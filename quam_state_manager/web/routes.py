@@ -26560,6 +26560,10 @@ def regenerate_build():
     populate_touched = data.get("populate_touched")
     if not isinstance(populate_touched, list):
         populate_touched = None
+    # QA review of regenerate-r2-03: fill-empty preset cells (land on null only).
+    populate_filled = data.get("populate_filled")
+    if not isinstance(populate_filled, list):
+        populate_filled = None
     scripts_dir = (data.get("scripts_dir") or "").strip() or None
 
     errors = config_generator.validate_spec(spec)
@@ -26699,6 +26703,7 @@ def regenerate_build():
         instance_path=current_app.instance_path,
         power_mode=power_mode if isinstance(power_mode, str) else None,
         fsp_ack=fsp_ack,
+        populate_filled=populate_filled,
     )
     if live_note and isinstance(outcome, dict):
         outcome["source_live_changed"] = True

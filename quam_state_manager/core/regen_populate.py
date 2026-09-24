@@ -428,6 +428,56 @@ def protect_paths(changed: list[tuple[str, str, str]], spec_populate: Any,
     return protect, conflicts
 
 
+def fill_protect_paths(filled: Iterable[Iterable[str]] | None,
+                       changed: list[tuple[str, str, str]], spec_populate: Any,
+                       old_state: dict, old_wiring: dict,
+                       new_state: dict, new_wiring: dict) -> set[str]:
+    """Leaf paths a FILL-EMPTY preset Apply may write over the tier-1 carry
+    (QA review of regenerate-r2-03).
+
+    "Empty cells only" is judged against the SOURCE CHIP, leaf by leaf -- not
+    against what step 6 managed to display, because a cell the extractor
+    could not read back looks blank while the chip holds a calibration there.
+    So a filled cell's paths (the same fanout as :func:`protect_paths`) are
+    protected only where the OLD leaf holds no value: null, or NaN (docs/137:
+    a NaN was never a value). Never over a number, a string or anything else
+    the chip stores. An ABSENT old leaf needs nothing -- tier-1 carries only
+    leaves present in both trees. The null case is real: quam_builder's
+    ``Transmon.anharmonicity`` defaults to None, and a null anharmonicity
+    crashes generate_config on the DRAG pulses (run_build) -- exactly the
+    chip a user fills from the preset.
+
+    ``filled`` -- ``[group, id, field]`` cells. A cell already in ``changed``
+    (typed, Set-all, Overwrite) keeps its full protection; a filled cell the
+    user cleared afterwards (absent from the spec) protects nothing.
+    """
+    spec_populate = spec_populate if isinstance(spec_populate, dict) else {}
+    done = set(changed or ())
+    cells: list[tuple[str, str, str]] = []
+    for t in filled or ():
+        try:
+            g, i, f = (str(x) for x in t)
+        except (TypeError, ValueError):
+            continue
+        ids = spec_populate.get(g)
+        fields = ids.get(i) if isinstance(ids, dict) else None
+        if ((g, i, f) in done or not isinstance(fields, dict)
+                or fields.get(f) is None):
+            continue
+        done.add((g, i, f))
+        cells.append((g, i, f))
+    if not cells:
+        return set()
+    paths, _ = protect_paths(cells, spec_populate, old_state, old_wiring,
+                             new_state, new_wiring)
+
+    def no_value(p: str) -> bool:
+        v = _walk(old_state, p)
+        return v is None or (isinstance(v, float) and math.isnan(v))
+
+    return {p for p in paths if _exists(old_state, p) and no_value(p)}
+
+
 def _protect_cr_zz(add, add_rel, merged_pid: str, fname: str,
                    pair_new: dict | None, members: tuple[str, str] | None,
                    new_state: dict) -> None:

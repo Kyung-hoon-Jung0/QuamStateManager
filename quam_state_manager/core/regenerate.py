@@ -125,6 +125,7 @@ def run_regenerate(
     source_probe=None,
     power_mode: str | None = None,
     fsp_ack: dict | None = None,
+    populate_filled: list | None = None,
 ) -> dict:
     """Build ``spec`` fresh into ``out_dir`` then merge the OLD chip's values on.
 
@@ -144,6 +145,11 @@ def run_regenerate(
     (+ ``populate_touched`` ``[group, id, field]`` cells) expands via
     :mod:`regen_populate` into merge ``protect_paths`` so the user's Populate
     edits survive the tier-1 carry. ``None`` ⇒ legacy behavior.
+
+    ``populate_filled`` (QA review of regenerate-r2-03) — ``[group, id, field]``
+    cells a fill-empty preset Apply wrote. They beat the tier-1 carry only
+    where the source chip holds no value (null), never over a number — see
+    :func:`regen_populate.fill_protect_paths`.
 
     ``power_mode`` / ``fsp_ack`` (QA regenerate-r2-04 / r2-06): a port FSP the
     wizard changed would leave every carried amplitude on that port at its old
@@ -210,6 +216,11 @@ def run_regenerate(
             pop_view, populate_baseline, populate_touched)
         protect, pop_conflicts = regen_populate.protect_paths(
             changed, pop_view, old_state, old_wiring, new_state, new_wiring)
+        # QA review of regenerate-r2-03: a fill-empty preset cell lands where
+        # the source chip holds no value (a null anharmonicity), never over one.
+        protect |= regen_populate.fill_protect_paths(
+            populate_filled, changed, pop_view, old_state, old_wiring,
+            new_state, new_wiring)
 
     # docs/202 §15: which of the SOURCE chip's classes this build env can
     # hold -- the merge keeps a lab subclass the builder replaced with its

@@ -514,6 +514,62 @@ function panelText(win) {
     ok(rf().every(function (v) { return v === undefined; }), 'D18: empty commit clears the column');
   }
 
+  // D19 (QA generate-r2-02, review): a red cell is not the only word. The
+  // Review step counts the invalid populate values (from the spec, so a cell
+  // scrolled out of view still counts) and the build result never shows a
+  // bare ✓ over them — QA J4 built a -3 ns x180 under "✓ Generated". Still
+  // advisory (docs/53): nothing is refused.
+  {
+    const win = makeWorld();
+    const G = buildWizard(win);
+    const RES = { ok: true, status: 'ok',
+                  result: { qubits: ['q1', 'q2', 'q3'], qubit_pairs: [] } };
+    function reviewRow(label) {
+      let txt = null;
+      win.document.querySelectorAll('#gen-review tr').forEach(function (tr) {
+        const th = tr.querySelector('th');
+        if (th && th.textContent === label) txt = tr.querySelector('td').textContent;
+      });
+      return txt;
+    }
+    // A cross-cell error (the feedline Σ|amp| clip, red on every readout amp
+    // of the bank) is the conflicts row's to say — never counted twice.
+    G.QT.setValidateDebounce(0);
+    ['q1', 'q2', 'q3'].forEach(function (q) {
+      setInput(win, cell(win, 'resonator', q, 'readout_amplitude'), '0.5');
+    });
+    await tick();
+    ok(flagged(cell(win, 'resonator', 'q3', 'readout_amplitude')) === 'err',
+       'D19: the Σ|amp| clip is red in step 6');
+    G.goToStep(8);
+    ok(/sum/.test(reviewRow('LO / band / power conflicts') || ''),
+       'D19: the conflicts row says the Σ clip (got "' +
+       reviewRow('LO / band / power conflicts') + '")');
+    ok(reviewRow('Invalid populate values') === null,
+       'D19: no invalid single-cell value, no invalid row (got "' +
+       reviewRow('Invalid populate values') + '")');
+    G.QT.showBuildResult(JSON.parse(JSON.stringify(RES)), 'D:\\out\\chip');
+    let res = win.document.getElementById('gen-build-result');
+    ok(!/invalid/.test(res.textContent), 'D19: a clean build says nothing about invalid values');
+    G.goToStep(6);
+    setInput(win, cell(win, 'pulses', 'q3', 'x180_length'), '-3');
+    G.goToStep(8);
+    const row = reviewRow('Invalid populate values') || '';
+    ok(/^1 /.test(row) && row.indexOf('q3 x180 length') >= 0 &&
+       row.indexOf('cannot be negative') >= 0,
+       'D19: Review names the invalid value (got "' + row + '")');
+    G.QT.showBuildResult(JSON.parse(JSON.stringify(RES)), 'D:\\out\\chip');
+    res = win.document.getElementById('gen-build-result');
+    const head = res.querySelector('p');
+    ok(head && /1 invalid populate value/.test(head.textContent) &&
+       head.className.indexOf('gen-build-warn-line') >= 0,
+       'D19: the headline is a warning, not a bare ✓ (got "' +
+       (head && head.textContent) + '")');
+    const line = res.querySelector('.gen-build-cell-errs');
+    ok(line && line.textContent.indexOf('q3 x180 length') >= 0,
+       'D19: a ⚠ line names the value (got "' + (line && line.textContent) + '")');
+  }
+
   if (fails) { console.error(fails + ' check(s) failed'); process.exit(1); }
   console.log('generate_validation_selfcheck: all checks passed');
 })().catch(function (e) { console.error(e); process.exit(1); });

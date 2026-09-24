@@ -29,6 +29,13 @@ const HTML = fs.readFileSync(
   path.join(ROOT, 'quam_state_manager', 'web', 'templates', '_generate.html'), 'utf8');
 const GEN_JS = fs.readFileSync(
   path.join(ROOT, 'quam_state_manager', 'web', 'static', 'generate.js'), 'utf8');
+// The REAL ValueDelta IIFE from app.js (docs/76: one Δ implementation) —
+// sliced like bulk_arith_selfcheck, the rest of app.js is not needed.
+const APP_JS = fs.readFileSync(
+  path.join(ROOT, 'quam_state_manager', 'web', 'static', 'app.js'), 'utf8');
+const VD_START = APP_JS.indexOf('window.ValueDelta = (function () {');
+if (VD_START < 0) { console.error('FAIL: ValueDelta not found in app.js'); process.exit(1); }
+const VALUE_DELTA_JS = APP_JS.slice(VD_START, APP_JS.indexOf('\n})();', VD_START) + 6);
 
 let fails = 0;
 function ok(c, m) { if (!c) { console.error('FAIL: ' + m); fails++; } }
@@ -71,6 +78,7 @@ function makeWorld(buildReplies) {
   win._fspCompUpdates = function (plan) {
     return plan.amps.map(function (a) { return { dot_path: a.path, value: '0.14' }; });
   };
+  new win.Function(VALUE_DELTA_JS).call(win);
   new win.Function(GEN_JS).call(win);
   return win;
 }
@@ -126,6 +134,13 @@ const ASK = { ok: false, needs_confirm: true, confirm_kind: 'fsp', fsp_pending: 
     'R3: the result names the rescaled amplitude (got ' + res.slice(0, 300) + ')');
   const chip = win.document.querySelector('.gen-merge-fsp');
   ok(chip && chip.title.indexOf('EF_x180') >= 0, 'R3: its title lists the path');
+  // Review of r2-04 / r2-06: old → new carries its Δ through ValueDelta
+  // (docs/76), the way Live Edit's popup shows the same rescale.
+  const vd = win.ValueDelta.compute(0.07, 0.14);
+  ok(vd && vd.text === '+0.07' && vd.pct_text === '+100%',
+    'R3: the harness runs the real ValueDelta (got ' + JSON.stringify(vd) + ')');
+  ok(chip && chip.title.indexOf('0.07 → 0.14  (Δ +0.07, +100%)') >= 0,
+    'R3: each rescaled amplitude shows its Δ (got ' + JSON.stringify(chip && chip.title) + ')');
 
   // ---- R2: cancel never builds ------------------------------------------
   win = makeWorld([JSON.parse(JSON.stringify(ASK)), JSON.parse(JSON.stringify(DONE))]);

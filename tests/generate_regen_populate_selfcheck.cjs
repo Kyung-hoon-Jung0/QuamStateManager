@@ -228,6 +228,46 @@ const SPEC = {
      'P8: fill-empty still writes the blank cells');
   ok(Object.keys(st.regenTouched || {}).length === 0,
      'P8: fill-empty preset Apply marks NO cell touched in regen mode');
+  // Review of r2-03: the fill is recorded APART and shipped with the build,
+  // so the server can land it where the source leaf is null (a null
+  // anharmonicity) and never over a number. Unrecorded, the null stayed.
+  ok(st.regenFilled && st.regenFilled['qubit|q1|anharmonicity'] === 1 &&
+     st.regenFilled['qubit|q2|anharmonicity'] === 1,
+     'P8: fill-empty preset Apply records the filled cells (got ' +
+     JSON.stringify(st.regenFilled) + ')');
+  // A cell step 6 SHOWED the chip's value for, then the user cleared, still
+  // means that value (clear = keep, tier-1 carries it) — fill-empty leaves
+  // it blank instead of showing a value the build would not write.
+  delete st.spec.populate.qubit.q1.RF_freq;
+  const rep2 = G._test.applyPreset(
+    { sections: { qubit: { defaults: { RF_freq: 6e9 } } } }, false);
+  ok(st.spec.populate.qubit.q1.RF_freq === undefined &&
+     st.spec.populate.qubit.q2.RF_freq === 6e9 && rep2.applied === 1 &&
+     !st.regenFilled['qubit|q1|RF_freq'],
+     'P8: fill-empty skips a cleared chip value, fills a truly empty cell (got q1 ' +
+     st.spec.populate.qubit.q1.RF_freq + ', q2 ' + st.spec.populate.qubit.q2.RF_freq +
+     ', applied ' + rep2.applied + ')');
+  let posted = null;
+  // A synchronous thenable, so runBuild's select-env round-trip re-enters
+  // it inside this (sync) block and the build POST is captured here.
+  function sync(v) {
+    if (v && typeof v.then === 'function') return v;
+    return { then(f) { return sync(f ? f(v) : v); }, catch() { return this; } };
+  }
+  win.fetch = function (url, opts) {
+    if (/select-env/.test(String(url))) {
+      return sync({ json() { return sync({ ok: true }); } });
+    }
+    if (/\/(re)?generate\/build/.test(String(url))) posted = JSON.parse(opts.body);
+    return new win.Promise(function () {});
+  };
+  st.env = 'C:/py/python.exe';
+  win.document.getElementById('gen-output-path').value = 'D:\\out\\chip';
+  G._test.runBuild();
+  const pf = (posted && posted.populate_filled || []).map(function (c) { return c.join('|'); });
+  ok(pf.indexOf('qubit|q1|anharmonicity') >= 0 && pf.indexOf('qubit|q2|anharmonicity') >= 0,
+     'P8: the regen build POST carries populate_filled (got ' +
+     JSON.stringify(posted && posted.populate_filled) + ')');
   G._test.applyPreset({ sections: { qubit: { defaults: { anharmonicity: 3e8 } } } }, true);
   ok(st.regenTouched['qubit|q1|anharmonicity'] === 1 &&
      st.regenTouched['qubit|q2|anharmonicity'] === 1,

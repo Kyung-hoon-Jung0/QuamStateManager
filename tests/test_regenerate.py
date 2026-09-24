@@ -466,6 +466,52 @@ def test_populate_baseline_protects_wizard_edit(tmp_path, monkeypatch):
     assert out["merge"]["populate_protected_paths"] == ["qubits.q1.f_01"]
 
 
+def test_fill_empty_preset_lands_on_a_null_leaf_never_over_a_number(
+        tmp_path, monkeypatch):
+    # QA review of regenerate-r2-03: a fill-empty preset Apply ("empty cells
+    # only") is judged against the SOURCE chip, leaf by leaf. Step 6 showed
+    # every anharmonicity cell blank -- q1/q4 because the chip holds null/NaN
+    # there (quam_builder's default; generate_config then crashes on the DRAG
+    # pulses), q2 standing in for a calibration the extractor cannot read.
+    # The fill must land on q1/q4 (and q3, absent) and never replace q2's
+    # number. Unprotected fills (the first r2-03 fix) left q1 = None.
+    (tmp_path / "old").mkdir()
+    old_state = {"qubits": {
+        "q1": {"f_01": 5.0e9, "anharmonicity": None},
+        "q2": {"f_01": 5.1e9, "anharmonicity": -2.0e8},
+        "q3": {"f_01": 5.2e9},
+        "q4": {"f_01": 5.3e9, "anharmonicity": float("nan")}},
+        "active_qubit_names": ["q1", "q2", "q3", "q4"]}
+    (tmp_path / "old" / "state.json").write_text(json.dumps(old_state))
+    (tmp_path / "old" / "wiring.json").write_text(json.dumps({"wiring": {}, "network": {}}))
+    fresh = {"qubits": {q: {"f_01": 4.0e9, "anharmonicity": 2.0e8}
+                        for q in ("q1", "q2", "q3", "q4")},
+             "active_qubit_names": ["q1", "q2", "q3", "q4"]}
+
+    def fake_build(python_path, mode, spec, out_dir, timeout=300):
+        out_dir = Path(out_dir); out_dir.mkdir(parents=True, exist_ok=True)
+        (out_dir / "state.json").write_text(json.dumps(fresh))
+        (out_dir / "wiring.json").write_text(json.dumps({"wiring": {}, "network": {}}))
+        return {"ok": True, "status": "ok", "error": None, "result": {}}
+
+    monkeypatch.setattr(regenerate.config_generator, "run_generator", fake_build)
+    qs = ("q1", "q2", "q3", "q4")
+    spec = {"qubits": list(qs), "populate": {"qubit": {
+        q: {"anharmonicity": 2.0e8} for q in qs}}}
+    filled = [["qubit", q, "anharmonicity"] for q in qs]
+    out = regenerate.run_regenerate("py", tmp_path / "old", spec,
+                                    tmp_path / "new", populate_baseline={},
+                                    populate_touched=[], populate_filled=filled)
+    assert out["ok"] is True
+    merged = json.loads((tmp_path / "new" / "state.json").read_text())
+    anh = {q: merged["qubits"][q]["anharmonicity"] for q in qs}
+    assert anh == {"q1": 2.0e8, "q2": -2.0e8, "q3": 2.0e8, "q4": 2.0e8}, anh
+    assert all(merged["qubits"][q]["f_01"] == old_state["qubits"][q]["f_01"]
+               for q in qs)                                   # tier-1 untouched
+    assert sorted(out["merge"]["populate_protected_paths"]) == [
+        "qubits.q1.anharmonicity", "qubits.q4.anharmonicity"]
+
+
 def test_no_baseline_is_legacy_byte_identical(tmp_path, monkeypatch):
     (tmp_path / "old").mkdir()
     old_state = {"qubits": {"q1": {"f_01": 5.0e9}}, "active_qubit_names": ["q1"]}

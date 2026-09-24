@@ -5219,6 +5219,9 @@
   function validateCellValue(group, rid, col, base, raw) {
     function err(m) { return { severity: "err", message: m }; }
     function warn(m) { return { severity: "warn", message: m }; }
+    // A fact about OTHER cells too (the LO's members, the feedline sum): the
+    // Review conflicts row already says it, populateCellErrors skips it.
+    function xerr(m) { return { severity: "err", message: m, cross: true }; }
     if (isNaN(base)) return err('"' + raw + '" is not a number.');
 
     if (group === "qdac" && col.field === "channel") {
@@ -5252,7 +5255,7 @@
           var rf = parseFloat(((pop[m.group] || {})[m.rid] || {})[loRfField(m.group)]);
           if (!isFinite(rf)) continue;
           if (Math.abs(rf - base) > LO_IF_HALF_WINDOW) {
-            return err(m.rid + "'s RF " + fmtFreq(rf) +
+            return xerr(m.rid + "'s RF " + fmtFreq(rf) +
               " is outside this LO's ±0.4 GHz IF window.");
           }
           if (!rfInBand(rf, b)) {
@@ -5308,7 +5311,7 @@
       if (col.field === "readout_amplitude" && group === "resonator") {
         var sum = feedlineAmpSum(rid, Math.abs(base));
         if (sum != null && sum > PWR.SUM_MAX + 1e-9) {
-          return err("Feedline Σ|amp| = " + sum.toFixed(2) +
+          return xerr("Feedline Σ|amp| = " + sum.toFixed(2) +
             " > 1 — simultaneous readout tones will CLIP at the DAC.");
         }
       }
@@ -5429,6 +5432,47 @@
         });
         if (col) validateCellInline(input, group, input.dataset.rid, col);
       });
+  }
+
+  // QA generate-r2-02 (review): the error-severity cells of the WHOLE spec,
+  // read from the spec, not the DOM (step 6 may never have rendered, and a
+  // red cell scrolled out of view on a big chip says nothing). Review and the
+  // build result name them, so a -3 ns length never builds under a silent ✓.
+  // Still advisory (docs/53): nothing is refused. Same rows as the tables.
+  // Single-cell facts only: a cross-cell one (an LO's member outside its IF
+  // window, the feedline Σ|amp|) is the Review conflicts row's to say.
+  function populateCellErrors() {
+    var mw = hasMwFem() || hasOpxPlus();
+    var lf = hasLfFem() || hasOpxPlus();
+    var qs = state.spec.qubits || [];
+    var rows = {
+      qubit: mw ? qs : [], resonator: mw ? qs : [], pulses: mw ? qs : [],
+      flux: (lf && state.qubitFlux) ? qs : [],
+      qdac: qs.filter(isQdacBiased),
+      twpa: mw ? (state.spec.twpas || []).map(function (t) {
+        return typeof t === "string" ? t : (t && t.id);
+      }).filter(Boolean) : [],
+      pairs: (state.spec.qubit_pairs || []).filter(function (p) { return p[0] && p[1]; })
+        .map(function (p) { return p[0] + "-" + p[1]; })
+    };
+    var out = [];
+    Object.keys(rows).forEach(function (group) {
+      rows[group].forEach(function (rid) {
+        var b = popBucketRead(group, rid);
+        popColsOf(group).forEach(function (col) {
+          if ((col.kind === "select" && col.field !== "band") || col.kind === "text") return;
+          var v = b[col.field];
+          if (v == null || String(v).trim() === "") return;
+          var base = typeof v === "number" ? v : parseFloat(v);
+          var f = validateCellValue(group, rid, col, base, v);
+          if (f && f.severity === "err" && !f.cross) {
+            out.push({ group: group, rid: rid, label: col.label || col.field,
+                       message: f.message });
+          }
+        });
+      });
+    });
+    return out;
   }
 
   // Choose one LO for a port pair's elements. entries = [{rf, needHole}] —
@@ -5786,6 +5830,21 @@
     if (state.mode !== "regenerate") return;
     if (!state.regenTouched) state.regenTouched = {};
     state.regenTouched[group + "|" + rid + "|" + field] = 1;
+  }
+  // A fill-empty preset cell (QA review of regenerate-r2-03): not "touched" —
+  // run_regenerate protects it only over a null source leaf
+  // (regen_populate.fill_protect_paths), so an unreadable calibration stays.
+  function markPopulateFilled(group, rid, field) {
+    if (state.mode !== "regenerate") return;
+    if (!state.regenFilled) state.regenFilled = {};
+    state.regenFilled[group + "|" + rid + "|" + field] = 1;
+  }
+  // Regen: did step 6 SHOW the chip's value for this cell at hydration? A
+  // cell the user cleared since still means that value (tier-1 carries it).
+  function regenBaselineHas(group, rid, field) {
+    if (state.mode !== "regenerate") return false;
+    var v = (((state.regenBaselinePopulate || {})[group] || {})[rid] || {})[field];
+    return v != null && v !== "";
   }
 
   // What the build WRITES on each port, and the band rules it must satisfy
@@ -6958,15 +7017,22 @@
         var b = popBucketWrite(sec, rid);
         if (!b) return;    // "qdac" on a qubit that is not QDAC-biased
         if (!overwrite && b[f] != null && b[f] !== "") return;
+        // A regen cell the user cleared still holds the chip's calibration
+        // (clear = keep, docs/72), so fill-empty leaves it alone — the table
+        // never shows a value the build would not write.
+        if (!overwrite && regenBaselineHas(sec, rid, f)) return;
         b[f] = v;
-        // Preset Apply is a user action — its fills are populate-protect
-        // touched cells in regen mode (docs/72). autoApplyStandardDefaults
+        // Preset Apply is a user action — an Overwrite's fills are populate-
+        // protect touched cells in regen mode (docs/72). autoApplyStandardDefaults
         // never runs there, so this can't taint the baseline with synthetics.
         // Fill-empty (QA regenerate-r2-03) is judged against the CHIP, not the
         // display: a cell the extractor could not read back looks blank, and
         // protecting the fill would overwrite the calibration tier-1 carries.
-        // Unprotected, it still lands where the old chip truly lacks the leaf.
+        // So a fill is recorded apart, and the server protects it per leaf —
+        // only where the source chip holds no value (a null anharmonicity),
+        // never over a number (review of r2-03: absent-only lost the nulls).
         if (overwrite) markPopulateTouched(sec, rid, f);
+        else markPopulateFilled(sec, rid, f);
         report.applied++;
       }
       var defaults = body.defaults || {};
@@ -7465,6 +7531,14 @@
         " (see step 6) — " + reviewFindings[0].message +
         (reviewFindings.length > 1 ? " …" : "")]);
     }
+    // QA generate-r2-02 (review): cells step 6 flags red, counted from the spec.
+    var cellErrs = populateCellErrors();
+    if (cellErrs.length) {
+      rows.push(["Invalid populate values", cellErrs.length +
+        " (red in step 6; they build as entered) — " + cellErrs[0].rid + " " +
+        cellErrs[0].label + ": " + cellErrs[0].message +
+        (cellErrs.length > 1 ? " …" : "")]);
+    }
     el.innerHTML = '<table class="gen-review-table"><tbody>' +
       rows.map(function (r) {
         return "<tr><th>" + r[0] + "</th><td></td></tr>";
@@ -7864,6 +7938,14 @@
         msg.textContent += " — not runnable yet";
         msg.className = "gen-build-warn-line";
       }
+      // QA generate-r2-02 (review): values step 6 flags red went into the
+      // build — never under a bare ✓ (the ⚠ line below names them).
+      var cellErrs = populateCellErrors();
+      if (cellErrs.length) {
+        msg.textContent += " — " + cellErrs.length + " invalid populate value" +
+          (cellErrs.length === 1 ? "" : "s");
+        msg.className = "gen-build-warn-line";
+      }
       el.appendChild(msg);
       (r.warnings || []).forEach(function (w) {
         var wel = document.createElement("p");
@@ -7871,6 +7953,17 @@
         wel.textContent = "⚠ " + w;
         el.appendChild(wel);
       });
+      if (cellErrs.length) {
+        var cel = document.createElement("p");
+        cel.className = "gen-build-warn-line gen-build-cell-errs";
+        cel.textContent = "⚠ " + cellErrs.length + " value" +
+          (cellErrs.length === 1 ? "" : "s") + " step 6 flags as invalid went " +
+          "into the build: " + cellErrs.slice(0, 4).map(function (c) {
+            return c.rid + " " + c.label + " (" + c.message + ")";
+          }).join("; ") + (cellErrs.length > 4 ? "; …" : "") +
+          " — fix them before running this chip.";
+        el.appendChild(cel);
+      }
       // Editable-scripts export outcome (best-effort side artefact).
       if (res.scripts) {
         var sc = document.createElement("p");
@@ -7992,7 +8085,12 @@
         var fspChip = mp.querySelector(".gen-merge-fsp");
         if (fspChip) {   // the rescaled amplitudes, old → new (text, never HTML)
           fspChip.title = (m.fsp_compensated || []).map(function (c) {
-            return c.path + ": " + c.old + " → " + c.new;
+            // Δ through the one shared implementation (docs/76), as the Live
+            // Edit FSP popup shows the same rescale (review of r2-04 / r2-06),
+            // in value_delta.describe's tooltip shape.
+            var d = window.ValueDelta ? window.ValueDelta.compute(c.old, c.new) : null;
+            return c.path + ": " + c.old + " → " + c.new +
+              (d ? "  (Δ " + d.text + (d.pct_text ? ", " + d.pct_text : "") + ")" : "");
           }).join("\n") +
             (fspCompN > (m.fsp_compensated || []).length ? "\n…" : "");
         }
@@ -8344,6 +8442,11 @@
           ? (state.regenBaselinePopulate || {}) : null,
         populate_touched: state.mode === "regenerate"
           ? Object.keys(state.regenTouched || {}).map(function (k) {
+              return k.split("|");
+            }) : null,
+        // fill-empty preset cells — protected only over a null source leaf
+        populate_filled: state.mode === "regenerate"
+          ? Object.keys(state.regenFilled || {}).map(function (k) {
               return k.split("|");
             }) : null,
         // QA regenerate-r2-04 / r2-06: a changed port FSP rescales the port's
@@ -8979,6 +9082,7 @@
       state.regenBaselinePopulate = _base;
     } catch (e) { state.regenBaselinePopulate = {}; }
     state.regenTouched = {};
+    state.regenFilled = {};   // fill-empty preset cells (review of r2-03)
     state.regenFspAck = {};   // QA regenerate-r2-06: answers belong to one source chip
     repaintFromState();
     // repaintFromState() only syncs the scalar inputs — the Chassis grid, the
