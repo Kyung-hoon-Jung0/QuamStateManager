@@ -1374,6 +1374,20 @@ class TestUndoChipIdentity:
         assert r.status_code == 200
         assert self._off(B, "qB1") == 0.55
 
+    def test_a_host_edit_on_the_same_chip_does_not_block_its_own_undo(self, tmp_path):
+        """jsontree-r2-04: editing network.host moves the fingerprint of the
+        SAME chip; the render-time token must still undo that very edit, while
+        chip A's token stays refused on chip B (the test above)."""
+        c, A, B, tokA, tokB = self._two_chips(tmp_path)
+        r = c.post("/field/edit", data={"dot_path": "network.host",
+                                        "value": "10.0.0.9", "expect_chip": tokB})
+        assert r.status_code == 200, r.get_data(as_text=True)
+        assert c.get("/chip/active-token").get_json().get("token") != tokB
+        r = c.post("/undo", data={"expect_chip": tokB})
+        assert r.status_code == 200, r.get_data(as_text=True)
+        r = c.post("/undo", data={"expect_chip": tokA})
+        assert r.status_code == 409, "chip A's token is still not chip B's"
+
 
 class TestReplayNeverMergesTwoGestures:
     """R-A1 Round-2 (docs/160 §5e2): the replay's fresh-gid remap must never fuse

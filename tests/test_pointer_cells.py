@@ -268,6 +268,26 @@ class TestThroughTheRoutes:
         st = self._state_of(client)
         assert st["qubit_pairs"]["q1-2"]["qubit_control"] == "#/qubits/q1"
 
+    def test_the_trees_quoted_spelling_repoints_too(self, client):
+        """JT-02: the Json tree shows a pointer as its JSON literal
+        ("#/qubits/q1"), unwraps it on commit and sends value_quoted=1. The
+        route used to re-wrap it in quotes and then refuse its own re-wrap as
+        'plain text' -- the tree's spelling of a re-point was always a 400."""
+        r = client.post("/field/edit", data={
+            "dot_path": "qubit_pairs.q1-2.qubit_control",
+            "value": "#/qubits/q2", "value_quoted": "1"})
+        assert r.status_code == 200, r.get_data(as_text=True)
+        st = self._state_of(client)
+        assert st["qubit_pairs"]["q1-2"]["qubit_control"] == "#/qubits/q2"
+
+    def test_quoted_plain_text_is_still_refused(self, client):
+        r = client.post("/field/edit", data={
+            "dot_path": "qubit_pairs.q1-2.qubit_control",
+            "value": "q2", "value_quoted": "1"})
+        assert r.status_code == 400
+        st = self._state_of(client)
+        assert st["qubit_pairs"]["q1-2"]["qubit_control"] == "#/qubits/q1"
+
     def test_the_batch_path_refuses_it_too(self, client):
         """Four generic value-edit surfaces share the rule; a side door around
         it is how the older audits describe this exact class of hole."""

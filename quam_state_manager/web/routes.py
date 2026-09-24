@@ -3953,7 +3953,9 @@ def _ctx(**extra: Any) -> dict[str, Any]:
         "chip_identity": ident,          # full identity for _chip_header.html
         "chip_origin": ident["origin"] if ident else "live",
         # Render-time chip fingerprint token (topology-only: network + qubit/pair
-        # labels, NOT values — so value edits never change it). Baked into the page
+        # labels, NOT values -- but an edit OF the network block or of the qubit
+        # set does move it; the gate accepts every token this context issued,
+        # jsontree-r2-04). Baked into the page
         # as window.__chipToken and sent back as expect_chip on every edit POST, so
         # an edit committed from a stale tab after another tab switched the active
         # chip is caught server-side by _chip_mismatch_response (409) instead of
@@ -7194,13 +7196,40 @@ def _normalize_dot_path(dot_path: str) -> str:
 
 
 def _active_chip_token() -> str | None:
-    """Fingerprint token of the LOADED chip (in-memory state+wiring), or None."""
-    store = _store()
+    """Fingerprint token of the LOADED chip (in-memory state+wiring), or None.
+
+    The fingerprint covers the network block and the qubit/pair key sets, so
+    an ordinary edit of ``network.host`` or an added qubit MOVES it on the
+    same chip (jsontree-r2-04). Every token handed out is recorded on the
+    context that issued it, so :func:`_chip_token_ok` can tell a page that
+    watched this chip change from a page that belongs to another chip."""
+    ctx = _active_ctx()
+    store = ctx.get("store") if ctx else None
     if not store:
         return None
     from quam_state_manager.core import history
-    return history.fingerprint_token(
+    token = history.fingerprint_token(
         history.fingerprint_from_dicts(store.state, store.wiring))
+    if token:
+        seen = ctx.setdefault("chip_tokens_seen", [])
+        if token not in seen:
+            seen.append(token)
+            del seen[:-32]
+    return token
+
+
+def _chip_token_ok(expect_chip: str) -> bool:
+    """Does *expect_chip* belong to the loaded chip? True when no token can be
+    computed (no gate, as before), when it is the current token, or when THIS
+    context issued it earlier -- an edit on the same chip that moved the
+    fingerprint is not a chip switch (jsontree-r2-04). A switch changes the
+    context, and a context only records its own tokens, so a stale tab from
+    another chip is still refused."""
+    active = _active_chip_token()
+    if active is None or active == expect_chip:
+        return True
+    ctx = _active_ctx()
+    return bool(ctx) and expect_chip in (ctx.get("chip_tokens_seen") or ())
 
 
 def _chip_mismatch_response(expect_chip: str, force_chip: bool):
@@ -7214,8 +7243,7 @@ def _chip_mismatch_response(expect_chip: str, force_chip: bool):
     expect_chip = (expect_chip or "").strip()
     if not expect_chip or force_chip:
         return None
-    active = _active_chip_token()
-    if active is not None and active != expect_chip:
+    if not _chip_token_ok(expect_chip):
         return jsonify(
             ok=False, chip_mismatch=True,
             error="This value came from a different chip than the one loaded — "
@@ -7236,8 +7264,7 @@ def _chip_mismatch_html(expect_chip: str, force_chip: bool):
     expect_chip = (expect_chip or "").strip()
     if not expect_chip:
         return None
-    active = _active_chip_token()
-    if active is not None and active != expect_chip:
+    if not _chip_token_ok(expect_chip):
         return render_template(
             "_status.html",
             message="This edit was staged against a different chip than the one "
@@ -7289,8 +7316,12 @@ def field_edit():
     # stores "7" -- the zeros are gone, on the very edit that asked to keep
     # them. Putting the quotes back makes this byte-identical to the literal
     # the user actually typed, which is the path that already preserves them.
+    # A `#`-string is a reference everywhere in QUAM, never text to protect
+    # (JT-02): re-wrapping it hid the re-point from the pointer guard below,
+    # which then refused the tree's own quoted spelling as "plain text".
     if _value_was_quoted() and not (raw_value.startswith('"')
-                                    or raw_value.startswith("'")):
+                                    or raw_value.startswith("'")) \
+            and not is_pointer(raw_value.strip()):
         raw_value = json.dumps(raw_value)
 
     if not dot_path:
@@ -9231,7 +9262,7 @@ def pair_gate_inspector_switch(name: str):
     # `_active_chip_token`; there is no `_chip_token`, and naming it wrong made
     # this route raise NameError on every press (app.js always sends the field).
     chip_token = request.form.get("expect_chip") or ""
-    if chip_token and chip_token != (_active_chip_token() or ""):
+    if chip_token and not _chip_token_ok(chip_token):
         return render_template(
             "_status.html", message="Chip changed — please reload.", level="error"), 409
 

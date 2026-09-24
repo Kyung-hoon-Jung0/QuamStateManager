@@ -76,6 +76,13 @@ def test_undo_pages_selfcheck():
     _run("undo_pages_selfcheck.cjs", "ok - a click-away after the undo does NOT re-commit")
 
 
+def test_tree_structural_revert_selfcheck():
+    """JT-04 / jsontree-r2-05 / JT-05 / jsontree-r2-06: an undone creation
+    leaves no phantom null row, an undone delete puts the row back, a filled
+    null leaf's pencil opens its value, and Enter on Cancel cancels."""
+    _run("tree_structural_revert_selfcheck.cjs", "all tree structural-revert checks passed")
+
+
 def test_pulses_undo_selfcheck():
     _run("pulses_undo_selfcheck.cjs", "ok - undo back to an already-drawn state costs NO synth request (cache)")
 

@@ -113,3 +113,33 @@ def test_no_token_means_no_gate(client):
     resp = client.post("/field/edit-batch", json={
         "updates": [{"dot_path": "qubits.qA1.f_01", "value": 1.0e9}]})
     assert resp.status_code == 200
+
+
+# --- jsontree-r2-04: an edit OF the identity is not a chip switch -----------
+
+def test_editing_network_host_does_not_lock_the_page(client):
+    """The fingerprint covers network.host, so editing it moves the server's
+    token while the page keeps its render-time one. Every later edit used to
+    409 'a different chip' until a reload -- on the SAME chip."""
+    tok = client.get("/chip/active-token").get_json()["token"]
+    r = client.post("/field/edit", data={
+        "dot_path": "network.host", "value": "10.0.0.7", "expect_chip": tok})
+    assert r.status_code == 200, r.get_data(as_text=True)
+    assert client.get("/chip/active-token").get_json()["token"] != tok  # it did move
+    # the page still holds `tok`: a later edit and a Ctrl+Z both proceed
+    r = client.post("/field/edit", data={
+        "dot_path": "qubits.qA1.f_01", "value": "6.3e9", "expect_chip": tok})
+    assert r.status_code == 200, r.get_data(as_text=True)
+    r = client.post("/undo", data={"expect_chip": tok})
+    assert r.status_code == 200, r.get_data(as_text=True)
+
+
+def test_a_token_this_context_never_issued_is_still_refused(client):
+    tok = client.get("/chip/active-token").get_json()["token"]
+    client.post("/field/edit", data={
+        "dot_path": "network.host", "value": "10.0.0.7", "expect_chip": tok})
+    r = client.post("/field/edit", data={
+        "dot_path": "qubits.qA1.f_01", "value": "6.3e9",
+        "expect_chip": "deadbeefdeadbeef"})
+    assert r.status_code == 409
+    assert r.get_json()["chip_mismatch"] is True

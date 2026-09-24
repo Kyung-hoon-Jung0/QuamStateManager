@@ -7959,7 +7959,13 @@ window.clearDetailPanelSearch = function(btnEl) {
                 nullJsonBtn.textContent = "✎";   // ✎
                 nullJsonBtn.title = "Enter a value as JSON (list / object / any type)";
                 (function(nd, p) {
-                    nullJsonBtn.onclick = function(e) { e.stopPropagation(); _makeContainerEditable(nd, p, null); };
+                    // JT-05: the value NOW (an inline commit may have filled
+                    // it), never the null this button was built with.
+                    nullJsonBtn.onclick = function(e) {
+                        e.stopPropagation();
+                        _makeContainerEditable(nd, p, _treeModelGet(nd.closest(".json-tree"), p,
+                            nd._value === undefined ? null : nd._value));
+                    };
                 })(node, path);
                 row.appendChild(nullJsonBtn);
             }
@@ -8229,6 +8235,46 @@ window.clearDetailPanelSearch = function(btnEl) {
         return true;
     }
     window._treeModelSet = _treeModelSet;
+
+    /* The model's container holding dotPath's final key, walked exactly as
+     * _treeModelSet walks it, or null when the model does not hold the path. */
+    function _treeModelParent(container, dotPath) {
+        if (!container || container._treeData == null || !dotPath) return null;
+        var segs = String(dotPath).split(".");
+        var cur = container._treeData;
+        for (var i = 0; i < segs.length - 1; i++) {
+            var seg = segs[i];
+            var nxt = Array.isArray(cur) && /^[0-9]+$/.test(seg) ? cur[Number(seg)] : cur[seg];
+            if (nxt === undefined || nxt === null || typeof nxt !== "object") return null;
+            cur = nxt;
+        }
+        if (!cur || typeof cur !== "object") return null;
+        return { cur: cur, last: segs[segs.length - 1] };
+    }
+    function _treeModelHas(container, dotPath) {
+        var p = _treeModelParent(container, dotPath);
+        if (!p) return false;
+        if (Array.isArray(p.cur)) return /^[0-9]+$/.test(p.last) && Number(p.last) < p.cur.length;
+        return Object.prototype.hasOwnProperty.call(p.cur, p.last);
+    }
+    /* JT-05: read the CURRENT value the model holds (an inline commit writes the
+     * model, not the pencil's build-time capture); `fallback` when it has none. */
+    function _treeModelGet(container, dotPath, fallback) {
+        if (!_treeModelHas(container, dotPath)) return fallback;
+        var p = _treeModelParent(container, dotPath);
+        return Array.isArray(p.cur) ? p.cur[Number(p.last)] : p.cur[p.last];
+    }
+    /* JT-04: the inverse of _treeModelSet's final-key write. A key the server
+     * no longer has is REMOVED from the model -- writing null fabricated a key
+     * that does not exist. Fails closed on a list parent (lists are whole,
+     * docs/160 M1) and on a path the model does not hold. */
+    function _treeModelDelete(container, dotPath) {
+        var p = _treeModelParent(container, dotPath);
+        if (!p || Array.isArray(p.cur) || !Object.prototype.hasOwnProperty.call(p.cur, p.last)) return false;
+        delete p.cur[p.last];
+        container._flatIndex = null;
+        return true;
+    }
 
     function _buildFlatIndex(data) {
         var flat = [];
@@ -8753,6 +8799,16 @@ window.clearDetailPanelSearch = function(btnEl) {
                               data.stored_kind !== undefined ? data.stored : newVal);
                 var row = valEl.closest(".tree-row");
                 if (row) row.classList.add("tree-row-pending");
+                // JT-05: the row now reads as a fresh render would -- the node
+                // carries the committed value (copy / paste eligibility read
+                // it) and a no-longer-null leaf loses its null-only ✎.
+                (function () {
+                    var _cv = data.stored_kind !== undefined ? data.stored : newVal;
+                    var _nd = valEl.closest(".tree-node");
+                    if (_nd) _nd._value = _cv;
+                    var _pb = row && row.querySelector(":scope > .tree-json-edit-btn");
+                    if (_pb && _cv !== null) _pb.remove();
+                })();
                 // If this field was part of an incoming live diff, inline-editing it
                 // IS the user's choice for that row — invalidate its incoming entry so
                 // a later "Accept all" can't overwrite the typed value with the stale
@@ -9004,6 +9060,56 @@ window.clearDetailPanelSearch = function(btnEl) {
         });
     }
 
+    /* JT-04 / jsontree-r2-05: an undo, redo, discard or revert can ADD or
+     * REMOVE a key, not only change a value. Presence comes from the server's
+     * peek, never from the entry's created/deleted flags (their direction
+     * differs between emit sites). A removed key leaves the model and its
+     * row; a restored one enters the model. Either way the parent row on
+     * screen is rebuilt, so its children and its "{N keys}" follow, and an
+     * open parent stays open. Scoped to the two explorer trees -- a
+     * diff-workbench tree is never touched. `present` with a key the model
+     * already holds is a value revert, not structural: returns false and the
+     * caller paints. Returns true when it handled the entry. */
+    function _treeStructuralRevert(dotPath, present, value) {
+        var handled = false;
+        var pp = _parentPath(dotPath);
+        var key = String(dotPath).slice(pp ? pp.length + 1 : 0);
+        function sel(p) {
+            return '.tree-node[data-path="' + String(p).replace(/(["\\])/g, "\\$1") + '"]';
+        }
+        ["explorer-tree-state", "explorer-tree-wiring"].forEach(function (id) {
+            var c = document.getElementById(id);
+            if (!c || c._treeData == null) return;
+            var leaf = c.querySelector(sel(dotPath));
+            var changed;
+            if (present) {
+                if (_treeModelHas(c, dotPath)) return;
+                changed = _treeModelSet(c, dotPath, value);
+            } else {
+                changed = _treeModelDelete(c, dotPath);
+            }
+            if (!changed && !(leaf && !present)) return;
+            handled = true;
+            var pn = pp ? c.querySelector(sel(pp)) : null;
+            if (pn && pn._meta) {
+                var kids = pn.querySelector(":scope > .tree-children");
+                var wasOpen = !!(kids && kids.style.display !== "none");
+                var pv = _treeModelGet(c, pp, pn._value);
+                if (pv && typeof pv === "object" && !Array.isArray(pv)) {
+                    if (present) pv[key] = value; else delete pv[key];
+                }
+                var fresh = _rebuildNode(pn, pv);
+                if (fresh && wasOpen) {
+                    var tg = fresh.querySelector(":scope > .tree-row > .tree-toggle.collapsed");
+                    if (tg) tg.click();
+                }
+            } else if (leaf && !present) {
+                leaf.remove();
+            }
+        });
+        return handled;
+    }
+
     window._revertTreeNode = function(dotPath, oldValueStr) {
         var treeNode = document.querySelector('.tree-node[data-path="' + dotPath + '"]');
         var row = treeNode ? treeNode.querySelector(":scope > .tree-row") : null;
@@ -9020,6 +9126,13 @@ window.clearDetailPanelSearch = function(btnEl) {
             var _c2 = document.getElementById("explorer-tree-wiring");
             if (!(_c1 && _treeModelSet(_c1, dotPath, v)) && _c2) _treeModelSet(_c2, dotPath, v);
             if (treeNode && !_c1 && !_c2) _treeModelSet(treeNode.closest(".json-tree"), dotPath, v);
+            // A sibling's structural revert may have rebuilt the parent while
+            // this peek was in flight: paint the row that is on screen now.
+            if (valEl && valEl.isConnected === false) {
+                var _tn = document.querySelector('.tree-node[data-path="' + dotPath + '"]');
+                var _tr = _tn ? _tn.querySelector(":scope > .tree-row") : null;
+                valEl = _tr ? _tr.querySelector(".tree-val") : null;
+            }
             if (!valEl) return;
             valEl.textContent = _formatValue(v);
             valEl.dataset.editVal = (typeof v === "string") ? v : _formatValue(v);
@@ -9040,7 +9153,16 @@ window.clearDetailPanelSearch = function(btnEl) {
         fetch("/field/peek?dot_path=" + encodeURIComponent(dotPath))
             .then(function(r) { return r.json(); })
             .then(function(d) {
+                // JT-04: a path the server does not have is GONE -- an undone
+                // creation, a redone delete -- never a value of null.
+                if (d && d.ok && d.errors && d.errors[dotPath]) {
+                    _treeStructuralRevert(dotPath, false);
+                    return;
+                }
                 if (d && d.ok && d.values && dotPath in d.values) {
+                    // jsontree-r2-05: a key restored (undone delete) has no row
+                    // to repaint -- its parent's row has to be rebuilt.
+                    if (!valEl && _treeStructuralRevert(dotPath, true, d.values[dotPath])) return;
                     paint(d.values[dotPath]);
                     return;
                 }
@@ -9272,8 +9394,12 @@ window.clearDetailPanelSearch = function(btnEl) {
         panel.querySelector(".tree-crud-ok").onclick = submit;
         panel.querySelector(".tree-crud-cancel").onclick = function () { panel.remove(); };
         panel.addEventListener("keydown", function (e) {
-            if (e.key === "Enter" && e.target !== valIn) { e.preventDefault(); submit(); }
-            if (e.key === "Enter" && e.target === valIn) { e.preventDefault(); submit(); }
+            // jsontree-r2-06: Enter submits from the two text boxes only. On
+            // Cancel / Add / the type select it keeps its native meaning --
+            // Enter on a focused Cancel used to CREATE the key.
+            if (e.key === "Enter" && (e.target === keyIn || e.target === valIn) && !e.isComposing) {
+                e.preventDefault(); submit();
+            }
             if (e.key === "Escape") panel.remove();
         });
     }
