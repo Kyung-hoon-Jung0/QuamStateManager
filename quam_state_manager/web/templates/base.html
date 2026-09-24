@@ -1616,6 +1616,8 @@
                 if (localStorage.getItem("quam_sidebar_collapsed") === "1") {
                     var layout = document.querySelector(".app-layout");
                     if (layout) layout.classList.add("sidebar-collapsed");
+                    // QA F17: the top bar's tool fallback keys on <html> (app.js toggleSidebar)
+                    if (layout) document.documentElement.classList.add("sidebar-is-collapsed");
                 }
                 // Global top-bar hidden state (Item 3) — class on <html>, survives
                 // HTMX partial swaps; the matching CSS also zeroes --topbar-height.

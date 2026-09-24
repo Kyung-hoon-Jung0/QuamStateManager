@@ -1981,7 +1981,13 @@ window.toggleExpFilterCollapsed = function() {
 (function() {
     function apply() {
         try {
-            var collapsed = localStorage.getItem('quam_exp_filter_collapsed') === '1';
+            // QA F17: with no stored choice the band starts FOLDED on a short
+            // window (the 1366x768 laptop): open, its chip rows (~700 px for
+            // 67 types) pushed the first run below the fold. The folded band
+            // still shows "N experiment types -- click to filter" and its
+            // toggle; a choice the user made always wins.
+            var stored = localStorage.getItem('quam_exp_filter_collapsed');
+            var collapsed = stored === null ? (window.innerHeight < 900) : stored === '1';
             document.body.classList.toggle('exp-filter-collapsed', collapsed);
             var btn = document.getElementById('exp-filter-toggle');
             if (btn) btn.setAttribute('aria-expanded', collapsed ? 'false' : 'true');
@@ -2307,6 +2313,9 @@ window.toggleSidebar = function() {
     var layout = document.querySelector(".app-layout");
     if (!layout) return;
     var collapsed = layout.classList.toggle("sidebar-collapsed");
+    // QA F17: mirrored on <html> -- the top bar is not inside .app-layout, and
+    // its Settings/Calculator fallback must show only while this is collapsed.
+    document.documentElement.classList.toggle("sidebar-is-collapsed", collapsed);
     try {
         localStorage.setItem("quam_sidebar_collapsed", collapsed ? "1" : "0");
     } catch(e) {}
@@ -14241,6 +14250,8 @@ window.updateCompareButton = function() {
     // docs/141 4y: one button -- 2..5 runs open the diff workbench.
     var counter = document.getElementById('ds-compare-count');
     if (counter) counter.textContent = String(count);
+    // QA datasets-r2-16: the "over" message names the count too.
+    bar.querySelectorAll('.ds-compare-n').forEach(function (n) { n.textContent = String(count); });
 };
 
 /**

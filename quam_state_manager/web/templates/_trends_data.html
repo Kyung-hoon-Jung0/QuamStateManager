@@ -112,7 +112,10 @@
             name: s.qubit + ' / ' + s.metric,
             connectgaps: false,
             marker: { size: 6 },
-            line: { width: 2 }
+            line: { width: 2 },
+            // QA F19: each point carries its run's uid (build_trend_data
+            // stamps trend.runs[i].uid, same order as s.values).
+            customdata: runs.map(function (r) { return r.uid || null; })
         };
 
         // Statistics layer (moving average + ±σ band) beneath the data —
@@ -134,8 +137,47 @@
             hovermode: 'x unified'
         };
 
-        return _plotlyRender(el, statTraces.concat([trace]), layout,
-                             { responsive: true, displayModeBar: false });
+        return Promise.resolve(_plotlyRender(el, statTraces.concat([trace]), layout,
+                                             { responsive: true, displayModeBar: false }))
+            .then(function () { _bindRunClicks(el); });
+    }
+
+    /* QA F19: a point opens its run in the INSPECTOR, as the Chip Status and
+       Param History trends do (docs/204 -- never #table-pane, which would
+       replace these Trends). With 'x unified' the click's points include the
+       statistics traces (no uid), so the first point that CARRIES a uid wins,
+       not points[0]. Bound after the render: el.on exists only once Plotly
+       drew (and _plotlyRender resolves null when Plotly failed to load). */
+    function _uidOf(evt) {
+        var pts = (evt && evt.points) || [];
+        for (var i = 0; i < pts.length; i++) {
+            var cd = pts[i] && pts[i].customdata;
+            if (typeof cd === 'string' && cd) return cd;
+        }
+        return null;
+    }
+    function _bindRunClicks(el) {
+        if (!el || typeof el.on !== 'function') return;
+        el.on('plotly_click', function (evt) {
+            try {
+                var uid = _uidOf(evt);
+                if (!uid) return;
+                var url = '/dataset/' + uid;
+                if (window.htmx && window.htmx.ajax) {
+                    window.htmx.ajax('GET', url, { source: '#inspector-pane',
+                                                   target: '#inspector-pane',
+                                                   swap: 'innerHTML' });
+                } else {
+                    window.location.href = url;
+                }
+            } catch (e) { /* a click must never break the chart */ }
+        });
+        el.on('plotly_hover', function (evt) {
+            try { el.style.cursor = _uidOf(evt) ? 'pointer' : ''; } catch (e) {}
+        });
+        el.on('plotly_unhover', function () {
+            try { el.style.cursor = ''; } catch (e) {}
+        });
     }
 
     /* QA F6: ONE chart per task. Every _plotlyRender promise resolves in the

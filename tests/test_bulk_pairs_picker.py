@@ -52,7 +52,10 @@ class TestPopoversAreNotCovered:
         assert ".bulk-panel .bulk-toolbar { position: relative; z-index: 8; }" in block
         assert ".bulk-panel .bulk-chipbar, .bulk-panel .bulk-dyn-truncated, .bulk-panel .bulk-virt-note { position: relative; z-index: 6; }" in block
         # the popover itself sits above the sticky header (2 / 4) inside the toolbar's context
-        assert "z-index: 30" in CSS[CSS.index(".bulk-colvis-menu {"):CSS.index(".bulk-colvis-menu {") + 200]
+        # the rule itself, line-anchored: `.ds-colvis .bulk-colvis-menu {` (the
+        # Datasets override, QA ds-table) also contains the substring and comes first
+        m = re.search(r"(?m)^\.bulk-colvis-menu \{", CSS)
+        assert m and "z-index: 30" in CSS[m.start():m.start() + 200]
 
 
 class TestPairsPicker:

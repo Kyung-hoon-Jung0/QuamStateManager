@@ -889,6 +889,14 @@ body {
     background: var(--pico-background-color);
     border-bottom: 1px solid var(--pico-muted-border-color);
     padding: var(--topbar-pad-v) var(--topbar-pad-h);
+    /* QA F17: Pico's nav rows are 1rem of li padding each way (20 px at its
+       125% root) around a ~38 px pill, so each WRAPPED row of the bar cost
+       ~78 px -- three rows took 235 of 768 px. Scoped here (inherited only
+       inside the bar); link spacing keeps Pico's half-of-element ratio so an
+       anchor pill never overhangs its li into the next row. The sidebar reads
+       the same variables and is untouched. */
+    --pico-nav-element-spacing-vertical: .3rem;
+    --pico-nav-link-spacing-vertical: .15rem;
 }
 .topbar nav { margin: 0; }
 .topbar-right { gap: var(--topbar-right-gap); align-items: center; }
@@ -5741,7 +5749,7 @@ input.tree-edit-input {
 /* Drag-to-resize grip on each header cell's right edge (dbl-click = auto-fit). */
 .ds-resize-handle {
     position: absolute; top: 0; right: 0; width: 7px; height: 100%;
-    cursor: col-resize; user-select: none;
+    cursor: col-resize; user-select: none; z-index: 1;  /* QA datasets-r2-17: above th.sortable::after (it took the press) */
 }
 .ds-resize-handle:hover { background: var(--pico-primary); opacity: .35; }
 /* Run status chip — coloured text + border (NOT a fill behind text), per the
@@ -6251,6 +6259,10 @@ table.h5-vars-table tr.h5-var-selected .btn-sm { background: var(--pico-primary)
 }
 /* Pad the search input so the typed text doesn't slide under the ? button. */
 .ds-search-wrap input[type="search"] { padding-right: 2.5rem; }
+/* QA F15: the ? sits on the WRAP's right edge, and a non-empty count strip is
+   the wrap's last flex item -- the button covered its text ("Showing 1?f 39",
+   and the comparison hint). Reserve the button's room at the strip's end. */
+.ds-search-wrap > #dataset-filter-count:not(:empty) { padding-right: 2.2rem; }
 .ds-search-help-panel {
     position: absolute; top: calc(100% + 0.35rem); left: 0; right: 0;
     max-width: 38rem;
@@ -12354,8 +12366,14 @@ form.inline-edit.fh-host:focus-within .field-hist-btn,
 /* Topbar fallback — ONLY while the sidebar is collapsed (it collapses to
    width 0, so the sidebar row is gone, not merely narrow). Exactly one of the
    two is ever visible, so this is a fallback and not a duplicate control. */
-.topbar-tools-fallback { display: none; }
-.sidebar-collapsed .topbar-tools-fallback { display: flex; gap: 0.15rem; align-items: center; }
+/* QA F17: `.sidebar-collapsed` lives on .app-layout, a SIBLING of the bar's
+   .shell-head, so a descendant rule never matched -- and the bar's own
+   `li {display:inline-flex}` outranked a bare class -- so the pair showed
+   ALWAYS, twice the tools and ~80 px of bar width. toggleSidebar/restorePrefs
+   mirror the state on <html> (no :has() -- docs/203's ancestor :has() was a
+   measured style-recalc cost); a hidden bar keeps hiding it. */
+.topbar > nav > ul > li.topbar-tools-fallback { display: none; }
+html.sidebar-is-collapsed:not(.topbar-hidden) .topbar > nav > ul > li.topbar-tools-fallback { display: flex; gap: 0.15rem; align-items: center; }
 .topbar-tool {
     background: none; border: none; cursor: pointer; padding: 0.2rem 0.35rem;
     border-radius: 4px; color: var(--pico-muted-color); line-height: 0;

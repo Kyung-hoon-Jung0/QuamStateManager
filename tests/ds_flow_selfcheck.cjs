@@ -49,7 +49,7 @@ function boot(preSort, extra) {
       <div class="ds-search-wrap"><input type="search" id="dataset-search"></div>
       <span id="dataset-filter-count"></span>
       ${x.html || ''}
-      <script id="ds-rows-data" data-now="1000" data-view="${x.view || 'datasets'}">${JSON.stringify(ROWS)}</script>
+      <script id="ds-rows-data" data-now="1000" data-view="${x.view || 'datasets'}">${JSON.stringify(x.rows || ROWS)}</script>
       <div id="datasets-scroll" style="height:400px">
         <table><tbody id="datasets-tbody"></tbody></table>
       </div>
@@ -243,7 +243,11 @@ function tick(ms) { return new Promise(r => setTimeout(r, ms || 30)); }
         <span class="tag-chip" data-tag="flagged">flagged</span></div>
       <input type="hidden" id="ds-active-date" name="date" value="2026-08-10">
       <div id="datasets-empty" style="display:none">No runs <button>Clear all filters</button></div>`;
-    const w = boot(null, { html: html, view: view });
+    // Collections only ever holds TAGGED runs (the server's rule, applied
+    // live by the client since QA datasets-r2-14), so its fixture rows carry one.
+    const rows = view === 'collections'
+      ? ROWS.map(r => Object.assign({}, r, { tags: ['flagged'] })) : undefined;
+    const w = boot(null, { html: html, view: view, rows: rows });
     await tick();
     const doc = w.document;
     w.DatasetVirtual.toggleFolder('kh');                       // a folder with no runs on this date

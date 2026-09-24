@@ -367,6 +367,62 @@ async function datasetIdChecks() {
     ok(await count('id>=4100 | id=3281') === 6, 'datasets ids: ORs like any scope');
 }
 
+/* ── 6c. QA F15: the tooltip's `run:` works, and a comparison says what it
+ * compared. `run:` was advertised by the box's own tooltip but was an unknown
+ * scope; `metric>=0.99` / `frequency>6e9` ended at "Showing 0 of N" with no
+ * reason (the key is not a parameter, or it matched a parameter by substring
+ * while the Sort banner shows a fit value of that name). */
+async function datasetHintChecks() {
+    const rows = [
+        { id: 41, f: 'f1', exp: 'qubit_spec', q: ['q1'], p: [], tags: [], date: '2026-09-01', status: 'finished',
+          pm: { num_shots: 1000, frequency_span_in_mhz: 50 }, sm: { frequency: 5.1e9, amplitude: 0.2 } },
+        { id: 142, f: 'f1', exp: 'ramsey', q: ['q2'], p: [], tags: [], date: '2026-09-01', status: 'finished',
+          pm: { num_shots: 100 }, sm: { frequency: 5.3e9 } },
+        { id: 7, f: 'f1', exp: 'rabi', q: ['q3'], p: [], tags: [], date: '2026-09-01', status: 'finished',
+          pm: { num_shots: 100 } },
+    ];
+    const dom = new JSDOM('<!doctype html><html><body>' +
+        '<script type="application/json" id="ds-rows-data" data-now="1000">' +
+        JSON.stringify(rows) + '</script>' +
+        '<input id="dataset-search"><span id="dataset-filter-count"></span>' +
+        '<div id="datasets-scroll" style="height:400px"><table><tbody id="datasets-tbody"></tbody></table></div>' +
+        '</body></html>', { url: 'http://localhost/datasets', runScripts: 'outside-only', pretendToBeVisual: true });
+    const w = dom.window;
+    global.window = w; global.document = w.document;
+    global.localStorage = w.localStorage;
+    w.requestAnimationFrame = w.requestAnimationFrame || (cb => setTimeout(cb, 0));
+    global.requestAnimationFrame = w.requestAnimationFrame;
+    w.eval(fs.readFileSync(path.join(STATIC, 'search-query.js'), 'utf8'));
+    w.eval(fs.readFileSync(path.join(STATIC, 'dataset-virtual.js'), 'utf8'));
+    w.DatasetVirtual.init();
+    async function strip(q) {
+        const inp = w.document.getElementById('dataset-search');
+        inp.value = q;
+        inp.dispatchEvent(new w.Event('input', { bubbles: true }));
+        await wait(30);
+        return w.document.getElementById('dataset-filter-count').textContent || '';
+    }
+    const n = t => { const m = t.match(/Showing (\d+) of (\d+)/); return m ? Number(m[1]) : -1; };
+    let t = await strip('run:14');
+    ok(n(t) === 1 && !/unknown/.test(t), 'hint: run:14 is the id scope (was "unknown scope"): ' + t);
+    ok(n(await strip('id:14')) === 1, 'hint: …the same rows as id:14');
+    t = await strip('metric>=0.99');
+    ok(/no loaded run has a parameter matching "metric"/.test(t) && /use metric:/.test(t),
+       'hint: metric>=0.99 says no parameter matches and names metric: -- ' + t);
+    t = await strip('frequency>6e9');
+    ok(n(t) === 0 && /"frequency" compared as parameter frequency_span_in_mhz/.test(t)
+       && /fit values are sorted, not filtered/.test(t),
+       'hint: frequency>6e9 names the parameter it compared -- ' + t);
+    t = await strip('amplitude>0');
+    ok(/no loaded run has a parameter matching "amplitude"/.test(t) && /fit values are sorted/.test(t),
+       'hint: a fit-only key says it is not a parameter -- ' + t);
+    t = await strip('num_shots>=1000');
+    ok(n(t) === 1 && !/no loaded run|compared as parameter/.test(t),
+       'hint: a real parameter comparison carries no hint -- ' + t);
+    t = await strip('metric>=0.99 metric<2');
+    ok((t.match(/no loaded run/g) || []).length === 1, 'hint: one line per key, not per token -- ' + t);
+}
+
 /* ── 7. scheduler library filter + dataset sort-key filters ────────────── */
 async function schedulerChecks() {
     // SchedulerUI is IIFE-internal and self-inits on DOMContentLoaded; the
@@ -422,6 +478,8 @@ async function schedulerChecks() {
     await datasetChecks();
     say('-- datasets ids');
     await datasetIdChecks();
+    say('-- datasets hints');
+    await datasetHintChecks();
     say('-- scheduler');
     await schedulerChecks();
     if (fails) { say(fails + ' check(s) failed'); process.exit(1); }

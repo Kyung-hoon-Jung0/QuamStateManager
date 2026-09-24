@@ -79,7 +79,7 @@
 
     // Slack-style scoped search. Short aliases let power users type `q:q0` instead
     // of `qubit:q0`. The placeholder advertises the long form so newcomers learn it.
-    var SCOPE_ALIASES = {q: 'qubit', qp: 'pair', e: 'exp', t: 'tag', oc: 'outcome', d: 'date', m: 'metric', n: 'note', p: 'param'};
+    var SCOPE_ALIASES = {q: 'qubit', qp: 'pair', e: 'exp', t: 'tag', oc: 'outcome', d: 'date', m: 'metric', n: 'note', p: 'param', run: 'id'};  // run: = the sidebar box's alias (QA F15)
     var KNOWN_SCOPES = new Set(['qubit', 'pair', 'exp', 'tag', 'outcome', 'date', 'id', 'metric', 'note', 'param', 'is']);
 
     var state = {
@@ -110,6 +110,7 @@
         searchGroups: [],         // AND-of-OR groups over ORDERED parsed tokens (SearchQuery)
         scopedFilters: [],        // [{key, value, negate}, ...] parsed scoped filters
         unknownScopes: [],        // Surfaced in the filter-count strip as "unknown scope: foo:"
+        collections: false,       // QA datasets-r2-14: data-view="collections" -> only tagged runs
         selectedExps: null,       // Set of experiment names; null = no exp filter
         scrollEl: null,
         tbody: null,
@@ -668,6 +669,7 @@
         thead.innerHTML = html + '</tr>';
         var master = thead.querySelector('#ds-select-all');
         if (master) master.addEventListener('change', onSelectAll);
+        syncSelectAll();   // QA datasets-r2-16: a rebuilt header must not forget the ticks
         thead.querySelectorAll('th.sortable').forEach(function (th) {
             th.addEventListener('click', function (e) {
                 if (e.target.classList && e.target.classList.contains('ds-resize-handle')) return;
@@ -1027,6 +1029,10 @@
         var visible = [];
         for (var i = 0; i < state.rows.length; i++) {
             var row = state.rows[i];
+            // QA datasets-r2-14: Collections holds only runs with >=1 tag -- the
+            // server rule (routes: `rows = [r for r in rows if r.get("tags")]`),
+            // kept live here so an untag/unstar or a delta arrival obeys it too.
+            if (state.collections && !(row.tags && row.tags.length)) continue;
             // Folder filter (multi-folder) — OR: empty set = all folders shown.
             if (state.folderFilter.size > 0 && !state.folderFilter.has(row.f)) continue;
             if (state.selectedExps.size > 0 && !state.selectedExps.has(row.exp)) continue;
@@ -1080,6 +1086,7 @@
         applySort();
         scheduleRender();
         updateFilterCount();
+        syncSelectAll();   // QA datasets-r2-16: the master box follows the visible set
     }
 
     function applySort() {
@@ -1143,6 +1150,37 @@
         });
     }
 
+    /* QA F15: a `key>=N` token compares run PARAMETERS whose name contains
+       `key` (matchScope's param branch). When no loaded run has such a
+       parameter -- `metric>=0.99` -- or the key is also a fit-result key the
+       Sort banner shows -- `frequency>6e9` compared frequency_span_in_mhz --
+       the count alone ("Showing 0 of N") hid why. Text only: no filtering
+       changes. Same substring rule as matchScope, over the loaded rows. */
+    function _paramCompareHint() {
+        var out = [], seen = {};
+        var pkeys = Object.keys(state.paramKeyCount || {});
+        var scoped = state.scopedFilters || [];
+        for (var i = 0; i < scoped.length; i++) {
+            var f = scoped[i];
+            if (f.key !== 'param') continue;
+            var c = _paramCond(f.value);
+            if (!c || seen[c.key]) continue;
+            seen[c.key] = true;
+            var hit = pkeys.filter(function (k) { return k.toLowerCase().indexOf(c.key) !== -1; });
+            var fit = false;
+            state.fitKeys.forEach(function (k) { if (String(k).toLowerCase().indexOf(c.key) !== -1) fit = true; });
+            var fitNote = fit ? ' — fit values are sorted, not filtered (Sort banner)' : '';
+            if (!hit.length) {
+                out.push('no loaded run has a parameter matching "' + c.key + '"' +
+                         (c.key === 'metric' ? ' (key metric: use metric:)' : '') + fitNote);
+            } else if (fit) {
+                out.push('"' + c.key + '" compared as parameter ' + hit.slice(0, 2).join(', ') +
+                         (hit.length > 2 ? ' +' + (hit.length - 2) : '') + fitNote);
+            }
+        }
+        return out.join(' · ');
+    }
+
     function updateFilterCount() {
         _kbIdx = -1; _kbHighlight();   // the visible set changed under the cursor
         _updateDigestBand();           // docs/112: digest follows the filter
@@ -1167,6 +1205,8 @@
             var list = uniq.map(function(s) { return '"' + s + ':"'; }).join(', ');
             msg += (msg ? ' · ' : '') + 'unknown ' + noun + ': ' + list;
         }
+        var cmpHint = _paramCompareHint();     // QA F15
+        if (cmpHint) msg += (msg ? ' · ' : '') + cmpHint;
         countEl.textContent = msg;
         if (state.emptyEl) {
             state.emptyEl.style.display = state.visible.length === 0 ? '' : 'none';
@@ -1399,6 +1439,7 @@
         var id = t.value;   // uid string
         if (t.checked) state.selected.add(id);
         else state.selected.delete(id);
+        syncSelectAll();   // QA datasets-r2-16
         if (typeof window.updateCompareButton === 'function') {
             window.updateCompareButton();
         }
@@ -1427,7 +1468,12 @@
         var row = state.rows[idx];
         for (var k in fields) row[k] = fields[k];
         row._s = null;  // Invalidate the cached search text.
-        scheduleRender();
+        // QA datasets-r2-14: a tag change can take the row out of (or into) the
+        // view -- Collections' has-a-tag rule, a selected tag chip -- so it
+        // re-filters; a note edit stays render-only (a row never vanishes
+        // under the user's note).
+        if ('tags' in fields) applyFilters();
+        else scheduleRender();
     }
 
     function onSearchInput() {
@@ -1637,7 +1683,9 @@
             if (idx == null) {
                 state.rows.push(row);
                 state.rowsById.set(row.uid, state.rows.length - 1);
-                if (_stampOf(row) > newestBefore) newUids.push(row.uid);
+                if (_stampOf(row) > newestBefore
+                    && !(state.collections && !(row.tags && row.tags.length)))   // QA datasets-r2-14
+                    newUids.push(row.uid);
             } else {
                 state.rows[idx] = row;
             }
@@ -1734,7 +1782,9 @@
         for (var i = 0; i < updated.length; i++) {
             var uid = (updated[i].f || '') + ':' + updated[i].id;
             if ((!state.rowsById || !state.rowsById.has(uid)) &&
-                _stampOf(updated[i]) > newest) state.arrivalUids.add(uid);   // docs/170
+                _stampOf(updated[i]) > newest &&
+                !(state.collections && !(updated[i].tags && updated[i].tags.length)))   // QA datasets-r2-14
+                state.arrivalUids.add(uid);   // docs/170
         }
         _updateNewPill();
     }
@@ -1877,6 +1927,25 @@
         }
     }
 
+    /* QA datasets-r2-16: the master checkbox states the VISIBLE rows' ticks --
+       checked when every visible row is selected, indeterminate for some. It
+       used to keep whatever the last click left: after a filter change it
+       stayed ticked over rows none of which were selected (and unticking it
+       then removed nothing), and a header rebuild (sort click) reset it even
+       with every row ticked. Hidden ticks survive a filter change (docs/25 §4);
+       they are not counted here. O(visible), called where the set changes. */
+    function syncSelectAll() {
+        var m = document.getElementById('ds-select-all');
+        if (!m) return;
+        var n = 0, vis = state.visible;
+        for (var i = 0; i < vis.length; i++) {
+            var r = state.rows[vis[i]];
+            if (r && state.selected.has(r.uid)) n++;
+        }
+        m.checked = vis.length > 0 && n === vis.length;
+        m.indeterminate = n > 0 && n < vis.length;
+    }
+
     // Header sort + the resize handles are bound inside buildHeader() (the header
     // is JS-built now). The select-all master checkbox lives in the header too, so
     // its handler is bound there — this is the extracted handler.
@@ -1889,6 +1958,7 @@
             if (checked) state.selected.add(id);
             else state.selected.delete(id);
         }
+        syncSelectAll();   // QA datasets-r2-16
         scheduleRender();
         if (typeof window.updateCompareButton === 'function') {
             window.updateCompareButton();
@@ -2444,6 +2514,7 @@
             console.error('dataset-virtual: failed to parse rows JSON', e);
             return;
         }
+        state.collections = (data.getAttribute('data-view') === 'collections');   // QA datasets-r2-14
         var nowAttr = data.getAttribute('data-now');
         var initialTs = nowAttr ? parseFloat(nowAttr) : 0;
         if (!isFinite(initialTs)) initialTs = 0;
@@ -2682,6 +2753,7 @@
         },
         clearSelection: function() {
             state.selected.clear();
+            syncSelectAll();   // QA datasets-r2-16
             scheduleRender();
         },
         // Folder filter (multi-folder). The set lives here so it resets when the
