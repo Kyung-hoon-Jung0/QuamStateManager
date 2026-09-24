@@ -340,6 +340,24 @@ def test_chip_jump_selfcheck():
     assert r.stdout.count("ok - ") >= 20, r.stdout
 
 
+@pytest.mark.skipif(shutil.which("node") is None, reason="node not available")
+def test_chip_status_qa3_selfcheck():
+    """QA F-22 / chipstatus-r2-04 / chipstatus-r2-14: the avoid list names its
+    metric, Back/Forward leaves nothing running behind, and the Report menu
+    closes like every other popup -- against the REAL, mounted chip-status.js."""
+    node = shutil.which("node")
+    try:
+        subprocess.run([node, "-e", "require('jsdom')"], check=True, capture_output=True, timeout=30)
+    except Exception:
+        pytest.skip("jsdom not installed")
+    r = subprocess.run([node, str(ROOT / "tests" / "chip_status_qa3_selfcheck.cjs")],
+                       capture_output=True, text=True, encoding="utf-8", timeout=180, cwd=str(ROOT))
+    if r.returncode == 2:
+        pytest.skip("jsdom not installed")
+    assert r.returncode == 0, r.stdout + r.stderr
+    assert r.stdout.count("ok - ") >= 20, r.stdout
+
+
 class TestQaLayoutCss:
     """The CSS halves of the QA round-2 Chip Status fixes (the geometry itself
     was measured in real Chrome; jsdom has no layout)."""

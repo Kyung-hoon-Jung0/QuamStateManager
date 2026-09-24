@@ -413,7 +413,9 @@ function world(topo, opts) {
     box.st = 5900;
     geomAll(T, { coherence: -449, frequencies: 251 });
     pane.dispatchEvent(new win.Event('scroll'));
-    const ev = new win.CustomEvent('htmx:beforeSwap', { detail: { target: pane } });
+    // bubbling, as htmx's triggerEvent fires it (QA chipstatus-r2-04: the
+    // teardowns listen on `document` now, through the leave registry)
+    const ev = new win.CustomEvent('htmx:beforeSwap', { bubbles: true, detail: { target: pane } });
     T.doc.body.dispatchEvent(ev);
     const rec2 = win.history.state.smChipScroll;
     ok(rec2 && rec2.d === 449 && rec2.top === 5900,

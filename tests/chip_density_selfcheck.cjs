@@ -97,6 +97,32 @@ ok(Array.from(doc.querySelectorAll('#mp-a .density-preset.active')).map((b) => b
 win = world('[1,2,3]');
 ok(win.ChipStatus.density.get('T1') === 1, 'a non-object store is ignored');
 
+// ── QA chipstatus-r2-09: a size set in ANOTHER tab survives this tab's set ──
+// The cache was loaded once per tab and written back whole, so tab B (loaded
+// before tab A's press) overwrote A's choice for a different panel.
+{
+  win = world();
+  doc = win.document;
+  const D = win.ChipStatus.density, KEY = 'quam_chip_density_panels';
+  D.set('T1', 0.85);                                        // this tab's cache is live now
+  // another tab writes behind this module's back: T1 -> S, a third panel M
+  win.localStorage.setItem(KEY, JSON.stringify({ T1: 0.7, T2echo: 0.5 }));
+  D.set('readout_frequency', 0.85);
+  const st = JSON.parse(win.localStorage.getItem(KEY));
+  ok(st.T1 === 0.7 && st.T2echo === 0.5 && st.readout_frequency === 0.85,
+     'r2-09 a set() keeps what another tab wrote meanwhile (' + JSON.stringify(st) + ')');
+  // the other tab's size also reaches THIS tab's screen (storage event)
+  win.localStorage.setItem(KEY, JSON.stringify({ T1: 1.15, readout_frequency: 0.85 }));
+  win.dispatchEvent(new win.StorageEvent('storage', { key: KEY }));
+  ok(D.get('T1') === 1.15 && doc.getElementById('mp-b').style.getPropertyValue('--topo-density-scale') === '1.15',
+     'r2-09 a size set in another tab is applied here too (T1 ' + D.get('T1') + ', inline '
+     + doc.getElementById('mp-b').style.getPropertyValue('--topo-density-scale') + ')');
+  // blocked / garbage storage still leaves the buttons working in memory
+  win.localStorage.setItem(KEY, 'not json');
+  D.set('T1', 0.7);
+  ok(D.get('T1') === 0.7, 'r2-09 garbage in storage: the in-memory store still serves');
+}
+
 // ── the jump guard: a section below Trends is re-anchored once Trends lands ──
 // (docs/141 4o: Trends moved above Fidelity and is fetched lazily; a jump to
 // Fidelity landed on the charts that arrived a moment later)
@@ -156,6 +182,15 @@ win.Date.now = _realNow;
   pane.dispatchEvent(new win.KeyboardEvent('keydown', { key: 'PageDown' }));
   win.Date.now = (function (orig) { return function () { return orig() + 100; }; })(_realNow);
   ok(J.reanchor(selOf) === false, 'a key on the pane cancels it too');
+  win.Date.now = _realNow;
+
+  // QA chipstatus-r2-13: a scrollbar thumb drag / track click fires neither a
+  // wheel, a touch nor a key -- only a pointer press on the pane itself
+  J.note('fidelity2q', pane);
+  pane.dispatchEvent(new win.Event('pointerdown'));
+  win.Date.now = (function (orig) { return function () { return orig() + 100; }; })(_realNow);
+  ok(J.reanchor(selOf) === false && J.current() === null,
+     'r2-13 a pointer press on the pane (scrollbar drag / track click) cancels the re-anchor');
   win.Date.now = _realNow;
   J.note('fidelity2q', pane);
   win.Date.now = (function (orig) { return function () { return orig() + 100; }; })(_realNow);
