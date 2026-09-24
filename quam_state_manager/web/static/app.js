@@ -2858,7 +2858,8 @@ document.addEventListener("stateRestored", function(evt) {
     // them. No detail (a bare-string trigger) or structural => the wholesale
     // path below, exactly as before.
     var d = (evt && evt.detail) || {};
-    if (d.structural === false && d.changes && window.LiveSurfacePatch) {
+    if (d.structural === false && d.changes && window.LiveSurfacePatch
+            && !_paneNeedsRerender(d)) {
         window._stateRestoredRefresh = Date.now();
         try {
             window.LiveSurfacePatch.apply(d.changes);
@@ -4100,10 +4101,21 @@ function _keepPaneScroll() {
     setTimeout(function () { document.removeEventListener("htmx:afterSwap", once); }, 15000);
 }
 
+/* QA diagnostics-r2-10: a pane drawn ONCE from inlined JSON (the Instrument
+   Wiring SVG + its problem-port rings) has no leaf for LiveSurfacePatch to
+   reach, so an in-place patch "succeeded" while the diagram kept the old
+   wiring. Such a pane marks itself [data-rerender-on-pull] and a non-empty
+   change set takes the wholesale re-GET instead (it is in STATE_PAGES). */
+function _paneNeedsRerender(d) {
+    return !!(d && d.changes && d.changes.length &&
+              document.querySelector("#table-pane [data-rerender-on-pull]"));
+}
+window._paneNeedsRerender = _paneNeedsRerender;
+
 /* Sync response → in-place patch when the shape is unchanged, wholesale
    refresh (scroll kept) when it is not. */
 function _patchOrRefreshLiveSurface(data) {
-    if (data && data.changes && !data.structural) {
+    if (data && data.changes && !data.structural && !_paneNeedsRerender(data)) {
         window.LiveSurfacePatch.apply(data.changes);
         return "patched";
     }
@@ -5543,6 +5555,7 @@ window.PaneState = (function () {
             // load: the server rendered it for THIS url, leave it alone.
             var stamped = p.getAttribute('data-pane-route');
             var mismatch = stamped && stamped !== location.pathname;
+            _historyFreshness(!p.firstElementChild || mismatch);
             if (!p.firstElementChild || mismatch) {
                 // A mismatch also means htmx's history cache is POISONED:
                 // its private currentPathForHistory does not move on a skip
@@ -5563,6 +5576,40 @@ window.PaneState = (function () {
                                    swap: 'innerHTML' });
             }
         }, 60);
+    }
+    // QA diagnostics-r2-07: htmx's history snapshot is the WHOLE body as it
+    // was when the user left -- the tray (seq, count, sig) and the pane's
+    // values included. The route checks above catch a blank or foreign pane;
+    // this catches a pane (stamped or not) and a tray that are simply BEHIND
+    // the server: a mutation since the snapshot moves the tray's data-seq.
+    // Same server-truth signal _verifyRestore uses for parked panes. The tray
+    // always follows; the pane is refetched unless the route check already
+    // is; the badge + banner re-lint through the one announcer.
+    function _historyFreshness(paneRefetching) {
+        if (!document.getElementById('pending-tray')) return;
+        // popstate AND htmx:historyRestore both funnel here - one probe
+        if (window.PaneState.__freshFor === location.pathname) return;
+        window.PaneState.__freshFor = location.pathname;
+        setTimeout(function () { window.PaneState.__freshFor = null; }, 1000);
+        var shown = seqNow(), route = location.pathname;
+        try {
+            fetch('/state/tray', { cache: 'no-store' })
+                .then(function (r) { return r.ok ? r.text() : null; })
+                .then(function (html) {
+                    if (!html || !window.htmx) return;
+                    var m = html.match(/data-seq="([^"]*)"/);
+                    if (!m || m[1] === shown || location.pathname !== route) return;
+                    window.htmx.ajax('GET', '/state/tray',
+                                     { target: '#pending-tray', swap: 'outerHTML' });
+                    if (!paneRefetching) {
+                        window.htmx.ajax('GET', location.pathname + location.search,
+                                         { source: '#table-pane', target: '#table-pane',
+                                           swap: 'innerHTML' });
+                    }
+                    if (window._diagChanged) window._diagChanged();
+                })
+                .catch(function () {});
+        } catch (e) {}
     }
     document.addEventListener('stateRestored', function () {
         for (var k in stash) _purge(stash[k].holder);
@@ -13547,7 +13594,13 @@ function _showPlotClickToast(coordText, qubitName, dotPath) {
  */
 function _navigateToExplorerPath(dotPath) {
     function openExplorer() {
-        htmx.ajax('GET', '/explorer', {target: '#table-pane', swap: 'innerHTML'}).then(function() {
+        // A jump is a NAVIGATION (QA F-C): htmx 2's ajax has no pushUrl option,
+        // so source the request from the sidebar's own Json Tree View link --
+        // it carries hx-push-url, giving the same history entry + sidebar sync
+        // as clicking it. Already on /explorer -> no source, no same-URL entry.
+        var src = location.pathname === '/explorer' ? null
+            : document.querySelector('.sidebar-nav a[href="/explorer"][hx-push-url="true"]');
+        htmx.ajax('GET', '/explorer', {source: src || undefined, target: '#table-pane', swap: 'innerHTML'}).then(function() {
             var attempts = 0;
             var maxAttempts = 15;
             function tryExpand() {
@@ -16439,6 +16492,11 @@ window.PendingMarkers = (function () {
     document.addEventListener('htmx:responseError', hide);
     document.addEventListener('htmx:sendError', hide);
     document.addEventListener('htmx:swapError', hide);
+    // QA diagnostics-r2-07: htmx snapshots the outgoing body when a slow
+    // navigation's response ARRIVES -- by then this loader is .visible -- and
+    // Back swaps that snapshot in with pending at 0, so nothing ever hid it.
+    // A restored body is never in flight.
+    document.addEventListener('htmx:historyRestore', hide);
 })();
 
 
@@ -17992,6 +18050,14 @@ document.addEventListener('click', function(evt) {
         _DIAG_BUCKETS.forEach(function(b) { if (s[b] === undefined) s[b] = true; });
         return s;
     }
+    // QA F-D: an entry point that is ABOUT a bucket (the crash banner's
+    // "Review diagnostics" -> errors) turns that bucket back on before the
+    // page renders; the #table-pane afterSwap / load paths re-apply it.
+    window._diagShowBucket = function (b) {
+        var st = _diagFilterState();
+        st[b] = true;
+        try { localStorage.setItem('quam_diag_filter', JSON.stringify(st)); } catch (e) {}
+    };
     function _applyDiagFilter() {
         var bar = document.getElementById('diag-filter-bar');
         if (!bar) return;
@@ -18020,6 +18086,36 @@ document.addEventListener('click', function(evt) {
         }
         var cnt = bar.querySelector('.diag-shown-count');
         if (cnt) cnt.textContent = (shown === total || total === 0) ? '' : (shown + ' of ' + total + ' shown');
+        // QA F-D: a saved filter (it persists across reloads and chips) must
+        // never hide crash errors -- or everything -- behind a muted count.
+        // A sibling of .diag-shown-count, never inside it (its text is pinned).
+        var hiddenErr = (results && st.error === false)
+            ? results.querySelectorAll('tr.diag-row[data-bucket="error"]:not(.diag-row-acknowledged)').length : 0;
+        var allHidden = total > 0 && shown === 0;
+        var note = bar.querySelector('.diag-filter-hidden-note');
+        if (cnt && (hiddenErr || allHidden)) {
+            if (!note) {
+                note = document.createElement('span');
+                note.className = 'diag-filter-hidden-note';
+                note.setAttribute('role', 'status');
+                cnt.parentNode.insertBefore(note, cnt);
+            }
+            note.textContent = hiddenErr
+                ? '\u26a0 ' + hiddenErr + ' error' + (hiddenErr === 1 ? '' : 's') + ' hidden by your filter '
+                : 'Every finding is hidden by your filter ';
+            var showBtn = document.createElement('button');
+            showBtn.type = 'button';
+            showBtn.className = 'btn-xs outline diag-filter-show';
+            showBtn.textContent = hiddenErr ? 'Show errors' : 'Show all';
+            showBtn.addEventListener('click', function () {
+                if (hiddenErr) window._diagShowBucket('error');
+                else _DIAG_BUCKETS.forEach(function (b) { window._diagShowBucket(b); });
+                _applyDiagFilter();
+            });
+            note.appendChild(showBtn);
+        } else if (note) {
+            note.parentNode.removeChild(note);
+        }
     }
     window._applyDiagFilter = _applyDiagFilter;
     document.addEventListener('click', function(e) {
@@ -18068,6 +18164,18 @@ document.addEventListener('click', function(evt) {
             window._applyExplorerSpecMarks();
         }
         _applyDiagFilter();
+    });
+    // QA diagnostics-r2-10: an edit or a patched pull re-lints (the topbar
+    // pill follows `diagnostics-changed`) but the sidebar dots only refreshed
+    // on a #table-pane swap -- Instrument Wiring's dot stayed red after the
+    // collision was fixed. Same trailing pause the pill uses.
+    var _diagDotsTimer = null;
+    document.addEventListener('diagnostics-changed', function () {
+        if (_diagDotsTimer) clearTimeout(_diagDotsTimer);
+        _diagDotsTimer = setTimeout(function () {
+            _diagDotsTimer = null;
+            if (window._refreshSidebarDiagDots) window._refreshSidebarDiagDots();
+        }, 500);
     });
     // Once on first full-page load so the dots + filter show immediately.
     function _diagInitOnLoad() {

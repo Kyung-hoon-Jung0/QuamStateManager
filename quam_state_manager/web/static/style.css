@@ -9474,6 +9474,8 @@ button.diag-badge { cursor: pointer; }
 .diag-pill.diag-info     { color: var(--diag-info-text); border-color: var(--diag-info-text); }
 .diag-pill.diag-pill-off { opacity: 0.45; text-decoration: line-through; }
 .diag-shown-count { font-size: 0.8rem; margin-left: auto; }
+.diag-filter-hidden-note { font-size: 0.8rem; font-weight: 600; color: var(--outcome-fail-color, #c0392b); }
+.diag-filter-hidden-note .diag-filter-show { margin-left: 0.3rem; }
 
 /* Collapsible domain sections + per-domain severity mini-counts. */
 .diag-domain { margin-bottom: 0.2rem; }

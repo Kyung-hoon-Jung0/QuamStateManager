@@ -398,8 +398,67 @@ setTimeout(() => {   // let earlier scenarios' 60ms fallback timers drain first
         pane().innerHTML = '<div>server-rendered</div>';
         window.dispatchEvent(new window.CustomEvent('popstate'));
         setTimeout(() => {
-            ok(calls2.length === 0, 'an unstamped full-load pane is never refetched');
-            process.exit(fails ? 1 : 0);
+            // (QA diagnostics-r2-07 narrowed this to ROUTE identity: the
+            // freshness probe below may still refetch it when the server's
+            // seq moved -- here the probe's fetch never resolves.)
+            ok(calls2.length === 0, 'an unstamped full-load pane is never refetched for its route');
+            section10();
         }, 90);
     }, 90);
 }, 80);
+
+// -- 10. QA diagnostics-r2-07: Back restores a snapshot that is BEHIND --
+// htmx's history snapshot is the whole body as the user left it: the tray's
+// data-seq/count and the pane's values. Measured live: Back to /diagnostics
+// after an edit on /bulk showed the old tray count and a fix confirm quoting
+// the old value. The restored tray's seq vs the server's decides.
+function section10() {
+    const trayHtml = (seq) => '<div id="pending-tray" data-seq="' + seq + '"></div>';
+    const probe = (seq) => {
+        const got = [];
+        // app.js runs in the Node realm here, so bare `fetch` is global.fetch
+        global.fetch = window.fetch = (url) => {
+            got.push(String(url));
+            return Promise.resolve({ ok: true, text: () => Promise.resolve(trayHtml(seq)) });
+        };
+        return got;
+    };
+    const calls = [];
+    window.htmx.ajax = (verb, p, opts) => { calls.push({ p: p, opts: opts || {} }); return Promise.resolve(); };
+    let diagChanged = 0;
+    const realDiag = window._diagChanged;
+    window._diagChanged = () => { diagChanged++; };
+    doc.getElementById('pending-tray').setAttribute('data-seq', '7');
+    pane().removeAttribute('data-pane-route');
+    pane().innerHTML = '<div>restored /diagnostics snapshot</div>';
+    window.history.pushState({}, '', '/diagnostics');
+    const fetched = probe('9');                            // the server moved on
+    window.dispatchEvent(new window.CustomEvent('popstate'));
+    doc.body.dispatchEvent(new window.CustomEvent('htmx:historyRestore', { bubbles: true }));
+    setTimeout(() => {
+        ok(fetched.filter((u) => u.indexOf('/state/tray') === 0).length === 1,
+           'Back: ONE server probe of the tray for popstate + historyRestore (got '
+           + JSON.stringify(fetched) + ')');
+        const tray = calls.filter((c) => c.p === '/state/tray');
+        const paneRe = calls.filter((c) => c.p.indexOf('/diagnostics') === 0);
+        ok(tray.length === 1 && tray[0].opts.target === '#pending-tray'
+           && tray[0].opts.swap === 'outerHTML',
+           'a restored tray behind the server is re-rendered from it (got ' + JSON.stringify(calls) + ')');
+        ok(paneRe.length === 1 && paneRe[0].opts.target === '#table-pane',
+           'a restored pane behind the server is refetched, stamped or not (got '
+           + JSON.stringify(calls) + ')');
+        ok(diagChanged === 1, 'the badge + banner re-lint through the one announcer');
+        // equal seq: the snapshot is current -- nothing moves
+        calls.length = 0; diagChanged = 0;
+        window.history.pushState({}, '', '/pulses');
+        const fetched2 = probe('7');
+        window.dispatchEvent(new window.CustomEvent('popstate'));
+        setTimeout(() => {
+            ok(fetched2.length === 1 && calls.length === 0 && diagChanged === 0,
+               'a restored snapshot at the server seq is left alone (got '
+               + JSON.stringify({ fetched: fetched2, calls: calls, diagChanged: diagChanged }) + ')');
+            window._diagChanged = realDiag;
+            process.exit(fails ? 1 : 0);
+        }, 150);
+    }, 150);
+}

@@ -81,3 +81,33 @@ def test_waveform_finding_in_explorer_feed(tmp_path):
     cats = [f["category"] for f in feed["value_spec"]]
     assert "waveform_range" in cats
     assert any(f["jump_path"].endswith("readout.amplitude") for f in feed["value_spec"])
+
+
+def test_review_diagnostics_shows_the_errors_a_saved_filter_hid(tmp_path):
+    """QA F-D: the pill choice persists (one global localStorage key), and the
+    crash banner's "Review diagnostics" landed on a page whose saved filter hid
+    the very errors it was about. The banner turns the error bucket back on, and
+    any page whose filter hides errors says so next to the pills
+    (diag_filter_entry_selfcheck.cjs, real app.js + real fragments)."""
+    import shutil
+    import subprocess
+    from pathlib import Path
+
+    import pytest
+    if shutil.which("node") is None:
+        pytest.skip("node not available")
+    client = _client(tmp_path, 1.5)
+    banner = client.get("/diagnostics/banner").get_data(as_text=True)
+    assert "_diagShowBucket('error')" in banner
+    diag = client.get("/diagnostics", headers={"HX-Request": "true"}).get_data(as_text=True)
+    bp, dp = tmp_path / "banner.html", tmp_path / "diag.html"
+    bp.write_text(banner, encoding="utf-8")
+    dp.write_text(diag, encoding="utf-8")
+    root = Path(__file__).resolve().parent.parent
+    r = subprocess.run(["node", str(root / "tests" / "diag_filter_entry_selfcheck.cjs"), str(bp), str(dp)],
+                       capture_output=True, text=True, encoding="utf-8", errors="replace",
+                       cwd=str(root), timeout=180)
+    if r.returncode == 2:
+        pytest.skip("jsdom not installed")
+    assert r.returncode == 0, r.stdout[-3000:] + r.stderr[-3000:]
+    assert "diag_filter_entry_selfcheck ok" in r.stdout

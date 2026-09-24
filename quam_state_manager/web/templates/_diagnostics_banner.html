@@ -15,7 +15,7 @@
     </span>
     <button type="button" class="topo-change-banner-btn"
             hx-get="/diagnostics" hx-target="#table-pane" hx-sync="#table-pane:replace" hx-push-url="true"
-            onclick="document.querySelectorAll('.diag-error-banner').forEach(function(b){b.hidden=true})">
+            onclick="window._diagShowBucket && window._diagShowBucket('error'); document.querySelectorAll('.diag-error-banner').forEach(function(b){b.hidden=true})">
         Review diagnostics</button>
     <button type="button" class="topo-change-banner-dismiss" aria-label="Dismiss"
             onclick="window._dismissDiagBanner && window._dismissDiagBanner()">&#10005;</button>

@@ -195,6 +195,56 @@ ok(ajax.length === 1 && closed === 1, 'a bare stateRestored (unbracketed route) 
        'F43: with the chip value underneath it');
     ok(fld.classList.contains('dirty'), 'F43: and the field says it differs');
 
+    // ---- QA diagnostics-r2-10: a pane drawn ONCE from inlined JSON (the
+    // Instrument Wiring SVG + rings) has no leaf a patch can reach -- "Take
+    // live" fixed a port collision and the diagram kept drawing it. Such a
+    // pane is marked [data-rerender-on-pull]; a non-empty pull re-GETs it.
+    {
+        const tp = d.getElementById('table-pane');
+        const treeEl = d.getElementById('explorer-tree-state');
+        const hold = d.createElement('div');
+        while (tp.firstChild) hold.appendChild(tp.firstChild);   // leave the Explorer
+        tp.innerHTML = '<div id="instrument-diagram" data-rerender-on-pull><svg></svg></div>';
+        window.history.replaceState({}, '', '/instrument');
+        const pull = [{ dot_path: 'wiring.qubits.q3.xy.opx_output', old_value_disp: '#/ports/mw_outputs/con1/3/4',
+                        old_value_str: '#/ports/mw_outputs/con1/3/4', old_kind: 'str',
+                        value: '#/ports/mw_outputs/con1/3/4' }];
+        ajax.length = 0;
+        ok(window._patchOrRefreshLiveSurface({ changes: pull, structural: false }) === 'refreshed'
+           && ajax.length === 1 && ajax[0] === '/instrument',
+           'r2-10: a marked pane takes the wholesale re-GET on a non-structural pull (got '
+           + JSON.stringify(ajax) + ')');
+        ajax.length = 0;
+        ok(window._patchOrRefreshLiveSurface({ changes: [], structural: false }) === 'patched'
+           && ajax.length === 0, 'r2-10: an EMPTY pull still re-GETs nothing');
+        ajax.length = 0; closed = 0;
+        d.dispatchEvent(new window.CustomEvent('stateRestored', { detail: { structural: false, changes: pull } }));
+        ok(ajax.length === 1 && ajax[0] === '/instrument',
+           'r2-10: an auto-sync pull (stateRestored patch detail) re-GETs a marked pane too (got '
+           + JSON.stringify(ajax) + ')');
+        // unmarked pane on the same route: the docs/144 patch stands
+        tp.innerHTML = '<div id="instrument-diagram"><svg></svg></div>';
+        ajax.length = 0;
+        ok(window._patchOrRefreshLiveSurface({ changes: pull, structural: false }) === 'patched'
+           && ajax.length === 0, 'r2-10: without the marker the in-place patch is unchanged');
+        tp.innerHTML = '';
+        while (hold.firstChild) tp.appendChild(hold.firstChild);
+        window.history.replaceState({}, '', '/explorer');
+        void treeEl;
+    }
+    // ---- QA diagnostics-r2-10: the sidebar dots follow every re-lint, not
+    // only a #table-pane swap (Instrument Wiring's dot stayed red).
+    {
+        let dots = 0;
+        const realDots = window._refreshSidebarDiagDots;
+        window._refreshSidebarDiagDots = function () { dots++; };
+        d.body.dispatchEvent(new window.CustomEvent('diagnostics-changed', { bubbles: true }));
+        d.body.dispatchEvent(new window.CustomEvent('diagnostics-changed', { bubbles: true }));
+        await new Promise((r) => setTimeout(r, 650));
+        ok(dots === 1, 'r2-10: a burst of diagnostics-changed refreshes the sidebar dots once (got ' + dots + ')');
+        window._refreshSidebarDiagDots = realDots;
+    }
+
     console.log(fails ? ('FAILED: ' + fails) : 'ALL OK');
     process.exit(fails ? 1 : 0);
 })();

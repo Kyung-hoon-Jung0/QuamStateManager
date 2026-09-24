@@ -118,3 +118,21 @@ def test_hardware_freq_check_is_fresh_after_edit(tmp_path):
     client.post("/field/edit", data={"dot_path": RF_PATH, "value": "5.05e9"})
     assert "healthy" in _summary(client)
     assert _banner_status(client) == 204
+
+
+def test_page_header_badges_follow_the_state(tmp_path):
+    """QA diagnostics-r2-10: the Instrument Wiring / Config Viewer header badge
+    loaded once with an outerHTML swap -- the swap replaced its own trigger, so
+    it said '9 issues' long after the topbar pill said 7. It now listens to the
+    same `diagnostics-changed` the pill does and swaps its inner HTML; the
+    Instrument diagram marks itself for a re-GET on a pull (live_patch_selfcheck)."""
+    client = _client(tmp_path)
+    for route in ("/instrument", "/config"):
+        html = client.get(route, headers={"HX-Request": "true"}).get_data(as_text=True)
+        i = html.index('class="diag-header-slot"')
+        tag = html[i:html.index(">", i)]
+        assert "diagnostics-changed from:body" in tag and "load" in tag, (route, tag)
+        assert 'hx-swap="innerHTML"' in tag, (route, tag)
+    html = client.get("/instrument", headers={"HX-Request": "true"}).get_data(as_text=True)
+    i = html.index('id="instrument-diagram"')
+    assert "data-rerender-on-pull" in html[i:html.index(">", i)]

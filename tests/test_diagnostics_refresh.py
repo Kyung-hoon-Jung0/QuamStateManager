@@ -66,3 +66,36 @@ def test_the_filter_is_reapplied_after_the_inner_swap():
     seg = app.split("if (evt.detail.target.id === 'diag-findings') {")[1].split("return;")[0]
     assert "_diagOpenSnap" in seg and "_applyDiagFilter();" in seg
     assert "details.diag-domain[data-domain]" in app.split("var _diagOpenSnap = null;")[1][:700]
+
+
+def test_the_slot_does_not_leak_its_select_and_swap_to_its_links(client):
+    """QA diagnostics-r2-01: hx-select / hx-swap are INHERITED htmx attributes.
+
+    Without ``hx-disinherit`` the Config Viewer links inside the slot selected
+    ``#diag-findings`` out of ``/config`` (nothing) and outerHTML-swapped
+    ``#table-pane`` itself away: blank pane, dead sidebar until F5.
+    """
+    html = client.get("/diagnostics", headers={"HX-Request": "true"}).get_data(as_text=True)
+    i = html.index('id="diag-findings"')
+    tag = html[i:html.index(">", i)]
+    assert 'hx-disinherit="' in tag
+    val = tag.split('hx-disinherit="')[1].split('"')[0].split()
+    assert "hx-select" in val and "hx-swap" in val
+
+
+@pytest.mark.skipif(__import__("shutil").which("node") is None, reason="node not available")
+def test_the_config_viewer_link_keeps_the_pane_under_real_htmx(client, tmp_path):
+    """Behaviour, not markup: the real bundled htmx clicks the real fragment's
+    link against a local server; a control run without the disinherit must
+    reproduce the loss (diag_findings_disinherit_selfcheck.cjs)."""
+    import subprocess
+    html = client.get("/diagnostics", headers={"HX-Request": "true"}).get_data(as_text=True)
+    frag = tmp_path / "diag_fragment.html"
+    frag.write_text(html, encoding="utf-8")
+    proc = subprocess.run(
+        ["node", str(_ROOT / "tests" / "diag_findings_disinherit_selfcheck.cjs"), str(frag)],
+        capture_output=True, text=True, encoding="utf-8", errors="replace",
+        cwd=str(_ROOT), timeout=120)
+    if proc.returncode == 2 and "jsdom not installed" in (proc.stdout + proc.stderr):
+        pytest.skip("jsdom not installed")
+    assert proc.returncode == 0, proc.stdout[-3000:] + proc.stderr[-3000:]
