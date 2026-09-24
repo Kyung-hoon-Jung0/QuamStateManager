@@ -185,9 +185,12 @@ function renderedCol(w, colKey) {
     const chips = Array.prototype.map.call(
       w.document.querySelectorAll('.ds-digest-band .ds-digest-qchip'),
       b => b.getAttribute('data-example'));
+    // QA datasets-r2-18: each chip is scoped to the band's day and ties the
+    // outcome to ITS qubit (was 'qubit:qN outcome:fail', every date).
     eqList(chips,
-           ['qubit:q1 outcome:fail', 'qubit:q2 outcome:fail', 'qubit:q9 outcome:fail',
-            'qubit:q10 outcome:fail', 'qubit:q11 outcome:fail'],
+           ['date:2026-09-01 outcome:q1=fail', 'date:2026-09-01 outcome:q2=fail',
+            'date:2026-09-01 outcome:q9=fail', 'date:2026-09-01 outcome:q10=fail',
+            'date:2026-09-01 outcome:q11=fail'],
            'digest failed-qubit chips break a count tie in natural qubit order');
   }
 

@@ -1738,6 +1738,19 @@ body.sidebar-resizing { cursor: col-resize; user-select: none; }
     border: 1px solid var(--pico-muted-border-color);
     border-radius: 8px;
     display: flex; flex-direction: column;
+    /* QA datasets-r2-27: Pico styles EVERY <dialog> as a full-viewport overlay
+       (min-width/min-height:100%, overlay colour + blur ON the element, children
+       centred) and expects an inner <article> card. min-* beat width/max-height,
+       so this box filled the screen and its parts floated on the blur. Undo
+       exactly those; ::backdrop below is the scrim. */
+    min-width: 0; min-height: 0;
+    height: fit-content;
+    margin: auto;
+    background: var(--pico-background-color);
+    -webkit-backdrop-filter: none; backdrop-filter: none;
+    align-items: stretch; justify-content: flex-start;
+    overflow: hidden;
+    box-shadow: 0 14px 44px rgba(0,0,0,0.28);
 }
 .folder-browser-dialog::backdrop {
     background: rgba(0,0,0,0.35);
@@ -1761,6 +1774,10 @@ body.sidebar-resizing { cursor: col-resize; user-select: none; }
     border-bottom: 1px solid var(--pico-muted-border-color);
     background: var(--pico-card-background-color);
     white-space: nowrap; overflow-x: auto;
+    /* QA datasets-r2-27: a scroll container's min-height is 0, so once the
+       card is capped at 75vh a long folder list squeezed THIS row (and gave it
+       a vertical scrollbar) instead of scrolling itself. */
+    flex-shrink: 0;
 }
 .breadcrumb-link {
     cursor: pointer; color: var(--pico-primary);

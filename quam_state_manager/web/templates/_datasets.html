@@ -21,15 +21,24 @@
 <div class="ds-digest-band">
     <span class="ds-digest-date">{{ digest.date }}</span>
     <span class="ds-digest-item">{{ digest.total }} run{{ 's' if digest.total != 1 }}</span>
+    {# QA datasets-r2-18: "all OK" only when NOTHING failed -- a finished run
+       whose fit failed is not OK -- and every chip is scoped to the band's
+       day + ties the outcome to ITS target (outcome:<q>=fail), so a click
+       shows exactly the runs the chip counted. dataset-virtual.js
+       _updateDigestBand is the client twin; change both together. #}
+    {% set _dscope = ('date:' ~ digest.date ~ ' ') if digest.date else '' %}
     {% if digest.failed %}
-    <button class="ds-help-example ds-digest-bad" data-example="is:failed"
-            title="Show only failed runs">{{ digest.failed }} failed</button>
-    {% else %}
+    <button class="ds-help-example ds-digest-bad" data-example="{{ _dscope }}is:failed"
+            title="Show this day's failed runs">{{ digest.failed }} failed</button>
+    {% elif not digest.qubit_fail %}
     <span class="ds-digest-ok">all OK</span>
+    {% else %}
+    <span class="ds-digest-item">no run errors</span>
     {% endif %}
+    {% if digest.qubit_fail %}<span class="ds-digest-item ds-digest-oclabel">failed outcomes:</span>{% endif %}
     {% for q, n in digest.qubit_fail %}
-    <button class="ds-help-example ds-digest-qchip" data-example="qubit:{{ q }} outcome:fail"
-            title="Runs where {{ q }}'s outcome failed">{{ q }}&nbsp;×{{ n }}</button>
+    <button class="ds-help-example ds-digest-qchip" data-example="{{ _dscope }}outcome:{{ q }}=fail"
+            title="Show the {{ n }} run{{ 's' if n != 1 }} where {{ q }}'s outcome failed">{{ q }}&nbsp;×{{ n }}</button>
     {% endfor %}
 </div>
 {% endif %}
@@ -89,6 +98,8 @@
                             <td>Runs tagged <code>flagged</code> (alias: <code>t:</code>)</td></tr>
                         <tr><td><button class="ds-help-example" data-example="outcome:successful">outcome:successful</button></td>
                             <td>Outcome contains <code>successful</code> on any qubit (alias: <code>oc:</code>)</td></tr>
+                        <tr><td><button class="ds-help-example" data-example="outcome:q1=fail">outcome:q1=fail</button></td>
+                            <td><code>q1</code>'s own outcome contains <code>fail</code> (a pair works too: <code>outcome:q1-2=fail</code>)</td></tr>
                         <tr><td><button class="ds-help-example" data-example="date:2026-05">date:2026-05</button></td>
                             <td>Runs whose date matches <code>2026-05</code> (alias: <code>d:</code>)</td></tr>
                         <tr><td><button class="ds-help-example" data-example="id:108">id:108</button></td>

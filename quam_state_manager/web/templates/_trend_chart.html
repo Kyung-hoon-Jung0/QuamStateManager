@@ -18,6 +18,11 @@
 </details>
 
 {% set unique_props = trend_data | map(attribute='property') | unique | list %}
+{# QA datasets-r2-32: no qubit ticked charts every qubit -- say so. #}
+{% if not qubit_filter %}
+{% set _nq = trend_data | map(attribute='qubit') | unique | list | length %}
+<p class="muted trend-all-qubits">No qubit ticked — showing all {{ _nq }} qubit{{ 's' if _nq != 1 }}.</p>
+{% endif %}
 <div class="trend-chart-container">
     {% for prop in unique_props %}
     <div id="trend-chart-{{ loop.index0 }}" class="trend-mini-chart"></div>

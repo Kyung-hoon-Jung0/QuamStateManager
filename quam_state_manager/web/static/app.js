@@ -2708,6 +2708,11 @@ document.addEventListener('click', function(evt) {
         if (t.classList.contains('ds-basket-go') && window.htmx) {
             htmx.ajax('GET', '/datasets/compare?ids=' + window._dsBasket.join(','),
                       {source: '#inspector-pane', target: '#inspector-pane', swap: 'innerHTML'});
+            // QA datasets-r2-21: the fixed bar sat over the compare view's
+            // figures (and outlived its x). Take it off screen; the picks are
+            // kept, and the next Alt+click brings the bar back with them.
+            var goBar = document.getElementById('ds-basket-bar');
+            if (goBar) goBar.remove();
         } else if (t.classList.contains('ds-basket-clear')) {
             window._dsBasket = []; _dsBasketRender();
         } else if (t.hasAttribute('data-drop')) {
@@ -2726,6 +2731,9 @@ document.addEventListener('click', function(evt) {
     var i = window._dsBasket.indexOf(uid);
     if (i !== -1) window._dsBasket.splice(i, 1);
     else if (window._dsBasket.length < 8) window._dsBasket.push(uid);
+    // QA datasets-r2-21: a 9th pick was dropped without a word (the server
+    // route caps at 8 too). Say so, like the sidebar diff's MAX_DIFF toast.
+    else if (window.showToast) window.showToast('The compare basket holds at most 8 runs — remove one first.', 'warning');
     _dsBasketRender();
 }, true);   // capture: pre-empt the plain-click open handler on Alt+click
 

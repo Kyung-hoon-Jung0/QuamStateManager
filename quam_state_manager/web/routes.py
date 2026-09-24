@@ -19279,21 +19279,37 @@ def workspace_add():
     # workspace-token validation) can't serve a list missing the new root.
     _dataset_candidates_cache.pop(id(current_app._get_current_object()), None)
     _save_workspace_roots()
+    # QA datasets-r2-26: a re-added folder's keys are live again.
+    _retired_dataset_keys().difference_update(
+        {_folder_key(c) for c in _dataset_candidate_folders(fast=True)})
 
-    return render_template("_sidebar_tree.html", **_tree_render_ctx(ws.tree, ws=ws),
-                           message=f"Added {len(entries)} experiment(s)")
+    resp = make_response(render_template(
+        "_sidebar_tree.html", **_tree_render_ctx(ws.tree, ws=ws),
+        message=f"Added {len(entries)} experiment(s)"))
+    # QA datasets-r2-26: an open Datasets page re-reads its table (rows,
+    # folder chips, count) -- it only rebuilds from a full payload.
+    resp.headers["HX-Trigger"] = json.dumps({"workspaceRootsChanged": {"removed": []}})
+    return resp
 
 
 @bp.route("/workspace/remove", methods=["POST"])
 def workspace_remove():
     folder = request.form.get("folder", "").strip()
     ws = _ws()
+    # QA datasets-r2-26: which data folders this press takes away -- the
+    # candidate-set DIFF (the root's own key and its runs' grandparent keys;
+    # never a folder still reachable through another root).
+    _keys_before = {_folder_key(c) for c in _dataset_candidate_folders(fast=True)}
     ws.remove_root(folder)
     # Invalidate cached DatasetStore so it rebuilds without removed root
     current_app.config.pop("dataset_store", None)
     # …and the candidate-folder cache (per-run fast path — see workspace_add).
     _dataset_candidates_cache.pop(id(current_app._get_current_object()), None)
     _save_workspace_roots()
+    retired_now = _keys_before - {_folder_key(c) for c in _dataset_candidate_folders(fast=True)}
+    _retired_dataset_keys().update(retired_now)
+    # …and tell an open Datasets page, which never hears about it otherwise.
+    _roots_trigger = json.dumps({"workspaceRootsChanged": {"removed": sorted(retired_now)}})
     # Project lens (docs/63): an explicitly removed folder must not keep
     # seeding project scopes on the Datasets/Trends pages.
     _strip_project_root(folder)
@@ -19316,15 +19332,19 @@ def workspace_remove():
                 _save_session_raising(data)
         except OSError as exc:
             logger.warning("Could not record workspace exclusion: %s", exc)
-            return render_template(
+            resp = make_response(render_template(
                 "_status.html",
                 message=(
                     "Removed from workspace but the exclusion couldn't be "
                     f"saved ({exc}); the folder may re-appear on next launch."
                 ),
                 level="warning",
-            )
-    return render_template("_sidebar_tree.html", **_tree_render_ctx(ws.tree, ws=ws))
+            ))
+            resp.headers["HX-Trigger"] = _roots_trigger   # the root WAS removed
+            return resp
+    resp = make_response(render_template("_sidebar_tree.html", **_tree_render_ctx(ws.tree, ws=ws)))
+    resp.headers["HX-Trigger"] = _roots_trigger
+    return resp
 
 
 # docs/126 #20 — the unfiltered tree HTML, memoized per workspace version.
@@ -20581,7 +20601,14 @@ def _extract_run_id(label: str) -> int | None:
 def trend_chart():
     """Render stacked trend charts for selected properties/qubits."""
     paths_raw = request.form.getlist("paths")
-    props = request.form.getlist("props") or ["f_01"]
+    # QA datasets-r2-32: no property ticked used to chart f_01 anyway -- a
+    # property the user had just deselected -- and so could never reach the
+    # template's own "Select at least one property" state. Ask instead.
+    props = request.form.getlist("props")
+    if not props:
+        return render_template("_trend_chart.html", trend_data=[])
+    # No qubit ticked = every qubit (the picker's default flow); the chart
+    # SAYS so (_trend_chart.html), it is not an error.
     qubit_filter = request.form.getlist("qubits") or None
 
     stores, _contexts, labels, _ = _load_compare_stores(paths_raw)
@@ -23705,6 +23732,13 @@ def _active_dataset_stores(*, fast: bool = False,
     return result
 
 
+def _retired_dataset_keys() -> set[str]:
+    """QA datasets-r2-26: folder keys the user took out of the workspace with
+    the sidebar x (cleared again by a re-add). Only the single-folder drift
+    fallback below reads it: a live folder's exact key still resolves first."""
+    return current_app.config.setdefault("retired_dataset_folder_keys", set())
+
+
 def _store_for_folder_key(folder_key: str, rescan: bool = True,
                           run_id: int | None = None) -> tuple[DatasetStore | None, str | None]:
     """Resolve one folder_key → (store, leaf-label) WITHOUT instantiating the
@@ -23740,7 +23774,11 @@ def _store_for_folder_key(folder_key: str, rescan: bool = True,
     # run doesn't exist 404s honestly instead of resolving to some unrelated run. (A
     # different single folder that merely reuses the same numeric run_id is an accepted,
     # logged residual — it needs a mid-session multi→single transition AND a colliding id;
-    # see audit 2026-06-26.)
+    # see audit 2026-06-26.) QA datasets-r2-26: an explicit sidebar x IS that transition,
+    # and run ids restart at #1 in every folder -- a REMOVED folder's uid 404s honestly
+    # instead of opening the remaining folder's run of the same number.
+    if folder_key in current_app.config.get("retired_dataset_folder_keys", ()):
+        return None, None
     if len(cands) == 1:
         store = _get_or_create_store(cands[0], rescan=rescan)
         if store is None:
@@ -24006,7 +24044,10 @@ def _datasets_view(view_mode: str):
         qubit_fail: dict[str, int] = {}
         for r in day_rows:
             for q, oc in (r.get("oc") or {}).items():
-                if _bad.search(str(oc).lower()):
+                # QA datasets-r2-18: the chip's filter is `outcome:<q>=fail`,
+                # a substring test -- count with the SAME test, so the number
+                # on the chip is the number of rows its click shows.
+                if "fail" in str(oc).lower():
                     qubit_fail[q] = qubit_fail.get(q, 0) + 1
         digest = {
             "date": latest_day,

@@ -347,6 +347,20 @@
                 return false;
             case 'outcome':
                 if (!row.oc) return false;
+                // QA datasets-r2-18: `outcome:<target>=<v>` ties the outcome
+                // to ONE qubit/pair key (exact, case-insensitive) -- the
+                // digest chips' filter. The plain form ("any target's outcome
+                // contains v") is unchanged; no real outcome contains '='.
+                var oeq = value.indexOf('=');
+                if (oeq > 0) {
+                    var otgt = value.slice(0, oeq), ov = value.slice(oeq + 1);
+                    for (var ok2 in row.oc) {
+                        if (String(ok2).toLowerCase() === otgt) {
+                            return String(row.oc[ok2]).toLowerCase().indexOf(ov) !== -1;
+                        }
+                    }
+                    return false;
+                }
                 for (var k in row.oc) {
                     if (String(row.oc[k]).toLowerCase().indexOf(value) !== -1) return true;
                 }
@@ -972,7 +986,9 @@
             if (bad.test(String(row.status || '').toLowerCase())) failed++;
             if (row.oc) {
                 for (var q in row.oc) {
-                    if (bad.test(String(row.oc[q]).toLowerCase())) {
+                    // QA datasets-r2-18: the chip filters `outcome:<q>=fail`
+                    // (a substring) -- count with the same test.
+                    if (String(row.oc[q]).toLowerCase().indexOf('fail') !== -1) {
                         qfail[q] = (qfail[q] || 0) + 1;
                     }
                 }
@@ -989,24 +1005,30 @@
         band.appendChild(span('ds-digest-date', latest || '\u2014'));
         band.appendChild(span('ds-digest-item',
             total + ' run' + (total === 1 ? '' : 's')));
-        if (failed) {
-            var fb = document.createElement('button');
-            fb.className = 'ds-help-example ds-digest-bad';
-            fb.setAttribute('data-example', 'is:failed');
-            fb.textContent = failed + ' failed';
-            band.appendChild(fb);
-        } else {
-            band.appendChild(span('ds-digest-ok', 'all OK'));
-        }
         var qs = Object.keys(qfail).sort(function (x, y) {
             // Count desc; ties by NATURAL qubit order (q2 before q10 — a tie is
             // the normal case here, one failure each).
             return (qfail[y] - qfail[x]) || natCmp(x, y);
         }).slice(0, 8);
+        // QA datasets-r2-18 (twin of _datasets.html): "all OK" only when
+        // nothing failed, and both buttons are scoped to the band's day.
+        var dscope = latest ? 'date:' + latest + ' ' : '';
+        if (failed) {
+            var fb = document.createElement('button');
+            fb.className = 'ds-help-example ds-digest-bad';
+            fb.setAttribute('data-example', dscope + 'is:failed');
+            fb.textContent = failed + ' failed';
+            band.appendChild(fb);
+        } else if (!qs.length) {
+            band.appendChild(span('ds-digest-ok', 'all OK'));
+        } else {
+            band.appendChild(span('ds-digest-item', 'no run errors'));
+        }
+        if (qs.length) band.appendChild(span('ds-digest-item ds-digest-oclabel', 'failed outcomes:'));
         qs.forEach(function (q) {
             var b = document.createElement('button');
             b.className = 'ds-help-example ds-digest-qchip';
-            b.setAttribute('data-example', 'qubit:' + q + ' outcome:fail');
+            b.setAttribute('data-example', dscope + 'outcome:' + q + '=fail');
             b.textContent = q + ' \u00d7' + qfail[q];
             band.appendChild(b);
         });
@@ -1123,11 +1145,14 @@
         // allocations on a 10k `when` sort).
         var sortVal = new Map();
         var tagCnt = rankByTags ? new Map() : null;
+        var nv = 0;     // QA datasets-r2-23: rows IN VIEW that have a value
         for (var vi = 0; vi < state.visible.length; vi++) {
             var vidx = state.visible[vi];
             sortVal.set(vidx, val(vidx, key));
+            if (sortVal.get(vidx) != null) nv++;
             if (rankByTags) tagCnt.set(vidx, tagMatchCount(rows[vidx]));
         }
+        state.sortValCount = nv;
         state.visible.sort(function(a, b) {
             if (rankByTags) {
                 var ca = tagCnt.get(a), cb = tagCnt.get(b);
@@ -1136,7 +1161,10 @@
             var va = sortVal.get(a), vb = sortVal.get(b);
             var na = (va === null || va === undefined), nb = (vb === null || vb === undefined);
             if (na || nb) {
-                if (na && nb) return rows[a].id - rows[b].id;   // both missing → stable by id
+                // both missing → the page's default order, newest first (QA
+                // datasets-r2-23: id-ASCENDING flipped a filtered list whose
+                // rows all lack a fit key from #4121… to #1824, #1825…)
+                if (na && nb) return rows[b].id - rows[a].id;
                 return na ? 1 : -1;                              // missing sinks LAST in both directions
             }
             if (va === vb) return rows[a].id - rows[b].id;       // value tie → stable by id
@@ -1148,6 +1176,7 @@
                 : ((va < vb) ? -1 : 1);
             return desc ? -cmp : cmp;
         });
+        _syncSortBadgeUI();   // QA datasets-r2-23: the "no values" note follows the filter
     }
 
     /* QA F15: a `key>=N` token compares run PARAMETERS whose name contains
@@ -2247,7 +2276,11 @@
             var col = _isColKey(state.sortKey);
             var label = col ? col.label : state.sortKey;
             var aggTxt = state.fitKeys.has(state.sortKey) ? (' · ' + state.sortAgg) : '';
-            var noVal = (state.fitKeys.has(state.sortKey) && !(state.fitCounts[state.sortKey] > 0)) ? ' — no values' : '';
+            // QA datasets-r2-23: judged over the rows IN VIEW (applySort's
+            // count). The workspace count could never be 0 for a listed key,
+            // so a search whose runs all lack the key said nothing.
+            var noVal = (state.fitKeys.has(state.sortKey) && state.visible.length > 0
+                         && !(state.sortValCount > 0)) ? ' — no values in these runs' : '';
             sum.textContent = 'Sort: ' + label + aggTxt + (state.sortDesc ? ' ▼' : ' ▲') + noVal;
         }
         var thead = document.getElementById('datasets-thead');
@@ -2717,6 +2750,48 @@
 
         _updateNewPill();   // mount the (hidden) arrival pill in its host early
         startPolling();
+    }
+
+    /* QA datasets-r2-26: a data folder added or removed in the sidebar
+       (/workspace/add|remove -> HX-Trigger workspaceRootsChanged) changes
+       which runs exist, but this table rebuilds its rows, folder chips and
+       count only from a FULL payload -- it kept listing (and opening) the
+       removed folder's runs. Re-read the pane on its date tab, then put the
+       box's text back (a GET never reads keep_q -- QA F9). A run left open
+       from a removed folder is closed, with a word why. Bound once. */
+    function _onWorkspaceRootsChanged(ev) {
+        var removed = (ev && ev.detail && ev.detail.removed) || [];
+        var root = document.getElementById('ds-detail-root');
+        var ruid = root && root.closest && root.closest('#inspector-pane')
+            ? String(root.getAttribute('data-uid') || '') : '';
+        if (ruid && removed.indexOf(ruid.split(':')[0]) !== -1
+                && typeof window.closeInspector === 'function') {
+            window.closeInspector();
+            if (window.showToast) window.showToast(
+                'Run ' + ruid.split(':').pop() + ' closed \u2014 its data folder was removed from the workspace.',
+                'info');
+        }
+        if (!document.getElementById('datasets-tbody') || !window.htmx) return;
+        var data = document.getElementById('ds-rows-data');
+        var coll = data && data.getAttribute('data-view') === 'collections';
+        var dateEl = document.getElementById('ds-active-date');
+        var box = document.getElementById('dataset-search');
+        var kept = box ? box.value : '';
+        var p = window.htmx.ajax('GET', coll ? '/collections' : '/datasets', {
+            target: '#table-pane', swap: 'innerHTML',
+            values: { date: dateEl ? dateEl.value : '' },
+        });
+        if (kept && p && p.then) p.then(function () {
+            var nb = document.getElementById('dataset-search');
+            if (nb && !nb.value) {
+                nb.value = kept;
+                nb.dispatchEvent(new Event('input', { bubbles: true }));
+            }
+        });
+    }
+    if (!window._dsRootsChangedBound) {
+        window._dsRootsChangedBound = true;
+        document.addEventListener('workspaceRootsChanged', _onWorkspaceRootsChanged);
     }
 
     window.DatasetVirtual = {

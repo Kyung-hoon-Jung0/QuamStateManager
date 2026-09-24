@@ -209,6 +209,74 @@ function tick(ms) { return new Promise(r => setTimeout(r, ms || 30)); }
        'clearing the filter restores the server band byte-identically');
   }
 
+  // ── QA datasets-r2-18: a digest chip shows exactly the runs it counted ────
+  // The band said "all OK" (run STATUS) beside a red "q3 ×2" (per-qubit
+  // OUTCOME), and the chip pasted `qubit:q3 outcome:fail` -- every date, and
+  // any row holding q3 where ANY target failed. Pair chips found nothing.
+  {
+    const mk = (id, date, q, p, oc, status) => ({
+      id: id, exp: 'rabi', date: date, time: '0' + (id % 10) + ':00:00', q: q, p: p,
+      oc: oc, metric: '', bm: false, tags: [], status: status || 'successful',
+      dur: 1, note: '', parent: null, hs: false, sm: {}, pm: {}, f: 'f1' });
+    const R18 = [
+      mk(10, '2026-09-24', ['q3', 'q4'], [], { q3: 'failed', q4: 'successful' }),
+      mk(9, '2026-09-24', ['q3'], [], { q3: 'failed' }),
+      // q3 is on this run and SOME target failed -- but not q3
+      mk(8, '2026-09-24', ['q3', 'q4'], [], { q3: 'successful', q4: 'failed' }),
+      // a 2Q run keys its outcome by the PAIR name
+      mk(7, '2026-09-24', ['q3', 'q4'], ['q3-4'], { 'q3-4': 'failed' }),
+      // an older day's q3 failure is not in the band's count
+      mk(6, '2026-09-23', ['q3'], [], { q3: 'failed' }),
+      mk(5, '2026-09-23', ['q4'], [], {}, 'error'),
+    ];
+    const w = boot(null, { rows: R18 });
+    await tick();
+    const doc = w.document;
+    const band = doc.querySelector('.ds-digest-band');
+    const s = doc.getElementById('dataset-search');
+    s.value = 'rabi';                       // every row: forces the client digest
+    s.dispatchEvent(new w.Event('input', { bubbles: true }));
+    await tick(300);
+    ok(band.textContent.indexOf('all OK') < 0,
+       'r2-18: failed outcomes on the day => the band never says "all OK"');
+    ok(band.textContent.indexOf('no run errors') >= 0,
+       'r2-18: no failed run STATUS on the day => "no run errors", beside the chips');
+    const chips = Array.prototype.map.call(
+      doc.querySelectorAll('.ds-digest-band .ds-digest-qchip'),
+      b => ({ ex: b.getAttribute('data-example'),
+              n: Number((b.textContent.match(/×(\d+)/) || [])[1]) }));
+    ok(chips.length === 3, 'r2-18: three chips (q3, q4, q3-4), got ' + chips.length);
+    ok(chips.every(c => c.ex.indexOf('date:2026-09-24 ') === 0),
+       'r2-18: every chip is scoped to the band\'s day: ' + chips.map(c => c.ex).join(' | '));
+    ok(chips.some(c => c.ex === 'date:2026-09-24 outcome:q3-4=fail'),
+       'r2-18: the pair chip filters by the pair key');
+    for (const c of chips) {
+      s.value = c.ex;                       // what the chip click pastes
+      s.dispatchEvent(new w.Event('input', { bubbles: true }));
+      await tick(300);
+      const shown = doc.querySelectorAll('#datasets-tbody tr[data-id]').length;
+      ok(shown === c.n && c.n > 0,
+         `r2-18: "${c.ex}" shows exactly the ${c.n} run(s) its chip counted (shows ${shown})`);
+    }
+    // the failed-run button carries the same day scope
+    const w2 = boot(null, { rows: R18.map(r => r.id === 9
+      ? Object.assign({}, r, { status: 'error' }) : r) });
+    await tick();
+    const s2 = w2.document.getElementById('dataset-search');
+    s2.value = 'rabi';
+    s2.dispatchEvent(new w2.Event('input', { bubbles: true }));
+    await tick(300);
+    const bad = w2.document.querySelector('.ds-digest-band .ds-digest-bad');
+    ok(bad && bad.getAttribute('data-example') === 'date:2026-09-24 is:failed',
+       'r2-18: the "N failed" button is scoped to the band\'s day: '
+       + (bad && bad.getAttribute('data-example')));
+    s2.value = bad ? bad.getAttribute('data-example') : '';
+    s2.dispatchEvent(new w2.Event('input', { bubbles: true }));
+    await tick(300);
+    ok(w2.document.querySelectorAll('#datasets-tbody tr[data-id]').length === 1,
+       'r2-18: ... and shows the 1 failed run of that day, not the older one');
+  }
+
   // ── integration-audit fixes ───────────────────────────────────────────────
   {
     const w = boot({ key: 'status', desc: false });
