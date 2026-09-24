@@ -26,7 +26,7 @@ global.MutationObserver = window.MutationObserver;
 global.IntersectionObserver = class { observe() {} disconnect() {} unobserve() {} }; window.IntersectionObserver = global.IntersectionObserver;
 global.ResizeObserver = class { observe() {} disconnect() {} unobserve() {} }; window.ResizeObserver = global.ResizeObserver;
 window.htmx = { ajax: () => Promise.resolve(), trigger: () => {}, process: () => {} }; global.htmx = window.htmx;
-window.openConfigManual = function () {};
+const manualCalls = []; window.openConfigManual = function (o) { manualCalls.push(o); };
 window.eval(fs.readFileSync(path.join(STATIC, 'search-query.js'), 'utf8'));
 window.eval(fs.readFileSync(path.join(STATIC, 'app.js'), 'utf8'));
 
@@ -70,5 +70,10 @@ ok(/\.tree-row:hover \.key-help-btn\.tree-help \{ opacity: 0\.7; \}/.test(css), 
 ok(/\.tree-row \.key-help-btn\.tree-help:hover \{ opacity: 1; \}/.test(css), 'full on direct hover');
 ok(css.indexOf('.key-help-btn.tree-help { opacity: 0;') > css.indexOf('.key-help-btn:hover { opacity: 1;'), 'placed after the generic rules');
 
-console.log(fails ? ('FAILED: ' + fails) : 'ALL OK (' + 15 + ' assertions)');
+// 5. jsontree-r2-23: the ? hands itself over as the trigger, so the manual
+//    opens beside the row it explains -- not under the sidebar button
+help.click();
+ok(manualCalls.length === 1 && manualCalls[0].trigger === help && !!manualCalls[0].path,
+   'the tree ? passes itself as the trigger (' + JSON.stringify(manualCalls.map((o) => o && o.path)) + ')');
+console.log(fails ? ('FAILED: ' + fails) : 'ALL OK (' + 16 + ' assertions)');
 process.exit(fails ? 1 : 0);

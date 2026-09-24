@@ -177,7 +177,7 @@ setTimeout(function () {
                     window.localStorage.setItem('quam_manual_size', JSON.stringify({ w: 700, h: 520 }));   // jsdom's real Storage
                     window.toggleConfigManual(); window.toggleConfigManual(d.getElementById('manual-btn'));
                     ok(pop.style.width === '700px' && pop.style.height === '520px', 'a remembered size is restored on open (' + pop.style.width + ' x ' + pop.style.height + '; stored=' + window.localStorage.getItem('quam_manual_size') + ' vw=' + window.innerWidth + ' open=' + !pop.classList.contains('manual-hidden') + ')');
-                    reviewPins(function () { closedIntoNodePins(function () { hoverF1Pins(function () { process.exit(fails ? 1 : 0); }); }); });
+                    reviewPins(function () { closedIntoNodePins(function () { hoverF1Pins(function () { besideAndLivePins(function () { process.exit(fails ? 1 : 0); }); }); }); });
                 }, 400);
             });
             return;
@@ -369,4 +369,68 @@ function hoverF1Pins(done) {
             }, 30);
         }, 30);
     }, 30);
+}
+
+/* jsontree-r2-23: (i) a row's ? opens the window BESIDE that ?, not under
+   the sidebar button (it landed over the tree's key column, on top of the
+   row it explains and its + button); a window the user dragged stays put.
+   (ii) the "this place" view follows edits: a key added in the tree moves
+   from "Keys you could add" to "Set here" without re-opening. */
+function besideAndLivePins(done) {
+    const esc = () => pop.querySelector('.manual-search').dispatchEvent(new window.KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
+    esc();
+    pop.classList.remove('manual-floating');            // the drag pin above left it floating
+    Object.defineProperty(pop, 'offsetWidth', { value: 660, configurable: true });
+    Object.defineProperty(pop, 'offsetHeight', { value: 707, configurable: true });
+    d.body.insertAdjacentHTML('beforeend',
+        '<button type="button" class="key-help-btn" id="help-deleg" data-help-path="qubits.q1.z.joint_offset">?</button>');
+    const q = d.getElementById('help-deleg');
+    q.getBoundingClientRect = () => ({ left: 300, right: 316, top: 200, bottom: 216, width: 16, height: 16 });
+    q.click();                                          // the delegated ? handler
+    setTimeout(function () {
+        ok(!pop.classList.contains('manual-hidden'), 'r2-23 setup: the ? opened the manual');
+        const left = parseInt(pop.style.left, 10);
+        ok(left >= 316 && pop.style.left !== '10px',
+           "r2-23: the window opens right of the ? it explains, clear of the row (left=" + pop.style.left + ', was the sidebar anchor 10px)');
+        ok(parseInt(pop.style.top, 10) >= 6 && parseInt(pop.style.top, 10) + 707 <= window.innerHeight,
+           'r2-23: ...and inside the viewport vertically (top=' + pop.style.top + ')');
+        // a dragged window is the user saying "keep it here"
+        pop.classList.add('manual-floating'); pop.style.left = '777px';
+        window.openConfigManual({ path: 'qubits.q1.z.joint_offset', trigger: q });
+        ok(pop.style.left === '777px', 'r2-23: a window the user dragged is never moved by a ? press');
+        pop.classList.remove('manual-floating');
+        // no room on the right: left of the row instead
+        q.getBoundingClientRect = () => ({ left: 900, right: 916, top: 200, bottom: 216, width: 16, height: 16 });
+        window.openConfigManual({ path: 'qubits.q1.z.joint_offset', trigger: q });
+        ok(parseInt(pop.style.left, 10) + 660 <= 900, 'r2-23: near the right edge it opens left of the ? instead (left=' + pop.style.left + ')');
+        // (ii) the node view follows an edit
+        setTimeout(function () {
+            ok(/Keys you could add \(1\)/.test(body().textContent), 'r2-23 setup: independent_offset is addable');
+            NODE.fields[1].present = true;               // the tree just added it
+            calls.length = 0;
+            let jumps = 0;
+            window.Element.prototype.scrollIntoView = function () { jumps++; };
+            d.dispatchEvent(new window.CustomEvent('quam:state-changed'));
+            d.dispatchEvent(new window.CustomEvent('quam:state-changed'));   // a paste: one request
+            setTimeout(function () {
+                const nodeCalls = calls.filter((c) => c.indexOf('/api/manual/node?path=qubits.q1.z.joint_offset') === 0);
+                ok(nodeCalls.length === 1, 'r2-23: an edit re-asks the node view, debounced (' + nodeCalls.length + ' request(s))');
+                ok(/Set here \(2\)/.test(body().textContent) && !/Keys you could add/.test(body().textContent),
+                   'r2-23: the added key moved to "Set here" (' + (body().querySelector('.manual-section') || {}).textContent + ')');
+                ok(jumps === 0, 'r2-23: the refresh an edit caused does not scroll the reader to the focus row (' + jumps + ')');
+                // closed, or in search mode: an edit costs nothing
+                esc();
+                calls.length = 0;
+                d.dispatchEvent(new window.CustomEvent('quam:state-changed'));
+                window.openConfigManual({ q: '' });
+                d.dispatchEvent(new window.CustomEvent('quam:state-changed'));
+                setTimeout(function () {
+                    ok(!calls.some((c) => c.indexOf('/api/manual/node') === 0),
+                       'r2-23: closed or in search mode, an edit fetches no node view (' + calls.join(',') + ')');
+                    NODE.fields[1].present = false;
+                    done();
+                }, 250);
+            }, 250);
+        }, 40);
+    }, 40);
 }

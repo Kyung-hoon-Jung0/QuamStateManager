@@ -2600,6 +2600,18 @@ class TestFieldEdit:
             data={"dot_path": "qubits.q0.chi", "value": "1.0"},
         )
         assert resp.status_code == 400
+        # jsontree-r2-18: after an SM restart no chip is open while the page
+        # still shows one -- the reply names the cause and the way back, not
+        # the jargon "No active context".
+        err = json.loads(resp.data)["error"]
+        assert "No active context" not in err
+        assert "restarted" in err and "reopen the chip" in err
+        for url, data in (("/field/create", {"dot_path": "qubits.q0.x", "value": "1"}),
+                          ("/field/delete", {"dot_path": "qubits.q0.chi"})):
+            r2 = client.post(url, data=data)
+            assert r2.status_code == 400
+            assert json.loads(r2.data)["error"] == err
+        assert json.loads(client.get("/field/refs?dot_path=qubits.q0.chi").data)["error"] == err
 
 
 # ======================================================================

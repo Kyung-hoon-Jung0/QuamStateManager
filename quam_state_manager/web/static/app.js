@@ -7861,7 +7861,7 @@ window.clearDetailPanelSearch = function(btnEl) {
                 helpEl.type = "button"; helpEl.className = "key-help-btn tree-help"; helpEl.tabIndex = -1;
                 helpEl.textContent = "?"; helpEl.title = "Config Manual — this key (F1)";
                 (function (p2) {
-                    helpEl.onclick = function (ev) { ev.stopPropagation(); window.openConfigManual({ path: p2 }); };
+                    helpEl.onclick = function (ev) { ev.stopPropagation(); window.openConfigManual({ path: p2, trigger: ev.currentTarget }); };
                 })(path);
             }
 
@@ -8264,8 +8264,11 @@ window.clearDetailPanelSearch = function(btnEl) {
     function _buildFlatIndex(data) {
         var flat = [];
 
-        function add(path, keyStr, valStr) {
-            var hay = ((keyStr == null ? "" : String(keyStr)) + " " + (valStr || "")).toLowerCase();
+        // `extra` joins the SEARCH text only (never `val`): a number's
+        // comma-free twin, so 4895431254 finds the leaf displayed as
+        // 4,895,431,254 -- the grids' `disp + ' ' + bare` rule (docs/110).
+        function add(path, keyStr, valStr, extra) {
+            var hay = ((keyStr == null ? "" : String(keyStr)) + " " + (valStr || "") + (extra ? " " + extra : "")).toLowerCase();
             flat.push({ path: path, pathLower: path.toLowerCase(), hayLower: hay, val: valStr || "" });
         }
 
@@ -8286,7 +8289,9 @@ window.clearDetailPanelSearch = function(btnEl) {
                     walk(String(j), value[j], path + "." + j);
                 }
             } else {
-                add(path, key, _formatValue(value));
+                var disp = _formatValue(value);
+                add(path, key, disp,
+                    (typeof value === "number" && disp.indexOf(",") >= 0) ? disp.replace(/,/g, "") : null);
             }
         }
 
@@ -8578,6 +8583,11 @@ window.clearDetailPanelSearch = function(btnEl) {
             if (hay === undefined) {
                 var row = nd.querySelector(":scope > .tree-row");
                 hay = row ? row.textContent.toLowerCase() : "";
+                // Same comma-free number twin as _buildFlatIndex's `extra`.
+                if (row) row.querySelectorAll(".tree-val-number").forEach(function (v) {
+                    var t = v.textContent;
+                    if (t.indexOf(",") >= 0) hay += " " + t.replace(/,/g, "").toLowerCase();
+                });
                 nd._searchText = hay;
             }
             var pathAttr = (nd.getAttribute("data-path") || "").toLowerCase();
@@ -8635,12 +8645,32 @@ window.clearDetailPanelSearch = function(btnEl) {
         var chip = document.createElement("span");
         chip.className = "tree-edit-err";
         chip.textContent = "✗ " + (msg || "edit rejected");
-        chip.title = "click to dismiss";
+        // the chip ellipsizes a long reason (max-width) -- hover reads it all
+        chip.title = (msg || "edit rejected") + "\n(click to dismiss)";
         chip.onclick = function() { chip.remove(); };
         row.appendChild(chip);
         setTimeout(function() { chip.remove(); }, 8000);
     }
     window._showEditError = _showEditError;
+
+    // jsontree-r2-18: the tree's CRUD calls use raw fetch(), so the global
+    // htmx:sendError toast never fires for them and a failed write used to
+    // revert / vanish in silence. A fetch that never reached SM rejects BEFORE
+    // any reply; _smFetch tags exactly that case, so a reply that is not JSON
+    // (an HTML 500) or a bug in a success handler is never reported as
+    // "the app is not running".
+    var _UNREACHABLE = "Couldn't reach the app — is it still running? Please retry.";
+    function _smFetch(url, opts) {
+        return fetch(url, opts).catch(function (e) {
+            e = e || new Error("network");
+            try { e.smNetwork = true; } catch (x) { /* frozen error */ }
+            throw e;
+        });
+    }
+    function _netFail(e) {
+        return (e && e.smNetwork) ? _UNREACHABLE
+            : "Unexpected reply from the app — reload the page to see the stored value.";
+    }
 
     function _makeValueEditable(valEl, dotPath) {
         if (valEl.querySelector("input")) return; // already editing
@@ -8746,7 +8776,7 @@ window.clearDetailPanelSearch = function(btnEl) {
                 if (extraBody) Object.keys(extraBody).forEach(function(k) {
                     b2.append(k, extraBody[k]);
                 });
-                return fetch("/field/edit", {
+                return _smFetch("/field/edit", {
                     method: "POST",
                     headers: {"Content-Type": "application/x-www-form-urlencoded"},
                     body: b2.toString()
@@ -8842,9 +8872,12 @@ window.clearDetailPanelSearch = function(btnEl) {
                     window._restoreTrayState && window._restoreTrayState();
                 }
             })
-            .catch(function() {
+            .catch(function(e) {
                 valEl.textContent = currentDisplay;
                 valEl.classList.remove("tree-val-editing");
+                valEl.classList.add("tree-val-error");   // jsontree-r2-18: never silent
+                setTimeout(function() { valEl.classList.remove("tree-val-error"); }, 2000);
+                _showEditError(valEl, _netFail(e));
             });
         }
 
@@ -9046,7 +9079,7 @@ window.clearDetailPanelSearch = function(btnEl) {
             body.append("dot_path", dotPath);
             body.append("value", txt);   // server re-parses (authoritative coercion)
             body.append("expect_chip", window.__chipToken || "");   // wrong-chip 409 gate
-            fetch("/field/edit", {
+            _smFetch("/field/edit", {
                 method: "POST",
                 headers: {"Content-Type": "application/x-www-form-urlencoded"},
                 body: body.toString()
@@ -9063,7 +9096,7 @@ window.clearDetailPanelSearch = function(btnEl) {
                 if (data.tray_html) { _swapPendingTray(data.tray_html); window._restoreTrayState && window._restoreTrayState(); }
                 if (window._diagChanged) window._diagChanged();
             })
-            .catch(function() { err.hidden = false; err.textContent = "Request failed"; save.disabled = false; });
+            .catch(function(e) { err.hidden = false; err.textContent = _netFail(e); save.disabled = false; });
         }
 
         save.onclick = doSave;
@@ -9462,7 +9495,7 @@ window.clearDetailPanelSearch = function(btnEl) {
             body.append("value", valIn.value);
             body.append("expect_type", typeSel.value);
             body.append("expect_chip", window.__chipToken || "");
-            fetch("/field/create", { method: "POST",
+            _smFetch("/field/create", { method: "POST",
                 headers: {"Content-Type": "application/x-www-form-urlencoded"},
                 body: body.toString() })
             .then(function (r) { return r.json(); })
@@ -9485,7 +9518,7 @@ window.clearDetailPanelSearch = function(btnEl) {
                 if (d.tray_html) { _swapPendingTray(d.tray_html); window._restoreTrayState && window._restoreTrayState(); }
                 if (window._diagChanged) window._diagChanged();
             })
-            .catch(function () { err.textContent = "request failed"; });
+            .catch(function (e) { err.textContent = _netFail(e); });
         }
         panel.querySelector(".tree-crud-ok").onclick = submit;
         panel.querySelector(".tree-crud-cancel").onclick = function () { panel.remove(); };
@@ -9517,14 +9550,17 @@ window.clearDetailPanelSearch = function(btnEl) {
         fetch("/field/refs?dot_path=" + encodeURIComponent(m.path))
             .then(function (r) { return r.json(); })
             .then(function (d) {
-                if (d.ok) label.textContent = label.textContent.replace("refs: …",
-                    d.total + " pointer ref" + (d.total === 1 ? "" : "s"));
-            }).catch(function () {});
+                label.textContent = label.textContent.replace("refs: …", d.ok
+                    ? d.total + " pointer ref" + (d.total === 1 ? "" : "s")
+                    : "refs: unknown");
+            }).catch(function () {
+                label.textContent = label.textContent.replace("refs: …", "refs: unknown");
+            });
         actionsSpan.appendChild(_mkBtn("Delete", "confirm", "tree-act-del", function () {
             var body = new URLSearchParams();
             body.append("dot_path", m.path);
             body.append("expect_chip", window.__chipToken || "");
-            fetch("/field/delete", { method: "POST",
+            _smFetch("/field/delete", { method: "POST",
                 headers: {"Content-Type": "application/x-www-form-urlencoded"},
                 body: body.toString() })
             .then(function (r) { return r.json(); })
@@ -9546,7 +9582,7 @@ window.clearDetailPanelSearch = function(btnEl) {
                 if (d.tray_html) { _swapPendingTray(d.tray_html); window._restoreTrayState && window._restoreTrayState(); }
                 if (window._diagChanged) window._diagChanged();
             })
-            .catch(function () { actionsSpan.remove(); });
+            .catch(function (e) { _showEditError(row, _netFail(e)); actionsSpan.remove(); });
         }));
         actionsSpan.appendChild(_mkBtn("Cancel", "keep", "", function () {
             actionsSpan.remove();
@@ -9591,7 +9627,7 @@ window.clearDetailPanelSearch = function(btnEl) {
             body.append("type", sel.value);
             if (override) body.append("override_env", "1");
             body.append("expect_chip", window.__chipToken || "");
-            fetch("/field/type-assign", { method: "POST",
+            _smFetch("/field/type-assign", { method: "POST",
                 headers: {"Content-Type": "application/x-www-form-urlencoded"},
                 body: body.toString() })
             .then(function (r) { return r.json().then(function (d) { return {s: r.status, d: d}; }); })
@@ -9607,21 +9643,23 @@ window.clearDetailPanelSearch = function(btnEl) {
                 panel.remove();
                 if (window.showToast) window.showToast("Type assigned: " + sel.value, "success");
             })
-            .catch(function () { err.textContent = "request failed"; });
+            .catch(function (e) { err.textContent = _netFail(e); });
         }
         panel.querySelector(".tree-type-assign").onclick = function () { post(false); };
         panel.querySelector(".tree-type-clear").onclick = function () {
             var body = new URLSearchParams();
             body.append("dot_path", m.path);
-            fetch("/field/type-unassign", { method: "POST",
+            _smFetch("/field/type-unassign", { method: "POST",
                 headers: {"Content-Type": "application/x-www-form-urlencoded"},
                 body: body.toString() })
             .then(function (r) { return r.json(); })
             .then(function (d) {
+                // jsontree-r2-18: a refused clear is not "No override was set"
+                if (!d.ok) { err.textContent = d.error || "clear failed"; return; }
                 panel.remove();
                 if (window.showToast) window.showToast(
                     d.removed ? "Override cleared" : "No override was set", "info");
-            }).catch(function () {});
+            }).catch(function (e) { err.textContent = _netFail(e); });
         };
         panel.querySelector(".tree-type-close").onclick = function () { panel.remove(); };
         panel.addEventListener("keydown", function (e) {
@@ -13835,6 +13873,15 @@ function _showPlotClickToast(coordText, qubitName, dotPath) {
  * e.g. "qubits.q4.resonator.time_of_flight"
  */
 function _navigateToExplorerPath(dotPath) {
+    // jsontree-r2-20: already ON Json Tree View -- jump in place. A re-GET of
+    // /explorer re-rendered the pane and silently ended a live-diff session
+    // (bar + incoming rows gone, no word), and reset every fold and scroll.
+    var here = document.getElementById('explorer-tree-state');
+    if (here && here.children.length) {
+        if (here.style.display === 'none' && window.switchExplorerTab) window.switchExplorerTab('state');
+        _jumpToTreePath('explorer-tree-state', dotPath);
+        return;
+    }
     function openExplorer() {
         htmx.ajax('GET', '/explorer', {target: '#table-pane', swap: 'innerHTML'}).then(function() {
             var attempts = 0;
@@ -17705,12 +17752,15 @@ document.addEventListener('click', function(evt) {
 (function() {
     // Materialize lazy nodes along a dot-path (like _expandTreeToPath, but no
     // scroll/popup) then mark the leaf row with a ⚠ + tooltip.
-    function markTreePath(containerId, dotPath, message) {
+    // opts.expand === false (jsontree-r2-19): mark only rows already in the
+    // DOM -- a re-mark after an edit must not reopen subtrees the user folded
+    // or materialise rows an active search is hiding.
+    function markTreePath(containerId, dotPath, message, opts) {
         var container = document.getElementById(containerId);
         if (!container) return;
         var segments = dotPath.split('.');
         var currentPath = '';
-        for (var i = 0; i < segments.length; i++) {
+        for (var i = 0; i < segments.length && !(opts && opts.expand === false); i++) {
             currentPath = i === 0 ? segments[i] : currentPath + '.' + segments[i];
             var node = container.querySelector('.tree-node[data-path="' + currentPath + '"]');
             if (!node) break;
@@ -18481,22 +18531,29 @@ document.addEventListener('click', function(evt) {
         }
     };
 
-    window._applyExplorerSpecMarks = function() {
+    // jsontree-r2-19: a generation counter, so an older findings.json reply
+    // that lands late cannot repaint a newer verdict.
+    var _markGen = 0;
+    function _paintExplorerMarks(d, opts) {
+        clearExplorerMarks();
+        var marks = (d.value_spec || []).concat(d.connectivity || []);
+        for (var i = 0; i < marks.length; i++) {
+            var f = marks[i];
+            // docs/168 + on-site 2026-09-07: an acknowledged finding
+            // no longer marks the tree row -- the user said it is right.
+            if (!f.jump_path || f.acknowledged) continue;
+            var cid = f.jump_path.indexOf('wiring.') === 0
+                ? 'explorer-tree-wiring' : 'explorer-tree-state';
+            markTreePath(cid, f.jump_path, f.message, opts);
+        }
+    }
+    window._applyExplorerSpecMarks = function(opts) {
         if (!document.getElementById('explorer-tree-state')) return;
-        fetch('/diagnostics/findings.json', { cache: 'no-store' })
+        var gen = ++_markGen;
+        return fetch('/diagnostics/findings.json', { cache: 'no-store' })
             .then(function(r) { return r.json(); })
             .then(function(d) {
-                clearExplorerMarks();
-                var marks = (d.value_spec || []).concat(d.connectivity || []);
-                for (var i = 0; i < marks.length; i++) {
-                    var f = marks[i];
-                    // docs/168 + on-site 2026-09-07: an acknowledged finding
-                    // no longer marks the tree row -- the user said it is right.
-                    if (!f.jump_path || f.acknowledged) continue;
-                    var cid = f.jump_path.indexOf('wiring.') === 0
-                        ? 'explorer-tree-wiring' : 'explorer-tree-state';
-                    markTreePath(cid, f.jump_path, f.message);
-                }
+                if (gen === _markGen) _paintExplorerMarks(d, opts);
             })
             .catch(function() {});
     };
@@ -18529,6 +18586,32 @@ document.addEventListener('click', function(evt) {
             })
             .catch(function() {});
     };
+
+    // jsontree-r2-19: the ⚠ row marks and the sidebar dots used to be redone
+    // only on a #table-pane swap or a full load, so an edit (or an
+    // acknowledgement) left them describing the chip as it WAS. Every edit
+    // path, sync, acknowledge and revoke fires 'diagnostics-changed'; the
+    // PaneState keep-alive restore (docs/139) fires 'paneRestored' and never an
+    // afterSwap. One debounced findings.json read repaints both surfaces --
+    // the marks WITHOUT expanding (the edited row is on screen already).
+    var _diagSurfT = null;
+    function _refreshDiagSurfaces() {
+        clearTimeout(_diagSurfT);
+        _diagSurfT = setTimeout(function () {
+            var gen = ++_markGen;
+            fetch('/diagnostics/findings.json', { cache: 'no-store' })
+                .then(function(r) { return r.json(); })
+                .then(function(d) {
+                    setNavDot('/explorer', _maxLevel(d.value_spec));
+                    setNavDot('/instrument', _maxLevel(d.connectivity));
+                    if (gen === _markGen && document.getElementById('explorer-tree-state'))
+                        _paintExplorerMarks(d, { expand: false });
+                })
+                .catch(function() {});
+        }, 400);
+    }
+    document.addEventListener('diagnostics-changed', _refreshDiagSurfaces);
+    document.addEventListener('paneRestored', _refreshDiagSurfaces);
 
     /* ---- Diagnostics filter pills (severity + advisory), persisted ---------- */
     /* Toggles row visibility on #diag-filter-bar pills, hides emptied domain
@@ -19889,6 +19972,12 @@ window.UndoNav = (function () {
             return { kind: "pulse",
                      url: "/pulse/detail?path=" + encodeURIComponent(pulseRoot) };
         }
+        // jsontree-r2-20: on Json Tree View the field's home is the tree the
+        // user is looking at -- the qubit inspector squeezed the tree to a
+        // sliver and left the row hidden by the search (docs/180's one door).
+        if (!multi && document.getElementById("explorer-tree-state")) {
+            return { kind: "explorer", path: dp, inPlace: true };
+        }
         if (seg[0] === "qubits" && seg[1]) {
             return multi
                 ? { kind: "pane", url: "/bulk" }
@@ -20020,6 +20109,10 @@ window.UndoNav = (function () {
                 htmx.ajax("GET", os.url, {
                     target: "#inspector-pane", swap: "innerHTML" });
             }
+            return;
+        }
+        if (os.inPlace) {                   // no pane swap follows: arm nothing
+            if (window._navigateToExplorerPath) _navigateToExplorerPath(os.path);
             return;
         }
         stashDirtyInputs();

@@ -7280,6 +7280,13 @@ def chip_active_token():
                    path=(ctx.get("path") if ctx else None) or "")
 
 
+# jsontree-r2-18: what a /field/* write says when no chip is open. After an
+# SM restart nothing auto-loads (docs/63 decision 3), so the page still shows
+# the chip the server no longer has -- "No active context" named neither the
+# cause nor the way back.
+_NO_CHIP_MSG = "No chip open (SM restarted?) — reopen the chip: Projects → Resume."
+
+
 @bp.route("/field/edit", methods=["POST"])
 def field_edit():
     """Generic field editor — works for any dot-path in state or wiring."""
@@ -7288,7 +7295,7 @@ def field_edit():
     ctx = _active_ctx()
     modifier = ctx.get("modifier") if ctx else None
     if not modifier:
-        return jsonify(ok=False, error="No active context"), 400
+        return jsonify(ok=False, error=_NO_CHIP_MSG), 400
     _lk = _agent_edit_lock_refusal(ctx)
     if _lk is not None:
         return _lk
@@ -7598,7 +7605,7 @@ def field_peek():
     """
     store = _store()
     if not store:
-        return jsonify(ok=False, error="No active context"), 400
+        return jsonify(ok=False, error=_NO_CHIP_MSG), 400
 
     from quam_state_manager.core.pointer_path import find_shared_by, resolve_field_target
 
@@ -8327,7 +8334,7 @@ def field_type_assignments():
     """The chip's user type assignments + whether the env manifest is warm."""
     store = _store()
     if not store:
-        return jsonify(ok=False, error="No active context"), 400
+        return jsonify(ok=False, error=_NO_CHIP_MSG), 400
     policy = getattr(store, "type_policy", None)
     assignments = dict(policy.assignments) if policy else {}
     return jsonify(ok=True, assignments=assignments, count=len(assignments),
@@ -8348,7 +8355,7 @@ def field_type_assign():
     ctx = _active_ctx()
     store = ctx.get("store") if ctx else None
     if not store or not ctx.get("path"):
-        return jsonify(ok=False, error="No active context"), 400
+        return jsonify(ok=False, error=_NO_CHIP_MSG), 400
     guard = _chip_mismatch_response(
         request.form.get("expect_chip", ""),
         request.form.get("force_chip") in ("1", "true", "True"))
@@ -8608,7 +8615,7 @@ def field_type_unassign():
     ctx = _active_ctx()
     store = ctx.get("store") if ctx else None
     if not store or not ctx.get("path"):
-        return jsonify(ok=False, error="No active context"), 400
+        return jsonify(ok=False, error=_NO_CHIP_MSG), 400
     dot_path = _normalize_dot_path(request.form.get("dot_path", "").strip())
     if not dot_path:
         return jsonify(ok=False, error="dot_path required"), 400
@@ -8685,7 +8692,7 @@ def field_refs():
     """Pointer references into a path (the delete-confirm blast radius)."""
     store = _store()
     if not store:
-        return jsonify(ok=False, error="No active context"), 400
+        return jsonify(ok=False, error=_NO_CHIP_MSG), 400
     dot_path = _normalize_dot_path(request.args.get("dot_path", "").strip())
     if not dot_path:
         return jsonify(ok=False, error="dot_path required"), 400
@@ -8703,7 +8710,7 @@ def field_create():
     ctx = _active_ctx()
     modifier = ctx.get("modifier") if ctx else None
     if not modifier:
-        return jsonify(ok=False, error="No active context"), 400
+        return jsonify(ok=False, error=_NO_CHIP_MSG), 400
     guard = _chip_mismatch_response(
         request.form.get("expect_chip", ""),
         request.form.get("force_chip") in ("1", "true", "True"))
@@ -8760,7 +8767,7 @@ def field_delete():
     ctx = _active_ctx()
     modifier = ctx.get("modifier") if ctx else None
     if not modifier:
-        return jsonify(ok=False, error="No active context"), 400
+        return jsonify(ok=False, error=_NO_CHIP_MSG), 400
     guard = _chip_mismatch_response(
         request.form.get("expect_chip", ""),
         request.form.get("force_chip") in ("1", "true", "True"))
@@ -8796,7 +8803,7 @@ def schema_missing_keys():
     Explorer add-key datalist ('your class has these unset fields')."""
     store = _store()
     if not store:
-        return jsonify(ok=False, error="No active context"), 400
+        return jsonify(ok=False, error=_NO_CHIP_MSG), 400
     scope = _normalize_dot_path(request.args.get("scope", "").strip())
     policy = getattr(store, "type_policy", None)
     manifest = policy.manifest if policy is not None else None
@@ -8865,7 +8872,7 @@ def field_edit_batch():
     ctx = _active_ctx()
     modifier = ctx.get("modifier") if ctx else None
     if not modifier:
-        return jsonify(ok=False, error="No active context"), 400
+        return jsonify(ok=False, error=_NO_CHIP_MSG), 400
     _lk = _agent_edit_lock_refusal(ctx)
     if _lk is not None:
         return _lk

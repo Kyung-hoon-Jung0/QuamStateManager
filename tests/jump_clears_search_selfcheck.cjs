@@ -23,6 +23,10 @@
  *   J7  (QA r2-03) a tree left filtered under a box cleared on the other tab
  *       is re-synced when shown -- never a blank tree under an empty box
  *       (the real switchExplorerTab, extracted from _explorer.html)
+ *   J8  (jsontree-r2-20) a jump while already on Json Tree View stays in place:
+ *       no pane re-GET, the live-diff session survives
+ *   J9  (jsontree-r2-20) the Undo trail's go to field on the tree reveals the
+ *       row in the tree, never the qubit inspector
  *
  * Run: node tests/jump_clears_search_selfcheck.cjs   (needs jsdom)
  */
@@ -274,6 +278,43 @@ async function main() {
   window.switchExplorerTab('state');
   await sleep(300);
   ok(hiddenIn(c) === 0, 'J7b: switching back after clearing the box on the other tab shows the state tree (' + hiddenIn(c) + ' hidden)');
+
+  // ── J8/J9 (jsontree-r2-20): a jump while ALREADY on Json Tree View ───────
+  // stays in place. The Manual's goto re-GET /explorer and silently ended a
+  // live-diff session (bar + incoming rows gone); the Undo trail's "go to
+  // field" opened the qubit inspector over the tree, row still hidden.
+  window.switchExplorerTab('state');
+  render();
+  const tog = d.createElement('button'); tog.id = 'explorer-livediff-toggle'; tog.className = 'active';
+  const ldbar = d.createElement('div'); ldbar.id = 'explorer-livediff-bar';
+  const insp = d.createElement('div'); insp.id = 'inspector-pane';
+  d.querySelector('.explorer-pane').prepend(tog, ldbar);
+  d.body.appendChild(insp);
+  const ajaxed = [];
+  window.htmx.ajax = (m, u) => { ajaxed.push(m + ' ' + u); return Promise.resolve(); };
+  global.fetch = window.fetch = () => Promise.resolve({ json: () => Promise.resolve({ loaded: true }) });
+  type('amplitude');
+  await sleep(300);
+  said.length = 0;
+  window._navigateToExplorerPath(TARGET);           // the Config Manual's goto
+  await sleep(500);
+  ok(ajaxed.length === 0, 'J8: no re-GET of the pane (' + ajaxed.join(', ') + ')');
+  ok(tog.classList.contains('active') && !ldbar.hidden, 'J8: the live-diff session survives the jump');
+  ok(box.value === '' && shown(TARGET) && node(TARGET).classList.contains('tree-highlight'),
+    'J8: the row is revealed and highlighted in the tree on screen');
+  ok(said.length === 1 && /amplitude/.test(said[0]), 'J8: the dropped search is still announced');
+
+  render();
+  type('amplitude');
+  await sleep(300);
+  ajaxed.length = 0; said.length = 0; window._undoNavAt = 0;
+  window.UndoNav.handle([{ dot_path: TARGET }]);    // the Undo trail's go to field
+  await sleep(500);
+  ok(ajaxed.length === 0, 'J9: go to field opens no inspector and no pane (' + ajaxed.join(', ') + ')');
+  ok(box.value === '' && shown(TARGET) && node(TARGET).classList.contains('tree-highlight'),
+    'J9: the row is revealed in the tree, the hiding search cleared');
+  ok(!window._undoNavAt, 'J9: no confirm-bypass stamp armed (no swap follows)');
+  ok(tog.classList.contains('active') && !ldbar.hidden, 'J9: the live-diff session survives');
 
   console.log(fails ? 'FAILED (' + fails + ')'
     : 'jump_clears_search_selfcheck ok (' + asserts + ' assertions)');

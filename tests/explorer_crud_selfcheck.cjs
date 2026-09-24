@@ -345,6 +345,90 @@ function nodeAt(container, p) {
     ok(!leaf.querySelector('.tree-act-type'), 'C10: no ⚙ under a membership top');
   }
 
+  // C11 (jsontree-r2-18): SM unreachable. A fetch that never reaches the
+  //      server rejects with a TypeError; every tree write used to revert /
+  //      vanish in SILENCE (the global htmx:sendError toast never fires for a
+  //      raw fetch). Each one must now say the app could not be reached, and
+  //      a reply that is not JSON must NOT be blamed on the network.
+  {
+    const down = function (url) {
+      if (url.indexOf('/schema/missing-keys') === 0) return jsonResp({ ok: true, warm: false, missing: [] });
+      return Promise.reject(new TypeError('Failed to fetch'));
+    };
+    // inline edit
+    let win = makeWorld(down);
+    let c = win.document.getElementById('tree');
+    expandAll(c);
+    let leaf = nodeAt(c, 'qubits.qA1.f_01');
+    let val = leaf.querySelector('.tree-val');
+    const before = val.textContent;
+    val.click();
+    await tick(10);
+    let inp = leaf.querySelector('.tree-edit-input');
+    inp.value = '1.5e-05';
+    inp.dispatchEvent(new win.KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
+    await tick(30);
+    let chip = leaf.querySelector(':scope > .tree-row .tree-edit-err');
+    ok(!!chip && /reach the app/.test(chip.textContent),
+       'C11: a failed inline edit says the app could not be reached (' + (chip && chip.textContent) + ')');
+    ok(val.textContent === before, 'C11: the display still reverts to the stored value');
+    ok(!!chip && chip.title.indexOf("Couldn't reach the app") === 0,
+       'C11: the chip ellipsizes, so its hover title carries the whole reason');
+
+    // delete: the refs label never sits at "refs: …", the failed POST is named
+    win = makeWorld(down);
+    c = win.document.getElementById('tree');
+    expandAll(c);
+    leaf = nodeAt(c, 'qubits.qA1.f_01');
+    hover(win, leaf);
+    leaf.querySelector('.tree-act-del').click();
+    await tick(20);
+    const lbl = leaf.querySelector('.tree-del-confirm');
+    ok(!!lbl && lbl.textContent.indexOf('refs: …') < 0 && /refs: unknown/.test(lbl.textContent),
+       'C11: an unreachable refs pre-fetch says "refs: unknown" (' + (lbl && lbl.textContent) + ')');
+    leaf.querySelectorAll('.tree-row-actions .tree-act-btn')[0].click();
+    await tick(25);
+    chip = leaf.querySelector(':scope > .tree-row .tree-edit-err');
+    ok(!!chip && /reach the app/.test(chip.textContent),
+       'C11: a failed delete says the app could not be reached');
+    ok(!!nodeAt(c, 'qubits.qA1.f_01'), 'C11: the row is still there (nothing deleted)');
+
+    // add key
+    win = makeWorld(down);
+    c = win.document.getElementById('tree');
+    expandAll(c);
+    const dictNode = nodeAt(c, 'qubits.qA1');
+    hover(win, dictNode);
+    dictNode.querySelector('.tree-act-add').click();
+    await tick();
+    const panel = dictNode.querySelector('.tree-crud-panel');
+    panel.querySelector('.tree-crud-key').value = 'T9';
+    panel.querySelector('.tree-crud-val').value = '1';
+    panel.querySelector('.tree-crud-ok').click();
+    await tick(25);
+    ok(/reach the app/.test(panel.querySelector('.tree-crud-err').textContent),
+       'C11: a failed add says the app could not be reached');
+
+    // a reply that is not JSON (an HTML 500) is NOT "the app is not running"
+    win = makeWorld(function (url) {
+      if (url === '/field/edit') return Promise.resolve({ ok: false, status: 500,
+        json: function () { return Promise.reject(new SyntaxError('Unexpected token <')); } });
+      return jsonResp({ ok: true, values: {}, expected: {} });
+    });
+    c = win.document.getElementById('tree');
+    expandAll(c);
+    leaf = nodeAt(c, 'qubits.qA1.f_01');
+    leaf.querySelector('.tree-val').click();
+    await tick(10);
+    inp = leaf.querySelector('.tree-edit-input');
+    inp.value = '7';
+    inp.dispatchEvent(new win.KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
+    await tick(30);
+    chip = leaf.querySelector(':scope > .tree-row .tree-edit-err');
+    ok(!!chip && !/reach the app/.test(chip.textContent) && /Unexpected reply/.test(chip.textContent),
+       'C11: a non-JSON reply is named as such, not blamed on the network');
+  }
+
   if (fails) { console.error(fails + ' check(s) failed'); process.exit(1); }
   console.log('explorer_crud_selfcheck: all checks passed');
   process.exit(0);

@@ -257,8 +257,9 @@ window.ConfigManual = (function () {
         delete _lazy[key];
     }
 
-    function renderNode(nd) {
+    function renderNode(nd, keepScroll) {
         var body = pop().querySelector('.manual-body');
+        var top0 = body.scrollTop;
         if (!nd || !nd.ok) {
             body.innerHTML = '<p class="manual-note">' + esc((nd && nd.reason) || 'nothing here') + '</p>';
             return;
@@ -277,6 +278,9 @@ window.ConfigManual = (function () {
             unset.forEach(function (f) { h += entryHtml(f, { unset: true, mark: '○', markTitle: 'declared by the class, not set here' }); });
         }
         body.innerHTML = h;
+        // jsontree-r2-23: a refresh the user did not ask for (an edit in the
+        // tree) keeps the reader where they were
+        if (keepScroll) { body.scrollTop = top0; return; }
         var fo = body.querySelector('.manual-focus');
         if (fo && fo.scrollIntoView) { try { fo.scrollIntoView({ block: 'center' }); } catch (e) {} }
     }
@@ -294,6 +298,26 @@ window.ConfigManual = (function () {
         var q = pop().querySelector('.manual-search').value;
         load().then(function () { renderSearch(q); schedulePoll(); });
     }
+    /* jsontree-r2-23: the "this place" view was fetched once, so a key added
+       or deleted in the tree left it listing the key under "Keys you could
+       add" (or "Set here") until the next open. Every edit path announces
+       'quam:state-changed' (_swapPendingTray); the node view re-asks,
+       debounced so a multi-cell paste is one request, without moving the
+       reader's scroll. */
+    var _stTimer = null;
+    document.addEventListener('quam:state-changed', function () {
+        if (!isOpen() || _mode !== 'node' || !_nodePath) return;
+        clearTimeout(_stTimer);
+        _stTimer = setTimeout(function () {
+            var path = _nodePath;
+            if (!isOpen() || _mode !== 'node' || !path) return;
+            fetch('/api/manual/node?path=' + encodeURIComponent(path), { credentials: 'same-origin' })
+                .then(function (r) { return r.json(); })
+                .then(function (nd) { if (isOpen() && _mode === 'node' && _nodePath === path) renderNode(nd, true); })
+                .catch(function () {});
+        }, 150);
+    });
+
     /* The in-window ways back to the search (typing, "← all keys") go
        through here: an open straight into the node view (a row's ?, F1)
        cleared the catalogue and fetched only the node, so rendering the
@@ -382,6 +406,28 @@ window.ConfigManual = (function () {
         setOpen(!o, trigger);
     };
 
+    /* jsontree-r2-23: a deep link from a row's ? (or F1) opens BESIDE that
+       ?, not under the sidebar button -- there it landed over the tree's key
+       column, on top of the row it explains and its + button. The ? is the
+       row's last child (docs/141 4w), so right of it the whole row stays
+       clear; else left of the row; else the shared below/above anchor. */
+    function placeBeside(p, trig) {
+        if (!trig || !trig.getBoundingClientRect || !trig.isConnected) return;
+        var r = trig.getBoundingClientRect();
+        var w = p.offsetWidth || 0, h = p.offsetHeight || 0, pad = 6;
+        var vw = window.innerWidth || 0, vh = window.innerHeight || 0;
+        var left = r.right + 8;
+        if (left + w > vw - pad) {
+            var rowEl = (trig.closest && trig.closest('.tree-row, tr, th, .detail-row')) || trig;
+            left = rowEl.getBoundingClientRect().left - w - 8;
+            if (left < pad) { if (window._anchorPopover) window._anchorPopover(p, trig); return; }
+        }
+        var top = Math.max(pad, Math.min(r.top - 24, vh - h - pad));
+        p.classList.add('pop-anchored');
+        p.style.left = Math.round(left) + 'px';
+        p.style.top = Math.round(top) + 'px';
+    }
+
     /* Deep link: {q} pre-fills the search, {path} opens the "this place" view. */
     window.openConfigManual = function (opts) {
         opts = opts || {};
@@ -392,10 +438,14 @@ window.ConfigManual = (function () {
             _mode = 'search'; _nodePath = null;
             if (typeof opts.q === 'string') p.querySelector('.manual-search').value = opts.q;
         }
-        if (isOpen()) { refresh(); return; }
+        var beside = function () {       // a window the user dragged stays put
+            if (opts.trigger && !p.classList.contains('manual-floating')) placeBeside(p, opts.trigger);
+        };
+        if (isOpen()) { refresh(); beside(); return; }
         var a = document.activeElement;
         _returnFocus = (a && a !== document.body && !p.contains(a)) ? a : null;
         setOpen(true, null);
+        beside();
     };
 
     function enableDrag(p) {
@@ -445,8 +495,8 @@ window.ConfigManual = (function () {
         var b = e.target && e.target.closest ? e.target.closest('.key-help-btn[data-help-path], .key-help-btn[data-help-q]') : null;
         if (!b) return;
         e.preventDefault();   // no stopPropagation: a click-away listener elsewhere must still see this click
-        if (b.hasAttribute('data-help-path')) window.openConfigManual({ path: b.getAttribute('data-help-path') });
-        else window.openConfigManual({ q: b.getAttribute('data-help-q') });
+        if (b.hasAttribute('data-help-path')) window.openConfigManual({ path: b.getAttribute('data-help-path'), trigger: b });
+        else window.openConfigManual({ q: b.getAttribute('data-help-q'), trigger: b });
     });
 
     /* QA JT-18: the Json tree's ? says "(F1)" but only shows on HOVER, and a
@@ -492,7 +542,11 @@ window.ConfigManual = (function () {
         }
         if (!path) return;
         e.preventDefault();
-        window.openConfigManual({ path: path });
+        // jsontree-r2-23: beside the place F1 named -- a tree row's own ?
+        var trig = cell || (path === _hoverTreePath && !t.closest('.tree-node[data-path], form') ? _hoverTreeRow : null);
+        if (!trig) { var tn = t.closest('.tree-node[data-path]'); trig = tn ? tn.querySelector(':scope > .tree-row') : t; }
+        if (trig && trig.classList && trig.classList.contains('tree-row')) trig = trig.querySelector(':scope > .key-help-btn.tree-help') || trig;
+        window.openConfigManual({ path: path, trigger: trig });
     });
 
     if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', wire);
