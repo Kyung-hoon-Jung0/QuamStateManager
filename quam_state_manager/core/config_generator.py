@@ -151,6 +151,23 @@ def _pinned_fem_slots(channel) -> list:
     return sorted({(con, s) for s in slots if _is_int(s) and s in OPX1000_SLOTS})
 
 
+def _pinned_output(channel):
+    """``(kind, con, slot, out_port)`` of a FEM pin that names one exact output
+    port, read as ``run_build._make_constraint`` hands it to the allocator (an
+    lf pin's ``out_slot`` falls back to ``slot``); ``None`` for a partial or
+    out-of-range pin (those are "any" constraints, or already refused)."""
+    if not isinstance(channel, dict) or channel.get("kind") not in ("mw_fem", "lf_fem"):
+        return None
+    con = channel.get("con")
+    slot = (channel.get("out_slot", channel.get("slot"))
+            if channel["kind"] == "lf_fem" else channel.get("slot"))
+    port = channel.get("out_port")
+    if not (_is_int(con) and con >= 1 and _is_int(slot) and slot in OPX1000_SLOTS
+            and _is_int(port) and port in _FEM_OUT_PORTS):
+        return None
+    return (channel["kind"], con, slot, port)
+
+
 def validate_spec(spec) -> list[str]:
     """Validate a Generate-Config spec. Returns a list of human-readable errors.
 
@@ -448,6 +465,43 @@ def validate_spec(spec) -> list[str]:
                if have else
                f"which has no {fem} in the chassis (step 3) — put the module back there")
             + ", or re-pin or clear those pins in step 5 (Wiring) so they auto-allocate."
+        )
+
+    # QA regenerate-r2-24: two lines pinned to ONE FEM output reached the
+    # allocator and came back as "NotEnoughChannelsException ... add a FEM" --
+    # inside one allocate_wiring call the wirer blocks every channel an earlier
+    # line took. A feedline is one line (run_build uses its FIRST member's pin);
+    # CR / ZZ lines are left out: under cr_port_mode=shared_xy they share the
+    # control's xy port by design (run_build allocates them per line). A pin on
+    # a module the chassis does not hold is named above, not here.
+    port_pins: dict = {}
+    feeds: set = set()
+    for line in lines:
+        if not isinstance(line, dict):
+            continue
+        line_type, element = line.get("line"), line.get("element")
+        if line_type == "resonator":
+            feed = str(line.get("group", f"__solo__{element}"))
+            if feed in feeds:
+                continue
+            feeds.add(feed)
+        if line_type in ("cross_resonance", "zz_drive"):
+            continue
+        out = _pinned_output(line.get("channel"))
+        want = {"mw_fem": "mw", "lf_fem": "lf"}[out[0]] if out else None
+        if out is None or (controllers and fem_kind.get(out[1:3]) != want):
+            continue
+        port_pins.setdefault(out, []).append(f"{element} {line_type}")
+    for (_kind, con, slot, port), who in sorted(port_pins.items()):
+        if len(who) < 2:
+            continue
+        errors.append(
+            (" and ".join(who) + " are both" if len(who) == 2
+             else ", ".join(who) + " are all")
+            + f" pinned to con{con} slot {slot} output {port} — the allocator gives "
+            "each line its own output port (a feedline counts as one), so re-pin or "
+            + ("clear one of them" if len(who) == 2 else "clear all but one of them")
+            + " in step 5 (Wiring)."
         )
 
     # -- bias tee, the other way round --------------------------------------
@@ -1258,7 +1312,8 @@ _BUILD_ERROR_HELP: dict[str, str] = {
         "This environment's instrument list does not have enough channels for "
         "the chip as configured. Add or enlarge a controller/FEM in step 3, or "
         "reduce the number of qubits, pairs or lines in step 4, then "
-        "re-allocate."
+        "re-allocate. A port pinned in step 5 (Wiring) can cause this too: "
+        "clear that pin so the allocator chooses."
     ),
     "ConstraintsTooStrictException": (
         "The port constraints you pinned cannot all be satisfied at once. "

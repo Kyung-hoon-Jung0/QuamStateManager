@@ -496,6 +496,46 @@ function stone(win, qid) {
     ok(!/armed|selected/.test(st.textContent), 'r2-22: a click away still disarms (got "' + st.textContent + '")');
   }
 
+  // QA generate-r2-16: a preset lays out in the zone the user TYPED, not in the
+  // zone floored at the old placement. 6 qubits in one row (a 20 x 1 chain),
+  // then "3 x 2" + Grid (NN) must give the 3 x 2 nearest-neighbour grid.
+  {
+    const w = freshChip();
+    const G = w.WiringGrid;
+    setInput(w, 'gen-topo-cols', '20'); setInput(w, 'gen-topo-rows', '1');
+    G.preset('chain');
+    const row = QS.every(function (q) { const c = G._cellOf(q); return c && c.row === 0; });
+    ok(row, 'r2-16: 20 x 1 chain puts all 6 qubits in one row');
+    setInput(w, 'gen-topo-cols', '3'); setInput(w, 'gen-topo-rows', '2');
+    G.preset('grid');
+    const pairs = w.QuamGen.state.spec.qubit_pairs;
+    ok(pairs.length === 7, 'r2-16: Grid (NN) 3 x 2 gives 7 pairs (got ' + pairs.length + ')');
+    const cells = QS.map(function (q) { const c = G._cellOf(q); return c ? c.col + ',' + c.row : '?'; }).sort();
+    ok(JSON.stringify(cells) === JSON.stringify(['0,0', '0,1', '1,0', '1,1', '2,0', '2,1']),
+       'r2-16: Grid (NN) 3 x 2 fills cells {0..2} x {0..1} (got ' + cells.join(' ') + ')');
+    const z = G.zone();
+    ok(z.cols === 3 && z.rows === 2, 'r2-16: the board is 3 x 2 afterwards (got ' + z.cols + 'x' + z.rows + ')');
+    ok(w.document.getElementById('gen-topo-cols').value === '3' && w.document.getElementById('gen-topo-rows').value === '2',
+       'r2-16: the fields keep 3 x 2 (got ' + w.document.getElementById('gen-topo-cols').value + 'x' +
+       w.document.getElementById('gen-topo-rows').value + ')');
+    // 2 x 2 is too small for 6: the grid is 2 wide and the board GROWS to fit it (2 x 3)
+    setInput(w, 'gen-topo-cols', '2'); setInput(w, 'gen-topo-rows', '2');
+    G.preset('grid');
+    const z2 = G.zone();
+    ok(w.QuamGen.state.spec.qubit_pairs.length === 7 && z2.cols === 2 && z2.rows === 3,
+       'r2-16: Grid (NN) 2 x 2 for 6 qubits = 2 wide, 7 pairs, board grows to 2 x 3 (got ' +
+       w.QuamGen.state.spec.qubit_pairs.length + ' pairs, ' + z2.cols + 'x' + z2.rows + ')');
+    // Chain honours a typed zone the same way: 1 x 20 is one vertical line
+    setInput(w, 'gen-topo-cols', '1'); setInput(w, 'gen-topo-rows', '20');
+    G.preset('chain');
+    ok(QS.every(function (q) { const c = G._cellOf(q); return c && c.col === 0; }),
+       'r2-16: Chain in a 1 x 20 zone is one column');
+    // the manual-shrink floor is unchanged: every stone stays on the board
+    setInput(w, 'gen-topo-cols', '1'); setInput(w, 'gen-topo-rows', '1');
+    const z3 = G.zone();
+    ok(z3.cols >= 1 && z3.rows >= 6, 'r2-16: a typed zone below the placement is still floored (got ' + z3.cols + 'x' + z3.rows + ')');
+  }
+
   if (fails) { console.error(fails + ' check(s) FAILED'); process.exit(1); }
   console.log('generate_topoboard_selfcheck: all checks passed');
 })();

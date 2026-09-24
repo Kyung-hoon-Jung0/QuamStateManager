@@ -1555,6 +1555,50 @@
     return order.map(function (g) { return members[g]; });
   }
 
+  // QA regenerate-r2-30: a pair edit (Control/Target pick, + Add pair, ×)
+  // as one wizard Ctrl+Z step. Snapshots what the handlers change -- the pair
+  // list, pairsTouched, each pair's CZ orientation flag (markPairManual
+  // touches only cz_order; populate values typed later are left alone) and the
+  // pins of lines the edit may drop (a × delete loses its pair's line pin).
+  // `structural` repaints like the add/delete handlers, else like a pick.
+  function pairUndo(structural) {
+    var pop = (state.spec.populate || {}).pairs || {};
+    var cz = {}, had = {}, pins = {};
+    Object.keys(pop).forEach(function (id) {
+      had[id] = true;
+      if (pop[id] && "cz_order" in pop[id]) cz[id] = pop[id].cz_order;
+    });
+    var pairs = JSON.parse(JSON.stringify(state.spec.qubit_pairs));
+    var touched = state.pairsTouched;
+    state.spec.lines.forEach(function (ln) {
+      if (ln.channel) pins[ln.element + "|" + ln.line] = JSON.parse(JSON.stringify(ln.channel));
+    });
+    return function () {
+      state.spec.qubit_pairs = pairs;
+      state.pairsTouched = touched;
+      var popObj = state.spec.populate || (state.spec.populate = {});
+      var pp = popObj.pairs || (popObj.pairs = {});
+      Object.keys(pp).forEach(function (id) {
+        if (!pp[id] || !("cz_order" in pp[id]) || id in cz) return;
+        delete pp[id].cz_order;
+        if (!had[id] && !Object.keys(pp[id]).length) delete pp[id];
+      });
+      Object.keys(cz).forEach(function (id) { (pp[id] = pp[id] || {}).cz_order = cz[id]; });
+      var present = {};
+      state.spec.lines.forEach(function (ln) { present[ln.element + "|" + ln.line] = true; });
+      renderPairs();
+      if (structural) {
+        syncLineTypeToggles();
+        deriveLines();
+        state.spec.lines.forEach(function (ln) {   // a line the undo brings back gets its pin back
+          var k = ln.element + "|" + ln.line;
+          if (!present[k] && pins[k] && !ln.channel) ln.channel = pins[k];
+        });
+      }
+      if (window.WiringGrid) window.WiringGrid.refresh();
+    };
+  }
+
   function renderPairs() {
     var list = document.getElementById("gen-pair-list");
     if (!list) return;
@@ -1615,18 +1659,21 @@
         }
       });
       row.querySelector(".gen-pair-c").addEventListener("change", function (e) {
+        _wizPushRestore("pair " + pair[0] + "–" + pair[1] + " change", pairUndo(false));
         pair[0] = e.target.value;
         state.pairsTouched = true;
         markPairManual(pair);
         renderPairs();   // repaint (the manual chip may have just appeared)
       });
       row.querySelector(".gen-pair-t").addEventListener("change", function (e) {
+        _wizPushRestore("pair " + pair[0] + "–" + pair[1] + " change", pairUndo(false));
         pair[1] = e.target.value;
         state.pairsTouched = true;
         markPairManual(pair);
         renderPairs();
       });
       row.querySelector(".gen-row-del").addEventListener("click", function () {
+        _wizPushRestore("pair " + pair[0] + "–" + pair[1] + " delete", pairUndo(true));
         state.pairsTouched = true;
         state.spec.qubit_pairs.splice(idx, 1);
         renderPairs();
@@ -2372,6 +2419,7 @@
     }
     if (addPair) {
       addPair.addEventListener("click", function () {
+        _wizPushRestore("+ Add pair", pairUndo(true));   // QA regenerate-r2-30
         state.pairsTouched = true;
         var qs = state.spec.qubits;
         state.spec.qubit_pairs.push(
@@ -2845,6 +2893,43 @@
             : "which has no " + fem + " in the chassis (step 3)") + ".";
   }
 
+  // Two lines pinned to ONE FEM output (QA regenerate-r2-24; mirror of
+  // config_generator.validate_spec): the wirer blocks a channel once a line
+  // took it, so the allocator failed as "not enough channels ... add a FEM".
+  // A feedline is one line (run_build uses its FIRST member's pin); CR / ZZ
+  // lines share the control's xy port by design (shared_xy) and are left out,
+  // as is a pin on a missing module (stalePinGroups names that).
+  function pinCollisionGroups() {
+    var byPort = {}, feeds = {};
+    var chassis = (state.spec.instruments.controllers || []).length > 0;
+    state.spec.lines.forEach(function (ln, idx) {
+      if (ln.line === "resonator") {
+        var feed = ln.group !== undefined ? ln.group : "__solo__" + ln.element;
+        if (feeds[feed]) return;
+        feeds[feed] = true;
+      }
+      if (ln.line === "cross_resonance" || ln.line === "zz_drive") return;
+      var ch = ln.channel, want = ch && ({ mw_fem: "mw", lf_fem: "lf" })[ch.kind];
+      if (!want || ch.con == null || ch.out_port == null) return;
+      var slot = (ch.kind === "lf_fem" && "out_slot" in ch) ? ch.out_slot : ch.slot;
+      if (slot == null || (chassis && femKindAt(ch.con, slot) !== want)) return;
+      var k = ch.kind + "|" + ch.con + "/" + slot + "/" + ch.out_port;
+      (byPort[k] || (byPort[k] = { con: ch.con, slot: slot, port: ch.out_port, idx: [] })).idx.push(idx);
+    });
+    return Object.keys(byPort).sort().map(function (k) { return byPort[k]; })
+      .filter(function (g) { return g.idx.length > 1; });
+  }
+
+  function pinCollisionText(g) {
+    var who = g.idx.map(function (i) {
+      var ln = state.spec.lines[i]; return ln.element + " " + ln.line;
+    });
+    return (who.length === 2 ? who.join(" and ") + " are both" : who.join(", ") + " are all") +
+      " pinned to con" + g.con + " slot " + g.slot + " output " + g.port +
+      " — the allocator gives each line its own output port (a feedline counts as one), so re-pin or " +
+      (who.length === 2 ? "clear one of them." : "clear all but one of them.");
+  }
+
   // Rewrite (move=true) or drop (move=false) the pins of one stale group, then
   // re-allocate -- one press instead of retyping every pin. Never automatic:
   // a user who removed a module may want those lines re-allocated, not moved.
@@ -2875,6 +2960,9 @@
     });
     stalePinGroups().forEach(function (g) {
       out.push({ level: "error", message: stalePinText(g), stale: g });
+    });
+    pinCollisionGroups().forEach(function (g) {
+      out.push({ level: "error", message: pinCollisionText(g) });
     });
     return out;
   }
@@ -2930,6 +3018,9 @@
     var staleIdx = {};
     stalePinGroups().forEach(function (g) {
       g.idx.forEach(function (i) { staleIdx[i] = stalePinText(g); });
+    });
+    pinCollisionGroups().forEach(function (g) {   // QA regenerate-r2-24
+      g.idx.forEach(function (i) { if (!staleIdx[i]) staleIdx[i] = pinCollisionText(g); });
     });
     var body = state.spec.lines.map(function (ln, idx) {
       var pin = channelToPin(ln.channel);
@@ -3993,6 +4084,59 @@
     }
   }
 
+  // QA regenerate-r2-30: a wiring drag as one wizard Ctrl+Z step. The three
+  // drag editors mutate the allocation IN PLACE, so it keeps its identity
+  // until the allocator answers again -- that identity is the staleness guard
+  // (a re-allocation or a dropped allocation makes the snapshot stale), and
+  // the restore is in place too so an older drag keeps its guard. Also put
+  // back: the spec pins + feedline groups (by element|line), wiringTouched,
+  // the allocation-matches-spec signature and the QDAC trigger pins.
+  function wizSnapKeys(o, keys) {
+    var snap = {};
+    keys.forEach(function (k) {
+      if (o && Object.prototype.hasOwnProperty.call(o, k)) {
+        snap[k] = o[k] === undefined ? undefined : JSON.parse(JSON.stringify(o[k]));
+      }
+    });
+    return snap;
+  }
+  function wizPutKeys(o, keys, snap) {
+    keys.forEach(function (k) {
+      if (Object.prototype.hasOwnProperty.call(snap, k)) o[k] = snap[k];
+      else delete o[k];
+    });
+  }
+  function wireUndo() {
+    var alloc = state.allocation;
+    var allocSnap = JSON.parse(JSON.stringify(alloc));
+    var lines = {}, trig = {};
+    state.spec.lines.forEach(function (ln) {
+      lines[ln.element + "|" + ln.line] = wizSnapKeys(ln, ["channel", "group"]);
+    });
+    var qq = (state.spec.qdac || {}).qubits || {};
+    Object.keys(qq).forEach(function (q) { trig[q] = wizSnapKeys(qq[q], ["trigger_pin", "pin_source"]); });
+    var touched = state.wiringTouched, specSig = _allocSpecSig;
+    return {
+      valid: function () { return state.allocation === alloc; },
+      restore: function () {
+        Object.keys(alloc).forEach(function (k) { delete alloc[k]; });
+        Object.keys(allocSnap).forEach(function (k) { alloc[k] = allocSnap[k]; });
+        state.spec.lines.forEach(function (ln) {
+          var snap = lines[ln.element + "|" + ln.line];
+          if (snap) wizPutKeys(ln, ["channel", "group"], snap);
+        });
+        Object.keys(trig).forEach(function (q) {
+          if (qq[q]) wizPutKeys(qq[q], ["trigger_pin", "pin_source"], trig[q]);
+        });
+        state.wiringTouched = touched;
+        _allocSpecSig = specSig;
+        renderQdacCabling();
+        renderWiringDiagram();
+        renderWiringTable();
+      }
+    };
+  }
+
   function onWireDragEnd(ev) {
     if (!_wireDrag) return;
     var drag = _wireDrag;
@@ -4002,6 +4146,10 @@
     if (cell) {
       var target = readCell(cell);
       if (isValidDrop(drag, target)) {
+        if (state.allocation) {
+          var wu = wireUndo();
+          _wizPushRestore("wiring drag", wu.restore, wu.valid);
+        }
         if (drag.role === "digital") {
           applyQdacTriggerEdit(drag, target);    // the whole trigger cable
         } else if (!drag.whole && (drag.role === "rr" || drag.role === "rr_in")) {
@@ -8002,10 +8150,15 @@
     } else {
       el.className = "gen-build-result gen-build-error";
       var errs;
-      if (res.result && res.result.error) {
+      // QA regenerate-r2-25: res.error is explain_build_error's text -- what
+      // to do, THEN the raw exception it keeps verbatim. Preferring the raw
+      // res.result.error hid that advice from every build failure.
+      if (res.error) {
+        errs = [res.error];
+      } else if (res.result && res.result.error) {
         errs = [res.result.error];
       } else {
-        errs = res.errors || (res.error ? [res.error] : ["Generation failed."]);
+        errs = res.errors || ["Generation failed."];
       }
       var head = document.createElement("p");
       head.textContent = "✗ Generation failed:";
@@ -8582,6 +8735,17 @@
   var _WIZ_STACK_CAP = 100;
   var _wizApplying = false;
 
+  // QA regenerate-r2-30: a structural wizard edit (pair pick / add / delete, a
+  // wiring drag) is undoable like a field. `restore` puts its snapshot back and
+  // repaints; `valid` (optional) says whether the snapshot still describes the
+  // wizard. A content swap (hydrate / reset / draft restore reassigns
+  // state.spec) always makes it stale -- skipped like a detached field.
+  function _wizPushRestore(label, restore, valid) {
+    if (typeof _wizStack === "undefined" || !_wizStack || _wizApplying) return;
+    _wizStack.push({ restore: restore, label: label, spec: state.spec, valid: valid || null });
+    if (_wizStack.length > _WIZ_STACK_CAP) _wizStack.shift();
+  }
+
   function _wizField(t) {
     if (!t || !t.matches) return null;
     if (!t.matches('input, select, textarea')) return null;
@@ -8642,6 +8806,14 @@
             return true;
           }
           continue;
+        }
+        if (entry.restore) {
+          if (entry.spec !== state.spec || (entry.valid && !entry.valid())) continue;
+          _wizApplying = true;
+          try { entry.restore(); } finally { _wizApplying = false; }
+          try { captureDomFields(); saveDraft(); } catch (e3) { /* best-effort */ }
+          if (window.showToast) window.showToast('Undid: ' + entry.label, 'success');
+          return true;
         }
         var el = (entry.el && entry.el.isConnected) ? entry.el
                : (entry.id ? document.getElementById(entry.id) : null);

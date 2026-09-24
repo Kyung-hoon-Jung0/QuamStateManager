@@ -1201,6 +1201,77 @@ function statusText(win) {
       'A23: Clear drops the stale pins so they auto-allocate');
   })();
 
+  // ── A25 (QA regenerate-r2-24): two pins on ONE output are named ─────────
+  // q2's drive typed onto q1's drive port used to show nothing but the
+  // allocator's "not enough channels ... add a FEM". A feedline is one line
+  // (all three resonators on one pinned port are fine); a CR line may share.
+  await (async function pinCollisionNamed() {
+    const { win, log } = makeWorld([
+      { match: '/generate/envs', reply: { envs: [] } },
+      { match: '/generate/allocate', reply: (e) => {
+          const outs = {};
+          let clash = false;
+          (e.body.spec.lines || []).forEach(l => {
+            if (l.line === 'drive' && l.channel && l.channel.out_port) {
+              const k = l.channel.slot + '/' + l.channel.out_port;
+              if (outs[k]) clash = true; outs[k] = 1;
+            }
+          });
+          return clash ? { ok: false, errors: ['q1 drive and q2 drive are both pinned (server)'] }
+                       : { ok: true, result: { allocation: cleanAlloc() } };
+        } }
+    ]);
+    const G = buildWizard(win);
+    G.state.env = 'C:/envs/test/python.exe';
+    G.goToStep(5); await settle();
+    const issues = () => win.document.getElementById('gen-wiring-issues').textContent;
+    const idx = (el, line) => G.state.spec.lines.findIndex(l => l.element === el && l.line === line);
+    const box = (el, line) => win.document.querySelector('#gen-wiring-table tr[data-idx="' + idx(el, line) + '"] .gen-wiring-pin');
+    function type(el, line, v) {
+      const b = box(el, line); b.value = v;
+      b.dispatchEvent(new win.Event('change', { bubbles: true }));
+    }
+    // one feedline, every member pinned to the same port: not a collision
+    ['q1', 'q2', 'q3'].forEach(q => type(q, 'resonator', '1/1/1'));
+    await settle();
+    type('q1', 'drive', '1/1/2');
+    await settle();
+    ok(!win.document.querySelector('#gen-wiring-table .gen-wiring-pin-invalid') &&
+       issues().indexOf('pinned to') < 0,
+      'A25: a feedline pinned to one port is one line, nothing flagged (got "' + issues() + '")');
+    type('q2', 'drive', '1/1/2');
+    await settle();
+    ok(issues().indexOf('q1 drive and q2 drive are both pinned to con1 slot 1 output 2') >= 0 &&
+       issues().indexOf('Wiring valid') < 0,
+      'A25: the issues panel names both lines and the port (got "' + issues() + '")');
+    ok(box('q1', 'drive').getAttribute('aria-invalid') === 'true' &&
+       box('q2', 'drive').getAttribute('aria-invalid') === 'true' &&
+       /both pinned/.test(box('q2', 'drive').title),
+      'A25: both pin boxes are flagged, with the reason as their title');
+    G.goToStep(4); G.goToStep(5); await settle();
+    ok(box('q2', 'drive').classList.contains('gen-wiring-pin-invalid') && issues().indexOf('both pinned') >= 0,
+      'A25: the flag survives leaving and re-entering step 5');
+    // a drive onto the feedline's output port is a collision too
+    type('q2', 'drive', '1/1/1');
+    await settle();
+    ok(issues().indexOf('q1 resonator and q2 drive are both pinned to con1 slot 1 output 1') >= 0,
+      'A25: a drive on the feedline output names the feedline once (got "' + issues() + '")');
+    // re-pin to a free port: every flag clears and the allocation comes back
+    type('q2', 'drive', '1/1/3');
+    await settle();
+    ok(!win.document.querySelector('#gen-wiring-table .gen-wiring-pin-invalid') &&
+       issues().indexOf('pinned to') < 0 && !!G.state.allocation,
+      'A25: a free port clears every flag (got "' + issues() + '")');
+    // a CR line on its control's xy port shares it by design
+    G.state.spec.lines.push({ element: 'q1-q2', line: 'cross_resonance',
+                              channel: { kind: 'mw_fem', con: 1, slot: 1, out_port: 2 } });
+    type('q3', 'drive', '1/1/4');   // any commit re-reads the pins (no step re-entry: deriveLines would drop the CR line)
+    await settle();
+    ok(idx('q1-q2', 'cross_resonance') >= 0 && issues().indexOf('pinned to') < 0,
+      'A25: a CR line on the control xy port is not flagged (line kept: ' + (idx('q1-q2', 'cross_resonance') >= 0) + ')');
+    ok(allocCalls(log).length > 0, 'A25: the allocator was asked (world is live)');
+  })();
+
   if (fails) {
     console.error('generate_autoalloc_selfcheck: ' + fails + ' FAILURES');
     process.exit(1);
