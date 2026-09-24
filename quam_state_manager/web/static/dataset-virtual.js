@@ -1312,6 +1312,9 @@
     // via the search-results / status check kept simple: empty OR shows search results).
     function openDatasetDetail(id) {
         if (!window.htmx) return;
+        // QA r2-01: the inspector's up/down walk THIS list (filtered + sorted)
+        // for a run opened from it -- see navFrom below and app.js dsNavRun.
+        window._dsNavFromTable = id;
         state.lastDetailId = id;
         state._reissuedIds = state._reissuedIds || {};
         window.htmx.ajax('GET', '/dataset/' + id, { source: '#inspector-pane', target: '#inspector-pane', swap: 'innerHTML' });
@@ -2567,5 +2570,21 @@
             applyFilters();
         },
         folderFilterKeys: function() { return Array.from(state.folderFilter); },
+        // QA r2-01: step the inspector from run `uid` through the rows the
+        // user SEES (search + sort applied). 'moved' | 'end' | false (the run
+        // is not in this list / no table mounted -> the caller falls back).
+        navFrom: function (uid, dir) {
+            if (!_kbBound()) return false;
+            var i = -1;
+            for (var k = 0; k < state.visible.length; k++) {
+                var r = state.rows[state.visible[k]];
+                if (r && String(r.uid != null ? r.uid : r.id) === uid) { i = k; break; }
+            }
+            if (i < 0) return false;
+            _kbIdx = i; _kbMove(dir);          // clamp + scroll into view + highlight
+            if (_kbIdx === i) return 'end';
+            openDatasetDetail(_kbUid());
+            return 'moved';
+        },
     };
 })();

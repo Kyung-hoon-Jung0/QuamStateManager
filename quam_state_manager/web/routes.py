@@ -7255,10 +7255,19 @@ def chip_active_token():
     name = ""
     ctx = _active_ctx()
     if ctx and ctx.get("path"):
+        # The name the topbar shows (never the raw parent folder -- a
+        # standalone <x>/<chip> folder said "chip"/"quam_states"), plus the
+        # user-declared extras.chip_name when it says something else.
         try:
-            name = history.chip_name_for(_Path(ctx["path"]))
+            name = _chip_display_name(ctx["path"])
         except (OSError, ValueError):
             name = ""
+        store = ctx.get("store")
+        if store is not None:
+            with store._lock:
+                declared = history.extras_chip_name(store.state)
+            if declared and declared != name:
+                name = f"{name} (chip_name {declared})" if name else declared
     # ``loaded`` distinguishes "no chip loaded" from "loaded but token
     # uncomputable" (corrupt wiring) — clients that treat the ACTIVE context as
     # authoritative need the truth, not an empty-token proxy for it.
@@ -24885,8 +24894,12 @@ def _run_chip_identity(run_qs: Path) -> tuple[str, str]:
         hit = _run_chip_identity_cache.get(key)
         if hit is not None and hit[0] == stamp:
             return hit[1]
-    token = history.fingerprint_token(history.fingerprint_of(run_qs)) or ""
-    name = history.chip_name_for(run_qs)
+    # ONE read of the run's state+wiring. docs/20 v2 ladder: the run's own
+    # declared extras.chip_name first; the data-folder label chip_name_for
+    # derives is only the fallback.
+    ident = history.identity_of(run_qs)
+    token = history.fingerprint_token(ident.fingerprint) or ""
+    name = ident.name or ident.path_name
     if stamp is not None:
         if len(_run_chip_identity_cache) >= _RUN_CHIP_IDENTITY_CAP:
             _run_chip_identity_cache.clear()   # simple full-reset bound
@@ -25645,10 +25658,14 @@ def dataset_compare_prev(uid):
     prev_id = ds.get_previous_same_experiment_id(run_id)
     if prev_id is None:
         run = ds.get_run(run_id) or {}
+        # QA r2-04: the lookup is per TARGET now -- name it, since earlier runs
+        # of the same experiment on other qubits may well exist.
+        targets = ", ".join(run.get("qubit_pairs") or run.get("qubits") or [])
         return render_template(
             "_status.html",
             message=(f"No earlier run of “{run.get('experiment_name', 'this experiment')}”"
-                     f" in this folder — this is the first one."),
+                     + (f" on {targets}" if targets else "")
+                     + " in this folder — this is the first one."),
             level="info")
     folder_key = uid.split(":")[0]
     return redirect(url_for("main.datasets_compare",

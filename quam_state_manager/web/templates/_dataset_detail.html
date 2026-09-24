@@ -238,7 +238,7 @@
                 {% endif %}
                 {% if run.parent_id %}
                 <tr><td class="col-prop"><code>parent</code></td>
-                    <td class="col-val"><a href="#" hx-get="/dataset/{{ folder_key }}:{{ run.parent_id }}" hx-target="#inspector-pane" hx-swap="innerHTML">#{{ run.parent_id }}</a></td></tr>
+                    <td class="col-val"><a href="#" hx-get="/dataset/{{ folder_key }}:{{ run.parent_id }}" hx-target="closest #table-pane, #inspector-pane" hx-swap="innerHTML">#{{ run.parent_id }}</a></td></tr>
                 {% endif %}
             </tbody>
         </table>

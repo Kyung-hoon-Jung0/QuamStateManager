@@ -394,7 +394,7 @@ class TestDetailNavAffordances:
         with app.app_context():
             key = routes._folder_key(f)
         body = c.get(f"/dataset/{key}:7", headers={"HX-Request": "true"}).get_data(as_text=True)
-        assert "dsNavRun(-1)" in body and "dsNavRun(1)" in body   # prev/next run
+        assert "dsNavRun(-1, this)" in body and "dsNavRun(1, this)" in body   # prev/next run
         assert "dsOpenFullPage" in body                            # full-page expand
         assert 'hx-trigger="load"' not in body, \
             "hidden-tab eager load re-introduced (H5 opened on every click)"
@@ -405,9 +405,12 @@ class TestPhase2Compare:
 
     def _seed_series(self, tmp_path):
         f = tmp_path / "data"
-        _seed_run(f, 10, name="rabi", hhmmss="010000")
-        _seed_run(f, 11, name="t1", hhmmss="020000")
-        _seed_run(f, 12, name="rabi", hhmmss="030000")
+        # one shared target: 'vs prev' matches the same experiment on an
+        # OVERLAPPING target (QA r2-04) -- the default q{run_id} qubits made
+        # 10 and 12 different qubits, which only passed while it ignored them
+        _seed_run(f, 10, name="rabi", hhmmss="010000", qubits=["q1"])
+        _seed_run(f, 11, name="t1", hhmmss="020000", qubits=["q1"])
+        _seed_run(f, 12, name="rabi", hhmmss="030000", qubits=["q1"])
         app, c = _app_with_folders(tmp_path, [f])
         with app.app_context():
             key = routes._folder_key(f)

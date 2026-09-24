@@ -6377,6 +6377,10 @@ table.h5-vars-table tr.h5-var-selected .btn-sm { background: var(--pico-primary)
     border-radius: 4px; transition: background 0.15s;
 }
 .inspector-nav-btn:hover, .inspector-expand:hover { background: rgba(128,128,128,0.15); }
+/* QA r2-06: on the full page (the run in #table-pane) ⛶ is where you already
+   are and 📌 compares inside the inspector only -- both were dead buttons. */
+#table-pane .inspector-header-dataset .inspector-expand,
+#table-pane .inspector-header-dataset .inspector-pin { display: none; }
 
 .inspector-vsprev {
     background: transparent; border: 1px solid var(--pico-muted-border-color);

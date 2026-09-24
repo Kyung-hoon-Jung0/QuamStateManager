@@ -2413,6 +2413,7 @@ document.addEventListener('click', function(evt) {
     if (!el) return;
     var uid = el.getAttribute('data-uid');
     if (uid && window.htmx) {
+        window._dsNavFromTable = null;     // opened from the tree: nav walks the tree
         var hasInspector = !!document.getElementById('inspector-pane');
         var target = hasInspector ? '#inspector-pane' : '#table-pane';
         // Mark the active run in the tree (the flip-compare gesture needs to
@@ -2444,6 +2445,7 @@ document.addEventListener('click', function(evt) {
  * so only flag the genuinely slow ones: after 200ms in flight, overlay a clear
  * "Loading #id…" chip (CSS .ds-slow-loading::after reads data-loading-run). */
 var _dsSlowTimer = null;
+var _dsSlowClear = null;
 function _dsMarkSlowLoad(targetSel, runId) {
     var pane = document.querySelector(targetSel);
     if (!pane) return;
@@ -2453,15 +2455,22 @@ function _dsMarkSlowLoad(targetSel, runId) {
         pane.classList.add('ds-slow-loading');
     }, 200);
     var clear = function(e) {
-        if (e.detail && e.detail.target && e.detail.target !== pane) return;
+        if (e && e.detail && e.detail.target && e.detail.target !== pane) return;
         if (_dsSlowTimer) { clearTimeout(_dsSlowTimer); _dsSlowTimer = null; }
         pane.classList.remove('ds-slow-loading');
         pane.removeAttribute('data-loading-run');
         document.removeEventListener('htmx:afterSwap', clear);
         document.removeEventListener('htmx:responseError', clear);
+        if (_dsSlowClear === clear) _dsSlowClear = null;
     };
+    _dsSlowClear = clear;
     document.addEventListener('htmx:afterSwap', clear);
     document.addEventListener('htmx:responseError', clear);
+}
+/* QA r2-02: a swap htmx never performs (the pinned-compare interceptor cancels
+   it and builds the split itself) fires no htmx:afterSwap -- clear explicitly. */
+function _dsClearSlowLoad(pane) {
+    if (_dsSlowClear) _dsSlowClear({detail: {target: pane}});
 }
 
 /* Prev/next run navigation — walks the sidebar tree's VISIBLE run entries in
@@ -2469,11 +2478,21 @@ function _dsMarkSlowLoad(targetSel, runId) {
  * run. Buttons in the dataset inspector header + the [ and ] keys. Clicking via
  * el.click() reuses the exact delegated handler above (source/hx-sync, active
  * marker, slow-load chip — one path, no drift). */
-window.dsNavRun = function(dir) {
+window.dsNavRun = function(dir, btn) {
     // The CURRENT (unprefixed) detail only — in pinned compare the left column's
-    // ids are "pinned-"-prefixed and must not anchor the navigation.
-    var root = document.getElementById('ds-detail-root');
+    // ids are "pinned-"-prefixed and must not anchor the navigation. QA r2-06:
+    // the pressed header's OWN run first (a full page and an inspector run can
+    // both be on screen), then the inspector's, then any.
+    var root = (btn && btn.closest && btn.closest('#ds-detail-root'))
+        || document.querySelector('#inspector-pane #ds-detail-root')
+        || document.getElementById('ds-detail-root');
     var curUid = root ? root.getAttribute('data-uid') : null;
+    var host = _dsHost(root);   // a full-page run is REPLACED, never stacked under
+    // QA r2-01: a run opened from the Datasets TABLE steps through the table's
+    // own filtered + sorted rows -- never out of the search to raw id order.
+    if (curUid && host === '#inspector-pane' && window._dsNavFromTable === curUid && window.DatasetVirtual
+            && typeof window.DatasetVirtual.navFrom === 'function'
+            && window.DatasetVirtual.navFrom(curUid, dir)) return;
     // r16 ④: server neighbor fallback — a run opened from the Datasets TABLE
     // (or with the tree collapsed / date group closed / filter hiding it) has
     // no visible tree entries, so both nav buttons were silently dead.
@@ -2483,11 +2502,11 @@ window.dsNavRun = function(dir) {
             .then(function(r) { return r.json(); })
             .then(function(d) {
                 if (!d || !d.uid) return;   // genuinely at the end
-                var hasInspector = !!document.getElementById('inspector-pane');
-                var target = hasInspector ? '#inspector-pane' : '#table-pane';
+                var target = host;
                 _dsMarkSlowLoad(target, d.run_id);
                 htmx.ajax('GET', '/dataset/' + d.uid,
-                          {source: target, target: target, swap: 'innerHTML'});
+                          {source: target, target: target, swap: 'innerHTML'})
+                    .then(function() { _dsSyncFullPageUrl(target); });
             }).catch(function() {});
     }
     var entries = Array.prototype.filter.call(
@@ -2516,8 +2535,56 @@ window.dsNavRun = function(dir) {
         closed = closed.parentElement ? closed.parentElement.closest('details:not([open])') : null;
     }
     next.scrollIntoView({block: 'nearest'});
+    if (host === '#table-pane') {
+        // the tree click always opens the INSPECTOR -- a full page loads in place
+        document.querySelectorAll('.tree-entry-active').forEach(function(a) {
+            a.classList.remove('tree-entry-active');
+        });
+        next.classList.add('tree-entry-active');
+        window._markActiveTreeBranch(next);
+        try { next.focus({preventScroll: true}); } catch (e) {}
+        _dsMarkSlowLoad(host, next.getAttribute('data-run-id'));
+        htmx.ajax('GET', '/dataset/' + next.getAttribute('data-uid'),
+                  {source: host, target: host, swap: 'innerHTML'})
+            .then(function() { _dsSyncFullPageUrl(host); });
+        return;
+    }
     next.click();   // the delegated click handler opens it AND puts the keyboard on it
 };
+
+/* QA r2-06: a run detail's own controls act on the pane that HOLDS it -- the
+ * full-page view (/dataset/<uid>, ⛶) lives in #table-pane, everything else in
+ * the inspector. */
+function _dsHost(el) {
+    if (el && el.closest && el.closest('#table-pane')) return '#table-pane';
+    return document.getElementById('inspector-pane') ? '#inspector-pane' : '#table-pane';
+}
+/* The detail's ×: the inspector closes; a full page goes back to the Datasets
+ * list the way the sidebar link does (its hx-get + push-url). */
+window.dsCloseRun = function(btn) {
+    if (_dsHost(btn) === '#inspector-pane') { window.closeInspector(); return; }
+    var a = document.querySelector('.sidebar-nav a[href="/datasets"]');
+    if (a) a.click(); else window.location.assign('/datasets');
+};
+/* ...and the full page keeps its address honest: a run that replaced it in
+ * #table-pane (↑/↓ above, the detail's own parent link below) is what the URL
+ * names. ONLY those: a swap that pushes its own history entry (a journal/agent
+ * run link) must never have the entry it leaves renamed. */
+function _dsSyncFullPageUrl(sel) {
+    var t = document.querySelector(sel);
+    if (!t || t.id !== 'table-pane' || location.pathname.indexOf('/dataset/') !== 0) return;
+    var r = t.querySelector('#ds-detail-root');
+    var uid = r && r.getAttribute('data-uid');
+    if (uid && location.pathname !== '/dataset/' + uid) {
+        try { history.replaceState({htmx: true}, '', '/dataset/' + uid); } catch (e) {}
+    }
+}
+document.addEventListener('htmx:afterSwap', function(evt) {
+    var d = evt.detail || {};
+    var src = d.requestConfig && d.requestConfig.elt;
+    if (d.target && d.target.id === 'table-pane' && src && src.closest
+            && src.closest('#ds-detail-root')) _dsSyncFullPageUrl('#table-pane');
+});
 
 /* docs/126 r3: the run-number jump lives on the Prev State comparison bar
  * (its original home per the request) — typing a number compares the open
@@ -2644,10 +2711,10 @@ document.addEventListener('keydown', function (evt) {
 window.dsOpenFullPage = function(btn) {
     var root = btn.closest('[data-uid]');
     var uid = root ? root.getAttribute('data-uid') : null;
-    if (!uid || !window.htmx) return;
-    if (window.closeInspector) window.closeInspector();
-    htmx.ajax('GET', '/dataset/' + uid,
-              {source: '#table-pane', target: '#table-pane', swap: 'innerHTML'});
+    if (!uid) return;
+    // QA r2-06: a REAL page (one code path with a pasted /dataset/<uid>, and a
+    // history entry, so Back returns to where ⛶ was pressed).
+    window.location.assign('/dataset/' + uid);
 };
 
 /* "vs prev": one-click compare against the previous run of the SAME experiment
@@ -12622,6 +12689,8 @@ function _renderPlotApplyPopup(updates, expName, qubitName, contextRows, chipExp
     // Apply All only makes sense for 2+ rows.
     var applyAllBtn = document.getElementById('plot-apply-all');
     if (applyAllBtn) applyAllBtn.style.display = (updates.length > 1) ? '' : 'none';
+    // a fresh popup: a previous one's missing-row gate must not carry over
+    if (applyAllBtn) { applyAllBtn.disabled = false; applyAllBtn.removeAttribute('title'); }
 
     popup.style.display = 'flex';
     popup._releaseTrap = window.trapFocus(popup, window.closePlotApplyPopup);
@@ -12732,13 +12801,40 @@ function _fetchPlotApplyOldValues(updates) {
                 var v = (info && info.resolved_value !== undefined && info.resolved_value !== null)
                         ? info.resolved_value : values[input];
                 _setOldVal(oldSlot, v, errors[input]);
+                // Not on the LOADED chip at all (another chip's run, a qubit
+                // this chip lacks): Apply could only fail with a raw KeyError.
+                if (errors[input] && !(info && info.resolvable)) _markPlotRowMissing(row, input);
             }
         });
+        _syncPlotApplyAllMissing();
     }).catch(function() { /* leave placeholders */ });
 }
 
+/* A row whose path the peek reported missing (and that no pointer resolves):
+   say so plainly and never offer Apply -- the popup sends no `create` flag, so
+   the write can only 400. Apply All stays all-or-nothing, so it goes too. */
+function _markPlotRowMissing(row, path) {
+    row.classList.add('plot-apply-missing');
+    var btn = row.querySelector('.plot-apply-row-btn');
+    if (btn) { btn.disabled = true; btn.title = 'Not on the loaded chip'; }
+    var errEl = row.querySelector('.plot-apply-row-error');
+    if (errEl) {
+        errEl.hidden = false;
+        errEl.textContent = 'Not on the loaded chip — ' + path
+            + ' does not exist here, so there is nothing to update.';
+    }
+}
+function _syncPlotApplyAllMissing() {
+    var all = document.getElementById('plot-apply-all');
+    var n = document.querySelectorAll('#plot-apply-rows .plot-apply-missing').length;
+    if (!all || !n) return;
+    all.disabled = true;
+    all.title = n + ' field' + (n === 1 ? ' is' : 's are') + ' not on the loaded chip';
+}
+
 function applyPlotRow(row) {
-    if (!row || row.classList.contains('plot-apply-applied')) return;
+    if (!row || row.classList.contains('plot-apply-applied')
+        || row.classList.contains('plot-apply-missing')) return;
     var input = row.querySelector('.plot-apply-new-input');
     var btn = row.querySelector('.plot-apply-row-btn');
     var errEl = row.querySelector('.plot-apply-row-error');
@@ -12842,6 +12938,7 @@ function applyPlotRow(row) {
 function applyAllPlotRows() {
     var rowsBox = document.getElementById('plot-apply-rows');
     if (!rowsBox) return;
+    if (rowsBox.querySelector('.plot-apply-missing')) { _syncPlotApplyAllMissing(); return; }
     var rows = Array.prototype.slice.call(rowsBox.querySelectorAll('.plot-apply-row'));
     var pending = rows.filter(function(r) { return !r.classList.contains('plot-apply-applied'); });
     if (!pending.length) { closePlotApplyPopup(); return; }
@@ -13546,7 +13643,24 @@ function _showPlotClickToast(coordText, qubitName, dotPath) {
  * e.g. "qubits.q4.resonator.time_of_flight"
  */
 function _navigateToExplorerPath(dotPath) {
+    var runMoved = false;
     function openExplorer() {
+        // QA r2-06: a full-page run (in #table-pane) would be REPLACED by the
+        // Explorer with nothing to close and no way back -- move it into the
+        // inspector first, so it stays beside the state as it does from there.
+        var fp = !runMoved && document.querySelector('#table-pane #ds-detail-root');
+        var fpUid = fp && fp.getAttribute('data-uid');
+        if (fpUid && document.getElementById('inspector-pane')) {
+            runMoved = true;
+            htmx.ajax('GET', '/dataset/' + fpUid,
+                      {source: '#inspector-pane', target: '#inspector-pane', swap: 'innerHTML'})
+                .then(function() {
+                    // after the swap: its afterSwap handler re-expands the inspector
+                    if (window._applySplitPreset) window._applySplitPreset('collapsed');
+                    openExplorer();
+                });
+            return;
+        }
         htmx.ajax('GET', '/explorer', {target: '#table-pane', swap: 'innerHTML'}).then(function() {
             var attempts = 0;
             var maxAttempts = 15;
@@ -14362,7 +14476,9 @@ window.trendUseSingleFolder = function() {
 /* ------------------------------------------------------------------ */
 
 window._pinnedRunId = null;
+window._pinnedRunKey = null;   // QA r2-03: folder-aware -- run ids repeat across folders
 window._pinnedHtml = null;
+function _dsRunKey(root) { return (root.dataset.folderKey || '') + ':' + root.dataset.runId; }
 
 /**
  * innerHTML never runs <script> tags nor wires htmx attributes. The Pin & Browse
@@ -14389,6 +14505,7 @@ function _activatePinnedPane(pane) {
  */
 window.unpinDataset = function() {
     window._pinnedRunId = null;
+    window._pinnedRunKey = null;
     window._pinnedHtml = null;
     var btn = document.getElementById('inspector-pin-btn');
     if (btn) btn.classList.remove('pinned');
@@ -14425,6 +14542,7 @@ function _closeCurrentKeepPinned() {
     if (label) label.remove();
     tmp.querySelectorAll('[id^="pinned-"]').forEach(function(el) { el.id = el.id.slice(7); });
     window._pinnedRunId = null;
+    window._pinnedRunKey = null;
     window._pinnedHtml = null;
     // Purge live plots before innerHTML nukes them (see unpinDataset).
     if (window.PlotHost) {
@@ -14452,6 +14570,7 @@ window.togglePinDataset = function() {
     var root = source.querySelector('#ds-detail-root');
     if (!root) return;
     window._pinnedRunId = root.dataset.runId;
+    window._pinnedRunKey = _dsRunKey(root);
 
     // Clone HTML and prefix IDs to avoid duplicates with the live (right) column.
     var clone = source.cloneNode(true);
@@ -14539,12 +14658,13 @@ function _pinnedRunSwapInterceptor(evt) {
     tmp.innerHTML = evt.detail.serverResponse;
     var newRoot = tmp.querySelector('#ds-detail-root');
     if (!newRoot) return; // Not a dataset detail — let it swap normally
+    _dsClearSlowLoad(evt.detail.target);   // both branches below cancel the swap
 
     // Same run clicked again: do NOT fall through to the default swap (which would
     // replace the whole pane with a single-column response and silently drop the
     // pinned column — the "sometimes the pinned vanishes" bug). Suppress the swap and
     // leave the current layout untouched.
-    if (newRoot.dataset.runId === window._pinnedRunId) {
+    if (_dsRunKey(newRoot) === window._pinnedRunKey) {
         evt.detail.shouldSwap = false;
         return;
     }

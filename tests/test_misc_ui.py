@@ -145,7 +145,9 @@ class TestRunJump:
         h = _read("quam_state_manager/web/templates/_inspector_header.html")
         assert 'id="ds-run-jump"' not in h
         assert "dsNavRun(-10)" not in h and "dsNavRun(10)" not in h
-        assert "dsNavRun(-1)" in h and "dsNavRun(1)" in h   # single-step stays
+        # single-step stays (QA r2-06: the button passes itself, so a full
+        # page and an inspector run on screen together each drive their own)
+        assert "dsNavRun(-1, this)" in h and "dsNavRun(1, this)" in h
         bar = _read("quam_state_manager/web/templates/_dataset_prev_diff.html")
         assert "prevdiff-vs-input" in bar
         assert "prevDiffJump" in bar

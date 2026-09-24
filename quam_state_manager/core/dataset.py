@@ -2194,19 +2194,33 @@ class DatasetStore:
         return None
 
     def get_previous_same_experiment_id(self, run_id: int) -> int | None:
-        """The nearest EARLIER run of the SAME experiment (node type), or None.
+        """The nearest EARLIER run of the SAME experiment (node type) on an
+        OVERLAPPING target, or None.
 
         The calibration workflow's core question — "how does this run compare
         to the last time this node ran?" — walks run-id order backwards until
-        the experiment_name matches. In-memory walk over the sorted index."""
+        the experiment_name matches AND the candidate measured at least one of
+        this run's targets (QA r2-04: q3's run was compared with q2's, so every
+        row was one-sided). A 2Q run matches on its PAIRS (pair runs also fold
+        their member qubits into ``qubits``, so q1-q2 must not match q2-q3); a
+        run with no parsed targets matches on the name alone, as before.
+        In-memory walk over the sorted index."""
         cur = self.runs.get(run_id)
         if cur is None or not cur.experiment_name:
             return None
+        cur_pairs = set(cur.qubit_pairs or ())
+        cur_qubits = set(cur.qubits or ())
         idx = bisect.bisect_left(self._run_ids_sorted, run_id)
         for i in range(idx - 1, -1, -1):
             cand = self.runs.get(self._run_ids_sorted[i])
-            if cand is not None and cand.experiment_name == cur.experiment_name:
-                return cand.run_id
+            if cand is None or cand.experiment_name != cur.experiment_name:
+                continue
+            if cur_pairs:
+                if not cur_pairs & set(cand.qubit_pairs or ()):
+                    continue
+            elif cur_qubits and not cur_qubits & set(cand.qubits or ()):
+                continue
+            return cand.run_id
         return None
 
     def get_next_run_id(
