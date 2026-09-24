@@ -91,6 +91,16 @@ def test_tree_edit_integrity_selfcheck():
     _run("tree_edit_integrity_selfcheck.cjs", "all tree edit-integrity checks passed")
 
 
+def test_one_leaf_repaint_rule():
+    """jsontree-r2-10 review: the leaf repaint (text, edit value, type colour
+    class) lived in three near-copies -- the inline commit's echo, the
+    revert's paint() and the batch's _paintTreeLeaf. One helper now; a copy
+    inlined again is a second rendering rule free to drift."""
+    app = (_STATIC / "app.js").read_text(encoding="utf-8")
+    assert app.count("tree-val-(string|number|boolean|null|pointer)") == 1
+    assert app.count("_paintLeafEl(") == 4, "the definition + its three callers"
+
+
 def test_pulses_undo_selfcheck():
     _run("pulses_undo_selfcheck.cjs", "ok - undo back to an already-drawn state costs NO synth request (cache)")
 

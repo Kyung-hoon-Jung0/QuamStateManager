@@ -95,13 +95,39 @@ class TestCreate:
         assert r.status_code == 200, r.get_json()
         assert self._peek(client, "qubits.qA1.extras.rag") == [[1, 2], [3]]
 
-    @pytest.mark.parametrize("typ", ["infer", "str", "int", "list"])
+    @pytest.mark.parametrize("typ", ["infer", "str", "int", "real", "bool"])
     def test_an_empty_value_creates_null(self, client, typ):
         """jsontree-r2-22: empty became "" (a schema suggestion's Optional[str]
-        default None was created as a real empty thread name)."""
+        default None was created as a real empty thread name). ("list" left
+        this list in review: an explicit container choice is the next pin.)"""
         path = "qubits.qA1.extras.e_" + typ
         r = client.post("/field/create", data={
             "dot_path": path, "value": "", "expect_type": typ})
+        assert r.status_code == 200, r.get_json()
+        assert self._peek(client, path) is None
+
+    @pytest.mark.parametrize("typ,empty", [
+        ("dict", {}), ("list", []), ("matrix", []), ("list<int>", [])])
+    def test_an_empty_container_choice_creates_the_empty_container(
+            self, client, typ, empty):
+        """jsontree-r2-22 review: picking dict with nothing typed made a null
+        leaf -- no ＋ on it, so the children the user picked a dict for could
+        not be added without first typing {} through the JSON editor."""
+        path = "qubits.qA1.extras.c_" + typ.replace("<", "_").replace(">", "")
+        r = client.post("/field/create", data={
+            "dot_path": path, "value": "", "expect_type": typ})
+        assert r.status_code == 200, r.get_json()
+        got = self._peek(client, path)
+        assert got == empty and type(got) is type(empty), got
+
+    @pytest.mark.parametrize("typ", ["dict", "list", "str"])
+    def test_a_class_default_none_stays_null(self, client, typ):
+        """...while the schema suggestion whose class default is None (the
+        panel says "null (class default)") still creates null."""
+        path = "qubits.qA1.extras.d_" + typ
+        r = client.post("/field/create", data={
+            "dot_path": path, "value": "", "expect_type": typ,
+            "empty_is_default": "1"})
         assert r.status_code == 200, r.get_json()
         assert self._peek(client, path) is None
 

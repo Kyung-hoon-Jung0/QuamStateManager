@@ -70,8 +70,9 @@ function makeWorld(data) {
 }
 
 function nodeAt(win, p) {
+  // escaped here: the JT-04 review block below uses keys holding " and \
   return win.document.getElementById('explorer-tree-state')
-    .querySelector('.tree-node[data-path="' + p + '"]');
+    .querySelector('.tree-node[data-path="' + String(p).replace(/(["\\])/g, '\\$1') + '"]');
 }
 function open(win, p) {
   const n = nodeAt(win, p);
@@ -258,6 +259,69 @@ const DATA = { qubits: { q1: { f_01: 6.1e9, xy: { amp: 0.1, len: 40 }, extras: {
     enterOn(p.querySelector('.tree-crud-val'));
     await tick(30);
     ok(creates() === 2, 'r2-06: Enter in the value box still submits');
+  }
+
+  // ── JT-04 review: a key holding `"` or `\` ────────────────────────────
+  // _revertCell and _revertTreeNode built unescaped attribute selectors, so
+  // the undo THREW (SyntaxError) before the tree was touched: the undone key
+  // kept its row and extras its "{N keys}". An inspector form carrying the
+  // path is in the page too, so _revertCell's own selector is exercised.
+  {
+    const Q = 'qubits.q1.extras.rv"q', B = 'qubits.q1.extras.b\\s';
+    const win = makeWorld({ qubits: { q1: { extras: { a: 1, 'k"v': 1, 'd"x': { z: 1 } } } } });
+    const c = win.document.getElementById('explorer-tree-state');
+    const errs = [];
+    win.addEventListener('error', function (e) { errs.push(String(e.message || (e.error && e.error.message))); });
+    const form = win.document.createElement('form');
+    const hid = win.document.createElement('input');
+    hid.type = 'hidden'; hid.name = 'dot_path'; hid.value = 'qubits.q1.extras.k"v';
+    const inp = win.document.createElement('input');
+    inp.name = 'value'; inp.value = '9';
+    form.appendChild(hid); form.appendChild(inp);
+    win.document.body.appendChild(form);
+    open(win, 'qubits'); open(win, 'qubits.q1'); open(win, 'qubits.q1.extras');
+    const addKey = async function (full, key, val) {
+      hover(win, nodeAt(win, 'qubits.q1.extras'));
+      nodeAt(win, 'qubits.q1.extras').querySelector('.tree-act-add').click();
+      const panel = nodeAt(win, 'qubits.q1.extras').querySelector('.tree-crud-panel');
+      panel.querySelector('.tree-crud-key').value = key;
+      panel.querySelector('.tree-crud-val').value = String(val);
+      win._server[full] = val;
+      panel.querySelector('.tree-crud-ok').click();
+      await tick(40);
+    };
+    await addKey(Q, 'rv"q', 7);
+    await addKey(B, 'b\\s', 8);
+    ok(!!nodeAt(win, Q) && !!nodeAt(win, B), 'fixture: both added keys are on screen');
+    ok(summary(nodeAt(win, 'qubits.q1.extras')) === '{5 keys}', 'fixture: extras reads {5 keys}');
+
+    delete win._server[Q]; delete win._server[B];
+    undo(win, [{ dot_path: Q, old_value_str: '', old_value_disp: '', created: true },
+               { dot_path: B, old_value_str: '', old_value_disp: '', created: true }]);
+    await tick(40);
+    ok(errs.length === 0, 'JT-04 review: the undo throws nothing (' + errs.join(' | ') + ')');
+    ok(!nodeAt(win, Q) && !('rv"q' in c._treeData.qubits.q1.extras),
+       'JT-04 review: a key with " leaves the row and the model');
+    ok(!nodeAt(win, B) && !('b\\s' in c._treeData.qubits.q1.extras),
+       'JT-04 review: a key with \\ leaves the row and the model');
+    ok(summary(nodeAt(win, 'qubits.q1.extras')) === '{3 keys}', 'JT-04 review: extras reads {3 keys} again');
+
+    // a VALUE revert on such a key repaints its row and its inspector input
+    win._server['qubits.q1.extras.k"v'] = 4;
+    undo(win, [{ dot_path: 'qubits.q1.extras.k"v', old_value_disp: '4', old_kind: 'num' }]);
+    await tick(40);
+    const kv = nodeAt(win, 'qubits.q1.extras.k"v');
+    ok(kv && kv.querySelector('.tree-val').textContent === '4', 'JT-04 review: a value revert repaints the " row');
+    ok(inp.value === '4', 'JT-04 review: and the inspector input carrying that path (' + inp.value + ')');
+
+    // the soft restore re-opens a branch whose key holds a quote
+    const dx = nodeAt(win, 'qubits.q1.extras.d"x');
+    ok(dx && !isOpen(dx), 'fixture: the d"x branch starts closed');
+    let threw = null;
+    try { win.jsonTreeSetExpanded('explorer-tree-state', ['qubits.q1.extras.d"x']); } catch (e) { threw = e; }
+    ok(!threw && isOpen(nodeAt(win, 'qubits.q1.extras.d"x')),
+       'JT-04 review: jsonTreeSetExpanded opens it (' + (threw && threw.message) + ')');
+    ok(errs.length === 0, 'JT-04 review: still no error');
   }
 
   if (fails) { console.error(fails + ' check(s) failed'); process.exit(1); }

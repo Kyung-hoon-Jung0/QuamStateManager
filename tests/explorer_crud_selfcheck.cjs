@@ -579,6 +579,60 @@ function nodeAt(container, p) {
       'C16: the value box says empty = null for a null default');
   }
 
+  // C16b (jsontree-r2-22 review): an explicit dict / list / matrix with an
+  //      empty value is the empty container (the route makes {} / []); the
+  //      box says so, and a None-default suggestion -- whose box says
+  //      "null (class default)" -- sends empty_is_default so it stays null.
+  {
+    const win = makeWorld(function (url) {
+      if (url.indexOf('/schema/missing-keys') === 0) {
+        return jsonResp({ ok: true, warm: true, missing: [
+          { key: 'slots', expected_type: 'dict', default: null, source_class: 'X' }] });
+      }
+      if (url === '/field/create') return jsonResp({ ok: false, error: 'kept open' });
+      return jsonResp({ ok: true, values: {}, expected: {} });
+    });
+    const c = win.document.getElementById('tree');
+    expandAll(c);
+    const ex = nodeAt(c, 'qubits.qA1.extras');
+    hover(win, ex);
+    ex.querySelector('.tree-act-add').click();
+    await tick();
+    const panel = ex.querySelector('.tree-crud-panel');
+    const keyIn = panel.querySelector('.tree-crud-key');
+    const typeSel = panel.querySelector('.tree-crud-type');
+    const valIn = panel.querySelector('.tree-crud-val');
+    const pick = function (t) { typeSel.value = t; typeSel.dispatchEvent(new win.Event('change', { bubbles: true })); };
+    const last = function () {
+      const cr = win._fetchCalls.filter(function (x) { return x.url === '/field/create'; });
+      return cr.length ? String(cr[cr.length - 1].opts.body) : '';
+    };
+    keyIn.value = 'bag';
+    keyIn.dispatchEvent(new win.Event('change', { bubbles: true }));
+    pick('dict');
+    ok(valIn.placeholder === 'value (empty = {})', 'C16b: dict says empty = {} (' + valIn.placeholder + ')');
+    pick('matrix');
+    ok(valIn.placeholder === 'value (empty = [])', 'C16b: matrix says empty = [] (' + valIn.placeholder + ')');
+    pick('str');
+    ok(/empty = null/.test(valIn.placeholder), 'C16b: str says empty = null');
+    pick('dict');
+    panel.querySelector('.tree-crud-ok').click();
+    await tick(20);
+    ok(/(^|&)expect_type=dict(&|$)/.test(last()) && !/empty_is_default/.test(last()),
+      'C16b: an explicit dict posts no empty_is_default (' + last() + ')');
+    keyIn.value = 'slots';
+    keyIn.dispatchEvent(new win.Event('change', { bubbles: true }));
+    ok(typeSel.value === 'dict' && valIn.placeholder === 'null (class default)',
+      'C16b: the None-default suggestion reads "null (class default)" under dict');
+    panel.querySelector('.tree-crud-ok').click();
+    await tick(20);
+    ok(/(^|&)empty_is_default=1(&|$)/.test(last()), 'C16b: and sends empty_is_default=1 (' + last() + ')');
+    valIn.value = '{"a": 1}';
+    panel.querySelector('.tree-crud-ok').click();
+    await tick(20);
+    ok(!/empty_is_default/.test(last()), 'C16b: a typed value never carries the flag');
+  }
+
   // C17 (jsontree-r2-29): a wrong-chip refusal on ＋ / ✕ carries its way
   //      forward. Only a reload re-issues the page's chip token, so the
   //      message alone was a dead end. A NON-chip refusal gets no button.

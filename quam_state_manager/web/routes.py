@@ -1170,6 +1170,7 @@ def _reconcile_cached_quam_ctx(key: str, ctx: dict, *,
                             "C29 working-folder re-persist failed for %s", key)
                     ctx["live_diverged"] = True
                     return
+                _held_fp = _chip_fp(ctx)   # jsontree-r2-04 review
                 try:
                     store.reload()
                     index = SearchIndex.build(
@@ -1190,6 +1191,7 @@ def _reconcile_cached_quam_ctx(key: str, ctx: dict, *,
                 ctx["working_dirty"] = False
                 ctx["live_diverged"] = False
                 ctx.pop("live_drift_count", None)   # docs/116
+                _chip_tokens_rebase(ctx, _held_fp)
             engine = ctx.get("engine")
             if engine:
                 engine.invalidate_cache()
@@ -1830,6 +1832,7 @@ def _rebuild_after_working_copy_replaced(ctx: dict) -> None:
     reopen the stale-chip bug. Caller must hold the per-folder build lock.
     """
     store = ctx["store"]
+    _held_fp = _chip_fp(ctx)   # jsontree-r2-04 review: what was held
     store.reload()
     index = SearchIndex.build(store.merged, wiring_keys=set(store.wiring.keys()))
     store.search_index = index
@@ -1847,6 +1850,7 @@ def _rebuild_after_working_copy_replaced(ctx: dict) -> None:
     # (the redo stack self-invalidates via the mutation_seq handshake).
     _journal_reset(ctx)
     _reseed_drift_baseline_if_chip_changed(ctx)
+    _chip_tokens_rebase(ctx, _held_fp)   # another chip, same folder
     # docs/78: content the user did not type just landed — let the next render
     # raise the type-anomaly popup once (pull / stage / restore / run load).
     _arm_type_alarm(ctx, ctx.pop("_alarm_reason", None) or "live-pull")
@@ -7232,6 +7236,40 @@ def _chip_token_ok(expect_chip: str) -> bool:
     return bool(ctx) and expect_chip in (ctx.get("chip_tokens_seen") or ())
 
 
+def _chip_fp(ctx: dict):
+    """*ctx*'s content fingerprint -- taken BEFORE a wholesale replace, for
+    :func:`_chip_tokens_rebase`."""
+    from quam_state_manager.core import history
+    store = ctx.get("store")
+    return (history.fingerprint_from_dicts(store.state, store.wiring)
+            if store else None)
+
+
+def _chip_tokens_rebase(ctx: dict, held_fp) -> None:
+    """The tokens a context vouched for describe the content it HELD. A
+    wholesale replace (a pull, a stage, a restore, a run's state, a robot's
+    auto-adopt) can put another chip into the same folder -- and so into the
+    same cached context, whose tokens would then wave a page from the old
+    chip through (jsontree-r2-04 review). *held_fp* is the replaced content's
+    fingerprint. The set starts over when the new content is a DIFFERENT chip
+    by the rule the app already uses for that (``history.align``, C30's
+    gate: a differing network identity, or with no network on either side,
+    different qubit/pair labels). A same-chip replace keeps it -- a pull after
+    an identity edit, a node that added a qubit -- and so does one landing on
+    a token this context already issued."""
+    seen = ctx.get("chip_tokens_seen")
+    store = ctx.get("store")
+    if not seen or not store:
+        return
+    from quam_state_manager.core import history
+    new_fp = history.fingerprint_from_dicts(store.state, store.wiring)
+    if history.fingerprint_token(new_fp) in seen:
+        return
+    if history.align(held_fp, new_fp) not in (history.ALIGN_ALIGNED,
+                                              history.ALIGN_RENAMED):
+        seen.clear()
+
+
 def _chip_mismatch_response(expect_chip: str, force_chip: bool, *,
                             action: str | None = None):
     """409 JSON if *expect_chip* (a run's fingerprint token) doesn't match the
@@ -8786,7 +8824,8 @@ def field_create():
     value it yields is held to that type by the ONE judge
     (``state_env_validate.judge``, jsontree-r2-22: the modifier's gate never
     sees the hint, so a list/dict choice was enforced by nobody). An empty
-    value creates null."""
+    value creates null -- or the empty container under an explicit
+    dict / list / matrix choice."""
     from quam_state_manager.core import type_policy as _tp
     ctx = _active_ctx()
     modifier = ctx.get("modifier") if ctx else None
@@ -8836,7 +8875,16 @@ def field_create():
             # Optional field the schema suggestion picks. It used to become
             # "" (a real thread name, for XYDriveMW.thread). A literal empty
             # string is still typed as "".
-            parsed = None
+            # Review: an explicit dict / list / matrix choice with nothing
+            # typed is the EMPTY container -- a null there offers no ＋, so the
+            # children the user picked a container for could not be added.
+            # The schema suggestion whose class default is None says so
+            # (`empty_is_default`) and keeps null.
+            _base = (_tp.parse_type(expect_type).get("base")
+                     if expect_type and expect_type != "infer"
+                     and request.form.get("empty_is_default")
+                     not in ("1", "true", "True") else None)
+            parsed = {} if _base == "dict" else [] if _base == "list" else None
         elif expect_type and expect_type != "infer":
             hint = _tp.Expected(spec=_tp.parse_type(expect_type), source="user")
             parsed = _tp.parse_with_expected(raw_value, hint)

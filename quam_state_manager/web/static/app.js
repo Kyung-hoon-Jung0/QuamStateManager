@@ -6535,12 +6535,22 @@ document.addEventListener("keydown", function(evt) {
     window.UndoQueue.push("/undo");
 }, true);
 
+// A dot-path inside a double-quoted attribute selector. A key may hold `"` or
+// `\` (JSON allows it; the Json tree's ＋ creates it), and unescaped the
+// selector THROWS: the revert never ran -- the undone key's row and its
+// parent's "{N keys}" stayed, plus an uncaught SyntaxError (JT-04 review).
+function _cssAttrVal(s) {
+    return String(s).replace(/(["\\])/g, "\\$1").replace(/[\n\r\f]/g, function (c) {
+        return "\\" + c.charCodeAt(0).toString(16) + " ";
+    });
+}
+
 function _revertCell(dotPath, oldValueStr) {
     // Revert inspector cell
     // every form carrying the path -- an alias section and its target in one
     // view both show it (docs/141 4l-review)
     var hiddens = document.querySelectorAll(
-        'input[type="hidden"][name="dot_path"][value="' + dotPath + '"]'
+        'input[type="hidden"][name="dot_path"][value="' + _cssAttrVal(dotPath) + '"]'
     );
     Array.prototype.forEach.call(hiddens, function (hidden) {
         var form = hidden.parentElement;
@@ -8320,10 +8330,20 @@ window.clearDetailPanelSearch = function(btnEl) {
         if (!container || !dotPath) return false;
         var inModel = _treeModelSet(container, dotPath, v);
         var nd = null;
-        try { nd = container.querySelector('.tree-node[data-path="' + dotPath + '"]'); } catch (e) {}
+        try { nd = container.querySelector('.tree-node[data-path="' + _cssAttrVal(dotPath) + '"]'); } catch (e) {}
         var row = nd ? nd.querySelector(":scope > .tree-row") : null;
         var el = row ? row.querySelector(":scope > .tree-val") : null;
         if (!el) return inModel;
+        _paintLeafEl(el, v);
+        nd._value = v;
+        row.classList.add("tree-row-pending");
+        return true;
+    }
+
+    /* The ONE leaf repaint (jsontree-r2-10 review): the text, the raw edit
+     * value and the type colour class. An inline commit's echo, a revert and
+     * a batch's other rows all paint through it, so the three cannot drift. */
+    function _paintLeafEl(el, v) {
         el.textContent = _formatValue(v);
         el.dataset.editVal = (typeof v === "string") ? v : _formatValue(v);
         el.className = el.className
@@ -8331,9 +8351,6 @@ window.clearDetailPanelSearch = function(btnEl) {
             .trim();
         el.classList.add("tree-val-" + _typeOf(v));
         if (_isPointer(v)) el.classList.add("tree-val-pointer");
-        nd._value = v;
-        row.classList.add("tree-row-pending");
-        return true;
     }
 
     /* The model's container holding dotPath's final key, walked exactly as
@@ -8994,14 +9011,7 @@ window.clearDetailPanelSearch = function(btnEl) {
                 // raw-text write-back showed "0.13"-the-string as bare 0.13
                 // and mis-kept the number/string colour class.
                 if (data.stored_kind !== undefined) {
-                    valEl.textContent = _formatValue(data.stored);
-                    valEl.dataset.editVal = (typeof data.stored === "string")
-                        ? data.stored : _formatValue(data.stored);
-                    valEl.className = valEl.className
-                        .replace(/tree-val-(string|number|boolean|null|pointer)/g, "")
-                        .trim();
-                    valEl.classList.add("tree-val-" + _typeOf(data.stored));
-                    if (_isPointer(data.stored)) valEl.classList.add("tree-val-pointer");
+                    _paintLeafEl(valEl, data.stored);
                 } else {
                     valEl.textContent = newVal;
                     valEl.dataset.editVal = newVal;
@@ -9334,7 +9344,7 @@ window.clearDetailPanelSearch = function(btnEl) {
         var pp = _parentPath(dotPath);
         var key = String(dotPath).slice(pp ? pp.length + 1 : 0);
         function sel(p) {
-            return '.tree-node[data-path="' + String(p).replace(/(["\\])/g, "\\$1") + '"]';
+            return '.tree-node[data-path="' + _cssAttrVal(p) + '"]';
         }
         ["explorer-tree-state", "explorer-tree-wiring"].forEach(function (id) {
             var c = document.getElementById(id);
@@ -9370,7 +9380,7 @@ window.clearDetailPanelSearch = function(btnEl) {
     }
 
     window._revertTreeNode = function(dotPath, oldValueStr) {
-        var treeNode = document.querySelector('.tree-node[data-path="' + dotPath + '"]');
+        var treeNode = document.querySelector('.tree-node[data-path="' + _cssAttrVal(dotPath) + '"]');
         var row = treeNode ? treeNode.querySelector(":scope > .tree-row") : null;
         var valEl = row ? row.querySelector(".tree-val") : null;
         if (row) row.classList.remove("tree-row-pending");
@@ -9388,18 +9398,12 @@ window.clearDetailPanelSearch = function(btnEl) {
             // A sibling's structural revert may have rebuilt the parent while
             // this peek was in flight: paint the row that is on screen now.
             if (valEl && valEl.isConnected === false) {
-                var _tn = document.querySelector('.tree-node[data-path="' + dotPath + '"]');
+                var _tn = document.querySelector('.tree-node[data-path="' + _cssAttrVal(dotPath) + '"]');
                 var _tr = _tn ? _tn.querySelector(":scope > .tree-row") : null;
                 valEl = _tr ? _tr.querySelector(".tree-val") : null;
             }
             if (!valEl) return;
-            valEl.textContent = _formatValue(v);
-            valEl.dataset.editVal = (typeof v === "string") ? v : _formatValue(v);
-            valEl.className = valEl.className
-                .replace(/tree-val-(string|number|boolean|null|pointer)/g, "")
-                .trim();
-            valEl.classList.add("tree-val-" + _typeOf(v));
-            if (_isPointer(v)) valEl.classList.add("tree-val-pointer");
+            _paintLeafEl(valEl, v);
         }
         // Nothing on this page holds the model or the node: nothing to do.
         if (!valEl && !document.getElementById("explorer-tree-state")
@@ -9605,18 +9609,33 @@ window.clearDetailPanelSearch = function(btnEl) {
                     dl.appendChild(o);
                 });
             }).catch(function () {});
+        // jsontree-r2-22 review: what an EMPTY value creates, said where it is
+        // typed -- the empty container under an explicit dict / list / matrix
+        // (so ＋ can add under it next), null otherwise, and null for a schema
+        // suggestion whose class default is None (sent as empty_is_default).
+        function _nullDefault() {
+            var s = suggestions[keyIn.value.trim()];
+            return !!(s && s.default === null);
+        }
+        function _emptyHint() {
+            var t = typeSel.value;
+            valIn.placeholder = _nullDefault() ? "null (class default)"
+                : t === "dict" ? "value (empty = {})"
+                : (t === "list" || t === "matrix") ? "value (empty = [])"
+                : "value (empty = null; JSON for lists/dicts)";
+        }
+        typeSel.addEventListener("change", _emptyHint);
         keyIn.addEventListener("change", function () {
             var s = suggestions[keyIn.value];
-            if (!s) return;
+            if (!s) { _emptyHint(); return; }
             // legacy manifests may still say "number" — map onto the "real" choice
             var t = s.expected_type === "number" ? "real" : s.expected_type;
             if (_TYPE_CHOICES.indexOf(t) >= 0) typeSel.value = t;
             if (s.default !== null && s.default !== undefined && valIn.value === "") {
                 valIn.value = typeof s.default === "string" ? s.default : JSON.stringify(s.default);
-            } else if (s.default === null && valIn.value === "") {
-                // jsontree-r2-22: an empty submit creates null = this default
-                valIn.placeholder = "null (class default)";
             }
+            // jsontree-r2-22: an empty submit creates null = a None default
+            _emptyHint();
         });
 
         function submit() {
@@ -9637,6 +9656,9 @@ window.clearDetailPanelSearch = function(btnEl) {
             body.append("key", key);
             body.append("value", valIn.value);
             body.append("expect_type", typeSel.value);
+            // keeps the "null (class default)" placeholder true: without it an
+            // empty dict / list choice creates the empty container
+            if (valIn.value === "" && _nullDefault()) body.append("empty_is_default", "1");
             body.append("expect_chip", window.__chipToken || "");
             fetch("/field/create", { method: "POST",
                 headers: {"Content-Type": "application/x-www-form-urlencoded"},
@@ -9950,7 +9972,7 @@ window.clearDetailPanelSearch = function(btnEl) {
         });
         var n = 0;
         for (var i = 0; i < sorted.length; i++) {
-            var node = c.querySelector('.tree-node[data-path="' + sorted[i] + '"]');
+            var node = c.querySelector('.tree-node[data-path="' + _cssAttrVal(sorted[i]) + '"]');
             if (!node) continue;
             var t = node.querySelector(':scope > .tree-row > .tree-toggle');
             if (t && t.classList.contains('collapsed')) { t.click(); n++; }
