@@ -97,6 +97,11 @@
         knownQubits: new Set(),   // every qubit name across rows (qubit-aware search + the picker)
         qubitFilter: _persistedQubitFilter,  // selected qubits → AND filter (run must contain ALL)
         knownPairs: new Set(),    // every qubit-pair name across rows (pair search + the picker)
+        // QA datasets-r2-30: the SPELLING to show for each lower-case key above
+        // (first one seen) — the keys stay the match/filter identity, the
+        // pickers show 'qA1' the way the runs and the chip spell it, not 'qa1'.
+        qubitLabels: new Map(),
+        pairLabels: new Map(),
         pairFilter: _persistedPairFilter,    // selected pairs → AND filter (run must contain ALL)
         folderFilter: _persistedFolderFilter,  // selected folder_keys → OR filter; empty = all folders
         foldersByKey: {},                    // folder_key -> {key, label, full_path} (from folders_json)
@@ -2034,11 +2039,20 @@
     // newly-arrived key shows up with no server round-trip.
     function _rebuildFitKeys() {
         var keys = new Set(), counts = {}, qubits = new Set(), pairs = new Set();
+        var qubitLabels = new Map(), pairLabels = new Map();
         for (var i = 0; i < state.rows.length; i++) {
             var r = state.rows[i];
             if (!r) continue;
-            if (r.q) for (var j = 0; j < r.q.length; j++) qubits.add(String(r.q[j]).toLowerCase());
-            if (r.p) for (var pj = 0; pj < r.p.length; pj++) pairs.add(String(r.p[pj]).toLowerCase());
+            if (r.q) for (var j = 0; j < r.q.length; j++) {
+                var qRaw = String(r.q[j]), qKey = qRaw.toLowerCase();
+                qubits.add(qKey);
+                if (!qubitLabels.has(qKey)) qubitLabels.set(qKey, qRaw);
+            }
+            if (r.p) for (var pj = 0; pj < r.p.length; pj++) {
+                var pRaw = String(r.p[pj]), pKey = pRaw.toLowerCase();
+                pairs.add(pKey);
+                if (!pairLabels.has(pKey)) pairLabels.set(pKey, pRaw);
+            }
             if (!r.sm) continue;
             for (var k in r.sm) { keys.add(k); counts[k] = (counts[k] || 0) + 1; }
         }
@@ -2046,6 +2060,8 @@
         state.fitCounts = counts;
         state.knownQubits = qubits;
         state.knownPairs = pairs;
+        state.qubitLabels = qubitLabels;
+        state.pairLabels = pairLabels;
         // Persisted sort key was a fit key that has since vanished → fall back.
         if (state.sortKey && !keys.has(state.sortKey) && !_isColKey(state.sortKey)) {
             state.sortKey = 'id'; state.sortDesc = true;
@@ -2396,7 +2412,8 @@
         if (!qubits.length) html += '<div class="muted sort-fit-empty" style="padding:.2rem .3rem">no qubits</div>';
         qubits.forEach(function (q) {
             html += '<label class="bulk-colvis-item"><input type="checkbox" data-qubit="' + escapeHtml(q) + '"' +
-                    (state.qubitFilter.has(q) ? ' checked' : '') + '> ' + escapeHtml(q) + '</label>';
+                    (state.qubitFilter.has(q) ? ' checked' : '') + '> ' +
+                    escapeHtml(state.qubitLabels.get(q) || q) + '</label>';
         });
         menu.innerHTML = html;
         _updateQubitSummary();
@@ -2442,7 +2459,8 @@
         if (!pairs.length) html += '<div class="muted sort-fit-empty" style="padding:.2rem .3rem">no qubit pairs</div>';
         pairs.forEach(function (p) {
             html += '<label class="bulk-colvis-item"><input type="checkbox" data-pair="' + escapeHtml(p) + '"' +
-                    (state.pairFilter.has(p) ? ' checked' : '') + '> ' + escapeHtml(p) + '</label>';
+                    (state.pairFilter.has(p) ? ' checked' : '') + '> ' +
+                    escapeHtml(state.pairLabels.get(p) || p) + '</label>';
         });
         menu.innerHTML = html;
         _updatePairSummary();
