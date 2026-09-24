@@ -96,6 +96,7 @@ def run_regenerate(
     scripts_dir: Path | str | None = None,
     instance_path: Path | str | None = None,
     source_probe=None,
+    scripts_enabled: bool = True,
 ) -> dict:
     """Build ``spec`` fresh into ``out_dir`` then merge the OLD chip's values on.
 
@@ -118,7 +119,11 @@ def run_regenerate(
 
     ``scripts_dir`` — where to write the editable build-script bundle
     (r16 ⓪-4: the wizard's script-path box). ``None`` keeps the legacy
-    ``<out_dir>/build_scripts`` location.
+    ``<out_dir>/build_scripts`` location. ``scripts_enabled=False`` (the
+    wizard's export checkbox unticked) writes no bundle at all; the outcome's
+    ``script`` is then ``None``. When written, ``script`` is the bundle's
+    absolute folder and ``script_in_output`` says whether it sits inside
+    ``out_dir``.
     """
     old_folder = Path(old_folder)
     out_dir = Path(out_dir)
@@ -213,22 +218,32 @@ def run_regenerate(
     # subfolder so the chip dir stays clean (Quam.load ignores non-.json
     # either way). Best-effort: a script-emit hiccup never fails the merge.
     script_name = None
-    try:
-        from . import script_emitter
-        chip = out_dir.name or "chip"
-        res = outcome.get("result") or {}
-        bundle = script_emitter.emit_bundle(
-            spec, res.get("allocation"), res.get("versions"), chip)
-        # r16 ⓪-4: honor the wizard's script-path box (previously ignored here —
-        # everything landed in a hardcoded build_scripts/ regardless).
-        bundle_dir = Path(scripts_dir) if scripts_dir else out_dir / "build_scripts"
-        bundle_dir.mkdir(parents=True, exist_ok=True)
-        for name, src in bundle.items():
-            (bundle_dir / name).write_text(src, encoding="utf-8")
-        script_name = str(bundle_dir) if scripts_dir else "build_scripts/"
-    except Exception as exc:  # noqa: BLE001 — transparency, not a hard failure
-        outcome["script_error"] = str(exc)
-        script_name = None
+    script_in_output = None
+    # QA regenerate-r2-18: an unticked export writes NOTHING — a None
+    # scripts_dir alone used to mean "the legacy folder", bundle and all.
+    if scripts_enabled:
+        try:
+            from . import script_emitter
+            chip = out_dir.name or "chip"
+            res = outcome.get("result") or {}
+            bundle = script_emitter.emit_bundle(
+                spec, res.get("allocation"), res.get("versions"), chip)
+            # r16 ⓪-4: honor the wizard's script-path box (previously ignored
+            # here — everything landed in a hardcoded build_scripts/ regardless).
+            bundle_dir = Path(scripts_dir) if scripts_dir else out_dir / "build_scripts"
+            bundle_dir.mkdir(parents=True, exist_ok=True)
+            for name, src in bundle.items():
+                (bundle_dir / name).write_text(src, encoding="utf-8")
+            # The real folder + whether it is inside the output: the report
+            # used to claim "written to the output folder" for any folder.
+            script_name = str(bundle_dir)
+            o = Path(path_match.fs_key(bundle_dir)).parts
+            c = Path(path_match.fs_key(out_dir)).parts
+            script_in_output = len(o) > len(c) and o[:len(c)] == c
+        except Exception as exc:  # noqa: BLE001 — transparency, not a hard failure
+            outcome["script_error"] = str(exc)
+            script_name = None
+            script_in_output = None
 
     # Exact-spec sidecar keyed by the OUTPUT chip's hash, so a later re-generate
     # FROM this folder uses the exact spec instead of re-inferring. Best-effort.
@@ -279,4 +294,5 @@ def run_regenerate(
         "populate_conflicts": s.populate_conflicts[:20],
     }
     outcome["script"] = script_name   # emitted build recipe filename, or None
+    outcome["script_in_output"] = script_in_output
     return outcome

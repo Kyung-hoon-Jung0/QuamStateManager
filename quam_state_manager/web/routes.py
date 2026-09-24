@@ -26369,7 +26369,8 @@ def regenerate_reconstruct():
     data = request.get_json(silent=True) or {}
     # Prefer the WORKING COPY (like the Config Viewer's _ctx_path), so a
     # reconstruct carries the user's in-app edits instead of the stale live files.
-    folder = (data.get("folder") or "").strip() or _ctx_path()
+    explicit = (data.get("folder") or "").strip()
+    folder = explicit or _ctx_path()
     if not folder:
         return jsonify({"ok": False, "error": "No chip loaded and no folder given."}), 400
     # The exact-spec sidecar lives in the chip's REAL folder, never in the
@@ -26414,7 +26415,12 @@ def regenerate_reconstruct():
         "info_notes": list(rec.info_notes),
         "flavor": flavor,
         "source_folder": str(folder),
-        "source_name": ident["name"] if ident else Path(folder).name,
+        # QA F9: name the folder that was READ. The loaded chip's name is right
+        # only on the default path (whose folder is the working-copy key); an
+        # explicit "Load different…" folder used to wear it too, so the bar
+        # named the loaded chip over another chip's counts.
+        "source_name": (_chip_display_name(folder) if explicit
+                        else (ident["name"] if ident else Path(folder).name)),
     })
 
 
@@ -26543,6 +26549,9 @@ def regenerate_build():
     if not isinstance(populate_touched, list):
         populate_touched = None
     scripts_dir = (data.get("scripts_dir") or "").strip() or None
+    # QA regenerate-r2-18: the wizard's export checkbox. Absent (an older
+    # client) keeps today's behaviour; an explicit false writes no bundle.
+    scripts_enabled = data.get("scripts_enabled") is not False
 
     errors = config_generator.validate_spec(spec)
     if errors:
@@ -26659,6 +26668,7 @@ def regenerate_build():
         populate_touched=populate_touched,
         scripts_dir=scripts_dir,
         instance_path=current_app.instance_path,
+        scripts_enabled=scripts_enabled,
     )
     if live_note and isinstance(outcome, dict):
         outcome["source_live_changed"] = True

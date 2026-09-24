@@ -18,6 +18,17 @@
 //        moves on from step 1
 //   F5   after Reset (and after hydrateFromSpec) QDAC IP/port/link edits land in
 //        the CURRENT spec, not in an orphaned object
+//   F6   leaving a Re-generate session with edits (sidebar swap / F5 / Load
+//        different…) asks first; an untouched or just-built session never asks;
+//        plain Generate never asks
+//   F7   Re-generate neither reads nor clears the Generate draft
+//   F8   Reset on the Re-generate page re-fills the wizard from the source chip
+//        (the page's own script, driven for real) instead of leaving an empty
+//        plain Generate under a header that still names the source
+//   F10  a header "Generate" press shows its answer (busy on BOTH buttons, the
+//        "Generating…" slot and the result brought into view)
+//   r2-18 an unticked scripts export is sent as such; a ticked export with no
+//        folder is refused; the recipe report names where it really went
 //
 // Run: node tests/generate_qa_session_selfcheck.cjs   (needs jsdom; exit 2 = skip)
 'use strict';
@@ -49,8 +60,15 @@ const DRAFT_KEY = 'quam_generate_draft';
 // routes = [{match, reply}] for fetch; unrouted requests hang forever.
 function makeWorld(opts) {
   const o = opts || {};
+  // o.regen: the wizard inside the Re-generate page's #regen-surface.
+  // o.regenPage: the REAL _regenerate.html markup + bootstrap script.
+  let body = '<div id="table-pane">' + HTML + '</div>';
+  if (o.regen) {
+    body = '<div id="table-pane"><div class="regen" id="regen-surface">' + HTML + '</div></div>';
+  }
+  if (o.regenPage) body = '<div id="table-pane">' + REGEN_MARKUP + '</div>';
   const dom = new JSDOM(
-    '<!DOCTYPE html><html><body><div id="table-pane">' + HTML + '</div></body></html>',
+    '<!DOCTYPE html><html><body>' + body + '</body></html>',
     { runScripts: 'outside-only', pretendToBeVisual: true, url: 'http://localhost/' });
   const win = dom.window;
   win.NumberInput = {
@@ -79,7 +97,61 @@ function makeWorld(opts) {
   new win.Function(GEN_JS).call(win);
   const G = win.QuamGen;
   if (!o.noInit) G.init();
+  if (o.regenPage) {
+    win.QuamGen = G;
+    win.openFolderBrowser = function () {};
+    new win.Function(REGEN_SCRIPT).call(win);
+  }
   return { win, G, log, reveals };
+}
+
+// The Re-generate page as shipped: _regenerate.html with its Jinja bits filled
+// (the loaded chip = LOADED_CHIP, no deep-link step) and _generate.html included.
+const REGEN_TPL = fs.readFileSync(
+  path.join(ROOT, 'quam_state_manager', 'web', 'templates', '_regenerate.html'), 'utf8');
+const REGEN_MARKUP = REGEN_TPL.slice(0, REGEN_TPL.indexOf('<script>'))
+  .replace(/\{#[\s\S]*?#\}/g, '')
+  .replace("{% include '_generate.html' %}", HTML)
+  .replace(/\{\{ active_path or '' \}\}/, '')
+  .replace(/\{\{ active_name or [^}]*\}\}/, 'LOADED_CHIP');
+const REGEN_SCRIPT = REGEN_TPL.slice(REGEN_TPL.indexOf('<script>') + 8,
+                                     REGEN_TPL.lastIndexOf('</script>'))
+  .replace(/\{\{ \(regen_step[^}]*\}\}/, 'null');
+if (/\{\{|\{%/.test(REGEN_MARKUP + REGEN_SCRIPT)) {
+  console.error('harness: unfilled Jinja left in _regenerate.html');
+  process.exit(1);
+}
+
+// A reconstructed source chip (what /regenerate/reconstruct returns).
+function srcSpec(nq) {
+  const qs = [];
+  for (let i = 1; i <= (nq || 2); i++) qs.push('q' + i);
+  return {
+    network: { host: '1.2.3.4', cluster_name: 'SRC', port: null },
+    instruments: { controllers: [{ con: 1, fems: [{ slot: 1, fem: 'mw' }, { slot: 5, fem: 'lf' }] }],
+                   opx_plus: [], octaves: [] },
+    qubits: qs, qubit_pairs: [['q1', 'q2']], twpas: [], lines: [],
+    pair_gate: 'cz_tunable', populate: {},
+    qdac: { communication_type: 'Ethernet', ip_address: '10.0.0.1', port: 5025,
+            usb_device: null, lib: '@py', qubits: {} }
+  };
+}
+// An htmx sidebar swap of #table-pane, as htmx raises it (on the pane, bubbling).
+function swapAway(win) {
+  const e = new win.CustomEvent('htmx:beforeSwap', { bubbles: true, cancelable: true,
+    detail: { target: win.document.getElementById('table-pane'), shouldSwap: true } });
+  win.document.getElementById('table-pane').dispatchEvent(e);
+  return e;
+}
+function unload(win) {
+  const e = new win.Event('beforeunload', { cancelable: true });
+  win.dispatchEvent(e);
+  return e;
+}
+function editField(win, el, value) {   // a user edit: focus, type, commit
+  el.focus();
+  setInput(win, el, value);
+  el.blur();
 }
 
 function $(win, id) { return win.document.getElementById(id); }
@@ -460,6 +532,343 @@ function toStep4(win, G, n) {
     comm.dispatchEvent(new w.win.Event('change', { bubbles: true }));
     ok(w.G.state.spec.qdac.communication_type === 'USB' && comm.value === 'USB',
       'F5: after hydrateFromSpec the link switch sticks');
+  })();
+
+  // ── F6: leaving a Re-generate session with edits asks first ──────────────
+  function regenWorld() {
+    const w = makeWorld({ regen: true });
+    w.asked = [];
+    w.answer = false;
+    w.win.confirm = function (m) { w.asked.push(m); return w.answer; };
+    w.G.hydrateFromSpec(srcSpec(), { mode: 'regenerate', sourcePath: 'D:\\src\\chipA' });
+    return w;
+  }
+
+  (function f6Untouched() {
+    const w = regenWorld();
+    ok(w.G.regenDirty() === false, 'F6: a freshly hydrated regen session is clean');
+    w.G.goToStep(4); w.G.goToStep(2);         // looking around is not editing
+    const e = swapAway(w.win);
+    ok(!e.defaultPrevented && w.asked.length === 0,
+      'F6: an untouched regen session leaves without a prompt (asked ' + w.asked.length + ')');
+    ok(!unload(w.win).defaultPrevented, 'F6: F5 on an untouched regen session raises no prompt');
+  })();
+
+  (function f6FieldEdit() {
+    const w = regenWorld();
+    w.G.goToStep(2);
+    editField(w.win, $(w.win, 'gen-net-host'), '10.9.9.9');
+    ok(w.G.regenDirty() === true, 'F6: a committed field edit makes the session dirty');
+    const e = swapAway(w.win);
+    ok(w.asked.length === 1 && /no draft/i.test(w.asked[0]),
+      'F6: a sidebar swap asks before discarding (asked ' + JSON.stringify(w.asked) + ')');
+    ok(e.defaultPrevented && e.detail.shouldSwap === false,
+      'F6: Cancel vetoes the swap (defaultPrevented ' + e.defaultPrevented +
+      ', shouldSwap ' + e.detail.shouldSwap + ')');
+    ok(unload(w.win).defaultPrevented, 'F6: F5 raises the browser\'s leave prompt');
+    w.answer = true;
+    const e2 = swapAway(w.win);
+    ok(!e2.defaultPrevented && e2.detail.shouldSwap !== false, 'F6: OK lets the swap through');
+  })();
+
+  (function f6TypedNotCommitted() {
+    const w = regenWorld();
+    w.G.goToStep(2);
+    const host = $(w.win, 'gen-net-host');
+    host.focus();
+    host.value = '10.7.7.7';
+    host.dispatchEvent(new w.win.Event('input', { bubbles: true }));   // no change yet
+    ok(unload(w.win).defaultPrevented,
+      'F6: F5 with a value typed but not committed still prompts');
+  })();
+
+  (function f6Topology() {
+    const w = regenWorld();
+    w.G.state.spec.qubit_pairs[0] = ['q2', 'q1'];    // a CZ auto-flip is no change…
+    ok(w.G.regenDirty() === false, 'F6: a pair orientation flip is not a topology change');
+    w.G.state.spec.qubits.push('q3');                // …a new qubit is
+    ok(w.G.regenDirty() === true, 'F6: a topology change (button-driven) makes it dirty');
+  })();
+
+  (function f6PopulateCell() {
+    const w = regenWorld();
+    w.G.goToStep(6);
+    const rf = w.win.document.querySelector(
+      '.gen-pop-in[data-group="qubit"][data-rid="q1"][data-field="RF_freq"]');
+    ok(!!rf, 'F6: populate RF cell rendered');
+    if (!rf) return;
+    rf.focus();
+    typeOnly(w.win, rf, '4.9');                      // typed, not committed
+    rf.blur();
+    ok(w.G.regenDirty() === true, 'F6: a typed populate cell makes the session dirty');
+    const e = swapAway(w.win);
+    ok(e.defaultPrevented && w.asked.length === 1, 'F6: …and leaving it asks');
+  })();
+
+  (function f6SetAll() {
+    // Set-all / preset Apply / Re-solve LOs write through markPopulateTouched
+    // (no field focus involved — a button-driven change).
+    const w = regenWorld();
+    w.G.goToStep(6);
+    const all = Array.prototype.find.call(
+      w.win.document.querySelectorAll('.gen-pop-in:not([data-field])'),
+      el => el.tagName === 'INPUT');
+    ok(!!all, 'F6: a Set-all cell rendered');
+    if (!all) return;
+    all.value = '5.1';
+    all.dispatchEvent(new w.win.Event('change', { bubbles: true }));
+    ok(Object.keys(w.G.state.regenTouched || {}).length > 0, 'F6 harness: Set-all touched cells');
+    ok(w.G.regenDirty() === true, 'F6: a Set-all makes the session dirty');
+  })();
+
+  await (async function f6BuiltIsClean() {
+    const w = makeWorld({ regen: true, routes: [
+      { match: '/generate/envs', reply: { envs: [] } },
+      { match: '/generate/select-env', reply: { ok: true } },
+      { match: '/regenerate/build', reply: { ok: true, result: { qubits: ['q1', 'q2'], qubit_pairs: [] } } }
+    ] });
+    w.asked = [];
+    w.win.confirm = function (m) { w.asked.push(m); return false; };
+    w.G.state.env = 'C:/envs/test/python.exe';
+    w.G.hydrateFromSpec(srcSpec(), { mode: 'regenerate', sourcePath: 'D:\\src\\chipA' });
+    w.G.goToStep(2);
+    editField(w.win, $(w.win, 'gen-net-host'), '10.9.9.9');
+    w.G.goToStep(7);
+    setInput(w.win, $(w.win, 'gen-output-path'), 'D:\\x\\rebuilt');
+    w.G.goToStep(8);
+    click(w.win, $(w.win, 'gen-next'));
+    await settle();
+    ok(w.log.some(e => e.url.indexOf('/regenerate/build') >= 0), 'F6: the regen build ran');
+    ok(w.G.regenDirty() === false,
+      'F6: a finished build holds the edits — leaving afterwards does not warn');
+    swapAway(w.win);
+    ok(w.asked.length === 0, 'F6: no prompt after a successful build');
+  })();
+
+  (function f6OutputFolderOnly() {
+    // The output/scripts folders are mirrored in localStorage and come back.
+    const w = regenWorld();
+    w.G.goToStep(7);
+    editField(w.win, $(w.win, 'gen-output-path'), 'D:\\x\\out');
+    ok(w.G.regenDirty() === false, 'F6: choosing the output folder alone is not a lossy edit');
+  })();
+
+  (function f6GenerateModeNeverAsks() {
+    const w = makeWorld();
+    const asked = [];
+    w.win.confirm = function (m) { asked.push(m); return false; };
+    w.G.goToStep(2);
+    editField(w.win, $(w.win, 'gen-net-host'), '10.1.2.3');
+    const e = swapAway(w.win);
+    ok(!e.defaultPrevented && asked.length === 0, 'F6: plain Generate never asks on a swap');
+    ok(!unload(w.win).defaultPrevented, 'F6: plain Generate raises no leave prompt');
+    ok(JSON.parse(draftOf(w.win)).spec.network.host === '10.1.2.3',
+      'F6: plain Generate still saves its draft on the swap');
+  })();
+
+  // ── F7: Re-generate neither reads nor clears the Generate draft ──────────
+  (function f7DraftSurvives() {
+    const w1 = makeWorld();
+    w1.G.goToStep(2);
+    setInput(w1.win, $(w1.win, 'gen-net-host'), '10.1.2.3');
+    setInput(w1.win, $(w1.win, 'gen-net-cluster'), 'MY_DRAFT_CLUSTER');
+    swapAway(w1.win);                              // Generate → sidebar: draft saved
+    const draft = draftOf(w1.win);
+    ok(draft && JSON.parse(draft).spec.network.host === '10.1.2.3', 'F7: the Generate draft is saved');
+
+    // The Re-generate page, same session storage.
+    const w2 = makeWorld({ regen: true, draft: draft });
+    ok(w2.G.state.spec.network.host !== '10.1.2.3',
+      'F7: the Re-generate page does not load the Generate draft into its session');
+    pagehide(w2.win);                              // F5 before the hydrate lands
+    swapAway(w2.win);                              // …or a sidebar click
+    ok(draftOf(w2.win) === draft, 'F7: an un-hydrated regen page never overwrites the draft');
+    w2.G.hydrateFromSpec(srcSpec(), { mode: 'regenerate', sourcePath: 'D:\\src\\chipA' });
+    ok(draftOf(w2.win) === draft,
+      'F7: hydrating the Re-generate wizard leaves the Generate draft alone (got ' +
+      JSON.stringify(draftOf(w2.win) && JSON.parse(draftOf(w2.win)).spec.network) + ')');
+    w2.win.confirm = function () { return true; };
+    swapAway(w2.win);
+    click(w2.win, $(w2.win, 'gen-reset'));         // Reset on the regen page
+    ok(draftOf(w2.win) === draft, 'F7: a Reset on the Re-generate page keeps the Generate draft');
+
+    // Back to Generate: the draft restores host + cluster.
+    const w3 = makeWorld({ draft: draftOf(w2.win) });
+    ok($(w3.win, 'gen-net-host').value === '10.1.2.3' &&
+       $(w3.win, 'gen-net-cluster').value === 'MY_DRAFT_CLUSTER',
+      'F7: returning to Generate restores host + cluster');
+  })();
+
+  // ── F8: Reset on the Re-generate page re-fills from the source chip ──────
+  await (async function f8ResetRefills() {
+    const w = makeWorld({ regenPage: true, routes: [
+      { match: '/generate/envs', reply: { envs: [] } },
+      { match: '/regenerate/reconstruct', reply: function (e) {
+        const other = e.body && e.body.folder;
+        return { ok: true, spec: srcSpec(other ? 3 : 5),
+                 source_folder: other || 'D:\\wc\\key123',
+                 source_name: other ? 'other_chip' : 'LOADED_CHIP', notes: [], info_notes: [] };
+      } }
+    ] });
+    await settle();
+    const recon = () => w.log.filter(e => e.url.indexOf('/regenerate/reconstruct') >= 0);
+    ok(recon().length === 1 && w.G.state.mode === 'regenerate' &&
+       w.G.state.spec.qubits.length === 5, 'F8 harness: the page hydrated from the loaded chip');
+    ok($(w.win, 'regen-meta').textContent.indexOf('5 qubits') === 0, 'F8 harness: header meta');
+    click(w.win, $(w.win, 'gen-reset'));
+    ok(w.G.state.mode === 'generate' && w.G.state.sourcePath === null,
+      'F8: Reset still drops to plain Generate at once (no stale source can post)');
+    await settle();
+    ok(recon().length === 2 && recon()[1].body.folder === null,
+      'F8: Reset re-reads the same source (the loaded chip) — reconstructs: ' +
+      JSON.stringify(recon().map(e => e.body)));
+    ok(w.G.state.mode === 'regenerate' && w.G.state.sourcePath === 'D:\\wc\\key123' &&
+       w.G.state.spec.qubits.length === 5 && w.G.state.buildEndpoint === '/regenerate/build',
+      'F8: after Reset the wizard is the source chip again (mode ' + w.G.state.mode +
+      ', qubits ' + w.G.state.spec.qubits.length + ')');
+    ok($(w.win, 'regen-meta').textContent.indexOf('5 qubits') === 0 &&
+       $(w.win, 'regen-chip').textContent === 'LOADED_CHIP',
+      'F8: the header names the source and its counts again');
+    ok(w.G.state.step === 1, 'F8: Reset starts over at step 1');
+
+    // After "Load different…", a Reset re-reads THAT folder.
+    const src = $(w.win, 'regen-src-input');
+    src.value = 'D:\\x\\other_chip';
+    src.dispatchEvent(new w.win.Event('change', { bubbles: true }));
+    await settle();
+    ok(w.G.state.spec.qubits.length === 3 && $(w.win, 'regen-chip').textContent === 'other_chip',
+      'F8 harness: Load different… hydrated the other chip');
+    click(w.win, $(w.win, 'gen-reset'));
+    await settle();
+    ok(recon().length === 4 && recon()[3].body.folder === 'D:\\x\\other_chip' &&
+       w.G.state.sourcePath === 'D:\\x\\other_chip',
+      'F8: after Load different…, Reset re-reads that folder (got ' +
+      JSON.stringify(recon()[recon().length - 1].body) + ')');
+
+    // F6 on the page: Load different… over a dirty session asks first.
+    w.G.goToStep(2);
+    editField(w.win, $(w.win, 'gen-net-host'), '10.5.5.5');
+    let asked = 0;
+    w.win.confirm = function () { asked++; return false; };
+    src.value = 'D:\\x\\third';
+    src.dispatchEvent(new w.win.Event('change', { bubbles: true }));
+    await settle();
+    ok(asked === 1 && recon().length === 4 && w.G.state.spec.network.host === '10.5.5.5',
+      'F6: Load different… over edits asks, and Cancel keeps the session (asked ' + asked + ')');
+  })();
+
+  (function f8PlainResetFiresNothing() {
+    const w = makeWorld();
+    let fired = 0;
+    w.win.document.addEventListener('quamgen:reset', function () { fired++; });
+    click(w.win, $(w.win, 'gen-reset'));
+    ok(fired === 0, 'F8: a Reset in plain Generate asks nobody to re-fill');
+  })();
+
+  // ── F10: a header Generate press answers where the user looks ────────────
+  await (async function f10HeaderGenerate() {
+    let release;
+    const w = makeWorld({ routes: [
+      { match: '/generate/envs', reply: { envs: [] } },
+      { match: '/generate/select-env', reply: { ok: true } }
+    ] });
+    const origFetch = w.win.fetch;
+    w.win.fetch = function (url, fo) {
+      if (String(url).indexOf('/generate/build') >= 0) {
+        w.log.push({ url: String(url), body: JSON.parse(fo.body) });
+        return new w.win.Promise(function (res) {
+          release = function (data) { res({ json: () => w.win.Promise.resolve(data) }); };
+        });
+      }
+      return origFetch(url, fo);
+    };
+    toStep4(w.win, w.G, 2);
+    w.G.state.env = 'C:/envs/test/python.exe';
+    w.G.goToStep(7);
+    setInput(w.win, $(w.win, 'gen-output-path'), 'D:\\x\\build1');
+    w.G.goToStep(8);
+    w.reveals.length = 0;
+    click(w.win, $(w.win, 'gen-next-top'));
+    await settle();
+    const builds = () => w.log.filter(e => e.url.indexOf('/generate/build') >= 0);
+    ok(builds().length === 1, 'F10: the header press POSTs the build');
+    ok($(w.win, 'gen-next-top').disabled && $(w.win, 'gen-next').disabled,
+      'F10: BOTH Generate buttons are busy during the build (top ' +
+      $(w.win, 'gen-next-top').disabled + ', bottom ' + $(w.win, 'gen-next').disabled + ')');
+    ok(w.reveals.indexOf('gen-build-result') >= 0,
+      'F10: "Generating…" is brought into view (reveals ' + JSON.stringify(w.reveals) + ')');
+    w.reveals.length = 0;
+    release({ ok: true, result: { qubits: ['q1', 'q2'], qubit_pairs: [] } });
+    await settle();
+    ok(!$(w.win, 'gen-next-top').disabled && !$(w.win, 'gen-next').disabled,
+      'F10: both buttons come back after the build');
+    ok(w.reveals.indexOf('gen-build-result') >= 0 &&
+       $(w.win, 'gen-build-result').textContent.indexOf('Generated') >= 0,
+      'F10: the result is brought into view');
+  })();
+
+  // ── r2-18: the scripts export means what the box says ────────────────────
+  await (async function r18Payload() {
+    const w = makeWorld({ routes: [
+      { match: '/generate/envs', reply: { envs: [] } },
+      { match: '/generate/select-env', reply: { ok: true } },
+      { match: '/generate/build', reply: { ok: true, result: { qubits: [], qubit_pairs: [] } } }
+    ] });
+    toStep4(w.win, w.G, 2);
+    w.G.state.env = 'C:/envs/test/python.exe';
+    w.G.goToStep(7);
+    setInput(w.win, $(w.win, 'gen-output-path'), 'D:\\x\\b1');
+    const chk = $(w.win, 'gen-scripts-enable');
+    chk.checked = false;
+    chk.dispatchEvent(new w.win.Event('change', { bubbles: true }));
+    w.G.goToStep(8);
+    click(w.win, $(w.win, 'gen-next'));
+    await settle();
+    const b = w.log.filter(e => e.url.indexOf('/generate/build') >= 0).pop();
+    ok(b && b.body.scripts_enabled === false && b.body.scripts_dir === null,
+      'r2-18: an unticked export is sent as scripts_enabled:false (got ' +
+      JSON.stringify(b && { e: b.body.scripts_enabled, d: b.body.scripts_dir }) + ')');
+  })();
+
+  await (async function r18EmptyFolderRefused() {
+    const w = makeWorld({ routes: [
+      { match: '/generate/envs', reply: { envs: [] } },
+      { match: '/generate/select-env', reply: { ok: true } },
+      { match: '/generate/build', reply: { ok: true, result: {} } }
+    ] });
+    toStep4(w.win, w.G, 2);
+    w.G.state.env = 'C:/envs/test/python.exe';
+    w.G.goToStep(7);
+    setInput(w.win, $(w.win, 'gen-output-path'), 'D:\\x\\b1');
+    setInput(w.win, $(w.win, 'gen-scripts-path'), '');       // the user cleared it
+    w.G.goToStep(8);                                        // via the stepper
+    click(w.win, $(w.win, 'gen-next'));
+    await settle();
+    ok(!w.log.some(e => e.url.indexOf('/generate/build') >= 0),
+      'r2-18: a ticked export with no scripts folder never POSTs a build');
+    ok(/scripts/i.test($(w.win, 'gen-build-result').textContent),
+      'r2-18: the refusal names the scripts folder (got "' +
+      $(w.win, 'gen-build-result').textContent + '")');
+  })();
+
+  (function r18RecipeLabel() {
+    const w = makeWorld();
+    const show = w.G._test.showBuildResult;
+    const res = (script, inOut) => ({ ok: true, result: { qubits: [], qubit_pairs: [] },
+                                      script: script, script_in_output: inOut });
+    show(res('D:\\shared\\state_gen_scripts', false), 'D:\\x\\new');
+    let t = $(w.win, 'gen-build-result').textContent;
+    ok(t.indexOf('D:\\shared\\state_gen_scripts') >= 0 &&
+       t.indexOf('outside the output folder') >= 0 &&
+       t.indexOf('written to the output folder') < 0,
+      'r2-18: a recipe written elsewhere is reported as elsewhere (got "' + t + '")');
+    show(res('D:\\x\\new\\build_scripts', true), 'D:\\x\\new');
+    t = $(w.win, 'gen-build-result').textContent;
+    ok(t.indexOf('written inside the output folder') >= 0, 'r2-18: inside is reported as inside');
+    show(res('D:\\<b>evil</b>', false), 'D:\\x\\new');
+    ok(!w.win.document.querySelector('#gen-build-result b') &&
+       $(w.win, 'gen-build-result').textContent.indexOf('<b>evil</b>') >= 0,
+      'r2-18: the user-typed folder renders as text, never markup');
   })();
 
   if (fails) {

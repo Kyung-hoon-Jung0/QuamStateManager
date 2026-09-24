@@ -2416,6 +2416,7 @@
       if (rows) rows.value = z.rows;
     }
     window.WiringGrid.setOnChange(function (kind) {
+      regenMarkEdited(null);   // QA F6: every board commit is a user act
       // Placement / drag change only grid_location — NOT the qubit set or pairs —
       // so they must NOT trigger the expensive pair-dropdown rebuild + line
       // re-derivation. Skipping them is what keeps a 50-qubit hand-placement fast
@@ -3644,6 +3645,7 @@
     if (cell) {
       var target = readCell(cell);
       if (isValidDrop(drag, target)) {
+        regenMarkEdited(null);   // QA F6 (a QDAC trigger move escapes topoSig)
         if (drag.role === "digital") {
           applyQdacTriggerEdit(drag, target);    // the whole trigger cable
         } else if (!drag.whole && (drag.role === "rr" || drag.role === "rr_in")) {
@@ -5483,6 +5485,7 @@
     if (state.mode !== "regenerate") return;
     if (!state.regenTouched) state.regenTouched = {};
     state.regenTouched[group + "|" + rid + "|" + field] = 1;
+    state.regenEdited = true;   // QA F6: a populate edit is a leave-worthy edit
   }
 
   // -- step 6: LO-group visualisation ----------------------------------
@@ -7519,10 +7522,16 @@
           '<span class="gen-merge-h">Build recipe</span>' +
           '<span class="gen-merge-stat gen-merge-ok" title="Editable build scripts ' +
           '(01 wiring / 02 populate+gates / 03 config check) reproducing this chip ' +
-          '— edit the data blocks and re-run to rebuild">&#128196; ' +
-          res.script + '</span>' +
+          '— edit the data blocks and re-run to rebuild"></span>' +
           '<span class="gen-merge-muted gen-merge-detail" style="margin-left:.4rem">' +
-          'written to the output folder</span>';
+          '</span>';
+        // QA regenerate-r2-18: the folder is the user's own (step-7 box), so
+        // it goes in as text, and "where" is the server's verdict — the fixed
+        // "written to the output folder" was false for any custom folder.
+        sc.children[1].textContent = "📄 " + res.script;
+        sc.children[2].textContent = res.script_in_output === true
+          ? "written inside the output folder"
+          : (res.script_in_output === false ? "written outside the output folder" : "");
         el.appendChild(sc);
       } else if (res.script_error) {
         var se = document.createElement("div");
@@ -7663,6 +7672,14 @@
       }
       showMessage(msg, kind, { reveal: true });   // after the slot's reflow
     }
+    // QA F10: the header "Generate" sits a whole Review table above the result
+    // slot, so "Generating…", the result and a wiring refusal all rendered
+    // off-screen and the press looked dead. The press's answer is brought
+    // into view ('nearest' = no scroll when already visible).
+    function revealResult(el) {
+      if (!el || el.hidden || typeof el.scrollIntoView !== "function") return;
+      try { el.scrollIntoView({ block: "nearest" }); } catch (e) { /* old engine */ }
+    }
     if (!state.env) {
       refuseBuild("Select an environment in step 1.", "warn");
       return;
@@ -7715,6 +7732,22 @@
                   "warn");
       return;
     }
+    // QA regenerate-r2-18: the step-7 scripts rule, re-checked here like the
+    // output path (a step-chip jump skips the step-7 guard) — a ticked export
+    // with no folder used to build anyway while Review said "folder not set".
+    if (state.scriptsEnabled) {
+      var scriptsPath = getScriptsPath();
+      if (!scriptsPath) {
+        refuseBuild("Choose a folder for the editable Python scripts in " +
+                    "step 7, or untick the export.", "warn");
+        return;
+      }
+      if (!looksAbsolutePath(scriptsPath)) {
+        refuseBuild("Scripts folder must be an absolute path — fix it in step 7.",
+                    "warn");
+        return;
+      }
+    }
 
     // Final topology gate (defense-in-depth) — a hole-y / dangling / partially-placed
     // spec must never reach the build, even if a step chip jumped past the step-4
@@ -7749,17 +7782,27 @@
           gEl.appendChild(gp);
         });
       }
+      revealResult(gEl);
       return;
     }
 
     var resultEl = document.getElementById("gen-build-result");
-    var nextBtn = document.getElementById("gen-next");
-    if (nextBtn) nextBtn.disabled = true;
+    // QA F10: BOTH Generate buttons are busy for the build — only the bottom
+    // one used to be, so a header press that looked dead could be pressed
+    // again and POST a second concurrent build.
+    var nextBtns = ["gen-next", "gen-next-top"].map(function (id) {
+      return document.getElementById(id);
+    }).filter(Boolean);
+    function setBuildBusy(busy) {
+      nextBtns.forEach(function (b) { b.disabled = busy; });
+    }
+    setBuildBusy(true);
     if (resultEl) {
       resultEl.hidden = false;
       resultEl.className = "gen-build-result";
       resultEl.textContent =
         "Generating… this can take up to a minute while the QM stack loads.";
+      revealResult(resultEl);
     }
 
     fetch(state.buildEndpoint || "/generate/build", {
@@ -7771,6 +7814,10 @@
         source_folder: state.sourcePath || null,  // regenerate: merge from here
         // optional editable-scripts export (step 7 checkbox)
         scripts_dir: (state.scriptsEnabled && state.scriptsPath) || null,
+        // QA regenerate-r2-18: the box's own verdict — /regenerate/build read
+        // a null scripts_dir as "the legacy build_scripts/ folder" and wrote
+        // a bundle with the export unticked.
+        scripts_enabled: !!state.scriptsEnabled,
         // populate-protect (docs/72): the hydration-time populate snapshot +
         // explicitly-touched cells — the server diffs them against
         // spec.populate so in-wizard edits beat the tier-1 value merge.
@@ -7784,18 +7831,24 @@
     })
       .then(function (r) { return r.json(); })
       .then(function (res) {
-        if (nextBtn) nextBtn.disabled = false;
+        setBuildBusy(false);
         if (res.needs_confirm) {
           showBuildConfirm(res, outPath);
+          revealResult(resultEl);
           return;
         }
+        // QA F6: a finished re-generate build holds the session's edits — a
+        // later leave must not warn that they are about to be lost.
+        if (res.ok && state.mode === "regenerate") regenMarkClean();
         showBuildResult(res, outPath);
+        revealResult(resultEl);
       })
       .catch(function () {
-        if (nextBtn) nextBtn.disabled = false;
+        setBuildBusy(false);
         if (resultEl) {
           resultEl.className = "gen-build-result gen-build-error";
           resultEl.textContent = "Generate request failed.";
+          revealResult(resultEl);
         }
       });
   }
@@ -7856,11 +7909,18 @@
     if (sp) state.scriptsPath = sp.value.trim();
   }
 
+  // QA F7: the Re-generate page mounts this same wizard inside #regen-surface.
+  function onRegenPage() { return !!document.getElementById("regen-surface"); }
+
   function saveDraft() {
     // Re-generate re-hydrates from the source chip on every visit, so it must
     // NOT write the shared Generate draft — otherwise its (named, non-contiguous)
     // spec leaks into a later plain Generate session and triggers the renumber gate.
     if (state.mode === "regenerate") return;
+    // QA F7: nor from the regen PAGE before its hydrate lands (init() leaves
+    // plain-Generate mode there) — that save would overwrite the user's
+    // Generate draft with the regen page's empty session.
+    if (onRegenPage()) return;
     try {
       sessionStorage.setItem(DRAFT_KEY, JSON.stringify({
         v: DRAFT_VERSION, step: state.step, env: state.env,
@@ -8025,11 +8085,22 @@
 
   // Discard the draft and start the wizard over.
   function resetWizard() {
-    if (!window.confirm(
-        "Discard everything entered in this wizard and start over?")) {
+    // QA F8: on the Re-generate page, starting over means starting over FROM
+    // THE SOURCE CHIP — the page re-reads it on `quamgen:reset` (below)
+    // instead of leaving an empty plain Generate under a header that still
+    // names the source and promises carried-over values.
+    var wasRegen = state.mode === "regenerate";
+    var prevSource = state.sourcePath;
+    if (!window.confirm(wasRegen
+        ? "Discard every edit made in this wizard and start over from the source chip?"
+        : "Discard everything entered in this wizard and start over?")) {
       return;
     }
-    try { sessionStorage.removeItem(DRAFT_KEY); } catch (e) {}
+    // QA F7: the Generate draft belongs to the Generate wizard — a Reset on
+    // the Re-generate page never clears it.
+    if (!onRegenPage()) {
+      try { sessionStorage.removeItem(DRAFT_KEY); } catch (e) {}
+    }
     state.step = 1;
     state.spec = freshSpec();
     // QA F4: env: KEEP the current selection (the docs/134 hydrateFromSpec
@@ -8084,6 +8155,13 @@
     setChassisCount(5);   // re-seed 5 OPX1000 chassis (also renders the grid)
     setQubitCount(0);     // clears qubits / pairs / TWPAs and re-renders
     goToStep(1);
+    if (wasRegen) {
+      // From #generate-root, so the listener lives on the page's own
+      // #regen-surface and leaves with it on the next swap.
+      var rr = root();
+      if (rr) rr.dispatchEvent(new CustomEvent("quamgen:reset",
+        { bubbles: true, detail: { sourcePath: prevSource } }));
+    }
   }
 
   function init() {
@@ -8091,9 +8169,13 @@
     // Idempotent: skip if absent or already wired (HTMX re-swaps a fresh node).
     if (!r || r._quamGenInit) return;
     r._quamGenInit = true;
+    installRegenLeaveGuard();   // QA F6 (latched: installs once per page load)
 
     // Restore an in-progress draft if one exists, else start fresh.
-    var draft = loadDraft();
+    // QA F7: the Re-generate page never reads the Generate draft — its
+    // hydrate replaces the session anyway, and applying the draft first only
+    // leaked the draft's env / units into the regen session.
+    var draft = onRegenPage() ? null : loadDraft();
     if (draft) {
       applyDraft(draft);
     } else {
@@ -8186,6 +8268,65 @@
     saveDraft();
   });
 
+  // ── QA F6: leaving a Re-generate session with edits asks first ─────────
+  // Regen keeps no draft (docs/72: a return re-reads the source chip, so the
+  // populate-protect baseline always matches the working copy), so every
+  // leave DISCARDS the session — and used to do it without a word. Dirty =
+  // an explicit edit since the post-hydrate baseline (a committed wizard
+  // field, a board edit, a wire drag, a touched populate cell), a topology
+  // change against that baseline (the step-4 buttons), or a value typed and
+  // not committed yet. The output / scripts folders are exempt: both are
+  // mirrored in localStorage and come back on the next visit.
+  var REGEN_DURABLE_FIELDS = { "gen-output-path": 1, "gen-scripts-path": 1 };
+  var REGEN_LEAVE_MSG = "Re-generate keeps no draft — leaving discards the " +
+    "edits made in this wizard (coming back re-reads the source chip). " +
+    "Leave anyway?";
+  function regenMarkEdited(el) {
+    if (state.mode !== "regenerate") return;
+    if (el && el.id && REGEN_DURABLE_FIELDS[el.id]) return;
+    state.regenEdited = true;
+  }
+  function regenMarkClean() {
+    state.regenCleanTopo = topoSig();
+    state.regenEdited = false;
+  }
+  function regenDirty() {
+    if (state.mode !== "regenerate" || !root() || state.regenCleanTopo == null) {
+      return false;
+    }
+    if (state.regenEdited) return true;
+    if (document.querySelector('.gen-pop-in[data-field][data-dirty="1"]')) return true;
+    var f = _wizField(document.activeElement);
+    if (f && !REGEN_DURABLE_FIELDS[f.id] && f.__wizPrev !== undefined &&
+        _wizVal(f) !== f.__wizPrev) {
+      return true;
+    }
+    return topoSig() !== state.regenCleanTopo;
+  }
+  function installRegenLeaveGuard() {
+    if (window._regenLeaveGuard || !document.body) return;
+    window._regenLeaveGuard = true;
+    // On BODY, so it speaks before app.js's document-level swap teardown
+    // (PaneState park, Plotly purge) — those all stand down on a veto.
+    document.body.addEventListener("htmx:beforeSwap", function (evt) {
+      var d = evt.detail;
+      if (!d || !d.target || d.target.id !== "table-pane") return;
+      if (d.shouldSwap === false || state.mode !== "regenerate" || !root()) return;
+      captureDomFields();   // flushes a typed-but-uncommitted cell first
+      if (regenDirty() && !window.confirm(REGEN_LEAVE_MSG)) {
+        evt.preventDefault();
+        d.shouldSwap = false;
+      }
+    });
+    // F5 / tab close: the browser's own "Leave site?" prompt.
+    window.addEventListener("beforeunload", function (ev) {
+      if (!regenDirty()) return;
+      ev.preventDefault();
+      ev.returnValue = "";
+      return "";
+    });
+  }
+
   // ── Wizard field undo (Ctrl+Z) ────────────────────────────────────────────
   // A client-side undo stack for COMMITTED wizard field edits (value typed →
   // change fired on blur/Enter). Ctrl+Z restores the previous value and
@@ -8226,6 +8367,7 @@
     }
     var now = _wizVal(el);
     if (old === now) { el.__wizPrev = now; return; }
+    regenMarkEdited(el);   // QA F6
     _wizStack.push({ el: el, id: el.id || null, old: old });
     if (_wizStack.length > _WIZ_STACK_CAP) _wizStack.shift();
     el.__wizPrev = now;
@@ -8298,10 +8440,10 @@
   // auto-refilled. Idempotent — call after QuamGen.init() has mounted the wizard.
   function hydrateFromSpec(spec, opts) {
     var o = opts || {};
-    // Re-generate owns the wizard state fresh from the source chip: drop any
-    // stale/Generate draft so (a) it can't interfere here and (b) this named,
-    // non-contiguous spec never lingers as a draft for a later plain Generate.
-    try { sessionStorage.removeItem(DRAFT_KEY); } catch (e) {}
+    // QA F7: Re-generate neither reads nor clears the Generate draft (it used
+    // to delete it here, wiping the user's in-progress Generate session). A
+    // leak the other way is closed by saveDraft's regen guards and init()'s
+    // mode reset; the regen page's init() never applies the draft at all.
     // Normalize TWPAs to the wizard's object shape. Old exact-spec sidecars
     // (and the pre-fix reconstructor) carry bare id strings; the step-4 rows
     // bind twpa.id, so strings rendered as broken empty rows and edits
@@ -8403,6 +8545,8 @@
     if (typeof renderChassis === "function") renderChassis();
     if (typeof renderQubitsStep === "function") renderQubitsStep();
     render();
+    // QA F6: the leave guard's clean baseline — exactly what is on screen now.
+    if (state.mode === "regenerate") regenMarkClean();
   }
 
   window.QuamGen = {
@@ -8426,6 +8570,7 @@
       setTimeout(function () { if (btn) btn.disabled = false; }, 1500);
     },
     hydrateFromSpec: hydrateFromSpec,
+    regenDirty: regenDirty,   // QA F6: the page's "Load different…" asks too
     // Pure allocation internals, exposed for the node selfcheck harness only
     // (tests/generate_power_selfcheck.cjs) — not a public API.
     _test: {
