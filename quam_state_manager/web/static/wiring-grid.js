@@ -292,6 +292,14 @@ window.WiringGrid = (function () {
   function onDown(e) {
     var stone = e.target.closest && e.target.closest(".gen-topo-stone");
     if (stone) {
+      // preventDefault below keeps focus where it was, so a form field focused
+      // before the click (step 4 focuses the qubit count on entry) would still
+      // own the keyboard and eat the board's Del -- blanking the count, which
+      // then wipes every qubit. Blur it first, as a native click would.
+      var ae = document.activeElement, host = root();
+      if (ae && ae !== document.body && /^(INPUT|SELECT|TEXTAREA)$/.test(ae.tagName) &&
+          !(host && host.contains(ae)) && typeof ae.blur === "function") ae.blur();
+      if (!stone.isConnected) return;   // a dirty field's change may have rebuilt the board
       _drag = { qid: stone.dataset.qubit, startX: e.clientX, startY: e.clientY, moved: false };
       e.preventDefault();
     }

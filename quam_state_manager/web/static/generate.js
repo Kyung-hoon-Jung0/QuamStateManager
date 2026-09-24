@@ -40,7 +40,7 @@
     env: null,            // selected interpreter path
     allocation: null,     // last /generate/allocate result, keyed by element
     pairsTouched: false,  // user hand-edited pairs -> stop auto-filling them
-    wiringTouched: false, // user drag-edited the wiring -> keep their groups
+    wiringTouched: false, // user edited the READOUT wiring (drag/pin/CSV/regen) -> keep their feedline groups
     // Qubit naming scheme (step 4): "one_based" (q1, q2, … — the historical
     // default), "zero_based" (q0, q1, …), "grid" (board-derived letters —
     // qA1, qB2; one-shot Apply), or "custom" (prefix + start index).
@@ -241,6 +241,24 @@
         var shown = unplaced.slice(0, 6).join(", ") + (unplaced.length > 6 ? ", …" : "");
         return "Some qubits aren't placed on the board (" + shown + "). Place them all " +
                "on the Chip board, or clear the board to use the default layout.";
+      }
+      return null;
+    },
+    // QA F7/F5: Next used to carry a failed or stale allocation into Populate
+    // (its LO/FSP banks and wiring panel read state.allocation). Only a KNOWN
+    // problem for the CURRENT topology blocks; the rail's forward jumps stay
+    // free (docs/134), and a never-allocated chip keeps the single-tone path.
+    5: function () {
+      var sig = topoSig();
+      if (_allocLastErr && _allocLastErr.sig === sig) {
+        return "Wiring allocation failed for this chip (" + _allocLastErr.msg +
+               ") — change the pins here, the qubits/lines in step 4 or the " +
+               "FEMs in step 3, then Auto-allocate, before continuing.";
+      }
+      if (state.allocation && _allocSpecSig !== null && _allocSpecSig !== sig) {
+        return "The wiring changed since the last allocation — " +
+               (_allocInFlight ? "wait for Auto-allocate to finish"
+                               : "press Auto-allocate") + " before continuing.";
       }
       return null;
     },
@@ -1489,10 +1507,47 @@
       groups.push(chunk.length === 1 ? chunk[0]
         : chunk[0] + "–" + chunk[chunk.length - 1]);
     }
+    // QA generate-r2-06: once the readout wiring was edited (drag, pin, CSV,
+    // regenerate), deriveLines KEEPS those feedline groups and ignores the mux
+    // size — so the caption must show the kept split, not the mux one.
+    var kept = keptFeedlineGroups(qs, mux);
+    var note = "";
+    if (kept) {
+      var keptShown = kept.map(function (m) {
+        var a = qs.indexOf(m[0]), b = qs.indexOf(m[m.length - 1]);
+        return m.length === 1 ? m[0]
+          : (b - a === m.length - 1) ? m[0] + "–" + m[m.length - 1] : m.join(", ");
+      });
+      if (keptShown.join("|") !== groups.join("|")) {
+        note = " (kept from the step-5 readout wiring — Per feedline does not " +
+               "regroup it; drag the readout ports in step 5 to change it)";
+      }
+      groups = keptShown;
+    }
     var shown = groups.slice(0, 4).join(" · ") + (groups.length > 4 ? " · …" : "");
     el.textContent = qs.length + " qubit" + (qs.length === 1 ? "" : "s") +
       " · " + groups.length + " feedline" + (groups.length === 1 ? "" : "s") +
-      ": " + shown;
+      ": " + shown + note;
+    el.classList.toggle("gen-qubit-summary-kept", !!note);
+  }
+
+  // The feedline membership deriveLines will build when the readout wiring is
+  // kept (state.wiringTouched): a qubit's kept resonator group, else the mux
+  // chunk it falls in. Null when nothing is kept (the caption's mux path).
+  function keptFeedlineGroups(qs, mux) {
+    if (!state.wiringTouched) return null;
+    var groupOf = {};
+    (state.spec.lines || []).forEach(function (ln) {
+      if (ln.line === "resonator" && ln.group) groupOf[ln.element] = ln.group;
+    });
+    if (!Object.keys(groupOf).length) return null;
+    var order = [], members = {};
+    qs.forEach(function (q, idx) {
+      var g = groupOf[q] || ("feedline" + (Math.floor(idx / mux) + 1));
+      if (!members[g]) { members[g] = []; order.push(g); }
+      members[g].push(q);
+    });
+    return order.map(function (g) { return members[g]; });
   }
 
   function renderPairs() {
@@ -2251,7 +2306,11 @@
 
     if (countInput) {
       countInput.addEventListener("change", function () {
-        setQubitCount(parseInt(countInput.value, 10));
+        // A blank/unparsable box reverts instead of committing 0 (an emptied
+        // field is not "delete every qubit"; an explicit 0 still clears).
+        var n = parseInt(countInput.value, 10);
+        if (isNaN(n)) { countInput.value = state.spec.qubits.length; return; }
+        setQubitCount(n);
         countInput.value = state.spec.qubits.length;
       });
     }
@@ -2615,7 +2674,21 @@
     if (!ch) return "";
     var slot = ch.slot != null ? ch.slot : ch.out_slot;
     var port = ch.out_port != null ? ch.out_port : ch.port;
+    // A PARTIAL channel (deriveLines' LO-safe readout pre-pin carries ports but
+    // no con/slot) is not a con/slot/port pin: join() rendered it "//8".
+    if (ch.con == null || slot == null || port == null) return "";
     return [ch.con, slot, port].join("/");
+  }
+
+  // The MW-FEM input that shares an LO with output `port` (MW_LO_PAIRS: Out1+In1,
+  // Out8+In2), or null when that output's LO partner is another output.
+  function loPairedInput(port) {
+    for (var i = 0; i < MW_LO_PAIRS.length; i++) {
+      var a = MW_LO_PAIRS[i][0], b = MW_LO_PAIRS[i][1];
+      if (a[1] === "output" && a[0] === port && b[1] === "input") return b[0];
+      if (b[1] === "output" && b[0] === port && a[1] === "input") return a[0];
+    }
+    return null;
   }
 
   function pinToChannel(str, lineType) {
@@ -2623,7 +2696,14 @@
     if (parts.length !== 3 || parts.some(isNaN)) return null;
     var con = parts[0], slot = parts[1], port = parts[2];
     if (lineType === "resonator") {
-      return { kind: "mw_fem", con: con, slot: slot, in_port: port, out_port: port };
+      // The typed port is the OUTPUT (what the pin box and the Auto-allocated
+      // column show). It used to set in_port = out_port too, and a MW-FEM has
+      // inputs 1-2 only, so '1/1/8' could never allocate. The input follows the
+      // output's LO partner; an output with no input partner leaves it free.
+      var rch = { kind: "mw_fem", con: con, slot: slot, out_port: port };
+      var inp = loPairedInput(port);
+      if (inp != null) rch.in_port = inp;
+      return rch;
     }
     if (lineType === "drive" || lineType === "cross_resonance" || lineType === "zz_drive") {
       // CR/ZZ are MW drive tones — the old lf_fem fallthrough mis-pinned a
@@ -2648,18 +2728,39 @@
   function renderWiringTable() {
     var host = document.getElementById("gen-wiring-table");
     if (!host) return;
+    // An allocation answering re-renders this table (QA F5: a typed pin now
+    // re-allocates) — a pin box being typed in must keep its text and focus.
+    var ae = document.activeElement, keep = null;
+    if (ae && ae.classList && ae.classList.contains("gen-wiring-pin") && host.contains(ae)) {
+      keep = { idx: ae.closest("tr").dataset.idx, value: ae.value,
+               s: ae.selectionStart, e: ae.selectionEnd };
+    }
     if (!state.spec.lines.length) {
       host.innerHTML = '<p class="muted">Add qubits in step 4 first.</p>';
       return;
     }
+    // A feedline's ports come from its FIRST member's pin (run_build
+    // build_connectivity), so a later member's own partial pin says nothing.
+    var feedLead = {};
+    state.spec.lines.forEach(function (ln) {
+      if (ln.line === "resonator" && ln.group && !feedLead[ln.group]) feedLead[ln.group] = ln.element;
+    });
     var body = state.spec.lines.map(function (ln, idx) {
-      return '<tr data-idx="' + idx + '"' + (ln.channel ? ' class="pinned"' : "") + ">" +
+      var pin = channelToPin(ln.channel);
+      // a partial (LO-safe) channel shows its ports as the placeholder, not "//8"
+      var lead = ln.line === "resonator" && ln.group ? feedLead[ln.group] : null;
+      var ph = (!pin && lead && lead !== ln.element) ? "auto · " + lead + "'s feedline"
+        : (!pin && ln.channel && ln.channel.out_port != null)
+        ? "auto · out " + ln.channel.out_port +
+          (ln.channel.in_port != null ? " / in " + ln.channel.in_port : "")
+        : "auto";
+      return '<tr data-idx="' + idx + '"' + (pin ? ' class="pinned"' : "") + ">" +
         "<td>" + ln.element + "</td>" +
         "<td>" + ln.line +
         (ln.group ? ' <span class="muted">· ' + ln.group + "</span>" : "") + "</td>" +
         '<td class="gen-wiring-alloc">' + allocText(ln.element, ln.line) + "</td>" +
-        '<td><input type="text" class="gen-wiring-pin" placeholder="auto" value="' +
-        channelToPin(ln.channel) + '"></td></tr>';
+        '<td><input type="text" class="gen-wiring-pin" placeholder="' + ph + '" value="' +
+        pin + '"></td></tr>';
     }).join("");
     host.innerHTML =
       '<table class="gen-wiring" id="gen-wiring-tbl"><thead><tr>' +
@@ -2671,15 +2772,44 @@
       // pins are "con/slot/port" strings, not numbers — auto-grow only (no comma).
       window.NumberInput.fit(input);
       input.addEventListener("input", function () { window.NumberInput.fit(input); });
-      input.addEventListener("change", function () {
-        var tr = input.closest("tr");
-        var ln = state.spec.lines[Number(tr.dataset.idx)];
-        var v = input.value.trim();
-        ln.channel = v ? pinToChannel(v, ln.line) : null;
-        tr.classList.toggle("pinned", !!ln.channel);
-      });
+      input.addEventListener("change", function () { commitWiringPin(input); });
+      // blur too: a box restored mid-typing by a re-render fires no change
+      input.addEventListener("blur", function () { commitWiringPin(input); });
     });
     if (window.armPlainResize) window.armPlainResize("gen-wiring-tbl", "quam_gen_wiring_cols");
+    if (keep) {
+      var again = host.querySelector('tr[data-idx="' + keep.idx + '"] .gen-wiring-pin');
+      if (again) {
+        again.value = keep.value;
+        window.NumberInput.fit(again);
+        again.focus();
+        try { again.setSelectionRange(keep.s, keep.e); } catch (e) {}
+      }
+    }
+  }
+
+  // Commit one typed pin. QA F5: it used to write spec.lines only, so the
+  // Auto-allocated column, the diagram, "✓ Wiring valid" and the step-6 LO map
+  // kept the OLD port while the build used the new one. A changed pin now
+  // re-allocates (the allocator enforces pins as constraints), exactly as a
+  // drag redraws. Idempotent: an unchanged box or channel does nothing.
+  function commitWiringPin(input) {
+    if (!input.isConnected) return;   // a re-render replaced it (its text moved on)
+    var tr = input.closest("tr");
+    var ln = tr && state.spec.lines[Number(tr.dataset.idx)];
+    if (!ln) return;
+    var v = input.value.trim();
+    if (v === channelToPin(ln.channel)) return;   // e.g. a partial LO-safe pre-pin left blank
+    var before = JSON.stringify(ln.channel || null);
+    ln.channel = v ? pinToChannel(v, ln.line) : null;
+    tr.classList.toggle("pinned", !!channelToPin(ln.channel));
+    if (JSON.stringify(ln.channel || null) === before) return;
+    // a typed readout pin is a readout edit: deriveLines must keep it
+    if (ln.line === "resonator") state.wiringTouched = true;
+    var cell = tr.querySelector(".gen-wiring-alloc");
+    if (cell) cell.textContent = "re-allocating…";
+    if (_allocInFlight) { _allocRerun = true; return; }
+    if (typeof fetch === "function") runAutoAllocate(true);
   }
 
   // -- step 5: QDAC trigger cabling (docs/136 WS7) ------------------------
@@ -3085,6 +3215,7 @@
                  '<br><small>the first usable env from step 1 is selected ' +
                  'automatically</small></p>')
             : '<p class="muted">Run Auto-allocate to see the wiring diagram.</p>';
+      renderWiringIssues(null);   // no allocation, no "✓ Wiring valid" (QA F7)
       return;
     }
     renderInstrumentWiring("gen-wiring-diagram",
@@ -3505,13 +3636,21 @@
   // readout-outputs are interchangeable on MW output ports; a feedline (all
   // its qubits) moves as a unit.
   function applyPortEdit(src, t) {
+    var wasCurrent = _allocSpecSig !== null && _allocSpecSig === topoSig();
     var io = src.io;
     var srcLines = linesAtPort(src.con, src.slot, src.port, io);
     var tgtLines = linesAtPort(t.con, t.slot, t.port, io);
     srcLines.forEach(function (x) { moveChannel(x, t.con, t.slot, t.port, io); });
     tgtLines.forEach(function (x) { moveChannel(x, src.con, src.slot, src.port, io); });
-    state.wiringTouched = true;
+    // Only a drag that moves READOUT freezes the feedline grouping (QA
+    // generate-r2-06): an xy-only drag used to set it too, after which
+    // step 4's "Per feedline" was silently ignored while its caption claimed
+    // the new split. syncSpecChannels still pins every line (diagram == build).
+    if (srcLines.concat(tgtLines).some(function (x) { return x.allocKey === "rr"; })) {
+      state.wiringTouched = true;
+    }
     syncSpecChannels();
+    if (wasCurrent) _allocSpecSig = topoSig();   // the drag moved both in lockstep
     renderWiringDiagram();
     renderWiringTable();
   }
@@ -3521,6 +3660,7 @@
   // only the input. Consistency is checked later (the Populate band check),
   // never enforced by snapping the two ports together.
   function applyQubitReadoutEdit(src, t) {
+    var wasCurrent = _allocSpecSig !== null && _allocSpecSig === topoSig();
     (state.allocation[src.element].rr || []).forEach(function (ch) {
       if ((ch.io_type || "output") === src.io) {
         ch.con = t.con; ch.slot = t.slot; ch.port = t.port;
@@ -3528,6 +3668,7 @@
     });
     state.wiringTouched = true;
     syncSpecChannels();
+    if (wasCurrent) _allocSpecSig = topoSig();   // the drag moved both in lockstep
     renderWiringDiagram();
     renderWiringTable();
   }
@@ -3673,6 +3814,17 @@
   // relevant edit auto-re-allocates on the next Wiring entry instead of
   // silently showing the stale diagram.
   var _allocTopoSig = null;
+  // QA F7: the last allocator failure {sig, msg} (auto OR manual press) — the
+  // step-5 Next guard names it. Separate from the auto-latch above.
+  var _allocLastErr = null;
+  // QA F5: a pin typed while a request is in flight is not in that request's
+  // spec — run once more when it answers.
+  var _allocRerun = false;
+  // QA F5/F7: the spec signature state.allocation currently DESCRIBES — the
+  // allocator's answer, or a drag edit made on it (which moves allocation and
+  // pins in lockstep). Unlike _allocTopoSig it follows drags, so the step-5
+  // Next guard never refuses the user's own drag. null = unknown (draft).
+  var _allocSpecSig = null;
 
   // Allocator-relevant signature of the spec: entity membership, the derived
   // line set with pins, hardware layout, gate, QDAC bias, TWPAs. Pair ids are
@@ -3715,6 +3867,9 @@
     _allocAutoBlocked = false;
     _allocFailSig = null;
     _allocTopoSig = null;
+    _allocLastErr = null;
+    _allocRerun = false;
+    _allocSpecSig = null;
   }
 
   function maybeAutoAllocate() {
@@ -3774,9 +3929,14 @@
         if (res.ok && res.result) {
           _allocAutoBlocked = false;
           _allocFailSig = null;
+          _allocLastErr = null;
           state.allocation = res.result.allocation || {};
           _allocTopoSig = sigAtRequest;   // the spec this response was computed FOR
+          _allocSpecSig = sigAtRequest;
           if (status) status.textContent = "Allocated.";
+          // QA F7: an earlier allocation error must not stay beside "Allocated."
+          // (step-gated: a late answer never wipes another step's message).
+          if (state.step === 5) showMessage(null);
           renderWiringTable();
           // docs/136 WS7: grouping runs on the FRESH allocation — before the
           // diagram, so the picture shows the grouped cables, not the
@@ -3787,23 +3947,46 @@
           if (warns.length) showMessage(warns.join(" "), "warn");
         } else {
           if (auto) { _allocAutoBlocked = true; _allocFailSig = sigAtRequest; }
-          if (status) status.textContent = "✗ allocation failed";
+          var why = res.error || (res.errors || []).join("; ") || "Allocation failed.";
+          _allocLastErr = { sig: sigAtRequest, msg: why };
+          dropStaleAllocation(sigAtRequest);
+          if (status) status.textContent = "✗ allocation failed — " + why;
+          renderWiringTable();     // no row keeps a "re-allocating…" that never comes
           renderWiringDiagram();   // back to the manual placeholder
-          showMessage(
-            res.error || (res.errors || []).join("; ") || "Allocation failed.",
-            "error"
-          );
+          showMessage(why, "error");
         }
+        rerunIfPinned();
       })
       .catch(function () {
         if (myRun !== _allocRunSeq) return;
         _allocInFlight = false;
         if (auto) { _allocAutoBlocked = true; _allocFailSig = sigAtRequest; }
         if (btn) btn.disabled = false;
+        dropStaleAllocation(sigAtRequest);
         if (status) status.textContent = "✗ allocation failed";
+        renderWiringTable();
         renderWiringDiagram();
         showMessage("Allocation request failed.", "error");
+        rerunIfPinned();
       });
+  }
+
+  // QA F7: a failed allocation for a CHANGED topology leaves nothing to show —
+  // the previous allocation (and its "✓ Wiring valid") describes another chip.
+  // An unchanged topology's transient failure keeps the good allocation; the
+  // user's drag/pin edits live in spec.lines either way.
+  function dropStaleAllocation(sigAtRequest) {
+    if (!state.allocation || sigAtRequest === _allocSpecSig) return;
+    state.allocation = null;   // the caller re-renders: the column falls back to "—"
+    _allocTopoSig = null;
+    _allocSpecSig = null;
+  }
+
+  // QA F5: a pin changed while that request was in flight — allocate again.
+  function rerunIfPinned() {
+    if (!_allocRerun) return;
+    _allocRerun = false;
+    runAutoAllocate(true);
   }
 
   function bindWiringStep() {
@@ -7867,6 +8050,8 @@
     // exempt from topology-staleness forever. An old draft lacks the field —
     // null keeps the previous trust-the-draft behavior for those only.
     _allocTopoSig = d.allocation ? (d.allocSig || null) : null;
+    _allocSpecSig = null;   // a restored allocation's match to the spec is unknown
+    _allocLastErr = null;
     // Naming scheme — old drafts lack it: default = the historical q1…qN.
     var nm = (d.naming && typeof d.naming === "object") ? d.naming : {};
     state.naming = {
@@ -8379,6 +8564,7 @@
       applyPreset: applyPreset,
       applyPortCsv: applyPortCsv,
       pinToChannel: pinToChannel,
+      channelToPin: channelToPin,
       deriveLines: deriveLines,
       isQdacBiased: isQdacBiased,
       isBiasTee: isBiasTee,
@@ -8400,6 +8586,8 @@
       qtElementsAtPort: qtElementsAtPort,
       applyQdacTriggerEdit: applyQdacTriggerEdit,
       syncSpecChannels: syncSpecChannels,
+      applyPortEdit: applyPortEdit,
+      applyQubitReadoutEdit: applyQubitReadoutEdit,
       // docs/176 seams — the review's verdict + root picker, and the
       // build-result renderer that has to take TWO blocker shapes.
       renderCapabilityReport: renderCapabilityReport,

@@ -8298,6 +8298,8 @@ button.gen-mini-btn:hover {
 .gen-band-head .muted { font-weight: 400; }
 .gen-band-sublabel { font-weight: 600; font-size: 0.9em; }
 .gen-oneline { margin: 0.2rem 0; font-size: 0.9em; }
+/* QA generate-r2-06: the caption names a feedline split the mux size did not make */
+.gen-oneline.gen-qubit-summary-kept { color: var(--color-warning-text); }
 /* DEFINE band: architecture radios + count + mux inline on one wrapping row */
 .gen-define-row { display: flex; gap: 1.6rem; align-items: flex-start; flex-wrap: wrap; }
 .gen-define-row .gen-chassis-count-field { margin: 0; font-size: 0.933em; }

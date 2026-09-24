@@ -64,6 +64,28 @@ ok(T.pinToChannel('1/2/3', 'coupler').kind === 'lf_fem',
 ok(T.pinToChannel('1/2/3', 'cross_resonance').out_port === 3,
    'cr pin carries out_port');
 
+// --- QA F6: a resonator pin names the OUTPUT; the input follows its LO ------
+// pinToChannel set in_port = out_port, so '1/1/8' asked for MW input 8 (a
+// MW-FEM has inputs 1-2) and allocation failed with NotEnoughChannels.
+(function () {
+  const r8 = T.pinToChannel('1/1/8', 'resonator');
+  ok(r8 && r8.kind === 'mw_fem' && r8.con === 1 && r8.slot === 1 && r8.out_port === 8 && r8.in_port === 2,
+     'F6: resonator 1/1/8 -> out 8 + its LO partner in 2 (got ' + JSON.stringify(r8) + ')');
+  const r1 = T.pinToChannel('1/1/1', 'resonator');
+  ok(r1 && r1.out_port === 1 && r1.in_port === 1, 'F6: resonator 1/1/1 -> out 1 + in 1');
+  const r3 = T.pinToChannel('1/1/3', 'resonator');
+  ok(r3 && r3.out_port === 3 && !('in_port' in r3),
+     'F6: an output with no input LO partner leaves in_port to the allocator');
+  ok(T.pinToChannel('1//1', 'resonator') === null, 'F6: a blank segment is still refused');
+  // channelToPin: a partial LO-safe pre-pin is not "//8"
+  ok(T.channelToPin({ kind: 'mw_fem', out_port: 8, in_port: 2 }) === '',
+     'F6: a partial channel renders as an empty pin box, not "//8"');
+  ok(T.channelToPin({ kind: 'mw_fem', con: 1, slot: 1, out_port: 8, in_port: 2 }) === '1/1/8',
+     'F6: a full channel still renders con/slot/port');
+  ok(T.channelToPin({ kind: 'lf_fem', con: 1, out_slot: 3, out_port: 5 }) === '1/3/5',
+     'F6: an lf_fem channel renders con/out_slot/port');
+})();
+
 // --- ALLOC_KEY: WiringLineType values ---------------------------------------
 ok(T.ALLOC_KEY.cross_resonance === 'cr', 'ALLOC_KEY.cross_resonance === cr');
 ok(T.ALLOC_KEY.zz_drive === 'zz', 'ALLOC_KEY.zz_drive === zz');

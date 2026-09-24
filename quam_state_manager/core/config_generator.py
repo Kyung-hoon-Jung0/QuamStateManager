@@ -1163,13 +1163,13 @@ def _run_script_outcome(
 _BUILD_ERROR_HELP: dict[str, str] = {
     "NotEnoughChannelsException": (
         "This environment's instrument list does not have enough channels for "
-        "the chip as configured. Add or enlarge a controller/FEM in step 2, or "
-        "reduce the number of qubits, pairs or lines in step 3–4, then "
+        "the chip as configured. Add or enlarge a controller/FEM in step 3, or "
+        "reduce the number of qubits, pairs or lines in step 4, then "
         "re-allocate."
     ),
     "ConstraintsTooStrictException": (
         "The port constraints you pinned cannot all be satisfied at once. "
-        "Relax or clear a pinned port in step 3 and re-allocate."
+        "Relax or clear a pinned port in step 5 and re-allocate."
     ),
     "ModuleNotFoundError": (
         "The selected environment is missing a package this build needs. "

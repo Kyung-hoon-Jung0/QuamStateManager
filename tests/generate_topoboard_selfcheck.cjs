@@ -434,6 +434,30 @@ function stone(win, qid) {
     ok((board.innerHTML.match(/gen-topo-stone-ro/g) || []).length === 5, 'reopen redraws CURRENT topology, not a stale closure');
   }
 
+  // QA regenerate-r2-01: step 4 focuses the qubit count on entry, and a stone's
+  // mousedown preventDefaults, so focus used to STAY in the count box -- the
+  // board's Del was then skipped as "typing" and the browser blanked the count
+  // (blur committed 0 = every qubit gone). A stone click must take the keyboard.
+  {
+    const w = freshChip();
+    w.WiringGrid.preset('chain');
+    w.QuamGen.goToStep(4);
+    const qc = w.document.getElementById('gen-qubit-count');
+    ok(w.document.activeElement === qc, 'r2-01: step 4 focuses the qubit count (the trap state)');
+    clickEl(w, stone(w, 'q3'));
+    ok(w.document.activeElement !== qc, 'r2-01: a stone click moves focus off the count box');
+    w.document.activeElement.dispatchEvent(new w.KeyboardEvent('keydown', { key: 'Delete', bubbles: true }));
+    const qs = w.QuamGen.state.spec.qubits;
+    ok(qs.indexOf('q3') < 0 && qs.length === 5, 'r2-01: Del removes the selected stone q3 (got ' + JSON.stringify(qs) + ')');
+    // the hardening: a blank count reverts instead of committing 0.
+    qc.value = '';
+    qc.dispatchEvent(new w.Event('change', { bubbles: true }));
+    ok(w.QuamGen.state.spec.qubits.length === 5 && qc.value === '5',
+       'r2-01: a blank count box reverts (spec ' + w.QuamGen.state.spec.qubits.length + ', box "' + qc.value + '")');
+    setInput(w, 'gen-qubit-count', '0');
+    ok(w.QuamGen.state.spec.qubits.length === 0, 'r2-01: an explicit 0 still clears');
+  }
+
   if (fails) { console.error(fails + ' check(s) FAILED'); process.exit(1); }
   console.log('generate_topoboard_selfcheck: all checks passed');
 })();
