@@ -10,8 +10,9 @@
  *   2. ArrowUp/Down walk the VISIBLE rows -- collapsed children and
  *      search-hidden rows are skipped; Right opens (materialising a lazy
  *      node) then steps in; Left closes then steps out; Home/End
- *   3. Enter on a value does the value's own click: the inline editor on an
- *      editable tree, a copy on a read-only one (never an editor there)
+ *   3. Enter on a value does the value's own click (the inline editor); a
+ *      read-only copy tree has no keyboard layer at all (review: a dataset
+ *      page renders one small tree per qubit per key -- not Tab stops)
  *   4. the editor hands focus back to its row on Escape and on Enter, and
  *      Enter inside the editor commits exactly once
  *   5. F1 on a focused row opens the manual on that row's path
@@ -212,14 +213,33 @@ const DATA = {
     window.jsonTreeSearch('tree-edit', '');
     await tick(320);
 
-    // ── 7. a read-only tree: Enter copies, never edits ────────────────────
+    // ── 7. a read-only copy tree is NOT a Tab stop (review) ───────────────
+    // Keyboard navigation is for the trees a keyboard user acts on (edit /
+    // accept-reject). A dataset page renders one small parameter/result tree
+    // per qubit per key, and its Tab order used to grow by that number.
     window.renderJsonTree('tree-copy', DATA, { defaultDepth: 3, valueClick: 'copy' });
     const ct = doc.getElementById('tree-copy');
+    ok(!ct.hasAttribute('tabindex') && !ct._treeKeys,
+       'a read-only copy tree is not a Tab stop and has no key handling');
     ct.querySelector('.tree-node[data-path="flag"] > .tree-row').focus();
     copies.length = 0;
-    key('Enter');
-    ok(copies.length === 1 && copies[0] === 'true' && !ct.querySelector('input'),
-       'Enter on a read-only value copies it and opens no editor (' + copies.join(',') + ')');
+    const evc = key('Enter');
+    ok(copies.length === 0 && !evc.defaultPrevented && !ct.querySelector('input'),
+       'Enter on a read-only copy tree is left to the page (no copy, no editor)');
+    // ...and the JSON pencils inside a keyboard tree are reached from their row, not by Tab
+    window.jsonTreeSetExpanded('tree-edit', ['qubits', 'qubits.q1']);
+    const pencils = tree.querySelectorAll('.tree-json-edit-btn');
+    ok(pencils.length > 0 && Array.prototype.every.call(pencils, (b) => b.tabIndex === -1),
+       'the JSON pencils are not Tab stops inside a keyboard tree (' + pencils.length + ' pencils): one Tab stop per tree, literally');
+    tree.querySelector('.tree-node[data-path="qubits.q1.xy"] > .tree-row').focus();
+    key('F2');
+    ok(!!tree.querySelector('.tree-node[data-path="qubits.q1.xy"] .tree-json-textarea'),
+       'F2 on a container row opens its JSON editor: the way in');
+    const jta = tree.querySelector('.tree-node[data-path="qubits.q1.xy"] .tree-json-textarea');
+    jta.focus();
+    jta.dispatchEvent(new window.KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true }));
+    ok(!tree.querySelector('.tree-node[data-path="qubits.q1.xy"] .tree-json-editor') && focused() === 'qubits.q1.xy' && onRow(),
+       'Escape closes the JSON editor and hands focus back to its ROW, not <body> (' + focused() + ')');
 
     // ── 8. leaving is not a trap; a mouse click does not jump ─────────────
     const r1 = tree.querySelector('.tree-node[data-path="qubits"] > .tree-row');

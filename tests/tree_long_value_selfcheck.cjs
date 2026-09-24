@@ -80,6 +80,11 @@ const row = val.parentElement;
 ok(window.getComputedStyle(row).display === 'flex', 'setup: the row is still the flex row the rule relies on');
 ok(val.textContent === JSON.stringify(LONG) && val.dataset.editVal === LONG,
    'the text is untouched -- the full value is still what edit and copy read');
+// review: the clipping applies to every tree, so a hover shows what the ellipsis hides
+ok(val.title.indexOf('Click to edit') === 0 && val.title.indexOf(LONG) > 0,
+   'a clipped long string carries its full text in the hover, after the action hint');
+const shortVal = doc.querySelector('.tree-node[data-path="qubits.q2.extras.short"] > .tree-row > .tree-val');
+ok(!!shortVal && shortVal.title === 'Click to edit', 'a short value keeps the plain hint (' + (shortVal && shortVal.title) + ')');
 
 // the diff view's right-hand value is a sibling span, not a .tree-val
 const inc = doc.createElement('span');

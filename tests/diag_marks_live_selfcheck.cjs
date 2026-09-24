@@ -130,6 +130,20 @@ function finding(jp, sev, ack) {
   ok(!nav.classList.contains('nav-diag-dot'), 'M3: acknowledged + pane restore clears the red dot');
   ok(!rowOf(TOF).querySelector('.tree-warn-icon'), 'M3: ...and the ⚠ on the restored tree');
 
+  // M3b (r2-19 review): a keep-alive restore of ANY OTHER route has no marks
+  // to repaint and reads nothing (the sidebar dots follow 'diagnostics-changed')
+  const pane = doc.getElementById('table-pane');
+  const parked = doc.createElement('div');
+  while (pane.firstChild) parked.appendChild(pane.firstChild);
+  pane.innerHTML = '<div id="bulk-stub">bulk</div>';
+  const readsBefore = win._findingsReads;
+  doc.dispatchEvent(new win.CustomEvent('paneRestored', { bubbles: true, detail: { route: '/bulk' } }));
+  await tick(520);
+  ok(win._findingsReads === readsBefore,
+     'M3b: a restore of /bulk issues no findings.json read (' + (win._findingsReads - readsBefore) + ')');
+  pane.innerHTML = '';
+  while (parked.firstChild) pane.appendChild(parked.firstChild);
+
   // M4: a finding under the FOLDED q2 does not reopen it
   const q2 = c.querySelector('.tree-node[data-path="qubits.q2"]');
   const q2t = q2.querySelector(':scope > .tree-row > .tree-toggle');

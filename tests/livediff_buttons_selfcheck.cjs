@@ -55,6 +55,7 @@ const STORE = { getItem: () => null, setItem: () => {}, removeItem: () => {} };
 // Response-like with ok/status/text().
 const fetches = [];
 let liveDiffPayload = { live_state: {}, live_wiring: {} };
+let liveDiffHold = null;         // a promise the live-diff read waits on (r2-02: an in-flight read)
 let editBatchResponder = null;   // (opts) -> body, for the Accept-all pins
 function fetchStub(url, opts) {
     fetches.push({ url: String(url), opts: opts || {} });
@@ -63,10 +64,11 @@ function fetchStub(url, opts) {
         : (editBatchResponder && String(url).indexOf('/field/edit-batch') === 0)
             ? editBatchResponder(opts || {})
             : { ok: true, results: [{ ok: true }], tray_html: '' };
-    return Promise.resolve({
+    const hold = (String(url).indexOf('/state/live-diff') === 0 && liveDiffHold) ? liveDiffHold : Promise.resolve();
+    return hold.then(() => ({
         ok: true, status: 200,
         text: function () { return Promise.resolve(JSON.stringify(body)); },
-    });
+    }));
 }
 global.fetch = fetchStub;
 Object.defineProperty(window, 'fetch',
@@ -101,6 +103,7 @@ global.renderJsonTree = window.renderJsonTree;
 let fails = 0;
 function ok(c, m) { if (!c) { console.error('FAIL: ' + m); fails++; } else { console.log('ok - ' + m); } }
 const settle = () => new Promise((r) => setTimeout(r, 30));
+let refreshes = 0;   // _softRefreshLiveSurface calls (a pane re-GET)
 
 (async function main() {
 
@@ -193,7 +196,7 @@ ok(cnt.textContent !== '2',
     bar.hidden = true;
     bar.innerHTML = '<span id="livediff-bar-count"></span>';
     d.body.appendChild(bar);
-    window._softRefreshLiveSurface = function () {};
+    window._softRefreshLiveSurface = function () { refreshes++; };
 
     // fresh render (toggle INACTIVE — what _explorer.html always ships):
     // an argless call must derive ON from the DOM and fetch the diff. With
@@ -385,10 +388,77 @@ ok(cnt.textContent !== '2',
        'JT-03: Cancel accepts only the live-side rows; the own edit is left out (' + (b && b.updates.map((u) => u.dot_path).join()) + ')');
     // the last reviewed row ends the diff
     ok(toggle.classList.contains('active'), 'JT-03 precondition: one own row is left, diff still on');
+    const refreshesBefore = refreshes;
     rowAt(sHost, 'qubits.q3.T1').querySelector('.tree-reject-btn').click();
     await settle();
     ok(!toggle.classList.contains('active') && bar.hidden,
        'JT-03: reviewing the last row ends the diff (no "changed 0 field(s)" bar)');
+    // ...IN PLACE (review): the reviewed rows stay as they are, the pane is not re-fetched
+    ok(refreshes === refreshesBefore,
+       'JT-03: the last review does not re-GET the pane (' + (refreshes - refreshesBefore) + ' soft refresh)');
+    ok(!!rowAt(sHost, 'qubits.q1.gef') && rowAt(sHost, 'qubits.q1.gef').classList.contains('tree-row-pending'),
+       'JT-03: the accepted rows are still on screen, marked pending');
+    // ...and the accepts patched the MODEL, so the next diff does not re-count them
+    const m = sHost._treeData, mw = wHost._treeData;
+    ok(m.qubits.q1.chi === undefined && m.qubits.q1.extras.qa_added === 123.5 && JSON.stringify(m.qubits.q1.gef) === '[1,2]'
+       && mw.network.cluster_name === undefined && mw.network.qa_net === 'x',
+       'JT-03: delete / create / replace accepts reached the tree model (' + JSON.stringify(m.qubits.q1) + ' ' + JSON.stringify(mw) + ')');
+    liveDiffPayload = { ok: true, live_state: LIVE_S, live_wiring: LIVE_W, live_moved: true, mine: [], conflicts: [], external: ['qubits.q3.T1'] };
+    window.explorerLiveDiff(true);
+    await settle();
+    ok(toggle.classList.contains('active') && d.getElementById('livediff-bar-count').textContent === '1',
+       'JT-03: the next diff counts only the row that was kept (' + d.getElementById('livediff-bar-count').textContent + ')');
+
+    // r2-02 (review): the toggle is busy while the live read is in flight; a second press is a no-op
+    window.explorerLiveDiff(false);
+    await settle();
+    let release = null;
+    liveDiffHold = new Promise((r) => { release = r; });
+    const nf = fetches.filter((f) => f.url.indexOf('/state/live-diff') === 0).length;
+    window.explorerLiveDiff(true);
+    await settle();
+    ok(toggle.disabled && toggle.getAttribute('aria-busy') === 'true',
+       'r2-02: the toggle is busy while the read is in flight');
+    window.explorerLiveDiff();          // the impatient second press (argless, as the button sends it)
+    window.explorerLiveDiff(true);
+    await settle();
+    const nf2 = fetches.filter((f) => f.url.indexOf('/state/live-diff') === 0).length;
+    ok(nf2 === nf + 1, 'r2-02: a second press during the read starts no second read and turns nothing off (' + (nf2 - nf) + ' reads)');
+    release();
+    await settle(); await settle();
+    liveDiffHold = null;
+    ok(!toggle.disabled && !toggle.hasAttribute('aria-busy') && toggle.classList.contains('active'),
+       'r2-02: the read answers, the toggle is live again and ON');
+
+    // r2-01 (review): ONE builder -- the renderer's leaf rows call the overlay's _ldReviewButtons
+    const realBuilder = window._ldReviewButtons;
+    ok(typeof realBuilder === 'function', 'r2-01: the review-button builder is exported');
+    const built = [];
+    window._ldReviewButtons = function (row, p, node) { built.push(p.dot_path + ':' + (p.op || 'leaf')); return realBuilder(row, p, node); };
+    await arm({ live_moved: true, mine: [], conflicts: [], external: PAIRS_S.concat(PAIRS_W) });
+    window._ldReviewButtons = realBuilder;
+    ok(built.indexOf('qubits.q3.T1:leaf') >= 0,
+       'r2-01: a leaf row gets its buttons from the one builder (' + built.join(' ') + ')');
+    const tmp = d.createElement('div');
+    realBuilder(tmp, { dot_path: 'x', value: 1 });
+    ok(accOf(sHost, 'qubits.q3.T1').title === tmp.querySelector('.tree-accept-btn').title
+       && rowAt(sHost, 'qubits.q3.T1').querySelector('.tree-reject-btn').title === tmp.querySelector('.tree-reject-btn').title,
+       'r2-01: the leaf row\'s titles are the builder\'s, byte for byte');
+    ok(/only the live chip has it/.test(accOf(sHost, 'qubits.q1.extras.qa_added').title)
+       && /the live chip does not have it/.test(accOf(sHost, 'qubits.q1.chi').title),
+       'r2-01: the structural rows keep their create / delete titles');
+
+    // JT-03 (review): dismissing a structural row leaves no residue in the kept pane
+    rowAt(sHost, 'qubits.q1.extras.qa_added').querySelector('.tree-reject-btn').click();
+    await settle();
+    ok(!nodeAt(sHost, 'qubits.q1.extras.qa_added'),
+       'JT-03: a dismissed live-only key leaves the tree (the working state has no such row)');
+    rowAt(sHost, 'qubits.q1.chi').querySelector('.tree-reject-btn').click();
+    await settle();
+    ok(!!nodeAt(sHost, 'qubits.q1.chi') && !rowAt(sHost, 'qubits.q1.chi').querySelector('.tree-sidetag'),
+       'JT-03: a kept key drops its "removed" tag');
+    window.explorerLiveDiff(false);
+    await settle();
 
     // latent: a failed live read must not break the toggle
     liveDiffPayload = { ok: false, error: 'unreadable' };

@@ -37,6 +37,7 @@ def test_tree_keyboard_selfcheck():
                  "and hands focus back to its ROW",
                  "F1 on a focused row opens the manual on that row",
                  "ArrowDown never lands on a row the search hid",
-                 "Enter on a read-only value copies it and opens no editor",
+                 "a read-only copy tree is not a Tab stop",
+                 "the JSON pencils are not Tab stops inside a keyboard tree",
                  "Shift+Tab goes past the tree"):
         assert line in res.stdout, line

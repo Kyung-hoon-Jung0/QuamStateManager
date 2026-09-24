@@ -486,6 +486,50 @@ function section10() {
     ok(window.jsonTreeExpandedPaths('explorer-tree-wiring').indexOf('wiring.q1') >= 0,
        'JT-10: Back brings the expanded nodes back');
     ok(taClosed >= 1, 'JT-10: the re-applied query does not leave the typeahead open over an unfocused box');
-    delete window.switchExplorerTab; delete window.Typeahead;
-    setTimeout(() => process.exit(fails ? 1 : 0), 120);
+
+    // (iii) Back -> retype -> Forward -> Back again (review). Forward out of
+    //       /explorer is served from htmx's cache (no swap, so no beforeSwap
+    //       refreshed the capture) and the second Back is served from the
+    //       cache too (no afterSwap re-applied it): the partial's inline
+    //       script rendered a fresh depth-1 tree under an empty box. Real
+    //       Chrome: 'ports' typed before Forward, Back again showed box '' /
+    //       7 nodes. The retype is what tells a re-capture from the stale
+    //       first park -- both halves are pinned.
+    window.switchExplorerTab = (w) => {         // what the real one does: the capture reads the display
+        tabAsked = w;
+        doc.getElementById('explorer-tree-state').style.display = w === 'wiring' ? 'none' : '';
+        doc.getElementById('explorer-tree-wiring').style.display = w === 'wiring' ? '' : 'none';
+    };
+    window.switchExplorerTab('wiring');
+    doc.getElementById('explorer-search').value = 'ports';
+    // Forward: this listener runs BEFORE htmx's onpopstate -- the pane still shows /explorer
+    window.history.pushState({}, '', '/diagnostics');
+    window.dispatchEvent(new window.CustomEvent('popstate'));
+    const cap2 = window.PaneState._soft()['/explorer'];
+    ok(!!cap2 && cap2.inputs.some(i => i.value === 'ports') && cap2.explorer && cap2.explorer.tab === 'wiring'
+       && cap2.explorer.expanded.indexOf('wiring.q1') >= 0,
+       'JT-10: a history exit re-captures the view as it is NOW, not the first park (got ' + JSON.stringify(cap2 && cap2.inputs) + ')');
+    // ...then htmx swaps the body from its cache and says so
+    pane().innerHTML = '<div id="diag-stub">diagnostics</div>';
+    pane().setAttribute('data-pane-route', '/diagnostics');
+    doc.dispatchEvent(new window.CustomEvent('htmx:historyRestore'));
+    setTimeout(() => {
+        // Back again: htmx restores its /explorer snapshot; the inline script renders fresh
+        window.history.pushState({}, '', '/explorer');
+        window.dispatchEvent(new window.CustomEvent('popstate'));
+        pane().innerHTML = EXP('');
+        pane().setAttribute('data-pane-route', '/explorer');
+        renderTrees();
+        tabAsked = null;
+        doc.dispatchEvent(new window.CustomEvent('htmx:historyRestore'));
+        setTimeout(() => {
+            ok(doc.getElementById('explorer-search').value === 'ports',
+               'JT-10: Back again brings the retyped search back (got "' + doc.getElementById('explorer-search').value + '")');
+            ok(tabAsked === 'wiring', 'JT-10: Back again brings the wiring tab back');
+            ok(window.jsonTreeExpandedPaths('explorer-tree-wiring').indexOf('wiring.q1') >= 0,
+               'JT-10: Back again brings the expanded nodes back');
+            delete window.switchExplorerTab; delete window.Typeahead;
+            setTimeout(() => process.exit(fails ? 1 : 0), 120);
+        }, 200);
+    }, 200);
 }

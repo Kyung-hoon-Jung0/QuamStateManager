@@ -5544,6 +5544,25 @@ window.PaneState = (function () {
     // back/forward belongs to htmx's own history machinery -- clear AND
     // re-sync the route (audit M3: a desynced _cur parked the WRONG DOM).
     function _historyReset() {
+        // JT-10 (review): re-capture the SOFT tier of the route being LEFT.
+        // This listener runs BEFORE htmx's own onpopstate (that one is bound
+        // at DOMContentLoaded, this one at script evaluation), so the pane
+        // still shows the outgoing route. A Forward out of /explorer never
+        // swaps (htmx serves its cache), so beforeSwap never refreshed the
+        // capture and a second Back re-applied the FIRST park's view --
+        // measured in real Chrome: retyped 'ports', Back again showed the
+        // old 'opx_output' capture's shape. The stamp check keeps this
+        // order-safe: a pane htmx already replaced carries the INCOMING
+        // route's stamp (a full page load's pane is unstamped, and is _cur).
+        var lp = pane();
+        if (lp && lp.firstElementChild && _cur !== location.pathname && SOFT.indexOf(_cur) >= 0) {
+            var stampL = lp.getAttribute('data-pane-route');
+            if (!stampL || stampL === _cur) soft[_cur] = _captureSoft(lp, _cur);
+        }
+        // a NEW route change gets its own re-apply (the token below is shared
+        // only by the two funnels of the same change; a Back -> Forward -> Back
+        // inside its 1 s expiry used to be skipped)
+        if (_cur !== location.pathname) window.PaneState.__softFor = null;
         for (var k in stash) _purge(stash[k].holder);
         stash = {};
         _cur = location.pathname;
@@ -5590,6 +5609,17 @@ window.PaneState = (function () {
                 window.htmx.ajax('GET', location.pathname + location.search,
                                  { source: '#table-pane', target: '#table-pane',
                                    swap: 'innerHTML' });
+            } else if (SOFT.indexOf(location.pathname) >= 0) {
+                // JT-10 (review): htmx served this Back from its OWN cache --
+                // no swap, so afterSwap never ran and the SOFT tier was never
+                // re-applied: the partial's inline script rendered a fresh
+                // depth-1 tree under an empty search box (measured: Back ->
+                // Forward -> Back again lost search, tab and expansion). Both
+                // funnels (popstate, htmx:historyRestore) land here: once.
+                if (window.PaneState.__softFor === location.pathname) return;
+                window.PaneState.__softFor = location.pathname;
+                setTimeout(function () { window.PaneState.__softFor = null; }, 1000);
+                _reapplySoft(location.pathname);
             }
         }, 60);
     }
@@ -7891,6 +7921,7 @@ window.clearDetailPanelSearch = function(btnEl) {
                 jsonBtn.className = "tree-json-edit-btn";
                 jsonBtn.textContent = "✎";   // ✎
                 jsonBtn.title = "Edit this " + (type === "array" ? "list" : "object") + " as JSON";
+                jsonBtn.tabIndex = -1;   // QA JT-20 review: one Tab stop per tree -- F2 on the row is the way in
                 (function(nd, p, v) {
                     jsonBtn.onclick = function(e) { e.stopPropagation(); _makeContainerEditable(nd, p, v); };
                 })(node, path, value);
@@ -7977,6 +8008,10 @@ window.clearDetailPanelSearch = function(btnEl) {
                     el.onclick = function(e) { e.stopPropagation(); _makeValueEditable(el, p); };
                 })(valEl, path);
             }
+            // QA JT-15 (review): the ellipsis rule clips a long string at the
+            // row's edge on EVERY tree (a __class__ path at 1093 px), so the
+            // hover carries the full text after the action hint.
+            if (typeof shown === "string" && shown.length > 40) valEl.title += "\n" + shown;
             row.appendChild(valEl);
 
             // A null leaf is the common "not yet set" field (e.g. exponential_filter):
@@ -7989,6 +8024,7 @@ window.clearDetailPanelSearch = function(btnEl) {
                 nullJsonBtn.className = "tree-json-edit-btn";
                 nullJsonBtn.textContent = "✎";   // ✎
                 nullJsonBtn.title = "Enter a value as JSON (list / object / any type)";
+                nullJsonBtn.tabIndex = -1;   // QA JT-20 review: reached from its row (Enter / F2), not by Tab
                 (function(nd, p) {
                     nullJsonBtn.onclick = function(e) { e.stopPropagation(); _makeContainerEditable(nd, p, null); };
                 })(node, path);
@@ -8039,28 +8075,11 @@ window.clearDetailPanelSearch = function(btnEl) {
                     while (holder.firstChild) row.appendChild(holder.firstChild);
                 }
                 if (liveDiff) {
-                    var acc = document.createElement("button");
-                    acc.type = "button";
-                    acc.className = "tree-accept-btn";
-                    acc.textContent = "✓";
-                    acc.title = "Take the live value into the working state";
-                    (function(p, rv, el, rw) {
-                        // window.-qualified: the handlers live in the live-diff
-                        // IIFE, not this one — a bare call is a ReferenceError
-                        // at click time and the accept is silently lost
-                        // (docs/124 C-1; same cross-IIFE class as _deepEqual).
-                        acc.onclick = function(e) { e.stopPropagation(); window._acceptLiveValue(p, rv, el, rw); };
-                    })(path, refValue, valEl, row);
-                    row.appendChild(acc);
-                    var rej = document.createElement("button");
-                    rej.type = "button";
-                    rej.className = "tree-reject-btn";
-                    rej.textContent = "✗";
-                    rej.title = "Keep the working-state value (dismiss this difference)";
-                    (function(rw, p) {
-                        rej.onclick = function(e) { e.stopPropagation(); window._rejectLiveValue(rw, p); };
-                    })(row, path);
-                    row.appendChild(rej);
+                    // ONE builder with the overlay's structural rows (QA r2-01
+                    // review) -- window.-qualified: it lives in the live-diff
+                    // IIFE, not this one; a bare call is a ReferenceError at
+                    // render time (docs/124 C-1; same class as _deepEqual).
+                    window._ldReviewButtons(row, { dot_path: path, value: refValue });
                 }
             }
 
@@ -9086,6 +9105,10 @@ window.clearDetailPanelSearch = function(btnEl) {
         function close() {
             editor.remove();
             if (children && childDisplay !== null) children.style.display = childDisplay;
+            // QA JT-20 review: the pencil is no longer a Tab stop, so the row
+            // it belongs to is where a keyboard user came from -- hand focus
+            // back there (measured: Escape used to land on <body>).
+            _kbRefocusRow(row);
         }
 
         function doSave() {
@@ -9745,7 +9768,14 @@ window.clearDetailPanelSearch = function(btnEl) {
         // re-stamped on EVERY render so a non-crud re-render disables it.
         container._crudEnabled = false;
         if (options.crud) _attachCrudHover(container);
-        _attachTreeKeys(container);
+        // QA JT-20 (review): keyboard navigation is for the trees a keyboard
+        // user ACTS on -- the editable ones (the explorer, the entity pages'
+        // JSON panel) and the live-diff overlay (accept / reject). A read-only
+        // copy or compare tree is not a Tab stop: a dataset page renders one
+        // small parameter/result tree per qubit per key, and its Tab order
+        // used to grow by that number.
+        if (valueClick === "edit" || valueClick === "livediff") _attachTreeKeys(container);
+        else if (container._treeKeys) container.removeAttribute("tabindex");
 
         if (defaultDepth >= 99) {
             _expandAll(container);
@@ -18008,8 +18038,36 @@ document.addEventListener('click', function(evt) {
         if (cnt) cnt.textContent = _liveDiffRemaining;
         _ldBarText();
         // the last row reviewed ends the diff -- the bar used to stay up
-        // reading "changed 0 field(s) ... then accept" (QA JT-03)
-        if (was > 0 && _liveDiffRemaining === 0 && _explorerLiveDiffOn()) window.explorerLiveDiff(false);
+        // reading "changed 0 field(s) ... then accept" (QA JT-03). IN PLACE
+        // (review): every row is already marked (pending / cleared), so the
+        // pane is left alone -- the soft re-GET of /explorer this used to
+        // ride dropped the user's folds, the tree's scroll and the keyboard
+        // focus as the side effect of reviewing one row. The explicit Exit
+        // diff button keeps its refresh.
+        if (was > 0 && _liveDiffRemaining === 0 && _explorerLiveDiffOn()) _ldEndInPlace();
+    }
+    function _ldEndInPlace() {
+        _setLiveDiffUi(false);
+        _liveDiffState = []; _liveDiffWiring = []; _liveDiffDone = {}; _liveDiffRemaining = 0;
+    }
+    // The model follows an accept (JT-03 review): with no refresh at the end
+    // of the diff, container._treeData is what the NEXT toggle diffs against
+    // -- unpatched, an accepted row came back as "differing" although the
+    // working copy now holds exactly the live value. Same rule as docs/144's
+    // inline edit ("patch the MODEL too, not just the DOM").
+    function _ldModelPatch(row, dotPath, value, del) {
+        var c = row && row.closest ? row.closest(".json-tree") : null;
+        if (!c || c._treeData == null || !dotPath) return;
+        if (!del) { if (window._treeModelSet) window._treeModelSet(c, dotPath, value); return; }
+        var segs = String(dotPath).split("."), cur = c._treeData;
+        for (var i = 0; i < segs.length - 1; i++) {
+            cur = (Array.isArray(cur) && /^[0-9]+$/.test(segs[i])) ? cur[Number(segs[i])] : (cur || {})[segs[i]];
+            if (cur === undefined || cur === null || typeof cur !== "object") return;
+        }
+        var last = segs[segs.length - 1];
+        if (Array.isArray(cur) && /^[0-9]+$/.test(last)) cur.splice(Number(last), 1);
+        else if (cur && typeof cur === "object") delete cur[last];
+        c._flatIndex = null;
     }
 
     /* QA JT-03 -- WHO moved each differing field. diff(working, live) cannot
@@ -18132,6 +18190,15 @@ document.addEventListener('click', function(evt) {
             inEl.title = "the live chip's value";
             row.appendChild(inEl);
         }
+        _ldReviewButtons(row, p, node);
+    }
+    /* ONE builder for a row's review buttons (QA r2-01 review): the
+       renderer's leaf rows (_buildNode) and the overlay's structural rows
+       used to build the check / cross in two places with two copies of every
+       title, and the copies had already drifted once. p = {dot_path, value,
+       op?}: a leaf (no op) accepts through _acceptLiveValue, a structural
+       row (create / delete / whole-value replace) through _ldAcceptPair. */
+    function _ldReviewButtons(row, p, node) {
         var acc = document.createElement("button");
         acc.type = "button";
         acc.className = "tree-accept-btn";
@@ -18139,16 +18206,21 @@ document.addEventListener('click', function(evt) {
         acc.title = p.op === "create" ? "Add this key to the working state (only the live chip has it)"
                   : p.op === "delete" ? "Remove this key from the working state (the live chip does not have it)"
                   : "Take the live value into the working state";
-        acc.onclick = function (e) { e.stopPropagation(); _ldAcceptPair(p, node, row); };
+        acc.onclick = function (e) {
+            e.stopPropagation();
+            if (p.op) _ldAcceptPair(p, node, row);
+            else _acceptLiveValue(p.dot_path, p.value, row.querySelector(":scope > .tree-val"), row);
+        };
         row.appendChild(acc);
         var rej = document.createElement("button");
         rej.type = "button";
         rej.className = "tree-reject-btn";
         rej.textContent = "\u2717";
         rej.title = "Keep the working-state value (dismiss this difference)";
-        rej.onclick = function (e) { e.stopPropagation(); _rejectLiveValue(row, p.dot_path); };
+        rej.onclick = function (e) { e.stopPropagation(); _rejectLiveValue(row, p.dot_path, p.op); };
         row.appendChild(rej);
     }
+    window._ldReviewButtons = _ldReviewButtons;
     // ✓ on a structural row: create / delete / whole-value replace.
     function _ldAcceptPair(p, node, row) {
         var u = p.op === "delete" ? { dot_path: p.dot_path, delete: true } : { dot_path: p.dot_path, value: p.value };
@@ -18176,6 +18248,7 @@ document.addEventListener('click', function(evt) {
     }
     // An accepted row shows what the working state now holds (staged, pending).
     function _ldMarkAccepted(p, node, row) {
+        _ldModelPatch(row, p.dot_path, p.value, p.op === "delete");
         _clearIncoming(row);
         row.classList.add("tree-row-pending");
         _liveDiffDone[p.dot_path] = 1;
@@ -18228,6 +18301,7 @@ document.addEventListener('click', function(evt) {
             }
             valEl.textContent = window._formatValue(liveValue);
             valEl.dataset.editVal = (typeof liveValue === "string") ? liveValue : window._formatValue(liveValue);
+            _ldModelPatch(row, dotPath, liveValue, false);
             _clearIncoming(row);
             row.classList.add("tree-row-pending");
             _liveDiffDone[dotPath] = 1;
@@ -18240,8 +18314,18 @@ document.addEventListener('click', function(evt) {
     }
 
     // ✗ — keep the working-copy value; just drop the incoming markers.
-    function _rejectLiveValue(row, dotPath) {
+    // op (structural rows only): the pane is kept when the diff ends (JT-03
+    // review), so a dismissed live-only key must not stay on screen as a row
+    // the working state does not have, and a kept key drops its "removed" tag.
+    function _rejectLiveValue(row, dotPath, op) {
         _clearIncoming(row);
+        if (op === "create" && row && row.parentNode && row.parentNode.classList.contains("tree-node")) {
+            var nd = row.parentNode;
+            if (nd.parentNode) nd.parentNode.removeChild(nd);
+        } else if (op === "delete" && row) {
+            var tg = row.querySelector(":scope > .tree-sidetag");
+            if (tg && tg.parentNode) tg.parentNode.removeChild(tg);
+        }
         if (dotPath) _liveDiffDone[dotPath] = 1;
         _bumpLiveDiffCount(-1);
     }
@@ -18375,6 +18459,13 @@ document.addEventListener('click', function(evt) {
         _explorerDiffFilterNote();
     };
 
+    var _ldReading = false;
+    function _ldToggleBusy(on) {
+        var t = document.getElementById("explorer-livediff-toggle");
+        if (!t) return;
+        if (on) { t.setAttribute("aria-busy", "true"); t.disabled = true; }
+        else { t.removeAttribute("aria-busy"); t.disabled = false; }
+    }
     window.explorerLiveDiff = function(on) {
         var stateEl = document.getElementById("explorer-tree-state");
         var wiringEl = document.getElementById("explorer-tree-wiring");
@@ -18390,7 +18481,16 @@ document.addEventListener('click', function(evt) {
             return;
         }
 
+        // QA r2-02 (review): the with_live=1 read is ~1-1.5 s for a 711 KB
+        // payload and the union render follows -- a second press inside that
+        // window used to turn the diff straight back off. Busy until the
+        // read answers, and a second call meanwhile is a no-op.
+        if (_ldReading) return;
+        _ldReading = true;
+        _ldToggleBusy(true);
         _liveFetchJson("/state/live-diff?with_live=1").then(function (res) {
+            _ldReading = false;
+            _ldToggleBusy(false);
             if (!res.ok) {
                 _liveDiffRecover(res.transient
                     ? "Live chip is being written — couldn't read it just now."
@@ -18631,7 +18731,12 @@ document.addEventListener('click', function(evt) {
         }, 400);
     }
     document.addEventListener('diagnostics-changed', _refreshDiagSurfaces);
-    document.addEventListener('paneRestored', _refreshDiagSurfaces);
+    document.addEventListener('paneRestored', function () {
+        // only the explorer's restore has marks to repaint; the sidebar dots
+        // already follow 'diagnostics-changed' (r2-19 review: every keep-alive
+        // restore of /bulk, /pairs, ... issued one findings.json read)
+        if (document.getElementById('explorer-tree-state')) _refreshDiagSurfaces();
+    });
 
     /* ---- Diagnostics filter pills (severity + advisory), persisted ---------- */
     /* Toggles row visibility on #diag-filter-bar pills, hides emptied domain
