@@ -82,6 +82,16 @@
 
     renderJsonTree("explorer-tree-state", stateData, { defaultDepth: 1, crud: true });
     renderJsonTree("explorer-tree-wiring", wiringData, { defaultDepth: 1, crud: true });
+    // JT-06: a search with no hits on one tab names the other tab's hits, and
+    // its button switches there (_treeSearchResults' zero-match notice).
+    [["explorer-tree-state", "explorer-tree-wiring", "wiring.json", "wiring"],
+     ["explorer-tree-wiring", "explorer-tree-state", "state.json", "state"]].forEach(function (t) {
+        var el = document.getElementById(t[0]);
+        if (!el) return;
+        el.setAttribute("data-search-peer", t[1]);
+        el.setAttribute("data-search-peer-label", t[2]);
+        el._searchPeerSwitch = function () { if (window.switchExplorerTab) window.switchExplorerTab(t[3]); };
+    });
     if (window.explorerApplyScale) window.explorerApplyScale();   // persisted size
 
     if (window.ExplorerChips) ExplorerChips.mount("explorer-chipbar", [stateData, wiringData]);

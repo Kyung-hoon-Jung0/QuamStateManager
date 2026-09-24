@@ -263,6 +263,11 @@ async function main() {
                nodes: c.querySelectorAll('.tree-node').length,
                visible: c.querySelectorAll('.tree-node:not(.tree-search-hidden)').length,
                lastQ: c._lastSearchQuery, showAllQ: c._searchShowAllQ };})()`);
+  // The tree's own count: the capped notice names it, a JT-06 "No matches"
+  // notice means 0, no notice means every match is highlighted in the tree.
+  const uiCount = s => s.notice
+    ? (/^No matches/.test(s.noticeText || '') ? 0 : Number(((s.noticeText || '').match(/^(\d+) matches/) || [])[1]))
+    : s.highlighted;
 
   if (want('A')) {
   stage = '1-grammar'; save();
@@ -290,12 +295,12 @@ async function main() {
   s = await treeState();
   const tightMine = await ev(`window.__mine.count('explorer-tree-state','x180 amplitude | length')`);
   ok('standalone | = OR (checked against an independent count)',
-     (s.notice ? Number((s.noticeText.match(/^(\d+) matches/) || [])[1]) : s.highlighted) === orCount,
+     uiCount(s) === orCount,
      { uiTotal: s.noticeText || s.highlighted, independent: orCount });
 
   await typeInto(ES, 'x180 amplitude | length');
   s = await treeState();
-  const uiTight = s.notice ? Number((s.noticeText.match(/^(\d+) matches/) || [])[1]) : s.highlighted;
+  const uiTight = uiCount(s);
   ok('| binds tighter than the space: x180 AND (amplitude|length)',
      uiTight === tightMine, { ui: uiTight, independent: tightMine });
 
@@ -304,7 +309,7 @@ async function main() {
     await typeInto(ES, q, { settle: 420 });
     const st2 = await treeState();
     const mn = await ev(`window.__mine.count('explorer-tree-state', ${JSON.stringify(q)})`);
-    const uiTotal = st2.notice ? Number((st2.noticeText.match(/^(\d+) matches/) || [])[1]) : st2.highlighted;
+    const uiTotal = uiCount(st2);
     ok('a non-standalone pipe `' + q + '` stays literal and does not throw',
        uiTotal === mn, { ui: uiTotal, independent: mn });
   }
@@ -767,7 +772,9 @@ async function main() {
   await typeInto(ES, 'x'.repeat(300), { fast: true, settle: 900 });
   const longSt = await treeState();
   ok('a 300-character query neither hangs nor throws and the tree says "nothing"',
-     (await rows()).length === 0 && longSt.highlighted === 0, { hidden: longSt.hidden, nodes: longSt.nodes });
+     (await rows()).length === 0 && longSt.highlighted === 0
+       && /^No matches for x{300}/.test(longSt.noticeText || ''),   // JT-06: SAYS nothing, not a blank strip
+     { hidden: longSt.hidden, nodes: longSt.nodes, notice: longSt.noticeText });
   await clearBox(ES); await sleep(700);
 
   // 40 input events back to back

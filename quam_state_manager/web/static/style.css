@@ -1209,6 +1209,7 @@ html.topbar-hidden .topbar-reveal { display: block; }
      searching about. Sticky keeps the one honest line in view. */
   position: sticky; top: 0; z-index: 3; background: var(--pico-background-color, #fff); }
 .tsr-head { padding: 0.3rem 0.5rem; font-size: 0.8em; border-bottom: 1px solid var(--pico-muted-border-color); position: sticky; top: 0; background: var(--pico-background-color); }
+.tsr-head code { overflow-wrap: anywhere; word-break: break-all; }   /* JT-06: a 300-char no-match query wraps, never scrolls sideways */
 .tsr-row { display: flex; gap: 0.6rem; align-items: baseline; padding: 0.15rem 0.5rem; text-decoration: none; color: inherit; font-size: 0.85em; }
 .tsr-row:hover { background: var(--pico-card-background-color); }
 .tsr-path { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }

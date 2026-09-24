@@ -2901,6 +2901,19 @@ def _is_htmx() -> bool:
             and request.headers.get("HX-History-Restore-Request") != "true")
 
 
+def _no_chip(label: str, nav: str):
+    """The "No chip loaded" empty state for a chip menu (jsontree-r2-13).
+
+    An htmx menu swap gets the bare partial, exactly as before; a full-page
+    GET (F5 after a restart, a bookmark) or an htmx history restore gets it
+    inside base.html, so the sidebar/topbar are there and ``nav`` marks the
+    menu active — the bare fragment left an unstyled page with no way back.
+    """
+    if _is_htmx():
+        return render_template("_empty_state.html", page=label)
+    return render_template("empty_state.html", **_ctx(page=nav), empty_label=label)
+
+
 def _change_count() -> int:
     store = _store()
     return len(store.change_log) if store else 0
@@ -5553,7 +5566,7 @@ def _port_owner_map(wiring_root: dict | None) -> dict[str, str]:
 def explorer():
     store = _store()
     if not store:
-        return render_template("_empty_state.html", page="the state explorer")
+        return _no_chip("the state explorer", "explorer")
     from quam_state_manager.core.leaf_classify import readonly_policy
     state_json = json.dumps(store.state)
     wiring_json = _wiring_json()
@@ -5579,7 +5592,7 @@ def explorer():
 def qubits():
     engine = _engine()
     if not engine:
-        return render_template("_empty_state.html", page="qubits")
+        return _no_chip("qubits", "qubits")
 
     chain_filter = request.args.get("chain")
     page = _int_arg("page", 1, minimum=1)
@@ -5628,7 +5641,7 @@ def _channel_scoped_qubits_page(*, has_key: str, page_name: str,
                                 template_stub: str, **extra):
     engine = _engine()
     if not engine:
-        return render_template("_empty_state.html", page=page_name)
+        return _no_chip(page_name, page_name)
 
     chain_filter = request.args.get("chain")
     page = _int_arg("page", 1, minimum=1)
@@ -5974,7 +5987,7 @@ def bulk_edit():
     engine = _engine()
     store = _store()
     if not engine or not store:
-        return render_template("_empty_state.html", page="live state editing")
+        return _no_chip("live state editing", "bulk")
 
     from quam_state_manager.core import bulk_virt, mw_fem
 
@@ -9100,7 +9113,7 @@ def pairs():
     engine = _engine()
     store = _store()
     if not engine or not store:
-        return render_template("_empty_state.html", page="qubit pairs")
+        return _no_chip("qubit pairs", "pairs")
 
     pair_data = []
     for pair_name in store.qubit_pair_names:
@@ -9300,7 +9313,7 @@ def couplers():
     engine = _engine()
     store = _store()
     if not engine or not store:
-        return render_template("_empty_state.html", page="couplers")
+        return _no_chip("couplers", "couplers")
 
     pair_data = []
     for pair_name in store.qubit_pair_names:
@@ -10021,7 +10034,7 @@ def pair_edit(name: str):
 def comparison_table():
     engine = _engine()
     if not engine:
-        return render_template("_empty_state.html", page="the parameter table")
+        return _no_chip("the parameter table", "table")
 
     selected = request.args.getlist("props") or _ALL_TABLE_PROPS
 
@@ -10208,7 +10221,7 @@ def _report_gate_param_rows(pairs: list[dict]) -> list[dict]:
 def wiring_view():
     engine = _engine()
     if not engine:
-        return render_template("_empty_state.html", page="the chip topology")
+        return _no_chip("the chip topology", "topology")
 
     store = _store()
     topology = _topology_with_derived_rb(engine)
@@ -10394,7 +10407,7 @@ def state_history():
     framed by the experiment that produced each (experiment-attribution)."""
     store = _store()
     if not store:
-        return render_template("_empty_state.html", page="state history")
+        return _no_chip("state history", "state_history")
     hm = _history()
     snapshots = hm.list_snapshots(_active_path())
     page = _int_arg("page", 1, minimum=1)
@@ -12185,7 +12198,7 @@ def instrument_view():
     """Render the OPX instrument wiring diagram showing FEM slots and port assignments."""
     engine = _engine()
     if not engine:
-        return render_template("_empty_state.html", page="instrument wiring")
+        return _no_chip("instrument wiring", "instrument")
 
     store = _store()
     instrument_error = None
@@ -12634,7 +12647,7 @@ def pulses_page():
     store = _store()
     pulse_index = _pulse_index()
     if not store or not pulse_index:
-        return render_template("_empty_state.html", page="pulses")
+        return _no_chip("pulses", "pulses")
 
     channel = request.args.get("channel", "")
     query = request.args.get("q", "").strip()
@@ -21880,7 +21893,7 @@ def param_history():
     """
     store = _store()
     if not store:
-        return render_template("_empty_state.html", page="parameter history")
+        return _no_chip("parameter history", "param_history")
 
     hm = _history()
     loaded_path = Path(_active_path())
@@ -22216,7 +22229,7 @@ def param_history_changes():
     """
     store = _store()
     if not store:
-        return render_template("_empty_state.html", page="parameter history")
+        return _no_chip("parameter history", "param_history")
     hm = _history()
     path = Path(_active_path())
     prefix = (request.args.get("prefix") or "").strip()
@@ -27467,7 +27480,7 @@ def diagnostics_view():
     """Full diagnostics report for the active chip."""
     store = _store()
     if not store:
-        return render_template("_empty_state.html", page="diagnostics")
+        return _no_chip("diagnostics", "diagnostics")
     findings = _active_chip_findings(store)
     template = "_diagnostics.html" if _is_htmx() else "diagnostics.html"
     return render_template(

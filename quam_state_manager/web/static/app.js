@@ -5111,10 +5111,11 @@ window.smModalOpen = function () {
    pushState, and a failed nav left a blank pane):
    - Every navigation runs COMPLETELY NORMALLY through htmx (request,
      history snapshot, URL push, swap) -- PaneState never cancels anything.
-   - PARK happens at htmx:beforeSwap on #table-pane, i.e. AFTER htmx took
-     its history snapshot of the outgoing page and ONLY when a real swap is
-     about to replace the DOM (a failed request never parks -- the pane
-     stays intact). KEEP routes detach their children into the stash;
+   - PARK happens at htmx:beforeSwap on #table-pane, ONLY when a real swap
+     is about to replace the DOM (JT-10: htmx 2.0.4 takes its history
+     snapshot AFTER this event, so a parked KEEP route is cached with an
+     EMPTY pane -- Back rides _historyCheck's refetch + the SOFT tier)
+     (a failed request never parks -- the pane stays intact). KEEP routes detach their children into the stash;
      every SOFT route refreshes its search-input capture here too (so a
      deliberately cleared box is captured as cleared -- never resurrected).
    - RESTORE happens at htmx:afterSwap: if the arriving route has a FRESH
@@ -5339,6 +5340,9 @@ window.PaneState = (function () {
             if (el && it.value && el.value !== it.value) {
                 el.value = it.value;
                 el.dispatchEvent(new Event('input', { bubbles: true }));
+                // JT-10: a re-applied query is not typing -- the typeahead's
+                // input listener would open its panel over an unfocused box
+                if (window.Typeahead && document.activeElement !== el) window.Typeahead.close();
                 fetched = true;
             }
         });
@@ -5369,6 +5373,13 @@ window.PaneState = (function () {
         // landed at the top-left corner, and 4ac's scrollX below was a no-op
         // from the day it was added because it was added at this broken read.
         var st0 = p.scrollTop, sx0 = p.scrollLeft;
+        // JT-10: the Json tree is its OWN scroller (.json-tree, overflow:auto),
+        // and a detached element loses its offset exactly like the pane does
+        // -- measured 485 -> 0 on a sidebar round trip. Read them here too.
+        var inner = [];
+        Array.prototype.forEach.call(p.querySelectorAll('.json-tree[id]'), function (el) {
+            if (el.scrollTop || el.scrollLeft) inner.push({ id: el.id, top: el.scrollTop, left: el.scrollLeft });
+        });
         var holder = document.createElement('div');
         while (p.firstChild) holder.appendChild(p.firstChild);
         // docs/141 4ac: scrollX too. 4q made #table-pane the ONE scroller
@@ -5376,7 +5387,7 @@ window.PaneState = (function () {
         // its scrollLeft -- parking the bars without their pane's sideways
         // position left them translated over a pane reset to 0.
         stash[route] = { holder: holder, seq: seqNow(), chip: chipNow(),
-                         scroll: st0, scrollX: sx0, order: ++_order };
+                         scroll: st0, scrollX: sx0, inner: inner, order: ++_order };
         var keys = Object.keys(stash);
         if (keys.length > MAX) {
             keys.sort(function (a, b) { return stash[a].order - stash[b].order; });
@@ -5418,6 +5429,10 @@ window.PaneState = (function () {
         while (e.holder.firstChild) p.appendChild(e.holder.firstChild);
         p.scrollTop = e.scroll || 0;
         p.scrollLeft = e.scrollX || 0;      // docs/141 4ac -- BEFORE paneRestored
+        (e.inner || []).forEach(function (sc) {   // JT-10: the tree's own scroll
+            var el = document.getElementById(sc.id);
+            if (el) { el.scrollTop = sc.top; el.scrollLeft = sc.left; }
+        });
         if (window.PhysAmp) window.PhysAmp.applyAll(p);
         document.dispatchEvent(new CustomEvent('paneRestored',
                                                { detail: { route: route } }));
@@ -5494,10 +5509,14 @@ window.PaneState = (function () {
         if (evt.defaultPrevented) return;
         if (evt.detail && evt.detail.shouldSwap === false) return;
         var inRoute = _routeOf(evt.detail);
-        // park the OUTGOING route (htmx's history snapshot is already taken);
+        // park the OUTGOING route (htmx snapshots AFTER this event -- JT-10);
         // a same-route refresh only refreshes the SOFT capture, never parks
         if (inRoute && inRoute !== _cur) _park(_cur);
-        else if (SOFT.indexOf(_cur) >= 0 && pane()) soft[_cur] = _captureSoft(pane(), _cur);
+        // JT-10: never from an EMPTY pane -- htmx 2.0.4 snapshots AFTER this
+        // event, so a parked KEEP route is cached blank; Back restores that
+        // blank, _historyCheck refetches the same route, and a capture here
+        // overwrote the park-time one (search, tab, expansion) with nothing.
+        else if (SOFT.indexOf(_cur) >= 0 && pane() && pane().firstElementChild) soft[_cur] = _captureSoft(pane(), _cur);
     });
     document.addEventListener('htmx:afterSwap', function (evt) {
         if (!evt.target || evt.target.id !== 'table-pane') return;
@@ -5633,7 +5652,7 @@ window.smOpenStateFolder = function () {
    are parsed from their shortest round-tripping decimal spelling, so the
    answer reads 0.1 — the number a physicist would have written down. */
 window.ValueDelta = (function () {
-    var GROUPED = /^[+-]?\d[\d,]*(\.\d+)?$/;
+    var GROUPED = /^[+-]?\d{1,3}(,\d{3})*(\.\d+)?$/;   // well-formed groups only: "1,1" is text (JT-08)
     var DECIMAL = /^([+-]?)(\d+)(?:\.(\d*))?(?:[eE]([+-]?\d+))?$/;
     var SCI_HIGH_EXP = 16;    // |v| >= 1e15  (mirrors _SCI_HIGH)
     var SCI_LOW_EXP = -6;     // |v| <  1e-6  (mirrors _SCI_LOW)
@@ -5730,9 +5749,10 @@ window.ValueDelta = (function () {
         }
         var dir = dm > 0n ? "up" : (dm < 0n ? "down" : "same");
         var coerced = (typeof oldValue === "string") || (typeof newValue === "string");
+        var bothText = (typeof oldValue === "string") && (typeof newValue === "string");
         var title = "difference: " + text + (pctText ? " (" + pctText + ")" : "");
-        if (coerced) title += " — one side is stored as text";
-        if (dm === 0n) title = "same numeric value" + (coerced ? " (stored type differs)" : "");
+        if (coerced) title += bothText ? " — both sides are stored as text" : " — one side is stored as text";
+        if (dm === 0n) title = "same numeric value" + (coerced && !bothText ? " (stored type differs)" : "");
         return { delta: toNumber(dm, al.scale), text: text, pct: pct,
                  pct_text: pctText, dir: dir, coerced: coerced, title: title };
     }
@@ -8316,6 +8336,8 @@ window.clearDetailPanelSearch = function(btnEl) {
             el.setAttribute("data-for", container.id || "");
             container.insertBefore(el, container.firstChild);
             el.addEventListener("click", function (ev) {
+                var pb = ev.target.closest && ev.target.closest(".tsr-peer");   // JT-06: "N in wiring.json"
+                if (pb) { ev.preventDefault(); if (typeof container._searchPeerSwitch === "function") container._searchPeerSwitch(); return; }
                 var b = ev.target.closest && ev.target.closest(".tsr-all");
                 if (!b) return;
                 ev.preventDefault();
@@ -8323,6 +8345,18 @@ window.clearDetailPanelSearch = function(btnEl) {
                 container._lastSearchQuery = undefined;                  // past the dedup guard
                 _searchTree(container, b.getAttribute("data-q"));
             });
+        }
+        if (res.total === 0) {
+            // JT-06: a search that found nothing used to leave a blank grey
+            // strip -- say so, and name the other tab's matches when it has
+            // some (the typeahead suggests keys from BOTH trees).
+            var pipeLit = res.q.split(/\s+/).some(function (t) { return t.indexOf("|") >= 0 && t !== "|"; });
+            el.innerHTML = '<div class="tsr-head muted">No matches for <code>' + _escapeHtml(res.q) + '</code>'
+                + (res.peer ? ' here — <b>' + res.peer.n + '</b> in <button type="button" class="btn-xs tsr-peer">'
+                    + _escapeHtml(res.peer.label) + '</button>' : '')
+                + (pipeLit ? ' <span class="muted">(| means OR only with spaces around it)</span>' : '')
+                + '</div>';
+            return;
         }
         el.innerHTML = '<div class="tsr-head muted">' + res.total + ' matches for <code>' + _escapeHtml(res.q) + '</code>'
             + ' — the first ' + res.shown + ' are shown in the tree; type more to narrow, or '
@@ -8333,6 +8367,27 @@ window.clearDetailPanelSearch = function(btnEl) {
         return String(s == null ? "" : s).replace(/[&<>"']/g, function (c) {
             return { "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c];
         });
+    }
+
+    // One match predicate for a flat-index entry, shared by the tree's own
+    // search and the other tab's zero-match count (JT-06) so the hint can
+    // never disagree with what that tab then shows.
+    function _flatHit(e, grps, q) {
+        return window.SearchQuery
+            ? window.SearchQuery.matchesHay(e.hayLower + ' ' + e.pathLower, grps)
+            : (e.hayLower.indexOf(q) >= 0 || e.pathLower.indexOf(q) >= 0);
+    }
+    // {label, n} for the tree named by the container's data-search-peer, or
+    // null (no peer declared, no data, or nothing there either).
+    function _peerMatchCount(container, q) {
+        var id = container.getAttribute && container.getAttribute("data-search-peer");
+        var peer = id ? document.getElementById(id) : null;
+        if (!peer || peer._treeData === undefined || peer._treeData === null) return null;
+        if (!peer._flatIndex) peer._flatIndex = _buildFlatIndex(peer._treeData);
+        var grps = window.SearchQuery ? window.SearchQuery.groups(q) : [[q]];
+        var n = 0, pf = peer._flatIndex.flat;
+        for (var i = 0; i < pf.length; i++) if (_flatHit(pf[i], grps, q)) n++;
+        return n ? { id: id, label: container.getAttribute("data-search-peer-label") || id, n: n } : null;
     }
 
     function _searchTreeData(container, q) {
@@ -8367,9 +8422,7 @@ window.clearDetailPanelSearch = function(btnEl) {
         var keepPaths = new Set();
         for (var j = 0; j < flat.length; j++) {
             var e = flat[j];
-            if (window.SearchQuery
-                    ? window.SearchQuery.matchesHay(e.hayLower + ' ' + e.pathLower, grps)
-                    : (e.hayLower.indexOf(q) >= 0 || e.pathLower.indexOf(q) >= 0)) {
+            if (_flatHit(e, grps, q)) {
                 matchPaths.add(e.path);
                 var p = e.path;
                 while (!keepPaths.has(p)) {       // stop once an ancestor chain is known
@@ -8384,7 +8437,7 @@ window.clearDetailPanelSearch = function(btnEl) {
             for (var h = 0; h < rendered.length; h++) {
                 rendered[h].classList.add("tree-search-hidden");
             }
-            _treeSearchResults(container, null);
+            _treeSearchResults(container, { total: 0, q: q, peer: _peerMatchCount(container, q) });
             return;
         }
         // Night session 2026-08-28, revised the same day (user): a broad query
@@ -8487,6 +8540,7 @@ window.clearDetailPanelSearch = function(btnEl) {
         for (var i = 0; i < nodes.length; i++) {
             nodes[i].classList.remove("tree-highlight", "tree-search-hidden");
         }
+        _treeSearchResults(container, null);   // JT-06: the zero-match notice, if any
         if (!q) {
             _expandToDepth(container, 1);
             return;
@@ -8526,6 +8580,7 @@ window.clearDetailPanelSearch = function(btnEl) {
 
         if (matches.length === 0) {
             for (var h = 0; h < nodes.length; h++) nodes[h].classList.add("tree-search-hidden");
+            _treeSearchResults(container, { total: 0, q: q, peer: null });
             return;
         }
 

@@ -31,10 +31,13 @@ import re
 from decimal import Decimal, InvalidOperation
 from typing import Any, Optional
 
-# Mirrors type_policy._PLAIN_GROUPED_NUMBER: a display-form number may carry
-# thousands commas (that is how group_digits renders it, and what an editable
-# field hands back), and stripping them must round-trip exactly.
-_GROUPED = re.compile(r"^[+-]?\d[\d,]*(\.\d+)?$")
+# A display-form number may carry thousands commas (that is how group_digits
+# renders it, and what an editable field hands back), and stripping them must
+# round-trip exactly. Only WELL-FORMED grouping counts -- 1-3 leading digits,
+# then exact 3-digit groups, which is all group_digits ever emits -- so a text
+# pair like "1,1" / "4,8" (a grid_location) is not the number 11 / 48 (JT-08;
+# the same rule as type_fix._parse_plain). Mirrored in JS (window.ValueDelta).
+_GROUPED = re.compile(r"^[+-]?\d{1,3}(,\d{3})*(\.\d+)?$")
 
 # Fixed-point is readable up to a point; past these the digits stop being
 # informative and exponential is the honest form. Mirrored in JS.
@@ -177,15 +180,17 @@ def compute(old: Any, new: Any) -> Optional[dict]:
     text = format_delta(d)
     direction = "up" if d > 0 else ("down" if d < 0 else "same")
     coerced = isinstance(old, str) or isinstance(new, str)
+    both_text = isinstance(old, str) and isinstance(new, str)
 
     title = f"difference: {text}"
     if pct_text:
         title += f" ({pct_text})"
     if coerced:
-        title += " — one side is stored as text"
+        title += (" — both sides are stored as text" if both_text
+                  else " — one side is stored as text")
     if d == 0:
-        title = "same numeric value" + (" (stored type differs)" if coerced
-                                        else "")
+        title = "same numeric value" + (" (stored type differs)"
+                                        if coerced and not both_text else "")
 
     return {
         "delta": float(d),
