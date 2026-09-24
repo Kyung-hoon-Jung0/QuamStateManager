@@ -211,6 +211,29 @@ def _annotate_load_error(message: str, chip_class, versions) -> str:
     that wall of red, a user reinstalls libraries instead of selecting the
     matching env. Lead with the likely cause + remedy so the fix is obvious.
     """
+    # QA diagnostics-r2-02: quam's load-time type check names ONE value of the
+    # wrong type ("Wrong object type found during validation. Path: ...").
+    # That is a value to fix, not an env to switch -- the env-mismatch lead
+    # below sent users after the wrong cause. Checked first, so it never
+    # steals a genuine mismatch message.
+    if "Wrong object type found during validation" in message:
+        def _line(tag):
+            for ln in message.splitlines():
+                if ln.strip().startswith(tag):
+                    return ln.strip()[len(tag):].strip()
+            return ""
+        where = _line("Path:")
+        want, got = _line("Required type:"), _line("Actual type:")
+        what = f" {where}" if where else ""
+        types = (f" (must be {want}, stored as {got})" if want and got else "")
+        hint = (
+            f"Quam.load() rejected the value at{what or ' one field'}{types}. "
+            "This is a stored value of the wrong type (e.g. a number saved as "
+            "text), NOT an environment mismatch: fix that value — "
+            "Diagnostics › Environment match lists it — and every node run "
+            "will load again. Technical detail follows.\n\n"
+        )
+        return hint + message
     needles = ("Could not load QUAM machine", "ModuleNotFoundError",
                "No module named", "is not a valid attr")
     if not any(n in message for n in needles):

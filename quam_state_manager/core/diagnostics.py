@@ -180,7 +180,7 @@ _CHECK_CATALOG: list[tuple[str, list[tuple[str, str, str]]]] = [
         ("error", "Classes importable in the selected env", "Every __class__ the state references imports in the selected python environment (third-party packages included) — an unimportable class makes Quam.load() fail."),
         ("error", "Fields exist on the env's classes", "Every key under a __class__-bearing node is a real field of that class in the selected env — an unknown field raises AttributeError('Unexpected attribute') at Quam.load(). Free-form dicts (extras, operations) are never flagged."),
         ("error", "Required fields present", "Fields the env's class requires (no default) exist in the state."),
-        ("warning", "Value types match annotations", "Scalar values match the env class's type annotations (int widening and pointer values always pass; enum membership is advisory)."),
+        ("error", "Value types match annotations", "Scalar values match the env class's type annotations — a wrong-type value (e.g. a number stored as text in a float field) makes Quam.load() raise TypeError('Wrong object type found during validation'). A bool in a number, a NaN and a fractional int load, so they stay warnings; int widening and pointer values always pass; enum membership is advisory."),
         ("warning", "Package versions match", "The state's __package_versions__ stamp (written by quam ≥0.6) matches the selected env's installed versions."),
     ]),
     ("connectivity", [

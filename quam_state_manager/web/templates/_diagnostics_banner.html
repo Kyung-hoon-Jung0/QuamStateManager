@@ -6,7 +6,7 @@
    missing/colliding port, NaN), i.e. a value that would crash the next node run.
    Load is never blocked; this is a non-modal, dismissible alert. #}
 <div class="topo-change-banner diag-error-banner" id="diagnostics-banner" role="alert"
-     data-diag-sig="{{ diag_summary.error }}:{{ active_name or 'this chip' }}">
+     data-diag-sig="{{ diag_sig or (diag_summary.error ~ ':' ~ (active_name or 'this chip')) }}">
     <span class="topo-change-banner-text">
         &#9888;&#65039; <b>{{ diag_summary.error }}</b>
         value{{ 's' if diag_summary.error != 1 }} on <b>{{ active_name or "this chip" }}</b>
@@ -22,7 +22,9 @@
 </div>
 {# A13: the slot re-fetches on every `diagnostics-changed` (i.e. every edit), so a
    plain hidden=true would re-pop the banner on the next edit while the user is
-   fixing the chip. Persist the dismissed error SET signature (count:chip) in
+   fixing the chip. Persist the dismissed error SET signature (count:chip:hash of each error's
+   category|location|jump_path -- the value text is left out on purpose, so
+   lowering a still-bad value keeps it hidden) in
    sessionStorage and stay hidden until that signature changes — re-pop only when
    the error set actually changes. Same idea the wc-gc banner uses. #}
 <script>

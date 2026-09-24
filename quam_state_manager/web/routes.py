@@ -3765,8 +3765,18 @@ def type_fix_apply():
         _set_working_dirty(True, ctx)
         _invalidate_engine_cache(ctx)
 
+    # QA F-E: name every converted leaf in the ONE patch shape the sync pull
+    # and undo already ship, so an open Explorer tree repaints the stored
+    # number in place (it kept the quoted text until a full reload). The value
+    # is what the modifier STORED, not the proposal (int vs float).
+    changes = []
+    for e in applied:
+        c = _revert_entry_payload(e.dot_path, e.new_value,
+                                  source_file=getattr(e, "source_file", "state"))
+        c["value"] = e.new_value
+        changes.append(c)
     return jsonify(ok=True, converted=converted, count=len(converted),
-                   failures=failures, unknown=unknown,
+                   failures=failures, unknown=unknown, changes=changes,
                    tray_html=_tray_html())
 
 
@@ -17294,6 +17304,40 @@ def state_sync():
     })
 
 
+def _crash_values_on_chip(store) -> dict | None:
+    """QA diagnostics-r2-04: the crash-class values a live write carries.
+
+    Every live-write door pushes the WHOLE working copy, so after it the live
+    chip holds every value the red banner counts -- the same filter
+    (``summarize``'s error tier: not acknowledged, not advisory), so the write
+    and the banner never disagree. ADVISORY ONLY: it names them in the result
+    line / confirm the door already has; it never blocks or asks (docs/104 #1,
+    the researcher-trust rule). ``None`` when there are none, and on any
+    failure -- an advisory must never break a write that succeeded. Reads only
+    the memoized lint (no live read)."""
+    try:
+        errs = [f for f in _active_chip_findings(store)
+                if f.severity == "error" and not getattr(f, "advisory", False)
+                and not getattr(f, "acknowledged", None)]
+    except Exception:  # noqa: BLE001
+        logger.debug("crash-value advisory failed", exc_info=True)
+        return None
+    if not errs:
+        return None
+    locs = [f.location for f in errs]
+    shown = "; ".join(locs[:5]) + (f" (+{len(locs) - 5} more)" if len(locs) > 5 else "")
+    n = len(errs)
+    return {
+        "count": n,
+        "values": [{"location": f.location, "message": f.message,
+                    "jump_path": f.jump_path} for f in errs[:8]],
+        "sig": "\n".join(sorted(locs)),
+        "sentence": (f"{n} value{'s' if n != 1 else ''} on the live chip would "
+                     f"crash a node run: {shown}. Fix before running an "
+                     "experiment (Diagnostics lists them)."),
+    }
+
+
 def _sync_pull_apply_to_live(ctx, replay, *, pulled_other_changes=False,
                              force=False, patch=None, journal=True, walk=False):
     """Finish a ``mode=apply`` sync: save the re-applied edits to the working
@@ -17451,6 +17495,7 @@ def _sync_pull_apply_to_live(ctx, replay, *, pulled_other_changes=False,
                 ctx["walk_last_snap"] = time.time()
         except Exception:
             logger.warning("History snapshot after pull-apply failed", exc_info=True)
+    _crash = _crash_values_on_chip(store)      # QA diagnostics-r2-04 (advisory)
     return jsonify({
         "status": "ok",
         "mode": "apply",
@@ -17458,6 +17503,7 @@ def _sync_pull_apply_to_live(ctx, replay, *, pulled_other_changes=False,
         "replay": replay,
         "pulled_other_changes": pulled_other_changes,
         **(patch or {}),
+        **({"crash_values": _crash} if _crash else {}),
     })
 
 
@@ -17705,16 +17751,27 @@ def state_apply_to_live():
                 _auto["last_snap"] = time.time()
         except Exception:
             logger.warning("History snapshot after apply failed", exc_info=True)
+    # QA diagnostics-r2-04: name the crash-class values the write carried
+    # (advisory -- the result line only; a clean chip's response is unchanged)
+    _crash = _crash_values_on_chip(store)
     if _auto is not None:
         # The applied log IS the feedback; one success toast per edit would be
         # noise the user cannot dismiss fast enough.
         _auto["flushes"] = int(_auto.get("flushes") or 0) + 1
         resp = make_response(_tray_html())
         resp.headers["HX-Trigger"] = ("liveDriftChanged, stateHistoryChanged, "
-                                      "autoApplyApplied")
+                                      "autoApplyApplied") if not _crash else json.dumps({
+            "liveDriftChanged": None, "stateHistoryChanged": None,
+            # auto-apply.js toasts this once per distinct set, not per flush
+            "autoApplyApplied": {"crash": _crash}})
         return resp
-    toast = render_template(
-        "_status.html", message="Applied to the live chip.", level="success")
+    if _crash:
+        toast = render_template(
+            "_status.html", level="warning",
+            message="Applied to the live chip — ⚠ " + _crash["sentence"])
+    else:
+        toast = render_template(
+            "_status.html", message="Applied to the live chip.", level="success")
     resp = make_response(_tray_html() + "\n"
                          + f'<div id="status-bar" hx-swap-oob="innerHTML">{toast}</div>')
     # The live chip + baseline just moved — refresh the open State-History timeline (a
@@ -17799,6 +17856,8 @@ def state_overwrite_live_preflight():
         "live_changes": live_changes,
         "unsaved": unsaved,
         "hand_tuned": marked,
+        # QA diagnostics-r2-04: one more clause for the SAME confirm
+        "crash_values": _crash_values_on_chip(store),
         # The push snapshots the pre-apply live first, which is what powers the
         # tray's "Revert last apply" — so this is a reversible action and the
         # confirm should say so.
@@ -27513,16 +27572,33 @@ def diagnostics_banner():
     ``machine.generate_config()`` provably rejects (e.g. a waveform sample
     outside the DAC range, a missing/colliding port, a NaN) — i.e. something that
     would crash the next node run. Warnings/suggestions stay in the quiet tray
-    badge; only crash-class errors get the banner. Empty (204) otherwise."""
+    badge; only crash-class errors get the banner. Empty 200 otherwise -- never
+    204: htmx 2.x does not swap a 204, so the previous banner would outlive the
+    error set it describes until a full reload (the type_alarm_banner contract).
+
+    ``diag_sig`` (the dismissal signature) names WHICH findings are errors, not
+    only how many: count:chip alone let a new same-count error set match a
+    dismissed one and stay hidden. The identity is category|location|jump_path
+    -- never the message, which carries the live value, so lowering a still-bad
+    value does not re-pop a dismissed banner (A13)."""
     store = _store()
     if not store:
-        return ("", 204)
-    summary = diagnostics.summarize(_active_chip_findings(store))
+        return ""
+    findings = _active_chip_findings(store)
+    summary = diagnostics.summarize(findings)
     if not summary.get("error"):
-        return ("", 204)
+        return ""
     ident = _active_chip_identity()
+    name = ident["name"] if ident else None
+    # the same filter summarize() counts as an error (acknowledged/advisory
+    # findings drive no banner, so they must not move its signature either)
+    ids = sorted(f"{f.category}|{f.location}|{f.jump_path}" for f in findings
+                 if f.severity == "error" and not getattr(f, "acknowledged", None)
+                 and not getattr(f, "advisory", False))
+    sig = "%d:%s:%s" % (summary["error"], name or "this chip",
+                        hashlib.sha1("\n".join(ids).encode("utf-8")).hexdigest()[:12])
     return render_template("_diagnostics_banner.html", diag_summary=summary,
-                           active_name=ident["name"] if ident else None)
+                           active_name=name, diag_sig=sig)
 
 
 @bp.route("/diagnostics/findings.json")

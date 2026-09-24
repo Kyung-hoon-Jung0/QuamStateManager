@@ -78,6 +78,31 @@ class TestSkewErrorAnnotation:
         assert out.startswith("Couldn't load this chip")
         assert raw in out
 
+    def test_a_wrong_type_value_is_not_blamed_on_the_env(self):
+        # QA diagnostics-r2-02: quam's load-time type check names ONE value;
+        # the env-mismatch lead ("almost always a version/package mismatch")
+        # sent the user after the wrong cause. Message shape verified against
+        # quam 0.6.0.
+        rgc = _load_run_generate_config()
+        # the shape _load_machine really raises: its RuntimeError wraps the
+        # __class__ load's TypeError (so the env-mismatch needle matches too)
+        raw = "\n".join([
+            "RuntimeError: Could not load QUAM machine from x. __class__ load "
+            "failed with TypeError: Failed to load QUAM state from 'x/state.json':",
+            "Wrong object type found during validation.",
+            'Path: Quam.qubits["q4"].T1',
+            "Required type: <class 'float'>",
+            "Actual type: <class 'str'>",
+            "value of actual type: 1.2e-05"])
+        out = rgc._annotate_load_error(raw, "quam_config.my_quam.Quam",
+                                       {"quam": "0.6.0", "quam_builder": "0.4.0"})
+        lead = out.split("\n\n")[0]
+        assert out.startswith("Quam.load() rejected the value at")
+        assert "version/package mismatch" not in lead
+        assert 'Quam.qubits["q4"].T1' in lead
+        assert "<class 'float'>" in lead and "<class 'str'>" in lead
+        assert raw in out                                  # detail preserved
+
     def test_unrelated_error_is_passthrough(self):
         rgc = _load_run_generate_config()
         raw = "ValueError: amplitude must be finite"

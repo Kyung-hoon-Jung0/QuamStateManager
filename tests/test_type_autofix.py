@@ -204,6 +204,20 @@ class TestApply:
         assert isinstance(store.get_value("qubits.q1.T1"), int)
         assert store.get_value("qubits.q1.xy.operations.saturation.amplitude") == 0.13
 
+    def test_the_response_names_every_converted_leaf(self, app, client):
+        # QA F-E: an open Explorer tree kept the quoted text after the repair;
+        # the response now carries the ONE patch shape (sync pull / undo) with
+        # the value the modifier STORED, which the client patches in place.
+        _, paths, sig = _plan(client)
+        body = client.post("/type-fix/apply", json={"paths": paths, "sig": sig}).get_json()
+        by = {c["dot_path"]: c for c in body["changes"]}
+        assert set(by) == set(paths)
+        assert by["qubits.q1.T1"]["value"] == 8834 and isinstance(by["qubits.q1.T1"]["value"], int)
+        assert isinstance(by["qubits.q1.f_01"]["value"], float)
+        for c in body["changes"]:
+            assert c["old_kind"] == "num"
+            assert {"old_value_str", "old_value_disp", "source_file"} <= set(c)
+
     def test_the_whole_repair_is_one_undo(self, app, client):
         _, paths, sig = _plan(client)
         client.post("/type-fix/apply", json={"paths": paths, "sig": sig})
@@ -299,6 +313,24 @@ class TestEntryPoints:
             assert f"window.{fn}" in app_js, fn
         # the apply path must go through the shared tray swap + refresh events
         assert "_swapPendingTray(d.tray_html)" in app_js
+
+
+def test_type_fix_tree_refresh_selfcheck():
+    """QA F-E: the open Explorer tree shows the converted number and loses the
+    stale warning mark without a reload (tests/type_fix_tree_refresh_selfcheck.cjs)."""
+    import shutil
+    import subprocess
+    from pathlib import Path
+    if shutil.which("node") is None:
+        pytest.skip("node not on PATH")
+    root = Path(__file__).resolve().parent.parent
+    r = subprocess.run(["node", str(root / "tests" / "type_fix_tree_refresh_selfcheck.cjs")],
+                       capture_output=True, text=True, encoding="utf-8",
+                       cwd=str(root), timeout=120)
+    if r.returncode == 2:
+        pytest.skip("jsdom not installed (run `npm install jsdom`)")
+    assert r.returncode == 0, r.stdout + r.stderr
+    assert "ALL OK" in r.stdout, r.stdout + r.stderr
 
 
 class TestTheQuotedSignalFromTheTreeEditor:

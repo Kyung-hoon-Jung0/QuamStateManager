@@ -61,12 +61,67 @@ class TestAnalyzeState:
                  for p in f["example_paths"]]
         assert not any("extras" in p or "brand_new_op" in p for p in paths)
 
-    def test_type_mismatch_is_warning_tier(self):
+    def test_type_mismatch_is_error_tier(self):
+        # QA diagnostics-r2-02 (this pin used to say "warning"): quam's
+        # load-time typeguard check raises on a str in a float field -- every
+        # node run dies on Quam.load(), exactly like unknown_field. Verified in
+        # quam 0.6.0: "Wrong object type found during validation".
         state = _state()
-        state["qubits"]["qA1"]["f_01"] = "oops-a-string"
+        state["qubits"]["qA1"]["f_01"] = "1.1349480376211927e-05"
         k = _by_kind(_findings(state))
         rec = k["type_mismatch"][0]
-        assert rec["severity"] == "warning"
+        assert rec["severity"] == "error"
+        assert "Wrong object type" in rec["detail"]
+
+    @pytest.mark.parametrize("field,value,code", [
+        ("confusion_matrix", [[0.9, "x"], [0.1, 0.9]], "element_mismatch"),
+        ("confusion_matrix", [0.9, 0.1], "list_shape"),
+        ("active", 1, "type_mismatch"),          # int in a bool field
+        ("xy", "not-a-pointer", "type_mismatch"),  # str in a PLAIN component
+    ])
+    def test_load_breaking_codes_are_error_tier(self, field, value, code):
+        state = _state()
+        state["qubits"]["qA1"][field] = value
+        recs = [r for r in _findings(state) if r.get("code") == code]
+        assert recs and recs[0]["severity"] == "error", recs
+
+    @pytest.mark.parametrize("field,value,code", [
+        ("f_01", True, "bool_in_numeric"),       # quam loads it (verified)
+        ("f_01", float("nan"), "non_finite"),    # quam loads it (verified)
+        ("length", 40.5, "non_integral_int"),    # quam int()s it (verified)
+        ("flux_point", "sideways", "enum_miss"),  # explicit v1 design: advisory
+    ])
+    def test_codes_that_load_stay_warning_tier(self, field, value, code):
+        state = _state()
+        state["qubits"]["qA1"][field] = value
+        recs = [r for r in _findings(state) if r.get("code") == code]
+        assert recs and recs[0]["severity"] == "warning", recs
+
+    def test_component_or_str_union_string_stays_warning(self):
+        # the probe collapses Union[Component, str] to `component` (raw keeps
+        # the Union); quam's str arm accepts any string there, so it LOADS
+        import copy
+        man = copy.deepcopy(MANIFEST)
+        man["classes"]["q.Transmon"]["fields"]["gate_pulse"] = {
+            "type": {"base": "component", "optional": False, "item": None,
+                     "enum": None, "union": None, "class": "q.Pulse",
+                     "raw": "typing.Union[q.Pulse, str]"},
+            "optional": False, "has_default": True, "default": None,
+            "default_repr": None, "default_is_reference": False,
+            "raw": "typing.Union[q.Pulse, str]"}
+        state = _state()
+        state["qubits"]["qA1"]["gate_pulse"] = "qA1"
+        recs = [r for r in _findings(state, man) if r.get("field") == "gate_pulse"]
+        assert recs and recs[0]["severity"] == "warning", recs
+
+    def test_a_text_number_reaches_the_crash_banner_count(self):
+        # the chain the banner reads: analyzer -> diagnostics Finding -> summary
+        from quam_state_manager.core import diagnostics
+        state = _state()
+        del state["custom"]                       # drop the fixture's own error
+        state["qubits"]["qA1"]["f_01"] = "1.1349480376211927e-05"
+        found = sev.to_diag_findings(sev.analyze_state(state, MANIFEST))
+        assert diagnostics.summarize(found)["error"] == 1
 
     def test_pointer_and_inferred_refs_pass(self):
         state = _state()

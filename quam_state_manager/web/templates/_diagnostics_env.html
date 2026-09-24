@@ -49,7 +49,10 @@
     <span id="diag-env-deep-busy" class="htmx-indicator muted">running in the env&hellip;</span>
     {% endif %}
   </div>
-  <div id="diag-env-deep"></div>
+  {# QA diagnostics-r2-03: config-status-host joins the /config/regenerate
+     error-body allowance (app.js htmx:beforeSwap) -- without it a failed
+     Validate deeply dropped its 502 explanation and showed a generic toast. #}
+  <div id="diag-env-deep" class="config-status-host"></div>
   {% if env_card.missing_classes %}
   <p class="diag-env-missing muted">
     {{ env_card.missing_classes | length }} class(es) not importable in this
