@@ -3797,10 +3797,64 @@
     });
   }
 
+  // QA F25: a feedline keeps its NAME through a drag. Membership is still
+  // re-derived from the dragged layout — same rr output port <=> same group,
+  // because every builder pins a whole group to its first member's channel,
+  // so a stale shared name would silently multiplex a qubit onto another
+  // feedline's port — but each port inherits the name most of its members
+  // already carried (no name twice); a port no old name can go to gets a
+  // fresh "feedline<n>" (freshFeedlineGroup's convention). Any drag, a
+  // drive drag included, used to rename every feedline "fl_<con>_<slot>_<port>".
+  function rrPortKey(ro) { return ro.con + "_" + ro.slot + "_" + ro.port; }
+  function feedlineNamesByPort() {
+    // null-prototype maps: a group is free text ("constructor" is a name)
+    var order = [], members = Object.create(null), used = Object.create(null);
+    state.spec.lines.forEach(function (ln) {
+      if (ln.line !== "resonator") return;
+      if (ln.group) used[ln.group] = true;
+      var rr = (allocEntry(ln.element) || {}).rr;
+      if (!rr) return;
+      var ro = rr.filter(function (x) { return (x.io_type || "output") === "output"; })[0];
+      var ri = rr.filter(function (x) { return x.io_type === "input"; })[0];
+      if (!ro || !ri) return;   // syncSpecChannels skips it too
+      var key = rrPortKey(ro);
+      if (!members[key]) { members[key] = []; order.push(key); }
+      members[key].push(ln.group);
+    });
+    var cands = [];
+    order.forEach(function (key, ki) {
+      var count = Object.create(null), seen = [];
+      members[key].forEach(function (g) {
+        if (!g) return;
+        if (!count[g]) { count[g] = 0; seen.push(g); }
+        count[g]++;
+      });
+      seen.forEach(function (g, gi) {
+        cands.push({ key: key, name: g, n: count[g], ki: ki, gi: gi });
+      });
+    });
+    cands.sort(function (a, b) { return (b.n - a.n) || (a.ki - b.ki) || (a.gi - b.gi); });
+    var nameOf = Object.create(null), taken = Object.create(null);
+    cands.forEach(function (c) {
+      if (nameOf[c.key] !== undefined || taken[c.name]) return;
+      nameOf[c.key] = c.name;
+      taken[c.name] = true;
+    });
+    var k = 1;
+    order.forEach(function (key) {
+      if (nameOf[key] !== undefined) return;
+      while (used["feedline" + k] || taken["feedline" + k]) k++;
+      nameOf[key] = "feedline" + k;
+      taken[nameOf[key]] = true;
+    });
+    return nameOf;
+  }
+
   // A feedline's readout output + input must share one MW-FEM. After a port
   // swap, pull any stray readout-input back onto its output's FEM.
   // Rewrite every spec line's channel pin from the drag-mutated allocation.
   function syncSpecChannels() {
+    var feedName = feedlineNamesByPort();   // from the PRE-sync groups
     state.spec.lines.forEach(function (ln) {
       var a = allocEntry(ln.element) || {};   // QA F11: pair lines are "q1-2" there
       if (ln.line === "drive" && (a.xy || [])[0]) {
@@ -3820,7 +3874,7 @@
                          out_port: ro.port, in_port: ri.port };
           // Feedline = qubits sharing one rr output port — re-derive `group`
           // from the dragged layout so build_connectivity multiplexes them.
-          ln.group = "fl_" + ro.con + "_" + ro.slot + "_" + ro.port;
+          ln.group = feedName[rrPortKey(ro)];
         }
       } else if (ln.line === "twpa_pump" && (a.p || [])[0]) {
         var tp = a.p[0];
