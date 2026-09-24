@@ -134,6 +134,41 @@ def test_twpas_preserved_when_rebuild_drops_them():
     assert merge_states(old2, new2).merged["qubits"].keys() == {"q1"}
 
 
+def test_removed_qubit_reference_dropped_from_a_carried_list():
+    # QA F14: removing q2 left '#/qubits/q2' inside the TWPA's `qubits` LIST --
+    # a list is a merge leaf, so tier-1 carried the old list whole over the
+    # builder's null and the dangling scan (strings only) never looked inside.
+    old = {"qubits": {"q1": {"f": 1}, "q2": {"f": 2}},
+           "twpas": {"t": {"qubits": ["#/qubits/q1", "#/qubits/q2"]}}}
+    new = {"qubits": {"q1": {"f": 0}},
+           "twpas": {"t": {"qubits": None}}}           # TWPA(...).to_dict()
+    r = merge_states(old, new)
+    assert r.merged["twpas"]["t"]["qubits"] == ["#/qubits/q1"]
+    refs = [x for x in r.stats.residual_lost if x.startswith("twpas.")]
+    assert len(refs) == 1                            # reported, never silent
+    # listed FIRST: the panel shows 80 lines and the removed qubit's own
+    # leaves (hundreds on a real chip) would otherwise bury it
+    assert r.stats.residual_lost[0] == refs[0]
+    assert "twpas.t.qubits" in refs[0] and "#/qubits/q2" in refs[0]
+    # the same when the whole TWPA is grafted (builder emitted no twpas)
+    r2 = merge_states(old, {"qubits": {"q1": {"f": 0}}, "twpas": {}})
+    assert r2.merged["twpas"]["t"]["qubits"] == ["#/qubits/q1"]
+    assert any("#/qubits/q2" in x for x in r2.stats.residual_lost)
+
+
+def test_surviving_list_references_carried_verbatim():
+    # control: nothing removed -> the list is carried untouched, nothing reported;
+    # a reference that was ALREADY broken in the source is not ours to edit.
+    old = {"qubits": {"q1": {"f": 1}, "q2": {"f": 2}},
+           "twpas": {"t": {"qubits": ["#/qubits/q1", "#/qubits/q2", "#/qubits/q9",
+                                      "#/wiring/x", "plain"]}}}
+    new = {"qubits": {"q1": {"f": 0}, "q2": {"f": 0}},
+           "twpas": {"t": {"qubits": None}}}
+    r = merge_states(old, new)
+    assert r.merged["twpas"]["t"]["qubits"] == old["twpas"]["t"]["qubits"]
+    assert r.stats.residual_lost == []
+
+
 def test_dangling_graft_flagged():
     # A grafted macro points at a qubit the rebuild no longer has.
     old = {"qubit_pairs": {"p": {"macros": {"cz": {"ref": "#/qubits/q9/z"}}}}}
@@ -648,6 +683,30 @@ def test_a_subclass_of_a_subclass_is_kept_too():
     assert ro["__class__"] == LAB_GEF and ro["u_centers"] == [0.1, 0.2]
 
 
+LAB_ROOT = "quam_config.my_quam.Quam"
+STOCK_ROOT = "quam_builder.architecture.superconducting.qpu.flux_tunable_quam.FluxTunableQuam"
+
+
+def test_the_root_class_the_user_picked_is_never_overridden():
+    """QA regenerate-r2-16: the Review step's "Chip root class" is the spec's
+    own slot (docs/176) -- the user picked the stock root to share the chip
+    without the lab package, the build wrote it, and the §15 keep restored the
+    lab root anyway ("kept quam_config.my_quam.Quam -- 1 place"). Below the
+    root the keep still applies."""
+    keep = dict(KEEP)
+    keep[LAB_ROOT] = {"bases": [STOCK_ROOT], "fields": ["qubits", "lab_extra"]}
+    old = _ro_chip(LAB_RO, weights_real=[1.0, 2.0])
+    old.update({"__class__": LAB_ROOT, "lab_extra": 7})
+    new = _ro_chip(STOCK_RO)
+    new["__class__"] = STOCK_ROOT
+    r = merge_states(old, new, keep_classes=keep,
+                     class_schemas={STOCK_ROOT: ["qubits"], STOCK_RO: ["amplitude"]})
+    assert r.merged["__class__"] == STOCK_ROOT
+    assert r.stats.class_changed == [("(root)", LAB_ROOT, STOCK_ROOT)]
+    assert "lab_extra" in r.stats.schema_dropped
+    assert r.stats.class_kept == [("qubits.q1.resonator.operations.readout", LAB_RO)]
+
+
 # ---------------------------------------------------------------------------
 # docs/202 §17 -- a declared port nothing references is carried
 # ---------------------------------------------------------------------------
@@ -763,3 +822,108 @@ class TestADeclaredPortNothingUsesIsCarried:
         new = _chip_with_ports({3: [1, 8]}, refs=[(3, 1)])
         r = _merge_ports(old, new)
         assert r.stats.ports_carried == []
+
+
+# ---------------------------------------------------------------------------
+# QA regenerate-r2-14 -- an object and a null never meet as tier-1 scalars
+# ---------------------------------------------------------------------------
+
+FLUX_Q = "quam_builder.architecture.superconducting.qubit.FluxTunableTransmon"
+FLUX_LINE = "quam.components.channels.FluxLine"
+
+
+def _cr_rebuild_of_a_flux_chip():
+    """The customer case: a flux chip re-generated as cross-resonance. The
+    rebuild still types q1 FluxTunableTransmon but has no flux wiring, so it
+    serializes `z: null`; the pair's CR channel is NEW where OLD had null."""
+    old = {"qubits": {"q1": {
+        "__class__": FLUX_Q, "id": "q1",
+        "z": {"__class__": FLUX_LINE, "joint_offset": 0.12,
+              "opx_output": "#/wiring/qubits/q1/z/opx_output"}}},
+        "qubit_pairs": {"q1-2": {"cross_resonance": None}}}
+    new = {"qubits": {"q1": {"__class__": FLUX_Q, "id": "q1", "z": None}},
+           "qubit_pairs": {"q1-2": {"cross_resonance": {
+               "__class__": "quam_builder.CRChannel", "intermediate_frequency": 0,
+               "opx_output": "#/wiring/qubit_pairs/q1-2/cr/opx_output"}}}}
+    return old, new
+
+
+class TestAnObjectNeverMeetsANullAsAScalar:
+    def test_a_typed_object_over_a_new_null_goes_through_the_schema_gate(self):
+        # QA review: this pin used to assert `qubits.q1.z in schema_dropped`,
+        # which the panel prints as "old-stack field this env doesn't know" --
+        # but `z` IS a field the env knows; the rebuild left it empty. It is
+        # now ONE residual line saying so, and still no per-leaf loss.
+        old, new = _cr_rebuild_of_a_flux_chip()
+        r = merge_states(old, new, class_schemas={FLUX_Q: ["id", "z"]})
+        assert r.merged["qubits"]["q1"]["z"] is None
+        assert r.stats.schema_dropped == []
+        assert [p for p, _ in r.stats.rebuild_removed] == ["qubits.q1.z"]
+        assert r.stats.residual_lost == [
+            "qubits.q1.z (the rebuild left it empty; old FluxLine not put "
+            "back — this build writes no FluxLine)"]
+
+    def test_one_qubits_removed_flux_line_is_not_put_back(self):
+        """QA review of r2-14: the class gate only catches a class the rebuild
+        writes NOWHERE. Drop q1's flux line while q2 keeps its own and
+        FluxLine is in the schemas -- the old q1 line was grafted back
+        pointing at wiring the rebuild never made (reported dangling, shipped
+        anyway, generate_config() crash)."""
+        line = lambda q, off: {"__class__": FLUX_LINE, "joint_offset": off,  # noqa: E731
+                               "opx_output": f"#/wiring/qubits/{q}/z/opx_output"}
+        old = {"qubits": {"q1": {"__class__": FLUX_Q, "z": line("q1", 0.12)},
+                          "q2": {"__class__": FLUX_Q, "z": line("q2", 0.34)}}}
+        new = {"qubits": {"q1": {"__class__": FLUX_Q, "z": None},
+                          "q2": {"__class__": FLUX_Q, "z": line("q2", 0.0)}}}
+        new_wiring = {"wiring": {"qubits": {"q2": {"z": {"opx_output": "#/ports/x"}}}}}
+        schemas = {FLUX_Q: ["z"], FLUX_LINE: ["joint_offset", "opx_output"]}
+        r = merge_states(old, new, class_schemas=schemas,
+                         old_wiring={"wiring": {"qubits": {
+                             "q1": {"z": {}}, "q2": {"z": {}}}}},
+                         new_wiring=new_wiring)
+        assert r.merged["qubits"]["q1"]["z"] is None
+        assert r.merged["qubits"]["q2"]["z"]["joint_offset"] == 0.34   # tier-1
+        assert r.stats.dangling_grafts == []
+        assert all(p != "qubits.q1.z" for p, _ in r.stats.graft_subtrees)
+        assert r.stats.grafted == 0
+        assert r.stats.residual_lost == [
+            "qubits.q1.z (the rebuild left it empty; old FluxLine not put back "
+            "— #/wiring/qubits/q1/z/opx_output is not in the rebuild)"]
+
+    def test_a_graft_whose_pointers_all_land_is_kept(self):
+        # control: a user-added object on a field the builder leaves empty
+        # (its wiring exists in the rebuild) still grafts, as docs/72 wants;
+        # and a STATE-side pointer is judged even with no wiring given.
+        obj = {"__class__": FLUX_LINE, "joint_offset": 0.5,
+               "opx_output": "#/wiring/qubits/q1/z/opx_output"}
+        old = {"qubits": {"q1": {"__class__": FLUX_Q, "z": obj}}}
+        new = {"qubits": {"q1": {"__class__": FLUX_Q, "z": None}}}
+        r = merge_states(old, new, new_wiring={"wiring": {"qubits": {"q1": {
+            "z": {"opx_output": "#/ports/x"}}}}})
+        assert r.merged["qubits"]["q1"]["z"] == obj
+        assert r.stats.rebuild_removed == []
+        gone = dict(obj, opx_output="#/ports/mw_outputs/con1/9/1")
+        r = merge_states({"qubits": {"q1": {"__class__": FLUX_Q, "z": gone}}}, new)
+        assert r.merged["qubits"]["q1"]["z"] is None
+        assert [p for p, _ in r.stats.rebuild_removed] == ["qubits.q1.z"]
+
+    def test_without_schemas_it_grafts_and_its_pointer_is_checked(self):
+        old, new = _cr_rebuild_of_a_flux_chip()
+        r = merge_states(old, new)
+        assert r.merged["qubits"]["q1"]["z"]["joint_offset"] == 0.12
+        assert ("qubits.q1.z", 2) in r.stats.graft_subtrees
+        assert "qubits.q1.z.opx_output" in r.stats.dangling_grafts
+
+    def test_an_old_null_never_erases_a_channel_the_rebuild_made(self):
+        old, new = _cr_rebuild_of_a_flux_chip()
+        r = merge_states(old, new, class_schemas={FLUX_Q: ["id", "z"]})
+        cr = r.merged["qubit_pairs"]["q1-2"]["cross_resonance"]
+        assert cr == new["qubit_pairs"]["q1-2"]["cross_resonance"]
+        # the OLD null is no loss (the one line is q1's removed flux line)
+        assert not any("cross_resonance" in x for x in r.stats.residual_lost)
+
+    def test_a_scalar_over_a_null_still_carries(self):
+        # tier-1 unchanged where neither side is an object
+        r = merge_states({"q": {"T1": 4.2e-5, "arr": [1, 2]}},
+                         {"q": {"T1": None, "arr": None}})
+        assert r.merged["q"] == {"T1": 4.2e-5, "arr": [1, 2]}

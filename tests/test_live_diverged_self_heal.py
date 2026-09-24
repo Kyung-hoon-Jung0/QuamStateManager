@@ -60,3 +60,103 @@ def test_a_real_divergence_is_still_raised_and_kept(env):
     assert ctx.get("live_diverged") is True
     ctx = _poll(env)
     assert ctx.get("live_diverged") is True, "still diverged -> still flagged"
+
+
+def test_an_outside_write_is_seen_on_the_next_poll_not_30_s_later(env, monkeypatch):
+    """QA regenerate-r2-36: the hash re-check is throttled to once / 30 s, and
+    the cheap mtime check its comment relies on ran only on the Chip Status
+    poll -- so on every other page an outside write read "Synced" for up to
+    30 s and Re-generate built the stale working copy. A MOVED live pair is
+    judged on the very next poll (throttle NOT lifted here), and only once."""
+    import os
+    import time
+
+    from quam_state_manager.core import working_copy
+
+    ctx = _poll(env)                                  # a hash check just ran
+    assert ctx.get("live_diverged") is not True
+    calls = []
+    real = working_copy.live_diverged_now
+    monkeypatch.setattr(working_copy, "live_diverged_now",
+                        lambda wc: calls.append(1) or real(wc))
+    c = env["client"]
+    assert c.get("/state/drift").status_code == 200   # nothing moved: throttled
+    assert calls == []
+    p = env["live"] / "state.json"
+    p.write_text(json.dumps(_state(off_a=0.123)), encoding="utf-8")
+    t = time.time() + 5
+    os.utime(p, (t, t))
+    assert c.get("/state/drift").status_code == 200
+    assert ctx.get("live_diverged") is True, "an outside write must not wait 30 s"
+    assert calls == [1]
+    for _ in range(3):                                # same mtimes: no re-hash
+        c.get("/state/drift")
+    assert calls == [1]
+
+
+def test_an_unjudged_move_is_judged_again_on_the_next_poll(env, monkeypatch):
+    """QA review of r2-36: the moved mtimes were recorded as "checked" BEFORE
+    the verdict, so a live pair caught mid-write (live_diverged_now -> None:
+    unreadable / torn) was never re-hashed until the 30 s throttle -- exactly
+    the actively-writing case the fix targets. The poll now also carries the
+    flag, so an open page's pill can stop claiming Synced."""
+    import os
+    import time
+
+    from quam_state_manager.core import working_copy
+
+    _poll(env)                                        # a hash check just ran
+    c = env["client"]
+    assert c.get("/state/drift").get_json()["live_diverged"] is False
+    verdicts = [None]                                 # first look: torn write
+    calls = []
+    real = working_copy.live_diverged_now
+    monkeypatch.setattr(
+        working_copy, "live_diverged_now",
+        lambda wc: calls.append(1) or (verdicts.pop(0) if verdicts else real(wc)))
+    p = env["live"] / "state.json"
+    p.write_text(json.dumps(_state(off_a=0.456)), encoding="utf-8")
+    t = time.time() + 5
+    os.utime(p, (t, t))
+    assert c.get("/state/drift").get_json()["live_diverged"] is False
+    assert calls == [1]
+    body = c.get("/state/drift").get_json()          # same mtimes, NOT throttled
+    assert calls == [1, 1], "an unjudged move must be judged on the next poll"
+    assert body["live_diverged"] is True
+    c.get("/state/drift")
+    assert calls == [1, 1], "a judged move is not re-hashed every poll"
+
+
+def test_drift_pill_selfcheck_passes():
+    """The client half: a pill still reading Synced under a diverged live is
+    re-rendered from the poll (node + jsdom drive the REAL app.js)."""
+    import shutil
+    import subprocess
+    from pathlib import Path
+
+    import pytest
+
+    if shutil.which("node") is None:
+        pytest.skip("node not on PATH")
+    root = Path(__file__).resolve().parent.parent
+    r = subprocess.run(["node", str(root / "tests" / "drift_pill_selfcheck.cjs")],
+                       capture_output=True, text=True, encoding="utf-8",
+                       cwd=str(root), timeout=180)
+    if r.returncode == 2:
+        pytest.skip("jsdom not installed (run `npm install jsdom`)")
+    assert r.returncode == 0, (r.stdout + r.stderr)
+    assert "assertions passed" in r.stdout, (r.stdout + r.stderr)
+
+
+def test_the_poll_carries_the_flag_only_for_a_clean_context(env):
+    """A dirty context's refresh returns early, so the poll cannot keep the
+    flag current there (test_sync_badge's pin) -- the payload says False and
+    the pill (already "Working state") is never asked to repaint from it."""
+    (env["live"] / "state.json").write_text(json.dumps(_state(off_a=0.321)),
+                                             encoding="utf-8")
+    ctx = _poll(env)
+    assert ctx.get("live_diverged") is True
+    c = env["client"]
+    assert c.get("/state/drift").get_json()["live_diverged"] is True
+    ctx["working_dirty"] = True
+    assert c.get("/state/drift").get_json()["live_diverged"] is False

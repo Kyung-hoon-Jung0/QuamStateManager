@@ -338,6 +338,35 @@ class TestTheSourceClassesTheEnvHolds:
         ro = merged["qubits"]["q1"]["resonator"]["operations"]["readout"]
         assert ro["__class__"] == self.LAB and ro["weights_real"] == [1.0, 2.0]
 
+    def test_the_root_the_spec_names_is_the_root_written(self, tmp_path, monkeypatch):
+        """QA regenerate-r2-16, end to end: spec.quam_class = the stock root,
+        the build writes it, the source's lab root is importable and
+        subclasses it -- state.json must still declare the stock root."""
+        lab_root, stock_root = "quam_config.my_quam.Quam", "qb.FluxTunableQuam"
+        (tmp_path / "old").mkdir()
+        (tmp_path / "old" / "state.json").write_text(json.dumps(
+            {"__class__": lab_root, "qubits": {}}))
+        (tmp_path / "old" / "wiring.json").write_text(json.dumps({"wiring": {}, "network": {}}))
+
+        def fake_build(python_path, mode, spec, out_dir, timeout=300):
+            out_dir = Path(out_dir); out_dir.mkdir(parents=True, exist_ok=True)
+            (out_dir / "state.json").write_text(json.dumps(
+                {"__class__": spec["quam_class"], "qubits": {}}))
+            (out_dir / "wiring.json").write_text(json.dumps({"wiring": {}, "network": {}}))
+            return {"ok": True, "status": "ok", "error": None,
+                    "result": {"class_schemas": {stock_root: ["qubits"]}}}
+
+        monkeypatch.setattr(regenerate.config_generator, "run_generator", fake_build)
+        probe = self._probe({lab_root: {"importable": True, "is_dataclass": True,
+                                        "bases": [stock_root],
+                                        "fields": {"qubits": {}}}})
+        out = regenerate.run_regenerate("py", tmp_path / "old",
+                                        {"quam_class": stock_root},
+                                        tmp_path / "new", source_probe=probe)
+        assert out["merge"]["class_kept"] == 0
+        merged = json.loads((tmp_path / "new" / "state.json").read_text())
+        assert merged["__class__"] == stock_root
+
 
 class TestCollectClassSchemas:
     """run_build._collect_class_schemas — the in-env harvest feeding the gate.

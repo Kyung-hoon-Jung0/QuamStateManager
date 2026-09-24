@@ -1486,6 +1486,23 @@ class TestRegenMergeRefusesAnUntypeableGraft:
         assert "qubits.q1.z" in res.stats.schema_dropped
         assert "z" not in res.merged["qubits"]["q1"]
 
+    def test_the_bias_line_is_dropped_when_the_rebuild_writes_z_null(self):
+        """QA regenerate-r2-14: a builder that serializes `z: null` instead of
+        omitting the key used to carry the old object whole (tier-1 leaf
+        branch), bypassing this very gate."""
+        old = {"qubits": {"q1": {
+            "__class__": "lab.FixedFrequencyTransmon", "id": "q1",
+            "z": {"__class__": "quam_config.qdac_components.QdacBiasLine",
+                  "channel": 13}}}}
+        new = {"qubits": {"q1": {"__class__": "lab.FixedFrequencyTransmon",
+                                 "id": "q1", "z": None}}}
+        res = self._merge(old, new)
+        # QA review: reported as what it is -- the rebuild left `z` empty --
+        # not as an "old-stack field this env doesn't know" (schema_dropped).
+        assert [p for p, _ in res.stats.rebuild_removed] == ["qubits.q1.z"]
+        assert "qubits.q1.z" not in res.stats.schema_dropped
+        assert res.merged["qubits"]["q1"]["z"] is None
+
     def test_a_user_added_pulse_still_grafts(self):
         """`operations` is an UNTAGGED container — no declared types to
         violate, and that is where a lab's own pulse class legitimately lives.

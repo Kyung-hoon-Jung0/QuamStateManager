@@ -158,6 +158,17 @@ def build_instruments(spec: dict):
     return instruments
 
 
+def _twpa_wire_id(tid):
+    """The id to hand ``add_twpa_lines`` for a spec TWPA id.
+
+    qualang_tools renders the element as f"twpa{id}" -- a spec id that already
+    says "twpa1"/"twpaA" would double-prefix to "twpatwpa1" in state+wiring
+    keys. Strip the redundant prefix. ONE function for the wizard build and
+    the emitted recipe (script_emitter), so the two can never name it apart.
+    """
+    return tid[4:] if (tid.lower().startswith("twpa") and len(tid) > 4) else tid
+
+
 def build_connectivity(spec: dict, include_pair_lines: bool = True):
     """Build a qualang_tools ``Connectivity`` from the spec's ``lines``.
 
@@ -220,8 +231,7 @@ def build_connectivity(spec: dict, include_pair_lines: bool = True):
             # qualang_tools renders the element as f"twpa{id}" — a spec id
             # that already says "twpa1"/"twpaA" would double-prefix to
             # "twpatwpa1" in state+wiring keys. Strip the redundant prefix.
-            tid_norm = tid[4:] if (tid.lower().startswith("twpa")
-                                   and len(tid) > 4) else tid
+            tid_norm = _twpa_wire_id(tid)
             kwargs = {"twpas": [tid_norm]}
             if twpa_pumps.get(tid) is not None:
                 kwargs["pump_constraints"] = _make_constraint(twpa_pumps[tid])

@@ -3609,6 +3609,29 @@ window.applyEditsToLive = function () {
         document.addEventListener(n, function () { window.__lastUserAct = Date.now(); },
                                   { capture: true, passive: true });
     });
+    /* QA review of regenerate-r2-36: the server judges an outside write to the
+       live chip on THIS poll, but only a full render repainted the pill -- an
+       open page kept reading "● Synced" above a Re-generate result saying the
+       live chip had moved. When the poll says diverged and the pill still
+       claims Synced, re-render the tray (its own rule then reads "Live chip
+       moved"). A dirty or archive pill is left alone; nothing else moves, and
+       an Auto-Sync pull or an apply in flight repaints the tray itself (two
+       swaps racing into #pending-tray could land the stale one last). */
+    var _pillRefreshing = false;
+    function onLiveDiverged(d) {
+        if (!d || d.live_diverged !== true || _pillRefreshing || !window.htmx) return false;
+        if (d.auto_pull || window._applyInFlight) return false;
+        if (!document.querySelector("#pending-tray .state-status-badge.state-status-synced")) return false;
+        _pillRefreshing = true;
+        var done = function () { _pillRefreshing = false; };
+        try {
+            var p = window.htmx.ajax("GET", "/state/tray",
+                                     { target: "#pending-tray", swap: "outerHTML" });
+            if (p && p.then) p.then(done, done); else done();
+        } catch (e) { done(); }
+        return true;
+    }
+    window._onDriftLiveDiverged = onLiveDiverged;
 
     function poll() {
         // In-flight guard + visibility gating (audit B24): never overlap a slow
@@ -3631,6 +3654,7 @@ window.applyEditsToLive = function () {
                 // THIS window's tray and the values on screen -- in place, never
                 // swapping what the reader is looking at (docs/87/144).
                 onEditSeq(d);
+                onLiveDiverged(d);
                 if (d && d.hist_seq && d.hist_seq !== window._histSeqSeen) {
                     var first = window._histSeqSeen === undefined;
                     window._histSeqSeen = d.hist_seq;
