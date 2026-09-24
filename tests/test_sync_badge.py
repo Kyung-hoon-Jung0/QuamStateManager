@@ -189,8 +189,9 @@ class TestWhatWasDeliberatelyLeftOut:
         assert self._kinds() == {"rundone", "new"}, self._kinds()
 
     def test_live_changed_is_not_announced(self):
-        """/state/drift's refresh returns early on a dirty context, so the
-        5-second poll cannot keep the flag true there — a chip that is right
+        """/state/drift's refresh only raises the flag on a dirty context
+        (QA diagnostics-r2-12), so the 5-second poll cannot keep it current
+        there — a chip that is right
         only sometimes is worse than none. The pill's own server-rendered
         `state-status-drifted` covers the clean case honestly."""
         assert "drift" not in self._kinds()

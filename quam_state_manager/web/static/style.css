@@ -5106,6 +5106,12 @@ a.topo-health-tile:hover { background: var(--pico-card-sectioning-background-col
 .diag-error-banner .topo-change-banner-btn { background: var(--color-error-border); color: #fff; }
 .diag-error-banner .topo-change-banner-btn:hover { background: #b02a37; }
 .diag-error-banner .topo-change-banner-dismiss { color: var(--color-error-text); }
+/* QA F-I: the crash banner points AT /diagnostics; on that page it repeats the
+   error pill and its Review button reloads the page you are on, while taking
+   ~70 px from a short window. :has() follows the pane across htmx swaps both
+   ways (PaneState parks a pane DETACHED, so a parked Diagnostics pane cannot
+   match); #diag-findings exists only in _diagnostics.html. */
+body:has(#table-pane #diag-findings) #diagnostics-banner-slot { display: none; }
 
 /* Live-drift banner — the accumulating "N params changed on the live chip"
    notice. Info (cyan) accent to set it apart from the amber out-of-band
@@ -9991,6 +9997,7 @@ tr.bulk-row-pinned > th, tr.bulk-row-pinned > td { background: color-mix(in srgb
 /* before / after hover panel on a modified cell */
 .bulk-td { position: relative; }
 .bulk-ba { display: none; position: absolute; left: 4px; top: 100%; z-index: 6; margin-top: 2px;
+    pointer-events: none; /* QA SIDE-1: a hover panel, never the click target of the row below */
     padding: 2px 6px; font-size: 0.74em; font-family: var(--font-mono); white-space: nowrap;
     background: var(--pico-card-background-color); border: 1px solid var(--pico-muted-border-color);
     border-radius: 4px; box-shadow: 0 2px 8px rgba(0,0,0,0.25); }

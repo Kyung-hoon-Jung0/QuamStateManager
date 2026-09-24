@@ -43,9 +43,22 @@
   {% endif %}
 </div>
 
+{#- QA F-H: a domain holding an active (unacknowledged) crash-class error is
+    listed FIRST, so the errors the red banner is about are not below the
+    Values / Physics warnings. Both passes keep DIAG_DOMAINS order (a stable
+    partition); the first such section carries #diag-first-error, the anchor
+    the banner's Review diagnostics scrolls to. -#}
+{%- set eorder = [] -%}
+{%- for dk, dl in diag_domains -%}
+  {%- if groups.get(dk, []) | rejectattr('acknowledged') | selectattr('severity', 'equalto', 'error') | list -%}{%- if eorder.append(dk) -%}{%- endif -%}{%- endif -%}
+{%- endfor -%}
+{%- set dorder = [] -%}
+{%- for dk, dl in diag_domains if dk in eorder -%}{%- if dorder.append((dk, dl)) -%}{%- endif -%}{%- endfor -%}
+{%- for dk, dl in diag_domains if dk not in eorder -%}{%- if dorder.append((dk, dl)) -%}{%- endif -%}{%- endfor -%}
+{%- set fe = namespace(done=false) -%}
 {% if findings %}
 <div class="diag-results">
-{% for dkey, dlabel in diag_domains %}
+{% for dkey, dlabel in dorder %}
   {% set rows = groups.get(dkey, []) %}
   {% if rows %}
     {# acknowledged rows are listed (collapsed, revocable) but never counted #}
@@ -59,7 +72,8 @@
     {# Open by default any domain with a crash-class error or a real (non-
        advisory) warning; advisory-only / info-only domains start collapsed so
        by-design recommendations don't shout on load. #}
-    <details class="detail-section diag-domain" data-domain="{{ dkey }}"{{ ' open' if (se or sw) else '' }}>
+    {% set first_err = se and not fe.done %}{% if first_err %}{% set fe.done = true %}{% endif %}
+    <details class="detail-section diag-domain" data-domain="{{ dkey }}"{{ ' id="diag-first-error"' | safe if first_err else '' }}{{ ' open' if (se or sw) else '' }}>
       <summary class="section-header diag-domain-summary">
         <span class="diag-domain-title">{{ dlabel }}</span>
         <span class="diag-domain-badges">

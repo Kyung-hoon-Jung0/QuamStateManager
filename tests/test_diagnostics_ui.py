@@ -80,6 +80,42 @@ class TestDiagnosticsListRender:
         assert "No structural issues found" in html
         assert 'class="diag-pill' not in html
 
+    def test_error_domains_come_first_and_carry_the_scroll_anchor(self):
+        """QA F-H: the crash banner's Review diagnostics landed on the Values
+        warnings with the waveform errors two screens down, because domains
+        rendered in the fixed DIAG_DOMAINS order. A domain with an ACTIVE error
+        is listed first (the rest keep their order) and the first one carries
+        the #diag-first-error anchor the banner scrolls to."""
+        findings = [
+            Finding("warning", "value_spec_if_floor", "q1.resonator.intermediate_frequency",
+                    "IF below floor", jump_path="q1.resonator.RF_frequency"),
+            Finding("warning", "connectivity_band_edge", "con1/p1",
+                    "near edge. Optional, not required.", jump_path="ports.a", advisory=True),
+            Finding("error", "waveform_range", "q1.readout", "sample>1", jump_path="q1.amp"),
+        ]
+        html = _render(findings)
+        order = re.findall(r'data-domain="([a-z_]+)"', html)
+        assert order == ["waveforms", "connectivity", "values"], order
+        assert html.count('id="diag-first-error"') == 1
+        tag = re.search(r'<details[^>]*id="diag-first-error"[^>]*>', html).group(0)
+        assert 'data-domain="waveforms"' in tag
+
+    def test_an_acknowledged_error_is_not_promoted(self):
+        from quam_state_manager.core.diagnostics import Finding as F
+        findings = [
+            Finding("warning", "value_spec_if_floor", "q1.resonator.intermediate_frequency",
+                    "IF below floor", jump_path="q1.resonator.RF_frequency"),
+            # (acknowledging is offered on env findings only; the template is
+            # generic, and a domain AFTER values is what makes a promotion show)
+            F(severity="error", category="waveform_range", location="q1.readout",
+              message="sample>1", jump_path="q1.amp", acknowledged={"at": 1},
+              ack_key="k|q1.readout"),
+        ]
+        html = _render(findings)
+        order = re.findall(r'data-domain="([a-z_]+)"', html)
+        assert order == ["values", "waveforms"], order      # DIAG_DOMAINS order kept
+        assert 'id="diag-first-error"' not in html
+
 
 class TestAcknowledgedRowsReadAsSettled:
     """docs/168 + on-site 2026-09-07: after every env finding was confirmed the

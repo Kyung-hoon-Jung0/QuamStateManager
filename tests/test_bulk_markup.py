@@ -142,3 +142,18 @@ def test_bulk_markup_selfcheck():
         pytest.skip("jsdom not installed")
     assert r.returncode == 0, r.stdout + r.stderr
     assert r.stdout.count("ok - ") >= 20, r.stdout
+
+
+def test_the_before_after_chip_never_takes_a_click():
+    """QA SIDE-1: the before->after chip under a modified cell (absolute,
+    top:100%, z-index 6) covered the top of the next row's cell in the same
+    column and took the click: focus went to BODY and a second click was
+    needed. Worse, hovering the chip counted as hovering its own cell, so it
+    followed the pointer down. A hover panel must let clicks through (jsdom has
+    no hit-testing, so the pin is on the stylesheet; real Chrome verified)."""
+    css = (Path(__file__).resolve().parent.parent / "quam_state_manager" / "web"
+           / "static" / "style.css").read_text(
+        encoding="utf-8")
+    m = re.search(r"(?m)^\.bulk-ba\s*\{([^}]*)\}", css)
+    assert m, "the .bulk-ba rule is gone"
+    assert re.search(r"pointer-events\s*:\s*none", m.group(1)), m.group(1)

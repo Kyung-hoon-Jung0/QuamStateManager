@@ -762,8 +762,8 @@ def _refresh_live_diverged(ctx) -> None:
     False→True, and — since 2026-08-27 — lowers True→False only for a CLEAN
     context whose live hash provably equals the sync point (a stale banner
     over identical content was the reported lie); it never touches change_log
-    / working_dirty / pending_reapply. Dirty contexts keep escalate-only (the
-    explicit sync/apply paths own those). Never raises into the caller.
+    / working_dirty / pending_reapply. Dirty contexts are RAISE-only (the
+    explicit sync/apply paths own lowering it). Never raises into the caller.
     """
     if not ctx or ctx.get("type") != "quam":
         return
@@ -779,25 +779,17 @@ def _refresh_live_diverged(ctx) -> None:
     if _quam_ctx_dirty(ctx):
         if flagged:
             return
-        # docs/120 item 8: an ARMED Auto-Sync pull is the user asking SM to
-        # watch, so the skip is lifted for exactly that case.
-        #
-        # The skip's original reasoning ("the explicit sync/apply paths own
-        # those") was sound while nothing pulled on its own. With auto-pull it
-        # became a hole precisely where the feature was promised: make edits,
-        # qualibrate rewrites the chip, and the flag the pull depends on is
-        # never raised — so "auto replace my modified values", the checkbox
-        # asked for BY NAME, could only ever fire when the divergence happened
-        # before the user started typing.
-        #
-        # Everyone who has not armed pull is untouched, and escalating the flag
-        # is still all this does: it never clears it, never touches change_log
-        # / working_dirty / pending_reapply. The decision about what to do with
-        # a dirty context still belongs to /auto-sync/pull, which refuses
-        # unless "replace" was ticked.
-        sess = ctx.get("auto_apply") or {}
-        if not sess.get("pull"):
-            return
+        # docs/120 item 8 lifted the dirty skip for an ARMED Auto-Sync pull
+        # only. QA diagnostics-r2-12: that left everyone else with pending
+        # edits unwarned -- an outside write to the live chip raised no banner
+        # at all, not even after F5, although docs/87 says writes from outside
+        # SM raise it and the banner template says it exists for exactly a
+        # working copy that holds unapplied edits. The skip's original reason
+        # ("the explicit sync/apply paths own those") holds for LOWERING the
+        # flag, not for raising it. So a dirty context is raise-only: this
+        # never clears the flag, never touches change_log / working_dirty /
+        # pending_reapply, and pulls nothing (_auto_pull_due and
+        # /auto-sync/pull still require an armed pull).
     wc = ctx.get("working_copy")
     if wc is None:
         return
@@ -16883,10 +16875,10 @@ def state_drift():
     # moved. The poll that asks the question must also be allowed to answer it.
     #
     # Cheap by construction: `_refresh_live_diverged` self-throttles to once per
-    # `_LIVE_HASH_RECHECK_S`, returns immediately once the flag is already True,
-    # and (for a dirty context) does nothing at all unless an Auto-Sync pull
-    # session is armed — so an idle chip pays two `os.stat` calls, exactly as
-    # this route did before.
+    # `_LIVE_HASH_RECHECK_S` and returns immediately once the flag is already
+    # True (for a dirty context it only ever raises it, QA diagnostics-r2-12)
+    # — so an idle chip pays two `os.stat` calls, exactly as this route did
+    # before.
     _refresh_live_diverged(ctx)
     # QA review of r2-36: the flag this refresh may just have raised rides the
     # poll, so an OPEN page's pill can stop reading "Synced" (app.js re-renders

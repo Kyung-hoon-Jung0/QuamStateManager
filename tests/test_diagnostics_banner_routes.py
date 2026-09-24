@@ -54,6 +54,22 @@ def test_banner_pops_when_chip_has_error(tmp_path):
     assert "would crash a node run" in body
 
 
+def test_review_diagnostics_lands_on_the_first_error(tmp_path):
+    """QA F-H: Review diagnostics landed on the Values warnings with the
+    crash errors below the fold. The button scrolls to #diag-first-error, which
+    the page renders exactly once, on the (now first) domain holding the error."""
+    client = _client(tmp_path, 1.5)
+    banner = client.get("/diagnostics/banner").get_data(as_text=True)
+    assert 'hx-swap="innerHTML show:#diag-first-error:top"' in banner
+    diag = client.get("/diagnostics", headers={"HX-Request": "true"}).get_data(as_text=True)
+    assert diag.count('id="diag-first-error"') == 1
+    import re
+    tag = re.search(r'<details[^>]*id="diag-first-error"[^>]*>', diag).group(0)
+    assert 'data-domain="waveforms"' in tag
+    first = re.search(r'<details[^>]*class="detail-section diag-domain"[^>]*>', diag).group(0)
+    assert first == tag, "the error domain is the first section"
+
+
 def test_banner_empty_when_chip_is_clean(tmp_path):
     resp = _client(tmp_path, 0.3).get("/diagnostics/banner")
     assert resp.status_code == 204
@@ -111,3 +127,21 @@ def test_review_diagnostics_shows_the_errors_a_saved_filter_hid(tmp_path):
         pytest.skip("jsdom not installed")
     assert r.returncode == 0, r.stdout[-3000:] + r.stderr[-3000:]
     assert "diag_filter_entry_selfcheck ok" in r.stdout
+
+
+def test_the_crash_banner_is_not_shown_on_diagnostics_itself():
+    """QA F-I: on /diagnostics the crash banner repeated the error pill, its
+    Review button reloaded the page you were on, and at 1366x768 it pushed the
+    pills below the fold. One CSS rule hides the slot while the LIVE pane holds
+    the Diagnostics findings slot -- which exists only in _diagnostics.html, so
+    the drag-drop previews (which include _diagnostics_list.html) keep it."""
+    import re
+    from pathlib import Path
+    root = Path(__file__).resolve().parent.parent / "quam_state_manager" / "web"
+    css = (root / "static" / "style.css").read_text(encoding="utf-8")
+    m = re.search(r"body:has\(#table-pane #diag-findings\)\s+#diagnostics-banner-slot\s*\{([^}]*)\}", css)
+    assert m, "the rule that hides the banner on /diagnostics is gone"
+    assert re.search(r"display\s*:\s*none", m.group(1))
+    owners = [p.name for p in (root / "templates").glob("*.html")
+              if 'id="diag-findings"' in p.read_text(encoding="utf-8")]
+    assert owners == ["_diagnostics.html"], owners

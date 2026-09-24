@@ -3609,6 +3609,11 @@ window.applyEditsToLive = function () {
         // the values on screen: the pulses table patches its own rows, the
         // grids and the inspector re-read through their existing refreshers
         try { window.htmx.trigger(document.body, "pulses-changed"); } catch (e) {}
+        // QA F-M: the badge, the crash banner, the type alarm and the
+        // /diagnostics list follow `diagnostics-changed`, which every LOCAL
+        // mutation announces through _diagChanged. A foreign edit is a state
+        // change too (debounced there, so it coalesces with a local one).
+        try { if (window._diagChanged) window._diagChanged(); } catch (e) {}
         try {
             var insp = document.getElementById("inspector-pane");
             var root = insp && insp.querySelector("#pulse-detail-root");
