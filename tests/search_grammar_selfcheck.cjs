@@ -317,6 +317,56 @@ async function datasetChecks() {
        'datasets: tight binding — (rabi|ramsey) AND q1');
 }
 
+/* ── 6b. QA datasets-r2-33: `id>=N` compares the RUN id ────────────────────
+ * It used to be a param condition whose key matches by substring, so `id`
+ * hit target_peak_width / idle_time / load_data_id: `id>=4100 id<=4105` kept
+ * #3281 (3e6 >= 4100 on one key, 16 <= 4105 on another) and none of
+ * #4100-#4105; `id=4113` found nothing. Rows carry exactly those keys. The
+ * Python twin (routes._parse_tree_query) is pinned to the same answers in
+ * tests/test_id_compare_search.py. */
+async function datasetIdChecks() {
+    const pm = { target_peak_width: 3e6, idle_time: 16, load_data_id: 20 };
+    const rows = [4100, 4103, 4105, 4113, 4200, 3281].map(function (id) {
+        return { id: id, f: 'f1', exp: 'exp' + id, q: ['q1'], p: [], tags: [],
+                 date: '2026-09-01', status: 'finished', pm: pm };
+    });
+    const dom = new JSDOM('<!doctype html><html><body>' +
+        '<script type="application/json" id="ds-rows-data" data-now="1000">' +
+        JSON.stringify(rows) + '</script>' +
+        '<input id="dataset-search"><span id="dataset-filter-count"></span>' +
+        '<div id="datasets-scroll" style="height:400px"><table><tbody id="datasets-tbody"></tbody></table></div>' +
+        '</body></html>', { url: 'http://localhost/datasets', runScripts: 'outside-only', pretendToBeVisual: true });
+    const w = dom.window;
+    global.window = w; global.document = w.document;
+    global.localStorage = w.localStorage;
+    w.requestAnimationFrame = w.requestAnimationFrame || (cb => setTimeout(cb, 0));
+    global.requestAnimationFrame = w.requestAnimationFrame;
+    w.eval(fs.readFileSync(path.join(STATIC, 'search-query.js'), 'utf8'));
+    w.eval(fs.readFileSync(path.join(STATIC, 'dataset-virtual.js'), 'utf8'));
+    w.DatasetVirtual.init();
+    async function count(q) {
+        const inp = w.document.getElementById('dataset-search');
+        inp.value = q;
+        inp.dispatchEvent(new w.Event('input', { bubbles: true }));
+        await wait(30);
+        const m = (w.document.getElementById('dataset-filter-count').textContent || '')
+            .match(/Showing (\d+) of (\d+)/);
+        return m ? Number(m[1]) : rows.length;
+    }
+    ok(await count('id>=4100 id<=4105') === 3, 'datasets ids: id>=4100 id<=4105 = #4100/#4103/#4105');
+    ok(await count('id>=4100') === 5, 'datasets ids: id>=4100 excludes #3281');
+    ok(await count('id=4113') === 1, 'datasets ids: id=4113 is the run, exactly');
+    ok(await count('id=4105..4100') === 3, 'datasets ids: a range, order free, ends included');
+    ok(await count('id>4105') === 2, 'datasets ids: > is strict');
+    ok(await count('id<4100') === 1, 'datasets ids: < selects #3281 only');
+    ok(await count('ID>=4200') === 1, 'datasets ids: the scope name is case-blind');
+    ok(await count('-id>=4100') === 1, 'datasets ids: negation keeps only #3281');
+    ok(await count('id:>=4113') === 2, 'datasets ids: the scoped spelling compares too');
+    ok(await count('id:41') === 4, 'datasets ids: id:41 is still a substring');
+    ok(await count('p:id>=4100') === 6, 'datasets ids: p:id>=N still reaches a parameter');
+    ok(await count('id>=4100 | id=3281') === 6, 'datasets ids: ORs like any scope');
+}
+
 /* ── 7. scheduler library filter + dataset sort-key filters ────────────── */
 async function schedulerChecks() {
     // SchedulerUI is IIFE-internal and self-inits on DOMContentLoaded; the
@@ -370,6 +420,8 @@ async function schedulerChecks() {
     await pairChecks();
     say('-- datasets');
     await datasetChecks();
+    say('-- datasets ids');
+    await datasetIdChecks();
     say('-- scheduler');
     await schedulerChecks();
     if (fails) { say(fails + ' check(s) failed'); process.exit(1); }

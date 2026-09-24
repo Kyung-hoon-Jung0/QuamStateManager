@@ -95,6 +95,8 @@ def insert_token(key: str, value: str, force_scope: str = "",
         return None
 
     scope = force_scope or ("" if _BARE_KEY.match(key) else "p:")
+    if not scope and key.lower() == "id":
+        scope = "p:"          # QA datasets-r2-33: bare `id>=N` is the RUN id
     if scope and value != value.strip():
         return None                      # the scope path strips the value
     if not value:

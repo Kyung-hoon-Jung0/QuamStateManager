@@ -18834,6 +18834,29 @@ def _param_cond(body: str, scoped: bool = False):
     return {"key": key, "op": op, "want": want, "wnum": w, "lo": None, "hi": None}
 
 
+# QA datasets-r2-33: the twin of dataset-virtual.js ``_idCond``.
+_ID_CMP = re.compile(r"^(>=|<=|>|<|=)(\d+)(?:\.\.(\d+))?$")
+
+
+def _id_cond(value: str):
+    """A run-id comparison -- ``>=4100``, ``<4105``, ``=4113``, ``=4100..4105``
+    (range only with ``=``, both ends included, order free) -- or None.
+
+    QA datasets-r2-33: ``id>=4100`` used to be a PARAM condition whose key
+    matched by substring (``target_peak_width``, ``load_data_id``, ``idle_*``)
+    and never looked at the run id. Integers only; anything else keeps the
+    substring meaning ``id:108`` always had.
+    """
+    m = _ID_CMP.match(value or "")
+    if not m or (m.group(3) is not None and m.group(1) != "="):
+        return None
+    a = int(m.group(2))
+    if m.group(3) is not None:
+        b = int(m.group(3))
+        return {"op": "..", "lo": min(a, b), "hi": max(a, b)}
+    return {"op": m.group(1), "wnum": a}
+
+
 def _tokenize_query(text: str) -> list[str]:
     """Whitespace-or-comma split that keeps "double-quoted" runs as one token.
 
@@ -18878,6 +18901,12 @@ def _parse_tree_query(text: str) -> list[dict]:
             body = body[1:]
         # Bare `key=value` -> param, BEFORE the scope match (`=` is not a scope
         # separator, and `multiplexed=true` has no colon to find).
+        # QA datasets-r2-33: `id>=4100` compares the run id (dataset-virtual.js
+        # parseQuery routes it the same way); `p:id>=4100` still means a param.
+        ic = _id_cond(body[2:]) if body[:2].lower() == "id" else None
+        if ic is not None:
+            conds.append(dict(ic, field="id", value=body[2:].lower(), negate=negate))
+            continue
         pc = _param_cond(body.lower())
         if pc is not None:
             conds.append(dict(pc, field="param", value=body.lower(), negate=negate))
@@ -18891,6 +18920,8 @@ def _parse_tree_query(text: str) -> list[dict]:
                 if key == "param":
                     # `p:num_shots>=1000` means what `num_shots>=1000` means.
                     c.update(_param_cond(value, scoped=True) or {})
+                elif key == "id":
+                    c.update(_id_cond(value) or {})     # QA datasets-r2-33
                 conds.append(c)
                 continue
         # Bare / unknown token → free-text with the ORIGINAL token (negation
@@ -19024,6 +19055,22 @@ def _entry_matches(entry, conds: list[dict], runsets: dict | None = None) -> boo
         if field == "status":
             return value in status
         if field == "id":
+            op = c.get("op")                 # QA datasets-r2-33
+            if op:
+                if not rid:
+                    return False
+                n = int(rid)
+                if op == "..":
+                    return c["lo"] <= n <= c["hi"]
+                if op == ">=":
+                    return n >= c["wnum"]
+                if op == ">":
+                    return n > c["wnum"]
+                if op == "<=":
+                    return n <= c["wnum"]
+                if op == "<":
+                    return n < c["wnum"]
+                return n == c["wnum"]
             return value in rid
         if field == "qubit":
             return value in qubits                       # exact
@@ -19204,8 +19251,21 @@ def _tree_render_ctx(tree: dict, ws=None) -> dict:
 @bp.route("/workspace/add", methods=["POST"])
 def workspace_add():
     folder = request.form.get("folder", "").strip()
+    # QA datasets-r2-11: Explorer's "Copy as path" wraps the path in quotes.
+    if len(folder) >= 2 and folder[0] == folder[-1] == '"':
+        folder = folder[1:-1].strip()
     if not folder:
         return render_template("_status.html", message="No folder specified", level="error"), 400
+    # QA datasets-r2-11: a missing path or a FILE used to be registered as a
+    # root (and persisted) with no word said. Refuse both here, at the user's
+    # door only -- core add_root keeps serving its other callers unchanged.
+    _p = Path(folder).expanduser()
+    if not _p.exists():
+        return render_template("_status.html", level="error",
+                               message=f"Folder not found: {folder}"), 400
+    if not _p.is_dir():
+        return render_template("_status.html", level="error",
+                               message=f"Not a folder: {folder} -- choose the folder that holds the runs"), 400
 
     ws = _ws()
     try:
@@ -23834,6 +23894,11 @@ def _datasets_view(view_mode: str):
     # carries one, so the swap it answers with clears no filters; only the
     # date tab rides along, read below through request.values.)
     search = (request.args.get("q") or "").strip()
+    # QA F9: a Rescan POST carries the box's LIVE text back as `keep_q` (never
+    # as `q`: a preset clears every picker/facet tick, docs/167). It refills
+    # the box's value only -- data-preset stays `search`, so nothing clears.
+    search_value = search or ((request.form.get("keep_q") or "").strip()
+                              if request.method == "POST" else "")
     if _is_htmx():
         template = "_datasets.html"
     else:
@@ -23844,7 +23909,7 @@ def _datasets_view(view_mode: str):
                                active_folder="", folders=[], folders_json="[]",
                                no_workspace=True, curated_keys_json="[]",
                                view_mode=view_mode, collection_tags=[],
-                               search=search)
+                               search=search, search_value=search_value)
     import time as _t
     poll_ts = _t.time()
     date = request.values.get("date")
@@ -23864,16 +23929,31 @@ def _datasets_view(view_mode: str):
     for fol in active:
         store = fol["store"]
         folders.append({"key": fol["key"], "label": fol["label"], "full_path": fol["path"]})
-        for row in store.list_runs_compact(date=date):
+        frows = store.list_runs_compact(date=date)
+        for row in frows:
             row["f"] = fol["key"]   # _compact_row returns a fresh dict — safe to tag
             rows.append(row)
-        experiments_set.update(store.experiment_types)
-        dates_set.update(store.dates)
         tags_set.update(store.list_all_tags())
-        total += store.run_count
-        qubits_set.update(store.summary_stats.get("unique_qubits", []))
+        if is_collections:
+            # QA F10: the header, experiment chips and date tabs describe the
+            # COLLECTION (tagged runs, every date -- independent of the active
+            # tab, as on Datasets), not the whole workspace behind it.
+            tagged = [r for r in (store.list_runs_compact() if date else frows)
+                      if r.get("tags")]
+            total += len(tagged)
+            experiments_set.update(r["exp"] for r in tagged if r.get("exp"))
+            dates_set.update(r["date"] for r in tagged if r.get("date"))
+            for r in tagged:
+                qubits_set.update(r.get("q") or [])
+        else:
+            experiments_set.update(store.experiment_types)
+            dates_set.update(store.dates)
+            total += store.run_count
+            qubits_set.update(store.summary_stats.get("unique_qubits", []))
         for cat in store.categorize_experiments():
             cat_map.setdefault(cat["label"], set()).update(cat["experiments"])
+    if is_collections:   # QA F10: only the categories the collection holds
+        cat_map = {k: v & experiments_set for k, v in cat_map.items() if v & experiments_set}
 
     # Newest-first by run timestamp — run_id isn't comparable across folders.
     rows.sort(key=lambda r: (r.get("date") or "", r.get("time") or "", r.get("id") or 0),
@@ -23980,6 +24060,7 @@ def _datasets_view(view_mode: str):
         all_tags=all_tags,
         active_date=date,
         search=search,
+        search_value=search_value,
     )
 
 

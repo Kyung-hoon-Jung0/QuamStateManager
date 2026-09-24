@@ -50,6 +50,11 @@
     {% if name_filter and not date_groups %}
     <p class="muted tree-nomatch-note"><small>No runs in this folder match &ldquo;{{ name_filter }}&rdquo;.</small></p>
     {% endif %}
+    {# QA datasets-r2-11: an empty root (a storage folder before its first
+       run, or one whose runs were removed) says so instead of a bare row. #}
+    {% if not name_filter and not date_groups and not ((tree_hydrating or ()) and root_path in tree_hydrating) %}
+    <p class="muted tree-empty-root-note"><small>No runs found under this folder yet.</small></p>
+    {% endif %}
 </details>
 {% endfor %}
 {% elif message is defined %}

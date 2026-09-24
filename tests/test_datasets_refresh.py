@@ -288,7 +288,8 @@ class TestRescanSwapsTheTable:
     def test_the_button_sends_its_date_and_view_and_cannot_double_fire(self):
         i = _DS_HTML.index('hx-post="/datasets/rescan"')
         btn = _DS_HTML[i - 200:i + 400]
-        assert 'hx-include="#ds-active-date"' in btn
+        # QA F9: the search box rides along too, so the swap keeps the search
+        assert 'hx-include="#ds-active-date, #dataset-search"' in btn
         assert "hx-vals='{\"view\": \"{{ view_mode }}\"}'" in btn
         assert 'hx-disabled-elt="this"' in btn
 

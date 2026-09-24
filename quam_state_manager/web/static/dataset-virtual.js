@@ -198,6 +198,16 @@
             // before the key:value scope match since `=` is not a scope separator.
             // `key>=value` is the same facet with a comparison; `>=` must precede
             // `>` in the alternation or the value becomes "=1000".
+            // QA datasets-r2-33: `id>=4100` / `id=4113` / `id=4100..4105`
+            // compare the RUN ID. Before, they fell into the param facet
+            // below, whose key matches by substring -- `id` hit target_peak_width,
+            // load_data_id, idle_* -- and never looked at the run id at all.
+            // `p:id>=N` still reaches a parameter.
+            if (/^id[<>=]/i.test(body) && _idCond(body.slice(2))) {
+                scoped.push({key: 'id', value: body.slice(2), negate: negate});
+                items.push({kind: 'scope', key: 'id', value: body.slice(2), negate: negate});
+                continue;
+            }
             var eqm = body.match(/^([A-Za-z][\w.\-]*)(>=|<=|>|<|=)(.+)$/);
             if (eqm && (eqm[2] === '=' || _num(eqm[3]) != null)) {
                 scoped.push({key: 'param', value: body.toLowerCase(), negate: negate});
@@ -275,6 +285,21 @@
        bare token was already validated against the strict pattern when it was
        routed to this facet, and a `param:`-scoped one deliberately has no key
        pattern at all (that is how `_leading=7` is searchable). */
+    /* QA datasets-r2-33: a run-id comparison value -- `>=4100`, `<4105`,
+       `=4113`, `=4100..4105` (range only with `=`, both ends included, order
+       free) -- or null. Integers only: anything else stays a substring. The
+       twin of routes._id_cond. */
+    function _idCond(value) {
+        var m = /^(>=|<=|>|<|=)(\d+)(?:\.\.(\d+))?$/.exec(String(value));
+        if (!m || (m[3] != null && m[1] !== '=')) return null;
+        var a = Number(m[2]);
+        if (m[3] != null) {
+            var b = Number(m[3]);
+            return {op: '..', lo: Math.min(a, b), hi: Math.max(a, b)};
+        }
+        return {op: m[1], w: a};
+    }
+
     function _paramCond(body) {
         var m = String(body).match(/^([^=<>]+)(>=|<=|>|<|=)(.+)$/);
         if (!m) return null;
@@ -327,8 +352,20 @@
                 return false;
             case 'date':
                 return (row.date || '').toLowerCase().indexOf(value) !== -1;
-            case 'id':
+            case 'id': {
+                var ic = _idCond(value);     // QA datasets-r2-33
+                if (ic) {
+                    var rn = row.id == null ? NaN : Number(row.id);
+                    if (!isFinite(rn)) return false;
+                    if (ic.op === '..') return rn >= ic.lo && rn <= ic.hi;
+                    if (ic.op === '>=') return rn >= ic.w;
+                    if (ic.op === '>') return rn > ic.w;
+                    if (ic.op === '<=') return rn <= ic.w;
+                    if (ic.op === '<') return rn < ic.w;
+                    return rn === ic.w;
+                }
                 return String(row.id).indexOf(value) !== -1;
+            }
             case 'metric':
                 if (row.metric == null) return false;
                 return String(row.metric).toLowerCase().indexOf(value) !== -1;
@@ -775,14 +812,21 @@
                             : Math.max(0, Math.min(n - 1, _kbIdx + dir));
         // bring the row into the virtual window
         if (state.scrollEl) {
-            var y = _kbIdx * ROW_HEIGHT;
-            // `y` is a position in the LIST; the scroller's own coordinates
-            // are offset by wherever the list begins inside it.
-            var _m = listMetrics();
-            var base = state.scrollEl.scrollTop - _m.top;
-            var top = _m.top, vh = _m.viewport;
-            if (y < top) state.scrollEl.scrollTop = base + y;
-            else if (y + ROW_HEIGHT > top + vh) state.scrollEl.scrollTop = base + y + ROW_HEIGHT - vh;
+            var el = state.scrollEl, y = _kbIdx * ROW_HEIGHT;
+            // QA F7: the row's offset from the scroller's visible top, NOT
+            // clamped. listMetrics() clamps for the virtual window, which
+            // dropped (delta - clientHeight) whenever the list starts below
+            // the fold (the filter section is taller than the pane on a fresh
+            // page): each j crept down 32 px and the active row stayed
+            // off-screen. The sticky header covers the band above `headH`.
+            var rowTop = state.tbody.getBoundingClientRect().top
+                       - el.getBoundingClientRect().top + y;
+            var vh = el.clientHeight;
+            var thead = state.tbody.parentNode && state.tbody.parentNode.querySelector
+                ? state.tbody.parentNode.querySelector('thead') : null;
+            var headH = thead ? thead.getBoundingClientRect().height : 0;
+            if (rowTop < headH) el.scrollTop += rowTop - headH;
+            else if (rowTop + ROW_HEIGHT > vh) el.scrollTop += rowTop + ROW_HEIGHT - vh;
         }
         renderWindow(true);
         _kbHighlight();

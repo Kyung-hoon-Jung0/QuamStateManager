@@ -115,7 +115,9 @@ class TestTheLink:
 class TestServerPreset:
     def test_the_box_is_prefilled_from_q(self):
         tag = _search_input(_text("_datasets.html"))
-        assert 'value="{{ search | default(\'\') }}"' in tag
+        # QA F9: a Rescan refills the box from `keep_q` (search_value); a GET
+        # render has no search_value, so the value is still `search`.
+        assert 'value="{{ search_value | default(search | default(\'\')) }}"' in tag
         assert 'data-preset="{{ search | default(\'\') }}"' in tag
 
     def test_a_real_render_round_trips_the_token(self, tmp_path):

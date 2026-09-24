@@ -127,6 +127,43 @@ function tick(ms) { return new Promise(r => setTimeout(r, ms || 30)); }
        'Escape clears the active row');
   }
 
+  // ── QA F7: j scrolls the active row into view in the ONE-scroller pane ────
+  // On a fresh page the filter section is taller than #table-pane, so the list
+  // starts below the fold. listMetrics() clamps that offset for the virtual
+  // window, and _kbMove's old arithmetic on the clamped values scrolled 32 px
+  // per press: the active row stayed off-screen. Geometry is stubbed (jsdom
+  // has no layout): pane 900 px high, list 1100 px down it, a 30 px header.
+  {
+    const w = boot(null, { html: '<div id="table-pane"></div>' });
+    await tick();
+    const doc = w.document;
+    const pane = doc.getElementById('table-pane');
+    const tb = doc.getElementById('datasets-tbody');
+    const thead = doc.createElement('thead');
+    tb.parentNode.insertBefore(thead, tb);
+    const g = { S: 0 };
+    Object.defineProperty(pane, 'scrollTop', { configurable: true,
+      get: () => g.S, set: (v) => { g.S = v; } });
+    Object.defineProperty(pane, 'clientHeight', { configurable: true, get: () => 900 });
+    pane.getBoundingClientRect = () => ({ top: 0, bottom: 900, left: 0, right: 900, width: 900, height: 900 });
+    tb.getBoundingClientRect = () => ({ top: 1100 - g.S, bottom: 1100 - g.S + 128, left: 0, right: 900, width: 900, height: 128 });
+    thead.getBoundingClientRect = () => ({ top: 0, bottom: 30, left: 0, right: 900, width: 900, height: 30 });
+    key(w, 'j');
+    // row 0: 1100 - S .. 1100 - S + 32 must end inside the 900 px viewport
+    ok(1100 - g.S + 32 <= 900 && 1100 - g.S >= 30,
+       `F7: the first j brings row 0 on screen (scrollTop ${g.S}, want 232 -- 32 was the bug)`);
+    key(w, 'j');
+    ok(1100 - g.S + 32 + 32 <= 900 && g.S === 264,
+       `F7: the second j keeps row 1 on screen (scrollTop ${g.S}, want 264)`);
+    // scrolled well past the list top: k must land row 0 BELOW the sticky
+    // header, not under it (the old arithmetic put it at the pane's top edge)
+    g.S = 1300;                       // list top now 200 px above the pane
+    key(w, 'k');
+    const rowTop = 1100 - g.S;
+    ok(rowTop >= 30 && rowTop + 32 <= 900,
+       `F7: k lands row 0 under the sticky header, not behind it (row top ${rowTop}, header 30)`);
+  }
+
   // ── ↻ Newest chip ────────────────────────────────────────────────────────
   {
     const w = boot({ key: 'status', desc: false });   // restored non-default sort

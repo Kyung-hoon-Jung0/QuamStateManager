@@ -51,10 +51,10 @@
                one, so a date tab or a Rescan never disturbs the user's own
                filters. `| default('')` because the no-workspace branch renders
                this partial without the variable. #}
-            <input type="search" id="dataset-search"
+            <input type="search" id="dataset-search" name="keep_q"
                    placeholder="{{ search_hint('tag:', 'is:') }}"
                    title="{{ search_title('tag:flagged', 'is:bookmarked', 'run:', 'q:') }}"
-                   value="{{ search | default('') }}"
+                   value="{{ search_value | default(search | default('')) }}"
                    data-preset="{{ search | default('') }}"
                    autocomplete="off" style="width:100%">
             <button type="button" id="ds-search-help-toggle" class="ds-search-help-btn"
@@ -93,6 +93,8 @@
                             <td>Runs whose date matches <code>2026-05</code> (alias: <code>d:</code>)</td></tr>
                         <tr><td><button class="ds-help-example" data-example="id:108">id:108</button></td>
                             <td>Run id contains <code>108</code></td></tr>
+                        <tr><td><button class="ds-help-example" data-example="id>=4100">id&gt;=4100</button></td>
+                            <td>Run id at least <code>4100</code> (also <code>id&lt;=</code>, <code>id=4113</code>, <code>id=4100..4105</code>; <code>p:id&gt;=</code> is a parameter)</td></tr>
                         <tr><td><button class="ds-help-example" data-example="metric:1.5">metric:1.5</button></td>
                             <td>Key metric contains <code>1.5</code> (alias: <code>m:</code>)</td></tr>
                         <tr><td><button class="ds-help-example" data-example="note:todo">note:todo</button></td>
@@ -122,7 +124,7 @@
            cannot queue a second full re-read. The "N new" chip on the sync
            pill presses this same button (app.js refreshRunLists). #}
         <button class="btn-sm outline" hx-post="/datasets/rescan" hx-target="#table-pane"
-                hx-include="#ds-active-date" hx-vals='{"view": "{{ view_mode }}"}'
+                hx-include="#ds-active-date, #dataset-search" hx-vals='{"view": "{{ view_mode }}"}'
                 hx-disabled-elt="this" title="Rescan for new runs">Rescan</button>
     </div>
 </div>
