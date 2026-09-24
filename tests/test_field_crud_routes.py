@@ -58,6 +58,15 @@ class TestCreate:
         assert r.status_code == 400
         assert "already exists" in r.get_json()["error"]
 
+    def test_existing_key_error_is_not_wrapped_in_quotes(self, client):
+        """JT-22: str(KeyError) is the message's repr, so the Explorer's
+        add-key panel showed '"Cannot create ...: key already exists"' with
+        literal double quotes around it."""
+        r = client.post("/field/create", data={
+            "dot_path": "qubits.qA1.f_01", "value": "1"})
+        err = r.get_json()["error"]
+        assert err == "Cannot create 'qubits.qA1.f_01': key already exists", err
+
     def test_missing_parent_400(self, client):
         r = client.post("/field/create", data={
             "dot_path": "qubits.qZZ.brand.new", "value": "1"})
@@ -101,6 +110,13 @@ class TestDelete:
     def test_top_level_blocked(self, client):
         r = client.post("/field/delete", data={"dot_path": "qubits"})
         assert r.status_code == 400
+
+    def test_missing_key_error_is_not_wrapped_in_quotes(self, client):
+        """JT-22 (same str(KeyError) glitch on the delete door)."""
+        r = client.post("/field/delete", data={"dot_path": "qubits.qA1.no_such_key"})
+        assert r.status_code == 400
+        err = r.get_json()["error"]
+        assert err == "Cannot delete 'qubits.qA1.no_such_key': key does not exist", err
 
 
 class TestRefs:

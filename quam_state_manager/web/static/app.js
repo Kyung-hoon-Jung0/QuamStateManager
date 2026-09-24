@@ -3488,8 +3488,8 @@ window.overwriteLiveWithWorking = function () {
                     + "(an experiment program, another window) loses those changes.");
             }
             if (d.unsaved) {
-                lines.push("Your " + d.unsaved + " unsaved edit" + (d.unsaved === 1 ? "" : "s")
-                    + " are saved and pushed along with it.");
+                lines.push("Your " + d.unsaved + " unsaved edit" + (d.unsaved === 1 ? " is" : "s are")
+                    + " saved and pushed along with it.");   // jsontree-r2-30: the verb follows the count
             }
             if (d.run_active) {
                 lines.push("", "⚠ A run is in progress"
@@ -8070,7 +8070,7 @@ window.clearDetailPanelSearch = function(btnEl) {
 
         // If a key-copy is active, a freshly-built empty same-key node (e.g. one
         // lazily materialised on expand) should immediately offer its paste button.
-        if (_treeCopyBuffer) _applyPasteTargetTo(node);
+        if (_treeCopyBuffer && _applyPasteTargetTo(node)) _queueCopyPill();   // JT-22
 
         return node;
     }
@@ -8945,12 +8945,42 @@ window.clearDetailPanelSearch = function(btnEl) {
         btn.title = "Paste the copied '" + m.key + "' value into this empty field";
         (function(nd) { btn.onclick = function(e) { e.stopPropagation(); _pasteIntoNode(nd); }; })(node);
         row.appendChild(btn);
+        return true;
     }
 
     function _refreshPasteTargets() {
         _clearPasteButtons();
         if (!_treeCopyBuffer) return;
         document.querySelectorAll(".tree-node").forEach(_applyPasteTargetTo);
+        _renderCopyPill();   // JT-22: a paste fills a field — the count follows
+    }
+
+    /** JT-22: the pill's label, recounted from the paste buttons that exist NOW.
+     *  It used to be written once at copy time, so a button that appeared later
+     *  (lazy expand) or went away (a paste) left it saying the wrong thing. */
+    function _renderCopyPill() {
+        var pill = document.getElementById("tree-copy-pill");
+        if (!_treeCopyBuffer || !pill) return;
+        var key = _treeCopyBuffer.key;
+        var n = document.querySelectorAll(".tree-paste-btn").length;
+        pill.innerHTML = "";
+        var label = document.createElement("span");
+        label.textContent = "Copied '" + key + "' — " +
+            (n ? ("click “paste” on " + n + " empty field" + (n === 1 ? "" : "s")) :
+                 "open an empty '" + key + "' to paste");
+        var x = document.createElement("button");
+        x.type = "button"; x.className = "tree-copy-pill-x"; x.textContent = "✕";
+        x.title = "Clear copy (Esc)"; x.onclick = _clearTreeCopy;
+        pill.appendChild(label); pill.appendChild(x);
+    }
+    /* A node _buildNode just gave a paste button is not in the document yet
+       (its caller appends it after), so the recount waits one microtask —
+       coalesced, so a lazy expand of many targets recounts once. */
+    var _copyPillQueued = false;
+    function _queueCopyPill() {
+        if (_copyPillQueued) return;
+        _copyPillQueued = true;
+        Promise.resolve().then(function() { _copyPillQueued = false; _renderCopyPill(); });
     }
 
     function _treeCopyKey(node) {
@@ -8961,23 +8991,13 @@ window.clearDetailPanelSearch = function(btnEl) {
             return;
         }
         _treeCopyBuffer = {key: m.key, value: node._value, srcPath: m.path};
-        _refreshPasteTargets();
-        var n = document.querySelectorAll(".tree-paste-btn").length;
         var pill = document.getElementById("tree-copy-pill");
         if (!pill) {
             pill = document.createElement("div");
             pill.id = "tree-copy-pill"; pill.className = "tree-copy-pill";
             document.body.appendChild(pill);
         }
-        pill.innerHTML = "";
-        var label = document.createElement("span");
-        label.textContent = "Copied '" + m.key + "' — " +
-            (n ? ("click “paste” on " + n + " empty field" + (n === 1 ? "" : "s")) :
-                 "open an empty '" + m.key + "' to paste");
-        var x = document.createElement("button");
-        x.type = "button"; x.className = "tree-copy-pill-x"; x.textContent = "✕";
-        x.title = "Clear copy (Esc)"; x.onclick = _clearTreeCopy;
-        pill.appendChild(label); pill.appendChild(x);
+        _refreshPasteTargets();   // also writes the pill's label (_renderCopyPill)
         pill.hidden = false;
     }
 

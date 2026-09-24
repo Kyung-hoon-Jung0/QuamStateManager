@@ -8700,6 +8700,15 @@ def field_refs():
     return jsonify(ok=True, total=total, refs=refs)
 
 
+def _exc_text(e: Exception) -> str:
+    """JT-22: an exception's message as a person reads it. ``str(KeyError)``
+    is the key's repr, so the modifier's "Cannot create 'x': key already
+    exists" arrived wrapped in literal double quotes."""
+    if isinstance(e, KeyError) and len(e.args) == 1 and isinstance(e.args[0], str):
+        return e.args[0]
+    return str(e)
+
+
 @bp.route("/field/create", methods=["POST"])
 def field_create():
     """Create a brand-new key (scalar or subtree) anywhere a dict parent
@@ -8745,7 +8754,7 @@ def field_create():
     except _tp.TypeMismatchError as e:
         return jsonify(ok=False, error=str(e), **e.as_json()), 400
     except (KeyError, TypeError, ValueError, IndexError) as e:
-        return jsonify(ok=False, error=str(e)), 400
+        return jsonify(ok=False, error=_exc_text(e)), 400
 
     if request.form.get("assign_type") in ("1", "true", "True") and expect_type \
             and expect_type != "infer" and ctx.get("path"):
@@ -8789,7 +8798,7 @@ def field_delete():
         entry = modifier.delete_subtree(dot_path)
         _invalidate_engine_cache(ctx)
     except (KeyError, TypeError, ValueError, IndexError) as e:
-        return jsonify(ok=False, error=str(e)), 400
+        return jsonify(ok=False, error=_exc_text(e)), 400
 
     from quam_state_manager.core.modifier import _enumerate_leaves
     removed = sum(1 for _ in _enumerate_leaves(entry.old_value, dot_path))

@@ -5473,6 +5473,9 @@ input.tree-edit-input {
 .tree-row:hover .tree-act-btn { opacity: 0.7; }
 .tree-act-btn:hover { opacity: 1 !important; color: var(--pico-color); }
 .tree-act-del:hover { color: var(--color-error-text) !important; }
+/* jsontree-r2-31: the hover tools are controls, not content — keep their
+   glyphs (⧉ ⚙ ✕ ✎ ?) out of a drag selection and out of Ctrl+C. */
+.tree-row-actions, .tree-json-edit-btn, .key-help-btn.tree-help { -webkit-user-select: none; user-select: none; }
 .tree-del-confirm { font-size: 0.85em; color: var(--color-warning-text, #b45309); }
 .tree-crud-panel {
     display: flex; flex-wrap: wrap; gap: 0.35rem; align-items: center;
@@ -5593,6 +5596,9 @@ input.tree-edit-input {
     font-size: 0.84rem; color: var(--pico-color); max-width: min(92vw, 640px);
 }
 .tree-copy-pill[hidden] { display: none; }
+/* JT-22: the fixed pill floats over the tree's bottom rows — while it shows,
+   the tree gets room to scroll its last rows clear of it. */
+body:has(.tree-copy-pill:not([hidden])) .json-tree { padding-bottom: 5rem; }
 .tree-copy-pill-x {
     all: unset; cursor: pointer; line-height: 1; padding: 0 0.25rem;
     color: var(--pico-muted-color); font-size: 1.05em;
