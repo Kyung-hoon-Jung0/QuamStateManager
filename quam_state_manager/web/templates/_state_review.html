@@ -130,12 +130,16 @@
         <td class="sp-val">{% if r.live is not none and not r.created and not r.deleted %}{{ r.live | groupdigits }}{% else %}—{% endif %}</td>
         <td class="sp-delta">{% if not r.created and not r.deleted and r.live is not none %}{{ delta_pct(r.new, r.live) }}{% endif %}</td>
         <td class="sp-x">
+          {#- QA liveedit-r2-16, carried from the old tray: an FSP bundle's ✕ takes
+              the whole unit (FSP + its compensated amplitudes) and must SAY so
+              before the press -- the server discards the unit either way -#}
+          {% set _fb = (fsp_bundle_gids | default({})).get(r.gid) if r.gid else none %}
           <button type="button" class="sp-x-btn btn-discard"
                   hx-post="/discard" hx-target="#pending-tray" hx-swap="outerHTML"
                   hx-vals='{"index": "{{ r.index }}", "expect_path": {{ r.path | tojson }}}'
                   data-after-request="syncPanelRefresh"
-                  aria-label="Discard pending change to {{ r.path }}"
-                  title="Discard this edit (Ctrl+Shift+Z brings it back)">&#10005;</button>
+                  aria-label="Discard pending change to {{ r.path }}{% if _fb and r.path in _fb.paths %} with its full-scale-power bundle{% endif %}"
+                  title="{% if _fb and r.path in _fb.paths %}Discard this edit with its full-scale-power bundle ({{ _fb.n }} changes, one unit: no pulse changes output power). Ctrl+Shift+Z brings them back{% else %}Discard this edit (Ctrl+Shift+Z brings it back){% endif %}">&#10005;</button>
         </td>
       </tr>
       {% endfor %}

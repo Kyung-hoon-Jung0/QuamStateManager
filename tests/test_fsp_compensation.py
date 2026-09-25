@@ -435,10 +435,13 @@ class TestTrayDiscardKeepsTheBundleWhole:
             "qubits.qA1.xy.operations.x180.length"]
 
     def test_the_x_says_it_takes_the_bundle(self, env):
+        # sync-ux 2026-09-25: the per-change ✕ left the tray (now one status
+        # control) for the sync panel's "Your unapplied edits" group; the
+        # warning must travel with it -- the server discards the unit either way
         _commit_comp(env)
-        for html in (env["client"].get("/state/tray").data.decode(),
-                     env["client"].get("/bulk").data.decode()):
-            assert html.count("with its full-scale-power bundle (4 changes") == 4, html[:200]
+        html = env["client"].get("/state/review").data.decode()
+        assert html.count('hx-post="/discard"') == 4, html[:400]
+        assert html.count("with its full-scale-power bundle (4 changes") == 4, html[:400]
 
     # review follow-up: the unit is the FSP + its amplitudes, never the whole
     # gid -- a T1 typed into the same row commit rode along before.
@@ -489,10 +492,10 @@ class TestTrayDiscardKeepsTheBundleWhole:
 
     def test_the_x_counts_only_the_unit(self, env):
         self._commit_comp_with_len(env)
-        html = env["client"].get("/state/tray").data.decode()
-        assert html.count("with its full-scale-power bundle (4 changes") == 4, html[:200]
+        html = env["client"].get("/state/review").data.decode()
+        assert html.count("with its full-scale-power bundle (4 changes") == 4, html[:400]
         assert "bundle (5 changes" not in html
-        assert html.count("Discard this change (Ctrl+Shift+Z restores it)") == 1
+        assert html.count("Discard this edit (Ctrl+Shift+Z brings it back)") == 1
 
 
 class TestPointerAmpsThatFollowACompensatedTarget:
