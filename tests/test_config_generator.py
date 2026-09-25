@@ -108,6 +108,34 @@ class TestValidateSpecErrors:
         spec["network"]["port"] = "5000"
         assert any("network.port" in e for e in validate_spec(spec))
 
+    # QA F10: host text and an out-of-range port reached wiring.json unchecked
+    @pytest.mark.parametrize("port", [0, -1, 65536, 99999, True])
+    def test_port_out_of_range_is_refused(self, port):
+        spec = _valid_spec()
+        spec["network"]["port"] = port
+        assert any("network.port" in e for e in validate_spec(spec))
+
+    @pytest.mark.parametrize("port", [None, 1, 80, 443, 65535])
+    def test_port_in_range_or_empty_passes(self, port):
+        spec = _valid_spec()
+        spec["network"]["port"] = port
+        assert validate_spec(spec) == []
+
+    @pytest.mark.parametrize("host", ["not an ip!!", " a b", "h/x", "10.1.1.6;x", 5])
+    def test_host_that_no_address_can_be_is_refused(self, host):
+        spec = _valid_spec()
+        spec["network"]["host"] = host
+        errs = validate_spec(spec)
+        assert any("network.host" in e for e in errs), errs
+
+    @pytest.mark.parametrize("host", ["10.1.1.6", "10.1.1.6 ", "qop.lab.local", "::1",
+                                      "[fe80::1]", "h", "qm-saas-7.cloud",
+                                      "fe80::1%eth0"])
+    def test_ip_or_hostname_passes(self, host):
+        spec = _valid_spec()
+        spec["network"]["host"] = host
+        assert validate_spec(spec) == []
+
     def test_no_instruments(self):
         spec = _valid_spec()
         spec["instruments"] = {"controllers": [], "opx_plus": [], "octaves": []}
@@ -182,6 +210,19 @@ class TestValidateSpecErrors:
             {"element": "qA1-qB2", "line": "coupler", "channel": None},
         ]
         assert not [e for e in validate_spec(spec) if "qubits: id" in e]
+
+    def test_a_pair_listed_twice_is_refused(self):
+        # QA r2-34: the builder keys a pair by its ORDERED (control, target),
+        # so a duplicate built once while Review counted it twice.
+        spec = _valid_spec()
+        spec["qubit_pairs"] = [["q1", "q2"], ["q1", "q2"]]
+        errs = [e for e in validate_spec(spec) if "duplicate" in e]
+        assert errs == ["qubit_pairs[1]: duplicate of qubit_pairs[0] (q1-q2)"]
+
+    def test_anti_parallel_cr_pairs_are_two_pairs(self):
+        spec = _valid_spec()
+        spec["qubit_pairs"] = [["q1", "q2"], ["q2", "q1"]]
+        assert not [e for e in validate_spec(spec) if "duplicate" in e]
 
     def test_pair_references_unknown_qubit(self):
         spec = _valid_spec()

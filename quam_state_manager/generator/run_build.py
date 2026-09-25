@@ -180,11 +180,13 @@ def build_connectivity(spec: dict, include_pair_lines: bool = True):
     phase (the shared-port CR layout — see :func:`allocate_full`).
 
     ``twpa_pump`` / ``twpa_isolation`` lines build natively when the env's
-    ``quam_builder`` exposes ``Connectivity.add_twpa_lines`` (modern versions —
-    one pump line per TWPA seeds pump + pump_ on the MW port; an isolation line
-    maps to ``isolation_constraints``). Only pre-TWPA builders (0.2.0, where
-    ``WiringLineType.TWPA_PUMP``'s ``"p"`` collided with ``PLUNGER_GATE``) skip
-    them with a warning — upgrade ``quam_builder`` there to build TWPAs.
+    ``qualang_tools`` ``Connectivity`` exposes ``add_twpa_lines`` (modern
+    ``qualang_tools.wirer`` — one pump line per TWPA seeds pump + pump_ on the
+    MW port; an isolation line maps to ``isolation_constraints``). A pre-TWPA
+    ``qualang_tools.wirer`` skips them with a warning — upgrade qualang-tools
+    there (with a ``quam_builder`` that knows the TWPA wiring type, e.g. 0.4.0)
+    to build TWPAs. QA generate-r2-20: this used to name ``quam_builder``, which
+    does not define ``add_twpa_lines``.
     """
     from qualang_tools.wirer import Connectivity
 
@@ -206,9 +208,9 @@ def build_connectivity(spec: dict, include_pair_lines: bool = True):
         constraint = _make_constraint(items[0].get("channel"))
         connectivity.add_resonator_line(qubits=qubits, constraints=constraint)
 
-    # TWPA lines — build natively when the installed quam_builder supports it
-    # (modern versions expose Connectivity.add_twpa_lines; the pump constraint
-    # seeds pump + pump_ on one MW port). Older builders (0.2.0) had no TWPA
+    # TWPA lines — build natively when the installed qualang_tools Connectivity
+    # supports it (modern qualang_tools.wirer exposes add_twpa_lines; the pump constraint
+    # seeds pump + pump_ on one MW port). Older wirers had no TWPA
     # category — WiringLineType.TWPA_PUMP's 'p' collided with PLUNGER_GATE — so
     # there we skip with a clear warning instead of crashing. One pump line per
     # TWPA; an optional isolation line maps to isolation_constraints.
@@ -223,8 +225,10 @@ def build_connectivity(spec: dict, include_pair_lines: bool = True):
     if twpa_elems and not hasattr(connectivity, "add_twpa_lines"):
         warnings.append(
             f"TWPA lines skipped ({', '.join(twpa_elems)}): the installed "
-            "quam_builder has no add_twpa_lines (pre-TWPA wiring registry). "
-            "Upgrade quam_builder in the selected env to build TWPAs."
+            "qualang_tools Connectivity has no add_twpa_lines (a pre-TWPA "
+            "qualang_tools.wirer). Upgrade qualang-tools in the selected env "
+            "(together with a quam_builder that knows the TWPA wiring type, "
+            "e.g. 0.4.0) to build TWPAs."
         )
     elif twpa_elems:
         for tid in twpa_elems:
@@ -2583,10 +2587,18 @@ def _cz_order_warning(quam_id, pair, vals):
     ``populate.pairs`` matching and every element/op name. Just surfaces a
     warning in ``_result.json`` when a backwards CZ pair reaches the build
     (old draft / hand-written spec) and the user didn't pin the order with
-    ``cz_order: manual``. Physics stays correct either way — the flux pulse
-    plays on the higher-frequency (moving) qubit regardless of labels.
+    ``cz_order: manual``. With NO explicit ``moving_qubit`` the physics stays
+    correct either way — ``_seed_cz_variant`` then puts the flux pulse on the
+    higher-frequency qubit regardless of labels. A spec that NAMES the role
+    (every Re-generate does: the chip's recorded ``moving_qubit`` is carried
+    into ``populate.pairs``) has already fixed which physical qubit moves, so
+    control/target is only a label and there is nothing to warn about — the
+    old text then claimed the pulse plays on the higher qubit when it plays
+    on the one the chip says (QA F15).
     """
     if (vals or {}).get("cz_order") == "manual":
+        return None
+    if (vals or {}).get("moving_qubit") in ("control", "target"):
         return None
     try:
         fc = float(getattr(getattr(pair, "qubit_control", None), "f_01", None) or 0)
@@ -2594,13 +2606,15 @@ def _cz_order_warning(quam_id, pair, vals):
     except (TypeError, ValueError):
         return None
     if fc and ft and ft > fc:
+        # No "the wizard orients" claim: Re-generate never re-orients a pair
+        # (QA review of F15). What decides the physics is the moving qubit.
         return (
             f"pair {quam_id}: target f_01 ({ft / 1e9:.4g} GHz) is higher than "
-            f"control ({fc / 1e9:.4g} GHz) — the wizard orients CZ pairs "
-            "control = higher-frequency qubit. The flux pulse still plays on "
-            "the higher-frequency (moving) qubit; set "
-            f"populate.pairs['{quam_id}'].cz_order = 'manual' to keep this "
-            "order silently."
+            f"control ({fc / 1e9:.4g} GHz). No moving qubit is named, so the "
+            "flux pulse plays on the higher-frequency qubit (the target); to "
+            "choose which qubit moves, set this pair's 'moving qubit' on the "
+            f"Populate step (populate.pairs['{quam_id}'].moving_qubit), or set "
+            "its 'order' to 'manual' (cz_order) to keep this order silently."
         )
     return None
 

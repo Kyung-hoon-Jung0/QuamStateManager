@@ -708,3 +708,24 @@ class TestQdacTriggerPinsAreReserved:
         assert "qNEW" not in pins
         assert "qNEW" not in allocation, "never draw a port it will not get"
         assert any("could not be placed" in w for w in warnings), warnings
+
+
+def test_cz_seed_is_read_through_a_flux_pulse_pointer():
+    """QA regenerate-r2-09: a modern chip keeps the CZ flux pulse on the
+    moving qubit's z and the macro POINTS at it. The seed was read only from
+    an inline dict, so a pair rebuilt under a new op name (reversed on step 4)
+    got the default amplitude instead of the calibrated one."""
+    from quam_state_manager.core import regen_spec
+    state = {"qubits": {"q2": {"z": {"operations": {"cz_unipolar_flux_pulse_q2_q3": {
+                 "length": 100, "amplitude": 0.4}}}}, "q3": {}},
+             "qubit_pairs": {"q2-3": {
+                 "qubit_control": "#/qubits/q2", "qubit_target": "#/qubits/q3",
+                 "moving_qubit": "control",
+                 "macros": {"cz_unipolar": {"flux_pulse_qubit":
+                     "#/qubits/q2/z/operations/cz_unipolar_flux_pulse_q2_q3"}}}}}
+    merged = dict(state)
+    merged["wiring"] = {}
+    pv = regen_spec._extract_populate(state, merged)["pairs"]["q2-q3"]
+    assert pv["cz_amplitude"] == 0.4
+    assert pv["cz_interaction_duration"] == 100
+    assert pv["moving_qubit"] == "control"

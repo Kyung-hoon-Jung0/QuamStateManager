@@ -210,5 +210,56 @@ const SPEC = {
   if (!deadGone) { console.error('FAIL: P7: dead pair key survived'); fails++; }
 })();
 
+// ---- P8 (QA generate-r2-21): Explorer "Copy as path" quotes are stripped ---
+(function () {
+  const win = makeWorld();
+  const G = win.QuamGen;
+  G.init();
+  const st = G._test.state;
+  const U = G._test.unquotePath;
+  ok(U('"D:\\a\\b"') === 'D:\\a\\b', 'P8: one matched double-quote pair stripped');
+  ok(U("  'D:\\a'  ") === 'D:\\a', 'P8: single quotes + outer space');
+  ok(U('C:\\a\\b"c') === 'C:\\a\\b"c', 'P8: an interior quote is left alone');
+  ok(U('"D:\\a') === '"D:\\a', 'P8: an unmatched quote is left alone');
+
+  const out = win.document.getElementById('gen-output-path');
+  const sp = win.document.getElementById('gen-scripts-path');
+  out.value = '"D:\\gen_out\\r2_quoted"';
+  out.dispatchEvent(new win.Event('input', { bubbles: true }));
+  ok(st.outputPath === 'D:\\gen_out\\r2_quoted', 'P8: the output folder is stored unquoted');
+  ok(sp.value === 'D:\\gen_out\\r2_quoted\\state_gen_scripts',
+     'P8: the scripts folder follows the UNQUOTED path — got ' + sp.value);
+  out.dispatchEvent(new win.Event('change', { bubbles: true }));
+  ok(out.value === 'D:\\gen_out\\r2_quoted', 'P8: on commit the box shows the path used');
+
+  // the real step-7 Next gate accepts it
+  out.value = '"D:\\gen_out\\r2_quoted"';
+  G.goToStep(7);
+  const msg = win.document.getElementById('gen-message');
+  G.tryNext();
+  ok(G.state.step === 8, 'P8: a quoted absolute output passes step 7 — got step ' +
+     G.state.step + ' / ' + (msg.hidden ? '' : msg.textContent));
+  // ...and so does a quoted scripts folder the user pasted themselves
+  sp.value = '"D:\\gen_out\\my scripts"';
+  sp.dispatchEvent(new win.Event('input', { bubbles: true }));
+  sp.value = '"D:\\gen_out\\my scripts"';      // the box as typed, quotes and all
+  G.goToStep(7);
+  G.tryNext();
+  ok(G.state.step === 8 && st.scriptsPath === 'D:\\gen_out\\my scripts',
+     'P8: a quoted scripts folder passes step 7 unquoted — got step ' + G.state.step +
+     ' / ' + (msg.hidden ? '' : msg.textContent));
+
+  // the custom interpreter is probed unquoted
+  const urls = [];
+  win.fetch = function (u) { urls.push(String(u)); return new win.Promise(function () {}); };
+  const ci = win.document.getElementById('gen-env-custom-path');
+  ci.value = '"D:\\miniconda3\\envs\\cqt\\python.exe"';
+  G.useCustomEnv();
+  const want = '/generate/probe?python=' +
+    encodeURIComponent('D:\\miniconda3\\envs\\cqt\\python.exe');
+  ok(urls.indexOf(want) >= 0, 'P8: the interpreter is probed without its quotes — got ' +
+     JSON.stringify(urls));
+})();
+
 if (fails) { console.error(fails + ' failure(s)'); process.exit(1); }
 console.log('generate_regen_populate_selfcheck: all checks passed');

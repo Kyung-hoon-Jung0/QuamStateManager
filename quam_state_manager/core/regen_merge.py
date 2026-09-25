@@ -138,6 +138,12 @@ class MergeStats:
     populate_conflicts: list[str] = field(default_factory=list)  # hand-tuned OLD values kept where a populate edit implied a derived change (z delay)
     deferred_grafted: list[str] = field(default_factory=list)  # OLD typed objects grafted over a NEW null -- judged in merge_states
     rebuild_removed: list[tuple[str, str]] = field(default_factory=list)  # (path, why) an OLD typed object the rebuild left null, NOT grafted back
+    ports_moved: list[tuple[str, str, str]] = field(default_factory=list)  # (old port, new port, owner) -- the port's calibration followed its line (QA F1)
+    ports_fresh: list[tuple[str, str, str]] = field(default_factory=list)  # (port, old owner, new owner) -- old values left with their line; rebuild defaults stand (QA F1)
+    pairs_reversed: list[tuple[str, str]] = field(default_factory=list)  # (old id, new id) -- the rebuild has the pair only with control/target swapped (QA r2-09)
+    ports_inherited: list[tuple[str, str, str]] = field(default_factory=list)  # (port, old owner, new owner) -- kept by port number from a line the rebuild removed (QA review of F1)
+    twpas_removed: list[str] = field(default_factory=list)  # OLD TWPAs the step-4 list no longer carries (renamed / deleted) -- not grafted back (QA r2-10)
+    twpas_renamed: list[tuple[str, str]] = field(default_factory=list)  # (old id, new id) -- a TWPA renamed on step 4; its calibration carried under the new id (QA review of r2-10)
 
 
 @dataclass
@@ -174,11 +180,63 @@ def _kept_class(old: dict, new: dict, keep: dict | None) -> str | None:
     return o_cls
 
 
+_DROPPED = object()   # _gate_graft: the whole object is dropped
+
+
+def _gate_graft(obj: Any, path: str, schemas: dict | None,
+                env_fields: dict, stats: MergeStats) -> Any:
+    """A deep copy of the OLD subtree ``obj`` about to be grafted at ``path``,
+    gated at EVERY depth by the build env (QA regenerate-r2-15).
+
+    The tier-2 gate checks a graft ROOT against its immediate parent; a
+    subtree grafted under an untagged container (a TWPA under ``twpas``, a
+    lab op under ``operations``) was copied whole, so a rebuild in an
+    older-generation env reported "unsafe fields dropped" and still wrote a
+    chip ``Quam.load()`` refused (``extras is not a valid attr of
+    ...twpas["twpa1"].pump``). ``env_fields`` is the build env's own probe of
+    the SOURCE chip's classes: ``{cls: [field, ...]}`` for a dataclass it
+    imports, ``{cls: None}`` for one it cannot import. Here:
+
+    - an object whose class the env cannot import is dropped whole (quam
+      would fall back to the declared base type, whose fields then kill the
+      load) -- its path lands in ``stats.schema_dropped``;
+    - a key outside its class's fields is dropped (``schema_dropped``);
+    - a class with no answer is copied as-is (the legacy graft).
+
+    Only ever NARROWS what is copied; returns ``_DROPPED`` for a dropped root.
+    """
+    if not isinstance(obj, dict):
+        return copy.deepcopy(obj)
+    cls = obj.get("__class__")
+    legal = None
+    if isinstance(cls, str):
+        if cls in env_fields and env_fields[cls] is None:
+            stats.schema_dropped.append(path)
+            return _DROPPED
+        legal = env_fields.get(cls)
+        if legal is None and schemas:
+            legal = schemas.get(cls)
+    out: dict = {}
+    for k, v in obj.items():
+        if k in ("__class__", "__package_versions__"):
+            out[k] = copy.deepcopy(v)
+            continue
+        sub = f"{path}.{k}"
+        if legal is not None and k not in legal:
+            stats.schema_dropped.append(sub)
+            continue
+        g = _gate_graft(v, sub, schemas, env_fields, stats)
+        if g is not _DROPPED:
+            out[k] = g
+    return out
+
+
 def _merge(old: Any, new: Any, path: str, stats: MergeStats,
            schemas: dict[str, list[str]] | None = None,
            protect: set[str] | None = None,
            keep: dict | None = None,
-           carry_ports: set[str] | None = None) -> Any:
+           carry_ports: set[str] | None = None,
+           env_fields: dict | None = None) -> Any:
     if isinstance(old, dict) and isinstance(new, dict):
         out: dict = {}
         # Keys whose OLD typed object met a NEW null: decided by the tier-2
@@ -240,7 +298,8 @@ def _merge(old: Any, new: Any, path: str, stats: MergeStats,
                     stats.kept_new_only += _count_leaves(nv)
                     continue
                 out[k] = _merge(ov, nv, f"{path}.{k}" if path else k,
-                                stats, schemas, protect, keep, carry_ports)
+                                stats, schemas, protect, keep, carry_ports,
+                                env_fields)
             else:
                 out[k] = copy.deepcopy(nv)
                 stats.kept_new_only += _count_leaves(nv)
@@ -291,6 +350,10 @@ def _merge(old: Any, new: Any, path: str, stats: MergeStats,
                 sub = f"{path}.{k}" if path else k
                 if carry_ports and top == "ports":
                     kept = _only_carried(ov, sub, carry_ports)
+                    if kept is not None and env_fields is not None:
+                        kept = _gate_graft(kept, sub, schemas, env_fields, stats)
+                        if kept is _DROPPED:
+                            kept = None
                     if kept is not None:
                         out[k] = kept
                         n = _count_leaves(kept)
@@ -330,8 +393,18 @@ def _merge(old: Any, new: Any, path: str, stats: MergeStats,
                     continue
                 stats.schema_dropped.append(f"{path}.{k}" if path else k)
                 continue
-            out[k] = copy.deepcopy(ov)
-            n = _count_leaves(ov)
+            if env_fields is not None:
+                # QA regenerate-r2-15: the checks above look at the graft ROOT
+                # only; the subtree under it is gated here, at every depth,
+                # by the build env's own answer for every class in it.
+                gv = _gate_graft(ov, f"{path}.{k}" if path else k,
+                                 schemas, env_fields, stats)
+                if gv is _DROPPED:
+                    continue
+            else:
+                gv = copy.deepcopy(ov)
+            out[k] = gv
+            n = _count_leaves(gv)
             stats.grafted += n
             stats.graft_subtrees.append((f"{path}.{k}" if path else k, n))
             if k in deferred:
@@ -423,6 +496,40 @@ def _reconcile_pair_ids(old_state: dict, new_state: dict,
     out = dict(new_state)
     out["qubit_pairs"] = remapped
     return out
+
+
+def _reversed_pairs(old_state: dict, new_state: dict,
+                    old_wiring: dict | None = None,
+                    new_wiring: dict | None = None) -> list[tuple[str, str]]:
+    """``(old id, new id)`` for each OLD pair the rebuild has only with its
+    control and target swapped (QA regenerate-r2-09).
+
+    Detection only -- the merge still matches pairs by ORDERED membership (a
+    CR chip keeps q0-4 and q4-0 as two objects, and phase shifts, the 4x4
+    confusion basis and the moving role all depend on orientation), so the
+    old pair's values are not carried. This names the pair in the report
+    instead of leaving only its raw ``qubit_pairs.<id>.*`` paths.
+    ``new_state`` is the post-:func:`_reconcile_pair_ids` state.
+    """
+    new_pairs = new_state.get("qubit_pairs") or {}
+    new_doc = _merged_doc(new_state, new_wiring)
+    new_by_mem: dict[tuple[str, str], str] = {}
+    for nid, npair in new_pairs.items():
+        m = _pair_membership(npair, new_doc)
+        if m is not None:
+            new_by_mem.setdefault(m, nid)
+    old_doc = _merged_doc(old_state, old_wiring)
+    out: list[tuple[str, str]] = []
+    for oid, opair in (old_state.get("qubit_pairs") or {}).items():
+        if oid in new_pairs:
+            continue
+        m = _pair_membership(opair, old_doc)
+        if m is None or m in new_by_mem:
+            continue
+        rev = new_by_mem.get((m[1], m[0]))
+        if rev is not None:
+            out.append((oid, rev))
+    return sorted(out, key=lambda t: natural_key(t[0]))
 
 
 def _enclosing_op(dot_path: str) -> str | None:
@@ -568,8 +675,118 @@ def reconcile_twpa_ids(new_state: dict, new_wiring: dict,
     return mapping
 
 
+def _twpas_the_spec_removed(old_state: dict, new_state: dict,
+                           old_wiring: dict | None,
+                           twpa_ids: Any) -> set[str]:
+    """OLD TWPAs the user took off the step-4 list -- renamed or deleted
+    (QA regenerate-r2-10).
+
+    ``twpas`` is graftable on purpose: a builder with no TWPA support emits
+    none, and a missing TWPA then is a builder gap, not a removal. But the
+    wizard OFFERED every TWPA the source wiring declares (reconstruct_spec
+    builds the step-4 rows from exactly those); one that is no longer in
+    ``twpa_ids`` and that the rebuild did not build was removed by the user,
+    and grafting it back built two TWPAs on one port -- the old one whole and
+    the renamed one uncalibrated. ``twpa_ids`` None (no spec information)
+    means graft all, exactly as before; ids compare through the same
+    ``twpa`` prefix rule :func:`reconcile_twpa_ids` uses.
+    """
+    if twpa_ids is None:
+        return set()
+    old_t = old_state.get("twpas")
+    if not isinstance(old_t, dict) or not old_t:
+        return set()
+    w = old_wiring.get("wiring", old_wiring) if isinstance(old_wiring, dict) else {}
+    wt = w.get("twpas") if isinstance(w, dict) else None
+    offered = {k for k, v in (wt.items() if isinstance(wt, dict) else ())
+               if isinstance(v, dict)}
+    new_t = new_state.get("twpas")
+    built = set(new_t) if isinstance(new_t, dict) else set()
+    requested = {_norm_twpa_id(str(i)).lower() for i in twpa_ids if i}
+    return {k for k in old_t
+            if k in offered and k not in built
+            and _norm_twpa_id(k).lower() not in requested}
+
+
+def _twpa_port_refs(wiring: dict | None, tid: str) -> set[str]:
+    """Every ``#/ports/...`` pointer a TWPA's wiring entry holds (its pump
+    line, its isolation line)."""
+    w = wiring.get("wiring", wiring) if isinstance(wiring, dict) else {}
+    wt = w.get("twpas") if isinstance(w, dict) else None
+    out: set[str] = set()
+
+    def walk(node: Any) -> None:
+        if isinstance(node, dict):
+            for v in node.values():
+                walk(v)
+        elif isinstance(node, str) and node.startswith("#/ports/"):
+            out.add(node)
+
+    walk(wt.get(tid) if isinstance(wt, dict) else None)
+    return out
+
+
+def _twpas_the_spec_renamed(old_state: dict, new_state: dict,
+                           old_wiring: dict | None, new_wiring: dict | None,
+                           removed: set[str]) -> dict[str, str]:
+    """``{old id: new id}`` -- the removed TWPAs the user only RENAMED on
+    step 4 (QA review of regenerate-r2-10).
+
+    A rename is a removal plus a TWPA the source never had; what makes them
+    ONE device is the line: the rebuilt TWPA's wiring lands on a port the
+    removed one's wiring used (the wizard re-keys the pump pin with the id).
+    Matched one-to-one only -- two candidates either way is not a rename, and
+    a TWPA the rebuild put on other ports stays a removal plus a new one.
+    """
+    new_t = new_state.get("twpas")
+    old_t = old_state.get("twpas") or {}
+    if not removed or not isinstance(new_t, dict):
+        return {}
+    fresh = [k for k in new_t if k not in old_t]
+    cand: dict[str, list[str]] = {}
+    for o in removed:
+        o_ports = _twpa_port_refs(old_wiring, o)
+        cand[o] = [n for n in fresh
+                   if o_ports & _twpa_port_refs(new_wiring, n)] if o_ports else []
+    out: dict[str, str] = {}
+    for o, ns in cand.items():
+        if len(ns) == 1 and sum(ns[0] in v for v in cand.values()) == 1:
+            out[o] = ns[0]
+    return out
+
+
+def _renamed_twpa_view(old_twpa: Any, old_id: str, new_id: str,
+                       new_twpa: Any) -> Any:
+    """The OLD TWPA as the merge should see it under its NEW id: its own
+    ``#/twpas/<old>/`` / ``#/wiring/twpas/<old>/`` pointers re-keyed, and its
+    ``id`` the rebuild's (tier-1 would otherwise carry the old name back)."""
+    prefixes = {f"#/twpas/{old_id}/": f"#/twpas/{new_id}/",
+                f"#/wiring/twpas/{old_id}/": f"#/wiring/twpas/{new_id}/"}
+
+    def rewrite(node: Any) -> Any:
+        if isinstance(node, dict):
+            return {k: rewrite(v) for k, v in node.items()}
+        if isinstance(node, list):
+            return [rewrite(v) for v in node]
+        if isinstance(node, str):
+            for op, np in prefixes.items():
+                if node.startswith(op):
+                    return np + node[len(op):]
+        return node
+
+    view = rewrite(copy.deepcopy(old_twpa))
+    if isinstance(view, dict) and "id" in view:
+        view["id"] = (copy.deepcopy(new_twpa["id"])
+                      if isinstance(new_twpa, dict) and "id" in new_twpa
+                      else new_id)
+    return view
+
+
 def graft_twpa_wiring(merged_state: dict, old_state: dict,
-                      old_wiring: dict, new_wiring: dict) -> int:
+                      old_wiring: dict, new_wiring: dict,
+                      env_fields: dict | None = None,
+                      schemas: dict | None = None,
+                      stats: MergeStats | None = None) -> int:
     """Carry a preserved TWPA's wiring + ports from OLD into the rebuilt config.
 
     The state merge grafts the OLD ``twpas`` back (the builder can't rebuild
@@ -612,8 +829,65 @@ def graft_twpa_wiring(merged_state: dict, old_state: dict,
                     break
                 dst = dst.setdefault(seg, {})
             if ok and isinstance(src, dict) and segs[-1] in src and segs[-1] not in dst:
-                dst[segs[-1]] = copy.deepcopy(src[segs[-1]])
+                if env_fields is not None:
+                    # QA regenerate-r2-15: gated like every other graft.
+                    g = _gate_graft(src[segs[-1]], "ports." + ".".join(segs),
+                                    schemas, env_fields,
+                                    stats if stats is not None else MergeStats())
+                    if g is not _DROPPED:
+                        dst[segs[-1]] = g
+                else:
+                    dst[segs[-1]] = copy.deepcopy(src[segs[-1]])
     return carried
+
+
+def graft_network_settings(old_wiring: dict | None, new_wiring: dict,
+                           held: list[str] | None = None,
+                           requested: dict | None = None) -> list[str]:
+    """Carry the source chip's ``wiring.network`` keys the build did not write.
+
+    QA regenerate-r2-17: the wizard edits only ``host`` / ``cluster_name`` /
+    ``port`` and the build writes a fresh ``network`` block from them, so every
+    other key -- a custom/cloud QMM's ``qmm_class`` / ``qmm_settings`` /
+    ``use_custom_qmm`` -- silently vanished and the rebuilt chip could not reach
+    its backend. Fills ABSENT keys only: what the build wrote (the user's
+    step-2 values, a ``port: None`` included) is never overwritten. Mutates
+    ``new_wiring`` in place; returns the carried keys, naturally sorted.
+
+    Only to the SAME place (QA review of r2-17): those keys route the QM
+    connection (a cloud QMM ignores ``host``), so when step 2 moved the chip
+    -- ``requested`` (the build spec's ``network``) names another ``host`` or
+    ``cluster_name`` than the source -- carrying them would keep connecting
+    to the old backend. Then nothing is carried and ``held`` (optional,
+    filled in place) names every key held back. Compared against the SPEC,
+    not the written block: the build writes ``0.0.0.0`` / ``Cluster`` for a
+    blank one, which is no move -- nor is a value typed where the source had
+    none (step 2 requires a cluster name). ``requested`` None carries as
+    before.
+    """
+    old_net = (old_wiring or {}).get("network") if isinstance(old_wiring, dict) else None
+    if not isinstance(old_net, dict) or not old_net:
+        return []
+    new_net = new_wiring.get("network")
+    if not isinstance(new_net, dict):
+        new_net = new_wiring["network"] = {}
+    def norm(v: Any) -> str:
+        return "" if v is None else str(v).strip()
+    moved = isinstance(requested, dict) and any(
+        norm(old_net.get(k)) and norm(old_net.get(k)) != norm(requested.get(k))
+        for k in ("host", "cluster_name"))
+    carried = []
+    for k, v in old_net.items():
+        if k not in new_net:
+            if moved:
+                if held is not None:
+                    held.append(k)
+                continue
+            new_net[k] = copy.deepcopy(v)
+            carried.append(k)
+    if held is not None:
+        held.sort(key=natural_key)
+    return sorted(carried, key=natural_key)
 
 
 # ---------------------------------------------------------------------------
@@ -772,6 +1046,183 @@ def _only_carried(obj: Any, path: str, carry: set[str]) -> Any:
     return out or None
 
 
+# ---------------------------------------------------------------------------
+# QA F1 -- a port's calibration follows the line that owns it
+#
+# Tier-1 matches leaves by PATH, and under `ports` the path is the port
+# NUMBER. An LF port's delay / FIR / exponential filters (an MW port's band /
+# LO / power) describe the line the port drives: moving q1's flux line from
+# out1 to out6 left its 48-tap FIR on out1 -- dropped as 15 anonymous paths,
+# or inherited whole by whatever new qubit the allocator put there -- and gave
+# q1 fresh defaults on out6. A port's OWNERS are the channels in the STATE
+# whose pointer chain lands on it; each rebuilt port takes the OLD values of
+# the one old port its (surviving) owners came from. The port number stays the
+# rule whenever owners are unknown or disagree.
+# ---------------------------------------------------------------------------
+
+_PORT_IDENTITY_KEYS = ("controller_id", "fem_id", "port_id", "__class__")
+
+
+def _land(doc: dict, dot_path: str, _depth: int = 0) -> str | None:
+    """The dot-path ``dot_path`` really lands on in ``doc``, following every
+    pointer met on the way (``qubits.q1.z.opx_output`` -> ``#/wiring/...`` ->
+    ``ports.analog_outputs.con1.5.1``). None when it does not resolve."""
+    if _depth > 8:
+        return None
+    node: Any = doc
+    segs = [s for s in dot_path.split(".") if s]
+    for i, seg in enumerate(segs):
+        if is_pointer(node):
+            tgt = _pointer_target(".".join(segs[:i]), node)
+            return (None if tgt is None
+                    else _land(doc, ".".join([tgt, *segs[i:]]), _depth + 1))
+        if isinstance(node, dict) and seg in node:
+            node = node[seg]
+        else:
+            return None
+    if is_pointer(node):
+        tgt = _pointer_target(".".join(segs), node)
+        return None if tgt is None else _land(doc, tgt, _depth + 1)
+    return ".".join(segs)
+
+
+def _port_owners(state: dict, wiring: dict | None) -> dict[str, set[str]]:
+    """``{port entity path: {owner path}}`` -- every pointer in the STATE,
+    outside ``ports`` / ``wiring``, whose chain lands on or inside a port
+    entity (a pointer at a whole slot or container owns nothing)."""
+    ents = _port_entities(state.get("ports"))
+    if not ents:
+        return {}
+    doc = _merged_doc(state, wiring)
+    out: dict[str, set[str]] = {}
+    for src, kind, val in _walk_refs(state):
+        if kind != "pointer" or src.split(".", 1)[0] in ("ports", "wiring"):
+            continue
+        tgt = _pointer_target(src, val)
+        land = _land(doc, tgt) if tgt is not None else None
+        if land is None:
+            continue
+        ent = next((p for p in ents if land == p or land.startswith(p + ".")),
+                   None)
+        if ent is not None:
+            out.setdefault(ent, set()).add(src)
+    return out
+
+
+def _owner_label(owners: Any) -> str:
+    """``qubits.q1.z.opx_output`` -> ``q1.z`` (the line, as a reader calls it);
+    several lines -> the first plus a count."""
+    labels = set()
+    for src in owners:
+        segs = src.split(".")
+        if segs and segs[0] in ("qubits", "qubit_pairs", "twpas"):
+            segs = segs[1:]
+        labels.add(".".join(segs[:-1]) or src)
+    ordered = sorted(labels, key=natural_key)
+    if not ordered:
+        return ""
+    return ordered[0] + (f" (+{len(ordered) - 1})" if len(ordered) > 1 else "")
+
+
+def _port_moves(old_state: dict, new_state: dict,
+                old_wiring: dict | None = None,
+                new_wiring: dict | None = None,
+                inherited: dict[str, tuple[str, str]] | None = None
+                ) -> tuple[dict[str, tuple[str, str]], dict[str, tuple[str, str]]]:
+    """Which rebuilt ports take which OLD port's values.
+
+    ``moves = {new port: (old port, owner)}`` -- every owner the two builds
+    share came from ONE other old port (a brand-new line beside them, e.g. a
+    qubit added to a moved feedline, brings no calibration and does not
+    count). ``fresh = {new port: (old owner, new owner)}`` -- the port's old
+    values LEFT with their line (it is some move's source) and only brand-new
+    lines use it now: the rebuild's defaults stand, never someone else's
+    calibration. Anything else keeps the port-number identity. ``new_state``
+    must be post-:func:`_reconcile_pair_ids`, so a pair's owner path matches
+    across a builder's pair-id drift.
+
+    ``inherited`` (optional, filled in place) -- ``{port: (old owner, new
+    owner)}`` for the port-number carry nothing else names: every line that
+    used the port belonged to a qubit / pair the rebuild no longer has (a
+    removed or renamed qubit), and only lines the source never had use it
+    now. The values stay (a rename must keep them), but the report says whose
+    they were (QA review of F1).
+    """
+    old_owners = _port_owners(old_state, old_wiring)
+    if not old_owners:
+        return {}, {}
+    new_owners = _port_owners(new_state, new_wiring)
+    old_port_of = {o: p for p, os_ in old_owners.items() for o in os_}
+    old_ents = _port_entities(old_state.get("ports"))
+    moves: dict[str, tuple[str, str]] = {}
+    for n, owners in new_owners.items():
+        shared = [o for o in owners if o in old_port_of]
+        known = {old_port_of[o] for o in shared}
+        if len(known) != 1:
+            continue
+        (o_port,) = known
+        if o_port != n and o_port in old_ents:
+            moves[n] = (o_port, _owner_label(shared))
+    moved_from = {o for o, _ in moves.values()}
+    fresh: dict[str, tuple[str, str]] = {}
+    for n, owners in new_owners.items():
+        if n in moves or n not in moved_from:
+            continue
+        if any(o in old_port_of for o in owners):
+            continue
+        fresh[n] = (_owner_label(old_owners.get(n) or ()), _owner_label(owners))
+    if inherited is not None:
+        def gone(o: str) -> bool:           # its qubit / pair left the chip
+            segs = o.split(".")
+            return (len(segs) > 1 and segs[0] in _LISTED_ENTITY_COLLECTIONS
+                    and segs[1] not in (new_state.get(segs[0]) or {}))
+        for n, owners in new_owners.items():
+            olds = old_owners.get(n)
+            if (n in moves or n in fresh or not olds
+                    or any(o in old_port_of for o in owners)):
+                continue
+            if all(gone(o) for o in olds):
+                inherited[n] = (_owner_label(olds), _owner_label(owners))
+    return moves, fresh
+
+
+def _ports_view(old_state: dict, new_state: dict,
+                moves: dict[str, tuple[str, str]],
+                fresh: dict[str, tuple[str, str]]) -> dict:
+    """``old_state`` as the merge should see it: each moved-to port holds the
+    OLD values of the port its line came from, with the rebuilt port's
+    identity (controller / FEM / port id, class) so port 6 is never written
+    back as port 1; a ``fresh`` port holds nothing, so the rebuild's values
+    stand. Only ``ports`` is copied -- the rest is shared, and the residual
+    accounting keeps reading the REAL old state."""
+    view = dict(old_state)
+    ports = copy.deepcopy(old_state.get("ports") or {})
+    view["ports"] = ports
+    for n, (o, _) in moves.items():
+        val: Any = old_state
+        for seg in o.split("."):
+            val = val.get(seg) if isinstance(val, dict) else None
+        new_ent: Any = new_state
+        for seg in n.split("."):
+            new_ent = new_ent.get(seg) if isinstance(new_ent, dict) else None
+        if not (isinstance(val, dict) and isinstance(new_ent, dict)):
+            continue
+        val = copy.deepcopy(val)
+        for k in _PORT_IDENTITY_KEYS:
+            if k in new_ent:
+                val[k] = copy.deepcopy(new_ent[k])
+        segs = n.split(".")[1:]                      # below `ports`
+        node = ports
+        for seg in segs[:-1]:
+            if not isinstance(node.get(seg), dict):
+                node[seg] = {}
+            node = node[seg]
+        node[segs[-1]] = val
+    for n in fresh:
+        _del_path(view, n)
+    return view
+
+
 def _node_is_dict(root: dict, dot_path: str) -> bool:
     node: Any = root
     for seg in dot_path.split("."):
@@ -881,8 +1332,23 @@ def merge_states(old_state: dict, new_state: dict,
                  protect_paths: set[str] | None = None,
                  old_wiring: dict | None = None,
                  new_wiring: dict | None = None,
-                 keep_classes: dict | None = None) -> MergeResult:
+                 keep_classes: dict | None = None,
+                 twpa_ids: Any = None,
+                 env_fields: dict | None = None) -> MergeResult:
     """Merge the OLD calibrated state onto the NEW rebuilt structure.
+
+    ``twpa_ids`` -- the TWPA ids the build spec asked for (QA r2-10): an OLD
+    TWPA the wizard offered and the spec no longer carries is NOT grafted
+    back (see :func:`_twpas_the_spec_removed`). ``None`` ⇒ graft all, as
+    before.
+
+    ``env_fields`` -- the build env's probe of the SOURCE chip's classes,
+    ``{cls: [field, ...] | None}`` (QA r2-15): every tier-2 graft is gated at
+    every depth by it (see :func:`_gate_graft`). ``None`` ⇒ legacy graft.
+
+    A port's values follow the line that owns it (QA F1): see
+    :func:`_port_moves`; ``stats.ports_moved`` / ``stats.ports_fresh`` name
+    each one.
 
     ``keep_classes`` -- optional ``{class_path: {"bases": [...], "fields":
     [...]}}`` for the SOURCE chip's classes that the build env imports
@@ -919,8 +1385,39 @@ def merge_states(old_state: dict, new_state: dict,
     new_state = _reconcile_pair_ids(old_state, new_state,
                                     old_wiring, new_wiring)   # align pair ids first
     carry_ports = _carryable_ports(old_state, new_state, old_wiring, new_wiring)
-    merged = _merge(old_state, new_state, "", stats, class_schemas, protect_paths,
-                    keep_classes, carry_ports)
+    # QA F1: the OLD side the merge reads -- a port's values moved to wherever
+    # its line went. QA r2-10: minus the TWPAs the user took off step 4.
+    inherited: dict[str, tuple[str, str]] = {}
+    moves, fresh = _port_moves(old_state, new_state, old_wiring, new_wiring,
+                               inherited)
+    old_view = (_ports_view(old_state, new_state, moves, fresh)
+                if (moves or fresh) else old_state)
+    stats.ports_moved = sorted(((o, n, who) for n, (o, who) in moves.items()),
+                               key=lambda t: natural_key(t[1]))
+    stats.ports_fresh = sorted(((n, was, now) for n, (was, now) in fresh.items()),
+                               key=lambda t: natural_key(t[0]))
+    stats.ports_inherited = sorted(
+        ((n, was, now) for n, (was, now) in inherited.items()),
+        key=lambda t: natural_key(t[0]))
+    removed_twpas = _twpas_the_spec_removed(old_state, new_state, old_wiring,
+                                            twpa_ids)
+    if removed_twpas:
+        old_view = dict(old_view)
+        old_view["twpas"] = {k: v for k, v in old_state["twpas"].items()
+                             if k not in removed_twpas}
+        # ...except a RENAME: the same device under the id the user typed.
+        renamed = _twpas_the_spec_renamed(old_state, new_state, old_wiring,
+                                          new_wiring, removed_twpas)
+        for o, n in renamed.items():
+            old_view["twpas"][n] = _renamed_twpa_view(
+                old_state["twpas"][o], o, n, new_state["twpas"][n])
+        stats.twpas_renamed = sorted(renamed.items(),
+                                     key=lambda t: natural_key(t[0]))
+        stats.twpas_removed = sorted(removed_twpas - set(renamed), key=natural_key)
+    stats.pairs_reversed = _reversed_pairs(old_state, new_state,
+                                           old_wiring, new_wiring)
+    merged = _merge(old_view, new_state, "", stats, class_schemas, protect_paths,
+                    keep_classes, carry_ports, env_fields)
     _ungraft_unlanded(merged, stats, new_wiring)
     # A removed qubit/pair is still NAMED inside a list another object carried
     # (a TWPA's `qubits`); the list survives as a leaf, so drop the reference
@@ -941,8 +1438,16 @@ def merge_states(old_state: dict, new_state: dict,
     old_scalars = [(p, v) for p, v in _iter_leaves(old_state)
                    if not is_pointer(v)
                    and not p.startswith("__package_versions__")]  # artifact, never "lost"
+    moved_from = [(o, n) for o, n, _ in stats.ports_moved]
+    # ...and a renamed TWPA's values live under its new id.
+    moved_from += [(f"twpas.{o}", f"twpas.{n}") for o, n in stats.twpas_renamed]
     for p, ov in old_scalars:
         if p in merged_paths:
+            continue
+        # QA F1: a moved port's values live at the port its line went to.
+        if moved_from and any(
+                (p == o or p.startswith(o + ".")) and (n + p[len(o):]) in merged_paths
+                for o, n in moved_from):
             continue
         # An OLD null the rebuild replaced with real structure is not a lost
         # calibration (see _merge: NEW keeps structure over an OLD null).
@@ -986,3 +1491,114 @@ def merge_states(old_state: dict, new_state: dict,
     stats.pruned_ops, stats.dangling_grafts = _prune_redundant_graft_ops(merged, dangling)
 
     return MergeResult(merged=merged, stats=stats)
+
+
+# ---------------------------------------------------------------------------
+# Report views over MergeStats (QA F17 / regenerate-r2-28). Derived only: the
+# stats lists above stay exactly as the merge recorded them.
+
+_LOST_KIND_RANK = {"qubit": 0, "pair": 1, "twpa": 2, "port": 3, "other": 4}
+
+
+def _lost_owner(path: str) -> tuple[str, str, list[str]]:
+    """``(kind, owner, owner_segments)`` of one not-carried report line.
+
+    A line may carry a trailing note (``"<path> (the rebuild left it empty;
+    ...)"`` / ``"<path> -> #/qubits/q5 (...)"``) -- the owner is read from the
+    dot-path before the first space."""
+    segs = path.split(" ", 1)[0].split(".")
+    top = segs[0]
+    kinds = {"qubits": "qubit", "qubit_pairs": "pair", "twpas": "twpa"}
+    if top in kinds and len(segs) > 1:
+        return kinds[top], segs[1], segs[:2]
+    if top == "ports" and len(segs) > 3:
+        # ports.<type>.<con>.<fem>.<port>.<leaf> (OPX1000) or
+        # ports.<type>.<con>.<port>.<leaf> (OPX+): the digit run names the port.
+        nums: list[str] = []
+        for s in segs[3:-1]:
+            if not s.isdigit():
+                break
+            nums.append(s)
+        return ("port", f"{segs[1]} {segs[2]}/" + "/".join(nums),
+                segs[:3 + len(nums)])
+    return "other", top, segs[:1]
+
+
+def group_lost_paths(paths: list[str], merged: dict | None = None,
+                     reversed_pairs: dict[str, str] | None = None,
+                     cap: int = 20) -> list[dict]:
+    """Group not-carried report lines by the entity they belonged to.
+
+    One removed qubit fills ``residual_lost`` with hundreds of its own leaves
+    (a port's ``controller_id`` beside a real calibration), which a flat list
+    buries. Each group: ``{"kind", "owner", "n", "paths"}`` (paths capped at
+    ``cap``; ``n`` is the true count) plus ``"present"`` -- whether the owner
+    still exists in ``merged`` (``None`` when unknown / not an entity) -- and
+    ``"reversed_as"`` for a pair the rebuild only has reversed. Ordered
+    qubits, pairs, TWPAs, ports, then the rest; natural order within each."""
+    groups: dict[tuple[str, str], dict] = {}
+    for p in paths:
+        kind, owner, osegs = _lost_owner(p)
+        g = groups.get((kind, owner))
+        if g is None:
+            present = None
+            if merged is not None and kind != "other":
+                node: Any = merged
+                for s in osegs:
+                    node = node.get(s) if isinstance(node, dict) else None
+                present = isinstance(node, dict)
+            g = groups[(kind, owner)] = {"kind": kind, "owner": owner,
+                                         "present": present, "n": 0, "paths": []}
+            if kind == "pair" and reversed_pairs and owner in reversed_pairs:
+                g["reversed_as"] = reversed_pairs[owner]
+        g["n"] += 1
+        if len(g["paths"]) < cap:
+            g["paths"].append(p)
+    return sorted(groups.values(),
+                  key=lambda g: (_LOST_KIND_RANK[g["kind"]], natural_key(g["owner"])))
+
+
+def _nearest_typed_ancestor(root: Any, dot_path: str) -> str | None:
+    """Dot-path of the closest ANCESTOR of ``dot_path`` in ``root`` that
+    carries a ``__class__`` (``"(root)"`` for the root) -- the object whose
+    class schema decided whether that field could stay."""
+    segs = dot_path.split(".")
+    nodes = [root]
+    node = root
+    for s in segs[:-1]:
+        node = node.get(s) if isinstance(node, dict) else None
+        nodes.append(node)
+    for i in range(len(nodes) - 1, -1, -1):
+        n = nodes[i]
+        if isinstance(n, dict) and isinstance(n.get("__class__"), str):
+            return ".".join(segs[:i]) if i else "(root)"
+    return None
+
+
+def class_change_groups(class_changed: list[tuple[str, str, str]],
+                        dropped_paths: list[str], old_state: dict,
+                        sample: int = 3) -> list[dict]:
+    """``class_changed`` grouped by ``(old, new)`` class, first-seen order,
+    over the FULL list (the report ships only 80 paths; grouping that page
+    under-counted every group and hid any group sorted past it -- QA r2-28).
+
+    Each group: ``{"old", "new", "count", "paths" (first ``sample``),
+    "dropped"}`` where ``dropped`` counts the dropped / not-carried fields
+    whose owning object (nearest typed ancestor in the SOURCE chip) is one of
+    the group's re-typed objects. ``dropped == 0`` is a measured "no fields
+    lost" -- e.g. a class quam moved into quam_builder -- not a claim that
+    the two classes behave identically."""
+    owner_of = {p: (o, n) for p, o, n in class_changed}
+    groups: dict[tuple[str, str], dict] = {}
+    for p, o, n in class_changed:
+        g = groups.setdefault((o, n), {"old": o, "new": n, "count": 0,
+                                       "paths": [], "dropped": 0})
+        g["count"] += 1
+        if len(g["paths"]) < sample:
+            g["paths"].append(p)
+    if owner_of:
+        for dp in dropped_paths:
+            anc = _nearest_typed_ancestor(old_state, dp.split(" ", 1)[0])
+            if anc in owner_of:
+                groups[owner_of[anc]]["dropped"] += 1
+    return list(groups.values())

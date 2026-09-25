@@ -146,6 +146,43 @@ var bandEl = win.document.getElementById('gen-qdac-band');
 ok(bandEl && bandEl.hidden === false,
   'T7: QDAC-II band visible with zero qubits biased');
 
+// T8 (QA regenerate-r2-02): the step-4 QDAC-II instrument fields (IP / port /
+// link / USB) must write into the CURRENT spec.qdac. bindQubitsStep runs once
+// at init; hydrateFromSpec (Re-generate) and Reset each replace state.spec,
+// so a handler that captured spec.qdac at bind time wrote into a detached
+// object -- the boxes showed the typed IP while the build 400'd on
+// "qdac.ip_address: required" (or silently kept the source chip's IP).
+G.init();   // idempotent; wires the bind*Step listeners like a real mount
+function typeQdac(id, v, evt) {
+  const el = win.document.getElementById(id);
+  el.value = v;
+  el.dispatchEvent(new win.Event(evt || 'input', { bubbles: true }));
+}
+function qdacRound(tag) {
+  typeQdac('gen-qdac-ip', '192.168.88.77');
+  typeQdac('gen-qdac-port', '5026');
+  ok(state.spec.qdac.ip_address === '192.168.88.77',
+    'T8 ' + tag + ': typed IP reaches spec.qdac (got ' + state.spec.qdac.ip_address + ')');
+  ok(state.spec.qdac.port === 5026,
+    'T8 ' + tag + ': typed port reaches spec.qdac (got ' + state.spec.qdac.port + ')');
+  typeQdac('gen-qdac-comm', 'USB', 'change');
+  ok(state.spec.qdac.communication_type === 'USB',
+    'T8 ' + tag + ': USB link reaches spec.qdac');
+  ok(win.document.getElementById('gen-qdac-ip-label').hidden === true &&
+     win.document.getElementById('gen-qdac-usb-label').hidden === false,
+    'T8 ' + tag + ': USB swaps the visible fields (IP hidden, USB shown)');
+  typeQdac('gen-qdac-usb', '3');
+  ok(state.spec.qdac.usb_device === 3, 'T8 ' + tag + ': USB device reaches spec.qdac');
+}
+const SPEC_Q = JSON.parse(JSON.stringify(SPEC));
+SPEC_Q.qdac = { ip_address: '10.0.0.1', port: 5025, communication_type: 'Ethernet', qubits: {} };
+G.hydrateFromSpec(JSON.parse(JSON.stringify(SPEC_Q)), { mode: 'regenerate' });
+qdacRound('after hydrate');
+G.hydrateFromSpec(JSON.parse(JSON.stringify(SPEC_Q)), { mode: 'regenerate' });
+qdacRound('after a second hydrate');
+win.document.getElementById('gen-reset').click();
+qdacRound('after Reset wizard');
+
 if (fails) { console.error(fails + ' check(s) failed'); process.exit(1); }
 console.log('generate_qdac_selfcheck: all checks passed');
 process.exit(0);

@@ -308,3 +308,33 @@ def test_cz_chip_and_no_manifest_are_silent():
     state_b, _ = make_flavor_b()
     assert cap.flavor_findings(state_b, None) == []
     assert cap.flavor_findings(state_b, {}) == []
+
+
+# --- QA generate-r2-20: one package named for the TWPA degrade ---------------
+
+def test_the_twpa_degrade_names_the_package_that_holds_add_twpa_lines(monkeypatch):
+    """The pre-build card said "upgrade qualang-tools", the post-build warning
+    "Upgrade quam_builder" -- but add_twpa_lines is a qualang_tools.wirer
+    Connectivity method (the hasattr checks that object), so upgrading
+    quam_builder alone can never make it pass. Both must name qualang-tools."""
+    import types
+    from quam_state_manager.generator import run_build
+
+    class _OldConnectivity:            # a pre-TWPA qualang_tools.wirer
+        def add_resonator_line(self, *a, **k):
+            pass
+
+    fake_wirer = types.ModuleType("qualang_tools.wirer")
+    fake_wirer.Connectivity = _OldConnectivity
+    monkeypatch.setitem(_sys.modules, "qualang_tools.wirer", fake_wirer)
+    spec = {"lines": [{"line": "twpa_pump", "element": "A",
+                       "channel": {"con": 1, "slot": 1, "port": 8}}]}
+    _conn, warnings = run_build.build_connectivity(spec)
+    twpa = [w for w in warnings if w.startswith("TWPA lines skipped")]
+    assert len(twpa) == 1, warnings
+    assert "qualang_tools Connectivity has no add_twpa_lines" in twpa[0]
+    assert "Upgrade qualang-tools" in twpa[0]
+    assert "Upgrade quam_builder in the selected env" not in twpa[0]
+    card = cap.REGISTRY["wire.twpa_lines"]
+    assert card["package"] == "qualang-tools"
+    assert card["fix"].startswith("upgrade qualang-tools")

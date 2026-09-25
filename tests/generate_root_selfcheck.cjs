@@ -125,6 +125,13 @@ const ROOTS = [
     path: 'quam_builder.architecture.superconducting.qpu.flux_tunable_quam.FluxTunableQuam',
     importable: true, holds_qdac: false,
     qubits_type: 'typing.Dict[str, quam_builder.FluxTunableTransmon]'
+  },
+  {
+    // QA generate-r2-28: the cqt lab's real root holds a Union.
+    path: 'quam_config.union_quam.Quam', importable: true, holds_qdac: true,
+    qubits_type: 'typing.Dict[str, typing.Union[quam_builder.architecture.' +
+      'superconducting.qubit.flux_tunable_transmon.FluxTunableTransmon, ' +
+      'quam_config.qdac_components.QdacBiasedFixedFrequencyTransmon]]'
   }
 ];
 
@@ -226,6 +233,25 @@ async function main() {
     "R4: the lab's own root is offered first, as the probe reports it");
   ok(/holds AnyTransmon/.test(sel.options[1].textContent),
     'R4: each option says what it can hold — ' + sel.options[1].textContent);
+  // QA generate-r2-28: a Union root names EVERY class it holds, no stray ']'.
+  const H = win.QuamGen._test.holdsLabel;
+  const UNION = 'typing.Dict[str, typing.Union[quam_builder.architecture.' +
+    'superconducting.qubit.flux_tunable_transmon.FluxTunableTransmon, ' +
+    'quam_config.qdac_components.QdacBiasedFixedFrequencyTransmon]]';
+  ok(H(UNION) === 'FluxTunableTransmon, QdacBiasedFixedFrequencyTransmon',
+    'R4: a Union root lists both members — got ' + JSON.stringify(H(UNION)));
+  ok(H('typing.Dict[str, quam_config.my_quam.AnyTransmon]') === 'AnyTransmon',
+    'R4: the single-class form is unchanged');
+  ok(H('Dict[str, AnyTransmon]') === 'AnyTransmon',
+    'R4: a string annotation (no typing. prefix) — got ' +
+    JSON.stringify(H('Dict[str, AnyTransmon]')));
+  ok(H('dict[str, a.X | b.Y]') === 'X, Y', 'R4: a PEP 604 union — got ' +
+    JSON.stringify(H('dict[str, a.X | b.Y]')));
+  ok(H('') === '' && H(null) === '', 'R4: no annotation, no label');
+  const uo = sel.options[3].textContent;
+  ok(/holds FluxTunableTransmon, QdacBiasedFixedFrequencyTransmon\)$/.test(uo) &&
+     uo.indexOf(']') < 0,
+    'R4: the rendered Union option names both classes, no stray bracket — ' + uo);
 
   // A person picks one: the key reaches the spec and the review re-runs.
   sel.value = 'quam_config.my_quam.Quam';

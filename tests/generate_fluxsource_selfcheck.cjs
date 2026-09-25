@@ -141,8 +141,11 @@ ok(doc.getElementById('gen-line-flux-source').hidden === false,
 const optOpx = sel.querySelector('option[value="opx"]');
 const optTee = sel.querySelector('option[value="tee"]');
 const optQdac = sel.querySelector('option[value="qdac"]');
-ok(optOpx.disabled === true && optTee.disabled === true,
-  'F1: LF-FEM and bias tee need a z line to play pulses on');
+// QA review of F9: "opx" with no z line IS "None (no DC bias)" -- always
+// buildable, and the way back the step-4 guard names. Only the bias tee
+// (pulses on a z line) is disabled. (This pin used to require both disabled.)
+ok(optTee.disabled === true && optOpx.disabled === false,
+  'F1: the bias tee needs a z line to play pulses on; "None" is always offered');
 ok(!!optTee.title, 'F1: and say why, rather than being silently inert');
 ok(optQdac.disabled === false, 'F1: the QDAC is available on any architecture');
 ok(optOpx.textContent.indexOf('None') === 0,
@@ -430,6 +433,101 @@ ok(doc.getElementById('f9-qt').style.cursor !== 'default',
 ok(doc.getElementById('f9-alien').style.cursor === 'default',
   'F9: a digital marker with no QDAC home is not');
 hostF9.innerHTML = '';
+
+// ── QA F9 (arch): switching architecture repaints the Flux source row, and
+// step 4 refuses a flux-source shape the architecture cannot build. Every
+// check above calls renderFluxSource() by hand after setting qubitFlux, so
+// the ARCHITECTURE path was never exercised -- these go through the real
+// #gen-chip-arch change listener and the real Next gate, never by hand.
+G.init();   // binds the real listeners (#gen-chip-arch change among them)
+function archWorld(spec) {
+  G.hydrateFromSpec(JSON.parse(JSON.stringify(spec)), { mode: 'generate' });
+  const a = doc.getElementById('gen-chip-arch');
+  a.value = 'flux_tunable_coupler';
+  a.dispatchEvent(new win.Event('change'));
+  return a;
+}
+function nextFrom4() {
+  G.state.step = 4;
+  const msg = doc.getElementById('gen-message');
+  msg.hidden = true; msg.textContent = '';
+  G.tryNext();
+  return { step: G.state.step, msg: msg.hidden ? '' : msg.textContent };
+}
+let arch = archWorld(SPEC);
+T.applyFluxSource('tee');
+const selA = doc.getElementById('gen-flux-source');
+ok(selA.value === 'tee', 'QF9: precondition -- the row reads bias tee');
+arch.value = 'fixed_frequency';
+arch.dispatchEvent(new win.Event('change'));
+const aOpx = selA.querySelector('option[value="opx"]');
+const aTee = selA.querySelector('option[value="tee"]');
+ok(aOpx.disabled === false && aTee.disabled === true,
+  'QF9: after the switch to fixed-frequency, bias tee is disabled and None is not');
+ok(aOpx.textContent.indexOf('None') === 0,
+  'QF9: and the first option relabels itself "None (no DC bias)" -- got ' + aOpx.textContent);
+let r = nextFrom4();
+ok(r.step === 4 && /bias tee/.test(r.msg) && /no qubit flux/.test(r.msg),
+  'QF9: Next on step 4 is refused for bias tee on a chip with no z line -- got ' +
+  JSON.stringify(r));
+
+// a revisit of step 4 repaints the row from state (render(), not by hand)
+arch = archWorld(SPEC);
+aOpx.textContent = 'stale'; aOpx.disabled = true; aTee.disabled = false;
+// a fixed-frequency chip whose row was painted stale (a draft restore, or
+// the arch changed while step 4 was not on screen)
+G.state.chipArch = 'fixed_frequency';
+G.state.pairGate = 'cr';
+G.state.qubitFlux = false;
+G.goToStep(4);
+ok(aOpx.disabled === false && aTee.disabled === true &&
+   aOpx.textContent.indexOf('None') === 0,
+  'QF9: goToStep(4) repaints the Flux source row -- got ' + aOpx.textContent);
+
+// QA review of F9: the guard's advice is reachable -- choose None on the top
+// selector (a real change event), and Next goes through.
+arch = archWorld(SPEC);
+T.applyFluxSource('tee');
+arch.value = 'fixed_frequency';
+arch.dispatchEvent(new win.Event('change'));
+r = nextFrom4();
+ok(r.step === 4 && /QDAC-II or None/.test(r.msg), 'QF9: precondition -- tee is refused');
+ok(!aOpx.disabled, 'QF9: the None the message names is selectable');
+selA.value = 'opx';
+selA.dispatchEvent(new win.Event('change', { bubbles: true }));
+ok(G.state.spec.qubits.every(function (q) {
+     return !((G.state.spec.qdac || {}).qubits || {})[q]; }) &&
+   selA.value === 'opx', 'QF9: None applied to every qubit -- got ' + selA.value);
+r = nextFrom4();
+ok(r.step === 5, 'QF9: after None, step 4 lets the chip through -- got ' + JSON.stringify(r));
+
+// the same chip set to QDAC-II (a QdacBiasedFixedFrequencyTransmon) passes
+arch = archWorld(SPEC);
+T.applyFluxSource('qdac');
+arch.value = 'fixed_frequency';
+arch.dispatchEvent(new win.Event('change'));
+r = nextFrom4();
+ok(r.step === 5, 'QF9: fixed-frequency + QDAC-only is buildable -- got ' + JSON.stringify(r));
+
+// a tunable-coupler CZ with EVERY qubit QDAC-only has no qubit flux line
+const SPEC_P = JSON.parse(JSON.stringify(SPEC));
+SPEC_P.qubit_pairs = [['q1', 'q2']];
+archWorld(SPEC_P);
+T.applyFluxSource('qdac');
+r = nextFrom4();
+ok(r.step === 4 && /QDAC-only/.test(r.msg),
+  'QF9: all-QDAC on a tunable-coupler CZ chip is refused at step 4 -- got ' +
+  JSON.stringify(r));
+// ...but a PARTIAL-QDAC chip is a build-time warn-and-skip, never blocked
+T.setQubitFluxSource('q3', 'opx');
+T.deriveLines();
+r = nextFrom4();
+ok(r.step === 5, 'QF9: partial QDAC on a CZ chip still passes -- got ' + JSON.stringify(r));
+// and a bias tee on every qubit keeps its z line, so it passes too
+archWorld(SPEC_P);
+T.applyFluxSource('tee');
+r = nextFrom4();
+ok(r.step === 5, 'QF9: bias tee on a CZ chip passes -- got ' + JSON.stringify(r));
 
 if (fails) { console.error(fails + ' check(s) failed'); process.exit(1); }
 console.log('generate_fluxsource_selfcheck: all checks passed');

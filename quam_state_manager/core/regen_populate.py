@@ -428,6 +428,31 @@ def protect_paths(changed: list[tuple[str, str, str]], spec_populate: Any,
     return protect, conflicts
 
 
+_DRAG_OP_LEAF_RE = re.compile(r"^qubits\.[^.]+\.xy\.operations\.([^.]+)\.[^.]+$")
+# the seed op itself: "x180" or a suffixed name ("x180_DragCosine"), not "x1800"
+_X180_SEED_RE = re.compile(r"^x180(?!\d)")
+
+
+def protected_detail(paths: list[str], old_state: dict, merged: dict,
+                     cap: int = 80) -> list[dict]:
+    """``[{path, old, new, derived_from}]`` for the populate-protected leaves
+    (QA F17): the report said "2 populate edits applied" for ONE edited cell
+    and never named that the second was a calibrated ``x90.amplitude``
+    re-derived from the x180 seed. ``old`` is the source chip's value,
+    ``new`` the rebuilt one; ``derived_from`` is ``"x180"`` for a DragCosine
+    family member other than the seed itself (see ``_DRAG_FAMILY_RE``)."""
+    out: list[dict] = []
+    for p in paths[:cap]:
+        m = _DRAG_OP_LEAF_RE.match(p)
+        op = m.group(1) if m else None
+        out.append({"path": p, "old": _walk(old_state, p),
+                    "new": _walk(merged, p),
+                    "derived_from": ("x180" if op and _DRAG_FAMILY_RE.match(op)
+                                     and not _X180_SEED_RE.match(op) else None)})
+    # the value the user typed first, then what the build derived from it
+    return sorted(out, key=lambda d: d["derived_from"] is not None)
+
+
 def _protect_cr_zz(add, add_rel, merged_pid: str, fname: str,
                    pair_new: dict | None, members: tuple[str, str] | None,
                    new_state: dict) -> None:

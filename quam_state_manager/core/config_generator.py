@@ -72,6 +72,16 @@ def _is_int(v) -> bool:
     return isinstance(v, int) and not isinstance(v, bool)
 
 
+# QA F10: a QOP host is an IPv4/IPv6 address or a DNS name (qm-saas hands a
+# hostname), so this only refuses characters none of them can hold -- spaces,
+# "!", "/" ... -- never a legal name. A port is a TCP port: 1-65535.
+_NET_HOST_RE = re.compile(r"[A-Za-z0-9._:%\[\]-]+")
+
+
+def _is_valid_port(v) -> bool:
+    return _is_int(v) and 1 <= v <= 65535
+
+
 def _validate_channel(channel, ctx: str) -> list[str]:
     """Validate a single ``channel`` (port-pin) object. Returns error strings."""
     if not isinstance(channel, dict):
@@ -108,13 +118,16 @@ def validate_spec(spec) -> list[str]:
     if not isinstance(network, dict):
         errors.append("network: missing or not an object")
     else:
-        if not network.get("host"):
+        host = network.get("host")
+        if not host:
             errors.append("network.host: required")
+        elif not (isinstance(host, str) and _NET_HOST_RE.fullmatch(host.strip())):
+            errors.append(f"network.host: {host!r} is not an IP address or hostname")
         if not network.get("cluster_name"):
             errors.append("network.cluster_name: required")
         port = network.get("port")
-        if port is not None and not _is_int(port):
-            errors.append("network.port: must be an integer or null")
+        if port is not None and not _is_valid_port(port):
+            errors.append("network.port: must be an integer 1-65535, or empty")
 
     # -- instruments -------------------------------------------------------
     instruments = spec.get("instruments")
@@ -190,11 +203,21 @@ def validate_spec(spec) -> list[str]:
 
     # -- qubit_pairs -------------------------------------------------------
     pairs = spec.get("qubit_pairs", []) or []
+    # QA r2-34: the builder keys a pair by its ORDERED (control, target), so a
+    # pair listed twice builds once -- the Review counted a pair the chip
+    # never got. Anti-parallel CR pairs ([q1,q2] + [q2,q1]) are two pairs.
+    first_at: dict = {}
     for i, pair in enumerate(pairs):
         if not (isinstance(pair, (list, tuple)) and len(pair) == 2):
             errors.append(f"qubit_pairs[{i}]: must be a [control, target] pair")
             continue
         control, target = str(pair[0]), str(pair[1])
+        if (control, target) in first_at:
+            errors.append(f"qubit_pairs[{i}]: duplicate of "
+                          f"qubit_pairs[{first_at[(control, target)]}] "
+                          f"({control}-{target})")
+        else:
+            first_at[(control, target)] = i
         if control not in qubit_set:
             errors.append(f"qubit_pairs[{i}]: control '{control}' is not a declared qubit")
         if target not in qubit_set:
@@ -670,7 +693,15 @@ def discover_uv_venvs() -> list[dict]:
         if not calib:
             continue
         try:
-            node = Path(calib)
+            # QA generate-r2-29: a qualibrate folder can be drive-less rooted
+            # (``\work\...``); the stat below already resolves it against
+            # the current drive, so spell that drive out — the row's python
+            # then equals what resolve_python_interpreter returns for the
+            # same folder typed with its drive (the Custom path), and a row
+            # click never persists a drive-relative interpreter. absolute(),
+            # not resolve(): a POSIX .venv/bin/python is a symlink to the
+            # base interpreter.
+            node = Path(calib).absolute()
             for _ in range(5):                    # itself + ≤4 ancestors
                 venv = node / ".venv"
                 if (venv / "pyvenv.cfg").is_file():

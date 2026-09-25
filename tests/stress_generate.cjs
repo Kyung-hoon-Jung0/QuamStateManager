@@ -779,9 +779,11 @@ async function main() {
   for (const v of ['abc', '999.999.999.999', '', '-1', '🙂']) {
     await typeInto('#gen-qdac-ip', v, { settle: 120, fast: true });
   }
+  // The LAST typed value must be what spec.qdac.ip_address holds (the old
+  // check read a non-existent `.ip` key OR'd with an always-true test, so it
+  // passed while every IP edit went into a detached object -- QA r2-02).
   ok('a hostile QDAC IP is stored as text and never breaks the spec',
-     typeof (await spec(`(QuamGen.state.spec.qdac||{}).ip`)) !== 'undefined' ||
-     (await spec(`JSON.stringify(QuamGen.state.spec.qdac||{})`)) !== null,
+     (await spec(`(QuamGen.state.spec.qdac||{}).ip_address`)) === '🙂',
      await spec(`JSON.stringify(QuamGen.state.spec.qdac||{}).slice(0,300)`));
   await ev(`(function(){var s=document.getElementById('gen-flux-source'); s.value='opx'; s.dispatchEvent(new Event('change',{bubbles:true})); return 1;})()`);
   await sleep(350);

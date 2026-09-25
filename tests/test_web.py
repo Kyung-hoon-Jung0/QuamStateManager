@@ -3830,6 +3830,77 @@ class TestGenerate:
         assert "Pull & apply" in warns[1], warns[1]
         assert "(↓ Take live) and re-generate" not in warns[1], warns[1]
 
+    # --- QA generate-r2-21: a quoted "Copy as path" output folder was refused
+    # as "not an absolute path" although it is one.
+    def test_regenerate_build_accepts_a_quoted_copy_as_path(
+            self, loaded_client, monkeypatch, tmp_path_factory):
+        calls, wc = self._regen_rig(loaded_client, monkeypatch)
+        out = tmp_path_factory.mktemp("regen_quoted") / "out"
+        resp = loaded_client.post("/regenerate/build", json={
+            "spec": _gen_valid_spec(), "source_folder": f'"{wc}"',
+            "output_path": f'"{out}"'})
+        assert resp.status_code == 200, resp.get_json()
+        assert [Path(c) for c in calls] == [out]
+
+    # --- QA regenerate-r2-21: an unsaved Live-State-Edit change (the tray's
+    # "1 unsaved change") lives only in memory; reconstruct + build read the
+    # working-copy FILES, so the rebuild silently carried the old value.
+    def test_regenerate_carries_an_unsaved_edit_and_says_so(
+            self, loaded_client, monkeypatch, tmp_path_factory):
+        from quam_state_manager.core import regenerate as regen_mod
+        calls, wc = self._regen_rig(loaded_client, monkeypatch)
+        got = {}
+        monkeypatch.setattr(
+            regen_mod, "run_regenerate",
+            lambda py, src, spec, out, timeout=300, **kw: got.update(kw)
+            or {"ok": True, "status": "ok", "error": None, "merge": None})
+        seen = {}
+        real_rec = regen_mod.reconstruct_from_folder
+
+        def spy_rec(folder, sidecar_dirs=(), source=None):
+            seen["source"] = source
+            return real_rec(folder, sidecar_dirs=sidecar_dirs, source=source)
+
+        monkeypatch.setattr(regen_mod, "reconstruct_from_folder", spy_rec)
+        out = tmp_path_factory.mktemp("regen_unsaved") / "out"
+
+        def build():
+            got.clear()
+            resp = loaded_client.post("/regenerate/build", json={
+                "spec": _gen_valid_spec(), "source_folder": wc,
+                "output_path": str(out)})
+            assert resp.status_code == 200, resp.get_json()
+            return resp.get_json()
+
+        # clean chip: the files, exactly as before -- nothing added
+        rec = loaded_client.post("/regenerate/reconstruct", json={}).get_json()
+        assert rec.get("unsaved_included") == 0 and seen["source"] is None
+        assert "old_source" not in got and "unsaved_included" not in build()
+
+        r = loaded_client.post("/field/edit", data={
+            "dot_path": "qubits.qA1.f_01", "value": "5.123e9"})
+        assert r.status_code == 200
+        on_disk = json.loads((Path(wc) / "state.json").read_text(encoding="utf-8"))
+        assert on_disk["qubits"]["qA1"]["f_01"] != 5.123e9   # unsaved: memory only
+
+        rec = loaded_client.post("/regenerate/reconstruct", json={}).get_json()
+        assert rec["ok"] is True and rec["unsaved_included"] == 1
+        assert seen["source"][0]["qubits"]["qA1"]["f_01"] == 5.123e9
+        assert any("1 unsaved edit " in n for n in rec["info_notes"]), rec["info_notes"]
+        body = build()
+        assert body["unsaved_included"] == 1
+        old_state, _old_wiring = got["old_source"]
+        assert old_state["qubits"]["qA1"]["f_01"] == 5.123e9
+        # a copy, never the live store dict the build could race with
+        app = loaded_client.application
+        store = app.config["contexts"][app.config["active_context"]]["store"]
+        assert old_state is not store.state
+
+        # once saved, the files hold the edit and the in-memory path stands down
+        assert loaded_client.post("/save").status_code in (200, 302)
+        body = build()
+        assert "old_source" not in got and "unsaved_included" not in body
+
     # --- QA review of F2/F3: the chip loaded NOW is protected whichever chip
     # the posting tab reconstructed, and no build lands under a chip SM has open.
     def test_regenerate_build_stale_tab_never_writes_the_chip_loaded_now(

@@ -123,7 +123,43 @@ const payload = {
   feedlines: { q0: 'mux0_0', q1: 'mux0_0', q2: 'mux0_0' },
   warnings: []
 };
+// QA regenerate-r2-38: the chip before the import pinned lines onto slots the
+// CSV's instruments do not have (a Re-generate pins EVERY line) -- a TWPA pump
+// on slot 3, a CR drive the CSV does not pin -- and step 3 showed the old
+// chassis. "Replaces the ... port pins" must mean it.
+state.spec.twpas = [{ id: 'twpa1', qubits: ['qA1', 'q1'] },
+                    { id: 'twpa2', qubits: ['#/qubits/q2', '#/qubits/q9'] }];
+state.spec.lines = [
+  { element: 'twpa1', line: 'twpa_pump',
+    channel: { kind: 'mw_fem', con: 1, slot: 3, out_port: 7 } },
+  { element: 'q0-q1', line: 'cross_resonance',
+    channel: { kind: 'mw_fem', con: 1, slot: 3, out_port: 5 } }];
+state.spec.instruments = { controllers: [{ con: 1, fems: [
+  { slot: 3, fem: 'mw' }, { slot: 5, fem: 'lf' }] }], opx_plus: [], octaves: [] };
+win.document.getElementById('gen-chassis-count').value = '2';
 ok(T.applyPortCsv(payload) === true, 'applyPortCsv accepts a valid payload');
+{
+  const pump = state.spec.lines.find(l => l.element === 'twpa1' && l.line === 'twpa_pump');
+  ok(pump && pump.channel == null,
+     'r2-38: the TWPA pump is re-allocated, not left on the old slot 3 — got ' +
+     JSON.stringify(pump && pump.channel));
+  const cr = state.spec.lines.find(l => l.element === 'q0-q1' && l.line === 'cross_resonance');
+  ok(cr && cr.channel == null,
+     'r2-38: an old pin the CSV does not set is gone too — got ' +
+     JSON.stringify(cr && cr.channel));
+  ok(JSON.stringify(state.spec.twpas[0].qubits) === '["q1"]',
+     'r2-38: TWPA links keep only qubits that still exist — got ' +
+     JSON.stringify(state.spec.twpas[0].qubits));
+  ok(JSON.stringify(state.spec.twpas[1].qubits) === '["#/qubits/q2"]',
+     'r2-38: a re-generated pointer link is judged by its qubit id — got ' +
+     JSON.stringify(state.spec.twpas[1].qubits));
+  ok(win.document.getElementById('gen-chassis-count').value === '1',
+     'r2-38: the chassis count follows the imported instruments');
+  const tiles = win.document.getElementById('gen-chassis-list').textContent;
+  ok(/MW/.test(tiles) && !/LF/.test(tiles),
+     'r2-38: step 3 shows the imported MW-FEM, not the old LF slot — got ' +
+     JSON.stringify(tiles.replace(/\s+/g, ' ').slice(0, 200)));
+}
 ok(state.spec.qubits.join(',') === 'q0,q1,q2', 'qubits installed');
 ok(state.spec.qubit_pairs.length === 4, 'directed pairs installed');
 ok(state.pairGate === 'cr', 'architecture flipped to CR');

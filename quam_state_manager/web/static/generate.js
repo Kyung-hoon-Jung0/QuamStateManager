@@ -139,7 +139,19 @@
     2: function () {
       var net = state.spec.network;
       if (!net.host) return "Enter the QOP host IP.";
+      // QA F10: an IP or a DNS name (qm-saas hands a hostname) -- refuse only
+      // what no address can hold. validate_spec mirrors it (step-rail jumps
+      // skip this guard).
+      if (!/^[A-Za-z0-9._:%\[\]-]+$/.test(net.host)) {
+        return "Host must be an IP address or hostname — no spaces or symbols " +
+               "(got \"" + net.host + "\").";
+      }
       if (!net.cluster_name) return "Enter the cluster name.";
+      if (net.port != null &&
+          !(Number.isInteger(net.port) && net.port >= 1 && net.port <= 65535)) {
+        return "Port must be a whole number from 1 to 65535, or left blank " +
+               "(got " + net.port + ").";
+      }
       return null;
     },
     3: function () {
@@ -161,6 +173,29 @@
         return !p[0] || !p[1] || p[0] === p[1];
       });
       if (badPair) return "Every qubit pair needs two different qubits.";
+      // QA r2-34: a pair listed twice builds ONCE (the builder keys pairs by
+      // id), so Review counted a pair the chip never got. Ordered for CR
+      // (q1→q2 and q2→q1 are two drives); unordered for a CZ gate (q1–q2 and
+      // q2–q1 are one physical pair) -- in Re-generate too, where roles are
+      // not auto-assigned but the coupler is still one (review of r2-34).
+      // A source chip that itself lists both orders keeps them.
+      var seenPair = {}, dupPair = null,
+          czUnordered = state.pairGate === "cz_fixed" || state.pairGate === "cz_tunable";
+      state.spec.qubit_pairs.some(function (p) {
+        var k = czUnordered ? p.slice().sort().join("|") : p[0] + "|" + p[1];
+        var o = p[0] + "|" + p[1];
+        var srcBoth = czUnordered && state.mode === "regenerate" &&
+          regenPairOrient && (regenPairOrient[k] || {}).both;
+        if (seenPair[k] && !(srcBoth && seenPair[k] !== o)) {
+          dupPair = p; return true;
+        }
+        seenPair[k] = seenPair[k] || o;
+        return false;
+      });
+      if (dupPair) {
+        return "Qubit pair " + dupPair[0] + (czUnordered ? "–" : "→") +
+          dupPair[1] + " is listed twice — remove the duplicate.";
+      }
       if (state.spec.twpas.some(function (t) { return !t.id; })) {
         return "Every TWPA needs an id.";
       }
@@ -180,6 +215,29 @@
         return "Fixed-frequency qubits can't use a tunable-coupler CZ (the CZ gate " +
                "needs a qubit flux line). Pick a flux-tunable architecture, or use " +
                "the fixed-frequency (cross-resonance) chip type.";
+      }
+      // QA F9: flux-source shapes this architecture cannot build -- caught
+      // here, not as an off-screen ';'-joined list at step 5 (validate_spec).
+      // A bias tee plays pulses on the qubit's z line; there is none here.
+      if (!state.qubitFlux) {
+        var teeN = state.spec.qubits.filter(isBiasTee).length;
+        if (teeN) {
+          return teeN + " qubit" + (teeN === 1 ? " is" : "s are") + " set to " +
+                 "'Both — bias tee', but this architecture has no qubit flux (z) " +
+                 "line for the LF-FEM pulse half — set Flux source to QDAC-II or None.";
+        }
+      }
+      // A tunable-coupler CZ with EVERY qubit QDAC-only has no qubit flux line
+      // at all (validate_spec: "coupler lines need qubit flux lines"). A
+      // partial-QDAC chip is a warn-and-skip at build time, never blocked.
+      if (state.pairGate === "cz_tunable" && state.qubitFlux &&
+          state.spec.qubit_pairs.length && state.spec.qubits.length &&
+          state.spec.qubits.every(function (q) {
+            return isQdacBiased(q) && !isBiasTee(q);
+          })) {
+        return "A tunable-coupler CZ plays on the qubit flux (z) line, but every " +
+               "qubit is QDAC-only — put at least the pair qubits on LF-FEM or " +
+               "bias tee, or pick another architecture.";
       }
       // Pairs declared but the selected 2-qubit gate can't be built on this
       // hardware → the build would silently drop them (no error, no pairs in
@@ -274,6 +332,19 @@
     return p.charAt(0) === "/" || /^[A-Za-z]:[\\/]/.test(p) || /^\\\\/.test(p);
   }
 
+  // QA generate-r2-21: Explorer's "Copy as path" wraps the path in quotes
+  // ("D:\x\y"). Strip ONE matched surrounding pair -- never an interior
+  // quote. Every value starting with a quote fails looksAbsolutePath today,
+  // so this only changes inputs that are refused now. Mirrored server-side
+  // by routes._unquote_path.
+  function unquotePath(s) {
+    s = String(s == null ? "" : s).trim();
+    if (s.length >= 2 && (s[0] === '"' || s[0] === "'") && s[s.length - 1] === s[0]) {
+      s = s.slice(1, -1).trim();
+    }
+    return s;
+  }
+
   function root() {
     return document.getElementById("generate-root");
   }
@@ -333,6 +404,7 @@
     if (state.step >= 5) deriveLines();
     if (state.step === 4) {
       syncLineTypeToggles();
+      renderFluxSource();   // QA F9: a revisit repaints the row from state
       syncTopoControls();   // show the Renumber button if we arrived with id holes
       // Re-render the pair list from state: a CZ auto-orientation flip on
       // step 6/8 (czAutoOrient) reorders spec.qubit_pairs while this list
@@ -609,7 +681,7 @@
   function useCustomEnv() {
     var input = document.getElementById("gen-env-custom-path");
     var status = document.getElementById("gen-env-custom-status");
-    var python = input && input.value.trim();
+    var python = input && unquotePath(input.value);
     if (!python) { if (status) status.textContent = "Enter an interpreter or venv-folder path."; return; }
     if (status) status.textContent = "checking…";
     fetch("/generate/probe?python=" + encodeURIComponent(python))
@@ -651,8 +723,10 @@
     if (port) {
       port.addEventListener("input", function () {
         var v = port.value.trim();
-        var num = parseInt(v, 10);
-        state.spec.network.port = (v === "" || isNaN(num)) ? null : num;
+        // QA F10: Number, not parseInt -- parseInt read "1e5" as 1 and "80.5"
+        // as 80, silently; the step-2 guard judges the value as typed.
+        var num = Number(v);
+        state.spec.network.port = (v === "" || !isFinite(num)) ? null : num;
       });
     }
   }
@@ -1016,6 +1090,35 @@
       pairs.push([qubits[i], qubits[i + 1]]);
     }
     return pairs;
+  }
+
+  // QA r2-34: "+ Add pair" always pre-filled [qs[0], qs[1]] -- a duplicate of
+  // row 1 that the builder silently collapsed. Offer the first chain pair not
+  // listed yet (either direction), then any unlisted combination; blank only
+  // when every combination is taken (the step-4 gate refuses a blank pair).
+  function nextFreePair(qs, pairs) {
+    var taken = {};
+    (pairs || []).forEach(function (p) {
+      if (p && p[0] && p[1]) taken[p.slice().sort().join("|")] = true;
+    });
+    var free = function (a, b) { return !taken[[a, b].sort().join("|")]; };
+    var chain = defaultChainPairs(qs || []);
+    for (var i = 0; i < chain.length; i++) {
+      if (free(chain[i][0], chain[i][1])) return chain[i].slice();
+    }
+    for (var a = 0; a < (qs || []).length; a++) {
+      for (var b = a + 1; b < qs.length; b++) {
+        if (free(qs[a], qs[b])) return [qs[a], qs[b]];
+      }
+    }
+    return ["", ""];
+  }
+
+  // QA F15: repaint the chip board (its caption counts pairs, its edges draw
+  // them) after a pair edit made OUTSIDE the board. Guarded -- selfchecks eval
+  // generate.js without wiring-grid.js.
+  function refreshBoard() {
+    if (window.WiringGrid) window.WiringGrid.refresh();
   }
 
   // Atomic lock-step rename of the qubit set against a single old→new map
@@ -1531,11 +1634,17 @@
     }
     var popPairs = (state.spec.populate || {}).pairs || {};
     state.spec.qubit_pairs.forEach(function (pair, idx) {
+      // QA r2-09 review: every path that changes a row (its selects, x then
+      // + Add pair, a board edge, Ctrl+Z) re-renders here -- follow it once.
+      regenFollowPairOrientation(pair);
       var row = document.createElement("div");
       row.className = "gen-pair-row";
       // Surface the (previously invisible) manual orientation pin.
       var isManual = cz && pair[0] && pair[1] &&
         (popPairs[pair[0] + "-" + pair[1]] || {}).cz_order === "manual";
+      var srcOrient = regenPairRec(pair);
+      var isReversed = !!(srcOrient && pair[0] === srcOrient.src[1] &&
+                          pair[1] === srcOrient.src[0]);
       row.innerHTML =
         '<select class="gen-pair-c"><option value="">—</option>' +
         qubitOptions(pair[0]) + "</select>" +
@@ -1554,17 +1663,36 @@
           row.querySelector("." + cls).classList.add("gen-pair-missing");
         }
       });
+      var revNote = null;
+      if (isReversed) {
+        // Its own line UNDER the row: the pairs column is narrow, and an
+        // inline chip pushed the row's x out of view.
+        revNote = document.createElement("div");
+        revNote.className = "gen-pair-reversed-chip";
+        revNote.textContent = "⚠ reversed vs the source chip — its CZ " +
+          "calibration will not carry";
+        revNote.title =
+          "The source chip has this pair as " + srcOrient.src[0] + " → " +
+          srcOrient.src[1] + ". Its orientation-dependent calibration (CZ " +
+          "macros, phase shifts, confusion matrix, bench history) will NOT " +
+          "be carried to " + pair[0] + " → " + pair[1] + " — the build " +
+          "report lists it as not carried. The flux pulse stays on the same " +
+          "physical qubit, seeded from the source's CZ values. Set the order " +
+          "back to keep the calibration.";
+      }
       row.querySelector(".gen-pair-c").addEventListener("change", function (e) {
         pair[0] = e.target.value;
         state.pairsTouched = true;
         markPairManual(pair);
         renderPairs();   // repaint (the manual chip may have just appeared)
+        refreshBoard();  // QA F15: the edge moved
       });
       row.querySelector(".gen-pair-t").addEventListener("change", function (e) {
         pair[1] = e.target.value;
         state.pairsTouched = true;
         markPairManual(pair);
-        renderPairs();
+        renderPairs();   // ...which follows a reversal (regenFollowPairOrientation)
+        refreshBoard();
       });
       row.querySelector(".gen-row-del").addEventListener("click", function () {
         state.pairsTouched = true;
@@ -1572,8 +1700,94 @@
         renderPairs();
         syncLineTypeToggles();   // gate selector depends on pair count
         deriveLines();           // keep spec.lines in sync after removal
+        refreshBoard();          // QA F15: caption + edge now
       });
       list.appendChild(row);
+      if (revNote) list.appendChild(revNote);
+    });
+  }
+
+  // QA regenerate-r2-09 -- Re-generate only. A source pair's populate bucket
+  // (its moving_qubit ROLE, its pinned line) describes the orientation it is
+  // keyed under. Reversing Control/Target by hand left the role unswapped:
+  // "control" then meant the OTHER qubit, and the flux pulse silently moved
+  // to it at the default amplitude. The reversal now drags the bucket, the
+  // role, the pins and the allocation along exactly as czAutoOrient's flip
+  // does (flipPairOrder), tracked per PAIR MEMBERSHIP (review: a row deleted
+  // and re-added, or re-drawn on the board, is a new array but the same
+  // coupler) against the orientation its bucket currently has; the row also
+  // says it is reversed.
+  var regenPairOrient = null;   // {"qa|qb": {src, cur}}; set by hydrate
+
+  function regenPairRec(pair) {
+    if (state.mode !== "regenerate" || !regenPairOrient || !pair ||
+        !pair[0] || !pair[1] || pair[0] === pair[1]) return null;
+    var rec = regenPairOrient[[pair[0], pair[1]].sort().join("|")];
+    // A source chip listing BOTH orientations has two real pairs here --
+    // neither is a reversal of the other.
+    return (rec && !rec.both) ? rec : null;
+  }
+
+  function regenFollowPairOrientation(pair) {
+    var rec = regenPairRec(pair);
+    if (!rec) return;
+    // Listed twice (both orders) is a duplicate step 4 refuses -- never move
+    // the bucket between the two rows.
+    var k = [pair[0], pair[1]].sort().join("|");
+    if (state.spec.qubit_pairs.filter(function (p) {
+      return p && p[0] && p[1] && [p[0], p[1]].sort().join("|") === k;
+    }).length > 1) return;
+    // The bucket's own key says which order it is in now (an undo may have
+    // restored either); the last recorded order when there is no bucket.
+    var pp = (state.spec.populate || {}).pairs || {};
+    var cur = pp[pair[0] + "-" + pair[1]] ? [pair[0], pair[1]]
+            : pp[pair[1] + "-" + pair[0]] ? [pair[1], pair[0]] : rec.cur;
+    if (pair[0] === cur[1] && pair[1] === cur[0]) {
+      pair[0] = cur[0]; pair[1] = cur[1];   // back to the bucket's order,
+      flipPairOrder(pair);                  // then flip WITH everything
+    }
+    rec.cur = [pair[0], pair[1]];
+  }
+
+  // QA review of r2-10: the source chip's TWPAs and the ports their pinned
+  // lines use (set by hydrate). A source TWPA missing from step 4 carries as
+  // a RENAME when a new row's pins share a port with it -- the merge's own
+  // rule (regen_merge._twpas_the_spec_renamed); otherwise it is removed.
+  var regenTwpaSrc = null;   // {id: {"con/slot/port": true}}
+
+  // The output ports a TWPA's lines use: its pins, plus the step-5
+  // allocation (a new TWPA has no pin until it is allocated).
+  function twpaPinKeys(id) {
+    var keys = {};
+    var add = function (ch) {
+      if (!ch || (ch.io_type && ch.io_type !== "output")) return;
+      var p = ch.out_port != null ? ch.out_port : ch.port;
+      if (p != null) keys[[ch.con, ch.slot, p].join("/")] = true;
+    };
+    (state.spec.lines || []).forEach(function (ln) {
+      if (ln && ln.element === id && /^twpa_/.test(ln.line || "")) add(ln.channel);
+    });
+    var al = (state.allocation || {})[id] || {};
+    Object.keys(al).forEach(function (k) { (al[k] || []).forEach(add); });
+    return keys;
+  }
+
+  // [{id, renamed: new id | null, known: the source had pins}] -- Review.
+  function regenTwpaChanges() {
+    if (state.mode !== "regenerate" || !regenTwpaSrc) return [];
+    var cur = {};
+    (state.spec.twpas || []).forEach(function (t) { if (t && t.id) cur[t.id] = true; });
+    return Object.keys(regenTwpaSrc).filter(function (sid) {
+      return !cur[sid];
+    }).map(function (sid) {
+      var src = Object.keys(regenTwpaSrc[sid]);
+      var to = Object.keys(cur).filter(function (nid) {
+        if (regenTwpaSrc[nid]) return false;
+        var k = twpaPinKeys(nid);
+        return src.some(function (x) { return k[x]; });
+      });
+      return { id: sid, renamed: to.length === 1 ? to[0] : null,
+               known: src.length > 0 };
     });
   }
 
@@ -1596,17 +1810,37 @@
       input.type = "text";
       input.value = twpa.id || "";
       input.placeholder = "twpaA";
+      // The key this row's populate bucket and pinned lines live under. A
+      // rename that passes through an EMPTY id (select-all + Delete, then
+      // type) used to compare against '' and orphan the bucket under the old
+      // id: every step-6 cell of the renamed TWPA went blank and it built
+      // uncalibrated (QA regenerate-r2-10). Also re-keys its pins, so the
+      // renamed TWPA keeps its pump port and its isolation line.
+      var popKey = twpa.id || "";
       input.addEventListener("input", function () {
-        var oldId = twpa.id, newId = input.value.trim();
+        var newId = input.value.trim();
         twpa.id = newId;
+        if (!newId || newId === popKey) return;
         // populate.twpa is keyed by TWPA id (not qubit id — so it is
         // deliberately NOT in applyQubitIdMap's / prunePopulate's lists,
         // which would delete every TWPA bucket). Follow a rename.
         var pt = (state.spec.populate || {}).twpa;
-        if (pt && oldId && newId && oldId !== newId && pt[oldId] && !pt[newId]) {
-          pt[newId] = pt[oldId];
-          delete pt[oldId];
+        var lines = state.spec.lines || [];
+        var taken = (pt && pt[newId]) || lines.some(function (ln) {
+          return ln.element === newId;
+        });
+        if (taken) return;   // another TWPA's key — keep ours until it differs
+        if (pt && popKey && pt[popKey]) {
+          pt[newId] = pt[popKey];
+          delete pt[popKey];
         }
+        lines.forEach(function (ln) {
+          if (popKey && ln.element === popKey &&
+              (ln.line === "twpa_pump" || ln.line === "twpa_isolation")) {
+            ln.element = newId;
+          }
+        });
+        popKey = newId;
       });
       var del = document.createElement("button");
       del.type = "button";
@@ -1614,7 +1848,7 @@
       del.textContent = "×";
       del.addEventListener("click", function () {
         var pt = (state.spec.populate || {}).twpa;
-        if (pt) delete pt[twpa.id];
+        if (pt) delete pt[popKey || twpa.id];
         state.spec.twpas.splice(idx, 1);
         renderTwpas();
       });
@@ -1727,12 +1961,15 @@
       if (opt) opt.hidden = (mode !== "mixed");
       Array.prototype.forEach.call(sel.options, function (o) {
         if (o.value !== "opx" && o.value !== "tee") return;
-        // Both play PULSES on an OPX port, so both need a z line to play them
-        // on. Disabled with the reason, never hidden — the option is real,
-        // the architecture just does not have it yet.
-        o.disabled = !lfOk;
-        o.title = lfOk ? ""
-          : "needs a flux-tunable architecture with an LF-FEM (steps 3-4)";
+        // A bias tee plays PULSES on an OPX port, so it needs a z line to
+        // play them on. Disabled with the reason, never hidden — the option
+        // is real, the architecture just does not have it yet. "opx" with no
+        // z line is "None (no DC bias)", always buildable, and the way back
+        // the step-4 guard names (QA review of F9) — never disabled.
+        var off = !lfOk && o.value === "tee";
+        o.disabled = off;
+        o.title = off
+          ? "needs a flux-tunable architecture with an LF-FEM (steps 3-4)" : "";
       });
       // With no OPX z line, "opx" does not mean "biased from an LF-FEM" — it
       // means this qubit has no QDAC entry, i.e. no DC bias at all. Say that.
@@ -1917,6 +2154,10 @@
     reconcilePopulatePairs();   // drop now-irrelevant CR/CZ pair populate
     syncLineTypeToggles();
     deriveLines();
+    // QA F9: the Flux source row reads state.qubitFlux (set just above via
+    // syncLineTypeToggles) -- without this it kept offering LF-FEM / bias
+    // tee on a chip that no longer has a z line.
+    renderFluxSource();
     // Re-style the board edges to the new gate's line bundle (CR arrow / CZ dashed
     // / coupler dot) — edgeStyle() reads state.pairGate at render.
     if (window.WiringGrid) window.WiringGrid.refresh();
@@ -2129,6 +2370,12 @@
     if (!payload || !payload.ok) return false;
     state.spec.instruments = payload.instruments ||
       { controllers: [], opx_plus: [], octaves: [] };
+    // QA r2-38: "replaces the ... port pins" -- deriveLines builds its pinned
+    // map from spec.lines, so the previous chip's pins (a Re-generate pins
+    // every line) survived onto instruments that no longer have those slots:
+    // a TWPA pump kept con1/slot 3 and the build failed NotEnoughChannels.
+    // The CSV's own pins are applied after deriveLines below, as before.
+    state.spec.lines = [];
     state.spec.qubits = (payload.qubits || []).slice();
     state.namesTouched = true;      // q0-based ids must survive the scheme gate
     state.spec.qubit_pairs = (payload.qubit_pairs || [])
@@ -2141,6 +2388,22 @@
     });
     var countInput = document.getElementById("gen-qubit-count");
     if (countInput) countInput.value = state.spec.qubits.length;
+    // QA r2-38: TWPAs stay, but only linked to qubits that still exist. A
+    // re-generated spec links them by pointer ("#/qubits/q1"): judged by id.
+    var validQ = {};
+    state.spec.qubits.forEach(function (q) { validQ[q] = true; });
+    (state.spec.twpas || []).forEach(function (tw) {
+      if (tw && typeof tw === "object") {
+        tw.qubits = (tw.qubits || []).filter(function (q) {
+          return validQ[String(q).replace(/^#\/qubits\//, "")];
+        });
+      }
+    });
+    // ...and step 3 shows the imported instruments, not the previous chassis
+    // (hydrateFromSpec repaints the same way).
+    var chCount = document.getElementById("gen-chassis-count");
+    if (chCount) chCount.value = (state.spec.instruments.controllers || []).length;
+    if (typeof renderChassis === "function") renderChassis();
 
     // architecture: the CSV layout IS the shared-port CR chip. State first
     // (deriveLines below must see it even before any UI listener runs), then
@@ -2219,7 +2482,9 @@
         if (!f) return;
         if (state.spec.qubits.length &&
             !window.confirm("Importing the CSV replaces the current qubits, "
-                            + "pairs, instruments and port pins. Continue?")) {
+                            + "pairs, instruments and port pins (TWPAs are "
+                            + "kept, re-allocated on the imported "
+                            + "instruments). Continue?")) {
           return;
         }
         var reader = new FileReader();
@@ -2269,13 +2534,12 @@
     if (addPair) {
       addPair.addEventListener("click", function () {
         state.pairsTouched = true;
-        var qs = state.spec.qubits;
-        state.spec.qubit_pairs.push(
-          qs.length >= 2 ? [qs[0], qs[1]] : ["", ""]
-        );
+        state.spec.qubit_pairs.push(nextFreePair(state.spec.qubits,
+                                                 state.spec.qubit_pairs));
         renderPairs();
         syncLineTypeToggles();   // gate selector depends on pair count
         deriveLines();           // keep spec.lines in sync with the new pair
+        refreshBoard();          // QA F15: caption + edge now, not one click late
       });
     }
     if (addTwpa) {
@@ -2338,27 +2602,27 @@
     var qdIp = document.getElementById("gen-qdac-ip");
     var qdPort = document.getElementById("gen-qdac-port");
     var qdUsb = document.getElementById("gen-qdac-usb");
-    var qd = (state.spec.qdac = state.spec.qdac || qdacInstrumentDefaults());
+    function curQd() { return (state.spec.qdac = state.spec.qdac || qdacInstrumentDefaults()); }
     if (qdComm) {
       qdComm.addEventListener("change", function () {
-        qd.communication_type = qdComm.value;
+        curQd().communication_type = qdComm.value;
         renderQdacInstrument();
       });
     }
-    if (qdIp) qdIp.addEventListener("input", function () { qd.ip_address = qdIp.value.trim(); });
+    if (qdIp) qdIp.addEventListener("input", function () { curQd().ip_address = qdIp.value.trim(); });
     if (qdPort) {
       qdPort.addEventListener("input", function () {
         // An empty field falls back to the 5025 default rather than an
         // explicit null — Python's qdac.get("port", 5025) only substitutes
         // the default when the key is ABSENT, not when it's None.
         var v = parseInt(qdPort.value, 10);
-        qd.port = isNaN(v) ? 5025 : v;
+        curQd().port = isNaN(v) ? 5025 : v;
       });
     }
     if (qdUsb) {
       qdUsb.addEventListener("input", function () {
         var v = parseInt(qdUsb.value, 10);
-        qd.usb_device = isNaN(v) ? null : v;
+        curQd().usb_device = isNaN(v) ? null : v;
       });
     }
 
@@ -2412,6 +2676,7 @@
       var qc = document.getElementById("gen-qubit-count");
       if (qc) qc.value = String(state.spec.qubits.length);
       renderQubitSummary();    // count chip below the board reflects the delete
+      renderNamingUi();        // QA F15: the rename list follows the qubit set
       renderPairs();           // keep the dropdown pair list in sync
       syncLineTypeToggles();   // gate selector depends on pair count
       deriveLines();           // keep spec.lines in sync (respects wiringTouched)
@@ -6198,7 +6463,8 @@
       });
     }
     var cap = document.getElementById("gen-pop-topo-caption");
-    if (cap) cap.textContent = placed + "/" + sp.qubits.length + " placed · " + sp.qubit_pairs.length + " pairs";
+    if (cap) cap.textContent = placed + "/" + sp.qubits.length + " placed · " + sp.qubit_pairs.length +
+      (sp.qubit_pairs.length === 1 ? " pair" : " pairs");
     var leg = document.getElementById("gen-pop-topo-legend");
     if (leg && window.TopoGraph) leg.textContent = window.TopoGraph.legendForGate(state.pairGate);
     if (details.open) renderPopTopoBoard();
@@ -6752,18 +7018,18 @@
   // Read live from the input — the folder browser fills .value directly.
   function getOutputPath() {
     var input = document.getElementById("gen-output-path");
-    return input ? input.value.trim() : "";
+    return input ? unquotePath(input.value) : "";
   }
 
   function getScriptsPath() {
     var input = document.getElementById("gen-scripts-path");
-    return input ? input.value.trim() : (state.scriptsPath || "");
+    return input ? unquotePath(input.value) : (state.scriptsPath || "");
   }
 
   // r16 ⓪-4: the scripts path FOLLOWS the state output folder
   // (`<output>\state_gen_scripts`) until the user edits the box themselves.
   function autoScriptsPath(outPath) {
-    var p = (outPath || "").trim();
+    var p = unquotePath(outPath);
     if (!p) return "";
     var win = /\\/.test(p) || /^[A-Za-z]:/.test(p);
     var sep = win ? "\\" : "/";
@@ -6787,7 +7053,10 @@
       // hand-typed paths.
       ["input", "change"].forEach(function (ev) {
         out.addEventListener(ev, function () {
-          state.outputPath = out.value.trim();
+          state.outputPath = unquotePath(out.value);
+          // QA generate-r2-21: on commit (not while typing -- the caret
+          // would jump) the box shows the path that will be used.
+          if (ev === "change" && out.value !== state.outputPath) out.value = state.outputPath;
           // Durable mirror — a cleared sessionStorage draft (crash, quota,
           // tab close) used to silently lose the output folder.
           try { localStorage.setItem("quam_gen_output_path", state.outputPath); }
@@ -6810,7 +7079,8 @@
       ["input", "change"].forEach(function (ev) {
         sp.addEventListener(ev, function () {
           state._scriptsPathTouched = true;   // user owns the box from here on
-          state.scriptsPath = sp.value.trim();
+          state.scriptsPath = unquotePath(sp.value);
+          if (ev === "change" && sp.value !== state.scriptsPath) sp.value = state.scriptsPath;
           try { localStorage.setItem("quam_gen_scripts_path", state.scriptsPath); }
           catch (e) { /* private mode */ }
         });
@@ -6861,7 +7131,9 @@
     var rows = [
       ["Environment", state.env || "(none selected — step 1)"],
       ["Network", (sp.network.host || "?") +
-        " · cluster " + (sp.network.cluster_name || "?")],
+        " · cluster " + (sp.network.cluster_name || "?") +
+        // QA F10: the port that will be written, shown before Generate
+        (sp.network.port != null ? " · port " + sp.network.port : "")],
       ["Instruments", inst.controllers.length + " OPX1000 (" + femCount +
         " FEMs), " + inst.opx_plus.length + " OPX+, " +
         inst.octaves.length + " Octave"],
@@ -6907,6 +7179,38 @@
       if (czCounts.pending) czParts.push(czCounts.pending + " pending frequencies");
       if (czCounts.equal) czParts.push(czCounts.equal + " equal frequencies");
       rows.splice(5, 0, ["CZ pair orientation", czParts.join(", ")]);
+    }
+    // QA regenerate-r2-09: a source pair reversed by hand loses its
+    // orientation-dependent calibration -- say so BEFORE the build.
+    if (state.mode === "regenerate" && regenPairOrient) {
+      var reversed = sp.qubit_pairs.filter(function (p) {
+        var r = regenPairRec(p);
+        return r && p[0] === r.src[1] && p[1] === r.src[0];
+      }).map(function (p) {
+        return p[1] + " → " + p[0] + " is now " + p[0] + " → " + p[1];
+      });
+      if (reversed.length) {
+        rows.push(["⚠ Reversed pairs", reversed.join("; ") + " — the source " +
+          "pair's orientation-dependent calibration (CZ macros, phase shifts, " +
+          "confusion) will NOT carry; the flux pulse stays on the same qubit. " +
+          "Set the order back on step 4 to keep it."]);
+      }
+    }
+    // QA review of r2-10: a source TWPA renamed or removed on step 4.
+    var twCh = regenTwpaChanges();
+    if (twCh.length) {
+      rows.push([twCh.some(function (c) { return !c.renamed; })
+        ? "⚠ TWPAs changed" : "TWPAs renamed",
+        twCh.map(function (c) {
+          return c.renamed
+            ? c.id + " → " + c.renamed + " (renamed on the same line — its " +
+              "calibration carries)"
+            : c.known
+              ? c.id + " removed — its calibration (pump, isolation) will " +
+                "NOT carry; add it back on step 4 to keep it"
+              : c.id + " is not in the list — carried only if a rebuilt TWPA " +
+                "uses its pump port";
+        }).join("; ")]);
     }
     el.innerHTML = '<table class="gen-review-table"><tbody>' +
       rows.map(function (r) {
@@ -7005,6 +7309,21 @@
    * "Automatic" is the default and is byte-for-byte today's behaviour: the
    * value is only put on the spec when a person picks one.
    */
+  // QA generate-r2-28: every class name a root's `qubits` annotation holds.
+  // Taking the text after the LAST dot turned Dict[str, Union[A, B]] into
+  // "B]" -- the first member dropped, the Union's bracket left behind.
+  function _holdsLabel(t) {
+    var inner = String(t || "")
+      .replace(/^(?:typing\.)?[Dd]ict\[\s*str\s*,\s*/, "").replace(/\]\s*$/, "");
+    var names = [];
+    (inner.match(/[A-Za-z_][\w.]*/g) || []).forEach(function (tok) {
+      var n = tok.split(".").pop();
+      if (/^(Union|Optional|ForwardRef|NoneType|None|typing)$/.test(n)) return;
+      if (names.indexOf(n) < 0) names.push(n);
+    });
+    return names.join(", ");
+  }
+
   function _rootPicker(box, res) {
     var roots = res.roots || [];
     if (!roots.length) return;
@@ -7026,8 +7345,8 @@
     roots.forEach(function (r) {
       var o = document.createElement("option");
       o.value = r.path;
-      var q = String(r.qubits_type || "").replace(/^typing\.Dict\[str, /, "").replace(/\]$/, "");
-      o.textContent = r.path + (q ? "   (holds " + q.split(".").pop() + ")" : "");
+      var q = _holdsLabel(r.qubits_type);
+      o.textContent = r.path + (q ? "   (holds " + q + ")" : "");
       sel.appendChild(o);
     });
     sel.value = (state.spec && state.spec.quam_class) || "";
@@ -7298,9 +7617,10 @@
       el.className = "gen-build-result gen-build-ok";
       var r = res.result;
       var msg = document.createElement("p");
+      var nQ = (r.qubits || []).length, nP = (r.qubit_pairs || []).length;
       msg.textContent = "✓ Generated " +
-        ((r.qubits || []).length) + " qubits and " +
-        ((r.qubit_pairs || []).length) + " pairs into " + outPath;
+        nQ + (nQ === 1 ? " qubit" : " qubits") + " and " +
+        nP + (nP === 1 ? " pair" : " pairs") + " into " + outPath;
       el.appendChild(msg);
       (r.warnings || []).forEach(function (w) {
         var wel = document.createElement("p");
@@ -7336,6 +7656,9 @@
         var dangN = (m.dangling_grafts_total != null)
             ? m.dangling_grafts_total : (m.dangling_grafts || []).length;
         var twpaN = m.twpa_wiring_carried || 0;     // TWPAs carried (wiring + ports)
+        // QA regenerate-r2-17: wiring.network keys step 2 does not show (a
+        // custom/cloud QMM), carried unchanged -- named, never invisible.
+        var netCarried = m.network_carried || [];
         var prunedN = m.pruned_ops || 0;            // redundant old ops cleaned
         var schemaDropN = m.schema_dropped || 0;    // old-stack fields the new env's classes don't know
         // The CAUSE behind most of those drops: the rebuild typed an object
@@ -7354,12 +7677,33 @@
         // carried onto a FEM the rebuild still uses.
         var portsN = (m.ports_carried_total != null)
             ? m.ports_carried_total : (m.ports_carried || []).length;
+        // QA F1 -- port calibration that followed its line to another port.
+        var portsMovedN = (m.ports_moved_total != null)
+            ? m.ports_moved_total : (m.ports_moved || []).length;
         var keptByCls = {};
         (m.class_kept_paths || []).forEach(function (c) {
           keptByCls[c.cls] = (keptByCls[c.cls] || 0) + 1;
         });
         var classGroups = [];
+        // QA r2-28: the server groups the FULL list and measures, per group,
+        // how many fields its re-typed objects dropped. Grouping the capped
+        // page under-counted (80 of 126) and hid a whole group past the cap;
+        // a package move that dropped nothing was painted as a loss.
+        var srvClassGroups = Array.isArray(m.class_changed_groups)
+            ? m.class_changed_groups : null;
+        var classLossyN = classChN, classRetypedN = 0;
+        if (srvClassGroups) {
+          classLossyN = 0;
+          srvClassGroups.forEach(function (g) {
+            classGroups.push({ old: g.old, nw: g.new, paths: g.paths || [],
+                               count: g.count || 0, dropped: g.dropped || 0,
+                               measured: true });
+            if (g.dropped) classLossyN += g.count || 0;
+            else classRetypedN += g.count || 0;
+          });
+        }
         (function () {
+          if (srvClassGroups) return;
           var seen = {};
           classCh.forEach(function (c) {
             var key = c.old + " -> " + c.new;
@@ -7371,17 +7715,32 @@
           });
         })();
         var popProtN = m.populate_protected || 0;   // wizard populate edits kept over tier-1
+        // QA F17: the edited CELLS (one x180 edit protects the whole
+        // DragCosine family, so values > cells). Absent on older results.
+        var popCellsN = (m.populate_cells != null) ? m.populate_cells : null;
+        var popDetail = m.populate_protected_detail || [];
         var popConf = m.populate_conflicts || [];
         var mp = document.createElement("div");
         mp.className = "gen-merge-report";
         mp.innerHTML =
           '<span class="gen-merge-h">Values preserved</span>' +
-          '<span class="gen-merge-stat gen-merge-ok">' + m.carried + ' carried</span>' +
-          '<span class="gen-merge-stat gen-merge-graft">' + m.grafted + ' grafted</span>' +
-          (popProtN ? '<span class="gen-merge-stat gen-merge-ok" title="Values you ' +
+          '<span class="gen-merge-stat gen-merge-ok" title="Calibrated values ' +
+            'from the source chip written over the rebuild\'s fresh defaults ' +
+            '(the same place exists in both chips)">' + m.carried + ' carried</span>' +
+          '<span class="gen-merge-stat gen-merge-graft" title="Values only the ' +
+            'source chip had (your added pulses, macros, extras …) copied into ' +
+            'the rebuild whole">' + m.grafted + ' grafted</span>' +
+          (popProtN ? '<span class="gen-merge-stat gen-merge-ok gen-merge-pop" title="Values you ' +
             'changed in the Populate step — kept as edited (the merge no longer ' +
-            'reverts wizard edits to the old chip\'s values)">' + popProtN +
-            ' populate edit' + (popProtN === 1 ? '' : 's') + ' applied</span>' : '') +
+            'reverts wizard edits to the old chip\'s values). Editing an x180 ' +
+            'seed re-derives the whole DragCosine family (x90, -x90, y180 …) ' +
+            'from it — every value this set is listed below.">' +
+            (popCellsN != null && popCellsN > 0
+              ? popCellsN + ' populate edit' + (popCellsN === 1 ? '' : 's') +
+                ' applied' + (popProtN !== popCellsN ? ' (' + popProtN + ' value' +
+                (popProtN === 1 ? '' : 's') + ')' : '')
+              : popProtN + ' populate edit' + (popProtN === 1 ? '' : 's') +
+                ' applied') + '</span>' : '') +
           (supN ? '<span class="gen-merge-stat gen-merge-ok" title="Value preserved — the ' +
             'rebuild references it (e.g. a CZ pulse the old builder stored inline, now on the ' +
             'qubit z line)">' + supN + ' via reference</span>' : '') +
@@ -7391,9 +7750,20 @@
             'rebuild still uses. A port something DID use is never brought back ' +
             '— that is how a removed qubit stays removed.">' + portsN +
             ' unused port' + (portsN === 1 ? '' : 's') + ' carried</span>' : '') +
+          (portsMovedN ? '<span class="gen-merge-stat gen-merge-ok gen-merge-ports-moved" ' +
+            'title="A line you moved to another port took its port calibration ' +
+            'with it (delay, predistortion filters, band / LO / power) — ' +
+            'listed below. Clear them on the new port if the cable is different.">' +
+            portsMovedN + ' port calibration' + (portsMovedN === 1 ? '' : 's') +
+            ' moved with its line</span>' : '') +
           (twpaN ? '<span class="gen-merge-stat gen-merge-ok" title="TWPAs the builder ' +
             "can't rebuild, carried whole (state + wiring + ports) so the config still " +
             'compiles">' + twpaN + ' TWPA carried</span>' : '') +
+          (netCarried.length ? '<span class="gen-merge-stat gen-merge-ok gen-merge-net" ' +
+            'title="Network settings the wizard does not edit (e.g. a custom or ' +
+            'cloud QMM), carried unchanged from the source chip (wiring.json)">' +
+            netCarried.length + ' network setting' + (netCarried.length === 1 ? '' : 's') +
+            ' carried</span>' : '') +
           '<span class="gen-merge-stat ' + (lostN ? 'gen-merge-warn' : 'gen-merge-muted') +
             '" title="OLD values with no home in the rebuild">' +
             lostN + ' not carried</span>' +
@@ -7407,13 +7777,19 @@
             'stock class the builder wrote, so every field only your class declares ' +
             '(e.g. optimized readout weights) was carried over">' + keptN +
             ' kept as your class' + '</span>' : '') +
-          (classChN ? '<span class="gen-merge-stat gen-merge-warn" title="The rebuild ' +
+          (classLossyN ? '<span class="gen-merge-stat gen-merge-warn" title="The rebuild ' +
             'typed these objects as a different class than the source chip — usually ' +
             "your own subclass replaced by the stock class this env's builder knows. " +
             'Every field only your class declares is gone from the rebuild (they are ' +
             'in the dropped list below). Name the class in the build recipe, or keep ' +
-            'the source chip for those values.">' + classChN +
-            ' class substitution' + (classChN === 1 ? '' : 's') + '</span>' : '') +
+            'the source chip for those values.">' + classLossyN +
+            ' class substitution' + (classLossyN === 1 ? '' : 's') + '</span>' : '') +
+          (classRetypedN ? '<span class="gen-merge-stat gen-merge-muted gen-merge-retyped" ' +
+            'title="The rebuild wrote these objects with a different class path ' +
+            'than the source chip (e.g. a class quam moved into quam_builder), and ' +
+            'every field the source stored was carried — none dropped. Nothing ' +
+            'to do unless your own code checks the class path.">' + classRetypedN +
+            ' re-typed, no fields lost</span>' : '') +
           (dangN ? '<span class="gen-merge-stat gen-merge-warn" title="Grafted legacy content ' +
             'whose reference no longer resolves">' + dangN + ' broken ref</span>' : '') +
           (popConf.length ? '<span class="gen-merge-stat gen-merge-warn" ' +
@@ -7430,20 +7806,100 @@
         if (prunedN) {
           var pn = document.createElement("div");
           pn.className = "gen-merge-muted gen-merge-detail";
+          var prunedP = m.pruned_ops_paths || [];
           pn.textContent = "cleaned " + prunedN +
             " redundant legacy op" + (prunedN === 1 ? "" : "s") +
-            " the rebuild re-expressed (unreferenced, broken pointers)";
+            " the rebuild re-expressed (nothing referenced " +
+            (prunedN === 1 ? "it" : "them") + "; " +
+            (prunedN === 1 ? "its" : "their") + " pointers were broken)" +
+            (prunedP.length ? ": " + prunedP.slice(0, 6).join(", ") +
+              (prunedN > 6 ? ", …" : "") : "");
           el.appendChild(pn);
         }
         // A class substitution is named where the user is already looking —
         // above the fold, not inside a collapsed list — because it explains
         // the dropped fields underneath it and is the only line here that
         // says what to change.
+        if (netCarried.length) {
+          var nl = document.createElement("div");
+          nl.className = "gen-merge-muted gen-merge-detail gen-merge-net-line";
+          nl.textContent = "carried network: " + netCarried.join(", ");
+          el.appendChild(nl);
+        }
+        // QA review of r2-17: ...but not to a chip step 2 moved elsewhere.
+        if ((m.network_held || []).length) {
+          var nh = document.createElement("div");
+          nh.className = "gen-merge-detail gen-merge-warn gen-merge-net-held";
+          nh.textContent = "⚠ network not carried: " + m.network_held.join(", ") +
+            " — the source's QM connection settings (e.g. a custom / cloud " +
+            "QMM), and step 2 changed the host or cluster; add them to " +
+            "wiring.json only if the new host needs them";
+          el.appendChild(nh);
+        }
         (m.ports_carried || []).slice(0, 6).forEach(function (p) {
           var pl = document.createElement("div");
           pl.className = "gen-merge-muted gen-merge-detail gen-merge-port-line";
           pl.textContent = "carried " + p + " — declared, used by nothing in the source";
           el.appendChild(pl);
+        });
+        // QA F1: name the LINE, not 15 anonymous port paths. "ports.analog_
+        // outputs.con1.5.6" reads as "analog_outputs con1/5/6".
+        var portLabel = function (p) {
+          var sg = String(p).split(".");
+          return sg.length > 2 ? sg[1] + " " + sg.slice(2).join("/") : String(p);
+        };
+        (m.ports_moved || []).slice(0, 6).forEach(function (mv) {
+          var ml = document.createElement("div");
+          ml.className = "gen-merge-muted gen-merge-detail gen-merge-port-moved";
+          ml.textContent = mv.owner + ": " + portLabel(mv.from) + " → " +
+            portLabel(mv.to) + " — its port calibration (delay, filters, " +
+            "band / LO / power) moved with it";
+          el.appendChild(ml);
+        });
+        (m.ports_fresh || []).slice(0, 6).forEach(function (f) {
+          var fl = document.createElement("div");
+          fl.className = "gen-merge-detail gen-merge-warn gen-merge-port-fresh";
+          fl.textContent = "⚠ " + f.now + " on " + portLabel(f.port) +
+            ": fresh defaults — that port's calibration was " +
+            (f.was || "another line") + "'s and moved with it";
+          el.appendChild(fl);
+        });
+        // QA review of F1: kept by port number from a line that is gone.
+        (m.ports_inherited || []).slice(0, 6).forEach(function (f) {
+          var il = document.createElement("div");
+          il.className = "gen-merge-detail gen-merge-warn gen-merge-port-inherited";
+          il.textContent = "⚠ " + f.now + " on " + portLabel(f.port) +
+            ": kept that port's calibration (delay, filters, band / power) by " +
+            "port number — it was " + (f.was || "another line") + "'s, which " +
+            "is not in the rebuild; clear it if " + f.now + "'s cable differs";
+          el.appendChild(il);
+        });
+        // QA r2-09 / r2-10: say WHOSE values the not-carried list holds.
+        (m.pairs_reversed || []).forEach(function (r) {
+          var rl = document.createElement("div");
+          rl.className = "gen-merge-detail gen-merge-warn gen-merge-pair-reversed";
+          rl.textContent = "⚠ pair " + r.old + " was rebuilt reversed as " +
+            r.new + " — " + r.lost + " orientation-dependent value" +
+            (r.lost === 1 ? "" : "s") + " of " + r.old +
+            " not carried (listed below)";
+          el.appendChild(rl);
+        });
+        (m.twpas_removed || []).forEach(function (t) {
+          var tl = document.createElement("div");
+          tl.className = "gen-merge-detail gen-merge-warn gen-merge-twpa-removed";
+          tl.textContent = "TWPA " + t.id + " is not in this build's TWPA " +
+            "list (removed on step 4, or renamed onto other ports) — not " +
+            "rebuilt; its " + t.lost + " value" + (t.lost === 1 ? "" : "s") +
+            " are listed below";
+          el.appendChild(tl);
+        });
+        // QA review of r2-10: a rename on the same line is ONE TWPA.
+        (m.twpas_renamed || []).forEach(function (t) {
+          var rn = document.createElement("div");
+          rn.className = "gen-merge-muted gen-merge-detail gen-merge-twpa-renamed";
+          rn.textContent = "TWPA " + t.old + " renamed " + t["new"] +
+            " — same line, its calibration carried under the new name";
+          el.appendChild(rn);
         });
         Object.keys(keptByCls).slice(0, 6).forEach(function (cls) {
           var kl = document.createElement("div");
@@ -7452,15 +7908,65 @@
             (keptByCls[cls] === 1 ? "" : "s") + ", with every field it declares";
           el.appendChild(kl);
         });
+        // QA F17: name every value a Populate edit set, source -> rebuilt.
+        var fmtV = function (v) {
+          if (v == null) return "—";
+          return (typeof v === "number" || typeof v === "string")
+            ? String(v) : JSON.stringify(v);
+        };
+        popDetail.slice(0, 8).forEach(function (d) {
+          var pl = document.createElement("div");
+          pl.className = "gen-merge-muted gen-merge-detail gen-merge-pop-line";
+          pl.textContent = "edited " + d.path + ": " + fmtV(d.old) + " → " +
+            fmtV(d.new);
+          // docs/76: the Δ is the one ValueDelta implementation's (the
+          // review of F17) -- blank where a Δ means nothing.
+          var dl = document.createElement("span");
+          if (window.ValueDelta && window.ValueDelta.paint(dl, d.old, d.new)) {
+            pl.appendChild(document.createTextNode(" "));
+            pl.appendChild(dl);
+          }
+          if (d.derived_from) {
+            pl.appendChild(document.createTextNode(" (re-derived from the " +
+              d.derived_from + " seed you edited)"));
+          }
+          el.appendChild(pl);
+        });
+        if (popDetail.length > 8) {
+          var pm = document.createElement("div");
+          pm.className = "gen-merge-muted gen-merge-detail gen-merge-pop-line";
+          pm.textContent = "+ " + (popDetail.length - 8) + " more edited value" +
+            (popDetail.length - 8 === 1 ? "" : "s");
+          el.appendChild(pm);
+        }
         classGroups.slice(0, 6).forEach(function (g) {
           var cg = document.createElement("div");
-          cg.className = "gen-merge-muted gen-merge-detail";
+          var n = g.measured ? g.count : g.paths.length;
+          cg.className = (g.measured && g.dropped)
+            ? "gen-merge-detail gen-merge-warn" : "gen-merge-muted gen-merge-detail";
           cg.textContent = "rebuilt as " + g.nw + " (was " + g.old + ") — " +
-            g.paths.length + " place" + (g.paths.length === 1 ? "" : "s") +
+            n + " place" + (n === 1 ? "" : "s") +
+            (g.measured ? (g.dropped ? ", " + g.dropped + " field" +
+              (g.dropped === 1 ? "" : "s") + " dropped" : ", no fields lost") : "") +
             ": " + g.paths.slice(0, 3).join(", ") +
-            (g.paths.length > 3 ? ", …" : "");
+            (n > 3 ? ", …" : "");
           el.appendChild(cg);
         });
+        if (classGroups.length > 6) {
+          var cmore = document.createElement("div");
+          cmore.className = "gen-merge-muted gen-merge-detail gen-merge-class-more";
+          cmore.textContent = "+ " + (classGroups.length - 6) + " more class " +
+            "change" + (classGroups.length - 6 === 1 ? "" : "s") + " not shown";
+          el.appendChild(cmore);
+        }
+        if (!srvClassGroups && classCh.length && classCh.length < classChN) {
+          // An older result: the groups above count only the listed page.
+          var ccap = document.createElement("div");
+          ccap.className = "gen-merge-muted gen-merge-detail gen-merge-class-more";
+          ccap.textContent = "(first " + classCh.length + " of " + classChN +
+            " re-typed places listed — the counts above cover only those)";
+          el.appendChild(ccap);
+        }
         if (lostN || dangN || schemaDropN) {
           var det = document.createElement("details");
           det.className = "gen-merge-detail";
@@ -7468,16 +7974,55 @@
           sm.textContent = "Not carried / dropped / broken (" +
             (lostN + dangN + schemaDropN) + ") — expand";
           det.appendChild(sm);
-          (m.residual_lost || []).concat(m.dangling_grafts || [])
-            .concat((m.schema_dropped_paths || []).map(function (p) {
-              return p + " — old-stack field this env doesn't know (dropped)";
-            }))
-            .slice(0, 80).forEach(function (p) {
+          // QA F17: grouped by what the values belonged to ("qubit q5 —
+          // removed: 142 values"), each group its own expandable list; a
+          // truncated list says "shown K of N" (docs/118: a cap must never
+          // read as a total). Older results without groups stay flat.
+          var lostGroups = Array.isArray(m.residual_lost_groups)
+              ? m.residual_lost_groups : null;
+          var plural = function (n, w) { return n + " " + w + (n === 1 ? "" : "s"); };
+          var capLine = function (parent, shown, total) {
+            if (shown >= total) return;
+            var cl = document.createElement("div");
+            cl.className = "gen-merge-muted gen-merge-lost-cap";
+            cl.textContent = "shown " + shown + " of " + total;
+            parent.appendChild(cl);
+          };
+          (lostGroups || []).forEach(function (g) {
+            var gd = document.createElement("details");
+            gd.className = "gen-merge-lost-group";
+            var gs = document.createElement("summary");
+            var who = g.kind === "other" ? g.owner : g.kind + " " + g.owner;
+            var gone = g.reversed_as ? " — rebuilt reversed as " + g.reversed_as
+              : g.present === false ? (g.kind === "port"
+                  ? " — not in the rebuild (its line was removed or moved)"
+                  : " — removed")
+              : "";
+            gs.textContent = who + gone + ": " + plural(g.n, "value") +
+              (g.present === true ? " with no place in the rebuild" : "");
+            gd.appendChild(gs);
+            (g.paths || []).forEach(function (p) {
               var line = document.createElement("div");
               line.className = "gen-merge-lost-line";
               line.textContent = p;
-              det.appendChild(line);
+              gd.appendChild(line);
             });
+            capLine(gd, (g.paths || []).length, g.n);
+            det.appendChild(gd);
+          });
+          var flat = (lostGroups ? [] : (m.residual_lost || []))
+            .concat(m.dangling_grafts || [])
+            .concat((m.schema_dropped_paths || []).map(function (p) {
+              return p + " — old-stack field this env doesn't know (dropped)";
+            }));
+          var flatTotal = (lostGroups ? 0 : lostN) + dangN + schemaDropN;
+          flat.slice(0, 80).forEach(function (p) {
+            var line = document.createElement("div");
+            line.className = "gen-merge-lost-line";
+            line.textContent = p;
+            det.appendChild(line);
+          });
+          capLine(det, Math.min(flat.length, 80), flatTotal);
           el.appendChild(det);
         }
       }
@@ -7806,9 +8351,9 @@
       if (!isNaN(m)) state.muxSize = clampMux(m);
     }
     var out = document.getElementById("gen-output-path");
-    if (out) state.outputPath = out.value.trim();
+    if (out) state.outputPath = unquotePath(out.value);
     var sp = document.getElementById("gen-scripts-path");
-    if (sp) state.scriptsPath = sp.value.trim();
+    if (sp) state.scriptsPath = unquotePath(sp.value);
   }
 
   function saveDraft() {
@@ -7998,6 +8543,7 @@
     state.sourcePath = null;
     state.regenLineInventory = null;
     state.regenSourcePairGate = null;
+    regenPairOrient = null;
     resetAllocRuntime();   // strand any in-flight allocate for the old content
     try {
       localStorage.removeItem("quam_gen_output_path");
@@ -8059,6 +8605,7 @@
     state.sourcePath = null;
     state.regenLineInventory = null;
     state.regenSourcePairGate = null;
+    regenPairOrient = null;
 
     // Bottom nav + the top header mirror share the same handlers.
     ["gen-back", "gen-back-top"].forEach(function (id) {
@@ -8302,6 +8849,19 @@
       namesTouched: true
     });
     applyChipArch(state.chipArch);            // sync qubitFlux / couplerFlux / pairGate
+    // QA regenerate-r2-09: each source pair's orientation, by membership.
+    regenPairOrient = {};
+    (state.spec.qubit_pairs || []).forEach(function (p) {
+      if (!p || !p[0] || !p[1] || p[0] === p[1]) return;
+      var k = [p[0], p[1]].sort().join("|");
+      if (regenPairOrient[k]) regenPairOrient[k].both = true;
+      else regenPairOrient[k] = { src: [p[0], p[1]], cur: [p[0], p[1]] };
+    });
+    // QA review of r2-10: each source TWPA's pinned ports (Review).
+    regenTwpaSrc = {};
+    (state.spec.twpas || []).forEach(function (t) {
+      if (t && t.id) regenTwpaSrc[t.id] = twpaPinKeys(t.id);
+    });
     // Populate-protect baseline (docs/72): snapshot EXACTLY what this wizard
     // session displays. The build POST ships it back verbatim; the server
     // diffs it against the edited populate so only the user's in-wizard edits
@@ -8404,6 +8964,8 @@
       // build-result renderer that has to take TWO blocker shapes.
       renderCapabilityReport: renderCapabilityReport,
       showBuildResult: showBuildResult,
+      holdsLabel: _holdsLabel,          // QA generate-r2-28
+      nextFreePair: nextFreePair,       // QA r2-34
       // r15 CG2/CG3 selfcheck seams (docs/70) — not public API
       openSlotMenu: openSlotMenu,
       hideSlotMenu: hideSlotMenu,
@@ -8417,6 +8979,7 @@
       autoApplyStandardDefaults: autoApplyStandardDefaults,
       markPopulateTouched: markPopulateTouched,
       autoScriptsPath: autoScriptsPath,
+      unquotePath: unquotePath,
       maybeFollowScriptsPath: maybeFollowScriptsPath,
       POP_QUBIT_COLS: POP_QUBIT_COLS,
       POP_QDAC_COLS: POP_QDAC_COLS,

@@ -370,5 +370,47 @@ function val(win, id) {
   ok(G.state.step === 7, 'TOPNAV: top Back navigates (8 -> 7), got ' + G.state.step);
 })();
 
+// ===========================================================================
+// QA F10 — step 2 judges the host and the port it will write, through the
+// real inputs and the real Next; the Review row shows the port.
+// ===========================================================================
+(function scenarioNet() {
+  const win = makeWorld();
+  const G = win.QuamGen;
+  G.init();
+  G.state.env = 'py';
+  function next2(host, port) {
+    G.goToStep(2);
+    setInput(win, 'gen-net-host', host);
+    setInput(win, 'gen-net-cluster', 'QA_cluster');
+    setInput(win, 'gen-net-port', port);
+    const msg = win.document.getElementById('gen-message');
+    G.tryNext();
+    return { step: G.state.step, msg: msg.hidden ? '' : msg.textContent };
+  }
+  let r = next2('not an ip!!', '');
+  ok(r.step === 2 && /IP address or hostname/.test(r.msg),
+    'NET: a host no address can be is refused at step 2 — got ' + JSON.stringify(r));
+  r = next2('10.1.1.6', '99999');
+  ok(r.step === 2 && /1 to 65535/.test(r.msg),
+    'NET: port 99999 is refused at step 2 — got ' + JSON.stringify(r));
+  r = next2('10.1.1.6', '0');
+  ok(r.step === 2 && /1 to 65535/.test(r.msg), 'NET: port 0 is refused — got ' + JSON.stringify(r));
+  r = next2('10.1.1.6', '80.5');
+  ok(r.step === 2 && G.state.spec.network.port === 80.5,
+    'NET: 80.5 is judged as typed, not silently truncated to 80 — got ' +
+    JSON.stringify(r) + ' port ' + G.state.spec.network.port);
+  r = next2('qop.lab.local', '');
+  ok(r.step === 3 && G.state.spec.network.port === null,
+    'NET: a hostname with no port passes — got ' + JSON.stringify(r));
+  r = next2('10.1.1.6', '9510');
+  ok(r.step === 3 && G.state.spec.network.port === 9510,
+    'NET: an IP with port 9510 passes — got ' + JSON.stringify(r));
+  G.goToStep(8);
+  const review = win.document.getElementById('gen-review');
+  ok(review && /port 9510/.test(review.textContent),
+    'NET: the Review Network row shows the port that will be written');
+})();
+
 if (fails) { console.error(fails + ' check(s) FAILED'); process.exit(1); }
 console.log('generate_nav_selfcheck: all checks passed');

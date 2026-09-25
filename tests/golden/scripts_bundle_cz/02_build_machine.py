@@ -1341,10 +1341,18 @@ def _cz_order_warning(quam_id, pair, vals):
     ``populate.pairs`` matching and every element/op name. Just surfaces a
     warning in ``_result.json`` when a backwards CZ pair reaches the build
     (old draft / hand-written spec) and the user didn't pin the order with
-    ``cz_order: manual``. Physics stays correct either way — the flux pulse
-    plays on the higher-frequency (moving) qubit regardless of labels.
+    ``cz_order: manual``. With NO explicit ``moving_qubit`` the physics stays
+    correct either way — ``_seed_cz_variant`` then puts the flux pulse on the
+    higher-frequency qubit regardless of labels. A spec that NAMES the role
+    (every Re-generate does: the chip's recorded ``moving_qubit`` is carried
+    into ``populate.pairs``) has already fixed which physical qubit moves, so
+    control/target is only a label and there is nothing to warn about — the
+    old text then claimed the pulse plays on the higher qubit when it plays
+    on the one the chip says (QA F15).
     """
     if (vals or {}).get("cz_order") == "manual":
+        return None
+    if (vals or {}).get("moving_qubit") in ("control", "target"):
         return None
     try:
         fc = float(getattr(getattr(pair, "qubit_control", None), "f_01", None) or 0)
@@ -1352,13 +1360,15 @@ def _cz_order_warning(quam_id, pair, vals):
     except (TypeError, ValueError):
         return None
     if fc and ft and ft > fc:
+        # No "the wizard orients" claim: Re-generate never re-orients a pair
+        # (QA review of F15). What decides the physics is the moving qubit.
         return (
             f"pair {quam_id}: target f_01 ({ft / 1e9:.4g} GHz) is higher than "
-            f"control ({fc / 1e9:.4g} GHz) — the wizard orients CZ pairs "
-            "control = higher-frequency qubit. The flux pulse still plays on "
-            "the higher-frequency (moving) qubit; set "
-            f"populate.pairs['{quam_id}'].cz_order = 'manual' to keep this "
-            "order silently."
+            f"control ({fc / 1e9:.4g} GHz). No moving qubit is named, so the "
+            "flux pulse plays on the higher-frequency qubit (the target); to "
+            "choose which qubit moves, set this pair's 'moving qubit' on the "
+            f"Populate step (populate.pairs['{quam_id}'].moving_qubit), or set "
+            "its 'order' to 'manual' (cz_order) to keep this order silently."
         )
     return None
 
