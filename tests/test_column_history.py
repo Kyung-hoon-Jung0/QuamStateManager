@@ -386,8 +386,9 @@ class TestRevertLastApply:
         # live now has the applied value
         post_live = json.loads((env["live"] / "state.json").read_text())
         assert post_live["qubits"]["qA1"]["z"]["joint_offset"] == 0.095
-        # the tray offers the explicit revert (clean state, fresh memo)
-        html = c.get("/bulk").data.decode()
+        # the sync panel's History offers the explicit revert (clean state,
+        # fresh memo) -- it moved there from the tray in ef07a90
+        html = c.get("/state/review").data.decode()
         assert "tray-revert-apply" in html
         assert f"/state-history/{la['pre_ts']}/stage" in html
 

@@ -295,6 +295,17 @@ class TestTheStageDoorsSayIt:
             assert "ARMED" in render_template_string(tpl)
 
 
+def _revert_button(client):
+    """The Revert button's opening tag. Since the one-status-control decision
+    (ef07a90) it lives in the sync panel's History section (GET /state/review),
+    no longer in the pending tray; the old static "You review it first"
+    confirm became the unarmed button's title plus an in-panel second press."""
+    html = client.get("/state/review").get_data(as_text=True)
+    m = re.search(r'<button[^>]*class="[^"]*tray-revert-apply[^"]*"[^>]*>', html)
+    assert m, "no Revert button in the sync panel: " + html[:500]
+    return m.group(0)
+
+
 class TestRevertThisSessionNamesWhatItRollsBack:
     """QA correctness-r2-06: '↺ Revert this session' stages the chip as it was
     when the session STARTED and the armed push writes it at once -- so a
@@ -326,18 +337,15 @@ class TestRevertThisSessionNamesWhatItRollsBack:
 
     def test_the_armed_button_asks_through_the_preflight_not_a_review_promise(self, env):
         self._session_with_a_pulled_value(env)
-        tray = env["client"].get("/state/tray").get_data(as_text=True)
-        m = re.search(r'<button[^>]*class="tray-revert-apply"[^>]*>', tray)
-        assert m, tray[:500]
-        btn = m.group(0)
+        btn = _revert_button(env["client"])
         assert 'hx-trigger="revertconfirmed"' in btn
         assert "revertSessionConfirm(this)" in btn
-        assert "You review it first" not in btn, "an armed push never promises a review"
+        assert "nothing touches the live chip" not in btn,             "an armed push never promises a review"
 
     def test_unarmed_it_keeps_the_review_promise(self, env):
         c = env["client"]
         c.post("/field/edit", data={"dot_path": "qubits.qA1.T1", "value": "2.5e-05"})
         assert c.post("/state/apply-to-live").status_code == 200
-        btn = re.search(r'<button[^>]*class="tray-revert-apply"[^>]*>',
-                        c.get("/state/tray").get_data(as_text=True)).group(0)
-        assert "You review it first" in btn and "revertconfirmed" not in btn
+        btn = _revert_button(c)
+        assert "nothing touches the live chip until you apply" in btn
+        assert "revertconfirmed" not in btn and "SyncPanel.arm(this, event)" in btn
