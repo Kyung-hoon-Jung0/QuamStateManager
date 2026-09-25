@@ -181,6 +181,15 @@ def connect():
     want_hooks = data.get("hooks", True)
     want_allow = data.get("allow", True)
     if backend == "claude":
+        # every JSON file this press would rewrite, checked before the first write
+        files = [st.claude_json_path(home)]
+        if want_hooks:
+            files.append(st.claude_settings_path(home))
+        if want_allow and cal:
+            files.append(st.allow_path(cal))
+        blockers = st.write_blockers(files)
+        if blockers:
+            return _err("; ".join(blockers), 409)
         out["previews"]["mcp"] = st.preview_claude_mcp(spec, home)
         if want_hooks:
             cmd = st.hook_command(_python(), str(inst) if _custom_instance(inst) else None)
@@ -220,6 +229,9 @@ def disconnect():
     inst = current_app.instance_path
     out = {"ok": True, "backend": backend, "removed": {}}
     if backend == "claude":
+        blockers = st.write_blockers([st.claude_json_path(home), st.claude_settings_path(home)])
+        if blockers:
+            return _err("; ".join(blockers), 409)
         out["removed"]["mcp"] = st.remove_claude_mcp(home)
         out["removed"]["hooks"] = st.remove_claude_hooks(home)
     else:

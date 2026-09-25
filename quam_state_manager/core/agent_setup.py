@@ -81,6 +81,48 @@ def _read_json(path: Path) -> dict:
         return {}
 
 
+class UnreadableConfig(ValueError):
+    """An existing settings file SM could not read as a JSON object."""
+
+
+def _read_json_for_write(path: Path) -> dict:
+    """The WRITE paths' reader. ``_read_json`` answers ``{}`` for a file it
+    cannot parse, which is right for a status probe and wrong for a
+    read-modify-write: the write then replaced the WHOLE file with SM's one
+    key -- a ``~/.claude.json`` caught mid-rewrite by the CLI, or a hand-edited
+    settings file with one trailing comma, lost every other key it held. A
+    missing or empty file is nothing to lose; anything else unreadable is
+    refused by name and left exactly as it is."""
+    if not path.exists():
+        return {}
+    try:
+        text = path.read_text(encoding="utf-8")
+    except OSError as exc:
+        raise UnreadableConfig(f"cannot read {path} ({exc}) -- SM will not overwrite a file it could not read") from exc
+    if not text.strip():
+        return {}
+    try:
+        d = json.loads(text)
+    except ValueError as exc:
+        raise UnreadableConfig(f"{path} is not valid JSON ({exc}) -- SM will not overwrite it; "
+                               f"fix or move it, then try again") from exc
+    if not isinstance(d, dict):
+        raise UnreadableConfig(f"{path} holds a JSON {type(d).__name__}, not an object -- SM will not overwrite it")
+    return d
+
+
+def write_blockers(paths) -> list[str]:
+    """Every file among ``paths`` a write would refuse, checked BEFORE any
+    write so a refusal never leaves the setup half-applied."""
+    out = []
+    for p in paths:
+        try:
+            _read_json_for_write(Path(p))
+        except UnreadableConfig as exc:
+            out.append(str(exc))
+    return out
+
+
 def _write_json(path: Path, data: dict) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     tmp = path.with_name(path.name + ".tmp")
@@ -145,8 +187,8 @@ def preview_claude_mcp(spec: dict, home: Path | None = None) -> dict:
 
 def write_claude_mcp(spec: dict, home: Path | None = None) -> dict:
     p = claude_json_path(home)
+    cur = _read_json_for_write(p)       # refuses BEFORE any backup or write
     bak = backup(p)
-    cur = _read_json(p)
     servers = dict(cur.get("mcpServers") or {})
     servers[SERVER_NAME] = spec
     cur["mcpServers"] = servers
@@ -156,7 +198,7 @@ def write_claude_mcp(spec: dict, home: Path | None = None) -> dict:
 
 def remove_claude_mcp(home: Path | None = None) -> dict:
     p = claude_json_path(home)
-    cur = _read_json(p)
+    cur = _read_json_for_write(p)
     servers = dict(cur.get("mcpServers") or {})
     if SERVER_NAME not in servers:
         return {"file": str(p), "backup": None, "removed": False}
@@ -212,8 +254,8 @@ def preview_claude_hooks(cmd: str, home: Path | None = None) -> dict:
 
 def write_claude_hooks(cmd: str, home: Path | None = None) -> dict:
     p = claude_settings_path(home)
+    cur = _read_json_for_write(p)       # refuses BEFORE any backup or write
     bak = backup(p)
-    cur = _read_json(p)
     cur["hooks"] = _merge_hooks(cur.get("hooks") or {}, hooks_block(cmd))
     _write_json(p, cur)
     return {"file": str(p), "backup": bak}
@@ -221,7 +263,7 @@ def write_claude_hooks(cmd: str, home: Path | None = None) -> dict:
 
 def remove_claude_hooks(home: Path | None = None) -> dict:
     p = claude_settings_path(home)
-    cur = _read_json(p)
+    cur = _read_json_for_write(p)
     hooks = cur.get("hooks") or {}
     if not any(_is_sm_hook(g) for groups in hooks.values() if isinstance(groups, list) for g in groups):
         return {"file": str(p), "backup": None, "removed": False}
@@ -255,8 +297,8 @@ def preview_allow(cal_folder: str | Path) -> dict:
 
 def write_allow(cal_folder: str | Path) -> dict:
     p = allow_path(cal_folder)
+    cur = _read_json_for_write(p)       # refuses BEFORE any backup or write
     bak = backup(p)
-    cur = _read_json(p)
     perms = dict(cur.get("permissions") or {})
     allow = list(perms.get("allow") or [])
     allow += [r for r in ALLOW_RULES if r not in allow]

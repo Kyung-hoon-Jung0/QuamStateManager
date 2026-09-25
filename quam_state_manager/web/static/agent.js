@@ -1119,9 +1119,17 @@ window.AgentPanel = (function () {
     document.addEventListener("pointerdown", off, true);
   }
 
+  /* A root is LIVE when a mount in S.mounts renders into it. The
+     `data-ag-mounted` attribute cannot answer that: it is part of the DOM, so
+     htmx's history snapshot carries it, and a browser Back restored a home
+     that said "mounted" while nothing polled or rendered into it -- a line
+     sent from it made no card until a reload (measured in real Chrome). */
+  function isLive(root) {
+    return !!root && S.mounts.some(function (m) { return m.root && root.contains(m.root) && document.body.contains(m.root); });
+  }
   function mount(root, opts) {
     opts = opts || {};
-    if (!root || root.getAttribute("data-ag-mounted")) return;
+    if (!root || isLive(root)) return;
     root.setAttribute("data-ag-mounted", "1");
     root.innerHTML = skeleton(!!opts.compact);
     var m = { id: opts.id || ("m" + S.mounts.length), root: root.querySelector(".ag-root"), compact: !!opts.compact, autoscroll: true };
@@ -1192,7 +1200,7 @@ window.AgentPanel = (function () {
     if (open) { pop.classList.add("agent-hidden"); return; }
     pop.classList.remove("agent-hidden");
     var body = pop.querySelector(".agent-body");
-    if (body && !body.getAttribute("data-ag-mounted")) {
+    if (body && !isLive(body)) {
       mount(body, { compact: true, id: "float" });
       var head = pop.querySelector(".agent-header");
       if (head && window.FloatPanel) {
@@ -1218,12 +1226,19 @@ window.AgentPanel = (function () {
     // twice, one over the other, with two composers and two Arm / Stop now
     // strips on one screen. The float exists to carry the feed onto a page that
     // is not this one, so this page is where it stands down.
+    var pop = document.getElementById("agent-popover");
     if (home) {
-      var pop = document.getElementById("agent-popover");
       if (pop && !pop.classList.contains("agent-hidden")) pop.classList.add("agent-hidden");
+    } else if (pop && !pop.classList.contains("agent-hidden")) {
+      // a float restored OPEN by a history snapshot is a picture of the old
+      // feed; hide it and let the person reopen a live one (toggleFloat mounts)
+      var fb = pop.querySelector(".agent-body");
+      if (fb && !isLive(fb)) pop.classList.add("agent-hidden");
     }
   }
   document.addEventListener("htmx:afterSwap", function () { init(); wirePaint(); });
+  // htmx restores Back/Forward from a BODY snapshot outside every swap hook
+  document.addEventListener("htmx:historyRestore", function () { init(); wirePaint(); });
   if (document.readyState === "loading") document.addEventListener("DOMContentLoaded", init); else init();
 
   return { mount: mount, poll: poll, submit: submit, key: key, preset: preset, startPlan: startPlan, cancelPlan: cancelPlan,

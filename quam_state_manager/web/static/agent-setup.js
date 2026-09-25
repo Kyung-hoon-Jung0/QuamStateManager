@@ -334,12 +334,17 @@ window.AgentSetup = (function () {
 
   function init() {
     var root = document.getElementById("as-body");
-    if (!root || root.getAttribute("data-as-mounted")) return;
+    // The attribute rides htmx's history snapshot, so after a browser Back it
+    // says "mounted" on a node this script never saw: every later load() then
+    // rendered into the DETACHED old root and the visible page never moved.
+    // Mounted means S.root IS the visible node.
+    if (!root || (root === S.root && root.getAttribute("data-as-mounted"))) return;
     root.setAttribute("data-as-mounted", "1");
     S.root = root;
     load();
   }
   document.addEventListener("htmx:afterSwap", function () { init(); });
+  document.addEventListener("htmx:historyRestore", function () { init(); });
   if (document.readyState === "loading") document.addEventListener("DOMContentLoaded", init); else init();
 
   return { init: init, load: load, preview: preview, connect: connect, disconnect: disconnect, journal: journal,
