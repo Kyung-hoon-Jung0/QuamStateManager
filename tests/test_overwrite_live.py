@@ -316,3 +316,61 @@ class TestARefusedApplyWritesNoVersion:
         assert r.status_code == 200 and "tray-force-btn" not in r.get_data(as_text=True)
         ctx = next(iter(env["app"].config["contexts"].values()))
         assert ctx.get("last_apply", {}).get("pre_ts")
+
+
+class TestKeepMineHoldsToWhatTheConfirmNamed:
+    """QA correctness-r2-09: the Keep-mine confirm counts the live values it
+    will replace from a preflight read at click time; a write landing while
+    the confirm is open was overwritten too, unnamed (force skips every
+    staleness check). The preflight now returns the content hash it counted
+    from and the push is held to it."""
+
+    def test_the_preflight_returns_the_hash_it_counted(self, env):
+        from quam_state_manager.core import working_copy
+        _rewrite_live_out_of_band(env, off=0.5)
+        d = env["client"].get("/state/overwrite-live/preflight").get_json()
+        st = json.loads((env["live"] / "state.json").read_text(encoding="utf-8"))
+        assert d["live_hash"] == working_copy.content_hash(st, _WIRING)
+
+    def test_a_write_landing_during_the_confirm_is_refused_and_asked_again(self, env):
+        c = env["client"]
+        _rewrite_live_out_of_band(env, off=0.5)
+        h0 = c.get("/state/overwrite-live/preflight").get_json()["live_hash"]
+        _rewrite_live_out_of_band(env, off=0.5, f01=6.1e9)   # lands while the confirm is open
+        before = TestARefusedApplyWritesNoVersion._versions(env)
+        r = c.post(f"/state/apply-to-live?force=1&expect_live_hash={h0}")
+        assert TestARefusedApplyWritesNoVersion._versions(env) == before, \
+            "a refused push must not record a backup version"
+        live = _live(env)
+        assert live["qubits"]["qA1"]["f_01"] == 6.1e9, "the unnamed write was overwritten"
+        assert live["qubits"]["qA1"]["z"]["joint_offset"] == 0.5
+        assert "keepMineReask" in (r.headers.get("HX-Trigger") or "")
+        assert "Nothing was written" in r.get_data(as_text=True)
+
+    def test_the_tight_recheck_inside_the_write_also_holds(self, env, monkeypatch):
+        """A write between the route's check and the file write itself."""
+        from quam_state_manager.core import working_copy
+        c = env["client"]
+        _rewrite_live_out_of_band(env, off=0.5)
+        h0 = c.get("/state/overwrite-live/preflight").get_json()["live_hash"]
+        real = working_copy.read_live
+        calls = {"n": 0}
+
+        def read_live_then_write(wc, **kw):
+            out = real(wc, **kw)
+            calls["n"] += 1
+            if calls["n"] == 1:           # right after the route's own check
+                _rewrite_live_out_of_band(env, off=0.5, f01=6.2e9)
+            return out
+        monkeypatch.setattr(working_copy, "read_live", read_live_then_write)
+        r = c.post(f"/state/apply-to-live?force=1&expect_live_hash={h0}")
+        assert _live(env)["qubits"]["qA1"]["f_01"] == 6.2e9
+        assert "keepMineReask" in (r.headers.get("HX-Trigger") or "")
+
+    def test_unchanged_live_is_written(self, env):
+        c = env["client"]
+        _rewrite_live_out_of_band(env, off=0.5)
+        h0 = c.get("/state/overwrite-live/preflight").get_json()["live_hash"]
+        r = c.post(f"/state/apply-to-live?force=1&expect_live_hash={h0}")
+        assert r.status_code == 200
+        assert _live(env)["qubits"]["qA1"]["z"]["joint_offset"] == 0.08

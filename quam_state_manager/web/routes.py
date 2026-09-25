@@ -18335,6 +18335,27 @@ _UNBACKED_OVERWRITE_MSG = (
     "other program has finished saving.")
 
 
+_LIVE_MOVED_DURING_CONFIRM_MSG = (
+    "Nothing was written — the live chip changed again while the confirm was "
+    "open, so it no longer holds what the confirm named. Asking again with the "
+    "new count.")
+
+
+def _keep_mine_reask(ctx, store):
+    """The conflict tray + a status line + ``keepMineReask``, which makes the
+    page re-run the Keep-mine preflight and confirm with the NEW count
+    (QA correctness-r2-09)."""
+    _msg = render_template("_status.html", level="warning",
+                           message=_LIVE_MOVED_DURING_CONFIRM_MSG)
+    resp = make_response(
+        _conflict_tray(ctx, store, staged_conflict=bool(ctx.get("working_dirty")) and (
+            bool(ctx.get("staged_base")) or not ctx.get("pending_reapply")))
+        + "\n" + f'<div id="status-bar" hx-swap-oob="innerHTML">{_msg}</div>')
+    resp.headers["HX-Trigger"] = json.dumps({"liveDriftChanged": True,
+                                             "keepMineReask": True})
+    return resp
+
+
 @bp.route("/state/apply-to-live", methods=["POST"])
 def state_apply_to_live():
     """Push the working copy's state + wiring to the live chip.
@@ -18371,6 +18392,9 @@ def state_apply_to_live():
     store = ctx["store"]
     saver = ctx["saver"]
     force = request.values.get("force") == "1"
+    # QA correctness-r2-09: "Keep mine" hands back the live content hash its
+    # confirm counted; a forced push is held to it (absent -> unchanged).
+    expect_live_hash = (request.values.get("expect_live_hash") or None) if force else None
     # docs/117: an armed session turns THIS route into the auto-apply writer.
     # It is still the only thing that writes live; the session just presses it.
     _auto = _auto_apply_state(ctx)
@@ -18421,6 +18445,23 @@ def state_apply_to_live():
     # "revert last apply" means "put back what the chip held when I armed it"
     # (the user's own choice; per-change revert is the applied log's X). Taking
     # it once is also what stops a 10-minute session writing 200 full snapshots.
+    if expect_live_hash is not None:
+        # QA correctness-r2-09: the live chip moved while the Keep-mine
+        # confirm was open -- the user consented to replacing the values it
+        # named, not these. Nothing is written; the page asks again with the
+        # new count (keepMineReask). Checked before the backup, so a refused
+        # push records no version.
+        try:
+            _now = working_copy.content_hash(*working_copy.read_live(wc))
+        except (OSError, ValueError):
+            _now = None
+        if _now != expect_live_hash:
+            ctx["live_diverged"] = True
+            if request.headers.get("Accept", "").startswith("application/json"):
+                return jsonify(ok=False, conflict="live_moved",
+                               message=_LIVE_MOVED_DURING_CONFIRM_MSG), 409
+            return _keep_mine_reask(ctx, store)
+
     def _take_pre_apply_backup():
         try:
             _hm = _history()
@@ -18490,8 +18531,20 @@ def state_apply_to_live():
             # needs the same "before" tree to be journaled.
             if ctx.get("staged_base") or force:
                 _before_tree = _live_merged_tree(wc)
-            working_copy.apply_to_live(wc, force=force)
+            # the hash rides along ONLY when the Keep-mine confirm sent one:
+            # every other push keeps the exact call it always made
+            working_copy.apply_to_live(
+                wc, force=force,
+                **({"expect_live_hash": expect_live_hash} if expect_live_hash else {}))
     except working_copy.StaleLiveError:
+        if expect_live_hash is not None and _auto is None:
+            # QA correctness-r2-09: the tight re-check inside apply_to_live --
+            # a write landed between the check above and the write
+            ctx["live_diverged"] = True
+            if request.headers.get("Accept", "").startswith("application/json"):
+                return jsonify(ok=False, conflict="live_moved",
+                               message=_LIVE_MOVED_DURING_CONFIRM_MSG), 409
+            return _keep_mine_reask(ctx, store)
         # QA F5: the refusal is a verdict about the LIVE chip, so it lives in
         # ctx like every other one -- the conflict fragment alone was the only
         # record, and any re-render (a reload, another page) dropped it. From
@@ -18720,10 +18773,12 @@ def state_overwrite_live_preflight():
 
     store = ctx["store"]
     live_changes = None
+    live_hash = None
     try:
         live_state, live_wiring = working_copy.read_live(ctx["working_copy"])
         live_changes = len(Differ().diff(store, (live_state, live_wiring),
                                          ignore_keys=set()))
+        live_hash = working_copy.content_hash(live_state, live_wiring)
     except (FileNotFoundError, OSError, ValueError):
         logger.info("overwrite-live preflight could not read the live files",
                     exc_info=True)
@@ -18781,6 +18836,10 @@ def state_overwrite_live_preflight():
         # refuses), and a missing one has nothing to revert to.
         "reversible": live_changes is not None,
         "live_read": live_read,
+        # QA correctness-r2-09: the content this count was taken from; the
+        # push hands it back so a write landing while the confirm is open is
+        # refused and asked about, never overwritten unnamed
+        "live_hash": live_hash,
         "run_active": bool(run_active),
         "run_label": run_label,
     })

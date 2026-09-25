@@ -3890,7 +3890,13 @@ window.overwriteLiveWithWorking = function () {
                 return;
             }
             window._applyInFlight = true;
-            htmx.ajax("POST", "/state/apply-to-live?force=1",
+            // QA correctness-r2-09: hold the push to the live content this
+            // confirm counted. A write landing while it was open is refused
+            // server-side (keepMineReask below asks again with the new count)
+            // instead of being overwritten unnamed. No hash (live unreadable
+            // or missing) keeps the plain forced push.
+            htmx.ajax("POST", "/state/apply-to-live?force=1"
+                          + (d.live_hash ? "&expect_live_hash=" + encodeURIComponent(d.live_hash) : ""),
                       { target: "#pending-tray", swap: "outerHTML" })
                 .finally(function () { window._applyInFlight = false; });
         })
@@ -3898,6 +3904,14 @@ window.overwriteLiveWithWorking = function () {
             window.showToast("Could not check the live chip (network error).", "error");
         });
 };
+/* QA correctness-r2-09: the server refused a Keep mine because the live chip
+ * moved while its confirm was open -- ask again, with the count taken NOW.
+ * Deferred a tick so the in-flight guard above has been released. */
+document.addEventListener("keepMineReask", function () {
+    setTimeout(function () {
+        if (window.overwriteLiveWithWorking) window.overwriteLiveWithWorking();
+    }, 50);
+});
 
 /* The grid ⚡ "Apply to live now" buttons push the user's edits all the way to the
  * live chip in ONE click (the grids call this after applyAll commits the edits).

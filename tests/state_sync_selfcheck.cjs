@@ -160,6 +160,36 @@ window.eval(fs.readFileSync(path.join(STATIC, 'app.js'), 'utf8'));
     ok(push && push.opts && push.opts.target === '#pending-tray',
        'the response swaps the tray, which is where Revert last apply lives');
 
+    /* QA correctness-r2-09: the push is held to the live content the confirm
+       counted -- the preflight's hash rides the forced POST -- and a server
+       refusal (keepMineReask) re-runs the preflight + confirm with the new count. */
+    ajaxCalls.length = 0; preflightCalls.length = 0; lastConfirm = '';
+    preflightQueue = [{ ok: true, live_changes: 1, unsaved: 0, reversible: true,
+                        live_hash: 'abc123', run_active: false }];
+    confirmAnswer = true;
+    window.overwriteLiveWithWorking();
+    await flush(30);
+    const push2 = ajaxCalls.filter(function (c) {
+        return c.method === 'POST' && c.url.indexOf('/state/apply-to-live') === 0; })[0];
+    ok(push2 && /force=1/.test(push2.url) && /expect_live_hash=abc123/.test(push2.url),
+       'the forced push carries the hash the confirm counted from (got: ' + (push2 && push2.url) + ')');
+    ajaxCalls.length = 0;
+    preflightQueue = [{ ok: true, live_changes: null, unsaved: 0, reversible: false,
+                        live_read: 'unreadable', live_hash: null, run_active: false }];
+    window.overwriteLiveWithWorking();
+    await flush(30);
+    const push3 = ajaxCalls.filter(function (c) {
+        return c.method === 'POST' && c.url.indexOf('/state/apply-to-live') === 0; })[0];
+    ok(push3 && !/expect_live_hash/.test(push3.url),
+       'no hash (unreadable live) -> the plain forced push (got: ' + (push3 && push3.url) + ')');
+    preflightCalls.length = 0; lastConfirm = ''; confirmAnswer = false;
+    preflightQueue = [{ ok: true, live_changes: 3, unsaved: 0, reversible: true,
+                        live_hash: 'def456', run_active: false }];
+    document.dispatchEvent(new window.CustomEvent('keepMineReask', { bubbles: true }));
+    await flush(120);
+    ok(preflightCalls.length === 1 && /3 values/.test(lastConfirm),
+       'keepMineReask asks again with the NEW count (got: ' + preflightCalls.length + ' / ' + lastConfirm + ')');
+
     /* jsontree-r2-30: ONE unsaved edit "is" saved — the verb follows the
        count the noun already followed ("Your 1 unsaved edit are saved"). */
     ajaxCalls.length = 0; lastConfirm = '';

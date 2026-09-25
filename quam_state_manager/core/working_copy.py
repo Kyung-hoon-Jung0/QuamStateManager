@@ -616,12 +616,21 @@ def sync_from_live(wc: WorkingCopy) -> tuple[dict, dict]:
     return state, wiring
 
 
-def apply_to_live(wc: WorkingCopy, *, force: bool = False) -> None:
+def apply_to_live(wc: WorkingCopy, *, force: bool = False,
+                  expect_live_hash: str | None = None) -> None:
     """Push the working copy's state + wiring to the live folder.
 
     Unless *force*, raises :class:`StaleLiveError` if the live files changed
     since the last sync -- applying would otherwise silently overwrite an
     experiment program's write.
+
+    ``expect_live_hash`` (QA correctness-r2-09) holds even a FORCED push to the
+    live content the user was shown: "Keep mine" counts the live values it
+    replaces in a confirm, and a write landing while that confirm is open used
+    to be overwritten unnamed. When given, the live pair is re-read right
+    before the write and :class:`StaleLiveError` is raised unless its content
+    hash still matches (an unreadable pair does not match). ``None`` (every
+    other caller) is byte-identical to before.
 
     The staleness check happens *twice*: once at the top of the function
     (preserves the historical contract), then again immediately before the
@@ -708,6 +717,16 @@ def apply_to_live(wc: WorkingCopy, *, force: bool = False) -> None:
                 "The live state files changed while preparing to apply -- refusing "
                 "to overwrite an out-of-band write."
             )
+
+    if expect_live_hash is not None:
+        try:
+            now_hash = content_hash(*safe_io.read_state_wiring(wc.live_folder))
+        except (OSError, ValueError):
+            now_hash = None
+        if now_hash != expect_live_hash:
+            raise StaleLiveError(
+                "The live state files changed after the overwrite was confirmed "
+                "-- refusing to replace values the confirm did not name.")
 
     safe_io.write_state_wiring_bytes(wc.live_folder, state_b, wiring_b)
 
