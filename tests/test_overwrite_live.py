@@ -374,3 +374,19 @@ class TestKeepMineHoldsToWhatTheConfirmNamed:
         r = c.post(f"/state/apply-to-live?force=1&expect_live_hash={h0}")
         assert r.status_code == 200
         assert _live(env)["qubits"]["qA1"]["z"]["joint_offset"] == 0.08
+
+
+class TestAMissingLiveFolderStillFailsHonestly:
+    """QA F5 follow-up: the backup deferral stats the live files before the
+    apply; a missing live pair must still reach apply_to_live's own honest
+    "Apply to live failed" answer, never an unhandled 500."""
+
+    def test_unforced_apply_with_no_live_files(self, env):
+        c = env["client"]
+        c.post("/field/edit-batch", json={"updates": [
+            {"dot_path": "qubits.qA1.z.joint_offset", "value": "0.09"}], "expect_chip": ""})
+        (env["live"] / "state.json").unlink()
+        (env["live"] / "wiring.json").unlink()
+        r = c.post("/state/apply-to-live")
+        assert r.status_code == 500
+        assert "Apply to live failed" in r.get_data(as_text=True)

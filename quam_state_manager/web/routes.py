@@ -18540,8 +18540,14 @@ def state_apply_to_live():
     # before the call when live has not moved (the common case, unchanged),
     # after it for the adopt (so Revert last apply arms exactly as before).
     _backup_deferred = False
+    try:
+        _live_moved = (not force) and working_copy.live_changed(wc)
+    except OSError:
+        # live files missing/unstatable: apply_to_live below says so in its
+        # own honest error; this pre-check must not turn it into a bare 500
+        _live_moved = False
     if not pre_apply_ts:
-        if not force and working_copy.live_changed(wc):
+        if _live_moved:
             _backup_deferred = True
         else:
             pre_apply_ts = _take_pre_apply_backup()
