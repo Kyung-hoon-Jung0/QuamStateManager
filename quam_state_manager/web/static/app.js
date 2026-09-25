@@ -19320,27 +19320,10 @@ window.PendingMarkers = (function () {
     // still up 47 SECONDS later over a fully rendered grid, because a stale
     // 80 ms timer fired one millisecond after the hide that ended the work.
     // Nothing was loading; the user is told to please wait a moment.
-    // Queue #7: the slim strip counts the wait in whole seconds. The count
-    // starts with the request (not with the 80 ms reveal) and is blank for
-    // the first second, so a normal slow open reads "Please wait a moment"
-    // alone and only a genuinely long one grows a number.
-    var elapsedTick = null, startedAt = 0;
-    function paintElapsed() {
-        var e = document.getElementById('quam-loader-elapsed');
-        if (!e) return;
-        var sec = Math.floor((Date.now() - startedAt) / 1000);
-        e.textContent = sec >= 1 ? sec + ' s' : '';
-    }
-    function stopElapsed() {
-        if (elapsedTick) { clearInterval(elapsedTick); elapsedTick = null; }
-        var e = document.getElementById('quam-loader-elapsed');
-        if (e) e.textContent = '';
-    }
     function show() {
         if (pending <= 0) return;
         var el = getLoader();
         if (el) el.classList.add('visible');
-        if (!elapsedTick) { paintElapsed(); elapsedTick = setInterval(paintElapsed, 250); }
     }
     // Is any htmx request genuinely in flight? htmx puts `htmx-request` on the
     // requesting element for exactly its lifetime, so this is the DOM's own
@@ -19354,7 +19337,6 @@ window.PendingMarkers = (function () {
         if (timer) { clearTimeout(timer); timer = null; }
         if (safety) { clearTimeout(safety); safety = null; }
         pending = 0;
-        stopElapsed();
         var el = getLoader();
         if (el) el.classList.remove('visible');
     }
@@ -19368,7 +19350,6 @@ window.PendingMarkers = (function () {
         // a counter nothing will ever decrement.
         if (evt.defaultPrevented) return;
         if (!isSlow(evt.detail)) return;
-        if (pending <= 0) startedAt = Date.now();   // the wait begins with the first slow request
         pending++;
         // QA chipstatus-r2-01 (review): htmx fires afterRequest on the element
         // that ISSUED the request. When a re-render swaps that element out

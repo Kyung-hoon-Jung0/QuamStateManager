@@ -553,7 +553,7 @@ window.ChipStatus.mount = function (opts) {
         var ar = noArrow ? '' : arrow(k);
         var blurb = metricBlurb(k);
         var dw = dirWords(k);
-        var tip = blurb ? blurb + (dw ? ' (' + dw + ')' : '') : (dw ? dw.charAt(0).toUpperCase() + dw.slice(1) : '');
+        var tip = blurb ? blurb + (dw && !/is better/i.test(blurb) ? ' (' + dw + ')' : '') : (dw ? dw.charAt(0).toUpperCase() + dw.slice(1) : '');
         return '<span class="metric-label" data-metric="' + _esc(k) + '"' +
                (tip ? ' title="' + _esc(tip) + '"' : '') + '>' + _esc(txt) +
                (ar ? ' <span class="metric-dir" title="' + _esc(dw.charAt(0).toUpperCase() + dw.slice(1)) +

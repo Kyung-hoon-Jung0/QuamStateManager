@@ -747,8 +747,9 @@ html[data-font-size="large"] { --font-size-base: 19px; }
 /* letter-by-letter "QUAM STATE MANAGER" title, big and sitting in    */
 /* the middle of whatever the user was looking at. It is now one      */
 /* small line pinned just below the top bar -- ring, the please-wait  */
-/* text, elapsed seconds, and (during a Param History import) the     */
-/* progress count -- and it never takes a click (pointer-events none).*/
+/* text and (during a Param History import) the progress count; the   */
+/* elapsed seconds stay where they already were, in the top bar's     */
+/* NavProgress. It never takes a click (pointer-events none).         */
 /* ---------------------------------------------------------------- */
 .quam-loader {
     position: fixed;
@@ -801,13 +802,6 @@ html[data-font-size="large"] { --font-size-base: 19px; }
     color: var(--pico-muted-color);
     letter-spacing: 0.01em;
 }
-.quam-loader-elapsed {
-    flex: none;
-    font-family: var(--font-mono);
-    font-variant-numeric: tabular-nums;
-    color: var(--pico-muted-color);
-}
-.quam-loader-elapsed:empty { display: none; }
 
 /* Honour reduced-motion users -- a static ring. */
 @media (prefers-reduced-motion: reduce) {

@@ -1866,11 +1866,10 @@
     {# JS (80 ms, docs/146) so fast requests stay invisible; cleared at the  #}
     {# slow request's own afterSettle. The ring spins via a compositor       #}
     {# transform, so it keeps moving while the main thread is blocked by a  #}
-    {# big swap. Elapsed seconds appear from the first full second.          #}
+    {# big swap. Elapsed seconds live in the top bar's NavProgress already. #}
     <div id="quam-loader" class="quam-loader" role="status" aria-hidden="true">
       <div class="quam-loader-spinner" aria-hidden="true"></div>
       <div class="quam-loader-sub">Please wait a moment&hellip; a first open can take a while.</div>
-      <span id="quam-loader-elapsed" class="quam-loader-elapsed"></span>
       {# Param History import count — populated by JS; hidden when empty. #}
       <div id="quam-loader-progress" class="quam-loader-progress"></div>
     </div>

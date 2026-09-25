@@ -80,7 +80,7 @@ const TOPO = {
   summary: {},
 };
 const RAW = { wiring: { qubits: { q1: { xy: { opx_output: '#/ports/a' } }, q2: { xy: { opx_output: '#/ports/b' } } } } };
-const META = { T1: { label: 'T1', abbr: 'T1', direction: 'higher' },
+const META = { T1: { label: 'T1', abbr: 'T1', direction: 'higher', blurb: 'Energy relaxation time. Higher is better.' },
                gate_fidelity_avg: { label: '1Q gate fidelity', abbr: 'Gate F', direction: 'higher' } };
 
 /* opts: url, chipView, storage (object preset), histState, chipToken */
@@ -386,6 +386,10 @@ const esc = (T) => T.doc.activeElement.dispatchEvent(
     const lab = t1 && t1.querySelector('.metric-label');
     ok(lab && /higher is better/i.test(lab.getAttribute('title') || ''),
        'q#5 the direction moved into the title hover text in words (' + (lab && lab.getAttribute('title')) + ')');
+    const tips = Array.from(d.querySelectorAll('.metric-label[title]')).map((e) => e.getAttribute('title'));
+    ok(tips.length > 0 && tips.every((t) => (t.match(/is better/gi) || []).length <= 1),
+       'q#5 a blurb that already says which way is better is not told twice ('
+       + tips.filter((t) => (t.match(/is better/gi) || []).length > 1).slice(0, 1) + ')');
     const tiles = Array.from(d.querySelectorAll('#topo-overview-tiles .topo-card'));
     ok(tiles.length > 0 && tiles.every((c) => !c.querySelector('.metric-dir')),
        'q#5 no Overview tile title carries the bare arrow either (' + tiles.length + ' tiles)');
