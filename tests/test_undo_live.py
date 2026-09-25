@@ -1539,3 +1539,65 @@ class TestADriftedStepSaysItOnce:
         on_screen = value_delta.compute(0.20, 0.08)["pct_text"]      # -60%
         journal = value_delta.compute(0.10, 0.08)["pct_text"]        # -20%
         assert on_screen in t["message"] and journal not in t["message"], t["message"]
+
+
+# ======================================================================
+# QA F1 (windows): the ↶ names the journal step, and the other window hears
+# ======================================================================
+
+class TestTheButtonNamesTheLiveStep:
+    """Window B's ↶ read "Undo typed edit (anharmonicity)" (a committed,
+    applied entry of its own) while the press rewrote window A's applied
+    q1.chi on the LIVE chip; A's own ↶ was hidden. With nothing pending the
+    tray now carries the journal step it would walk, and a live undo leaves
+    a numbered record every other window's next tray render shows."""
+
+    def _tray(self, c):
+        return c.get("/state/tray").get_data(as_text=True)
+
+    def test_an_empty_log_after_apply_names_the_live_step(self, env):
+        c = env["client"]
+        _edit(c, 0.10); _apply(c)
+        t = self._tray(c)
+        assert 'data-jrn-what="qubits.qA1.z.joint_offset' in t
+        assert 'data-jrn-live="1"' in t and 'data-jrn-n="1"' in t
+        # the direction: from the applied value back to the one before it
+        import re
+        what = re.search(r'data-jrn-what="([^"]*)"', t).group(1)
+        assert what.index("0.1") < what.index("0.08"), what
+
+    def test_setting_off_names_a_staged_step(self, env):
+        c = env["client"]
+        _edit(c, 0.10); _apply(c)
+        _set_setting(env, False)
+        assert 'data-jrn-live="0"' in self._tray(c)
+
+    def test_pending_edits_carry_no_journal_preview(self, env):
+        c = env["client"]
+        _edit(c, 0.10); _apply(c)
+        _edit(c, 0.12)
+        assert "data-jrn-what" not in self._tray(c)
+
+    def test_nothing_to_walk_carries_none(self, env):
+        assert "data-jrn-what" not in self._tray(env["client"])
+
+    def test_a_live_undo_is_numbered_for_the_other_window(self, env):
+        c = env["client"]
+        assert "data-live-undo-seq" not in self._tray(c)
+        _edit(c, 0.10); _apply(c)
+        r = c.post("/undo")
+        t = _trig(r)["cellsReverted"]
+        assert t["live"] is True and t["live_undo_seq"] == 1
+        tray = self._tray(c)
+        assert 'data-live-undo-seq="1"' in tray
+        assert "qubits.qA1.z.joint_offset" in tray.split('data-live-undo-msg="')[1].split('"')[0]
+        _edit(c, 0.11); _apply(c)
+        assert _trig(c.post("/undo"))["cellsReverted"]["live_undo_seq"] == 2
+
+    def test_a_staged_undo_is_not_announced_as_live(self, env):
+        c = env["client"]
+        _edit(c, 0.10); _apply(c)
+        _set_setting(env, False)
+        t = _trig(c.post("/undo"))["cellsReverted"]
+        assert t["live"] is False and t.get("live_undo_seq") is None
+        assert "data-live-undo-seq" not in self._tray(c)

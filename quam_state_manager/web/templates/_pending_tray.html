@@ -9,6 +9,10 @@
         happens to be the same SIZE. #}
      data-change-sig="{{ change_sig | default('') }}"
      data-edit-seq="{{ edit_seq | default('') }}"
+     {# QA F1 (windows): the newest undo another window wrote to the LIVE
+        chip. A window that did not press it toasts the message once. #}
+     {% if last_live_undo is defined and last_live_undo %}data-live-undo-seq="{{ last_live_undo.seq }}"
+     data-live-undo-msg="{{ last_live_undo.message }}"{% endif %}
      data-working-dirty="{{ '1' if working_dirty else '0' }}"
      {# docs/110 #10-A: the store's mutation_seq — PaneState's freshness beacon.
         The tray renders on every page AND OOB-swaps on every mutation, so the
@@ -116,6 +120,11 @@
    Hidden until there is something to undo (JS toggles). #}
 <button type="button" id="tray-undo-btn" class="tray-undo-btn" style="display:none"
         onclick="LiveEditUndo.trigger()" onmouseenter="LiveEditUndo.refreshTip(this)"
+        {# QA F1 (windows): with nothing pending the next press walks the
+           journal -- on the LIVE chip when the live walk is on (docs/160) --
+           so the button carries what that step would undo, to name it. #}
+        {% if undo_next is defined and undo_next %}data-jrn-what="{{ undo_next.what }}"
+        data-jrn-n="{{ undo_next.n }}" data-jrn-live="{{ '1' if undo_next.live else '0' }}"{% endif %}
         title="Undo last edit (Ctrl+Z)" aria-label="Undo last edit">&#8630;</button>
 {% endif %}
 {% if last_apply is defined and last_apply and change_count == 0 and not working_dirty and not _archive %}

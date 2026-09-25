@@ -6850,6 +6850,43 @@ def _fsp_bundle_gids(changes) -> dict:
     return out
 
 
+def _undo_next_preview(ctx, changes) -> dict | None:
+    """QA F1 (windows): what the tray ↶ / Ctrl+Z does next when the change
+    log is EMPTY -- a docs/107/160 journal step, which since docs/160 writes
+    the LIVE chip. The button said "Undo typed edit (anharmonicity)" (a stale
+    in-memory entry of the presser's own) or "Nothing to undo", while the
+    press rewrote another window's applied q1.chi on the live files. Display
+    only: /undo still decides on the server at press time (docs/73), this is
+    what the button NAMES. ``None`` when the log holds edits (the ordinary
+    staged undo, already named) or there is no journal step to walk."""
+    if not ctx or changes:
+        return None
+    if (ctx.get("origin") or "live") != "live":
+        return None
+    units = ctx.get("undo_units") or []
+    cursor = int(ctx.get("undo_cursor") or 0)
+    if cursor <= 0 or cursor > len(units):
+        return None
+    ents = units[cursor - 1].get("entries") or []
+    if not ents:
+        return None
+    a = ents[0]   # the step's anchor, as its toast names it (uents[-1])
+    live = False
+    try:
+        live = (_undo_live_enabled() and _archive_write_blocked(ctx) is None
+                and not _journal_unit_foreign(units[cursor - 1]))
+    except Exception:  # noqa: BLE001 -- a preview never breaks the tray
+        live = False
+    if a.get("created"):
+        what = f"{a.get('path')} (remove it)"
+    elif a.get("deleted"):
+        what = f"{a.get('path')} (restore it)"
+    else:
+        what = (f"{a.get('path')} {_fmt_msg_val(a.get('new'))} → "
+                f"{_fmt_msg_val(a.get('old'))}")
+    return {"path": a.get("path"), "what": what, "n": len(ents), "live": live}
+
+
 def _render_tray(*, oob: bool) -> str:
     """Render ``#pending-tray`` — the single tray renderer for both direct
     target swaps and OOB swaps.
@@ -6901,6 +6938,11 @@ def _render_tray(*, oob: bool) -> str:
         auto_sync=_auto_sync_state(),
         auto_pull_armable=_auto_pull_armable(),
         applied_log=_applied_log_rows(),
+        # QA F1 (windows): the ↶ names the journal step it would walk, and a
+        # window whose applied value another window undid on the live chip
+        # is told (the tray re-renders on every foreign edit_seq move).
+        undo_next=_undo_next_preview(_active_ctx(), changes),
+        last_live_undo=(_active_ctx() or {}).get("last_live_undo"),
         oob=oob,
     )
 
@@ -15780,11 +15822,20 @@ def _undo_journal_step(ctx, n_req: int = 1):
     elif drift:
         message += f" — {drift} value(s) had moved since; the tray now holds the journal value"
 
+    live_undo_seq = None
+    if live:
+        # QA F1 (windows): another window showing this value is told, once,
+        # through its next tray render (the seq tells it which one it saw).
+        prev = ctx.get("last_live_undo") or {}
+        live_undo_seq = int(prev.get("seq") or 0) + 1
+        ctx["last_live_undo"] = {"seq": live_undo_seq, "message": message}
+
     resp = make_response(_tray_html())
     resp.headers["HX-Trigger"] = json.dumps({
         "cellsReverted": {
             "message": message,
             "live": live,
+            "live_undo_seq": live_undo_seq,
             "tier_note": flush.get("note") if not live else None,
             **_walk_burst_extra(n_req),
             **_walk_entries_payload(uents, lambda u: u.get("old"),

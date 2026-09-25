@@ -21659,14 +21659,44 @@ window.LiveEditUndo = (function () {
         var tray = document.getElementById("pending-tray");
         return tray ? parseInt(tray.getAttribute("data-change-count") || "0", 10) : 0;
     }
+    /* QA F1 (windows): an entry whose every cell is on screen and COMMITTED
+       since (tryUndo's own test) will never be restored -- tryUndo drops it
+       and the press falls through to /undo. The button kept naming it
+       ("Undo typed edit (anharmonicity)") while the press rewrote another
+       window's applied value on the live chip. Drop such entries before the
+       button or its tooltip reads the stack. A cell that is merely not on
+       screen keeps its entry (a parked pane can come back, docs/110). */
+    function _committedStale(a) {
+        if (!a || !a.cells || !a.cells.length) return true;
+        for (var i = 0; i < a.cells.length; i++) {
+            var c = a.cells[i], input = _input(c.dp);
+            if (!input || input.readOnly) return false;
+            if (!(input.getAttribute("data-orig") === String(c.next)
+                  || input.value === input.getAttribute("data-orig"))) return false;
+        }
+        return true;
+    }
+    function _prune() {
+        while (stack.length && _committedStale(stack[stack.length - 1])) stack.pop();
+    }
+    function _jrnNext(btn) {
+        return btn && btn.getAttribute("data-jrn-what")
+            ? { what: btn.getAttribute("data-jrn-what"),
+                n: parseInt(btn.getAttribute("data-jrn-n") || "1", 10) || 1,
+                live: btn.getAttribute("data-jrn-live") === "1" }
+            : null;
+    }
     function _updateTrayBtn() {
         var btn = document.getElementById("tray-undo-btn");
         if (!btn) return;
-        btn.style.display = (stack.length || _changeCount() > 0) ? "" : "none";
+        _prune();
+        btn.style.display = (stack.length || _changeCount() > 0 || _jrnNext(btn)) ? "" : "none";
     }
     function refreshTip(btn) {
         // Transparency contract: the tooltip names what the NEXT press does.
         var tip;
+        _prune();
+        var jrn = _changeCount() > 0 ? null : _jrnNext(btn);
         if (stack.length) {
             tip = "Undo " + stack[stack.length - 1].label + " (Ctrl+Z)";
         } else if (_changeCount() > 0) {
@@ -21699,11 +21729,46 @@ window.LiveEditUndo = (function () {
                 : ("Undo last staged change — removes exactly that entry "
                    + "group from Review (Ctrl+Z)");
             }
+        } else if (jrn) {
+            // QA F1 (windows): the journal step -- which may be ANOTHER
+            // window's apply -- and, with the live walk on, it writes the
+            // live chip now (docs/160). Say both before the press.
+            var more = jrn.n > 1 ? " (+" + (jrn.n - 1) + " more in that step)" : "";
+            tip = jrn.live
+                ? ("Undo on the LIVE chip: " + jrn.what + more
+                   + " — writes the live files now, whichever window applied it (Ctrl+Z)")
+                : ("Stage the undo of " + jrn.what + more
+                   + " into Review — Apply writes it (Ctrl+Z)");
         } else {
             tip = "Nothing to undo";
         }
         btn.title = tip;
     }
+
+    /* QA F1 (windows): a window whose applied value another window undid on
+       the live chip was never told -- its cell just changed back. The tray
+       (re-rendered on every foreign edit_seq move) carries the newest live
+       undo; a window that did not press it says so, once. The first tray a
+       window sees only records where it is. */
+    var _ownLiveUndo = {};
+    document.addEventListener("cellsReverted", function (evt) {
+        var d = evt && evt.detail;
+        if (d && d.live_undo_seq) _ownLiveUndo[String(d.live_undo_seq)] = true;
+    });
+    function _noticeForeignLiveUndo() {
+        var tray = document.getElementById("pending-tray");
+        if (!tray) return;
+        var seq = tray.getAttribute("data-live-undo-seq") || "";
+        if (window._liveUndoSeen === undefined) { window._liveUndoSeen = seq; return; }
+        if (!seq || seq === window._liveUndoSeen) return;
+        window._liveUndoSeen = seq;
+        if (_ownLiveUndo[seq]) return;
+        if (window.showToast) {
+            window.showToast("Another State Manager window undid a change on the live chip — "
+                             + (tray.getAttribute("data-live-undo-msg") || "") , "warning");
+        }
+    }
+    window._noticeForeignLiveUndo = _noticeForeignLiveUndo;
 
     // The tray re-renders on every staged mutation — re-evaluate the button.
     // audit-r10: ALSO on oobAfterSwap (every server _tray_oob() rides OOB,
@@ -21714,14 +21779,16 @@ window.LiveEditUndo = (function () {
         if (t && (t.id === "pending-tray"
                   || (t.querySelector && t.querySelector("#pending-tray")))) {
             _updateTrayBtn();
+            _noticeForeignLiveUndo();
         }
     }
     document.addEventListener("htmx:afterSwap", _onTraySwap);
     document.addEventListener("htmx:oobAfterSwap", _onTraySwap);
     if (document.readyState === "loading") {
-        document.addEventListener("DOMContentLoaded", _updateTrayBtn);
+        document.addEventListener("DOMContentLoaded", function () { _updateTrayBtn(); _noticeForeignLiveUndo(); });
     } else {
         _updateTrayBtn();
+        _noticeForeignLiveUndo();
     }
 
     return { record: record, tryUndo: tryUndo, tryRedo: tryRedo, resync: resync,
