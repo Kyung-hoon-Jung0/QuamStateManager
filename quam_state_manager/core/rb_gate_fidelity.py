@@ -117,7 +117,7 @@ def from_run_folder(folder: Any, pair_id: str) -> dict | None:
     return out
 
 
-def derive_for_edges(edges: Any, resolve_run) -> int:
+def derive_for_edges(edges: Any, resolve_run, *, read_values=None) -> int:
     """Attach a derived per-gate fidelity to every Standard-RB row, IN PLACE.
 
     *resolve_run* is ``load_id -> run folder or None`` — supplied by the caller
@@ -130,6 +130,9 @@ def derive_for_edges(edges: Any, resolve_run) -> int:
     """
     if not isinstance(edges, list):
         return 0
+    # Routes can cache file-versioned values while retaining the one reader.
+    if read_values is None:
+        read_values = from_run_folder
     cache: dict = {}
     hits = 0
     for edge in edges:
@@ -150,7 +153,7 @@ def derive_for_edges(edges: Any, resolve_run) -> int:
                     logger.debug("rb_gate_fidelity: resolve_run(%r) failed",
                                  load_id, exc_info=True)
                     folder = None
-                cache[key] = from_run_folder(folder, pair_id)
+                cache[key] = read_values(folder, pair_id)
             found = cache[key]
             if found:
                 row["derived_gate_fidelity"] = found["average_gate_fidelity"]

@@ -23478,6 +23478,38 @@ def _rb_run_folder(load_id, stores=None):
     return None
 
 
+# Positive folder entries and timed misses share the same bounded cache.
+_RB_CACHE_MAX = 512
+_RB_MISS_TTL_S = 60.0
+_RB_CACHE_LOCK = threading.RLock()
+_RB_RUN_FOLDERS: dict = {}  # load_id -> (resolved folder or None, miss expiry)
+_RB_DERIVED_VALUES: dict = {}  # (folder, pair, mtime_ns, size) -> derived values
+
+
+def _rb_cache_put(cache, key, value):
+    # Caller holds _RB_CACHE_LOCK; insertion-order eviction bounds memory.
+    if key not in cache and len(cache) >= _RB_CACHE_MAX:
+        del cache[next(iter(cache))]
+    cache[key] = value
+
+
+def _rb_cached_values(folder, pair_id):
+    from quam_state_manager.core import rb_gate_fidelity
+
+    if folder is None:
+        return None
+    try:
+        stamp = os.stat(os.path.join(folder, "data.json"))
+    except OSError:
+        return None
+    key = (folder, pair_id, stamp.st_mtime_ns, stamp.st_size)
+    with _RB_CACHE_LOCK:
+        if key not in _RB_DERIVED_VALUES:
+            _rb_cache_put(_RB_DERIVED_VALUES, key,
+                          rb_gate_fidelity.from_run_folder(folder, pair_id))
+        return _RB_DERIVED_VALUES[key]
+
+
 def _topology_with_derived_rb(engine):
     """`engine.get_topology()`, plus the per-gate fidelity derived from each
     Standard-RB run. The cached topology itself is never mutated."""
@@ -23493,27 +23525,40 @@ def _topology_with_derived_rb(engine):
             return topo                      # nothing to enrich; skip the copy
         topo = copy.deepcopy(topo)           # get_topology's result is CACHED
 
-        # ONE staleness sweep per render, not one per edge (docs/155 F1).
-        # `_rb_run_folder` re-entered `_active_dataset_stores`, and each of
-        # those rescans every dataset store — `DatasetStore._current_mtime`
-        # stats every date dir under the root. On a 390-date-dir archive that
-        # was 7,831 filesystem operations per Chip Status render, ten sweeps
-        # to look up ten run folders, and it grew by one date dir per day of
-        # measurement forever. Resolved once here — and with F2 halving the
-        # sweep itself — the same render measures 403.
-        #
-        # LAZY on purpose: a chip whose edges carry no Standard-RB load_id
-        # resolves nothing, and must keep paying nothing. (The guard above
-        # already returns early for the common case, but `derive_for_edges`
-        # is also free to call the resolver zero times.)
-        _rb_stores: list = []
+        # docs/207: resolved from memory, not by an archive sweep per render.
+        # Run ids are unique only WITHIN a data folder, so the cache key carries
+        # the set of folders this chip reads from -- another chip's run #1477
+        # is never this chip's #1477.
+        stores = _active_dataset_stores(fast=True, rescan=False)
+        scope = tuple(sorted(str(e.get("path")) for e in stores))
+        rescanned = False
 
         def _resolve_rb_run(load_id):
-            if not _rb_stores:
-                _rb_stores.append(_active_dataset_stores(fast=True))
-            return _rb_run_folder(load_id, stores=_rb_stores[0])
+            nonlocal stores, rescanned
+            try:
+                rid = int(load_id)
+            except (TypeError, ValueError):
+                return None
+            with _RB_CACHE_LOCK:
+                cached = _RB_RUN_FOLDERS.get((scope, rid))
+                if cached is not None:
+                    folder, expires = cached
+                    if folder is not None or time.monotonic() < expires:
+                        return folder
+                folder = _rb_run_folder(rid, stores=stores)
+                if folder is None and not rescanned:
+                    # Only a genuine RAM-index miss may sweep the archive,
+                    # and all rows in this render share that single retry.
+                    rescanned = True
+                    stores = _active_dataset_stores(fast=True)
+                    folder = _rb_run_folder(rid, stores=stores)
+                folder = str(Path(folder).resolve()) if folder is not None else None
+                _rb_cache_put(_RB_RUN_FOLDERS, (scope, rid),
+                              (folder, time.monotonic() + _RB_MISS_TTL_S))
+                return folder
 
-        n = rb_gate_fidelity.derive_for_edges(topo.get("edges"), _resolve_rb_run)
+        n = rb_gate_fidelity.derive_for_edges(
+            topo.get("edges"), _resolve_rb_run, read_values=_rb_cached_values)
         if n:
             logger.debug("topology: derived per-gate RB fidelity for %d row(s)", n)
     except Exception:  # noqa: BLE001 — an enrichment never breaks the page
