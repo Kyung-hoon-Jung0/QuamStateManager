@@ -21,15 +21,18 @@ const [SM, OUT, W, LABEL, TAG] = [process.argv[2], process.argv[3], +process.arg
   const cards = `(() => [...document.querySelectorAll('#agent-home .ag-card')].slice(-4).map(c => c.getAttribute('data-card') + ': ' + c.innerText.replace(/\\s+/g, ' ').slice(0, 140)).join(' || '))()`;
   console.log('strip  ', await p.ev(strip));
   console.log('cards  ', await p.ev(cards));
-  const at = await p.ev(`(() => { const re = new RegExp('^\\\\s*' + ${JSON.stringify(LABEL)}.replace(/[.*+?^\${}()|[\\]\\\\]/g, '\\\\$&'));
+  for (const [k, LABEL1] of LABEL.split('|').entries()) {
+  const at = await p.ev(`(() => { const re = new RegExp('^\\\\s*' + ${JSON.stringify(LABEL1)}.replace(/[.*+?^\${}()|[\\]\\\\]/g, '\\\\$&'));
     const e = [...document.querySelectorAll('#agent-home button, #agent-home a, #agent-home summary')].reverse().find(e => re.test(e.textContent) && e.getBoundingClientRect().width > 0);
     if (!e) return null; e.scrollIntoView({block:'nearest'}); const b = e.getBoundingClientRect(); return JSON.stringify([b.x + b.width/2, b.y + b.height/2]); })()`);
-  console.log('press  ', LABEL, at);
+  console.log('press  ', LABEL1, at);
   if (at) { const xy = JSON.parse(at); await p.click(xy[0], xy[1]); }
   await sleep(3000);
   console.log('toast  ', await p.ev(`(() => { const t = document.getElementById('ag-toast'); return t && !t.hidden ? t.textContent : null; })()`));
   console.log('strip  ', await p.ev(strip));
   console.log('cards  ', await p.ev(cards));
+  await p.shot(`${OUT}/${TAG}_${k}_${W}.png`);
+  }
   await p.shot(`${OUT}/${TAG}_${W}.png`);
   await p.send('Page.reload'); await sleep(3500);
   console.log('reload ', await p.ev(strip));

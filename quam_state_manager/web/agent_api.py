@@ -925,12 +925,17 @@ def _now_state() -> dict:
     # pill and the strip said "thinking · by_claude" for the window's whole
     # 15 min after Stop now had killed the agent (QA agents round). A sign of
     # life after the stop (a resumed session) still counts.
+    # The same holds for SM's own chat-window session whose recorded process
+    # is gone: Arm clears the stop, and the strip went back to "thinking" (with
+    # Stop buttons for nothing) over a process that no longer exists.
     stop = (sess or {}).get("agent_stop") or {}
-    if (alive and stop.get("at") and str((sess or {}).get("session_id") or "") == str(sid)
-            and not agent_session.alive(sess)):
+    own = bool(sess) and str(sess.get("session_id") or "") == str(sid) and not agent_session.alive(sess)
+    if alive and own and stop.get("at"):
         stop_at = float(stop["at"])
         if not any(float(e.get("ts") or 0) > stop_at and e.get("hook_event_name") != "Stop" for e in es):
             alive = False
+    elif alive and own and sess.get("window") == "chat" and (sess.get("pid") or sess.get("worker_pid")):
+        alive = False
     running = None
     if open_tools and alive:
         e = sorted(open_tools.values(), key=lambda x: float(x.get("ts") or 0))[-1]

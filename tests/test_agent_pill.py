@@ -366,3 +366,29 @@ class TestAStoppedSessionIsNotThinking:
         agent_session.request_stop(inst, chip, who="human", mode="now")
         d = _now(client)
         assert d["session_id"] == "TERMINAL" and d["state"] == "between", d
+
+    def test_sms_own_chat_session_with_a_dead_process_is_not_thinking(self, client, app):
+        """Arm clears the stop record; the strip then said "thinking" again, with
+        Stop buttons, over a chat process that no longer existed."""
+        import subprocess
+        import sys as _sys
+        from quam_state_manager.core import agent_session
+        with app.app_context():
+            from quam_state_manager.web import agent_api
+            chip = agent_api._chip_key()
+            inst = app.instance_path
+        dead = subprocess.Popen([_sys.executable, "-c", "pass"])
+        dead.wait()
+        _ev(client, hook_event_name="PostToolUse", tool_name="mcp__sm__state_get", tool_use_id="a", summary="{}",
+            session_id="S2")
+        agent_session.save(inst, chip, session_id="S2", owner="human", backend="claude", window="chat", pid=dead.pid)
+        d = _now(client)
+        assert d["state"] != "between" and d["alive"] is False, d
+        live = subprocess.Popen([_sys.executable, "-c", "import time; time.sleep(30)"])
+        try:
+            agent_session.save(inst, chip, pid=live.pid)
+            assert _now(client)["state"] == "between", "a live chat process is still thinking"
+            agent_session.save(inst, chip, pid=dead.pid, window="terminal")
+            assert _now(client)["state"] == "between", "outside the chat window the event window still decides"
+        finally:
+            live.kill()
