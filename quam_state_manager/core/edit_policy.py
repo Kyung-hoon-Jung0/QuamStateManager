@@ -143,6 +143,15 @@ def leaf_is_absent(store: Any, dot_path: str) -> bool:
     return isinstance(container, dict) and leaf not in container
 
 
+# What a runtime `#./` self-ref is computed from, for the refusal's guidance.
+# Only entries quam's own source states: channels.py
+# `inferred_intermediate_frequency` docstring, "Returns:
+# self.RF_frequency - self.LO_frequency". Anything else stays generic.
+_RUNTIME_SOURCES = {
+    "#./inferred_intermediate_frequency": "RF_frequency - LO_frequency",
+}
+
+
 def pointer_cell_refusal(store: Any, dot_path: str, new_value: Any) -> str | None:
     """Why a pointer-valued cell refuses *new_value*, or None to proceed.
 
@@ -162,7 +171,7 @@ def pointer_cell_refusal(store: Any, dot_path: str, new_value: Any) -> str | Non
     said out loud, on the Pulses page's explicit 3-mode editor.
     """
     from quam_state_manager.core.pointer_path import resolve_field_target
-    from quam_state_manager.core.pointer_resolver import is_pointer
+    from quam_state_manager.core.pointer_resolver import is_pointer, is_self_ref
     try:
         current = store.get_value(dot_path)
     except (KeyError, TypeError, ValueError, IndexError):
@@ -202,11 +211,52 @@ def pointer_cell_refusal(store: Any, dot_path: str, new_value: Any) -> str | Non
         # `#./` self-ref is quam's shape for a runtime-computed value, not a
         # broken one.
         return None
+    if is_self_ref(current) and not (ft.get("resolvable")
+                                     and ft.get("resolved_path") != dot_path):
+        # JT-11: an unresolvable `#./` self-ref is quam's runtime-computed
+        # value (docs/121), not a link to break -- the generic text below
+        # called the number "plain text" and sent the user to the Pulses
+        # page's pointer editor, which refuses a non-pulse path and offers no
+        # unlink for an unresolved pointer. Same refusal, honest guidance.
+        leaf = dot_path.rsplit(".", 1)[-1]
+        src = _RUNTIME_SOURCES.get(current)
+        return (f"{leaf} is computed at runtime by quam ({current}); the chip "
+                f"stores no value here to overwrite or clear. Change the "
+                f"fields it is computed from"
+                + (f" ({src})" if src else "")
+                + f", or enter a pointer (e.g. {current}) to re-point it.")
     return (f"This field is a reference ({current}), not a value. Writing "
             f"{new_value!r} here would replace the link with plain text and "
             f"break it. Enter a pointer (e.g. {current}) to re-point it, or "
             f"use the Pulses page's pointer editor to break the link "
             f"deliberately.")
+
+
+def dangling_pointer_warning(store: Any, dot_path: str) -> str | None:
+    """A non-blocking note when the pointer now stored at *dot_path* reaches
+    nothing, else None. JT-12: a re-point to a target that does not exist is
+    ALLOWED (docs/190 F27, "dangling pointers stay allowed" -- real chips carry
+    them and a user may point at a target they are about to create), but the
+    only signal was the global issues badge. Same rule as Diagnostics: a `#./`
+    self-ref is runtime, and a pointer whose parent object exists with only the
+    final field absent is the "optional field at its default" info case
+    (``QuamStore._pointer_parent_resolves``), so neither warns. Never raises.
+    """
+    from quam_state_manager.core.pointer_resolver import is_pointer, is_self_ref
+    try:
+        v = store.get_value(dot_path)
+        if not is_pointer(v) or is_self_ref(v):
+            return None
+        pt = tuple(dot_path.split("."))
+        if store.resolve_pointer(v, pt) != v:
+            return None
+        if store._pointer_parent_resolves(v, pt):
+            return None
+    except Exception:                   # noqa: BLE001 -- a note never fails an edit
+        return None
+    return (f"{v} does not resolve on this chip: its target does not exist. "
+            f"The link is staged anyway; applying it to live writes a dangling "
+            f"reference.")
 
 
 def sibling_type_refusal(store: Any, dot_path: str, new_value: Any) -> str | None:
@@ -264,10 +314,18 @@ def sibling_type_refusal(store: Any, dot_path: str, new_value: Any) -> str | Non
             continue
         cur = node
         for k in leaf:
-            if not isinstance(cur, dict) or k not in cur:
+            # jsontree-r2-08: a list element (`confusion_matrix.0.1`) is the
+            # same leaf on every sibling too; a dict-only walk stopped at the
+            # list, so a nulled matrix element took '[1,2]' / '"x"' unopposed.
+            # Strict-digit segments only (the path grammar's ^\d+$ gate); a
+            # dict is tried first, so number-keyed dicts walk as before.
+            if isinstance(cur, dict) and k in cur:
+                cur = cur[k]
+            elif isinstance(cur, list) and k.isdigit() and int(k) < len(cur):
+                cur = cur[int(k)]
+            else:
                 cur = None
                 break
-            cur = cur[k]
         if cur is None:
             continue
         # docs/120 item 17: a sibling holding a POINTER used to land in `other`,

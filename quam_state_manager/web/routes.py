@@ -1163,6 +1163,7 @@ def _reconcile_cached_quam_ctx(key: str, ctx: dict, *,
                             "C29 working-folder re-persist failed for %s", key)
                     ctx["live_diverged"] = True
                     return
+                _held_fp = _chip_fp(ctx)   # jsontree-r2-04 review
                 try:
                     store.reload()
                     index = SearchIndex.build(
@@ -1183,6 +1184,7 @@ def _reconcile_cached_quam_ctx(key: str, ctx: dict, *,
                 ctx["working_dirty"] = False
                 ctx["live_diverged"] = False
                 ctx.pop("live_drift_count", None)   # docs/116
+                _chip_tokens_rebase(ctx, _held_fp)
             engine = ctx.get("engine")
             if engine:
                 engine.invalidate_cache()
@@ -1823,6 +1825,7 @@ def _rebuild_after_working_copy_replaced(ctx: dict) -> None:
     reopen the stale-chip bug. Caller must hold the per-folder build lock.
     """
     store = ctx["store"]
+    _held_fp = _chip_fp(ctx)   # jsontree-r2-04 review: what was held
     store.reload()
     index = SearchIndex.build(store.merged, wiring_keys=set(store.wiring.keys()))
     store.search_index = index
@@ -1841,6 +1844,7 @@ def _rebuild_after_working_copy_replaced(ctx: dict) -> None:
     # (the redo stack self-invalidates via the mutation_seq handshake).
     _journal_reset(ctx)
     _reseed_drift_baseline_if_chip_changed(ctx)
+    _chip_tokens_rebase(ctx, _held_fp)   # another chip, same folder
     # docs/78: content the user did not type just landed — let the next render
     # raise the type-anomaly popup once (pull / stage / restore / run load).
     _arm_type_alarm(ctx, ctx.pop("_alarm_reason", None) or "live-pull")
@@ -4013,7 +4017,9 @@ def _ctx(**extra: Any) -> dict[str, Any]:
         "chip_identity": ident,          # full identity for _chip_header.html
         "chip_origin": ident["origin"] if ident else "live",
         # Render-time chip fingerprint token (topology-only: network + qubit/pair
-        # labels, NOT values — so value edits never change it). Baked into the page
+        # labels, NOT values -- but an edit OF the network block or of the qubit
+        # set does move it; the gate accepts every token this context issued,
+        # jsontree-r2-04). Baked into the page
         # as window.__chipToken and sent back as expect_chip on every edit POST, so
         # an edit committed from a stale tab after another tab switched the active
         # chip is caught server-side by _chip_mismatch_response (409) instead of
@@ -7348,33 +7354,110 @@ def _normalize_dot_path(dot_path: str) -> str:
 
 
 def _active_chip_token() -> str | None:
-    """Fingerprint token of the LOADED chip (in-memory state+wiring), or None."""
-    store = _store()
+    """Fingerprint token of the LOADED chip (in-memory state+wiring), or None.
+
+    The fingerprint covers the network block and the qubit/pair key sets, so
+    an ordinary edit of ``network.host`` or an added qubit MOVES it on the
+    same chip (jsontree-r2-04). Every token handed out is recorded on the
+    context that issued it, so :func:`_chip_token_ok` can tell a page that
+    watched this chip change from a page that belongs to another chip."""
+    ctx = _active_ctx()
+    store = ctx.get("store") if ctx else None
     if not store:
         return None
     from quam_state_manager.core import history
-    return history.fingerprint_token(
+    token = history.fingerprint_token(
         history.fingerprint_from_dicts(store.state, store.wiring))
+    if token:
+        seen = ctx.setdefault("chip_tokens_seen", [])
+        if token not in seen:
+            seen.append(token)
+            del seen[:-32]
+    return token
 
 
-def _chip_mismatch_response(expect_chip: str, force_chip: bool):
+def _chip_token_ok(expect_chip: str) -> bool:
+    """Does *expect_chip* belong to the loaded chip? True when no token can be
+    computed (no gate, as before), when it is the current token, or when THIS
+    context issued it earlier -- an edit on the same chip that moved the
+    fingerprint is not a chip switch (jsontree-r2-04). A switch changes the
+    context, and a context only records its own tokens, so a stale tab from
+    another chip is still refused."""
+    active = _active_chip_token()
+    if active is None or active == expect_chip:
+        return True
+    ctx = _active_ctx()
+    return bool(ctx) and expect_chip in (ctx.get("chip_tokens_seen") or ())
+
+
+def _chip_fp(ctx: dict):
+    """*ctx*'s content fingerprint -- taken BEFORE a wholesale replace, for
+    :func:`_chip_tokens_rebase`."""
+    from quam_state_manager.core import history
+    store = ctx.get("store")
+    return (history.fingerprint_from_dicts(store.state, store.wiring)
+            if store else None)
+
+
+def _chip_tokens_rebase(ctx: dict, held_fp) -> None:
+    """The tokens a context vouched for describe the content it HELD. A
+    wholesale replace (a pull, a stage, a restore, a run's state, a robot's
+    auto-adopt) can put another chip into the same folder -- and so into the
+    same cached context, whose tokens would then wave a page from the old
+    chip through (jsontree-r2-04 review). *held_fp* is the replaced content's
+    fingerprint. The set starts over when the new content is a DIFFERENT chip
+    by the rule the app already uses for that (``history.align``, C30's
+    gate: a differing network identity, or with no network on either side,
+    different qubit/pair labels). A same-chip replace keeps it -- a pull after
+    an identity edit, a node that added a qubit -- and so does one landing on
+    a token this context already issued."""
+    seen = ctx.get("chip_tokens_seen")
+    store = ctx.get("store")
+    if not seen or not store:
+        return
+    from quam_state_manager.core import history
+    new_fp = history.fingerprint_from_dicts(store.state, store.wiring)
+    if history.fingerprint_token(new_fp) in seen:
+        return
+    if history.align(held_fp, new_fp) not in (history.ALIGN_ALIGNED,
+                                              history.ALIGN_RENAMED):
+        seen.clear()
+
+
+def _chip_mismatch_response(expect_chip: str, force_chip: bool, *,
+                            action: str | None = None):
     """409 JSON if *expect_chip* (a run's fingerprint token) doesn't match the
     loaded chip and the caller didn't force it; else None.
 
     The dataset "Apply fitted value" path stamps the run's token here so a fit
     can't be silently written onto a different loaded chip that happens to reuse
-    the same qubit names (audit #1). Other edit callers send no token → no gate.
+    the same qubit names (audit #1). The page-token callers (Json Tree add /
+    delete / type assignment, the grids) stamp ``window.__chipToken``; a caller
+    that sends no token is not gated.
+
+    jsontree-r2-29: *action* names what a page-token caller refused ("add",
+    "delete", ...), so the refusal speaks about THAT act, names the chip now
+    loaded and says how to go on. Without it the apply-fit sentence stays
+    byte-identical -- that popup appends "Apply anyway?" to it and re-sends
+    with force_chip, so it must not start telling the user to reload.
+    ``loaded_chip`` rides every mismatch (additive).
     """
     expect_chip = (expect_chip or "").strip()
     if not expect_chip or force_chip:
         return None
-    active = _active_chip_token()
-    if active is not None and active != expect_chip:
-        return jsonify(
-            ok=False, chip_mismatch=True,
-            error="This value came from a different chip than the one loaded — "
-                  "applying it would write onto the wrong chip.",
-        ), 409
+    if not _chip_token_ok(expect_chip):
+        now = (_active_chip_identity() or {}).get("name") or "another chip"
+        if action:
+            msg = (f"Not applied: this app now has '{now}' loaded, not the "
+                   "chip this page was showing (another window or tab may "
+                   f"have opened a different chip). The {action} was refused "
+                   "so it cannot land on the wrong chip — reload this page "
+                   f"to continue on '{now}', or load your chip again first.")
+        else:
+            msg = ("This value came from a different chip than the one "
+                   "loaded — applying it would write onto the wrong chip.")
+        return jsonify(ok=False, chip_mismatch=True, loaded_chip=now,
+                       error=msg), 409
     return None
 
 
@@ -7390,8 +7473,7 @@ def _chip_mismatch_html(expect_chip: str, force_chip: bool):
     expect_chip = (expect_chip or "").strip()
     if not expect_chip:
         return None
-    active = _active_chip_token()
-    if active is not None and active != expect_chip:
+    if not _chip_token_ok(expect_chip):
         return render_template(
             "_status.html",
             message="This edit was staged against a different chip than the one "
@@ -7443,8 +7525,12 @@ def field_edit():
     # stores "7" -- the zeros are gone, on the very edit that asked to keep
     # them. Putting the quotes back makes this byte-identical to the literal
     # the user actually typed, which is the path that already preserves them.
+    # A `#`-string is a reference everywhere in QUAM, never text to protect
+    # (JT-02): re-wrapping it hid the re-point from the pointer guard below,
+    # which then refused the tree's own quoted spelling as "plain text".
     if _value_was_quoted() and not (raw_value.startswith('"')
-                                    or raw_value.startswith("'")):
+                                    or raw_value.startswith("'")) \
+            and not is_pointer(raw_value.strip()):
         raw_value = json.dumps(raw_value)
 
     if not dot_path:
@@ -7534,6 +7620,10 @@ def field_edit():
     except (KeyError, TypeError, ValueError, IndexError) as e:
         return jsonify(ok=False, error=str(e)), 400
 
+    # JT-12: a re-point to nowhere lands (docs/190 F27) but is SAID, inline.
+    from quam_state_manager.core.edit_policy import dangling_pointer_warning
+    _warn = dangling_pointer_warning(modifier.store, target_path)
+    _wkw = {"warning": _warn} if _warn else {}
     # Echo what was ACTUALLY committed (the coercer may have kept the old
     # type) so the client can re-render the value with honest type styling.
     try:
@@ -7542,9 +7632,9 @@ def field_edit():
                 committed != committed or committed in (float("inf"), float("-inf"))):
             raise ValueError("non-finite echo would break JSON.parse")
         return jsonify(ok=True, tray_html=_tray_html(),
-                       stored=committed, stored_kind=_kind_of(committed))
+                       stored=committed, stored_kind=_kind_of(committed), **_wkw)
     except Exception:  # noqa: BLE001 — echo is a bonus, never a failure
-        return jsonify(ok=True, tray_html=_tray_html())
+        return jsonify(ok=True, tray_html=_tray_html(), **_wkw)
 
 
 def _fsp_plan_for(store, target_path: str, raw_value) -> dict | None:
@@ -7648,6 +7738,32 @@ def _type_fix_offer(store, target_path: str, raw_value: str,
         return None
 
 
+def _text_violates_enforced(store, target_path: str, current) -> bool:
+    """jsontree-r2-11: True when the leaf's ENFORCED type (env / user /
+    verdict) itself refuses the text the leaf holds now.
+
+    Such a leaf is not a text leaf -- it is a wrong-typed value waiting for
+    repair (a str override was cleared, or a number type was assigned over
+    prose; docs/56: "assignment IS the repair path"). The verbatim carve-out
+    below used to hand the typed number back as a str, so the enforced judge
+    refused it ("expected float, got str '2.3e-05'") and the field could never
+    be set back to a number. No policy / no enforced expectation => False, so
+    every chip without one keeps the carve-out byte-identically.
+    """
+    policy = getattr(store, "type_policy", None)
+    if policy is None:
+        return False
+    try:
+        expected = policy.expected_for(store.merged, target_path, infer=False)
+    except Exception:  # noqa: BLE001 — a policy bug must never brick edits
+        return False
+    if expected is None or not expected.enforced:
+        return False
+    from quam_state_manager.core.state_env_validate import EDIT_BLOCKING, judge
+    ok, code, _ = judge(current, expected.spec)
+    return (not ok) and code in EDIT_BLOCKING
+
+
 def _parse_for_target(store, target_path: str, raw_value: str):
     """Parse typed text against the resolved target's ENFORCED expectation;
     without one this is ``type_policy.parse_value`` byte-identical.
@@ -7694,7 +7810,8 @@ def _parse_for_target(store, target_path: str, raw_value: str):
     # untouched, and nothing about non-string fields changes. `extras` is
     # subsumed (its numeric values were already parsed under the old gate too).
     if (isinstance(current, str) and not is_pointer(current)
-            and (is_free_form_path(target_path) or not _is_numeric_string(current))):
+            and (is_free_form_path(target_path) or not _is_numeric_string(current))
+            and not _text_violates_enforced(store, target_path, current)):
         # VERBATIM means "the characters are the value" — it does NOT mean the
         # three tokens every other write path honours stop existing. Returning
         # raw_value unconditionally broke them, and the red team caught it:
@@ -8511,7 +8628,8 @@ def field_type_assign():
         return jsonify(ok=False, error="No active context"), 400
     guard = _chip_mismatch_response(
         request.form.get("expect_chip", ""),
-        request.form.get("force_chip") in ("1", "true", "True"))
+        request.form.get("force_chip") in ("1", "true", "True"),
+        action="type assignment")
     if guard is not None:
         return guard
 
@@ -8527,6 +8645,25 @@ def field_type_assign():
         policy = getattr(store, "type_policy", None)
     if policy is not None and not override_env:
         env_exp = policy._env_expected(store.merged, dot_path)
+        try:
+            _same = env_exp is not None and (
+                _tp.format_type(_tp.parse_type(type_expr))
+                == _tp.format_type(env_exp.spec))
+        except ValueError:
+            _same = False
+        if _same:
+            # JT-14: picking the env's OWN type is not an override -- it asked
+            # "Override real with real?". The env type governs again: an
+            # existing override (say str) is dropped, nothing new is stored.
+            removed = _tp.delete_assignment(current_app.instance_path,
+                                            ctx["path"], dot_path)
+            if removed:
+                _attach_type_policy(ctx)
+                policy = getattr(store, "type_policy", None)
+            return jsonify(ok=True, noop=True, removed=removed,
+                           already=_tp.format_type(env_exp.spec),
+                           expected=(policy.annotate(store.merged, dot_path)
+                                     if policy else None))
         if env_exp is not None:
             return jsonify(ok=False, error_kind="env_conflict",
                            error=("the env schema already types this key as "
@@ -8859,9 +8996,12 @@ def field_refs():
 @bp.route("/field/create", methods=["POST"])
 def field_create():
     """Create a brand-new key (scalar or subtree) anywhere a dict parent
-    exists — the Explorer's ＋. ``expect_type`` is a PARSE HINT only (the
-    modifier's type gate is the single enforcement authority — no separate
-    route-level gate, per the one-judge rule)."""
+    exists — the Explorer's ＋. ``expect_type`` is the parse hint, and the
+    value it yields is held to that type by the ONE judge
+    (``state_env_validate.judge``, jsontree-r2-22: the modifier's gate never
+    sees the hint, so a list/dict choice was enforced by nobody). An empty
+    value creates null -- or the empty container under an explicit
+    dict / list / matrix choice."""
     from quam_state_manager.core import type_policy as _tp
     ctx = _active_ctx()
     modifier = ctx.get("modifier") if ctx else None
@@ -8869,7 +9009,8 @@ def field_create():
         return jsonify(ok=False, error="No active context"), 400
     guard = _chip_mismatch_response(
         request.form.get("expect_chip", ""),
-        request.form.get("force_chip") in ("1", "true", "True"))
+        request.form.get("force_chip") in ("1", "true", "True"),
+        action="add")
     if guard is not None:
         return guard
 
@@ -8878,6 +9019,19 @@ def field_create():
     expect_type = request.form.get("expect_type", "").strip()
     if not dot_path:
         return jsonify(ok=False, error="dot_path required"), 400
+    # jsontree-r2-24: the ＋ panel sends the typed key on its own, because the
+    # joined dot_path cannot tell a typed "." from a separator: 'v1.2' was
+    # read as nesting ("Parent key 'v1' not found"), or -- with an existing
+    # dict 'v1' -- silently written as v1["2"]. A dotted key could never be
+    # addressed again anyway (docs/167). Absent `key` = the old contract.
+    _key = request.form.get("key")
+    if _key is not None and ("." in _key or _BRACKET_SEG_RE.search(_key)
+                             or not (dot_path == _key
+                                     or dot_path.endswith("." + _key))):
+        return jsonify(ok=False, error_kind="invalid_key", error=(
+            "A key cannot contain \".\" (or [n]): fields are addressed by "
+            "dot-path, so it could never be edited or deleted. To nest, use "
+            "＋ on the parent.")), 400
     reason = _crud_policy_reason(modifier.store, dot_path)
     if reason is not None:
         return jsonify(ok=False, error=reason, error_kind="policy"), 400
@@ -8891,9 +9045,42 @@ def field_create():
         return jsonify(ok=False, error=_sr, error_kind="sibling_type"), 400
 
     try:
-        if expect_type and expect_type != "infer":
+        if raw_value.strip() == "":
+            # jsontree-r2-22: an empty value means unset -- null, which is
+            # always writable (docs/56 §3) and is the class default of an
+            # Optional field the schema suggestion picks. It used to become
+            # "" (a real thread name, for XYDriveMW.thread). A literal empty
+            # string is still typed as "".
+            # Review: an explicit dict / list / matrix choice with nothing
+            # typed is the EMPTY container -- a null there offers no ＋, so the
+            # children the user picked a container for could not be added.
+            # The schema suggestion whose class default is None says so
+            # (`empty_is_default`) and keeps null.
+            _base = (_tp.parse_type(expect_type).get("base")
+                     if expect_type and expect_type != "infer"
+                     and request.form.get("empty_is_default")
+                     not in ("1", "true", "True") else None)
+            parsed = {} if _base == "dict" else [] if _base == "list" else None
+        elif expect_type and expect_type != "infer":
             hint = _tp.Expected(spec=_tp.parse_type(expect_type), source="user")
             parsed = _tp.parse_with_expected(raw_value, hint)
+            # jsontree-r2-22: the list/dict branch of the hint parse is plain
+            # json.loads, so "5" under list was stored as 5 -- the chosen type
+            # enforced by nobody. The ONE judge decides (a ragged matrix is
+            # still a list of lists, by the grammar's own definition).
+            from quam_state_manager.core.state_env_validate import (
+                EDIT_BLOCKING, judge)
+            _ok, _code, _msg = judge(parsed, hint.spec)
+            if not _ok and _code in EDIT_BLOCKING:
+                _chosen = _tp.format_type(hint.spec)
+                _eg = ('{"key": 5}' if hint.spec.get("base") == "dict"
+                       else "[[1, 2], [3, 4]]" if _chosen.startswith("matrix")
+                       else "[5]" if hint.spec.get("base") == "list" else None)
+                raise _tp.TypeMismatchError(
+                    f"{dot_path}: you chose {_chosen} -- {_msg}. "
+                    + (f"Type it as JSON (e.g. {_eg}) or pick 'infer'."
+                       if _eg else "Pick the type the value has, or 'infer'."),
+                    path=dot_path, expected=hint, got=type(parsed).__name__)
         else:
             parsed = _tp.parse_value(raw_value)
         modifier.create_subtree(dot_path, parsed)
@@ -8901,7 +9088,9 @@ def field_create():
     except _tp.TypeMismatchError as e:
         return jsonify(ok=False, error=str(e), **e.as_json()), 400
     except (KeyError, TypeError, ValueError, IndexError) as e:
-        return jsonify(ok=False, error=str(e)), 400
+        # str(KeyError) is its repr -- the message arrived wrapped in quotes
+        return jsonify(ok=False, error=(str(e.args[0]) if isinstance(e, KeyError)
+                                        and e.args else str(e))), 400
 
     if request.form.get("assign_type") in ("1", "true", "True") and expect_type \
             and expect_type != "infer" and ctx.get("path"):
@@ -8926,7 +9115,8 @@ def field_delete():
         return jsonify(ok=False, error="No active context"), 400
     guard = _chip_mismatch_response(
         request.form.get("expect_chip", ""),
-        request.form.get("force_chip") in ("1", "true", "True"))
+        request.form.get("force_chip") in ("1", "true", "True"),
+        action="delete")
     if guard is not None:
         return guard
 
@@ -9422,7 +9612,7 @@ def pair_gate_inspector_switch(name: str):
     # `_active_chip_token`; there is no `_chip_token`, and naming it wrong made
     # this route raise NameError on every press (app.js always sends the field).
     chip_token = request.form.get("expect_chip") or ""
-    if chip_token and chip_token != (_active_chip_token() or ""):
+    if chip_token and not _chip_token_ok(chip_token):
         return render_template(
             "_status.html", message="Chip changed — please reload.", level="error"), 409
 

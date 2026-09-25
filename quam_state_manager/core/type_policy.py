@@ -231,8 +231,15 @@ class TypePolicy:
             return None
         # provenance for the error message / UI chip
         cls, fld = _owner_of(dot_path, merged)
+        # JT-14: the probe stores str(annotation), so a plain class reads
+        # "<class 'float'>" -- shown raw in the type picker and chip tooltip.
+        # One cleaner (key_manual's, pinned by TestTypeLabel), not a second.
+        raw = str(ts.get("raw") or "")
+        if raw:
+            from quam_state_manager.core.key_manual import _type_label
+            raw = _type_label({"raw": raw})
         return Expected(spec=ts, source="env", class_path=cls, field=fld,
-                        detail=str(ts.get("raw") or ""))
+                        detail=raw)
 
     def _verdict_expected(self, merged: dict, dot_path: str) -> Expected | None:
         """The user's env-scoped correction of SM's belief, if it covers this

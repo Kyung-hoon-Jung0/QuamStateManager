@@ -76,6 +76,31 @@ def test_undo_pages_selfcheck():
     _run("undo_pages_selfcheck.cjs", "ok - a click-away after the undo does NOT re-commit")
 
 
+def test_tree_structural_revert_selfcheck():
+    """JT-04 / jsontree-r2-05 / JT-05 / jsontree-r2-06: an undone creation
+    leaves no phantom null row, an undone delete puts the row back, a filled
+    null leaf's pencil opens its value, and Enter on Cancel cancels."""
+    _run("tree_structural_revert_selfcheck.cjs", "all tree structural-revert checks passed")
+
+
+def test_tree_edit_integrity_selfcheck():
+    """jsontree-r2-07 / r2-08 / r2-10 / r2-17 / JT-07: a paste is a copy, a
+    list in a leaf row reads as JSON, the FSP bundle repaints every row it
+    wrote, a re-fetch waits for an open edit, and pending tints follow the
+    tray (render, lazy expand, redo)."""
+    _run("tree_edit_integrity_selfcheck.cjs", "all tree edit-integrity checks passed")
+
+
+def test_one_leaf_repaint_rule():
+    """jsontree-r2-10 review: the leaf repaint (text, edit value, type colour
+    class) lived in three near-copies -- the inline commit's echo, the
+    revert's paint() and the batch's _paintTreeLeaf. One helper now; a copy
+    inlined again is a second rendering rule free to drift."""
+    app = (_STATIC / "app.js").read_text(encoding="utf-8")
+    assert app.count("tree-val-(string|number|boolean|null|pointer)") == 1
+    assert app.count("_paintLeafEl(") == 4, "the definition + its three callers"
+
+
 def test_pulses_undo_selfcheck():
     _run("pulses_undo_selfcheck.cjs", "ok - undo back to an already-drawn state costs NO synth request (cache)")
 
