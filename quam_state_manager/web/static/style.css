@@ -893,6 +893,14 @@ body {
     background: var(--pico-background-color);
     border-bottom: 1px solid var(--pico-muted-border-color);
     padding: var(--topbar-pad-v) var(--topbar-pad-h);
+    /* QA F17: Pico's nav rows are 1rem of li padding each way (20 px at its
+       125% root) around a ~38 px pill, so each WRAPPED row of the bar cost
+       ~78 px -- three rows took 235 of 768 px. Scoped here (inherited only
+       inside the bar); link spacing keeps Pico's half-of-element ratio so an
+       anchor pill never overhangs its li into the next row. The sidebar reads
+       the same variables and is untouched. */
+    --pico-nav-element-spacing-vertical: .3rem;
+    --pico-nav-link-spacing-vertical: .15rem;
 }
 .topbar nav { margin: 0; }
 .topbar-right { gap: var(--topbar-right-gap); align-items: center; }
@@ -1739,6 +1747,19 @@ body.sidebar-resizing { cursor: col-resize; user-select: none; }
     border: 1px solid var(--pico-muted-border-color);
     border-radius: 8px;
     display: flex; flex-direction: column;
+    /* QA datasets-r2-27: Pico styles EVERY <dialog> as a full-viewport overlay
+       (min-width/min-height:100%, overlay colour + blur ON the element, children
+       centred) and expects an inner <article> card. min-* beat width/max-height,
+       so this box filled the screen and its parts floated on the blur. Undo
+       exactly those; ::backdrop below is the scrim. */
+    min-width: 0; min-height: 0;
+    height: fit-content;
+    margin: auto;
+    background: var(--pico-background-color);
+    -webkit-backdrop-filter: none; backdrop-filter: none;
+    align-items: stretch; justify-content: flex-start;
+    overflow: hidden;
+    box-shadow: 0 14px 44px rgba(0,0,0,0.28);
 }
 .folder-browser-dialog::backdrop {
     background: rgba(0,0,0,0.35);
@@ -1762,6 +1783,10 @@ body.sidebar-resizing { cursor: col-resize; user-select: none; }
     border-bottom: 1px solid var(--pico-muted-border-color);
     background: var(--pico-card-background-color);
     white-space: nowrap; overflow-x: auto;
+    /* QA datasets-r2-27: a scroll container's min-height is 0, so once the
+       card is capped at 75vh a long folder list squeezed THIS row (and gave it
+       a vertical scrollbar) instead of scrolling itself. */
+    flex-shrink: 0;
 }
 .breadcrumb-link {
     cursor: pointer; color: var(--pico-primary);
@@ -2169,16 +2194,20 @@ body.exp-list-compact .entry-name wbr { display: none; }
    customer's "the whole screen shakes". Here the layout takes whatever height
    is left, in the same layout pass as the bar, so no scrollbar can ever be
    created. Scoped to screen (a printed page must still flow) and to a body
-   that actually holds the shell. */
+   that actually holds the shell -- base.html's <body class="app-shell">.
+   QA F6: NOT `body:has(> .app-layout)`. A :has() in ancestor position makes
+   every forced layout read (Plotly measures text with getBoundingClientRect
+   ~21 times per chart) a near-full-document style recalc: choosing a Trends
+   experiment froze the page 5.7-6.2 s, ~1 s without it (real Chrome). */
 @media screen {
-    body:has(> .app-layout) {
+    body.app-shell {
         height: 100vh; overflow: hidden;
         display: flex; flex-direction: column;
     }
-    body:has(> .app-layout) > :not(.app-layout) { flex: 0 0 auto; }
-    body:has(> .app-layout) > .app-layout { flex: 1 1 auto; min-height: 0; }
-    body:has(> .app-layout) #sidebar,
-    body:has(> .app-layout) #main { max-height: none; min-height: 0; }
+    body.app-shell > :not(.app-layout) { flex: 0 0 auto; }
+    body.app-shell > .app-layout { flex: 1 1 auto; min-height: 0; }
+    body.app-shell #sidebar,
+    body.app-shell #main { max-height: none; min-height: 0; }
 }
 
 #content-area {
@@ -5185,10 +5214,12 @@ a.topo-health-tile:hover { background: var(--pico-card-sectioning-background-col
 .diag-error-banner .topo-change-banner-dismiss { color: var(--color-error-text); }
 /* QA F-I: the crash banner points AT /diagnostics; on that page it repeats the
    error pill and its Review button reloads the page you are on, while taking
-   ~70 px from a short window. :has() follows the pane across htmx swaps both
-   ways (PaneState parks a pane DETACHED, so a parked Diagnostics pane cannot
-   match); #diag-findings exists only in _diagnostics.html. */
-body:has(#table-pane #diag-findings) #diagnostics-banner-slot { display: none; }
+   ~70 px from a short window. #diag-findings exists only in _diagnostics.html.
+   A class on <html> that app.js syncs whenever #table-pane's content changes
+   (swap, PaneState restore, history restore, load) -- NOT a body:has() rule:
+   an ancestor-position :has() is what froze Trends (QA F6, test_topbar_twerk).
+   Merged at integration (fix/qa2-dg-nav x fix/qa2-ds-table). */
+html.diag-page-live #diagnostics-banner-slot { display: none; }
 
 /* Live-drift banner — the accumulating "N params changed on the live chip"
    notice. Info (cyan) accent to set it apart from the amber out-of-band
@@ -5693,8 +5724,10 @@ input.tree-edit-input {
 }
 .tree-copy-pill[hidden] { display: none; }
 /* JT-22: the fixed pill floats over the tree's bottom rows — while it shows,
-   the tree gets room to scroll its last rows clear of it. */
-body:has(.tree-copy-pill:not([hidden])) .json-tree { padding-bottom: 5rem; }
+   the tree gets room to scroll its last rows clear of it. The class on <html>
+   is set with the pill (app.js _syncCopyPillRoom), not a body:has() rule
+   (QA F6: an ancestor-position :has() froze Trends). Merged at integration. */
+html.tree-copy-active .json-tree { padding-bottom: 5rem; }
 .tree-copy-pill-x {
     all: unset; cursor: pointer; line-height: 1; padding: 0 0.25rem;
     color: var(--pico-muted-color); font-size: 1.05em;
@@ -5858,7 +5891,7 @@ body:has(.tree-copy-pill:not([hidden])) .json-tree { padding-bottom: 5rem; }
 /* Drag-to-resize grip on each header cell's right edge (dbl-click = auto-fit). */
 .ds-resize-handle {
     position: absolute; top: 0; right: 0; width: 7px; height: 100%;
-    cursor: col-resize; user-select: none;
+    cursor: col-resize; user-select: none; z-index: 1;  /* QA datasets-r2-17: above th.sortable::after (it took the press) */
 }
 .ds-resize-handle:hover { background: var(--pico-primary); opacity: .35; }
 /* Run status chip — coloured text + border (NOT a fill behind text), per the
@@ -6348,6 +6381,18 @@ table.h5-vars-table tr.h5-var-selected .btn-sm { background: var(--pico-primary)
 .ds-compare-bar[data-state="ready"] .ds-compare-msg-ready,
 .ds-compare-bar[data-state="over"]  .ds-compare-msg-over   { display: inline; }
 
+/* QA F4: the Datasets title row WRAPS (docs/15: "It wraps on narrow
+   screens") instead of pushing search / ? / Properties / Rescan past the
+   pane. The controls had `flex:1; min-width:0` = a ZERO basis, so flex
+   line-breaking always found "room" beside the nowrap title and squeezed
+   them to ~30 px; a real basis lets them drop to their own full-width line
+   when less than that is free. 24rem still fits beside the title at 1920.
+   The title wraps only BETWEEN its segments (count, tz note, scan note). */
+.ds-head-controls { display: flex; gap: .5rem; align-items: center; flex: 1 1 24rem; min-width: 0; }
+.ds-head-title > small { white-space: nowrap; }
+/* The column menu opens leftward under its button: anchored left it stuck
+   ~30 px out of the pane even while closed (a sideways scrollbar). */
+.ds-colvis .bulk-colvis-menu { left: auto; right: 0; }
 /* Scoped-search help panel — anchored under #dataset-search.
    Opens on first focus per browser session + on ? icon click;
    closes only via the X button (no auto-dismiss on blur). */
@@ -6366,6 +6411,10 @@ table.h5-vars-table tr.h5-var-selected .btn-sm { background: var(--pico-primary)
 }
 /* Pad the search input so the typed text doesn't slide under the ? button. */
 .ds-search-wrap input[type="search"] { padding-right: 2.5rem; }
+/* QA F15: the ? sits on the WRAP's right edge, and a non-empty count strip is
+   the wrap's last flex item -- the button covered its text ("Showing 1?f 39",
+   and the comparison hint). Reserve the button's room at the strip's end. */
+.ds-search-wrap > #dataset-filter-count:not(:empty) { padding-right: 2.2rem; }
 .ds-search-help-panel {
     position: absolute; top: calc(100% + 0.35rem); left: 0; right: 0;
     max-width: 38rem;
@@ -6452,6 +6501,15 @@ table.h5-vars-table tr.h5-var-selected .btn-sm { background: var(--pico-primary)
 .trends-filters select { font-size: 0.88em; padding: 0.2rem 0.4rem; margin: 0; max-width: 280px; }
 .trends-section { margin-bottom: 1.5rem; }
 .trends-section h3 { font-size: 1em; margin-bottom: 0.5rem; }
+/* QA F6: Trends says it is loading (app.js loadTrendData makes this box the
+   request's source, so htmx marks it .htmx-request) -- Pico's spinner, and
+   words, instead of the old placeholder sitting there for seconds. */
+#trends-content.htmx-request { opacity: .6; transition: opacity .15s; }
+#trends-content.htmx-request::before {
+    content: 'Loading trends\2026'; display: block; margin-bottom: .5rem;
+    padding-left: 1.5em; color: var(--pico-muted-color);
+    background: var(--pico-icon-loading) no-repeat 0 50% / 1em auto;
+}
 
 /* Trend chart boxes */
 .trend-chart-box { margin-bottom: 0.75rem; }
@@ -12554,8 +12612,14 @@ form.inline-edit.fh-host:focus-within .field-hist-btn,
 /* Topbar fallback — ONLY while the sidebar is collapsed (it collapses to
    width 0, so the sidebar row is gone, not merely narrow). Exactly one of the
    two is ever visible, so this is a fallback and not a duplicate control. */
-.topbar-tools-fallback { display: none; }
-.sidebar-collapsed .topbar-tools-fallback { display: flex; gap: 0.15rem; align-items: center; }
+/* QA F17: `.sidebar-collapsed` lives on .app-layout, a SIBLING of the bar's
+   .shell-head, so a descendant rule never matched -- and the bar's own
+   `li {display:inline-flex}` outranked a bare class -- so the pair showed
+   ALWAYS, twice the tools and ~80 px of bar width. toggleSidebar/restorePrefs
+   mirror the state on <html> (no :has() -- docs/203's ancestor :has() was a
+   measured style-recalc cost); a hidden bar keeps hiding it. */
+.topbar > nav > ul > li.topbar-tools-fallback { display: none; }
+html.sidebar-is-collapsed:not(.topbar-hidden) .topbar > nav > ul > li.topbar-tools-fallback { display: flex; gap: 0.15rem; align-items: center; }
 .topbar-tool {
     background: none; border: none; cursor: pointer; padding: 0.2rem 0.35rem;
     border-radius: 4px; color: var(--pico-muted-color); line-height: 0;

@@ -104,8 +104,15 @@ class TestOneScroller:
         body = _strip_js_comments(js[i:i + 700])
         assert "listMetrics()" in body
         assert "state.scrollEl.scrollTop" not in body, body
-        # the two other places that asked the same question follow the same rule
-        assert "listMetrics().top <= ROW_HEIGHT" in js
+        # the other places that asked the same question follow the same rule.
+        # QA F2: the arrival acknowledgement asks "is an arrival's ROW on
+        # screen" (it was "is the list top on screen", which is not where new
+        # runs sort once several folders' run ids mix) -- through listMetrics.
+        i = js.index("function _arrivalOnScreen(")
+        ack = _strip_js_comments(js[i:i + 700])
+        assert "listMetrics()" in ack and "state.scrollEl.scrollTop" not in ack, ack
+        j = js.index("function onScroll(")
+        assert "_arrivalOnScreen()" in _strip_js_comments(js[j:j + 1500])
 
 
 class TestTheSortBandStartsFolded:

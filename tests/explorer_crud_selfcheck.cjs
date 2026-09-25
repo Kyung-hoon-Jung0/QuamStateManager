@@ -820,6 +820,8 @@ function nodeAt(container, p) {
     const label = function () { return pill ? pill.textContent : ''; };
     ok(pill && !pill.hidden && /open an empty 'confusion_matrix' to paste/.test(label()),
        'JT-22: with no empty target in view the pill says to open one (' + label() + ')');
+    ok(win.document.documentElement.classList.contains('tree-copy-active'),
+       'JT-22 x F6: the pill showing gives the tree its bottom room (html.tree-copy-active)');
     const t2 = toggleOf('qubits.qA2');
     if (t2) t2.click();
     await tick();
@@ -836,6 +838,8 @@ function nodeAt(container, p) {
     ok(!pill.hidden, 'JT-22: the buffer survives the paste (paste into many)');
     win.document.dispatchEvent(new win.KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
     ok(pill.hidden, 'JT-22: Escape still clears the copy');
+    ok(!win.document.documentElement.classList.contains('tree-copy-active'),
+       'JT-22 x F6: ...and takes the bottom room back');
   }
 
   if (fails) { console.error(fails + ' check(s) failed'); process.exit(1); }

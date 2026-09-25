@@ -79,7 +79,7 @@
 
     // Slack-style scoped search. Short aliases let power users type `q:q0` instead
     // of `qubit:q0`. The placeholder advertises the long form so newcomers learn it.
-    var SCOPE_ALIASES = {q: 'qubit', qp: 'pair', e: 'exp', t: 'tag', oc: 'outcome', d: 'date', m: 'metric', n: 'note', p: 'param'};
+    var SCOPE_ALIASES = {q: 'qubit', qp: 'pair', e: 'exp', t: 'tag', oc: 'outcome', d: 'date', m: 'metric', n: 'note', p: 'param', run: 'id'};  // run: = the sidebar box's alias (QA F15)
     var KNOWN_SCOPES = new Set(['qubit', 'pair', 'exp', 'tag', 'outcome', 'date', 'id', 'metric', 'note', 'param', 'is']);
 
     var state = {
@@ -97,6 +97,11 @@
         knownQubits: new Set(),   // every qubit name across rows (qubit-aware search + the picker)
         qubitFilter: _persistedQubitFilter,  // selected qubits → AND filter (run must contain ALL)
         knownPairs: new Set(),    // every qubit-pair name across rows (pair search + the picker)
+        // QA datasets-r2-30: the SPELLING to show for each lower-case key above
+        // (first one seen) — the keys stay the match/filter identity, the
+        // pickers show 'qA1' the way the runs and the chip spell it, not 'qa1'.
+        qubitLabels: new Map(),
+        pairLabels: new Map(),
         pairFilter: _persistedPairFilter,    // selected pairs → AND filter (run must contain ALL)
         folderFilter: _persistedFolderFilter,  // selected folder_keys → OR filter; empty = all folders
         foldersByKey: {},                    // folder_key -> {key, label, full_path} (from folders_json)
@@ -110,6 +115,7 @@
         searchGroups: [],         // AND-of-OR groups over ORDERED parsed tokens (SearchQuery)
         scopedFilters: [],        // [{key, value, negate}, ...] parsed scoped filters
         unknownScopes: [],        // Surfaced in the filter-count strip as "unknown scope: foo:"
+        collections: false,       // QA datasets-r2-14: data-view="collections" -> only tagged runs
         selectedExps: null,       // Set of experiment names; null = no exp filter
         scrollEl: null,
         tbody: null,
@@ -198,6 +204,16 @@
             // before the key:value scope match since `=` is not a scope separator.
             // `key>=value` is the same facet with a comparison; `>=` must precede
             // `>` in the alternation or the value becomes "=1000".
+            // QA datasets-r2-33: `id>=4100` / `id=4113` / `id=4100..4105`
+            // compare the RUN ID. Before, they fell into the param facet
+            // below, whose key matches by substring -- `id` hit target_peak_width,
+            // load_data_id, idle_* -- and never looked at the run id at all.
+            // `p:id>=N` still reaches a parameter.
+            if (/^id[<>=]/i.test(body) && _idCond(body.slice(2))) {
+                scoped.push({key: 'id', value: body.slice(2), negate: negate});
+                items.push({kind: 'scope', key: 'id', value: body.slice(2), negate: negate});
+                continue;
+            }
             var eqm = body.match(/^([A-Za-z][\w.\-]*)(>=|<=|>|<|=)(.+)$/);
             if (eqm && (eqm[2] === '=' || _num(eqm[3]) != null)) {
                 scoped.push({key: 'param', value: body.toLowerCase(), negate: negate});
@@ -275,6 +291,21 @@
        bare token was already validated against the strict pattern when it was
        routed to this facet, and a `param:`-scoped one deliberately has no key
        pattern at all (that is how `_leading=7` is searchable). */
+    /* QA datasets-r2-33: a run-id comparison value -- `>=4100`, `<4105`,
+       `=4113`, `=4100..4105` (range only with `=`, both ends included, order
+       free) -- or null. Integers only: anything else stays a substring. The
+       twin of routes._id_cond. */
+    function _idCond(value) {
+        var m = /^(>=|<=|>|<|=)(\d+)(?:\.\.(\d+))?$/.exec(String(value));
+        if (!m || (m[3] != null && m[1] !== '=')) return null;
+        var a = Number(m[2]);
+        if (m[3] != null) {
+            var b = Number(m[3]);
+            return {op: '..', lo: Math.min(a, b), hi: Math.max(a, b)};
+        }
+        return {op: m[1], w: a};
+    }
+
     function _paramCond(body) {
         var m = String(body).match(/^([^=<>]+)(>=|<=|>|<|=)(.+)$/);
         if (!m) return null;
@@ -321,14 +352,45 @@
                 return false;
             case 'outcome':
                 if (!row.oc) return false;
+                // QA datasets-r2-18: `outcome:<target>=<v>` ties the outcome
+                // to ONE qubit/pair key (exact, case-insensitive) -- the
+                // digest chips' filter. The plain form ("any target's outcome
+                // contains v") is unchanged; no real outcome contains '='.
+                var oeq = value.indexOf('=');
+                if (oeq > 0) {
+                    var otgt = value.slice(0, oeq), ov = value.slice(oeq + 1);
+                    for (var ok2 in row.oc) {
+                        if (String(ok2).toLowerCase() === otgt) {
+                            var ocv = String(row.oc[ok2]).toLowerCase();
+                            // `=fail` is the digest's failure CLASS -- the same
+                            // /error|fail|abort|crash/ its chip counts with
+                            // (routes._datasets_view is the server twin).
+                            return ov === 'fail' ? /error|fail|abort|crash/.test(ocv)
+                                                 : ocv.indexOf(ov) !== -1;
+                        }
+                    }
+                    return false;
+                }
                 for (var k in row.oc) {
                     if (String(row.oc[k]).toLowerCase().indexOf(value) !== -1) return true;
                 }
                 return false;
             case 'date':
                 return (row.date || '').toLowerCase().indexOf(value) !== -1;
-            case 'id':
+            case 'id': {
+                var ic = _idCond(value);     // QA datasets-r2-33
+                if (ic) {
+                    var rn = row.id == null ? NaN : Number(row.id);
+                    if (!isFinite(rn)) return false;
+                    if (ic.op === '..') return rn >= ic.lo && rn <= ic.hi;
+                    if (ic.op === '>=') return rn >= ic.w;
+                    if (ic.op === '>') return rn > ic.w;
+                    if (ic.op === '<=') return rn <= ic.w;
+                    if (ic.op === '<') return rn < ic.w;
+                    return rn === ic.w;
+                }
                 return String(row.id).indexOf(value) !== -1;
+            }
             case 'metric':
                 if (row.metric == null) return false;
                 return String(row.metric).toLowerCase().indexOf(value) !== -1;
@@ -634,6 +696,7 @@
         thead.innerHTML = html + '</tr>';
         var master = thead.querySelector('#ds-select-all');
         if (master) master.addEventListener('change', onSelectAll);
+        syncSelectAll();   // QA datasets-r2-16: a rebuilt header must not forget the ticks
         thead.querySelectorAll('th.sortable').forEach(function (th) {
             th.addEventListener('click', function (e) {
                 if (e.target.classList && e.target.classList.contains('ds-resize-handle')) return;
@@ -781,14 +844,21 @@
     function _kbReveal() {
         // bring the row into the virtual window
         if (state.scrollEl) {
-            var y = _kbIdx * ROW_HEIGHT;
-            // `y` is a position in the LIST; the scroller's own coordinates
-            // are offset by wherever the list begins inside it.
-            var _m = listMetrics();
-            var base = state.scrollEl.scrollTop - _m.top;
-            var top = _m.top, vh = _m.viewport;
-            if (y < top) state.scrollEl.scrollTop = base + y;
-            else if (y + ROW_HEIGHT > top + vh) state.scrollEl.scrollTop = base + y + ROW_HEIGHT - vh;
+            var el = state.scrollEl, y = _kbIdx * ROW_HEIGHT;
+            // QA F7: the row's offset from the scroller's visible top, NOT
+            // clamped. listMetrics() clamps for the virtual window, which
+            // dropped (delta - clientHeight) whenever the list starts below
+            // the fold (the filter section is taller than the pane on a fresh
+            // page): each j crept down 32 px and the active row stayed
+            // off-screen. The sticky header covers the band above `headH`.
+            var rowTop = state.tbody.getBoundingClientRect().top
+                       - el.getBoundingClientRect().top + y;
+            var vh = el.clientHeight;
+            var thead = state.tbody.parentNode && state.tbody.parentNode.querySelector
+                ? state.tbody.parentNode.querySelector('thead') : null;
+            var headH = thead ? thead.getBoundingClientRect().height : 0;
+            if (rowTop < headH) el.scrollTop += rowTop - headH;
+            else if (rowTop + ROW_HEIGHT > vh) el.scrollTop += rowTop + ROW_HEIGHT - vh;
         }
         renderWindow(true);
         _kbHighlight();
@@ -937,7 +1007,11 @@
             _digestOrig = band.innerHTML;
             _digestOrigEl = band;
         }
-        if (!_filtersActive()) {
+        var filtered = _filtersActive();
+        // QA F2: the server band describes the PAGE-LOAD rows. Once a delta
+        // poll changed them (a run finished, a new day began) it is stale --
+        // recompute over the rows the table holds, filter or not.
+        if (!filtered && !state.digestLive) {
             if (band.getAttribute('data-filtered') === '1') {
                 band.innerHTML = _digestOrig;
                 band.removeAttribute('data-filtered');
@@ -958,6 +1032,8 @@
             if (bad.test(String(row.status || '').toLowerCase())) failed++;
             if (row.oc) {
                 for (var q in row.oc) {
+                    // QA datasets-r2-18: the chip filters `outcome:<q>=fail`,
+                    // which matchScope reads as this same failure class.
                     if (bad.test(String(row.oc[q]).toLowerCase())) {
                         qfail[q] = (qfail[q] || 0) + 1;
                     }
@@ -965,7 +1041,8 @@
             }
         }
         while (band.firstChild) band.removeChild(band.firstChild);
-        band.setAttribute('data-filtered', '1');
+        if (filtered) band.setAttribute('data-filtered', '1');
+        else band.removeAttribute('data-filtered');
         function span(cls, text) {
             var el = document.createElement('span');
             el.className = cls; el.textContent = text;
@@ -974,31 +1051,37 @@
         band.appendChild(span('ds-digest-date', latest || '\u2014'));
         band.appendChild(span('ds-digest-item',
             total + ' run' + (total === 1 ? '' : 's')));
-        if (failed) {
-            var fb = document.createElement('button');
-            fb.className = 'ds-help-example ds-digest-bad';
-            fb.setAttribute('data-example', 'is:failed');
-            fb.textContent = failed + ' failed';
-            band.appendChild(fb);
-        } else {
-            band.appendChild(span('ds-digest-ok', 'all OK'));
-        }
         var qs = Object.keys(qfail).sort(function (x, y) {
             // Count desc; ties by NATURAL qubit order (q2 before q10 — a tie is
             // the normal case here, one failure each).
             return (qfail[y] - qfail[x]) || natCmp(x, y);
         }).slice(0, 8);
+        // QA datasets-r2-18 (twin of _datasets.html): "all OK" only when
+        // nothing failed, and both buttons are scoped to the band's day.
+        var dscope = latest ? 'date:' + latest + ' ' : '';
+        if (failed) {
+            var fb = document.createElement('button');
+            fb.className = 'ds-help-example ds-digest-bad';
+            fb.setAttribute('data-example', dscope + 'is:failed');
+            fb.textContent = failed + ' failed';
+            band.appendChild(fb);
+        } else if (!qs.length) {
+            band.appendChild(span('ds-digest-ok', 'all OK'));
+        } else {
+            band.appendChild(span('ds-digest-item', 'no run errors'));
+        }
+        if (qs.length) band.appendChild(span('ds-digest-item ds-digest-oclabel', 'failed outcomes:'));
         qs.forEach(function (q) {
             var b = document.createElement('button');
             b.className = 'ds-help-example ds-digest-qchip';
-            b.setAttribute('data-example', 'qubit:' + q + ' outcome:fail');
+            b.setAttribute('data-example', dscope + 'outcome:' + q + '=fail');
             b.textContent = q + ' \u00d7' + qfail[q];
             band.appendChild(b);
         });
         // audit: the band summarises the LATEST DAY of the filtered set while
         // the count beside it counts ALL matches — say exactly that, or the
         // two numbers read as a contradiction.
-        band.appendChild(span('ds-digest-filtered muted',
+        if (filtered) band.appendChild(span('ds-digest-filtered muted',
             state.visible.length > total
                 ? '(latest day of ' + state.visible.length + ' filtered runs)'
                 : '(filtered set)'));
@@ -1014,6 +1097,10 @@
         var visible = [];
         for (var i = 0; i < state.rows.length; i++) {
             var row = state.rows[i];
+            // QA datasets-r2-14: Collections holds only runs with >=1 tag -- the
+            // server rule (routes: `rows = [r for r in rows if r.get("tags")]`),
+            // kept live here so an untag/unstar or a delta arrival obeys it too.
+            if (state.collections && !(row.tags && row.tags.length)) continue;
             // Folder filter (multi-folder) — OR: empty set = all folders shown.
             if (state.folderFilter.size > 0 && !state.folderFilter.has(row.f)) continue;
             if (state.selectedExps.size > 0 && !state.selectedExps.has(row.exp)) continue;
@@ -1067,6 +1154,7 @@
         applySort();
         scheduleRender();
         updateFilterCount();
+        syncSelectAll();   // QA datasets-r2-16: the master box follows the visible set
     }
 
     function applySort() {
@@ -1103,11 +1191,14 @@
         // allocations on a 10k `when` sort).
         var sortVal = new Map();
         var tagCnt = rankByTags ? new Map() : null;
+        var nv = 0;     // QA datasets-r2-23: rows IN VIEW that have a value
         for (var vi = 0; vi < state.visible.length; vi++) {
             var vidx = state.visible[vi];
             sortVal.set(vidx, val(vidx, key));
+            if (sortVal.get(vidx) != null) nv++;
             if (rankByTags) tagCnt.set(vidx, tagMatchCount(rows[vidx]));
         }
+        state.sortValCount = nv;
         state.visible.sort(function(a, b) {
             if (rankByTags) {
                 var ca = tagCnt.get(a), cb = tagCnt.get(b);
@@ -1116,7 +1207,10 @@
             var va = sortVal.get(a), vb = sortVal.get(b);
             var na = (va === null || va === undefined), nb = (vb === null || vb === undefined);
             if (na || nb) {
-                if (na && nb) return rows[a].id - rows[b].id;   // both missing → stable by id
+                // both missing → the page's default order, newest first (QA
+                // datasets-r2-23: id-ASCENDING flipped a filtered list whose
+                // rows all lack a fit key from #4121… to #1824, #1825…)
+                if (na && nb) return rows[b].id - rows[a].id;
                 return na ? 1 : -1;                              // missing sinks LAST in both directions
             }
             if (va === vb) return rows[a].id - rows[b].id;       // value tie → stable by id
@@ -1128,6 +1222,44 @@
                 : ((va < vb) ? -1 : 1);
             return desc ? -cmp : cmp;
         });
+        _syncSortBadgeUI();   // QA datasets-r2-23: the "no values" note follows the filter
+    }
+
+    /* QA F15: a `key>=N` token compares run PARAMETERS whose name contains
+       `key` (matchScope's param branch). When no loaded run has such a
+       parameter -- `metric>=0.99` -- or the key is also a fit-result key the
+       Sort banner shows -- `frequency>6e9` compared frequency_span_in_mhz --
+       the count alone ("Showing 0 of N") hid why. Text only: no filtering
+       changes. Same substring rule as matchScope, over the loaded rows. */
+    function _paramCompareHint() {
+        var out = [], seen = {};
+        var pkeys = Object.keys(state.paramKeyCount || {});
+        var scoped = state.scopedFilters || [];
+        for (var i = 0; i < scoped.length; i++) {
+            var f = scoped[i];
+            if (f.key !== 'param') continue;
+            var c = _paramCond(f.value);
+            if (!c || seen[c.key]) continue;
+            seen[c.key] = true;
+            var hit = pkeys.filter(function (k) { return k.toLowerCase().indexOf(c.key) !== -1; });
+            var fit = false;
+            state.fitKeys.forEach(function (k) { if (String(k).toLowerCase().indexOf(c.key) !== -1) fit = true; });
+            var fitNote = fit ? ' — fit values are sorted, not filtered (Sort banner)' : '';
+            // QA F15 (review): `metric` is the Key metric COLUMN's word; a
+            // parameter such as leakage_metric must not swallow it silently.
+            var metricNote = c.key === 'metric' ? ' (key metric: use metric:)' : '';
+            // A substring hit that is not the typed name, or a comparison that
+            // left nothing, names what it compared -- same text as the fit case.
+            var inexact = hit.some(function (k) { return k.toLowerCase() !== c.key; });
+            if (!hit.length) {
+                out.push('no loaded run has a parameter matching "' + c.key + '"' +
+                         metricNote + fitNote);
+            } else if (fit || metricNote || inexact || !state.visible.length) {
+                out.push('"' + c.key + '" compared as parameter ' + hit.slice(0, 2).join(', ') +
+                         (hit.length > 2 ? ' +' + (hit.length - 2) : '') + metricNote + fitNote);
+            }
+        }
+        return out.join(' · ');
     }
 
     function updateFilterCount() {
@@ -1154,6 +1286,8 @@
             var list = uniq.map(function(s) { return '"' + s + ':"'; }).join(', ');
             msg += (msg ? ' · ' : '') + 'unknown ' + noun + ': ' + list;
         }
+        var cmpHint = _paramCompareHint();     // QA F15
+        if (cmpHint) msg += (msg ? ' · ' : '') + cmpHint;
         countEl.textContent = msg;
         if (state.emptyEl) {
             state.emptyEl.style.display = state.visible.length === 0 ? '' : 'none';
@@ -1226,12 +1360,14 @@
         // (pointerdown, no click) keeps pressActive=true and freezes the virtual window
         // until the 1500ms safety timeout, so the user scrolls into blank spacer rows.
         clearPress();
-        // Reaching the top of the list acknowledges APPLIED arrivals — the
+        // Reaching an arrival's ROW acknowledges APPLIED arrivals — the
         // pill's own click performs exactly this scroll, so a user who gets
         // there themselves has seen the same thing (docs/104 #3). Held runs
-        // are NOT acknowledged: they are not in the table yet.
+        // are NOT acknowledged: they are not in the table yet. (QA F2: was
+        // "reaching the top of the list", which is not where new runs sort
+        // once run ids from several folders are mixed.)
         if (state.arrivalUids && state.arrivalUids.size && !state.pendingDelta &&
-            state.scrollEl && listMetrics().top <= ROW_HEIGHT) {
+            state.scrollEl && _arrivalOnScreen()) {
             state.arrivalUids.clear();
             _updateNewPill();
         }
@@ -1387,6 +1523,7 @@
         var id = t.value;   // uid string
         if (t.checked) state.selected.add(id);
         else state.selected.delete(id);
+        syncSelectAll();   // QA datasets-r2-16
         if (typeof window.updateCompareButton === 'function') {
             window.updateCompareButton();
         }
@@ -1413,9 +1550,57 @@
         var idx = state.rowsById.get(runId);
         if (idx == null) return;
         var row = state.rows[idx];
+        var wasInHead = _inHead(row);   // QA datasets-r2-14 (review)
         for (var k in fields) row[k] = fields[k];
         row._s = null;  // Invalidate the cached search text.
-        scheduleRender();
+        // QA datasets-r2-14: a tag change can take the row out of (or into) the
+        // view -- Collections' has-a-tag rule, a selected tag chip -- so it
+        // re-filters; a note edit stays render-only (a row never vanishes
+        // under the user's note).
+        if ('tags' in fields) {
+            applyFilters();
+            // QA datasets-r2-14 (review): the row left the collection -- so
+            // does the header's count (it stayed "(4 runs" over 2 rows).
+            if (state.collections) _headCountAdjust((_inHead(row) ? 1 : 0) - (wasInHead ? 1 : 0));
+        }
+        else scheduleRender();
+    }
+
+    /* QA datasets-r2-14 / F2 (review): the title's "(N runs, T types, Q
+       qubits)" is server-rendered once; a tag change (Collections) or a
+       landed run (either page) left it stale until F5. A row counts where
+       the server counts it: every row on Datasets, a tagged one on
+       Collections. */
+    function _inHead(row) {
+        return !!row && !(state.collections && !(row.tags && row.tags.length));
+    }
+    function _headCountAdjust(delta) {
+        var headSmall = document.querySelector('.table-header-row h2 > small');
+        if (!headSmall) return;
+        var dateInp = document.getElementById('ds-active-date');
+        if (state.collections && !(dateInp && dateInp.value)) {
+            // All dates: the table holds the whole collection, so recount
+            // with _datasets_view's own rule (tagged rows' exp / q).
+            var runs = 0, ne = 0, nq = 0, exps = {}, qs = {};
+            for (var i = 0; i < state.rows.length; i++) {
+                var r = state.rows[i];
+                if (!_inHead(r)) continue;
+                runs++;
+                if (r.exp && !exps[r.exp]) { exps[r.exp] = 1; ne++; }
+                var rq = r.q || [];
+                for (var j = 0; j < rq.length; j++) if (!qs[rq[j]]) { qs[rq[j]] = 1; nq++; }
+            }
+            headSmall.textContent = headSmall.textContent
+                .replace(/^\(\d+ runs/, '(' + runs + ' runs')
+                .replace(/, \d+ types, \d+ qubits\)/, ', ' + ne + ' types, ' + nq + ' qubits)');
+            return;
+        }
+        // A date tab (or Datasets): the header counts every date, the table
+        // one -- step the run count by what changed, never recount.
+        if (!delta) return;
+        headSmall.textContent = headSmall.textContent.replace(/^\((\d+) runs/, function (m0, n) {
+            return '(' + Math.max(0, Number(n) + delta) + ' runs';
+        });
     }
 
     function onSearchInput() {
@@ -1617,16 +1802,21 @@
         var newUids = [];          // genuinely-new runs (insert, not in-place update)
         var updated = data.updated || [];
         var newestBefore = updated.length ? _newestStamp() : '';
+        var headDelta = 0;         // QA F2 (review): the title's "(N runs" follows
         for (var i = 0; i < updated.length; i++) {
             var row = updated[i];
             row._s = null;
             row.uid = (row.f || '') + ':' + row.id;   // folder-aware identity
             var idx = state.rowsById.get(row.uid);
             if (idx == null) {
+                if (_inHead(row)) headDelta++;
                 state.rows.push(row);
                 state.rowsById.set(row.uid, state.rows.length - 1);
-                if (_stampOf(row) > newestBefore) newUids.push(row.uid);
+                if (_stampOf(row) > newestBefore
+                    && !(state.collections && !(row.tags && row.tags.length)))   // QA datasets-r2-14
+                    newUids.push(row.uid);
             } else {
+                headDelta += (_inHead(row) ? 1 : 0) - (_inHead(state.rows[idx]) ? 1 : 0);
                 state.rows[idx] = row;
             }
             changed = true;
@@ -1640,6 +1830,7 @@
             state.flashUids.delete(vid);
             var vidx = state.rowsById.get(vid);
             if (vidx == null) continue;
+            if (_inHead(state.rows[vidx])) headDelta--;
             // Tombstone — splice would re-index every entry in rowsById.
             // Cheaper: mark and rebuild index lazily during applyFilters.
             state.rows[vidx] = null;
@@ -1678,10 +1869,13 @@
             state.pendingHeadCount = false;
             var headSmall = document.querySelector('.table-header-row h2 > small');
             var live = 0;
-            for (var hc = 0; hc < state.rows.length; hc++) if (state.rows[hc]) live++;
+            for (var hc = 0; hc < state.rows.length; hc++) if (_inHead(state.rows[hc])) live++;
             if (headSmall) headSmall.textContent = headSmall.textContent.replace(/^\(\d+ runs/, '(' + live + ' runs');
+        } else if (changed) {
+            _headCountAdjust(headDelta);   // QA F2 (review)
         }
         if (changed) {
+            state.digestLive = true;   // QA F2: the server digest band is stale now
             _rebuildFitKeys();     // a delta may introduce a brand-new fit key / qubit
             _rebuildParamFacets(); // …or a brand-new param key/value facet
             applyFilters();        // re-sorts (sm is on the merged rows → in-slot placement)
@@ -1721,7 +1915,9 @@
         for (var i = 0; i < updated.length; i++) {
             var uid = (updated[i].f || '') + ':' + updated[i].id;
             if ((!state.rowsById || !state.rowsById.has(uid)) &&
-                _stampOf(updated[i]) > newest) state.arrivalUids.add(uid);   // docs/170
+                _stampOf(updated[i]) > newest &&
+                !(state.collections && !(updated[i].tags && updated[i].tags.length)))   // QA datasets-r2-14
+                state.arrivalUids.add(uid);   // docs/170
         }
         _updateNewPill();
     }
@@ -1749,7 +1945,7 @@
         el.id = 'ds-new-pill';
         el.className = 'ds-new-pill';
         el.hidden = true;
-        el.title = 'Show the new runs — applies the held update and scrolls to the top';
+        el.title = 'Show the new runs — applies the held update and scrolls to the first of them';
         el.addEventListener('click', _onNewPillClick);
         var page = state.scrollEl.closest ? state.scrollEl.closest('.datasets-page') : null;
         var host = page && (page.querySelector('.ds-digest-band') ||
@@ -1768,11 +1964,58 @@
         el.hidden = false;
     }
 
+    // QA F2: where the first arrival sits in the CURRENT order. The pill
+    // assumed position 0 (id desc = newest first), but run ids are
+    // per-folder: with several folders shown, today's run of a young folder
+    // sorts below an old folder's big ids (and a user sort can put it
+    // anywhere). -1 = no arrival is in the visible (filtered) set.
+    function _firstArrivalPos() {
+        if (!state.arrivalUids || !state.arrivalUids.size) return -1;
+        for (var i = 0; i < state.visible.length; i++) {
+            var r = state.rows[state.visible[i]];
+            if (r && state.arrivalUids.has(r.uid)) return i;
+        }
+        return -1;
+    }
+
+    // Whether any arrival's row is inside the scroller's viewport now.
+    function _arrivalOnScreen() {
+        var m = listMetrics();
+        if (state.scrollEl.clientHeight > 0 && m.viewport <= 0) return false;   // list below the fold
+        var from = Math.floor(m.top / ROW_HEIGHT);
+        var to = Math.min(state.visible.length,
+                          Math.ceil((m.top + Math.max(m.viewport, ROW_HEIGHT)) / ROW_HEIGHT));
+        for (var i = Math.max(0, from); i < to; i++) {
+            var r = state.rows[state.visible[i]];
+            if (r && state.arrivalUids.has(r.uid)) return true;
+        }
+        return false;
+    }
+
+    // Scroll so list position `pos` sits one row below the sticky header.
+    // Measured from the tbody's UNCLAMPED offset (listMetrics clamps at 0,
+    // wrong while the list starts below the fold of the one-scroller pane).
+    // A row already on screen from the very top keeps the old scroll-to-top,
+    // so a single-folder page lands exactly where it always did.
+    function _scrollToListPos(pos) {
+        var el = state.scrollEl, tb = state.tbody;
+        if (!el || !tb) return;
+        var listOff = el.scrollTop + (tb.getBoundingClientRect().top - el.getBoundingClientRect().top);
+        if (listOff + (pos + 1) * ROW_HEIGHT <= el.clientHeight) { el.scrollTop = 0; return; }
+        var thead = tb.parentNode && tb.parentNode.querySelector ? tb.parentNode.querySelector('thead') : null;
+        var headH = thead ? thead.getBoundingClientRect().height : 0;
+        el.scrollTop = Math.max(0, Math.round(listOff + pos * ROW_HEIGHT - headH - ROW_HEIGHT));
+        scheduleRender();
+    }
+
     function _onNewPillClick() {
         flushPendingNow();                 // held runs land NOW (explicit request)
+        var pos = _firstArrivalPos();      // read BEFORE the count clears (QA F2)
         if (state.arrivalUids) state.arrivalUids.clear();
         _updateNewPill();
-        if (state.scrollEl) state.scrollEl.scrollTop = 0;   // where new runs sort (newest-first default)
+        if (!state.scrollEl) return;
+        if (pos < 0) { state.scrollEl.scrollTop = 0; return; }   // filtered out: the old top
+        _scrollToListPos(pos);             // where the new runs ACTUALLY sort
     }
 
     // docs/126 ⑥: Esc or a click anywhere else DISMISSES the announcement
@@ -1817,6 +2060,25 @@
         }
     }
 
+    /* QA datasets-r2-16: the master checkbox states the VISIBLE rows' ticks --
+       checked when every visible row is selected, indeterminate for some. It
+       used to keep whatever the last click left: after a filter change it
+       stayed ticked over rows none of which were selected (and unticking it
+       then removed nothing), and a header rebuild (sort click) reset it even
+       with every row ticked. Hidden ticks survive a filter change (docs/25 §4);
+       they are not counted here. O(visible), called where the set changes. */
+    function syncSelectAll() {
+        var m = document.getElementById('ds-select-all');
+        if (!m) return;
+        var n = 0, vis = state.visible;
+        for (var i = 0; i < vis.length; i++) {
+            var r = state.rows[vis[i]];
+            if (r && state.selected.has(r.uid)) n++;
+        }
+        m.checked = vis.length > 0 && n === vis.length;
+        m.indeterminate = n > 0 && n < vis.length;
+    }
+
     // Header sort + the resize handles are bound inside buildHeader() (the header
     // is JS-built now). The select-all master checkbox lives in the header too, so
     // its handler is bound there — this is the extracted handler.
@@ -1829,6 +2091,7 @@
             if (checked) state.selected.add(id);
             else state.selected.delete(id);
         }
+        syncSelectAll();   // QA datasets-r2-16
         scheduleRender();
         if (typeof window.updateCompareButton === 'function') {
             window.updateCompareButton();
@@ -1875,11 +2138,20 @@
     // newly-arrived key shows up with no server round-trip.
     function _rebuildFitKeys() {
         var keys = new Set(), counts = {}, qubits = new Set(), pairs = new Set();
+        var qubitLabels = new Map(), pairLabels = new Map();
         for (var i = 0; i < state.rows.length; i++) {
             var r = state.rows[i];
             if (!r) continue;
-            if (r.q) for (var j = 0; j < r.q.length; j++) qubits.add(String(r.q[j]).toLowerCase());
-            if (r.p) for (var pj = 0; pj < r.p.length; pj++) pairs.add(String(r.p[pj]).toLowerCase());
+            if (r.q) for (var j = 0; j < r.q.length; j++) {
+                var qRaw = String(r.q[j]), qKey = qRaw.toLowerCase();
+                qubits.add(qKey);
+                if (!qubitLabels.has(qKey)) qubitLabels.set(qKey, qRaw);
+            }
+            if (r.p) for (var pj = 0; pj < r.p.length; pj++) {
+                var pRaw = String(r.p[pj]), pKey = pRaw.toLowerCase();
+                pairs.add(pKey);
+                if (!pairLabels.has(pKey)) pairLabels.set(pKey, pRaw);
+            }
             if (!r.sm) continue;
             for (var k in r.sm) { keys.add(k); counts[k] = (counts[k] || 0) + 1; }
         }
@@ -1887,6 +2159,8 @@
         state.fitCounts = counts;
         state.knownQubits = qubits;
         state.knownPairs = pairs;
+        state.qubitLabels = qubitLabels;
+        state.pairLabels = pairLabels;
         // Persisted sort key was a fit key that has since vanished → fall back.
         if (state.sortKey && !keys.has(state.sortKey) && !_isColKey(state.sortKey)) {
             state.sortKey = 'id'; state.sortDesc = true;
@@ -2117,7 +2391,11 @@
             var col = _isColKey(state.sortKey);
             var label = col ? col.label : state.sortKey;
             var aggTxt = state.fitKeys.has(state.sortKey) ? (' · ' + state.sortAgg) : '';
-            var noVal = (state.fitKeys.has(state.sortKey) && !(state.fitCounts[state.sortKey] > 0)) ? ' — no values' : '';
+            // QA datasets-r2-23: judged over the rows IN VIEW (applySort's
+            // count). The workspace count could never be 0 for a listed key,
+            // so a search whose runs all lack the key said nothing.
+            var noVal = (state.fitKeys.has(state.sortKey) && state.visible.length > 0
+                         && !(state.sortValCount > 0)) ? ' — no values in these runs' : '';
             sum.textContent = 'Sort: ' + label + aggTxt + (state.sortDesc ? ' ▼' : ' ▲') + noVal;
         }
         var thead = document.getElementById('datasets-thead');
@@ -2233,7 +2511,8 @@
         if (!qubits.length) html += '<div class="muted sort-fit-empty" style="padding:.2rem .3rem">no qubits</div>';
         qubits.forEach(function (q) {
             html += '<label class="bulk-colvis-item"><input type="checkbox" data-qubit="' + escapeHtml(q) + '"' +
-                    (state.qubitFilter.has(q) ? ' checked' : '') + '> ' + escapeHtml(q) + '</label>';
+                    (state.qubitFilter.has(q) ? ' checked' : '') + '> ' +
+                    escapeHtml(state.qubitLabels.get(q) || q) + '</label>';
         });
         menu.innerHTML = html;
         _updateQubitSummary();
@@ -2279,7 +2558,8 @@
         if (!pairs.length) html += '<div class="muted sort-fit-empty" style="padding:.2rem .3rem">no qubit pairs</div>';
         pairs.forEach(function (p) {
             html += '<label class="bulk-colvis-item"><input type="checkbox" data-pair="' + escapeHtml(p) + '"' +
-                    (state.pairFilter.has(p) ? ' checked' : '') + '> ' + escapeHtml(p) + '</label>';
+                    (state.pairFilter.has(p) ? ' checked' : '') + '> ' +
+                    escapeHtml(state.pairLabels.get(p) || p) + '</label>';
         });
         menu.innerHTML = html;
         _updatePairSummary();
@@ -2328,11 +2608,37 @@
         document.querySelectorAll('#exp-filter-grid .exp-chip').forEach(function (c) {
             c.classList.toggle('active', (c.getAttribute('data-exp') || '') === '');
         });
+        // QA datasets-r2-09: "Clear all" also clears the folder chips, the
+        // tags and the date tab -- a folder + a date only another folder has
+        // was an empty table this button could not recover. Every set is
+        // cleared IN PLACE: the folder set is the swap-surviving
+        // _persistedFolderFilter alias, the tag set is app.js's own Set.
+        if (state.folderFilter) state.folderFilter.clear();
+        document.querySelectorAll('#folder-filter-grid .folder-chip').forEach(function (c) {
+            c.classList.toggle('active', (c.getAttribute('data-folder-key') || '') === '');
+        });
+        if (window._selectedTags instanceof Set) window._selectedTags.clear();
+        document.querySelectorAll('#tag-filter-grid .tag-chip').forEach(function (c) {
+            c.classList.toggle('active', (c.getAttribute('data-tag') || '') === '');
+        });
         _buildQubitPicker();
         _buildPairPicker();
         _buildSortBanner();   // reflect the cleared param facets in the badges
         markInteraction();
         applyFilters();
+        // The date tab is SERVER-side (the payload holds only that day's runs):
+        // re-read this page without it. No `q` (the tab's own link carries the
+        // search this button just cleared), `source` so htmx does not queue it
+        // on <body>, and the path follows the view (a Collections user stays
+        // on Collections).
+        var dateInp = document.getElementById('ds-active-date');
+        if (dateInp && dateInp.value && window.htmx && typeof window.htmx.ajax === 'function') {
+            dateInp.value = '';
+            var dataEl = document.getElementById('ds-rows-data');
+            var view = dataEl ? dataEl.getAttribute('data-view') : '';
+            window.htmx.ajax('GET', view === 'collections' ? '/collections' : '/datasets',
+                             { source: '#table-pane', target: '#table-pane', swap: 'innerHTML' });
+        }
     };
     function _restoreSortCollapsed() {
         // FOLDED by default (customer, 2026-09-11). Absent preference = folded;
@@ -2358,6 +2664,7 @@
             console.error('dataset-virtual: failed to parse rows JSON', e);
             return;
         }
+        state.collections = (data.getAttribute('data-view') === 'collections');   // QA datasets-r2-14
         var nowAttr = data.getAttribute('data-now');
         var initialTs = nowAttr ? parseFloat(nowAttr) : 0;
         if (!isFinite(initialTs)) initialTs = 0;
@@ -2460,6 +2767,7 @@
         // bookkeeping resets (the old pill node died with the swapped pane).
         state.arrivalUids = new Set();
         state.flashUids = new Map();
+        state.digestLive = false;   // QA F2: a fresh render's band is current
         // Poll interval (docs/104 #3, tightened by docs/132): a run that
         // just finished must appear near-real-time (customer), so the
         // DEFAULT is 5s — a tick is ~3.5ms server-side (docs/103) and
@@ -2561,6 +2869,49 @@
         startPolling();
     }
 
+    /* QA datasets-r2-26: a data folder added or removed in the sidebar
+       (/workspace/add|remove -> HX-Trigger workspaceRootsChanged) changes
+       which runs exist, but this table rebuilds its rows, folder chips and
+       count only from a FULL payload -- it kept listing (and opening) the
+       removed folder's runs. Re-read the pane on its date tab, then put the
+       box's text back (a GET never reads keep_q -- QA F9). A run left open
+       from a removed folder is closed, with a word why. Bound once. */
+    function _onWorkspaceRootsChanged(ev) {
+        var removed = (ev && ev.detail && ev.detail.removed) || [];
+        var root = document.getElementById('ds-detail-root');
+        var ruid = root && root.closest && root.closest('#inspector-pane')
+            ? String(root.getAttribute('data-uid') || '') : '';
+        if (ruid && removed.indexOf(ruid.split(':')[0]) !== -1
+                && typeof window.closeInspector === 'function') {
+            window.closeInspector();
+            if (window.showToast) window.showToast(
+                'Run ' + ruid.split(':').pop() + ' closed \u2014 its data folder was removed from the workspace.',
+                'info');
+        }
+        if (!document.getElementById('datasets-tbody') || !window.htmx) return;
+        var data = document.getElementById('ds-rows-data');
+        var coll = data && data.getAttribute('data-view') === 'collections';
+        var dateEl = document.getElementById('ds-active-date');
+        var box = document.getElementById('dataset-search');
+        var kept = box ? box.value : '';
+        var p = window.htmx.ajax('GET', coll ? '/collections' : '/datasets', {
+            // `source` so htmx does not queue it on <body> (as clearDatasetFilters)
+            source: '#table-pane', target: '#table-pane', swap: 'innerHTML',
+            values: { date: dateEl ? dateEl.value : '' },
+        });
+        if (kept && p && p.then) p.then(function () {
+            var nb = document.getElementById('dataset-search');
+            if (nb && !nb.value) {
+                nb.value = kept;
+                nb.dispatchEvent(new Event('input', { bubbles: true }));
+            }
+        });
+    }
+    if (!window._dsRootsChangedBound) {
+        window._dsRootsChangedBound = true;
+        document.addEventListener('workspaceRootsChanged', _onWorkspaceRootsChanged);
+    }
+
     window.DatasetVirtual = {
         init: init,
         // docs/141 4p: live-wake.js says a run folder changed -- run the delta
@@ -2595,6 +2946,7 @@
         },
         clearSelection: function() {
             state.selected.clear();
+            syncSelectAll();   // QA datasets-r2-16
             scheduleRender();
         },
         // Folder filter (multi-folder). The set lives here so it resets when the

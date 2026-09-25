@@ -202,6 +202,70 @@ done.push(new Promise(function (resolve) {
        '4d the retired magnitude gate is gone everywhere, name included');
 })();
 
+/* ------------------- QA F11: the sidebar Trend Tracker chart APPLIES it too
+ * _trend_chart.html built its y axis with no number format, so a constant
+ * 5.071 GHz f_01 drew Plotly's zero-span +-1 Hz autorange in US billions
+ * ("5.071000001B", left-clipped by the fixed margin), and an all-null T1 drew
+ * an empty -1..4 axis with no word. The template's own script is executed
+ * here with the two Jinja values replaced by fixtures. */
+(function () {
+    const TPL = path.join(ROOT, 'quam_state_manager', 'web', 'templates', '_trend_chart.html');
+    const tpl = fs.readFileSync(TPL, 'utf8');
+    const s0 = tpl.indexOf('<script>') + '<script>'.length;
+    const script = tpl.slice(s0, tpl.indexOf('</script>', s0));
+    const trend = [
+        { property: 'f_01', qubit: 'q1', values: [
+            { label: 'e39', value: 5.071e9 }, { label: 'e40', value: 5.071e9 },
+            { label: 'e41', value: 5.071e9 }] },
+        { property: 'T1', qubit: 'q1', values: [
+            { label: 'e39', value: null }, { label: 'e40', value: null },
+            { label: 'e41', value: null }] },
+        { property: 'T2ramsey', qubit: 'q1', values: [
+            { label: 'e39', value: 1.2e-5 }, { label: 'e40', value: 1.5e-5 },
+            { label: 'e41', value: null }] },
+    ];
+    const js = script
+        .replace('{{ trend_json | script_json }}', JSON.stringify(trend))
+        .replace('{{ symbol_map | tojson }}', JSON.stringify({ e39: 'E1', e40: 'E2', e41: 'E3' }));
+    ok(js.indexOf('{{') < 0, '5a the fixture replaced every Jinja value in the chart script');
+    const dom = new JSDOM('<!DOCTYPE html><html><body>'
+        + '<div id="trend-chart-0"></div><div id="trend-chart-1"></div><div id="trend-chart-2"></div>'
+        + '</body></html>', { runScripts: 'outside-only', url: 'http://localhost/' });
+    const win = dom.window;
+    win.eval(read('plot-theme.js'));
+    const calls = {};
+    win.eval('var UI_CONFIG = { plotly: { colorway: [], trendChart: { height: 250, '
+        + 'titleFont: {}, xTickFont: {}, yTickFont: {}, margin: { l: 80, r: 20, t: 40, b: 40 }, '
+        + 'legendFont: {}, legendY: -0.25 } } };');
+    win._plotlyRender = function (id, traces, layout) { calls[id] = layout; };
+    win.eval(js);
+    const f = calls['trend-chart-0'];
+    ok(!!f, '5b the f_01 chart renders');
+    if (f) {
+        ok(f.yaxis.exponentformat === 'SI' && f.yaxis.tickformat === '',
+           '5c the f_01 axis uses PlotTheme\'s rule (SI, not Plotly\'s default B): '
+           + JSON.stringify({ e: f.yaxis.exponentformat, t: f.yaxis.tickformat }));
+        ok(f.yaxis.automargin === true, '5d long tick labels widen the margin instead of clipping');
+        const r = f.yaxis.range;
+        ok(Array.isArray(r) && f.yaxis.autorange === false && r[0] < 5.071e9 && r[1] > 5.071e9
+           && r[1] - r[0] > 1e6,
+           '5e a constant f_01 gets a band around its own value, not +-1 Hz: ' + JSON.stringify(r));
+    }
+    ok(!calls['trend-chart-1'], '5f an all-null T1 draws no empty Plotly axis');
+    const note = win.document.getElementById('trend-chart-1').textContent;
+    ok(/T1: no numeric values/.test(note)
+       && win.document.getElementById('trend-chart-1').style.height === 'auto',
+       '5g ...and says why, in a line rather than an empty chart box: ' + JSON.stringify(note));
+    const t2 = calls['trend-chart-2'];
+    ok(t2 && t2.yaxis.autorange === true && t2.yaxis.range === undefined,
+       '5h a series that moves keeps Plotly\'s autorange');
+    // 4a/4c for this surface: it asks for the rule and never spells one out
+    ok(/PlotTheme\.axisNumberFormat\(/.test(script), '5i the chart script asks the shared rule');
+    const bad = (script.match(/(tickformat|exponentformat)\s*:\s*['"][^'"]*['"]/g) || [])
+        .filter(function (m) { return !/:\s*['"]\s*['"]/.test(m); });
+    ok(bad.length === 0, '5j _trend_chart.html hard-codes no axis number format (' + bad.join(' ') + ')');
+})();
+
 Promise.all(done).then(function () {
     if (fails === 0) console.log('all checks passed (' + checks + ' assertions)');
     process.exit(fails ? 1 : 0);

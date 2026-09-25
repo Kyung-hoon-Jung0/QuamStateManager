@@ -2280,6 +2280,23 @@ class TestTrend:
         assert resp.status_code == 200
         assert b"Select at least 2" in resp.data
 
+    @pytest.mark.parametrize("paths, says", [
+        (["only_one"], "Select at least 2"),
+        (["/no/such/run_a", "/no/such/run_b"], "Need at least 2 valid stores"),
+    ])
+    def test_trend_refusal_keeps_the_table_pane(self, client, paths, says):
+        """QA F3: the sidebar button targets #table-pane -- a bare _status
+        swap REPLACED the table, and the toast's x then left an empty pane.
+        Both refusals keep the pane (HX-Reswap: none) and say it as a toast,
+        the way /compare already does."""
+        resp = client.post("/trend", data={"paths": paths},
+                           headers={"HX-Request": "true"})
+        assert resp.status_code == 200
+        assert resp.headers.get("HX-Reswap") == "none"
+        trig = json.loads(resp.headers.get("HX-Trigger") or "{}")
+        assert says in trig.get("sm:toast", {}).get("message", "")
+        assert trig["sm:toast"]["level"] == "warning"
+
     def test_trend_picker(self, trend_client):
         client, folders = trend_client
         resp = client.post("/trend", data={"paths": folders},

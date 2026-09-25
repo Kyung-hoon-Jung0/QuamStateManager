@@ -935,6 +935,7 @@ window.__paramVocabInsert = function (key, value, op) {
     if (key.indexOf('=') >= 0 || key.indexOf(':') >= 0) return null;
     var bare = /^[A-Za-z][\w.\-]*$/.test(key);
     var scope = bare ? '' : 'p:';
+    if (!scope && key.toLowerCase() === 'id') scope = 'p:';   // QA datasets-r2-33: bare id>=N is the RUN id
     if (scope && value !== value.replace(/^\s+|\s+$/g, '')) return null;
     if (!value) return null;
     var tok = scope + key + op + value;

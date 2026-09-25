@@ -156,5 +156,30 @@ ok(/data-bucket="error"/.test(DIAG), 'preflight: the /diagnostics fragment has e
   ok(rows(w).length > 0 && rows(w).every(visible), 'E5 Show all shows every row');
 }
 
+// E7 -- QA F-I x QA F6 (merged at integration): the crash banner hides while
+// the LIVE pane holds the Diagnostics findings slot, through a class on <html>
+// (never a body:has() rule, which F6 measured freezing Trends)
+{
+  const w = boot();
+  const html = w.document.documentElement;
+  ok(!html.classList.contains('diag-page-live'), 'E7 on /bulk the banner slot shows');
+  navigateToDiagnostics(w);
+  ok(html.classList.contains('diag-page-live'), 'E7 on /diagnostics (a swap) it hides');
+  const pane = w.document.getElementById('table-pane');
+  pane.innerHTML = '<p>Live State Edit</p>';
+  pane.dispatchEvent(new w.CustomEvent('htmx:afterSwap', { bubbles: true, detail: { target: pane } }));
+  ok(!html.classList.contains('diag-page-live'), 'E7 swapping away shows it again');
+  pane.innerHTML = DIAG;                                  // a PaneState restore: no afterSwap
+  w.document.dispatchEvent(new w.CustomEvent('paneRestored', { detail: { route: '/diagnostics' } }));
+  ok(html.classList.contains('diag-page-live'), 'E7 a keep-alive restore of /diagnostics hides it');
+  pane.innerHTML = '<p>Qubits</p>';                       // htmx history restore (Back)
+  w.document.body.dispatchEvent(new w.CustomEvent('htmx:historyRestore', { bubbles: true }));
+  ok(!html.classList.contains('diag-page-live'), 'E7 a history restore of another page shows it');
+  // a drag-drop preview carries the findings LIST but not the page's slot
+  pane.innerHTML = DIAG.replace(/id="diag-findings"/g, 'id="diag-preview-list"');
+  pane.dispatchEvent(new w.CustomEvent('htmx:afterSwap', { bubbles: true, detail: { target: pane } }));
+  ok(!html.classList.contains('diag-page-live'), 'E7 a pane without #diag-findings keeps the banner');
+}
+
 console.log(fails ? 'FAILED (' + fails + ')' : 'diag_filter_entry_fragcheck ok (' + asserts + ' assertions)');
 process.exit(fails ? 1 : 0);

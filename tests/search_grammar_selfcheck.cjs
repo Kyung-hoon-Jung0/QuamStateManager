@@ -329,6 +329,164 @@ async function datasetChecks() {
        'datasets: tight binding — (rabi|ramsey) AND q1');
 }
 
+/* ── 6b. QA datasets-r2-33: `id>=N` compares the RUN id ────────────────────
+ * It used to be a param condition whose key matches by substring, so `id`
+ * hit target_peak_width / idle_time / load_data_id: `id>=4100 id<=4105` kept
+ * #3281 (3e6 >= 4100 on one key, 16 <= 4105 on another) and none of
+ * #4100-#4105; `id=4113` found nothing. Rows carry exactly those keys. The
+ * Python twin (routes._parse_tree_query) is pinned to the same answers in
+ * tests/test_id_compare_search.py. */
+async function datasetIdChecks() {
+    const pm = { target_peak_width: 3e6, idle_time: 16, load_data_id: 20 };
+    const rows = [4100, 4103, 4105, 4113, 4200, 3281].map(function (id) {
+        return { id: id, f: 'f1', exp: 'exp' + id, q: ['q1'], p: [], tags: [],
+                 date: '2026-09-01', status: 'finished', pm: pm };
+    });
+    const dom = new JSDOM('<!doctype html><html><body>' +
+        '<script type="application/json" id="ds-rows-data" data-now="1000">' +
+        JSON.stringify(rows) + '</script>' +
+        '<input id="dataset-search"><span id="dataset-filter-count"></span>' +
+        '<div id="datasets-scroll" style="height:400px"><table><tbody id="datasets-tbody"></tbody></table></div>' +
+        '</body></html>', { url: 'http://localhost/datasets', runScripts: 'outside-only', pretendToBeVisual: true });
+    const w = dom.window;
+    global.window = w; global.document = w.document;
+    global.localStorage = w.localStorage;
+    w.requestAnimationFrame = w.requestAnimationFrame || (cb => setTimeout(cb, 0));
+    global.requestAnimationFrame = w.requestAnimationFrame;
+    w.eval(fs.readFileSync(path.join(STATIC, 'search-query.js'), 'utf8'));
+    w.eval(fs.readFileSync(path.join(STATIC, 'dataset-virtual.js'), 'utf8'));
+    w.DatasetVirtual.init();
+    async function count(q) {
+        const inp = w.document.getElementById('dataset-search');
+        inp.value = q;
+        inp.dispatchEvent(new w.Event('input', { bubbles: true }));
+        await wait(30);
+        const m = (w.document.getElementById('dataset-filter-count').textContent || '')
+            .match(/Showing (\d+) of (\d+)/);
+        return m ? Number(m[1]) : rows.length;
+    }
+    ok(await count('id>=4100 id<=4105') === 3, 'datasets ids: id>=4100 id<=4105 = #4100/#4103/#4105');
+    ok(await count('id>=4100') === 5, 'datasets ids: id>=4100 excludes #3281');
+    ok(await count('id=4113') === 1, 'datasets ids: id=4113 is the run, exactly');
+    ok(await count('id=4105..4100') === 3, 'datasets ids: a range, order free, ends included');
+    ok(await count('id>4105') === 2, 'datasets ids: > is strict');
+    ok(await count('id<4100') === 1, 'datasets ids: < selects #3281 only');
+    ok(await count('ID>=4200') === 1, 'datasets ids: the scope name is case-blind');
+    ok(await count('-id>=4100') === 1, 'datasets ids: negation keeps only #3281');
+    ok(await count('id:>=4113') === 2, 'datasets ids: the scoped spelling compares too');
+    ok(await count('id:41') === 4, 'datasets ids: id:41 is still a substring');
+    ok(await count('p:id>=4100') === 6, 'datasets ids: p:id>=N still reaches a parameter');
+    ok(await count('id>=4100 | id=3281') === 6, 'datasets ids: ORs like any scope');
+}
+
+/* ── 6c. QA F15: the tooltip's `run:` works, and a comparison says what it
+ * compared. `run:` was advertised by the box's own tooltip but was an unknown
+ * scope; `metric>=0.99` / `frequency>6e9` ended at "Showing 0 of N" with no
+ * reason (the key is not a parameter, or it matched a parameter by substring
+ * while the Sort banner shows a fit value of that name). */
+async function datasetHintChecks() {
+    const rows = [
+        { id: 41, f: 'f1', exp: 'qubit_spec', q: ['q1'], p: [], tags: [], date: '2026-09-01', status: 'finished',
+          pm: { num_shots: 1000, frequency_span_in_mhz: 50 }, sm: { frequency: 5.1e9, amplitude: 0.2 } },
+        { id: 142, f: 'f1', exp: 'ramsey', q: ['q2'], p: [], tags: [], date: '2026-09-01', status: 'finished',
+          pm: { num_shots: 100 }, sm: { frequency: 5.3e9 } },
+        { id: 7, f: 'f1', exp: 'rabi', q: ['q3'], p: [], tags: [], date: '2026-09-01', status: 'finished',
+          pm: { num_shots: 100 } },
+    ];
+    const dom = new JSDOM('<!doctype html><html><body>' +
+        '<script type="application/json" id="ds-rows-data" data-now="1000">' +
+        JSON.stringify(rows) + '</script>' +
+        '<input id="dataset-search"><span id="dataset-filter-count"></span>' +
+        '<div id="datasets-scroll" style="height:400px"><table><tbody id="datasets-tbody"></tbody></table></div>' +
+        '</body></html>', { url: 'http://localhost/datasets', runScripts: 'outside-only', pretendToBeVisual: true });
+    const w = dom.window;
+    global.window = w; global.document = w.document;
+    global.localStorage = w.localStorage;
+    w.requestAnimationFrame = w.requestAnimationFrame || (cb => setTimeout(cb, 0));
+    global.requestAnimationFrame = w.requestAnimationFrame;
+    w.eval(fs.readFileSync(path.join(STATIC, 'search-query.js'), 'utf8'));
+    w.eval(fs.readFileSync(path.join(STATIC, 'dataset-virtual.js'), 'utf8'));
+    w.DatasetVirtual.init();
+    async function strip(q) {
+        const inp = w.document.getElementById('dataset-search');
+        inp.value = q;
+        inp.dispatchEvent(new w.Event('input', { bubbles: true }));
+        await wait(30);
+        return w.document.getElementById('dataset-filter-count').textContent || '';
+    }
+    const n = t => { const m = t.match(/Showing (\d+) of (\d+)/); return m ? Number(m[1]) : -1; };
+    let t = await strip('run:14');
+    ok(n(t) === 1 && !/unknown/.test(t), 'hint: run:14 is the id scope (was "unknown scope"): ' + t);
+    ok(n(await strip('id:14')) === 1, 'hint: …the same rows as id:14');
+    t = await strip('metric>=0.99');
+    ok(/no loaded run has a parameter matching "metric"/.test(t) && /use metric:/.test(t),
+       'hint: metric>=0.99 says no parameter matches and names metric: -- ' + t);
+    t = await strip('frequency>6e9');
+    ok(n(t) === 0 && /"frequency" compared as parameter frequency_span_in_mhz/.test(t)
+       && /fit values are sorted, not filtered/.test(t),
+       'hint: frequency>6e9 names the parameter it compared -- ' + t);
+    t = await strip('amplitude>0');
+    ok(/no loaded run has a parameter matching "amplitude"/.test(t) && /fit values are sorted/.test(t),
+       'hint: a fit-only key says it is not a parameter -- ' + t);
+    t = await strip('num_shots>=1000');
+    ok(n(t) === 1 && !/no loaded run|compared as parameter/.test(t),
+       'hint: a real parameter comparison carries no hint -- ' + t);
+    t = await strip('metric>=0.99 metric<2');
+    ok((t.match(/no loaded run/g) || []).length === 1, 'hint: one line per key, not per token -- ' + t);
+}
+
+/* ── 6d. QA F15 (review): a parameter that CONTAINS the word ────────────
+ * The KH corpus has a parameter named leakage_metric, so `metric>=0.99`
+ * silently compared THAT and ended at "Showing 0 of N" with no hint (the
+ * hint spoke only when no parameter matched, or the key was a fit key). A
+ * substring hit that is not the typed name, and a comparison that leaves
+ * nothing, now name what they compared; `metric` always points at metric:. */
+async function datasetHintSubstringChecks() {
+    const rows = [
+        { id: 41, f: 'f1', exp: 'cz_leakage', q: ['q1'], p: [], tags: [], date: '2026-09-01', status: 'finished',
+          pm: { num_shots: 1000, leakage_metric: 0.4 }, metric: 0.995 },
+        { id: 142, f: 'f1', exp: 'ramsey', q: ['q2'], p: [], tags: [], date: '2026-09-01', status: 'finished',
+          pm: { num_shots: 100, detuning: 1e6 } },
+    ];
+    const dom = new JSDOM('<!doctype html><html><body>' +
+        '<script type="application/json" id="ds-rows-data" data-now="1000">' +
+        JSON.stringify(rows) + '</script>' +
+        '<input id="dataset-search"><span id="dataset-filter-count"></span>' +
+        '<div id="datasets-scroll" style="height:400px"><table><tbody id="datasets-tbody"></tbody></table></div>' +
+        '</body></html>', { url: 'http://localhost/datasets', runScripts: 'outside-only', pretendToBeVisual: true });
+    const w = dom.window;
+    global.window = w; global.document = w.document;
+    global.localStorage = w.localStorage;
+    w.requestAnimationFrame = w.requestAnimationFrame || (cb => setTimeout(cb, 0));
+    global.requestAnimationFrame = w.requestAnimationFrame;
+    w.eval(fs.readFileSync(path.join(STATIC, 'search-query.js'), 'utf8'));
+    w.eval(fs.readFileSync(path.join(STATIC, 'dataset-virtual.js'), 'utf8'));
+    w.DatasetVirtual.init();
+    async function strip(q) {
+        const inp = w.document.getElementById('dataset-search');
+        inp.value = q;
+        inp.dispatchEvent(new w.Event('input', { bubbles: true }));
+        await wait(30);
+        return w.document.getElementById('dataset-filter-count').textContent || '';
+    }
+    const n = t => { const m = t.match(/Showing (\d+) of (\d+)/); return m ? Number(m[1]) : -1; };
+    let t = await strip('metric>=0.99');
+    ok(n(t) === 0 && /"metric" compared as parameter leakage_metric/.test(t) && /use metric:/.test(t),
+       'hint: metric>=0.99 names leakage_metric and points at metric: -- ' + t);
+    t = await strip('metric<0.5');
+    ok(n(t) === 1 && /compared as parameter leakage_metric/.test(t) && /use metric:/.test(t),
+       'hint: …even when the substring comparison keeps a row -- ' + t);
+    t = await strip('shots>=1000');
+    ok(n(t) === 1 && /"shots" compared as parameter num_shots/.test(t),
+       'hint: a key that is not a parameter NAME says which one it compared -- ' + t);
+    t = await strip('num_shots>=5000');
+    ok(n(t) === 0 && /"num_shots" compared as parameter num_shots/.test(t),
+       'hint: an exact comparison that leaves nothing still says what it compared -- ' + t);
+    t = await strip('num_shots>=1000');
+    ok(n(t) === 1 && !/compared as parameter|no loaded run/.test(t),
+       'hint: an exact comparison that keeps rows stays quiet -- ' + t);
+}
+
 /* ── 7. scheduler library filter + dataset sort-key filters ────────────── */
 async function schedulerChecks() {
     // SchedulerUI is IIFE-internal and self-inits on DOMContentLoaded; the
@@ -382,6 +540,11 @@ async function schedulerChecks() {
     await pairChecks();
     say('-- datasets');
     await datasetChecks();
+    say('-- datasets ids');
+    await datasetIdChecks();
+    say('-- datasets hints');
+    await datasetHintChecks();
+    await datasetHintSubstringChecks();
     say('-- scheduler');
     await schedulerChecks();
     if (fails) { say(fails + ' check(s) failed'); process.exit(1); }

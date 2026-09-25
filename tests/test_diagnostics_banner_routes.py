@@ -273,9 +273,14 @@ def test_the_crash_banner_is_not_shown_on_diagnostics_itself():
     from pathlib import Path
     root = Path(__file__).resolve().parent.parent / "quam_state_manager" / "web"
     css = (root / "static" / "style.css").read_text(encoding="utf-8")
-    m = re.search(r"body:has\(#table-pane #diag-findings\)\s+#diagnostics-banner-slot\s*\{([^}]*)\}", css)
+    # merged with QA F6: a class on <html> (app.js _syncDiagPageClass), never a
+    # body:has() rule; the class is driven under jsdom in
+    # diag_filter_entry_fragcheck.cjs (E7), real app.js + real fragments
+    m = re.search(r"html\.diag-page-live\s+#diagnostics-banner-slot\s*\{([^}]*)\}", css)
     assert m, "the rule that hides the banner on /diagnostics is gone"
     assert re.search(r"display\s*:\s*none", m.group(1))
+    app = (root / "static" / "app.js").read_text(encoding="utf-8")
+    assert "!!document.querySelector('#table-pane #diag-findings')" in app
     owners = [p.name for p in (root / "templates").glob("*.html")
               if 'id="diag-findings"' in p.read_text(encoding="utf-8")]
     assert owners == ["_diagnostics.html"], owners

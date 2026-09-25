@@ -67,9 +67,41 @@ class TestReachableWhenCollapsed:
         assert "settings-btn" in fb and "calc-btn" in fb
 
     def test_it_is_hidden_until_the_sidebar_collapses(self):
+        """QA F17: this pin used to check the two literal rules, both present
+        and neither working on the real page -- `.sidebar-collapsed` lives on
+        .app-layout, a SIBLING of the bar, and the bar's own
+        `.topbar > nav > ul > li {display:inline-flex}` outranked the bare
+        class, so the pair showed always. The rules now key on a class on
+        <html> (set by both writers of the collapsed state) and outrank the
+        bar's li rule; the real-Chrome check is in the QA record."""
+        import re
         css = (_STATIC / "style.css").read_text(encoding="utf-8")
-        assert ".topbar-tools-fallback { display: none; }" in css
-        assert ".sidebar-collapsed .topbar-tools-fallback { display: flex" in css
+
+        def spec(sel):
+            sel = sel.replace(":not(", " ").replace(")", " ")
+            ids = len(re.findall(r"#[\w-]+", sel))
+            cls = len(re.findall(r"[.:][\w-]+", sel))
+            els = len(re.findall(r"(?:^|[\s>+~])([a-z][\w-]*)", sel))
+            return (ids, cls, els)
+
+        hide = re.search(r"(?m)^([^{}\n]*topbar-tools-fallback)\s*\{\s*display:\s*none", css)
+        show = re.search(r"(?m)^([^{}\n]*topbar-tools-fallback)\s*\{\s*display:\s*flex", css)
+        assert hide and show, "the fallback's hide/show rules are gone"
+        bar_li = spec(".topbar > nav > ul > li")
+        hidden_bar_li = spec("html.topbar-hidden .topbar > nav > ul > li")
+        assert spec(hide.group(1)) > bar_li, hide.group(1)
+        assert spec(show.group(1)) > spec(hide.group(1)) and spec(show.group(1)) > hidden_bar_li
+        assert "html.sidebar-is-collapsed" in show.group(1)
+        assert ":not(.topbar-hidden)" in show.group(1), "a hidden bar must keep hiding it"
+        # the premise: the bar is NOT inside .app-layout, so a
+        # `.sidebar-collapsed <descendant>` rule can never reach it
+        base = (_TPL / "base.html").read_text(encoding="utf-8")
+        assert base.index('<header class="topbar">') < base.index('<div class="app-layout">')
+        assert not re.search(r"(?m)^\s*\.sidebar-collapsed\s+\.topbar", css)
+        # both writers of the collapsed state set the class the rule reads
+        js = (_STATIC / "app.js").read_text(encoding="utf-8")
+        assert 'classList.toggle("sidebar-is-collapsed", collapsed)' in js
+        assert 'documentElement.classList.add("sidebar-is-collapsed")' in base
 
     def test_the_sidebar_really_does_collapse_to_nothing(self):
         """The premise of the fallback. If this ever became an icon rail the

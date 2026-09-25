@@ -212,6 +212,15 @@ class TestTheTwoSearchBoxesAgree:
         assert "param" in routes._SIDEBAR_KNOWN_SCOPES
         assert routes._SIDEBAR_SCOPE_ALIASES.get("p") == "param"
 
+    def test_both_know_run_as_the_id_alias(self):
+        """QA F15: both tooltips advertise `run:`; the Datasets box called it an
+        unknown scope while the sidebar box mapped it to `id`."""
+        from quam_state_manager.web import routes
+        js = (_STATIC / "dataset-virtual.js").read_text(encoding="utf-8")
+        aliases = re.search(r"SCOPE_ALIASES\s*=\s*\{(.*?)\}", js, re.S)
+        assert aliases and re.search(r"\brun\s*:\s*'id'", aliases.group(1))
+        assert routes._SIDEBAR_SCOPE_ALIASES.get("run") == "id"
+
     def test_both_route_a_bare_key_equals_value(self):
         """One token means one thing on both boxes — including the operator.
 

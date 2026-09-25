@@ -19674,6 +19674,29 @@ def _param_cond(body: str, scoped: bool = False):
     return {"key": key, "op": op, "want": want, "wnum": w, "lo": None, "hi": None}
 
 
+# QA datasets-r2-33: the twin of dataset-virtual.js ``_idCond``.
+_ID_CMP = re.compile(r"^(>=|<=|>|<|=)(\d+)(?:\.\.(\d+))?$")
+
+
+def _id_cond(value: str):
+    """A run-id comparison -- ``>=4100``, ``<4105``, ``=4113``, ``=4100..4105``
+    (range only with ``=``, both ends included, order free) -- or None.
+
+    QA datasets-r2-33: ``id>=4100`` used to be a PARAM condition whose key
+    matched by substring (``target_peak_width``, ``load_data_id``, ``idle_*``)
+    and never looked at the run id. Integers only; anything else keeps the
+    substring meaning ``id:108`` always had.
+    """
+    m = _ID_CMP.match(value or "")
+    if not m or (m.group(3) is not None and m.group(1) != "="):
+        return None
+    a = int(m.group(2))
+    if m.group(3) is not None:
+        b = int(m.group(3))
+        return {"op": "..", "lo": min(a, b), "hi": max(a, b)}
+    return {"op": m.group(1), "wnum": a}
+
+
 def _tokenize_query(text: str) -> list[str]:
     """Whitespace-or-comma split that keeps "double-quoted" runs as one token.
 
@@ -19718,6 +19741,12 @@ def _parse_tree_query(text: str) -> list[dict]:
             body = body[1:]
         # Bare `key=value` -> param, BEFORE the scope match (`=` is not a scope
         # separator, and `multiplexed=true` has no colon to find).
+        # QA datasets-r2-33: `id>=4100` compares the run id (dataset-virtual.js
+        # parseQuery routes it the same way); `p:id>=4100` still means a param.
+        ic = _id_cond(body[2:]) if body[:2].lower() == "id" else None
+        if ic is not None:
+            conds.append(dict(ic, field="id", value=body[2:].lower(), negate=negate))
+            continue
         pc = _param_cond(body.lower())
         if pc is not None:
             conds.append(dict(pc, field="param", value=body.lower(), negate=negate))
@@ -19731,6 +19760,8 @@ def _parse_tree_query(text: str) -> list[dict]:
                 if key == "param":
                     # `p:num_shots>=1000` means what `num_shots>=1000` means.
                     c.update(_param_cond(value, scoped=True) or {})
+                elif key == "id":
+                    c.update(_id_cond(value) or {})     # QA datasets-r2-33
                 conds.append(c)
                 continue
         # Bare / unknown token → free-text with the ORIGINAL token (negation
@@ -19864,6 +19895,22 @@ def _entry_matches(entry, conds: list[dict], runsets: dict | None = None) -> boo
         if field == "status":
             return value in status
         if field == "id":
+            op = c.get("op")                 # QA datasets-r2-33
+            if op:
+                if not rid:
+                    return False
+                n = int(rid)
+                if op == "..":
+                    return c["lo"] <= n <= c["hi"]
+                if op == ">=":
+                    return n >= c["wnum"]
+                if op == ">":
+                    return n > c["wnum"]
+                if op == "<=":
+                    return n <= c["wnum"]
+                if op == "<":
+                    return n < c["wnum"]
+                return n == c["wnum"]
             return value in rid
         if field == "qubit":
             return value in qubits                       # exact
@@ -19942,6 +19989,17 @@ def _filter_tree(tree: dict, text: str) -> dict:
         if filtered_groups:
             result[root_path] = filtered_groups
     return result
+
+
+def _filtered_render_tree(full: dict, text: str) -> dict:
+    """QA datasets-r2-10: the FILTERED tree with every workspace root kept
+    (no match -> ``[]``). ``_filter_tree`` drops a root that has no matching
+    run, so a filter matching nothing rendered "No workspace roots added
+    yet." and took every root's header and x with it (it read as "my folders
+    are gone"). A filter narrows runs; it never makes a folder look removed.
+    """
+    ft = _filter_tree(full, text)
+    return {r: ft.get(r, []) for r in (full or {})}
 
 
 # docs/126 #20 — per-workspace memo for the UNFILTERED nested render model.
@@ -20033,8 +20091,21 @@ def _tree_render_ctx(tree: dict, ws=None) -> dict:
 @bp.route("/workspace/add", methods=["POST"])
 def workspace_add():
     folder = request.form.get("folder", "").strip()
+    # QA datasets-r2-11: Explorer's "Copy as path" wraps the path in quotes.
+    if len(folder) >= 2 and folder[0] == folder[-1] == '"':
+        folder = folder[1:-1].strip()
     if not folder:
         return render_template("_status.html", message="No folder specified", level="error"), 400
+    # QA datasets-r2-11: a missing path or a FILE used to be registered as a
+    # root (and persisted) with no word said. Refuse both here, at the user's
+    # door only -- core add_root keeps serving its other callers unchanged.
+    _p = Path(folder).expanduser()
+    if not _p.exists():
+        return render_template("_status.html", level="error",
+                               message=f"Folder not found: {folder}"), 400
+    if not _p.is_dir():
+        return render_template("_status.html", level="error",
+                               message=f"Not a folder: {folder} -- choose the folder that holds the runs"), 400
 
     ws = _ws()
     try:
@@ -20048,21 +20119,37 @@ def workspace_add():
     # workspace-token validation) can't serve a list missing the new root.
     _dataset_candidates_cache.pop(id(current_app._get_current_object()), None)
     _save_workspace_roots()
+    # QA datasets-r2-26: a re-added folder's keys are live again.
+    _retired_dataset_keys().difference_update(
+        {_folder_key(c) for c in _dataset_candidate_folders(fast=True)})
 
-    return render_template("_sidebar_tree.html", **_tree_render_ctx(ws.tree, ws=ws),
-                           message=f"Added {len(entries)} experiment(s)")
+    resp = make_response(render_template(
+        "_sidebar_tree.html", **_tree_render_ctx(ws.tree, ws=ws),
+        message=f"Added {len(entries)} experiment(s)"))
+    # QA datasets-r2-26: an open Datasets page re-reads its table (rows,
+    # folder chips, count) -- it only rebuilds from a full payload.
+    resp.headers["HX-Trigger"] = json.dumps({"workspaceRootsChanged": {"removed": []}})
+    return resp
 
 
 @bp.route("/workspace/remove", methods=["POST"])
 def workspace_remove():
     folder = request.form.get("folder", "").strip()
     ws = _ws()
+    # QA datasets-r2-26: which data folders this press takes away -- the
+    # candidate-set DIFF (the root's own key and its runs' grandparent keys;
+    # never a folder still reachable through another root).
+    _keys_before = {_folder_key(c) for c in _dataset_candidate_folders(fast=True)}
     ws.remove_root(folder)
     # Invalidate cached DatasetStore so it rebuilds without removed root
     current_app.config.pop("dataset_store", None)
     # …and the candidate-folder cache (per-run fast path — see workspace_add).
     _dataset_candidates_cache.pop(id(current_app._get_current_object()), None)
     _save_workspace_roots()
+    retired_now = _keys_before - {_folder_key(c) for c in _dataset_candidate_folders(fast=True)}
+    _retired_dataset_keys().update(retired_now)
+    # …and tell an open Datasets page, which never hears about it otherwise.
+    _roots_trigger = json.dumps({"workspaceRootsChanged": {"removed": sorted(retired_now)}})
     # Project lens (docs/63): an explicitly removed folder must not keep
     # seeding project scopes on the Datasets/Trends pages.
     _strip_project_root(folder)
@@ -20085,15 +20172,19 @@ def workspace_remove():
                 _save_session_raising(data)
         except OSError as exc:
             logger.warning("Could not record workspace exclusion: %s", exc)
-            return render_template(
+            resp = make_response(render_template(
                 "_status.html",
                 message=(
                     "Removed from workspace but the exclusion couldn't be "
                     f"saved ({exc}); the folder may re-appear on next launch."
                 ),
                 level="warning",
-            )
-    return render_template("_sidebar_tree.html", **_tree_render_ctx(ws.tree, ws=ws))
+            ))
+            resp.headers["HX-Trigger"] = _roots_trigger   # the root WAS removed
+            return resp
+    resp = make_response(render_template("_sidebar_tree.html", **_tree_render_ctx(ws.tree, ws=ws)))
+    resp.headers["HX-Trigger"] = _roots_trigger
+    return resp
 
 
 # docs/126 #20 — the unfiltered tree HTML, memoized per workspace version.
@@ -20128,7 +20219,7 @@ def workspace_tree():
             fmemo.pop(fkey); fmemo[fkey] = hit    # LRU touch
             return hit
         html = render_template("_sidebar_tree.html",
-                               **_tree_render_ctx(_filter_tree(ws.tree, name_filter)),
+                               **_tree_render_ctx(_filtered_render_tree(ws.tree, name_filter)),
                                name_filter=name_filter)
         fmemo[fkey] = html
         while len(fmemo) > 32:
@@ -20403,9 +20494,9 @@ def workspace_refresh():
         or request.args.get("name", "").strip()
     tree = ws.tree if ws else {}
     if name_filter:
-        tree = _filter_tree(tree, name_filter)
+        tree = _filtered_render_tree(tree, name_filter)
         return render_template("_sidebar_tree.html",
-                               **_tree_render_ctx(tree))
+                               **_tree_render_ctx(tree), name_filter=name_filter)
     # docs/126 r3: a no-change rescan keeps the version, so the memoized
     # unfiltered HTML is still valid — the Refresh round-trip pays only the
     # scan itself, not a 450 KB re-render of an identical tree.
@@ -21303,12 +21394,23 @@ def chip_compare_diff():
 def trend():
     """Show the trend property picker after selecting experiments."""
     paths_raw = request.form.getlist("paths")
+
+    def _refuse(msg):
+        # QA F3: the button targets #table-pane, so a bare _status render
+        # REPLACED the table (and its x then left an empty pane). Refuse the
+        # way /compare does: keep the pane, say it as a toast.
+        resp = make_response(render_template("_status.html", message=msg, level="warning"))
+        if _is_htmx():
+            resp.headers["HX-Reswap"] = "none"
+            resp.headers["HX-Trigger"] = json.dumps({"sm:toast": {"message": msg, "level": "warning"}})
+        return resp
+
     if len(paths_raw) < 2:
-        return render_template("_status.html", message="Select at least 2 experiments", level="warning")
+        return _refuse("Select at least 2 experiments -- tick two or more runs in the list to trend them.")
 
     stores, _contexts, labels, all_qubit_names = _load_compare_stores(paths_raw)
     if len(stores) < 2:
-        return render_template("_status.html", message="Need at least 2 valid stores", level="warning")
+        return _refuse("Need at least 2 valid stores -- fewer than two of the ticked runs could be read.")
 
     template = "_trend_picker.html" if _is_htmx() else "compare.html"
     return render_template(
@@ -21339,7 +21441,14 @@ def _extract_run_id(label: str) -> int | None:
 def trend_chart():
     """Render stacked trend charts for selected properties/qubits."""
     paths_raw = request.form.getlist("paths")
-    props = request.form.getlist("props") or ["f_01"]
+    # QA datasets-r2-32: no property ticked used to chart f_01 anyway -- a
+    # property the user had just deselected -- and so could never reach the
+    # template's own "Select at least one property" state. Ask instead.
+    props = request.form.getlist("props")
+    if not props:
+        return render_template("_trend_chart.html", trend_data=[])
+    # No qubit ticked = every qubit (the picker's default flow); the chart
+    # SAYS so (_trend_chart.html), it is not an error.
     qubit_filter = request.form.getlist("qubits") or None
 
     stores, _contexts, labels, _ = _load_compare_stores(paths_raw)
@@ -24463,6 +24572,13 @@ def _active_dataset_stores(*, fast: bool = False,
     return result
 
 
+def _retired_dataset_keys() -> set[str]:
+    """QA datasets-r2-26: folder keys the user took out of the workspace with
+    the sidebar x (cleared again by a re-add). Only the single-folder drift
+    fallback below reads it: a live folder's exact key still resolves first."""
+    return current_app.config.setdefault("retired_dataset_folder_keys", set())
+
+
 def _store_for_folder_key(folder_key: str, rescan: bool = True,
                           run_id: int | None = None) -> tuple[DatasetStore | None, str | None]:
     """Resolve one folder_key → (store, leaf-label) WITHOUT instantiating the
@@ -24498,7 +24614,11 @@ def _store_for_folder_key(folder_key: str, rescan: bool = True,
     # run doesn't exist 404s honestly instead of resolving to some unrelated run. (A
     # different single folder that merely reuses the same numeric run_id is an accepted,
     # logged residual — it needs a mid-session multi→single transition AND a colliding id;
-    # see audit 2026-06-26.)
+    # see audit 2026-06-26.) QA datasets-r2-26: an explicit sidebar x IS that transition,
+    # and run ids restart at #1 in every folder -- a REMOVED folder's uid 404s honestly
+    # instead of opening the remaining folder's run of the same number.
+    if folder_key in current_app.config.get("retired_dataset_folder_keys", ()):
+        return None, None
     if len(cands) == 1:
         store = _get_or_create_store(cands[0], rescan=rescan)
         if store is None:
@@ -24652,6 +24772,11 @@ def _datasets_view(view_mode: str):
     # carries one, so the swap it answers with clears no filters; only the
     # date tab rides along, read below through request.values.)
     search = (request.args.get("q") or "").strip()
+    # QA F9: a Rescan POST carries the box's LIVE text back as `keep_q` (never
+    # as `q`: a preset clears every picker/facet tick, docs/167). It refills
+    # the box's value only -- data-preset stays `search`, so nothing clears.
+    search_value = search or ((request.form.get("keep_q") or "").strip()
+                              if request.method == "POST" else "")
     if _is_htmx():
         template = "_datasets.html"
     else:
@@ -24662,7 +24787,7 @@ def _datasets_view(view_mode: str):
                                active_folder="", folders=[], folders_json="[]",
                                no_workspace=True, curated_keys_json="[]",
                                view_mode=view_mode, collection_tags=[],
-                               search=search)
+                               search=search, search_value=search_value)
     import time as _t
     poll_ts = _t.time()
     date = request.values.get("date")
@@ -24682,16 +24807,31 @@ def _datasets_view(view_mode: str):
     for fol in active:
         store = fol["store"]
         folders.append({"key": fol["key"], "label": fol["label"], "full_path": fol["path"]})
-        for row in store.list_runs_compact(date=date):
+        frows = store.list_runs_compact(date=date)
+        for row in frows:
             row["f"] = fol["key"]   # _compact_row returns a fresh dict — safe to tag
             rows.append(row)
-        experiments_set.update(store.experiment_types)
-        dates_set.update(store.dates)
         tags_set.update(store.list_all_tags())
-        total += store.run_count
-        qubits_set.update(store.summary_stats.get("unique_qubits", []))
+        if is_collections:
+            # QA F10: the header, experiment chips and date tabs describe the
+            # COLLECTION (tagged runs, every date -- independent of the active
+            # tab, as on Datasets), not the whole workspace behind it.
+            tagged = [r for r in (store.list_runs_compact() if date else frows)
+                      if r.get("tags")]
+            total += len(tagged)
+            experiments_set.update(r["exp"] for r in tagged if r.get("exp"))
+            dates_set.update(r["date"] for r in tagged if r.get("date"))
+            for r in tagged:
+                qubits_set.update(r.get("q") or [])
+        else:
+            experiments_set.update(store.experiment_types)
+            dates_set.update(store.dates)
+            total += store.run_count
+            qubits_set.update(store.summary_stats.get("unique_qubits", []))
         for cat in store.categorize_experiments():
             cat_map.setdefault(cat["label"], set()).update(cat["experiments"])
+    if is_collections:   # QA F10: only the categories the collection holds
+        cat_map = {k: v & experiments_set for k, v in cat_map.items() if v & experiments_set}
 
     # Newest-first by run timestamp — run_id isn't comparable across folders.
     rows.sort(key=lambda r: (r.get("date") or "", r.get("time") or "", r.get("id") or 0),
@@ -24744,6 +24884,11 @@ def _datasets_view(view_mode: str):
         qubit_fail: dict[str, int] = {}
         for r in day_rows:
             for q, oc in (r.get("oc") or {}).items():
+                # QA datasets-r2-18: the chip's filter is `outcome:<q>=fail`,
+                # which matches this same failure class (dataset-virtual.js
+                # matchScope) -- so the number on the chip is the number of
+                # rows its click shows, and an "error"/"aborted" outcome is
+                # never read as "all OK".
                 if _bad.search(str(oc).lower()):
                     qubit_fail[q] = qubit_fail.get(q, 0) + 1
         digest = {
@@ -24798,6 +24943,7 @@ def _datasets_view(view_mode: str):
         all_tags=all_tags,
         active_date=date,
         search=search,
+        search_value=search_value,
     )
 
 

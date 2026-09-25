@@ -18,6 +18,11 @@
 </details>
 
 {% set unique_props = trend_data | map(attribute='property') | unique | list %}
+{# QA datasets-r2-32: no qubit ticked charts every qubit -- say so. #}
+{% if not qubit_filter %}
+{% set _nq = trend_data | map(attribute='qubit') | unique | list | length %}
+<p class="muted trend-all-qubits">No qubit ticked — showing all {{ _nq }} qubit{{ 's' if _nq != 1 }}.</p>
+{% endif %}
 <div class="trend-chart-container">
     {% for prop in unique_props %}
     <div id="trend-chart-{{ loop.index0 }}" class="trend-mini-chart"></div>
@@ -42,6 +47,36 @@
     var propKeys = Object.keys(propMap);
     propKeys.forEach(function(prop, idx) {
         var items = propMap[prop];
+        // QA F11: every number this property has across the chosen runs.
+        var nums = [];
+        items.forEach(function(it) {
+            it.values.forEach(function(v) {
+                if (typeof v.value === 'number' && isFinite(v.value)) nums.push(v.value);
+            });
+        });
+        if (!nums.length) {
+            // Nothing to plot: say so instead of Plotly's bare -1..4 axis.
+            var host = document.getElementById('trend-chart-' + idx);
+            if (host) {
+                var note = document.createElement('p');
+                note.className = 'muted trend-chart-empty';
+                note.textContent = prop + ': no numeric values in these runs.';
+                host.appendChild(note);
+                host.style.height = 'auto';   // a line of text, not an empty chart box
+            }
+            return;
+        }
+        // The same two axis rules as the Trends charts and the Param History
+        // drawer: numbers written by PlotTheme's rule (Plotly's default
+        // exponentformat 'B' drew a 5.071 GHz f_01 as "5.071B"), and a series
+        // that has not moved gets a band around ITS OWN value (Plotly's
+        // zero-span autorange was +-1 Hz: ticks 5.070999999B ... 5.071000001B).
+        var lo = Math.min.apply(null, nums), hi = Math.max.apply(null, nums);
+        var scale = Math.max(Math.abs(lo), Math.abs(hi));
+        var flat = (scale > 0 && hi - lo <= scale * 1e-9)
+            ? [lo - 0.05 * scale, hi + 0.05 * scale] : null;
+        var numFmt = (window.PlotTheme && PlotTheme.axisNumberFormat)
+            ? PlotTheme.axisNumberFormat() : {};
         var traces = [];
         items.forEach(function(item) {
             var xLabels = item.values.map(function(v) { return symbolMap[v.label] || v.label; });
@@ -66,7 +101,10 @@
             title: { text: prop, font: cfg.titleFont },
             hovermode: 'closest',
             xaxis: { tickangle: 0, tickfont: cfg.xTickFont, type: 'category', showspikes: false },
-            yaxis: { title: '', tickfont: cfg.yTickFont, showspikes: false },
+            yaxis: { title: '', tickfont: cfg.yTickFont, showspikes: false,
+                     tickformat: numFmt.tickformat, exponentformat: numFmt.exponentformat,
+                     automargin: true,   // long labels widen the margin, never clip
+                     range: flat || undefined, autorange: flat ? false : true },
             margin: cfg.margin,
             legend: { orientation: 'h', y: cfg.legendY, font: cfg.legendFont },
             colorway: UI_CONFIG.plotly.colorway,

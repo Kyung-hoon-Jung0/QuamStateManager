@@ -127,7 +127,7 @@
        off, reveal them so the UTC fallback text still shows. #}
     <noscript><style>.ts-local{visibility:visible}</style></noscript>
 </head>
-<body data-plotly-src="{{ url_for('static', filename='plotly.min.js') }}">
+<body class="app-shell" data-plotly-src="{{ url_for('static', filename='plotly.min.js') }}">
     {# docs/203 — the bar and the banner slots share ONE block container. The
        body is a flex column on screen (style.css), and a flex container never
        collapses its items' margins, so with the slots as direct children every
@@ -749,6 +749,8 @@
                                     <td>Status contains it (<code>st:</code>)</td></tr>
                                 <tr><td><button class="ds-help-example search-help-example" data-search-help-input="sidebar-filter-input" data-example="id:108">id:108</button></td>
                                     <td>Run id contains it (<code>run:</code>)</td></tr>
+                                <tr><td><button class="ds-help-example search-help-example" data-search-help-input="sidebar-filter-input" data-example="id>=4100">id&gt;=4100</button></td>
+                                    <td>Run id at least <code>4100</code> (also <code>id&lt;=</code>, <code>id=4113</code>, <code>id=4100..4105</code>; <code>p:id&gt;=</code> is a parameter)</td></tr>
                                 <tr><td><button class="ds-help-example search-help-example" data-search-help-input="sidebar-filter-input" data-example="multiplexed=true">multiplexed=true</button></td>
                                     <td>Runs whose <b>node parameter</b> <code>multiplexed</code> = <code>true</code> (also <code>param:</code>/<code>p:</code>). The key matches by part, the value exactly.</td></tr>
                                 <tr><td><button class="ds-help-example search-help-example" data-search-help-input="sidebar-filter-input" data-example="-status:error">-status:error</button></td>
@@ -1617,6 +1619,8 @@
                 if (localStorage.getItem("quam_sidebar_collapsed") === "1") {
                     var layout = document.querySelector(".app-layout");
                     if (layout) layout.classList.add("sidebar-collapsed");
+                    // QA F17: the top bar's tool fallback keys on <html> (app.js toggleSidebar)
+                    if (layout) document.documentElement.classList.add("sidebar-is-collapsed");
                 }
                 // Global top-bar hidden state (Item 3) — class on <html>, survives
                 // HTMX partial swaps; the matching CSS also zeroes --topbar-height.

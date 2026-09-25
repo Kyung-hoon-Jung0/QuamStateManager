@@ -115,7 +115,9 @@ class TestTheLink:
 class TestServerPreset:
     def test_the_box_is_prefilled_from_q(self):
         tag = _search_input(_text("_datasets.html"))
-        assert 'value="{{ search | default(\'\') }}"' in tag
+        # QA F9: a Rescan refills the box from `keep_q` (search_value); a GET
+        # render has no search_value, so the value is still `search`.
+        assert 'value="{{ search_value | default(search | default(\'\')) }}"' in tag
         assert 'data-preset="{{ search | default(\'\') }}"' in tag
 
     def test_a_real_render_round_trips_the_token(self, tmp_path):
@@ -146,8 +148,11 @@ class TestServerPreset:
         """Without this a deep-linked filter evaporates on the first date click
         with nothing said about it."""
         html = _text("_datasets.html")
-        assert '/datasets?date={{ d }}{% if search %}&q={{ search | urlencode }}{% endif %}' in html
-        assert '/datasets{% if search %}?q={{ search | urlencode }}{% endif %}' in html
+        # QA F10 (review): the base is /collections on Collections -- the
+        # rendered hrefs are pinned in test_collections_counts.py
+        assert "{% set _tab_base = '/collections' if is_collections else '/datasets' %}" in html
+        assert '{{ _tab_base }}?date={{ d }}{% if search %}&q={{ search | urlencode }}{% endif %}' in html
+        assert '{{ _tab_base }}{% if search %}?q={{ search | urlencode }}{% endif %}' in html
 
     def test_the_route_reads_q_and_never_interprets_it(self):
         routes = (Path(__file__).resolve().parents[1] / "quam_state_manager"

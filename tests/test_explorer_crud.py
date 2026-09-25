@@ -65,5 +65,7 @@ def test_copy_pill_leaves_room_under_the_tree():
     while it shows the tree needs bottom room, or its last rows stay under it."""
     import re
     css = (_ROOT / "quam_state_manager" / "web" / "static" / "style.css").read_text(encoding="utf-8")
-    m = re.search(r"body:has\(\.tree-copy-pill:not\(\[hidden\]\)\)\s*\.json-tree\s*[{]([^}]*)[}]", css)
+    # merged with QA F6: the class app.js sets with the pill, never a body:has()
+    # rule; the class itself is driven in explorer_crud_selfcheck.cjs (JT-22)
+    m = re.search(r"html\.tree-copy-active\s+\.json-tree\s*[{]([^}]*)[}]", css)
     assert m and "padding-bottom" in m.group(1), "no bottom room for the tree under the copy pill"

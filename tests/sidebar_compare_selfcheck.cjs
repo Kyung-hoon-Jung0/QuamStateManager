@@ -83,6 +83,26 @@ function settle() { return new Promise((r) => setTimeout(r, 20)); }
   ok(all[2].checked === false && all[6].checked === true && checked(win) === 5, 'untick one, tick another: five again');
 }
 
+// 1b. QA F3 -- Trend Tracker has the same floor as Compare Selected: below two
+//     ticks a press could only be refused (the refusal used to replace the
+//     whole table pane), so it is disabled, and Clear disables it again.
+{
+  const { win } = makeWorld();
+  await settle();
+  const trend = () => win.document.querySelector('.btn-trend');
+  ok(trend().disabled === true, 'Trend Tracker is disabled with nothing ticked');
+  ok(/Tick 2/.test(trend().title), 'and its title says what to do (' + trend().title + ')');
+  const all = boxes(win);
+  click(win, all[0]);
+  ok(trend().disabled === true, 'Trend Tracker is still disabled with ONE tick');
+  click(win, all[1]);
+  ok(trend().disabled === false && trend().textContent === 'Trend Tracker (2)',
+     'two ticks enable it (' + trend().textContent + ')');
+  win.compareClearSelection();
+  ok(trend().disabled === true && trend().textContent === 'Trend Tracker',
+     'Clear disables it again (' + trend().textContent + ')');
+}
+
 // 2. a shift range beyond the cap is clamped from its far end
 {
   const { win, toasts } = makeWorld();

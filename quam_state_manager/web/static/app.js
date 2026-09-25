@@ -1806,8 +1806,16 @@ window.setFontSize = function(size) {
                                  : 'Open the diff of these ' + n + ' runs');
         }
         var trend = document.querySelector('#compare-form .btn-trend');
-        if (trend) trend.textContent = n > 1
-            ? 'Trend Tracker (' + n + ')' : 'Trend Tracker';
+        if (trend) {
+            trend.textContent = n > 1
+                ? 'Trend Tracker (' + n + ')' : 'Trend Tracker';
+            // QA F3: the same floor as Compare Selected -- below two ticks a
+            // press could only be refused (the refusal used to replace the
+            // whole table pane).
+            trend.disabled = n < 2;
+            trend.title = n < 2 ? 'Tick 2–5 runs in the list below to plot them over time'
+                                : 'Plot these ' + n + ' runs over time';
+        }
         var clr = document.getElementById('compare-clear');
         if (clr) clr.hidden = n === 0;
         // docs/161: the "what are these boxes for" line shows only while
@@ -2020,7 +2028,13 @@ window.toggleExpFilterCollapsed = function() {
 (function() {
     function apply() {
         try {
-            var collapsed = localStorage.getItem('quam_exp_filter_collapsed') === '1';
+            // QA F17: with no stored choice the band starts FOLDED on a short
+            // window (the 1366x768 laptop): open, its chip rows (~700 px for
+            // 67 types) pushed the first run below the fold. The folded band
+            // still shows "N experiment types -- click to filter" and its
+            // toggle; a choice the user made always wins.
+            var stored = localStorage.getItem('quam_exp_filter_collapsed');
+            var collapsed = stored === null ? (window.innerHeight < 900) : stored === '1';
             document.body.classList.toggle('exp-filter-collapsed', collapsed);
             var btn = document.getElementById('exp-filter-toggle');
             if (btn) btn.setAttribute('aria-expanded', collapsed ? 'false' : 'true');
@@ -2346,6 +2360,9 @@ window.toggleSidebar = function() {
     var layout = document.querySelector(".app-layout");
     if (!layout) return;
     var collapsed = layout.classList.toggle("sidebar-collapsed");
+    // QA F17: mirrored on <html> -- the top bar is not inside .app-layout, and
+    // its Settings/Calculator fallback must show only while this is collapsed.
+    document.documentElement.classList.toggle("sidebar-is-collapsed", collapsed);
     try {
         localStorage.setItem("quam_sidebar_collapsed", collapsed ? "1" : "0");
     } catch(e) {}
@@ -2855,6 +2872,11 @@ document.addEventListener('click', function(evt) {
         if (t.classList.contains('ds-basket-go') && window.htmx) {
             htmx.ajax('GET', '/datasets/compare?ids=' + window._dsBasket.join(','),
                       {source: '#inspector-pane', target: '#inspector-pane', swap: 'innerHTML'});
+            // QA datasets-r2-21: the fixed bar sat over the compare view's
+            // figures (and outlived its x). Take it off screen; the picks are
+            // kept, and the next Alt+click brings the bar back with them.
+            var goBar = document.getElementById('ds-basket-bar');
+            if (goBar) goBar.remove();
         } else if (t.classList.contains('ds-basket-clear')) {
             window._dsBasket = []; _dsBasketRender();
         } else if (t.hasAttribute('data-drop')) {
@@ -2873,6 +2895,9 @@ document.addEventListener('click', function(evt) {
     var i = window._dsBasket.indexOf(uid);
     if (i !== -1) window._dsBasket.splice(i, 1);
     else if (window._dsBasket.length < 8) window._dsBasket.push(uid);
+    // QA datasets-r2-21: a 9th pick was dropped without a word (the server
+    // route caps at 8 too). Say so, like the sidebar diff's MAX_DIFF toast.
+    else if (window.showToast) window.showToast('The compare basket holds at most 8 runs — remove one first.', 'warning');
     _dsBasketRender();
 }, true);   // capture: pre-empt the plain-click open handler on Alt+click
 
@@ -9860,7 +9885,18 @@ window.clearDetailPanelSearch = function(btnEl) {
         _clearPasteButtons();
         var pill = document.getElementById("tree-copy-pill");
         if (pill) pill.hidden = true;
+        _syncCopyPillRoom();
     }
+
+    /* JT-22 x QA F6 (merged at integration): the tree's bottom room while the
+       copy pill shows rides a class on <html> (style.css), not a body:has()
+       rule -- an ancestor-position :has() is what froze Trends (F6). */
+    function _syncCopyPillRoom() {
+        var pill = document.getElementById("tree-copy-pill");
+        document.documentElement.classList.toggle("tree-copy-active", !!pill && !pill.hidden);
+    }
+    // a history restore replaces <body> (the pill with it); <html> keeps its class
+    document.addEventListener("htmx:historyRestore", _syncCopyPillRoom);
 
     /** Add a "paste" button to one node iff a copy is active, the key matches, it
      *  isn't the source, and the node is empty (null / [] / {}). Editable trees only. */
@@ -9933,6 +9969,7 @@ window.clearDetailPanelSearch = function(btnEl) {
         }
         _refreshPasteTargets();   // also writes the pill's label (_renderCopyPill)
         pill.hidden = false;
+        _syncCopyPillRoom();
     }
 
     function _pasteIntoNode(node) {
@@ -15909,6 +15946,8 @@ window.updateCompareButton = function() {
     // docs/141 4y: one button -- 2..5 runs open the diff workbench.
     var counter = document.getElementById('ds-compare-count');
     if (counter) counter.textContent = String(count);
+    // QA datasets-r2-16: the "over" message names the count too.
+    bar.querySelectorAll('.ds-compare-n').forEach(function (n) { n.textContent = String(count); });
 };
 
 /**
@@ -16005,7 +16044,13 @@ window.loadTrendData = function() {
         });
         if (keys.length) url += '&folders=' + encodeURIComponent(keys.join(','));
     }
-    htmx.ajax('GET', url, {target: '#trends-content', swap: 'innerHTML'});
+    // QA F6: the request's SOURCE is the box it fills, so htmx marks THAT box
+    // .htmx-request while it runs (style.css: "Loading trends..."). Without a
+    // source htmx marked <body>, and the old "Select an experiment" text
+    // stayed up for the whole request. htmx's own request lifecycle clears
+    // it -- a promise would not: a second pick while one is in flight is
+    // QUEUED and its promise resolves at once.
+    htmx.ajax('GET', url, {source: '#trends-content', target: '#trends-content', swap: 'innerHTML'});
 };
 
 // Trends folder chips: multi-select among same-chip folders (default single).
@@ -20189,6 +20234,26 @@ document.addEventListener('click', function(evt) {
         st[b] = true;
         try { localStorage.setItem('quam_diag_filter', JSON.stringify(st)); } catch (e) {}
     };
+    /* QA F-I x QA F6 (merged at integration): the crash banner hides while the
+       LIVE pane holds the Diagnostics findings slot (#diag-findings is only in
+       _diagnostics.html, so a drag-drop preview that includes
+       _diagnostics_list.html keeps it). A class on <html> synced wherever the
+       pane's content changes -- a swap, a PaneState restore (no afterSwap), a
+       history restore, the first load -- instead of a body:has() rule, which
+       F6 measured freezing Trends. */
+    function _syncDiagPageClass() {
+        document.documentElement.classList.toggle('diag-page-live',
+            !!document.querySelector('#table-pane #diag-findings'));
+    }
+    window._syncDiagPageClass = _syncDiagPageClass;
+    document.addEventListener('htmx:afterSwap', _syncDiagPageClass);
+    document.addEventListener('htmx:historyRestore', _syncDiagPageClass);
+    document.addEventListener('paneRestored', _syncDiagPageClass);
+    if (document.readyState === 'loading') {
+        document.addEventListener('DOMContentLoaded', _syncDiagPageClass);
+    } else {
+        _syncDiagPageClass();
+    }
     function _applyDiagFilter() {
         var bar = document.getElementById('diag-filter-bar');
         if (!bar) return;
@@ -22529,6 +22594,21 @@ window.TopbarHold = (function () {
         });
         document.addEventListener('htmx:pushedIntoHistory', release);
         window.addEventListener('popstate', release);
+        // QA F17 (review): the Settings/Calculator fallback shows only while
+        // html.sidebar-is-collapsed; showing it wraps the bar a row taller, and
+        // the hold kept that row after the sidebar came back (141 px vs 99 at
+        // 1366, until reload). A sidebar toggle is an expected movement, like a
+        // width change: release when THAT bit flips, never on other classes.
+        if (window.MutationObserver) {
+            try {
+                new window.MutationObserver(function (recs) {
+                    var now = document.documentElement.classList.contains('sidebar-is-collapsed');
+                    var was = /(^|\s)sidebar-is-collapsed(\s|$)/.test(recs[0].oldValue || '');
+                    if (now !== was) release();
+                }).observe(document.documentElement,
+                           { attributes: true, attributeFilter: ['class'], attributeOldValue: true });
+            } catch (e) { /* older engine: the hold is released on resize / navigation only */ }
+        }
     }
     if (document.readyState === 'loading') {
         document.addEventListener('DOMContentLoaded', start);

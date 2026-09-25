@@ -21,20 +21,29 @@
 <div class="ds-digest-band">
     <span class="ds-digest-date">{{ digest.date }}</span>
     <span class="ds-digest-item">{{ digest.total }} run{{ 's' if digest.total != 1 }}</span>
+    {# QA datasets-r2-18: "all OK" only when NOTHING failed -- a finished run
+       whose fit failed is not OK -- and every chip is scoped to the band's
+       day + ties the outcome to ITS target (outcome:<q>=fail), so a click
+       shows exactly the runs the chip counted. dataset-virtual.js
+       _updateDigestBand is the client twin; change both together. #}
+    {% set _dscope = ('date:' ~ digest.date ~ ' ') if digest.date else '' %}
     {% if digest.failed %}
-    <button class="ds-help-example ds-digest-bad" data-example="is:failed"
-            title="Show only failed runs">{{ digest.failed }} failed</button>
-    {% else %}
+    <button class="ds-help-example ds-digest-bad" data-example="{{ _dscope }}is:failed"
+            title="Show this day's failed runs">{{ digest.failed }} failed</button>
+    {% elif not digest.qubit_fail %}
     <span class="ds-digest-ok">all OK</span>
+    {% else %}
+    <span class="ds-digest-item">no run errors</span>
     {% endif %}
+    {% if digest.qubit_fail %}<span class="ds-digest-item ds-digest-oclabel">failed outcomes:</span>{% endif %}
     {% for q, n in digest.qubit_fail %}
-    <button class="ds-help-example ds-digest-qchip" data-example="qubit:{{ q }} outcome:fail"
-            title="Runs where {{ q }}'s outcome failed">{{ q }}&nbsp;×{{ n }}</button>
+    <button class="ds-help-example ds-digest-qchip" data-example="{{ _dscope }}outcome:{{ q }}=fail"
+            title="Show the {{ n }} run{{ 's' if n != 1 }} where {{ q }}'s outcome failed">{{ q }}&nbsp;×{{ n }}</button>
     {% endfor %}
 </div>
 {% endif %}
 <div class="table-header-row">
-    <h2 style="white-space:nowrap">{{ page_title }} <small class="muted">({{ total }} runs{% if stats %}, {{ stats.experiment_types }} types, {{ stats.unique_qubits | length }} qubits{% endif %})</small>
+    <h2 class="ds-head-title">{{ page_title }} <small class="muted">({{ total }} runs{% if stats %}, {{ stats.experiment_types }} types, {{ stats.unique_qubits | length }} qubits{% endif %})</small>
         {# docs/126 ⑥ — the times' basis, stated where they are read: SM shows
            the run folders' own timestamps verbatim (the acquisition PC's
            local clock) and never converts them. #}
@@ -44,17 +53,17 @@
            indexed. Say so; dataset-virtual.js hides this on the first delta
            poll that reports a complete scan. #}
         {% if scan_partial %}<small class="muted ds-scan-note" id="ds-scan-note" title="The run index is still being built for this folder — older runs appear as the scan continues. Nothing to do.">&#8987; still indexing runs&hellip;</small>{% endif %}</h2>
-    <div style="display:flex;gap:.5rem;align-items:center;flex:1;min-width:0">
+    <div class="ds-head-controls">
         <div class="table-filter ds-search-wrap" style="flex:1;position:relative">
             {# `data-preset` is the ARRIVAL marker, not a copy of the value: the
                client clears leftover picker/facet ticks only when a swap brings
                one, so a date tab or a Rescan never disturbs the user's own
                filters. `| default('')` because the no-workspace branch renders
                this partial without the variable. #}
-            <input type="search" id="dataset-search"
+            <input type="search" id="dataset-search" name="keep_q"
                    placeholder="{{ search_hint('tag:', 'is:') }}"
                    title="{{ search_title('tag:flagged', 'is:bookmarked', 'run:', 'q:') }}"
-                   value="{{ search | default('') }}"
+                   value="{{ search_value | default(search | default('')) }}"
                    data-preset="{{ search | default('') }}"
                    autocomplete="off" style="width:100%">
             <button type="button" id="ds-search-help-toggle" class="ds-search-help-btn"
@@ -89,10 +98,14 @@
                             <td>Runs tagged <code>flagged</code> (alias: <code>t:</code>)</td></tr>
                         <tr><td><button class="ds-help-example" data-example="outcome:successful">outcome:successful</button></td>
                             <td>Outcome contains <code>successful</code> on any qubit (alias: <code>oc:</code>)</td></tr>
+                        <tr><td><button class="ds-help-example" data-example="outcome:q1=fail">outcome:q1=fail</button></td>
+                            <td><code>q1</code>'s own outcome failed (<code>fail</code> also finds error / abort / crash; a pair works too: <code>outcome:q1-2=fail</code>)</td></tr>
                         <tr><td><button class="ds-help-example" data-example="date:2026-05">date:2026-05</button></td>
                             <td>Runs whose date matches <code>2026-05</code> (alias: <code>d:</code>)</td></tr>
                         <tr><td><button class="ds-help-example" data-example="id:108">id:108</button></td>
-                            <td>Run id contains <code>108</code></td></tr>
+                            <td>Run id contains <code>108</code> (alias: <code>run:</code>)</td></tr>
+                        <tr><td><button class="ds-help-example" data-example="id>=4100">id&gt;=4100</button></td>
+                            <td>Run id at least <code>4100</code> (also <code>id&lt;=</code>, <code>id=4113</code>, <code>id=4100..4105</code>; <code>p:id&gt;=</code> is a parameter)</td></tr>
                         <tr><td><button class="ds-help-example" data-example="metric:1.5">metric:1.5</button></td>
                             <td>Key metric contains <code>1.5</code> (alias: <code>m:</code>)</td></tr>
                         <tr><td><button class="ds-help-example" data-example="note:todo">note:todo</button></td>
@@ -122,7 +135,7 @@
            cannot queue a second full re-read. The "N new" chip on the sync
            pill presses this same button (app.js refreshRunLists). #}
         <button class="btn-sm outline" hx-post="/datasets/rescan" hx-target="#table-pane"
-                hx-include="#ds-active-date" hx-vals='{"view": "{{ view_mode }}"}'
+                hx-include="#ds-active-date, #dataset-search" hx-vals='{"view": "{{ view_mode }}"}'
                 hx-disabled-elt="this" title="Rescan for new runs">Rescan</button>
     </div>
 </div>
@@ -245,13 +258,15 @@
            gap stays tight. Plain <a> pills (not a nested <ul>) so they sit in
            the flex topbar cleanly. #}
         {% if dates | length > 1 %}
+        {# QA F10 (review): a Collections tab stays on Collections. #}
+        {% set _tab_base = '/collections' if is_collections else '/datasets' %}
         <div class="ds-date-tabs" role="tablist" aria-label="Filter by date">
             <a class="ds-date-tab{% if not active_date %} active{% endif %}"
-               hx-get="/datasets{% if search %}?q={{ search | urlencode }}{% endif %}" hx-target="#table-pane"
+               hx-get="{{ _tab_base }}{% if search %}?q={{ search | urlencode }}{% endif %}" hx-target="#table-pane"
                onclick="var e=document.getElementById('ds-active-date');if(e)e.value=''">All dates</a>
             {% for d in dates %}
             <a class="ds-date-tab{% if active_date == d %} active{% endif %}"
-               hx-get="/datasets?date={{ d }}{% if search %}&q={{ search | urlencode }}{% endif %}" hx-target="#table-pane"
+               hx-get="{{ _tab_base }}?date={{ d }}{% if search %}&q={{ search | urlencode }}{% endif %}" hx-target="#table-pane"
                onclick="var e=document.getElementById('ds-active-date');if(e)e.value='{{ d }}'">{{ d[5:] }}</a>
             {% endfor %}
         </div>
@@ -336,7 +351,7 @@
     <span class="ds-compare-hint">
         <span class="ds-compare-msg-one">Pick 1 more to compare.</span>
         <span class="ds-compare-msg-ready"><strong id="ds-compare-count">0</strong> selected</span>
-        <span class="ds-compare-msg-over">Up to 5 runs.</span>
+        <span class="ds-compare-msg-over"><strong class="ds-compare-n">0</strong> selected &mdash; up to 5 can be compared.</span>
     </span>
     {# docs/141 4y: ONE button -- 2..5 picked runs open the diff workbench
        (figures first, then state / wiring / node / data). The N-run compare
