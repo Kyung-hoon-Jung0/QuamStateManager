@@ -509,6 +509,35 @@ function world(topo, opts) {
        'F-20 ...once: the next visit to that URL is a fresh entry and deep-links as before');
   }
   {
+    // QA F-20 re-verify: a metric section's anchor is its 40 px group HEADER,
+    // its panels follow as siblings (measured on the 5Q rig). The restore
+    // clamped every offset past 40 px to the header -- d 233 and d 533 both
+    // came back at the same place. The room is the run to the NEXT section.
+    for (const d of [233, 533]) {
+      const rec = { url: '/topology?view=coherence', view: 'coherence', d: d, top: 5451 + 67 + d };
+      let box;
+      const T = world(CHAIN, { url: '/topology?view=coherence', chipView: 'coherence',
+                               state: { smChipScroll: rec },
+                               beforeMount: function (T0) { box = stubPane(T0, 0); } });
+      geomAll(T, { coherence: 5518, frequencies: 5518 + 1200 }, { coherence: 40, frequencies: 40 });
+      await sleep(60);
+      ok(box.st === 5518 + d,
+         'F-20 re-verify: an offset past a 40 px group header but inside its panels is restored (d ' + d + ': ' + box.st + ')');
+    }
+    // the LAST section runs to the end of the pane's content (stub: 20000)
+    {
+      const rec = { url: '/topology?view=calibration', view: 'calibration', d: 400, top: 9000 };
+      let box;
+      const T = world(CHAIN, { url: '/topology?view=calibration', chipView: 'calibration',
+                               state: { smChipScroll: rec },
+                               beforeMount: function (T0) { box = stubPane(T0, 0); } });
+      geomAll(T, { frequencies: 7000, calibration: 8600 }, { frequencies: 40, calibration: 40 });
+      await sleep(60);
+      ok(box.st === 8600 + 400,
+         'F-20 re-verify: the last section (a header) holds an offset up to the end of the content (' + box.st + ')');
+    }
+  }
+  {
     // a record for another URL is not this entry's: the deep link stands
     const rec = { url: '/topology?view=overview', view: 'overview', d: 10, top: 10 };
     const T = world(CHAIN, { url: '/topology?view=coherence', chipView: 'coherence', state: { smChipScroll: rec } });

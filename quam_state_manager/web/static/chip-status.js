@@ -153,9 +153,33 @@ window.ChipStatus.jumpGuard = (function () {
        browser's scroll anchoring carried the pane down with those panels.
        Until the section can hold the offset, land on its top; the growth that
        fills it re-anchors to top + offset. */
+    /* QA F-20 (re-verify): "can the section hold the offset" used to ask the
+       ELEMENT's own height -- but a metric section's anchor is its 40 px group
+       HEADER (#topo-metric-panels [data-group=...]); the panels it names
+       follow it as siblings. Every Back into Coherence / Frequencies /
+       Calibration more than 40 px past the header was clamped to the header
+       (measured on the 5Q rig: d 233 and d 533 both restored to the same
+       5518). A section's room is the run from its top to the NEXT section's
+       top (the last one runs to the end of the pane's content): a lazy
+       placeholder (Trends at 51 px, the 2Q panels right under it) still has
+       51 px of room, a header with its panels below it has all of them. */
+    var SECTIONS = [];
+    function room(el, pane) {
+        var r = el.getBoundingClientRect(), next = null;
+        for (var i = 0; i < SECTIONS.length; i++) {
+            var s = document.querySelector(SECTIONS[i]);
+            if (!s || s === el || s.contains(el) || el.contains(s)) continue;
+            var t = s.getBoundingClientRect().top;
+            if (t > r.top && (next === null || t < next)) next = t;
+        }
+        if (next === null && pane) {
+            next = pane.getBoundingClientRect().top - pane.scrollTop + pane.scrollHeight;
+        }
+        return Math.max(r.height, next === null ? 0 : next - r.top);
+    }
     function land(el, pane, off) {
         var r = el.getBoundingClientRect();
-        var o = (off > 0 && off >= r.height) ? 0 : off;
+        var o = (off > 0 && off >= room(el, pane)) ? 0 : off;
         pane.scrollTop += r.top - pane.getBoundingClientRect().top + o;
     }
     var BELOW = ['fidelity2q', 'fidelity1q', 'readout',
@@ -197,6 +221,8 @@ window.ChipStatus.jumpGuard = (function () {
         },
         below: BELOW,
         cancel: cancel,
+        // the selector of every section, any order (the mount's TAB_SPEC)
+        sections: function (sels) { SECTIONS = (sels || []).slice(); },
         // QA F-07: the view of a jump that is still live (fresh, not cancelled
         // by a wheel / touch / key), so the scroll-spy can keep the CLICKED
         // item lit while its target is on screen but cannot reach the top.
@@ -3652,6 +3678,7 @@ window.ChipStatus.mount = function (opts) {
         // docs/120 items 5+9 — every qubit on ONE plot per metric.
         trends:       { build: 'trends',        sel: '[data-topo-section="trends"]' },
     };
+    window.ChipStatus.jumpGuard.sections(Object.keys(TAB_SPEC).map(function (v) { return TAB_SPEC[v].sel; }));
     var _chipSectionBuilt = {};   // section key -> built once (lazy heavy builders)
     var _suppressSpyUntil = 0;    // ignore scroll-spy briefly after a click-jump
     // docs/141 4o: Trends now sits ABOVE Fidelity / Coherence / … and is fetched
