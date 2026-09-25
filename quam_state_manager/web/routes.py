@@ -16854,6 +16854,19 @@ def auto_sync_pull():
     wc = ctx.get("working_copy")
     if wc is None:
         return "", 204
+    # QA correctness-r2-08: a live pair caught between QUAlibrate's two file
+    # writes is waited out -- the next poll sees the finished save -- for a
+    # bounded number of polls, then pulled anyway (a real new dangling port
+    # reference must not stall the session).
+    _torn = _live_pair_torn(ctx)
+    if _torn:
+        _sig = tuple(sorted(_torn.items()))
+        _rec = ctx.get("_auto_pull_torn") or {}
+        _n = (_rec.get("n", 0) + 1) if _rec.get("sig") == _sig else 1
+        ctx["_auto_pull_torn"] = {"sig": _sig, "n": _n}
+        if _n <= _AUTO_PULL_TORN_POLLS:
+            return "", 204
+    ctx.pop("_auto_pull_torn", None)
     build_lock = _active_wc_lock(ctx)
     try:
         with build_lock:
@@ -17907,6 +17920,26 @@ def _unseen_edit_refusal(ctx) -> dict | None:
                 f"write them to the live chip too.")}
 
 
+def _live_pair_torn(ctx) -> dict[str, str]:
+    """QA correctness-r2-08: the port references that dangle in the live pair
+    now but did not in the pair SM holds (``{}`` when none, or when live cannot
+    be read -- the pull then reports that itself). One live read, made only on
+    a pull the user or an armed Auto-Sync asked for (docs/28)."""
+    try:
+        store = ctx["store"]
+        live_state, live_wiring = working_copy.read_live(ctx["working_copy"])
+        return working_copy.new_dangling_port_refs(
+            store.state, store.wiring, live_state, live_wiring)
+    except Exception:  # noqa: BLE001 — an advisory gate, never a failure
+        return {}
+
+
+# QA correctness-r2-08: how many consecutive Auto-Sync polls a torn-looking
+# live pair is waited out before it is pulled anyway (a genuine new dangling
+# reference must not block the session for ever). ~5 s per poll.
+_AUTO_PULL_TORN_POLLS = 3
+
+
 @bp.route("/state/sync", methods=["POST"])
 def state_sync():
     """Pull the live state files into the working copy (manual sync).
@@ -18026,6 +18059,28 @@ def state_sync():
 
     wc = ctx["working_copy"]
     store = ctx["store"]
+
+    # QA correctness-r2-08: a pull landing between QUAlibrate's state.json and
+    # wiring.json writes adopted a pair that never existed (wiring wired to a
+    # port the new state had removed) and recorded it as a version. Every pull
+    # door (Take live, re-apply, Pull & apply) asks first when the live pair
+    # has port references that dangle NOW but did not in the pair SM holds --
+    # its own token (`ack_torn`), never implied by force (docs/41).
+    if request.values.get("ack_torn") != "1":
+        _torn = _live_pair_torn(ctx)
+        if _torn:
+            _p0, _v0 = next(iter(_torn.items()))
+            return jsonify({
+                "status": "torn_live", "mode": mode,
+                "paths": [f"{k} -> {v}" for k, v in list(_torn.items())[:6]],
+                "count": len(_torn),
+                "message": (
+                    "The live chip looks mid-save: wiring.json still points "
+                    f"{_p0.removeprefix('wiring.')} at {_v0}, which state.json no longer defines"
+                    + (f" (and {len(_torn) - 1} more)" if len(_torn) > 1 else "")
+                    + ". QUAlibrate writes state.json first and wiring.json "
+                      "right after, so this usually settles in a moment."),
+            })
 
     # The user's edits to re-apply = whatever is stashed (saved edits the change
     # log no longer holds) plus any still-unsaved change-log edits, with the

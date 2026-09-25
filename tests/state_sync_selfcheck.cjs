@@ -276,6 +276,27 @@ window.eval(fs.readFileSync(path.join(STATIC, 'app.js'), 'utf8'));
        'a clean pull-and-apply keeps its green line (got: ' + JSON.stringify(_clean) + ')');
     window.showToast = _realToast;
 
+    /* QA correctness-r2-08: a pull that caught the live pair mid-save is
+       answered with its OWN token -- OK re-posts ack_torn=1 (never force=1),
+       Cancel pulls nothing and says so. */
+    syncCalls.length = 0; lastConfirm = '';
+    syncQueue = [{ status: 'torn_live', mode: 'discard', count: 1,
+                   message: 'The live chip looks mid-save: wiring.json still points X at Y.' },
+                 { status: 'ok', mode: 'discard', tray_html: null, replay: null }];
+    confirmAnswer = true;
+    window.doStateSync('discard');
+    await flush(40);
+    ok(/mid-save/.test(lastConfirm) && /take it as it is/.test(lastConfirm),
+       'torn_live asks, naming the mid-save (got: ' + lastConfirm + ')');
+    ok(syncCalls.length === 2 && /ack_torn=1/.test(syncCalls[1].body) && !/force=1/.test(syncCalls[1].body),
+       'OK re-posts with ack_torn=1 and not force (got: ' + (syncCalls[1] && syncCalls[1].body) + ')');
+    syncCalls.length = 0;
+    syncQueue = [{ status: 'torn_live', mode: 'discard', message: 'mid-save' }];
+    confirmAnswer = false;
+    window.doStateSync('discard');
+    await flush(40);
+    ok(syncCalls.length === 1, 'Cancel pulls nothing (one POST, no retry)');
+
     /* ── 2. stateRestored bridge ──────────────────────────────────────── */
     ajaxCalls.length = 0;
     let inspectorClosed = 0;

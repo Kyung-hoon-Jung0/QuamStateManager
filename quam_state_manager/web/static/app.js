@@ -3581,6 +3581,7 @@ window.doStateSync = function(mode, forced, ackUnseen, expectChip, opts) {
               + (expectChip ? "&expect_chip=" + encodeURIComponent(expectChip) : "")
               + (mode === "apply" && !(opts && opts.informed) ? "&check_collisions=1" : "")
               + (opts && opts.ackCollision ? "&ack_collision=1" : "")
+              + (opts && opts.ackTorn ? "&ack_torn=1" : "")
     })
         .then(function(r) { return r.json(); })
         .then(function(data) {
@@ -3659,6 +3660,25 @@ window.doStateSync = function(mode, forced, ackUnseen, expectChip, opts) {
                     _banner();
                     if (window.showToast) window.showToast("Nothing was applied — "
                         + "the banner names the field the chip changed too.", "info");
+                }
+                return;
+            }
+            if (data.status === "torn_live") {
+                // QA correctness-r2-08: the live pair was caught between
+                // QUAlibrate's state.json and wiring.json writes. Nothing was
+                // pulled. The usual answer is to wait a moment; OK takes it as
+                // it is, with its OWN token (never force, docs/41).
+                if (window.confirm((data.message || "The live chip looks mid-save.")
+                        + "\n\nOK = take it as it is now."
+                        + "\nCancel = pull nothing, retry in a moment.")) {
+                    setTimeout(function () {
+                        window._applyInFlight = false;
+                        window.doStateSync(mode, forced, ackUnseen, expectChip,
+                            Object.assign({}, opts || {}, { ackTorn: true }));
+                    }, 0);
+                } else if (window.showToast) {
+                    window.showToast("Nothing was pulled — the live chip looked mid-save; "
+                                     + "retry in a moment.", "info");
                 }
                 return;
             }
