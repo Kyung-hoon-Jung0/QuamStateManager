@@ -6,6 +6,11 @@
  *      patchRow {bm, tags}) left the row drawn until F5, and a delta arrival
  *      with no tag was added. Now the client applies the same rule. On
  *      /datasets an untagged row stays; a note edit never hides a row.
+ *   C. (r2-14 / F2 review) the title's "(N runs, T types, Q qubits)" follows
+ *      the table: an untag / unstar on Collections, a landed or vanished run
+ *      on either page. It stayed at the render-time number until F5. On a date
+ *      tab the header counts every date, so the run count is STEPPED, never
+ *      recounted from the one date the table holds.
  *   B. (r2-16) the header select-all box follows the VISIBLE rows: after a
  *      filter change it is not left ticked over unselected rows, a sort click
  *      (header rebuild) does not forget the ticks, and a partial selection is
@@ -51,8 +56,9 @@ function compareBarJs() {
   return APP.slice(i, j + 3);
 }
 
-function boot(view, rows, fetchImpl) {
+function boot(view, rows, fetchImpl, headHtml) {
   const dom = new JSDOM(`<!doctype html><html><body>
+      ${headHtml || ''}
       <div class="ds-search-wrap"><input type="search" id="dataset-search"></div>
       <span id="dataset-filter-count"></span>
       <script id="ds-rows-data" data-now="1000" data-view="${view}">${JSON.stringify(rows)}</script>
@@ -157,6 +163,81 @@ async function search(w, q) {
     const pill = w.document.getElementById('ds-new-pill');
     ok(served === 1 && pill && !pill.hidden && /^1 new run /.test(pill.textContent),
        'collections: a HELD delta announces only the tagged arrival (' + (pill && pill.textContent) + ')');
+  }
+
+  // ── C. the title's count follows the table (r2-14 / F2 review) ──────────
+  const head = (txt, date) => '<div class="table-header-row"><h2 class="ds-head-title">Collections <small class="muted">('
+    + txt + ')</small><small class="muted ds-tz-note">local time</small></h2></div>'
+    + '<input type="hidden" id="ds-active-date" name="date" value="' + (date || '') + '">';
+  const headTxt = (w) => w.document.querySelector('.table-header-row h2 > small').textContent;
+  const deltaOnce = (delta) => {
+    let served = 0;
+    const f = (url) => {
+      if (String(url).indexOf('/datasets/changes-since') >= 0 && !served++) {
+        return Promise.resolve({ ok: true, status: 200, json: () => Promise.resolve(delta) });
+      }
+      return new Promise(() => {});
+    };
+    f.served = () => served;
+    return f;
+  };
+  {
+    // All dates: the table holds the whole collection -> recount all three
+    const w = boot('collections', [row(701, 'rabi', ['qa-coll'], { q: ['q1'] }),
+                                   row(40, 'rabi', ['favorite'], { bm: true, q: ['q2'] }),
+                                   row(39, 'ramsey', ['qa-coll'], { q: ['q3'] }),
+                                   row(38, 'ramsey', ['qa-coll'], { q: ['q4'] })],
+                   null, head('4 runs, 2 types, 4 qubits'));
+    await tick();
+    w.DatasetVirtual.patchTags('f1:39', []);
+    w.DatasetVirtual.patchRow('f1:40', { bm: false, tags: [] });
+    await tick();
+    ok(shownIds(w).join() === 'f1:701,f1:38' && headTxt(w) === '(2 runs, 2 types, 2 qubits)',
+       'collections: untag + unstar -> the title reads what the table holds: ' + headTxt(w));
+    w.DatasetVirtual.patchTags('f1:39', ['qa-coll']);
+    await tick();
+    ok(headTxt(w) === '(3 runs, 2 types, 3 qubits)', 'collections: a re-tag counts back in: ' + headTxt(w));
+    w.DatasetVirtual.patchRow('f1:701', { bm: true, tags: ['qa-coll', 'favorite'] });
+    await tick();
+    ok(headTxt(w) === '(3 runs, 2 types, 3 qubits)', 'collections: a tagged run gaining a tag is still one run: ' + headTxt(w));
+    w.DatasetVirtual.patchNote('f1:38', 'x');
+    await tick();
+    ok(headTxt(w) === '(3 runs, 2 types, 3 qubits)', 'collections: a note edit leaves the count: ' + headTxt(w));
+  }
+  {
+    // a date tab: the header counts EVERY date -> step, never recount
+    const w = boot('collections', [row(701, 'rabi', ['qa-coll']), row(39, 'ramsey', ['qa-coll'])],
+                   null, head('9 runs, 5 types, 6 qubits', '2026-09-01'));
+    await tick();
+    w.DatasetVirtual.patchTags('f1:39', []);
+    await tick();
+    ok(headTxt(w) === '(8 runs, 5 types, 6 qubits)',
+       'collections date tab: an untag steps the all-dates count by one: ' + headTxt(w));
+  }
+  {
+    // Datasets: a landed run and a vanished run step the count (F2 review)
+    const f = deltaOnce({ now: 2000, updated: [row(800, 'rabi', [], { date: '2026-09-02' }),
+                                              row(801, 'rabi', [], { date: '2026-09-02' }),
+                                              row(3, 'rabi', [])],            // re-emitted, already held
+                          vanished: ['f1:2'] });
+    const w = boot('datasets', [row(3, 'rabi', []), row(2, 'rabi', []), row(1, 'ramsey', [])], f,
+                   head('4160 runs, 67 types, 7 qubits'));
+    await tick();
+    w.document.dispatchEvent(new w.Event('visibilitychange'));
+    await tick(80);
+    ok(f.served() === 1 && headTxt(w) === '(4161 runs, 67 types, 7 qubits)',
+       'datasets: two runs landed, one vanished, one re-emitted -> +1: ' + headTxt(w));
+  }
+  {
+    // Collections date tab: only the TAGGED arrival counts
+    const f = deltaOnce({ now: 2000, updated: [row(800, 'rabi', []), row(801, 'rabi', ['qa-coll'])], vanished: [] });
+    const w = boot('collections', [row(701, 'rabi', ['qa-coll'])], f,
+                   head('9 runs, 5 types, 6 qubits', '2026-09-01'));
+    await tick();
+    w.document.dispatchEvent(new w.Event('visibilitychange'));
+    await tick(80);
+    ok(f.served() === 1 && headTxt(w) === '(10 runs, 5 types, 6 qubits)',
+       'collections: an untagged arrival is not counted, a tagged one is: ' + headTxt(w));
   }
 
   // ── B. select-all follows the visible set; the over bar counts ───────────

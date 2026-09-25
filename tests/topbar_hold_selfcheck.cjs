@@ -84,5 +84,34 @@ ok(held() === '', 'a release under a hidden bar clears the hold entirely (got ' 
 
 ok(!/style\.minHeight/.test(block), 'the hold is a CSS variable, never an inline min-height that would beat html.topbar-hidden');
 
-if (fails) { console.error(fails + ' failure(s)'); process.exit(1); }
-console.log('all ok');
+/* QA F17 (review): the sidebar-collapsed fallback tools wrap the bar a row
+   taller; after the sidebar came back the hold kept that row (141 vs 99 px at
+   1366 in real Chrome, until reload). A flip of html.sidebar-is-collapsed
+   releases; any other class change keeps the anti-shake hold. The observer
+   is a MutationObserver, so each step yields a tick. */
+(async () => {
+    const tick = () => new Promise((r) => setTimeout(r, 0));
+    const html = document.documentElement;
+    html.classList.remove('topbar-hidden');
+    rectH = 99;
+    window.TopbarHold.release();
+    ok(held() === '99px', 'setup: the bar holds 99 (got ' + held() + ')');
+    html.classList.add('sidebar-is-collapsed');
+    await tick();
+    ro(141);
+    ok(held() === '141px', 'the fallback tools wrap the bar: the hold grows to 141 (got ' + held() + ')');
+    rectH = 99;
+    html.classList.add('some-other-state');
+    await tick();
+    ok(held() === '141px', 'an unrelated <html> class change keeps the hold (got ' + held() + ')');
+    html.classList.remove('sidebar-is-collapsed');
+    await tick();
+    ok(held() === '99px', 'the sidebar coming back releases the fallback row: 99 again (got ' + held() + ')');
+    html.classList.add('topbar-hidden');
+    html.classList.add('sidebar-is-collapsed');   // cycleChrome: both legs in one batch
+    await tick();
+    ok(held() === '', 'collapse-all under a hidden bar clears the hold (got ' + JSON.stringify(held()) + ')');
+
+    if (fails) { console.error(fails + ' failure(s)'); process.exit(1); }
+    console.log('all ok');
+})();

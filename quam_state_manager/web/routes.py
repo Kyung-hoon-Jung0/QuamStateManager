@@ -24045,9 +24045,11 @@ def _datasets_view(view_mode: str):
         for r in day_rows:
             for q, oc in (r.get("oc") or {}).items():
                 # QA datasets-r2-18: the chip's filter is `outcome:<q>=fail`,
-                # a substring test -- count with the SAME test, so the number
-                # on the chip is the number of rows its click shows.
-                if "fail" in str(oc).lower():
+                # which matches this same failure class (dataset-virtual.js
+                # matchScope) -- so the number on the chip is the number of
+                # rows its click shows, and an "error"/"aborted" outcome is
+                # never read as "all OK".
+                if _bad.search(str(oc).lower()):
                     qubit_fail[q] = qubit_fail.get(q, 0) + 1
         digest = {
             "date": latest_day,

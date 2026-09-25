@@ -99,7 +99,7 @@
                         <tr><td><button class="ds-help-example" data-example="outcome:successful">outcome:successful</button></td>
                             <td>Outcome contains <code>successful</code> on any qubit (alias: <code>oc:</code>)</td></tr>
                         <tr><td><button class="ds-help-example" data-example="outcome:q1=fail">outcome:q1=fail</button></td>
-                            <td><code>q1</code>'s own outcome contains <code>fail</code> (a pair works too: <code>outcome:q1-2=fail</code>)</td></tr>
+                            <td><code>q1</code>'s own outcome failed (<code>fail</code> also finds error / abort / crash; a pair works too: <code>outcome:q1-2=fail</code>)</td></tr>
                         <tr><td><button class="ds-help-example" data-example="date:2026-05">date:2026-05</button></td>
                             <td>Runs whose date matches <code>2026-05</code> (alias: <code>d:</code>)</td></tr>
                         <tr><td><button class="ds-help-example" data-example="id:108">id:108</button></td>
@@ -258,13 +258,15 @@
            gap stays tight. Plain <a> pills (not a nested <ul>) so they sit in
            the flex topbar cleanly. #}
         {% if dates | length > 1 %}
+        {# QA F10 (review): a Collections tab stays on Collections. #}
+        {% set _tab_base = '/collections' if is_collections else '/datasets' %}
         <div class="ds-date-tabs" role="tablist" aria-label="Filter by date">
             <a class="ds-date-tab{% if not active_date %} active{% endif %}"
-               hx-get="/datasets{% if search %}?q={{ search | urlencode }}{% endif %}" hx-target="#table-pane"
+               hx-get="{{ _tab_base }}{% if search %}?q={{ search | urlencode }}{% endif %}" hx-target="#table-pane"
                onclick="var e=document.getElementById('ds-active-date');if(e)e.value=''">All dates</a>
             {% for d in dates %}
             <a class="ds-date-tab{% if active_date == d %} active{% endif %}"
-               hx-get="/datasets?date={{ d }}{% if search %}&q={{ search | urlencode }}{% endif %}" hx-target="#table-pane"
+               hx-get="{{ _tab_base }}?date={{ d }}{% if search %}&q={{ search | urlencode }}{% endif %}" hx-target="#table-pane"
                onclick="var e=document.getElementById('ds-active-date');if(e)e.value='{{ d }}'">{{ d[5:] }}</a>
             {% endfor %}
         </div>

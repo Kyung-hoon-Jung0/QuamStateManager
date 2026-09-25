@@ -77,3 +77,23 @@ class TestCollectionsCountsTheCollection:
         app, c = _setup(tmp_path, [])
         coll = c.get("/collections", headers=HX).get_data(as_text=True)
         assert _head(coll) == "0 runs, 0 types, 0 qubits"
+
+    def test_a_collections_date_tab_stays_on_collections(self, tmp_path):
+        """QA F10 (review): the tabs listed the collection's dates but hx-got
+        /datasets?date=..., so a click left for the whole-workspace view."""
+        app, c = _setup(tmp_path, [1, 3])
+        coll = c.get("/collections?q=q1", headers=HX).get_data(as_text=True)
+        tabs = coll[coll.index("ds-date-tabs"):]
+        tabs = tabs[:tabs.index("</div>")]
+        gets = re.findall(r'hx-get="([^"]*)"', tabs)
+        assert gets == ["/collections?q=q1",
+                        "/collections?date=2026-05-03&q=q1",
+                        "/collections?date=2026-05-01&q=q1"], gets
+        # ...and the tab it points at renders Collections, narrowed to the date
+        r = c.get("/collections?date=2026-05-01", headers=HX).get_data(as_text=True)
+        assert 'data-view="collections"' in r
+        ds = c.get("/datasets", headers=HX).get_data(as_text=True)
+        dtabs = ds[ds.index("ds-date-tabs"):]
+        dtabs = dtabs[:dtabs.index("</div>")]
+        assert all(g.startswith("/datasets")
+                   for g in re.findall(r'hx-get="([^"]*)"', dtabs))

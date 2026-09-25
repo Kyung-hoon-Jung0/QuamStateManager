@@ -361,7 +361,12 @@
                     var otgt = value.slice(0, oeq), ov = value.slice(oeq + 1);
                     for (var ok2 in row.oc) {
                         if (String(ok2).toLowerCase() === otgt) {
-                            return String(row.oc[ok2]).toLowerCase().indexOf(ov) !== -1;
+                            var ocv = String(row.oc[ok2]).toLowerCase();
+                            // `=fail` is the digest's failure CLASS -- the same
+                            // /error|fail|abort|crash/ its chip counts with
+                            // (routes._datasets_view is the server twin).
+                            return ov === 'fail' ? /error|fail|abort|crash/.test(ocv)
+                                                 : ocv.indexOf(ov) !== -1;
                         }
                     }
                     return false;
@@ -991,9 +996,9 @@
             if (bad.test(String(row.status || '').toLowerCase())) failed++;
             if (row.oc) {
                 for (var q in row.oc) {
-                    // QA datasets-r2-18: the chip filters `outcome:<q>=fail`
-                    // (a substring) -- count with the same test.
-                    if (String(row.oc[q]).toLowerCase().indexOf('fail') !== -1) {
+                    // QA datasets-r2-18: the chip filters `outcome:<q>=fail`,
+                    // which matchScope reads as this same failure class.
+                    if (bad.test(String(row.oc[q]).toLowerCase())) {
                         qfail[q] = (qfail[q] || 0) + 1;
                     }
                 }
@@ -1204,12 +1209,18 @@
             var fit = false;
             state.fitKeys.forEach(function (k) { if (String(k).toLowerCase().indexOf(c.key) !== -1) fit = true; });
             var fitNote = fit ? ' — fit values are sorted, not filtered (Sort banner)' : '';
+            // QA F15 (review): `metric` is the Key metric COLUMN's word; a
+            // parameter such as leakage_metric must not swallow it silently.
+            var metricNote = c.key === 'metric' ? ' (key metric: use metric:)' : '';
+            // A substring hit that is not the typed name, or a comparison that
+            // left nothing, names what it compared -- same text as the fit case.
+            var inexact = hit.some(function (k) { return k.toLowerCase() !== c.key; });
             if (!hit.length) {
                 out.push('no loaded run has a parameter matching "' + c.key + '"' +
-                         (c.key === 'metric' ? ' (key metric: use metric:)' : '') + fitNote);
-            } else if (fit) {
+                         metricNote + fitNote);
+            } else if (fit || metricNote || inexact || !state.visible.length) {
                 out.push('"' + c.key + '" compared as parameter ' + hit.slice(0, 2).join(', ') +
-                         (hit.length > 2 ? ' +' + (hit.length - 2) : '') + fitNote);
+                         (hit.length > 2 ? ' +' + (hit.length - 2) : '') + metricNote + fitNote);
             }
         }
         return out.join(' · ');
@@ -1500,14 +1511,57 @@
         var idx = state.rowsById.get(runId);
         if (idx == null) return;
         var row = state.rows[idx];
+        var wasInHead = _inHead(row);   // QA datasets-r2-14 (review)
         for (var k in fields) row[k] = fields[k];
         row._s = null;  // Invalidate the cached search text.
         // QA datasets-r2-14: a tag change can take the row out of (or into) the
         // view -- Collections' has-a-tag rule, a selected tag chip -- so it
         // re-filters; a note edit stays render-only (a row never vanishes
         // under the user's note).
-        if ('tags' in fields) applyFilters();
+        if ('tags' in fields) {
+            applyFilters();
+            // QA datasets-r2-14 (review): the row left the collection -- so
+            // does the header's count (it stayed "(4 runs" over 2 rows).
+            if (state.collections) _headCountAdjust((_inHead(row) ? 1 : 0) - (wasInHead ? 1 : 0));
+        }
         else scheduleRender();
+    }
+
+    /* QA datasets-r2-14 / F2 (review): the title's "(N runs, T types, Q
+       qubits)" is server-rendered once; a tag change (Collections) or a
+       landed run (either page) left it stale until F5. A row counts where
+       the server counts it: every row on Datasets, a tagged one on
+       Collections. */
+    function _inHead(row) {
+        return !!row && !(state.collections && !(row.tags && row.tags.length));
+    }
+    function _headCountAdjust(delta) {
+        var headSmall = document.querySelector('.table-header-row h2 > small');
+        if (!headSmall) return;
+        var dateInp = document.getElementById('ds-active-date');
+        if (state.collections && !(dateInp && dateInp.value)) {
+            // All dates: the table holds the whole collection, so recount
+            // with _datasets_view's own rule (tagged rows' exp / q).
+            var runs = 0, ne = 0, nq = 0, exps = {}, qs = {};
+            for (var i = 0; i < state.rows.length; i++) {
+                var r = state.rows[i];
+                if (!_inHead(r)) continue;
+                runs++;
+                if (r.exp && !exps[r.exp]) { exps[r.exp] = 1; ne++; }
+                var rq = r.q || [];
+                for (var j = 0; j < rq.length; j++) if (!qs[rq[j]]) { qs[rq[j]] = 1; nq++; }
+            }
+            headSmall.textContent = headSmall.textContent
+                .replace(/^\(\d+ runs/, '(' + runs + ' runs')
+                .replace(/, \d+ types, \d+ qubits\)/, ', ' + ne + ' types, ' + nq + ' qubits)');
+            return;
+        }
+        // A date tab (or Datasets): the header counts every date, the table
+        // one -- step the run count by what changed, never recount.
+        if (!delta) return;
+        headSmall.textContent = headSmall.textContent.replace(/^\((\d+) runs/, function (m0, n) {
+            return '(' + Math.max(0, Number(n) + delta) + ' runs';
+        });
     }
 
     function onSearchInput() {
@@ -1709,18 +1763,21 @@
         var newUids = [];          // genuinely-new runs (insert, not in-place update)
         var updated = data.updated || [];
         var newestBefore = updated.length ? _newestStamp() : '';
+        var headDelta = 0;         // QA F2 (review): the title's "(N runs" follows
         for (var i = 0; i < updated.length; i++) {
             var row = updated[i];
             row._s = null;
             row.uid = (row.f || '') + ':' + row.id;   // folder-aware identity
             var idx = state.rowsById.get(row.uid);
             if (idx == null) {
+                if (_inHead(row)) headDelta++;
                 state.rows.push(row);
                 state.rowsById.set(row.uid, state.rows.length - 1);
                 if (_stampOf(row) > newestBefore
                     && !(state.collections && !(row.tags && row.tags.length)))   // QA datasets-r2-14
                     newUids.push(row.uid);
             } else {
+                headDelta += (_inHead(row) ? 1 : 0) - (_inHead(state.rows[idx]) ? 1 : 0);
                 state.rows[idx] = row;
             }
             changed = true;
@@ -1734,6 +1791,7 @@
             state.flashUids.delete(vid);
             var vidx = state.rowsById.get(vid);
             if (vidx == null) continue;
+            if (_inHead(state.rows[vidx])) headDelta--;
             // Tombstone — splice would re-index every entry in rowsById.
             // Cheaper: mark and rebuild index lazily during applyFilters.
             state.rows[vidx] = null;
@@ -1772,8 +1830,10 @@
             state.pendingHeadCount = false;
             var headSmall = document.querySelector('.table-header-row h2 > small');
             var live = 0;
-            for (var hc = 0; hc < state.rows.length; hc++) if (state.rows[hc]) live++;
+            for (var hc = 0; hc < state.rows.length; hc++) if (_inHead(state.rows[hc])) live++;
             if (headSmall) headSmall.textContent = headSmall.textContent.replace(/^\(\d+ runs/, '(' + live + ' runs');
+        } else if (changed) {
+            _headCountAdjust(headDelta);   // QA F2 (review)
         }
         if (changed) {
             state.digestLive = true;   // QA F2: the server digest band is stale now
@@ -2796,7 +2856,8 @@
         var box = document.getElementById('dataset-search');
         var kept = box ? box.value : '';
         var p = window.htmx.ajax('GET', coll ? '/collections' : '/datasets', {
-            target: '#table-pane', swap: 'innerHTML',
+            // `source` so htmx does not queue it on <body> (as clearDatasetFilters)
+            source: '#table-pane', target: '#table-pane', swap: 'innerHTML',
             values: { date: dateEl ? dateEl.value : '' },
         });
         if (kept && p && p.then) p.then(function () {

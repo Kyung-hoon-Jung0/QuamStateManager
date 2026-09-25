@@ -83,6 +83,8 @@ function fire(w, removed) {
     ok(w.__ajax[0] && w.__ajax[0].cfg.target === '#table-pane'
        && w.__ajax[0].cfg.values.date === '2026-09-06',
        'r2-26: ... into #table-pane, on the date tab it was on');
+    ok(w.__ajax[0] && w.__ajax[0].cfg.source === '#table-pane',
+       'r2-26 (review): ... sourced on #table-pane, not queued on <body>');
     ok(w.document.getElementById('dataset-search').value === 'rabi',
        'r2-26: ... and the search text is put back after the swap');
     ok(w.__closed === 1 && w.__toasts.length === 1 && /folder was removed/.test(w.__toasts[0]),

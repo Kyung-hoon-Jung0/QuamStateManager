@@ -20336,6 +20336,21 @@ window.TopbarHold = (function () {
         });
         document.addEventListener('htmx:pushedIntoHistory', release);
         window.addEventListener('popstate', release);
+        // QA F17 (review): the Settings/Calculator fallback shows only while
+        // html.sidebar-is-collapsed; showing it wraps the bar a row taller, and
+        // the hold kept that row after the sidebar came back (141 px vs 99 at
+        // 1366, until reload). A sidebar toggle is an expected movement, like a
+        // width change: release when THAT bit flips, never on other classes.
+        if (window.MutationObserver) {
+            try {
+                new window.MutationObserver(function (recs) {
+                    var now = document.documentElement.classList.contains('sidebar-is-collapsed');
+                    var was = /(^|\s)sidebar-is-collapsed(\s|$)/.test(recs[0].oldValue || '');
+                    if (now !== was) release();
+                }).observe(document.documentElement,
+                           { attributes: true, attributeFilter: ['class'], attributeOldValue: true });
+            } catch (e) { /* older engine: the hold is released on resize / navigation only */ }
+        }
     }
     if (document.readyState === 'loading') {
         document.addEventListener('DOMContentLoaded', start);

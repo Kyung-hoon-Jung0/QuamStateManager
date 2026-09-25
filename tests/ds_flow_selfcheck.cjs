@@ -275,6 +275,34 @@ function tick(ms) { return new Promise(r => setTimeout(r, ms || 30)); }
     await tick(300);
     ok(w2.document.querySelectorAll('#datasets-tbody tr[data-id]').length === 1,
        'r2-18: ... and shows the 1 failed run of that day, not the older one');
+
+    // (review) an outcome reading "aborted" / "error" is a failure too: the
+    // count kept the band's own class, and the chip's filter reads it the same
+    // way -- never "all OK" with no chip, never a chip that finds nothing.
+    const w3 = boot(null, { rows: [
+      mk(12, '2026-09-25', ['q5'], [], { q5: 'aborted' }),
+      mk(11, '2026-09-25', ['q5', 'q6'], [], { q5: 'error', q6: 'successful' }),
+      mk(10, '2026-09-25', ['q6'], [], { q6: 'successful' }),
+    ] });
+    await tick();
+    const s3 = w3.document.getElementById('dataset-search');
+    s3.value = 'rabi';
+    s3.dispatchEvent(new w3.Event('input', { bubbles: true }));
+    await tick(300);
+    const b3 = w3.document.querySelector('.ds-digest-band');
+    const q5 = w3.document.querySelector('.ds-digest-band .ds-digest-qchip');
+    ok(b3.textContent.indexOf('all OK') < 0 && q5 && /q5 ×2/.test(q5.textContent),
+       'r2-18: aborted / error outcomes are counted ("' + b3.textContent.trim().replace(/\s+/g, ' ') + '")');
+    s3.value = q5 ? q5.getAttribute('data-example') : '';
+    s3.dispatchEvent(new w3.Event('input', { bubbles: true }));
+    await tick(300);
+    ok(w3.document.querySelectorAll('#datasets-tbody tr[data-id]').length === 2,
+       'r2-18: ... and the q5 chip filter shows those 2 runs');
+    s3.value = 'outcome:q6=succ';
+    s3.dispatchEvent(new w3.Event('input', { bubbles: true }));
+    await tick(300);
+    ok(w3.document.querySelectorAll('#datasets-tbody tr[data-id]').length === 2,
+       'r2-18: any other targeted value is still a substring');
   }
 
   // ── integration-audit fixes ───────────────────────────────────────────────

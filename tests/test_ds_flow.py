@@ -111,6 +111,17 @@ class TestDigestBandSaysWhatItCounted:
         assert 'data-example="date:2026-09-24 is:failed"' in band
         assert "1 failed" in band
 
+    def test_an_aborted_or_error_outcome_is_a_failure(self, tmp_path):
+        """Review: the count had been narrowed to the substring 'fail', so an
+        outcome reading 'aborted'/'error' rendered "all OK" with no chip."""
+        band = self._band(tmp_path, [
+            (2, "2026-09-24", ["q5"], {"q5": "aborted"}),
+            (1, "2026-09-24", ["q5"], {"q5": "error"}),
+        ])
+        assert "all OK" not in band
+        assert 'data-example="date:2026-09-24 outcome:q5=fail"' in band
+        assert "q5&nbsp;×2" in band
+
     def test_all_ok_still_shown_when_nothing_failed(self, tmp_path):
         band = self._band(tmp_path, [
             (1, "2026-09-24", ["q1"], {"q1": "successful"}),
