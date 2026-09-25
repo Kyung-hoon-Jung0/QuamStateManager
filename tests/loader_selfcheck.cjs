@@ -172,6 +172,47 @@ function fireCancelable(name, path) {
     await sleep(60);
     ok(!loader.classList.contains('visible'), '(and the slow one finishing still does)');
 
+    // 7. QA chipstatus-r2-01 (review): a slow request whose ELEMENT was
+    //    swapped out mid-flight. htmx fires afterRequest on the element that
+    //    issued it, so that event never reaches this document listener --
+    //    measured in real Chrome: Chip Status re-rendering its pane while a
+    //    Trends fetch sourced on #topo-trends was out left "Please wait" over
+    //    the finished page (still up 8 s later). The request's XHR still ends.
+    {
+        const slow = (name, p, xhr) => d.dispatchEvent(new window.CustomEvent(name,
+            { detail: { requestConfig: { path: p }, xhr: xhr } }));
+        const settle = () => d.dispatchEvent(new window.CustomEvent('htmx:afterSettle', { detail: {} }));
+        const xPane = new window.EventTarget(), xTrends = new window.EventTarget();
+        slow('htmx:beforeRequest', '/topology', xPane);
+        slow('htmx:beforeRequest', '/topology/trends', xTrends);
+        await sleep(140);
+        ok(loader.classList.contains('visible'), 'detached: two slow requests show it');
+        slow('htmx:afterRequest', '/topology', xPane);           // the re-render lands normally...
+        xPane.dispatchEvent(new window.Event('loadend'));
+        xTrends.dispatchEvent(new window.Event('loadend'));      // ...the Trends fetch only ends
+        settle();
+        await sleep(60);
+        ok(!loader.classList.contains('visible'),
+           'detached: the XHR ending settles its count -- hidden, not left for the 45 s safety');
+
+        // ONE request's afterRequest + loadend is one completion, never two
+        const xA = new window.EventTarget(), xB = new window.EventTarget();
+        slow('htmx:beforeRequest', '/bulk', xA);
+        slow('htmx:beforeRequest', '/bulk', xB);
+        await sleep(140);
+        slow('htmx:afterRequest', '/bulk', xA);
+        xA.dispatchEvent(new window.Event('loadend'));
+        settle();
+        await sleep(60);
+        ok(loader.classList.contains('visible'),
+           'one completion counted once: the other slow request keeps the popup up');
+        slow('htmx:afterRequest', '/bulk', xB);
+        xB.dispatchEvent(new window.Event('loadend'));
+        settle();
+        await sleep(60);
+        ok(!loader.classList.contains('visible'), '(and its own completion drops it)');
+    }
+
     // 5. markup + CSS contracts
     const base = fs.readFileSync(path.join(__dirname, '..', 'quam_state_manager', 'web', 'templates', 'base.html'), 'utf8');
     ok(base.indexOf('quam-loader-spinner') > -1 && /quam-loader-sub[^>]*>Please wait a moment/.test(base),

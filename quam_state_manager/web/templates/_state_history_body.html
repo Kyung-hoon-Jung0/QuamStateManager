@@ -1,6 +1,7 @@
 {# Inner of #state-history-body — the timeline (toolbar + entries + pagination).
    Rendered standalone via /state-history?body=1 for the stateRestored
    auto-refresh, and included by _state_history.html for the full page. #}
+{% from '_snapshot_zero_label.html' import zero_diff_label %}
 {% if snapshots %}
 <div class="sh-toolbar">
     <button id="sh-compare-btn" class="outline btn-sm" disabled
@@ -25,7 +26,8 @@
         <span class="diff-badge diff-added">+{{ s.diff_summary.added }}</span>
         <span class="diff-badge diff-removed">&minus;{{ s.diff_summary.removed }}</span>
         <span class="diff-badge diff-modified">~{{ s.diff_summary.modified }}</span>
-        {% else %}<span class="muted">(baseline)</span>{% endif %}
+        {# QA chipstatus-r2-15: the drawer's rule, from the one macro #}
+        {% else %}{{ zero_diff_label(s, first_ts, _k[0]) }}{% endif %}
     </div>
 
     {# Experiment attribution — the headline framing: which run produced this. #}

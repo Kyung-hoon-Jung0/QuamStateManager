@@ -1570,7 +1570,10 @@ def _readout_fidelity(store: QuamStore, name: str) -> float | None:
         if (isinstance(m, list) and len(m) == 2
                 and all(isinstance(r, list) and len(r) == 2 for r in m)
                 and all(_is_num(x) for r in m for x in r)):
-            return (m[0][0] + m[1][1]) / 2.0
+            # QA F-25: the same exact-decimal mean the qubit dict uses, so
+            # one fidelity is one double on every surface.
+            from quam_state_manager.core.query import _exact_mean
+            return _exact_mean([m[0][0], m[1][1]])
     except (KeyError, TypeError):
         pass
     return None

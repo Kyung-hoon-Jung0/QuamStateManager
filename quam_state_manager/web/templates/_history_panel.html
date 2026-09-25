@@ -1,3 +1,4 @@
+{% from '_snapshot_zero_label.html' import zero_diff_label %}
 <div id="history-list">
 {% if snapshots | length > 0 %}
 <div class="history-toolbar">
@@ -41,8 +42,10 @@
         <span class="diff-badge diff-added" title="Added">+{{ s.diff_summary.added }}</span>
         <span class="diff-badge diff-removed" title="Removed">-{{ s.diff_summary.removed }}</span>
         <span class="diff-badge diff-modified" title="Modified">~{{ s.diff_summary.modified }}</span>
+        {# QA chipstatus-r2-15: every zero-diff row said "(baseline)"; the
+           rule is shared with the State History page (_snapshot_zero_label). #}
         {% else %}
-        <span class="muted">(baseline)</span>
+        {{ zero_diff_label(s, first_ts, _k[0]) }}
         {% endif %}
     </div>
     {% if s.new_experiments | length > 0 %}
@@ -90,3 +93,7 @@
 
 <div id="history-detail-area"></div>
 </div>
+{# QA chipstatus-r2-15: the drawer's button count was rendered once with the
+   page, so Take Snapshot (which swaps only #history-content) left it behind.
+   Every drawer render now carries the full total out of band. #}
+<span id="history-count" hx-swap-oob="true">{{ total }}</span>

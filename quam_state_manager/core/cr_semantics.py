@@ -505,6 +505,74 @@ def _upconverter_freq(port: dict, upconverter: Any) -> float | None:
     return _num(port.get("upconverter_frequency"))
 
 
+_INFERRED_IF = "#./inferred_intermediate_frequency"
+_INFERRED_RF = "#./inferred_RF_frequency"
+_UPCONVERTER_LO = "#./upconverter_frequency"
+
+
+def channel_effective_rf_if(store: Any, chan: Any,
+                            base: tuple[str, ...]) -> tuple[float | None, float | None]:
+    """(RF, IF) in Hz of one MW output channel, the ``#./inferred_*`` aliases
+    included -- ``(None, None)`` parts wherever a number cannot be read.
+
+    ``pointer_resolver`` returns ``#./`` self-refs raw because they name quam
+    Python properties, not JSON leaves (QA F-13: the printable report put
+    ``#./inferred_intermediate_frequency`` in a column headed MHz). This
+    re-runs quam's own arithmetic, quoted from
+    ``quam/components/channels.py`` (quam 0.6.0, cqt env):
+
+    - ``_OutComplexChannel.inferred_intermediate_frequency``:
+      "Returns: self.RF_frequency - self.LO_frequency"
+    - ``_OutComplexChannel.inferred_RF_frequency``:
+      "Returns: self.LO_frequency + self.intermediate_frequency"
+    - ``MWChannel``: ``LO_frequency: float = "#./upconverter_frequency"`` and
+      ``upconverter_frequency``: "if self.opx_output.upconverter_frequency is
+      not None: return self.opx_output.upconverter_frequency" / "if
+      self.opx_output.upconverters is not None: upconverter_config =
+      self.opx_output.upconverters.get(self.upconverter)" ... "return
+      upconverter_config["frequency"]" (``upconverter: int = 1``).
+
+    Any other self-ref (an Octave ``frequency_converter_up`` LO, say), a
+    non-MW port or an unresolvable pointer gives ``None`` -- never a guess.
+    Pure: nothing is written, and ``store`` is only read through its
+    resolver.
+    """
+    if not isinstance(chan, dict):
+        return None, None
+
+    def _lit(key: str) -> float | None:
+        raw = chan.get(key)
+        if is_self_ref(raw):
+            return None
+        return _num(_resolve_leaf(store, raw, base + (key,)))
+
+    lo_raw = chan.get("LO_frequency")
+    lo: float | None = None
+    if lo_raw is None or lo_raw == _UPCONVERTER_LO:
+        port = _port_dict(store, chan, base)
+        if isinstance(port, dict):
+            lo = _num(port.get("upconverter_frequency"))
+            ups = port.get("upconverters")
+            if lo is None and isinstance(ups, dict):
+                key = chan.get("upconverter", 1)
+                entry = ups.get(str(key), ups.get(key))
+                if isinstance(entry, dict):
+                    lo = _num(entry.get("frequency"))
+    else:
+        lo = _lit("LO_frequency")
+
+    if_hz = _lit("intermediate_frequency")
+    rf_hz = _lit("RF_frequency")
+    rf_raw = chan.get("RF_frequency")
+    if (if_hz is None and chan.get("intermediate_frequency") == _INFERRED_IF
+            and rf_hz is not None and lo is not None):
+        if_hz = rf_hz - lo
+    elif (rf_hz is None and (rf_raw is None or rf_raw == _INFERRED_RF)
+            and if_hz is not None and lo is not None):
+        rf_hz = lo + if_hz
+    return rf_hz, if_hz
+
+
 def effective_frequencies(store: Any, pair_id: str,
                           channel: str = "cr") -> CrFrequencies | None:
     """Numeric emulation of the CR/ZZ channel's ``#./inferred_*`` properties.

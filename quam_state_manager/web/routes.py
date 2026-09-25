@@ -114,7 +114,7 @@ from quam_state_manager.core.saver import Saver
 from quam_state_manager.core.scanner import Workspace
 from quam_state_manager.core.search_index import SearchIndex
 from quam_state_manager.core.story import node_label
-from quam_state_manager.core.units import group_digits
+from quam_state_manager.core.units import group_digits, pair_field_key
 
 logger = logging.getLogger(__name__)
 
@@ -4527,6 +4527,10 @@ def _build_pair_sections(name: str, pair_data: dict[str, Any], store: QuamStore)
             "dangling": dangling,
             "editable": editable,
             "ptr_name": _ptr_entity_name(store, raw_value, dot_path, resolved_value),
+            # QA F-24: the unit a field held directly on the pair is shown in
+            # (its `detuning` is volts, not the Hz of every other `detuning`)
+            "unit_key": (pair_field_key(key)
+                         if dot_path == f"qubit_pairs.{name}.{key}" else key),
         })
 
     # Drop static sections whose every property is absent (None) — so a CR pair
@@ -10279,6 +10283,31 @@ def chip_status_report():
             except (OverflowError, OSError, ValueError):
                 pass
 
+    # QA F-13: a modern chip stores xy.intermediate_frequency as the quam
+    # alias "#./inferred_intermediate_frequency" (a Python property, never
+    # resolved), so the MHz column printed the pointer. The report shows the
+    # NUMBER quam computes (RF - LO), or '-' when it cannot be read. A side
+    # map: the engine-cached qubit dicts -- which the inspector shows as the
+    # editable pointer -- are not touched.
+    def _hz(v):
+        return v if isinstance(v, (int, float)) and not isinstance(v, bool) else None
+    merged_q = store.merged.get("qubits") or {}
+    xy_freq: dict[str, dict] = {}
+    for q in qubits:
+        qid = q.get("id")
+        rf = if_ = None
+        try:
+            qobj = merged_q.get(qid)
+            rf, if_ = cr_semantics.channel_effective_rf_if(
+                store, qobj.get("xy") if isinstance(qobj, dict) else None,
+                ("qubits", str(qid), "xy"))
+        except Exception as exc:  # noqa: BLE001 -- a cell degrades, never the page
+            logger.warning("report xy frequencies(%r) failed: %s", qid, exc)
+        xy_freq[qid] = {
+            "rf_hz": rf if rf is not None else _hz(q.get("xy_RF_frequency")),
+            "if_hz": if_ if if_ is not None else _hz(q.get("xy_intermediate_frequency")),
+        }
+
     return render_template(
         "chip_report.html",
         has_chip=True,
@@ -10295,6 +10324,7 @@ def chip_status_report():
         gate_params=_report_gate_param_rows(pairs),
         cal=cal,
         qdac_qubits=[q for q in qubits if q.get("has_qdac")],
+        xy_freq=xy_freq,
     )
 
 
@@ -10356,7 +10386,10 @@ def wiring_view():
     # badge + per-node markers, so "is it healthy" and "is it broken" stop being
     # two disconnected pages. Thresholds seed the client's live verdict/colour
     # (the client persists UI edits to localStorage).
-    diag_findings = diagnostics.lint_state(store) if store else []
+    # QA F-16: the SAME finding set /diagnostics and the top-bar badge count
+    # (state + cached generated config + env match). lint_state alone said
+    # "2 warnings" over a Diagnostics page that listed 3.
+    diag_findings = _active_chip_findings(store) if store else []
     diag_summary = diagnostics.summarize(diag_findings)
 
     # Optional ?view= picks the Chip Status sub-view (Topology / Full View /
@@ -10423,6 +10456,9 @@ def history_list():
     page = _int_arg("page", 1, minimum=1)
     per_page = _int_arg("per_page", _HISTORY_PANEL_PER_PAGE, minimum=0)  # 0 = All (explicit)
     page_items, total, current_page, total_pages = _paginate(snapshots, page, per_page)
+    # QA chipstatus-r2-15: only the chip's FIRST snapshot is a baseline. From
+    # the FULL newest-first list (not the page), the Versions panel's rule.
+    first_ts = snapshots[-1].timestamp if snapshots else None
 
     # hist_chip_key + active_path power the additive "⇄ Compare…" deep link
     # (docs/49 U1a — the in-panel Compare Selected stays verbatim)
@@ -10439,6 +10475,7 @@ def history_list():
         per_page=per_page,
         hist_chip_key=hist_chip_key,
         active_path=_active_path(),
+        first_ts=first_ts,
     )
 
 
@@ -10453,7 +10490,13 @@ def history_snapshot():
     hm.check_and_snapshot(_active_path(), "manual", force=True, kind="manual",
                           project=_scope_for(_active_path(), _active_ctx()))
 
-    return history_list()
+    # QA chipstatus-r2-15: announce it, so every surface that counts snapshots
+    # (Chip Status Trends, the top-bar Versions chip) catches up now instead of
+    # at the next drift poll. HX-Trigger, not -After-Swap: the button that
+    # sent this lives inside the swapped drawer and would be detached by then.
+    resp = make_response(history_list())
+    resp.headers["HX-Trigger"] = "stateHistoryChanged"
+    return resp
 
 
 @bp.route("/api/history/<timestamp>/diff")
@@ -10534,6 +10577,9 @@ def state_history():
     page = _int_arg("page", 1, minimum=1)
     per_page = _int_arg("per_page", _STATE_HISTORY_PER_PAGE, minimum=1)
     page_items, total, page, total_pages = _paginate(snapshots, page, per_page)
+    # QA chipstatus-r2-15: the drawer's zero-diff rule -- only the chip's FIRST
+    # snapshot (of the full newest-first list, not the page) is a baseline.
+    first_ts = snapshots[-1].timestamp if snapshots else None
     try:
         hist_chip_key = _history()._key_for(Path(_active_path()))
     except Exception:
@@ -10554,6 +10600,7 @@ def state_history():
         chip_origin=_active_origin(),
         hist_chip_key=hist_chip_key,
         disk_stats=disk_stats,
+        first_ts=first_ts,
     )
     # body=1 → just the timeline inner (toolbar + entries + pagination), for the
     # stateRestored auto-refresh that re-fetches it into #state-history-body
@@ -18122,6 +18169,9 @@ def export_csv():
     return send_file(mem, mimetype="text/csv", as_attachment=True, download_name="quam_summary.csv")
 
 
+_SPARK_POINTS = 40   # the popup sparkline's LTTB budget
+
+
 @bp.route("/api/topology/sparklines/<qubit>")
 def topology_sparklines(qubit: str):
     """Lazy per-qubit Param-History sparklines for the Chip Status '…more' popup.
@@ -18146,7 +18196,7 @@ def topology_sparklines(qubit: str):
     # CHANGE", not "since the previous identical sample" -- which is what a
     # trend arrow was always meant to say.
     for r in hm.extract_property_history(path, list(DEFAULT_TRACKED_PROPERTIES),
-                                         qubit_filter=[qubit], downsample=40,
+                                         qubit_filter=[qubit], downsample=_SPARK_POINTS,
                                          compress="changes"):
         prop = r["property"]
         cur = qd.get(prop)
@@ -18163,8 +18213,31 @@ def topology_sparklines(qubit: str):
             continue  # <2 finite points → no real trend (honest gap)
         nums = [p["value"] for p in phys_vals
                 if isinstance(p.get("value"), (int, float)) and not isinstance(p.get("value"), bool)]
-        delta = nums[-1] - nums[-2] if len(nums) >= 2 else None
-        delta_pct = (delta / abs(nums[-2]) * 100) if (delta is not None and nums[-2]) else None
+        # QA chipstatus-r2-12: the compressed series keeps BOTH edges of every
+        # step, so its last two points are equal unless the last change landed
+        # on the newest snapshot -- nums[-1] - nums[-2] read '–' after a real
+        # change. The arrow is the newest value against the previous DISTINCT
+        # one. When LTTB thinned the series (it can drop a step's flat edge),
+        # read that one property undownsampled so the step is the real last one.
+        full = phys_vals
+        if len(r["values"]) >= _SPARK_POINTS:
+            try:
+                ex = [b for b in hm.extract_property_history(
+                          path, [prop], qubit_filter=[qubit], downsample=None,
+                          compress="changes")
+                      if b.get("qubit") == r.get("qubit") and b.get("property") == prop]
+                if ex:
+                    full = [p for p in ex[0]["values"]
+                            if chip_health.physicality(prop, p.get("value"))] or phys_vals
+            except Exception:
+                logger.debug("sparkline full-series read failed", exc_info=True)
+        fin = [float(p["value"]) for p in full
+               if isinstance(p.get("value"), (int, float)) and not isinstance(p.get("value"), bool)
+               and math.isfinite(p["value"])]
+        last = fin[-1] if fin else None
+        prev = next((v for v in reversed(fin[:-1]) if v != last), None)
+        delta = (last - prev) if prev is not None else None
+        delta_pct = (delta / abs(prev) * 100) if (delta is not None and prev) else None
         meta = chip_health.metric_meta(prop)
         good = None
         if delta not in (None, 0) and meta["direction"] in ("higher", "lower"):
@@ -18197,23 +18270,19 @@ def export_report():
     # The chip header's rule, like the config exports (QA regenerate-r2-33):
     # chip_name_for named a flat chip folder after its PARENT ("chip").
     chip = _chip_display_name(path) if path else "chip"
-    diag_findings = [f.as_dict() for f in diagnostics.lint_state(store)] if store else []
-    # Honour the user's UI-edited thresholds (sent as a JSON query param by the
-    # export link) so the card's below-spec counts MATCH the on-screen header.
-    # Falls back to the seed defaults when absent/malformed.
-    thresholds = None
-    raw_th = request.args.get("thresholds")
-    if raw_th:
-        try:
-            parsed = json.loads(raw_th)
-            if isinstance(parsed, dict):
-                thresholds = parsed
-        except (ValueError, TypeError):
-            thresholds = None
+    # QA F-16: the Diagnostics page's finding set, like the on-screen tile.
+    diag_findings = [f.as_dict() for f in _active_chip_findings(store)] if store else []
+    # QA F-14: the bands are the lab spec the on-screen header scores against
+    # (docs/167) and the card says whose they are with the header's own words.
+    # The export link used to send the tab's whole band set on every download,
+    # so the card claimed "your UI-edited thresholds" when nothing was edited.
+    spec = spec_thresholds.resolve(current_app.instance_path)
+    thresholds = spec["metrics"]
     # Local time with its offset (QA F26 sibling): a UTC stamp dated a
     # 07:49 KST report, and its filename, the day before.
     report = report_card.build_report(engine, chip_name=chip, diag_findings=diag_findings,
                                       thresholds=thresholds,
+                                      thresholds_source=spec["summary"],
                                       generated_at=datetime.now().astimezone())
 
     fmt = (request.args.get("format") or "md").lower()
@@ -25019,13 +25088,24 @@ def chip_spec_set():
         return jsonify(ok=False, error="metrics must be JSON"), 400
     if not isinstance(metrics, dict):
         return jsonify(ok=False, error="metrics must be an object"), 400
-    return jsonify(ok=True, spec=spec_thresholds.save(
-        current_app.instance_path, metrics))
+    # QA chipstatus-r2-05: a disk that refuses the write is an answer the
+    # client must be able to read ("NOT saved -- why"), not an HTML 500.
+    try:
+        spec = spec_thresholds.save(current_app.instance_path, metrics)
+    except spec_thresholds.SpecBandError as exc:   # QA chipstatus-r2-08: nothing written
+        return jsonify(ok=False, error=str(exc), problems=exc.problems), 400
+    except OSError as exc:
+        return jsonify(ok=False, error=f"could not write the spec file: {exc}"), 500
+    return jsonify(ok=True, spec=spec)
 
 
 @bp.route("/chip-status/spec/clear", methods=["POST"])
 def chip_spec_clear():
-    return jsonify(ok=True, spec=spec_thresholds.clear(current_app.instance_path))
+    try:
+        spec = spec_thresholds.clear(current_app.instance_path)
+    except OSError as exc:
+        return jsonify(ok=False, error=f"could not write the spec file: {exc}"), 500
+    return jsonify(ok=True, spec=spec)
 
 
 @bp.route("/notes")

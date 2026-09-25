@@ -74,8 +74,13 @@ def _days_ago(epoch_ms, now: datetime):
 
 
 def build_report(engine, *, chip_name: str, generated_at: datetime | None = None,
-                 thresholds: dict | None = None, diag_findings: list | None = None) -> dict[str, Any]:
-    """Build the report data dict from the gated topology records."""
+                 thresholds: dict | None = None, diag_findings: list | None = None,
+                 thresholds_source: str | None = None) -> dict[str, Any]:
+    """Build the report data dict from the gated topology records.
+
+    ``thresholds_source`` names whose bands these are (the route passes
+    spec_thresholds.resolve's own summary, QA F-14); without one the card
+    says only what it can know -- custom bands were given, or none were."""
     now = generated_at or datetime.now(timezone.utc)
     th = thresholds or chip_health.DEFAULT_THRESHOLDS
     topo = engine.get_topology()
@@ -126,7 +131,11 @@ def build_report(engine, *, chip_name: str, generated_at: datetime | None = None
     for (i, v, sc) in _outliers(edges, "cz_fidelity", th.get("cz_fidelity")):
         outliers.append({"id": i, "metric": "cz_fidelity", "value": v, "score": round(sc, 1)})
 
-    diag = diag_findings or []
+    # QA F-16: diagnostics.summarize's rule -- an advisory or acknowledged
+    # finding is listed on the Diagnostics page but never counted as an issue.
+    diag = [f for f in (diag_findings or [])
+            if not ((f.get("advisory") or f.get("acknowledged")) if isinstance(f, dict)
+                    else (getattr(f, "advisory", False) or getattr(f, "acknowledged", None)))]
     diag_err = sum(1 for f in diag if (f.get("severity") if isinstance(f, dict) else getattr(f, "severity", None)) == "error")
     diag_warn = sum(1 for f in diag if (f.get("severity") if isinstance(f, dict) else getattr(f, "severity", None)) == "warning")
 
@@ -161,8 +170,8 @@ def build_report(engine, *, chip_name: str, generated_at: datetime | None = None
         "bad_fits": bad_fits,
         "outliers": outliers,
         "metrics": summ["nodes"],
-        "thresholds_source": ("your UI-edited thresholds" if thresholds
-                              else "default spec thresholds"),
+        "thresholds_source": thresholds_source or ("custom thresholds" if thresholds
+                                                   else "SM's own default bands"),
     }
 
 
@@ -220,7 +229,9 @@ def render_markdown(r: dict) -> str:
     if r["below_spec"] or r["cz_below_spec"]:
         out += ["## Below spec", "", "| Qubit/Pair | Metric | Value | Verdict |", "|---|---|---|---|"]
         out += [f"| {b['id']} | {chip_health.metric_meta(b['metric'])['label']} | {_fmt(b['value'], b['metric'])} | {b['verdict']} |" for b in r["below_spec"]]
-        out += [f"| {b['id']} | CZ Bell fidelity | {_fmt(b['value'], 'cz_fidelity')} | {b['verdict']} |" for b in r["cz_below_spec"]]
+        # QA F-11: the metric's own label, like the qubit rows above ("Bell"
+        # named a measurement an interleaved-RB chip never made)
+        out += [f"| {b['id']} | {chip_health.metric_meta('cz_fidelity')['label']} | {_fmt(b['value'], 'cz_fidelity')} | {b['verdict']} |" for b in r["cz_below_spec"]]
         out += [""]
     if r["bad_fits"]:
         out += ["## Bad fits (unphysical — excluded from all stats)", "", "| Qubit/Pair | Metric | Raw value |", "|---|---|---|"]
@@ -309,7 +320,7 @@ def render_html(r: dict) -> str:
                  [[w["id"], w["label"], _fmt(w["value"], w["metric"])] for w in r["worst_offenders"]])
     below = _tbl("Below spec", ["Qubit/Pair", "Metric", "Value", "Verdict"],
                  [[b["id"], chip_health.metric_meta(b["metric"])["label"], _fmt(b["value"], b["metric"]), b["verdict"]] for b in r["below_spec"]]
-                 + [[b["id"], "CZ Bell fidelity", _fmt(b["value"], "cz_fidelity"), b["verdict"]] for b in r["cz_below_spec"]])
+                 + [[b["id"], chip_health.metric_meta("cz_fidelity")["label"], _fmt(b["value"], "cz_fidelity"), b["verdict"]] for b in r["cz_below_spec"]])
     badf = _tbl("Bad fits (unphysical — excluded from stats)", ["Qubit/Pair", "Metric", "Raw value"],
                 [[b["id"], chip_health.metric_meta(b["metric"])["label"], _fmt(b["raw"], b["metric"])] for b in r["bad_fits"]])
     outl = _tbl("Statistical outliers (MAD ≥ 3.5)", ["Qubit/Pair", "Metric", "Value", "× MAD"],

@@ -32,6 +32,7 @@ from __future__ import annotations
 
 import json
 import logging
+import math
 import threading
 from copy import deepcopy
 from pathlib import Path
@@ -52,6 +53,41 @@ _BOUNDS = ("warn", "fail")
 
 def spec_path(instance_path) -> Path:
     return Path(instance_path) / _FILENAME
+
+
+class SpecBandError(ValueError):
+    """A posted band that cannot work as a band (QA chipstatus-r2-08).
+
+    Nothing is written when this is raised. ``problems`` names each one.
+    """
+
+    def __init__(self, problems: list[str]):
+        super().__init__("; ".join(problems))
+        self.problems = list(problems)
+
+
+def band_problem(key: str, warn: float, fail: float, direction: str) -> str | None:
+    """Why ``warn``/``fail`` cannot be a band for *key*, or ``None``.
+
+    ORDER only, never scale: what a good T1 is on somebody else's device is
+    the lab's call (a negative or a huge bound is a consistent band, it just
+    passes or fails everything). An INVERTED one is not: ``verdict`` reads
+    ``pass if v >= warn else (warn if v >= fail else fail)``, so with fail
+    above warn the warn band can never be reached and the metric silently
+    becomes a two-state pass/fail split at ``warn``. Equality stays allowed --
+    that is a deliberate "no warn band". Mirrors the editor's own check in
+    chip-status.js (applyThresholds).
+    """
+    if not (math.isfinite(warn) and math.isfinite(fail)):
+        return f"{key}: warn and fail must be finite numbers"
+    if direction == "lower":
+        if fail < warn:
+            return (f"{key}: fail ({fail:g}) must not be below warn ({warn:g}) "
+                    "for a lower-is-better metric")
+    elif fail > warn:
+        return (f"{key}: fail ({fail:g}) must not be above warn ({warn:g}) "
+                "for a higher-is-better metric -- the warn band could never be reached")
+    return None
 
 
 def _read(path: Path) -> dict:
@@ -114,26 +150,54 @@ def save(instance_path, metrics: dict[str, Any]) -> dict[str, Any]:
     correction to a seed value would never reach a lab that had once pressed
     Apply — the bug where "we use the defaults" quietly means "we use the
     defaults as they were in August".
-    """
-    out: dict[str, dict[str, float]] = {}
-    for key, band in (metrics or {}).items():
-        base = chip_health.DEFAULT_THRESHOLDS.get(key)
-        if not base or not isinstance(band, dict):
-            continue
-        diff: dict[str, float] = {}
-        for bound in _BOUNDS:
-            value = band.get(bound)
-            if not isinstance(value, (int, float)) or isinstance(value, bool):
-                continue
-            if abs(float(value) - float(base[bound])) > 1e-12 * max(1.0, abs(float(base[bound]))):
-                diff[bound] = float(value)
-        if diff:
-            out[key] = diff
 
+    A MERGE, not a replace (QA chipstatus-r2-06). Only the bounds named in
+    ``metrics`` are touched: a posted bound that differs from the default is
+    stored, one equal to the default is removed ("this bound back to SM's
+    seed"), and every bound nobody posted stays as it is. The file is re-read
+    inside the lock, so two windows saving DIFFERENT bands both survive -- a
+    whole-file replace let a tab opened earlier erase another window's bands
+    with its stale copy. Two windows editing the SAME bound are still
+    last-writer-wins; ``clear`` is the one explicit whole-spec reset.
+    """
     path = spec_path(instance_path)
     with _lock:
+        current = _read(path)
+        problems: list[str] = []
+        for key, band in (metrics or {}).items():
+            base = chip_health.DEFAULT_THRESHOLDS.get(key)
+            if not base or not isinstance(band, dict):
+                continue
+            stored = current.get(key)
+            stored = dict(stored) if isinstance(stored, dict) else {}
+            for bound in _BOUNDS:
+                value = band.get(bound)
+                if not isinstance(value, (int, float)) or isinstance(value, bool):
+                    continue
+                if not math.isfinite(float(value)):
+                    # NaN fails every comparison, so the default check below
+                    # read it as "back to the default"; an inf was stored as-is
+                    problems.append(f"{key}: {bound} must be a finite number")
+                    continue
+                if abs(float(value) - float(base[bound])) > 1e-12 * max(1.0, abs(float(base[bound]))):
+                    stored[bound] = float(value)
+                else:
+                    stored.pop(bound, None)
+            # QA chipstatus-r2-08: judge the band this save would LEAVE --
+            # the posted bound merged with the stored/default other one
+            why = band_problem(key, float(stored.get("warn", base["warn"])),
+                               float(stored.get("fail", base["fail"])),
+                               base.get("direction", "higher"))
+            if why:
+                problems.append(why)
+            if any(b in stored for b in _BOUNDS):
+                current[key] = stored
+            else:
+                current.pop(key, None)
+        if problems:
+            raise SpecBandError(problems)
         path.parent.mkdir(parents=True, exist_ok=True)
-        safe_io.atomic_write_json(path, {"version": 1, "thresholds": out})
+        safe_io.atomic_write_json(path, {"version": 1, "thresholds": current})
     return resolve(instance_path)
 
 

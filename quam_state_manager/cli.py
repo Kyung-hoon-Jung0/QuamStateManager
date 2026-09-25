@@ -297,7 +297,8 @@ def show(
     table.add_column("Value", min_width=30)
 
     for key, value in data.items():
-        table.add_row(key, _format_cell(value, key))
+        # QA F-24: a pair's own `detuning` is volts, not the Hz `detuning`
+        table.add_row(key, _format_cell(value, units.pair_field_key(key) if is_pair else key))
 
     console.print(table)
 

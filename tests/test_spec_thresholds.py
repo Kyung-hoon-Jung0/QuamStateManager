@@ -160,6 +160,130 @@ class TestSaveStoresOnlyTheDifference:
         assert spec_thresholds.resolve(inst)["metrics"] == chip_health.DEFAULT_THRESHOLDS
 
 
+class TestSaveMergesInsteadOfReplacing:
+    """QA chipstatus-r2-06: tab B, opened before tab A saved T1, changed only
+    T2 echo -- and A's T1 was gone, because save() rewrote the whole file from
+    B's payload. A save now touches only the bounds it names."""
+
+    def test_two_windows_saving_different_metrics_both_survive(self, inst):
+        spec_thresholds.save(inst, {"T1": {"warn": 4e-5, "fail": 2e-5}})
+        spec_thresholds.save(inst, {"T2echo": {"warn": 2.5e-5}})
+        raw = json.loads(spec_thresholds.spec_path(inst).read_text(encoding="utf-8"))
+        assert raw["thresholds"] == {"T1": {"warn": 4e-5, "fail": 2e-5},
+                                     "T2echo": {"warn": 2.5e-5}}
+
+    def test_two_windows_saving_different_bounds_of_one_metric_both_survive(self, inst):
+        spec_thresholds.save(inst, {"T1": {"warn": 4e-5}})
+        spec_thresholds.save(inst, {"T1": {"fail": 2e-5}})
+        raw = json.loads(spec_thresholds.spec_path(inst).read_text(encoding="utf-8"))
+        assert raw["thresholds"] == {"T1": {"warn": 4e-5, "fail": 2e-5}}
+
+    def test_a_bound_posted_at_the_default_removes_only_that_bound(self, inst):
+        base = chip_health.DEFAULT_THRESHOLDS["T1"]
+        spec_thresholds.save(inst, {"T1": {"warn": 4e-5, "fail": 2e-5},
+                                    "T2echo": {"warn": 2.5e-5}})
+        spec_thresholds.save(inst, {"T1": {"warn": base["warn"]}})
+        raw = json.loads(spec_thresholds.spec_path(inst).read_text(encoding="utf-8"))
+        assert raw["thresholds"] == {"T1": {"fail": 2e-5}, "T2echo": {"warn": 2.5e-5}}
+        spec_thresholds.save(inst, {"T1": {"warn": base["warn"], "fail": base["fail"]}})
+        raw = json.loads(spec_thresholds.spec_path(inst).read_text(encoding="utf-8"))
+        assert raw["thresholds"] == {"T2echo": {"warn": 2.5e-5}}
+
+    def test_over_the_route_too(self, tmp_path):
+        app = create_app(testing=True, instance_path=str(tmp_path / "_inst"))
+        a, b = app.test_client(), app.test_client()
+        a.post("/chip-status/spec",
+               data={"metrics": json.dumps({"T1": {"warn": 4e-5, "fail": 2e-5}})})
+        r = b.post("/chip-status/spec",
+                   data={"metrics": json.dumps({"T2echo": {"warn": 2.5e-5}})})
+        spec = r.get_json()["spec"]
+        # B's answer carries A's band, which is how B's page learns of it
+        assert spec["metrics"]["T1"]["warn"] == 4e-5
+        assert spec["metrics"]["T2echo"]["warn"] == 2.5e-5
+
+
+class TestAFailedWriteIsAnAnswer:
+    """QA chipstatus-r2-05: a disk that refuses the write must reach the client
+    as ``{ok: false, error}`` -- an HTML 500 could only be reported as 'HTTP
+    500', and before the client fix it was reported as 'saved'."""
+
+    def test_save_and_clear_say_why(self, tmp_path, monkeypatch):
+        app = create_app(testing=True, instance_path=str(tmp_path / "_inst"))
+        c = app.test_client()
+
+        def boom(*_a, **_k):
+            raise PermissionError(13, "Permission denied")
+
+        monkeypatch.setattr(spec_thresholds, "save", boom)
+        monkeypatch.setattr(spec_thresholds, "clear", boom)
+        for url, data in (("/chip-status/spec",
+                           {"metrics": json.dumps({"T1": {"warn": 4e-5}})}),
+                          ("/chip-status/spec/clear", {})):
+            r = c.post(url, data=data)
+            assert r.status_code == 500 and r.is_json, url
+            j = r.get_json()
+            assert j["ok"] is False and "Permission denied" in j["error"], j
+
+
+class TestAnInvertedBandIsRefused:
+    """QA chipstatus-r2-08: T1 warn 5 us / fail 20 us was saved "for everyone".
+    ``verdict`` reads ``pass if v >= warn else (warn if v >= fail else fail)``,
+    so with fail above warn the WARN band can never be reached -- the metric
+    silently became a two-state split. ORDER is refused; SCALE never is (a
+    negative or a huge band is the lab's call, docs/167)."""
+
+    def test_an_inverted_band_is_refused_and_nothing_is_written(self, inst):
+        spec_thresholds.save(inst, {"T2echo": {"warn": 2.5e-5}})
+        before = spec_thresholds.spec_path(inst).read_text(encoding="utf-8")
+        with pytest.raises(spec_thresholds.SpecBandError) as e:
+            spec_thresholds.save(inst, {"T1": {"warn": 5e-6, "fail": 2e-5}})
+        assert "T1" in str(e.value) and "higher-is-better" in str(e.value)
+        assert spec_thresholds.spec_path(inst).read_text(encoding="utf-8") == before
+
+    def test_it_judges_the_band_the_save_would_leave(self, inst):
+        """One posted bound meets the STORED other one (the editor posts only
+        the bound that was edited): warn 1.5e-5 alone is fine over the default
+        fail 1e-5, but not over a stored fail of 2e-5."""
+        spec_thresholds.save(inst, {"T1": {"warn": 1.5e-5}})
+        spec_thresholds.save(inst, {"T1": {"warn": 3e-5}})
+        spec_thresholds.save(inst, {"T1": {"fail": 2e-5}})
+        with pytest.raises(spec_thresholds.SpecBandError):
+            spec_thresholds.save(inst, {"T1": {"warn": 1.5e-5}})
+        assert spec_thresholds.resolve(inst)["metrics"]["T1"]["fail"] == 2e-5
+        assert spec_thresholds.resolve(inst)["metrics"]["T1"]["warn"] == 3e-5
+
+    def test_equal_negative_and_huge_bands_still_save(self, inst):
+        spec_thresholds.save(inst, {"T1": {"warn": 2e-5, "fail": 2e-5}})       # no warn band
+        spec_thresholds.save(inst, {"T2ramsey": {"warn": -5e-6, "fail": -1e-5}})
+        spec_thresholds.save(inst, {"T2echo": {"warn": 1000.0, "fail": 100.0}})
+        m = spec_thresholds.resolve(inst)["metrics"]
+        assert m["T1"]["warn"] == m["T1"]["fail"] == 2e-5
+        assert m["T2ramsey"]["warn"] == -5e-6 and m["T2echo"]["warn"] == 1000.0
+
+    def test_a_lower_is_better_band_is_judged_the_other_way(self):
+        assert spec_thresholds.band_problem("x", 0.1, 0.2, "lower") is None
+        assert "below" in spec_thresholds.band_problem("x", 0.2, 0.1, "lower")
+        assert spec_thresholds.band_problem("x", 0.2, 0.1, "higher") is None
+        assert "above" in spec_thresholds.band_problem("x", 0.1, 0.2, "higher")
+
+    def test_a_non_finite_bound_is_refused_not_read_as_the_default(self, inst):
+        spec_thresholds.save(inst, {"T1": {"warn": 5e-5}})
+        for bad in (float("nan"), float("inf")):
+            with pytest.raises(spec_thresholds.SpecBandError):
+                spec_thresholds.save(inst, {"T1": {"warn": bad}})
+        assert spec_thresholds.resolve(inst)["metrics"]["T1"]["warn"] == 5e-5
+
+    def test_the_route_answers_400_with_the_reason(self, tmp_path):
+        app = create_app(testing=True, instance_path=str(tmp_path / "_inst"))
+        c = app.test_client()
+        r = c.post("/chip-status/spec",
+                   data={"metrics": json.dumps({"T1": {"warn": 5e-6, "fail": 2e-5}})})
+        assert r.status_code == 400 and r.is_json
+        j = r.get_json()
+        assert j["ok"] is False and "T1" in j["error"] and j["problems"]
+        assert c.get("/chip-status/spec").get_json()["source"] == "default"
+
+
 class TestRoutes:
     @pytest.fixture
     def client(self, tmp_path):
@@ -213,18 +337,63 @@ class TestTheClientStoppedOwningIt:
 
     def test_pressing_apply_actually_posts(self):
         """Grepping for the URL is not enough: it lives in _postSpec, which a
-        commit path could simply stop calling. The pin is on the CALL."""
+        commit path could simply stop calling. The pin is on the CALL.
+
+        QA chipstatus-r2-06: the call posts ``changed`` -- only the bounds
+        this press edited -- where it used to post the whole in-memory set,
+        which let a stale tab erase another window's bands. (This pin used to
+        assert ``_postSpec(thresholds)``, the very call that did it.)"""
         js = self._js()
         body = js[js.index("window.applyThresholds = function"):]
         body = body[:body.index("window.toggleThresholdEditor")]
-        assert "_postSpec(thresholds)" in body
+        assert "_postSpec(changed)" in body
+        assert "_postSpec(thresholds)" not in body
         assert "localStorage" not in body
 
     def test_resetting_one_metric_posts_too(self):
+        """...and posts that ONE metric (QA chipstatus-r2-06; the pin used to
+        assert the whole-set ``_postSpec(thresholds)``)."""
         js = self._js()
         body = js[js.index("window.resetMetricThreshold = function"):]
         body = body[:body.index("// ── Cell colour")] if "// ── Cell colour" in body else body[:1200]
-        assert "_postSpec(thresholds)" in body
+        assert "_postSpec(one)" in body
+        assert "_postSpec(thresholds)" not in body
+
+    def test_the_save_paths_are_pinned_under_jsdom(self):
+        """QA chipstatus-r2-05/-06: a failed save says NOT saved and reverts,
+        Apply posts only the edited bound, a success adopts the server's merged
+        answer, and opening the editor re-reads it. Drives
+        tests/thresh_save_selfcheck.cjs over the real shipped JS."""
+        import shutil
+        import subprocess
+
+        if shutil.which("node") is None:
+            pytest.skip("node not on PATH")
+        r = subprocess.run(
+            ["node", str(_ROOT / "tests" / "thresh_save_selfcheck.cjs")],
+            capture_output=True, text=True, encoding="utf-8", errors="replace",
+            cwd=str(_ROOT), timeout=120)
+        if r.returncode == 2 and "jsdom not installed" in (r.stderr or ""):
+            pytest.skip("jsdom not installed")
+        assert r.returncode == 0, (r.stdout + r.stderr)
+
+    def test_both_in_spec_tiles_follow_every_band_change(self):
+        """QA chipstatus-r2-07: Apply, reset-one, reset-all, a refused save and
+        another window's bands each re-score the Overview 'Qubits In Spec'
+        tile together with the Health tile. Drives
+        tests/thresh_tiles_agree_selfcheck.cjs over the real shipped JS."""
+        import shutil
+        import subprocess
+
+        if shutil.which("node") is None:
+            pytest.skip("node not on PATH")
+        r = subprocess.run(
+            ["node", str(_ROOT / "tests" / "thresh_tiles_agree_selfcheck.cjs")],
+            capture_output=True, text=True, encoding="utf-8", errors="replace",
+            cwd=str(_ROOT), timeout=120)
+        if r.returncode == 2 and "jsdom not installed" in (r.stderr or ""):
+            pytest.skip("jsdom not installed")
+        assert r.returncode == 0, (r.stdout + r.stderr)
 
     def test_the_old_key_is_read_exactly_once_to_migrate(self):
         js = self._js()
@@ -273,6 +442,14 @@ class TestTheNumbersSayWhoseTheyAre:
         js = self._js()
         assert "shared with everyone using this SM" in js
         assert "saved to this browser" not in js
+        # QA chipstatus-r2-08: the ⚙ Thresholds button's own tooltip lives in
+        # the template, which this pin never read -- so the stale wording
+        # survived docs/167 there.
+        tpl = (_ROOT / "quam_state_manager" / "web" / "templates" / "_wiring.html"
+               ).read_text(encoding="utf-8")
+        assert "saved to this browser" not in tpl
+        btn = tpl[tpl.index('onclick="toggleThresholdEditor()"'):]
+        assert "shared with everyone using this SM" in btn[:btn.index("</button>")]
 
 
 class TestThePageShipsIt:

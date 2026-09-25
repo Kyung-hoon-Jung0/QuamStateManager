@@ -48,6 +48,9 @@
         </span>
         {% if snapshots is defined %}
         <span class="muted topo-trends-count">{{ snapshots }} snapshot{{ '' if snapshots == 1 else 's' }}</span>
+        {# QA chipstatus-r2-15: the same count as the History (N) button; a
+           Trends refresh keeps the two in step #}
+        <span id="history-count" hx-swap-oob="true">{{ snapshots }}</span>
         {% endif %}
     </div>
 

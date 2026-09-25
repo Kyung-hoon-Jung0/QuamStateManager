@@ -236,7 +236,7 @@ function part5() {
           { gate: 'cz_flattop', metric: 'StandardRB', value: 0.951 },
           { gate: 'cz_gaussian_bipolar', metric: 'StandardRB', value: 0.902 },
         ],
-        detuning: 2.5e8, has_coupler: true, coupler_decouple_offset: 0.012 },
+        detuning: -0.16586175268952874, has_coupler: true, coupler_decouple_offset: 0.012 },
       { pair_id: 'q1-3', source: 'q1', target: 'q3', has_cz: true, cz_fidelity: null,
         gate_kind: 'cz', directed: false, active: null, best_gate: null },
     ],
@@ -325,6 +325,10 @@ function part5() {
     ok(pop && /q1-2/.test(pop.textContent), 'pair popup names the pair');
     ok(pop && /95\.10%/.test(pop.textContent), 'pair popup lists the per-gate RB fidelity');
     ok(pop && /detuning/.test(pop.textContent), 'pair popup lists the parameters section');
+    // QA F-24: the pair's detuning is a flux amplitude in volts (quam_builder
+    // FluxTunableTransmonPair); read as Hz it printed "-0.0 MHz"
+    ok(pop && /detuning\s*-0\.1659 V/.test(pop.textContent) && !/detuning\s*-?0\.0 MHz/.test(pop.textContent),
+      'pair popup shows the detuning in volts — ' + (pop && (pop.textContent.match(/detuning[^a-z]{0,20}/) || [''])[0]));
     heroPrefersTheGateNumber();
     overviewTilesStateBothErrorRates();
     anharmSubLine();

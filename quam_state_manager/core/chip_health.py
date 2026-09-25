@@ -122,7 +122,7 @@ METRIC_META: dict[str, dict[str, Any]] = {
     "f_12":        {"label": "f₁₂ transition",      "abbr": "f₁₂",  "direction": "neutral",
                     "blurb": "1→2 transition frequency; f₀₁−f₁₂ gives the anharmonicity."},
     "anharmonicity": {"label": "Anharmonicity",     "abbr": "anharm", "direction": "neutral",
-                    "blurb": "Spacing between the 0→1 and 1→2 transitions — keeps the qubit a two-level system. Typically negative."},
+                    "blurb": "Spacing between the 0→1 and 1→2 transitions — keeps the qubit a two-level system. Stored as a positive magnitude, f₀₁−f₁₂."},
     "chi":         {"label": "Dispersive shift χ",  "abbr": "χ",     "direction": "neutral",
                     "blurb": "Qubit-state-dependent shift of the readout resonator — sets readout contrast."},
     "readout_frequency": {"label": "Readout frequency", "abbr": "f_ro", "direction": "neutral",
@@ -172,10 +172,13 @@ METRIC_META: dict[str, dict[str, Any]] = {
     "gate_fidelity_x90": {"label": "1Q gate fidelity x90", "abbr": "GF x90", "direction": "higher",
                     "blurb": "Single-qubit fidelity for the π/2 (x90) gate. Higher is better."},
     # two-qubit (edge) metrics
-    "cz_fidelity": {"label": "CZ Bell fidelity",    "abbr": "CZ F",  "direction": "higher",
-                    "blurb": "Two-qubit CZ gate quality (best of the pair's candidate gates). Higher is better."},
+    # QA F-11 (docs/138's rename, reaching the label every surface reads): the
+    # number's SOURCE varies by chip -- Bell_State, interleaved RB or the CR
+    # channel -- so it is named for what it measures, never for one source.
+    "cz_fidelity": {"label": "2Q gate fidelity",    "abbr": "2Q F",  "direction": "higher",
+                    "blurb": "Two-qubit gate fidelity of the pair's best candidate gate — from Bell_State, interleaved RB (1 − EPG) or the CR channel, whichever the chip records. Higher is better."},
     "detuning":    {"label": "Detuning",            "abbr": "detuning", "direction": "neutral",
-                    "blurb": "Frequency detuning applied to the pair during the two-qubit gate."},
+                    "blurb": "Flux amplitude (V) that brings the pair's two qubits to the same energy for the two-qubit gate."},
     "coupler_decouple_offset": {"label": "Coupler decouple offset", "abbr": "decouple", "direction": "neutral",
                     "blurb": "Coupler bias that turns the qubit-qubit interaction off (idle)."},
     "mutual_flux_bias": {"label": "Mutual flux bias", "abbr": "flux bias", "direction": "neutral",

@@ -1,0 +1,16 @@
+{# QA chipstatus-r2-15: what a snapshot row with a ZERO diff summary says --
+   one macro for the Chip Status History drawer (_history_panel.html) and the
+   State History page (_state_history_body.html), so one row reads the same on
+   both. Only the chip's FIRST snapshot is a baseline (nothing earlier to diff
+   against); a run row's zeros may mean NOT COMPUTED (bulk backfill, docs/132);
+   any other zero is a real "nothing changed since the previous one". `first_ts`
+   is the oldest timestamp of the chip's WHOLE list, never of one page. #}
+{% macro zero_diff_label(s, first_ts, kind) -%}
+{%- if s.timestamp == first_ts -%}
+<span class="muted" title="The chip's first snapshot: nothing earlier to compare against">(baseline)</span>
+{%- elif kind == 'exp' -%}
+<span class="muted" title="No difference was recorded for this run's snapshot (backfilled runs are not diffed)">(no diff recorded)</span>
+{%- else -%}
+<span class="muted" title="Identical to the snapshot before it">(no changes)</span>
+{%- endif -%}
+{%- endmacro %}

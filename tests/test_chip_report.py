@@ -177,7 +177,9 @@ def _rich_chip(folder: Path) -> Path:
             "q1-q2": {
                 "id": "q1-q2",
                 "qubit_control": "#/qubits/q1", "qubit_target": "#/qubits/q2",
-                "detuning": 1.5e8,
+                # QA F-24: a pair's detuning is a flux amplitude in V (the
+                # rig chip's q1-2 value); it was pinned here as 1.5e8 Hz
+                "detuning": -0.16586175268952874,
                 "confusion": [[0.85, 0.05, 0.06, 0.04],
                               [0.07, 0.79, 0.08, 0.06],
                               [0.06, 0.09, 0.77, 0.08],
@@ -309,8 +311,9 @@ class TestEverythingExtractable:
 
     def test_the_pair_row_names_what_measured_its_fidelity(self, rich_client):
         b = rich_client.get("/chip-status/report").get_data(as_text=True)
-        assert "Best 2Q fidelity" in b and "Detuning (MHz)" in b
-        assert "150.00" in b                     # 1.5e8 Hz -> 150.00 MHz
+        assert "Best 2Q fidelity" in b and "Detuning (V)" in b
+        assert "Detuning (MHz)" not in b
+        assert "-0.1659" in b                    # volts, 4 decimals -- not "-0.00" MHz
         assert "Pair readout confusion (1)" in b
 
     def test_the_ports_each_channel_is_cabled_to_are_printed(self, rich_client):
@@ -333,9 +336,140 @@ class TestEverythingExtractable:
         assert "P(RO) (dBm)" in b
         assert "-20.0 dBm" in b                  # 0 dBm FSP, amplitude 0.1
 
+    def test_the_anharmonicity_caption_matches_the_stored_sign(self, rich_client):
+        """QA F-25: the caption defined alpha as f12 - f01 (and spelt f01 as
+        f10) over a column of POSITIVE anharmonicities. SM's convention
+        (docs/162, chip_health's f_12 blurb) is a positive magnitude,
+        f01 - f12; caption and the metric blurb now say the same."""
+        import html as _html
+        from quam_state_manager.core import chip_health
+        b = _html.unescape(rich_client.get("/chip-status/report").get_data(as_text=True))
+        i = b.index("Qubits — frequencies")
+        cap = b[i:b.index("</p>", i)]
+        assert "anharmonicity f₀₁−f₁₂" in cap, cap
+        assert "f₁₂−f₀₁" not in cap, cap
+        assert "f₁₀" not in cap, cap
+        blurb = chip_health.METRIC_META["anharmonicity"]["blurb"]
+        assert "negative" not in blurb and "f₀₁−f₁₂" in blurb, blurb
+
     def test_a_small_number_keeps_its_precision(self, rich_client):
         """The report must not invent a second number renderer: a %.4f pass
         rounded a 4.4588e-04 readout threshold to "0.0004"."""
         b = rich_client.get("/chip-status/report").get_data(as_text=True)
         assert "4.4588e-04" in b
         assert ">0.0004<" not in b
+
+
+def _inferred_if_chip(folder: Path) -> Path:
+    """The xy shape a modern quam_builder chip stores (the customer's 5Q chip):
+    the IF is quam's ``#./inferred_intermediate_frequency`` alias, a Python
+    property no JSON pointer resolves, and the LO is the MW port's upconverter.
+    """
+    def xy(qid, **kw):
+        d = {"opx_output": f"#/wiring/qubits/{qid}/xy/opx_output",
+             "LO_frequency": "#./upconverter_frequency"}
+        d.update(kw)
+        return d
+    folder.mkdir(parents=True, exist_ok=True)
+    (folder / "state.json").write_text(json.dumps({
+        "qubits": {
+            # RF literal, IF inferred, LO = port scalar  ->  195.43 MHz
+            "q1": {"id": "q1", "f_01": 4.9e9,
+                   "xy": xy("q1", RF_frequency=4895431254.26,
+                            intermediate_frequency="#./inferred_intermediate_frequency")},
+            # the port states no LO at all  ->  '-' (never the pointer)
+            "q2": {"id": "q2", "f_01": 4.9e9,
+                   "xy": xy("q2", RF_frequency=4.9e9,
+                            intermediate_frequency="#./inferred_intermediate_frequency")},
+            # dual-LO port: upconverters[upconverter].frequency  ->  -50.00 MHz
+            "q3": {"id": "q3", "f_01": 4.95e9,
+                   "xy": xy("q3", RF_frequency=4.95e9, upconverter=2,
+                            intermediate_frequency="#./inferred_intermediate_frequency")},
+            # the other direction: IF literal, RF inferred  ->  4.7500 GHz
+            "q4": {"id": "q4", "f_01": 4.75e9,
+                   "xy": xy("q4", intermediate_frequency=5.0e7,
+                            RF_frequency="#./inferred_RF_frequency")},
+        },
+        "qubit_pairs": {},
+        "active_qubit_names": ["q1", "q2", "q3", "q4"],
+        "ports": {"mw_outputs": {"con1": {"3": {
+            "1": {"port_id": 1, "upconverter_frequency": 4.7e9},
+            "2": {"port_id": 2},
+            "3": {"port_id": 3, "upconverter_frequency": None,
+                  "upconverters": {"1": {"frequency": 4.7e9},
+                                   "2": {"frequency": 5.0e9}}}}}}},
+    }), encoding="utf-8")
+    (folder / "wiring.json").write_text(json.dumps({
+        "network": {"host": "1.2.3.4"},
+        "wiring": {"qubits": {
+            "q1": {"xy": {"opx_output": "#/ports/mw_outputs/con1/3/1"}},
+            "q2": {"xy": {"opx_output": "#/ports/mw_outputs/con1/3/2"}},
+            "q3": {"xy": {"opx_output": "#/ports/mw_outputs/con1/3/3"}},
+            "q4": {"xy": {"opx_output": "#/ports/mw_outputs/con1/3/1"}}}},
+    }), encoding="utf-8")
+    return folder
+
+
+class TestXyFrequenciesAreNumbers:
+    """QA F-13: the frequencies table printed ``#./inferred_intermediate_frequency``
+    in a column headed MHz. quam's own arithmetic (``RF - LO``, LO from the MW
+    port's upconverter) is what the report prints now, or '-'."""
+
+    @pytest.fixture
+    def body(self, tmp_path):
+        _inferred_if_chip(tmp_path / "quam_state")
+        app = create_app(testing=True, instance_path=str(tmp_path / "_if"))
+        c = app.test_client()
+        c.post("/load", data={"folder": str(tmp_path / "quam_state")})
+        return c.get("/chip-status/report").get_data(as_text=True)
+
+    @staticmethod
+    def _freq_row(body, qid):
+        i = body.index("Qubits &mdash; frequencies")
+        j = body.index(f"<strong>{qid}</strong>", i)
+        return body[j:body.index("</tr>", j)]
+
+    @staticmethod
+    def _cells(row):
+        import re
+        return [re.sub(r"<[^>]+>", "", c).strip()
+                for c in re.findall(r"<td[^>]*>(.*?)</td>", row, flags=re.S)]
+
+    def test_no_inferred_alias_reaches_the_frequency_table(self, body):
+        i = body.index("<table", body.index("Qubits &mdash; frequencies"))
+        table = body[i:body.index("</table>", i)]
+        assert "#./inferred" not in table, table
+
+    def test_the_if_is_rf_minus_the_port_lo(self, body):
+        # 4 895 431 254.26 - 4.7e9 Hz
+        assert self._cells(self._freq_row(body, "q1"))[-2] == "195.43"
+
+    def test_an_unreadable_lo_prints_a_dash(self, body):
+        assert self._cells(self._freq_row(body, "q2"))[-2] == "-"
+
+    def test_the_dual_lo_port_uses_the_channel_upconverter(self, body):
+        assert self._cells(self._freq_row(body, "q3"))[-2] == "-50.00"
+
+    def test_an_inferred_rf_is_lo_plus_if(self, body):
+        cells = self._cells(self._freq_row(body, "q4"))
+        assert cells[-3] == "4.7500" and cells[-2] == "50.00", cells
+
+    def test_the_engine_still_carries_the_editable_pointer(self, tmp_path):
+        """The report reads a side map: the engine's qubit dict -- which the
+        inspector and the grids show as the pointer you would edit -- keeps
+        the alias, and the helper is what turns it into a number."""
+        from quam_state_manager.core import cr_semantics
+        from quam_state_manager.core.loader import QuamStore
+        from quam_state_manager.core.query import QueryEngine
+
+        folder = _inferred_if_chip(tmp_path / "quam_state")
+        state = json.loads((folder / "state.json").read_text(encoding="utf-8"))
+        wiring = json.loads((folder / "wiring.json").read_text(encoding="utf-8"))
+        store = QuamStore.from_dicts(state, wiring)
+        q1 = QueryEngine(store).get_qubit("q1")
+        assert q1["xy_intermediate_frequency"] == "#./inferred_intermediate_frequency"
+        rf, if_ = cr_semantics.channel_effective_rf_if(
+            store, store.merged["qubits"]["q1"]["xy"], ("qubits", "q1", "xy"))
+        assert rf == 4895431254.26
+        assert abs(if_ - 195431254.26) < 1e-3
+

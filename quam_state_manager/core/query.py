@@ -11,6 +11,7 @@ import ast
 import logging
 import operator
 import math
+from decimal import Decimal
 
 from typing import Any
 
@@ -1304,12 +1305,28 @@ def _valid_confusion_matrix(cm: Any) -> bool:
     return True
 
 
+def _exact_mean(xs: list) -> float:
+    """Mean of numbers in exact decimal, returned as the nearest float.
+
+    QA F-25: a binary-float mean derives two different doubles for two equal
+    decimal means -- (0.903+0.8665)/2 is 0.88475 but (0.9105+0.859)/2 is
+    0.8847499999999999 -- so the same readout fidelity printed 88.48 % on one
+    qubit and 88.47 % on the other. Summing the stored numbers' shortest
+    decimal spellings (the docs/76 value_delta rule) gives ONE double for one
+    decimal value. A non-finite input keeps plain float arithmetic (Decimal
+    raises on inf - inf where float gives nan)."""
+    vals = [float(x) for x in xs]
+    if all(math.isfinite(v) for v in vals):
+        return float(sum(Decimal(repr(v)) for v in vals) / len(vals))
+    return sum(vals) / len(vals)
+
+
 def _assignment_fidelity(confusion_matrix: Any) -> float | None:
     """Assignment fidelity (avg of the diagonal) of a validated confusion matrix."""
     if not _valid_confusion_matrix(confusion_matrix):
         return None
     try:
-        return (confusion_matrix[0][0] + confusion_matrix[1][1]) / 2
+        return _exact_mean([confusion_matrix[0][0], confusion_matrix[1][1]])
     except (IndexError, TypeError):
         return None
 
@@ -1335,7 +1352,7 @@ def _assignment_fidelity_n(confusion_matrix: Any, *,
         return None
     try:
         n = len(confusion_matrix)
-        return sum(confusion_matrix[i][i] for i in range(n)) / n
+        return _exact_mean([confusion_matrix[i][i] for i in range(n)])
     except (IndexError, TypeError, ZeroDivisionError):
         return None
 

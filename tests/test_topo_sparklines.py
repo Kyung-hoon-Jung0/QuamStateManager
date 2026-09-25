@@ -111,3 +111,62 @@ def test_no_context_returns_empty(tmp_path):
     resp = app.test_client().get("/api/topology/sparklines/qA1")
     assert resp.status_code == 200
     assert resp.get_data(as_text=True) == ""
+
+
+# ── QA chipstatus-r2-12: the arrow is the LAST CHANGE, not the last two points ──
+# compress="changes" keeps both edges of every step, so a series whose last
+# change was NOT at the newest snapshot ends [.., old, new, new] and
+# nums[-1] - nums[-2] read '–' on every qubit of a real chip.
+
+def _series_client(tmp_path: Path, t1s: list[float]):
+    folder = tmp_path / "chip"
+    _write(folder, t1s[0])
+    app = create_app(testing=True, instance_path=str(tmp_path / "_i"))
+    c = app.test_client()
+    c.post("/load", data={"folder": str(folder)})
+    for i, t1 in enumerate(t1s):
+        st = _state(t1)
+        st["qubits"]["qA1"]["f_01"] = 5.0e9 + 1000.0 * i   # every snapshot is new content
+        folder.joinpath("state.json").write_text(json.dumps(st), encoding="utf-8")
+        with app.test_request_context():
+            routes._history().check_and_snapshot(routes._active_path(), "manual")
+    return c
+
+
+def _t1_delta(body: str) -> tuple[str, str]:
+    m = re.search(r'<span class="topo-prop-label">T1</span>\s*<span class="topo-spark-delta[^"]*"'
+                  r' data-trend="(\w+)"[^>]*>\s*([^<]*?)\s*</span>', body)
+    assert m, body
+    return m.group(1), m.group(2)
+
+
+def test_delta_is_the_last_change_when_the_series_then_stays_flat(tmp_path):
+    c = _series_client(tmp_path, [2.0e-5, 3.0e-5, 3.0e-5])
+    trend, text = _t1_delta(c.get("/api/topology/sparklines/qA1").get_data(as_text=True))
+    assert trend == "up", (trend, text)
+    assert text == "▲+50.0%", text
+
+
+def test_delta_does_not_walk_past_the_last_change(tmp_path):
+    c = _series_client(tmp_path, [2.0e-5, 3.0e-5, 3.0e-5, 3.3e-5])
+    trend, text = _t1_delta(c.get("/api/topology/sparklines/qA1").get_data(as_text=True))
+    assert (trend, text) == ("up", "▲+10.0%"), (trend, text)
+
+
+def test_a_series_that_never_changed_stays_flat(tmp_path):
+    c = _series_client(tmp_path, [2.0e-5, 2.0e-5, 2.0e-5])
+    trend, text = _t1_delta(c.get("/api/topology/sparklines/qA1").get_data(as_text=True))
+    assert (trend, text) == ("flat", "–"), (trend, text)
+
+
+def test_delta_is_exact_when_the_sparkline_is_thinned(tmp_path):
+    # 58 zig-zag snapshots (> the popup's 40-point LTTB budget), the last step
+    # 20 -> 22 µs, then a flat tail. On this series LTTB drops the step's flat
+    # edge (20 µs) and keeps a 15 µs trough before it, so a walk over the
+    # thinned points alone would say +46.7%; the arrow must come from the
+    # undownsampled change points.
+    zig = [2.0e-5 + (5e-6 if i % 2 else -5e-6) for i in range(58)]
+    c = _series_client(tmp_path, zig + [2.0e-5, 2.2e-5, 2.2e-5, 2.2e-5])
+    body = c.get("/api/topology/sparklines/qA1").get_data(as_text=True)
+    trend, text = _t1_delta(body)
+    assert (trend, text) == ("up", "▲+10.0%"), (trend, text)

@@ -91,7 +91,7 @@
             <th class="sortable" data-col="4" data-type="str">Moving</th>
             <th class="sortable" data-col="5" data-type="num">CZ Flattop Amp</th>
             <th class="sortable" data-col="6" data-type="num">Bell Fidelity</th>
-            <th class="sortable" data-col="7" data-type="num">Detuning <span class="unit">(MHz)</span></th>
+            <th class="sortable" data-col="7" data-type="num">Detuning <span class="unit">(V)</span></th>
         </tr>
     </thead>
     <tbody>
@@ -124,7 +124,7 @@
             {% endif %}
             {% else %}-{% endif %}
         </td>
-        <td>{{ p.detuning | qty('detuning') }}</td>
+        <td>{{ p.detuning | qty('pair_detuning') }}</td>
     </tr>
     {% endif %}
     {% endfor %}

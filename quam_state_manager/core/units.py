@@ -119,6 +119,12 @@ _FIELD_FIXED: dict[str, tuple[str, str]] = {
     "coupler_decouple_offset": ("volt", "V"),
     "coupler_interaction_offset": ("volt", "V"),
     "mutual_flux_bias": ("volt", "V"),
+    # QA F-24: a qubit PAIR's `detuning` is a flux amplitude, not the Hz
+    # `detuning` above (pulses, ZZ drive, XY-detuned channel). quam_builder
+    # FluxTunableTransmonPair, verbatim: "detuning (Optional[float]): Flux
+    # amplitude required to bring the qubits to the same energy in V". Its own
+    # key, because the leaf name alone cannot tell the two apart.
+    "pair_detuning": ("volt", "V"),
     # docs/136: the QDAC-II channel's idle DC bias. Its own key rather than
     # borrowing `z_joint_offset`'s — they are volts for the same reason but
     # not the same field, and a later change to one must not silently move
@@ -188,6 +194,19 @@ def stored_unit_label(field: str) -> str:
     """SI base unit a *field* is stored in (for 'editing raw X' hints), or ''."""
     dimension, _ = _resolve_field(field)
     return _STORED_LABEL.get(dimension or "", "")
+
+
+def pair_field_key(field: str) -> str:
+    """The units key of a field stored DIRECTLY on a qubit pair
+    (``qubit_pairs.<pair>.<field>``).
+
+    QA F-24: the pair's own ``detuning`` is a flux amplitude in volts
+    (``pair_detuning`` above); by its leaf name alone it reads as the Hz
+    ``detuning`` of pulses / the ZZ drive / the XY-detuned channel. Every
+    pair-level surface that looks a unit up by key (the pair inspector,
+    ``qsm show <pair>``) goes through here, so one value cannot get two units.
+    """
+    return "pair_detuning" if field == "detuning" else field
 
 
 def group_digits(value: Any) -> str:

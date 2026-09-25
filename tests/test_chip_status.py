@@ -213,6 +213,36 @@ def test_unnormalized_confusion_matrix_yields_no_readout_fidelity():
     assert q._cm_diag([[98, 2], [5, 95]], 0) is None
 
 
+def _stochastic(diag):
+    """A row-stochastic matrix with the given diagonal (off-diagonals split)."""
+    n = len(diag)
+    return [[d if i == j else (1 - d) / (n - 1) for j in range(n)]
+            for i, d in enumerate(diag)]
+
+
+def test_equal_decimal_readout_fidelities_are_one_double():
+    """QA F-25: q2 [[0.903,..],[..,0.8665]] and q5 [[0.9105,..],[..,0.859]] on
+    the customer chip copy both average to 0.88475 in decimal, but the binary
+    float mean gave 0.88475 and 0.8847499999999999 -- the Overview printed
+    88.48 % and 88.47 %. Equal decimal means are ONE double, on the qubit dict
+    (GE and GEF alike) and on the Compare hub's own copy of the formula."""
+    from quam_state_manager.core import compare as C
+    from quam_state_manager.core import query as q
+    q2 = _stochastic([0.903, 0.8665])
+    q5 = _stochastic([0.9105, 0.859])
+    assert q._assignment_fidelity(q2) == q._assignment_fidelity(q5) == 0.88475
+    # a three-state mean that is not a finite decimal still lands on one double
+    g1 = _stochastic([0.862, 0.903, 0.906])
+    g2 = _stochastic([0.844, 0.8935, 0.9335])
+    assert q._assignment_fidelity_n(g1) == q._assignment_fidelity_n(g2)
+    # the Compare hub derives the same number the qubit dict does
+    store = QuamStore.from_dicts({"qubits": {
+        "q2": {"resonator": {"confusion_matrix": q2}},
+        "q5": {"resonator": {"confusion_matrix": q5}},
+    }}, {})
+    assert C._readout_fidelity(store, "q2") == C._readout_fidelity(store, "q5") == 0.88475
+
+
 class TestNoDataIsNotInSpec:
     """The chip announced "✓ Chip looks healthy — all 20 qubits in spec" over a
     chip with NO coherence or fidelity data at all.
@@ -272,3 +302,48 @@ class TestNoDataIsNotInSpec:
         i = css.index(".topo-verdict-banner.unknown")
         rule = css[i:i + 220]
         assert "success" not in rule
+
+
+def _run_selfcheck(name):
+    """Run one tests/<name> jsdom selfcheck over the shipped JS; skip without
+    node or jsdom, fail on a non-zero exit."""
+    import shutil
+    import subprocess
+
+    import pytest
+
+    if shutil.which("node") is None:
+        pytest.skip("node not on PATH")
+    root = Path(__file__).resolve().parent.parent
+    r = subprocess.run(
+        ["node", str(root / "tests" / name)],
+        capture_output=True, text=True, encoding="utf-8", errors="replace",
+        cwd=str(root), timeout=120,
+    )
+    if r.returncode == 2 and "jsdom not installed" in (r.stderr or ""):
+        pytest.skip("jsdom not installed")
+    assert r.returncode == 0, (r.stdout + r.stderr)
+
+
+def test_an_in_app_mutation_rerenders_chip_status():
+    """QA chipstatus-r2-01: an edit, a Ctrl+Z or a Take live must refresh the
+    page. A changed /api/topology re-renders #table-pane via GET /topology, an
+    unchanged one does nothing, and no global `topo` leaks."""
+    _run_selfcheck("chip_status_refresh_selfcheck.cjs")
+
+
+def test_a_refresh_keeps_the_readers_place():
+    """QA chipstatus-r2-01 (review): that re-render came up as a first visit --
+    lazily built sections collapsed, the absolute scrollTop clamped against the
+    shrunken pane, the tab reset to Topology. A programmatic re-render of
+    /topology now keeps the tab, rebuilds what the reader had built and puts the
+    section at the pane top back at its offset (again when Trends lands, unless
+    the reader moved); the sidebar link still lands on Topology."""
+    _run_selfcheck("chip_status_resume_selfcheck.cjs")
+
+
+def test_every_2q_overview_number_names_its_pulse():
+    """QA F-04: each pair tile takes its own per-pair best, so the hover names
+    the pulse behind every number, and Health says "Bell" only for a
+    Bell-state number."""
+    _run_selfcheck("chip_status_pulse_attr_selfcheck.cjs")
