@@ -52,7 +52,7 @@
   {#- ONE sentence with the time, never a guess at who wrote -#}
   <p class="sp-sentence">
     {%- if _archive -%}
-      This is run{% if _ai and _ai.run_label %} {{ _ai.run_label }}{% endif %}'s frozen quam_state, opened read-only &mdash; nothing here syncs to a live chip.
+      This is run{% if _ai and _ai.run_label %} {{ _ai.run_label }}{% endif %}'s frozen quam_state, opened read-only &mdash; nothing here syncs to a live chip.{% if not (_ai and _ai.return_path) %} Load a chip folder (State Load) to edit one.{% endif %}
     {%- elif read_error -%}
       {{ read_error }} Nothing is taken or written while it cannot be read{% if _nm %}; your {{ _nm }} unapplied edit{{ 's' if _nm != 1 }} {{ 'are' if _nm != 1 else 'is' }} safe{% endif %}. SM checks it again on every poll (a save in progress usually settles within seconds).
     {%- else -%}

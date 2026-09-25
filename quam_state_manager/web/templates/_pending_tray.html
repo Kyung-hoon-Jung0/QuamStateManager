@@ -44,6 +44,11 @@
 <button type="button" class="btn-sm outline tray-archive-back" hx-post="/load"
         hx-vals='{{ {"folder": _ai.return_path} | tojson }}' hx-target="#table-pane" hx-swap="innerHTML"
         title="Leave this read-only run archive and re-open {{ _ai.return_path }} — its working state and edits are as you left them">&larr; Back to {{ _ai.return_name }}</button>
+{% elif _archive %}
+{#- no chip was open before the archive, so there is no way BACK -- say the way
+    forward instead (QA F13; lost in the sync-ux redesign, restored) -#}
+<span class="muted tray-archive-hint"
+      title="A dataset run's frozen quam_state. Load a chip folder (State Load) to edit or apply.">load a chip folder to edit</span>
 {% endif %}
 {% endif %}
 {# docs/115's always-on "How this works" banner is GONE (customer,

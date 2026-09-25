@@ -200,7 +200,8 @@ class TestArchiveWayBack:
         # BOTH tray renderers (full page via _ctx, partial via _render_tray)
         c = self._open_archive(env)
         body = c.get(url).get_data(as_text=True)
-        assert "Archive (read-only) · run #1" in body
+        # sync-ux 2026-09-25: the one status control words it "Archive · read-only"
+        assert "Archive · read-only · run #1" in body
         assert 'class="btn-sm outline tray-archive-back" hx-post="/load"' in body
         vals = body.split('tray-archive-back" hx-post="/load"', 1)[1].split("hx-vals='", 1)[1].split("'", 1)[0]
         assert json.loads(vals) == {"folder": str(env["chip"].resolve())}
@@ -224,9 +225,9 @@ class TestArchiveWayBack:
     def test_review_modal_says_archive_not_live_chip(self, env):
         c = self._open_archive(env)
         body = c.get("/state/review").get_data(as_text=True)
-        assert "Run #1 archive (read-only)" in body
+        assert "Run #1 archive · read-only" in body
         assert "matches the live chip" not in body
-        assert "Live chip vs. working state" not in body
+        assert 'data-sync-state="archive"' in body
         assert "frozen quam_state" in body
         assert 'href="/dataset/' + env["uid_same"] + '"' in body     # back to the run
         assert "state-review-archive-back" in body                   # back to the chip
@@ -234,7 +235,7 @@ class TestArchiveWayBack:
     def test_no_chip_before_means_no_back_button_but_a_hint(self, env):
         c = self._open_archive(env, chip_first=False)
         body = c.get("/state/tray").get_data(as_text=True)
-        assert "Archive (read-only) · run #1" in body
+        assert "Archive · read-only · run #1" in body
         assert "tray-archive-back" not in body
         assert "load a chip folder to edit" in body
         review = c.get("/state/review").get_data(as_text=True)
@@ -245,8 +246,9 @@ class TestArchiveWayBack:
         c = env["client"]
         c.post("/load", data={"folder": str(env["chip"])})
         body = c.get("/state/review").get_data(as_text=True)
-        assert "Live chip vs. working state" in body
-        assert "the working state matches the live chip" in body
-        assert "archive" not in body.split("</h3>", 1)[0]
+        # sync-ux 2026-09-25: the panel titles the live chip by its verdict
+        assert 'data-sync-state="synced"' in body
+        assert "what you see matches the live chip" in body
+        assert "archive" not in body.split("</h3>", 1)[0].lower()
         tray = c.get("/state/tray").get_data(as_text=True)
         assert "tray-archive-back" not in tray and "tray-archive-hint" not in tray
