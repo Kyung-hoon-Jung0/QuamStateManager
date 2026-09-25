@@ -322,6 +322,34 @@ class TestIncompleteRunsHeal:
         assert store.runs[2].incomplete is False
         assert store.runs[2].description == "run 2"
 
+    def test_the_ordinary_rescan_heals_it_too_not_only_the_button(self, tmp_path):
+        """Same as above through ``rescan_if_stale`` -- the call every poll,
+        the Trends routes and the run-watch ingest make. Its outer gate
+        compares date-dir mtimes only; with an incomplete run on record it
+        must stay open, or the run is frozen half-parsed until another run
+        lands (seen on the KH rig: a run the run-watch tick caught mid-copy
+        never reached /trends/series)."""
+        root = tmp_path / "data"
+        w = RunWriter(root)
+        w.write(1, mode="complete")
+        w.write(2, mode="partial", hhmmss="020000")
+        store = DatasetStore(root)
+        assert store.runs[2].incomplete is True
+        date_dir = root / w.date
+        st = date_dir.stat()
+
+        w.finish(2, hhmmss="020000")
+        os.utime(date_dir, ns=(st.st_atime_ns, st.st_mtime_ns))  # pin it back
+        gen = store.generation
+        store.rescan_if_stale()
+        assert store.runs[2].incomplete is False
+        assert store.runs[2].description == "run 2"
+        assert store.generation > gen, "the healed run must move the generation"
+        # and once whole, the gate closes again: nothing left to bet on
+        assert not store._incomplete_paths
+        gen = store.generation
+        assert store.rescan_if_stale() is False and store.generation == gen
+
     def test_node_only_run_completes_later(self, tmp_path):
         root = tmp_path / "data"
         w = RunWriter(root)

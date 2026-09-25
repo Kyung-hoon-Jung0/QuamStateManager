@@ -1322,11 +1322,20 @@ class DatasetStore:
         the walk (docs/105 #4); a truncated scan leaves the gate open so the
         next call continues.
         """
-        if self._current_mtime() == self._last_mtime:
+        # A run parsed mid-write (``_incomplete_paths``) keeps the gate OPEN:
+        # its files are completed INSIDE the run folder, which moves no date
+        # dir's mtime, so a closed gate froze it "incomplete" -- out of every
+        # Trends view and the Datasets table -- until some unrelated run
+        # landed. Measured on the KH rig: a run copied while the run-watch
+        # tick rescanned stayed missing from /trends/series. The bet stays
+        # bounded by ``_retry_incomplete`` (an unchanging broken folder
+        # leaves ``_incomplete_paths``), so this cannot keep the gate open
+        # forever.
+        if not self._incomplete_paths and self._current_mtime() == self._last_mtime:
             return False
         with self._scan_lock:
             inner = self._current_mtime()
-            if inner == self._last_mtime:
+            if not self._incomplete_paths and inner == self._last_mtime:
                 return False
             old_max = max(self.runs.keys()) if self.runs else -1
             # docs/105 #8: hand the inside-lock sample to _scan as its scan
