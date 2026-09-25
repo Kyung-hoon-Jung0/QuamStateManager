@@ -1507,3 +1507,35 @@ class TestKeepMineIsJournaled:
         assert _live_off(env) == 0.08
         assert c.post("/undo").status_code == 200
         assert _live_off(env) == 0.33
+
+
+class TestADriftedStepSaysItOnce:
+    """QA SU-09: a Ctrl+Z whose journal value had moved since (an Auto-Sync
+    pull landed in between) toasted the drift twice ("had moved since; ...
+    — staged only: the value had moved since — ...", a 108-px toast), and its
+    Δ was measured from the JOURNAL's recorded value instead of the value on
+    screen, so the toast's percentage disagreed with the tray's."""
+
+    def _drifted_step(self, env):
+        c = env["client"]
+        _edit(c, 0.10); _apply(c)                  # journal: 0.08 -> 0.10
+        ctx = _ctx(env)
+        wc = ctx["working_copy"]
+        for folder in (wc.working_folder, env["live"]):   # a pull brings 0.20
+            (Path(folder) / "state.json").write_text(json.dumps(_state(off=0.20)), encoding="utf-8")
+        with env["app"].app_context():
+            routes_mod._rebuild_after_working_copy_replaced(ctx)
+        c.post("/state/sync", data={"mode": "pull"})
+        return _trig(c.post("/undo"))["cellsReverted"]
+
+    def test_the_drift_is_named_once(self, env):
+        t = self._drifted_step(env)
+        assert t["live"] is False
+        assert t["message"].count("moved since") == 1, t["message"]
+
+    def test_the_delta_is_from_the_value_on_screen(self, env):
+        from quam_state_manager.core import value_delta
+        t = self._drifted_step(env)
+        on_screen = value_delta.compute(0.20, 0.08)["pct_text"]      # -60%
+        journal = value_delta.compute(0.10, 0.08)["pct_text"]        # -20%
+        assert on_screen in t["message"] and journal not in t["message"], t["message"]

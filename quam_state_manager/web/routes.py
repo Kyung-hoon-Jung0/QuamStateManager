@@ -15740,15 +15740,25 @@ def _undo_journal_step(ctx, n_req: int = 1):
         message = f"{head}: {anchor['path']} removed"
     else:
         from quam_state_manager.core import value_delta as _vd
-        _d = _vd.compute(anchor.get("new"), anchor.get("old"))
+        # QA SU-09: the Δ is FROM the value that was on screen before this
+        # press (the modifier's own returned old_value -- docs/107 names it as
+        # the drift source) TO the restored one. The journal's recorded `new`
+        # is only that value when nothing moved; after an Auto-Sync pull it
+        # was not, and the toast's -41.6% disagreed with the tray's -54%.
+        _was = staged[-1].old_value if staged else anchor.get("new")
+        _d = _vd.compute(_was, anchor.get("old"))
         message = f"{head}: {anchor['path']} → {_fmt_msg_val(anchor.get('old'))}"
         if _d and _d["dir"] != "same":
             message += f" ({_d['text']}"
             message += f", {_d['pct_text']})" if _d["pct_text"] else ")"
-    if drift:
-        message += f" — {drift} value(s) had moved since; the tray now holds the journal value"
+    # QA SU-09: one clause about the drift, not two. With the live walk on,
+    # a drifted step always carries the flush note ("staged only: the value
+    # had moved since — review, then Apply"), which says the same thing and
+    # names the remedy; the count line stays for the walk-off wording.
     if not live and flush.get("note"):
         message += f" — {flush['note']}"
+    elif drift:
+        message += f" — {drift} value(s) had moved since; the tray now holds the journal value"
 
     resp = make_response(_tray_html())
     resp.headers["HX-Trigger"] = json.dumps({
