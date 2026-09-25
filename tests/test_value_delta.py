@@ -296,9 +296,11 @@ def test_js_mirror_matches_python_character_for_character():
 class TestSurfacesRenderTheDelta:
     """Each of these was an old→new pair with no difference shown (docs/76)."""
 
+    # sync-ux 2026-09-25: the tray is one status control now and shows no
+    # old/new pair; its Review list moved into the sync panel, which renders
+    # every Δ (both-sides, live-changed, unapplied, staged) through delta_pct.
     @pytest.mark.parametrize("template,importer", [
-        ("_pending_tray.html", "delta_chip"),        # Review / apply-to-live
-        ("_state_review.html", "delta_chip"),        # live-vs-working sync screen
+        ("_state_review.html", "delta_pct"),         # THE sync panel (was tray + review)
         ("_changes.html", "delta_cell"),
         ("_dataset_prev_diff.html", "delta_cell"),   # run vs previous run
         ("_dataset_compare.html", "delta_chip"),     # compare selected runs
@@ -308,7 +310,7 @@ class TestSurfacesRenderTheDelta:
     def test_template_uses_the_shared_macro(self, template, importer):
         src = (_TPL / template).read_text(encoding="utf-8")
         assert "_delta_macros.html" in src, f"{template} does not import the shared macro"
-        assert importer in src
+        assert importer + "(" in src.split("import", 1)[1].split("%}", 1)[1],             f"{template} imports {importer} but never calls it"
 
     def test_the_macro_file_is_the_only_delta_arithmetic(self):
         src = (_TPL / "_delta_macros.html").read_text(encoding="utf-8")
