@@ -116,4 +116,4 @@ symmetric (docs/86).
   control's attached action.
 - There is no "being written…" busy state on the control while a live
   write is in flight.
-- Live write latency is still 5–9 s.
+- Live write latency is not reduced yet. The finder's 5–9 s did not reproduce (its own live-file polling inflated it). Reproduced on the 20Q chip: push-only auto-apply 0.2–0.4 s; Apply to live now / Keep mine 1.7–2.9 s; Pull & apply 2.6–4 s, worst ~6 s (sync_from_live ~2.7 s + cache rebuild ~1.5 s + verdict ~0.9 s before the write). Only a busy state was added.
