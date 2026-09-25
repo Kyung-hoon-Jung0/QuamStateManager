@@ -5274,6 +5274,18 @@ window.ChipTrends = (function () {
     var _reloadSeq = 0;
     function _reload() {
         if (!window.htmx || !document.getElementById('topo-trends')) return;
+        if (htmx.trigger) htmx.trigger('#topo-trends', 'htmx:abort');
+        var host = document.getElementById('topo-trends');
+        var loading = host.querySelector('.topo-trends-loading');
+        if (!loading) {
+            loading = document.createElement('p');
+            loading.className = 'muted topo-trends-loading';
+            host.appendChild(loading);
+        }
+        loading.textContent = 'loading…';
+        host.querySelectorAll('p').forEach(function (p) {
+            if (p.textContent.trim() === 'Pick a metric above.') p.textContent = 'loading…';
+        });
         var mine = ++_reloadSeq;
         var q = _params();
         try { window.localStorage.setItem(_selKey(), q); } catch (e) { /* private window */ }
@@ -5317,6 +5329,11 @@ window.ChipTrends = (function () {
             b.setAttribute('aria-pressed', on ? 'true' : 'false');
         }
         _reload();
+    }
+    function enter(p) {
+        var box = document.getElementById('topo-trend-suggest');
+        var first = box && !box.hidden && box.querySelector('[data-path]');
+        setPath(first ? first.getAttribute('data-path') : p);
     }
     function setPath(p) {
         var el = document.getElementById('topo-trend-path');
@@ -5772,6 +5789,7 @@ window.ChipTrends = (function () {
                 }
             }
             var traces = c.series.map(function (s) {
+                var held = (s.held && Object.keys(s.held).length) ? s.held : null;
                 var tr = {
                     x: s.points.map(function (p) {
                         return axisType === 'date' ? _iso(p[0]) : p[0]; }),
@@ -5779,18 +5797,36 @@ window.ChipTrends = (function () {
                     // The snapshot id, carried per point so the hover can name
                     // the snapshot the value came from even on a date axis.
                     customdata: s.points.map(function (p) { return p[0]; }),
-                    mode: longest > 120 ? 'lines' : 'lines+markers',
+                    mode: (longest > 120 && !held) ? 'lines' : 'lines+markers',
                     type: dense ? 'scattergl' : 'scatter', name: s.entity,
                     connectgaps: false, marker: { size: 5 },
                     hovertemplate: '%{fullData.name}<br>%{x}<br>%{y}'
                                  + '<br><span style="font-size:.85em">%{customdata}</span>'
                                  + '<extra></extra>',
                 };
-                if (!snaps) return tr;      // no map => byte-identical to before
+                if (held) {
+                    // A HELD point is the last value carried to the newest
+                    // snapshot (docs/208): hollow, and on a dense line the
+                    // only marker drawn, so it never reads as a measurement.
+                    tr.marker = {
+                        size: s.points.map(function (p) {
+                            return held[p[0]] ? 7 : (longest > 120 ? 0 : 5); }),
+                        symbol: s.points.map(function (p) {
+                            return held[p[0]] ? 'circle-open' : 'circle'; }),
+                    };
+                }
+                if (!snaps && !held) return tr;      // no map => byte-identical to before
                 // [snapshot id, provenance line, click hint] — joined in
                 // BROWSER memory, so the wire still carries 2-tuples.
                 tr.customdata = s.points.map(function (p) {
-                    var info = snaps[String(p[0])];
+                    if (held && held[p[0]]) {
+                        // Not a measurement: no snapshot id (a click does
+                        // nothing), no run, and the time it was last SET.
+                        var since = _iso(held[p[0]]);
+                        return ['', 'unchanged since '
+                                + _esc(since ? String(since).replace('T', ' ') : held[p[0]]), ''];
+                    }
+                    var info = snaps && snaps[String(p[0])];
                     return [p[0], _provLine(info), _hintLine(info)];
                 });
                 tr.hovertemplate =
@@ -5873,7 +5909,7 @@ window.ChipTrends = (function () {
             if (grid) window.PlotHost.observe(grid);
         }
     }
-    return { toggle: toggle, togglePath: togglePath, setPath: setPath,
+    return { toggle: toggle, togglePath: togglePath, setPath: setPath, enter: enter,
              suggest: suggest, render: render, setCols: setCols, reload: _reload,
              storedQuery: storedQuery };
 })();

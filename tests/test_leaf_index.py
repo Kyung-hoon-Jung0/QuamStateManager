@@ -418,7 +418,13 @@ class TestThroughTheHistoryManager:
         conn.execute("DELETE FROM leaf_cp")
         conn.execute("DELETE FROM leaf_snaps")
         conn.close()
-        # Repair is LAZY — it happens when a reader actually needs tier 0.
+        # The first reader schedules repair; later readers see the commit.
+        hm._ensure_leaf_index_fresh(live)
+        with hm._leaf_rebuild_lock:
+            workers = list(hm._leaf_rebuild_threads.values())
+        for worker in workers:
+            worker.join(10)
+            assert not worker.is_alive()
         out = hm.field_history(live, "qubits.qA1.xy.operations.x180.amplitude")
         assert out["source"] == "leaf-index"
         assert hm.leaf_stats(live)["snapshots"] == 2      # healed on read
@@ -491,6 +497,13 @@ class TestFreshnessGate:
         hm._snapshot_list_cache.clear()   # what a real prune/capture does
         return d
 
+    def _wait(self, hm):
+        with hm._leaf_rebuild_lock:
+            workers = list(hm._leaf_rebuild_threads.values())
+        for worker in workers:
+            worker.join(10)
+            assert not worker.is_alive()
+
     def _count_rebuilds(self, hm, monkeypatch, *, passthrough=True):
         calls = {"n": 0}
         real = hm.rebuild_leaf_index
@@ -523,13 +536,16 @@ class TestFreshnessGate:
         # ...but this rebuild cannot absorb it (locked file, torn dir, ...).
         calls = self._count_rebuilds(hm, monkeypatch, passthrough=False)
         hm.leaf_changes(live)
+        self._wait(hm)
         assert calls["n"] == 1
         hm.leaf_changes(live)
+        self._wait(hm)
         hm.leaf_field_series(live, "qubits.qA1.T1")
         assert calls["n"] == 1, "a failed ingest must be memoized, never per-query"
         # The dir set changes (an ordinary capture) → ONE new attempt.
         self._capture(hm, live, 2e-5)
         hm.leaf_changes(live)
+        self._wait(hm)
         assert calls["n"] == 2
 
     def test_a_repaired_dir_reingests(self, hm, tmp_path):
@@ -537,11 +553,13 @@ class TestFreshnessGate:
         self._capture(hm, live, 1e-5)
         d = self._orphan(hm, live, "20990101_000000")   # meta-only: skipped
         hm.leaf_changes(live)
+        self._wait(hm)
         assert hm.leaf_stats(live)["snapshots"] == 1     # honest: not ingested
         # Repair: the state.json arrives (restored backup / retried copy).
         (d / "state.json").write_text(json.dumps(_chip(t1=7e-5)), encoding="utf-8")
         hm._snapshot_list_cache.clear()
         hm.leaf_changes(live)                # freshness sees an ingestible dir
+        self._wait(hm)
         assert hm.leaf_stats(live)["snapshots"] == 2
         rows = hm.leaf_field_series(live, "qubits.qA1.T1")
         assert rows and rows[-1][1] == 7e-5              # the repaired value
@@ -559,6 +577,8 @@ class TestFreshnessGate:
         conn.execute("DELETE FROM leaf_cp")
         conn.execute("DELETE FROM leaf_snaps")
         conn.close()
+        hm.leaf_field_series(live, "qubits.qA1.T1")
+        self._wait(hm)
         assert hm.leaf_field_series(live, "qubits.qA1.T1")
         assert calls["n"] == 1                           # healed in ONE rebuild
         assert hm.leaf_stats(live)["snapshots"] == 2

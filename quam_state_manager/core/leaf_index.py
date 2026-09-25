@@ -831,3 +831,11 @@ def path_families(conn: sqlite3.Connection, query: str = "", *,
            for r in rows]
     out.sort(key=lambda d: (-d["changes"], natural_key(d["label"])))
     return out[:int(limit)] if limit else out
+
+
+def matching_paths(conn: sqlite3.Connection, pattern: str) -> list[str]:
+    """Match whole path segments, including more than one wildcard."""
+    parts = pattern.split(".")
+    return [r[0] for r in conn.execute("SELECT path FROM leaf_paths ORDER BY path")
+            if len(r[0].split(".")) == len(parts)
+            and all(a == "*" or a == b for a, b in zip(parts, r[0].split(".")))]

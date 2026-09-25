@@ -157,8 +157,9 @@ class TestOneClickChartsEveryEntity:
         from quam_state_manager.web import routes as R
         src = Path(R.__file__).read_text(encoding="utf-8")
         i = src.index("def _trend_series_leaf")
-        body = src[i:i + 2200]
-        fanout = body[:body.index("# Not entity-scoped")]
+        # Bounded by the function's own marker, not a character count: the
+        # docs/208 wildcard fan-out made the body longer, not per-entity.
+        fanout = src[i:src.index("# Not entity-scoped", i)]
         assert "leaf_field_series_many" in fanout
         assert "hm.leaf_field_series(" not in fanout
 
@@ -281,6 +282,12 @@ class TestTheTypeaheadReadsAFreshIndex:
         hm = self._stale(client, folder, "interaction_offset")
         assert hm.leaf_families(folder, "interaction_offset") == [], \
             "setup: read as it is, the stale index knows nothing of it"
+        client.get("/topology/trends/paths?q=interaction_offset")
+        with hm._leaf_rebuild_lock:
+            workers = list(hm._leaf_rebuild_threads.values())
+        for worker in workers:
+            worker.join(10)
+            assert not worker.is_alive()
         rows = client.get("/topology/trends/paths?q=interaction_offset").get_json()
         assert [r["path"] for r in rows] == ["qubit_pairs.*.coupler.interaction_offset"], rows
         assert rows[0]["n"] == 3
@@ -1123,14 +1130,12 @@ class TestReviewRound3:
     # ⑦ One point per entity is not a trend.
 
     def test_an_all_single_point_family_renders_the_honest_slot(self, tmp_path):
-        """Measured through this route on a real 5-qubit chip:
-        `qubit_pairs.*.mutual_flux_bias.0` returns 4 series of exactly 1 point,
-        all four at the same snapshot and all at 0.0 — and Plotly auto-ranges x
-        to a ~2 ms window. An axis that implies a measurement over time is worse
-        than no axis."""
+        """Only a value first recorded at the newest snapshot gets the slot.
+        A held value with an earlier origin is covered by test_trends_irb.
+        """
         c = _hot_cold_chip(tmp_path, "onepoint",
                            {"macros.cz.phase_shift_target": 0.2},
-                           {"mutual_flux_bias.0": 0.3})
+                           {"mutual_flux_bias.0": 0.3}, steps=1)
         p = "qubit_pairs.*.mutual_flux_bias.0"
         body = c.get("/topology/trends?metrics=&paths=" + p).get_data(as_text=True)
         charts = _charts(body)
@@ -1164,7 +1169,7 @@ class TestReviewRound3:
         folder = tmp_path / "mixed"
         folder.mkdir(parents=True, exist_ok=True)
         state = {"qubits": {q: {"id": q, "f_01": 6.0e9} for q in QUBITS},
-                 "qubit_pairs": {p: {"id": p, "detuning": 0.1 + j * 1e-3}
+                 "qubit_pairs": {p: {"id": p}
                                  for j, p in enumerate(PAIRS)},
                  "active_qubit_names": list(QUBITS)}
         (folder / "state.json").write_text(json.dumps(state), encoding="utf-8")
@@ -1176,6 +1181,11 @@ class TestReviewRound3:
         c.post("/load", data={"folder": str(folder)})
         for step in range(3):
             d = json.loads((folder / "state.json").read_text(encoding="utf-8"))
+            # The other pairs first acquire the value at the newest snapshot,
+            # retaining the mixed one-point/multi-point guard with held values.
+            if step == 2:
+                for p in PAIRS[1:]:
+                    d["qubit_pairs"][p]["detuning"] = 0.1
             # ONLY the first pair moves
             d["qubit_pairs"][PAIRS[0]]["detuning"] = 0.1 + (step + 1) * 1e-4
             (folder / "state.json").write_text(json.dumps(d), encoding="utf-8")

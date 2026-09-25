@@ -1,0 +1,28 @@
+const {JSDOM} = require('jsdom');
+const fs = require('fs');
+const assert = require('assert');
+const dom = new JSDOM(`<div id="topo-trends"><p>Pick a metric above.</p><input id="topo-trend-path"><div id="topo-trend-suggest"><button data-path="qubit_pairs.*.macros.*.fidelity.InterleavedRB"></button></div><div class="topo-trends-grid"><div id="topo-trend-0"></div></div><script id="topo-trends-snaps" type="application/json">{"20260102_000000":{"run":99,"uid":"run:99"}}</script></div>`, {url:'http://localhost', runScripts:'outside-only'});
+const w = dom.window;
+let events = [], traces;
+w.htmx = {trigger: (target, event) => events.push(event), ajax: (method, url) => { events.push(url); return Promise.resolve(); }};
+w.fetch = () => new Promise(() => {});
+for (const name of ['app.js', 'topo-graph.js', 'chip-status.js']) w.eval(fs.readFileSync('quam_state_manager/web/static/' + name,'utf8'));
+w._plotlyRender = (host, data) => { traces = data; return Promise.resolve(); };
+w.ChipTrends.enter('interleaved');
+assert.equal(w.document.getElementById('topo-trend-path').value, 'qubit_pairs.*.macros.*.fidelity.InterleavedRB');
+assert.equal(events[0], 'htmx:abort');
+assert(events[1].startsWith('/topology/trends?'));
+w.ChipTrends.reload();
+assert.equal(events[2], 'htmx:abort');
+assert(events[3].startsWith('/topology/trends?'));
+assert(w.document.querySelector('.topo-trends-loading').textContent.includes('loading'));
+assert(!w.document.getElementById('topo-trends').textContent.includes('Pick a metric above.'));
+w.ChipTrends.render([{metric:'irb', series:[{entity:'q1-2 · cz_SNZ', points:[['20260101_000000',.99],['20260102_000000',.99]], held:{'20260102_000000':'20260101_000000'}}]}]);
+assert.equal(traces[0].marker.symbol[1], 'circle-open');
+assert.equal(traces[0].customdata[1][0], '');
+// In the page's chosen zone, like the axis (SnapTime), so only the shape is pinned.
+assert.match(traces[0].customdata[1][1], /^unchanged since 20[0-9][0-9]-[0-9][0-9]-[0-9][0-9] [0-9][0-9]:[0-9][0-9]:00$/);
+assert.equal(traces[0].marker.size[1], 7);
+assert(!JSON.stringify(traces[0].customdata[1]).includes('99'));
+console.log('12 client assertions passed');
+setTimeout(() => w.close(), 0);

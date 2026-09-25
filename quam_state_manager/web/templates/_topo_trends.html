@@ -43,7 +43,7 @@
                    placeholder="…or any parameter: x180 amplitude, interleaved, coupler offset…"
                    value="{{ extra }}" autocomplete="off"
                    oninput="ChipTrends.suggest(this.value)"
-                   onkeydown="if(event.key==='Enter'){ChipTrends.setPath(this.value);}">
+                   onkeydown="if(event.key==='Enter'){event.preventDefault();ChipTrends.enter(this.value);}">
             <div class="topo-trend-suggest" id="topo-trend-suggest" hidden></div>
         </span>
         {% if snapshots is defined %}
@@ -86,6 +86,10 @@
     <p class="muted topo-trend-trim">{{ trim_note }}</p>
     {% endif %}
 
+    {% if index_updating %}
+    <p class="muted" hx-get="{{ refresh_url }}" hx-trigger="load delay:3s"
+       hx-target="#topo-trends" hx-swap="outerHTML" hx-sync="#topo-trends:replace">History index updating ({{ snapshots }} snapshots)…</p>
+    {% endif %}
     {% if not charts %}
     <p class="muted">Pick a metric above.</p>
     {% endif %}
