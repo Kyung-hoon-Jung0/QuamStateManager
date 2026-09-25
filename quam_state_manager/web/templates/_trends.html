@@ -45,4 +45,12 @@
 <div id="trends-content">
     <p class="muted section-placeholder">Select an experiment type to view trends.</p>
 </div>
+<script>
+    /* This page exists to draw charts: load the (lazy) chart library while
+       the user is still choosing, so the first chart after a pick does not
+       wait for it (design ram_design.md §2b, P3). */
+    (window.requestIdleCallback || function (f) { return setTimeout(f, 300); })(function () {
+        if (window.requirePlotly) window.requirePlotly().catch(function () {});
+    });
+</script>
 {% endif %}

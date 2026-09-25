@@ -254,6 +254,29 @@ def _compact_row(run: "RunInfo") -> dict:
     }
 
 
+def trend_point(v: Any) -> "tuple[bool, Any]":
+    """``(counts, value)`` for one fit-result entry on a Datasets trend.
+
+    The ONE rule for every Datasets trend surface (``build_trend_data``,
+    ``DatasetStore.get_trend_data`` and ``core/trend_index``):
+
+    * ``counts`` -- the entry makes its (qubit, metric) a series. This is the
+      historical ``isinstance(v, (int, float))`` test, kept exactly: a bool
+      flag (``pi_amp_reachable``, ``t2_in_range``...) has always been charted
+      (as a true/false axis), and a metric whose fit failed in every run has
+      always had its (empty) chart. Dropping either would hide a recorded
+      metric -- 22 of 75 charts on the real power_rabi archive.
+    * ``value`` -- what is plotted: the entry itself, except a non-finite
+      float becomes ``None``. JSON has no NaN; Plotly drew NaN as a gap, and
+      it draws ``null`` as the same gap.
+    """
+    if not isinstance(v, (int, float)):
+        return False, None
+    if isinstance(v, float) and not math.isfinite(v):
+        return True, None
+    return True, v
+
+
 def build_trend_data(runs, qubit=None, metrics=None, folder_key_of=None) -> dict:
     """Build a trend payload from an explicit, already-sorted list of RunInfo.
 
@@ -287,11 +310,13 @@ def build_trend_data(runs, qubit=None, metrics=None, folder_key_of=None) -> dict
     for q in target_qubits:
         for m in target_metrics:
             values = []
+            counted = False
             for r in matching:
                 qvals = r.fit_results.get(q, {})
-                val = qvals.get(m) if isinstance(qvals, dict) else None
-                values.append(val if isinstance(val, (int, float)) else None)
-            if any(v is not None for v in values):
+                c, val = trend_point(qvals.get(m) if isinstance(qvals, dict) else None)
+                counted = counted or c
+                values.append(val)
+            if counted:
                 series.append({"qubit": q, "metric": m, "values": values})
 
     fig_keys: list[str] = []
@@ -1810,15 +1835,13 @@ class DatasetStore:
         for q in target_qubits:
             for m in target_metrics:
                 values = []
+                counted = False
                 for r in matching:
                     qvals = r.fit_results.get(q, {})
-                    val = qvals.get(m) if isinstance(qvals, dict) else None
-                    # Only include numeric values
-                    if isinstance(val, (int, float)):
-                        values.append(val)
-                    else:
-                        values.append(None)
-                if any(v is not None for v in values):
+                    c, val = trend_point(qvals.get(m) if isinstance(qvals, dict) else None)
+                    counted = counted or c
+                    values.append(val)
+                if counted:
                     series.append({"qubit": q, "metric": m, "values": values})
 
         fig_keys: list[str] = []

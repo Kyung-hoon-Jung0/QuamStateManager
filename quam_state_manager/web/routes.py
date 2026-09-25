@@ -79,6 +79,7 @@ from quam_state_manager.core import (
 from quam_state_manager.core import compare as compare_engine
 from quam_state_manager.core import qdac as qdac_mod
 from quam_state_manager.core import ramcache as _ramcache
+from quam_state_manager.core import trend_index as _trend_index
 from quam_state_manager.core.dataset import DatasetStore
 from quam_state_manager.core.differ import Differ
 from quam_state_manager.core.experiment_data import ExperimentContext, load_experiment_context
@@ -26882,19 +26883,91 @@ def trends():
                            no_workspace=False)
 
 
+# ---------------------------------------------------------------------------
+# Datasets > Trends -- served from RAM (design ram_design.md §2b, P3)
+# ---------------------------------------------------------------------------
+#
+# /trends/data is a light SHELL: chart slots are built client-side from
+# /trends/series (gzipped JSON out of core/trend_index), the figure strip is a
+# collapsed "Figure timeline" built on open, and Parameter Differences is
+# fetched after the charts from /trends/param-diff (differing rows over the
+# newest 20 runs, exact counts, "show all" on request). The old fragment
+# shipped all of it as DOM -- 31,504 nodes for 16_iq_blobs -- which is what
+# froze the page.
+
+#: whether the selected folders are one chip -- a fingerprint read of a run's
+#: 1.5 MB state.json per folder, asked by all three Trends requests. Keyed on
+#: each store's identity + generation (a run set change can change the answer;
+#: a run's state.json is write-once).
+_TRENDS_SAME_CHIP = _ramcache.KeyedMemo("trends.same_chip", max_entries=64)
+
+
+def _trends_selection() -> list[dict[str, Any]] | None:
+    """The folders a Trends request is about, WITHOUT a candidate-folder
+    validation walk or a rescan (the page that rendered the picker already
+    did both; /trends/series rescans the selected stores itself). Same
+    selection rule as always: the ``folders=`` keys among the active folders,
+    else the first active folder. ``None`` -> no dataset loaded."""
+    active = [f for f in _active_dataset_stores(fast=True, rescan=False)
+              if f["store"].run_count > 0]
+    if not active:
+        return None
+    sel_keys = [k for k in request.args.get("folders", "").split(",") if k.strip()]
+    sel = [f for f in active if f["key"] in sel_keys] if sel_keys else []
+    return sel or [active[0]]
+
+
+def _trends_same_chip(sel: list[dict[str, Any]]) -> str:
+    """``_folders_same_chip`` for Trends, memoized: the answer is a function
+    of WHICH stores (``chip_stores``) and their run sets (``chip_gens``);
+    the folder keys play no part in it."""
+    return _TRENDS_SAME_CHIP.get(
+        _trend_index._key(chip_stores=tuple(f["store"].instance_seq for f in sel)),
+        _trend_index._key(chip_gens=tuple(f["store"].generation for f in sel)),
+        lambda: _folders_same_chip(sel),
+        forbid_held=[f["store"]._scan_lock for f in sel])
+
+
+def _trends_query(sel: list[dict[str, Any]], experiment: str, qubit: str | None,
+                  **more: str) -> str:
+    q = {"experiment": experiment}
+    if qubit:
+        q["qubit"] = qubit
+    q["folders"] = ",".join(f["key"] for f in sel)
+    q.update(more)
+    return urlencode(q)
+
+
+def _trends_rescan(sel: list[dict[str, Any]]) -> None:
+    """The data endpoints see every run on disk right now: the staleness gate
+    (one stat per date dir) and, when it opened, the bounded incremental walk
+    -- the same freshness contract /trends/data always had."""
+    deadline = time.monotonic() + _RENDER_SCAN_BUDGET_S
+    for f in sel:
+        try:
+            f["store"].rescan_if_stale(deadline=deadline)
+        except Exception:
+            logger.exception("rescan_if_stale failed for %s", f["path"])
+
+
+def _trends_forbidden_locks() -> list[Any]:
+    """Locks a Trends memo lookup must not be made under (design §1.3)."""
+    st = _store()
+    return [getattr(st, "_lock", None)] if st is not None else []
+
+
 @bp.route("/trends/data")
 def trends_data():
-    """HTMX fragment: trend charts + figure strip for an experiment.
+    """HTMX fragment: the Trends SHELL for an experiment (see above).
 
-    ``folders=<key,key>`` scopes the trend. Single folder → ordered by run_id.
-    Multiple folders are only combined when they're the SAME chip (a cross-chip
-    trend is physically meaningless); same-chip merges order by run timestamp so
-    colliding run_ids across folders interleave correctly. Different chips →
-    a warning fragment offering to fall back to one folder.
+    ``folders=<key,key>`` scopes the trend. Single folder -> ordered by
+    run_id. Multiple folders are only combined when they're the SAME chip (a
+    cross-chip trend is physically meaningless); same-chip merges order by
+    run timestamp so colliding run_ids across folders interleave correctly.
+    Different chips -> a warning fragment offering to fall back to one folder.
     """
-    from quam_state_manager.core.dataset import build_trend_data
-    active = _active_dataset_stores()
-    if not active:
+    sel = _trends_selection()
+    if sel is None:
         return render_template("_status.html",
                                message="No dataset loaded", level="warning")
     experiment = request.args.get("experiment", "")
@@ -26902,55 +26975,102 @@ def trends_data():
     if not experiment:
         return render_template("_status.html",
                                message="Select an experiment type", level="info")
-
-    sel_keys = [k for k in request.args.get("folders", "").split(",") if k.strip()]
-    sel = [f for f in active if f["key"] in sel_keys] if sel_keys else []
-    if not sel:
-        sel = [active[0]]   # default: a single (first active) folder
-
-    # Cross-chip trends are meaningless — only merge folders that share a chip.
-    if len(sel) > 1 and _folders_same_chip(sel) != "same":
+    if len(sel) > 1 and _trends_same_chip(sel) != "same":
         return render_template("_trends_chip_warning.html",
                                folders=sel, experiment=experiment, qubit=qubit or "")
+    return render_template(
+        "_trends_data.html", experiment=experiment, qubit=qubit,
+        series_url="/trends/series?" + _trends_query(sel, experiment, qubit),
+        params_url="/trends/param-diff?" + _trends_query(sel, experiment, qubit),
+        param_window=_trend_index.PARAM_WINDOW)
 
-    key_of: dict[int, str] = {}
-    matching: list = []
-    for f in sel:
-        for run in f["store"].runs_snapshot():
-            if run.experiment_name == experiment and (qubit is None or qubit in run.qubits):
-                key_of[id(run)] = f["key"]
-                matching.append(run)
-    # Single folder → run_id order (chronological within a folder); same-chip
-    # merge → run-timestamp order, since run_ids may collide across folders.
-    if len(sel) > 1:
-        matching.sort(key=lambda r: ((r.date or ""), (r.time or ""), r.run_id))
+
+def _trends_data_request():
+    """Shared front half of /trends/series and /trends/param-diff:
+    ``(sel, experiment, qubit, (message, status) | None)``."""
+    sel = _trends_selection()
+    if sel is None:
+        return None, "", None, ("No dataset loaded", 404)
+    experiment = request.args.get("experiment", "")
+    qubit = request.args.get("qubit") or None
+    if not experiment:
+        return None, "", None, ("Select an experiment type", 400)
+    if len(sel) > 1 and _trends_same_chip(sel) != "same":
+        return None, "", None, ("The selected folders are different chips; "
+                                "a combined trend is meaningless.", 409)
+    _trends_rescan(sel)
+    return sel, experiment, qubit, None
+
+
+@bp.route("/trends/series")
+def trends_series():
+    """JSON for the Trends charts, straight from the RAM index (design §2b):
+    ``{v, runs: [[run_id, t_ms|null, uid]], series: [{q, m, v}], undated, ...}``,
+    gzipped when the client accepts it. ``v`` is also the ETag, so a repeat
+    open revalidates to a 304. ``{"warming": true}`` (202) means a concurrent
+    request is still computing this exact answer -- the client asks again;
+    an older answer is never served in its place."""
+    sel, experiment, qubit, err = _trends_data_request()
+    if err is not None:
+        return jsonify({"error": err[0]}), err[1]
+    selection = [(f["key"], f["store"]) for f in sel]
+    pre_v = _trend_index.data_version(selection, experiment, qubit)
+    if request.headers.get("If-None-Match", "").strip() == f'"{pre_v}"':
+        resp = make_response("", 304)
+        resp.headers["ETag"] = f'"{pre_v}"'
+        resp.headers["Cache-Control"] = "no-cache"
+        return resp
+    try:
+        blob = _trend_index.series_blob(selection, experiment, qubit,
+                                        forbid_held=_trends_forbidden_locks())
+    except _ramcache.Warming:
+        return jsonify({"warming": True}), 202
+    if "gzip" in request.headers.get("Accept-Encoding", ""):
+        resp = make_response(blob.gz)
+        resp.headers["Content-Encoding"] = "gzip"
     else:
-        matching.sort(key=lambda r: r.run_id)
+        resp = make_response(blob.json_bytes())
+    resp.headers["Content-Type"] = "application/json"
+    resp.headers["Vary"] = "Accept-Encoding"
+    resp.headers["ETag"] = f'"{blob.v}"'
+    resp.headers["Cache-Control"] = "no-cache"
+    return resp
 
-    trend = build_trend_data(matching, qubit=qubit, folder_key_of=lambda r: key_of[id(r)])
 
-    # Parameter diffs across matching runs.
-    param_diff_rows: list[dict] = []
-    trend_labels: list[str] = []
-    if len(matching) >= 2:
-        contexts = []
-        for run in matching:
-            ctx = ExperimentContext(
-                parameters=run.parameters or {},
-                fit_results=run.fit_results or {},
-                outcomes=run.outcomes or {},
-                experiment_name=run.experiment_name,
-                has_data=True,
-            )
-            contexts.append(ctx)
-            trend_labels.append(f"#{run.run_id}")
-        param_diff_rows = Differ.compare_parameters(contexts, trend_labels)
+@bp.route("/trends/param-diff")
+def trends_param_diff():
+    """HTMX fragment: Parameter Differences for the Trends view -- only the
+    rows that differ across the newest ``PARAM_WINDOW`` runs (``window=all``
+    for every run), with exact counts of the runs and identical rows not
+    shown. Stamped with the same ``v`` as /trends/series, so the view can
+    tell when a run landed between the two requests."""
+    sel, experiment, qubit, err = _trends_data_request()
+    if err is not None:
+        return render_template("_status.html", message=err[0], level="warning")
+    selection = [(f["key"], f["store"]) for f in sel]
+    window = "all" if request.args.get("window") == "all" else str(_trend_index.PARAM_WINDOW)
 
-    return render_template("_trends_data.html",
-                           trend=trend, experiment=experiment,
-                           qubit=qubit,
-                           param_diff_rows=param_diff_rows,
-                           labels=trend_labels)
+    def render(data: dict) -> str:
+        return render_template(
+            "_trends_param_diff.html", d=data,
+            all_url="/trends/param-diff?" + _trends_query(sel, experiment, qubit, window="all"),
+            recent_url="/trends/param-diff?" + _trends_query(sel, experiment, qubit))
+
+    try:
+        blob = _trend_index.params_blob(selection, experiment, qubit, window, render,
+                                        forbid_held=_trends_forbidden_locks())
+    except _ramcache.Warming:
+        return render_template("_status.html", level="info",
+                               message="Preparing parameter differences... pick again in a moment.")
+    body = blob.html.encode("utf-8")
+    if "gzip" in request.headers.get("Accept-Encoding", "") and len(body) > 16384:
+        resp = make_response(gzip.compress(body, compresslevel=5))
+        resp.headers["Content-Encoding"] = "gzip"
+    else:
+        resp = make_response(body)
+    resp.headers["Content-Type"] = "text/html; charset=utf-8"
+    resp.headers["Vary"] = "Accept-Encoding"
+    return resp
 
 
 @bp.route("/debug/ram")

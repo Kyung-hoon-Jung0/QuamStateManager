@@ -1,223 +1,40 @@
-{% set trend_data = trend | tojson %}
-{% set num_runs = trend.runs | length %}
+{# Datasets > Trends -- the SHELL (design ram_design.md §2b, P3).
+   Everything heavy arrives as data: the charts from {{ series_url }} (gzipped
+   JSON out of the RAM trend index), the figure strip built client-side only
+   when "Figure timeline" is opened, and Parameter Differences fetched after
+   the first chart. window.DatasetTrends (static/app.js) does the drawing.
+   Before any <details> is opened this fragment stays a few hundred nodes;
+   the old one was 31,504 for 16_iq_blobs. #}
+<div class="trends-view" id="trends-view"
+     data-series-url="{{ series_url }}"
+     data-params-url="{{ params_url }}"
+     data-experiment="{{ experiment }}"
+     data-qubit="{{ qubit or '' }}">
 
-{% if num_runs == 0 %}
-<p class="muted section-placeholder">No runs found for this experiment.</p>
-{% else %}
+    <p class="trends-stale-note" data-role="stale" hidden>
+        New runs arrived while this view was loading.
+        <button type="button" class="btn-small outline" data-role="reload">Reload trends</button>
+    </p>
 
-{# ── Metric Trend Charts ── #}
-{% if trend.series %}
-<div class="trends-section">
-    <h3>Metric Trends <small class="muted">({{ num_runs }} runs)</small></h3>
-    {% for s in trend.series %}
-    <div class="trend-chart-box">
-        <div class="trend-chart-label"><code>{{ s.qubit }}</code> &mdash; {{ s.metric }}</div>
-        <div id="trend-chart-{{ loop.index0 }}" class="trend-mini-chart"></div>
-    </div>
-    {% endfor %}
-</div>
-{% else %}
-<p class="muted section-placeholder">No numeric fit-result metrics found.</p>
-{% endif %}
-
-{# ── Figure Timeline ── #}
-{% if trend.figure_keys %}
-<div class="trends-section">
-    <h3>Figure Timeline</h3>
-    {% for fig_key in trend.figure_keys %}
-    <details class="trend-figure-strip-section">
-        <summary><code>{{ fig_key }}</code> <small class="muted">({{ num_runs }} runs)</small></summary>
-        <div class="figure-strip">
-            {% for run in trend.runs %}
-            <div class="figure-strip-item">
-                <div class="figure-strip-label">#{{ run.run_id }}</div>
-                <img src="/dataset/{{ run.uid }}/fig/{{ fig_key }}"
-                     alt="{{ fig_key }}" loading="lazy"
-                     onclick="toggleFigureZoom(this)">
-            </div>
-            {% endfor %}
+    {# ── Metric Trends: one chart slot per series, built from the JSON ── #}
+    <div class="trends-section trends-metrics" data-role="metrics">
+        <h3>Metric Trends <small class="muted" data-role="count">(loading…)</small></h3>
+        <p class="muted trends-notes" data-role="notes" hidden></p>
+        <div class="trends-charts" data-role="charts">
+            <p class="muted section-placeholder" data-role="loading">Loading trends…</p>
         </div>
-    </details>
-    {% endfor %}
-</div>
-{% endif %}
-
-{# ── Parameter Differences ── #}
-{% if param_diff_rows %}
-<div class="trends-section">
-    <h3>Parameter Differences</h3>
-    <div class="table-scroll">
-    <table class="data-table" role="grid">
-        <thead><tr>
-            <th>Parameter</th>
-            {% for label in labels %}
-            <th title="{{ label }}">{{ label | truncate(14) }}</th>
-            {% endfor %}
-        </tr></thead>
-        <tbody>
-        {% for row in param_diff_rows %}
-        <tr>
-            <td><code>{{ row.key }}</code></td>
-            {% set ref_val = row["values"][0].value %}
-            {% for v in row["values"] %}
-            {% set is_diff = (loop.index0 != 0) and (v.value != ref_val) %}
-            <td{% if is_diff %} class="cell-diff"{% endif %}>
-                {% if v.value is none %}<span class="muted">-</span>
-                {% elif v.value is number %}{{ "%.4g" | format(v.value) }}
-                {% elif v.value is iterable and v.value is not string %}<small class="muted">[{{ v.value | length }} items]</small>
-                {% else %}{{ v.value }}{% endif %}
-            </td>
-            {% endfor %}
-        </tr>
-        {% endfor %}
-        </tbody>
-    </table>
     </div>
+
+    {# ── Figure Timeline: collapsed; built on open, newest 50 per figure ── #}
+    <details class="trends-section trends-figtl" data-role="figtl" hidden>
+        <summary><strong>Figure timeline</strong> <small class="muted" data-role="figtl-count"></small></summary>
+        <div class="trends-figtl-body" data-role="figtl-body"></div>
+    </details>
+    <template data-role="fig-item"><div class="figure-strip-item"><div class="figure-strip-label"></div><img alt="" loading="lazy" onclick="toggleFigureZoom(this)"></div></template>
+
+    {# ── Parameter Differences: fetched after the charts ── #}
+    <div class="trends-section trends-params" data-role="params" hidden></div>
 </div>
-{% endif %}
-
-{# ── Plotly chart rendering script ── #}
 <script>
-(function() {
-    var trend = {{ trend_data }};
-    var runs = trend.runs;
-    var xLabels = runs.map(function(r) { return '#' + r.run_id; });
-
-    /* docs/125 round 3 (docs/123 §7's last leftover): a real 20-qubit
-       power_rabi produces 220 series here, and the old eager loop rendered
-       every one before the page settled — which is also why no container
-       observer could be afforded. Charts now render LAZILY through the app's
-       own IntersectionObserver idiom (the Interactive tiles'): the first
-       screenful immediately, the rest as they scroll into view (IO computes
-       visibility through the #table-pane clip, so a nested scroller is
-       fine). That bound is what makes container-resize affordable too:
-       PlotHost.resizeWithin finds charts STRUCTURALLY, so it touches only
-       the ones that exist. */
-    var EAGER = 12;
-    /* QA F6: the boxes are captured NOW, not looked up at render time: the
-       next fragment reuses the same trend-chart-N ids, so a render still
-       queued from this one would draw old data into the new page (and its
-       _trendRendered flag would then block the right chart). */
-    var boxes = trend.series.map(function (_, i) { return document.getElementById('trend-chart-' + i); });
-    function renderOne(idx) {
-        var s = trend.series[idx];
-        var el = boxes[idx];
-        if (!el || el._trendRendered || !s) return;
-        el._trendRendered = true;
-
-        var trace = {
-            x: xLabels,
-            y: s.values,
-            mode: 'lines+markers',
-            name: s.qubit + ' / ' + s.metric,
-            connectgaps: false,
-            marker: { size: 6 },
-            line: { width: 2 },
-            // QA F19: each point carries its run's uid (build_trend_data
-            // stamps trend.runs[i].uid, same order as s.values).
-            customdata: runs.map(function (r) { return r.uid || null; })
-        };
-
-        // Statistics layer (moving average + ±σ band) beneath the data —
-        // "read like a statistics figure" (customer request). Skips short
-        // series (n < 5 finite points) automatically.
-        var color = UI_CONFIG.plotly.colorway[idx % UI_CONFIG.plotly.colorway.length];
-        var statTraces = window.trendStatTraces
-            ? window.trendStatTraces(xLabels, s.values, { color: color })
-            : [];
-
-        var mini = UI_CONFIG.plotly.trendsMini;
-        var layout = {
-            margin: mini.margin,
-            xaxis: { title: '', tickangle: mini.xTickAngle, tickfont: mini.xTickFont },
-            yaxis: { title: s.metric, tickfont: mini.yTickFont },
-            height: mini.height,
-            colorway: UI_CONFIG.plotly.colorway,
-            showlegend: false,
-            hovermode: 'x unified'
-        };
-
-        return Promise.resolve(_plotlyRender(el, statTraces.concat([trace]), layout,
-                                             { responsive: true, displayModeBar: false }))
-            .then(function () { _bindRunClicks(el); });
-    }
-
-    /* QA F19: a point opens its run in the INSPECTOR, as the Chip Status and
-       Param History trends do (docs/204 -- never #table-pane, which would
-       replace these Trends). With 'x unified' the click's points include the
-       statistics traces (no uid), so the first point that CARRIES a uid wins,
-       not points[0]. Bound after the render: el.on exists only once Plotly
-       drew (and _plotlyRender resolves null when Plotly failed to load). */
-    function _uidOf(evt) {
-        var pts = (evt && evt.points) || [];
-        for (var i = 0; i < pts.length; i++) {
-            var cd = pts[i] && pts[i].customdata;
-            if (typeof cd === 'string' && cd) return cd;
-        }
-        return null;
-    }
-    function _bindRunClicks(el) {
-        if (!el || typeof el.on !== 'function') return;
-        el.on('plotly_click', function (evt) {
-            try {
-                var uid = _uidOf(evt);
-                if (!uid) return;
-                var url = '/dataset/' + uid;
-                if (window.htmx && window.htmx.ajax) {
-                    window.htmx.ajax('GET', url, { source: '#inspector-pane',
-                                                   target: '#inspector-pane',
-                                                   swap: 'innerHTML' });
-                } else {
-                    window.location.href = url;
-                }
-            } catch (e) { /* a click must never break the chart */ }
-        });
-        el.on('plotly_hover', function (evt) {
-            try { el.style.cursor = _uidOf(evt) ? 'pointer' : ''; } catch (e) {}
-        });
-        el.on('plotly_unhover', function () {
-            try { el.style.cursor = ''; } catch (e) {}
-        });
-    }
-
-    /* QA F6: ONE chart per task. Every _plotlyRender promise resolves in the
-       same microtask checkpoint once Plotly is loaded, so the twelve eager
-       charts (and every IntersectionObserver burst) landed as ONE long task
-       -- 4-6 s with the page frozen and nothing on screen. The pump yields
-       to the browser between charts; it stops when this fragment is gone. */
-    var queue = [], pumping = false;
-    function pump() {
-        if (!queue.length) { pumping = false; return; }
-        pumping = true;
-        var idx = queue.shift();
-        if (!boxes[idx] || !boxes[idx].isConnected) { queue.length = 0; pumping = false; return; }
-        var next = function () { setTimeout(pump, 0); };
-        Promise.resolve(renderOne(idx)).then(next, next);
-    }
-    function enqueue(idx) { queue.push(idx); if (!pumping) pump(); }
-
-    for (var i = 0; i < Math.min(EAGER, trend.series.length); i++) enqueue(i);
-    if (trend.series.length > EAGER && typeof IntersectionObserver !== 'undefined') {
-        var io = new IntersectionObserver(function (entries) {
-            entries.forEach(function (en) {
-                if (!en.isIntersecting) return;
-                io.unobserve(en.target);
-                enqueue(parseInt(en.target.getAttribute('data-trend-idx'), 10));
-            });
-        }, { rootMargin: '600px 0px' });
-        for (var j = EAGER; j < trend.series.length; j++) {
-            var box = document.getElementById('trend-chart-' + j);
-            if (box) { box.setAttribute('data-trend-idx', String(j)); io.observe(box); }
-        }
-    } else {
-        for (var k = EAGER; k < trend.series.length; k++) enqueue(k);
-    }
-    // The charts follow their container (docs/122): one observer on the
-    // metric-trends section; unobserveWithin's choke-point sweep reclaims it
-    // when the pane swaps away.
-    var sec = document.querySelector('.trends-section');
-    if (sec && window.PlotHost) window.PlotHost.observe(sec);
-})();
+    if (window.DatasetTrends) window.DatasetTrends.mount(document.getElementById('trends-view'));
 </script>
-
-{% endif %}
