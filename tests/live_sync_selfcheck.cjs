@@ -435,35 +435,48 @@ function discard(w, detail) {
     await sleep(20);
     ok(!/check_collisions/.test(S.sync[0] ? S.sync[0].body : 'x'), 'D4 the review modal (informed) is not asked again');
 
-    // human, declines
+    /* sync-ux 2026-09-25 (user decision 2): a same-field collision is decided
+       PER FIELD in the sync panel -- no confirm() that makes "my value wins"
+       one OK away, and no banner (the banner is gone). Re-scoped from D5-D13
+       ("asked ONCE by confirm", "Cancel puts the banner up", "OK re-posts
+       with ack_collision"): the human press opens the panel, nothing is
+       re-posted, and the control is re-rendered in place; the panel's merge
+       posts the PICKS as its own token. */
+    const trayGets = function () { return S.ajax.filter(function (a) { return a.url === '/state/tray'; }); };
+    const opened = [];
+    w.openReview = function (o) { opened.push(o || {}); };
     S.sync.length = 0; S.confirms.length = 0; S.ajax.length = 0; S.toasts.length = 0;
-    S.syncQueue = [COLL]; S.confirmAnswer = false;
+    S.syncQueue = [COLL]; S.confirmAnswer = true;
     w.doStateSync('apply');
     await sleep(40);
-    ok(S.confirms.length === 1 && /qubits\.q1\.T2ramsey/.test(S.confirms[0]),
-       'D5 a collision is asked ONCE, naming the field');
-    ok(S.sync.length === 1, 'D6 Cancel: nothing is re-posted');
-    ok(bannerGets().length === 1 && bannerGets()[0].opts.target === '#live-diverged-slot',
-       'D7 Cancel: the banner is put up in place');
+    ok(S.confirms.length === 0 && opened.length === 1 && opened[0].force === true,
+       'D5 a collision asks no confirm: it opens the sync panel, where each field is picked');
+    ok(S.sync.length === 1, 'D6 nothing is re-posted');
+    ok(trayGets().length === 1 && trayGets()[0].opts.target === '#pending-tray',
+       'D7 the status control is re-rendered in place (it names the collision)');
     ok(!w._applyInFlight, 'D8 the latch is released');
+    ok(bannerGets().length === 0, 'D7b no banner is fetched any more');
 
-    // human, accepts
+    // the panel's merge: the picks ride the press, as their own token
     S.sync.length = 0; S.confirms.length = 0; S.ajax.length = 0;
-    S.syncQueue = [COLL, { status: 'ok', mode: 'apply' }]; S.confirmAnswer = true;
-    w.doStateSync('apply');
+    S.syncQueue = [{ status: 'ok', mode: 'apply' }];
+    w.doStateSync('apply', false, false, null, { informed: true, picks: { 'qubits.q1.T2ramsey': 'live' } });
     await sleep(60);
-    ok(S.sync.length === 2, 'D9 OK re-posts once');
-    const retry = S.sync[1] ? S.sync[1].body : '';
-    ok(/ack_collision=1/.test(retry) && !/force=1/.test(retry) && !/ack_unseen=1/.test(retry),
-       'D10 ...with its OWN token, never force=1 / ack_unseen=1: ' + retry);
+    const retry = S.sync[0] ? S.sync[0].body : '';
+    ok(S.sync.length === 1 && /picks=/.test(retry)
+       && decodeURIComponent(retry).indexOf('"qubits.q1.T2ramsey":"live"') >= 0,
+       'D9 the panel merge posts the picks: ' + decodeURIComponent(retry));
+    ok(!/force=1/.test(retry) && !/ack_unseen=1/.test(retry) && !/ack_collision=1/.test(retry),
+       'D10 ...never force=1 / ack_unseen=1 / a blanket ack_collision: ' + retry);
 
     // the automatic merge (expectChip) never answers for the user
-    S.sync.length = 0; S.confirms.length = 0; S.ajax.length = 0;
+    S.sync.length = 0; S.confirms.length = 0; S.ajax.length = 0; opened.length = 0;
     S.syncQueue = [COLL]; S.confirmAnswer = true;
     w.doStateSync('apply', false, false, 'CHIP-A');
     await sleep(40);
     ok(S.confirms.length === 0 && S.sync.length === 1, 'D11 the automatic merge shows no dialog and does not retry');
-    ok(bannerGets().length === 1, 'D12 ...it puts the naming banner up instead');
+    ok(trayGets().length === 1 && opened.length === 0,
+       'D12 ...it re-renders the control and opens nothing (the user was not pressing)');
 
     // (review) the server now returns this on the real automatic path, with
     // the conflict tray re-rendered without "Auto-Sync is resolving this"
@@ -473,8 +486,8 @@ function discard(w, detail) {
     w.doStateSync('apply', false, false, 'CHIP-A');
     await sleep(40);
     const t = w.document.getElementById('pending-tray');
-    ok(t && t.getAttribute('data-edit-seq') === 'Z1' && bannerGets().length === 1,
-       'D13 the automatic collision swaps in the tray the server rendered, and bannered');
+    ok(t && t.getAttribute('data-edit-seq') === 'Z1' && trayGets().length === 0,
+       'D13 the automatic collision swaps in the tray the server rendered (no second tray read)');
 }
 
 /* ── E. r2-07: liveConflict re-renders the banner in place ───────────── */
@@ -487,10 +500,12 @@ function discard(w, detail) {
     w.document.dispatchEvent(new w.Event('DOMContentLoaded'));
     S.ajax.length = 0;
     w.document.dispatchEvent(new w.CustomEvent('liveConflict', { detail: { chip: 'CHIP-A', paths: ['qubits.q1.T2ramsey'] } }));
-    const g = S.ajax.filter(function (a) { return a.url === '/state/diverged-banner'; });
-    ok(g.length === 1 && g[0].method === 'GET' && g[0].opts.target === '#live-diverged-slot'
-       && g[0].opts.swap === 'innerHTML',
-       'E1 the declined pull puts the "choose which to keep" banner up on the OPEN page');
+    // sync-ux 2026-09-25: the banner is gone -- the status control IS the
+    // question, so the declined pull re-renders it (state "collide") in place.
+    const g = S.ajax.filter(function (a) { return a.url === '/state/tray'; });
+    ok(g.length === 1 && g[0].method === 'GET' && g[0].opts.target === '#pending-tray'
+       && g[0].opts.swap === 'outerHTML',
+       'E1 the declined pull re-renders the status control on the OPEN page');
     S.ajax.length = 0;
     w.document.dispatchEvent(new w.CustomEvent('liveConflict', { detail: { chip: 'CHIP-B', paths: [] } }));
     ok(S.ajax.length === 0, 'E2 a signal for another chip paints nothing');

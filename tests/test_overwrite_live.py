@@ -126,26 +126,29 @@ class TestSurfaces:
     def test_clean_branch_gains_the_third_choice(self, env):
         """The branch the report is about: SM holds no edits of its own, an
         experiment rewrote live, and the only offer used to be Sync."""
+        # sync-ux 2026-09-25: the review modal became the sync panel; its
+        # clean branch is the "live" state (re-scoped from review-sync-clean)
         c = env["client"]
         _rewrite_live_out_of_band(env, off=0.5)
         body = self._review(c)
-        assert "review-sync-clean" in body
-        assert "overwriteLiveWithWorking()" in body
-        # still un-primary, and Sync is still the primary action
+        assert 'data-sync-state="live"' in body
+        assert "overwriteLiveWithWorking(this)" in body
+        # still un-primary and LAST (docs/86: pull and push are not symmetric)
         m = re.search(r'<button[^>]*state-review-overwrite-btn[^>]*>', body)
         assert m and "primary" not in m.group(0)
+        assert body.index("sp-take") < body.index("state-review-overwrite-btn")
 
     def test_offered_once_in_every_branch(self, env):
         """One button, outside the three branch spans — 'keep mine' is
         meaningful with pending edits, with saved edits, and with neither."""
         c = env["client"]
         _rewrite_live_out_of_band(env, off=0.5)
-        assert self._review(c).count("overwriteLiveWithWorking()") == 1
+        assert self._review(c).count("overwriteLiveWithWorking(this)") == 1
         c.post("/field/edit-batch", json={"updates": [
             {"dot_path": "qubits.qA1.f_01", "value": "5.1e9"}], "expect_chip": ""})
         body = self._review(c)
-        assert body.count("overwriteLiveWithWorking()") == 1
-        assert "review-sync-edits" in body
+        assert body.count("overwriteLiveWithWorking(this)") == 1
+        assert "Pull &amp; apply" in body
 
     def test_absent_when_there_is_nothing_to_overwrite(self, env):
         """No differences → no diff rows → no third choice (the modal's whole
@@ -153,23 +156,31 @@ class TestSurfaces:
         assert "overwriteLiveWithWorking()" not in self._review(env["client"])
 
     def test_banner_offers_both_directions(self, env):
-        """The drift banner used to be look-at-it or take-theirs."""
-        with env["app"].test_request_context("/"):
-            from flask import render_template
-            html = render_template("_live_diverged_banner.html",
-                                   live_diverged=True, active_name="chip")
-        assert "Take live" in html
-        assert "overwriteLiveWithWorking()" in html
-        assert "Keep mine" in html
+        """The drift banner used to be look-at-it or take-theirs. sync-ux
+        2026-09-25: the banner is gone (user decision); the status control
+        carries ↓ Take live and the panel it opens carries both directions."""
+        c = env["client"]
+        _rewrite_live_out_of_band(env, off=0.5)
+        c.get("/state/drift")
+        tray = c.get("/state/tray").get_data(as_text=True)
+        assert "Take live" in tray and "overwriteLiveWithWorking" not in tray, \
+            "Keep mine is never attached to the control (docs/86)"
+        body = self._review(c)
+        assert "Take live" in body
+        assert "overwriteLiveWithWorking(this)" in body
+        assert "Keep mine" in body
 
     def test_banner_hides_it_on_an_archive(self, env):
         with env["app"].test_request_context("/"):
             from flask import render_template
-            html = render_template("_live_diverged_banner.html",
-                                   live_diverged=True, active_name="chip",
-                                   chip_origin="dataset_archive")
-        assert "Take live" in html
-        assert "overwriteLiveWithWorking()" not in html
+            html = render_template("_state_review.html",
+                                   sync={"state": "archive", "sig": "x"},
+                                   chip_origin="dataset_archive", total=1,
+                                   conflict_rows=[], external_rows=[], mine_rows=[],
+                                   staged_rows=[], unsaved=0, live_total=1,
+                                   external_total=1, working_dirty=False)
+        assert "overwriteLiveWithWorking" not in html
+        assert "Take live" not in html
 
 
 class TestThePushItself:
@@ -226,8 +237,10 @@ class TestNoBackupNoOverwrite:
             "the unreadable live file was overwritten without a backup"
         assert "Nothing was written" in body and "back up" in body, body[:600]
         assert not ctx.get("last_apply"), "no Revert may be offered for a write that did not happen"
-        # the choice is re-offered (the conflict tray), not a dead end
-        assert "tray-force-btn" in body
+        # not a dead end: sync-ux 2026-09-25 re-scoped from the 4-row conflict
+        # tray's buttons -- the one-row control now says what happened and
+        # carries the way on (Resolve… opens the panel; Retry re-reads)
+        assert "sync-control" in body and ("Resolve" in body or "Retry" in body), body[:600]
 
     def test_a_json_caller_gets_a_409_naming_it(self, env):
         self._bom(env)
@@ -282,7 +295,9 @@ class TestARefusedApplyWritesNoVersion:
         live_before = (env["live"] / "state.json").read_bytes()
         r = env["client"].post("/state/apply-to-live")
         body = r.get_data(as_text=True)
-        assert "tray-force-btn" in body, "the conflict tray answers"
+        # sync-ux 2026-09-25: the refused control answers (re-scoped from the
+        # conflict tray's force button; the choices are in the panel)
+        assert 'data-sync-state="refused"' in body and "Resolve" in body, "the refused control answers"
         assert (env["live"] / "state.json").read_bytes() == live_before
         assert self._versions(env) == before, \
             "a refused Apply recorded a version for a write that never happened"

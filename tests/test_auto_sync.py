@@ -298,7 +298,11 @@ class TestTheTraySaysWhichModeIsOn:
         assert "asks before replacing" in c.get("/state/tray").get_data(as_text=True)
 
     def test_the_three_switches_default_to_on(self, tmp_path):
-        """The user's call: all checked, uncheck what you don't want.
+        """sync-ux 2026-09-25, user decision 3 -- RE-SCOPED: first armed,
+        Auto-Sync takes live changes and keeps unapplied edits on top; "replace"
+        and "push" start unticked (a live write still needs a press unless push
+        is chosen). This pin used to assert all three checked (docs/120 item 8,
+        the user's earlier call), which the 2026-09-25 decision replaced.
 
         The switches are their own fragment now, fetched when the pill is
         clicked — they used to live inside #pending-tray, which OOB-swaps on
@@ -306,9 +310,12 @@ class TestTheTraySaysWhichModeIsOn:
         """
         app, c, _ = _mk(tmp_path)
         body = c.get("/auto-sync/panel").get_data(as_text=True)
-        for cid in ("as-pull", "as-pull-replace", "as-push"):
+
+        def checked(cid):
             i = body.index(f'id="{cid}"')
-            assert "checked" in body[i:i + 200], cid
+            return "checked" in body[i:body.index(">", i)]
+        assert checked("as-pull")
+        assert not checked("as-pull-replace") and not checked("as-push")
 
     def test_the_switches_are_not_inside_the_swapped_tray(self, tmp_path):
         """Reducing permissions must not be able to fail silently."""

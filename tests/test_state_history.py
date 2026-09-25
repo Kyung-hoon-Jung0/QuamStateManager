@@ -491,8 +491,8 @@ class TestRestoreReanchorsRevertLastApply:
         la = self._ctx(app).get("last_apply") or {}
         assert la.get("pre_ts") and la["pre_ts"] != first, \
             "the revert must re-anchor on the restore's own backup"
-        # the tray's button targets it
-        assert f'/state-history/{la["pre_ts"]}/stage' in client.get("/state/tray").get_data(as_text=True)
+        # the Revert button targets it -- sync-ux 2026-09-25 (user decision: one control + one panel): in the panel's History
+        assert f'/state-history/{la["pre_ts"]}/stage' in client.get("/state/review").get_data(as_text=True)
         # ...and pressing it, then Apply, gives back the chip as it was right
         # before the restore (the outside 7.5e9), not the first apply's pre-state
         assert client.post(f"/state-history/{la['pre_ts']}/stage?from=tray").status_code == 200

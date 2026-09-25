@@ -163,7 +163,7 @@ class TestLiveWalk:
         with env["app"].app_context():
             rows = routes_mod._applied_log_rows()
         assert rows[0]["reverted_by"] == "undo"
-        assert ">undone<" in c.get("/state/tray").get_data(as_text=True)
+        assert ">undone<" in c.get("/state/review").get_data(as_text=True)   # sync-ux 2026-09-25 (user decision: one control + one panel):
         r = c.post("/auto-apply/revert", data={"unit_id": uid})
         assert r.status_code == 409 and b"already undone" in r.data
         c.post("/redo")                                        # back on the chip → the row is live again
@@ -1254,6 +1254,10 @@ class TestFinalReviewWalk:
         trig = _trig(r)
         assert trig.get("liveDriftChanged") is True, "the refusal must refresh the drift banner"
         assert _live_off(env) == 0.99, "the chip was correctly left untouched"
+        # SE-06 (sync-ux 2026-09-25): the words name the surface that exists --
+        # the status control -- never the removed drift banner
+        msg = trig["cellsReverted"]["message"]
+        assert "banner" not in msg and "sync status in the top bar" in msg, msg
 
     def test_a_redo_over_a_skipped_unit_reports_the_consumed_step(self, env, monkeypatch):
         """F-BURST-SKIP: redoing over a skipped (too-large/empty) unit moves the

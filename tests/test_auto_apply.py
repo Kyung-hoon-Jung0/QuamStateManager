@@ -169,7 +169,8 @@ class TestFlush:
         units = _ctx(env)["undo_units"]
         assert units and (units[-1].get("meta") or {}).get("src") == "auto"
         # the applied log shows it
-        assert "Applied to live" in c.get("/state/tray").data.decode()
+        # sync-ux 2026-09-25 (user decision: one control + one panel): the applied log is the panel's History
+        assert "Applied to live" in c.get("/state/review").data.decode()
 
     def test_armed_response_is_quiet_and_signals(self, env):
         c = env["client"]
@@ -256,7 +257,8 @@ class TestSnapshotPolicy:
         c.post("/auto-apply/arm")
         _edit(env)
         c.post("/state/apply-to-live")
-        html = c.get("/state/tray").data.decode()
+        # sync-ux 2026-09-25 (user decision: one control + one panel): Revert lives in the panel's History
+        html = c.get("/state/review").data.decode()
         assert "Revert this session" in html
         assert "Revert last apply" not in html
         c.post("/auto-apply/disarm")

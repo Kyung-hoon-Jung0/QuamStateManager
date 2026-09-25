@@ -189,8 +189,9 @@ class TestOneClickApplyAsksAboutASameFieldCollision:
         assert len(_ctx(env)["store"].change_log) == 1, "the edit is kept"
         assert _ctx(env)["live_diverged"] is True
         assert _ctx(env)["live_conflicts"] == [_T2R]
-        banner = env["client"].get("/state/diverged-banner").data.decode()
-        assert "changed both here and on" in banner and _T2R in banner
+        # sync-ux 2026-09-25 (user decision: one control + one panel): the status control names it (the banner is gone)
+        ctl = env["client"].get("/state/tray").data.decode()
+        assert "changed on both sides" in ctl and _T2R in ctl
 
     def test_only_its_own_token_answers_it(self, env):
         self._collide(env)
@@ -225,12 +226,13 @@ class TestOneClickApplyAsksAboutASameFieldCollision:
         assert c.post("/auto-apply/arm").status_code == 200   # armed before the drift
         self._collide(env)
         assert _apply(env).get_json()["status"] == "collision"
-        assert "choose which to keep" in c.get("/state/diverged-banner").data.decode()
+        # sync-ux 2026-09-25 (user decision: one control + one panel): the control says it; the landed flush takes it down
+        assert "changed on both sides" in c.get("/state/tray").data.decode()
         r = c.post("/state/apply-to-live", data={"force": "1"})
         assert "autoApplyApplied" in r.headers.get("HX-Trigger", ""), "the armed branch"
         html = r.data.decode()
         assert 'id="live-diverged-slot" hx-swap-oob="outerHTML"' in html
-        assert "choose which to keep" not in html
+        assert "changed on both sides" not in html
 
     def test_take_live_from_the_banner_clears_the_named_collision(self, env):
         # the banner's "Take live -- discard my edits" (a discard pull)
@@ -265,7 +267,7 @@ class TestOneClickApplyAsksAboutASameFieldCollision:
         _edit(env, _T2R, "1.23e-6")
         _write_chip(env["live"], _state(t2r=9.99e-7), future=True)
         html = env["client"].post("/state/apply-to-live").data.decode()
-        assert "changed since you loaded it" in html
+        assert "Apply wrote nothing" in html
         assert _ctx(env).get("pending_reapply")
         d = _apply(env).get_json()
         assert d["status"] == "collision" and d["paths"] == [_T2R], d
@@ -324,8 +326,9 @@ class TestOneClickApplyAsksAboutASameFieldCollision:
         d = _apply(env, expect_chip=chip).get_json()       # what autoSyncMerge sends
         assert d["status"] == "collision" and d["paths"] == ["qubits.qA1.T1"], d
         assert _live(env)["qubits"]["qA1"]["T1"] == 1.66e-5, "the node's value survives"
-        banner = c.get("/state/diverged-banner").data.decode()
-        assert "changed both here and on" in banner and "qubits.qA1.T1" in banner
+        # sync-ux 2026-09-25 (user decision: one control + one panel): named by the control, not a banner
+        ctl = c.get("/state/tray").data.decode()
+        assert "changed on both sides" in ctl and "qubits.qA1.T1" in ctl
         tray = d.get("tray_html") or ""
         assert 'id="pending-tray"' in tray and "resolving this itself" not in tray, (
             "the tray must stop saying Auto-Sync is resolving what the user now decides")
@@ -365,8 +368,9 @@ class TestADeclinedPullPutsTheBannerUpInPlace:
         assert "autoSyncMerge" not in raw
         sig = json.loads(raw)["liveConflict"]
         assert sig["paths"] == ["qubits.qA1.f_01"] and sig["chip"], sig
-        banner = env["client"].get("/state/diverged-banner").data.decode()
-        assert "changed both here and on" in banner and "qubits.qA1.f_01" in banner
+        # sync-ux 2026-09-25 (user decision: one control + one panel): the page the signal re-renders is the control
+        ctl = env["client"].get("/state/tray").data.decode()
+        assert "changed on both sides" in ctl and "qubits.qA1.f_01" in ctl
 
     def test_the_exhausted_merge_budget_signals_too(self, env):
         assert _arm_pull(env).status_code == 200
@@ -468,8 +472,8 @@ class TestTheAppliedLogListsOnlyWhatLanded:
         assert [row["entries"][-1]["new"] for row in rows] == [1.32e-5, 1.31e-5], rows
         # ...while Ctrl+Z still has the saved edit to walk (docs/107)
         assert len(_ctx(env)["undo_units"]) == 3
-        # the tray's applied log renders exactly those rows
-        assert c.get("/state/tray").data.decode().count('class="applied-log-row') == 2
+        # the applied log renders exactly those rows -- sync-ux 2026-09-25 (user decision: one control + one panel): in the panel
+        assert c.get("/state/review").data.decode().count('class="applied-log-row') == 2
 
     def test_the_merged_write_that_landed_is_the_row(self, env):
         c = env["client"]
@@ -631,7 +635,8 @@ class TestTheStageMessagePointsAtAReviewThatExists:
         body = env["client"].post(f"/state-history/{ts}/stage?force=1&from=tray").data.decode()
         assert "diff below" not in body, body[:400]
         assert "loaded as the working state" in body
-        assert "Working state badge" in body and "Apply to live chip" in body, body[:400]
+        # sync-ux 2026-09-25 (user decision: one control + one panel): the message names the control that exists
+        assert "sync status in the top bar" in body and "↑ Apply" in body, body[:400]
         pretty = f"{ts[0:4]}-{ts[4:6]}-{ts[6:8]} {ts[9:11]}:{ts[11:13]}:{ts[13:15]} UTC"
         assert pretty in body, (pretty, body[:400])
 
@@ -640,13 +645,14 @@ class TestTheStageMessagePointsAtAReviewThatExists:
         c = env["client"]
         c.post("/auto-apply/arm")
         body = c.post(f"/state-history/{ts}/stage?force=1").data.decode()
-        assert "ARMED" in body and "Working state badge" not in body, body[:400]
+        assert "ARMED" in body and "sync status in the top bar" not in body, body[:400]
 
     def test_the_revert_button_title_says_its_time_is_local(self, env):
         c = env["client"]
         _edit(env, "qubits.qA1.T1", "1.3e-5")
         assert c.post("/state/sync", data={"mode": "apply", "seen_changes": "1"}).status_code == 200
-        tray = c.get("/state/tray").data.decode()
+        # sync-ux 2026-09-25 (user decision: one control + one panel): Revert last apply lives in the panel's History
+        tray = c.get("/state/review").data.decode()
         assert "tray-revert-apply" in tray, tray[:600]
         import re
         m = re.search(r"Revert last apply \(done ([^)]*)\)", tray)

@@ -308,12 +308,20 @@ window.eval(fs.readFileSync(path.join(STATIC, 'app.js'), 'utf8'));
     ok(/applied them to the live chip/.test(_last[0]) && /would crash a node run/.test(_last[0])
        && _last[1] === 'warning',
        'pull-and-apply names the crash-class values, as a warning (got: ' + JSON.stringify(_last) + ')');
+    /* sync-ux 2026-09-25 (default 2 of the user's decisions): success toasts
+       go -- the status control says it for 4 s. Re-scoped from "keeps its
+       green line" (a success TOAST): a clean apply now adds no toast and
+       flashes the control instead; the crash-class case above stays a toast. */
+    const _flashes = [], _realFlash = window.SyncControl && window.SyncControl.flash;
+    if (window.SyncControl) window.SyncControl.flash = function (t) { _flashes.push(String(t)); };
+    const _nToasts = _toasts.length;
     syncQueue = [{ status: 'ok', mode: 'apply', tray_html: null, replay: { applied: 1, failed: [] } }];
     window.doStateSync('apply');
     await flush(40);
-    const _clean = _toasts[_toasts.length - 1] || ['', ''];
-    ok(_clean[1] === 'success' && !/crash/.test(_clean[0]),
-       'a clean pull-and-apply keeps its green line (got: ' + JSON.stringify(_clean) + ')');
+    ok(_toasts.length === _nToasts && _flashes.length === 1 && /Written to live · 1 edit/.test(_flashes[0]),
+       'a clean pull-and-apply says it on the control, not in a toast (got: ' + JSON.stringify(_flashes) + ' / '
+       + JSON.stringify(_toasts.slice(_nToasts)) + ')');
+    if (window.SyncControl) window.SyncControl.flash = _realFlash;
     window.showToast = _realToast;
 
     /* QA correctness-r2-08: a pull that caught the live pair mid-save is

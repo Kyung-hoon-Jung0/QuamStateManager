@@ -42,6 +42,7 @@ def test_the_changed_vs_live_marks_follow_live():
 
 
 def test_a_dismissed_live_banner_prompts_again_for_a_newer_write():
-    """✕ silences the write that was seen, not every later one; a pending show
-    never undoes a ✕; one banner (one live-content read) per write."""
+    """sync-ux 2026-09-25: the banner is gone (user decision); what the
+    selfcheck pins now is no banner, a poke to the status control, and ONE
+    live-marks read per write (a newer write refreshes again)."""
     _run_selfcheck("chip_status_live_banner_selfcheck.cjs")

@@ -7,15 +7,10 @@
  * (it reset only on changed === false) and every later external write was
  * silent for as long as the page stayed open.
  *
- * Pins (the REAL chip-status.js under jsdom, on a fake clock):
- *  B1  a live change shows the banner after the debounce;
- *  B2  ✕, then the SAME write on every later poll: it stays hidden;
- *  B3  a NEWER write (the live mtime pair moved) shows it again;
- *  B4  ✕ pressed while a show is already scheduled: the ✕ wins;
- *  B5  one banner per write: polls that see the same write do not re-show it
- *      (each show re-reads live CONTENT for the marks — it used to run every 3 s);
- *  B6  "Review changes" dismisses the same way and opens the review;
- *  B7  live back at the sync point hides it, and the next change prompts.
+ * sync-ux 2026-09-25: the banner itself is gone (user decision: one status
+ * control in the top bar). The pins below keep what this page still owes --
+ * no banner, a poke to the control, and the live-marks read once per write
+ * (the r2-03 "a newer write prompts again" rule now drives the marks).
  *
  * Run: node tests/chip_status_live_banner_selfcheck.cjs
  *      (driven by tests/test_chip_status_live_marks.py)
@@ -90,50 +85,40 @@ function shown() {
 function press(sel) { doc.querySelector(sel).dispatchEvent(new win.MouseEvent('click', { bubbles: true })); }
 
 (async function () {
+  /* sync-ux 2026-09-25 (user decision 1): Chip Status' own "Live chip state
+     changed on disk" banner is GONE -- the status control in the top bar says
+     it on every page. Re-scoped from B1-B7 (banner show / ✕ / Review changes):
+     what this page still owes is (R) no banner, (P) a poke to the control so it
+     does not wait for its own 5 s poll, and (M) the live-marks read ONCE per
+     write -- the B5 cost rule survives the banner. */
+  let pokes = 0;
+  win._pollDrift = function () { pokes++; };
+  const marks = function () { return diffReads; };
+  if (win.ChipStatus && !win.ChipStatus.liveDiff) {
+    win.ChipStatus.liveDiff = { refresh: function () { diffReads++; } };
+  }
   win.ChipStatus.liveDetection();              // polls at t=0, then every 3 s
   await flush();
   await advance(2100);
-  ok(shown(), 'B1: a live change shows the banner after the debounce');
-
-  press('.topo-change-banner-dismiss');
-  ok(!shown(), 'B2a: ✕ hides it');
-  await advance(6500);                          // two more polls, same write
-  ok(!shown(), 'B2b: …and the same write on later polls keeps it hidden');
+  ok(!shown(), 'R1: a live change inserts NO banner into the dashboard');
+  ok(pokes === 1, 'P1: …it pokes the status control once (got ' + pokes + ')');
+  const m1 = marks();
+  ok(m1 >= 1, 'M1: …and refreshes the live marks');
+  await advance(9000);                          // three polls, same write
+  ok(pokes === 1 && marks() === m1,
+    'M2: one refresh per write — polls of the same write re-read nothing (' + (marks() - m1) + ' extra)');
 
   live = { changed: true, state_mtime: 131.75, wiring_mtime: 50.25 };   // a newer write
   await advance(3000 + 2100);
-  ok(shown(), 'B3: a NEWER write shows the banner again');
+  ok(pokes === 2 && marks() > m1, 'M3: a NEWER write pokes and refreshes again');
+  ok(!shown(), 'R2: …still no banner');
 
-  live = { changed: true, state_mtime: 140, wiring_mtime: 50.25 };
-  // step to just past the next poll: it saw the newer write and scheduled a show
-  const nextPoll = timers.filter(function (t) { return t.every; })[0].at;
-  await advance(nextPoll - now + 100);
-  ok(timers.some(function (t) { return !t.every; }), 'B4a: (a show is scheduled for the newer write)');
-  press('.topo-change-banner-dismiss');
-  await advance(2500);
-  ok(!shown(), 'B4b: ✕ pressed while a show was pending wins over it');
-  await advance(6000);
-  ok(!shown(), 'B4c: …and later polls of that same write stay quiet');
-
-  live = { changed: true, state_mtime: 155, wiring_mtime: 50.25 };
-  await advance(3000 + 2100);
-  ok(shown(), 'B5a: the next write prompts');
-  const reads = diffReads;
-  await advance(9000);                          // three polls, same write, banner up
-  ok(shown() && diffReads === reads,
-    'B5b: one banner per write — polls of the same write re-read live content ' + (diffReads - reads) + ' time(s)');
-
-  press('.topo-change-banner-btn');
-  ok(!shown() && reviewOpened === 1, 'B6a: "Review changes" hides it and opens the review');
-  await advance(6000);
-  ok(!shown(), 'B6b: …and dismisses that write like ✕ does');
-
-  live = { changed: false, state_mtime: 155, wiring_mtime: 50.25 };
+  live = { changed: false, state_mtime: 131.75, wiring_mtime: 50.25 };
   await advance(3000);
-  ok(!shown(), 'B7a: live back at the sync point: no banner');
+  const m2 = marks();
   live = { changed: true, state_mtime: 170, wiring_mtime: 50.25 };
   await advance(3000 + 2100);
-  ok(shown(), 'B7b: …and the next change prompts');
+  ok(pokes === 3 && marks() > m2, 'M4: live back at the sync point, then a new change: refreshed again');
 
   console.log(fails ? ('FAILED (' + fails + ')')
     : ('chip_status_live_banner_selfcheck ok (' + asserts + ' assertions)'));
