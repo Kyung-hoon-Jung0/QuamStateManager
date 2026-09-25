@@ -18445,7 +18445,11 @@ def state_apply_to_live():
     _before_tree = None
     try:
         with _active_wc_lock(ctx):
-            if ctx.get("staged_base"):                  # docs/160 B (see the sync twin)
+            # docs/160 B (see the sync twin). QA correctness-r2-10: a FORCED
+            # push ("Keep mine -- overwrite live") also overwrites content the
+            # change log never saw -- the outside values it replaces -- so it
+            # needs the same "before" tree to be journaled.
+            if ctx.get("staged_base") or force:
                 _before_tree = _live_merged_tree(wc)
             working_copy.apply_to_live(wc, force=force)
     except working_copy.StaleLiveError:
@@ -18569,6 +18573,16 @@ def state_apply_to_live():
         _journal_mark_landed(ctx, _jrn_units)   # QA liveedit-r2-17: it landed
     if ctx.get("staged_base"):
         _journal_wholesale_commit(ctx, _before_tree, "apply-staged", edit_units=_jrn_units)   # docs/160 B
+    elif force:
+        # QA correctness-r2-10: Keep mine over an already-applied edit is a
+        # force push with an EMPTY change log, so it journaled nothing -- and
+        # Ctrl+Z right after it walked past it to the older edit unit and wrote
+        # the pre-edit value to live: neither the outside value Keep mine
+        # replaced nor the user's. Record what it overwrote (the chip's values
+        # before -> the working state) as its own unit, on top, so Ctrl+Z undoes
+        # the Keep mine first. Nothing differs -> no unit (a plain conflict
+        # resolution that overwrote nothing stays invisible, as before).
+        _journal_wholesale_commit(ctx, _before_tree, "force-overwrite", edit_units=_jrn_units)
     ctx["staged_base"] = False   # the staged content reached live (audit-r10)
     _clear_reapply(ctx)  # the edits are now on the live chip — nothing left to re-apply
     ctx["live_diverged"] = False  # live now holds the working content (incl. force)

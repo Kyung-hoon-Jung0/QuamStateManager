@@ -1460,3 +1460,50 @@ def _sidecar_app(app):
     files = sorted((Path(app.instance_path) / "working_state").glob("*.undo_journal.json"))
     assert files, "no journal sidecar"
     return files[0]
+
+
+class TestKeepMineIsJournaled:
+    """QA correctness-r2-10: Keep mine over an already-applied edit is a force
+    push with an EMPTY change log. It journaled nothing, so Ctrl+Z right after
+    it walked to the OLDER edit unit and wrote the pre-edit value to live --
+    neither the outside value Keep mine replaced nor the user's."""
+
+    def _outside(self, env, off):
+        _write_chip(env["live"], _state(off=off))
+
+    def test_ctrl_z_after_keep_mine_brings_back_what_it_overwrote(self, env):
+        c = env["client"]
+        _edit(c, 0.09)                       # A=0.08 -> B=0.09
+        _apply(c)
+        assert _live_off(env) == 0.09
+        self._outside(env, 0.33)             # a node writes C
+        assert c.post("/state/apply-to-live?force=1").status_code == 200   # Keep mine
+        assert _live_off(env) == 0.09
+        top = (_ctx(env).get("undo_units") or [])[-1]
+        assert top["meta"]["src"] == "force-overwrite"
+        assert [(e["path"], e["old"], e["new"]) for e in top["entries"]] == \
+            [("qubits.qA1.z.joint_offset", 0.33, 0.09)]
+        r = c.post("/undo")
+        assert r.status_code == 200, r.data
+        assert _live_off(env) == 0.33, "Ctrl+Z must undo the Keep mine, not the edit before it"
+
+    def test_a_force_push_that_overwrote_nothing_adds_no_unit(self, env):
+        c = env["client"]
+        _edit(c, 0.09)
+        _apply(c)
+        n = len(_ctx(env).get("undo_units") or [])
+        assert c.post("/state/apply-to-live?force=1").status_code == 200
+        assert len(_ctx(env).get("undo_units") or []) == n
+
+    def test_keep_mine_with_a_pending_edit_composes(self, env):
+        """edit unit on top (edited -> pre-edit), the overwrite below it
+        (pre-edit -> the outside value): two Ctrl+Z give the chip back."""
+        c = env["client"]
+        self._outside(env, 0.33)             # live moved; working still 0.08
+        _edit(c, 0.11)                       # pending tray edit
+        assert c.post("/state/apply-to-live?force=1").status_code == 200
+        assert _live_off(env) == 0.11
+        assert c.post("/undo").status_code == 200
+        assert _live_off(env) == 0.08
+        assert c.post("/undo").status_code == 200
+        assert _live_off(env) == 0.33
