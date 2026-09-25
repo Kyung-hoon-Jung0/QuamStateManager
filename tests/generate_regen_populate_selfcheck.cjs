@@ -93,8 +93,10 @@ const SPEC = {
   G._test.autoApplyStandardDefaults();
   ok(win._fetchCount === before,
      'P2: regen mode never fetches the builtin standard preset');
-  ok(G._test.state.autoPresetApplied !== true,
-     'P2: the one-shot flag is not consumed in regen mode');
+  // QA generate-r2-05: the one-shot flag became a per-row record; regen
+  // mode must not start one either.
+  ok(G._test.state.autoPresetRows == null,
+     'P2: no prefill record is started in regen mode');
 })();
 
 // ---- P3: applyLoAssignments fill-only-empty / force+touched / dirty-skip --
@@ -210,34 +212,151 @@ const SPEC = {
   if (!deadGone) { console.error('FAIL: P7: dead pair key survived'); fails++; }
 })();
 
-// ---- P8 (QA generate-r2-21): Explorer "Copy as path" quotes are stripped ---
+// ---- P8 (QA regenerate-r2-03): fill-empty preset Apply never protects ------
+// A cell the extractor could not read back displays blank although the chip
+// holds a calibration there; protecting the preset's fill made the merge keep
+// 0.1 over the chip's CZ amp. Only Overwrite ON records touched cells.
+(function () {
+  const win = makeWorld();
+  const G = win.QuamGen;
+  G.init();
+  G.hydrateFromSpec(JSON.parse(JSON.stringify(SPEC)), { mode: 'regenerate' });
+  const st = G._test.state;
+  const preset = { sections: { qubit: { defaults: { anharmonicity: 2e8 } } } };
+  const rep = G._test.applyPreset(preset, false);
+  ok(rep.applied === 2 && st.spec.populate.qubit.q2.anharmonicity === 2e8,
+     'P8: fill-empty still writes the blank cells');
+  ok(Object.keys(st.regenTouched || {}).length === 0,
+     'P8: fill-empty preset Apply marks NO cell touched in regen mode');
+  // Review of r2-03: the fill is recorded APART and shipped with the build,
+  // so the server can land it where the source leaf is null (a null
+  // anharmonicity) and never over a number. Unrecorded, the null stayed.
+  ok(st.regenFilled && st.regenFilled['qubit|q1|anharmonicity'] === 1 &&
+     st.regenFilled['qubit|q2|anharmonicity'] === 1,
+     'P8: fill-empty preset Apply records the filled cells (got ' +
+     JSON.stringify(st.regenFilled) + ')');
+  // A cell step 6 SHOWED the chip's value for, then the user cleared, still
+  // means that value (clear = keep, tier-1 carries it) — fill-empty leaves
+  // it blank instead of showing a value the build would not write.
+  delete st.spec.populate.qubit.q1.RF_freq;
+  const rep2 = G._test.applyPreset(
+    { sections: { qubit: { defaults: { RF_freq: 6e9 } } } }, false);
+  ok(st.spec.populate.qubit.q1.RF_freq === undefined &&
+     st.spec.populate.qubit.q2.RF_freq === 6e9 && rep2.applied === 1 &&
+     !st.regenFilled['qubit|q1|RF_freq'],
+     'P8: fill-empty skips a cleared chip value, fills a truly empty cell (got q1 ' +
+     st.spec.populate.qubit.q1.RF_freq + ', q2 ' + st.spec.populate.qubit.q2.RF_freq +
+     ', applied ' + rep2.applied + ')');
+  let posted = null;
+  // A synchronous thenable, so runBuild's select-env round-trip re-enters
+  // it inside this (sync) block and the build POST is captured here.
+  function sync(v) {
+    if (v && typeof v.then === 'function') return v;
+    return { then(f) { return sync(f ? f(v) : v); }, catch() { return this; } };
+  }
+  win.fetch = function (url, opts) {
+    if (/select-env/.test(String(url))) {
+      return sync({ json() { return sync({ ok: true }); } });
+    }
+    if (/\/(re)?generate\/build/.test(String(url))) posted = JSON.parse(opts.body);
+    return new win.Promise(function () {});
+  };
+  st.env = 'C:/py/python.exe';
+  win.document.getElementById('gen-output-path').value = 'D:\\out\\chip';
+  G._test.runBuild();
+  const pf = (posted && posted.populate_filled || []).map(function (c) { return c.join('|'); });
+  ok(pf.indexOf('qubit|q1|anharmonicity') >= 0 && pf.indexOf('qubit|q2|anharmonicity') >= 0,
+     'P8: the regen build POST carries populate_filled (got ' +
+     JSON.stringify(posted && posted.populate_filled) + ')');
+  G._test.applyPreset({ sections: { qubit: { defaults: { anharmonicity: 3e8 } } } }, true);
+  ok(st.regenTouched['qubit|q1|anharmonicity'] === 1 &&
+     st.regenTouched['qubit|q2|anharmonicity'] === 1,
+     'P8: Overwrite ON records the cells touched');
+})();
+
+// ---- P9 (QA regenerate-r2-31): the step-6 intro says what a BLANK cell
+// means in THIS mode — regen: the source chip's value (tier-1 carry), not
+// "build_quam's defaults"; Start over flips it back. -------------------------
+(function () {
+  function introShown(win) {
+    const spans = win.document.querySelectorAll('#gen-pop-intro [data-intro-mode]');
+    const out = {};
+    spans.forEach(function (s) { out[s.dataset.introMode] = !s.hidden; });
+    return out;
+  }
+  const win = makeWorld();
+  const G = win.QuamGen;
+  G.init();
+  G.hydrateFromSpec(JSON.parse(JSON.stringify(SPEC)), { mode: 'regenerate' });
+  G.goToStep(6);
+  let s = introShown(win);
+  ok(s.regenerate === true && s.generate === false,
+     'P9: regen step 6 shows the source-chip sentence only (got ' + JSON.stringify(s) + ')');
+  const txt = win.document.getElementById('gen-pop-intro').textContent;
+  ok(/source\s+chip's value/.test(txt), 'P9: the regen sentence names the source chip');
+  win.document.getElementById('gen-reset').click();     // Start over → generate
+  G.goToStep(6);
+  s = introShown(win);
+  ok(s.generate === true && s.regenerate === false,
+     'P9: after Start over the generate sentence is back (got ' + JSON.stringify(s) + ')');
+  const win2 = makeWorld();
+  win2.QuamGen.init();
+  win2.QuamGen.goToStep(6);
+  s = introShown(win2);
+  ok(s.generate === true && s.regenerate === false, 'P9: a generate mount shows build_quam');
+})();
+
+// ---- P10 (QA F19): an LO cell rewritten by applyLoAssignments is regrouped
+// like every other numeric cell — MHz showed RF "7,100" beside LO "7275". ----
+(function () {
+  const win = makeWorld();
+  const G = win.QuamGen;
+  G.init();
+  const st = G._test.state;
+  st.populateUnits.freq = 'MHz';
+  // A grouping NumberInput.format (the real one groups on blur/format()).
+  win.NumberInput.format = function (el) {
+    const m = /^(-?)(\d+)(\.\d+)?$/.exec(String(el.value));
+    if (m) el.value = m[1] + m[2].replace(/\B(?=(\d{3})+(?!\d))/g, ',') + (m[3] || '');
+  };
+  const inp = win.document.createElement('input');
+  inp.className = 'gen-pop-in';
+  inp.dataset.field = 'LO_frequency';
+  inp.dataset.group = 'qubit';
+  inp.dataset.rid = 'q1';
+  win.document.body.appendChild(inp);
+  G._test.applyLoAssignments({ 'qubit/q1': 7.275e9 });
+  ok(inp.value === '7,275', 'P10: LO shows "7,275" in MHz (got "' + inp.value + '")');
+})();
+
+// ---- P11 (QA generate-r2-21): Explorer "Copy as path" quotes are stripped ---
 (function () {
   const win = makeWorld();
   const G = win.QuamGen;
   G.init();
   const st = G._test.state;
   const U = G._test.unquotePath;
-  ok(U('"D:\\a\\b"') === 'D:\\a\\b', 'P8: one matched double-quote pair stripped');
-  ok(U("  'D:\\a'  ") === 'D:\\a', 'P8: single quotes + outer space');
-  ok(U('C:\\a\\b"c') === 'C:\\a\\b"c', 'P8: an interior quote is left alone');
-  ok(U('"D:\\a') === '"D:\\a', 'P8: an unmatched quote is left alone');
+  ok(U('"D:\\a\\b"') === 'D:\\a\\b', 'P11: one matched double-quote pair stripped');
+  ok(U("  'D:\\a'  ") === 'D:\\a', 'P11: single quotes + outer space');
+  ok(U('C:\\a\\b"c') === 'C:\\a\\b"c', 'P11: an interior quote is left alone');
+  ok(U('"D:\\a') === '"D:\\a', 'P11: an unmatched quote is left alone');
 
   const out = win.document.getElementById('gen-output-path');
   const sp = win.document.getElementById('gen-scripts-path');
   out.value = '"D:\\gen_out\\r2_quoted"';
   out.dispatchEvent(new win.Event('input', { bubbles: true }));
-  ok(st.outputPath === 'D:\\gen_out\\r2_quoted', 'P8: the output folder is stored unquoted');
+  ok(st.outputPath === 'D:\\gen_out\\r2_quoted', 'P11: the output folder is stored unquoted');
   ok(sp.value === 'D:\\gen_out\\r2_quoted\\state_gen_scripts',
-     'P8: the scripts folder follows the UNQUOTED path — got ' + sp.value);
+     'P11: the scripts folder follows the UNQUOTED path — got ' + sp.value);
   out.dispatchEvent(new win.Event('change', { bubbles: true }));
-  ok(out.value === 'D:\\gen_out\\r2_quoted', 'P8: on commit the box shows the path used');
+  ok(out.value === 'D:\\gen_out\\r2_quoted', 'P11: on commit the box shows the path used');
 
   // the real step-7 Next gate accepts it
   out.value = '"D:\\gen_out\\r2_quoted"';
   G.goToStep(7);
   const msg = win.document.getElementById('gen-message');
   G.tryNext();
-  ok(G.state.step === 8, 'P8: a quoted absolute output passes step 7 — got step ' +
+  ok(G.state.step === 8, 'P11: a quoted absolute output passes step 7 — got step ' +
      G.state.step + ' / ' + (msg.hidden ? '' : msg.textContent));
   // ...and so does a quoted scripts folder the user pasted themselves
   sp.value = '"D:\\gen_out\\my scripts"';
@@ -246,7 +365,7 @@ const SPEC = {
   G.goToStep(7);
   G.tryNext();
   ok(G.state.step === 8 && st.scriptsPath === 'D:\\gen_out\\my scripts',
-     'P8: a quoted scripts folder passes step 7 unquoted — got step ' + G.state.step +
+     'P11: a quoted scripts folder passes step 7 unquoted — got step ' + G.state.step +
      ' / ' + (msg.hidden ? '' : msg.textContent));
 
   // the custom interpreter is probed unquoted
@@ -257,7 +376,7 @@ const SPEC = {
   G.useCustomEnv();
   const want = '/generate/probe?python=' +
     encodeURIComponent('D:\\miniconda3\\envs\\cqt\\python.exe');
-  ok(urls.indexOf(want) >= 0, 'P8: the interpreter is probed without its quotes — got ' +
+  ok(urls.indexOf(want) >= 0, 'P11: the interpreter is probed without its quotes — got ' +
      JSON.stringify(urls));
 })();
 

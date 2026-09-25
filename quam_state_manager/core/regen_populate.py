@@ -451,6 +451,54 @@ def protected_detail(paths: list[str], old_state: dict, merged: dict,
                                      and not _X180_SEED_RE.match(op) else None)})
     # the value the user typed first, then what the build derived from it
     return sorted(out, key=lambda d: d["derived_from"] is not None)
+def fill_protect_paths(filled: Iterable[Iterable[str]] | None,
+                       changed: list[tuple[str, str, str]], spec_populate: Any,
+                       old_state: dict, old_wiring: dict,
+                       new_state: dict, new_wiring: dict) -> set[str]:
+    """Leaf paths a FILL-EMPTY preset Apply may write over the tier-1 carry
+    (QA review of regenerate-r2-03).
+
+    "Empty cells only" is judged against the SOURCE CHIP, leaf by leaf -- not
+    against what step 6 managed to display, because a cell the extractor
+    could not read back looks blank while the chip holds a calibration there.
+    So a filled cell's paths (the same fanout as :func:`protect_paths`) are
+    protected only where the OLD leaf holds no value: null, or NaN (docs/137:
+    a NaN was never a value). Never over a number, a string or anything else
+    the chip stores. An ABSENT old leaf needs nothing -- tier-1 carries only
+    leaves present in both trees. The null case is real: quam_builder's
+    ``Transmon.anharmonicity`` defaults to None, and a null anharmonicity
+    crashes generate_config on the DRAG pulses (run_build) -- exactly the
+    chip a user fills from the preset.
+
+    ``filled`` -- ``[group, id, field]`` cells. A cell already in ``changed``
+    (typed, Set-all, Overwrite) keeps its full protection; a filled cell the
+    user cleared afterwards (absent from the spec) protects nothing.
+    """
+    spec_populate = spec_populate if isinstance(spec_populate, dict) else {}
+    done = set(changed or ())
+    cells: list[tuple[str, str, str]] = []
+    for t in filled or ():
+        try:
+            g, i, f = (str(x) for x in t)
+        except (TypeError, ValueError):
+            continue
+        ids = spec_populate.get(g)
+        fields = ids.get(i) if isinstance(ids, dict) else None
+        if ((g, i, f) in done or not isinstance(fields, dict)
+                or fields.get(f) is None):
+            continue
+        done.add((g, i, f))
+        cells.append((g, i, f))
+    if not cells:
+        return set()
+    paths, _ = protect_paths(cells, spec_populate, old_state, old_wiring,
+                             new_state, new_wiring)
+
+    def no_value(p: str) -> bool:
+        v = _walk(old_state, p)
+        return v is None or (isinstance(v, float) and math.isnan(v))
+
+    return {p for p in paths if _exists(old_state, p) and no_value(p)}
 
 
 def _protect_cr_zz(add, add_rel, merged_pid: str, fname: str,
@@ -514,3 +562,174 @@ def _protect_cr_zz(add, add_rel, merged_pid: str, fname: str,
         suffix = cr_semantics.lever_map(pair_new).get(lever)
         if suffix:
             add_rel(suffix)
+
+
+# ---------------------------------------------------------------------------
+# FSP compensation (QA regenerate-r2-04 / r2-06)
+#
+# A port's ``full_scale_power_dbm`` changed in the wizard is protected (its NEW
+# value beats tier-1), but every OTHER amplitude on that port is tier-1 carried
+# at its OLD value — so each such pulse silently moved by the FSP delta
+# (``P = FSP + 20·log10|amp|``). Live Edit never lets that happen quietly
+# (docs/20 r12-B); a rebuild now doesn't either. The plan is Live Edit's own
+# engine, ``mw_fem.fsp_compensation_plan``, run on the SOURCE chip.
+
+_FSP_GROUP_LABEL = {"qubit": "xy", "resonator": "readout", "twpa": "pump"}
+
+
+def _element_port_path(root: dict, group: str, rid: str) -> str | None:
+    """Dot-path of the MW output port a populate row's FSP lands on — the
+    port :func:`protect_paths` resolves for that row's ``full_scale_power_dbm``."""
+    if group == "qubit":
+        return _chan_port_path(root, (root.get("qubits") or {}).get(rid), "xy")
+    if group == "twpa":
+        return _chan_port_path(root, (root.get("twpas") or {}).get(rid), "pump")
+    if group == "resonator":
+        q = (root.get("qubits") or {}).get(rid)
+        r = q.get("resonator") if isinstance(q, dict) else None
+        return _resolve_ptr_path(root, r.get("opx_output")) \
+            if isinstance(r, dict) else None
+    return None
+
+
+def fsp_offers(changed: list[tuple[str, str, str]], spec_populate: Any,
+               old_state: dict, old_wiring: dict) -> list[dict]:
+    """One compensation plan per MW output port whose FSP the wizard changed.
+
+    Computed on the SOURCE chip alone (so the route can ask BEFORE a build):
+    ``mw_fem.fsp_compensation_plan`` over the old tree lists every amplitude on
+    that physical port with ``new = old · 10^((FSP_old − FSP_new)/20)``. Rows
+    the wizard itself rewrites (an explicit amplitude edit, the DragCosine
+    family an x180 edit re-seeds) are dropped — predicted by running
+    :func:`protect_paths` against the old tree, which has the same op names.
+    Each plan gains ``rows`` ([group, id] of the wizard rows on that port) and
+    a ``port`` label naming them. Deduplicated by port (a readout bank is one).
+    """
+    from quam_state_manager.core import mw_fem
+
+    spec_populate = spec_populate if isinstance(spec_populate, dict) else {}
+    old_root = _root_of(old_state, old_wiring)
+    rows = [(g, i, f) for g, i, f in changed
+            if f == "full_scale_power_dbm" and g in _FSP_GROUP_LABEL]
+    if not rows:
+        return []
+    predicted, _ = protect_paths(changed, spec_populate, old_state, old_wiring,
+                                 old_state, old_wiring)
+    offers: dict[str, dict] = {}
+    for group, rid, fname in rows:
+        pp = _element_port_path(old_root, group, rid)
+        if not pp:
+            continue
+        if pp in offers:
+            offers[pp]["rows"].append([group, rid])
+            continue
+        new = ((spec_populate.get(group) or {}).get(rid) or {}).get(fname)
+        plan = mw_fem.fsp_compensation_plan(old_root, f"{pp}.{fname}", new)
+        if plan is None:
+            continue
+        plan["amps"] = [a for a in plan["amps"] if a["path"] not in predicted]
+        plan["clip_count"] = sum(1 for a in plan["amps"] if a["clips"])
+        plan["rows"] = [[group, rid]]
+        offers[pp] = plan
+    for plan in offers.values():
+        names = ", ".join(f"{rid} {_FSP_GROUP_LABEL[g]}" for g, rid in plan["rows"])
+        plan["port"] = f"{plan['port']} ({names})"
+    return list(offers.values())
+
+
+def fsp_ack_mode(plan: dict, fsp_ack: Any) -> str | None:
+    """``"comp"`` / ``"solo"`` when the wizard acknowledged THIS offer (same
+    port, same new FSP — a later FSP edit voids an earlier answer), else None."""
+    a = fsp_ack.get(plan.get("fsp_path")) if isinstance(fsp_ack, dict) else None
+    if not isinstance(a, dict) or a.get("mode") not in ("comp", "solo"):
+        return None
+    try:
+        same = math.isclose(float(a.get("fsp_new")), float(plan["fsp_new"]),
+                            rel_tol=0.0, abs_tol=1e-9)
+    except (TypeError, ValueError):
+        return None
+    return a["mode"] if same else None
+
+
+def _set_leaf(root: dict, dot_path: str, value: Any) -> bool:
+    node: Any = root
+    segs = dot_path.split(".")
+    for seg in segs[:-1]:
+        if not isinstance(node, dict) or seg not in node:
+            return False
+        node = node[seg]
+    if not isinstance(node, dict) or segs[-1] not in node:
+        return False
+    node[segs[-1]] = value
+    return True
+
+
+def apply_fsp_compensation(merged: dict, offers: list[dict],
+                           protect: set[str] | None,
+                           new_state: dict, new_wiring: dict, *,
+                           auto: bool, fsp_ack: Any = None
+                           ) -> tuple[list[dict], list[str]]:
+    """Rescale the tier-1-carried amplitudes on each FSP-changed port.
+
+    ``auto`` (absolute power mode: the wizard allocated the FSP, the user set
+    pulse POWERS) compensates every offer. Otherwise only an offer the user
+    answered ``comp`` is compensated (with any amplitude they edited in the
+    offer), ``solo`` keeps the amplitudes, and an unanswered one is reported
+    in the returned conflicts — never silent. A row is rewritten only when it
+    was really carried (merged value == the plan's old one) and is not a
+    protected path (the wizard's own value wins). A port the rebuild moved is
+    never compensated (the plan names the OLD port's channels).
+
+    Returns ``(compensated [{path, old, new}], conflicts [str])``.
+    """
+    compensated: list[dict] = []
+    conflicts: list[str] = []
+    protect = protect or set()
+    new_root = _root_of(new_state, new_wiring)
+    for plan in offers:
+        port_node = plan["fsp_path"][: -len(".full_scale_power_dbm")]
+        amps = plan.get("amps") or []
+        old_fsp, new_fsp = plan["fsp_old"], plan["fsp_new"]
+        where = f"{plan['port']}: FSP {old_fsp:g} → {new_fsp:g} dBm"
+        if any(_element_port_path(new_root, g, rid) != port_node
+               for g, rid in plan.get("rows") or ()):
+            if amps:
+                conflicts.append(
+                    f"{where}, but the rebuild moved it to another port — "
+                    f"{len(amps)} calibrated amplitude(s) were not compensated; "
+                    "verify their power.")
+            continue
+        mode = "comp" if auto else fsp_ack_mode(plan, fsp_ack)
+        if mode == "solo" or not amps:
+            continue
+        if mode is None:
+            db = float(new_fsp) - float(old_fsp)
+            conflicts.append(
+                f"{where} — {len(amps)} calibrated amplitude(s) on this port "
+                f"carried unchanged, so each of those pulses is {abs(db):.1f} dB "
+                f"{'weaker' if db < 0 else 'louder'}; verify.")
+            continue
+        overrides: dict[str, float] = {}
+        if not auto:
+            ack = fsp_ack.get(plan["fsp_path"]) if isinstance(fsp_ack, dict) else None
+            for u in (ack or {}).get("amps") or ():
+                try:
+                    overrides[str(u["dot_path"])] = float(u["value"])
+                except (KeyError, TypeError, ValueError):
+                    continue
+        for a in amps:
+            path = a["path"]
+            if path in protect:
+                continue
+            cur = _walk(merged, path)
+            if not (_num(cur) and _close(cur, a["old"])):
+                continue
+            val = overrides.get(path, a["new"])
+            if not math.isfinite(val) or not _set_leaf(merged, path, val):
+                continue
+            compensated.append({"path": path, "old": cur, "new": val})
+            if abs(val) > 1.0:
+                conflicts.append(
+                    f"{path}: rescaled for FSP {old_fsp:g} → {new_fsp:g} dBm, "
+                    f"|amp| {abs(val):.3g} > 1 clips at the DAC; verify.")
+    return compensated, conflicts

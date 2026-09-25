@@ -641,7 +641,9 @@
     // The user may already be LOOKING at the Wiring step (the /instrument
     // "Modify wiring…" deep link lands there before env probing finishes) —
     // the moment an env exists, deliver the diagram it was waiting for.
-    if (state.step === 5) maybeAutoAllocate();
+    if (state.step === 5 || (state.step === 6 && !state.allocation)) {
+      maybeAutoAllocate();
+    }
   }
 
   function selectEnv(python) {
@@ -1151,6 +1153,20 @@
       });
       pop.pairs = npairs;
     }
+    // The auto-prefill record follows a rename, so a renamed row is not
+    // mistaken for a new one (QA generate-r2-05).
+    var apr = state.autoPresetRows;
+    if (apr) {
+      var nq = {}, np = {};
+      Object.keys(apr.q || {}).forEach(function (q) { nq[map[q] || q] = 1; });
+      Object.keys(apr.pairs || {}).forEach(function (k) {
+        var seg = k.split("|");
+        np[[map[seg[0]] || seg[0], map[seg[1]] || seg[1]].sort().join("|") +
+           "|" + seg.slice(2).join("|")] = 1;
+      });
+      apr.q = nq;
+      apr.pairs = np;
+    }
     // TWPA qubit lists carry qubit ids too (the old renumber missed these).
     (sp.twpas || []).forEach(function (tw) {
       tw.qubits = (tw.qubits || []).map(function (q) { return map[q] || q; });
@@ -1389,6 +1405,19 @@
     });
   }
 
+  // Step 6's intro names what a BLANK cell means, which differs by mode
+  // (QA regenerate-r2-31): generate → build_quam's defaults; regenerate →
+  // the source chip's value (tier-1 carry, docs/72). Run on every step-6
+  // entry — Start over flips a regen page back to generate mode.
+  function renderPopulateIntro() {
+    var intro = document.getElementById("gen-pop-intro");
+    if (!intro) return;
+    var regen = state.mode === "regenerate";
+    intro.querySelectorAll("[data-intro-mode]").forEach(function (el) {
+      el.hidden = (el.dataset.introMode === "regenerate") !== regen;
+    });
+  }
+
   // Keep the naming block's controls + note in step with state. Module-level
   // (not a bindQubitsStep closure) so renderQubitsStep / hydrateFromSpec can
   // call it.
@@ -1523,6 +1552,7 @@
   // Drop every populate entry (per-qubit buckets + per-pair keys) whose id/endpoint
   // is no longer a live qubit. `valid` = { qid: true } for the surviving qubits.
   function prunePopulate(valid) {
+    forgetAutoPresetRows(valid);   // a re-created id prefills again (QA generate-r2-05)
     // docs/136: spec.qdac.qubits is keyed by qubit id like every populate
     // bucket, and it was the one map nothing pruned. Lowering the qubit count
     // left an orphan entry, which validate_spec rejects with "is not a
@@ -2053,7 +2083,18 @@
       } else {
         input.type = type;
         if (type === "number" && extra && extra.step) input.step = extra.step;
+        if (extra && extra.min != null) input.min = extra.min;
+        if (extra && extra.max != null) input.max = extra.max;
         input.value = fieldsObj[key] == null ? "" : fieldsObj[key];
+      }
+      // A single-field fact (QA generate-r2-07: the QDAC channel range) is
+      // flagged here too, not only in the step-6 table.
+      function flag() {
+        var m = extra && extra.check ? extra.check(fieldsObj[key]) : null;
+        if (m) { input.setAttribute("aria-invalid", "true"); input.title = m; }
+        else if (extra && extra.check) {
+          input.removeAttribute("aria-invalid"); input.title = "";
+        }
       }
       input.addEventListener("input", function () {
         if (type === "number") {
@@ -2062,12 +2103,16 @@
         } else {
           fieldsObj[key] = input.value === "" ? null : input.value;
         }
+        flag();
       });
+      flag();
       wrap.appendChild(span);
       wrap.appendChild(input);
       container.appendChild(wrap);
     }
-    field("Channel", "channel", "number", { step: "1" });
+    field("Channel", "channel", "number", { step: "1",
+      min: QDAC_CHANNEL_RANGE[0], max: QDAC_CHANNEL_RANGE[1],
+      check: qdacChannelError });
     field("Trigger port", "trigger_port", "select", { options: [
       { value: "", label: "(none)" },
       { value: "ext1", label: "ext1" }, { value: "ext2", label: "ext2" },
@@ -2433,6 +2478,14 @@
         if (fl) ln.group = fl;
       }
     });
+    // QA generate-r2-30: the import replaced the whole chip definition, so
+    // every undo entry recorded before it (field edits, board-delete
+    // sentinels, the gen-chip-arch change dispatched just above) belongs to
+    // the replaced chip. Ctrl+Z stops at this barrier and says so; the
+    // board's own delete-undo stack is emptied the same way.
+    _wizStack.length = 0;
+    _wizStack.push({ barrier: "the port-CSV import" });
+    if (window.WiringGrid && window.WiringGrid.clearUndo) window.WiringGrid.clearUndo();
     saveDraft();
     if (typeof renderQubitsStep === "function") renderQubitsStep();
     return true;
@@ -2471,7 +2524,9 @@
     var addTwpa = document.getElementById("gen-add-twpa");
 
     // Port-label CSV import (docs/54): file picker → text → server parse →
-    // applyPortCsv. Confirm before clobbering a non-empty chip definition.
+    // applyPortCsv. Confirm before clobbering a non-empty chip definition —
+    // AFTER the parse (QA F20): the parse route writes nothing, and a CSV that
+    // fails to parse never clobbers anything, so it is refused without asking.
     var csvBtn = document.getElementById("gen-csv-import-btn");
     var csvFile = document.getElementById("gen-csv-file");
     if (csvBtn && csvFile) {
@@ -2480,13 +2535,6 @@
         var f = csvFile.files && csvFile.files[0];
         csvFile.value = "";
         if (!f) return;
-        if (state.spec.qubits.length &&
-            !window.confirm("Importing the CSV replaces the current qubits, "
-                            + "pairs, instruments and port pins (TWPAs are "
-                            + "kept, re-allocated on the imported "
-                            + "instruments). Continue?")) {
-          return;
-        }
         var reader = new FileReader();
         reader.onload = function () {
           fetch("/generate/import-port-csv", {
@@ -2497,6 +2545,13 @@
             if (!payload.ok) {
               window.alert("CSV import failed:\n"
                            + (payload.errors || ["unknown error"]).join("\n"));
+              return;
+            }
+            if (state.spec.qubits.length &&
+                !window.confirm("Importing the CSV replaces the current qubits, "
+                                + "pairs, instruments and port pins (TWPAs are "
+                                + "kept, re-allocated on the imported "
+                                + "instruments). Continue?")) {
               return;
             }
             applyPortCsv(payload);
@@ -2673,6 +2728,11 @@
         _wizStack.push({ boardUndo: true });
         if (_wizStack.length > _WIZ_STACK_CAP) _wizStack.shift();
       }
+      if (kind === "delete") {     // the board dropped the qubit's populate too
+        var liveIds = {};
+        state.spec.qubits.forEach(function (q) { liveIds[q] = true; });
+        forgetAutoPresetRows(liveIds);
+      }
       var qc = document.getElementById("gen-qubit-count");
       if (qc) qc.value = String(state.spec.qubits.length);
       renderQubitSummary();    // count chip below the board reflects the delete
@@ -2795,10 +2855,11 @@
         // Once the wiring is drag-edited, keep the user's feedline grouping.
         var fnum = Math.floor(idx / muxSize) + 1;
         var group = (state.wiringTouched && groupOf[q]) ? groupOf[q] : "feedline" + fnum;
-        // LO-safe auto-pairing: a MW-FEM has 5 LOs, each shared by a port pair
+        // Coupled-port auto-pairing: the MW-FEM couples fixed port pairs
         // (Out1+In1, Out2+Out3, Out4+Out5, Out6+Out7, Out8+In2 — MW_LO_PAIRS,
-        // this file). Alternating feedlines Out8+In2 / Out1+In1 confines
-        // readout to LO5+LO1, leaving Out2-7 (LO2/3/4) free for drives.
+        // this file), which must share a BAND (QA F16: each port has its own
+        // LO). Alternating feedlines Out8+In2 / Out1+In1 keeps each readout's
+        // in/out on one coupled pair, leaving Out2-7 free for drives.
         // con/slot left to the allocator.
         //
         // The two in_ports used to be TRANSPOSED — Out8+In1 and Out1+In2 —
@@ -2807,7 +2868,10 @@
         // LOs. One LO then had to cover both the readout (≈4.95 GHz) and a
         // drive (≈6.6 GHz), the solver fell back to their midpoint, and the
         // wizard flagged its OWN generated value red. Confirmed against
-        // MW_LO_PAIRS, which is the authority in this file.
+        // MW_LO_PAIRS, which is the authority in this file. (QA F16: that was
+        // the shared-LO premise; with one LO per port the transposed pairing
+        // is legal when the bands agree — a real chip runs it. The pairing is
+        // kept so auto-allocations do not move.)
         var loPair = (fnum % 2 === 1) ? { out_port: 8, in_port: 2 }
                                       : { out_port: 1, in_port: 1 };
         var rch = (state.wiringTouched && pinned[q + "|resonator"])
@@ -4048,6 +4112,11 @@
           // dedicated ports the allocator handed out a moment earlier.
           renderQdacCabling();
           renderWiringDiagram();
+          if (state.step === 6) {   // QA F16: step-6 deep link — now derivable
+            renderPopWiring();
+            reconcileReadoutBanks();
+            recomputeLOs();
+          }
           var warns = res.result.warnings || [];
           if (warns.length) showMessage(warns.join(" "), "warn");
         } else {
@@ -4674,6 +4743,16 @@
     }
   }
 
+  // QA generate-r2-19: a non-empty entry in a numeric column that reads as no
+  // finite number ("abc", "1e999"). setPopValue skips such a write, so on a
+  // COMMIT the cell must put back what it held before the edit — the
+  // keystroke live-writes may have deleted it on the way (clear, then type).
+  function popRawUnparseable(col, raw) {
+    raw = (raw == null ? "" : String(raw)).trim();
+    if (raw === "" || col.kind === "text" || col.kind === "select") return false;
+    return !isFinite(parseFloat(window.NumberInput.strip(raw)));
+  }
+
   function setPopValue(bucket, col, raw, group, rid) {
     raw = (raw == null ? "" : String(raw)).trim();
     if (raw === "") {
@@ -4749,6 +4828,13 @@
     // edit never clobbers a hand-typed LO, flips a dBm negative amp, or storms on
     // a big chip. The change handler re-commits + clears dirty on blur.
     input.addEventListener("input", function () {
+      if (input.dataset.dirty !== "1") {
+        // First keystroke of this edit: remember the stored value, so an
+        // unparseable commit can put it back (QA generate-r2-19).
+        var pb = popBucketRead(group, rid);
+        input._preEdit = { has: Object.prototype.hasOwnProperty.call(pb, col.field),
+                           v: pb[col.field] };
+      }
       input.dataset.dirty = "1";
       var bucket = popBucketWrite(group, rid);
       if (bucket) {
@@ -4778,14 +4864,38 @@
       // the achieved value — while still SKIPPING sibling cells that are also
       // dirty (a multi-cell blur-race flush), preserving their typed input.
       input.dataset.dirty = "";
+      var pre = input._preEdit;
+      input._preEdit = null;
       var bucket = popBucketWrite(group, rid);
+      if (bucket && popRawUnparseable(col, input.value)) {
+        // QA generate-r2-19: nothing to store — put back the value from
+        // before this edit (a keystroke may have deleted it) and change
+        // nothing else. The typed text stays, flagged, until corrected; a
+        // re-render then shows the value the spec really holds.
+        if (pre) {
+          if (pre.has) bucket[col.field] = pre.v; else delete bucket[col.field];
+        }
+        popBucketPrune(group, rid);
+        clearTimeout(input._valTimer);
+        validateCellInline(input, group, rid, col);
+        var why = input.classList.contains("gen-cell-err") ? input.title
+          : '"' + String(input.value).trim() + '" is not a number.';
+        setCellFlag(input, { severity: "err", message: why +
+          " Not saved — the value from before this edit is kept." });
+        return;
+      }
       if (bucket) {
         setPopValue(bucket, col, input.value, group, rid);
         markPopulateTouched(group, rid, col.field);   // populate-protect (docs/72)
         popBucketPrune(group, rid);
       }
-      // Only an RF_freq edit re-derives the LOs, so a hand-typed LO sticks.
-      if (col.field === "RF_freq") recomputeLOs();
+      // Only an RF edit re-derives the LOs, so a hand-typed LO sticks.
+      if (col.field === loRfField(group)) recomputeLOs();
+      // A band / LO edit changes what the build writes on the port — re-run
+      // the band findings without re-solving (QA r2-07).
+      else if (col.field === "band" || col.field === "LO_frequency") {
+        recomputeLOs({ noApply: true });
+      }
       // A qubit frequency edit may re-orient CZ pairs (higher f = control).
       if (col.field === "RF_freq" && group === "qubit") czOrientAfterFreqEdit();
       // Multiplexed readout shares one MW-FEM port — sync FSP across the group.
@@ -4816,6 +4926,71 @@
       validateCellInline(input, group, rid, col);
     });
     return input;
+  }
+
+  // QA r2-23: a Set-all commit records what it overwrites — every (group, rid,
+  // field) the fill and its knock-on recomputes can write, plus whether the
+  // cell was already populate-touched — so Ctrl+Z puts each row's OWN previous
+  // value back. Undo used to restore the Set-all box's own "" and re-fire its
+  // change, which is an empty commit: the whole column went blank. Returns the
+  // restore function (spec writes + an in-place repaint of those columns).
+  function bulkFillSnapshot(group, rowIds, col) {
+    var cells = [];
+    var qs = state.spec.qubits || [];
+    rowIds.forEach(function (rid) { cells.push([group, rid, col.field]); });
+    if (state.powerMode === "absolute" && col.dim === "amp") {
+      // recomputeXyPower / recomputeReadoutPower rewrite the port's amps + FSP
+      if (group === "pulses") {
+        rowIds.forEach(function (rid) {
+          cells.push(["pulses", rid, "x180_amplitude"],
+                     ["pulses", rid, "saturation_amplitude"],
+                     ["qubit", rid, "full_scale_power_dbm"]);
+        });
+      } else if (group === "resonator") {
+        qs.forEach(function (rid) {
+          cells.push(["resonator", rid, "readout_amplitude"],
+                     ["resonator", rid, "full_scale_power_dbm"]);
+        });
+      }
+    }
+    if (col.field === loRfField(group)) {
+      // an RF fill re-solves LOs across the chip (recomputeLOs)
+      qs.forEach(function (rid) {
+        cells.push(["qubit", rid, "LO_frequency"], ["resonator", rid, "LO_frequency"]);
+      });
+      (state.spec.twpas || []).forEach(function (tw) {
+        var tid = (tw && typeof tw === "object") ? tw.id : tw;
+        if (tid) cells.push(["twpa", tid, "LO_frequency"]);
+      });
+    }
+    var touched = state.regenTouched || {};
+    var snap = cells.map(function (c) {
+      var b = popBucketRead(c[0], c[1]);
+      var has = Object.prototype.hasOwnProperty.call(b, c[2]);
+      return { g: c[0], rid: c[1], f: c[2], has: has, v: has ? b[c[2]] : undefined,
+               wasTouched: !!touched[c[0] + "|" + c[1] + "|" + c[2]] };
+    });
+    return function restoreBulkFill() {
+      var fields = {};
+      snap.forEach(function (e) {
+        fields[e.g + "|" + e.f] = [e.g, e.f];
+        var b = popBucketWrite(e.g, e.rid);
+        if (!b) return;
+        if (e.has) b[e.f] = e.v; else delete b[e.f];
+        popBucketPrune(e.g, e.rid);
+        if (!e.wasTouched && state.regenTouched) {
+          delete state.regenTouched[e.g + "|" + e.rid + "|" + e.f];
+        }
+      });
+      // Repaint every column the restore wrote, in place (a table rebuild
+      // would orphan the older undo entries' cells).
+      Object.keys(fields).forEach(function (k) {
+        var gf = fields[k];
+        popColsOf(gf[0]).forEach(function (c) {
+          if (c.field === gf[1]) refreshColumnCells(gf[0], c);
+        });
+      });
+    };
   }
 
   // The "Set all" cell for one column — on commit, writes its value to every
@@ -4851,6 +5026,8 @@
       input.placeholder = "set all…";
     }
     input.className = "gen-pop-in";
+    // Names the column in the Ctrl+Z toast (QA r2-23).
+    input.setAttribute("aria-label", "Set all " + (col.label || col.field));
     if (col.kind === "text") {
       window.NumberInput.fit(input);
       input.addEventListener("input", function () { window.NumberInput.fit(input); });
@@ -4858,6 +5035,18 @@
       window.NumberInput.attach(input);
     }
     input.addEventListener("change", function () {
+      // QA generate-r2-19: a Set-all that reads as no number changes no row —
+      // say so on the box instead of silently doing nothing. Its Ctrl+Z entry
+      // only clears the flag: an undo that replayed the box's "" would be an
+      // empty commit and clear the whole column.
+      if (popRawUnparseable(col, input.value)) {
+        setCellFlag(input, { severity: "err", message: '"' +
+          String(input.value).trim() + '" is not a number — no row was changed.' });
+        input.__wizRestore = function () { setCellFlag(input, null); };
+        return;
+      }
+      setCellFlag(input, null);
+      var restoreFill = bulkFillSnapshot(group, rowIds, col);   // QA r2-23
       rowIds.forEach(function (rid) {
         var bucket = popBucketWrite(group, rid);
         if (!bucket) return;
@@ -4865,8 +5054,18 @@
         markPopulateTouched(group, rid, col.field);   // populate-protect
         popBucketPrune(group, rid);
       });
+      // Read (and cleared) by the wizard undo's change listener: that entry
+      // restores each row's own value instead of replaying this box.
+      input.__wizRestore = function () {
+        restoreFill();
+        // Re-derive, never re-apply: the restored LOs / FSPs ARE the values
+        // from before the fill, so only displays + findings are redone.
+        refreshAmpCells();
+        if (col.field === "RF_freq" && group === "qubit") czOrientAfterFreqEdit();
+        recomputeLOs({ noApply: true });
+      };
       refreshColumnCells(group, col);
-      if (col.field === "RF_freq") recomputeLOs();
+      if (col.field === loRfField(group)) recomputeLOs();
       if (col.field === "RF_freq" && group === "qubit") czOrientAfterFreqEdit();
       if (col.field === "full_scale_power_dbm") {
         if (group === "resonator") {
@@ -5158,11 +5357,19 @@
   }
 
   // -- step 6: MW-FEM LO auto-assignment -------------------------------
-  // An MW-FEM has 5 LOs, each shared by a port pair (MW_LO_PAIRS). An LO can
-  // up/down-convert RF only within ±0.4 GHz of itself — a 0.8 GHz IF window.
-  // recomputeLOs() derives each LO from the RF_freq values the user enters,
-  // writes it into every element on that LO's ports, and warns when one LO
-  // cannot cover its port pair. bandOf() mirrors run_build.py's _band_for.
+  // QA F16: every MW-FEM analog port has its OWN LO. QM docs
+  // (Guides/opx1000_fems.md, Upconverters and Downconverters): "Each analog
+  // output port must define either an `upconverter_frequency` field with a
+  // frequency in the port's band, or a `upconverters` field" — and run_build
+  // writes one scalar upconverter_frequency per port. The coupled pairs
+  // (MW_LO_PAIRS) share only a BAND: "Coupled ports must be in the same band,
+  // or in bands `1` and `3`." One upconverter reaches RF within ±0.4 GHz of
+  // itself ('creating "sub-bands" of about 800 MHz around the center
+  // frequency of each DUC'). recomputeLOs() derives each PORT's LO from the
+  // RF_freq values on it, writes it into every element on that port, warns
+  // when one LO cannot cover the port, and checks the coupled-band rule
+  // (loBandFindings).
+  // bandOf() mirrors run_build.py's _band_for.
   function bandOf(freq) {
     freq = parseFloat(freq);
     if (isNaN(freq)) return null;
@@ -5172,6 +5379,8 @@
     return null;
   }
 
+  // The COUPLED port pairs — they must share a band (or be bands 1 + 3); they
+  // do NOT share an LO (QA F16). Mirrors spec_constraints.COUPLED_PORT_PAIRS.
   var MW_LO_PAIRS = [
     [[1, "output"], [1, "input"]],
     [[2, "output"], [3, "output"]],
@@ -5248,13 +5457,42 @@
     return sum;
   }
 
+  // The populate fields that ARE a played pulse's length (QA generate-r2-02).
+  var POSITIVE_PULSE_LENGTHS = {
+    x180_length: 1, saturation_length: 1, readout_length: 1, pump_length: 1,
+    cz_interaction_duration: 1, zz_flattop_length: 1
+  };
+
+  // QA generate-r2-07: the QDAC-II has channels 1..24 inclusive — the
+  // customer's driver asserts it. Parity-pinned against core/qdac.py's
+  // CHANNEL_RANGE (the rule Diagnostics and validate_spec apply).
+  var QDAC_CHANNEL_RANGE = [1, 24];
+  function qdacChannelError(ch) {
+    if (ch == null || ch === "") return null;
+    var n = Number(ch);
+    if (!isFinite(n) || n % 1 !== 0 || n < QDAC_CHANNEL_RANGE[0] ||
+        n > QDAC_CHANNEL_RANGE[1]) {
+      return "The QDAC-II has channels " + QDAC_CHANNEL_RANGE[0] + " to " +
+        QDAC_CHANNEL_RANGE[1] + " inclusive (the driver refuses " + ch + ").";
+    }
+    return null;
+  }
+
   // Validate ONE cell's BASE value (SI units / dimensionless amp — unit
   // conversion happens in the caller). Returns null when fine, else
   // { severity: "err" | "warn", message }. Pure derivation, no side effects.
   function validateCellValue(group, rid, col, base, raw) {
     function err(m) { return { severity: "err", message: m }; }
     function warn(m) { return { severity: "warn", message: m }; }
+    // A fact about OTHER cells too (the LO's members, the feedline sum): the
+    // Review conflicts row already says it, populateCellErrors skips it.
+    function xerr(m) { return { severity: "err", message: m, cross: true }; }
     if (isNaN(base)) return err('"' + raw + '" is not a number.');
+
+    if (group === "qdac" && col.field === "channel") {
+      var chMsg = qdacChannelError(base);
+      return chMsg ? err(chMsg) : null;
+    }
 
     if (col.dim === "freq" && col.field === "RF_freq") {
       if (base <= 0) return err("Frequency must be positive.");
@@ -5279,10 +5517,10 @@
         var pop = state.spec.populate || {};
         for (var i = 0; i < g.members.length; i++) {
           var m = g.members[i];
-          var rf = parseFloat(((pop[m.group] || {})[m.rid] || {}).RF_freq);
+          var rf = parseFloat(((pop[m.group] || {})[m.rid] || {})[loRfField(m.group)]);
           if (!isFinite(rf)) continue;
           if (Math.abs(rf - base) > LO_IF_HALF_WINDOW) {
-            return err(m.rid + "'s RF " + fmtFreq(rf) +
+            return xerr(m.rid + "'s RF " + fmtFreq(rf) +
               " is outside this LO's ±0.4 GHz IF window.");
           }
           if (!rfInBand(rf, b)) {
@@ -5294,6 +5532,22 @@
               " (|IF| ≤ 5 MHz is unreadable).");
           }
         }
+      }
+      return null;
+    }
+
+    // QA r2-07: an explicit band must cover this row's LO — the port
+    // frequency Diagnostics judges — band 2 (4.5–7.5 GHz) at a 3.5 GHz LO was
+    // accepted and built. Single-row fact; the coupled-port rule is a panel
+    // finding (loBandFindings).
+    if (col.field === "band") {
+      var rng = BAND_RF_RANGES[base];
+      if (!rng) return null;
+      var brow = ((state.spec.populate || {})[group] || {})[rid] || {};
+      var blo = parseFloat(brow.LO_frequency);
+      if (isFinite(blo) && (blo < rng[0] || blo > rng[1])) {
+        return warn("Band " + base + " covers " + fmtFreq(rng[0]) + "–" +
+          fmtFreq(rng[1]) + "; this row's LO " + fmtFreq(blo) + " is outside it.");
       }
       return null;
     }
@@ -5322,7 +5576,7 @@
       if (col.field === "readout_amplitude" && group === "resonator") {
         var sum = feedlineAmpSum(rid, Math.abs(base));
         if (sum != null && sum > PWR.SUM_MAX + 1e-9) {
-          return err("Feedline Σ|amp| = " + sum.toFixed(2) +
+          return xerr("Feedline Σ|amp| = " + sum.toFixed(2) +
             " > 1 — simultaneous readout tones will CLIP at the DAC.");
         }
       }
@@ -5338,6 +5592,31 @@
       if (base % 1 !== 0) {
         return warn("FSP uses an integer dB grid — " + base + " will not " +
           "round-trip exactly.");
+      }
+      return null;
+    }
+
+    // QA generate-r2-02: durations (ns; QDAC dwell in s). None is ever
+    // negative, and a PULSE length must be > 0 — QM's config refuses it
+    // ("Value out of range: -3"). Depletion / ToF / a flat part / settle /
+    // dwell may legitimately be 0, so they only get the sign check.
+    if (col.dim === "time" || col.unit === "ns" || col.unit === "s") {
+      if (base < 0) return err("A duration cannot be negative.");
+      if (base === 0 && POSITIVE_PULSE_LENGTHS[col.field]) {
+        return err("A pulse length must be > 0 ns — QM refuses a non-positive " +
+          "pulse length.");
+      }
+      return null;
+    }
+
+    // A TWPA tone's scale is played as QUA amp(scale) (quam_builder
+    // TWPA.initialize → Channel.play(amplitude_scale) → qua.amp), and the QM
+    // docs limit it: "A is limited to the range of -2 to 2 - 2^-16".
+    if (group === "twpa" &&
+        (col.field === "pump_amplitude" || col.field === "isolation_amplitude")) {
+      if (base < -2 || base > 2 - Math.pow(2, -16)) {
+        return err("amplitude scale " + base + " is outside QUA amp()'s range " +
+          "[-2, 2) — the pump cannot be played.");
       }
       return null;
     }
@@ -5376,10 +5655,12 @@
 
   // Parse + validate one populate cell against its column, unit-aware: the
   // typed display value is converted to BASE first (15.3 typed in GHz mode
-  // validates as 15.3e9). Selects and text cells are never flagged.
+  // validates as 15.3e9). Text cells and selects are never flagged — except
+  // the band select, which is checked against its row's LO (QA r2-07).
   function validateCellInline(input, group, rid, col) {
     if (!input.isConnected) return;   // table re-rendered before the timer fired
-    if (!col || col.kind === "select" || col.kind === "text") return;
+    if (!col || (col.kind === "select" && col.field !== "band") ||
+        col.kind === "text") return;
     var raw = input.value;
     if (String(raw == null ? "" : raw).trim() === "") {
       setCellFlag(input, null);
@@ -5416,6 +5697,47 @@
         });
         if (col) validateCellInline(input, group, input.dataset.rid, col);
       });
+  }
+
+  // QA generate-r2-02 (review): the error-severity cells of the WHOLE spec,
+  // read from the spec, not the DOM (step 6 may never have rendered, and a
+  // red cell scrolled out of view on a big chip says nothing). Review and the
+  // build result name them, so a -3 ns length never builds under a silent ✓.
+  // Still advisory (docs/53): nothing is refused. Same rows as the tables.
+  // Single-cell facts only: a cross-cell one (an LO's member outside its IF
+  // window, the feedline Σ|amp|) is the Review conflicts row's to say.
+  function populateCellErrors() {
+    var mw = hasMwFem() || hasOpxPlus();
+    var lf = hasLfFem() || hasOpxPlus();
+    var qs = state.spec.qubits || [];
+    var rows = {
+      qubit: mw ? qs : [], resonator: mw ? qs : [], pulses: mw ? qs : [],
+      flux: (lf && state.qubitFlux) ? qs : [],
+      qdac: qs.filter(isQdacBiased),
+      twpa: mw ? (state.spec.twpas || []).map(function (t) {
+        return typeof t === "string" ? t : (t && t.id);
+      }).filter(Boolean) : [],
+      pairs: (state.spec.qubit_pairs || []).filter(function (p) { return p[0] && p[1]; })
+        .map(function (p) { return p[0] + "-" + p[1]; })
+    };
+    var out = [];
+    Object.keys(rows).forEach(function (group) {
+      rows[group].forEach(function (rid) {
+        var b = popBucketRead(group, rid);
+        popColsOf(group).forEach(function (col) {
+          if ((col.kind === "select" && col.field !== "band") || col.kind === "text") return;
+          var v = b[col.field];
+          if (v == null || String(v).trim() === "") return;
+          var base = typeof v === "number" ? v : parseFloat(v);
+          var f = validateCellValue(group, rid, col, base, v);
+          if (f && f.severity === "err" && !f.cross) {
+            out.push({ group: group, rid: rid, label: col.label || col.field,
+                       message: f.message });
+          }
+        });
+      });
+    });
+    return out;
   }
 
   // Choose one LO for a port pair's elements. entries = [{rf, needHole}] —
@@ -5520,9 +5842,16 @@
     return "var(" + LO_GROUP_PALETTE[i % LO_GROUP_PALETTE.length] + ")";
   }
 
+  // The populate field that carries a group's tone RF for the LO solve: a
+  // TWPA pump's tone is its pump_frequency (QA generate-r2-03).
+  function loRfField(group) {
+    return group === "twpa" ? "pump_frequency" : "RF_freq";
+  }
+
   // Map each physical port to the elements allocated on it. Returns
   // { "con/slot/port/io": [ {group, rid, ch}, ... ] }, where group is the
-  // populate group — "qubit" for xy drives, "resonator" for readout.
+  // populate group — "qubit" for xy drives, "resonator" for readout, "twpa"
+  // for a TWPA pump.
   function collectPortElements() {
     var portMap = {};
     function add(group, rid, ch) {
@@ -5536,6 +5865,16 @@
       var a = (state.allocation || {})[q] || {};
       (a.xy || []).forEach(function (ch) { add("qubit", q, ch); });
       (a.rr || []).forEach(function (ch) { add("resonator", q, ch); });
+    });
+    // QA generate-r2-03: a TWPA pump is an MW output like an xy drive. Left
+    // out of the solve, it built on the port's default LO (5 GHz, band 1) and
+    // played a 7.95 GHz pump at an impossible 2.95 GHz IF. The isolation line
+    // has no LO field, so only the pump joins.
+    (state.spec.twpas || []).forEach(function (tw) {
+      var tid = (tw && typeof tw === "object") ? tw.id : tw;
+      if (!tid) return;
+      var a = (state.allocation || {})[tid] || {};
+      (a.p || []).forEach(function (ch) { add("twpa", tid, ch); });
     });
     return portMap;
   }
@@ -5552,21 +5891,33 @@
            (pair[1][1] === "input" ? "In" : "Out") + pair[1][0];
   }
 
-  // Derive each MW-FEM LO from the RF_freq values on its port pair. Returns:
+  // The "Out2" / "In2" name of one MW-FEM port ([port, io]).
+  function portDesc(pp) {
+    return (pp[1] === "input" ? "In" : "Out") + pp[0];
+  }
+
+  // Derive each MW-FEM PORT's LO from the RF_freq values on that port (QA
+  // F16: one LO per port, not per coupled pair). Returns:
   //   assignments   {"group/rid": loHz}   — output-side LO frequency
+  //   unsolved      {"group/rid": code}   — output-side members whose port
+  //                 has no feasible LO (the solver's legacy midpoint; QA r2-05)
   //   warnings      [{message, members:[{group,rid}]}]  — LO/band conflicts
-  //   groups        [{id, con, slot, pairIdx, loLabel, portPairDesc,
-  //                   members:[{group,rid}], loFreq, band}]  — occupied LOs
+  //   groups        [{id, con, slot, port, pairIdx, loLabel, portPairDesc,
+  //                   members:[{group,rid}], loFreq, solverLo, ok, band}]
+  //                 — occupied OUTPUT ports; loBandFindings() turns loFreq /
+  //                 band into what the build writes
   //   elementGroup  {"group/rid": groupId} — output-side, for cell colouring
+  //   ports         every occupied port, input side too (the band checks)
   function computeLoAssignments() {
-    var result = { assignments: {}, warnings: [], groups: [], elementGroup: {} };
+    var result = { assignments: {}, warnings: [], groups: [], elementGroup: {},
+                   unsolved: {}, ports: [] };
     if (!state.allocation) return result;
     var portMap = collectPortElements();
     var pop = state.spec.populate || {};
-    var inputLo = {};   // "group/rid" -> LO derived from its input-side pair
+    var inputLo = {};   // "group/rid" -> LO derived from its input port
 
     function rfOf(m) {
-      var n = parseFloat(((pop[m.group] || {})[m.rid] || {}).RF_freq);
+      var n = parseFloat(((pop[m.group] || {})[m.rid] || {})[loRfField(m.group)]);
       return isNaN(n) ? null : n;
     }
 
@@ -5576,8 +5927,12 @@
         var pre = ctrl.con + "/" + fem.slot + "/";
         var femName = "con" + ctrl.con + " slot" + fem.slot;
         MW_LO_PAIRS.forEach(function (pair, idx) {
-          var members = (portMap[pre + pair[0][0] + "/" + pair[0][1]] || [])
-            .concat(portMap[pre + pair[1][0] + "/" + pair[1][1]] || []);
+         pair.forEach(function (pp) {
+          var members = portMap[pre + pp[0] + "/" + pp[1]] || [];
+          // An input port's downconverter follows its readout's output port
+          // (run_build links it as a pointer), so it only feeds the
+          // output/input divergence check below — no solver warnings twice.
+          var isOut = pp[1] === "output";
           // Keep each member paired with its RF; drop members with no RF.
           var withRf = [];
           members.forEach(function (m) {
@@ -5596,10 +5951,9 @@
           var hi = Math.max.apply(null, rfs);
           var lo = Math.min.apply(null, rfs);
           var loFreq = solved.lo;
-          var groupId = ctrl.con + "/" + fem.slot + "/" + idx;
-          var loName = femName + " LO" + (idx + 1) +
-            " (" + portPairDesc(pair) + ")";
-          // Deduped {group,rid} of every member on this LO that has an RF.
+          var groupId = ctrl.con + "/" + fem.slot + "/" + pp[0] + "/" + pp[1];
+          var loName = femName + " " + portDesc(pp);
+          // Deduped {group,rid} of every member on this port that has an RF.
           var seen = {}, groupMembers = [];
           withRf.forEach(function (x) {
             var key = x.m.group + "/" + x.m.rid;
@@ -5607,20 +5961,30 @@
               seen[key] = 1;
               groupMembers.push({ group: x.m.group, rid: x.m.rid });
             }
-            if ((x.m.ch.io_type || "output") === "output") {
+            if (isOut) {
               result.assignments[key] = loFreq;
               result.elementGroup[key] = groupId;
+              // QA r2-05: an infeasible port's pick is the legacy midpoint —
+              // shown with its warning, never force-written over a real LO.
+              if (!solved.ok) result.unsolved[key] = solved.code;
             } else {
               inputLo[key] = loFreq;
             }
           });
+          result.ports.push({
+            key: groupId, con: ctrl.con, slot: fem.slot, femName: femName,
+            desc: portDesc(pp), loName: loName, isOut: isOut,
+            members: groupMembers, solverLo: loFreq
+          });
+          if (!isOut) return;
           // Each conflict carries the members involved, so recomputeLOs() can
           // ring the offending ports in the wiring diagram.
           if (solved.code === "span") {
             result.warnings.push({
-              message: loName + ": RF values span " + fmtFreq(hi - lo) +
-                " — wider than the 0.8 GHz IF window, so one LO cannot cover " +
-                "them. Move an element to another port pair.",
+              message: loName + ": RF values on this port span " +
+                fmtFreq(hi - lo) + " — wider than one upconverter's " +
+                "±0.4 GHz IF window, so one LO cannot cover them. Move an " +
+                "element to another port.",
               members: groupMembers
             });
           } else if (solved.code === "no_band") {
@@ -5628,7 +5992,7 @@
               message: loName + ": no single MW-FEM band covers RF " +
                 fmtFreq(lo) + "–" + fmtFreq(hi) +
                 " (band 1: 0.05–5.5, band 2: 4.5–7.5, band 3: 6.5–10.5 GHz). " +
-                "Move an element to another port pair.",
+                "Move an element to another port.",
               members: groupMembers
             });
           } else if (solved.code === "band_window") {
@@ -5638,7 +6002,7 @@
                 "the ±0.4 GHz IF window (" + fmtFreq(solved.window[0]) + "–" +
                 fmtFreq(solved.window[1]) + ") — shift the RF values so the " +
                 "window reaches band " + solved.band + "'s LO range, or move " +
-                "an element to another port pair.",
+                "an element to another port.",
               members: groupMembers
             });
           } else if (solved.code === "hole") {
@@ -5659,15 +6023,18 @@
             }
           });
           result.groups.push({
-            id: groupId, con: ctrl.con, slot: fem.slot, pairIdx: idx,
-            loLabel: "LO" + (idx + 1), portPairDesc: portPairDesc(pair),
-            members: groupMembers, loFreq: loFreq, band: bandOf(loFreq)
+            id: groupId, con: ctrl.con, slot: fem.slot, port: pp[0],
+            pairIdx: idx, loLabel: portDesc(pp), portPairDesc: portPairDesc(pair),
+            members: groupMembers, loFreq: loFreq, solverLo: loFreq,
+            ok: solved.ok, band: bandOf(loFreq)
           });
+         });
         });
       });
     });
-    // Under the LO-safe layout a readout's output and input land on different
-    // LO pairs; they should converge. Flag any hand-wired case where they don't.
+    // A readout's output and input ports should converge on one LO (run_build
+    // points the input's downconverter at the output's upconverter). Flag any
+    // hand-wired case where they don't.
     Object.keys(inputLo).forEach(function (key) {
       var out = result.assignments[key];
       if (out != null && Math.abs(out - inputLo[key]) > 1) {
@@ -5689,9 +6056,13 @@
   // (reconstructed into the spec) must not be silently replaced by the
   // solver on every Populate-step entry (docs/72 amplifier fix); a forced
   // re-solve records the changed cells as user-touched for populate-protect.
+  // opts.unsolved {"group/rid": code}: members whose port has NO feasible LO
+  // — even a forced re-solve keeps their stored LO (QA r2-05: it wrote the
+  // infeasible midpoint, |IF| 654-747 MHz, into a built chip).
   function applyLoAssignments(assignments, opts) {
     var o = opts || {};
     var fillOnly = state.mode === "regenerate" && !o.force;
+    var unsolved = o.unsolved || {};
     var pop = state.spec.populate;
     Object.keys(assignments).forEach(function (key) {
       var cut = key.indexOf("/");
@@ -5699,7 +6070,8 @@
       pop[group] = pop[group] || {};
       pop[group][rid] = pop[group][rid] || {};
       var had = pop[group][rid].LO_frequency;
-      if (fillOnly && had != null && had !== "") return;
+      if ((fillOnly || (o.force && unsolved[key])) &&
+          had != null && had !== "") return;
       if (o.force && had !== assignments[key]) {
         markPopulateTouched(group, rid, "LO_frequency");
       }
@@ -5711,6 +6083,9 @@
       var bucket = (pop[input.dataset.group] || {})[input.dataset.rid] || {};
       input.value = (bucket.LO_frequency == null)
         ? "" : toDisplayValue(bucket.LO_frequency, "freq");
+      // regroup commas + re-fit width, like every other programmatic write
+      // (QA F19: MHz showed RF "7,100" beside LO "7275")
+      window.NumberInput.format(input);
     });
   }
 
@@ -5720,6 +6095,126 @@
     if (state.mode !== "regenerate") return;
     if (!state.regenTouched) state.regenTouched = {};
     state.regenTouched[group + "|" + rid + "|" + field] = 1;
+  }
+  // A fill-empty preset cell (QA review of regenerate-r2-03): not "touched" —
+  // run_regenerate protects it only over a null source leaf
+  // (regen_populate.fill_protect_paths), so an unreadable calibration stays.
+  function markPopulateFilled(group, rid, field) {
+    if (state.mode !== "regenerate") return;
+    if (!state.regenFilled) state.regenFilled = {};
+    state.regenFilled[group + "|" + rid + "|" + field] = 1;
+  }
+  // Regen: did step 6 SHOW the chip's value for this cell at hydration? A
+  // cell the user cleared since still means that value (tier-1 carries it).
+  function regenBaselineHas(group, rid, field) {
+    if (state.mode !== "regenerate") return false;
+    var v = (((state.regenBaselinePopulate || {})[group] || {})[rid] || {})[field];
+    return v != null && v !== "";
+  }
+
+  // What the build WRITES on each port, and the band rules it must satisfy
+  // (QA F16, r2-07). Reads spec.populate only — run after applyLoAssignments
+  // (recomputeLOs) or alone after a band / LO edit (recomputeLOs noApply):
+  //  - a port's LO = its members' LO_frequency (run_build writes each onto
+  //    the port — two values on one port: the last write wins, so warn);
+  //  - a port's band = the members' explicit `band` (run_build's override),
+  //    else bandOf(LO) (run_build's _band_for);
+  //  - an explicit band must cover the member's LO — the port frequency, the
+  //    one Diagnostics' connectivity_freq judges (inclusive, mw_fem.in_band);
+  //  - coupled ports (MW_LO_PAIRS) must share a band or be bands 1 + 3
+  //    (mw_fem.bands_compatible; QM: "Other band combinations are not
+  //    supported").
+  // Appends to calc.warnings; rewrites each output group's loFreq / band to
+  // the built values (the LO map shows those, never an unused solver pick).
+  function loBandFindings(calc) {
+    var pop = state.spec.populate || {};
+    function row(m) { return (pop[m.group] || {})[m.rid] || {}; }
+    function num(v) { var n = parseFloat(v); return isFinite(n) ? n : null; }
+    function explicitBand(m) {
+      var b = parseInt(row(m).band, 10);
+      return (b === 1 || b === 2 || b === 3) ? b : null;
+    }
+    function covers(b, f) {
+      var r = BAND_RF_RANGES[b];
+      return !!r && f >= r[0] && f <= r[1];
+    }
+    function bandSpan(b) {
+      return fmtFreq(BAND_RF_RANGES[b][0]) + "–" + fmtFreq(BAND_RF_RANGES[b][1]);
+    }
+    function who(members) {
+      return members.map(function (m) {
+        return m.rid + (m.group === "resonator" ? ".rr"
+          : m.group === "twpa" ? ".pump" : "");
+      }).join(", ");
+    }
+    function warn(message, members) {
+      calc.warnings.push({ message: message, members: members });
+    }
+    var byId = {};
+    calc.groups.forEach(function (g) { byId[g.id] = g; });
+    var info = {};   // port key -> { band, lo, p }
+    calc.ports.forEach(function (p) {
+      var los = [], bands = [];
+      p.members.forEach(function (m) {
+        var lo = num(row(m).LO_frequency);
+        if (lo != null && !los.some(function (x) { return Math.abs(x - lo) <= 1; })) {
+          los.push(lo);   // 1 Hz: a GHz-typed cell round-trips through floats
+        }
+        var b = explicitBand(m);
+        if (b != null && bands.indexOf(b) < 0) bands.push(b);
+      });
+      var lo = los.length ? los[los.length - 1] : p.solverLo;
+      var band = bands.length ? bands[bands.length - 1] : bandOf(lo);
+      if (p.isOut) {
+        if (los.length > 1) {
+          warn(p.loName + ": its elements carry different LOs (" +
+            los.map(fmtFreq).join(", ") + ") — one port has one upconverter " +
+            "frequency, so the build keeps only the last. Give them one LO.",
+            p.members);
+        }
+        if (bands.length > 1) {
+          warn(p.loName + ": its elements set different bands (" +
+            bands.join(", ") + ") — a port has one band, so the build keeps " +
+            "only the last.", p.members);
+        }
+        p.members.forEach(function (m) {
+          var b = explicitBand(m);
+          if (b == null) return;
+          var mlo = num(row(m).LO_frequency);
+          if (mlo != null && !covers(b, mlo)) {
+            warn(m.rid + ": band " + b + " (" + bandSpan(b) + ") does not " +
+              "cover its LO " + fmtFreq(mlo) + " — the build writes band " + b +
+              " onto " + p.loName + ".", [m]);
+          }
+        });
+        var g = byId[p.key];
+        if (g) { g.loFreq = lo; g.band = band; }
+      }
+      info[p.key] = { band: band, lo: lo, p: p };
+    });
+    var fems = {};
+    calc.ports.forEach(function (p) { fems[p.con + "/" + p.slot] = p.femName; });
+    Object.keys(fems).forEach(function (fk) {
+      MW_LO_PAIRS.forEach(function (pair) {
+        var a = info[fk + "/" + pair[0][0] + "/" + pair[0][1]];
+        var b = info[fk + "/" + pair[1][0] + "/" + pair[1][1]];
+        if (!a || !b || a.band == null || b.band == null) return;
+        if (a.band === b.band ||
+            (a.band === 1 && b.band === 3) || (a.band === 3 && b.band === 1)) return;
+        var fix = [1, 2, 3].filter(function (bb) {
+          return a.lo != null && b.lo != null && covers(bb, a.lo) && covers(bb, b.lo);
+        });
+        warn(fems[fk] + " " + a.p.desc + " (band " + a.band + ": " +
+          who(a.p.members) + ") and " + b.p.desc + " (band " + b.band + ": " +
+          who(b.p.members) + ") are coupled — coupled MW-FEM ports must share " +
+          "a band or be bands 1 and 3." + (fix.length
+            ? " Band " + fix[0] + " (" + bandSpan(fix[0]) + ") covers both " +
+              "LOs — set it on both."
+            : " Move an element to another port."),
+          a.p.members.concat(b.p.members));
+      });
+    });
+    return calc;
   }
 
   // -- step 6: LO-group visualisation ----------------------------------
@@ -5790,7 +6285,7 @@
     var femSet = {};
     calc.groups.forEach(function (g) { femSet[g.con + "/" + g.slot] = 1; });
     var n = calc.groups.length, m = Object.keys(femSet).length;
-    summary.textContent = "LO map — " + n + " LO group" + (n === 1 ? "" : "s") +
+    summary.textContent = "LO map — " + n + " port LO" + (n === 1 ? "" : "s") +
       ", " + m + " MW-FEM" + (m === 1 ? "" : "s");
 
     // Regenerate keeps the chip's REAL LOs (fill-only-empty, docs/72) — the
@@ -5802,7 +6297,8 @@
       rs.className = "btn-sm outline gen-lo-resolve";
       rs.textContent = "Re-solve LOs";
       rs.title = "Replace the chip's stored LO frequencies with the " +
-        "solver's optimal picks (min max|IF| within band windows)";
+        "solver's optimal picks (min max|IF| within band windows); a port " +
+        "no single LO covers keeps its stored LO";
       rs.addEventListener("click", function () {
         recomputeLOs({ force: true });
       });
@@ -5827,18 +6323,26 @@
       row.appendChild(sw);
       var tag = document.createElement("span");
       tag.className = "gen-lo-row-tag";
-      tag.textContent = g.loLabel + " " + g.portPairDesc;
+      tag.textContent = g.loLabel;
+      tag.title = "Own LO; coupled pair " + g.portPairDesc +
+        " shares only the band rule (same band, or bands 1 and 3)";
       row.appendChild(tag);
       var who = document.createElement("span");
       who.className = "gen-lo-row-who";
       who.textContent = g.members.map(function (mem) {
-        return mem.rid + (mem.group === "resonator" ? ".rr" : "");
+        return mem.rid + (mem.group === "resonator" ? ".rr"
+          : mem.group === "twpa" ? ".pump" : "");
       }).join(", ") || "—";
       row.appendChild(who);
       var freq = document.createElement("span");
       freq.className = "gen-lo-row-freq";
+      // The LO + band the BUILD uses (loBandFindings), not the solver's pick.
       freq.textContent = fmtFreq(g.loFreq) +
         (g.band ? " · band " + g.band : "");
+      if (g.solverLo != null && Math.abs(g.solverLo - g.loFreq) > 0.5) {
+        freq.title = "Solver's pick: " + fmtFreq(g.solverLo) +
+          (g.ok === false ? " (no single LO covers this port)" : "");
+      }
       row.appendChild(freq);
       body.appendChild(row);
     });
@@ -5881,9 +6385,15 @@
   // Recompute + apply the MW-FEM LOs, colour the LO cells and the LO-map
   // panel, then render the conflict panel + diagram rings.
   // computeLoAssignments() returns an empty result with no allocation yet.
+  // opts.noApply: re-derive the findings WITHOUT writing solver LOs — a band
+  // or LO edit (QA r2-07), where a hand-typed LO must stick.
   function recomputeLOs(opts) {
     var calc = computeLoAssignments();
-    applyLoAssignments(calc.assignments, opts);
+    if (!(opts && opts.noApply)) {
+      applyLoAssignments(calc.assignments,
+        { force: !!(opts && opts.force), unsolved: calc.unsolved });
+    }
+    loBandFindings(calc);   // what the build writes, after the apply
     assignGroupColors(calc.groups);
     decorateLoCells(calc);
     decorateReadoutFSPCells(calc);
@@ -6628,7 +7138,10 @@
     var qubitPop = pop.qubit || {};
     var rows = qubits.map(function (qid) {
       var lo = qubitPop[qid] && qubitPop[qid].LO_frequency;
-      var band = bandOf(lo);
+      // run_build derives the delay from the band it WRITES — the explicit
+      // band override when set (QA r2-07), else _band_for(LO).
+      var ob = parseInt(qubitPop[qid] && qubitPop[qid].band, 10);
+      var band = (ob === 1 || ob === 2 || ob === 3) ? ob : bandOf(lo);
       var ns = band ? BAND_TO_DELAY_NS[band] : null;
       var bandStr = band ? ("band " + band) : "no LO yet";
       var nsStr = ns != null ? (ns + " ns") : "—";
@@ -6744,7 +7257,9 @@
   // row; overrides only where the id matches (skips reported, never errors);
   // fields not in the chip's current column set (e.g. cr_* on a CZ chip)
   // drop with a note. Returns the report; the caller re-renders + recomputes.
-  function applyPreset(preset, overwrite) {
+  // onlyRows ({q: {qid:1}, pairs: {"qC-qT":1}}, optional) limits the apply to
+  // those rows — the per-row auto-prefill; an explicit Apply passes nothing.
+  function applyPreset(preset, overwrite, onlyRows) {
     var report = { applied: 0, skippedRows: [], hiddenSections: [], droppedFields: [] };
     var sections = (preset && preset.sections) || {};
     var active = presetActiveSections();
@@ -6758,7 +7273,9 @@
       var rowIds = presetRowIds(sec);
       var rowSet = {};
       rowIds.forEach(function (r) { rowSet[r] = true; });
+      var only = onlyRows ? ((sec === "pairs" ? onlyRows.pairs : onlyRows.q) || {}) : null;
       function put(rid, f, v) {
+        if (only && !only[rid]) return;
         if (!keep[f] || skip[f]) {
           if (report.droppedFields.indexOf(f) < 0) report.droppedFields.push(f);
           return;
@@ -6766,11 +7283,22 @@
         var b = popBucketWrite(sec, rid);
         if (!b) return;    // "qdac" on a qubit that is not QDAC-biased
         if (!overwrite && b[f] != null && b[f] !== "") return;
+        // A regen cell the user cleared still holds the chip's calibration
+        // (clear = keep, docs/72), so fill-empty leaves it alone — the table
+        // never shows a value the build would not write.
+        if (!overwrite && regenBaselineHas(sec, rid, f)) return;
         b[f] = v;
-        // Preset Apply is a user action — its fills are populate-protect
-        // touched cells in regen mode (docs/72). autoApplyStandardDefaults
+        // Preset Apply is a user action — an Overwrite's fills are populate-
+        // protect touched cells in regen mode (docs/72). autoApplyStandardDefaults
         // never runs there, so this can't taint the baseline with synthetics.
-        markPopulateTouched(sec, rid, f);
+        // Fill-empty (QA regenerate-r2-03) is judged against the CHIP, not the
+        // display: a cell the extractor could not read back looks blank, and
+        // protecting the fill would overwrite the calibration tier-1 carries.
+        // So a fill is recorded apart, and the server protects it per leaf —
+        // only where the source chip holds no value (a null anharmonicity),
+        // never over a number (review of r2-03: absent-only lost the nulls).
+        if (overwrite) markPopulateTouched(sec, rid, f);
+        else markPopulateFilled(sec, rid, f);
         report.applied++;
       }
       var defaults = body.defaults || {};
@@ -6792,32 +7320,86 @@
   }
 
   // Supercritical feedback: pre-fill EVERY empty populate cell with the
-  // built-in standard defaults ONCE per draft — users start from filled-in
-  // values (the same seeds run_build would use on blanks) and modify, instead
-  // of typing every pair/pulse parameter from scratch. Fill-only-empty: a
-  // typed value is never overwritten, and because the one-shot flag persists
-  // in the draft, a cell the user deliberately clears afterwards stays
-  // cleared on the next visit.
+  // built-in standard defaults ONCE per ROW — users start from filled-in
+  // values and modify, instead of typing every pair/pulse parameter from
+  // scratch. (Not the seeds run_build uses on blanks: those are the
+  // builder's own defaults, e.g. x180 amp 0.1 — why a blank row builds a
+  // silently different qubit.) Fill-only-empty: a typed value is never
+  // overwritten, and because the prefilled rows persist in the draft, a cell
+  // the user deliberately clears afterwards stays cleared on the next visit.
+  // QA generate-r2-05: this used to be ONE flag per draft, so a qubit or pair
+  // added after the first visit (5 -> 3 -> 5, 20 -> 200) stayed blank.
+  function autoPresetPairKey(p) {
+    return [String(p[0]), String(p[1])].sort().join("|") + "|" + state.pairGate;
+  }
+  // Rows whose populate the wizard deleted (a qubit removed) must prefill
+  // again if the id comes back. `valid` = { qid: true } for surviving qubits.
+  function forgetAutoPresetRows(valid) {
+    var rec = state.autoPresetRows;
+    if (!rec) return;
+    Object.keys(rec.q || {}).forEach(function (q) { if (!valid[q]) delete rec.q[q]; });
+    Object.keys(rec.pairs || {}).forEach(function (k) {
+      var seg = k.split("|");
+      if (!valid[seg[0]] || !valid[seg[1]]) delete rec.pairs[k];
+    });
+  }
+  // A draft's record of the rows that were prefilled. `all` seeds it with
+  // every current row (an old draft whose one-shot flag was already spent).
+  function autoPresetRecordOf(all) {
+    var rec = { q: {}, pairs: {} };
+    if (all) {
+      state.spec.qubits.forEach(function (q) { rec.q[q] = 1; });
+      (state.spec.qubit_pairs || []).forEach(function (p) {
+        if (p[0] && p[1]) rec.pairs[autoPresetPairKey(p)] = 1;
+      });
+    }
+    return rec;
+  }
   function autoApplyStandardDefaults() {
     // Regenerate shows a REAL chip's values — auto-filling blanks with the
     // synthetic standard preset would present defaults the chip never had
     // (and poison the populate-protect baseline diff, docs/72). The preset
     // bar's explicit Apply stays available (and records touched cells).
     if (state.mode === "regenerate") return;
-    if (state.autoPresetApplied) return;
-    state.autoPresetApplied = true;
-    saveDraft();
+    var rec = state.autoPresetRows || (state.autoPresetRows = autoPresetRecordOf(false));
+    var hadRows = Object.keys(rec.q).length + Object.keys(rec.pairs).length > 0;
+    var liveQ = {}, livePairs = {};
+    var freshQ = {}, freshP = {}, freshPKeys = {}, names = [];
+    state.spec.qubits.forEach(function (q) {
+      liveQ[q] = 1;
+      if (!rec.q[q]) { freshQ[q] = 1; names.push(q); }
+    });
+    (state.spec.qubit_pairs || []).forEach(function (p) {
+      if (!p[0] || !p[1]) return;
+      var k = autoPresetPairKey(p);
+      livePairs[k] = 1;
+      if (!rec.pairs[k]) {
+        freshP[p[0] + "-" + p[1]] = 1; freshPKeys[k] = 1;
+        names.push(p[0] + "-" + p[1]);
+      }
+    });
+    // A pair that is gone now (removed, or the gate switched and its fields
+    // were dropped) prefills again when it comes back.
+    Object.keys(rec.q).forEach(function (q) { if (!liveQ[q]) delete rec.q[q]; });
+    Object.keys(rec.pairs).forEach(function (k) { if (!livePairs[k]) delete rec.pairs[k]; });
+    if (!names.length) return;
     fetch("/generate/presets/builtin-standard")
       .then(function (r) { return r.json(); })
       .then(function (p) {
         if (!p || !p.ok || !p.sections) return;
-        var report = applyPreset(p, false);
+        if (state.autoPresetRows !== rec) return;   // the wizard was reset meanwhile
+        var report = applyPreset(p, false, { q: freshQ, pairs: freshP });
+        // Recorded only once the preset arrived — an offline visit retries.
+        Object.keys(freshQ).forEach(function (q) { rec.q[q] = 1; });
+        Object.keys(freshPKeys).forEach(function (k) { rec.pairs[k] = 1; });
         if (report.applied > 0) {
           renderPopulateTables();
-          presetNote("Pre-filled " + report.applied + " empty cell(s) with the " +
-                     "standard defaults — edit anything you like.");
-          saveDraft();
+          presetNote("Pre-filled " + report.applied + " empty cell(s) " +
+                     (hadRows ? "on " + names.slice(0, 6).join(", ") +
+                      (names.length > 6 ? ", …" : "") + " " : "") +
+                     "with the standard defaults — edit anything you like.");
         }
+        saveDraft();
       })
       .catch(function () { /* offline / route failure — cells stay blank */ });
   }
@@ -6827,6 +7409,20 @@
     if (!el) return;
     el.textContent = text || "";
     el.hidden = !text;
+  }
+
+  // QA F20: the built-in preset (the server flags it `builtin`) can't be
+  // deleted, so Delete is disabled while it is selected — never a "Delete
+  // preset …?" confirm the server then refuses.
+  function syncPresetDeleteBtn() {
+    var sel = document.getElementById("gen-preset-select");
+    var btn = document.getElementById("gen-preset-delete");
+    if (!sel || !btn) return;
+    var opt = sel.options[sel.selectedIndex];
+    var builtin = !!(opt && opt.dataset.builtin);
+    if (btn.dataset.baseTitle == null) btn.dataset.baseTitle = btn.title || "";
+    btn.disabled = builtin;
+    btn.title = builtin ? "The built-in preset can't be deleted." : btn.dataset.baseTitle;
   }
 
   // Fill the preset dropdown from the server. A fetch failure degrades to a
@@ -6846,12 +7442,15 @@
             ? p.name + " (unreadable)"
             : p.name + " (" + count + " section" + (count === 1 ? "" : "s") + ")";
           if (p.corrupt) o.disabled = true;
+          if (p.builtin) o.dataset.builtin = "1";   // QA F20
           sel.appendChild(o);
         });
         if (selectSlug) sel.value = selectSlug;
+        syncPresetDeleteBtn();   // a code-set value fires no `change`
       })
       .catch(function () {
         sel.innerHTML = '<option value="">(presets unavailable)</option>';
+        syncPresetDeleteBtn();
       });
   }
 
@@ -6862,6 +7461,7 @@
     var sel = document.getElementById("gen-preset-select");
     var savebox = document.getElementById("gen-preset-savebox");
     var errEl = document.getElementById("gen-preset-err");
+    if (sel) sel.addEventListener("change", syncPresetDeleteBtn);   // QA F20
 
     function saveErr(msg) { if (errEl) errEl.textContent = msg || ""; }
 
@@ -6918,6 +7518,9 @@
     });
 
     document.getElementById("gen-preset-save-confirm").addEventListener("click", function doSave(ev, overwrite) {
+      // An earlier 'Preset "…" saved.' must not sit next to this attempt's
+      // error (QA generate-r2-15).
+      presetNote("");
       var name = (document.getElementById("gen-preset-name").value || "").trim();
       if (!name) { saveErr("Enter a preset name."); return; }
       var secs = PRESET_SECTIONS.filter(function (sec) {
@@ -6953,7 +7556,13 @@
 
     document.getElementById("gen-preset-delete").addEventListener("click", function () {
       if (!sel || !sel.value) { presetNote("Pick a preset to delete."); return; }
-      var label = sel.options[sel.selectedIndex].textContent;
+      var opt = sel.options[sel.selectedIndex];
+      if (opt && opt.dataset.builtin) {   // QA F20: refuse before asking
+        presetNote("The built-in preset can't be deleted.");
+        syncPresetDeleteBtn();
+        return;
+      }
+      var label = opt.textContent;
       if (!window.confirm('Delete preset "' + label + '"?')) return;
       fetch("/generate/presets/" + encodeURIComponent(sel.value), { method: "DELETE" })
         .then(function (r) { return r.json(); })
@@ -6972,6 +7581,7 @@
   function enterPopulateStep() {
     // Clear any stale live-preview panel from a previous visit to this step.
     if (window.GenPreview && window.GenPreview.reset) window.GenPreview.reset();
+    renderPopulateIntro();   // QA regenerate-r2-31
     bindPresetBar();
     loadPresetList();
     loadPopulateUnits();
@@ -6999,6 +7609,9 @@
         });
       }
     }
+    // QA F16: a deep link straight to step 6 has no wiring allocation yet, so
+    // no LO map and no conflict box — ask for one (the answer re-derives).
+    if (!state.allocation) maybeAutoAllocate();
     renderPopTopo();     // read-only chip-board mirror (toggleable)
     renderPopWiring();   // build the diagram first…
     reconcileReadoutBanks();   // converge any pre-allocation divergent-FSP banks
@@ -7211,6 +7824,24 @@
               : c.id + " is not in the list — carried only if a rebuilt TWPA " +
                 "uses its pump port";
         }).join("; ")]);
+    }
+    // QA r2-07: the step-6 LO / band / power findings reach Review too —
+    // derived fresh from the spec (pure reads; step 6 may never have run).
+    var loCalc = loBandFindings(computeLoAssignments());
+    recomputeAllPowerFindings();
+    var reviewFindings = loCalc.warnings.concat(powerWarningList());
+    if (reviewFindings.length) {
+      rows.push(["LO / band / power conflicts", reviewFindings.length +
+        " (see step 6) — " + reviewFindings[0].message +
+        (reviewFindings.length > 1 ? " …" : "")]);
+    }
+    // QA generate-r2-02 (review): cells step 6 flags red, counted from the spec.
+    var cellErrs = populateCellErrors();
+    if (cellErrs.length) {
+      rows.push(["Invalid populate values", cellErrs.length +
+        " (red in step 6; they build as entered) — " + cellErrs[0].rid + " " +
+        cellErrs[0].label + ": " + cellErrs[0].message +
+        (cellErrs.length > 1 ? " …" : "")]);
     }
     el.innerHTML = '<table class="gen-review-table"><tbody>' +
       rows.map(function (r) {
@@ -7621,6 +8252,20 @@
       msg.textContent = "✓ Generated " +
         nQ + (nQ === 1 ? " qubit" : " qubits") + " and " +
         nP + (nP === 1 ? " pair" : " pairs") + " into " + outPath;
+      // QA F12: built, but the QM will reject its config until the named
+      // elements get a frequency (the ⚠ line below names them).
+      if ((r.elements_without_frequency || []).length) {
+        msg.textContent += " — not runnable yet";
+        msg.className = "gen-build-warn-line";
+      }
+      // QA generate-r2-02 (review): values step 6 flags red went into the
+      // build — never under a bare ✓ (the ⚠ line below names them).
+      var cellErrs = populateCellErrors();
+      if (cellErrs.length) {
+        msg.textContent += " — " + cellErrs.length + " invalid populate value" +
+          (cellErrs.length === 1 ? "" : "s");
+        msg.className = "gen-build-warn-line";
+      }
       el.appendChild(msg);
       (r.warnings || []).forEach(function (w) {
         var wel = document.createElement("p");
@@ -7628,6 +8273,17 @@
         wel.textContent = "⚠ " + w;
         el.appendChild(wel);
       });
+      if (cellErrs.length) {
+        var cel = document.createElement("p");
+        cel.className = "gen-build-warn-line gen-build-cell-errs";
+        cel.textContent = "⚠ " + cellErrs.length + " value" +
+          (cellErrs.length === 1 ? "" : "s") + " step 6 flags as invalid went " +
+          "into the build: " + cellErrs.slice(0, 4).map(function (c) {
+            return c.rid + " " + c.label + " (" + c.message + ")";
+          }).join("; ") + (cellErrs.length > 4 ? "; …" : "") +
+          " — fix them before running this chip.";
+        el.appendChild(cel);
+      }
       // Editable-scripts export outcome (best-effort side artefact).
       if (res.scripts) {
         var sc = document.createElement("p");
@@ -7720,6 +8376,7 @@
         var popCellsN = (m.populate_cells != null) ? m.populate_cells : null;
         var popDetail = m.populate_protected_detail || [];
         var popConf = m.populate_conflicts || [];
+        var fspCompN = m.fsp_compensated_total || 0;   // QA regenerate-r2-04 / r2-06
         var mp = document.createElement("div");
         mp.className = "gen-merge-report";
         mp.innerHTML =
@@ -7792,12 +8449,28 @@
             ' re-typed, no fields lost</span>' : '') +
           (dangN ? '<span class="gen-merge-stat gen-merge-warn" title="Grafted legacy content ' +
             'whose reference no longer resolves">' + dangN + ' broken ref</span>' : '') +
+          (fspCompN ? '<span class="gen-merge-stat gen-merge-ok gen-merge-fsp">' +
+            fspCompN + ' amplitude' +
+            (fspCompN === 1 ? '' : 's') + ' rescaled to keep power (port FSP ' +
+            'changed)</span>' : '') +
           (popConf.length ? '<span class="gen-merge-stat gen-merge-warn" ' +
-            'title="A derived value (z-port delay) was NOT auto-updated because ' +
-            'the old value looks hand-tuned — verify it matches the new band">' +
-            popConf.length + ' delay kept — verify</span>' : '');
+            'title="Each line below says what to check — a derived value kept ' +
+            'because it looks hand-tuned, or a port power change">' +
+            popConf.length + ' to verify</span>' : '');
         el.appendChild(mp);
-        popConf.slice(0, 5).forEach(function (c) {
+        var fspChip = mp.querySelector(".gen-merge-fsp");
+        if (fspChip) {   // the rescaled amplitudes, old → new (text, never HTML)
+          fspChip.title = (m.fsp_compensated || []).map(function (c) {
+            // Δ through the one shared implementation (docs/76), as the Live
+            // Edit FSP popup shows the same rescale (review of r2-04 / r2-06),
+            // in value_delta.describe's tooltip shape.
+            var d = window.ValueDelta ? window.ValueDelta.compute(c.old, c.new) : null;
+            return c.path + ": " + c.old + " → " + c.new +
+              (d ? "  (Δ " + d.text + (d.pct_text ? ", " + d.pct_text : "") + ")" : "");
+          }).join("\n") +
+            (fspCompN > (m.fsp_compensated || []).length ? "\n…" : "");
+        }
+        popConf.slice(0, 8).forEach(function (c) {
           var cl = document.createElement("div");
           cl.className = "gen-merge-muted gen-merge-detail";
           cl.textContent = c;
@@ -8166,6 +8839,42 @@
     el.appendChild(go);
   }
 
+  // QA regenerate-r2-06: the server found a port whose FSP the wizard changed
+  // and whose calibrated amplitudes would otherwise all move by the FSP delta.
+  // Ask with Live Edit's own offer (window._openFspPopup, app.js): compensate
+  // (keep every pulse's power; edited amplitudes ride along), FSP only, or
+  // cancel the build. The answer is keyed by port + new FSP, so a later FSP
+  // edit asks again; each answered port re-POSTs until none is pending.
+  function askFspCompensation(res) {
+    var plan = res.fsp_compensation;
+    var el = document.getElementById("gen-build-result");
+    if (typeof window._openFspPopup !== "function" || !plan) {
+      showMessage((res.error || "A port's full-scale power changed.") +
+        " Reload the page to answer it.", "error");
+      return;
+    }
+    if (el) {
+      el.hidden = false;
+      el.className = "gen-build-result gen-build-confirm";
+      el.textContent = "⚠ " + (res.error || "") +
+        (res.fsp_pending > 1 ? " (" + res.fsp_pending + " ports)" : "");
+    }
+    window._openFspPopup(plan, function (mode, p) {
+      if (mode !== "comp" && mode !== "solo") {
+        if (el) el.textContent = "Generate cancelled — the full-scale power " +
+          "change on " + (plan.port || "a port") + " was not confirmed.";
+        return;
+      }
+      state.regenFspAck = state.regenFspAck || {};
+      state.regenFspAck[plan.fsp_path] = {
+        mode: mode, fsp_new: plan.fsp_new,
+        amps: (mode === "comp" && window._fspCompUpdates)
+          ? window._fspCompUpdates(p || plan) : []
+      };
+      runBuild();
+    });
+  }
+
   function runBuild(force, ackDegrades) {
     if (!state.env) {
       showMessage("Select an environment in step 1.", "warn");
@@ -8279,12 +8988,26 @@
         populate_touched: state.mode === "regenerate"
           ? Object.keys(state.regenTouched || {}).map(function (k) {
               return k.split("|");
-            }) : null
+            }) : null,
+        // fill-empty preset cells — protected only over a null source leaf
+        populate_filled: state.mode === "regenerate"
+          ? Object.keys(state.regenFilled || {}).map(function (k) {
+              return k.split("|");
+            }) : null,
+        // QA regenerate-r2-04 / r2-06: a changed port FSP rescales the port's
+        // carried amplitudes — automatically in absolute mode, else per the
+        // user's answer to the server's offer (askFspCompensation).
+        power_mode: state.mode === "regenerate" ? state.powerMode : null,
+        fsp_ack: state.mode === "regenerate" ? (state.regenFspAck || {}) : null
       })
     })
       .then(function (r) { return r.json(); })
       .then(function (res) {
         if (nextBtn) nextBtn.disabled = false;
+        if (res.needs_confirm && res.confirm_kind === "fsp") {
+          askFspCompensation(res);
+          return;
+        }
         if (res.needs_confirm) {
           showBuildConfirm(res, outPath);
           return;
@@ -8375,7 +9098,7 @@
         pairGate: state.pairGate, chipArch: state.chipArch,
         crPortMode: state.crPortMode, zzEnabled: state.zzEnabled,
         topoZone: state.topoZone,
-        autoPresetApplied: state.autoPresetApplied
+        autoPresetRows: state.autoPresetRows
       }));
     } catch (e) { /* quota / serialisation — non-fatal */ }
   }
@@ -8460,9 +9183,8 @@
     // Line-type toggles — default true for backward compat with old drafts.
     state.qubitFlux = d.qubitFlux !== false;
     state.couplerFlux = d.couplerFlux !== false;
-    // One-shot standard-defaults auto-apply (per draft): old drafts lack the
-    // flag → falsy → the prefill runs once on their next populate-step visit.
-    state.autoPresetApplied = !!d.autoPresetApplied;
+    // Per-row standard-defaults auto-apply (QA generate-r2-05) — restored
+    // below, once the pair gate its pair keys carry is restored.
     // 2-qubit gate — default to the tunable-coupler CZ, and migrate the
     // pre-redesign vocabulary (coupler / cross_resonance / zz_drive).
     state.pairGate = d.pairGate || "cz_tunable";
@@ -8474,6 +9196,13 @@
       ? d.chipArch
       : (!state.qubitFlux ? "fixed_frequency"
          : (state.pairGate === "cz_fixed" ? "flux_tunable_fixed_coupler" : "flux_tunable_coupler"));
+    // A draft from before the per-row record whose one-shot flag was spent:
+    // every row it has now counts as prefilled (cleared cells stay cleared),
+    // and only rows added from here on prefill. No flag: nothing recorded yet.
+    var dr = d.autoPresetRows;
+    state.autoPresetRows = (dr && typeof dr === "object")
+      ? { q: dr.q || {}, pairs: dr.pairs || {} }
+      : (d.autoPresetApplied ? autoPresetRecordOf(true) : null);
   }
 
   // Paint the steps that render() / the bind functions do not repaint from
@@ -8544,6 +9273,7 @@
     state.regenLineInventory = null;
     state.regenSourcePairGate = null;
     regenPairOrient = null;
+    state.autoPresetRows = null;   // a fresh chip prefills again (QA generate-r2-05)
     resetAllocRuntime();   // strand any in-flight allocate for the old content
     try {
       localStorage.removeItem("quam_gen_output_path");
@@ -8690,6 +9420,10 @@
     if (_wizApplying) return;
     var el = _wizField(evt.target);
     if (!el) return;
+    // A populate "Set all" commit leaves the per-row restore of what it
+    // overwrote (buildBulkCell, QA r2-23) — read it once, here.
+    var restore = el.__wizRestore || null;
+    el.__wizRestore = null;
     var old = el.__wizPrev;
     if (old === undefined) {
       // No focusin snapshot (e.g. programmatic path): a checkbox toggle is
@@ -8699,7 +9433,7 @@
     }
     var now = _wizVal(el);
     if (old === now) { el.__wizPrev = now; return; }
-    _wizStack.push({ el: el, id: el.id || null, old: old });
+    _wizStack.push({ el: el, id: el.id || null, old: old, restore: restore });
     if (_wizStack.length > _WIZ_STACK_CAP) _wizStack.shift();
     el.__wizPrev = now;
   });
@@ -8716,6 +9450,16 @@
       if (!root()) return false;   // wizard not on screen → not ours
       while (_wizStack.length) {
         var entry = _wizStack.pop();
+        // A whole-chip replacement (QA generate-r2-30): nothing before it is
+        // undoable — stay on the stack and say so, never reach past it.
+        if (entry.barrier) {
+          _wizStack.push(entry);
+          if (window.showToast) {
+            window.showToast("Ctrl+Z can't undo " + entry.barrier +
+                " — re-import a CSV or edit the qubits directly.", "info");
+          }
+          return true;
+        }
         // Board-delete sentinel (supercritical: irrecoverable qubit delete):
         // restore the deleted qubit — placement, physics, pairs — via the
         // board's own snapshot stack. A stale sentinel (its delete was already
@@ -8737,6 +9481,25 @@
         // A step re-render replaced the element and it carries no id —
         // skip to the next undoable entry (documented limitation).
         if (!el || !el.isConnected) continue;
+        if (entry.restore) {
+          // A Set-all: put each row's own value back. Never re-dispatch the
+          // box's change — its "" would read as an empty commit and clear the
+          // whole column (QA r2-23).
+          _wizApplying = true;
+          try {
+            el.value = entry.old;
+            el.__wizPrev = _wizVal(el);
+            entry.restore();
+          } finally { _wizApplying = false; }
+          try { captureDomFields(); saveDraft(); } catch (e) { /* draft best-effort */ }
+          el.classList.add('wiz-undo-flash');
+          setTimeout(function () { el.classList.remove('wiz-undo-flash'); }, 900);
+          if (window.showToast) {
+            window.showToast('Undid: ' + (el.getAttribute('aria-label') || 'Set all') +
+                " — each row's previous value is back", 'success');
+          }
+          return true;
+        }
         _wizApplying = true;
         try {
           if (el.type === 'checkbox') el.checked = !!entry.old;
@@ -8879,6 +9642,8 @@
       state.regenBaselinePopulate = _base;
     } catch (e) { state.regenBaselinePopulate = {}; }
     state.regenTouched = {};
+    state.regenFilled = {};   // fill-empty preset cells (review of r2-03)
+    state.regenFspAck = {};   // QA regenerate-r2-06: answers belong to one source chip
     repaintFromState();
     // repaintFromState() only syncs the scalar inputs — the Chassis grid, the
     // Qubits pair list, and the chip board render separately. Force them from the
@@ -8919,6 +9684,10 @@
       solvePortFsp: solvePortFsp,
       ampForTarget: ampForTarget,
       computeLoAssignments: computeLoAssignments,
+      loBandFindings: loBandFindings,   // QA F16 / r2-07
+      recomputeLOs: recomputeLOs,
+      runBuild: runBuild,               // QA regenerate-r2-06
+      askFspCompensation: askFspCompensation,
       recomputeReadoutPower: recomputeReadoutPower,
       recomputeXyPower: recomputeXyPower,
       PWR: PWR,
@@ -8977,6 +9746,7 @@
       prunePopulate: prunePopulate,
       applyLoAssignments: applyLoAssignments,
       autoApplyStandardDefaults: autoApplyStandardDefaults,
+      applyDraft: applyDraft,
       markPopulateTouched: markPopulateTouched,
       autoScriptsPath: autoScriptsPath,
       unquotePath: unquotePath,

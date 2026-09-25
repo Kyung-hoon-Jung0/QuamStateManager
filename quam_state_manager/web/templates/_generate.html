@@ -336,9 +336,18 @@
 
     <section class="gen-panel" data-step="6">
       <h3>Populate <span class="muted">&mdash; optional physics values</span></h3>
-      <p class="muted">Initial values for the generated <code>state.json</code>.
-        Blank cells keep <code>build_quam</code>'s defaults. Pick how values
-        are entered with the unit selectors below.</p>
+      {# The mode-specific sentence is switched by renderPopulateIntro() on
+         every step-6 entry (Start over can flip a regen page back to
+         generate). Re-generate: docs/72 "clear = don't re-seed" — tier-1
+         carries the source chip's value into every blank cell (QA r2-31). #}
+      <p class="muted" id="gen-pop-intro">Initial values for the generated <code>state.json</code>.
+        <span data-intro-mode="generate">Blank cells keep <code>build_quam</code>'s defaults.</span>
+        <span data-intro-mode="regenerate" hidden>Cells start from the source
+          chip. A blank cell keeps the source chip's value on build (clearing a
+          cell does not erase it); only a value you change here overrides it.
+          A qubit or pair added in this wizard gets <code>build_quam</code>'s
+          defaults.</span>
+        Pick how values are entered with the unit selectors below.</p>
 
       {# Default-value presets — named server-side sets of populate defaults
          (instance/gen_presets/); save the current values, re-apply them to a

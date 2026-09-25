@@ -198,6 +198,29 @@ const q1pick2 = doc.querySelector(
   '#gen-qdac-list .gen-qdac-row[data-qubit="q1"] select.gen-qdac-source');
 ok(q1pick2 && q1pick2.value === 'tee', 'F3: the re-render shows the new value');
 
+// ── F3b (QA generate-r2-07): the step-4 Channel box flags 1..24 ─────────────
+// Channel 30 used to build silently, and Diagnostics then called the fresh
+// chip "would crash a node run". The box now says so where it is typed.
+reset();
+T.setQubitFluxSource('q1', 'qdac');
+T.deriveLines();
+T.renderQdacBand();
+const chRow = doc.querySelector('#gen-qdac-list .gen-qdac-row[data-qubit="q1"]');
+const chIn = Array.prototype.filter.call(
+  chRow.querySelectorAll('.gen-qdac-fields label'),
+  function (l) { return l.textContent.indexOf('Channel') === 0; })
+  .map(function (l) { return l.querySelector('input'); })[0];
+ok(!!chIn && chIn.min === '1' && chIn.max === '24', 'F3b: the Channel box is bounded 1..24');
+chIn.value = '30';
+chIn.dispatchEvent(new win.Event('input', { bubbles: true }));
+ok(G.state.spec.qdac.qubits.q1.channel === 30, 'F3b: the value is still written through');
+ok(chIn.getAttribute('aria-invalid') === 'true' && chIn.title.indexOf('1 to 24') >= 0,
+  'F3b: channel 30 is flagged, naming the range');
+chIn.value = '13';
+chIn.dispatchEvent(new win.Event('input', { bubbles: true }));
+ok(!chIn.hasAttribute('aria-invalid') && chIn.title === '',
+  'F3b: a valid channel clears the flag');
+
 // ── F4: prunePopulate reaches spec.qdac.qubits ───────────────────────────────
 reset();
 T.applyFluxSource('qdac');

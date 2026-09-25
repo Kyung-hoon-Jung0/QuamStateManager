@@ -361,6 +361,215 @@ function panelText(win) {
     ok(true, 'D13: orphaned-cell timer is harmless');
   }
 
+  // D14 (QA generate-r2-02): a pulse length <= 0 and any negative duration
+  // err on the keystroke — QM refused the built config ("Value out of range:
+  // -3") while the cells stayed clean. A zero depletion / ToF stays clean.
+  {
+    const win = makeWorld();
+    const G = buildWizard(win);
+    G.QT.setValidateDebounce(0);
+    const x = cell(win, 'pulses', 'q1', 'x180_length');
+    typeOnly(win, x, '-3');
+    await tick();
+    ok(flagged(x) === 'err', 'D14: x180 length -3 ns errs');
+    typeOnly(win, x, '0');
+    await tick();
+    ok(flagged(x) === 'err', 'D14: x180 length 0 errs (a pulse needs a length)');
+    typeOnly(win, x, '40');
+    await tick();
+    ok(flagged(x) === null, 'D14: x180 length 40 clean');
+    const r = cell(win, 'resonator', 'q2', 'readout_length');
+    typeOnly(win, r, '0');
+    await tick();
+    ok(flagged(r) === 'err', 'D14: readout length 0 errs');
+    const d = cell(win, 'resonator', 'q1', 'depletion_time');
+    typeOnly(win, d, '0');
+    await tick();
+    ok(flagged(d) === null, 'D14: depletion 0 clean (legitimately zero)');
+    typeOnly(win, d, '-5');
+    await tick();
+    ok(flagged(d) === 'err', 'D14: negative depletion errs');
+    const V = G.QT.validateCellValue;
+    ok(V('twpa', 'twpaA', { field: 'settling_time', unit: 'ns' }, -1, '-1') &&
+       V('twpa', 'twpaA', { field: 'settling_time', unit: 'ns' }, 0, '0') === null,
+       'D14: settling time: negative errs, 0 clean');
+    ok(V('twpa', 'twpaA', { field: 'pump_length', dim: 'time' }, 0, '0'),
+       'D14: TWPA pump length 0 errs');
+    ok(V('qdac', 'q1', { field: 'dwell', unit: 's' }, -2e-6, '-2e-6') &&
+       V('qdac', 'q1', { field: 'dwell', unit: 's' }, 0, '0') === null,
+       'D14: QDAC dwell: negative errs, 0 clean');
+  }
+
+  // D15 (QA generate-r2-02): a TWPA tone scale is QUA amp(): [-2, 2 - 2^-16].
+  {
+    const win = makeWorld();
+    const G = buildWizard(win);
+    const V = G.QT.validateCellValue;
+    const pump = { field: 'pump_amplitude', label: 'pump amp (scale)' };
+    const iso = { field: 'isolation_amplitude', label: 'isolation amp (scale)' };
+    ok((V('twpa', 'twpaA', pump, 5, '5') || {}).severity === 'err',
+       'D15: pump amp 5 errs');
+    ok((V('twpa', 'twpaA', iso, -2.5, '-2.5') || {}).severity === 'err',
+       'D15: isolation amp -2.5 errs');
+    ok((V('twpa', 'twpaA', pump, 2, '2') || {}).severity === 'err',
+       'D15: pump amp 2 errs (amp() stops at 2 - 2^-16)');
+    ok(V('twpa', 'twpaA', pump, 1, '1') === null &&
+       V('twpa', 'twpaA', pump, 1.5, '1.5') === null &&
+       V('twpa', 'twpaA', iso, -2, '-2') === null,
+       'D15: 1, 1.5 and -2 are clean');
+  }
+
+  // D16 (QA generate-r2-07): the QDAC channel range the driver asserts.
+  {
+    const win = makeWorld();
+    const G = buildWizard(win);
+    const V = G.QT.validateCellValue;
+    const ch = { field: 'channel', label: 'channel' };
+    const e30 = V('qdac', 'q1', ch, 30, '30');
+    ok(e30 && e30.severity === 'err' && e30.message.indexOf('1 to 24') >= 0,
+       'D16: channel 30 errs naming 1 to 24');
+    ok((V('qdac', 'q1', ch, 0, '0') || {}).severity === 'err', 'D16: channel 0 errs');
+    ok((V('qdac', 'q1', ch, 2.5, '2.5') || {}).severity === 'err',
+       'D16: a fractional channel errs');
+    ok(V('qdac', 'q1', ch, 1, '1') === null && V('qdac', 'q1', ch, 24, '24') === null,
+       'D16: 1 and 24 are clean');
+  }
+
+  // D17 (QA generate-r2-19): an unparseable commit keeps the stored value.
+  // The keystroke live-write used to leave whatever the last parseable key
+  // wrote — after clear-then-type, NOTHING: RF deleted, and the unit switch's
+  // re-render then showed an empty cell (the red "abc" gone with it).
+  {
+    const win = makeWorld();
+    const G = buildWizard(win);
+    G.QT.setValidateDebounce(0);
+    const pq = function () { return (G.state.spec.populate.qubit || {}).q2 || {}; };
+    let c = cell(win, 'qubit', 'q2', 'RF_freq');
+    setInput(win, c, '5');                                   // 5 GHz committed
+    ok(pq().RF_freq === 5e9, 'D17: 5 GHz stored');
+    // clear, then type, then commit (blur)
+    typeOnly(win, c, '');
+    typeOnly(win, c, 'abc');
+    c.dispatchEvent(new win.Event('change', { bubbles: true }));
+    ok(pq().RF_freq === 5e9,
+       'D17: clear-then-"abc" commit keeps 5 GHz (got ' + pq().RF_freq + ')');
+    ok(flagged(c) === 'err' && c.value === 'abc', 'D17: the typed text stays, flagged');
+    ok(c.title.indexOf('Not saved') >= 0, 'D17: the flag says nothing was saved');
+    setInput(win, freqUnitSelect(win), 'MHz');               // re-render
+    c = cell(win, 'qubit', 'q2', 'RF_freq');
+    ok(c.value === '5000' && flagged(c) === null,
+       'D17: after the unit switch the cell shows the kept 5000 MHz (got "' + c.value + '")');
+    // An UNcommitted typo flushed by the unit switch (captureDomFields).
+    typeOnly(win, c, '');
+    typeOnly(win, c, 'zz');
+    setInput(win, freqUnitSelect(win), 'GHz');
+    c = cell(win, 'qubit', 'q2', 'RF_freq');
+    ok(pq().RF_freq === 5e9 && c.value === '5',
+       'D17: a dirty typo flushed by a unit switch keeps 5 GHz (got ' + pq().RF_freq + ')');
+    // 1e999 is no finite number either.
+    typeOnly(win, c, '1e999');
+    c.dispatchEvent(new win.Event('change', { bubbles: true }));
+    ok(pq().RF_freq === 5e9, 'D17: "1e999" never stores Infinity');
+    // A real value still commits; a genuine clear still clears.
+    setInput(win, c, '4.8');
+    ok(pq().RF_freq === 4.8e9 && flagged(c) === null, 'D17: a valid commit still lands');
+    setInput(win, c, '');
+    ok(!('RF_freq' in pq()), 'D17: an explicit clear still clears');
+  }
+
+  // D18 (QA generate-r2-19): Set-all "abc" changes no row AND says so.
+  {
+    const win = makeWorld();
+    const G = buildWizard(win);
+    G.QT.setValidateDebounce(0);
+    const rf = function () {
+      return ['q1', 'q2', 'q3'].map(function (q) {
+        return ((G.state.spec.populate.qubit || {})[q] || {}).RF_freq;
+      });
+    };
+    setInput(win, cell(win, 'qubit', 'q1', 'RF_freq'), '5');
+    setInput(win, cell(win, 'qubit', 'q2', 'RF_freq'), '5.2');
+    const sa = win.document.querySelector(
+      '#gen-pop-tbl-qubit tr.gen-pop-setall input[aria-label="Set all RF freq"]');
+    ok(!!sa, 'D18: the RF Set-all box renders');
+    const before = JSON.stringify(rf());
+    sa.dispatchEvent(new win.FocusEvent('focusin', { bubbles: true }));
+    setInput(win, sa, 'abc');
+    ok(JSON.stringify(rf()) === before, 'D18: no row changed');
+    ok(flagged(sa) === 'err' && sa.title.indexOf('no row was changed') >= 0,
+       'D18: the Set-all box is flagged (got class="' + sa.className + '")');
+    ok(!!sa.parentNode.querySelector('.gen-cell-flag'), 'D18: with the ⚠ marker');
+    // Ctrl+Z on that commit must NOT replay the box's "" (an empty commit
+    // would clear the whole column).
+    win._wizUndo.tryUndo();
+    ok(JSON.stringify(rf()) === before, 'D18: Ctrl+Z after the typo clears no row');
+    ok(flagged(sa) === null, 'D18: …and the flag is gone');
+    // A valid Set-all clears the flag and fills.
+    setInput(win, sa, 'abc');
+    setInput(win, sa, '6');
+    ok(JSON.stringify(rf()) === '[6000000000,6000000000,6000000000]' && flagged(sa) === null,
+       'D18: a valid Set-all fills every row and clears the flag');
+    // docs/27: an EMPTY Set-all commit still clears the column.
+    setInput(win, sa, '');
+    ok(rf().every(function (v) { return v === undefined; }), 'D18: empty commit clears the column');
+  }
+
+  // D19 (QA generate-r2-02, review): a red cell is not the only word. The
+  // Review step counts the invalid populate values (from the spec, so a cell
+  // scrolled out of view still counts) and the build result never shows a
+  // bare ✓ over them — QA J4 built a -3 ns x180 under "✓ Generated". Still
+  // advisory (docs/53): nothing is refused.
+  {
+    const win = makeWorld();
+    const G = buildWizard(win);
+    const RES = { ok: true, status: 'ok',
+                  result: { qubits: ['q1', 'q2', 'q3'], qubit_pairs: [] } };
+    function reviewRow(label) {
+      let txt = null;
+      win.document.querySelectorAll('#gen-review tr').forEach(function (tr) {
+        const th = tr.querySelector('th');
+        if (th && th.textContent === label) txt = tr.querySelector('td').textContent;
+      });
+      return txt;
+    }
+    // A cross-cell error (the feedline Σ|amp| clip, red on every readout amp
+    // of the bank) is the conflicts row's to say — never counted twice.
+    G.QT.setValidateDebounce(0);
+    ['q1', 'q2', 'q3'].forEach(function (q) {
+      setInput(win, cell(win, 'resonator', q, 'readout_amplitude'), '0.5');
+    });
+    await tick();
+    ok(flagged(cell(win, 'resonator', 'q3', 'readout_amplitude')) === 'err',
+       'D19: the Σ|amp| clip is red in step 6');
+    G.goToStep(8);
+    ok(/sum/.test(reviewRow('LO / band / power conflicts') || ''),
+       'D19: the conflicts row says the Σ clip (got "' +
+       reviewRow('LO / band / power conflicts') + '")');
+    ok(reviewRow('Invalid populate values') === null,
+       'D19: no invalid single-cell value, no invalid row (got "' +
+       reviewRow('Invalid populate values') + '")');
+    G.QT.showBuildResult(JSON.parse(JSON.stringify(RES)), 'D:\\out\\chip');
+    let res = win.document.getElementById('gen-build-result');
+    ok(!/invalid/.test(res.textContent), 'D19: a clean build says nothing about invalid values');
+    G.goToStep(6);
+    setInput(win, cell(win, 'pulses', 'q3', 'x180_length'), '-3');
+    G.goToStep(8);
+    const row = reviewRow('Invalid populate values') || '';
+    ok(/^1 /.test(row) && row.indexOf('q3 x180 length') >= 0 &&
+       row.indexOf('cannot be negative') >= 0,
+       'D19: Review names the invalid value (got "' + row + '")');
+    G.QT.showBuildResult(JSON.parse(JSON.stringify(RES)), 'D:\\out\\chip');
+    res = win.document.getElementById('gen-build-result');
+    const head = res.querySelector('p');
+    ok(head && /1 invalid populate value/.test(head.textContent) &&
+       head.className.indexOf('gen-build-warn-line') >= 0,
+       'D19: the headline is a warning, not a bare ✓ (got "' +
+       (head && head.textContent) + '")');
+    const line = res.querySelector('.gen-build-cell-errs');
+    ok(line && line.textContent.indexOf('q3 x180 length') >= 0,
+       'D19: a ⚠ line names the value (got "' + (line && line.textContent) + '")');
+  }
+
   if (fails) { console.error(fails + ' check(s) failed'); process.exit(1); }
   console.log('generate_validation_selfcheck: all checks passed');
 })().catch(function (e) { console.error(e); process.exit(1); });

@@ -247,6 +247,41 @@ def test_populate_pairs_keyed_by_control_target_orientation():
     assert list(pop["pairs"].keys()) == ["q1-q0"]
 
 
+def test_populate_pair_cz_read_through_the_flux_pulse_pointer():
+    """QA regenerate-r2-03: the canonical CZ macro stores flux_pulse_qubit as a
+    POINTER to the op on the moving qubit's z line (docs/61). Reading only the
+    inline-dict form left CZ dur/amp blank, so the wizard's fill-empty preset
+    wrote 0.1 over the chip's calibrated 0.45 and populate-protect kept it."""
+    from quam_state_manager.core import regen_spec
+    op = "#/qubits/q1/z/operations/cz_unipolar_flux_pulse_q1_q2"
+    state = {"qubits": {
+                 "q1": {"z": {"operations": {"cz_unipolar_flux_pulse_q1_q2": {
+                     "length": 48, "amplitude": 0.45}}}},
+                 "q2": {}},
+             "qubit_pairs": {"q1-q2": {
+                 "qubit_control": "#/qubits/q1",
+                 "qubit_target": "#/qubits/q2",
+                 "moving_qubit": "control",
+                 "macros": {"cz": "#./cz_unipolar",
+                            "cz_unipolar": {"flux_pulse_qubit": op}}},
+                 "q2-q1": {
+                 "qubit_control": "#/qubits/q2",
+                 "qubit_target": "#/qubits/q1",
+                 "macros": {"cz_unipolar": {
+                     "flux_pulse_qubit": "#/qubits/q2/z/operations/gone"}}}}}
+    merged = dict(state)
+    merged["wiring"] = {}
+    pop = regen_spec._extract_populate(state, merged)
+    pv = pop["pairs"]["q1-q2"]
+    assert pv["cz_amplitude"] == 0.45
+    assert pv["cz_interaction_duration"] == 48
+    assert pv["cz_variant"] == "unipolar"
+    # a dangling reference stays blank, never a crash
+    dangling = pop["pairs"]["q2-q1"]
+    assert "cz_amplitude" not in dangling
+    assert "cz_interaction_duration" not in dangling
+
+
 def test_populate_pair_key_wiring_fallback_and_raw_name():
     from quam_state_manager.core import regen_spec
     pair = {"moving_qubit": "target"}

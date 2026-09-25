@@ -210,6 +210,76 @@ try {
   ok(false, 'T10 threw: ' + (e && e.message));
 }
 
+// T11 (QA generate-r2-03): the TWPA pump joins the LO solve. It used to be
+// left out (collectPortElements walked qubits only, and rfOf read RF_freq
+// where the pump keeps pump_frequency), so the pump built on the port's
+// default 5 GHz band-1 LO and played 7.95 GHz at a 2.95 GHz IF.
+try {
+  var w11 = makeWorld();
+  var G11 = w11.QuamGen, T11 = G11._test;
+  G11.hydrateFromSpec({
+    network: { host: '1.2.3.4', cluster_name: 'C' },
+    instruments: { controllers: [{ con: 1, fems: [{ slot: 1, fem: 'mw' }] }],
+                   opx_plus: [], octaves: [] },
+    qubits: ['q1', 'q2'], qubit_pairs: [], twpas: [{ id: 'twpaA', qubits: [] }],
+    pair_gate: 'cz_tunable', lines: [],
+    populate: { qubit: { q1: { RF_freq: 5.0e9 } },
+                twpa: { twpaA: { pump_frequency: 7.95e9 } } }
+  }, { mode: 'generate' });
+  var st11 = G11.state;
+  // (a) a lone pump on Out6+Out7
+  st11.allocation = {
+    q1: { xy: [{ con: 1, slot: 1, port: 2, io_type: 'output' }] },
+    twpaA: { p: [{ con: 1, slot: 1, port: 6, io_type: 'output' }] }
+  };
+  var c11 = T11.computeLoAssignments();
+  var lo11 = c11.assignments['twpa/twpaA'];
+  ok(typeof lo11 === 'number' && Math.abs(lo11 - 7.95e9) <= 0.4e9,
+    'T11a: the pump gets an LO inside its ±0.4 GHz IF window (got ' + lo11 + ')');
+  var g11 = c11.groups.filter(function (g) {
+    return g.members.some(function (m) { return m.group === 'twpa' && m.rid === 'twpaA'; });
+  })[0];
+  ok(!!g11 && g11.band === 3, 'T11a: its LO group is band 3 (got ' + (g11 && g11.band) + ')');
+  // (b) a pump on a port COUPLED to a drive's port (Out4+Out5) is judged by
+  // the coupled-band rule (QA F16 corrected this pin: coupled ports share a
+  // band, not an LO): a 5 GHz band-1 drive beside the band-3 pump is legal
+  // (bands 1 + 3), a 6 GHz band-2 drive is a named conflict.
+  st11.allocation = {
+    q1: { xy: [{ con: 1, slot: 1, port: 4, io_type: 'output' }] },
+    twpaA: { p: [{ con: 1, slot: 1, port: 5, io_type: 'output' }] }
+  };
+  function pumpWarns() {
+    return T11.loBandFindings(T11.computeLoAssignments()).warnings.filter(function (w) {
+      return (w.members || []).some(function (m) { return m.rid === 'twpaA'; });
+    });
+  }
+  ok(pumpWarns().length === 0,
+    'T11b: a band-3 pump coupled to a band-1 drive is legal (got ' +
+    JSON.stringify(pumpWarns().map(function (w) { return w.message; })) + ')');
+  st11.spec.populate.qubit.q1.RF_freq = 6.0e9;
+  var w11b = pumpWarns();
+  ok(w11b.length > 0 && /coupled/.test(w11b[0].message),
+    'T11b: a band-3 pump coupled to a band-2 drive warns, naming twpaA');
+  st11.spec.populate.qubit.q1.RF_freq = 5.0e9;
+  // (c) editing the pump RF cell re-solves the LO (the handler keyed RF_freq)
+  st11.allocation = {
+    q1: { xy: [{ con: 1, slot: 1, port: 2, io_type: 'output' }] },
+    twpaA: { p: [{ con: 1, slot: 1, port: 6, io_type: 'output' }] }
+  };
+  T11.renderPopulateTables();
+  var pc = w11.document.querySelector(
+    '.gen-pop-in[data-group="twpa"][data-rid="twpaA"][data-field="pump_frequency"]');
+  ok(!!pc, 'T11c: the pump RF cell renders');
+  delete (st11.spec.populate.twpa.twpaA || {}).LO_frequency;
+  pc.value = '8.3';
+  pc.dispatchEvent(new w11.Event('change', { bubbles: true }));
+  var lo11c = (st11.spec.populate.twpa.twpaA || {}).LO_frequency;
+  ok(typeof lo11c === 'number' && Math.abs(lo11c - 8.3e9) <= 0.4e9,
+    'T11c: a pump RF edit writes the solved pump LO (got ' + lo11c + ')');
+} catch (e) {
+  ok(false, 'T11 threw: ' + (e && e.stack));
+}
+
 if (fails) { console.error(fails + ' check(s) failed'); process.exit(1); }
 console.log('generate_twpa_selfcheck: all checks passed');
 process.exit(0);

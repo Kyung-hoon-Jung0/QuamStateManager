@@ -133,6 +133,37 @@ def _spec_twpa_ids(spec: dict) -> list[str] | None:
         if isinstance(tid, str) and tid.strip():
             out.append(tid.strip())
     return out
+def pending_fsp_offers(old_folder: Path | str, spec: dict,
+                       populate_baseline: dict | None,
+                       populate_touched: list | None,
+                       fsp_ack: dict | None,
+                       old_source: tuple[dict, dict] | None = None) -> list[dict]:
+    """The FSP-compensation offers a rebuild of ``spec`` raises that ``fsp_ack``
+    has not answered yet (QA regenerate-r2-06).
+
+    Read from the SOURCE chip alone — no build — so /regenerate/build can ask
+    before anything is written, the way Live Edit's /field/edit asks before an
+    FSP edit commits. Never raises: an unreadable source asks nothing (the
+    build then reports the gap in ``populate_conflicts``).
+
+    ``old_source`` -- the in-memory ``(state, wiring)`` the rebuild will merge
+    from (QA regenerate-r2-21: an open chip's unsaved edits); the offers are
+    judged on that same source instead of the files on disk.
+    """
+    if populate_baseline is None:
+        return []
+    from . import regen_populate
+    try:
+        old_state, old_wiring = (old_source if old_source is not None
+                                 else safe_io.read_state_wiring(Path(old_folder)))
+        pop_view = regen_populate.populate_view(spec)
+        changed = regen_populate.changed_fields(
+            pop_view, populate_baseline, populate_touched)
+        offers = regen_populate.fsp_offers(changed, pop_view, old_state, old_wiring)
+    except (OSError, ValueError, TypeError, KeyError, AttributeError):
+        return []
+    return [p for p in offers
+            if p.get("amps") and regen_populate.fsp_ack_mode(p, fsp_ack) is None]
 
 
 def run_regenerate(
@@ -147,6 +178,9 @@ def run_regenerate(
     instance_path: Path | str | None = None,
     source_probe=None,
     old_source: tuple[dict, dict] | None = None,
+    power_mode: str | None = None,
+    fsp_ack: dict | None = None,
+    populate_filled: list | None = None,
 ) -> dict:
     """Build ``spec`` fresh into ``out_dir`` then merge the OLD chip's values on.
 
@@ -166,6 +200,19 @@ def run_regenerate(
     (+ ``populate_touched`` ``[group, id, field]`` cells) expands via
     :mod:`regen_populate` into merge ``protect_paths`` so the user's Populate
     edits survive the tier-1 carry. ``None`` ⇒ legacy behavior.
+
+    ``populate_filled`` (QA review of regenerate-r2-03) — ``[group, id, field]``
+    cells a fill-empty preset Apply wrote. They beat the tier-1 carry only
+    where the source chip holds no value (null), never over a number — see
+    :func:`regen_populate.fill_protect_paths`.
+
+    ``power_mode`` / ``fsp_ack`` (QA regenerate-r2-04 / r2-06): a port FSP the
+    wizard changed would leave every carried amplitude on that port at its old
+    value — each pulse silently off by the FSP delta. ``"absolute"`` (the
+    wizard allocated the FSP from pulse powers) rescales them to keep power;
+    otherwise ``fsp_ack`` ``{fsp_path: {mode: comp|solo, fsp_new, amps}}`` is
+    the user's answer to the offer (:func:`pending_fsp_offers`), and an
+    unanswered port is reported in ``populate_conflicts``, never silent.
 
     ``scripts_dir`` — where to write the editable build-script bundle
     (r16 ⓪-4: the wizard's script-path box). ``None`` keeps the legacy
@@ -230,6 +277,11 @@ def run_regenerate(
             pop_view, populate_baseline, populate_touched)
         protect, pop_conflicts = regen_populate.protect_paths(
             changed, pop_view, old_state, old_wiring, new_state, new_wiring)
+        # QA review of regenerate-r2-03: a fill-empty preset cell lands where
+        # the source chip holds no value (a null anharmonicity), never over one.
+        protect |= regen_populate.fill_protect_paths(
+            populate_filled, changed, pop_view, old_state, old_wiring,
+            new_state, new_wiring)
 
     # docs/202 §15: which of the SOURCE chip's classes this build env can
     # hold -- the merge keeps a lab subclass the builder replaced with its
@@ -264,6 +316,17 @@ def run_regenerate(
                                       env_fields=env_fields)
     result.stats.populate_conflicts.extend(pop_conflicts)
 
+    # QA regenerate-r2-04 / r2-06: rescale the amplitudes carried onto a port
+    # whose FSP the wizard changed (or say so) — see the docstring.
+    fsp_compensated: list = []
+    if populate_baseline is not None:
+        offers = regen_populate.fsp_offers(changed, pop_view, old_state, old_wiring)
+        if offers:
+            fsp_compensated, fsp_conflicts = regen_populate.apply_fsp_compensation(
+                result.merged, offers, protect, new_state, new_wiring,
+                auto=(power_mode == "absolute"), fsp_ack=fsp_ack)
+            result.stats.populate_conflicts.extend(fsp_conflicts)
+
     # TWPAs are grafted back at the state level but the builder made no TWPA
     # wiring/ports — carry those from OLD so the channel resolves and
     # generate_config() doesn't crash. This also un-dangles the TWPA pointers.
@@ -290,6 +353,9 @@ def run_regenerate(
         safe_io.atomic_write_json(out_dir / "wiring.json", new_wiring)
 
     safe_io.atomic_write_json(out_dir / "state.json", result.merged)
+    # QA F12: the merged chip, not the build spec, decides -- a merge can
+    # carry an RF the reconstructed spec lacked (a pointer-valued f_01).
+    config_generator.annotate_unplayable(outcome, result.merged, new_wiring)
 
     # Emit the editable build-script bundle alongside the rebuilt state, so the
     # user OWNS the config as Python. script_emitter is the SINGLE maintained
@@ -415,6 +481,9 @@ def run_regenerate(
                 s.populate_protected, old_state, result.merged)
             if changed is not None else []),
         "populate_conflicts": s.populate_conflicts[:20],
+        # QA regenerate-r2-04 / r2-06: amplitudes rescaled to keep power
+        "fsp_compensated": fsp_compensated[:80],
+        "fsp_compensated_total": len(fsp_compensated),
     }
     outcome["script"] = script_name   # emitted build recipe filename, or None
     return outcome

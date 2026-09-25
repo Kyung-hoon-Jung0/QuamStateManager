@@ -81,3 +81,12 @@ class TestJsPyConstantsParity:
             js = tuple(float(x) for x in m.group(band).split(","))
             py = tuple(float(v) for v in spec_constraints.BAND_FREQ_RANGES[band])
             assert js == py, f"band {band} range drifted from spec_constraints"
+
+    def test_qdac_channel_range_matches(self):
+        """QA generate-r2-07: the wizard's inline QDAC channel flag mirrors
+        core/qdac.py's CHANNEL_RANGE — the rule Diagnostics and validate_spec
+        apply."""
+        from quam_state_manager.core import qdac
+        m = re.search(r"var QDAC_CHANNEL_RANGE = \[(\d+), (\d+)\];", self._js())
+        assert m, "QDAC_CHANNEL_RANGE literal not found in generate.js"
+        assert (int(m.group(1)), int(m.group(2))) == qdac.CHANNEL_RANGE

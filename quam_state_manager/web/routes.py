@@ -26243,9 +26243,20 @@ def generate_presets_save():
             overwrite=bool(data.get("overwrite")),
         )
     except FileExistsError as exc:
+        # QA generate-r2-15: name the preset really stored under that slug —
+        # "Lab A" and "lab-a" share one file, so the confirm must say which
+        # preset an OK replaces.
+        import unicodedata
+        slug = getattr(exc, "slug", None) or str(exc)
+        existing = getattr(exc, "existing_name", None)
+        new = unicodedata.normalize("NFC", str(name).strip())
+        if existing and existing != new:
+            msg = (f'Saving "{new}" would replace the existing preset '
+                   f'"{existing}" (both are stored as "{slug}").')
+        else:
+            msg = f'A preset named "{new}" already exists.'
         return jsonify({
-            "ok": False, "needs_confirm": True, "slug": str(exc),
-            "error": f'A preset named "{name}" already exists.',
+            "ok": False, "needs_confirm": True, "slug": slug, "error": msg,
         })
     except ValueError as exc:
         return jsonify({"ok": False, "error": str(exc)}), 400
@@ -26773,6 +26784,13 @@ def generate_build():
     outcome = config_generator.run_generator(
         python_path, "build", spec, Path(output_path), timeout=600
     )
+    # QA F12: a success whose QM config the QM would reject says so.
+    if outcome.get("ok"):
+        try:
+            _st, _wr = safe_io.read_state_wiring(Path(output_path))
+            config_generator.annotate_unplayable(outcome, _st, _wr)
+        except (OSError, ValueError) as exc:
+            logger.warning("frequency check skipped: %s", exc)
 
     # Optional editable-scripts export (customer requirement: "generate/
     # populate python scripts in a different user-defined folder"). Runs
@@ -27015,6 +27033,10 @@ def regenerate_build():
     populate_touched = data.get("populate_touched")
     if not isinstance(populate_touched, list):
         populate_touched = None
+    # QA review of regenerate-r2-03: fill-empty preset cells (land on null only).
+    populate_filled = data.get("populate_filled")
+    if not isinstance(populate_filled, list):
+        populate_filled = None
     scripts_dir = (data.get("scripts_dir") or "").strip() or None
 
     errors = config_generator.validate_spec(spec)
@@ -27125,9 +27147,32 @@ def regenerate_build():
         if guard is not None:
             return jsonify(guard)
 
-    live_note = _regen_source_live_note(src_p)   # judged as the source is read
-    # QA regenerate-r2-21: an open chip's unsaved edits are part of the source.
+    # QA regenerate-r2-06: a port FSP changed in the wizard (manual power
+    # mode) moves every calibrated pulse on that port unless its amplitudes
+    # are rescaled — ask first, one port at a time, exactly like Live Edit's
+    # /field/edit FSP gate (docs/20 r12-B). Absolute mode compensates by
+    # itself (the wizard allocated that FSP from the pulse powers).
+    power_mode = data.get("power_mode")
+    fsp_ack = data.get("fsp_ack")
+    if not isinstance(fsp_ack, dict):
+        fsp_ack = None
+    # QA regenerate-r2-21: an open chip's unsaved edits are part of the
+    # source -- read once, and the FSP offers are judged on the same source
+    # the merge will read (regenerate-r2-06 x r2-21, merged at integration).
     unsaved = _regen_inmemory_source(src_p)
+    if power_mode != "absolute":
+        pending = regenerate.pending_fsp_offers(
+            source_folder, spec, populate_baseline, populate_touched, fsp_ack,
+            old_source=unsaved[:2] if unsaved else None)
+        if pending:
+            return jsonify({
+                "ok": False, "needs_confirm": True, "confirm_kind": "fsp",
+                "fsp_compensation": pending[0], "fsp_pending": len(pending),
+                "error": ("A port's full-scale power changed — choose whether "
+                          "its calibrated amplitudes keep their power."),
+            })
+
+    live_note = _regen_source_live_note(src_p)   # judged as the source is read
     outcome = regenerate.run_regenerate(
         python_path, source_folder, spec, Path(output_path), timeout=600,
         populate_baseline=populate_baseline,
@@ -27135,6 +27180,9 @@ def regenerate_build():
         scripts_dir=scripts_dir,
         instance_path=current_app.instance_path,
         **({"old_source": unsaved[:2]} if unsaved else {}),
+        power_mode=power_mode if isinstance(power_mode, str) else None,
+        fsp_ack=fsp_ack,
+        populate_filled=populate_filled,
     )
     if unsaved and isinstance(outcome, dict):
         outcome["unsaved_included"] = unsaved[2]

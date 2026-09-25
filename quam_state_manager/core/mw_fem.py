@@ -1,10 +1,12 @@
-"""OPX1000 MW-FEM band + LO-sharing model.
+"""OPX1000 MW-FEM band + port-coupling model.
 
-Per the QM docs (Guides/opx1000_fems): the MW-FEM up/downconverter LOs are shared
-across fixed port pairs **per controller+FEM** — Out1↔In1, Out2↔Out3, Out4↔Out5,
-Out6↔Out7, Out8↔In2. Coupled ports must use the **same band** (NOT the same
-frequency); bands 1 and 3 are mutually compatible, band 2 is compatible only with
-band 2. A port's up/downconverter frequency must lie within its band's Hz range.
+Per the QM docs (Guides/opx1000_fems): fixed port pairs are COUPLED **per
+controller+FEM** — Out1↔In1, Out2↔Out3, Out4↔Out5, Out6↔Out7, Out8↔In2 — and
+"Coupled ports must be in the same band, or in bands `1` and `3`". The coupling
+is a band rule only: each output port sets its own ``upconverter_frequency`` (or
+up to two ``upconverters``), so coupled ports do NOT share an LO (QA F16).
+Bands 1 and 3 are mutually compatible, band 2 is compatible only with band 2.
+A port's up/downconverter frequency must lie within its band's Hz range.
 
 This is the single source of truth for those constraints — both the server (to
 attach per-cell LO metadata) and the client (live band-range warnings) read it.

@@ -3690,20 +3690,25 @@ class TestGenerate:
             "source_folder": str(src),
             "populate_baseline": baseline,
             "populate_touched": [["qubit", "q1", "band"]],
+            "populate_filled": [["qubit", "q1", "anharmonicity"]],
             "scripts_dir": str(tmp_path / "scripts")})
         assert resp.status_code == 200, resp.get_json()
         assert got["populate_baseline"] == baseline
         assert got["populate_touched"] == [["qubit", "q1", "band"]]
+        # QA review of regenerate-r2-03: fill-empty preset cells ride along
+        assert got["populate_filled"] == [["qubit", "q1", "anharmonicity"]]
         assert str(got["scripts_dir"]).endswith("scripts")
 
         got.clear()
         resp = client.post("/regenerate/build", json={
             "spec": _gen_valid_spec(), "output_path": str(tmp_path / "out"),
             "source_folder": str(src),
-            "populate_baseline": "junk", "populate_touched": "junk"})
+            "populate_baseline": "junk", "populate_touched": "junk",
+            "populate_filled": "junk"})
         assert resp.status_code == 200
         assert got["populate_baseline"] is None
         assert got["populate_touched"] is None
+        assert got["populate_filled"] is None
         assert got["scripts_dir"] is None
 
     # --- QA F2/F3: the output is never the loaded chip's live folder, nor
