@@ -52,7 +52,10 @@ _COLD_SCAN_BUDGET_S = 3.0
 _STORE_CACHE_V = 1
 # A scan that changed something writes the cache this long after the LAST
 # such scan -- a burst of landing runs is one write, not one per run.
-_STORE_CACHE_DEBOUNCE_S = 3.0
+# The persisted index is only an accelerator (docs/171): losing 30 s on a
+# crash costs a re-verify. At 3 s, each new run re-encoded a 16 MB store,
+# holding the GIL and stalling requests for seconds. Batch those dumps.
+_STORE_CACHE_DEBOUNCE_S = 30.0
 
 _SCAN_PARSE_WORKERS = min(32, (os.cpu_count() or 4) * 4)
 
