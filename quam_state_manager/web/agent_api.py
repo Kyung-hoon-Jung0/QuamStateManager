@@ -1691,8 +1691,11 @@ def live_diff():
         if len(changed) >= 300:
             break
     overlap = [c["path"] for c in changed if c["path"] in tray]
+    # stale_since answers only beside live_diverged, like /chip and /state: a
+    # bare mtime on an in-sync chip read as "stale since <time>" to the agent
+    diverged = _live_flag()
     return jsonify(ok=True, count=len(changed), changed=changed, overlap=overlap,
-                   live_diverged=_live_flag(), stale_since=_stale_since())
+                   live_diverged=diverged, stale_since=_stale_since() if diverged else None)
 
 
 # ================================================================ S6: the card feed + plans

@@ -683,6 +683,8 @@ class TestRun:
     def test_live_diff_and_stale_since(self, c, inst, synth_folder):
         d = c.get("/api/agent/live-diff").get_json()
         assert d["ok"] and d["count"] == 0
+        # QA agents round: an in-sync chip has no stale_since (it had one: the live files' mtime)
+        assert d["live_diverged"] is False and d["stale_since"] is None
         st = json.loads((synth_folder / "state.json").read_text(encoding="utf-8"))
         st["qubits"]["qA1"]["T1"] = 12345
         time.sleep(0.05)
