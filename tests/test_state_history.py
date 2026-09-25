@@ -465,3 +465,36 @@ class TestHistoryScaleSurfaces:
         html = client.get("/param-history").data.decode()
         assert "on disk" in html
         assert "retention" not in html
+
+
+class TestRestoreReanchorsRevertLastApply:
+    """QA correctness-r2-04: after a restore-to-live, '↺ Revert last apply'
+    still pointed at the apply BEFORE the restore, and pressing it (then Apply)
+    wrote an older third state -- although the restore was the newest live
+    write and had just said 'the prior state was snapshotted first'."""
+
+    def _ctx(self, app):
+        return next(iter(app.config["contexts"].values()))
+
+    def test_revert_after_a_restore_puts_back_the_pre_restore_chip(self, client, app, live):
+        ts_a = _take_snapshot(client)[0]
+        client.post("/field/edit", data={"dot_path": "qubits.q1.f_01", "value": "7.0e9"})
+        client.post("/state/apply-to-live")
+        first = self._ctx(app)["last_apply"]["pre_ts"]
+        # an outside write the working copy never pulled
+        st = json.loads((live / "state.json").read_text())
+        st["qubits"]["q1"]["f_01"] = 7.5e9
+        (live / "state.json").write_text(json.dumps(st, indent=4))
+        pre_restore = (live / "state.json").read_text()
+        r = client.post(f"/state-history/{ts_a}/restore-live", data={"force": "1"})
+        assert r.status_code == 200
+        la = self._ctx(app).get("last_apply") or {}
+        assert la.get("pre_ts") and la["pre_ts"] != first, \
+            "the revert must re-anchor on the restore's own backup"
+        # the tray's button targets it
+        assert f'/state-history/{la["pre_ts"]}/stage' in client.get("/state/tray").get_data(as_text=True)
+        # ...and pressing it, then Apply, gives back the chip as it was right
+        # before the restore (the outside 7.5e9), not the first apply's pre-state
+        assert client.post(f"/state-history/{la['pre_ts']}/stage?from=tray").status_code == 200
+        assert client.post("/state/apply-to-live").status_code == 200
+        assert json.loads((live / "state.json").read_text()) == json.loads(pre_restore)

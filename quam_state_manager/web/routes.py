@@ -11154,6 +11154,17 @@ def state_history_restore_live(timestamp: str):
     # A restore is the user deliberately writing live — rebase drift tracking on
     # the restored state so it isn't reported as accumulated live drift.
     _reset_baseline_after_apply(ctx)
+    # QA correctness-r2-04: a restore is the newest live write, so ↺ Revert last
+    # apply must put back what the chip held right before IT -- the backup taken
+    # above -- not the pre-state of some earlier apply. Without this the tray
+    # kept the previous memo and "undo my last Apply" wrote a third, older
+    # state. Same rule the two apply routes follow ("the previous apply's memo
+    # must not survive this one"). backup_meta is never None here (the restore
+    # aborted above if it was).
+    ctx["last_apply"] = {
+        "pre_ts": backup_meta.timestamp,
+        "at": datetime.now().isoformat(timespec="seconds"),
+    }
     # Record that the live chip is now this snapshot's content. NOT force=True:
     # the restored bytes are identical to an existing snapshot, so content-hash
     # dedup should recognise it and skip a redundant ~1MB write.
