@@ -222,6 +222,23 @@ class TestParamDiff:
         cells = re.findall(r"<td( class=\"cell-diff\")?>", row)
         assert [bool(x) for x in cells] == [False] * 25 + [True] * 5
 
+    def test_warming_is_a_placeholder_that_asks_again(self, app_client, monkeypatch):
+        """design §3: never the previous answer -- a small placeholder that
+        re-fetches the SAME request by itself."""
+        c, _data, key = app_client
+        from quam_state_manager.core import ramcache
+
+        def busy(*a, **kw):
+            raise ramcache.Warming("trends.param_diff", "slot", 0.25)
+
+        monkeypatch.setattr(ti, "params_blob", busy)
+        html = c.get(f"/trends/param-diff?experiment={A}&folders={key}&window=all",
+                     headers=HX).get_data(as_text=True)
+        assert 'hx-trigger="load delay:400ms"' in html and "Preparing parameter differences" in html
+        m = re.search(r'hx-get="([^"]+)"', html)
+        assert m and "window=all" in m.group(1) and f"folders={key}" in m.group(1)
+        assert 'hx-target="closest .trends-params"' in html and "<table" not in html
+
     def test_the_fragment_carries_the_series_version(self, app_client):
         c, _data, key = app_client
         _r, p = _series(c, f"/trends/series?experiment={A}&folders={key}")

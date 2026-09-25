@@ -27060,8 +27060,9 @@ def trends_param_diff():
         blob = _trend_index.params_blob(selection, experiment, qubit, window, render,
                                         forbid_held=_trends_forbidden_locks())
     except _ramcache.Warming:
-        return render_template("_status.html", level="info",
-                               message="Preparing parameter differences... pick again in a moment.")
+        return render_template("_trends_params_warming.html",
+                               url="/trends/param-diff?" + _trends_query(
+                                   sel, experiment, qubit, window=window))
     body = blob.html.encode("utf-8")
     if "gzip" in request.headers.get("Accept-Encoding", "") and len(body) > 16384:
         resp = make_response(gzip.compress(body, compresslevel=5))

@@ -1,0 +1,8 @@
+{# Parameter Differences still being computed by a concurrent request (the
+   RAM memo's single-flight wait ran out). design ram_design.md §3: an explicit
+   placeholder that asks again by itself -- never the previous answer. #}
+<div class="trends-params-warming" hx-get="{{ url }}" hx-trigger="load delay:400ms"
+     hx-target="closest .trends-params" hx-swap="innerHTML">
+    <h3>Parameter Differences</h3>
+    <p class="muted">Preparing parameter differences…</p>
+</div>
