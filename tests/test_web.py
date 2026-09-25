@@ -7471,7 +7471,7 @@ class TestSidebarIAr15:
                       ">Flux</a>", ">Couplers</a>"):
             assert label in comp, label
         live = seg("live-edit-subnav")
-        assert ">Json Tree View</a>" in live and ">Pulses</a>" in live
+        assert ">Live edit - Json Tree view</a>" in live and ">Pulses</a>" in live
         hist = seg("journal-subnav")            # docs/173: Param History sits under Calibration log; 2026-09-08: State History too
         assert ">Param History</a>" in hist and ">State History</a>" in hist
         ds = seg("datasets-subnav")
@@ -7508,7 +7508,7 @@ class TestSidebarIAr15:
     def test_palette_covers_every_nav_page(self):
         base = self._base()
         for label in ("Re-generate config", "Diagnostics", "Resonators",
-                      "Couplers", "Json Tree View", "Experiment Runner",
+                      "Couplers", "Live edit - Json Tree view", "Experiment Runner",
                       "Fit Replay", "Auto Calibrate"):
             assert '"label": "%s"' % label in base, label
         assert '"Qubit Pairs"' not in base            # label drift fixed

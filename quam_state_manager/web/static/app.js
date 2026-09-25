@@ -1980,30 +1980,36 @@ window.toggleColorblindMode = function() {
 /* ------------------------------------------------------------------ */
 
 /**
- * Switch the Workspace experiment list between full multi-line names
- * (default) and compact single-row truncation. The class lives on
- * <body> so it survives HTMX re-swaps of #sidebar-tree with no per-row
- * JS re-application.
+ * Switch the Workspace experiment list between compact single-row
+ * truncation (default since queue #8, 2026-09-26) and full multi-line
+ * names. The class lives on <body> so it survives HTMX re-swaps of
+ * #sidebar-tree with no per-row JS re-application.
  */
-window.setExpListCompact = function(compact) {
+function _paintExpListCompact(compact) {
     document.body.classList.toggle('exp-list-compact', compact);
-    try { localStorage.setItem('quam_exp_list_compact', compact ? '1' : '0'); } catch(e) {}
     var full = document.getElementById('exp-density-full');
     var comp = document.getElementById('exp-density-compact');
     if (full) full.setAttribute('aria-pressed', compact ? 'false' : 'true');
     if (comp) comp.setAttribute('aria-pressed', compact ? 'true' : 'false');
+}
+window.setExpListCompact = function(compact) {
+    _paintExpListCompact(compact);
+    try { localStorage.setItem('quam_exp_list_compact', compact ? '1' : '0'); } catch(e) {}
+};
+// Queue #8 (2026-09-26, the user + a second customer): compact is the
+// DEFAULT. An ABSENT key (a first visit, a cleared or private browser) means
+// compact; only an explicit '0' -- the user pressing "Full names" -- brings
+// the wrapped rows back. base.html renders <body> with the class already on,
+// so the default paints with no full-name flash; restore only ever has to
+// take it OFF. Restoring never writes the key (absent stays absent).
+window.expListCompactPref = function() {
+    try { return localStorage.getItem('quam_exp_list_compact') !== '0'; }
+    catch(e) { return true; }
 };
 
-// Restore density on load. Default is multi-line, so the class is added
-// only when the user previously opted into compact.
+// Restore density on load.
 (function() {
-    function apply() {
-        try {
-            if (localStorage.getItem('quam_exp_list_compact') === '1') {
-                setExpListCompact(true);
-            }
-        } catch(e) {}
-    }
+    function apply() { _paintExpListCompact(window.expListCompactPref()); }
     if (document.readyState === 'loading') {
         document.addEventListener('DOMContentLoaded', apply);
     } else { apply(); }
@@ -21927,7 +21933,10 @@ document.addEventListener("htmx:configRequest", function (evt) {
 (function () {
     var H_KEY = "quam_json_panel_h";
     function _applyPersistedHeight(root) {
-        var h = parseInt(localStorage.getItem(H_KEY), 10);
+        // a private window throws on storage ACCESS -- a remembered size is a
+        // convenience, never a reason for every htmx swap to raise
+        var h = 0;
+        try { h = parseInt(localStorage.getItem(H_KEY), 10); } catch (e) { return; }
         if (!h) return;
         (root || document).querySelectorAll(".json-panel").forEach(function (p) {
             p.style.height = h + "px";

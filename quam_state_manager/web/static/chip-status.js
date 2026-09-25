@@ -536,13 +536,28 @@ window.ChipStatus.mount = function (opts) {
     // <span class=metric-label data-metric=k title=BLURB>TEXT <span class=metric-dir>↑</span></span>
     // useAbbr → terse card label; else the long label. Direction arrow appended
     // (empty for neutral). Both text + blurb are escaped.
+    // Queue #5 (2026-09-26): a bare arrow beside a PANEL title read as a dead
+    // button ("nobody knows what it means, clicking does nothing"). It was
+    // never a control -- it is the good direction. So: the big titles (the
+    // metric panels and the Overview tiles) no longer draw it, the direction
+    // moves into the title's own hover text in words, and wherever the arrow
+    // still appears (compact cards, the threshold editor -- where the
+    // direction decides which side of the fail line is bad) it says what it
+    // means on hover and is not dressed as something to click.
+    function dirWords(k) {
+        var d = _meta(k).direction;
+        return d === 'higher' ? 'higher is better' : (d === 'lower' ? 'lower is better' : '');
+    }
     function labelHtml(k, useAbbr, overrideText, noArrow) {
         var txt = overrideText != null ? overrideText : (useAbbr ? metricAbbr(k) : metricLabel(k));
         var ar = noArrow ? '' : arrow(k);
         var blurb = metricBlurb(k);
+        var dw = dirWords(k);
+        var tip = blurb ? blurb + (dw ? ' (' + dw + ')' : '') : (dw ? dw.charAt(0).toUpperCase() + dw.slice(1) : '');
         return '<span class="metric-label" data-metric="' + _esc(k) + '"' +
-               (blurb ? ' title="' + _esc(blurb) + '"' : '') + '>' + _esc(txt) +
-               (ar ? ' <span class="metric-dir">' + ar + '</span>' : '') + '</span>';
+               (tip ? ' title="' + _esc(tip) + '"' : '') + '>' + _esc(txt) +
+               (ar ? ' <span class="metric-dir" title="' + _esc(dw.charAt(0).toUpperCase() + dw.slice(1)) +
+                     '" aria-label="' + _esc(dw) + '">' + ar + '</span>' : '') + '</span>';
     }
 
     window._rawWiring = rawWiring;
@@ -1331,7 +1346,7 @@ window.ChipStatus.mount = function (opts) {
         var html = '';
         tiles.forEach(function(c) {
             var border = c.muted ? 'var(--pico-muted-border-color)' : (c.color || 'var(--pico-muted-border-color)');
-            var titleHtml = c.metricKey ? labelHtml(c.metricKey, false, c.title, c.noArrow) : _esc(c.title);
+            var titleHtml = c.metricKey ? labelHtml(c.metricKey, false, c.title, true) : _esc(c.title);   // queue #5: no bare arrow on a tile title
             // docs/150b: EVERY aggregate big number states which one it is
             // ('med' included) -- an untagged number was ambiguous.
             var statTag = c.stat
@@ -3393,7 +3408,7 @@ window.ChipStatus.mount = function (opts) {
             // good-direction arrow + plain-language tooltip from META — so direction
             // and blurb have one source, even though the display string stays bespoke.
             // docs/141 4o: the panel's own S / M / L sits right of its title.
-            sectionHtml += '<h4 class="topo-metric-panel-title">' + labelHtml(def.key, false, def.title)
+            sectionHtml += '<h4 class="topo-metric-panel-title">' + labelHtml(def.key, false, def.title, true)   // queue #5: no bare arrow on a panel title
                 + window.ChipStatus.density.controlHtml(def.key) + '</h4>';
             sectionHtml += '<div class="topo-metric-panel-stat">'
                 + 'avg ' + prop.fmtFn(agg.avg) + ' <span>med ' + prop.fmtFn(agg.median)

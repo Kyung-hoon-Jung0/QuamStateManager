@@ -2148,7 +2148,7 @@ details.tree-branch-active > summary {
 }
 
 /* Compact experiment-list mode: one truncated row per entry.
-   Opt-in via body.exp-list-compact (toggled by the sidebar "rows" control).
+   DEFAULT since queue #8 (base.html renders body.exp-list-compact; the sidebar "rows" control takes it off).
    Class lives on <body> so it survives HTMX re-swaps of #sidebar-tree. */
 body.exp-list-compact .tree-entry-label { align-items: center; }
 body.exp-list-compact .tree-entry-label input[type=checkbox] { margin: 0; }
@@ -4704,7 +4704,7 @@ html.topbar-hidden .topo-subnav {
    normal text colour as TEXT (never a *-border/fill token as text — the
    light-theme washout rule). cursor:help signals the tooltip. */
 .topo-dashboard .metric-label[title] { cursor: help; }
-.topo-dashboard .metric-dir { font-size: 0.82em; font-weight: 600; opacity: 0.7; margin-left: 0.1em; color: var(--pico-color); }
+.topo-dashboard .metric-dir { font-size: 0.82em; font-weight: 600; opacity: 0.7; margin-left: 0.1em; color: var(--pico-color); cursor: help; }
 .topo-prop-value { flex: 1; padding: 1px 5px; text-align: right; font-family: monospace; border-radius: 2px; white-space: nowrap; }
 .topo-edge-label {
     position: absolute; z-index: 3; font-size: var(--topo-edge-label-size); font-family: monospace;
