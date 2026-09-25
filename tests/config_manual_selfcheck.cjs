@@ -177,7 +177,7 @@ setTimeout(function () {
                     window.localStorage.setItem('quam_manual_size', JSON.stringify({ w: 700, h: 520 }));   // jsdom's real Storage
                     window.toggleConfigManual(); window.toggleConfigManual(d.getElementById('manual-btn'));
                     ok(pop.style.width === '700px' && pop.style.height === '520px', 'a remembered size is restored on open (' + pop.style.width + ' x ' + pop.style.height + '; stored=' + window.localStorage.getItem('quam_manual_size') + ' vw=' + window.innerWidth + ' open=' + !pop.classList.contains('manual-hidden') + ')');
-                    reviewPins(function () { process.exit(fails ? 1 : 0); });
+                    reviewPins(function () { closedIntoNodePins(function () { hoverF1Pins(function () { besideAndLivePins(function () { process.exit(fails ? 1 : 0); }); }); }); });
                 }, 400);
             });
             return;
@@ -252,4 +252,185 @@ function reviewPinsRun(done) {
             }, 400);
         });
     });
+}
+
+/* QA JT-01: an open from CLOSED straight into the node view (a row's ?, F1)
+   clears the catalogue and fetches only the node -- the in-window ways back
+   to the search ("← all keys", typing) must fetch it, never list the
+   'loading…' placeholder forever. */
+function closedIntoNodePins(done) {
+    window.__catalogState = 'ready'; window.__catalogNote = null;
+    const esc = () => pop.querySelector('.manual-search').dispatchEvent(new window.KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
+    const f1 = () => { const cell = d.getElementById('cell'); cell.focus(); cell.dispatchEvent(new window.KeyboardEvent('keydown', { key: 'F1', bubbles: true })); };
+    esc();
+    ok(pop.classList.contains('manual-hidden'), 'JT-01 setup: the window is closed');
+    calls.length = 0;
+    f1();
+    setTimeout(function () {
+        ok(!pop.classList.contains('manual-hidden') && !!body().querySelector('.manual-back'), 'JT-01: F1 from closed opens the node view');
+        ok(!calls.some((c) => c === '/api/manual'), 'JT-01 setup: the node open fetched only the node (the catalogue is not in hand)');
+        body().querySelector('.manual-back').click();
+        setTimeout(function () {
+            const n = body().querySelectorAll('.manual-entry').length;
+            ok(calls.some((c) => c === '/api/manual'), 'JT-01: "← all keys" fetches the catalogue');
+            ok(n > 0 && new RegExp(ENTRIES.length + ' keys').test(body().querySelector('.manual-status').textContent),
+               'JT-01: "← all keys" lists the catalogue, not the loading placeholder (' + n + ' rows; ' + body().querySelector('.manual-status').textContent + ')');
+            esc();
+            calls.length = 0;
+            f1();
+            setTimeout(function () {
+                const s = pop.querySelector('.manual-search');
+                s.value = 'joint';
+                s.dispatchEvent(new window.Event('input', { bubbles: true }));
+                setTimeout(function () {
+                    const keys = Array.from(body().querySelectorAll('.manual-entry')).map((e) => e.getAttribute('data-key'));
+                    ok(keys.length === 1 && keys[0] === 'joint_offset', 'JT-01: typing after a node open searches the real catalogue (' + keys.join(',') + ')');
+                    done();
+                }, 250);
+            }, 30);
+        }, 50);
+    }, 30);
+}
+
+/* QA JT-18: the Json tree's ? advertises "(F1)" but shows only on HOVER, and
+   a hovered row is not focused -- F1 found no path, opened nothing and let
+   the browser's own help through. The hovered editable row is the fallback
+   (focus still wins), gated like the ? itself; and closing the manual hands
+   focus back to where F1 was pressed, not to the sidebar button. */
+function hoverF1Pins(done) {
+    const esc = () => pop.querySelector('.manual-search').dispatchEvent(new window.KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
+    const f1 = (target) => {
+        const ev = new window.KeyboardEvent('keydown', { key: 'F1', bubbles: true, cancelable: true });
+        (target || d.body).dispatchEvent(ev);
+        return ev;
+    };
+    const over = (el) => el.dispatchEvent(new window.MouseEvent('mouseover', { bubbles: true }));
+    d.body.insertAdjacentHTML('beforeend',
+        '<div class="json-tree">' +
+        '<div class="tree-node" data-path="qubits.q1.T1"><div class="tree-row" id="row-help" tabindex="-1">' +
+        '<span class="tree-key">T1</span><span class="tree-val">1e-05</span>' +
+        '<button type="button" class="key-help-btn tree-help" tabindex="-1">?</button></div></div>' +
+        '<div class="tree-node" data-path="qubits.q1.T2"><div class="tree-row" id="row-nohelp">' +
+        '<span class="tree-key">T2</span><span class="tree-val">2e-05</span></div></div>' +
+        '</div>');
+    esc();
+    if (d.activeElement && d.activeElement !== d.body && d.activeElement.blur) d.activeElement.blur();
+    calls.length = 0;
+    over(d.querySelector('#row-help .tree-val'));
+    const ea = f1();
+    setTimeout(function () {
+        ok(ea.defaultPrevented, 'JT-18: F1 over a hovered editable tree row is consumed (no browser help)');
+        ok(!pop.classList.contains('manual-hidden')
+           && calls.some((c) => c.indexOf('/api/manual/node?path=qubits.q1.T1') === 0),
+           "JT-18: and opens the manual on that row's key (" + calls.join(',') + ')');
+        pop.querySelector('.manual-search').focus();   // wherever the user goes meanwhile
+        esc();
+        ok(d.activeElement === d.getElementById('row-help'),
+           'JT-18: with nothing focused, closing hands focus to the row F1 was pressed on (was: the sidebar button)');
+        calls.length = 0;
+        over(d.body);
+        const eb = f1();
+        ok(!eb.defaultPrevented && pop.classList.contains('manual-hidden') && !calls.length,
+           'JT-18: with the pointer off the tree, F1 does nothing and is not consumed');
+        over(d.querySelector('#row-nohelp .tree-key'));
+        const ec = f1();
+        ok(!ec.defaultPrevented && pop.classList.contains('manual-hidden'),
+           'JT-18: a row without the ? (read-only / diff trees) is not hijacked');
+        over(d.querySelector('#row-help .tree-key'));
+        calls.length = 0;
+        const cell = d.getElementById('cell'); cell.focus();
+        f1(cell);
+        setTimeout(function () {
+            ok(calls.some((c) => c.indexOf('/api/manual/node?path=qubits.q1.z.joint_offset') === 0)
+               && !calls.some((c) => c.indexOf('path=qubits.q1.T1') > 0),
+               'JT-18: a focused cell still wins over the hovered row');
+            pop.querySelector('.manual-search').focus();   // the user went into the window
+            esc();
+            ok(d.activeElement === cell, 'JT-18: closing the manual returns focus to the cell F1 was pressed in (was: the sidebar button)');
+            const row = d.getElementById('row-help');
+            row.focus();
+            f1(row);
+            setTimeout(function () {
+                window.toggleConfigManual();          // the Escape ladder's close (focus outside the window)
+                ok(pop.classList.contains('manual-hidden') && d.activeElement === row,
+                   'JT-18: ... and to a focused tree row, when the Escape ladder closes it');
+                window.toggleConfigManual(d.getElementById('manual-btn'));
+                esc();
+                ok(d.activeElement === d.getElementById('manual-btn'),
+                   'JT-18: a sidebar-button open still returns focus to the button');
+                const plain = d.createElement('input'); d.body.appendChild(plain);
+                plain.focus();
+                over(d.querySelector('#row-help .tree-key'));
+                const ep = f1(plain);
+                ok(ep.defaultPrevented && !pop.classList.contains('manual-hidden') && d.activeElement === plain,
+                   'JT-18: F1 over a row while focus is in a plain field opens the row but leaves the focus alone');
+                esc();
+                done();
+            }, 30);
+        }, 30);
+    }, 30);
+}
+
+/* jsontree-r2-23: (i) a row's ? opens the window BESIDE that ?, not under
+   the sidebar button (it landed over the tree's key column, on top of the
+   row it explains and its + button); a window the user dragged stays put.
+   (ii) the "this place" view follows edits: a key added in the tree moves
+   from "Keys you could add" to "Set here" without re-opening. */
+function besideAndLivePins(done) {
+    const esc = () => pop.querySelector('.manual-search').dispatchEvent(new window.KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
+    esc();
+    pop.classList.remove('manual-floating');            // the drag pin above left it floating
+    Object.defineProperty(pop, 'offsetWidth', { value: 660, configurable: true });
+    Object.defineProperty(pop, 'offsetHeight', { value: 707, configurable: true });
+    d.body.insertAdjacentHTML('beforeend',
+        '<button type="button" class="key-help-btn" id="help-deleg" data-help-path="qubits.q1.z.joint_offset">?</button>');
+    const q = d.getElementById('help-deleg');
+    q.getBoundingClientRect = () => ({ left: 300, right: 316, top: 200, bottom: 216, width: 16, height: 16 });
+    q.click();                                          // the delegated ? handler
+    setTimeout(function () {
+        ok(!pop.classList.contains('manual-hidden'), 'r2-23 setup: the ? opened the manual');
+        const left = parseInt(pop.style.left, 10);
+        ok(left >= 316 && pop.style.left !== '10px',
+           "r2-23: the window opens right of the ? it explains, clear of the row (left=" + pop.style.left + ', was the sidebar anchor 10px)');
+        ok(parseInt(pop.style.top, 10) >= 6 && parseInt(pop.style.top, 10) + 707 <= window.innerHeight,
+           'r2-23: ...and inside the viewport vertically (top=' + pop.style.top + ')');
+        // a dragged window is the user saying "keep it here"
+        pop.classList.add('manual-floating'); pop.style.left = '777px';
+        window.openConfigManual({ path: 'qubits.q1.z.joint_offset', trigger: q });
+        ok(pop.style.left === '777px', 'r2-23: a window the user dragged is never moved by a ? press');
+        pop.classList.remove('manual-floating');
+        // no room on the right: left of the row instead
+        q.getBoundingClientRect = () => ({ left: 900, right: 916, top: 200, bottom: 216, width: 16, height: 16 });
+        window.openConfigManual({ path: 'qubits.q1.z.joint_offset', trigger: q });
+        ok(parseInt(pop.style.left, 10) + 660 <= 900, 'r2-23: near the right edge it opens left of the ? instead (left=' + pop.style.left + ')');
+        // (ii) the node view follows an edit
+        setTimeout(function () {
+            ok(/Keys you could add \(1\)/.test(body().textContent), 'r2-23 setup: independent_offset is addable');
+            NODE.fields[1].present = true;               // the tree just added it
+            calls.length = 0;
+            let jumps = 0;
+            window.Element.prototype.scrollIntoView = function () { jumps++; };
+            d.dispatchEvent(new window.CustomEvent('quam:state-changed'));
+            d.dispatchEvent(new window.CustomEvent('quam:state-changed'));   // a paste: one request
+            setTimeout(function () {
+                const nodeCalls = calls.filter((c) => c.indexOf('/api/manual/node?path=qubits.q1.z.joint_offset') === 0);
+                ok(nodeCalls.length === 1, 'r2-23: an edit re-asks the node view, debounced (' + nodeCalls.length + ' request(s))');
+                ok(/Set here \(2\)/.test(body().textContent) && !/Keys you could add/.test(body().textContent),
+                   'r2-23: the added key moved to "Set here" (' + (body().querySelector('.manual-section') || {}).textContent + ')');
+                ok(jumps === 0, 'r2-23: the refresh an edit caused does not scroll the reader to the focus row (' + jumps + ')');
+                // closed, or in search mode: an edit costs nothing
+                esc();
+                calls.length = 0;
+                d.dispatchEvent(new window.CustomEvent('quam:state-changed'));
+                window.openConfigManual({ q: '' });
+                d.dispatchEvent(new window.CustomEvent('quam:state-changed'));
+                setTimeout(function () {
+                    ok(!calls.some((c) => c.indexOf('/api/manual/node') === 0),
+                       'r2-23: closed or in search mode, an edit fetches no node view (' + calls.join(',') + ')');
+                    NODE.fields[1].present = false;
+                    done();
+                }, 250);
+            }, 250);
+        }, 40);
+    }, 40);
 }

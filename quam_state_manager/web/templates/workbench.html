@@ -482,8 +482,14 @@
               if (d && d.error) watchEl.textContent = "⚠ " + d.error;
               return;
             }
-            if (d.total > 0) {
-              nudgeCount.textContent = d.total;
+            // QA JT-03: d.total also counts the user's own unapplied edits;
+            // the nudge names only what the live chip moved (unknown -> total)
+            var moved = d.total;
+            if (d.live_moved === false) moved = 0;
+            else if (d.live_moved === true && !d.unaccounted && d.external)
+              moved = d.external.length + (d.conflicts || []).length;
+            if (moved > 0) {
+              nudgeCount.textContent = moved;
               // smart show: if SM is on screen (Split/SM) open the before/after now; if
               // Qualibrate is full-screen, just show the banner so you're not yanked away.
               if (view === "qb") nudgeEl.hidden = false; else showLiveDiff();

@@ -2944,6 +2944,19 @@ def _is_htmx() -> bool:
             and request.headers.get("HX-History-Restore-Request") != "true")
 
 
+def _no_chip(label: str, nav: str):
+    """The "No chip loaded" empty state for a chip menu (jsontree-r2-13).
+
+    An htmx menu swap gets the bare partial, exactly as before; a full-page
+    GET (F5 after a restart, a bookmark) or an htmx history restore gets it
+    inside base.html, so the sidebar/topbar are there and ``nav`` marks the
+    menu active — the bare fragment left an unstyled page with no way back.
+    """
+    if _is_htmx():
+        return render_template("_empty_state.html", page=label)
+    return render_template("empty_state.html", **_ctx(page=nav), empty_label=label)
+
+
 def _change_count() -> int:
     store = _store()
     return len(store.change_log) if store else 0
@@ -5635,7 +5648,7 @@ def _port_owner_map(wiring_root: dict | None) -> dict[str, str]:
 def explorer():
     store = _store()
     if not store:
-        return render_template("_empty_state.html", page="the state explorer")
+        return _no_chip("the state explorer", "explorer")
     from quam_state_manager.core.leaf_classify import readonly_policy
     state_json = json.dumps(store.state)
     wiring_json = _wiring_json()
@@ -5661,7 +5674,7 @@ def explorer():
 def qubits():
     engine = _engine()
     if not engine:
-        return render_template("_empty_state.html", page="qubits")
+        return _no_chip("qubits", "qubits")
 
     chain_filter = request.args.get("chain")
     page = _int_arg("page", 1, minimum=1)
@@ -5710,7 +5723,7 @@ def _channel_scoped_qubits_page(*, has_key: str, page_name: str,
                                 template_stub: str, **extra):
     engine = _engine()
     if not engine:
-        return render_template("_empty_state.html", page=page_name)
+        return _no_chip(page_name, page_name)
 
     chain_filter = request.args.get("chain")
     page = _int_arg("page", 1, minimum=1)
@@ -6056,7 +6069,7 @@ def bulk_edit():
     engine = _engine()
     store = _store()
     if not engine or not store:
-        return render_template("_empty_state.html", page="live state editing")
+        return _no_chip("live state editing", "bulk")
 
     from quam_state_manager.core import bulk_virt, mw_fem
 
@@ -7503,6 +7516,13 @@ def chip_active_token():
                    path=(ctx.get("path") if ctx else None) or "")
 
 
+# jsontree-r2-18: what a /field/* write says when no chip is open. After an
+# SM restart nothing auto-loads (docs/63 decision 3), so the page still shows
+# the chip the server no longer has -- "No active context" named neither the
+# cause nor the way back.
+_NO_CHIP_MSG = "No chip open (SM restarted?) — reopen the chip: Projects → Resume."
+
+
 @bp.route("/field/edit", methods=["POST"])
 def field_edit():
     """Generic field editor — works for any dot-path in state or wiring."""
@@ -7511,7 +7531,7 @@ def field_edit():
     ctx = _active_ctx()
     modifier = ctx.get("modifier") if ctx else None
     if not modifier:
-        return jsonify(ok=False, error="No active context"), 400
+        return jsonify(ok=False, error=_NO_CHIP_MSG), 400
     _lk = _agent_edit_lock_refusal(ctx)
     if _lk is not None:
         return _lk
@@ -7856,7 +7876,7 @@ def field_peek():
     """
     store = _store()
     if not store:
-        return jsonify(ok=False, error="No active context"), 400
+        return jsonify(ok=False, error=_NO_CHIP_MSG), 400
 
     from quam_state_manager.core.pointer_path import find_shared_by, resolve_field_target
 
@@ -8604,7 +8624,7 @@ def field_type_assignments():
     """The chip's user type assignments + whether the env manifest is warm."""
     store = _store()
     if not store:
-        return jsonify(ok=False, error="No active context"), 400
+        return jsonify(ok=False, error=_NO_CHIP_MSG), 400
     policy = getattr(store, "type_policy", None)
     assignments = dict(policy.assignments) if policy else {}
     return jsonify(ok=True, assignments=assignments, count=len(assignments),
@@ -8625,7 +8645,7 @@ def field_type_assign():
     ctx = _active_ctx()
     store = ctx.get("store") if ctx else None
     if not store or not ctx.get("path"):
-        return jsonify(ok=False, error="No active context"), 400
+        return jsonify(ok=False, error=_NO_CHIP_MSG), 400
     guard = _chip_mismatch_response(
         request.form.get("expect_chip", ""),
         request.form.get("force_chip") in ("1", "true", "True"),
@@ -8908,7 +8928,7 @@ def field_type_unassign():
     ctx = _active_ctx()
     store = ctx.get("store") if ctx else None
     if not store or not ctx.get("path"):
-        return jsonify(ok=False, error="No active context"), 400
+        return jsonify(ok=False, error=_NO_CHIP_MSG), 400
     dot_path = _normalize_dot_path(request.form.get("dot_path", "").strip())
     if not dot_path:
         return jsonify(ok=False, error="dot_path required"), 400
@@ -8985,12 +9005,21 @@ def field_refs():
     """Pointer references into a path (the delete-confirm blast radius)."""
     store = _store()
     if not store:
-        return jsonify(ok=False, error="No active context"), 400
+        return jsonify(ok=False, error=_NO_CHIP_MSG), 400
     dot_path = _normalize_dot_path(request.args.get("dot_path", "").strip())
     if not dot_path:
         return jsonify(ok=False, error="dot_path required"), 400
     total, refs = _count_refs_into(store, dot_path)
     return jsonify(ok=True, total=total, refs=refs)
+
+
+def _exc_text(e: Exception) -> str:
+    """JT-22: an exception's message as a person reads it. ``str(KeyError)``
+    is the key's repr, so the modifier's "Cannot create 'x': key already
+    exists" arrived wrapped in literal double quotes."""
+    if isinstance(e, KeyError) and len(e.args) == 1 and isinstance(e.args[0], str):
+        return e.args[0]
+    return str(e)
 
 
 @bp.route("/field/create", methods=["POST"])
@@ -9006,7 +9035,7 @@ def field_create():
     ctx = _active_ctx()
     modifier = ctx.get("modifier") if ctx else None
     if not modifier:
-        return jsonify(ok=False, error="No active context"), 400
+        return jsonify(ok=False, error=_NO_CHIP_MSG), 400
     guard = _chip_mismatch_response(
         request.form.get("expect_chip", ""),
         request.form.get("force_chip") in ("1", "true", "True"),
@@ -9089,8 +9118,7 @@ def field_create():
         return jsonify(ok=False, error=str(e), **e.as_json()), 400
     except (KeyError, TypeError, ValueError, IndexError) as e:
         # str(KeyError) is its repr -- the message arrived wrapped in quotes
-        return jsonify(ok=False, error=(str(e.args[0]) if isinstance(e, KeyError)
-                                        and e.args else str(e))), 400
+        return jsonify(ok=False, error=_exc_text(e)), 400
 
     if request.form.get("assign_type") in ("1", "true", "True") and expect_type \
             and expect_type != "infer" and ctx.get("path"):
@@ -9112,7 +9140,7 @@ def field_delete():
     ctx = _active_ctx()
     modifier = ctx.get("modifier") if ctx else None
     if not modifier:
-        return jsonify(ok=False, error="No active context"), 400
+        return jsonify(ok=False, error=_NO_CHIP_MSG), 400
     guard = _chip_mismatch_response(
         request.form.get("expect_chip", ""),
         request.form.get("force_chip") in ("1", "true", "True"),
@@ -9135,7 +9163,7 @@ def field_delete():
         entry = modifier.delete_subtree(dot_path)
         _invalidate_engine_cache(ctx)
     except (KeyError, TypeError, ValueError, IndexError) as e:
-        return jsonify(ok=False, error=str(e)), 400
+        return jsonify(ok=False, error=_exc_text(e)), 400
 
     from quam_state_manager.core.modifier import _enumerate_leaves
     removed = sum(1 for _ in _enumerate_leaves(entry.old_value, dot_path))
@@ -9149,7 +9177,7 @@ def schema_missing_keys():
     Explorer add-key datalist ('your class has these unset fields')."""
     store = _store()
     if not store:
-        return jsonify(ok=False, error="No active context"), 400
+        return jsonify(ok=False, error=_NO_CHIP_MSG), 400
     scope = _normalize_dot_path(request.args.get("scope", "").strip())
     policy = getattr(store, "type_policy", None)
     manifest = policy.manifest if policy is not None else None
@@ -9186,6 +9214,12 @@ def schema_missing_keys():
     return jsonify(ok=True, warm=True, scope=scope, missing=missing[:40])
 
 
+# A JSON update ``{"dot_path": p, "delete": true}`` removes the key (QA r2-02):
+# the live-diff Accept all sent a key the live chip no longer has as a value-less
+# update, which stored null. Rides the value slot so the pair shape is unchanged.
+_BATCH_DELETE = object()
+
+
 @bp.route("/field/edit-batch", methods=["POST"])
 def field_edit_batch():
     """Apply many edits atomically; report per-path success/failure.
@@ -9212,7 +9246,7 @@ def field_edit_batch():
     ctx = _active_ctx()
     modifier = ctx.get("modifier") if ctx else None
     if not modifier:
-        return jsonify(ok=False, error="No active context"), 400
+        return jsonify(ok=False, error=_NO_CHIP_MSG), 400
     _lk = _agent_edit_lock_refusal(ctx)
     if _lk is not None:
         return _lk
@@ -9232,7 +9266,8 @@ def field_edit_batch():
         # (a generic bulk/plot edit never sets it, so its semantics are unchanged).
         pairs = [
             (_normalize_dot_path(str(u.get("dot_path", "")).strip()),
-             u.get("value"), bool(u.get("create")))
+             _BATCH_DELETE if u.get("delete") is True else u.get("value"),
+             bool(u.get("create")))
             for u in payload["updates"]
             if isinstance(u, dict)
         ]
@@ -9262,6 +9297,8 @@ def field_edit_batch():
     _fsp_ack = str(_pj.get("fsp_ack") or request.form.get("fsp_ack") or "")
     if _fsp_ack not in ("comp", "solo"):
         for _dp, _rv, _c in pairs:
+            if _rv is _BATCH_DELETE:
+                continue
             try:
                 _tgt = _resolve_edit_path(modifier.store, _dp)
             except Exception:  # noqa: BLE001
@@ -9339,6 +9376,19 @@ def field_edit_batch():
         ok_overall = True
         for dot_path, raw_value, allow_create in pairs:
             try:
+                if raw_value is _BATCH_DELETE:
+                    # the /field/delete guards, in this batch's one Ctrl+Z group
+                    if len(dot_path.split(".")) == 1:
+                        raise ValueError("top-level containers can't be deleted here")
+                    _cr = _crud_policy_reason(modifier.store, dot_path, deleting=True)
+                    if _cr is not None:
+                        raise ValueError(_cr)
+                    entry = modifier.delete_subtree(dot_path, group_id=_batch_gid)
+                    applied_entries.append(entry)
+                    results.append({"dot_path": dot_path, "resolved_path": entry.dot_path,
+                                    "applied": True, "deleted": True,
+                                    "new_value": None, "display": ""})
+                    continue
                 # Follow pointers to the real literal when the path isn't navigable
                 # as-is (keeps the posted dot_path in `results` for row matching).
                 target_path = _resolve_edit_path(modifier.store, dot_path)
@@ -9438,8 +9488,8 @@ def field_edit_batch():
                 for entry in applied_entries:
                     # create_subtree already registered the new leaves itself, and a
                     # created entry's dot_path may be a subtree root, not a leaf.
-                    if getattr(entry, "created", False):
-                        continue
+                    if getattr(entry, "created", False) or getattr(entry, "deleted", False):
+                        continue   # (delete_subtree maintains the index itself)
                     modifier.store.search_index.update_entry(entry.dot_path, entry.new_value)
 
     if applied_entries:
@@ -9459,7 +9509,7 @@ def pairs():
     engine = _engine()
     store = _store()
     if not engine or not store:
-        return render_template("_empty_state.html", page="qubit pairs")
+        return _no_chip("qubit pairs", "pairs")
 
     pair_data = []
     for pair_name in store.qubit_pair_names:
@@ -9659,7 +9709,7 @@ def couplers():
     engine = _engine()
     store = _store()
     if not engine or not store:
-        return render_template("_empty_state.html", page="couplers")
+        return _no_chip("couplers", "couplers")
 
     pair_data = []
     for pair_name in store.qubit_pair_names:
@@ -10380,7 +10430,7 @@ def pair_edit(name: str):
 def comparison_table():
     engine = _engine()
     if not engine:
-        return render_template("_empty_state.html", page="the parameter table")
+        return _no_chip("the parameter table", "table")
 
     selected = request.args.getlist("props") or _ALL_TABLE_PROPS
 
@@ -10593,7 +10643,7 @@ def _report_gate_param_rows(pairs: list[dict]) -> list[dict]:
 def wiring_view():
     engine = _engine()
     if not engine:
-        return render_template("_empty_state.html", page="the chip topology")
+        return _no_chip("the chip topology", "topology")
 
     store = _store()
     topology = _topology_with_derived_rb(engine)
@@ -10796,7 +10846,7 @@ def state_history():
     framed by the experiment that produced each (experiment-attribution)."""
     store = _store()
     if not store:
-        return render_template("_empty_state.html", page="state history")
+        return _no_chip("state history", "state_history")
     hm = _history()
     snapshots = hm.list_snapshots(_active_path())
     page = _int_arg("page", 1, minimum=1)
@@ -12686,7 +12736,7 @@ def instrument_view():
     """Render the OPX instrument wiring diagram showing FEM slots and port assignments."""
     engine = _engine()
     if not engine:
-        return render_template("_empty_state.html", page="instrument wiring")
+        return _no_chip("instrument wiring", "instrument")
 
     store = _store()
     instrument_error = None
@@ -13135,7 +13185,7 @@ def pulses_page():
     store = _store()
     pulse_index = _pulse_index()
     if not store or not pulse_index:
-        return render_template("_empty_state.html", page="pulses")
+        return _no_chip("pulses", "pulses")
 
     channel = request.args.get("channel", "")
     query = request.args.get("q", "").strip()
@@ -17130,6 +17180,41 @@ def state_review():
     )
 
 
+def _live_diff_attribution(ctx: dict, entries, live_state: dict,
+                           live_wiring: dict) -> dict:
+    """Who moved each differing path (QA JT-03).
+
+    diff(working, live) only says the two sides disagree, so the Explorer bar
+    announced the user's OWN unapplied edits as "Qualibrate changed N
+    field(s)" and its ✓ reverted them. The per-field answer already exists:
+    ``sync_conflict.classify`` over the same inputs ``_drift_conflicts``
+    passes. ``live_moved`` is the sync-point content check -- False means
+    nothing outside SM wrote the live files since the last sync, so every
+    difference is SM-side (a staged snapshot, Revert last apply) even with an
+    empty change log. None = cannot tell; the client then words it neutrally.
+    """
+    from quam_state_manager.core import sync_conflict
+    store, wc = ctx.get("store"), ctx.get("working_copy")
+    try:
+        with store._lock:
+            log = list(getattr(store, "change_log", None) or [])
+        v = sync_conflict.classify(
+            live_by_path={e.dot_path: e.new_value for e in entries},
+            change_log=log,
+            reapply_paths=tuple((ctx.get("pending_reapply") or {}).keys()),
+            working_dirty=bool(ctx.get("working_dirty")),
+        )
+        synced = getattr(wc, "synced_live_hash", None)
+        moved = (None if synced is None
+                 else working_copy.content_hash(live_state, live_wiring) != synced)
+        return {"mine": list(v.mine), "conflicts": list(v.conflicts),
+                "external": [] if moved is False else list(v.external),
+                "unaccounted": v.unaccounted, "live_moved": moved}
+    except Exception:       # noqa: BLE001 -- attribution is never worth an error
+        logger.debug("live-diff attribution failed", exc_info=True)
+        return {"live_moved": None, "unaccounted": "attribution unavailable"}
+
+
 @bp.route("/state/live-diff")
 def state_live_diff():
     """Before/after diff as JSON: working copy (before) vs Qualibrate's live (after).
@@ -17175,6 +17260,7 @@ def state_live_diff():
                 for e in entries[:500]
             ],
         }
+        payload.update(_live_diff_attribution(ctx, entries, live_state, live_wiring))
         if request.args.get("with_live") == "1":
             payload["live_state"] = live_state
             payload["live_wiring"] = live_wiring
@@ -22542,7 +22628,7 @@ def param_history():
     """
     store = _store()
     if not store:
-        return render_template("_empty_state.html", page="parameter history")
+        return _no_chip("parameter history", "param_history")
 
     hm = _history()
     loaded_path = Path(_active_path())
@@ -22878,7 +22964,7 @@ def param_history_changes():
     """
     store = _store()
     if not store:
-        return render_template("_empty_state.html", page="parameter history")
+        return _no_chip("parameter history", "param_history")
     hm = _history()
     path = Path(_active_path())
     prefix = (request.args.get("prefix") or "").strip()
@@ -28543,7 +28629,7 @@ def diagnostics_view():
     """Full diagnostics report for the active chip."""
     store = _store()
     if not store:
-        return render_template("_empty_state.html", page="diagnostics")
+        return _no_chip("diagnostics", "diagnostics")
     findings = _active_chip_findings(store)
     template = "_diagnostics.html" if _is_htmx() else "diagnostics.html"
     return render_template(

@@ -1,0 +1,7 @@
+{% extends "base.html" %}
+{# jsontree-r2-13: a FULL-PAGE GET of a chip menu with no chip loaded (F5 after an
+   SM restart, a bookmark, an htmx history restore) gets the app shell with the
+   sidebar + topbar, not the bare _empty_state.html fragment. `page` is the
+   sidebar nav token here; the include reads it as the human label, so the
+   `with` hands it `empty_label` without touching the sidebar's highlight. #}
+{% block table_content %}{% with page=empty_label %}{% include '_empty_state.html' %}{% endwith %}{% endblock %}

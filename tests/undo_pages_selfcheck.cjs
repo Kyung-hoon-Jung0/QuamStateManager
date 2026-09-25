@@ -124,6 +124,15 @@ setTimeout(function () {
             // ── 4. on the Pulses page a pulse parameter goes to the PULSE detail ──
             //    (user report: "go to field" on an undone pulse length opened the
             //    qubit inspector, with no graph)
+            // jsontree-r2-20: ON Json Tree View a single-entity path goes to
+            // the tree the user is looking at (in place), not the inspector
+            const osT = window.UndoNav.ownerSurface([{ dot_path: 'qubits.q1.T1' }]);
+            ok(osT.kind === 'explorer' && osT.inPlace === true && osT.path === 'qubits.q1.T1',
+               'on Json Tree View a qubit path stays in the tree (' + osT.kind + ')');
+            // ...and everything below is about OTHER pages: take the tree away
+            const exPane = d.getElementById('explorer-tree-state').closest('.explorer-pane');
+            const exParent = exPane.parentNode, exNext = exPane.nextSibling;
+            exPane.remove();
             const os0 = window.UndoNav.ownerSurface([{ dot_path: 'qubits.q1.xy.operations.saturation.length' }]);
             ok(os0.kind === 'inspector' && /\/qubit\/q1/.test(os0.url), 'off the Pulses page a qubit-owned path still opens the qubit inspector');
             const rows = d.createElement('div'); rows.id = 'pulses-rows-wrap'; d.body.appendChild(rows);
@@ -142,6 +151,7 @@ setTimeout(function () {
             ok(os2c.kind !== 'pulse', 'a channel the server does not enumerate is not a pulse either');
             const os3 = window.UndoNav.ownerSurface([{ dot_path: 'qubits.q1.T1' }]);
             ok(os3.kind === 'inspector', 'a non-pulse path keeps the inspector');
+            exParent.insertBefore(exPane, exNext);
             const ajaxed = [];
             window.htmx.ajax = (m, u, o) => { ajaxed.push(m + ' ' + u + ' -> ' + (o && o.target)); return Promise.resolve(); };
             window.UndoNav.handle([{ dot_path: 'qubits.q1.xy.operations.saturation.length' }]);

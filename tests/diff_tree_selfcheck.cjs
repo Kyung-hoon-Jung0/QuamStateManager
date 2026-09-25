@@ -106,7 +106,7 @@ ok(!!lchanged && lchanged.classList.contains('tree-diff'), 'live diff still mark
 ok(!!lchanged.querySelector('.tree-accept-btn') && !!lchanged.querySelector('.tree-reject-btn'),
    'live diff still offers accept / reject');
 ok(!nodeAt(lv, 'qubits.qA1.only_mine').classList.contains('tree-added'),
-   'live diff does NOT gain added/removed marks (union is opt-in)');
+   'renderJsonTree keeps union opt-in (the Explorer live-diff overlay opts in since QA r2-01: livediff_buttons_selfcheck §5)');
 const ldelta = lchanged.querySelector('.val-delta');
 ok(!!ldelta && ldelta.textContent.indexOf(
        window.ValueDelta.compute(1.0e-5, 2.0e-5).text) !== -1,

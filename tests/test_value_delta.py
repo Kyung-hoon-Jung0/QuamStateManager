@@ -185,6 +185,34 @@ class TestStoredAsTextIsHonest:
     def test_plain_numbers_are_not_flagged(self):
         assert compute(1, 2)["coerced"] is False
 
+    def test_both_text_is_not_called_one_side(self):
+        # JT-08: both sides were strings, the title said "one side"
+        assert "both sides are stored as text" in compute("0.13", "0.15")["title"]
+        assert "one side is stored as text" in compute("0.13", 0.15)["title"]
+        # same number, both text: the stored TYPE did not differ
+        assert "stored type differs" not in compute("0.13", "0.130")["title"]
+
+
+class TestMalformedGroupingIsText:
+    """JT-08: the comma in a grid_location ("1,1") was read as a thousands
+    separator, so '0,0' -> '1,1' showed a fabricated +11 on the tray, the
+    live diff and Versions. Only well-formed grouping is a number."""
+
+    def test_a_coordinate_pair_is_not_a_number(self):
+        assert as_decimal("1,1") is None
+        assert as_decimal("4,8") is None
+        assert as_decimal("12,34") is None
+
+    def test_no_delta_between_coordinate_pairs(self):
+        assert compute("0,0", "1,1") is None
+        assert compute("1,1", "0,0") is None
+        assert compute("4,0", "2,2") is None
+
+    def test_well_formed_grouping_still_parses(self):
+        assert compute("5,100,000,000", "5,200,000,000")["text"] == "+100,000,000"
+        assert as_decimal("-5,075,187,484.52453") == as_decimal("-5075187484.52453")
+        assert as_decimal("999") is not None and as_decimal("1,000") == 1000
+
 
 class TestFormatters:
     def test_format_delta_signs(self):
@@ -221,6 +249,9 @@ _PARITY_CASES = [
     # QA F15: a text coordinate is not a grouped number -- both sides render nothing
     ["0,0", "0,1"], ["1,0", "1,1"], ["0,5", "0,50"], ["12,34", "12,35"],
     ["-1,234.5", "-1,234.0"], ["+12,345.67", "12,345.68"],
+    # JT-08: malformed grouping is text, and both-text titles say so
+    ["0,0", "1,1"], ["4,0", "2,2"], ["1,5", 2], ["12,34", 5],
+    ["-5,075,187,484.52453", "-5,075,187,400"], ["0.13", "0.130"],
 ]
 
 

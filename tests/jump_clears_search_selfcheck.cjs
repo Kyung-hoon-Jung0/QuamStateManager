@@ -18,6 +18,15 @@
  *   J4  no query at all: nothing is cleared, nothing is announced
  *   J5  the box is driven the way a person drives it, so the chip bar cannot be
  *       left claiming a filter that is no longer applied
+ *   J6  (QA r2-03) a jump from the WIRING tab with both trees filtered shows
+ *       the state tab, clears the state tree's filter, and the toast is true
+ *   J7  (QA r2-03) a tree left filtered under a box cleared on the other tab
+ *       is re-synced when shown -- never a blank tree under an empty box
+ *       (the real switchExplorerTab, extracted from _explorer.html)
+ *   J8  (jsontree-r2-20) a jump while already on Json Tree View stays in place:
+ *       no pane re-GET, the live-diff session survives
+ *   J9  (jsontree-r2-20) the Undo trail's go to field on the tree reveals the
+ *       row in the tree, never the qubit inspector
  *
  * Run: node tests/jump_clears_search_selfcheck.cjs   (needs jsdom)
  */
@@ -42,6 +51,7 @@ const HTML = '<!doctype html><html><body>'
   + '<div class="explorer-pane">'
   + '<input type="text" id="explorer-search" oninput="explorerSearch(this.value)">'
   + '<div id="explorer-chipbar"></div>'
+  + '<div id="explorer-tabs"><span class="tree-file-tab active">state.json</span><span class="tree-file-tab">wiring.json</span></div>'
   + '<div id="explorer-tree-state" class="json-tree"></div>'
   + '<div id="explorer-tree-wiring" class="json-tree" style="display:none"></div>'
   + '</div><div id="status-bar"></div></body></html>';
@@ -249,6 +259,110 @@ async function main() {
   await sleep(300);
   ok(d.activeElement === outside,
     'J7: focus the user kept elsewhere is never stolen by a jump (the docs/75 rule)');
+
+  // ── J10/J11 (QA r2-03; J6/J7 in fix/qa2-jt-view): the wiring tab ─────────────────────────────────────
+  // The page's own tab switcher and active-tree probe, taken from the template
+  // text (never a hand copy: the pin must test what ships). They call
+  // jsonTreeSearch / _activeTreeId bare, so bridge them.
+  const TPL = fs.readFileSync(path.join(__dirname, '..', 'quam_state_manager', 'web', 'templates', '_explorer.html'), 'utf8');
+  function extract(sig) {
+    const i = TPL.indexOf(sig);
+    if (i < 0) throw new Error('template lost: ' + sig);
+    let depth = 0, j = TPL.indexOf('{', i);
+    for (; j < TPL.length; j++) {
+      if (TPL[j] === '{') depth++;
+      else if (TPL[j] === '}' && --depth === 0) break;
+    }
+    return TPL.slice(i, j + 1) + ';';
+  }
+  window.eval(extract('window._activeTreeId = function'));
+  window.eval(extract('window.switchExplorerTab = function'));
+  global._activeTreeId = window._activeTreeId;
+  global.jsonTreeSearch = window.jsonTreeSearch;
+  const w = d.getElementById('explorer-tree-wiring');
+  const WDATA = { network: { host: '10.0.0.1', cluster_name: 'c1' }, ports: { p1: { offset: 0.1 } } };
+  function hiddenIn(el) { return el.querySelectorAll('.tree-search-hidden').length; }
+
+  // J10: type on state, switch to wiring (both trees filtered), jump to a state path
+  window.switchExplorerTab('state');
+  render();
+  window.renderJsonTree('explorer-tree-wiring', WDATA, { defaultDepth: 1, crud: true });
+  type('host');
+  await sleep(300);
+  window.switchExplorerTab('wiring');
+  await sleep(300);
+  ok(c.style.display === 'none' && hiddenIn(c) > 0 && hiddenIn(w) > 0,
+    'J10 fixture: wiring shown, both trees filtered by "host"');
+  said.length = 0;
+  const realFetch = global.fetch;
+  global.fetch = window.fetch = () => Promise.resolve({ json: () => Promise.resolve({ loaded: true }) });
+  window._navigateToExplorerPath(TARGET);
+  await sleep(700);
+  global.fetch = window.fetch = realFetch;
+  ok(c.style.display !== 'none' && w.style.display === 'none',
+    'J10: a jump to a state path shows the state tab');
+  ok(box.value === '' && shown(TARGET) && hiddenIn(c) === 0,
+    'J10: the state tree is unfiltered and the target is on screen (hidden rows=' + hiddenIn(c) + ')');
+  const t6 = node(TARGET);
+  ok(t6 && t6.classList.contains('tree-highlight') && !t6.classList.contains('tree-search-hidden'),
+    'J10: the target is highlighted AND visible');
+  ok(said.length === 1 && /host/.test(said[0]), 'J10: the toast names the dropped query (' + said.join(' | ') + ')');
+
+  // J11a: the wiring tree the jump left filtered is re-synced when shown
+  window.switchExplorerTab('wiring');
+  await sleep(300);
+  ok(hiddenIn(w) === 0, 'J11: a tree left filtered under an empty box is un-filtered when shown (' + hiddenIn(w) + ' hidden)');
+
+  // J11b: the Diagnostics-free gesture: filter state, switch, clear, switch back
+  window.switchExplorerTab('state');
+  render();
+  type('amplitude');
+  await sleep(300);
+  ok(hiddenIn(c) > 0, 'J11b fixture: the state tree is filtered');
+  window.switchExplorerTab('wiring');
+  await sleep(300);
+  type('');
+  await sleep(300);
+  window.switchExplorerTab('state');
+  await sleep(300);
+  ok(hiddenIn(c) === 0, 'J11b: switching back after clearing the box on the other tab shows the state tree (' + hiddenIn(c) + ' hidden)');
+
+  // ── J12/J13 (jsontree-r2-20): a jump while ALREADY on Json Tree View ───────
+  // stays in place. The Manual's goto re-GET /explorer and silently ended a
+  // live-diff session (bar + incoming rows gone); the Undo trail's "go to
+  // field" opened the qubit inspector over the tree, row still hidden.
+  window.switchExplorerTab('state');
+  render();
+  const tog = d.createElement('button'); tog.id = 'explorer-livediff-toggle'; tog.className = 'active';
+  const ldbar = d.createElement('div'); ldbar.id = 'explorer-livediff-bar';
+  const insp = d.createElement('div'); insp.id = 'inspector-pane';
+  d.querySelector('.explorer-pane').prepend(tog, ldbar);
+  d.body.appendChild(insp);
+  const ajaxed = [];
+  window.htmx.ajax = (m, u) => { ajaxed.push(m + ' ' + u); return Promise.resolve(); };
+  global.fetch = window.fetch = () => Promise.resolve({ json: () => Promise.resolve({ loaded: true }) });
+  type('amplitude');
+  await sleep(300);
+  said.length = 0;
+  window._navigateToExplorerPath(TARGET);           // the Config Manual's goto
+  await sleep(500);
+  ok(ajaxed.length === 0, 'J12: no re-GET of the pane (' + ajaxed.join(', ') + ')');
+  ok(tog.classList.contains('active') && !ldbar.hidden, 'J12: the live-diff session survives the jump');
+  ok(box.value === '' && shown(TARGET) && node(TARGET).classList.contains('tree-highlight'),
+    'J12: the row is revealed and highlighted in the tree on screen');
+  ok(said.length === 1 && /amplitude/.test(said[0]), 'J12: the dropped search is still announced');
+
+  render();
+  type('amplitude');
+  await sleep(300);
+  ajaxed.length = 0; said.length = 0; window._undoNavAt = 0;
+  window.UndoNav.handle([{ dot_path: TARGET }]);    // the Undo trail's go to field
+  await sleep(500);
+  ok(ajaxed.length === 0, 'J13: go to field opens no inspector and no pane (' + ajaxed.join(', ') + ')');
+  ok(box.value === '' && shown(TARGET) && node(TARGET).classList.contains('tree-highlight'),
+    'J13: the row is revealed in the tree, the hiding search cleared');
+  ok(!window._undoNavAt, 'J13: no confirm-bypass stamp armed (no swap follows)');
+  ok(tog.classList.contains('active') && !ldbar.hidden, 'J13: the live-diff session survives');
 
   console.log(fails ? 'FAILED (' + fails + ')'
     : 'jump_clears_search_selfcheck ok (' + asserts + ' assertions)');

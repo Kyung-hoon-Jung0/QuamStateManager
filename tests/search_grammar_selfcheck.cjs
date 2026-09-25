@@ -104,6 +104,18 @@ async function treeChecks() {
     ok(hits.length === 4 &&
        hits.every(p => /x180\.(amplitude|length)$/.test(p)),
        'tree/data: tight binding — x180 AND (amplitude|length)');
+    // jsontree-r2-21: a number as Qualibrate / node.json write it (no digit
+    // grouping) finds the leaf the tree DISPLAYS as 6,250,000,000 — the
+    // grids' `disp + ' ' + bare` rule; the grouped form keeps working.
+    hits = await search('t1', '6250000000');
+    ok(hits.length === 1 && hits[0] === 'qubits.qA1.f_01',
+       'tree/data: an ungrouped number finds its grouped leaf (was 0)');
+    hits = await search('t1', '6,250,000,000');
+    ok(hits.length === 1 && hits[0] === 'qubits.qA1.f_01',
+       'tree/data: the grouped display form still finds it');
+    ok(w.document.getElementById('t1')._flatIndex.flat
+          .filter(e => e.path === 'qubits.qA1.f_01')[0].val === '6,250,000,000',
+       'tree/data: the twin is search text only — the entry val is unchanged');
 
     // additivity on this fixture: whole-substring matches survive AND
     const c1 = w.document.getElementById('t1');
@@ -129,7 +141,7 @@ async function treeChecks() {
     // materialise everything first (the DOM path's own loop does it too, but
     // the flat-index cache must not exist for the dispatch to take this arm)
     c2._treeData = null;
-    for (const q of ['qa1 f_01', 'qa1 | qa2', 'f_01', '|e>']) {
+    for (const q of ['qa1 f_01', 'qa1 | qa2', 'f_01', '|e>', '6250000000']) {
         const a = await search('t1', q);
         const b = await search('t2', q);
         ok(JSON.stringify(a.slice().sort()) === JSON.stringify(b.slice().sort()),

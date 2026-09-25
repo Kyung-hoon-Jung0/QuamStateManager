@@ -30,7 +30,10 @@ class TestTheEscapeLadder:
         import pathlib
         js = pathlib.Path("quam_state_manager/web/static/app.js").read_text(encoding="utf-8")
         i = js.index("ONE Escape ladder")
-        block = js[i:i + 4000]   # QA F11 added two rungs: the window grew
+        # QA F11 added two rungs, JT-19 a third: bounded by the handler, not a budget
+        # bounded by the handler's own terminator, not a char budget: a rung
+        # added to the ladder (QA JT-19: the Versions panel) is not a reorder
+        block = js[i:js.index("\n});", i)]
         tool = block.index("settings-dropdown:not(.settings-hidden)")
         autosync = block.index("getElementById('auto-sync-pop')")
         picker = block.index("#bulk-panel details.bulk-colvis[open]")

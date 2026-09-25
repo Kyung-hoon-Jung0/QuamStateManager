@@ -232,7 +232,7 @@ window.ConfigManual = (function () {
             h += '</details>';
         });
         if (skipped) h += '<p class="manual-note">… ' + skipped + ' more keys not shown — narrow the search or open fewer classes</p>';
-        if (!rows.length) h += '<p class="manual-note">nothing matches <code>' + esc(q) + '</code></p>';
+        if (!rows.length && _data) h += '<p class="manual-note">nothing matches <code>' + esc(q) + '</code></p>';
         body.innerHTML = h;
     }
     var _lazy = {};
@@ -257,8 +257,9 @@ window.ConfigManual = (function () {
         delete _lazy[key];
     }
 
-    function renderNode(nd) {
+    function renderNode(nd, keepScroll) {
         var body = pop().querySelector('.manual-body');
+        var top0 = body.scrollTop;
         if (!nd || !nd.ok) {
             body.innerHTML = '<p class="manual-note">' + esc((nd && nd.reason) || 'nothing here') + '</p>';
             return;
@@ -277,6 +278,9 @@ window.ConfigManual = (function () {
             unset.forEach(function (f) { h += entryHtml(f, { unset: true, mark: '○', markTitle: 'declared by the class, not set here' }); });
         }
         body.innerHTML = h;
+        // jsontree-r2-23: a refresh the user did not ask for (an edit in the
+        // tree) keeps the reader where they were
+        if (keepScroll) { body.scrollTop = top0; return; }
         var fo = body.querySelector('.manual-focus');
         if (fo && fo.scrollIntoView) { try { fo.scrollIntoView({ block: 'center' }); } catch (e) {} }
     }
@@ -293,6 +297,37 @@ window.ConfigManual = (function () {
         }
         var q = pop().querySelector('.manual-search').value;
         load().then(function () { renderSearch(q); schedulePoll(); });
+    }
+    /* jsontree-r2-23: the "this place" view was fetched once, so a key added
+       or deleted in the tree left it listing the key under "Keys you could
+       add" (or "Set here") until the next open. Every edit path announces
+       'quam:state-changed' (_swapPendingTray); the node view re-asks,
+       debounced so a multi-cell paste is one request, without moving the
+       reader's scroll. */
+    var _stTimer = null;
+    document.addEventListener('quam:state-changed', function () {
+        if (!isOpen() || _mode !== 'node' || !_nodePath) return;
+        clearTimeout(_stTimer);
+        _stTimer = setTimeout(function () {
+            var path = _nodePath;
+            if (!isOpen() || _mode !== 'node' || !path) return;
+            fetch('/api/manual/node?path=' + encodeURIComponent(path), { credentials: 'same-origin' })
+                .then(function (r) { return r.json(); })
+                .then(function (nd) { if (isOpen() && _mode === 'node' && _nodePath === path) renderNode(nd, true); })
+                .catch(function () {});
+        }, 150);
+    });
+
+    /* The in-window ways back to the search (typing, "← all keys") go
+       through here: an open straight into the node view (a row's ?, F1)
+       cleared the catalogue and fetched only the node, so rendering the
+       search from _data alone listed the 'loading…' placeholder forever
+       (QA JT-01). Cached catalogue: render synchronously, as before. */
+    function showSearch() {
+        var s = pop().querySelector('.manual-search');
+        renderSearch(s.value);
+        if (_data && _loadedChip === currentChip()) return;
+        load().then(function () { if (isOpen() && _mode === 'search') renderSearch(s.value); });
     }
 
     /* ── window plumbing (mirrors calc.js) ───────────────────────── */
@@ -333,6 +368,7 @@ window.ConfigManual = (function () {
     }
 
     function setOpen(open, trigger) {
+        var wasOpen = isOpen();
         var p = pop();
         var btn = (window._toolTrigger ? window._toolTrigger('.manual-btn', trigger)
                                        : document.getElementById('manual-btn'));
@@ -352,11 +388,45 @@ window.ConfigManual = (function () {
             if (s && _mode === 'search') setTimeout(function () { s.focus(); }, 0);
         } else {
             clearTimeout(_pollTimer); _pollTimer = null;
-            if (btn) btn.focus();
+            // QA JT-18: an open from a place (F1 on a tree row / cell) hands
+            // focus back THERE, not to the sidebar button
+            // (the search box AND the window both close on one Escape: only
+            // the press that actually closed it moves focus)
+            if (!wasOpen) return;
+            var back = _returnFocus; _returnFocus = null;
+            if (back && back.isConnected && back.focus) back.focus();
+            if (btn && (!back || document.activeElement !== back)) btn.focus();   // gone / hidden: the old target
         }
     }
 
-    window.toggleConfigManual = function (trigger) { setOpen(!isOpen(), trigger); };
+    var _returnFocus = null;
+    window.toggleConfigManual = function (trigger) {
+        var o = isOpen();
+        if (!o) _returnFocus = null;            // a close keeps where F1 came from
+        setOpen(!o, trigger);
+    };
+
+    /* jsontree-r2-23: a deep link from a row's ? (or F1) opens BESIDE that
+       ?, not under the sidebar button -- there it landed over the tree's key
+       column, on top of the row it explains and its + button. The ? is the
+       row's last child (docs/141 4w), so right of it the whole row stays
+       clear; else left of the row; else the shared below/above anchor. */
+    function placeBeside(p, trig) {
+        if (!trig || !trig.getBoundingClientRect || !trig.isConnected) return;
+        var r = trig.getBoundingClientRect();
+        var w = p.offsetWidth || 0, h = p.offsetHeight || 0, pad = 6;
+        var vw = window.innerWidth || 0, vh = window.innerHeight || 0;
+        var left = r.right + 8;
+        if (left + w > vw - pad) {
+            var rowEl = (trig.closest && trig.closest('.tree-row, tr, th, .detail-row')) || trig;
+            left = rowEl.getBoundingClientRect().left - w - 8;
+            if (left < pad) { if (window._anchorPopover) window._anchorPopover(p, trig); return; }
+        }
+        var top = Math.max(pad, Math.min(r.top - 24, vh - h - pad));
+        p.classList.add('pop-anchored');
+        p.style.left = Math.round(left) + 'px';
+        p.style.top = Math.round(top) + 'px';
+    }
 
     /* Deep link: {q} pre-fills the search, {path} opens the "this place" view. */
     window.openConfigManual = function (opts) {
@@ -368,7 +438,14 @@ window.ConfigManual = (function () {
             _mode = 'search'; _nodePath = null;
             if (typeof opts.q === 'string') p.querySelector('.manual-search').value = opts.q;
         }
-        if (isOpen()) refresh(); else setOpen(true, null);
+        var beside = function () {       // a window the user dragged stays put
+            if (opts.trigger && !p.classList.contains('manual-floating')) placeBeside(p, opts.trigger);
+        };
+        if (isOpen()) { refresh(); beside(); return; }
+        var a = document.activeElement;
+        _returnFocus = (a && a !== document.body && !p.contains(a)) ? a : null;
+        setOpen(true, null);
+        beside();
     };
 
     function enableDrag(p) {
@@ -392,13 +469,13 @@ window.ConfigManual = (function () {
         s.addEventListener('input', function () {
             _mode = 'search'; _nodePath = null;
             clearTimeout(timer);
-            timer = setTimeout(function () { renderSearch(s.value); }, 80);
+            timer = setTimeout(showSearch, 80);
         });
         s.addEventListener('keydown', function (e) { if (e.key === 'Escape') { setOpen(false, null); e.preventDefault(); } });
         p.addEventListener('keydown', function (e) { if (e.key === 'Escape') { setOpen(false, null); } });
         p.addEventListener('click', function (e) {
             var back = e.target.closest && e.target.closest('.manual-back');
-            if (back) { e.preventDefault(); _mode = 'search'; _nodePath = null; renderSearch(s.value); s.focus(); return; }
+            if (back) { e.preventDefault(); _mode = 'search'; _nodePath = null; showSearch(); s.focus(); return; }
             var go = e.target.closest && e.target.closest('.manual-goto');
             if (go) {
                 e.preventDefault();
@@ -418,11 +495,27 @@ window.ConfigManual = (function () {
         var b = e.target && e.target.closest ? e.target.closest('.key-help-btn[data-help-path], .key-help-btn[data-help-q]') : null;
         if (!b) return;
         e.preventDefault();   // no stopPropagation: a click-away listener elsewhere must still see this click
-        if (b.hasAttribute('data-help-path')) window.openConfigManual({ path: b.getAttribute('data-help-path') });
-        else window.openConfigManual({ q: b.getAttribute('data-help-q') });
+        if (b.hasAttribute('data-help-path')) window.openConfigManual({ path: b.getAttribute('data-help-path'), trigger: b });
+        else window.openConfigManual({ q: b.getAttribute('data-help-q'), trigger: b });
     });
 
-    /* F1 on a focused state cell / tree row / inspector input opens "this place". */
+    /* QA JT-18: the Json tree's ? says "(F1)" but only shows on HOVER, and a
+       row the pointer rests on is not focused -- F1 found no path, opened
+       nothing and let the browser's own help through. The row under the
+       pointer is remembered, gated exactly like the ? itself (only rows that
+       carry one: the editable live-state trees), and used when focus names no
+       place. A mouseover tracker, not :hover, so it is testable and cheap. */
+    var _hoverTreePath = null, _hoverTreeRow = null;
+    document.addEventListener('mouseover', function (e) {
+        var row = e.target && e.target.closest ? e.target.closest('.tree-row') : null;
+        var help = row && row.querySelector(':scope > .key-help-btn.tree-help');
+        var node = help ? row.closest('.tree-node[data-path]') : null;
+        _hoverTreePath = node ? node.getAttribute('data-path') : null;
+        _hoverTreeRow = node ? row : null;
+    }, true);
+
+    /* F1 on a focused state cell / tree row / inspector input -- or on the
+       hovered editable tree row -- opens "this place". */
     document.addEventListener('keydown', function (e) {
         if (e.key !== 'F1' || e.ctrlKey || e.altKey || e.metaKey) return;
         var t = e.target;
@@ -439,9 +532,21 @@ window.ConfigManual = (function () {
             var hid = form && form.querySelector('input[type="hidden"][name="dot_path"]');
             if (hid) path = hid.value;
         }
+        if (!path && _hoverTreePath) {
+            path = _hoverTreePath;
+            // nothing had focus: the row F1 was pressed on becomes the place
+            // Escape hands focus back to (not the sidebar button)
+            var ae = document.activeElement;
+            if ((!ae || ae === document.body) && _hoverTreeRow && _hoverTreeRow.isConnected
+                    && _hoverTreeRow.hasAttribute('tabindex')) _hoverTreeRow.focus({ preventScroll: true });
+        }
         if (!path) return;
         e.preventDefault();
-        window.openConfigManual({ path: path });
+        // jsontree-r2-23: beside the place F1 named -- a tree row's own ?
+        var trig = cell || (path === _hoverTreePath && !t.closest('.tree-node[data-path], form') ? _hoverTreeRow : null);
+        if (!trig) { var tn = t.closest('.tree-node[data-path]'); trig = tn ? tn.querySelector(':scope > .tree-row') : t; }
+        if (trig && trig.classList && trig.classList.contains('tree-row')) trig = trig.querySelector(':scope > .key-help-btn.tree-help') || trig;
+        window.openConfigManual({ path: path, trigger: trig });
     });
 
     if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', wire);

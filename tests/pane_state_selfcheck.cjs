@@ -494,7 +494,137 @@ function section10() {
                'a restored snapshot at the server seq is left alone (got '
                + JSON.stringify({ fetched: fetched2, calls: calls, diagChanged: diagChanged }) + ')');
             window._diagChanged = realDiag;
-            process.exit(fails ? 1 : 0);
+            section11();                  // JT-10 (fix/qa2-jt-view's section 10)
         }, 150);
     }, 150);
+}
+
+// -- 11. JT-10 (section 10 in fix/qa2-jt-view): leaving /explorer and coming back keeps the VIEW -------------
+// (i)  sidebar round trip: the tree is its OWN scroller (.json-tree), and a
+//      detached element loses its offset like the pane does (measured 485 -> 0
+//      in real Chrome). jsdom keeps the number across a detach, so the pin
+//      drops it EXPLICITLY after the park -- a getter keyed on isConnected
+//      would let a never-restored stale value pass on the broken code.
+// (ii) browser Back: htmx 2.0.4 snapshots AFTER beforeSwap, so /explorer is
+//      cached with an empty pane; Back restores the blank, _historyCheck
+//      refetches the same route, and that swap's beforeSwap used to recapture
+//      the SOFT tier from the EMPTY pane -- search, tab and expansion gone.
+function section11() {
+    window.htmx.ajax = () => Promise.resolve();
+    const DATA = { qubits: { q1: { resonator: { f: 1 }, xy: { f: 2 } }, q2: { f: 3 } } };
+    const WIRING = { wiring: { q1: { opx_output: '#/ports/1' } } };
+    const EXP = (box) => '<input type="search" id="explorer-search" class="tree-search" value="' + box + '">'
+        + '<div id="explorer-tree-state" class="json-tree"></div>'
+        + '<div id="explorer-tree-wiring" class="json-tree" style="display:none"></div>';
+    const renderTrees = () => {
+        window.renderJsonTree('explorer-tree-state', DATA, { defaultDepth: 1 });
+        window.renderJsonTree('explorer-tree-wiring', WIRING, { defaultDepth: 1 });
+    };
+
+    // (i) the sidebar round trip
+    window.PaneState.clear();
+    swapTo('/explorer', EXP(''));
+    renderTrees();
+    const tree = doc.getElementById('explorer-tree-state');
+    let tst = 0;
+    Object.defineProperty(tree, 'scrollTop', { configurable: true,
+        get: () => tst, set: (v) => { tst = Number(v) || 0; } });
+    tree.scrollTop = 485;                                   // the user scrolls the tree
+    swapTo('/qubits', '<div id="qubits-stub">qubits</div>');   // park /explorer
+    ok(!tree.isConnected && !!window.PaneState._stash()['/explorer'], 'JT-10 fixture: the tree was parked');
+    tst = 0;                                                // what Chrome does to a detached scroller
+    let atRestore = null;
+    const onR = () => { atRestore = doc.getElementById('explorer-tree-state').scrollTop; };
+    doc.addEventListener('paneRestored', onR);
+    swapTo('/explorer', '<div id="fresh-ex10">fresh server render</div>');
+    doc.removeEventListener('paneRestored', onR);
+    ok(!doc.getElementById('fresh-ex10') && tree.isConnected, 'JT-10: the parked tree came back');
+    ok(tree.scrollTop === 485, 'JT-10: the tree lands at its own scroll offset (got ' + tree.scrollTop + ', want 485)');
+    ok(atRestore === 485, 'JT-10: already in place when paneRestored fires (got ' + atRestore + ')');
+
+    // (ii) browser Back
+    window.PaneState.clear();
+    swapTo('/explorer', EXP(''));
+    renderTrees();
+    doc.getElementById('explorer-search').value = 'opx_output';
+    window.jsonTreeSetExpanded('explorer-tree-wiring', ['wiring', 'wiring.q1']);
+    doc.getElementById('explorer-tree-state').style.display = 'none';
+    doc.getElementById('explorer-tree-wiring').style.display = '';
+    swapTo('/qubits', '<div id="qubits-stub2">qubits</div>');  // park: the capture holds the view
+    const cap0 = window.PaneState._soft()['/explorer'];
+    ok(!!cap0 && cap0.inputs.some(i => i.value === 'opx_output') && cap0.explorer && cap0.explorer.tab === 'wiring',
+       'JT-10 fixture: the park captured search + tab');
+    // Back: htmx restores the parked-EMPTY snapshot of /explorer, popstate resets
+    window.history.pushState({}, '', '/explorer');
+    pane().innerHTML = '';
+    pane().setAttribute('data-pane-route', '/explorer');
+    window.dispatchEvent(new window.CustomEvent('popstate'));
+    // ... and _historyCheck's refetch swaps the same route over the EMPTY pane
+    const before = new window.CustomEvent('htmx:beforeSwap', { cancelable: true,
+        detail: { shouldSwap: true, pathInfo: { finalRequestPath: '/explorer' } } });
+    Object.defineProperty(before, 'target', { value: pane() });
+    doc.dispatchEvent(before);
+    const cap1 = window.PaneState._soft()['/explorer'];
+    ok(!!cap1 && cap1.inputs.some(i => i.value === 'opx_output') && cap1.explorer && cap1.explorer.tab === 'wiring'
+       && cap1.explorer.expanded.indexOf('wiring.q1') >= 0,
+       'JT-10: the refetch over an EMPTY pane keeps the park-time capture (got ' + JSON.stringify(cap1) + ')');
+    pane().innerHTML = EXP('');                             // the fresh server render
+    renderTrees();
+    let tabAsked = null, taClosed = 0;
+    window.switchExplorerTab = (w) => { tabAsked = w; };
+    window.Typeahead = { close: () => { taClosed++; } };
+    const after = new window.CustomEvent('htmx:afterSwap', { detail: { pathInfo: { finalRequestPath: '/explorer' } } });
+    Object.defineProperty(after, 'target', { value: pane() });
+    doc.dispatchEvent(after);
+    ok(doc.getElementById('explorer-search').value === 'opx_output', 'JT-10: Back brings the search text back');
+    ok(tabAsked === 'wiring', 'JT-10: Back brings the wiring tab back');
+    ok(window.jsonTreeExpandedPaths('explorer-tree-wiring').indexOf('wiring.q1') >= 0,
+       'JT-10: Back brings the expanded nodes back');
+    ok(taClosed >= 1, 'JT-10: the re-applied query does not leave the typeahead open over an unfocused box');
+
+    // (iii) Back -> retype -> Forward -> Back again (review). Forward out of
+    //       /explorer is served from htmx's cache (no swap, so no beforeSwap
+    //       refreshed the capture) and the second Back is served from the
+    //       cache too (no afterSwap re-applied it): the partial's inline
+    //       script rendered a fresh depth-1 tree under an empty box. Real
+    //       Chrome: 'ports' typed before Forward, Back again showed box '' /
+    //       7 nodes. The retype is what tells a re-capture from the stale
+    //       first park -- both halves are pinned.
+    window.switchExplorerTab = (w) => {         // what the real one does: the capture reads the display
+        tabAsked = w;
+        doc.getElementById('explorer-tree-state').style.display = w === 'wiring' ? 'none' : '';
+        doc.getElementById('explorer-tree-wiring').style.display = w === 'wiring' ? '' : 'none';
+    };
+    window.switchExplorerTab('wiring');
+    doc.getElementById('explorer-search').value = 'ports';
+    // Forward: this listener runs BEFORE htmx's onpopstate -- the pane still shows /explorer
+    window.history.pushState({}, '', '/diagnostics');
+    window.dispatchEvent(new window.CustomEvent('popstate'));
+    const cap2 = window.PaneState._soft()['/explorer'];
+    ok(!!cap2 && cap2.inputs.some(i => i.value === 'ports') && cap2.explorer && cap2.explorer.tab === 'wiring'
+       && cap2.explorer.expanded.indexOf('wiring.q1') >= 0,
+       'JT-10: a history exit re-captures the view as it is NOW, not the first park (got ' + JSON.stringify(cap2 && cap2.inputs) + ')');
+    // ...then htmx swaps the body from its cache and says so
+    pane().innerHTML = '<div id="diag-stub">diagnostics</div>';
+    pane().setAttribute('data-pane-route', '/diagnostics');
+    doc.dispatchEvent(new window.CustomEvent('htmx:historyRestore'));
+    setTimeout(() => {
+        // Back again: htmx restores its /explorer snapshot; the inline script renders fresh
+        window.history.pushState({}, '', '/explorer');
+        window.dispatchEvent(new window.CustomEvent('popstate'));
+        pane().innerHTML = EXP('');
+        pane().setAttribute('data-pane-route', '/explorer');
+        renderTrees();
+        tabAsked = null;
+        doc.dispatchEvent(new window.CustomEvent('htmx:historyRestore'));
+        setTimeout(() => {
+            ok(doc.getElementById('explorer-search').value === 'ports',
+               'JT-10: Back again brings the retyped search back (got "' + doc.getElementById('explorer-search').value + '")');
+            ok(tabAsked === 'wiring', 'JT-10: Back again brings the wiring tab back');
+            ok(window.jsonTreeExpandedPaths('explorer-tree-wiring').indexOf('wiring.q1') >= 0,
+               'JT-10: Back again brings the expanded nodes back');
+            delete window.switchExplorerTab; delete window.Typeahead;
+            setTimeout(() => process.exit(fails ? 1 : 0), 120);
+        }, 200);
+    }, 200);
 }

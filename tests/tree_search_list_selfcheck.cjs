@@ -10,6 +10,9 @@
  *   3. clearing the query removes the notice
  *   4. two trees under ONE parent (state + wiring tabs share the search box):
  *      the notice lives INSIDE its tree and survives a tab round trip
+ *   5. JT-06: a search with NO hits says so (it used to leave a blank grey
+ *      strip), names the other tab's hits when a peer is declared, hints
+ *      that an embedded | is literal, and the DOM-fallback tree agrees
  * Run: node tests/tree_search_list_selfcheck.cjs   (driven by tests/test_undo_trail.py)
  */
 const fs = require('fs');
@@ -104,7 +107,7 @@ setTimeout(function () {
                             window.jsonTreeSearch('explorer-tree-state', 'amp');
                             setTimeout(function () {
                                 ok(c.querySelector(':scope > .tree-search-results') === stateNotice && highlighted() === 20, 'back on state: the capped tree is as it was');
-                                process.exit(fails ? 1 : 0);
+                                zeroMatch();
                             }, 300);
                         }, 300);
                     }, 300);
@@ -113,3 +116,62 @@ setTimeout(function () {
         }, 300);
     }, 300);
 }, 300);
+
+// 5. JT-06 -- zero matches: a notice, not a blank strip
+function zeroMatch() {
+    const w = d.getElementById('explorer-tree-wiring');
+    const notices = () => c.querySelectorAll(':scope > .tree-search-results');
+    window.jsonTreeSearch('explorer-tree-state', 'zzqqxx');
+    setTimeout(function () {
+        ok(notices().length === 1 && /No matches for zzqqxx/.test(notices()[0].textContent), 'a no-hit query says "No matches" (' + (notices()[0] ? notices()[0].textContent.trim() : 'none') + ')');
+        ok(!c.querySelector('.tsr-all') && !c.querySelector('.tsr-peer'), 'with no show-all button, and no peer hint when no peer is declared');
+        ok(visibleNodes() === 0, 'every row is still hidden under it');
+        // declare the wiring tree as the peer (what _explorer.html does)
+        c.setAttribute('data-search-peer', 'explorer-tree-wiring');
+        c.setAttribute('data-search-peer-label', 'wiring.json');
+        let switched = 0;
+        c._searchPeerSwitch = function () { switched++; };
+        window.jsonTreeSearch('explorer-tree-state', 'ports');   // wiring-only term (3 hits there by path)
+        setTimeout(function () {
+            const n = c.querySelector(':scope > .tree-search-results');
+            ok(notices().length === 1 && /No matches for ports here/.test(n.textContent) && /3 in wiring\.json/.test(n.textContent), 'the notice names the other tab hits (' + n.textContent.trim() + ')');
+            n.querySelector('.tsr-peer').click();
+            ok(switched === 1, 'its button calls the tab switch');
+            window.jsonTreeSearch('explorer-tree-state', 'zeta|nothing');   // embedded pipe = a literal term
+            setTimeout(function () {
+                const n2 = c.querySelector(':scope > .tree-search-results');
+                ok(notices().length === 1 && /No matches/.test(n2.textContent) && /only with spaces around it/.test(n2.textContent) && !n2.querySelector('.tsr-peer'), 'an embedded | gets the OR hint, and no peer line when the peer has none either');
+                window.jsonTreeSearch('explorer-tree-state', 'zeta | nothing');   // standalone pipe = OR -> 1 hit
+                setTimeout(function () {
+                    ok(notices().length === 0 && highlighted() === 1, 'a hit removes the notice');
+                    window.jsonTreeSearch('explorer-tree-state', 'zzqqxx');
+                    setTimeout(function () {
+                        window.jsonTreeSearch('explorer-tree-state', '');
+                        setTimeout(function () {
+                            ok(notices().length === 0 && visibleNodes() > 0, 'clearing the box removes the no-match notice');
+                            domFallback();
+                        }, 300);
+                    }, 300);
+                }, 300);
+            }, 300);
+        }, 300);
+    }, 300);
+}
+
+// the DOM fallback (a tree with no _treeData, e.g. the unified compare tree)
+function domFallback() {
+    const t = d.createElement('div'); t.id = 'dom-tree'; t.className = 'json-tree';
+    t.innerHTML = '<div class="tree-node" data-path="alpha"><div class="tree-row">alpha 1</div></div>'
+        + '<div class="tree-node" data-path="beta"><div class="tree-row">beta 2</div></div>';
+    d.body.appendChild(t);
+    window.jsonTreeSearch('dom-tree', 'zzqqxx');
+    setTimeout(function () {
+        const n = t.querySelectorAll(':scope > .tree-search-results');
+        ok(n.length === 1 && /No matches for zzqqxx/.test(n[0].textContent), 'the DOM-fallback tree says "No matches" too');
+        window.jsonTreeSearch('dom-tree', 'alpha');
+        setTimeout(function () {
+            ok(!t.querySelector('.tree-search-results') && t.querySelectorAll('.tree-highlight').length === 1, 'and drops it on a hit');
+            process.exit(fails ? 1 : 0);
+        }, 300);
+    }, 300);
+}

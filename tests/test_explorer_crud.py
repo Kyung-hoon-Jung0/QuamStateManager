@@ -58,3 +58,12 @@ def test_the_tree_boolean_words_are_the_servers_words():
     py_words = {w.strip().strip('"') for pair in py for grp in pair if grp
                 for w in grp.split(",")}
     assert py_words and py_words == set(js_true) | set(js_false), py_words
+
+
+def test_copy_pill_leaves_room_under_the_tree():
+    """JT-22: the copy pill is a fixed float at the bottom of the window, so
+    while it shows the tree needs bottom room, or its last rows stay under it."""
+    import re
+    css = (_ROOT / "quam_state_manager" / "web" / "static" / "style.css").read_text(encoding="utf-8")
+    m = re.search(r"body:has\(\.tree-copy-pill:not\(\[hidden\]\)\)\s*\.json-tree\s*[{]([^}]*)[}]", css)
+    assert m and "padding-bottom" in m.group(1), "no bottom room for the tree under the copy pill"

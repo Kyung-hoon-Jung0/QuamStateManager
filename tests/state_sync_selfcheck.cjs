@@ -160,6 +160,17 @@ window.eval(fs.readFileSync(path.join(STATIC, 'app.js'), 'utf8'));
     ok(push && push.opts && push.opts.target === '#pending-tray',
        'the response swaps the tray, which is where Revert last apply lives');
 
+    /* jsontree-r2-30: ONE unsaved edit "is" saved — the verb follows the
+       count the noun already followed ("Your 1 unsaved edit are saved"). */
+    ajaxCalls.length = 0; lastConfirm = '';
+    preflightQueue = [{ ok: true, live_changes: 1, unsaved: 1, reversible: true,
+                        run_active: false, run_label: null }];
+    confirmAnswer = false;
+    window.overwriteLiveWithWorking();
+    await flush(30);
+    ok(/Your 1 unsaved edit is saved/.test(lastConfirm) && !/ edit are /.test(lastConfirm),
+       'one unsaved edit reads "is saved", never "edit are" (got: ' + lastConfirm + ')');
+
     /* a refusal (archive / no chip) never opens a confirm */
     ajaxCalls.length = 0; lastConfirm = '';
     preflightQueue = [{ ok: false, message: 'read-only archive' }];

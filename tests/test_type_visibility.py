@@ -269,3 +269,20 @@ class TestClientWiringPins:
         assert "font-size: 1.05em" in css[i:i + 400]
         j = css.index(".tree-json-edit-btn {")
         assert "font-size: 1.05em" in css[j:j + 400]
+
+    def test_hover_tools_stay_out_of_a_text_selection(self):
+        """jsontree-r2-31: the row tools sit in the DOM at opacity 0, so a drag
+        over rows copied '4,895,431,254.26 ⧉ ⚙ ✕ ? f_12 ...'. For each tool,
+        the LAST rule that sets user-select on it must say none."""
+        import re
+        css = (self._STATIC / "style.css").read_text(encoding="utf-8")
+        css = re.sub(r"/[*].*?[*]/", "", css, flags=re.S)
+        rules = re.findall(r"([^{}]+)[{]([^{}]*)[}]", css)
+        for sel in (".tree-row-actions", ".tree-json-edit-btn", ".key-help-btn.tree-help"):
+            last = None
+            for selectors, body in rules:
+                names = [x.strip() for x in selectors.split(",")]
+                m = re.search(r"(?<![-\w])user-select\s*:\s*([\w-]+)", body)
+                if sel in names and m:
+                    last = m.group(1)
+            assert last == "none", f"{sel}: user-select is {last!r}, its glyph is copied"

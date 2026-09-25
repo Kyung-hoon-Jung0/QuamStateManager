@@ -21,7 +21,8 @@
         <button class="btn-sm outline" onclick="jsonTreeExpandToDepth(_activeTreeId(), 1)">1</button>
         <button class="btn-sm outline" onclick="jsonTreeExpandToDepth(_activeTreeId(), 2)">2</button>
         <button class="btn-sm outline" onclick="jsonTreeExpandToDepth(_activeTreeId(), 3)">3</button>
-        <button class="btn-sm outline" onclick="jsonTreeExpandAll(_activeTreeId())">All</button>
+        <button class="btn-sm outline" onclick="jsonTreeExpandAllUi(_activeTreeId(), this)"
+                title="Expand every node &mdash; slow on a large chip (tens of thousands of rows)">All</button>
     </div>
     <button class="btn-sm outline" id="explorer-livediff-toggle" type="button"
             onclick="explorerLiveDiff()"
@@ -53,9 +54,13 @@
        "qualibrate changed nothing here", so the bar says how many its own
        search is hiding. Filled by _explorerDiffFilterNote(); hidden when the
        search box is empty or hides none of them. #}
-    <span>Qualibrate changed <b id="livediff-bar-count">0</b> field(s)<span
-          id="livediff-bar-filtered" class="livediff-filtered" hidden></span>
-          &mdash; review before&rarr;after, then accept.</span>
+    {# QA JT-03: the wording follows who moved the fields (filled by
+       _ldBarText): "Qualibrate changed" only when the live chip moved and
+       none of the rows is the user's own unapplied edit. #}
+    <span><span id="livediff-bar-lead"></span><b id="livediff-bar-count">0</b><span
+          id="livediff-bar-what"> field(s) differ from the live chip</span><span
+          id="livediff-bar-filtered" class="livediff-filtered" hidden></span><span
+          id="livediff-bar-tail"> &mdash; review before&rarr;after.</span></span>
     <button class="btn-sm" type="button" onclick="explorerAcceptAll()">Accept all</button>
     <button class="btn-sm outline" type="button" onclick="explorerLiveDiff(false)">Exit diff</button>
 </div>
@@ -78,6 +83,16 @@
 
     renderJsonTree("explorer-tree-state", stateData, { defaultDepth: 1, crud: true });
     renderJsonTree("explorer-tree-wiring", wiringData, { defaultDepth: 1, crud: true });
+    // JT-06: a search with no hits on one tab names the other tab's hits, and
+    // its button switches there (_treeSearchResults' zero-match notice).
+    [["explorer-tree-state", "explorer-tree-wiring", "wiring.json", "wiring"],
+     ["explorer-tree-wiring", "explorer-tree-state", "state.json", "state"]].forEach(function (t) {
+        var el = document.getElementById(t[0]);
+        if (!el) return;
+        el.setAttribute("data-search-peer", t[1]);
+        el.setAttribute("data-search-peer-label", t[2]);
+        el._searchPeerSwitch = function () { if (window.switchExplorerTab) window.switchExplorerTab(t[3]); };
+    });
     if (window.explorerApplyScale) window.explorerApplyScale();   // persisted size
 
     if (window.ExplorerChips) ExplorerChips.mount("explorer-chipbar", [stateData, wiringData]);
@@ -102,7 +117,10 @@
         }
 
         var search = document.getElementById("explorer-search");
-        if (search && search.value) {
+        // also re-sync a tree left filtered under a box cleared on the other
+        // tab -- it showed a blank tree under an empty box (QA r2-03)
+        var shown = document.getElementById(_activeTreeId());
+        if (search && (search.value || (shown && shown._lastSearchQuery))) {
             jsonTreeSearch(_activeTreeId(), search.value);
         }
     };

@@ -102,3 +102,42 @@ def test_no_chip_menu_shows_empty_state(client, path):
     # the clear, persistent empty state — not the old fading "No state loaded" toast
     assert "pane-empty" in body and "No chip loaded" in body
     assert "toast-warning" not in body
+
+
+# jsontree-r2-13: a FULL-PAGE GET of a no-chip menu (F5 after an SM restart, a
+# bookmark) used to return the 0.4 KB _empty_state.html fragment -- a white,
+# unstyled page with no sidebar and no way back. Only an htmx swap gets the
+# bare partial; a plain GET and an htmx history restore get the app shell.
+NO_CHIP_ALL_MENUS = EMPTY_STATE_MENUS + ["/resonators", "/flux", "/couplers",
+                                         "/param-history/changes"]
+
+
+@pytest.mark.parametrize("path", NO_CHIP_ALL_MENUS)
+def test_no_chip_full_page_get_keeps_the_app_shell(client, path):
+    body = client.get(path).data.decode()
+    assert "<html" in body and 'id="sidebar"' in body, path
+    assert "pane-empty" in body and "No chip loaded" in body
+    # the empty state sits in the main pane, the chrome around it
+    assert body.index('id="table-pane"') < body.index("pane-empty")
+
+
+@pytest.mark.parametrize("path", NO_CHIP_ALL_MENUS)
+def test_no_chip_htmx_swap_still_gets_the_bare_partial(client, path):
+    body = client.get(path, headers={"HX-Request": "true"}).data.decode()
+    assert "pane-empty" in body and "<html" not in body
+    assert 'id="sidebar"' not in body
+
+
+def test_no_chip_history_restore_gets_the_full_page(client):
+    body = client.get("/explorer", headers={
+        "HX-Request": "true", "HX-History-Restore-Request": "true"}).data.decode()
+    assert "<html" in body and 'id="sidebar"' in body and "pane-empty" in body
+
+
+def test_no_chip_full_page_marks_the_menu_and_names_it(client):
+    import re
+    body = client.get("/explorer").data.decode()
+    # the sidebar highlights the menu that was asked for ...
+    assert re.search(r'href="/explorer"[^>]*class="active"', body)
+    # ... while the empty state still reads the human label, not the nav token
+    assert "Load a chip to view the state explorer." in body

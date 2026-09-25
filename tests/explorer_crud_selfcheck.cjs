@@ -706,6 +706,138 @@ function nodeAt(container, p) {
       'C17: an ordinary refusal offers no Reload');
   }
 
+  // C18 (jsontree-r2-18; C11 in fix/qa2-jt-view): SM unreachable. A fetch that never reaches the
+  //      server rejects with a TypeError; every tree write used to revert /
+  //      vanish in SILENCE (the global htmx:sendError toast never fires for a
+  //      raw fetch). Each one must now say the app could not be reached, and
+  //      a reply that is not JSON must NOT be blamed on the network.
+  {
+    const down = function (url) {
+      if (url.indexOf('/schema/missing-keys') === 0) return jsonResp({ ok: true, warm: false, missing: [] });
+      return Promise.reject(new TypeError('Failed to fetch'));
+    };
+    // inline edit
+    let win = makeWorld(down);
+    let c = win.document.getElementById('tree');
+    expandAll(c);
+    let leaf = nodeAt(c, 'qubits.qA1.f_01');
+    let val = leaf.querySelector('.tree-val');
+    const before = val.textContent;
+    val.click();
+    await tick(10);
+    let inp = leaf.querySelector('.tree-edit-input');
+    inp.value = '1.5e-05';
+    inp.dispatchEvent(new win.KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
+    await tick(30);
+    let chip = leaf.querySelector(':scope > .tree-row .tree-edit-err');
+    ok(!!chip && /reach the app/.test(chip.textContent),
+       'C18: a failed inline edit says the app could not be reached (' + (chip && chip.textContent) + ')');
+    ok(val.textContent === before, 'C18: the display still reverts to the stored value');
+    ok(!!chip && chip.title.indexOf("Couldn't reach the app") === 0,
+       'C18: the chip ellipsizes, so its hover title carries the whole reason');
+
+    // delete: the refs label never sits at "refs: …", the failed POST is named
+    win = makeWorld(down);
+    c = win.document.getElementById('tree');
+    expandAll(c);
+    leaf = nodeAt(c, 'qubits.qA1.f_01');
+    hover(win, leaf);
+    leaf.querySelector('.tree-act-del').click();
+    await tick(20);
+    const lbl = leaf.querySelector('.tree-del-confirm');
+    ok(!!lbl && lbl.textContent.indexOf('refs: …') < 0 && /refs: unknown/.test(lbl.textContent),
+       'C18: an unreachable refs pre-fetch says "refs: unknown" (' + (lbl && lbl.textContent) + ')');
+    leaf.querySelectorAll('.tree-row-actions .tree-act-btn')[0].click();
+    await tick(25);
+    chip = leaf.querySelector(':scope > .tree-row .tree-edit-err');
+    ok(!!chip && /reach the app/.test(chip.textContent),
+       'C18: a failed delete says the app could not be reached');
+    ok(!!nodeAt(c, 'qubits.qA1.f_01'), 'C18: the row is still there (nothing deleted)');
+
+    // add key
+    win = makeWorld(down);
+    c = win.document.getElementById('tree');
+    expandAll(c);
+    const dictNode = nodeAt(c, 'qubits.qA1');
+    hover(win, dictNode);
+    dictNode.querySelector('.tree-act-add').click();
+    await tick();
+    const panel = dictNode.querySelector('.tree-crud-panel');
+    panel.querySelector('.tree-crud-key').value = 'T9';
+    panel.querySelector('.tree-crud-val').value = '1';
+    panel.querySelector('.tree-crud-ok').click();
+    await tick(25);
+    ok(/reach the app/.test(panel.querySelector('.tree-crud-err').textContent),
+       'C18: a failed add says the app could not be reached');
+
+    // a reply that is not JSON (an HTML 500) is NOT "the app is not running"
+    win = makeWorld(function (url) {
+      if (url === '/field/edit') return Promise.resolve({ ok: false, status: 500,
+        json: function () { return Promise.reject(new SyntaxError('Unexpected token <')); } });
+      return jsonResp({ ok: true, values: {}, expected: {} });
+    });
+    c = win.document.getElementById('tree');
+    expandAll(c);
+    leaf = nodeAt(c, 'qubits.qA1.f_01');
+    leaf.querySelector('.tree-val').click();
+    await tick(10);
+    inp = leaf.querySelector('.tree-edit-input');
+    inp.value = '7';
+    inp.dispatchEvent(new win.KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
+    await tick(30);
+    chip = leaf.querySelector(':scope > .tree-row .tree-edit-err');
+    ok(!!chip && !/reach the app/.test(chip.textContent) && /Unexpected reply/.test(chip.textContent),
+       'C18: a non-JSON reply is named as such, not blamed on the network');
+  }
+
+  // JT-22: the copy pill's label follows the paste buttons that exist NOW —
+  // a lazily expanded empty same-key field adds one, a paste removes one.
+  // It used to be written once at copy time and then go stale both ways.
+  {
+    const PDATA = {
+      qubits: {
+        qA1: { __class__: 'q.Transmon', id: 'qA1', confusion_matrix: [[0.98, 0.02], [0.03, 0.97]] },
+        qA2: { __class__: 'q.Transmon', id: 'qA2', confusion_matrix: [] }
+      }
+    };
+    const win = makeWorld(function (url) {
+      if (url === '/field/edit') return jsonResp({ ok: true });
+      return jsonResp({ ok: true, values: {}, expected: {} });
+    }, null, PDATA);
+    const c = win.document.getElementById('tree');
+    const toggleOf = function (p) {
+      return c.querySelector('.tree-node[data-path="' + p + '"] > .tree-row .tree-toggle.collapsed');
+    };
+    const t1 = toggleOf('qubits.qA1');
+    ok(!!t1, 'JT-22: qA1 starts collapsed (the fixture reaches the lazy path)');
+    if (t1) t1.click();
+    ok(!nodeAt(c, 'qubits.qA2.confusion_matrix'),
+       'JT-22: qA2 is not materialised yet (no paste target exists at copy time)');
+    const src = nodeAt(c, 'qubits.qA1.confusion_matrix');
+    src.querySelector(':scope > .tree-row .tree-key')
+       .dispatchEvent(new win.MouseEvent('dblclick', { bubbles: true }));
+    const pill = win.document.getElementById('tree-copy-pill');
+    const label = function () { return pill ? pill.textContent : ''; };
+    ok(pill && !pill.hidden && /open an empty 'confusion_matrix' to paste/.test(label()),
+       'JT-22: with no empty target in view the pill says to open one (' + label() + ')');
+    const t2 = toggleOf('qubits.qA2');
+    if (t2) t2.click();
+    await tick();
+    const tgt = nodeAt(c, 'qubits.qA2.confusion_matrix');
+    const btn = tgt && tgt.querySelector(':scope > .tree-row .tree-paste-btn');
+    ok(!!btn, 'JT-22: expanding qA2 materialises its empty confusion_matrix with a paste button');
+    ok(/click “paste” on 1 empty field\b/.test(label()) && !/open an empty/.test(label()),
+       'JT-22: the pill now counts the new paste button (' + label() + ')');
+    if (btn) btn.click();
+    await tick(25);
+    ok(!win.document.querySelector('.tree-paste-btn'), 'JT-22: the pasted field drops its button');
+    ok(/open an empty 'confusion_matrix' to paste/.test(label()),
+       'JT-22: after the paste the pill no longer claims a field to paste into (' + label() + ')');
+    ok(!pill.hidden, 'JT-22: the buffer survives the paste (paste into many)');
+    win.document.dispatchEvent(new win.KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
+    ok(pill.hidden, 'JT-22: Escape still clears the copy');
+  }
+
   if (fails) { console.error(fails + ' check(s) failed'); process.exit(1); }
   console.log('explorer_crud_selfcheck: all checks passed');
   process.exit(0);

@@ -158,3 +158,87 @@ def test_explorer_renders_livediff_controls(loaded_client):
     assert "explorer-livediff-toggle" in body
     assert "explorer-livediff-bar" in body
     assert "explorerLiveDiff" in body
+
+
+# --- QA JT-03: who moved each differing field --------------------------------
+
+_TOF = "qubits.qA1.resonator.time_of_flight"
+
+
+def test_live_diff_own_edit_is_mine_not_qualibrate(loaded_client):
+    """The user's own unapplied edit, nothing written outside SM: the diff is
+    SM-side, so it must never be attributed to Qualibrate (was: the bar read
+    "Qualibrate changed 1 field(s)" and ✓ reverted the edit)."""
+    r = loaded_client.post("/field/edit-batch",
+                           json={"updates": [{"dot_path": _TOF, "value": 99}]})
+    assert r.get_json()["ok"] is True
+    d = loaded_client.get("/state/live-diff").get_json()
+    assert d["total"] == 1
+    assert d["live_moved"] is False
+    assert _TOF in d["mine"]
+    assert d["external"] == [] and d["conflicts"] == []
+
+
+def test_live_diff_outside_write_is_external(loaded_client, synth_folder):
+    _write_live_state(synth_folder, _make_state(tof=36))
+    d = loaded_client.get("/state/live-diff").get_json()
+    assert d["live_moved"] is True
+    assert d["external"] == [_TOF]
+    assert d["mine"] == [] and d["conflicts"] == []
+
+
+def test_live_diff_both_sides_is_a_conflict(loaded_client, synth_folder):
+    loaded_client.post("/field/edit-batch",
+                       json={"updates": [{"dot_path": _TOF, "value": 99}]})
+    _write_live_state(synth_folder, _make_state(tof=36))
+    d = loaded_client.get("/state/live-diff").get_json()
+    assert d["live_moved"] is True
+    assert d["conflicts"] == [_TOF]
+    assert _TOF not in d["external"]
+
+
+def test_live_diff_mixed_names_each_side(loaded_client, synth_folder):
+    amp = "qubits.qA1.resonator.operations.readout.amplitude"
+    loaded_client.post("/field/edit-batch",
+                       json={"updates": [{"dot_path": amp, "value": 0.05}]})
+    _write_live_state(synth_folder, _make_state(tof=36))
+    d = loaded_client.get("/state/live-diff").get_json()
+    assert d["total"] == 2 and d["live_moved"] is True
+    assert amp in d["mine"] and d["external"] == [_TOF] and d["conflicts"] == []
+
+
+# --- QA r2-02: Accept all creates added keys and DELETES removed ones ---------
+
+
+def test_edit_batch_delete_removes_the_key_never_stores_null(loaded_client, synth_folder):
+    live = _make_state()
+    del live["qubits"]["qA1"]["resonator"]["time_of_flight"]
+    live["qubits"]["qA1"]["extras_added"] = 123.5
+    _write_live_state(synth_folder, live)
+    d = loaded_client.get("/state/live-diff").get_json()
+    assert d["total"] == 2
+    r = loaded_client.post("/field/edit-batch", json={"independent": True, "updates": [
+        {"dot_path": _TOF, "delete": True},
+        {"dot_path": "qubits.qA1.extras_added", "value": 123.5, "create": True},
+    ]}).get_json()
+    assert [x["applied"] for x in r["results"]] == [True, True], r
+    assert r["results"][0].get("deleted") is True
+    # the key is GONE (a null would still differ from live, which lacks it)
+    assert loaded_client.get("/state/live-diff").get_json()["total"] == 0
+
+
+def test_edit_batch_delete_keeps_the_crud_guards(loaded_client):
+    r = loaded_client.post("/field/edit-batch", json={"updates": [
+        {"dot_path": "qubits", "delete": True}]})
+    assert r.status_code == 400
+    assert "top-level" in r.get_json()["results"][0]["error"]
+    r = loaded_client.post("/field/edit-batch", json={"updates": [
+        {"dot_path": "qubits.qA1.id", "delete": True}]})
+    assert r.status_code == 400 and r.get_json()["results"][0]["applied"] is False
+    # an atomic batch whose later row fails restores the deleted key
+    r = loaded_client.post("/field/edit-batch", json={"updates": [
+        {"dot_path": _TOF, "delete": True},
+        {"dot_path": "qubits.qA1.no_such_key", "value": 1},
+    ]})
+    assert r.status_code == 400
+    assert loaded_client.get("/state/live-diff").get_json()["total"] == 0

@@ -56,6 +56,8 @@ def test_explorer_search_survives_rebuild():
     assert res.returncode == 0, f"explorer search selfcheck failed:\n{res.stdout}\n{res.stderr}"
     # Belt-and-braces against a silent early exit reporting green.
     assert res.stdout.count("ok - ") >= 20, res.stdout
+    # QA JT-17: a depth press forgets the search memo, so the same query re-runs
+    assert "ok - JT-17: re-entering the SAME query after a depth press brings the results back" in res.stdout
 
 
 def test_live_diff_bar_admits_what_the_search_hides():
