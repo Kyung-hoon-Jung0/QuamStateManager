@@ -6251,6 +6251,38 @@ window.Bundles = (function () {
     return { need: need, call: call, loaded: loaded, forPath: forPath, pending: pending, _manifest: manifest };
 })();
 
+/* A modified click on a nav link opens a tab, and leaves THIS page alone
+   (QA generate-r2-22). Every `<a href hx-get>` is a real page URL, but the
+   bundled htmx 2.0.4 answers a Ctrl/Cmd/Shift+click on it like a plain click:
+   it exempts only hx-boost anchors (SM uses none), calls preventDefault and
+   swaps the pane -- so a Ctrl+click on the sidebar left the wizard step being
+   edited. A document CAPTURE listener runs before htmx's own listener on the
+   anchor; stopping the event there keeps htmx out of it WITHOUT touching the
+   default, so the browser does what it does with any link. An href="#" anchor
+   has no page of its own and stays htmx's; Alt+click is left to htmx too.
+   Cmd (metaKey) is the tab gesture on a Mac ONLY: on Windows/Linux Win/Super+
+   click opens no tab, so claiming it just traded htmx's swap for a full
+   reload of the same tab (review) -- there it stays htmx's, like a plain click. */
+window.NavModifiedClick = (function () {
+    function isMac() {
+        var n = window.navigator || {};
+        var p = (n.userAgentData && n.userAgentData.platform) || n.platform || "";
+        return /mac|iphone|ipad|ipod/i.test(p);
+    }
+    function onClick(evt) {
+        if (!evt || evt.button !== 0 || !(evt.ctrlKey || evt.shiftKey || (evt.metaKey && isMac()))) return;
+        var t = evt.target;
+        if (t && t.nodeType !== 1) t = t.parentElement;
+        var a = t && t.closest ? t.closest("a[href][hx-get]") : null;
+        if (!a) return;
+        var href = a.getAttribute("href") || "";
+        if (!href || href.charAt(0) === "#" || /^\s*javascript:/i.test(href)) return;
+        evt.stopPropagation();
+    }
+    document.addEventListener("click", onClick, true);
+    return { onClick: onClick };
+})();
+
 /* One commit = POST → the whole #inspector-pane re-renders. Three things
    must hold across that swap or the surface feels broken (docs/75):
      1. the swap REMOVES the focused input, which fires focusout on it —

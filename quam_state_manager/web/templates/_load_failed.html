@@ -2,6 +2,9 @@
    place (the old 6-second toast vanished before it was read), with one-click
    candidates for any immediate subfolder that actually holds a state.json. #}
 <div class="load-failed-panel">
+  <button type="button" class="outline btn-sm load-failed-close"
+          onclick="this.closest('.load-failed-panel').remove()"
+          title="Dismiss" aria-label="Dismiss">&times;</button>
   <h3>&#9888; This folder is not a QUAM state</h3>
   <p class="muted"><code>{{ folder }}</code></p>
   <p>{{ error }}</p>
@@ -12,7 +15,7 @@
   <div class="load-failed-candidates">
     {% for c in candidates %}
     <button class="btn-sm" hx-post="/load" hx-vals='{{ {"folder": c} | tojson }}'
-            hx-target="#table-pane" hx-swap="innerHTML"
+            hx-target="{{ candidate_target or '#table-pane' }}" hx-swap="innerHTML"
             title="Load {{ c }}">&#128193; {{ c }}</button>
     {% endfor %}
   </div>

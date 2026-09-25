@@ -439,7 +439,6 @@
                    answers HX-Redirect, so this target is only ever used on failure. #}
                 <form id="load-form" hx-post="/load" hx-target="#load-failed-slot">
                     <div class="path-input-group">
-                        <div id="load-failed-slot" aria-live="polite"></div>
                     <input type="text" name="folder" id="load-path-input"
                                placeholder="quam_state folder path..." autocomplete="off">
                         <button type="button" class="outline btn-sm btn-browse"
@@ -450,6 +449,10 @@
                     </div>
                     <div id="recents-dropdown" class="recents-dropdown" hidden></div>
                     <button type="submit" class="btn-sm">State Load</button>
+                    {# F17: a normal block BELOW the form row — inside the flex
+                       .path-input-group the panel became a row item whose
+                       min-content (an unbreakable path) overflowed the sidebar. #}
+                    <div id="load-failed-slot" aria-live="polite"></div>
                 </form>
             </div>
             <hr class="sidebar-section-divider">

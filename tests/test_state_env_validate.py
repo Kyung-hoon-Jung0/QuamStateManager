@@ -169,6 +169,51 @@ class TestDiagnosticsIntegration:
         # no selected env in tests → 204 or the no-env copy
         assert r.status_code in (200, 204)
 
+    def test_env_card_names_the_env_it_checks_against(self, client, tmp_path):
+        """generate-r2-08: a Generate-wizard row click switches the env the
+        card validates against machine-wide, so the warm card must NAME that
+        env (its folder), not only quam/quam_builder versions."""
+        from quam_state_manager.core import config_generator
+        py = tmp_path / "envs" / "labenv_r208" / "python.exe"
+        py.parent.mkdir(parents=True)
+        py.write_text("", encoding="utf-8")
+        inst = client.application.instance_path
+        config_generator.set_selected_env(inst, str(py))
+        html = client.get("/diagnostics/env-card").get_data(as_text=True)
+        assert "checked against" in html            # the warm branch rendered
+        assert "labenv_r208" in html
+        # a POSIX-layout env (<env>/bin/python) is named by the env folder
+        py2 = tmp_path / "envs" / "posixenv_r208" / "bin" / "python"
+        py2.parent.mkdir(parents=True)
+        py2.write_text("", encoding="utf-8")
+        config_generator.set_selected_env(inst, str(py2))
+        html = client.get("/diagnostics/env-card").get_data(as_text=True)
+        assert "posixenv_r208" in html and ">bin<" not in html
+
+    def test_env_card_names_the_env_its_manifest_came_from(self, client, tmp_path):
+        """Review of generate-r2-08: the versions and missing classes come from
+        the store's manifest, which is bound to the env it was probed in
+        (store._type_manifest_env). Another SM process sharing the instance can
+        switch the selection file meanwhile; the card must still name the env
+        whose results it shows, not the new selection."""
+        from quam_state_manager.core import config_generator
+        probed = tmp_path / "envs" / "probed_env_r208" / "python.exe"
+        picked = tmp_path / "envs" / "picked_later_r208" / "python.exe"
+        for py in (probed, picked):
+            py.parent.mkdir(parents=True)
+            py.write_text("", encoding="utf-8")
+        app = client.application
+        with app.app_context():
+            ctx = app.config["contexts"][app.config["active_context"]]
+            ctx["store"]._type_manifest_env = str(probed)
+        config_generator.set_selected_env(app.instance_path, str(picked))
+        html = client.get("/diagnostics/env-card").get_data(as_text=True)
+        assert "checked against" in html            # the warm branch rendered
+        name = html.split('class="diag-env-name"', 1)[1].split("</code>", 1)[0]
+        assert "probed_env_r208" in name, name
+        assert "picked_later_r208" not in name, name
+        assert str(probed) in name                  # the title is its interpreter
+
     def test_env_probe_requires_selected_env(self, client):
         r = client.post("/diagnostics/env-probe")
         assert r.status_code == 400

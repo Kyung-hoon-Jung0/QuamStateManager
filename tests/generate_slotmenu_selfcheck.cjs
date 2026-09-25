@@ -130,6 +130,22 @@ T.openSlotMenu(slot, { con: 1 }, 1, 'mw');
 menu.dispatchEvent(new win.KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
 ok(menu.hidden === true, 'S7: Escape closes the menu');
 
+// S8 (QA F13): an EMPTY slot reads empty. The slot is role=button, and Pico's
+// [role=button] rule redefines --pico-background-color to the primary fill on
+// the element itself, so `background: var(--pico-background-color)` painted
+// every empty slot solid blue. jsdom does not run Pico's custom-property
+// cascade, so the pin reads the rule: a literal, never a --pico-* variable.
+const slotRule = (CSS.match(/(^|\n)\.gen-slot\s*\{[^}]*\}/) || [''])[0];
+ok(slotRule.length > 0, 'S8: the .gen-slot rule is present');
+const slotBg = (slotRule.match(/(^|[;{\s])background(-color)?\s*:\s*([^;}]*)/) || [])[3] || '';
+ok(slotBg.trim() !== '' && !/var\(\s*--pico-/.test(slotBg),
+   'S8: .gen-slot background is a literal, not a --pico-* variable Pico redefines on role=button (got "' + slotBg.trim() + '")');
+ok(renderedSlotHasRoleButton(), 'S8: the premise holds -- renderSlot still gives the slot role=button');
+function renderedSlotHasRoleButton() {
+  const s = doc.querySelector('.gen-slot');
+  return !!s && s.getAttribute('role') === 'button';
+}
+
 if (fails) { console.error(fails + ' failure(s)'); process.exit(1); }
 console.log('ALL OK generate_slotmenu_selfcheck');
 process.exit(0);

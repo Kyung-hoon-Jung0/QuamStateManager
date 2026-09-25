@@ -5543,9 +5543,16 @@ def load():
                         break
         except OSError:
             pass
+        # F17 review: a candidate that ALSO fails re-renders this panel into
+        # the candidate's target -- so a panel shown in the sidebar slot must
+        # keep its candidates there, or a bad subfolder would replace the open
+        # main surface (the wizard has no draft). The landing's own load form
+        # posts into #table-pane, where the panel already is.
+        slot = request.headers.get("HX-Target") == "load-failed-slot"
         return render_template(
             "_load_failed.html",
-            folder=folder, error=str(e), candidates=candidates), 400
+            folder=folder, error=str(e), candidates=candidates,
+            candidate_target="#load-failed-slot" if slot else "#table-pane"), 400
 
     _remember_load_path(folder)
     _maybe_auto_add_workspace_root(folder)
@@ -26504,6 +26511,129 @@ def _output_folder_problem(path: str, chip: bool = True) -> str | None:
         return None
 
 
+# One build at a time per OUTPUT folder (generate-r2-09). The overwrite guard
+# and the build are check-then-write: two tabs/windows pressing Generate into
+# one folder a moment apart both passed the guard, both reported success, and
+# the later build's files replaced the earlier chip. A NON-blocking per-folder
+# lock held across the whole build request (guard included) makes the guard +
+# build atomic: the second press gets a 409 busy instead of a wait of up to
+# the build timeout; after the first build finishes, a retry meets the
+# overwrite guard. Keyed like every other folder registry (path_match.fs_key)
+# so case-variant spellings share one lock; separate from _quam_build_locks on
+# purpose — those guard apply-to-live / chip loads and must never be held for
+# a whole build. Generate and Re-generate share it (they must exclude each
+# other too). Across processes too: see _gen_out_xlock below.
+_gen_out_locks: dict[str, threading.Lock] = {}
+_gen_out_locks_guard = threading.Lock()
+_GEN_OUT_BUSY = ("Another build into this folder is already running (another "
+                 "tab or window). Wait for it to finish, then build again — "
+                 "the folder's overwrite check will ask before replacing that "
+                 "chip.")
+
+
+def _gen_out_lock(output_path) -> threading.Lock:
+    key = path_match.fs_key(output_path)
+    with _gen_out_locks_guard:
+        lock = _gen_out_locks.get(key)
+        if lock is None:
+            lock = _gen_out_locks[key] = threading.Lock()
+        return lock
+
+
+# The threading.Lock above is ONE process's (review of generate-r2-09): two SM
+# windows are two processes sharing one instance dir (docs/80), and both could
+# still pass the guard and interleave into one folder -- a mismatched
+# state/wiring pair, while the busy message promises "another tab or window"
+# cannot happen. So the build also holds an OS byte-range lock on a per-folder
+# token file under the SHARED instance dir. The OS drops that lock when its
+# holder dies, so a crashed window can never wedge a folder (no PID-liveness or
+# staleness guesswork), and nothing is ever written into the user's output
+# folder. A lock that cannot be taken for any OTHER reason fails open: the
+# in-process lock still stands, exactly as before.
+_GEN_OUT_XLOCK_DIR = "gen_build_locks"
+
+
+def _gen_out_xlock(instance_path, key: str):
+    """``(taken, fd)``: taken is False only when ANOTHER process holds *key*."""
+    import errno
+    try:
+        d = Path(instance_path) / _GEN_OUT_XLOCK_DIR
+        d.mkdir(parents=True, exist_ok=True)
+        name = hashlib.sha1(key.encode("utf-8")).hexdigest()[:20] + ".lock"
+        fd = os.open(str(d / name), os.O_RDWR | os.O_CREAT, 0o644)
+    except OSError:
+        logger.warning("build lock file unavailable; in-process lock only",
+                       exc_info=True)
+        return True, None
+    try:
+        if os.name == "nt":
+            import msvcrt
+            msvcrt.locking(fd, msvcrt.LK_NBLCK, 1)
+        else:
+            import fcntl
+            fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        return True, fd
+    except OSError as exc:
+        os.close(fd)
+        if isinstance(exc, BlockingIOError) or exc.errno in (
+                errno.EACCES, errno.EAGAIN, getattr(errno, "EDEADLOCK", -1)):
+            return False, None
+        logger.warning("build lock not taken (%s); in-process lock only", exc)
+        return True, None
+
+
+def _gen_out_xunlock(fd) -> None:
+    if fd is None:
+        return
+    try:
+        if os.name == "nt":
+            import msvcrt
+            os.lseek(fd, 0, os.SEEK_SET)
+            msvcrt.locking(fd, msvcrt.LK_UNLCK, 1)
+        else:
+            import fcntl
+            fcntl.flock(fd, fcntl.LOCK_UN)
+    except OSError:
+        pass
+    finally:
+        try:
+            os.close(fd)
+        except OSError:
+            pass
+
+
+def _one_build_per_output_folder(view):
+    """Hold the output folder's build lock for the whole build request. The
+    key is the view's own normalization (_ingest_abs_path) of the same JSON
+    field; a missing/invalid path passes straight through so the view reports
+    it exactly as before."""
+    @functools.wraps(view)
+    def wrapped(*args, **kwargs):
+        data = request.get_json(silent=True)
+        raw = (data.get("output_path") or "") if isinstance(data, dict) else ""
+        raw = raw.strip() if isinstance(raw, str) else ""
+        if not raw:
+            return view(*args, **kwargs)
+        path, err = _ingest_abs_path(raw)
+        if err:
+            return view(*args, **kwargs)
+        lock = _gen_out_lock(path)
+        if not lock.acquire(blocking=False):
+            return jsonify({"ok": False, "busy": True, "error": _GEN_OUT_BUSY}), 409
+        try:
+            taken, xfd = _gen_out_xlock(current_app.instance_path,
+                                        path_match.fs_key(path))
+            if not taken:
+                return jsonify({"ok": False, "busy": True, "error": _GEN_OUT_BUSY}), 409
+            try:
+                return view(*args, **kwargs)
+            finally:
+                _gen_out_xunlock(xfd)
+        finally:
+            lock.release()
+    return wrapped
+
+
 def _build_output_guard(output_path: str) -> dict | None:
     """A needs_confirm payload if building into *output_path* would clobber an
     existing chip or ingest stray JSON, else None. Two hazards: (1) an EXISTING chip
@@ -26535,6 +26665,7 @@ def _build_output_guard(output_path: str) -> dict | None:
 
 
 @bp.route("/generate/build", methods=["POST"])
+@_one_build_per_output_folder
 def generate_build():
     """Build state.json + wiring.json from a spec into the chosen folder.
 
@@ -26816,6 +26947,7 @@ def _open_chip_under(out: Path) -> Path | None:
 
 
 @bp.route("/regenerate/build", methods=["POST"])
+@_one_build_per_output_folder
 def regenerate_build():
     """Rebuild an existing chip from an (edited) spec into a NEW folder, then
     merge the source chip's calibrated values back on. Returns the build outcome
@@ -27618,8 +27750,25 @@ def _env_card_state(store: QuamStore) -> dict:
         probing = any(k.startswith((python_path or "\0") + "|")
                       for k in _schema_warm_inflight)
     missing = list((manifest or {}).get("missing_classes") or [])
+    # the env's folder name, so the card SAYS which env it checks against (a
+    # Generate-wizard row click switches it machine-wide): <env>/python.exe,
+    # or <env>/bin|Scripts/python. Review of generate-r2-08: the env the SHOWN
+    # manifest (versions, missing classes) was computed against, never merely
+    # the current selection -- another SM process sharing the instance can
+    # switch the selection file while this store's policy still holds the
+    # previous env's manifest; the selection is only the cold-card fallback.
+    checked = (getattr(store, "_type_manifest_env", None)
+               if manifest is not None else None) or python_path
+    env_name = None
+    if checked:
+        _pp = Path(checked).parent
+        if _pp.name.lower() in ("bin", "scripts") and _pp.parent.name:
+            _pp = _pp.parent
+        env_name = _pp.name or None
     return {
         "selected": python_path,
+        "env_name": env_name,
+        "env_path": checked,
         "selected_exists": bool(python_path and Path(python_path).is_file()),
         "warm": manifest is not None,
         "probing": probing,

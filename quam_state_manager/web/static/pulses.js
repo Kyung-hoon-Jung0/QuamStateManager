@@ -876,6 +876,9 @@ window.PulsesPage = (function () {
                         html += ' <a class="btn-sm" href="/generate">Choose environment →</a>';
                     }
                     verifyNote(root, html, 'warn');
+                    // the failure re-renders _config_status.html, whose 'Last good'
+                    // is a ts_local span: hidden until localized (QA generate-r2-27)
+                    if (window.applyLocalTimes) window.applyLocalTimes(root);
                     return;
                 }
                 root._verifyPlot = null;  // force a fresh fetch

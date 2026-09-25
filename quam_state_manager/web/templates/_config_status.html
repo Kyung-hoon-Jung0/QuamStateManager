@@ -73,7 +73,7 @@
     {% if meta %}
     <div class="config-status-meta">
         <span class="config-meta-line">
-            <span class="config-meta-item">Last&nbsp;good <b class="config-meta-strong">{{ meta.at }}</b></span>
+            <span class="config-meta-item">Last&nbsp;good <b class="config-meta-strong">{{ meta.at | ts_local }}</b></span>
             {% if meta.versions %}
             <span class="config-meta-sep" aria-hidden="true">&middot;</span>
             <span class="config-meta-item">quam&nbsp;{{ meta.versions.quam or '?' }}</span>

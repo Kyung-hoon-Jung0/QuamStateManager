@@ -7851,7 +7851,12 @@ button.recents-item:focus {
     align-items: center; justify-content: center; gap: 0.15rem;
     min-height: 66px; cursor: pointer;
     border: 1px dashed var(--pico-muted-border-color); border-radius: 0.35rem;
-    background: var(--pico-background-color); color: var(--pico-muted-color);
+    /* A LITERAL, never var(--pico-*): the slot is role=button (generate.js
+       renderSlot), and Pico's [role=button] rule redefines
+       --pico-background-color to the primary fill ON this element -- every
+       EMPTY slot painted solid blue, louder than the filled MW/LF tints
+       (QA F13; the same trap as .tree-entry-click). Empty reads empty. */
+    background: transparent; color: var(--pico-muted-color);
 }
 .gen-slot:hover { border-color: var(--pico-primary); }
 .gen-slot:focus { outline: none; }
@@ -9885,6 +9890,15 @@ a.sidebar-tool-btn { text-decoration: none; color: inherit; }
 .load-failed-panel { max-width: 46rem; margin: 2rem auto; padding: 1rem 1.4rem; border: 1px solid var(--color-error-text); border-radius: 8px; }
 .load-failed-panel h3 { margin-top: 0; color: var(--color-error-text); }
 .load-failed-candidates { display: flex; flex-direction: column; gap: .4rem; align-items: flex-start; }
+/* F17: the same panel in the ~284px sidebar State Load slot — fit the column,
+   wrap the unbreakable path/error text, and offer a dismiss (main-pane
+   renders of the panel keep the layout above and hide the ✕). */
+.load-failed-close { display: none; }
+#load-failed-slot .load-failed-panel { position: relative; max-width: 100%; margin: .5rem 0; padding: .6rem 1.6rem .6rem .7rem; overflow-wrap: anywhere; }
+#load-failed-slot .load-failed-panel h3 { font-size: 1em; }
+#load-failed-slot .load-failed-panel code { overflow-wrap: anywhere; word-break: break-all; }
+#load-failed-slot .load-failed-candidates button { max-width: 100%; white-space: normal; overflow-wrap: anywhere; text-align: left; }
+#load-failed-slot .load-failed-close { display: inline-block; position: absolute; top: .3rem; right: .3rem; width: auto; margin: 0; padding: 0 .35rem; line-height: 1.3; }
 .ptr-dangling { color: var(--color-error-text) !important; border-color: var(--color-error-text) !important; }
 .tray-ro-lock { margin-right: .3rem; cursor: help; color: var(--color-error-text); }
 .tray-ro-text { font-size: .78em; }
@@ -11458,6 +11472,23 @@ body.scheduler-active #pending-tray { opacity: .5; pointer-events: none; }
    third row; the box shrinks first (its placeholder is a reminder, not a label) */
 @media (max-width: 1150px) { .topbar .search-box { flex: 0 1 11rem; } }
 @media (max-width: 1000px) { .topbar .search-box { flex: 0 1 8rem; } }
+/* QA generate-r2-23: Pico pads every nav <li> 1rem top AND bottom -- sized for
+   a one-line bar, paid again on EVERY wrapped row. At 150% zoom (1066x633 CSS
+   px) the bar wrapped to three ~75px rows and took 231px, 35% of the window,
+   before the page began -- and gating the cut on the viewport left a 1600x950
+   window's two wrapped rows at 174px, taller than 1366x768's three (review).
+   So each row keeps only 0.2rem and the rest of Pico's spacing moves to the
+   GROUP, paid once however many rows it wraps to: a one-row bar is exactly as
+   tall as before, every extra row costs 0.4rem instead of 2rem. A short or
+   narrow window drops the once-paid part too. Nothing is hidden. */
+.topbar > nav > ul {
+    padding-top: calc(var(--pico-nav-element-spacing-vertical, 1rem) - 0.2rem);
+    padding-bottom: calc(var(--pico-nav-element-spacing-vertical, 1rem) - 0.2rem);
+}
+.topbar > nav > ul > li { padding-top: 0.2rem; padding-bottom: 0.2rem; }
+@media screen and (max-height: 800px), screen and (max-width: 1150px) {
+    .topbar > nav > ul { padding-top: 0; padding-bottom: 0; }
+}
 /* docs/203 — window.TopbarHold keeps the group at the tallest height it has
    reached at this width, so an edit→apply cycle cannot bounce the page. Rows
    pack to the top: the held space is blank space at the bottom, and nothing

@@ -122,8 +122,15 @@ def _save_cache(instance_path, cache: dict[str, dict]) -> None:
         logger.warning("Could not persist state-schema cache", exc_info=True)
 
 
-def _decorate(manifest: dict) -> dict:
-    """Add the SM-side derivations: ``by_leaf`` + ``missing_classes``."""
+def _decorate(manifest: dict, requested=None) -> dict:
+    """Add the SM-side derivations: ``by_leaf`` + ``missing_classes``.
+
+    ``classes``/``by_leaf`` stay the per-env cache UNION (the type layer's
+    class lookups and class-move portability read them). ``missing_classes``
+    is what the /diagnostics env card lists for the LOADED chip, so when
+    *requested* (the chip's own harvested classes) is given it covers only
+    those, in requested order — another chip's classes that merely share the
+    env's cache entry must not be reported against this chip."""
     classes = manifest.get("classes") or {}
     by_leaf: dict[str, list[str]] = {}
     missing: list[str] = []
@@ -138,6 +145,10 @@ def _decorate(manifest: dict) -> dict:
         homes = by_leaf.setdefault(leaf, [])
         if canonical not in homes:
             homes.append(canonical)
+    if requested is not None:
+        missing = [p for p in dict.fromkeys(requested)
+                   if isinstance(classes.get(p), dict)
+                   and not classes[p].get("importable")]
     manifest["by_leaf"] = by_leaf
     manifest["missing_classes"] = missing
     return manifest
@@ -179,7 +190,8 @@ def probe_state_schema(python_path: str, class_paths: list[str], instance_path=N
             cached_classes = entry.get("classes") or {}
             if set(requested) <= set(cached_classes):
                 manifest = _decorate({"classes": cached_classes,
-                                      "pulse_roster": entry.get("pulse_roster") or {}})
+                                      "pulse_roster": entry.get("pulse_roster") or {}},
+                                     requested=requested)
                 result.update(ok=True, cached=True,
                               classes=manifest["classes"],
                               pulse_roster=manifest["pulse_roster"],
@@ -220,7 +232,8 @@ def probe_state_schema(python_path: str, class_paths: list[str], instance_path=N
 
     classes = parsed.get("classes") or {}
     roster = parsed.get("pulse_roster") or {}
-    manifest = _decorate({"classes": classes, "pulse_roster": roster})
+    manifest = _decorate({"classes": classes, "pulse_roster": roster},
+                         requested=requested)
     result.update(ok=True,
                   classes=manifest["classes"], pulse_roster=manifest["pulse_roster"],
                   by_leaf=manifest["by_leaf"], missing_classes=manifest["missing_classes"],
@@ -457,7 +470,8 @@ def manifest_for_store(store, python_path: str | None, instance_path=None, *,
         if not set(requested) <= set(classes):
             return None                                  # new chip classes unprobed
         manifest = _decorate({"classes": classes,
-                              "pulse_roster": entry.get("pulse_roster") or {}})
+                              "pulse_roster": entry.get("pulse_roster") or {}},
+                             requested=requested)
         manifest["versions"] = entry.get("versions") or {}
         return manifest
 

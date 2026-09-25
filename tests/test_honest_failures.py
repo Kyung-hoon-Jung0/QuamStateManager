@@ -73,6 +73,101 @@ class TestLoadFailureIsPersistent:
         assert "load-failed-panel" in r.data.decode("utf-8")
 
 
+class TestSidebarLoadFailedSlotFits:
+    """F17: the sidebar State Load failure panel must fit the ~284px sidebar.
+    The slot used to sit INSIDE the flex ``.path-input-group`` row, so the
+    panel became a row item whose min-content width (an unbreakable folder
+    path + ``[WinError 2] ...`` text) pushed the sidebar into a sideways
+    scroll and squeezed the path input to a few pixels."""
+
+    @staticmethod
+    def _ancestors_of_slot(html: str):
+        from html.parser import HTMLParser
+        void = {"input", "br", "img", "hr", "meta", "link", "source", "wbr",
+                "area", "base", "col", "embed", "param", "track"}
+
+        class P(HTMLParser):
+            def __init__(self):
+                super().__init__()
+                self.stack, self.found = [], None
+
+            def handle_starttag(self, tag, attrs):
+                a = dict(attrs)
+                if a.get("id") == "load-failed-slot" and self.found is None:
+                    self.found = list(self.stack)
+                if tag not in void:
+                    self.stack.append((tag, a.get("id"), (a.get("class") or "").split()))
+
+            def handle_endtag(self, tag):
+                for i in range(len(self.stack) - 1, -1, -1):
+                    if self.stack[i][0] == tag:
+                        del self.stack[i:]
+                        break
+
+        p = P()
+        p.feed(html)
+        return p.found
+
+    def test_slot_is_a_block_under_the_form_row_not_a_flex_item(self, client):
+        html = client.get("/").data.decode("utf-8")
+        anc = self._ancestors_of_slot(html)
+        assert anc is not None, "the sidebar load-failed slot must exist"
+        assert any(i == "load-form" for _, i, _ in anc), (
+            "the slot stays the sidebar load form's failure target")
+        assert not any("path-input-group" in c for _, _, c in anc), (
+            "inside the flex path row the panel overflows the sidebar")
+
+    def test_sidebar_scoped_panel_css_fits_and_wraps(self):
+        css = (Path(__file__).resolve().parent.parent / "quam_state_manager"
+               / "web" / "static" / "style.css").read_text(encoding="utf-8")
+        import re
+        rule = re.search(r"#load-failed-slot \.load-failed-panel\s*\{([^}]*)\}", css)
+        assert rule and "max-width: 100%" in rule.group(1)
+        code = re.search(r"#load-failed-slot \.load-failed-panel code\s*\{([^}]*)\}", css)
+        assert code and "anywhere" in code.group(1)
+
+    def test_panel_can_be_dismissed(self, client, tmp_path):
+        r = client.post("/load", data={"folder": str(tmp_path / "nope")})
+        assert r.status_code == 400
+        assert "load-failed-close" in r.data.decode("utf-8")
+
+    @staticmethod
+    def _candidate_targets(html: str) -> list[str]:
+        import re
+        block = html.split("load-failed-candidates", 1)[1]
+        return re.findall(r'hx-post="/load"[^>]*?hx-target="([^"]*)"', block)
+
+    def test_a_sidebar_panel_keeps_its_candidates_in_the_sidebar(self, client, tmp_path):
+        """F17 review: a candidate that ALSO fails re-renders the panel into
+        the candidate's target. From the sidebar slot that target was
+        #table-pane, so a subfolder with a broken state.json replaced the open
+        main surface (Generate wizard, Qubits grid) -- the very thing the slot
+        exists to prevent."""
+        parent = tmp_path / "gen_out"
+        bad = parent / "sub"
+        bad.mkdir(parents=True)
+        (bad / "state.json").write_text("{", encoding="utf-8")   # offered, then fails
+        r = client.post("/load", data={"folder": str(parent)},
+                        headers={"HX-Request": "true", "HX-Target": "load-failed-slot"})
+        assert r.status_code == 400
+        targets = self._candidate_targets(r.data.decode("utf-8"))
+        assert targets == ["#load-failed-slot"], targets
+        # ...and pressing that candidate (it fails too) keeps answering there
+        r2 = client.post("/load", data={"folder": str(bad)},
+                         headers={"HX-Request": "true", "HX-Target": "load-failed-slot"})
+        assert r2.status_code == 400 and "load-failed-panel" in r2.data.decode("utf-8")
+
+    def test_a_main_pane_panel_keeps_its_candidates_in_the_main_pane(self, client, tmp_path):
+        """The landing's own load form posts into #table-pane: its panel IS the
+        main surface, so its candidates stay there (unchanged)."""
+        parent = tmp_path / "exp"
+        _write_chip(parent / "quam_state", _state())
+        for hdr in ({"HX-Request": "true", "HX-Target": "table-pane"}, {}):
+            r = client.post("/load", data={"folder": str(parent)}, headers=hdr)
+            assert r.status_code == 400
+            assert self._candidate_targets(r.data.decode("utf-8")) == ["#table-pane"], hdr
+
+
 class TestDanglingPointerHonesty:
     def test_inspector_says_dangling_not_resolves_to_itself(self, client, tmp_path):
         live = tmp_path / "chip"

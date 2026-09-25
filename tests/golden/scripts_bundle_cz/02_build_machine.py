@@ -630,6 +630,21 @@ def _apply_dual_upconverters(machine, spec):
                 f"q{control}: could not install upconverters dict "
                 f"({type(exc).__name__}: {exc})")
             continue
+        # Pin the control's OWN xy LO to its upconverter explicitly (the same
+        # absolute-pointer idiom the CR/ZZ channels use for upconverter 2):
+        # quam_builder>=0.4 XYDriveMW.upconverter_frequency reads only the
+        # port's scalar upconverter_frequency — just cleared above — so the
+        # default "#./upconverter_frequency" LO resolves to None and the xy
+        # IF ships as the literal "#./inferred_intermediate_frequency" the
+        # OPX rejects. Older builds read upconverters[n] (same value).
+        try:
+            xy.LO_frequency = (xy.get_reference() + "/opx_output/upconverters/"
+                               + str(getattr(xy, "upconverter", 1) or 1)
+                               + "/frequency")
+        except Exception as exc:  # noqa: BLE001 — quam parent-quirk guard
+            warnings.append(
+                f"q{control}: could not pin the xy LO to its upconverter "
+                f"({type(exc).__name__}: {exc}) — its xy IF will not resolve.")
         band = getattr(port, "band", None)
         b2 = _band_for(lo2)
         if band is not None and b2 is not None and b2 != band:
