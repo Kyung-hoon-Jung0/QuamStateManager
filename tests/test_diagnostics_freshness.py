@@ -170,9 +170,12 @@ def test_a_passive_window_re_lints_after_a_foreign_edit():
     assert "a foreign edit re-lints diagnostics once" in r.stdout, r.stdout[-3000:]
 
 
-def test_an_open_page_shows_the_live_diverged_banner():
-    """QA diagnostics-r2-11: the drift poll re-renders #live-diverged-slot when
-    its verdict and the slot disagree (tests/drift_banner_follow_selfcheck.cjs)."""
+def test_an_open_page_shows_the_live_chip_changed():
+    """QA diagnostics-r2-11: an open page follows an outside write on the next
+    drift poll. The banner that carried it is gone (sync-ux 2026-09-25); the
+    poll now re-renders the one status control when the server's verdict
+    signature moves, and never polls the retired banner endpoint
+    (tests/drift_banner_follow_selfcheck.cjs)."""
     import shutil
     import subprocess
     from pathlib import Path

@@ -4774,34 +4774,6 @@ window.livePushExtrasLine = function (typedPaths) {
     }
     window._onDriftSyncSig = onSyncSig;
 
-    /* QA diagnostics-r2-11: the pill above now follows an outside write, but
-       the banner that ASKS what to do about it (#live-diverged-slot: Review
-       & sync / Take live / Keep mine) was filled only by a full page render --
-       an open page showed "Live chip moved" and nothing to act on for as long
-       as it stayed open (real Chrome, 38 s on /diagnostics). When the poll's
-       verdict and the slot disagree, re-render the slot in place from the
-       server's own flags (/state/diverged-banner, liveedit-r2-07's endpoint);
-       a verdict that went back to clean takes a shown banner down the same
-       way. Not while an Auto-Sync pull or an apply is in flight: those settle
-       the question themselves and repaint the slot with their answer. */
-    var _bannerRefreshing = false;
-    function onDivergedBanner(d) {
-        if (!d || typeof d.live_diverged !== "boolean" || _bannerRefreshing || !window.htmx) return false;
-        if (d.auto_pull || window._applyInFlight) return false;
-        var slot = document.getElementById("live-diverged-slot");
-        if (!slot) return false;
-        var shown = !!slot.querySelector("#live-diverged-banner");
-        if (shown === d.live_diverged) return false;
-        _bannerRefreshing = true;
-        var done = function () { _bannerRefreshing = false; };
-        try {
-            var p = window.htmx.ajax("GET", "/state/diverged-banner",
-                                     { target: "#live-diverged-slot", swap: "innerHTML" });
-            if (p && p.then) p.then(done, done); else done();
-        } catch (e) { done(); }
-        return true;
-    }
-    window._onDriftDivergedBanner = onDivergedBanner;
 
     function poll() {
         // In-flight guard + visibility gating (audit B24): never overlap a slow
