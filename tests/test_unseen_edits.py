@@ -246,6 +246,22 @@ class TestTakeLiveAsksBeforeDiscardingTheOtherWindowsEdit:
         assert r.status_code == 200, r.get_data(as_text=True)
 
 
+class TestTheTreeCanReadTheWorkingCopy:
+    """QA F2 (windows): the Json Tree View follows another window's edit by
+    re-reading the documents it renders -- the WORKING copy, pending edits
+    included, exactly what /explorer inlines."""
+
+    def test_model_carries_the_other_windows_edit(self, app_client):
+        _edit(app_client, "qubits.q1.f_01", "6.2e9")
+        r = app_client.get("/explorer/model")
+        assert r.status_code == 200
+        d = r.get_json()
+        assert d["ok"] is True
+        assert d["state"]["qubits"]["q1"]["f_01"] == 6.2e9
+        assert isinstance(d["wiring"], dict)
+        assert "no-store" in r.headers.get("Cache-Control", "")
+
+
 class TestTheTopBarPublishesItsRealHeight:
     """docs/120 item 23 — `--topbar-height` declared 48px while the rendered
     bar (a wrapping <nav>) measured 201px @1600, 229 @1280, 254 @1024. Every

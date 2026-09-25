@@ -5719,6 +5719,26 @@ def explorer():
     )
 
 
+@bp.route("/explorer/model")
+def explorer_model():
+    """QA F2 (windows): the two documents the Json Tree View renders, as data.
+
+    An open tree is drawn ONCE from the page's inlined JSON, so a value another
+    window edited or applied stayed stale on screen (under a tray reading
+    Synced) until a full reload threw away the search, expansion and scroll.
+    The drift poll's foreign-edit path reads this and patches only the leaves
+    that moved, in place (LiveSurfacePatch, docs/144). Read-only; the working
+    copy, exactly as /explorer renders it."""
+    store = _store()
+    if not store:
+        return jsonify(ok=False, error=_NO_CHIP_MSG), 400
+    with store._lock:
+        body = json.dumps({"ok": True, "state": store.state,
+                           "wiring": store.wiring})
+    return current_app.response_class(body, mimetype="application/json",
+                                      headers={"Cache-Control": "no-store"})
+
+
 # ======================================================================
 # Qubits
 # ======================================================================

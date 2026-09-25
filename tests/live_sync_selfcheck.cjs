@@ -970,6 +970,71 @@ function discard(w, detail) {
     ok(ps === 'min 1,000 · max 2,000', 'K4 ...while grouped numbers keep theirs (got ' + JSON.stringify(ps) + ')');
 }
 
+/* ── QA F2 (windows): the Json Tree View follows another window's edit ──
+   A foreign edit_seq move re-reads /explorer/model and patches the leaf in
+   place -- the row text AND the model the search reads -- keeping the
+   expansion; a changed shape takes the soft re-render; a user mid-edit or a
+   live-diff overlay is left alone. */
+{
+    const ST = { qubits: { q3: { chi: -353000, f_01: 5.1e9 } }, ports: { a: 1 } };
+    const WI = { wiring: { qubits: { q3: { xy: '#/ports/a' } } } };
+    let model = null;
+    const html = '<div id="pending-tray" data-change-count="0" data-change-sig="" data-edit-seq="T1"></div>'
+        + '<div id="table-pane"><div id="explorer-livediff-bar" class="livediff-bar" hidden></div>'
+        + '<div id="explorer-tree-state"></div><div id="explorer-tree-wiring" style="display:none"></div></div>';
+    const { w, S } = world(html, 'http://localhost/explorer', ['app.js'], function (w, S) {
+        const f0 = w.fetch;
+        w.fetch = function (u, o) {
+            if (String(u).indexOf('/explorer/model') === 0) { S.modelGets = (S.modelGets || 0) + 1; return mkResp(model); }
+            return f0(u, o);
+        };
+    });
+    w.renderJsonTree('explorer-tree-state', JSON.parse(JSON.stringify(ST)), { defaultDepth: 3, crud: true });
+    w.renderJsonTree('explorer-tree-wiring', JSON.parse(JSON.stringify(WI)), { defaultDepth: 1, crud: true });
+    w.jsonTreeSetExpanded('explorer-tree-state', ['qubits', 'qubits.q3']);
+    const rowVal = function () {
+        const n = w.document.querySelector('#explorer-tree-state .tree-node[data-path="qubits.q3.chi"] .tree-val');
+        return n && n.textContent;
+    };
+    ok(/353/.test(rowVal() || ''), 'X0 the tree renders chi (got ' + rowVal() + ')');
+    w.__lastUserAct = 0;
+    model = { ok: true, state: { qubits: { q3: { chi: -363000, f_01: 5.1e9 } }, ports: { a: 1 } }, wiring: WI };
+    let r = await w._followOnExplorer();
+    ok(r === 'patched' && /363/.test(rowVal() || '') && !/353/.test(rowVal() || ''),
+       'X1 another window\'s value is patched into the row in place (got ' + r + ', ' + rowVal() + ')');
+    const st = w.document.getElementById('explorer-tree-state');
+    ok(st._treeData.qubits.q3.chi === -363000, 'X2 ...and into the model the search reads');
+    ok(!S.ajax.some(function (a) { return a.url === '/explorer'; }), 'X3 ...without re-rendering the tree');
+    // the foreign-edit path reaches it
+    S.modelGets = 0;
+    w._editSeqSeen = 'T1';
+    model.state.qubits.q3.chi = -370000;
+    w._onDriftEditSeq({ edit_seq: 'T2' });
+    await sleep(80);
+    ok(S.modelGets === 1 && /370/.test(rowVal() || ''),
+       'X4 a foreign edit_seq move follows the tree (gets=' + S.modelGets + ', ' + rowVal() + ')');
+    // a changed shape: soft re-render (keeps the view), never a patch
+    S.ajax.length = 0;
+    model = { ok: true, state: { qubits: { q3: { chi: -370000, f_01: 5.1e9, new_key: 1 } }, ports: { a: 1 } }, wiring: WI };
+    r = await w._followOnExplorer();
+    ok(r === 'refreshed' && S.ajax.some(function (a) { return a.url === '/explorer'; }),
+       'X5 a new key takes the soft re-render (got ' + r + ')');
+    // a user in the window: deferred
+    S.modelGets = 0;
+    w.__lastUserAct = Date.now();
+    r = w._followOnExplorer();
+    ok(r === null && S.modelGets === 0, 'X6 a window with a user in it is not patched now');
+    w.__lastUserAct = 0;
+    // the live-diff overlay owns the tree
+    w.document.getElementById('explorer-livediff-bar').hidden = false;
+    r = w._followOnExplorer();
+    ok(r === null && S.modelGets === 0, 'X7 a live-diff overlay is left alone');
+    w.document.getElementById('explorer-livediff-bar').hidden = true;
+    ok(w._treeLeafDiff({ a: [1, 2] }, { a: [1, 3] }, '', []) === true
+       && w._treeLeafDiff({ a: [1, 2] }, { a: [1, 2, 3] }, '', []) === false,
+       'X8 a list element is a leaf, a list length change is a shape change');
+}
+
 console.log(fails ? (fails + ' failed') : ('all checks passed (' + asserts + ' assertions)'));
 process.exit(fails ? 1 : 0);
 })().catch(function (e) { console.error('FAIL: selfcheck threw: ' + (e && e.stack || e)); process.exit(1); });

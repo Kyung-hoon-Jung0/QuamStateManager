@@ -3601,6 +3601,10 @@ window.doStateSync = function(mode, forced, ackUnseen, expectChip, opts) {
                         window.showToast(data.message || "Nothing left to apply.",
                                          "warning");
                     }
+                    // QA correctness-r2-03: the other window applied or
+                    // discarded the edits this screen still shows -- its
+                    // cells must stop showing values the chip does not hold.
+                    try { if (window._followValuesOnScreen) window._followValuesOnScreen(); } catch (e) {}
                     return;
                 }
                 // Never a dead end — name what would go, and let one click
@@ -4149,6 +4153,73 @@ window.livePushExtrasLine = function (typedPaths) {
         window._scheduleGridResync(0);
     }
     window._followOnGrid = followOnGrid;
+    /* QA F2 (windows): the Json Tree View is drawn once from inlined JSON and
+       had no refresher here -- another window's edit + apply left chi reading
+       -353,000 under a tray reading Synced, and only F5 (which drops the
+       search, expansion and scroll) fixed it. Re-read both documents and
+       patch just the leaves that moved, model and row, in place (docs/144);
+       a changed SHAPE takes the soft re-render, which keeps the view
+       (docs/122). Never while someone is typing or reading a live diff. */
+    var _treeFollowTimer = null;
+    var _TREE_PATCH_CAP = 400;
+    function _treeLeafDiff(a, b, path, out) {
+        var ao = a !== null && typeof a === "object", bo = b !== null && typeof b === "object";
+        if (!ao && !bo) {
+            if (a !== b) out.push({ dot_path: path, value: b });
+            return out.length <= _TREE_PATCH_CAP;
+        }
+        if (!ao || !bo || Array.isArray(a) !== Array.isArray(b)) return false;
+        var ka = Object.keys(a), kb = Object.keys(b);
+        if (ka.length !== kb.length) return false;
+        for (var i = 0; i < kb.length; i++) {
+            if (!Object.prototype.hasOwnProperty.call(a, kb[i])) return false;
+            if (!_treeLeafDiff(a[kb[i]], b[kb[i]], path ? path + "." + kb[i] : kb[i], out)) return false;
+        }
+        return true;
+    }
+    window._treeLeafDiff = _treeLeafDiff;
+    function followOnExplorer() {
+        if (_treeFollowTimer) { clearTimeout(_treeFollowTimer); _treeFollowTimer = null; }
+        var st = document.getElementById("explorer-tree-state");
+        var wi = document.getElementById("explorer-tree-wiring");
+        if (!st || !wi) return null;
+        var bar = document.getElementById("explorer-livediff-bar");
+        if (bar && !bar.hidden) return null;   // the diff overlay owns the tree
+        if ((Date.now() - (window.__lastUserAct || 0)) < 2000
+                || document.querySelector(".json-tree .tree-val-editing")) {
+            _treeFollowTimer = setTimeout(followOnExplorer, 2000);
+            return null;
+        }
+        return fetch("/explorer/model", { cache: "no-store" })
+            .then(function (r) { return r.ok ? r.json() : null; })
+            .then(function (d) {
+                if (!d || !d.ok || document.getElementById("explorer-tree-state") !== st) return "gone";
+                var changes = [], same = true;
+                [[st, d.state], [wi, d.wiring]].forEach(function (p) {
+                    if (!same || p[0]._treeData == null) return;
+                    if (!_treeLeafDiff(p[0]._treeData, p[1], "", changes)) same = false;
+                });
+                if (!same) {
+                    if (typeof _keepPaneScroll === "function") _keepPaneScroll();
+                    if (typeof _softRefreshLiveSurface === "function") _softRefreshLiveSurface();
+                    return "refreshed";
+                }
+                if (!changes.length) return "unchanged";
+                window.LiveSurfacePatch.apply(changes.map(function (c) {
+                    return { dot_path: c.dot_path, value: c.value,
+                             old_value_str: typeof c.value === "string" ? c.value : JSON.stringify(c.value) };
+                }));
+                return "patched";
+            })
+            .catch(function () { return "failed"; });
+    }
+    window._followOnExplorer = followOnExplorer;
+    /* ...and the one entry point for "the working copy moved under this
+       screen": the grids and the tree, each through its own refresher. */
+    window._followValuesOnScreen = function () {
+        followOnGrid();
+        return followOnExplorer();
+    };
     /* docs/190 F05: another window changed the working copy. Re-render the tray
        (the count and the change signature the docs/179 gate reads) and re-fetch
        the rows/inspector VALUES the reader has on screen. Never a navigation:
@@ -4167,7 +4238,7 @@ window.livePushExtrasLine = function (typedPaths) {
         // refused push's conflict tray for the plain one within seconds.
         if (!foreign) { _foreignRefreshing = false; return; }
         var done = function () { _foreignRefreshing = false; };
-        var after = function () { done(); if (foreign) followOnGrid(); };
+        var after = function () { done(); if (foreign) window._followValuesOnScreen(); };
         try {
             var p = window.htmx.ajax("GET", "/state/tray",
                                      { target: "#pending-tray", swap: "outerHTML" });
