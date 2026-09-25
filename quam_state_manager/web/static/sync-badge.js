@@ -91,7 +91,10 @@
                 clear(k);
                 if (onAck[k]) { try { onAck[k](payload); } catch (e) {} }
             });
-            anchor.parentNode.insertBefore(el, anchor.nextSibling);
+            // sync-ux 2026-09-25: the pill sits inside the status control's split
+            // button now; the chip goes after the WHOLE control
+            var after = (anchor.closest && anchor.closest('.sync-control')) || anchor;
+            after.parentNode.insertBefore(el, after.nextSibling);
         }
         var spec = KINDS[kind];
         el.setAttribute('data-kind', kind);

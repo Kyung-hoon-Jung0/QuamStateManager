@@ -1,0 +1,21 @@
+{#- sync-ux 2026-09-25 (default 3 of the 2026-09-25 decisions): the "Standalone folder" chip
+    and the ⚗ QUAlibrate project badge left the one-row top bar and live here,
+    beside the folder the user loads. Same facts, same colours (docs/55: red =
+    the active project's state_path dangles, amber = QUAlibrate writes a
+    different chip), never a sync signal -- the status control carries the one
+    sync-relevant case as its "⚗ elsewhere" marker. -#}
+{%- if qualibrate_tray is defined and qualibrate_tray -%}
+<div class="sidebar-folder-badges">
+{%- if qualibrate_tray.standalone %}
+<span class="qualibrate-tray-badge tray-standalone-badge"
+      title="This chip is a standalone folder — it is not part of any QUAlibrate project. Everything is editable as usual; only the project association is absent.{% if qualibrate_tray.standalone_path %}&#10;{{ qualibrate_tray.standalone_path }}{% endif %}">
+    <span aria-hidden="true">&#128193;</span>&nbsp;Standalone folder</span>
+{%- endif %}
+{%- if qualibrate_tray.project or qualibrate_tray.sm_scope %}
+<a href="/qualibrate" hx-get="/qualibrate" hx-target="#table-pane" hx-push-url="true"
+   class="qualibrate-tray-badge{% if qualibrate_tray.dangling %} qualibrate-tray-danger{% elif qualibrate_tray.match == false %} qualibrate-tray-warn{% endif %}"
+   title="{% if qualibrate_tray.dangling %}QUAlibrate active project — its state_path does not exist (see Projects &rarr; Doctor){% elif qualibrate_tray.match == false %}QUAlibrate writes to a different chip than the one open in SM — click to review projects{% elif qualibrate_tray.match %}QUAlibrate active project — same chip as loaded in SM{% elif qualibrate_tray.project %}QUAlibrate active project — click to manage projects{% else %}SM project scope — qualibrate has no active project set{% endif %}">
+    <span aria-hidden="true">&#9879;</span>&nbsp;{{ qualibrate_tray.sm_scope or qualibrate_tray.project }}{% if qualibrate_tray.sm_scope and qualibrate_tray.project and qualibrate_tray.sm_scope != qualibrate_tray.project %}&nbsp;<span class="qualibrate-tray-active-note">(qualibrate: {{ qualibrate_tray.project }})</span>{% endif %}</a>
+{%- endif %}
+</div>
+{%- endif -%}

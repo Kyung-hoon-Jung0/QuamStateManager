@@ -18,87 +18,26 @@
      data-change-sig="{{ change_sig | default('') }}"
      data-working-dirty="{{ '1' if working_dirty else '0' }}"
      data-edit-seq="{{ edit_seq | default('') }}"
-     data-seq="{{ mutation_seq | default('') }}">
-  <div class="tray-bar">
-    <span class="tray-indicator tray-indicator-warn">
-      &#9888; The live chip changed since you loaded it
-    </span>
-    <div class="tray-actions">
-      <button class="btn-sm" onclick="openReview()">Review changes</button>
-    </div>
-  </div>
-{# docs/187 (3): this tray REPLACES #pending-tray, and the pill lived only
-   there -- so with a conflict on screen nothing said whether Auto-Sync was on,
-   nothing said it had just been turned off, and there was no control to turn
-   it back on. The pill is one partial now, rendered by both trays.
-
-   R6: it must be a DIRECT child of #pending-tray, exactly as in the main tray.
-   `html.topbar-hidden #pending-tray > :not(.state-status-badge):not(.auto-sync-wrap)`
-   (style.css:950) exempts direct children only, so nesting it inside
-   `.tray-bar` had the whole bar -- pill included -- hidden whenever the top bar
-   was collapsed: a tray pointing at a control nobody could click. #}
-{% include '_auto_sync_pill.html' %}
-{# ...and SAY it, where the user is looking. A toast is gone in seconds; this
-   is the surface they are reading while they decide what to do. `auto_sync`
-   is the session as it stands AFTER the route decided, so the two branches
-   cannot claim something the server did not do. #}
+     data-seq="{{ mutation_seq | default('') }}"
+     {% if sync is defined and sync %}data-sync-sig="{{ sync.sig }}" data-sync-state="{{ sync.state }}"{% endif %}
+     data-refused="{{ 'staged' if staged_conflict else 'edits' }}">
+{# sync-ux 2026-09-25 (user decision 2026-09-25): this used to be a 4-row tray that grew
+   the top bar to ~490 px. It is the status control now, in its "refused" state
+   -- "Apply wrote nothing — live changed" -- and every choice (⇄ Pull & apply,
+   Re-apply, ↓ Take live, ↑ Keep mine — overwrite live) is in the sync panel,
+   which the client opens in answer to the press that was refused. What
+   Auto-Sync decided (turned off / still merging) is said in the panel. #}
+{% include '_sync_control.html' %}
+{# docs/187 (3): SAY what Auto-Sync decided, where the user is looking -- a
+   compact marker in the one row (the panel repeats it in full). It states the
+   DECISION this refusal carried, never an inference from the session. #}
 {% if auto_disarmed %}
-  <p class="tray-conflict-note tray-conflict-autosync">
-    Auto-Sync has been turned <b>off</b> &mdash; it will not write to the live
-    chip again until you turn it back on with the pill above.
-  </p>
+<span class="sync-marker tray-conflict-autosync"
+      title="Auto-Sync has been turned off — it will not write to the live chip again until you turn it back on with the Auto pill · 자동 동기화가 꺼졌습니다">&#9889; turned off</span>
 {% elif auto_merging %}
-  <p class="tray-conflict-note tray-conflict-autosync">
-    Auto-Sync is still on and is resolving this itself (pull, re-apply your
-    edits on top, push). Choose below only if you would rather decide.
-  </p>
+<span class="sync-marker tray-conflict-autosync"
+      title="Auto-Sync is still on and is resolving this itself (pull, re-apply your edits on top, push). Open the panel only if you would rather decide · 자동 동기화가 직접 해결하는 중">&#9889; still on &middot; merging</span>
 {% endif %}
-  {% set _staged = staged_conflict is defined and staged_conflict %}
-  {% if _staged %}
-  {# docs/65: nothing in the re-apply stash — the working state IS the payload
-     (a loaded snapshot / saved edits). "Pull & re-apply" would replay nothing
-     and silently destroy it, so offer only the honest choices. #}
-  <p class="tray-conflict-note">
-    An experiment program updated the live state after you loaded it. Your
-    working state holds loaded/saved content &mdash; choose which side wins:
-  </p>
-  <div class="tray-actions tray-conflict-choices">
-    <button class="btn-sm primary tray-force-btn"
-            hx-post="/state/apply-to-live?force=1"
-            hx-target="#pending-tray"
-            hx-swap="outerHTML"
-            {# docs/179: force=1 answers the STALENESS question. It has never
-               meant "and another window's edits too", so this door declares
-               its own screen like every other one. #}
-            hx-vals='{"seen_changes": "{{ change_count }}", "seen_sig": "{{ change_sig }}"}'
-            hx-confirm="Overwrite the live chip with your working state? Changes written by an experiment program will be lost.">
-      &#8593; Keep mine <span class="sync-btn-sub">&mdash; overwrite live</span></button>
-    <button class="btn-sm outline" onclick="doStateSync('discard')"
-            title="Replace the working state with the live chip — your loaded/saved content is dropped (asks first).">
-      &#8595; Take live <span class="sync-btn-sub">&mdash; discard mine</span></button>
-  </div>
-  {% else %}
-  <p class="tray-conflict-note">
-    An experiment program updated the live state after you loaded it. Pull the
-    latest live state &mdash; choose what happens to the edits you made:
-  </p>
-  <div class="tray-actions tray-conflict-choices">
-    <button class="btn-sm primary" onclick="doStateSync('apply')"
-            title="Merge — pull the latest live state, re-apply your edits on top, and write the merged result straight to the live chip in one step.">
-      &#8644; Pull &amp; apply <span class="sync-btn-sub">(merge)</span></button>
-    <button class="btn-sm" onclick="doStateSync('reapply')"
-            title="Pull the latest live state, then re-apply your edits on top as pending changes so you can review them before pushing to the live chip.">
-      Re-apply <span class="sync-btn-sub">(review first)</span></button>
-    <button class="btn-sm outline" onclick="doStateSync('discard')"
-            title="Replace the working state with the live chip — your edits are dropped.">
-      &#8595; Take live <span class="sync-btn-sub">&mdash; discard my edits</span></button>
-    <button class="btn-sm outline tray-force-btn"
-            hx-post="/state/apply-to-live?force=1"
-            hx-target="#pending-tray"
-            hx-swap="outerHTML"
-            hx-vals='{"seen_changes": "{{ change_count }}", "seen_sig": "{{ change_sig }}"}'
-            hx-confirm="Overwrite the live chip with your version? Changes written by an experiment program will be lost.">
-      &#8593; Keep mine <span class="sync-btn-sub">&mdash; overwrite live</span></button>
-  </div>
-  {% endif %}
+{# docs/187 (3) R6: the pill stays a DIRECT child of #pending-tray. #}
+{% include '_auto_sync_pill.html' %}
 </div>

@@ -199,7 +199,10 @@
            "1 unapplied edit" while a saved working state went with it is
            understating a loss, which is worse than not counting. */
         var n = parseInt(d.count || 0, 10);
-        var more = !!d.saved || !!d.dom || parseInt(d.stash || 0, 10) > 0;
+        /* SYNCEXP-09: typed-but-not-entered cells are NOT discarded (the pull
+           patches only the leaves it changed; the typed input keeps its text),
+           so they are never counted as lost work here. */
+        var more = !!d.saved || parseInt(d.stash || 0, 10) > 0;
         var what = (n > 0 && !more)
             ? (n + ' unapplied edit' + (n === 1 ? '' : 's'))
             : (n > 0 ? (n + ' unapplied edit' + (n === 1 ? '' : 's')
@@ -265,9 +268,11 @@
     document.addEventListener('liveConflict', function (e) {
         var d = (e && e.detail) || {};
         if (d.chip && window.__chipToken && d.chip !== window.__chipToken) return;
-        if (!window.htmx || !document.getElementById('live-diverged-slot')) return;
-        window.htmx.ajax('GET', '/state/diverged-banner',
-                         { target: '#live-diverged-slot', swap: 'innerHTML' });
+        // sync-ux 2026-09-25: the banner is gone; the status control IS the question.
+        // Re-render it so it names the colliding fields (state 'collide').
+        if (!window.htmx || !document.getElementById('pending-tray')) return;
+        window.htmx.ajax('GET', '/state/tray',
+                         { target: '#pending-tray', swap: 'outerHTML' });
     });
     // htmx fires a plain (detail-less) event for string triggers too
     // QA diagnostics-r2-04: a flush that carried crash-class values names them

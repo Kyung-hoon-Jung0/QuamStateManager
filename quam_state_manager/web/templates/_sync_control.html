@@ -1,0 +1,83 @@
+{#- sync-ux 2026-09-25 -- THE status control (user decision 2026-09-25: "one status control in
+    a one-row top bar + one sync panel opened from it"). Every sync fact this
+    window knows is said here and only here; the full-width drift banner and Chip
+    Status' own banner are gone. Rendered from `sync` (core/sync_status.py view),
+    which both tray renderers stamp, so every window and every F5 shows the same
+    words for the same state.
+
+    Split button: [dot · state · chip ▾] opens the panel; the one attached action
+    (if any) never loses anything -- a choice that loses something lives in the
+    panel, names the loss in its own label and needs a second press. Contract
+    trio wording (docs/97) is kept verbatim on the actions.
+
+    English label, Korean gloss in the tooltip (default 7 of the decisions).
+    Reads: sync, active_name, chip_origin, change_count, working_dirty,
+    qualibrate_tray, auto_apply. -#}
+{%- set _sv = sync if (sync is defined and sync) else none -%}
+{%- set _st = _sv.state if _sv else ('dirty' if (change_count or working_dirty) else 'synced') -%}
+{%- set _n = _sv.unapplied if _sv else (change_count | default(0)) -%}
+{%- set _ln = _sv.live_n if _sv else 0 -%}
+{%- set _cn = (_sv.conflicts | length) if _sv else 0 -%}
+{#- the legacy badge classes stay on the main button: the drift poll, PaneState
+    and the topbar-hidden rule all key on .state-status-badge -#}
+{%- set _legacy = {'synced': 'synced', 'live': 'drifted', 'archive': 'archive',
+                   'unreadable': 'unreadable'}.get(_st, 'dirty') -%}
+{%- if _st == 'archive' %}{% set _ai = archive_info() %}{% endif -%}
+{%- set _texts = {
+  'synced': ('In sync', '동기화됨 — 여기 보이는 값이 라이브 칩과 같습니다.'),
+  'mine': (_n ~ ' unapplied edit' ~ ('s' if _n != 1 else ''), '적용 안 한 수정 ' ~ _n ~ '개 — 아직 라이브 칩에 없습니다.'),
+  'staged': ('Staged version · not on live', '불러온 버전 · 라이브에 없음 — 문서 전체가 라이브 칩과 다릅니다.'),
+  'live': ('Live chip changed' ~ (' · ' ~ _ln ~ ' value' ~ ('s' if _ln != 1 else '') if _ln else ''), '라이브 칩 변경 — 다른 프로그램(실험, 편집기, 다른 창)이 라이브 파일을 바꿨습니다. 여기 값은 예전 값입니다.'),
+  'both': ((_n ~ ' unapplied · ' if _n else 'Saved edits · ') ~ 'live changed' ~ (' ' ~ _ln if _ln else ''), '미적용 수정과 라이브 변경이 함께 있습니다 (겹치는 값 없음).'),
+  'collide': (_cn ~ ' field' ~ ('s' if _cn != 1 else '') ~ ' changed on both sides', '양쪽에서 같은 값을 바꿨습니다 — 값마다 내 값/라이브 값을 고르세요.'),
+  'refused': ('Apply wrote nothing — live changed', '적용 안 됨 — 그 사이 라이브 칩이 바뀌었습니다. 아무것도 기록되지 않았습니다.'),
+  'unreadable': ("Can't read the live chip — your edits are safe", '라이브 칩 파일을 읽을 수 없습니다 (저장 도중이거나 깨진 파일). 내 수정은 안전합니다.'),
+  'archive': ('Archive · read-only' ~ ((' · run ' ~ _ai.run_label) if (_ai is defined and _ai and _ai.run_label) else ''), '보관본 · 읽기 전용 — 데이터셋 실행의 quam_state 입니다.'),
+} -%}
+{%- set _t = _texts.get(_st, _texts['synced']) -%}
+<span class="sync-control sync-st-{{ _st }}" aria-label="Sync status"
+      data-sync-state="{{ _st }}">
+<button type="button"
+        class="sync-control-main state-status-badge state-status-{{ _legacy }}"
+        onclick="openReview()" aria-haspopup="dialog" aria-expanded="false"
+        title="{{ _t[0] }} · {{ _t[1] }}{% if _cn %}&#10;Changed on both sides: {{ _sv.conflicts[:4] | join(', ') }}{% if _cn > 4 %} and {{ _cn - 4 }} more{% endif %}{% endif %}{% if _st == 'unreadable' and _sv and _sv.unreadable %}&#10;{{ _sv.unreadable }}{% endif %}{% if _st not in ('archive',) %}&#10;Click for the sync panel · 클릭하면 동기화 패널이 열립니다{% if auto_apply %}{{ '&#10;Auto-Sync is ON: leaving an edited field writes it straight to the live chip. Every change is listed in the panel and revertible with its ✕, or the whole session with ↺ Revert this session.' | safe }}{% else %}{{ '&#10;How this works: edits stay in your working state (a private copy) until you press Apply to live — reversible with ↺ Revert last apply.' | safe }}{% endif %}{% endif %}">
+  <span class="state-status-dot" aria-hidden="true">&#9679;</span>
+  <span class="sync-control-text">{{ _t[0] }}</span>
+  {% if active_name %}<span class="state-status-name" title="{{ active_name }}">{{ active_name }}</span>{% endif %}
+  {% if qualibrate_tray is defined and qualibrate_tray and qualibrate_tray.match == false and not qualibrate_tray.standalone %}<span class="sync-marker sync-marker-elsewhere" title="QUAlibrate's active project writes a different folder — its runs will never show up as a live change here · QUAlibrate 프로젝트가 다른 폴더에 씁니다">&#9879; elsewhere</span>{% endif %}
+  <span class="sync-control-caret" aria-hidden="true">&#9662;</span>
+</button>
+{%- if _st == 'mine' and not working_dirty %}
+<button type="button" class="sync-control-act btn-apply-live"
+        onclick="doStateSync('apply')"
+        title="Writes your {{ _n }} edit{{ 's' if _n != 1 }} to the live chip. Lost: nothing (the live chip is backed up first; ↺ Revert last apply undoes it) · 내 수정 {{ _n }}개를 라이브 칩에 기록 — 잃는 것 없음">&#8593; Apply {{ _n }}</button>
+{%- elif _st in ('staged', 'mine') %}
+{#- a saved / staged working state is pushed WHOLE, never pull-merged: the
+    pull-first merge would put the live chip under the saved edits (the
+    grid's applyEditsToLive routes the same way, off data-working-dirty) -#}
+<button type="button" class="sync-control-act btn-apply-live sync-arm"
+        data-arm-label="Press again to write it to live"
+        hx-post="/state/apply-to-live" hx-target="#pending-tray" hx-swap="outerHTML"
+        hx-trigger="armed" hx-disabled-elt="this"
+        hx-vals='{"seen_changes": "{{ _n }}", "seen_sig": "{{ change_sig | default('') }}"}'
+        data-after-request="clearUndo"
+        onclick="SyncPanel.arm(this, event)"
+        title="Writes this staged version over the live chip. The live chip has not changed since you synced, so nothing of anyone else's is lost; it is backed up first (↺ Revert last apply). Press twice · 불러온 버전을 라이브에 기록 — 두 번 누르세요">&#8593; Apply</button>
+{%- elif _st == 'live' %}
+<button type="button" class="sync-control-act sync-act-take"
+        onclick="doStateSync('discard')"
+        title="Replaces what you see with the live chip. You have no unapplied edits, so nothing is lost, and the live chip is not written · 라이브 칩 값을 받아옵니다 — 잃는 것 없음">&#8595; Take live</button>
+{%- elif _st == 'both' and _n and not working_dirty %}
+<button type="button" class="sync-control-act btn-apply-live"
+        onclick="doStateSync('apply')"
+        title="⇄ Pull &amp; apply (merge): takes the live chip's {{ _ln }} change{{ 's' if _ln != 1 }}, then writes your {{ _n }} edit{{ 's' if _n != 1 }} on top. No field is in both, so nothing is lost · 라이브 변경을 받고 내 수정을 위에 기록 — 겹치는 값 없음">&#8644; Pull &amp; apply</button>
+{%- elif _st in ('both', 'collide', 'refused') %}
+<button type="button" class="sync-control-act sync-act-resolve"
+        onclick="openReview()"
+        title="Opens the sync panel to choose · 패널에서 고르세요">Resolve&hellip;</button>
+{%- elif _st == 'unreadable' %}
+<button type="button" class="sync-control-act sync-act-retry"
+        onclick="SyncPanel.retry()"
+        title="Read the live chip again now · 다시 읽기">Retry</button>
+{%- endif %}
+</span>

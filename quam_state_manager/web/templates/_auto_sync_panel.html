@@ -18,28 +18,27 @@
   <form hx-post="/auto-sync/set" hx-target="#pending-tray" hx-swap="outerHTML"
         data-after-request="autoSyncClose">
     <strong class="as-title">Auto-Sync</strong>
+    {# sync-ux 2026-09-25 (user decision 3, 2026-09-25): when first armed, Auto-Sync TAKES
+       live changes and keeps the user's unapplied edits on top. "Replace" and
+       "push" start unticked: a live write still needs a press unless push is
+       explicitly chosen (docs/117/160). A re-opened panel shows the session as
+       it stands. #}
     <label class="as-row">
       <input type="checkbox" name="pull" value="1" id="as-pull"
              {% if not _as or _as.pull %}checked{% endif %}
              onchange="AutoSync.syncNested()">
-      <span>Auto <b>pull</b> from the live chip</span></label>
+      <span>&#8595; Take live changes automatically
+        <small class="muted">your unapplied edits stay on top of them · 라이브 변경 자동으로 받기</small></span></label>
     <label class="as-row as-row-sub">
       <input type="checkbox" name="pull_replace" value="1" id="as-pull-replace"
-             {% if not _as or _as.pull_replace %}checked{% endif %}>
-      <span>…and <b>replace</b> my unapplied edits
-        <small class="muted">Off: SM asks instead of discarding your work.</small></span></label>
+             {% if _as and _as.pull_replace %}checked{% endif %}>
+      <span class="as-danger">&hellip;even over my unapplied edits (live wins)
+        <small class="muted">Lost each time the live chip changes: your unapplied edits, not recoverable with Ctrl+Z · 내 미적용 수정이 매번 사라짐</small></span></label>
     <label class="as-row">
       <input type="checkbox" name="push" value="1" id="as-push"
-             {% if not _as or _as.push %}checked{% endif %}>
-      <span>Auto <b>push</b> to the live chip</span></label>
-    {# The risk of REPLACE is unapplied work, not applied work — a pull that
-       replaces discards edits that never reached the tray's undo journal, so
-       reassuring the user about "revertible applies" here would answer a
-       question they did not ask. Say what actually disappears. #}
-    <p class="as-note muted">Ticking <b>replace</b> means the live chip always
-      wins, without asking — <b>unapplied edits in SM are discarded</b> and are
-      not recoverable with Ctrl+Z. Anything already applied to the chip stays
-      revertible as usual.</p>
+             {% if _as and _as.push %}checked{% endif %}>
+      <span>&#8593; Write my edits to the live chip automatically
+        <small class="muted">every Enter writes; if the live chip changed meanwhile it merges when take is on, otherwise stops and asks · 내 수정 자동 기록</small></span></label>
     <div class="as-actions">
       <button type="submit" class="btn-sm">Save</button>
       {% if _as %}

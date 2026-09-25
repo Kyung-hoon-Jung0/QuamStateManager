@@ -1,63 +1,10 @@
-{# Live-files-replaced banner — shown when the active chip's live
-   state.json/wiring.json changed out-of-band (content hash differs) while
-   the working copy holds, or might hold, unapplied edits. Without this the
-   app would silently keep showing the old chip (the stale working copy).
-   Clean working copies never get here — they are auto-synced on load. #}
-{% if live_diverged %}
-<div class="topo-change-banner live-diverged-banner" id="live-diverged-banner" role="alert">
-    {# docs/87: the count is FREE — the reconcile that raised this banner had to
-       read both sides to reach its verdict, so it hands the diff back. It is
-       "as of that check"; Review is the authority. None ⇒ say nothing rather
-       than invent a number. #}
-    {# When Auto-Sync established WHICH fields collide, lead with them. A
-       non-colliding live change never reaches this banner any more -- it is
-       merged in silently -- so an appearance here means a genuine two-sided
-       edit, and naming it is the difference between a decision and a dialog
-       the user learns to dismiss. #}
-    <span class="topo-change-banner-text">
-        {%- if live_conflicts %}
-        &#9888;&#65039; <b>{{ live_conflicts|length }}</b> field{{ 's' if live_conflicts|length != 1 }}
-        {{ 'were' if live_conflicts|length != 1 else 'was' }} changed both here and on
-        <b>{{ active_name or "this chip" }}</b>:
-        {% for p in live_conflicts[:3] %}<code>{{ p }}</code>{{ ', ' if not loop.last }}{% endfor %}
-        {%- if live_conflicts|length > 3 %} and {{ live_conflicts|length - 3 }} more{% endif %}
-        &mdash; choose which to keep.
-        {%- else %}
-        &#9888;&#65039; The live state files for <b>{{ active_name or "this chip" }}</b> changed on disk
-        {%- if live_drift_count %} &mdash; <b>{{ live_drift_count }}</b> value{{ 's' if live_drift_count != 1 }} differ{{ '' if live_drift_count != 1 else 's' }}
-        {%- endif %} &mdash; you are viewing the working state, which may show an <b>older chip</b>.
-        {%- endif %}
-    </span>
-    {# This banner only renders when the working copy MAY hold unapplied
-       edits (clean copies are auto-synced silently) — so the discard path
-       always confirms. Review & sync is the safe primary action. #}
-    <button type="button" class="topo-change-banner-btn" onclick="openReview()">Review &amp; sync</button>
-    <button type="button" class="btn-sm outline"
-            onclick="if (confirm('Replace the working state with the live files?\n\nAny unapplied edits in the working state will be discarded.')) doStateSync('discard')"
-            title="Replace the working state with the live files (any unapplied edits in the working state are discarded)">
-        &#8595; Take live <span class="sync-btn-sub">&mdash; discard my edits</span></button>
-    {# docs/86 — the other direction. This banner used to offer only "look at it"
-       and "take theirs", which is not a choice; the common case behind the
-       reports is a test run that wrote parameters by mistake, where the state SM
-       is holding is the one worth keeping. Last and un-primary: a pull discards
-       the working copy while the live files stay on disk, this discards live
-       content. The confirm (built by overwriteLiveWithWorking from a preflight
-       read) names how many live values disappear, warns if a run is writing this
-       chip right now, and says the push is snapshotted and therefore reversible
-       — none of which can be computed here, because the banner renders on every
-       page and reading live content on render is exactly what docs/28 forbids. #}
-    {% if (chip_origin | default('live')) != 'dataset_archive' %}
-    <button type="button" class="btn-sm outline live-diverged-overwrite"
-            onclick="overwriteLiveWithWorking()"
-            title="Keep the working state and write it over the live chip. The live state is snapshotted first — the tray's “Revert last apply” undoes it.">
-        &#8593; Keep mine <span class="sync-btn-sub">&mdash; overwrite live</span></button>
-    {% endif %}
-    <button type="button" class="topo-change-banner-dismiss" aria-label="Dismiss"
-            onclick="document.querySelectorAll('.live-diverged-banner').forEach(function(b){b.hidden=true})">&#10005;</button>
-</div>
-{# PERSISTENT until acknowledged (feedback #5): this warns the user they may be
-   viewing an OLDER chip while holding unapplied edits — a stale-data hazard that
-   must NOT auto-hide before they look (the old 10s timer was the "SM was supposed
-   to prompt me but it vanished" complaint). It clears only via × / Review & sync /
-   Take live; the divergence also persists in the chip-identity tray. #}
-{% endif %}
+{#- sync-ux 2026-09-25 (user decision 2026-09-25): the full-width "live state files changed
+    on disk" banner is GONE. It was the price docs/87 paid for never auto-pulling,
+    but it appeared only after a full render (SU-03), stayed hidden after ✕ until
+    F5, grew the top area to ~520 px and said the same thing as the status pill in
+    different words. The status control in the top bar now carries every sync
+    state (Live chip changed · N values / N fields changed on both sides / Can't
+    read the live chip), cells stale against live show "live now …", and the
+    sync panel offers the choices -- so this partial renders nothing. The slot
+    and GET /state/diverged-banner stay (always 200, empty) so an older window's
+    poll or an OOB swap aimed at them is harmless. -#}

@@ -1,197 +1,276 @@
-{% from '_delta_macros.html' import delta_chip %}
-{# Live-chip vs working-copy diff, shown in the #state-review-overlay. #}
-{# Layout (customer feedback): the Close + Sync actions live in the PINNED header
-   so they're reachable instantly — no Tab-past-every-value-box, no scrolling to
-   the bottom. The change-list scrolls inside .state-review-body (explicit vh cap
-   + overflow-y, so it scrolls on every webview engine, not only ones that honour
-   the flex min-height:0 trick). #}
-<div class="state-review">
-  <div class="state-review-head">
-    {% set _ai = archive_info() if (chip_origin is defined and chip_origin == 'dataset_archive') else none %}
-    <h3>{% if _ai %}Run{% if _ai.run_label %} {{ _ai.run_label }}{% endif %} archive (read-only){% else %}Live chip vs. working state{% endif %}</h3>
-    {# Actions moved up here. Keeps id="state-review-actions" + the
-       .review-sync-clean / .review-sync-edits spans so reviewAccept()'s
-       _reviewRevealEditSync() still flips clean⇄edits in place. #}
-    <div class="state-review-head-actions" id="state-review-actions">
-      {% set _archive = (chip_origin is defined and chip_origin == 'dataset_archive') %}
-      {% if total > 0 %}
-      {# Edit-preserving sync options — visible from the server when the change log
-         already holds unsaved edits; otherwise rendered hidden so reviewAccept()
-         can reveal them the instant the user accepts a Live value on the fly.
-         'apply' writes the live chip, so it's never offered on a read-only dataset
-         archive (the server 409s it anyway). #}
-      <span class="review-sync-edits"{% if unsaved == 0 %} hidden{% endif %}>
-        {% if not _archive %}
-        {# informed (QA liveedit-r2-05): this screen shows the live values, so
-           the one-click same-field collision question is not asked again #}
-        <button class="btn-sync primary" onclick="doStateSync('apply', false, false, null, {informed: true})"
-                title="Merge — pull the live state, re-apply your edits on top, and write the merged result straight to the live chip in one step.">
-          &#8644; Pull &amp; apply <span class="sync-btn-sub">(merge)</span></button>
-        {% endif %}
-        <button class="btn-sync" onclick="doStateSync('reapply')"
-                title="Pull the live state, then re-apply your edits on top as pending changes so you can review them before pushing to the live chip.">
-          Re-apply <span class="sync-btn-sub">(review first)</span></button>
-        <button class="btn-sync outline" onclick="doStateSync('discard')"
-                title="Replace the working state with the live chip — your unsaved edits are dropped.">
-          &#8595; Take live <span class="sync-btn-sub">&mdash; discard my edits</span></button>
-      </span>
-      {# Saved-but-unapplied edits (working_dirty, change log empty): a pull would
-         OVERWRITE them, and there's nothing in the change log to re-apply — so the
-         plain discard "Sync" below would SILENTLY drop them. Offer the safe direct
-         snapshot push instead, and gate the destructive discard behind a confirm.
-         Mirrors the pending-tray working_dirty branch. #}
-      <span class="review-sync-saved"{% if unsaved > 0 or not working_dirty %} hidden{% endif %}>
-        {% if not _archive %}
-        {# Close the modal only AFTER a sent request (data-after-request) — NOT an
-           eager onclick, which would also close it when the user cancels the
-           hx-confirm. docs/120 item 27: this used to be an `hx-on::` attribute,
-           which htmx compiles with `new Function` — blocked by this app's own
-           CSP, so the handler never ran and the modal stayed open. #}
-        {# docs/120 item 22: this modal IS the consent record — the user is
-           looking at the list it rendered. Ship that count so the server can
-           tell "apply what I reviewed" from "apply what I reviewed plus
-           whatever another window added since". Rendered server-side, not
-           read from the DOM: an `hx-vals='js:…'` cannot run under this app's
-           CSP (item 27), and the number that matters is the one that was on
-           screen when the modal was built. #}
-        <button class="btn-sync primary" type="button"
-                hx-post="/state/apply-to-live" hx-target="#pending-tray" hx-swap="outerHTML"
-                hx-vals='{"seen_changes": "{{ unsaved }}", "seen_sig": "{{ change_sig }}"}'
-                hx-confirm="Apply the working state to the live chip's state.json / wiring.json now?"
-                data-after-request="closeReviewAndClearUndo"
-                title="Push the working state (your saved, not-yet-applied edits) straight to the live chip.">
-          &#8593; Apply to live chip</button>
-        {% endif %}
-        {# forced=true: this button already confirms here — without it the server's
-           working_dirty needs_confirm gate (docs/65) would double-prompt. #}
-        <button class="btn-sync outline" type="button"
-                onclick="if (window.confirm('Discard your saved edits and replace the working state with the live chip? This cannot be undone.')) doStateSync('discard', true)"
-                title="Replace the working state with the live chip — your saved edits are dropped.">
-          &#8595; Take live <span class="sync-btn-sub">&mdash; discard my edits</span></button>
-      </span>
-      {# Plain pull — shown only when there's genuinely nothing to preserve (no pending
-         edits AND no saved-but-unapplied edits; e.g. the live chip drifted while the
-         snapshot stayed clean). #}
-      <span class="review-sync-clean"{% if unsaved > 0 or working_dirty %} hidden{% endif %}>
-        <button class="btn-sync primary" onclick="doStateSync('discard')"
-                title="Replace the working state with the live chip.">
-          &#8595; Take live <span class="sync-btn-sub">&mdash; use the live chip</span></button>
-      </span>
-      {# docs/86 — the third choice, between Sync and Close. It sits OUTSIDE the
-         three branch spans on purpose: "keep mine and overwrite live" is
-         meaningful in all of them, and the branch that most needed it was the
-         CLEAN one (no edits of my own; an experiment wrote the live chip and I
-         want my state back), which offered only Sync. Deliberately last and
-         un-primary — a pull discards the working copy while the live files stay
-         on disk, but this discards live content that may be a real calibration.
-         The count + the run warning + the reversibility live in the confirm,
-         because naming them needs a live read that must not happen on render. #}
-      {% if not _archive %}
-      <button class="btn-sync outline state-review-overwrite-btn" type="button"
-              onclick="overwriteLiveWithWorking()"
-              title="Keep the working state and write it over the live chip's state.json / wiring.json. The live state is snapshotted first — the tray's “Revert last apply” undoes it.">
-        &#8593; Keep mine <span class="sync-btn-sub">&mdash; overwrite live</span></button>
-      {% endif %}
-      {% endif %}
-      {% if _ai and _ai.return_path %}
-      <button class="btn-sync state-review-archive-back" type="button" hx-post="/load"
-              hx-vals='{{ {"folder": _ai.return_path} | tojson }}' hx-target="#table-pane" hx-swap="innerHTML"
-              title="Leave this read-only archive and re-open {{ _ai.return_path }}">&larr; Back to {{ _ai.return_name }}</button>
-      {% endif %}
-      {% if _ai and _ai.uid %}
-      <a class="btn-sync outline state-review-archive-run" role="button" href="/dataset/{{ _ai.uid }}"
-         title="Open this run's detail page">Back to run{% if _ai.run_label %} {{ _ai.run_label }}{% endif %}</a>
-      {% endif %}
-      <button class="btn-sync outline state-review-close-btn" type="button"
-              onclick="closeReview()" aria-label="Close" title="Close">Close</button>
+{% from '_delta_macros.html' import delta_pct %}
+{#- sync-ux 2026-09-25 -- THE sync panel (user decision 2026-09-25: "one sync panel opened
+    from the status control"). It replaces the review modal, the conflict tray's
+    choices, the Review drawer and the tray's History items.
+
+    Rules it keeps:
+      * it never closes on a timer and never writes on open;
+      * every choice says in its own label what it loses ("Lost: …"), and a
+        choice that loses something needs a second press in place (default 6 of
+        the decisions -- replaces the native confirm() dialogs);
+      * same-field collision: ⇄ Pull & apply stays disabled until each colliding
+        field has "Keep mine" or "Use live" picked (decision 2) -- no silent
+        my-value-wins;
+      * contract trio wording verbatim (docs/97): ↓ Take live / ↑ Keep mine —
+        overwrite live / ⇄ Pull & apply (merge); pull and push are not symmetric
+        (docs/86): Keep mine is always last, error-tinted, and names what it
+        replaces;
+      * ↓ Take live with edits keeps a backup first (decision 4) and History
+        offers "↶ Bring back".
+    Everything is rendered from the facts /state/review computed with the same
+    judgment the drift poll uses. -#}
+{%- set _sv = sync if (sync is defined and sync) else {} -%}
+{%- set _st = _sv.state | default('synced') -%}
+{%- set _archive = (chip_origin is defined and chip_origin == 'dataset_archive') -%}
+{%- set _ai = archive_info() if _archive else none -%}
+{%- set _nc = conflict_rows | length -%}
+{%- set _nl = live_total | default(0) -%}
+{%- set _ne = external_total | default(0) -%}
+{%- set _nm = unsaved -%}
+<div class="state-review sync-panel" data-sync-state="{{ _st }}" data-sync-sig="{{ _sv.sig | default('') }}"
+     data-conflicts="{{ _nc }}">
+  <div class="state-review-head sp-head">
+    <div class="sp-title-wrap">
+      <h3 class="sp-title">{% if _archive %}Run{% if _ai and _ai.run_label %} {{ _ai.run_label }}{% endif %} archive · read-only
+        {% elif _st == 'unreadable' %}Can't read the live chip
+        {% elif _st == 'collide' %}Both sides changed the same field
+        {% elif _st == 'refused' %}Your apply wrote nothing
+        {% elif _st in ('live', 'both') %}The live chip changed
+        {% elif _st == 'mine' %}Your unapplied edits
+        {% elif _st == 'staged' %}Staged version · not on live
+        {% else %}In sync{% endif %}</h3>
     </div>
+    <button type="button" class="sp-close state-review-close-btn" onclick="closeReview()"
+            aria-label="Close" title="Close (Esc)">&#10005;</button>
   </div>
 
-  <div class="state-review-body">
-  {% if total == 0 and _ai %}
-  <p class="muted state-review-empty">This is run{% if _ai.run_label %} {{ _ai.run_label }}{% endif %}'s frozen quam_state, opened read-only &mdash; nothing here syncs to a live chip.{% if not _ai.return_path %} Load a chip folder (State Load) to edit one.{% endif %}</p>
-  {% elif total == 0 %}
-  <p class="muted state-review-empty">No differences &mdash; the working state matches the live chip.</p>
-  {% else %}
-  <div class="diff-summary">
-    {# QA F14: the old verbs (Added/Removed) read the PULL direction (working ->
-       live) next to push buttons -- "Removed: 7" beside "Apply to live" read as
-       "apply deletes 7". Say where each value is instead; the arrow gets an owner. #}
-    <span class="diff-dir-badge" title="Each row shows your working-state value on the left and the live chip's value on the right">Working state <span class="diff-dir-arrow">&rarr;</span> Live chip</span>
-    <span class="diff-badge diff-removed">Only in working state: {{ summary.removed }}</span>
-    <span class="diff-badge diff-added">Only on live chip: {{ summary.added }}</span>
-    <span class="diff-badge diff-modified">Different: {{ summary.modified }}</span>
-    <span class="diff-badge diff-total">Total: {{ summary.total }}</span>
-    {% if total > entries | length %}
-    <small class="muted">(showing {{ entries | length }} of {{ total }})</small>
+  <div class="state-review-body sp-body">
+  {#- ONE sentence with the time, never a guess at who wrote -#}
+  <p class="sp-sentence">
+    {%- if _archive -%}
+      This is run{% if _ai and _ai.run_label %} {{ _ai.run_label }}{% endif %}'s frozen quam_state, opened read-only &mdash; nothing here syncs to a live chip.
+    {%- elif read_error -%}
+      {{ read_error }} Nothing is taken or written while it cannot be read{% if _nm %}; your {{ _nm }} unapplied edit{{ 's' if _nm != 1 }} {{ 'are' if _nm != 1 else 'is' }} safe{% endif %}. SM checks it again on every poll (a save in progress usually settles within seconds).
+    {%- else -%}
+      {%- if _nl %}The live chip changed {{ _nl }} value{{ 's' if _nl != 1 }} since SM last synced{% else %}The live chip has not changed since SM last synced{% endif -%}
+      {%- if _nm %}; you have {{ _nm }} unapplied edit{{ 's' if _nm != 1 }}{% elif working_dirty %}; you have a saved or staged version that is not on the live chip{% endif -%}
+      {%- if _nc %}; {{ _nc }} field{{ 's' if _nc != 1 }} {{ 'are' if _nc != 1 else 'is' }} in both{% endif -%}
+      . {% if _nl or _nm or working_dirty %}Nothing has been written yet.{% elif total == 0 %}No differences &mdash; what you see matches the live chip.{% else %}Nothing to do.{% endif %}
+      <span class="sp-when muted">checked {{ checked_at }}</span>
+    {%- endif -%}
+  </p>
+  {% if refused %}
+  <p class="sp-note sp-note-warn">Your apply at {{ refused.at }} wrote nothing: the live chip had changed in between.
+    {%- if refused.auto_disarmed %} Auto-Sync has been turned <b>off</b>; it will not write again until you turn it back on.{% elif refused.auto_merging %} Auto-Sync is still on and will merge this itself; choose below only if you would rather decide.{% endif %}</p>
+  {% endif %}
+  {% if mixed %}
+  <p class="sp-note">Your saved version and the live chip's changes cannot be told apart field by field, so they are listed together. Pull &amp; apply is not offered: it would drop the saved version.</p>
+  {% endif %}
+
+  {% if conflict_rows or external_rows or mine_rows or staged_rows %}
+  <table class="sp-diff">
+    <thead><tr><th>field</th><th>here (SM)</th><th>live chip</th><th title="Δ = live chip − here">&Delta;</th><th></th></tr></thead>
+    {% if conflict_rows %}
+    <tbody class="sp-group sp-group-collide">
+      <tr class="sp-group-head"><td colspan="5">Changed on both sides &mdash; pick one ({{ _nc }})</td></tr>
+      {% for r in conflict_rows %}
+      <tr class="sp-row sp-row-collide" data-path="{{ r.path }}">
+        <td class="sp-path"><code title="{{ r.path }}">{{ r.path }}</code></td>
+        <td class="sp-val">{{ r.here | groupdigits if r.here is not none else '—' }}<small class="sp-sub">yours{% if r.orig is not none %} · both were {{ r.orig | groupdigits }}{% endif %}</small></td>
+        <td class="sp-val">{{ r.live | groupdigits if r.live is not none else '—' }}</td>
+        <td class="sp-delta">{{ delta_pct(r.here, r.live) }}</td>
+        <td class="sp-pick" role="radiogroup" aria-label="Which value to keep for {{ r.path }}">
+          <label class="sp-pick-opt"><input type="radio" name="sp-pick-{{ loop.index0 }}" value="mine" data-pick-path="{{ r.path }}" onchange="SyncPanel.picked(this)"> Keep mine</label>
+          <label class="sp-pick-opt"><input type="radio" name="sp-pick-{{ loop.index0 }}" value="live" data-pick-path="{{ r.path }}" onchange="SyncPanel.picked(this)"> Use live</label>
+        </td>
+      </tr>
+      {% endfor %}
+    </tbody>
+    {% endif %}
+    {% if external_rows %}
+    <tbody class="sp-group sp-group-live">
+      <tr class="sp-group-head"><td colspan="5">{% if mixed %}Differs between here and the live chip{% else %}Live chip changed{% endif %} ({{ _ne }}){% if _ne > external_rows | length %} <small class="muted">showing {{ external_rows | length }}</small>{% endif %}</td></tr>
+      {% for r in external_rows %}
+      {#- the live value stays an editable input with a per-field ↓ (the
+          review's on-the-fly accept, Phase D): take just this field, as shown
+          or tweaked, into what you see -- no full pull. -#}
+      <tr class="sp-row sp-row-live diff-row-{{ r.kind }}" data-path="{{ r.path }}">
+        <td class="sp-path"><code title="{{ r.path }}">{{ r.path }}</code></td>
+        <td class="sp-val">{{ r.here | groupdigits if r.here is not none else '—' }}</td>
+        {% if r.live is not none %}
+        <td class="sp-val sp-val-live"><span class="review-live-edit"><input type="text" class="review-live-input sp-live-input"
+               value="{{ r.live | groupdigits }}" data-dot-path="{{ r.path }}" data-old-raw="{{ r.here | tojson }}"
+               aria-label="Live value for {{ r.path }} (editable)"
+               title="The live chip's value — editable; ↓ takes just this field"></span></td>
+        <td class="sp-delta">{{ delta_pct(r.here, r.live, 'review-delta') }}</td>
+        <td class="sp-dir"><span class="review-live-edit"><input type="hidden" class="review-live-input" data-mirror="1"
+               data-dot-path="{{ r.path }}" value="{{ r.live | groupdigits }}"><button type="button" class="btn-xs review-accept sp-one-field"
+               onclick="SyncPanel.takeOne(this)"
+               title="Take just this field (the value shown, as you may have edited it) into what you see. Nothing is written to the live chip.">&#8595;</button></span></td>
+        {% else %}
+        <td class="sp-val sp-val-live">—</td><td class="sp-delta"></td><td></td>
+        {% endif %}
+      </tr>
+      {% endfor %}
+    </tbody>
+    {% endif %}
+    {% if mine_rows %}
+    <tbody class="sp-group sp-group-mine">
+      <tr class="sp-group-head"><td colspan="5">Your unapplied edits ({{ mine_rows | length }})</td></tr>
+      {% for r in mine_rows %}
+      <tr class="sp-row sp-row-mine tray-change-item" data-group-id="{{ r.gid or '' }}" data-path="{{ r.path }}">
+        <td class="sp-path"><code class="tray-change-path" title="{{ r.path }}">{{ r.path }}</code></td>
+        {#- r16 ②: a created / deleted entry shows its VALUES (the drawer's rule,
+            carried into the panel): a scalar inline, a mapping as a leaf list -#}
+        <td class="sp-val">{% if r.created or r.deleted %}{% set _v = r.new if r.created else r.old %}{% set _cls = 'change-new' if r.created else 'change-old' %}{% set _sg = '+' if r.created else '&minus;' %}{% if _v is mapping %}<details class="tray-subtree"><summary class="{{ _cls }} tray-op-pill">{{ _sg | safe }} {{ 'added' if r.created else 'deleted' }} ({{ _v | length }} field{{ 's' if _v | length != 1 }})</summary><div class="tray-subtree-leaves">{% for lp, lv in _v | flatten_leaves %}<div class="tray-subtree-leaf"><code>{{ lp }}</code> <span class="{{ _cls }}">{{ lv | groupdigits if lv is not none else 'null' }}</span></div>{% endfor %}</div></details>{% else %}<span class="{{ _cls }} tray-op-pill">{{ _sg | safe }} {{ _v | groupdigits if _v is not none else 'null' }}</span>{% endif %}{% else %}{{ r.new | groupdigits if r.new is not none else 'null' }}<small class="sp-sub">was {{ r.old | groupdigits if r.old is not none else 'null' }}</small>{% endif %}</td>
+        <td class="sp-val">{% if r.live is not none and not r.created and not r.deleted %}{{ r.live | groupdigits }}{% else %}—{% endif %}</td>
+        <td class="sp-delta">{% if not r.created and not r.deleted and r.live is not none %}{{ delta_pct(r.new, r.live) }}{% endif %}</td>
+        <td class="sp-x">
+          <button type="button" class="sp-x-btn btn-discard"
+                  hx-post="/discard" hx-target="#pending-tray" hx-swap="outerHTML"
+                  hx-vals='{"index": "{{ r.index }}", "expect_path": {{ r.path | tojson }}}'
+                  data-after-request="syncPanelRefresh"
+                  aria-label="Discard pending change to {{ r.path }}"
+                  title="Discard this edit (Ctrl+Shift+Z brings it back)">&#10005;</button>
+        </td>
+      </tr>
+      {% endfor %}
+    </tbody>
+    {% endif %}
+    {% if staged_rows %}
+    <tbody class="sp-group sp-group-staged">
+      <tr class="sp-group-head"><td colspan="5">{% if working_dirty %}Staged / saved version vs the live chip{% else %}Here vs the live chip{% endif %} ({{ staged_rows | length }})</td></tr>
+      {% for r in staged_rows %}
+      <tr class="sp-row sp-row-staged" data-path="{{ r.path }}">
+        <td class="sp-path"><code title="{{ r.path }}">{{ r.path }}</code></td>
+        <td class="sp-val">{{ r.here | groupdigits if r.here is not none else '—' }}</td>
+        <td class="sp-val">{{ r.live | groupdigits if r.live is not none else '—' }}</td>
+        <td class="sp-delta">{{ delta_pct(r.here, r.live) }}</td>
+        <td></td>
+      </tr>
+      {% endfor %}
+    </tbody>
+    {% endif %}
+  </table>
+  {% endif %}
+
+  {#- CHOICES -- only one press writes (except the armed second press) -#}
+  {% if not _archive and _st != 'unreadable' and _st != 'synced' %}
+  <div class="sp-choices" id="state-review-actions">
+    <div class="sp-choices-head">Choose <small class="muted">each choice says what it loses</small></div>
+    {% set _can_merge = (_nm > 0 and not mixed and _nl > 0) %}
+    {% if _st == 'mine' and not working_dirty %}
+    <button type="button" class="sp-choice sp-choice-primary btn-sync primary"
+            onclick="doStateSync('apply', false, false, null, {informed: true})">
+      <span class="sp-choice-label">&#8593; Apply to live</span>
+      <span class="sp-choice-what">Writes your {{ _nm }} edit{{ 's' if _nm != 1 }} to the live chip.</span>
+      <span class="sp-lost">Lost: nothing (the live chip is backed up first).</span></button>
+    {% endif %}
+    {% if _can_merge %}
+    <button type="button" class="sp-choice sp-choice-primary btn-sync primary sp-merge"
+            id="sp-merge" {% if _nc %}disabled data-needs-picks="{{ _nc }}"{% endif %}
+            onclick="SyncPanel.merge(this)">
+      <span class="sp-choice-label">&#8644; Pull &amp; apply <span class="sync-btn-sub">(merge)</span></span>
+      <span class="sp-choice-what">{% if _nl - _nc > 0 %}Takes the live chip's {{ _nl - _nc }} other change{{ 's' if (_nl - _nc) != 1 }}, then writes your edits on top{% if _nc %}, with the side you picked for each field above{% endif %}.{% else %}Writes your edits to the live chip, with the side you picked for each field above.{% endif %}</span>
+      <span class="sp-lost" data-lost-default="{% if _nc %}Pick a side for {{ _nc }} field{{ 's' if _nc != 1 }} above first.{% else %}Lost: nothing.{% endif %}">{% if _nc %}Pick a side for {{ _nc }} field{{ 's' if _nc != 1 }} above first.{% else %}Lost: nothing.{% endif %}</span></button>
+    <button type="button" class="sp-choice btn-sync sp-reapply" {% if _nc %}disabled title="Pick a side for the fields above first"{% endif %}
+            onclick="SyncPanel.reapply()">
+      <span class="sp-choice-label">Re-apply <span class="sync-btn-sub">(review first)</span></span>
+      <span class="sp-choice-what">Takes the live chip's changes and keeps your edits on top, unapplied. Writes nothing.</span>
+      <span class="sp-lost">Lost: nothing.</span></button>
+    {% endif %}
+    {% if working_dirty and not mixed and _nl == 0 %}
+    <button type="button" class="sp-choice sp-choice-primary btn-sync primary sync-arm"
+            data-arm-label="Press again to write the staged version to live"
+            hx-post="/state/apply-to-live" hx-target="#pending-tray" hx-swap="outerHTML" hx-trigger="armed"
+            hx-vals='{"seen_changes": "{{ _nm }}", "seen_sig": "{{ change_sig }}"}'
+            data-after-request="closeReviewAndClearUndo"
+            onclick="SyncPanel.arm(this, event)">
+      <span class="sp-choice-label">&#8593; Apply to live</span>
+      <span class="sp-choice-what">Writes this {% if _nm %}version and your edits{% else %}staged version{% endif %} over the live chip.</span>
+      <span class="sp-lost">Lost: the live chip's current values at {{ staged_rows | length }} field{{ 's' if staged_rows | length != 1 }} (backed up first; ↺ Revert last apply restores them).</span></button>
+    {% endif %}
+    {% if _nl > 0 or _nm > 0 or working_dirty %}
+    {% set _loses = (_nm > 0 or working_dirty) %}
+    <button type="button" class="sp-choice btn-sync outline sp-take{% if _loses %} sync-arm{% endif %}"
+            {% if _loses %}data-arm-label="Press again to discard {% if _nm %}{{ _nm }} edit{{ 's' if _nm != 1 }}{% else %}the staged version{% endif %} and take live"{% endif %}
+            onclick="{% if _loses %}SyncPanel.arm(this, event, function(){ doStateSync('discard', true); }){% else %}doStateSync('discard'){% endif %}">
+      <span class="sp-choice-label">&#8595; Take live</span>
+      <span class="sp-choice-what">Replaces what you see with the live chip. The live chip is not written.</span>
+      <span class="sp-lost">{% if _nm %}Lost: your {{ _nm }} unapplied edit{{ 's' if _nm != 1 }} &mdash; a backup is kept first; ↶ Bring back (History) restores {{ 'them' if _nm != 1 else 'it' }}.{% elif working_dirty %}Lost: the staged version &mdash; a backup is kept first (History, State History).{% else %}Lost: nothing.{% endif %}</span></button>
+    {% endif %}
+    {% if _nm > 0 %}
+    <button type="button" class="sp-choice btn-sync outline sync-arm sp-discard-all"
+            data-arm-label="Press again to discard {{ _nm }} edit{{ 's' if _nm != 1 }}"
+            hx-post="/discard_all" hx-target="#pending-tray" hx-swap="outerHTML" hx-trigger="armed"
+            data-after-request="syncPanelRefresh"
+            onclick="SyncPanel.arm(this, event)">
+      <span class="sp-choice-label">Discard my {{ _nm }} edit{{ 's' if _nm != 1 }}</span>
+      <span class="sp-choice-what">Keeps what SM last synced; the live chip is not touched.</span>
+      <span class="sp-lost">Lost: your {{ _nm }} edit{{ 's' if _nm != 1 }}; Ctrl+Shift+Z brings them back one by one.</span></button>
+    <button type="button" class="sp-choice btn-sync outline btn-save"
+            hx-post="/save" hx-target="#pending-tray" hx-swap="outerHTML" hx-disabled-elt="this"
+            data-after-request="syncPanelRefresh">
+      <span class="sp-choice-label">Save to working state</span>
+      <span class="sp-choice-what">A durable draft on disk that survives a restart. The live chip is not touched.</span>
+      <span class="sp-lost">Lost: nothing.</span></button>
+    {% endif %}
+    {% if _nl > 0 or _nm > 0 or working_dirty %}
+    <button type="button" class="sp-choice btn-sync outline sp-keep state-review-overwrite-btn"
+            onclick="overwriteLiveWithWorking(this)">
+      <span class="sp-choice-label">&#8593; Keep mine <span class="sync-btn-sub">&mdash; overwrite live</span></span>
+      <span class="sp-choice-what">{% if _nm == 0 and not working_dirty %}Puts the {{ _nl }} older value{{ 's' if _nl != 1 }} shown here back on the live chip &mdash; the way to undo a bad run's write.{% else %}Writes everything shown here over the live chip.{% endif %}</span>
+      <span class="sp-lost">{% if _nl %}Lost: the live chip's {{ _nl }} new value{{ 's' if _nl != 1 }} (backed up first; ↺ Revert last apply restores them).{% else %}Lost: nothing on the live chip has changed since you synced.{% endif %}</span></button>
     {% endif %}
   </div>
-  {% if unsaved > 0 %}
-  <p class="state-review-note muted">
-    Includes {{ unsaved }} of your own unsaved edit{{ 's' if unsaved != 1 }}. Choose a direction:
-    <b>&#8644; Pull &amp; apply</b> merges (live&nbsp;+&nbsp;your edits, pushed) &middot;
-    <b>&#8595; Take live</b> replaces the working state with the live chip and drops your edits &middot;
-    <b>&#8593; Keep mine</b> overwrites the live chip with your working state.
-  </p>
-  {% elif working_dirty %}
-  <p class="state-review-note muted">
-    &#9888; You have edits saved to the working state. Pulling the live state will
-    overwrite them.
-  </p>
-  {% endif %}
-
-  <p class="state-review-note muted">Tip: tweak a <b>Live chip</b> value and hit <b>&#10003;</b> to pull
-     just that field (as edited) into the working state on the fly — no full pull needed.</p>
-  {# Surfaced by reviewAccept() the moment the user accepts an edited live value,
-     so a clean-working-copy review (which opens with only "Pull & discard") can't
-     mislead them into discarding the edit they just accepted. Also rendered visible
-     server-side whenever the working copy already holds unsaved edits, so the steer
-     survives a close-and-reopen of the review (the JS reveal is in-session only). #}
-  <p class="state-review-note muted review-accept-note"{% if unsaved == 0 %} hidden{% endif %}>
-    &#9888; You accepted edited value(s) into the working state. Use
-    <b>&#8644; Pull &amp; apply</b> to keep them — <b>&#8595; Take live</b> would drop them.
-  </p>
-  {# Borderless hairline list (VSCode Source-Control style): a long dot-path never
-     fits a column, so each change is a row with the PATH on its own full-width line
-     (dim parent dirs + emphasized soft-blue leaf) above the value transition (your
-     copy → live chip, editable). The change kind is a restrained gutter letter
-     M/A/D + a 2px left accent — not a loud filled pill. See docs/42. #}
-  <div class="state-review-cards">
-    {% for e in entries %}
-    {% set _mine = edited_paths is defined and e.dot_path in edited_paths %}
-    {% set _glyph = {'modified': 'M', 'added': 'A', 'removed': 'D'}.get(e.change_type, '?') %}
-    {% set _where = {'modified': 'different', 'added': 'only on the live chip', 'removed': 'only in the working state'}.get(e.change_type, e.change_type) %}
-    {% set _parts = e.dot_path.rsplit('.', 1) %}
-    <div class="review-row diff-row-{{ e.change_type }}{% if _mine %} diff-row-yours{% endif %}">
-      <div class="review-row-path">
-        <span class="diff-type-badge diff-type-{{ e.change_type }}" aria-label="{{ _where }}" title="{{ _where }}">{{ _glyph }}</span>
-        <code class="dot-path" title="{{ e.dot_path }}">{%- if _parts | length == 2 -%}<span class="dp-dirs">{{ _parts[0] }}.</span><span class="dp-leaf">{{ _parts[1] }}</span>{%- else -%}<span class="dp-leaf">{{ e.dot_path }}</span>{%- endif -%}</code>
-        {% if _mine %}<span class="diff-yours-tag" title="The working state already holds your own edited value here. Accepting (✓) would REPLACE it with the live value.">your edit</span>{% endif %}
-      </div>
-      <div class="review-row-vals">
-        {% if e.old_value is none %}<span class="muted review-old">-</span>
-        {% else %}<span class="review-old" title="working state: {{ e.old_value | groupdigits }}">{{ e.old_value | groupdigits }}</span>{% endif %}
-        <span class="review-arrow" aria-hidden="true">&rarr;</span>
-        {% if e.new_value is none %}<span class="muted">-</span>
-        {% else %}
-        <span class="review-live-edit" title="live chip value (editable) — &#10003; pulls it into the working state">
-          <input type="text" class="review-live-input" value="{{ e.new_value | groupdigits }}"
-                 data-dot-path="{{ e.dot_path }}"{% if _mine %} data-yours="1"{% endif %}
-                 data-old-raw="{{ e.old_value | tojson }}"
-                 size="{{ [((e.new_value | groupdigits) | length) + 1, 8] | max }}"
-                 aria-label="Live value for {{ e.dot_path }} (editable)">
-          <button type="button" class="btn-xs review-accept" onclick="reviewAccept(this)"
-                  title="{% if _mine %}The working state already holds your edit — accepting REPLACES it with the live value{% else %}Write this (editable) live value into the working state{% endif %}">&#10003;</button>
-        </span>
-        {# Δ against the working-state value. Server-rendered for the initial
-           view; recomputed by reviewDeltaWatch() while the user edits the
-           live value, so the difference never lies about what will be pulled. #}
-        {{ delta_chip(e.old_value, e.new_value, 'review-delta') }}
-        {% endif %}
-      </div>
-    </div>
-    {% endfor %}
+  {% elif _archive %}
+  <div class="sp-choices">
+    {% if _ai and _ai.return_path %}
+    <button class="btn-sync state-review-archive-back" type="button" hx-post="/load"
+            hx-vals='{{ {"folder": _ai.return_path} | tojson }}' hx-target="#table-pane" hx-swap="innerHTML"
+            title="Leave this read-only archive and re-open {{ _ai.return_path }}">&larr; Back to {{ _ai.return_name }}</button>
+    {% endif %}
+    {% if _ai and _ai.uid %}
+    <a class="btn-sync outline state-review-archive-run" role="button" href="/dataset/{{ _ai.uid }}"
+       title="Open this run's detail page">Back to run{% if _ai.run_label %} {{ _ai.run_label }}{% endif %}</a>
+    {% endif %}
+  </div>
+  {% elif _st == 'unreadable' %}
+  <div class="sp-choices">
+    <button type="button" class="sp-choice btn-sync" onclick="SyncPanel.retry()">
+      <span class="sp-choice-label">Retry now</span>
+      <span class="sp-choice-what">Reads the live chip again.</span></button>
   </div>
   {% endif %}
+
+  {#- HISTORY -#}
+  {% if not _archive and (last_apply or applied_log or take_live_backup) %}
+  <div class="sp-history">
+    <div class="sp-choices-head">History</div>
+    {% if take_live_backup %}
+    <div class="sp-hist-row">
+      <span>&#8595; Take live at {{ take_live_backup.at }} dropped {{ take_live_backup.n }} edit{{ 's' if take_live_backup.n != 1 }}{% if take_live_backup.snapshot %} (backup version {{ take_live_backup.snapshot }}){% endif %}.</span>
+      <button type="button" class="btn-sm outline sp-bring-back"
+              hx-post="/state/take-live/restore" hx-target="#pending-tray" hx-swap="outerHTML"
+              data-after-request="syncPanelRefresh"
+              title="Puts those edits back as unapplied edits on top of what you see now. The live chip is not written.">&#8630; Bring back</button>
+    </div>
+    {% endif %}
+    {% if last_apply and _nm == 0 and not working_dirty %}
+    <div class="sp-hist-row">
+      <span>Last apply {{ (last_apply.at or '') | replace('T', ' ') }}</span>
+      <button type="button" class="btn-sm outline tray-revert-apply sync-arm"
+              data-arm-label="Press again to stage the pre-apply state"
+              hx-post="/state-history/{{ last_apply.pre_ts }}/stage?from=tray"
+              hx-target="#status-bar" hx-swap="innerHTML" hx-trigger="{% if auto_apply %}revertconfirmed{% else %}armed{% endif %}"
+              data-after-request="syncPanelRefresh"
+              onclick="{% if auto_apply %}revertSessionConfirm(this){% else %}SyncPanel.arm(this, event){% endif %}"
+              title="{% if auto_apply %}Revert the whole Auto-Sync session — stages the state as it was when you turned it on, including values pulled since (the confirm names them).{% else %}Revert last apply (done {{ (last_apply.at or '') | replace('T', ' ') }} local time) — stages the state as it was before it, for review; nothing touches the live chip until you apply.{% endif %}">&#8634; Revert {% if auto_apply %}this session{% else %}last apply{% endif %}</button>
+    </div>
+    {% endif %}
+    {% if auto_apply or applied_log %}{% include '_applied_log.html' %}{% endif %}
+  </div>
+  {% endif %}
+  <p class="sp-gloss muted">live chip = state.json + wiring.json on disk (라이브 칩) · here = what this window shows (여기) · unapplied = not on the live chip yet (미적용)</p>
   </div>
 </div>
