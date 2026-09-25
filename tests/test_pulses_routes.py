@@ -571,9 +571,13 @@ class TestPulseDelete:
         body = table.group(0) if table else html.split('id="pending-tray"')[0]
         assert "saturation" not in body, "the deleted pulse is still listed"
         # ...and the deletion IS reported where a user reviews changes — a
-        # delete the review surface hid would be the real defect.
-        assert "tray-change-item" in html
-        assert f"{XY}.saturation" in html
+        # delete the review surface hid would be the real defect. sync-ux
+        # 2026-09-25: that surface is the sync panel now, not a page drawer.
+        panel = loaded_client.get("/state/review").data.decode()
+        mine = panel.split("sp-group-mine", 1)[1]
+        assert "tray-change-item" in mine
+        assert f'data-path="{XY}.saturation"' in mine
+        assert "deleted" in mine.split(f'data-path="{XY}.saturation"', 1)[1].split("</tr>", 1)[0]
 
     def test_delete_referenced_409_without_force(self, loaded_client):
         resp = loaded_client.post("/api/pulse/delete",

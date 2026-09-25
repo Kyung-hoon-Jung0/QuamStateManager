@@ -237,7 +237,10 @@ class TestRevertGoesThroughTheOneDoor:
         assert r.status_code == 200
         tray = c.get("/state/tray").data.decode()
         assert 'data-change-count="1"' in tray
-        assert "qubits.q1.T1" in tray
+        # sync-ux 2026-09-25: the per-edit list moved from the tray (now the one
+        # status control) into the sync panel's "Your unapplied edits" group
+        panel = c.get("/state/review").data.decode()
+        assert 'data-path="qubits.q1.T1"' in panel.split("sp-group-mine", 1)[1]
         # …and the live chip is untouched until Apply.
         doc = json.loads((env["live"] / "state.json").read_text(encoding="utf-8"))
         assert doc["qubits"]["q1"]["T1"] == 2.0e-5

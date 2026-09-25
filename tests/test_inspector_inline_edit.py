@@ -216,9 +216,10 @@ class TestTheEditStillWorks:
         c = env["client"]
         c.post("/qubit/q1/edit", data={"dot_path": "qubits.q1.f_01",
                                        "value": "5.5e9", "freq_sync": "0"})
-        tray = c.get("/state/tray").data.decode()
-        assert "qubits.q1.f_01" in tray
-        assert "RF_frequency" not in tray, "freq_sync=0 still mirrored"
+        # sync-ux 2026-09-25: the unapplied-edit list lives in the sync panel
+        mine = c.get("/state/review").data.decode().split("sp-group-mine", 1)[1]
+        assert 'data-path="qubits.q1.f_01"' in mine
+        assert "RF_frequency" not in mine, "freq_sync=0 still mirrored"
 
 
 _SELFCHECK = _ROOT / "tests" / "inspector_inject_selfcheck.cjs"
