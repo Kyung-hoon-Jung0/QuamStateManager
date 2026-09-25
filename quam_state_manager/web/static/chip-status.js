@@ -5274,13 +5274,23 @@ window.ChipTrends = (function () {
     var _reloadSeq = 0;
     function _reload() {
         if (!window.htmx || !document.getElementById('topo-trends')) return;
-        if (htmx.trigger) htmx.trigger('#topo-trends', 'htmx:abort');
         var host = document.getElementById('topo-trends');
+        // docs/208 D2: before the section's first fragment has arrived there
+        // is no selection in the DOM to read -- _params() would say
+        // "metrics=" and store it, and aborting the build request for that
+        // left the section empty for good. The build request is already
+        // asking with the remembered selection; let it land.
+        if (!host.querySelector('.topo-trends-controls')) return;
+        if (htmx.trigger) htmx.trigger('#topo-trends', 'htmx:abort');
         var loading = host.querySelector('.topo-trends-loading');
         if (!loading) {
             loading = document.createElement('p');
             loading.className = 'muted topo-trends-loading';
-            host.appendChild(loading);
+            // where the eye is: under the controls, not below every chart
+            var ctl = host.querySelectorAll('.topo-trends-controls');
+            var after = ctl.length ? ctl[ctl.length - 1] : null;
+            if (after && after.parentNode) after.parentNode.insertBefore(loading, after.nextSibling);
+            else host.insertBefore(loading, host.firstChild);
         }
         loading.textContent = 'loading…';
         host.querySelectorAll('p').forEach(function (p) {
@@ -5704,7 +5714,23 @@ window.ChipTrends = (function () {
         });
         return allDated ? 'date' : 'category';
     }
+    // docs/208 D1: while the history index rebuilds in the background the
+    // fragment carries a note; re-fetch THIS selection a little later, unless
+    // the user asked for something newer meanwhile (their response carries
+    // its own note if the rebuild is still running).
+    var _updTimer = null;
+    function _followIndexUpdate() {
+        clearTimeout(_updTimer);
+        if (!document.querySelector('#topo-trends [data-trends-updating]')) return;
+        var seq = _reloadSeq;
+        _updTimer = setTimeout(function () {
+            if (seq !== _reloadSeq) return;
+            if (!document.querySelector('#topo-trends [data-trends-updating]')) return;
+            _reload();
+        }, 3000);
+    }
     function render(charts) {
+        _followIndexUpdate();
         // FIRST, and outside every early return: the section is lazily fetched
         // and re-fetched on every metric toggle, so the grid element is BRAND
         // NEW each time and a column choice applied once is lost on the next
@@ -5852,7 +5878,8 @@ window.ChipTrends = (function () {
                              ? { text: 'time' + _tzNote(), font: { size: 10 } }
                              : undefined,
                          tickfont: { size: 9 }, automargin: true },
-                yaxis: { title: { text: c.metric + (c.unit ? ' (' + c.unit + ')' : ''),
+                yaxis: { title: { text: ((c.metric.indexOf('*') >= 0 && c.label) ? c.label : c.metric)
+                                        + (c.unit ? ' (' + c.unit + ')' : ''),
                                   font: { size: 11 } },
                          tickformat: _numFmt.tickformat,
                          exponentformat: _numFmt.exponentformat,

@@ -1,5 +1,6 @@
 """Regression pins for customer IRB Trends failures (F1-F6)."""
 import json
+import os
 import subprocess
 import threading
 import time
@@ -173,8 +174,13 @@ def test_stale_route_reports_progress_and_retries(irb_client, monkeypatch):
     monkeypatch.setattr(hm, "_ensure_leaf_index_fresh", lambda p: None)
     body = irb_client.get("/topology/trends?metrics=").get_data(as_text=True)
     assert "History index updating (" in body
-    assert 'hx-trigger="load delay:3s"' in body
-    assert 'hx-get="/topology/trends?metrics="' in body
+    assert 'data-trends-updating="1"' in body
+    # docs/208 D1: the note must not fetch its OWN url -- that request aborted
+    # the user's badge press and brought the old selection back. The client
+    # re-fetches the current selection (trends_irb_selfcheck.cjs).
+    note = body[body.index("data-trends-updating"):]
+    note = note[:note.index("</p>")]
+    assert "hx-get" not in body[body.rindex("<p", 0, body.index("data-trends-updating")):body.index("data-trends-updating") + len(note)]
 
 
 def test_irb_client_selfcheck():
@@ -228,3 +234,38 @@ def test_a_disappearance_is_a_gap_not_a_joined_line(tmp_path):
     chart, = _charts(c.get("/topology/trends?metrics=&paths=" + p).get_data(as_text=True))
     ys = [pt[1] for pt in chart["series"][0]["points"]]
     assert None in ys and ys[0] is not None and ys[-1] is not None, ys
+
+
+def test_index_reads_do_not_move_the_history_signal(history):
+    """docs/208 D3: every index read creates and deletes index.sqlite-wal/-shm
+    in the history dir, which moves its mtime; read as "another process
+    captured something", the drift poll re-fetched an open Trends section
+    every ~5 s forever. The signal is the set of snapshot dirs."""
+    hm, live, helper = history
+    seq = hm.history_seq_for(live)
+    assert seq > 0
+    hist = hm._history_dir(live)
+    for _ in range(3):
+        hm.leaf_field_series(live, "qubits.qA1.T1")
+        join_repairs(hm)
+        (hist / "stray.tmp").write_text("x", encoding="utf-8")
+        (hist / "stray.tmp").unlink()
+        assert hm.history_seq_for(live) == seq
+    # A snapshot dir created inside the SAME clock tick as the last -wal
+    # delete leaves the dir mtime unchanged (Windows file times step in
+    # ~1-16 ms); pin that case deterministically by restoring the mtime.
+    st = hist.stat()
+    helper._orphan(hm, live, "20990101_000000", state=_chip(t1=3e-5))
+    os.utime(hist, ns=(st.st_atime_ns, st.st_mtime_ns))
+    assert hm.history_seq_for(live) != seq, "a new snapshot dir still moves it"
+
+
+def test_a_wildcard_family_beside_one_variant_names_what_it_spans(irb_client):
+    """docs/208 D4: charted together, the family read "... (IRB) · * · N pairs"."""
+    body = irb_client.get("/topology/trends?metrics=&paths=" + IRB + ","
+                          "qubit_pairs.*.macros.cz_SNZ.fidelity.InterleavedRB"
+                          ).get_data(as_text=True)
+    labels = {c["metric"]: c["label"] for c in _charts(body)}
+    assert labels["macros.*.fidelity.InterleavedRB"].endswith("all variants"), labels
+    assert labels["macros.cz_SNZ.fidelity.InterleavedRB"].endswith("cz_SNZ"), labels
+    assert "· *" not in body

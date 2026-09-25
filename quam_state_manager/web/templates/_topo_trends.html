@@ -87,8 +87,11 @@
     {% endif %}
 
     {% if index_updating %}
-    <p class="muted" hx-get="{{ refresh_url }}" hx-trigger="load delay:3s"
-       hx-target="#topo-trends" hx-swap="outerHTML" hx-sync="#topo-trends:replace">History index updating ({{ snapshots }} snapshots)…</p>
+    {# Re-fetched by ChipTrends with the CURRENT selection, and only when the
+       user has not asked for anything newer since (docs/208 D1: an hx-get of
+       this fragment's own URL aborted the user's badge press and brought
+       the old selection back). #}
+    <p class="muted topo-trends-updating" data-trends-updating="1">History index updating ({{ snapshots }} snapshots)…</p>
     {% endif %}
     {% if not charts %}
     <p class="muted">Pick a metric above.</p>

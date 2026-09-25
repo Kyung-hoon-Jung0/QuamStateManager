@@ -473,7 +473,8 @@ class TestTheAxisSaysWhatItMeans:
             "the chart must ask the one shared axis rule"
         assert "tickformat: '~s'" not in src, \
             "the retired workaround must not come back"
-        assert "c.metric + (c.unit ? ' (' + c.unit + ')' : '')" in src
+        # docs/208: a wildcard family's title is its label; the unit rides on either
+        assert "+ (c.unit ? ' (' + c.unit + ')' : '')" in src
 
     def test_a_constant_series_is_not_drawn_against_zero(self):
         src = _P_read()

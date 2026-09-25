@@ -11958,7 +11958,9 @@ def _trend_pair_labels(tails: list[str]) -> dict[str, str]:
         segs = {t: [s for s in t.split(".") if s] for t in ts}
         shared = set(segs[ts[0]]).intersection(*[set(segs[t]) for t in ts[1:]])
         for t in ts:
-            extra = [s for s in segs[t] if s not in shared]
+            # a wildcard segment is what the family SPANS, not a name
+            extra = [("all variants" if s == "*" else s)
+                     for s in segs[t] if s not in shared]
             out[t] = lbl + " · " + (".".join(extra) if extra else t)
     # ...and if a tail was a SUBSET of its rival's it has no distinguishing
     # segment at all, so the whole tail settles it.
@@ -12474,7 +12476,6 @@ def topology_trends():
                            metric_labels=metric_labels, pair_chips=pair_chips,
                            pair_chips_more=pair_chips_more,
                            trim_note=trim_note, index_updating=updating,
-                           refresh_url=request.full_path,
                            snaps=_snapshot_provenance_map(hm, path, only=charted),
                            snapshots=len(hm.list_snapshots(path)))
 

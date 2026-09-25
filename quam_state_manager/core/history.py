@@ -19,6 +19,7 @@ import shutil
 import sqlite3
 import threading
 import time
+import zlib
 from collections import OrderedDict
 from collections.abc import Callable
 from dataclasses import asdict, dataclass, fields
@@ -905,6 +906,8 @@ class HistoryManager:
         self._content_ts_cache: dict[str, tuple[object, dict[str, str]]] = {}
         # history_seq_for's last-seen chip-dir mtimes (docs/132)
         self._hist_seq_seen: dict[str, int] = {}
+        # hist dir -> (its mtime_ns, the seq of its snapshot-dir NAMES)
+        self._hist_seq_names: dict[str, tuple[int, int]] = {}
         # history_seq_for's TTL memo of resolved chip dirs (see its docstring)
         self._hist_seq_dir_memo: dict[str, tuple[Path, float]] = {}
         # docs/155 10h — the background sidecar verifier: last sweep start and
@@ -4883,11 +4886,38 @@ class HistoryManager:
             except OSError:
                 return 0
             self._hist_seq_dir_memo[key_src] = (hist_dir, now_t)
+        # The signal is the SET OF SNAPSHOT DIRS, not the dir's mtime (docs/208).
+        # The leaf/param index lives in this dir in WAL mode, and every read
+        # that opens and closes it creates and deletes index.sqlite-wal/-shm --
+        # which moves the dir mtime. Read as "another process captured
+        # something", that re-fetched an open Trends section every ~5 s,
+        # forever, mangling what the user was typing (measured on the rig).
+        # The mtime still gates the work: names are re-listed only when it
+        # moved, and a file coming or going never changes the answer.
         try:
-            seq = hist_dir.stat().st_mtime_ns
+            dir_mtime = hist_dir.stat().st_mtime_ns
         except OSError:
             return 0
         key = str(hist_dir)
+        memo = self._hist_seq_names.get(key)
+        # Racy-clean (the git index rule): a dir modified within the last 2 s
+        # may be modified again inside the SAME clock tick (Windows file times
+        # advance in ~1-16 ms steps), so an equal mtime proves nothing there
+        # and the names are re-listed. Measured: a snapshot dir created right
+        # after a -wal delete kept the old mtime and was missed.
+        if (memo is not None and memo[0] == dir_mtime
+                and time.time_ns() - dir_mtime > 2_000_000_000):
+            seq = memo[1]
+        else:
+            try:
+                names = sorted(e.name for e in os.scandir(hist_dir)
+                               if e.is_dir(follow_symlinks=False))
+            except OSError:
+                return 0
+            # >= 1 for an existing dir (0 means "no history dir" to callers)
+            seq = ((len(names) << 32)
+                   | zlib.crc32(chr(10).join(names).encode("utf-8"))) + 1
+            self._hist_seq_names[key] = (dir_mtime, seq)
         with self._lock:
             last = self._hist_seq_seen.get(key)
             if last != seq:
