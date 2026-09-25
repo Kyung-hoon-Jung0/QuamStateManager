@@ -63,10 +63,10 @@ window.IntersectionObserver = global.IntersectionObserver;
 global.ResizeObserver = class { observe() {} disconnect() {} unobserve() {} };
 window.ResizeObserver = global.ResizeObserver;
 
-const ajaxCalls = [];
+const ajaxCalls = [], triggerCalls = [];
 window.htmx = {
     ajax: function (method, url, opts) { ajaxCalls.push({ method, url, opts }); return Promise.resolve(); },
-    trigger: function () {},
+    trigger: function (elt, name) { triggerCalls.push({ elt: elt, name: name }); },
     process: function () {},
 };
 global.htmx = window.htmx;
@@ -80,10 +80,14 @@ function mkResp(payload, status) {
         text: function () { return Promise.resolve(''); },
     });
 }
-const syncCalls = [], editCalls = [], preflightCalls = [];
-let syncQueue = [], editQueue = [], preflightQueue = [];
+const syncCalls = [], editCalls = [], preflightCalls = [], revertCalls = [];
+let syncQueue = [], editQueue = [], preflightQueue = [], revertQueue = [];
 window.fetch = global.fetch = function (url, opts) {
     const u = String(url);
+    if (u.indexOf('/state/revert-last-apply/preflight') === 0) {
+        revertCalls.push(u);
+        return mkResp(revertQueue.length ? revertQueue.shift() : { ok: true });
+    }
     if (u.indexOf('/state/overwrite-live/preflight') === 0) {
         preflightCalls.push(u);
         return mkResp(preflightQueue.length ? preflightQueue.shift() : { ok: true });
@@ -317,6 +321,29 @@ window.eval(fs.readFileSync(path.join(STATIC, 'app.js'), 'utf8'));
     ok(ajaxCalls.length >= 1, 'the surface still refreshes in that case');
     ip.innerHTML = '';
     window.closeInspector = realClose;
+
+    /* QA correctness-r2-06: the armed "Revert this session" asks through the
+       preflight, NAMES the outside values it also rolls back, says the push
+       writes at once, and fires the button's hx-post only on OK. */
+    const _btn = document.createElement('button');
+    triggerCalls.length = 0; revertCalls.length = 0; lastConfirm = '';
+    revertQueue = [{ ok: true, push_armed: true, mine_n: 2, outside_n: 1,
+                     outside: [{ path: 'qubits.q1.T2ramsey', now: '7.3779e-05', back_to: '1.817e-05' }] }];
+    confirmAnswer = false;
+    window.revertSessionConfirm(_btn);
+    await flush(30);
+    ok(revertCalls.length === 1, 'revert: preflights once before asking');
+    ok(/qubits\.q1\.T2ramsey: 7\.3779e-05 → 1\.817e-05/.test(lastConfirm) && /ALSO 1 value/.test(lastConfirm),
+       'the confirm names the outside value it rolls back (got: ' + lastConfirm + ')');
+    ok(/ARMED/.test(lastConfirm) && /immediately/.test(lastConfirm) && !/review it first/i.test(lastConfirm),
+       'it says the push writes at once, never "you review it first"');
+    ok(triggerCalls.length === 0, 'Cancel fires nothing');
+    revertQueue = [{ ok: true, push_armed: true, mine_n: 1, outside_n: 0, outside: [] }];
+    confirmAnswer = true;
+    window.revertSessionConfirm(_btn);
+    await flush(30);
+    ok(triggerCalls.length === 1 && triggerCalls[0].elt === _btn && triggerCalls[0].name === 'revertconfirmed',
+       'OK fires the button\'s own request (revertconfirmed)');
 
     /* ── 2b. LiveEditUndo boundary discipline (audit-r10) ─────────────── */
     {

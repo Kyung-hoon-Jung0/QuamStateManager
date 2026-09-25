@@ -18802,6 +18802,65 @@ def state_apply_to_live():
     return resp
 
 
+@bp.route("/state/revert-last-apply/preflight")
+def state_revert_last_apply_preflight():
+    """What "↺ Revert this session" rolls back, fetched ON CLICK (QA r2-06).
+
+    Under an armed Auto-Sync push the tray's revert stages the SESSION anchor
+    -- the chip as it was when the session started -- and the armed push
+    writes it within a second. A value the session pulled from the live chip
+    in between (a calibration node's T2) is part of that difference, so it was
+    rolled back as well, silently, under a confirm that promised "You review it
+    first". This names it before the press: the leaves the revert changes,
+    split into the ones this session applied (its applied-log units) and the
+    ones that came from the live chip.
+
+    Reads the anchor snapshot (SM's own history) and the working copy on
+    screen; never the live files (docs/28).
+    """
+    ctx = _active_ctx()
+    if not ctx or ctx.get("type") != "quam":
+        return jsonify({"ok": False, "message": "No state loaded"}), 400
+    pre_ts = (ctx.get("last_apply") or {}).get("pre_ts")
+    if not pre_ts:
+        return jsonify({"ok": False, "message": "There is no apply to revert."}), 409
+    sess = _auto_apply_state(ctx)
+    out = {"ok": True, "pre_ts": pre_ts, "push_armed": bool(sess),
+           "mine_n": 0, "outside_n": 0, "outside": [], "unknown": False}
+    try:
+        before, t1 = json_diff.flatten(_history().load_snapshot(ctx["path"], pre_ts).merged)
+        after, t2 = json_diff.flatten(ctx["store"].merged)
+    except Exception:  # noqa: BLE001 — the confirm then says it cannot tell
+        logger.info("revert preflight could not diff the anchor", exc_info=True)
+        before = after = None
+        t1 = t2 = True
+    if t1 or t2 or before is None:
+        out["unknown"] = True
+        return jsonify(out)
+    changed = sorted(k for k in set(before) | set(after)
+                     if k not in before or k not in after or _differs(before[k], after[k]))
+    # this session's own writes: the applied-log units since it armed
+    since = float((sess or {}).get("armed_at") or 0.0)
+    mine: set[str] = set()
+    for u in ctx.get("undo_units") or []:
+        meta = u.get("meta") or {}
+        if not (meta.get("src") == "auto" or meta.get("auto")):
+            continue
+        if float(u.get("ts") or 0.0) < since:
+            continue
+        mine.update(str(e["path"]) for e in (u.get("entries") or []) if e.get("path"))
+
+    def _is_mine(k: str) -> bool:
+        return any(k == m or k.startswith(m + ".") or m.startswith(k + ".") for m in mine)
+
+    outside = [k for k in changed if not _is_mine(k)]
+    out["mine_n"] = len(changed) - len(outside)
+    out["outside_n"] = len(outside)
+    out["outside"] = [{"path": k, "now": _fmt_msg_val(after.get(k)),
+                       "back_to": _fmt_msg_val(before.get(k))} for k in outside[:5]]
+    return jsonify(out)
+
+
 @bp.route("/state/overwrite-live/preflight")
 def state_overwrite_live_preflight():
     """Everything the "keep mine, overwrite live" confirm needs, in one call.

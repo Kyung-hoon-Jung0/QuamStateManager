@@ -3924,6 +3924,55 @@ window.overwriteLiveWithWorking = function () {
             window.showToast("Could not check the live chip (network error).", "error");
         });
 };
+/* QA correctness-r2-06: "↺ Revert this session" under an armed Auto-Sync push.
+ * The revert stages the chip as it was when the session STARTED, and the armed
+ * push writes that within a second -- so a value the session pulled from the
+ * live chip in between (a calibration node's T2) was rolled back with the
+ * user's own edits, under a static confirm promising "You review it first".
+ * This asks from a preflight instead: it names the outside values the revert
+ * also rolls back and says the write is immediate. OK fires the button's own
+ * hx-post (hx-trigger="revertconfirmed"); Cancel changes nothing. */
+window.revertSessionConfirm = function (btn) {
+    if (!btn) return;
+    fetch("/state/revert-last-apply/preflight", { headers: { "HX-Request": "true" } })
+        .then(function (r) { return r.json(); })
+        .then(function (d) {
+            if (!d || !d.ok) {
+                window.showToast((d && d.message) || "Nothing to revert.", "error");
+                return;
+            }
+            var lines = ["Revert this Auto-Sync session?",
+                         "The chip goes back to how it was when the session started."];
+            if (d.unknown) {
+                lines.push("", "SM could not work out which values that changes.");
+            } else {
+                lines.push("");
+                if (d.mine_n) lines.push("• " + d.mine_n + " value" + (d.mine_n === 1 ? "" : "s")
+                    + " this session applied go back.");
+                if (d.outside_n) {
+                    lines.push("• ALSO " + d.outside_n + " value" + (d.outside_n === 1 ? "" : "s")
+                        + " that came from the live chip since (e.g. a calibration) — rolled back too:");
+                    (d.outside || []).forEach(function (o) {
+                        lines.push("    " + o.path + ": " + o.now + " → " + o.back_to);
+                    });
+                    if (d.outside_n > (d.outside || []).length)
+                        lines.push("    … and " + (d.outside_n - d.outside.length) + " more");
+                    lines.push("  To keep them, cancel and use ✕ on your own rows in the applied log.");
+                }
+            }
+            if (d.push_armed) {
+                lines.push("", "Auto-Sync (push) is ARMED, so this is written to the live chip immediately.");
+            }
+            if (!window.confirm(lines.join("\n"))) {
+                if (window.showToast) window.showToast("Cancelled — nothing was changed.", "info");
+                return;
+            }
+            if (window.htmx) window.htmx.trigger(btn, "revertconfirmed");
+        })
+        .catch(function () {
+            window.showToast("Could not check what the revert changes (network error).", "error");
+        });
+};
 /* QA correctness-r2-09: the server refused a Keep mine because the live chip
  * moved while its confirm was open -- ask again, with the count taken NOW.
  * Deferred a tick so the in-flight guard above has been released. */
