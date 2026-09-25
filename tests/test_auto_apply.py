@@ -272,6 +272,67 @@ class TestSnapshotPolicy:
         assert len(_snapshot_dirs(env)) >= n
 
 
+class TestFlushAnswersBeforeTheCapture:
+    """QA liveedit F14: under Auto-Sync the tray kept "Working state · 1
+    unsaved" and "Apply to live now" for 2-6 s after the live file was
+    written, because the flush's periodic history snapshot ran inside the
+    request (measured on the 5Q rig in real Chrome: state.json written at
+    ~0.4 s, the response at 2.1-6.1 s). The capture is not part of the answer
+    -- the session's revert anchor is taken BEFORE the write -- so it starts
+    once the response has been sent."""
+
+    def test_the_session_capture_runs_after_the_response(self, env, monkeypatch):
+        import threading
+        from quam_state_manager.core.history import HistoryManager
+
+        monkeypatch.setattr(routes_mod, "_defer_auto_snapshot", lambda: True)
+        real = HistoryManager.check_and_snapshot
+        release, started = threading.Event(), []
+
+        def fake(self, path, trigger="auto", **kw):
+            if trigger == "save":
+                started.append(threading.current_thread().name)
+                release.wait(3)
+            return real(self, path, trigger, **kw)
+
+        monkeypatch.setattr(HistoryManager, "check_and_snapshot", fake)
+        c = env["client"]
+        c.post("/auto-apply/arm")
+        _edit(env)
+        r = c.post("/state/apply-to-live")
+        assert r.status_code == 200
+        assert _live_f01(env) == 5.1e9, "the live write itself is not deferred"
+        assert started == [], "the capture ran inside the request"
+        assert 'data-change-count="0"' in r.get_data(as_text=True)
+        r.close()                                     # the response is sent
+        release.set()
+        for t in list(routes_mod._POST_APPLY_SNAP_THREADS):
+            t.join(10)
+        assert started == ["sm-post-apply-snapshot"], started
+        assert _ctx(env)["auto_apply"]["last_snap"] > 0, "the throttle is stamped"
+        # the anchor is still the synchronous pre-apply snapshot
+        assert _ctx(env)["auto_apply"]["pre_ts"]
+
+    def test_a_manual_apply_still_captures_inside_the_request(self, env, monkeypatch):
+        """Its response refreshes the State-History timeline, which must see
+        the new snapshot (the check_and_snapshot docstring's contract)."""
+        from quam_state_manager.core.history import HistoryManager
+
+        monkeypatch.setattr(routes_mod, "_defer_auto_snapshot", lambda: True)
+        real = HistoryManager.check_and_snapshot
+        seen = []
+
+        def spy(self, path, trigger="auto", **kw):
+            seen.append(trigger)
+            return real(self, path, trigger, **kw)
+
+        monkeypatch.setattr(HistoryManager, "check_and_snapshot", spy)
+        _edit(env)
+        r = env["client"].post("/state/apply-to-live")
+        assert r.status_code == 200
+        assert "save" in seen, seen
+
+
 class TestAppliedLog:
     def test_newest_first_and_only_auto_units(self, env):
         c = env["client"]
@@ -387,3 +448,20 @@ def test_client_flusher_is_a_separate_file_and_is_loaded():
     assert "_applyInFlight" in js, "shares the existing double-submit guard"
     base = (root / "templates" / "base.html").read_text(encoding="utf-8")
     assert "auto-apply.js" in base
+
+
+def test_diag_refresh_waits_for_the_flush_selfcheck():
+    """QA liveedit F14 (client half): the edit's diagnostics refresh waits for
+    the Auto-Sync flush the same edit started (tests/diag_waits_for_flush_selfcheck.cjs)."""
+    import shutil
+    import subprocess
+    if shutil.which("node") is None:
+        pytest.skip("node not available")
+    root = Path(__file__).resolve().parent.parent
+    r = subprocess.run(["node", str(root / "tests" / "diag_waits_for_flush_selfcheck.cjs")],
+                       capture_output=True, text=True, encoding="utf-8", errors="replace",
+                       cwd=str(root), timeout=300)
+    if "Cannot find module 'jsdom'" in (r.stderr or ""):
+        pytest.skip("jsdom not installed")
+    assert r.returncode == 0, r.stdout[-3000:] + r.stderr[-3000:]
+    assert "all checks passed" in r.stdout, r.stdout[-3000:]

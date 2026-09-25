@@ -6614,6 +6614,30 @@ def _entity_bulk_grid(store: QuamStore, root: str, ids: list[str] | None,
 # turn it off", and the pill makes the state impossible to miss.
 _AUTO_SNAPSHOT_MIN_S = 120.0     # post-apply history snapshots, per session
 
+# QA liveedit F14: an Auto-Sync flush's periodic post-apply snapshot runs off
+# the request thread (see state_apply_to_live). Synchronous under TESTING, like
+# `defer_index`, so a test client that tears its tmp folder down right after
+# the request never races a writer; the pin switches it on explicitly.
+_POST_APPLY_SNAP_THREADS: list = []
+
+
+def _defer_auto_snapshot() -> bool:
+    return not current_app.config.get("TESTING")
+
+
+def _spawn_post_apply_snapshot(hm, path, project) -> None:
+    def _run():
+        try:
+            hm.check_and_snapshot(path, "save", kind="manual",
+                                  defer_index=False, project=project)
+        except Exception:  # noqa: BLE001 -- a capture, never the user's write
+            logger.warning("History snapshot after auto-apply failed", exc_info=True)
+
+    t = threading.Thread(target=_run, name="sm-post-apply-snapshot", daemon=True)
+    _POST_APPLY_SNAP_THREADS[:] = [x for x in _POST_APPLY_SNAP_THREADS if x.is_alive()]
+    _POST_APPLY_SNAP_THREADS.append(t)
+    t.start()
+
 
 # \u2500\u2500 docs/120 item 8 \u2014 Auto-Sync: the covenant amended a second time \u2500\u2500\u2500\u2500\u2500\u2500\u2500
 #
@@ -18503,10 +18527,25 @@ def state_apply_to_live():
     # state+wiring every few seconds. Throttled per session; the disarm route
     # takes the unconditional closing one, so a session always ends captured.
     _snap_now = True
+    _post_snap = None
     if _auto is not None:
         _last = float(_auto.get("last_snap") or 0.0)
         _snap_now = (time.time() - _last) >= _AUTO_SNAPSHOT_MIN_S
-    if _snap_now:
+    if _snap_now and _auto is not None and _defer_auto_snapshot():
+        # QA liveedit F14: under Auto-Sync this periodic capture held the
+        # RESPONSE -- the live file was written at ~0.4 s, but the tray kept
+        # "Working state · 1 unsaved" and "Apply to live now" for 2-6 s while
+        # the snapshot copied the chip (measured on the 5Q rig, real Chrome).
+        # Nothing in this response needs it: the session's revert anchor
+        # (pre_ts) was taken synchronously BEFORE the write, and the disarm
+        # takes the unconditional closing snapshot. So it runs after the
+        # answer -- started when the response has been SENT (call_on_close),
+        # because a thread started here competes with the rest of this very
+        # response for the interpreter (measured: it only moved the wait).
+        # Stamped now, so the throttle holds while it runs.
+        _auto["last_snap"] = time.time()
+        _post_snap = (_history(), ctx["path"], _scope_for(ctx["path"], ctx))
+    elif _snap_now:
         try:
             _history().check_and_snapshot(
                 ctx["path"], "save", kind="manual",
@@ -18532,6 +18571,8 @@ def state_apply_to_live():
             "liveDriftChanged": None, "stateHistoryChanged": None,
             # auto-apply.js toasts this once per distinct set, not per flush
             "autoApplyApplied": {"crash": _crash}})
+        if _post_snap is not None:
+            resp.call_on_close(lambda: _spawn_post_apply_snapshot(*_post_snap))
         return resp
     if _crash:
         toast = render_template(

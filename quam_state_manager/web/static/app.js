@@ -14975,7 +14975,18 @@ var _diagChangedTimer = null;
 window._diagChanged = function () {
     if (!window.htmx) return;
     if (_diagChangedTimer) clearTimeout(_diagChangedTimer);   // reset → fire after the LAST call
-    _diagChangedTimer = setTimeout(function () {
+    // QA liveedit F14: under Auto-Sync the edit's own flush to the live chip
+    // is in flight at this moment, and the diagnostics refresh this event
+    // fans out into (findings, banners, type alarm: seconds of server CPU)
+    // was competing with it -- the tray kept "1 unsaved" well after the live
+    // file was written. The refresh is advisory; it waits for the flush
+    // (bounded, ~5 s), then runs.
+    var waits = 0;
+    _diagChangedTimer = setTimeout(function fire() {
+        if (window._applyInFlight && waits++ < 50) {
+            _diagChangedTimer = setTimeout(fire, 100);
+            return;
+        }
         _diagChangedTimer = null;
         try { htmx.trigger(document.body, 'diagnostics-changed'); } catch (e) {}
     }, 350);
