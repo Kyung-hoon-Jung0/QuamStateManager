@@ -3089,6 +3089,13 @@ th.sortable.sort-desc::after { content: '\25BC'; opacity: 0.8; }
 }
 .ds-folder-line-icon { opacity: .75; }
 .ds-folder-line-label { font-family: var(--font-mono); overflow: hidden; text-overflow: ellipsis; }
+/* datasets-r2-20: an unreadable run file / a missing figure is said in text. */
+.ds-file-health-note {
+    font-size: .85em; margin: .1rem 0 .45rem; padding: .3rem .55rem;
+    color: var(--color-warning-text); background: var(--color-warning-bg);
+    border-left: 3px solid var(--color-warning-border); border-radius: 3px;
+}
+.figure-missing { padding: 1.5rem .5rem; text-align: center; margin: 0; }
 /* Trends: folder selector row + cross-chip warning. */
 .trends-folder-row { display: flex; flex-wrap: wrap; gap: .3rem; align-items: center; margin-bottom: .5rem; }
 .trend-chip-warning {
@@ -3363,8 +3370,20 @@ input.sort-key-filter { width: 9rem; margin: 0; padding: .12rem .4rem; font-size
     margin-top: calc(-1 * var(--table-pane-pad-v));
     padding-top: calc(var(--table-pane-pad-v) + 0.25rem);
 }
+/* The pinned compare renders the same partial inside each split column, which
+   pads 0.5rem (.inspector-pinned-col/.inspector-current-col), not the pane's
+   --inspector-pane-pad-h: the 1rem bleed ran 0.5rem past every column's padding
+   box and gave both columns a horizontal scrollbar (datasets-r2-29). */
+.inspector-split .inspector-header-dataset {
+    margin-left: -0.5rem; margin-right: -0.5rem;
+    padding-left: 0.5rem; padding-right: 0.5rem;
+}
 .inspector-header-dataset .inspector-title strong { font-size: 1.1em; }
 .inspector-header-dataset .inspector-title small  { font-size: 0.92em; }
+/* datasets-r2-05: in the compare header the run list gives way first, so
+   "Comparing N runs" never shrinks to "Co..." (full list on hover). */
+.inspector-header-compare .inspector-title strong { flex-shrink: 0; }
+.inspector-header-compare .inspector-title small { min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 
 /* Dataset header: the list of qubits (or qubit-pairs) the run executed on.
    A <span> (not a button) so --pico-primary reads fine in both themes; it
@@ -5297,6 +5316,11 @@ table code { font-size: 0.88em; }
 .ds-replot-title { font-size: 0.9em; color: var(--pico-muted-color); }
 .ds-replot-title code { font-size: 0.95em; }
 .ds-replot-head .ds-interactive-colbtns { margin-left: auto; }
+/* datasets-r2-22: labelled like the recipe toolbar; a failure reads as one */
+.ds-replot-head .ds-interactive-toolbar-label { margin-left: auto; }
+.ds-replot-head .ds-interactive-toolbar-label + .ds-interactive-colbtns { margin-left: 0; }
+.ds-replot-title.ds-replot-fail { color: var(--pico-del-color, #b3261e); }
+p.ds-replot-fatal { padding: 0 0.2rem; overflow-wrap: anywhere; }
 .ds-replot-errors {
     margin: 0.2rem 0 0.6rem; font-size: 0.85em;
     color: var(--pico-del-color, #b3261e);
@@ -6065,12 +6089,13 @@ body:has(.tree-copy-pill:not([hidden])) .json-tree { padding-bottom: 5rem; }
 
 /* Dataset detail tabs */
 .dataset-tabs { margin: .5rem 0; border-bottom: 1px solid var(--pico-muted-border-color); }
-.dataset-tabs ul { display: flex; list-style: none; padding: 0; margin: 0; gap: 0; }
+.dataset-tabs ul { display: flex; flex-wrap: wrap; list-style: none; padding: 0; margin: 0; gap: 0; }
 .dataset-tabs li { margin: 0; }
 .dataset-tabs a {
     display: block; padding: var(--dataset-tab-pad-v) var(--dataset-tab-pad-h); cursor: pointer;
     color: var(--pico-muted-color); text-decoration: none;
     border-bottom: var(--dataset-tab-active-border) solid transparent; font-size: var(--dataset-tab-font);
+    white-space: nowrap; /* datasets-r2-29: a whole tab wraps, a label never breaks ("Full / View") */
 }
 .dataset-tabs a:hover { color: var(--pico-color); }
 .dataset-tabs a.active { color: var(--pico-primary); border-bottom-color: var(--pico-primary); font-weight: 600; }
@@ -6113,6 +6138,15 @@ body:has(.tree-copy-pill:not([hidden])) .json-tree { padding-bottom: 5rem; }
 .prevdiff-badges { display: flex; gap: .3rem; align-items: center; }
 .prevdiff-table { font-size: .86em; }
 .prevdiff-table td.col-val { font-family: var(--font-mono); word-break: break-all; }
+/* datasets-r2-29: in THIS table the dot-path is the long part, so the global
+   .col-prop 1% hug cannot apply — a percent column is assigned exactly its
+   min-content, which either keeps the full path on one line (the #prev/#run
+   headers fall past a 510 px pinned column) or, with any wrapping rule, wraps
+   every path one character per line (measured: a 42 px column, 10 lines). An
+   auto column shares the width and wraps only when the pane is too narrow.
+   Intended trade-off (review): in a WIDE single pane the surplus width now
+   goes to the path column, so #prev/#run/Δ sit grouped at the right. */
+.prevdiff-table .col-prop { width: auto; white-space: normal; overflow-wrap: anywhere; }
 .prevdiff-more { padding: .35rem .5rem; font-size: .85em; }
 
 /* Figure grid */
@@ -6474,6 +6508,10 @@ table.h5-vars-table tr.h5-var-selected .btn-sm { background: var(--pico-primary)
     border-radius: 4px; transition: background 0.15s;
 }
 .inspector-nav-btn:hover, .inspector-expand:hover { background: rgba(128,128,128,0.15); }
+/* QA r2-06: on the full page (the run in #table-pane) ⛶ is where you already
+   are and 📌 compares inside the inspector only -- both were dead buttons. */
+#table-pane .inspector-header-dataset .inspector-expand,
+#table-pane .inspector-header-dataset .inspector-pin { display: none; }
 
 .inspector-vsprev {
     background: transparent; border: 1px solid var(--pico-muted-border-color);
@@ -6999,7 +7037,9 @@ body.cmp-resizing { cursor: col-resize; user-select: none; }
 .plot-apply-old-val {
     font-family: var(--font-mono, monospace);
     font-size: 0.92em;
-    white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+    /* F21: the full previous value WRAPS -- an ellipsis cut a full-precision
+       frequency to "6723520634.…" with no way to read the rest */
+    overflow-wrap: anywhere;
 }
 .plot-apply-new-input {
     font-family: var(--font-mono, monospace);

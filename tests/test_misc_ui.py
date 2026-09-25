@@ -145,7 +145,9 @@ class TestRunJump:
         h = _read("quam_state_manager/web/templates/_inspector_header.html")
         assert 'id="ds-run-jump"' not in h
         assert "dsNavRun(-10)" not in h and "dsNavRun(10)" not in h
-        assert "dsNavRun(-1)" in h and "dsNavRun(1)" in h   # single-step stays
+        # single-step stays (QA r2-06: the button passes itself, so a full
+        # page and an inspector run on screen together each drive their own)
+        assert "dsNavRun(-1, this)" in h and "dsNavRun(1, this)" in h
         bar = _read("quam_state_manager/web/templates/_dataset_prev_diff.html")
         assert "prevdiff-vs-input" in bar
         assert "prevDiffJump" in bar
@@ -153,6 +155,20 @@ class TestRunJump:
         js = _read("quam_state_manager/web/static/app.js")
         assert "window.prevDiffJump" in js
         assert "window.dsJumpRun" not in js
+
+    def test_the_box_refuses_what_is_not_a_run_number(self):
+        """datasets-r2-15: '12.5' silently compared against #125 and 'abc' did
+        nothing at all -- pinned against the real app.js under jsdom."""
+        import shutil
+        import subprocess
+        if shutil.which("node") is None:
+            pytest.skip("node not available")
+        proc = subprocess.run(
+            ["node", str(_ROOT / "tests" / "prevdiff_jump_selfcheck.cjs")],
+            capture_output=True, text=True, cwd=str(_ROOT), timeout=120)
+        if proc.returncode == 2 and "jsdom not installed" in (proc.stderr or ""):
+            pytest.skip("jsdom not installed")
+        assert proc.returncode == 0, f"stdout:\n{proc.stdout}\nstderr:\n{proc.stderr}"
 
 
 class TestPillDismiss:

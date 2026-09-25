@@ -234,4 +234,110 @@ E('k3').focus();
 ev = key('ArrowLeft', { shiftKey: true });
 ok(!ev.defaultPrevented, 'Shift+Left is left alone');
 
-process.exit(fails ? 1 : 0);
+/* 9. F20 (QA 2026-09-24): closing the inspector with its x destroyed the
+ * focused button and dropped the keyboard to <body> -- Enter no longer reopened
+ * the run and Left/Right no longer folded the tree. The close hands the
+ * keyboard back to the tree entry of the run that was open, and only when the
+ * focus was inside the pane being blanked. */
+doc.body.innerHTML =
+    '<div id="sidebar"><details open><summary>d</summary><ul class="tree-entries">'
+    + entry('u3', 3) + entry('u2', 2) + entry('u1', 1)
+    + '</ul></details></div>'
+    + '<div id="table-pane" tabindex="-1"></div>'
+    + '<div id="inspector-pane"></div>';
+const pane9 = doc.getElementById('inspector-pane');
+const openRun = (uid) => {
+    pane9.innerHTML = '<div id="ds-detail-root" data-uid="' + uid + '">'
+        + '<button id="x-close" type="button">x</button></div>';
+};
+E('u2').click();
+openRun('u2');
+doc.getElementById('x-close').focus();
+ok(doc.activeElement === doc.getElementById('x-close'), '(fixture) the x button has the keyboard');
+window.closeInspector();
+ok(pane9.innerHTML === '', '(fixture) the close blanked the inspector');
+ok(doc.activeElement === E('u2'), 'closing the inspector hands the keyboard back to the tree entry of the open run');
+const nLoads9 = loads.length;
+ev = key('Enter');
+ok(ev.defaultPrevented && loads.length === nLoads9 + 1 && loads[loads.length - 1] === '/dataset/u2',
+   'Enter on that entry reopens the run');
+// a close triggered while the keyboard is elsewhere never moves it
+openRun('u1');
+doc.getElementById('table-pane').focus();
+window.closeInspector();
+ok(doc.activeElement === doc.getElementById('table-pane'), 'a close with the focus outside the pane leaves the focus where it is');
+// a run whose entry is hidden (filtered / collapsed) does not grab anything
+E('u3').closest('li').hidden = true;
+openRun('u3');
+doc.getElementById('x-close').focus();
+window.closeInspector();
+ok(doc.activeElement !== E('u3'), 'a hidden tree entry is never focused');
+E('u3').closest('li').hidden = false;
+
+// the load an hx-sync:replace aborts rejects htmx.ajax's promise: that must not
+// surface as an "Uncaught (in promise)"
+const unhandled = [];
+process.on('unhandledRejection', (r) => { unhandled.push(r); });
+const realAjax = window.htmx.ajax;
+window.htmx.ajax = (m, url) => { loads.push(url); return Promise.reject(); };
+E('u1').click();
+window.htmx.ajax = realAjax;
+setTimeout(async () => {
+    ok(unhandled.length === 0, 'an aborted run load (rejected htmx.ajax promise) is not an unhandled rejection');
+    await endOfList();
+    process.exit(fails ? 1 : 0);
+}, 30);
+
+/* 10. datasets-r2-25: ↑ on the newest run / ↓ on the oldest did NOTHING --
+ * the server answered {ok:true, uid:null} ("honest end-of-folder") and the
+ * client dropped it: no load, no message, the button still live. Now the
+ * press says where the walk stopped, one toast at a time, and still loads
+ * nothing. The PgUp/PgDn clamp at the list's end says so too. */
+async function endOfList() {
+    const flush = () => new Promise((r) => setTimeout(r, 10));
+    doc.body.innerHTML =
+        '<div id="sidebar"><details open><summary>d</summary><ul class="tree-entries">'
+        + entry('u3', 3) + entry('u2', 2) + entry('u1', 1)
+        + '</ul></details></div>'
+        + '<div id="table-pane"></div>'
+        + '<div id="inspector-pane"><div id="ds-detail-root" data-uid="u3"></div></div>'
+        + '<div id="status-bar"></div>';
+    global.fetch = window.fetch = (url) => {
+        fetches.push(String(url));
+        return Promise.resolve({ json: () => Promise.resolve({ ok: true, uid: null, run_id: null }) });
+    };
+    const toasts = () => Array.from(doc.querySelectorAll('#status-bar .toast')).map((t) => t.textContent);
+    const n0 = loads.length;
+    fetches.length = 0;
+    window.dsNavRun(-1);                 // ↑ on the newest run of the folder
+    await flush();
+    ok(fetches.indexOf('/dataset/u3/neighbor?dir=-1') >= 0, '(fixture) past the top the server is asked');
+    ok(toasts().length === 1 && /newest run/.test(toasts()[0]),
+       'r2-25: ↑ on the newest run says so: ' + JSON.stringify(toasts()));
+    ok(loads.length === n0, 'r2-25: and loads nothing');
+    window.dsNavRun(-1);
+    await flush();
+    ok(toasts().length === 1, 'r2-25: a second press replaces the toast, never stacks it');
+    doc.getElementById('ds-detail-root').setAttribute('data-uid', 'u1');
+    window.dsNavRun(1);                  // ↓ on the oldest run
+    await flush();
+    ok(toasts().length === 1 && /oldest run/.test(toasts()[0]),
+       'r2-25: ↓ on the oldest run says so: ' + JSON.stringify(toasts()));
+    ok(loads.length === n0, 'r2-25: and loads nothing either');
+    // the PgDn clamp at the last visible entry
+    fetches.length = 0;
+    window.dsNavRun(10);
+    await flush();
+    ok(fetches.length === 0 && toasts().length === 1 && /bottom of the list/.test(toasts()[0]),
+       'r2-25: PgDn at the last entry says the list ends here: ' + JSON.stringify(toasts()));
+    // a real neighbor still loads, and a failed answer ({ok:false}) stays quiet
+    global.fetch = window.fetch = (url) => {
+        fetches.push(String(url));
+        return Promise.resolve({ json: () => Promise.resolve({ ok: false }) });
+    };
+    doc.getElementById('status-bar').innerHTML = '';
+    doc.getElementById('ds-detail-root').setAttribute('data-uid', 'u3');
+    window.dsNavRun(-1);
+    await flush();
+    ok(toasts().length === 0, 'r2-25: a refused lookup is not called an end');
+}

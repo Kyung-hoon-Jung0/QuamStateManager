@@ -49,7 +49,9 @@ _DATA_JSON_CACHE_MAX = 200
 _COLD_SCAN_BUDGET_S = 3.0
 # docs/171: the persisted store. Version bumps when the payload's shape or
 # meaning changes (a mismatch reads as a miss: one cold scan, then flat).
-_STORE_CACHE_V = 1
+# v2 (F21): key_metric no longer carries a raw "nan" -- a v1 cache would
+# re-serve it on every warm start.
+_STORE_CACHE_V = 2
 # A scan that changed something writes the cache this long after the LAST
 # such scan -- a burst of landing runs is one write, not one per run.
 _STORE_CACHE_DEBOUNCE_S = 3.0
@@ -1722,6 +1724,40 @@ class DatasetStore:
     # Figure serving
     # ------------------------------------------------------------------
 
+    def run_file_health(self, run_id: int) -> dict:
+        """datasets-r2-20: what the run detail must SAY instead of an empty
+        state or a broken image. Called by the detail route only (get_run has
+        16 callers and stays read-free):
+
+        - ``unreadable``: node.json / data.json present but unparsable -- read
+          only when the run is flagged ``incomplete``, so a healthy run pays
+          nothing;
+        - ``files_on_disk``: with data.json unreadable, the image files that
+          ARE in the run folder (the rule ``_diff_run_figures`` uses);
+        - ``missing_figures``: declared figures whose file is gone (one stat
+          each, the same resolution the /fig route serves).
+        """
+        out: dict = {"unreadable": [], "files_on_disk": [], "missing_figures": []}
+        run = self.runs.get(run_id)
+        if not run:
+            return out
+        if run.incomplete:
+            for fname in ("node.json", "data.json"):
+                p = run.folder_path / fname
+                if p.exists() and safe_io.scan_json(p) is None:
+                    out["unreadable"].append(fname)
+            if "data.json" in out["unreadable"]:
+                try:
+                    out["files_on_disk"] = sorted(
+                        f.name for f in run.folder_path.iterdir()
+                        if f.is_file() and f.suffix.lower() in (".png", ".jpg", ".jpeg", ".svg"))
+                except OSError:
+                    pass
+        for name in run.figure_names:
+            if self.get_figure_path(run_id, name) is None:
+                out["missing_figures"].append(name)
+        return out
+
     def get_figure_path(self, run_id: int, figure_name: str) -> Path | None:
         """Return absolute path to a figure PNG file (path-traversal safe)."""
         run = self.runs.get(run_id)
@@ -2194,19 +2230,33 @@ class DatasetStore:
         return None
 
     def get_previous_same_experiment_id(self, run_id: int) -> int | None:
-        """The nearest EARLIER run of the SAME experiment (node type), or None.
+        """The nearest EARLIER run of the SAME experiment (node type) on an
+        OVERLAPPING target, or None.
 
         The calibration workflow's core question — "how does this run compare
         to the last time this node ran?" — walks run-id order backwards until
-        the experiment_name matches. In-memory walk over the sorted index."""
+        the experiment_name matches AND the candidate measured at least one of
+        this run's targets (QA r2-04: q3's run was compared with q2's, so every
+        row was one-sided). A 2Q run matches on its PAIRS (pair runs also fold
+        their member qubits into ``qubits``, so q1-q2 must not match q2-q3); a
+        run with no parsed targets matches on the name alone, as before.
+        In-memory walk over the sorted index."""
         cur = self.runs.get(run_id)
         if cur is None or not cur.experiment_name:
             return None
+        cur_pairs = set(cur.qubit_pairs or ())
+        cur_qubits = set(cur.qubits or ())
         idx = bisect.bisect_left(self._run_ids_sorted, run_id)
         for i in range(idx - 1, -1, -1):
             cand = self.runs.get(self._run_ids_sorted[i])
-            if cand is not None and cand.experiment_name == cur.experiment_name:
-                return cand.run_id
+            if cand is None or cand.experiment_name != cur.experiment_name:
+                continue
+            if cur_pairs:
+                if not cur_pairs & set(cand.qubit_pairs or ()):
+                    continue
+            elif cur_qubits and not cur_qubits & set(cand.qubits or ()):
+                continue
+            return cand.run_id
         return None
 
     def get_next_run_id(
@@ -2466,11 +2516,38 @@ class DatasetStore:
                 raise
             return list(tags_dict.get(rid_str, []))
 
-    def set_note(self, run_id: int, note: str):
-        """Set a note on a run."""
+    class NoteConflict(Exception):
+        """datasets-r2-12: the note changed since the editor rendered it (another
+        tab or window saved one). ``current`` is the note that is stored now."""
+
+        def __init__(self, current: str):
+            super().__init__("note changed since it was opened")
+            self.current = current
+
+    def set_note(self, run_id: int, note: str, expected: str | None = None):
+        """Set a note on a run.
+
+        ``expected`` (datasets-r2-12) is the note the editor last saw. When
+        given, a stored note that differs from it AND from ``note`` raises
+        :class:`NoteConflict` instead of silently replacing another window's
+        text; ``None`` keeps last-write-wins for every other caller.
+        """
         with self._tags_lock:
             notes = self._tags_data.setdefault("notes", {})
             rid_str = str(run_id)
+            if expected is not None:
+                def _nl(s):
+                    return (s or "").replace("\r\n", "\n").replace("\r", "\n")
+                on_disk = (safe_io.scan_json(self._tags_path)
+                           if self._tags_path.exists() else None)
+                if isinstance(on_disk, dict) and isinstance(on_disk.get("notes"), dict):
+                    current = on_disk["notes"].get(rid_str) or ""
+                else:
+                    current = notes.get(rid_str) or ""
+                if not isinstance(current, str):
+                    current = str(current)
+                if _nl(current) != _nl(expected) and _nl(current) != _nl(note):
+                    raise DatasetStore.NoteConflict(current)
             previous = notes.get(rid_str)
             if note:
                 notes[rid_str] = note
@@ -2533,18 +2610,28 @@ class DatasetStore:
             "readout_amplitude": ("amplitude", "V"),
         }
 
+        # F21: a NaN/inf is not a value (docs/137) and a bool is not a
+        # number -- the table printed a failed fit's NaN as "nan" and True
+        # as "1.0000". The SAME rule _extract_sort_scalars applies below.
+        def _num(v):
+            return type(v) is not bool and isinstance(v, (int, float))
+
         for pattern, (field_name, unit) in metric_map.items():
             if pattern in exp:
                 val = first_qubit_results.get(field_name)
-                if val is not None and isinstance(val, (int, float)):
-                    return _format_metric(val, unit)
+                if _num(val):
+                    # a failed headline fit reads blank ("-"), never some
+                    # unrelated field standing in for it
+                    return _format_metric(val, unit) if math.isfinite(val) else ""
 
-        # Fallback: find first numeric value that isn't "success"
+        # Fallback: the FIRST numeric value that isn't "success" decides --
+        # blank when it is non-finite (skipping on to the next field would
+        # headline a diagnostic like ridge_coverage instead)
         for key, val in first_qubit_results.items():
             if key == "success":
                 continue
-            if isinstance(val, (int, float)):
-                return _format_metric(val, "")
+            if _num(val):
+                return _format_metric(val, "") if math.isfinite(val) else ""
 
         return ""
 

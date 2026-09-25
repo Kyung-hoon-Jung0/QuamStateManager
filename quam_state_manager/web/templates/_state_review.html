@@ -7,7 +7,8 @@
    the flex min-height:0 trick). #}
 <div class="state-review">
   <div class="state-review-head">
-    <h3>Live chip vs. working state</h3>
+    {% set _ai = archive_info() if (chip_origin is defined and chip_origin == 'dataset_archive') else none %}
+    <h3>{% if _ai %}Run{% if _ai.run_label %} {{ _ai.run_label }}{% endif %} archive (read-only){% else %}Live chip vs. working state{% endif %}</h3>
     {# Actions moved up here. Keeps id="state-review-actions" + the
        .review-sync-clean / .review-sync-edits spans so reviewAccept()'s
        _reviewRevealEditSync() still flips clean⇄edits in place. #}
@@ -92,19 +93,34 @@
         &#8593; Keep mine <span class="sync-btn-sub">&mdash; overwrite live</span></button>
       {% endif %}
       {% endif %}
+      {% if _ai and _ai.return_path %}
+      <button class="btn-sync state-review-archive-back" type="button" hx-post="/load"
+              hx-vals='{{ {"folder": _ai.return_path} | tojson }}' hx-target="#table-pane" hx-swap="innerHTML"
+              title="Leave this read-only archive and re-open {{ _ai.return_path }}">&larr; Back to {{ _ai.return_name }}</button>
+      {% endif %}
+      {% if _ai and _ai.uid %}
+      <a class="btn-sync outline state-review-archive-run" role="button" href="/dataset/{{ _ai.uid }}"
+         title="Open this run's detail page">Back to run{% if _ai.run_label %} {{ _ai.run_label }}{% endif %}</a>
+      {% endif %}
       <button class="btn-sync outline state-review-close-btn" type="button"
               onclick="closeReview()" aria-label="Close" title="Close">Close</button>
     </div>
   </div>
 
   <div class="state-review-body">
-  {% if total == 0 %}
+  {% if total == 0 and _ai %}
+  <p class="muted state-review-empty">This is run{% if _ai.run_label %} {{ _ai.run_label }}{% endif %}'s frozen quam_state, opened read-only &mdash; nothing here syncs to a live chip.{% if not _ai.return_path %} Load a chip folder (State Load) to edit one.{% endif %}</p>
+  {% elif total == 0 %}
   <p class="muted state-review-empty">No differences &mdash; the working state matches the live chip.</p>
   {% else %}
   <div class="diff-summary">
-    <span class="diff-badge diff-added">Added: {{ summary.added }}</span>
-    <span class="diff-badge diff-removed">Removed: {{ summary.removed }}</span>
-    <span class="diff-badge diff-modified">Modified: {{ summary.modified }}</span>
+    {# QA F14: the old verbs (Added/Removed) read the PULL direction (working ->
+       live) next to push buttons -- "Removed: 7" beside "Apply to live" read as
+       "apply deletes 7". Say where each value is instead; the arrow gets an owner. #}
+    <span class="diff-dir-badge" title="Each row shows your working-state value on the left and the live chip's value on the right">Working state <span class="diff-dir-arrow">&rarr;</span> Live chip</span>
+    <span class="diff-badge diff-removed">Only in working state: {{ summary.removed }}</span>
+    <span class="diff-badge diff-added">Only on live chip: {{ summary.added }}</span>
+    <span class="diff-badge diff-modified">Different: {{ summary.modified }}</span>
     <span class="diff-badge diff-total">Total: {{ summary.total }}</span>
     {% if total > entries | length %}
     <small class="muted">(showing {{ entries | length }} of {{ total }})</small>
@@ -144,10 +160,11 @@
     {% for e in entries %}
     {% set _mine = edited_paths is defined and e.dot_path in edited_paths %}
     {% set _glyph = {'modified': 'M', 'added': 'A', 'removed': 'D'}.get(e.change_type, '?') %}
+    {% set _where = {'modified': 'different', 'added': 'only on the live chip', 'removed': 'only in the working state'}.get(e.change_type, e.change_type) %}
     {% set _parts = e.dot_path.rsplit('.', 1) %}
     <div class="review-row diff-row-{{ e.change_type }}{% if _mine %} diff-row-yours{% endif %}">
       <div class="review-row-path">
-        <span class="diff-type-badge diff-type-{{ e.change_type }}" aria-label="{{ e.change_type }}" title="{{ e.change_type }}">{{ _glyph }}</span>
+        <span class="diff-type-badge diff-type-{{ e.change_type }}" aria-label="{{ _where }}" title="{{ _where }}">{{ _glyph }}</span>
         <code class="dot-path" title="{{ e.dot_path }}">{%- if _parts | length == 2 -%}<span class="dp-dirs">{{ _parts[0] }}.</span><span class="dp-leaf">{{ _parts[1] }}</span>{%- else -%}<span class="dp-leaf">{{ e.dot_path }}</span>{%- endif -%}</code>
         {% if _mine %}<span class="diff-yours-tag" title="The working state already holds your own edited value here. Accepting (✓) would REPLACE it with the live value.">your edit</span>{% endif %}
       </div>

@@ -82,10 +82,17 @@ class TestTheOneSiteWhereItMattered:
         """
         src = _STATIC.joinpath("app.js").read_text(encoding="utf-8")
         i = src.index("_pushRecent(entry);")
-        block = src[i:i + 5200]   # the branch grew a comment; keep the window past it
-        assert "history.pushState" in block,             "the palette's navigation branch must add the history entry itself"
-        assert "htmx:afterSwap" in block,             "it must hang the entry off the SWAP, not off the ajax promise"
-        assert "syncSidebarNavActive" in block,             "a raw pushState fires no htmx event -- the sidebar needs telling"
+        block = src[i:src.index("window.location.href = entry.url;", i + 400)]
+        # F16 review: ONE navigation contract. The palette's page branch goes
+        # through the shared main-pane helper instead of carrying its own copy
+        # of the push-on-swap block (two copies had to be kept in step by hand).
+        assert "_navigateTablePane(entry.url)" in block, "the palette's page pick must go through the one navigation helper"
+        assert "history.pushState" not in block and "htmx:afterSwap" not in block, "the palette must not carry a second copy of the push-on-swap contract"
+        j = src.index("function _navigateTablePane(url)")
+        helper = src[j:src.index("window._navigateTablePane = _navigateTablePane", j)]
+        assert "history.pushState" in helper,             "the navigation helper must add the history entry itself"
+        assert "htmx:afterSwap" in helper,             "it must hang the entry off the SWAP, not off the ajax promise"
+        assert "syncSidebarNavActive" in helper,             "a raw pushState fires no htmx event -- the sidebar needs telling"
 
     def test_the_two_noisy_sites_pass_a_source_instead(self):
         """Where there was no history entry to add, the fix is `source`.

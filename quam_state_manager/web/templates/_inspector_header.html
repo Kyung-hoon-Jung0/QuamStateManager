@@ -1,4 +1,4 @@
-<div class="inspector-header inspector-header-{{ inspector_type }}">
+<div class="inspector-header inspector-header-{{ inspector_type }}{% if inspector_compare is defined and inspector_compare %} inspector-header-compare{% endif %}">
     <div class="inspector-title">
         {% if inspector_runid is defined and inspector_runid is not none %}
         {# Datasets: a plain "#NN" run-id prefix before the title (r13 feedback —
@@ -13,7 +13,7 @@
         {% endif %}
         <strong>{{ inspector_label }}</strong>
         {% if inspector_qubits is defined and inspector_qubits %}<span class="inspector-qubit-list" title="{{ inspector_qubits }}">{{ inspector_qubits }}</span>{% endif %}
-        {% if inspector_sub %}<small class="muted">{{ inspector_sub }}</small>{% endif %}
+        {% if inspector_sub %}<small class="muted"{% if inspector_compare is defined and inspector_compare %} title="{{ inspector_sub }}"{% endif %}>{{ inspector_sub }}</small>{% endif %}
         {% if inspector_inactive is defined and inspector_inactive %}<span class="inactive-chip" title="Not listed in the state's active names — shown anyway (r15: everything is listed, active is a mark)">inactive</span>{% endif %}
     </div>
     <div class="inspector-actions">
@@ -37,16 +37,16 @@
            hx-sync="#table-pane:replace" hx-push-url="true"
            title="Show the experiment runs that measured {{ inspector_label }}">runs →</a>
         {% endif %}
-        {% if inspector_type == "dataset" %}
+        {% if inspector_type == "dataset" and not (inspector_compare is defined and inspector_compare) %}
         {# Up/down run navigation — walks the sidebar tree's run entries in
            the order the user SEES them (r13: newest-first, so ↑ = newer,
            ↓ = older — spatial motion stays honest). Keyboard: [ and ]. #}
         {# docs/126 r3: the ⑥-era 10-step jumps + run-number box moved to the
            Prev State tab's comparison bar — that was the request's real home
            and the header copy duplicated it. Single-step nav stays. #}
-        <button class="inspector-nav-btn" onclick="dsNavRun(-1)"
+        <button class="inspector-nav-btn" onclick="dsNavRun(-1, this)"
                 title="Newer run  [" aria-label="Newer run">&#8593;</button>
-        <button class="inspector-nav-btn" onclick="dsNavRun(1)"
+        <button class="inspector-nav-btn" onclick="dsNavRun(1, this)"
                 title="Older run  ]" aria-label="Older run">&#8595;</button>
         <button class="inspector-vsprev" onclick="dsComparePrev(this)"
                 title="Compare with the previous run of this experiment"
@@ -58,7 +58,9 @@
                 onclick="togglePinDataset()" title="Pin for comparison"
                 aria-label="Pin this dataset for side-by-side comparison">&#128204;</button>
         {% endif %}
-        <button class="inspector-close" onclick="closeInspector()"
+        {# QA r2-06: a run's × acts on the pane that holds it (a full page goes
+           back to the Datasets list; the inspector closes as before) #}
+        <button class="inspector-close" onclick="{% if inspector_type == 'dataset' %}dsCloseRun(this){% else %}closeInspector(){% endif %}"
                 title="Close inspector" aria-label="Close inspector">&times;</button>
     </div>
 </div>

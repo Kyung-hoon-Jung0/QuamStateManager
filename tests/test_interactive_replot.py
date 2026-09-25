@@ -469,3 +469,117 @@ def test_fingerprint_sees_same_second_same_size_rewrite(tmp_path):
     os.utime(p, ns=(base + 500_000, base + 500_000))   # same second, same size
     fp2 = replot._fingerprint(tmp_path)
     assert fp1 != fp2
+
+
+# ── datasets-r2-22: a failure before the plot loop reads as a failure ────────
+_IMPORT_TRACE = ("Traceback (most recent call last):\n"
+                 "  File \"run_interactive_replot.py\", line 144, in main\n"
+                 "ModuleNotFoundError: No module named "
+                 "'calibration_utils.resonator_spectroscopy_single'\n")
+
+
+def test_replot_outcome_sorts_every_state():
+    fig = _twin_log_fig()
+    imp = {"stage": "import", "trace": _IMPORT_TRACE}
+    plot = {"stage": "plot:raw", "trace": "Traceback\nValueError: bad axis\n"}
+    o = replot.replot_outcome({"figures": [], "errors": [imp]})
+    assert o["state"] == "failed"
+    assert o["fatal"] == {"stage": "import", "line": _IMPORT_TRACE.strip().splitlines()[-1]}
+    for stage in ("env", "spawn", "subprocess", "timeout", "qubits", "datasets"):
+        assert replot.replot_outcome(
+            {"figures": [], "errors": [{"stage": stage, "trace": "x"}]})["state"] == "failed"
+    assert replot.replot_outcome({"figures": [], "errors": [plot]})["state"] == "all_plots_failed"
+    assert replot.replot_outcome({"figures": [], "errors": []})["state"] == "no_plot_fns"
+    assert replot.replot_outcome({"figures": [fig], "errors": [plot]})["state"] == "ok"
+    # figures are keyed first (the runner cannot produce both, but never "failed")
+    assert replot.replot_outcome({"figures": [fig], "errors": [imp]})["state"] == "ok"
+
+
+def _replot_body(monkeypatch, tmp_path, result, util="resonator_spectroscopy_single"):
+    (tmp_path / "quam_state").mkdir(exist_ok=True)
+    fake_run = SimpleNamespace(experiment_name="02a_resonator_spectroscopy",
+                               folder_path=str(tmp_path))
+    from quam_state_manager.core.interactive_plots import replot as R
+    monkeypatch.setattr(R, "replot_capability",
+                        lambda run, ip: {"available": True, "reason": "",
+                                         "util": util, "env": "/fake/py"})
+    monkeypatch.setattr(R, "replot_run", lambda run, ip, **kw: result)
+    client = _app_client(monkeypatch, fake_run)
+    res = client.get("/dataset/anyuid/replot")
+    assert res.status_code == 200
+    return res.data.decode()
+
+
+def test_replot_import_failure_is_said_plainly(monkeypatch, tmp_path):
+    body = _replot_body(monkeypatch, tmp_path, {
+        "schema": "iplot/v1", "util": "resonator_spectroscopy_single",
+        "figures": [], "errors": [{"stage": "import", "trace": _IMPORT_TRACE}]})
+    assert "Reproduced from" not in body
+    assert "ran but produced" not in body
+    assert "Could not load" in body and "resonator_spectroscopy_single" in body
+    # the real cause is on screen, not folded inside a collapsed <details>
+    import re
+    assert "ModuleNotFoundError" in body
+    assert "<details" not in body
+    outside = re.sub(r"<details.*?</details>", "", body, flags=re.S)
+    assert "ModuleNotFoundError" in outside
+    assert "Retry" in body
+    # nothing to lay out -> no column buttons
+    assert "ds-col-btn" not in body
+
+
+def test_replot_driver_failure_names_the_util(monkeypatch, tmp_path):
+    # the driver-side envelopes (env/spawn/subprocess/timeout) carry no util
+    body = _replot_body(monkeypatch, tmp_path, {
+        "schema": "iplot/v1", "figures": [],
+        "errors": [{"stage": "timeout", "trace": "exceeded 180s"}]})
+    assert "calibration_utils.resonator_spectroscopy_single" in body
+    assert "calibration_utils.</code>" not in body
+    assert "Reproduced from" not in body and "ran but produced" not in body
+    assert "exceeded 180s" in body
+
+
+def test_replot_all_plots_failed_shows_the_errors_open(monkeypatch, tmp_path):
+    body = _replot_body(monkeypatch, tmp_path, {
+        "schema": "iplot/v1", "util": "u", "figures": [],
+        "errors": [{"stage": "plot:raw", "trace": "Traceback\nValueError: bad axis\n"}]})
+    assert "Reproduced from" not in body and "ran but produced" not in body
+    assert "loaded, but all 1" in body
+    assert "<details class=\"ds-replot-errors\" open>" in body
+    assert "ValueError: bad axis" in body
+    assert "ds-col-btn" not in body
+
+
+def test_replot_success_keeps_its_header_and_labels_the_columns(monkeypatch, tmp_path):
+    body = _replot_body(monkeypatch, tmp_path, {
+        "schema": "iplot/v1", "util": "resonator_spectroscopy_vs_power_iq",
+        "figures": [_twin_log_fig()], "errors": []})
+    assert "Reproduced from" in body
+    assert "ds-col-btn" in body
+    assert "ds-interactive-toolbar-label\">Columns</span>" in body
+
+
+def test_replot_no_plot_functions_is_the_only_ran_but_empty(monkeypatch, tmp_path):
+    body = _replot_body(monkeypatch, tmp_path, {
+        "schema": "iplot/v1", "util": "u", "figures": [], "errors": []})
+    assert "has no <code>plot_*</code> functions" in body
+    assert "ds-col-btn" not in body
+
+
+def test_replot_column_buttons_drive_their_own_list():
+    """datasets-r2-22: the replot list's own 1/2/3 buttons lay out THAT list,
+    never the recipe grid beside it -- pinned against the REAL app.js by
+    ``tests/replot_cols_selfcheck.cjs``."""
+    import shutil
+    import subprocess
+    from pathlib import Path
+    if shutil.which("node") is None:
+        pytest.skip("node not available")
+    root = Path(__file__).resolve().parent.parent
+    proc = subprocess.run(["node", str(root / "tests" / "replot_cols_selfcheck.cjs")],
+                          capture_output=True, text=True, encoding="utf-8",
+                          cwd=str(root), timeout=120)
+    if proc.returncode == 2 and "jsdom not installed" in (proc.stderr or ""):
+        pytest.skip("jsdom not installed")
+    assert proc.returncode == 0, f"stdout:\n{proc.stdout}\nstderr:\n{proc.stderr}"
+    assert proc.stdout.count("ok - ") >= 8, proc.stdout

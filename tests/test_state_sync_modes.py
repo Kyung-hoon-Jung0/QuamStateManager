@@ -631,3 +631,37 @@ class TestPulledOtherChanges:
         data = loaded_client.post("/state/sync", data={"mode": "apply"}).get_json()
         assert data["status"] == "ok"
         assert data["pulled_other_changes"] is True
+
+
+# ---------------------------------------------------------------------------
+# QA F14: the review modal's counts used bare verbs in the PULL direction
+# (working -> live: "Removed: 7" = seven keys the working state has and live
+# lacks) right beside the primary PUSH button "Apply to live chip", whose effect
+# is the opposite -- a customer read it as "apply removes 7 values". The counts
+# now say where each value is, and a direction badge owns the row arrow.
+# ---------------------------------------------------------------------------
+
+
+class TestReviewCountsNameTheSide:
+    def test_saved_branch_counts_say_where_each_value_is(self, loaded_client, synth_folder):
+        loaded_client.post(
+            "/field/edit-batch",
+            json={"updates": [{"dot_path": "qubits.qA1.f_01", "value": "5.0e9"}]},
+        )
+        loaded_client.post("/save")          # working_dirty: the push branch
+        live = _make_state()
+        del live["qubits"]["qA1"]["T2ramsey"]          # only in the working state
+        live["qubits"]["qA1"]["T2echo"] = 3.3e-6       # only on the live chip
+        _write_live_state(synth_folder, live)
+        html = loaded_client.get("/state/review").data.decode()
+        assert '<span class="review-sync-saved">' in html   # "Apply to live chip" shown
+        assert "Only in working state: 1" in html
+        assert "Only on live chip: 1" in html
+        assert "Different: 1" in html
+        assert "Removed:" not in html and "Added:" not in html
+        badge = "</span>".join(html.split('class="diff-dir-badge"', 1)[1].split("</span>")[:2])
+        assert badge.index("Working state") < badge.index("Live chip")
+        # the gutter letter keeps its class contract (docs/42) and names the side
+        row = html.split('data-dot-path="qubits.qA1.T2ramsey"', 1)[0].rsplit("review-row diff-row-", 1)[1]
+        assert row.startswith("removed")
+        assert 'title="only in the working state"' in row

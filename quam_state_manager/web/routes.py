@@ -2012,6 +2012,31 @@ def _active_chip_identity() -> dict | None:
     }
 
 
+@bp.app_template_global("archive_info")
+def _archive_info() -> dict | None:
+    """QA F13: what a read-only run archive IS and where it came from, for
+    the tray badge and the review modal (a template global, so both tray
+    renderers see it without stamping yet another field).
+
+    ``run_label`` is the run (``#3822``) -- the badge's chip-level ``name``
+    stays the chip folder on purpose (the mutation guards key on it). The
+    way back is the chip that was active when the archive was opened
+    (``archive_return``, set by ``dataset_load_state``); None when nothing
+    editable was open. None when the active chip is not an archive."""
+    ctx = _active_ctx()
+    if not ctx or ctx.get("type") != "quam" or ctx.get("origin") != "dataset_archive":
+        return None
+    path = ctx.get("path")
+    m = re.match(r"#?(\d+)_", Path(path).parent.name) if path else None
+    ret = ctx.get("archive_return")
+    return {
+        "run_label": f"#{m.group(1)}" if m else None,
+        "uid": ctx.get("archive_uid"),
+        "return_path": str(ret) if ret else None,
+        "return_name": _chip_display_name(ret) if ret else None,
+    }
+
+
 def _agent_edit_lock_refusal(ctx: dict | None):
     """docs/173 S5: while the agent's node runs, the working copy is what its
     writes will be diffed against -- a human edit meanwhile would be silently
@@ -7504,10 +7529,19 @@ def chip_active_token():
     name = ""
     ctx = _active_ctx()
     if ctx and ctx.get("path"):
+        # The name the topbar shows (never the raw parent folder -- a
+        # standalone <x>/<chip> folder said "chip"/"quam_states"), plus the
+        # user-declared extras.chip_name when it says something else.
         try:
-            name = history.chip_name_for(_Path(ctx["path"]))
+            name = _chip_display_name(ctx["path"])
         except (OSError, ValueError):
             name = ""
+        store = ctx.get("store")
+        if store is not None:
+            with store._lock:
+                declared = history.extras_chip_name(store.state)
+            if declared and declared != name:
+                name = f"{name} (chip_name {declared})" if name else declared
     # ``loaded`` distinguishes "no chip loaded" from "loaded but token
     # uncomputable" (corrupt wiring) — clients that treat the ACTIVE context as
     # authoritative need the truth, not an empty-token proxy for it.
@@ -25717,8 +25751,12 @@ def _run_chip_identity(run_qs: Path) -> tuple[str, str]:
         hit = _run_chip_identity_cache.get(key)
         if hit is not None and hit[0] == stamp:
             return hit[1]
-    token = history.fingerprint_token(history.fingerprint_of(run_qs)) or ""
-    name = history.chip_name_for(run_qs)
+    # ONE read of the run's state+wiring. docs/20 v2 ladder: the run's own
+    # declared extras.chip_name first; the data-folder label chip_name_for
+    # derives is only the fallback.
+    ident = history.identity_of(run_qs)
+    token = history.fingerprint_token(ident.fingerprint) or ""
+    name = ident.name or ident.path_name
     if stamp is not None:
         if len(_run_chip_identity_cache) >= _RUN_CHIP_IDENTITY_CAP:
             _run_chip_identity_cache.clear()   # simple full-reset bound
@@ -25797,7 +25835,9 @@ def dataset_detail(uid):
                            fit_targets=resolve_fit_targets(run),
                            uid=uid, folder_key=uid.split(":")[0],
                            run_chip_token=chip_token, run_chip_name=chip_name,
-                           folder_label=folder_label, folder_path=str(ds.folder_path))
+                           folder_label=folder_label, folder_path=str(ds.folder_path),
+                           # datasets-r2-20: an unreadable file / a missing figure is SAID
+                           file_health=ds.run_file_health(run_id))
 
 
 @bp.route("/dataset/<uid>/fig/<name>")
@@ -26006,7 +26046,7 @@ def dataset_replot(uid):
         return render_template("_status.html",
                                message=f"Run #{run_id} not found", level="error"), 404
     from quam_state_manager.core.interactive_plots.replot import (
-        replot_capability, replot_run, replot_menu)
+        replot_capability, replot_run, replot_menu, replot_outcome)
     cap = replot_capability(run, current_app.instance_path)
     if not cap["available"]:
         return render_template("_dataset_replot.html", uid=uid, run_id=run_id,
@@ -26014,8 +26054,12 @@ def dataset_replot(uid):
                                figures=[], errors=[])
     force = request.args.get("force") == "1"
     result = replot_run(run, current_app.instance_path, force=force)
+    # datasets-r2-22: the driver-side envelopes (env/spawn/subprocess/timeout)
+    # carry no util -- the capability check already derived it.
     return render_template("_dataset_replot.html", uid=uid, run_id=run_id,
-                           available=True, reason="", util=result.get("util", ""),
+                           available=True, reason="",
+                           util=result.get("util") or cap.get("util", ""),
+                           outcome=replot_outcome(result),
                            figures=replot_menu(result), errors=result.get("errors", []))
 
 
@@ -26184,6 +26228,47 @@ def dataset_neighbor(uid):
                    run_id=nid)
 
 
+def _replaced_edits_note(entries: list, saved_unapplied: bool) -> str:
+    """datasets-r2-19: the result-line clause for what an Apply-to-chip press
+    replaced (docs/126 ⑤: applied over without asking, but NAMED).
+
+    ``entries`` is the change log captured BEFORE the working copy was
+    replaced. Those edits were on neither the chip nor any snapshot, so the
+    clause names each field + value and says plainly that ↺ Revert last apply
+    cannot bring them back (docs/187's rule for the replace-pull: never point
+    at a way back that does not hold the value). The literal prefix
+    "Replaced N unsaved edit" is kept.
+    """
+    def _short(e):
+        if getattr(e, "deleted", False):
+            return "(deleted)"
+        v = getattr(e, "new_value", None)
+        if isinstance(v, (dict, list)):
+            return "(new subtree)" if getattr(e, "created", False) else "{…}"
+        s = "null" if v is None else str(v)
+        return s if len(s) <= 40 else s[:39] + "…"
+
+    n = len(entries)
+    if not n:
+        return (" (Replaced saved-but-unapplied working changes.)"
+                if saved_unapplied else "")
+    last: dict = {}
+    for e in entries:                     # the last write to a path wins
+        last.pop(e.dot_path, None)
+        last[e.dot_path] = _short(e)
+    items = [f"{p} = {v}" for p, v in last.items()]
+    shown = "; ".join(items[:5]) + (f"; +{len(items) - 5} more" if len(items) > 5 else "")
+    one = n == 1
+    return (f" (Replaced {n} unsaved edit{'' if one else 's'}: {shown}. "
+            f"{'It was' if one else 'They were'} never on the chip or in any "
+            f"snapshot, so ↺ Revert last apply cannot bring "
+            f"{'it' if one else 'them'} back — re-enter {'it' if one else 'them'}"
+            f" if still wanted."
+            + (" Saved-but-unapplied working changes were replaced as well."
+               if saved_unapplied else "")
+            + ")")
+
+
 @bp.route("/dataset/<uid>/load-state", methods=["POST"])
 def dataset_load_state(uid):
     """Bring a run's frozen quam_state INTO the open chip (r11 feedback).
@@ -26233,14 +26318,22 @@ def dataset_load_state(uid):
                  and (ctx.get("origin") or "live") == "live"
                  and request.values.get("mode") != "archive")
     if not can_stage:
+        # QA F13: the chip being left is the archive's way back (an archive
+        # opened from an archive keeps the first one's).
+        back = None
+        if ctx is not None and ctx.get("type") == "quam":
+            back = (ctx.get("path") if (ctx.get("origin") or "live") == "live"
+                    else ctx.get("archive_return"))
         try:
             # A dataset run's quam_state is a FROZEN archive — open it
             # read-only so save/apply routes refuse to overwrite the record.
-            _activate_quam(state_path, origin="dataset_archive")
+            actx = _activate_quam(state_path, origin="dataset_archive")
         except Exception as e:  # noqa: BLE001
             return render_template("_status.html",
                                    message=f"Failed to load state: {e}",
                                    level="error")
+        actx["archive_return"] = back
+        actx["archive_uid"] = uid
         resp = make_response()
         resp.headers["HX-Redirect"] = "/qubits"
         return resp
@@ -26285,6 +26378,8 @@ def dataset_load_state(uid):
     store = ctx["store"]
     with store._lock:
         replaced_edits = len(store.change_log)
+        # datasets-r2-19: WHAT is replaced, captured before the reload clears it
+        replaced_entries = list(store.change_log)
         has_pending = (bool(store.change_log) or bool(ctx.get("pending_reapply"))
                        or bool(ctx.get("working_dirty")))
     if (has_pending and not apply_req
@@ -26303,10 +26398,9 @@ def dataset_load_state(uid):
         ), 409
     replaced_note = ""
     if apply_req and has_pending:
-        replaced_note = (f" (Replaced {replaced_edits} unsaved edit"
-                         f"{'' if replaced_edits == 1 else 's'}.)"
-                         if replaced_edits
-                         else " (Replaced saved-but-unapplied working changes.)")
+        replaced_note = _replaced_edits_note(
+            replaced_entries,
+            bool(ctx.get("pending_reapply")) or bool(ctx.get("working_dirty")))
 
     try:
         state, wiring = safe_io.read_state_wiring(Path(state_path))
@@ -26361,7 +26455,11 @@ def dataset_load_state(uid):
                          # following Apply, not on this press. Saying
                          # "restores" made a correct staging read as a
                          # dead button when this was driven for real.
-                         + " Reversible — ↺ Revert last apply (top bar) "
+                         # datasets-r2-19: with unsaved edits replaced, the
+                         # reversibility covers the CHIP, not those edits
+                         + (" The chip's previous state is reversible"
+                            if replaced_edits else " Reversible")
+                         + " — ↺ Revert last apply (top bar) "
                            "stages the pre-apply state; Apply puts it "
                            "back on the chip."),
                 level="success")
@@ -26477,10 +26575,14 @@ def dataset_compare_prev(uid):
     prev_id = ds.get_previous_same_experiment_id(run_id)
     if prev_id is None:
         run = ds.get_run(run_id) or {}
+        # QA r2-04: the lookup is per TARGET now -- name it, since earlier runs
+        # of the same experiment on other qubits may well exist.
+        targets = ", ".join(run.get("qubit_pairs") or run.get("qubits") or [])
         return render_template(
             "_status.html",
             message=(f"No earlier run of “{run.get('experiment_name', 'this experiment')}”"
-                     f" in this folder — this is the first one."),
+                     + (f" on {targets}" if targets else "")
+                     + " in this folder — this is the first one."),
             level="info")
     folder_key = uid.split(":")[0]
     return redirect(url_for("main.datasets_compare",
@@ -26667,8 +26769,16 @@ def dataset_set_note(uid):
         return jsonify({"error": "No dataset loaded"}), 400
     ds, run_id, _ = resolved
     note = request.json.get("note", "") if request.is_json else request.form.get("note", "")
+    # datasets-r2-12: the note the editor last saw -- a stale tab never
+    # silently replaces another window's note (compare-and-swap, as entity notes)
+    expected = request.json.get("expected") if request.is_json else None
+    if not isinstance(expected, str):
+        expected = None
     try:
-        ds.set_note(run_id, note)
+        ds.set_note(run_id, note, expected=expected)
+    except DatasetStore.NoteConflict as exc:
+        return jsonify({"note_conflict": True, "current": exc.current,
+                        "error": "Somebody else changed this note since you opened it."}), 409
     except OSError as exc:
         return jsonify({"error": f"dataset folder is read-only ({exc})"}), 400
     return jsonify({"note": note, "run_id": run_id, "uid": uid})

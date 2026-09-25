@@ -22,10 +22,22 @@
 </div>
 {% endif %}
 
+{# datasets-r2-20: a run file that is present but cannot be parsed (truncated,
+   or still being written) blanks whatever it carries -- say so, once, here. #}
+{% set _fh = file_health if file_health is defined and file_health else {} %}
+{% if _fh.unreadable %}
+<p class="ds-file-health-note" role="status">&#9888; {{ _fh.unreadable | join(" and ") }}
+    could not be read (truncated, or still being written) &mdash; what
+    {{ "they carry is" if _fh.unreadable|length > 1 else "it carries is" }} not shown below.</p>
+{% endif %}
+
 {# Note (collapsible) — a small "Note" badge sits above Tags; clicking it reveals
    a tight, auto-growing editor (one line, grows only on real wraps/newlines).
    Always starts collapsed; the badge wears .has-note (filled dot + the note as a
-   hover title) when a note exists. Persistence unchanged: saveDatasetNote on blur.
+   hover title) when a note exists. Persistence: saveDatasetNote on blur (and
+   Escape), plus a keepalive flush on pagehide; data-saved is the stored note
+   the editor started from (datasets-r2-12: F5 lost typed text, a stale tab
+   overwrote another tab's note).
    Always-collapsed means the textarea is only sized on click (toggleNoteEditor),
    so there's no hidden->scrollHeight=0 or pinned-mode load-sizing problem. #}
 {% set _has_note = (run.note or '') | trim | length > 0 %}
@@ -38,7 +50,8 @@
         <span class="ds-note-dot" aria-hidden="true"></span>
     </button>
     <textarea class="ds-note-input ds-note-textarea" rows="1" placeholder="Add a note…"
-              hidden oninput="autoGrowNote(this)"
+              hidden oninput="autoGrowNote(this)" data-uid="{{ uid }}" data-saved="{{ run.note or '' }}"
+              onkeydown="if (event.key === 'Escape') this.blur();"
               onblur="saveDatasetNote('{{ uid }}', this.value, this)">{{ run.note or '' }}</textarea>
 </div>
 
@@ -131,7 +144,7 @@
                         {% for key, val in qresults.items() %}
                         <tr>
                             <td class="col-prop"><code>{{ key }}</code></td>
-                            <td class="col-val"{% if val is number and val is float %} data-copy="{{ val }}"{% endif %}>
+                            <td class="col-val"{% if val is number and val is float %} data-copy="{{ val }}"{% elif val is mapping %} data-copy='{{ val | tojson }}'{% endif %}>
                                 {% if val is none %}
                                     <em class="null-value">not set</em>
                                 {% elif val is sameas true %}
@@ -166,6 +179,8 @@
                 </details>
                 {% endfor %}
             </details>
+            {% elif 'data.json' in (_fh.unreadable or []) %}
+            <p class="muted" style="padding:.5rem">Fit results unknown: data.json could not be read.</p>
             {% else %}
             <p class="muted" style="padding:.5rem">No fit results.</p>
             {% endif %}
@@ -200,19 +215,30 @@
                 {% if run.qubits %}
                 <span class="figure-qubit-actions">
                     {% for q in run.qubits %}
-                    <button class="btn-sm outline" onclick="event.stopPropagation(); (function(){ var m = _resolveExperimentPath('{{ run.experiment_name }}', '{{ q }}'); _navigateToExplorerPath(m ? m[0].path : 'qubits.{{ q }}'); })()" title="Edit {{ q }}">{{ q }}</button>
+                    <button class="btn-sm outline" onclick="event.stopPropagation(); goToQubitState('{{ run.experiment_name }}', '{{ q }}')" title="Edit {{ q }}">{{ q }}</button>
                     {% endfor %}
                 </span>
                 {% endif %}
             </div>
+            {% if fig_name in (_fh.missing_figures or []) %}
+            {# datasets-r2-20: data.json names it, the file is gone -- text, not a broken image #}
+            <p class="muted figure-missing">figure file missing: <code>{{ fig_name }}</code></p>
+            {% else %}
             <img src="/dataset/{{ uid }}/fig/{{ fig_name }}"
                  alt="{{ fig_name }}"
                  loading="lazy"
                  onclick="toggleFigureZoom(this)"
+                 onerror="this.onerror=null; var p=document.createElement('p'); p.className='muted figure-missing'; p.textContent='figure file missing: ' + this.alt; this.replaceWith(p);"
                  title="Click to zoom">
+            {% endif %}
         </div>
         {% endfor %}
     </div>
+    {% elif 'data.json' in (_fh.unreadable or []) %}
+        <p class="muted" style="padding:1rem;text-align:center">data.json could not be read
+            (truncated, or still being written), so this run's figures cannot be listed.
+            {% if _fh.files_on_disk %}<br>In the run folder:
+            {% for f in _fh.files_on_disk %}<code>{{ f }}</code>{% if not loop.last %}, {% endif %}{% endfor %}{% endif %}</p>
     {% else %}
         <p class="muted" style="padding:1rem;text-align:center">No figures saved for this run.</p>
     {% endif %}
@@ -238,7 +264,7 @@
                 {% endif %}
                 {% if run.parent_id %}
                 <tr><td class="col-prop"><code>parent</code></td>
-                    <td class="col-val"><a href="#" hx-get="/dataset/{{ folder_key }}:{{ run.parent_id }}" hx-target="#inspector-pane" hx-swap="innerHTML">#{{ run.parent_id }}</a></td></tr>
+                    <td class="col-val"><a href="#" hx-get="/dataset/{{ folder_key }}:{{ run.parent_id }}" hx-target="closest #table-pane, #inspector-pane" hx-swap="innerHTML">#{{ run.parent_id }}</a></td></tr>
                 {% endif %}
             </tbody>
         </table>
@@ -307,7 +333,7 @@
                 {% for key, val in qresults.items() %}
                 <tr>
                     <td class="col-prop"><code>{{ key }}</code></td>
-                    <td class="col-val"{% if val is number and val is float %} data-copy="{{ val }}"{% endif %}>
+                    <td class="col-val"{% if val is number and val is float %} data-copy="{{ val }}"{% elif val is mapping %} data-copy='{{ val | tojson }}'{% endif %}>
                         {% if val is none %}
                             <em class="null-value">not set</em>
                         {% elif val is sameas true %}
@@ -352,6 +378,9 @@
             </table>
         </details>
         {% endfor %}
+    {% elif 'data.json' in (_fh.unreadable or []) %}
+        <p class="muted" style="padding:1rem;text-align:center">data.json could not be read
+            (truncated, or still being written), so this run's fit results cannot be shown.</p>
     {% else %}
         <p class="muted" style="padding:1rem;text-align:center">No fit results available for this run.</p>
     {% endif %}
@@ -421,7 +450,7 @@
         <button hx-post="/dataset/{{ uid }}/load-state?apply=1"
                 hx-target="#ds-load-state-result" hx-swap="innerHTML"
                 class="btn-sm"
-                title="One click: this run's state becomes the working state AND is applied to the live chip. Reversible — ↺ Revert last apply stages the pre-apply state, and Apply puts it back on the chip.">Apply to chip</button>
+                title="One click: this run's state becomes the working state AND is applied to the live chip. Reversible for the chip — ↺ Revert last apply stages the pre-apply state, and Apply puts it back on the chip. Unsaved working edits are replaced and named in the result, not recoverable.">Apply to chip</button>
         <button hx-post="/dataset/{{ uid }}/load-state"
                 hx-target="#ds-load-state-result" hx-swap="innerHTML"
                 class="btn-sm outline"
@@ -431,7 +460,7 @@
         <button hx-post="/dataset/{{ uid }}/load-state?mode=archive"
                 hx-target="#ds-load-state-result" hx-swap="innerHTML"
                 class="btn-sm ds-load-archive-btn"
-                title="Open this run's frozen quam_state as a separate READ-ONLY context — does not touch the open chip">Open read-only</button>
+                title="Switch SM to this run's frozen quam_state, read-only. Your chip's files and working state are untouched — the status badge offers the way back.">Open read-only</button>
     </div>
     <div id="ds-load-state-result" aria-live="polite"></div>
     {% endif %}
@@ -439,12 +468,12 @@
     {# File sub-tabs #}
     <div class="tree-file-tabs" id="ds-state-file-tabs">
         {% if run.has_quam_state %}
-        <span class="tree-file-tab active" onclick="switchDatasetStateTab('state')">state.json</span>
-        <span class="tree-file-tab" onclick="switchDatasetStateTab('wiring')">wiring.json</span>
+        <span class="tree-file-tab active" onclick="switchDatasetStateTab('state', this)">state.json</span>
+        <span class="tree-file-tab" onclick="switchDatasetStateTab('wiring', this)">wiring.json</span>
         {% endif %}
         <span class="tree-file-tab{% if not run.has_quam_state %} active{% endif %}"
-              onclick="switchDatasetStateTab('node')">node.json</span>
-        <span class="tree-file-tab" onclick="switchDatasetStateTab('data')">data.json</span>
+              onclick="switchDatasetStateTab('node', this)">node.json</span>
+        <span class="tree-file-tab" onclick="switchDatasetStateTab('data', this)">data.json</span>
     </div>
 
     {# Toolbar: search + depth controls (reuses existing .tree-toolbar CSS) #}
@@ -452,14 +481,14 @@
         <span class="tree-search-icon">&#128269;</span>
         <input type="text" class="tree-search" id="ds-state-search"
                placeholder="{{ search_hint() }}" title="{{ search_title() }}"
-               oninput="jsonTreeSearch(_dsStateActiveId(), this.value)" autocomplete="off">
+               oninput="jsonTreeSearch(_dsStateActiveId(this), this.value)" autocomplete="off">
         <div class="tree-depth-group">
             <span class="tree-depth-label">Depth:</span>
-            <button class="btn-sm outline" onclick="jsonTreeCollapseAll(_dsStateActiveId())">0</button>
-            <button class="btn-sm outline" onclick="jsonTreeExpandToDepth(_dsStateActiveId(),1)">1</button>
-            <button class="btn-sm outline" onclick="jsonTreeExpandToDepth(_dsStateActiveId(),2)">2</button>
-            <button class="btn-sm outline" onclick="jsonTreeExpandToDepth(_dsStateActiveId(),3)">3</button>
-            <button class="btn-sm outline" onclick="jsonTreeExpandAll(_dsStateActiveId())">All</button>
+            <button class="btn-sm outline" onclick="jsonTreeCollapseAll(_dsStateActiveId(this))">0</button>
+            <button class="btn-sm outline" onclick="jsonTreeExpandToDepth(_dsStateActiveId(this),1)">1</button>
+            <button class="btn-sm outline" onclick="jsonTreeExpandToDepth(_dsStateActiveId(this),2)">2</button>
+            <button class="btn-sm outline" onclick="jsonTreeExpandToDepth(_dsStateActiveId(this),3)">3</button>
+            <button class="btn-sm outline" onclick="jsonTreeExpandAll(_dsStateActiveId(this))">All</button>
         </div>
     </div>
 
@@ -476,13 +505,22 @@
         var runId = '{{ uid }}';
         var hasState = {{ 'true' if run.has_quam_state else 'false' }};
         var _loaded = {};
+        // QA r2-08: THIS run's State tab. In Pin & Browse the pinned clone's ids
+        // are "pinned-"-prefixed and both columns' scripts run; everything below
+        // acts inside its own tab (suffix-matched ids), never on the global ids,
+        // which in the split name the OTHER column.
+        var cs = document.currentScript;
+        var tab = (cs && cs.closest && cs.closest('[id$="ds-tab-state"]'))
+                  || document.getElementById('ds-tab-state');
+        if (!tab) return;
+        function _tree(n) { return tab.querySelector('[id$="ds-state-tree-' + n + '"]'); }
 
         function _loadStateFile(which) {
             if (_loaded[which]) return;
             _loaded[which] = true;
-            var cid = 'ds-state-tree-' + which;
-            var el = document.getElementById(cid);
+            var el = _tree(which);
             if (!el) return;
+            var cid = el.id;
             el.innerHTML = '<p class="muted" style="padding:.5rem">Loading\u2026</p>';
             fetch('/dataset/' + runId + '/json?file=' + which)
                 .then(function(r){ return r.json(); })
@@ -499,27 +537,42 @@
                 });
         }
 
-        window.switchDatasetStateTab = function(which) {
-            document.querySelectorAll('#ds-state-file-tabs .tree-file-tab').forEach(function(t) {
+        tab._dsStateSwitch = function(which) {
+            tab.querySelectorAll('[id$="ds-state-file-tabs"] .tree-file-tab').forEach(function(t) {
                 t.classList.toggle('active', t.textContent.trim() === which + '.json');
             });
             // Query by ID, not class — renderJsonTree clobbers className with "json-tree"
             ['state', 'wiring', 'node', 'data'].forEach(function(name) {
-                var el = document.getElementById('ds-state-tree-' + name);
+                var el = _tree(name);
                 if (el) el.style.display = (name === which) ? '' : 'none';
             });
             _loadStateFile(which);
-            var s = document.getElementById('ds-state-search');
-            if (s && s.value) jsonTreeSearch('ds-state-tree-' + which, s.value);
+            var s = tab.querySelector('[id$="ds-state-search"]'), t = _tree(which);
+            if (s && s.value && t) jsonTreeSearch(t.id, s.value);
         };
 
-        window._dsStateActiveId = function() {
-            var a = document.querySelector('#ds-state-file-tabs .tree-file-tab.active');
-            return a ? 'ds-state-tree-' + a.textContent.trim().replace('.json','') : 'ds-state-tree-node';
+        // Stateless dispatchers: the pressed element names its own tab; no
+        // element (the sticky restore) means the unprefixed, browsed run.
+        function _tabOf(el) {
+            return (el && el.closest && el.closest('[id$="ds-tab-state"]'))
+                || document.getElementById('ds-tab-state');
+        }
+        window.switchDatasetStateTab = function(which, el) {
+            var t = _tabOf(el);
+            if (t && t._dsStateSwitch) t._dsStateSwitch(which);
+        };
+        window._dsStateActiveId = function(el) {
+            var t = _tabOf(el);
+            var a = t && t.querySelector('[id$="ds-state-file-tabs"] .tree-file-tab.active');
+            var n = a ? a.textContent.trim().replace('.json', '') : 'node';
+            var tr = t && t.querySelector('[id$="ds-state-tree-' + n + '"]');
+            return tr ? tr.id : 'ds-state-tree-' + n;
         };
 
-        // Load first visible tab immediately
-        _loadStateFile(hasState ? 'state' : 'node');
+        // Load the tab this markup shows (a pinned clone keeps the one it was
+        // pinned on) — first visible tab on a fresh render.
+        var a0 = tab.querySelector('[id$="ds-state-file-tabs"] .tree-file-tab.active');
+        _loadStateFile(a0 ? a0.textContent.trim().replace('.json', '') : (hasState ? 'state' : 'node'));
     })();
     </script>
 </div>

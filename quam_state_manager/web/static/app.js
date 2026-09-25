@@ -2460,6 +2460,7 @@ document.addEventListener('click', function(evt) {
     if (!el) return;
     var uid = el.getAttribute('data-uid');
     if (uid && window.htmx) {
+        window._dsNavFromTable = null;     // opened from the tree: nav walks the tree
         var hasInspector = !!document.getElementById('inspector-pane');
         var target = hasInspector ? '#inspector-pane' : '#table-pane';
         // Mark the active run in the tree (the flip-compare gesture needs to
@@ -2480,8 +2481,12 @@ document.addEventListener('click', function(evt) {
         // the request on the TARGET, not document.body. Without it every dataset
         // load shares body's single (timeout-0) queue, so one slow/stalled load
         // wedges every later click → the intermittent "Datasets frozen" dead-clicks.
-        htmx.ajax('GET', '/dataset/' + uid,
+        // F20: an overlapping load aborted by the pane's hx-sync:replace
+        // rejects this promise (htmx 2 p.onabort) -- the abort is intended and
+        // still fires htmx:sendAbort; only the unhandled rejection goes.
+        var p = htmx.ajax('GET', '/dataset/' + uid,
                   {source: target, target: target, swap: 'innerHTML'});
+        if (p && typeof p.catch === 'function') p.catch(function() {});
     }
 });
 
@@ -2491,6 +2496,7 @@ document.addEventListener('click', function(evt) {
  * so only flag the genuinely slow ones: after 200ms in flight, overlay a clear
  * "Loading #id…" chip (CSS .ds-slow-loading::after reads data-loading-run). */
 var _dsSlowTimer = null;
+var _dsSlowClear = null;
 function _dsMarkSlowLoad(targetSel, runId) {
     var pane = document.querySelector(targetSel);
     if (!pane) return;
@@ -2500,15 +2506,22 @@ function _dsMarkSlowLoad(targetSel, runId) {
         pane.classList.add('ds-slow-loading');
     }, 200);
     var clear = function(e) {
-        if (e.detail && e.detail.target && e.detail.target !== pane) return;
+        if (e && e.detail && e.detail.target && e.detail.target !== pane) return;
         if (_dsSlowTimer) { clearTimeout(_dsSlowTimer); _dsSlowTimer = null; }
         pane.classList.remove('ds-slow-loading');
         pane.removeAttribute('data-loading-run');
         document.removeEventListener('htmx:afterSwap', clear);
         document.removeEventListener('htmx:responseError', clear);
+        if (_dsSlowClear === clear) _dsSlowClear = null;
     };
+    _dsSlowClear = clear;
     document.addEventListener('htmx:afterSwap', clear);
     document.addEventListener('htmx:responseError', clear);
+}
+/* QA r2-02: a swap htmx never performs (the pinned-compare interceptor cancels
+   it and builds the split itself) fires no htmx:afterSwap -- clear explicitly. */
+function _dsClearSlowLoad(pane) {
+    if (_dsSlowClear) _dsSlowClear({detail: {target: pane}});
 }
 
 /* Prev/next run navigation — walks the sidebar tree's VISIBLE run entries in
@@ -2516,11 +2529,24 @@ function _dsMarkSlowLoad(targetSel, runId) {
  * run. Buttons in the dataset inspector header + the [ and ] keys. Clicking via
  * el.click() reuses the exact delegated handler above (source/hx-sync, active
  * marker, slow-load chip — one path, no drift). */
-window.dsNavRun = function(dir) {
+window.dsNavRun = function(dir, btn) {
     // The CURRENT (unprefixed) detail only — in pinned compare the left column's
-    // ids are "pinned-"-prefixed and must not anchor the navigation.
-    var root = document.getElementById('ds-detail-root');
+    // ids are "pinned-"-prefixed and must not anchor the navigation. QA r2-06:
+    // the pressed header's OWN run first (a full page and an inspector run can
+    // both be on screen), then the inspector's, then any.
+    var root = (btn && btn.closest && btn.closest('#ds-detail-root'))
+        || document.querySelector('#inspector-pane #ds-detail-root')
+        || document.getElementById('ds-detail-root');
     var curUid = root ? root.getAttribute('data-uid') : null;
+    var host = _dsHost(root);   // a full-page run is REPLACED, never stacked under
+    // QA r2-01: a run opened from the Datasets TABLE steps through the table's
+    // own filtered + sorted rows -- never out of the search to raw id order.
+    if (curUid && host === '#inspector-pane' && window._dsNavFromTable === curUid && window.DatasetVirtual
+            && typeof window.DatasetVirtual.navFrom === 'function') {
+        var nf = window.DatasetVirtual.navFrom(curUid, dir);
+        if (nf === 'end') _dsNavEnd(dir, false);   // datasets-r2-25
+        if (nf) return;
+    }
     // r16 ④: server neighbor fallback — a run opened from the Datasets TABLE
     // (or with the tree collapsed / date group closed / filter hiding it) has
     // no visible tree entries, so both nav buttons were silently dead.
@@ -2529,12 +2555,17 @@ window.dsNavRun = function(dir) {
         fetch('/dataset/' + curUid + '/neighbor?dir=' + dir)
             .then(function(r) { return r.json(); })
             .then(function(d) {
-                if (!d || !d.uid) return;   // genuinely at the end
-                var hasInspector = !!document.getElementById('inspector-pane');
-                var target = hasInspector ? '#inspector-pane' : '#table-pane';
+                if (!d || !d.uid) {
+                    // genuinely at the end -- say so (datasets-r2-25); a
+                    // refused lookup ({ok:false}) is not an end
+                    if (d && d.ok) _dsNavEnd(dir, true);
+                    return;
+                }
+                var target = host;
                 _dsMarkSlowLoad(target, d.run_id);
                 htmx.ajax('GET', '/dataset/' + d.uid,
-                          {source: target, target: target, swap: 'innerHTML'});
+                          {source: target, target: target, swap: 'innerHTML'})
+                    .then(function() { _dsSyncFullPageUrl(target); }, function() {});   // F20: an hx-sync abort is not an error
             }).catch(function() {});
     }
     var entries = Array.prototype.filter.call(
@@ -2551,7 +2582,7 @@ window.dsNavRun = function(dir) {
     // a single step past the end keeps the server fallback.
     var tgt = idx + dir;
     if (Math.abs(dir) > 1) tgt = Math.max(0, Math.min(entries.length - 1, tgt));
-    if (tgt === idx) return;
+    if (tgt === idx) { _dsNavEnd(dir, false); return; }
     var next = entries[tgt];
     if (!next) { serverNeighbor(); return; }        // tree end — folder may have more
     // A run inside a CLOSED date group (a closed <details> still lays its rows
@@ -2563,17 +2594,103 @@ window.dsNavRun = function(dir) {
         closed = closed.parentElement ? closed.parentElement.closest('details:not([open])') : null;
     }
     next.scrollIntoView({block: 'nearest'});
+    if (host === '#table-pane') {
+        // the tree click always opens the INSPECTOR -- a full page loads in place
+        document.querySelectorAll('.tree-entry-active').forEach(function(a) {
+            a.classList.remove('tree-entry-active');
+        });
+        next.classList.add('tree-entry-active');
+        window._markActiveTreeBranch(next);
+        try { next.focus({preventScroll: true}); } catch (e) {}
+        _dsMarkSlowLoad(host, next.getAttribute('data-run-id'));
+        htmx.ajax('GET', '/dataset/' + next.getAttribute('data-uid'),
+                  {source: host, target: host, swap: 'innerHTML'})
+            .then(function() { _dsSyncFullPageUrl(host); }, function() {});   // F20
+        return;
+    }
     next.click();   // the delegated click handler opens it AND puts the keyboard on it
 };
+
+/* datasets-r2-25: a press past either end used to do nothing at all (no load,
+ * no message, the button still live). Say where the walk stopped -- the
+ * server's neighbor walk is per FOLDER in run-id order (-1 = newer); the
+ * table/tree walks are the list as shown. One toast at a time: holding ] at
+ * the end must not stack them. */
+function _dsNavEnd(dir, folder) {
+    if (!window.showToast) return;
+    var bar = document.getElementById('status-bar');
+    if (!bar) return;
+    bar.querySelectorAll('.toast[data-ds-nav-end]').forEach(function(t) { t.remove(); });
+    window.showToast(folder
+        ? (dir < 0 ? 'Already at the newest run in this folder.' : 'Already at the oldest run in this folder.')
+        : (dir < 0 ? 'Already at the top of the list.' : 'Already at the bottom of the list.'), 'info');
+    var t = bar.lastElementChild;
+    if (t) t.setAttribute('data-ds-nav-end', '1');
+}
+
+/* QA r2-06: a run detail's own controls act on the pane that HOLDS it -- the
+ * full-page view (/dataset/<uid>, ⛶) lives in #table-pane, everything else in
+ * the inspector. */
+function _dsHost(el) {
+    if (el && el.closest && el.closest('#table-pane')) return '#table-pane';
+    return document.getElementById('inspector-pane') ? '#inspector-pane' : '#table-pane';
+}
+/* The detail's ×: the inspector closes; a full page goes back to the Datasets
+ * list the way the sidebar link does (its hx-get + push-url). */
+window.dsCloseRun = function(btn) {
+    if (_dsHost(btn) === '#inspector-pane') { window.closeInspector(); return; }
+    var a = document.querySelector('.sidebar-nav a[href="/datasets"]');
+    if (a) a.click(); else window.location.assign('/datasets');
+};
+/* ...and the full page keeps its address honest: a run that replaced it in
+ * #table-pane (↑/↓ above, the detail's own parent link below) is what the URL
+ * names. ONLY those: a swap that pushes its own history entry (a journal/agent
+ * run link) must never have the entry it leaves renamed. */
+function _dsSyncFullPageUrl(sel) {
+    var t = document.querySelector(sel);
+    if (!t || t.id !== 'table-pane' || location.pathname.indexOf('/dataset/') !== 0) return;
+    var r = t.querySelector('#ds-detail-root');
+    var uid = r && r.getAttribute('data-uid');
+    if (uid && location.pathname !== '/dataset/' + uid) {
+        try { history.replaceState({htmx: true}, '', '/dataset/' + uid); } catch (e) {}
+    }
+}
+document.addEventListener('htmx:afterSwap', function(evt) {
+    var d = evt.detail || {};
+    var src = d.requestConfig && d.requestConfig.elt;
+    if (d.target && d.target.id === 'table-pane' && src && src.closest
+            && src.closest('#ds-detail-root')) _dsSyncFullPageUrl('#table-pane');
+});
 
 /* docs/126 r3: the run-number jump lives on the Prev State comparison bar
  * (its original home per the request) — typing a number compares the open
  * run against exactly that run. A number with no saved state renders the
  * route's honest fallback note in the same pane. */
 window.prevDiffJump = function(inp, uid, compact) {
-    var n = parseInt((inp && inp.value || '').replace(/[^0-9]/g, ''), 10);
-    if (!isFinite(n)) return;
-    window.loadPrevDiff(inp, uid, n, compact);
+    if (!inp) return;
+    // datasets-r2-15: a leading '#' / spaces are fine (the box sits after a
+    // literal '#'); anything else that is not a whole run number is REFUSED
+    // and said so -- stripping every non-digit turned '12.5' into #125 and
+    // left 'abc' silently beside a table that still named the old run.
+    var typed = (inp.value || '').trim();
+    var raw = typed.replace(/^#\s*/, '');
+    if (!/^\d+$/.test(raw)) {
+        var bar = inp.closest('.prevdiff-bar');
+        var note = bar && bar.querySelector('.prevdiff-note');
+        if (bar && !note) {
+            note = document.createElement('p');
+            note.className = 'muted prevdiff-note';
+            bar.insertBefore(note, bar.querySelector('.prevdiff-badges'));
+        }
+        if (note) note.textContent = '\u201c' + typed + '\u201d is not a run number \u2014 type a whole run number (e.g. '
+            + inp.defaultValue + '). Still comparing against #' + inp.defaultValue + '.';
+        // (no aria-invalid: the box holds the valid run again, and Pico's
+        // invalid icon would cover the number in this narrow box)
+        inp.value = inp.defaultValue;     // the box agrees with the table header again
+        if (typeof inp.select === 'function') inp.select();
+        return;
+    }
+    window.loadPrevDiff(inp, uid, parseInt(raw, 10), compact);
 };
 
 // Enter/Space open a keyboard-focused tree run entry (they're tabindex=0 now).
@@ -2691,10 +2808,10 @@ document.addEventListener('keydown', function (evt) {
 window.dsOpenFullPage = function(btn) {
     var root = btn.closest('[data-uid]');
     var uid = root ? root.getAttribute('data-uid') : null;
-    if (!uid || !window.htmx) return;
-    if (window.closeInspector) window.closeInspector();
-    htmx.ajax('GET', '/dataset/' + uid,
-              {source: '#table-pane', target: '#table-pane', swap: 'innerHTML'});
+    if (!uid) return;
+    // QA r2-06: a REAL page (one code path with a pasted /dataset/<uid>, and a
+    // history entry, so Back returns to where ⛶ was pressed).
+    window.location.assign('/dataset/' + uid);
 };
 
 /* "vs prev": one-click compare against the previous run of the SAME experiment
@@ -2875,8 +2992,26 @@ window.closeInspector = function() {
             try { Plotly.purge(plots[i]); } catch (e) {}
         }
     }
+    // F20: blanking the pane destroys the focused control (the x button) and
+    // drops the keyboard to <body>. When the focus was IN the pane and the pane
+    // held a run, hand it back to that run's visible tree entry (docs/192: a
+    // close returns focus to what opened it). A close from elsewhere never
+    // moves focus.
+    var act = document.activeElement;
+    var hadFocus = !!(act && act !== document.body && pane.contains(act));
+    var dsRoot = pane.querySelector("#ds-detail-root");
+    var openUid = dsRoot ? dsRoot.getAttribute("data-uid") : null;
     pane.innerHTML = "";
     document.body.dispatchEvent(new Event("inspector-closed"));
+    if (hadFocus && openUid) {
+        var ents = document.querySelectorAll(".tree-entry-click[data-uid]");
+        for (var j = 0; j < ents.length; j++) {
+            if (ents[j].getAttribute("data-uid") === openUid && ents[j].offsetParent !== null) {
+                try { ents[j].focus({preventScroll: true}); } catch (e) { ents[j].focus(); }
+                break;
+            }
+        }
+    }
 };
 
 /* A State History stage/restore replaces the working copy (and live, in Mode 2)
@@ -3132,6 +3267,20 @@ window.copyWithFeedback = function(text, el, message) {
     });
 };
 
+/* datasets-r2-31: a value cell's COPY text is its value, never the chrome
+ * around it -- the fit table's "copy-only" badge, an Apply / Go-to-state
+ * button label, an inline tree's <script> source all rode along in
+ * textContent ("success<TAB>true copy-only"). data-copy wins when present;
+ * otherwise a CLONE is stripped of that chrome (the live cell is untouched). */
+function _propCellCopyText(cell) {
+    var v = cell.getAttribute("data-copy");
+    if (v != null) return v;
+    var c = cell.cloneNode(true);
+    var junk = c.querySelectorAll("button, script, style, .fit-copy-only");
+    for (var i = 0; i < junk.length; i++) junk[i].remove();
+    return (c.textContent || "").trim().replace(/\s+/g, " ");
+}
+
 /**
  * Delegated click-to-copy for dataset Property/Parameter tables. One listener
  * for the whole page — the prop-tables are injected via HTMX swaps, so a
@@ -3144,8 +3293,7 @@ document.addEventListener("click", function(e) {
     var cell = e.target.closest(".prop-table td.col-val, .prop-table td.col-prop code");
     if (!cell) return;
     if (e.target.closest("a, button, input, textarea, select, .ds-inline-tree, .json-tree")) return;
-    var text = cell.getAttribute("data-copy");
-    if (text == null) text = (cell.textContent || "").trim();
+    var text = _propCellCopyText(cell);
     if (!text) return;
     window.copyWithFeedback(text, cell);
 });
@@ -3166,8 +3314,7 @@ window.copyPropTable = function(btn, fmt) {
         var valEl = rows[i].querySelector(".col-val");
         if (!keyEl || !valEl) continue;
         var key = (keyEl.textContent || "").trim();
-        var val = valEl.getAttribute("data-copy");
-        if (val == null) val = (valEl.textContent || "").trim().replace(/\s+/g, " ");
+        var val = _propCellCopyText(valEl);   // datasets-r2-31
         if (fmt === "md") {
             lines.push("| " + key + " | " + val + " |");
         } else {
@@ -12989,7 +13136,9 @@ window.loadDatasetReplot = function(runId, panel, force) {
  */
 window.setInteractiveCols = function(n, btn) {
     n = Math.max(1, Math.min(3, parseInt(n, 10) || 2));
-    var scope = (btn && btn.closest && btn.closest('[id$="interactive-container"]'))
+    // datasets-r2-22: a reproduced-figure list's own buttons scope to ITS
+    // container (#ds-replot-container), not the recipe grid beside it.
+    var scope = (btn && btn.closest && btn.closest('[id$="interactive-container"], [id$="replot-container"]'))
              || document.getElementById('ds-interactive-container')
              || document;
     scope.querySelectorAll('.ds-interactive-list').forEach(function(list) {
@@ -13404,8 +13553,8 @@ function _fetchAndRenderPlot(container, runId, which, varName, qubitIdx) {
 
 // ── Plot click → copy x,y → navigate to Explorer ───────────────────
 
-function _getRunQubits() {
-    var root = document.getElementById('ds-detail-root');
+function _getRunQubits(root) {
+    root = root || document.getElementById('ds-detail-root');
     return root ? (root.getAttribute('data-qubits') || '').split(',').filter(Boolean) : [];
 }
 
@@ -13525,8 +13674,9 @@ function _fetchApplyVerdict(qubitName, compute) {
     if (!slot) return;
     slot.hidden = true;
     slot.innerHTML = '';
+    var pop = document.getElementById('plot-apply-popup');
     var root = document.getElementById('ds-detail-root');
-    var uid = root ? root.getAttribute('data-uid') : '';
+    var uid = (pop && pop.dataset.runUid) || (root ? root.getAttribute('data-uid') : '');
     if (!uid || !qubitName) return;   // no run context / no qubit → no badge
     var gen = (window.__pavGen = (window.__pavGen || 0) + 1);
     slot.hidden = false;
@@ -13574,7 +13724,7 @@ function _showPlotApplyPopup(mappings, pt, expName, qubitName) {
 /* Open the editable parameter-apply popup for pre-computed {dot_path, value}
    updates. Shared by the Data tab (axis→path mappings) and the Interactive tab
    (recipe `clickable` spec). Activates the loaded state first so edits target it. */
-function _openPlotApplyPopup(updates, expName, qubitName, contextRows, chipExpect) {
+function _openPlotApplyPopup(updates, expName, qubitName, contextRows, chipExpect, runUid) {
     if (!updates || !updates.length) return;
     // chipExpect = {token, name} for a dataset fit-apply: the run's OWN chip
     // identity. We carry it into every Apply so the server refuses (409) to
@@ -13583,7 +13733,7 @@ function _openPlotApplyPopup(updates, expName, qubitName, contextRows, chipExpec
     function render() {
         // Even if activation failed, still render — the popup shows real
         // per-row errors when Apply is clicked.
-        _renderPlotApplyPopup(updates, expName, qubitName, contextRows, expect);
+        _renderPlotApplyPopup(updates, expName, qubitName, contextRows, expect, runUid);
         _fetchPlotApplyOldValues(updates);
     }
     // Cross-chip pre-check: warn BEFORE the popup if the loaded chip isn't
@@ -13645,10 +13795,10 @@ function applyFitValue(btn) {
     var value = btn.getAttribute('data-fit-value');  // keep as string → full precision
     if (!path || value == null) return;
     var qubit = btn.getAttribute('data-fit-qubit') || null;
-    var root = document.getElementById('ds-detail-root');
+    var root = _dsRootFor(btn);
     var expName = root ? root.getAttribute('data-experiment') : '';
     window._openPlotApplyPopup([{dot_path: path, value: value}], expName, qubit, [],
-                               _runChipExpect(root));
+                               _runChipExpect(root), _dsRunUidOf(root));
 }
 window.applyFitValue = applyFitValue;
 
@@ -13660,6 +13810,16 @@ function _runChipExpect(root) {
     if (!token) return null;  // run has no bundled quam_state → can't gate
     return {token: token, name: root.getAttribute('data-chip-name') || ''};
 }
+/* QA r2-07: the run a control BELONGS to. In Pin & Browse the pinned column's
+   ids are "pinned-"-prefixed, so the global #ds-detail-root is always the
+   OTHER (current) column -- its chip token let a pinned run's fit through the
+   cross-chip gate. The suffix match finds either column's own root; an element
+   outside any detail (or a fake one with no .closest) keeps the global. */
+function _dsRootFor(el) {
+    return (el && el.closest && el.closest('[id$="ds-detail-root"]'))
+        || document.getElementById('ds-detail-root');
+}
+function _dsRunUidOf(root) { return root ? (root.getAttribute('data-uid') || '') : ''; }
 
 /* Dataset Results tab → "Go to state": jump to the exact state field the fitted value
    would update, shown in the Explorer (raw JSON tree) in the TOP pane while the dataset
@@ -13669,7 +13829,7 @@ function goToFitState(btn) {
     if (!btn) return;
     var path = btn.getAttribute('data-fit-path');
     if (!path) return;
-    var expect = _runChipExpect(document.getElementById('ds-detail-root'));
+    var expect = _runChipExpect(_dsRootFor(btn));
     function navigate() {
         if (window._applySplitPreset) window._applySplitPreset('collapsed');
         window._navigateToExplorerPath(path);
@@ -13688,6 +13848,16 @@ function goToFitState(btn) {
 }
 window.goToFitState = goToFitState;
 
+/* QA F16: a figure's per-qubit "Edit qN" button -- the same jump as Go to
+   state: collapse the run below first so the Explorer on top is not a sliver
+   (a run opened at the expanded preset left it ~113 px), then navigate. */
+function goToQubitState(expName, q) {
+    var m = _resolveExperimentPath(expName, q);
+    if (window._applySplitPreset) window._applySplitPreset('collapsed');
+    window._navigateToExplorerPath(m ? m[0].path : 'qubits.' + q);
+}
+window.goToQubitState = goToQubitState;
+
 /* "Apply all mapped" for one fit-results section: collect every per-row Apply
    button in the section into one multi-row popup (the popup's Apply-All handles
    the atomic batch). */
@@ -13702,9 +13872,10 @@ function applyAllFitValues(sectionBtn) {
         qubit = qubit || b.getAttribute('data-fit-qubit');
     });
     if (!updates.length) return;
-    var root = document.getElementById('ds-detail-root');
+    var root = _dsRootFor(sec);
     expName = root ? root.getAttribute('data-experiment') : '';
-    window._openPlotApplyPopup(updates, expName, qubit, [], _runChipExpect(root));
+    window._openPlotApplyPopup(updates, expName, qubit, [], _runChipExpect(root),
+                               _dsRunUidOf(root));
 }
 window.applyAllFitValues = applyAllFitValues;
 
@@ -13718,8 +13889,9 @@ function _attachInteractivePlotClickHandler(plotDiv, clickable, runId) {
         if (!ev || !ev.points || !ev.points.length) return;
         var pt = ev.points[0];
 
+        var root = _dsRootFor(plotDiv);   // QA r2-07: the column this tile is in
         var q = clickable.qubit || (pt.customdata != null ? String(pt.customdata).trim() : null);
-        if (!q) { var qs = _getRunQubits(); if (qs.length === 1) q = qs[0]; }
+        if (!q) { var qs = _getRunQubits(root); if (qs.length === 1) q = qs[0]; }
 
         var updates = [];
         clickable.targets.forEach(function(t) {
@@ -13786,14 +13958,14 @@ function _attachInteractivePlotClickHandler(plotDiv, clickable, runId) {
             contextRows.push({label: c.label || '', value: disp, unit: c.unit || ''});
         });
 
-        var root = document.getElementById('ds-detail-root');
         var expName = root ? root.getAttribute('data-experiment') : '';
         var toastVal = (clickable.axis === 'y') ? pt.y : pt.x;
         _showPlotClickToast((clickable.axis === 'y' ? 'y=' : 'x=') + toastVal, q, updates[0].dot_path);
         // Carry the run's own chip identity so the server 409s a cross-chip
         // write (same gate as the Results-tab apply path) — without it a run's
         // CZ amp could silently land on a different chip reusing pair names.
-        _openPlotApplyPopup(updates, expName, q, contextRows, _runChipExpect(root));
+        _openPlotApplyPopup(updates, expName, q, contextRows, _runChipExpect(root),
+                            _dsRunUidOf(root));
     });
 }
 window._attachInteractivePlotClickHandler = _attachInteractivePlotClickHandler;
@@ -13827,11 +13999,13 @@ function _updatePlotRowDomainWarning(row) {
     else { box.textContent = ''; box.hidden = true; }
 }
 
-function _renderPlotApplyPopup(updates, expName, qubitName, contextRows, chipExpect) {
+function _renderPlotApplyPopup(updates, expName, qubitName, contextRows, chipExpect, runUid) {
     var rowsBox = document.getElementById('plot-apply-rows');
     var ctxBox = document.getElementById('plot-apply-context');
     var popup = document.getElementById('plot-apply-popup');
     if (!rowsBox || !popup) return;
+    // QA r2-07: the run the verdict badge audits (a pinned column's own run)
+    if (runUid) popup.dataset.runUid = runUid; else delete popup.dataset.runUid;
     // Stash the run's chip token so the Apply / Apply-All requests carry it
     // (server 409s a cross-chip write unless force-overridden).
     if (chipExpect && chipExpect.token) {
@@ -13933,6 +14107,8 @@ function _renderPlotApplyPopup(updates, expName, qubitName, contextRows, chipExp
     // Apply All only makes sense for 2+ rows.
     var applyAllBtn = document.getElementById('plot-apply-all');
     if (applyAllBtn) applyAllBtn.style.display = (updates.length > 1) ? '' : 'none';
+    // a fresh popup: a previous one's missing-row gate must not carry over
+    if (applyAllBtn) { applyAllBtn.disabled = false; applyAllBtn.removeAttribute('title'); }
 
     popup.style.display = 'flex';
     popup._releaseTrap = window.trapFocus(popup, window.closePlotApplyPopup);
@@ -13946,10 +14122,12 @@ function _setOldVal(slot, v, err) {
         slot.textContent = err ? '(not set)' : '(null)';
         slot.classList.add('muted');
         slot._rawValue = null;
+        slot.removeAttribute('title');
     } else {
         slot.textContent = String(v);
         slot.classList.remove('muted');
         slot._rawValue = v;         // keep the RAW value for the Δ (docs/76)
+        slot.title = String(v);     // F21: the whole value, whatever the width
     }
     var row = slot.closest ? slot.closest('.plot-apply-row') : null;
     if (row) _updatePlotRowDelta(row);
@@ -14043,13 +14221,40 @@ function _fetchPlotApplyOldValues(updates) {
                 var v = (info && info.resolved_value !== undefined && info.resolved_value !== null)
                         ? info.resolved_value : values[input];
                 _setOldVal(oldSlot, v, errors[input]);
+                // Not on the LOADED chip at all (another chip's run, a qubit
+                // this chip lacks): Apply could only fail with a raw KeyError.
+                if (errors[input] && !(info && info.resolvable)) _markPlotRowMissing(row, input);
             }
         });
+        _syncPlotApplyAllMissing();
     }).catch(function() { /* leave placeholders */ });
 }
 
+/* A row whose path the peek reported missing (and that no pointer resolves):
+   say so plainly and never offer Apply -- the popup sends no `create` flag, so
+   the write can only 400. Apply All stays all-or-nothing, so it goes too. */
+function _markPlotRowMissing(row, path) {
+    row.classList.add('plot-apply-missing');
+    var btn = row.querySelector('.plot-apply-row-btn');
+    if (btn) { btn.disabled = true; btn.title = 'Not on the loaded chip'; }
+    var errEl = row.querySelector('.plot-apply-row-error');
+    if (errEl) {
+        errEl.hidden = false;
+        errEl.textContent = 'Not on the loaded chip — ' + path
+            + ' does not exist here, so there is nothing to update.';
+    }
+}
+function _syncPlotApplyAllMissing() {
+    var all = document.getElementById('plot-apply-all');
+    var n = document.querySelectorAll('#plot-apply-rows .plot-apply-missing').length;
+    if (!all || !n) return;
+    all.disabled = true;
+    all.title = n + ' field' + (n === 1 ? ' is' : 's are') + ' not on the loaded chip';
+}
+
 function applyPlotRow(row) {
-    if (!row || row.classList.contains('plot-apply-applied')) return;
+    if (!row || row.classList.contains('plot-apply-applied')
+        || row.classList.contains('plot-apply-missing')) return;
     var input = row.querySelector('.plot-apply-new-input');
     var btn = row.querySelector('.plot-apply-row-btn');
     var errEl = row.querySelector('.plot-apply-row-error');
@@ -14153,6 +14358,7 @@ function applyPlotRow(row) {
 function applyAllPlotRows() {
     var rowsBox = document.getElementById('plot-apply-rows');
     if (!rowsBox) return;
+    if (rowsBox.querySelector('.plot-apply-missing')) { _syncPlotApplyAllMissing(); return; }
     var rows = Array.prototype.slice.call(rowsBox.querySelectorAll('.plot-apply-row'));
     var pending = rows.filter(function(r) { return !r.classList.contains('plot-apply-applied'); });
     if (!pending.length) { closePlotApplyPopup(); return; }
@@ -14880,14 +15086,36 @@ function _navigateToExplorerPath(dotPath) {
         _jumpToTreePath('explorer-tree-state', dotPath);
         return;
     }
+    var runMoved = false;
     function openExplorer() {
-        // A jump is a NAVIGATION (QA F-C): htmx 2's ajax has no pushUrl option,
-        // so source the request from the sidebar's own Json Tree View link --
-        // it carries hx-push-url, giving the same history entry + sidebar sync
-        // as clicking it. Already on /explorer -> no source, no same-URL entry.
-        var src = location.pathname === '/explorer' ? null
+        // QA r2-06: a full-page run (in #table-pane) would be REPLACED by the
+        // Explorer with nothing to close and no way back -- move it into the
+        // inspector first, so it stays beside the state as it does from there.
+        var fp = !runMoved && document.querySelector('#table-pane #ds-detail-root');
+        var fpUid = fp && fp.getAttribute('data-uid');
+        if (fpUid && document.getElementById('inspector-pane')) {
+            runMoved = true;
+            htmx.ajax('GET', '/dataset/' + fpUid,
+                      {source: '#inspector-pane', target: '#inspector-pane', swap: 'innerHTML'})
+                .then(function() {
+                    // after the swap: its afterSwap handler re-expands the inspector
+                    if (window._applySplitPreset) window._applySplitPreset('collapsed');
+                    openExplorer();
+                });
+            return;
+        }
+        // A jump is a NAVIGATION (QA F-C, QA F16). With the sidebar's own Json
+        // Tree View link (hx-push-url) the request is sourced from it -- the
+        // same history entry + sidebar sync as clicking it (F-C); already on
+        // /explorer -> no source, no same-URL entry. With no such link,
+        // _navigateTablePane pushes the entry on the swap itself (F16).
+        var onExplorer = location.pathname === '/explorer';
+        var src = onExplorer ? null
             : document.querySelector('.sidebar-nav a[href="/explorer"][hx-push-url="true"]');
-        htmx.ajax('GET', '/explorer', {source: src || undefined, target: '#table-pane', swap: 'innerHTML'}).then(function() {
+        var req = (src || onExplorer)
+            ? htmx.ajax('GET', '/explorer', {source: src || undefined, target: '#table-pane', swap: 'innerHTML'})
+            : _navigateTablePane('/explorer');
+        req.then(function() {
             var attempts = 0;
             var maxAttempts = 15;
             function tryExpand() {
@@ -14933,6 +15161,48 @@ function _navigateToExplorerPath(dotPath) {
         })
         .catch(openExplorer);   // probe failure \u2192 fail open (Explorer shows its own state)
 }
+/* QA F16: a jump into the Explorer is a NAVIGATION -- the main pane changes,
+ * so the address bar, the sidebar highlight and Back must follow it (it used to
+ * stay on /datasets, and Back left the app). The history entry hangs off the
+ * SWAP, never off the ajax promise (htmx resolves that on a 404 too); a request
+ * that fails releases the listeners, and PaneState's skip path (a parked fresh
+ * /explorer: it pushes the entry itself and fires no afterSwap) releases them
+ * via paneRestored. Same contract as the command palette's navigation. */
+function _navigateTablePane(url) {
+    var bare = url.split('?')[0];
+    var same = function (d) {
+        var got = (d && d.pathInfo && (d.pathInfo.finalRequestPath || d.pathInfo.requestPath)) || '';
+        return !got || got.split('?')[0] === bare;
+    };
+    var off = function () {
+        document.removeEventListener('htmx:afterSwap', onSwap);
+        document.removeEventListener('htmx:afterRequest', onDone);
+        document.removeEventListener('paneRestored', onRestored);
+    };
+    var onSwap = function (evt) {
+        if (!evt.target || evt.target.id !== 'table-pane' || !same(evt.detail)) return;
+        off();
+        try {
+            if (window.location.pathname + window.location.search !== url) {
+                window.history.pushState({ htmx: true }, '', url);
+            }
+        } catch (e) { /* file:// */ }
+        if (window.syncSidebarNavActive) window.syncSidebarNavActive();
+    };
+    var onDone = function (evt) {
+        if (!evt.target || evt.target.id !== 'table-pane' || !same(evt.detail)) return;
+        if (evt.detail && evt.detail.successful) return;   // the swap decides
+        off();
+    };
+    var onRestored = function (evt) {
+        if (evt.detail && evt.detail.route === bare) off();
+    };
+    document.addEventListener('htmx:afterSwap', onSwap);
+    document.addEventListener('htmx:afterRequest', onDone);
+    document.addEventListener('paneRestored', onRestored);
+    return htmx.ajax('GET', url, {source: '#table-pane', target: '#table-pane', swap: 'innerHTML'});
+}
+window._navigateTablePane = _navigateTablePane;
 // Explicit window binding: the guarded callers (value-history Data links,
 // UndoNav) reference window._navigateToExplorerPath \u2014 a classic <script>
 // hoists top-level declarations onto window, but eval'd/bundled contexts
@@ -15493,12 +15763,42 @@ window.promptAddTag = function(runId, btnEl) {
  * Save a note on a dataset run. Shows brief ✓ confirmation.
  */
 window.saveDatasetNote = function(runId, note, el) {
+    // datasets-r2-12: data-saved is the stored note this editor started from.
+    // Nothing changed -> nothing sent; otherwise the server is told what we
+    // saw (a stale tab gets a 409, never a silent overwrite), and keepalive
+    // lets a save started by a reload / close still land.
+    var saved = el && el.dataset ? el.dataset.saved : undefined;
+    if (saved !== undefined && note === saved) return;
+    if (el && el.dataset) el.dataset.inflight = note;
     fetch('/dataset/' + runId + '/note', {
         method: 'POST',
+        keepalive: (note || '').length < 60000,
         headers: {'Content-Type': 'application/json'},
-        body: JSON.stringify({note: note})
+        body: JSON.stringify({note: note, expected: saved})
     })
-    .then(function() {
+    .then(function(r) {
+        return r.json().catch(function() { return {}; })
+            .then(function(d) { return {r: r, d: d || {}}; });
+    })
+    .then(function(res) {
+        var r = res.r, d = res.d;
+        if (el && el.dataset && el.dataset.inflight === note) delete el.dataset.inflight;
+        if (!r.ok) {
+            var bad = el || document.querySelector('.ds-note-textarea');
+            if (bad) bad.style.borderColor = '#c0392b';
+            if (r.status === 409 && d.note_conflict) {
+                // keep the typed text; the next leave is an informed overwrite
+                // (a leave, never an unload: the flush below skips it)
+                if (el && el.dataset) { el.dataset.saved = d.current || ''; el.dataset.conflict = '1'; }
+                if (window.showToast) window.showToast('This note was changed in another window: "'
+                    + (d.current || '') + '". Your text is kept here and was NOT saved;'
+                    + ' leave the box again to overwrite it.', 'error');
+            } else if (window.showToast) {
+                window.showToast('Note not saved: ' + (d.error || ('HTTP ' + r.status)), 'error');
+            }
+            return;
+        }
+        if (el && el.dataset) { el.dataset.saved = note; delete el.dataset.conflict; }
         if (window.TagVocab) TagVocab.load(true);    // docs/191 N04: the person's own words just changed
         // Brief ✓ feedback on the edited textarea (el is passed from onblur so it
         // targets the right one in split/pinned view; falls back to the first).
@@ -15516,8 +15816,27 @@ window.saveDatasetNote = function(runId, note, el) {
                 else btn.removeAttribute('title');
             }
         }
+    }).catch(function() {
+        if (el && el.dataset && el.dataset.inflight === note) delete el.dataset.inflight;
     });
 };
+/* datasets-r2-12: F5 / close with the caret still in a note fires no blur, so
+ * the typed text used to vanish. Flush every note that differs from what is
+ * stored (keepalive outlives the page) -- one not already on its way, and never
+ * one that just met another window's text (overwriting that takes a leave).
+ * beforeunload first: it runs BEFORE the reload's own request, so the page that
+ * comes back already shows the note; pagehide covers exits that skip it. */
+function _flushDirtyNotes() {
+    var tas = document.querySelectorAll('.ds-note-textarea[data-uid]');
+    for (var i = 0; i < tas.length; i++) {
+        var ta = tas[i];
+        if (ta.dataset.conflict || ta.value === ta.dataset.saved
+                || ta.value === ta.dataset.inflight) continue;
+        window.saveDatasetNote(ta.getAttribute('data-uid'), ta.value, ta);
+    }
+}
+window.addEventListener('beforeunload', _flushDirtyNotes);
+window.addEventListener('pagehide', _flushDirtyNotes);
 
 /**
  * Resize the note <textarea> to fit its content: one line by default, taller
@@ -15719,7 +16038,9 @@ window.trendUseSingleFolder = function() {
 /* ------------------------------------------------------------------ */
 
 window._pinnedRunId = null;
+window._pinnedRunKey = null;   // QA r2-03: folder-aware -- run ids repeat across folders
 window._pinnedHtml = null;
+function _dsRunKey(root) { return (root.dataset.folderKey || '') + ':' + root.dataset.runId; }
 
 /**
  * innerHTML never runs <script> tags nor wires htmx attributes. The Pin & Browse
@@ -15746,6 +16067,7 @@ function _activatePinnedPane(pane) {
  */
 window.unpinDataset = function() {
     window._pinnedRunId = null;
+    window._pinnedRunKey = null;
     window._pinnedHtml = null;
     var btn = document.getElementById('inspector-pin-btn');
     if (btn) btn.classList.remove('pinned');
@@ -15782,6 +16104,7 @@ function _closeCurrentKeepPinned() {
     if (label) label.remove();
     tmp.querySelectorAll('[id^="pinned-"]').forEach(function(el) { el.id = el.id.slice(7); });
     window._pinnedRunId = null;
+    window._pinnedRunKey = null;
     window._pinnedHtml = null;
     // Purge live plots before innerHTML nukes them (see unpinDataset).
     if (window.PlotHost) {
@@ -15809,6 +16132,8 @@ window.togglePinDataset = function() {
     var root = source.querySelector('#ds-detail-root');
     if (!root) return;
     window._pinnedRunId = root.dataset.runId;
+    window._pinnedRunKey = _dsRunKey(root);
+    _dsNavMarkerAtBuild = window._dsNavFromTable;   // the marker describing the run pinned alone
 
     // Clone HTML and prefix IDs to avoid duplicates with the live (right) column.
     var clone = source.cloneNode(true);
@@ -15884,6 +16209,14 @@ function _initCompareSplitResizer(pane) {
  * HTMX beforeSwap interceptor: when a run is pinned, intercept the new
  * dataset detail swap and render two-column layout instead.
  */
+// The table-nav marker (window._dsNavFromTable, dataset-virtual.js) as it
+// stood when the CURRENT column was last built or pinned (datasets-r2-01
+// review). A re-click of the pinned run is a suppressed swap below, but the
+// click behind it already moved the marker onto the pinned run while the
+// current column did not change -- the same-run branch puts the marker back,
+// so that column's ]/[ keep walking the list it was opened from instead of
+// falling back to the tree.
+var _dsNavMarkerAtBuild;
 // Registered EARLY (see the top-of-file registration, docs/124 M-2): this
 // must set shouldSwap before the purge/unobserve/_io-teardown listeners look.
 function _pinnedRunSwapInterceptor(evt) {
@@ -15896,13 +16229,15 @@ function _pinnedRunSwapInterceptor(evt) {
     tmp.innerHTML = evt.detail.serverResponse;
     var newRoot = tmp.querySelector('#ds-detail-root');
     if (!newRoot) return; // Not a dataset detail — let it swap normally
+    _dsClearSlowLoad(evt.detail.target);   // both branches below cancel the swap
 
     // Same run clicked again: do NOT fall through to the default swap (which would
     // replace the whole pane with a single-column response and silently drop the
     // pinned column — the "sometimes the pinned vanishes" bug). Suppress the swap and
     // leave the current layout untouched.
-    if (newRoot.dataset.runId === window._pinnedRunId) {
+    if (_dsRunKey(newRoot) === window._pinnedRunKey) {
         evt.detail.shouldSwap = false;
+        if (_dsNavMarkerAtBuild !== undefined) window._dsNavFromTable = _dsNavMarkerAtBuild;
         return;
     }
 
@@ -15910,6 +16245,7 @@ function _pinnedRunSwapInterceptor(evt) {
     evt.detail.shouldSwap = false;
 
     // Build two-column layout
+    _dsNavMarkerAtBuild = window._dsNavFromTable;   // describes the column built below
     var pane = document.getElementById('inspector-pane');
     if (pane) {
         // Running FIRST means the choke-point purge listeners will see our
@@ -18173,81 +18509,19 @@ document.addEventListener('click', function(evt) {
                 window.location.href = entry.url;
             }
         } else {
-            // A palette pick is a NAVIGATION, and this line said so while not
-            // doing it: `pushUrl` is not an htmx 2 ajax option, so the pane
-            // changed and the address bar did not -- Back then left the app
-            // instead of returning to the page the user came from. htmx.ajax
-            // resolves when the swap is done, so the history entry is ours to
-            // add, after it.
+            // A palette pick is a NAVIGATION: the main pane changes, so the
+            // address bar, the sidebar highlight and Back follow it. ONE
+            // contract for every main-pane navigation, _navigateTablePane
+            // (QA F16 review): the history entry hangs off the SWAP, never
+            // off the ajax promise (htmx resolves that on a 404 too, and
+            // immediately when Bundles' htmx:confirm cancels the request); a
+            // pick that never swapped releases its listeners; PaneState's skip
+            // path (it pushes its own entry) releases them via paneRestored.
+            // `pushUrl` is not an htmx 2 ajax option (the bundled htmx.min.js
+            // contains the string zero times), which is how this line was
+            // dead in the first place.
             if (window.htmx) {
-                // `source` for hx-sync queueing, and no pushUrl -- htmx 2 has
-                // no such ajax option (the bundled htmx.min.js contains the
-                // string zero times).
-                //
-                // The history entry hangs off the SWAP, not off the ajax
-                // promise. That promise settles the same way whether the pane
-                // changed or not: htmx resolves it on a 404, and resolves it
-                // IMMEDIATELY when Bundles' htmx:confirm handler cancels the
-                // request to wait for a page bundle. Pushing from it moved the
-                // address bar to pages that never loaded. A swap is the event
-                // that means "the pane now shows this URL" -- the same order
-                // htmx's own hx-push-url uses.
-                var _url = entry.url;
-                // No once-guard here: _onSwap removes both listeners BEFORE
-                // it pushes, and DOM dispatch is synchronous, so there is no
-                // second call to guard against. A flag no mutation can reach
-                // is dead code claiming a protection it is not providing --
-                // the sweep for this commit caught exactly that.
-                var _push = function () {
-                    try {
-                        // PaneState's skip path pushes its own {htmx:true}
-                        // entry for a KEEP route synchronously; a second entry
-                        // for the SAME address would make the first Back do
-                        // nothing a person can see.
-                        if (window.location.pathname + window.location.search !== _url) {
-                            window.history.pushState({ htmx: true }, '', _url);
-                        }
-                    } catch (e) { /* file:// */ }
-                    // A raw pushState fires none of the events the sidebar's
-                    // active-item sync listens to (htmx:pushedIntoHistory,
-                    // popstate). PaneState's own skip push calls this for the
-                    // same reason.
-                    if (window.syncSidebarNavActive) window.syncSidebarNavActive();
-                };
-                var _same = function (d) {
-                    var got = (d && d.pathInfo
-                               && (d.pathInfo.finalRequestPath || d.pathInfo.requestPath)) || '';
-                    return !got || got.split('?')[0] === _url.split('?')[0];
-                };
-                var _off = function () {
-                    // `document`, never document.body: app.js is evaluated in
-                    // <head>, and a blanket pin forbids the body form because a
-                    // TOP-LEVEL one would throw against a null body. These are
-                    // added at click time so body exists -- but every htmx event
-                    // bubbles to document anyway, and PaneState's own listeners
-                    // live there, so this is the house spelling.
-                    document.removeEventListener('htmx:afterSwap', _onSwap);
-                    document.removeEventListener('htmx:afterRequest', _onDone);
-                };
-                var _onSwap = function (evt) {
-                    if (!evt.target || evt.target.id !== 'table-pane') return;
-                    if (!_same(evt.detail)) return;
-                    _off();
-                    _push();
-                };
-                var _onDone = function (evt) {
-                    // Cleanup, so a pick that never swapped (404, abort, a
-                    // cancelled request nothing re-issues) cannot leave a
-                    // listener that fires on somebody else's later swap.
-                    if (!evt.target || evt.target.id !== 'table-pane') return;
-                    if (!_same(evt.detail)) return;
-                    if (evt.detail && evt.detail.successful) return;   // the swap decides
-                    _off();
-                };
-                document.addEventListener('htmx:afterSwap', _onSwap);
-                document.addEventListener('htmx:afterRequest', _onDone);
-                htmx.ajax('GET', _url,
-                    {source: '#table-pane', target: '#table-pane', swap: 'innerHTML'});
+                _navigateTablePane(entry.url);
             } else {
                 window.location.href = entry.url;
             }
@@ -21990,16 +22264,18 @@ window.StateVersions = (function () {
             }
         });
     }
-    /* ── the RAM undo stack (docs/132 r5) ────────────────────────────────
-       Manual accepts are rare and few (the user's own read), so each one
-       records {dot_path, prev, taken} in memory — prev being the working
-       value the row itself displayed. Ctrl+Z / Ctrl+Shift+Z then step
-       accepts back and forth with ONE POST each, no server group machinery.
-       Scope: only while the version-diff overlay is open or a workbench
-       with take rows is on screen; an empty stack falls through to the
-       docs/107 global tiers. Takes onto CREATED leaves (no prev) are not
-       RAM-recorded — un-creating is the server tier's job. */
-    var _tkUndo = [], _tkRedo = [], _tkBusy = false;
+    /* ── the row marks follow the server undo (docs/132 r5, datasets-r2-28) ──
+       A take is ONE ungrouped change-log entry, so the docs/107 global
+       Ctrl+Z / Ctrl+Shift+Z chain undoes / redoes it exactly (with its
+       expect_chip + expect_sig guards). The r5 RAM tier posted the PREV
+       value as a second, NEW edit on the same press -- its "capture phase
+       preempts the bubble-phase chain" premise was false (that chain is a
+       capture listener registered earlier), so one press ran BOTH: /undo
+       popped the take, then the inverse wrote prev over prev and left a
+       phantom old == new entry in the tray. Now each successful take only
+       records {resolved path, row}; the cellsReverted answer of the
+       server's own undo / redo flips the row's mark. */
+    var _tkUndo = [], _tkRedo = [];
     function _tkPost(dot, value, create, done) {
         fetch('/field/edit-batch', {
             method: 'POST',
@@ -22015,7 +22291,7 @@ window.StateVersions = (function () {
                 if (ok && d.tray_html && window._swapPendingTray) {
                     window._swapPendingTray(d.tray_html);
                 }
-                done(ok, (res && res.error) || (d && d.error));
+                done(ok, (res && res.error) || (d && d.error), res);
             })
             .catch(function () { done(false, 'network error'); });
     }
@@ -22030,42 +22306,19 @@ window.StateVersions = (function () {
             b.textContent = accepted ? '✓ staged' : rec.origLabel;
         }
     }
-    function takeUndo(redo) {
-        if (_tkBusy) return true;
-        var rec = (redo ? _tkRedo : _tkUndo).pop();
-        if (!rec) return false;             // empty → fall through to global
-        _tkBusy = true;
-        _tkPost(rec.dot, redo ? rec.taken : rec.prev, redo && rec.create,
-            function (ok, err) {
-                _tkBusy = false;
-                if (ok) {
-                    (redo ? _tkUndo : _tkRedo).push(rec);
-                    _tkMark(rec, !!redo);
-                } else {
-                    (redo ? _tkRedo : _tkUndo).push(rec);   // keep the record
-                    if (window.showToast) {
-                        window.showToast((redo ? 'Redo' : 'Undo')
-                            + ' failed: ' + (err || 'unknown'), 'error');
-                    }
-                }
-            });
-        return true;
-    }
-    document.addEventListener('keydown', function (e) {
-        if (!((e.ctrlKey || e.metaKey) && !e.altKey
-              && (e.key === 'z' || e.key === 'Z'))) return;
-        // typing INSIDE the edit input keeps the browser's own text undo
-        if (e.target && e.target.classList
-                && e.target.classList.contains('sv-take-input')) return;
-        var o = _diffOverlay();
-        var scoped = (o && o.style.display !== 'none')
-            || !!document.querySelector('#diff-root [data-dot-path] .sv-take');
-        if (!scoped) return;
-        if (!takeUndo(e.shiftKey)) return;   // empty stack → global tiers
-        // capture phase, so this preempts the bubble-phase docs/107 chain
-        e.preventDefault();
-        e.stopImmediatePropagation();
-    }, true);
+    document.addEventListener('cellsReverted', function (evt) {
+        var d = (evt && evt.detail) || {};
+        var redo = /^Redone|^Redid/i.test(String(d.message || ''));
+        (d.entries || []).forEach(function (en) {
+            var from = redo ? _tkRedo : _tkUndo;
+            var rec = from[from.length - 1];
+            // only the take the server just stepped (LIFO, by resolved path)
+            if (!rec || !en || en.dot_path !== rec.resolved) return;
+            from.pop();
+            (redo ? _tkUndo : _tkRedo).push(rec);
+            _tkMark(rec, redo);
+        });
+    });
     function take(btn) {
         var holder = btn.closest('[data-dot-path]');
         if (!holder || btn.disabled) return;
@@ -22082,21 +22335,16 @@ window.StateVersions = (function () {
         var create = holder.getAttribute('data-create') === '1';
         var origLabel = btn.textContent;
         btn.disabled = true;
-        _tkPost(dot, val, create, function (ok, err) {
+        _tkPost(dot, val, create, function (ok, err, res) {
             if (ok) {
                 var row = btn.closest('.review-row, tr');
                 if (row) row.classList.add('review-accepted');
                 btn.textContent = '✓ staged';
                 btn.classList.add('sv-taken');
-                var prevRaw = holder.getAttribute('data-prev');
-                if (prevRaw !== null) {
-                    var prev;
-                    try { prev = JSON.parse(prevRaw); } catch (e2) { prev = prevRaw; }
-                    _tkUndo.push({ dot: dot, prev: prev, taken: val,
-                                   create: create, holder: row || holder,
-                                   origLabel: origLabel });
-                    _tkRedo.length = 0;
-                }
+                // the change log keys the entry on the RESOLVED write path
+                _tkUndo.push({ dot: dot, resolved: (res && res.resolved_path) || dot,
+                               holder: row || holder, origLabel: origLabel });
+                _tkRedo.length = 0;
             } else {
                 btn.disabled = false;
                 // window.showToast, called THROUGH window: the bare-call

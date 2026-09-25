@@ -122,8 +122,11 @@ async function main() {
   try { window._navigateToExplorerPath('qubits.q2.resonator.f_01'); } catch (e) { threw = e; }
   await sleep(50);
   ex = explorerCalls();
-  ok(!threw && ex.length === 1 && !ex[0].opts.source,
-     'H4 without the sidebar link it degrades to the source-less call');
+  const src4 = ex[0] && ex[0].opts.source;
+  const src4El = typeof src4 === 'string' ? d.querySelector(src4) : src4;
+  ok(!threw && ex.length === 1 && ex[0].opts.target === '#table-pane'
+     && !(src4El && src4El.matches && src4El.matches('a[href="/explorer"]')),
+     'H4 without the sidebar link it still navigates (QA F16: _navigateTablePane pushes on the swap)');
 
   console.log(fails ? 'FAILED (' + fails + ')'
     : 'jump_history_selfcheck ok (' + asserts + ' assertions)');

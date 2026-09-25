@@ -179,3 +179,74 @@ class TestUiWiring:
         body = c.post(
             f"/dataset/{env['uid_other']}/load-state").get_data(as_text=True)
         assert 'hx-target="#ds-load-state-result"' in body
+
+
+class TestArchiveWayBack:
+    """QA F13: "Open read-only" swaps the active chip for a run archive. The
+    badge named only the chip folder, the review modal called the archive
+    "the live chip" ("No differences -- the working state matches the live
+    chip"), and nothing offered the way back to the chip that was open."""
+
+    def _open_archive(self, env, *, chip_first=True):
+        c = env["client"]
+        if chip_first:
+            c.post("/load", data={"folder": str(env["chip"])})
+        r = c.post(f"/dataset/{env['uid_same']}/load-state?mode=archive")
+        assert r.headers.get("HX-Redirect") == "/qubits"   # contract unchanged
+        return c
+
+    @pytest.mark.parametrize("url", ["/qubits", "/state/tray"])
+    def test_badge_names_the_run_and_offers_the_chip_back(self, env, url):
+        # BOTH tray renderers (full page via _ctx, partial via _render_tray)
+        c = self._open_archive(env)
+        body = c.get(url).get_data(as_text=True)
+        assert "Archive (read-only) · run #1" in body
+        assert 'class="btn-sm outline tray-archive-back" hx-post="/load"' in body
+        vals = body.split('tray-archive-back" hx-post="/load"', 1)[1].split("hx-vals='", 1)[1].split("'", 1)[0]
+        assert json.loads(vals) == {"folder": str(env["chip"].resolve())}
+        assert "Back to live_chip" in body
+
+    def test_back_button_really_goes_back(self, env):
+        c = self._open_archive(env)
+        r = c.post("/load", data={"folder": str(env["chip"].resolve())},
+                   headers={"HX-Request": "true"})
+        assert r.headers.get("HX-Redirect")
+        ctx = _active(env["app"])
+        assert (ctx.get("origin") or "live") == "live"
+        assert Path(ctx["path"]).resolve() == env["chip"].resolve()
+
+    def test_archive_after_archive_keeps_the_first_way_back(self, env):
+        c = self._open_archive(env)
+        c.post(f"/dataset/{env['uid_other']}/load-state")   # archive -> archive
+        body = c.get("/state/tray").get_data(as_text=True)
+        assert "run #2" in body and "Back to live_chip" in body
+
+    def test_review_modal_says_archive_not_live_chip(self, env):
+        c = self._open_archive(env)
+        body = c.get("/state/review").get_data(as_text=True)
+        assert "Run #1 archive (read-only)" in body
+        assert "matches the live chip" not in body
+        assert "Live chip vs. working state" not in body
+        assert "frozen quam_state" in body
+        assert 'href="/dataset/' + env["uid_same"] + '"' in body     # back to the run
+        assert "state-review-archive-back" in body                   # back to the chip
+
+    def test_no_chip_before_means_no_back_button_but_a_hint(self, env):
+        c = self._open_archive(env, chip_first=False)
+        body = c.get("/state/tray").get_data(as_text=True)
+        assert "Archive (read-only) · run #1" in body
+        assert "tray-archive-back" not in body
+        assert "load a chip folder to edit" in body
+        review = c.get("/state/review").get_data(as_text=True)
+        assert "state-review-archive-back" not in review
+        assert "Load a chip folder" in review
+
+    def test_live_chip_review_is_unchanged(self, env):
+        c = env["client"]
+        c.post("/load", data={"folder": str(env["chip"])})
+        body = c.get("/state/review").get_data(as_text=True)
+        assert "Live chip vs. working state" in body
+        assert "the working state matches the live chip" in body
+        assert "archive" not in body.split("</h3>", 1)[0]
+        tray = c.get("/state/tray").get_data(as_text=True)
+        assert "tray-archive-back" not in tray and "tray-archive-hint" not in tray

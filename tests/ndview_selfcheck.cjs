@@ -581,6 +581,55 @@ async function main() {
         function (l) { return l.textContent.trim() === 'detuning_signs'; });
     ok(stillNoChips, 'a DRAWN overlay grows no prepChips (it is already on screen)');
 
+    /* ══ QA F12: a per-qubit fit scalar of a single-qubit run is shaped
+       (qubit=1) -- not 0-d -- so it reached renderPlot with no x and no
+       entity axis and showed "No plottable axis". It is one value: show it. */
+    const scal = function (name, data, extraDims) {
+        return { ok: true, var: name, dtype: 'float64', units: 'V', long_name: null,
+                 dims: [{ name: 'qubit', size: 1, kind: 'entity', coord: ['qA1'], units: null, decimated: false }]
+                     .concat(extraDims || []),
+                 data: data, kept: null, aux_axes: [], iq_partner: null,
+                 default_view: { x: null, y: null, entity: null, overlay: extraDims ? ['fit_vals'] : [], sliders: {} } };
+    };
+    feedCube(scal('opt_amp', [0.31965023613206567]));
+    card.setAttribute('data-var', 'opt_amp');
+    card.click();
+    await sleep(40);
+    const sc = plotEl().querySelector('.ndv-scalar');
+    ok(!!sc && sc.querySelector('strong').textContent === window.PlotTheme.siFormat(0.31965023613206567, 'V'),
+       'a (qubit=1) fit scalar shows its value card: ' + (sc ? sc.textContent : plotEl().innerHTML));
+    ok(!!sc && /opt_amp/.test(sc.textContent) && /qA1/.test(sc.textContent), 'the card names the variable and its qubit');
+    ok(fallbackEl().hidden && fallbackEl().textContent.indexOf('No plottable axis') === -1,
+       'no "No plottable axis" fallback for a single value');
+    // back to a CACHED plotted variable (no fetch, so no loading-purge), then
+    // to the cached scalar: the card itself must purge the figure it replaces
+    card.setAttribute('data-var', 'I_again');
+    card.click();
+    await sleep(40);
+    ok(!!plotEl().data, 'the cached line variable is drawn again');
+    const purgesBefore = purgeCount;
+    card.setAttribute('data-var', 'opt_amp');
+    card.click();
+    await sleep(40);
+    ok(purgeCount > purgesBefore && !plotEl().data && !!plotEl().querySelector('.ndv-scalar'),
+       'the card purges the previous variable’s figure before replacing it');
+
+    feedCube(scal('flux_min', [null]));
+    card.setAttribute('data-var', 'flux_min');
+    card.click();
+    await sleep(40);
+    const sc2 = plotEl().querySelector('.ndv-scalar');
+    ok(!!sc2 && sc2.querySelector('strong').textContent === window.PlotTheme.siFormat(NaN, 'V'),
+       'a NaN/null fit scalar shows the honest empty value, not a fallback');
+
+    feedCube(scal('fit', [[1, 2, 3, 4]],
+                  [{ name: 'fit_vals', size: 4, kind: 'cat', coord: ['a', 'b', 'c', 'd'], units: null, decimated: false }]));
+    card.setAttribute('data-var', 'fit');
+    card.click();
+    await sleep(40);
+    ok(!plotEl().querySelector('.ndv-scalar') && !fallbackEl().hidden,
+       'a 4-value cube with no plottable axis still takes the fallback (not squeezed into one card)');
+
     console.log(fails ? ('FAILURES: ' + fails) : 'ALL OK');
     process.exit(fails ? 1 : 0);
 }
