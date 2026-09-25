@@ -395,3 +395,25 @@ def test_replaced_edits_note_shapes():
     both = f([E("q.a", 1)], True)
     assert "Replaced 1 unsaved edit" in both
     assert "Saved-but-unapplied working changes were replaced as well." in both
+
+
+class TestNoBackupNoForcedApply:
+    """QA correctness-r2-01, the twin door: "Apply to chip" forces over a
+    drifted live and promises "Reversible". With the live pair unreadable no
+    backup exists, so the forced retry must refuse instead of writing."""
+
+    def test_unreadable_live_is_not_overwritten(self, env):
+        c = env["client"]
+        root = env["tmp"] / "data"
+        _seed_run(root, 41, _state(off_a=0.079))
+        uid = _uid(env, root, 41)
+        # an outside save written with a BOM: drift the first attempt sees,
+        # and content no snapshot can read
+        (env["live"] / "state.json").write_text(json.dumps(_state(off_a=0.5)),
+                                                encoding="utf-8-sig")
+        before = (env["live"] / "state.json").read_bytes()
+        # the identity gate cannot fingerprint an unreadable live -> "anyway"
+        r = c.post(f"/dataset/{uid}/load-state?apply=1&force_chip=1")
+        assert (env["live"] / "state.json").read_bytes() == before
+        assert "back up" in r.get_data(as_text=True)
+        assert "is now LIVE" not in r.get_data(as_text=True)

@@ -18158,6 +18158,16 @@ def _sync_pull_apply_to_live(ctx, replay, *, pulled_other_changes=False,
         except Exception:
             logger.warning("Pre-apply snapshot failed", exc_info=True)
 
+    # QA correctness-r2-01, the twin: a forced push with no backup of existing
+    # live content is refused here too (dataset "Apply to chip" forces over a
+    # drift and promises "Reversible").
+    if force and not walk and not pre_apply_ts and _live_files_present(wc):
+        logger.warning("Refusing a forced pull-apply of %s: no pre-apply "
+                       "backup could be taken", ctx.get("path"))
+        ctx["live_diverged"] = True
+        return jsonify({"status": "error", "conflict": "no_backup",
+                        "message": _UNBACKED_OVERWRITE_MSG}), 409
+
     _before_tree = None
     try:
         with _active_wc_lock(ctx):
@@ -18256,6 +18266,23 @@ def _sync_pull_apply_to_live(ctx, replay, *, pulled_other_changes=False,
         **(patch or {}),
         **({"crash_values": _crash} if _crash else {}),
     })
+
+
+def _live_files_present(wc) -> bool:
+    """True when the live folder holds state.json or wiring.json (os.stat only).
+
+    The line between "there is nothing on the live chip to lose" (a folder
+    that is gone, docs/86 point 7 -- the user may still write the working
+    state there) and "there IS content, SM just could not read it"."""
+    lf = Path(wc.live_folder)
+    return (lf / "state.json").exists() or (lf / "wiring.json").exists()
+
+
+_UNBACKED_OVERWRITE_MSG = (
+    "Nothing was written — SM could not back up the live chip first (its "
+    "files could not be read: a save in progress, or a UTF-8 BOM), and "
+    "without that backup the overwrite could not be undone. Retry once the "
+    "other program has finished saving.")
 
 
 @bp.route("/state/apply-to-live", methods=["POST"])
@@ -18360,6 +18387,34 @@ def state_apply_to_live():
             logger.warning("Pre-apply snapshot failed", exc_info=True)
         if _auto is not None and pre_apply_ts:
             _auto["pre_ts"] = pre_apply_ts
+
+    # QA correctness-r2-01: a FORCED push skips every staleness check, so the
+    # pre-apply backup above is the only thing standing between it and the
+    # content it overwrites -- and "Keep mine" promises that backup ("the
+    # current live state is snapshotted first, so Revert last apply undoes
+    # this"). With the live pair unreadable (a QUAlibrate save caught mid-write,
+    # a BOM-encoded save) neither capture returns anything, and this used to
+    # write anyway: the outside values ended up in no version and no Revert was
+    # offered. Refuse instead, exactly like restore-live ("Aborted so the
+    # restore stays reversible"). A folder with NO live files has nothing to
+    # lose and still proceeds (docs/86 point 7). The edits stay saved in the
+    # working copy and the conflict tray re-offers the choice.
+    if force and not pre_apply_ts and _live_files_present(wc):
+        logger.warning("Refusing a forced apply-to-live of %s: no pre-apply "
+                       "backup could be taken", ctx.get("path"))
+        ctx["live_diverged"] = True
+        if request.headers.get("Accept", "").startswith("application/json"):
+            return jsonify(ok=False, conflict="no_backup",
+                           message=_UNBACKED_OVERWRITE_MSG), 409
+        _err = render_template("_status.html", level="error",
+                               message=_UNBACKED_OVERWRITE_MSG)
+        resp = make_response(
+            _conflict_tray(ctx, store, staged_conflict=bool(ctx.get("working_dirty")) and (
+                bool(ctx.get("staged_base")) or not ctx.get("pending_reapply")))
+            + "\n" + f'<div id="status-bar" hx-swap-oob="innerHTML">{_err}</div>'
+            + _diverged_oob())
+        resp.headers["HX-Trigger"] = "liveDriftChanged"
+        return resp
 
     _before_tree = None
     try:
@@ -18576,6 +18631,12 @@ def state_overwrite_live_preflight():
     except (FileNotFoundError, OSError, ValueError):
         logger.info("overwrite-live preflight could not read the live files",
                     exc_info=True)
+    # QA correctness-r2-01: "unreadable" (files there, content unknown -- the
+    # push will refuse unless it can back them up by then) is a different
+    # sentence from "missing" (nothing on the live chip to lose).
+    live_read = ("ok" if live_changes is not None
+                 else "unreadable" if _live_files_present(ctx["working_copy"])
+                 else "missing")
 
     # A run writing this chip right now would simply re-write whatever we push
     # the moment its node finishes — worth saying, never worth blocking (the
@@ -18619,8 +18680,11 @@ def state_overwrite_live_preflight():
         "crash_values": _crash_values_on_chip(store),
         # The push snapshots the pre-apply live first, which is what powers the
         # tray's "Revert last apply" — so this is a reversible action and the
-        # confirm should say so.
-        "reversible": True,
+        # confirm should say so. QA correctness-r2-01: only when the live read
+        # worked -- an unreadable pair cannot be snapshotted (the push then
+        # refuses), and a missing one has nothing to revert to.
+        "reversible": live_changes is not None,
+        "live_read": live_read,
         "run_active": bool(run_active),
         "run_label": run_label,
     })

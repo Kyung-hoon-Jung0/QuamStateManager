@@ -3846,8 +3846,16 @@ window.overwriteLiveWithWorking = function () {
             }
             var n = d.live_changes;
             var lines = ["Overwrite the live chip with the working state?", ""];
-            if (n === null || n === undefined) {
-                lines.push("The live files could not be read, so what they hold right now is unknown.");
+            if ((n === null || n === undefined) && d.live_read === "missing") {
+                // QA correctness-r2-01: nothing there to lose -- say that, not "unknown"
+                lines.push("The live folder has no state files, so nothing on the live chip is replaced.");
+            } else if (n === null || n === undefined) {
+                // QA correctness-r2-01: the push backs live up first and REFUSES
+                // when it still cannot -- never "snapshotted first" here, since
+                // that promise is exactly what an unreadable file breaks.
+                lines.push("The live files could not be read just now (a save still in progress?), "
+                    + "so what they hold is unknown. SM backs them up before writing and "
+                    + "refuses the overwrite if it still cannot read them.");
             } else if (n === 0) {
                 lines.push("The live chip already matches the working state — nothing would change.");
             } else {

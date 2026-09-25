@@ -189,6 +189,25 @@ window.eval(fs.readFileSync(path.join(STATIC, 'app.js'), 'utf8'));
     ok(/could not be read/.test(lastConfirm),
        'an unknown live count is stated, not faked (got: ' + lastConfirm + ')');
 
+    /* QA correctness-r2-01: the server now says it CANNOT snapshot an unreadable
+       pair (reversible:false) -- the confirm must stop promising the backup
+       and say the push refuses instead of writing blind. */
+    lastConfirm = ''; confirmAnswer = false;
+    preflightQueue = [{ ok: true, live_changes: null, unsaved: 0, reversible: false,
+                        live_read: 'unreadable', run_active: false }];
+    window.overwriteLiveWithWorking();
+    await flush(30);
+    ok(/could not be read/.test(lastConfirm) && !/snapshotted first/.test(lastConfirm)
+       && /refuses the overwrite/.test(lastConfirm),
+       'an unreadable live never promises a snapshot; it says the push refuses (got: ' + lastConfirm + ')');
+    lastConfirm = '';
+    preflightQueue = [{ ok: true, live_changes: null, unsaved: 0, reversible: false,
+                        live_read: 'missing', run_active: false }];
+    window.overwriteLiveWithWorking();
+    await flush(30);
+    ok(/no state files/.test(lastConfirm) && !/snapshotted first/.test(lastConfirm),
+       'a missing live folder says nothing is replaced (got: ' + lastConfirm + ')');
+
     /* QA diagnostics-r2-04: crash-class values the push carries are named in
        the SAME confirm (one clause -- never a second dialog, never a block) */
     lastConfirm = ''; confirmAnswer = false;

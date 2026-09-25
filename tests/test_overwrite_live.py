@@ -192,3 +192,65 @@ class TestThePushItself:
         _rewrite_live_out_of_band(env, off=0.5)
         c.post("/state/apply-to-live?force=1")
         assert c.get("/state/overwrite-live/preflight").get_json()["live_changes"] == 0
+
+
+class TestNoBackupNoOverwrite:
+    """QA correctness-r2-01: Keep mine while the live pair was unreadable (a
+    QUAlibrate save caught mid-write; a save written with a UTF-8 BOM) wrote
+    anyway -- 'Snapshot capture failed ... not valid JSON' in the log, the
+    outside value in no version, no Revert offered -- while the confirm had
+    promised 'the current live state is snapshotted first'. A forced push now
+    refuses when it could not back up content that is really there, exactly
+    like restore-live does."""
+
+    @staticmethod
+    def _bom(env):
+        st = _state(off=0.5)
+        (env["live"] / "state.json").write_text(json.dumps(st), encoding="utf-8-sig")
+
+    @staticmethod
+    def _torn(env):
+        full = json.dumps(_state(off=0.5), indent=4)
+        (env["live"] / "state.json").write_text(full[: len(full) // 2], encoding="utf-8")
+
+    @pytest.mark.parametrize("spoil", ["_bom", "_torn"])
+    def test_a_forced_push_over_unreadable_live_writes_nothing(self, env, spoil):
+        c = env["client"]
+        getattr(self, spoil)(env)
+        before = (env["live"] / "state.json").read_bytes()
+        ctx = next(iter(env["app"].config["contexts"].values()))
+        ctx.pop("last_apply", None)
+        r = c.post("/state/apply-to-live?force=1")
+        body = r.get_data(as_text=True)
+        assert (env["live"] / "state.json").read_bytes() == before, \
+            "the unreadable live file was overwritten without a backup"
+        assert "Nothing was written" in body and "back up" in body, body[:600]
+        assert not ctx.get("last_apply"), "no Revert may be offered for a write that did not happen"
+        # the choice is re-offered (the conflict tray), not a dead end
+        assert "tray-force-btn" in body
+
+    def test_a_json_caller_gets_a_409_naming_it(self, env):
+        self._bom(env)
+        r = env["client"].post("/state/apply-to-live?force=1",
+                               headers={"Accept": "application/json"})
+        assert r.status_code == 409
+        assert r.get_json()["conflict"] == "no_backup"
+
+    def test_a_missing_live_folder_still_takes_the_working_state(self, env):
+        """docs/86 point 7: nothing on the live chip to lose -> the user may
+        still write the working state there (no Revert: nothing to revert to)."""
+        (env["live"] / "state.json").unlink()
+        (env["live"] / "wiring.json").unlink()
+        r = env["client"].post("/state/apply-to-live?force=1")
+        assert r.status_code == 200, r.data[:400]
+        assert _live(env)["qubits"]["qA1"]["z"]["joint_offset"] == 0.08
+
+    def test_the_preflight_stops_promising_a_backup_it_cannot_take(self, env):
+        self._torn(env)
+        d = env["client"].get("/state/overwrite-live/preflight").get_json()
+        assert d["live_changes"] is None
+        assert d["reversible"] is False and d["live_read"] == "unreadable"
+        (env["live"] / "state.json").unlink()
+        (env["live"] / "wiring.json").unlink()
+        d = env["client"].get("/state/overwrite-live/preflight").get_json()
+        assert d["reversible"] is False and d["live_read"] == "missing"
