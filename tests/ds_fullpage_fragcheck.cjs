@@ -17,7 +17,7 @@
  *   _navigateToExplorerPath from a full page moves the run into the inspector
  *     BEFORE the Explorer takes #table-pane.
  *
- * Run: node tests/ds_fullpage_selfcheck.cjs <rendered-detail.html>
+ * Run: node tests/ds_fullpage_fragcheck.cjs <rendered-detail.html>
  * (driven by tests/test_ds_fullpage.py)
  */
 'use strict';

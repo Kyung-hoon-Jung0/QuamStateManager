@@ -23529,16 +23529,21 @@ def _topology_with_derived_rb(engine):
         # Run ids are unique only WITHIN a data folder, so the cache key carries
         # the set of folders this chip reads from -- another chip's run #1477
         # is never this chip's #1477.
-        stores = _active_dataset_stores(fast=True, rescan=False)
-        scope = tuple(sorted(str(e.get("path")) for e in stores))
+        # Resolved LAZILY: a chip whose Clifford rows carry no load_id never
+        # pays even the in-memory store lookup (TestRbDerivationSweepsOnce).
+        stores = None
+        scope = ()
         rescanned = False
 
         def _resolve_rb_run(load_id):
-            nonlocal stores, rescanned
+            nonlocal stores, scope, rescanned
             try:
                 rid = int(load_id)
             except (TypeError, ValueError):
                 return None
+            if stores is None:
+                stores = _active_dataset_stores(fast=True, rescan=False)
+                scope = tuple(sorted(str(e.get("path")) for e in stores))
             with _RB_CACHE_LOCK:
                 cached = _RB_RUN_FOLDERS.get((scope, rid))
                 if cached is not None:

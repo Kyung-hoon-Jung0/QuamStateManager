@@ -358,12 +358,21 @@ class _FakeEngine:
 class TestRbDerivationSweepsOnce:
 
     def _count_sweeps(self, monkeypatch, engine):
+        """Counts ARCHIVE SWEEPS: calls that rescan. docs/207 made the first
+        lookup an in-memory one (``rescan=False``) with one shared rescan
+        retry per render, so a no-rescan call is not a sweep. The run-folder
+        memo is cleared first: it is module state, and a negative entry left
+        by an earlier test would hide this render's sweep entirely."""
         sweeps = []
 
         def fake_stores(*a, **k):
-            sweeps.append(1)
+            if k.get("rescan", True) is not False:
+                sweeps.append(1)
             return []          # no store has the run -> every lookup is a miss
 
+        with routes._RB_CACHE_LOCK:
+            routes._RB_RUN_FOLDERS.clear()
+            routes._RB_DERIVED_VALUES.clear()
         monkeypatch.setattr(routes, "_active_dataset_stores", fake_stores)
         routes._topology_with_derived_rb(engine)
         return len(sweeps)
@@ -391,6 +400,14 @@ class TestRbDerivationSweepsOnce:
         assert self._count_sweeps(
             monkeypatch, _FakeEngine(8, load_ids=False)) == 0
 
+    def test_nothing_to_derive_does_not_even_look_in_memory(self, monkeypatch):
+        """Laziness down to the in-memory lookup: no load_id, no store call."""
+        calls = []
+        monkeypatch.setattr(routes, "_active_dataset_stores",
+                            lambda *a, **k: (calls.append(k), [])[1])
+        routes._topology_with_derived_rb(_FakeEngine(8, load_ids=False))
+        assert calls == []
+
     def test_the_enrichment_still_happens(self, monkeypatch):
         """Cost pins alone would pass with the derivation deleted."""
         seen = []
@@ -402,10 +419,16 @@ class TestRbDerivationSweepsOnce:
 
         monkeypatch.setattr(routes, "_active_dataset_stores",
                             lambda *a, **k: [{"store": _OneStore()}])
+        with routes._RB_CACHE_LOCK:
+            routes._RB_RUN_FOLDERS.clear()
+            routes._RB_DERIVED_VALUES.clear()
         routes._topology_with_derived_rb(_FakeEngine(5))
-        assert sorted(seen) == [2000, 2001, 2002, 2003, 2004], (
+        assert sorted(set(seen)) == [2000, 2001, 2002, 2003, 2004], (
             "the per-gate RB derivation stopped resolving its runs"
         )
+        # docs/207: a miss in the in-memory stores gets ONE rescan retry per
+        # render (shared by every row), so at most one id is asked twice.
+        assert len(seen) <= len(set(seen)) + 1, seen
 
     def test_a_direct_caller_still_gets_the_old_behaviour(self, monkeypatch):
         """`stores=None` must remain byte-identical to before — the parameter

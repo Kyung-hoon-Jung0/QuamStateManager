@@ -9,7 +9,7 @@ switched and filtered the OTHER column, the pinned run's other files could not
 be opened at all, and the pinned script's first fetch rendered the pinned run's
 state.json into the current column. Pinned against the REAL app.js (the real
 togglePinDataset + pinned-swap interceptor) on the markup the REAL template
-renders here, by ``tests/ds_state_pinned_selfcheck.cjs``.
+renders here, by ``tests/ds_state_pinned_fragcheck.cjs``.
 """
 from __future__ import annotations
 
@@ -72,7 +72,7 @@ def test_state_tab_pinned_client_selfcheck(rendered, tmp_path):
     page = tmp_path / "details.json"
     page.write_text(json.dumps(rendered), encoding="utf-8")
     proc = subprocess.run(
-        ["node", str(_ROOT / "tests" / "ds_state_pinned_selfcheck.cjs"), str(page)],
+        ["node", str(_ROOT / "tests" / "ds_state_pinned_fragcheck.cjs"), str(page)],
         capture_output=True, text=True, encoding="utf-8", cwd=str(_ROOT), timeout=120)
     if proc.returncode == 2 and "jsdom not installed" in (proc.stderr or ""):
         pytest.skip("jsdom not installed")

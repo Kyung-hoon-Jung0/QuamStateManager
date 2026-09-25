@@ -519,7 +519,7 @@ def channel_effective_rf_if(store: Any, chan: Any,
     Python properties, not JSON leaves (QA F-13: the printable report put
     ``#./inferred_intermediate_frequency`` in a column headed MHz). This
     re-runs quam's own arithmetic, quoted from
-    ``quam/components/channels.py`` (quam 0.6.0, cqt env):
+    ``quam/components/channels.py`` (quam 0.6.0, the verified modern-stack env):
 
     - ``_OutComplexChannel.inferred_intermediate_frequency``:
       "Returns: self.RF_frequency - self.LO_frequency"

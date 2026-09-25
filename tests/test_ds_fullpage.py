@@ -4,7 +4,7 @@ On ``/dataset/<uid>`` (and after the inspector's full-page button) the run
 lives in ``#table-pane``; its controls assumed the inspector: the close button
 emptied an empty pane, the down arrow and the parent link stacked the next run
 underneath, and "Go to state" replaced the run with the Explorer. The client
-behaviour is pinned by ``tests/ds_fullpage_selfcheck.cjs`` (REAL app.js + REAL
+behaviour is pinned by ``tests/ds_fullpage_fragcheck.cjs`` (REAL app.js + REAL
 htmx) on the markup the REAL template renders here.
 """
 from __future__ import annotations
@@ -75,7 +75,7 @@ def test_full_page_client_selfcheck(rendered, tmp_path):
     page = tmp_path / "detail.html"
     page.write_text(html, encoding="utf-8")
     proc = subprocess.run(
-        ["node", str(_ROOT / "tests" / "ds_fullpage_selfcheck.cjs"), str(page)],
+        ["node", str(_ROOT / "tests" / "ds_fullpage_fragcheck.cjs"), str(page)],
         capture_output=True, text=True, encoding="utf-8", cwd=str(_ROOT), timeout=120)
     if proc.returncode == 2 and "jsdom not installed" in (proc.stderr or ""):
         pytest.skip("jsdom not installed")

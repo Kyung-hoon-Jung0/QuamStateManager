@@ -14,7 +14,7 @@
  * togglePinDataset clone + the real pinned beforeSwap interceptor, whose
  * _activatePinnedPane re-creates both columns' <script>s in DOM order.
  *
- * Run: node tests/ds_state_pinned_selfcheck.cjs <details.json>
+ * Run: node tests/ds_state_pinned_fragcheck.cjs <details.json>
  *      (driven by tests/test_ds_state_pinned.py)
  */
 'use strict';
