@@ -2516,6 +2516,45 @@ class HistoryManager:
         for th in threads:
             th.join(timeout)
 
+    def snapshot_dir(self, quam_state_path: str | Path, timestamp: str) -> Path:
+        """Where the snapshot ``timestamp`` of this chip folder lives on disk.
+
+        Normally ``<this chip's dir>/<timestamp>``. But a snapshot is filed
+        under the identity its CONTENT carried when it was captured
+        (``resolve_chip_dir_for_content``), while this lookup resolves the
+        folder's identity NOW -- and an apply can change that identity: a
+        dataset run whose state names another chip (``extras.chip_name``),
+        applied with "anyway", moves the live folder to that chip's dir. The
+        pre-apply BACKUP then sat under the old dir, and ↺ Revert last apply
+        -- promised as "Reversible" -- answered 404 (QA F1). So when the
+        timestamp is not under the current dir, look for it under every chip
+        dir. Timestamps are microsecond-unique; if two dirs ever held the
+        same one, that is ambiguous and raises rather than guessing. A stamp
+        found nowhere keeps the current dir, so "not found" stays honest.
+        """
+        if not isinstance(timestamp, str) or not _HIST_TS_RE.match(timestamp):
+            raise KeyError(f"invalid snapshot timestamp: {timestamp!r}")
+        primary = self._history_dir(Path(quam_state_path)) / timestamp
+        if (primary / "state.json").exists():
+            return primary
+        found: list[Path] = []
+        try:
+            for d in self._root.iterdir():
+                if (d.is_dir() and d != primary.parent
+                        and (d / timestamp / "state.json").exists()):
+                    found.append(d / timestamp)
+        except OSError:
+            return primary
+        if len(found) > 1:
+            raise KeyError(f"snapshot {timestamp} exists under several chip dirs: "
+                           + ", ".join(sorted(f.parent.name for f in found)))
+        if found:
+            logger.info("snapshot %s found under chip dir %s, not the folder's "
+                        "current identity %s (the identity changed since capture)",
+                        timestamp, found[0].parent.name, primary.parent.name)
+            return found[0]
+        return primary
+
     def load_snapshot(self, quam_state_path: str | Path, timestamp: str) -> QuamStore:
         """Load a ``QuamStore`` from a historical snapshot (LRU-cached).
 
@@ -2536,7 +2575,7 @@ class HistoryManager:
                 return self._store_cache[cache_key]
 
         # Load outside the lock (IO-bound, don't block other threads)
-        snap_dir = self._history_dir(path) / timestamp
+        snap_dir = self.snapshot_dir(path, timestamp)
         store = QuamStore(snap_dir, validate=False)
 
         with self._lock:
@@ -2580,7 +2619,7 @@ class HistoryManager:
         a lie (docs/128 review).
         """
         path = Path(quam_state_path)
-        snap_dir = self._history_dir(path) / timestamp
+        snap_dir = self.snapshot_dir(path, timestamp)
         target = current_store if current_store is not None else path
         if ignore_keys is None:
             return _differ.diff(snap_dir, target)

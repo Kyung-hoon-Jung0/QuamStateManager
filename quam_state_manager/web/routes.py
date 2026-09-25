@@ -26680,6 +26680,13 @@ def dataset_load_state(uid):
                 uid, ctx["path"])
 
     if apply_req:
+        # QA F1: which history dir files this chip BEFORE the push -- a run
+        # whose state names another chip (extras.chip_name) moves it, and the
+        # result line must say so (State History then lists the other name).
+        try:
+            _key_before = _history().resolve_chip_dir(ctx["path"])[1]
+        except Exception:  # noqa: BLE001 — an advisory, never a blocker
+            _key_before = None
         # docs/108 one-click: push the just-staged snapshot through the SHARED
         # apply core — same pre-apply snapshot (arms ↺ Revert last apply),
         # same staleness handling, same bookkeeping as the ⚡ button.
@@ -26702,10 +26709,19 @@ def dataset_load_state(uid):
                           "those changes were overwritten (the run's state "
                           "wins).")
         if status == "ok":
+            ident_note = ""
+            try:
+                _key_after = _history().resolve_chip_dir(ctx["path"])[1]
+                if _key_before and _key_after and _key_after != _key_before:
+                    ident_note = (f" Its state names another chip, so State "
+                                  f"History now files this folder as "
+                                  f"{_key_after} (was {_key_before}).")
+            except Exception:  # noqa: BLE001
+                pass
             msg = render_template(
                 "_status.html",
                 message=(f"Run #{run_id}'s state is now LIVE on {chip_label}."
-                         + drift_note + replaced_note
+                         + drift_note + replaced_note + ident_note
                          # docs/198: it STAGES -- the chip moves on the
                          # following Apply, not on this press. Saying
                          # "restores" made a correct staging read as a
@@ -26718,7 +26734,11 @@ def dataset_load_state(uid):
                            "stages the pre-apply state; Apply puts it "
                            "back on the chip."),
                 level="success")
-            resp = make_response(msg + "\n" + _tray_oob())
+            # QA F1 (verification): live now holds the run's state, so a drift
+            # banner raised before the press ("you may be viewing an older
+            # chip") is answered -- take it down in place, like the tray's own
+            # apply does (QA liveedit-r2-07 review)
+            resp = make_response(msg + "\n" + _tray_oob() + _diverged_oob())
             resp.headers["HX-Trigger"] = _state_restored_trigger(ctx, _pre_leaves)
             return resp
         # error — the staging succeeded; say exactly how far things got.

@@ -3128,3 +3128,45 @@ class TestNaturalOrder:
         hm.check_and_snapshot(many_qubit_path, "save")
         entry = next(c for c in hm.list_chip_histories() if c["qubits"])
         assert entry["qubits"] == [f"q{i}" for i in range(1, 13)]
+
+
+class TestASnapshotSurvivesAnIdentityChange:
+    """QA F1 (blocker): a dataset run whose state names ANOTHER chip, applied
+    with "anyway", changes the live folder's identity (``extras.chip_name``).
+    The pre-apply BACKUP was filed under the OLD identity's dir -- capture keys
+    on the captured content -- but the lookup keyed on the folder's identity
+    NOW, so "↺ Revert last apply" (promised as Reversible) answered 404."""
+
+    def _flip_identity(self, quam_path: Path, name: str) -> None:
+        st = _base_state()
+        st["extras"] = {"chip_name": name}
+        st["qubits"]["qB9"] = st["qubits"].pop("qA1")
+        _write_quam_state(quam_path, st, _base_wiring())
+
+    def test_the_backup_is_found_under_the_identity_it_was_filed_under(
+            self, hm: HistoryManager, quam_path: Path):
+        meta = hm.check_and_snapshot(quam_path, "auto", kind="backup")
+        old_dir = hm.resolve_chip_dir(quam_path)[0]
+        self._flip_identity(quam_path, "OTHER_CHIP")
+        assert hm.resolve_chip_dir(quam_path)[0] != old_dir, "the fixture must flip identity"
+        store = hm.load_snapshot(quam_path, meta.timestamp)
+        assert "qA1" in store.merged["qubits"], "the pre-flip content must load"
+        assert hm.snapshot_dir(quam_path, meta.timestamp).parent == old_dir
+        # the Versions "Diff" door resolves through the same lookup
+        assert hm.diff_current(quam_path, meta.timestamp) is not None
+
+    def test_a_missing_stamp_still_says_not_found(self, hm: HistoryManager, quam_path: Path):
+        hm.check_and_snapshot(quam_path, "auto")
+        with pytest.raises(FileNotFoundError):
+            hm.load_snapshot(quam_path, "20000101_000000_0001")
+
+    def test_the_same_stamp_under_two_dirs_is_ambiguous_not_guessed(
+            self, hm: HistoryManager, quam_path: Path):
+        meta = hm.check_and_snapshot(quam_path, "auto")
+        src = hm.resolve_chip_dir(quam_path)[0] / meta.timestamp
+        import shutil
+        for other in ("CHIP_X", "CHIP_Y"):
+            shutil.copytree(src, hm._root / other / meta.timestamp)
+        shutil.rmtree(src)
+        with pytest.raises(KeyError, match="several chip dirs"):
+            hm.load_snapshot(quam_path, meta.timestamp)

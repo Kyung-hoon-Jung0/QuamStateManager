@@ -417,3 +417,43 @@ class TestNoBackupNoForcedApply:
         assert (env["live"] / "state.json").read_bytes() == before
         assert "back up" in r.get_data(as_text=True)
         assert "is now LIVE" not in r.get_data(as_text=True)
+
+
+class TestRevertAcrossAChipIdentityChange:
+    """QA F1 (blocker): "Apply to chip" (with "anyway") of a run whose state
+    names ANOTHER chip promised "Reversible — ↺ Revert last apply", but the
+    revert answered 404: the pre-apply BACKUP was filed under the old identity
+    while the lookup used the identity the apply had just written."""
+
+    def test_revert_last_apply_stages_the_pre_apply_chip(self, env):
+        c = env["client"]
+        root = env["tmp"] / "data"
+        # a different chip: its own name, qubits and network (as the rig's
+        # IQCC_QOP37_1Q run was against KRISS_CZ)
+        other = {"qubits": {"qZ7": {"id": "qZ7", "f_01": 4.1e9,
+                                    "z": {"joint_offset": 0.079}}},
+                 "qubit_pairs": {}, "active_qubit_names": ["qZ7"],
+                 "extras": {"chip_name": "SOME_OTHER_CHIP"}}
+        _seed_run(root, 51, other)
+        run_q = root / "2026-12-30" / "#51_08_spec_010000" / "quam_state"
+        _write_chip(run_q, other, {"network": {"host": "9.9.9.9", "cluster_name": "Z"}})
+        uid = _uid(env, root, 51)
+        pre = (env["live"] / "state.json").read_bytes()
+        r = c.post(f"/dataset/{uid}/load-state?apply=1&force_chip=1")
+        assert r.status_code == 200, r.data
+        body = r.get_data(as_text=True)
+        assert "is now LIVE" in body
+        assert "SOME_OTHER_CHIP" in body, "the identity change must be named"
+        # live now holds the run's state: the drift banner slot is re-rendered
+        # (empty) so a banner raised before the press does not linger
+        assert 'id="live-diverged-slot"' in body
+        live_now = json.loads((env["live"] / "state.json").read_text(encoding="utf-8"))
+        assert "qZ7" in live_now["qubits"], "the other chip's state is live now"
+        pre_ts = _ctx(env)["last_apply"]["pre_ts"]
+        r = c.post(f"/state-history/{pre_ts}/stage?from=tray")
+        assert r.status_code == 200, r.get_data(as_text=True)[:400]
+        # ...and Apply completes the revert: the chip is back, byte-for-byte
+        r = c.post("/state/apply-to-live")
+        assert r.status_code == 200
+        assert json.loads((env["live"] / "state.json").read_text(encoding="utf-8")) \
+            == json.loads(pre.decode("utf-8"))
