@@ -3606,14 +3606,24 @@ window.doStateSync = function(mode, forced, ackUnseen, expectChip, opts) {
                 // Never a dead end — name what would go, and let one click
                 // accept it or send the user to review it first.
                 var lines = (data.paths || []).slice(0, 6).join("\n  ");
+                // QA correctness-r2-03: Take live asks about the edits it
+                // would DESTROY (the server says which door this is).
+                var _discardQ = !!data.discard;
                 if (window.confirm((data.message || "") + "\n\n  " + lines
-                        + "\n\nApply everything, including those?")) {
+                        + (_discardQ
+                           ? "\n\nOK = discard them too and take the live chip."
+                             + "\nCancel = discard nothing; the tray will show them."
+                           : "\n\nApply everything, including those?"))) {
                     setTimeout(function () {
                         window._applyInFlight = false;
                         // `ackUnseen`, never `forced`: force=1 answers the
                         // STALENESS question and must not double as consent to
                         // another window's edits.
-                        window.doStateSync(mode, false, true, expectChip, opts);
+                        // (a Take live's force=1 answered the docs/65 staged-
+                        // content question already asked -- carry it, or that
+                        // question would be asked a second time)
+                        window.doStateSync(mode, _discardQ ? forced : false, true,
+                                           expectChip, opts);
                     }, 0);
                 } else {
                     // Refresh the tray so this screen stops lying, then show it.
@@ -3622,8 +3632,10 @@ window.doStateSync = function(mode, forced, ackUnseen, expectChip, opts) {
                                          {target: "#pending-tray", swap: "outerHTML"});
                     }
                     if (window.showToast) {
-                        window.showToast("Nothing was applied — the tray now shows "
-                                         + "every pending edit.", "info");
+                        window.showToast((_discardQ ? "Nothing was discarded"
+                                                    : "Nothing was applied")
+                                         + " — the tray now shows every pending edit.",
+                                         "info");
                     }
                 }
                 return;

@@ -17920,6 +17920,25 @@ def _unseen_edit_refusal(ctx) -> dict | None:
                 f"write them to the live chip too.")}
 
 
+def _discard_unseen_body(refusal: dict) -> dict:
+    """QA correctness-r2-03: the unseen-edit refusal, worded for Take live.
+
+    Same fields as the Apply door's (``status``/``have``/``seen``/``paths``)
+    so the client's one handler reads both; ``discard`` tells it which
+    question to ask. The sentence names what would be LOST, which is the
+    difference between the two doors: Apply would write those edits, Take
+    live would throw them away with no undo."""
+    have = int(refusal.get("have") or 0)
+    seen = int(refusal.get("seen") or 0)
+    unseen = max(have - seen, 0) or have
+    return {**refusal, "discard": True,
+            "message": (
+                f"Taking the live chip now would also discard "
+                f"{unseen} unapplied edit{'s' if unseen != 1 else ''} made in "
+                f"another State Manager window, which this screen is not "
+                f"showing. A discarded edit cannot be undone.")}
+
+
 def _live_pair_torn(ctx) -> dict[str, str]:
     """QA correctness-r2-08: the port references that dangle in the live pair
     now but did not in the pair SM holds (``{}`` when none, or when live cannot
@@ -18113,6 +18132,21 @@ def state_sync():
         # (safe_io's torn-pair refusal → ValueError → 500). Matches the
         # State-History callers, which already hold the lock across the rebuild.
         with build_lock:
+            # QA correctness-r2-03: Take live (mode=discard) DESTROYS every
+            # pending edit, and two windows share one change log -- a press
+            # made against a screen showing 0 edits dropped the other
+            # window's typed value, unjournaled and unnamed. The presser's
+            # declared view (seen_changes/seen_sig, docs/120/179) is asked
+            # about here, under the build lock right before the pull (the
+            # F5 discipline: sampled at the door, not before it). Only the
+            # DESTRUCTIVE pull: reapply keeps every edit and stays one click
+            # (test_a_pull_is_never_gated), and a screen that saw the whole
+            # set is byte-identical to before. Answered by `ack_unseen`
+            # alone, never force (docs/41).
+            if mode == "discard":
+                _unseen = _unseen_edit_refusal(ctx)
+                if _unseen is not None and not _unseen.get("nothing_pending"):
+                    return jsonify(_discard_unseen_body(_unseen)), 409
             _pre_leaves = _leaf_snapshot(ctx)
             working_copy.sync_from_live(wc)
             pulled_other_changes = (_pre_sync_hash is not None

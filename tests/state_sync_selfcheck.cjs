@@ -130,6 +130,42 @@ window.eval(fs.readFileSync(path.join(STATIC, 'app.js'), 'utf8'));
     ok(/force=1/.test(syncCalls[1] ? syncCalls[1].body : ''),
        'the retry carries force=1 (got: ' + (syncCalls[1] && syncCalls[1].body) + ')');
 
+    /* ── 1a. QA correctness-r2-03: Take live asks about ANOTHER window's
+       edits it would destroy. The server's refusal carries discard:true; the
+       confirm must ask the discard question (not "Apply everything"), a
+       decline names that nothing was discarded, and OK re-posts with
+       ack_unseen=1 -- carrying a force=1 already given, so the docs/65
+       question is never asked twice. */
+    syncCalls.length = 0; lastConfirm = '';
+    syncQueue = [{ status: 'unseen_changes', discard: true, have: 1, seen: 0,
+                   paths: ['qubits.q1.T2ramsey'],
+                   message: 'Taking the live chip now would also discard 1 unapplied edit' }];
+    confirmAnswer = false;
+    const _toasts1a = [];
+    const _st1a = window.showToast;
+    window.showToast = function (m) { _toasts1a.push(String(m)); };
+    window.doStateSync('discard');
+    await flush(20);
+    ok(/qubits\.q1\.T2ramsey/.test(lastConfirm) && /discard them too/i.test(lastConfirm)
+       && !/Apply everything/.test(lastConfirm),
+       'Take live: the confirm names the other window\'s edit and asks the DISCARD question (got: ' + lastConfirm + ')');
+    ok(syncCalls.length === 1, 'Take live + decline: no re-post');
+    ok(_toasts1a.some(function (t) { return /Nothing was discarded/.test(t); }),
+       'Take live + decline: the toast says nothing was discarded (got: ' + _toasts1a.join(' | ') + ')');
+    syncCalls.length = 0;
+    syncQueue = [{ status: 'unseen_changes', discard: true, have: 1, seen: 0,
+                   paths: ['qubits.q1.T2ramsey'], message: 'm' },
+                 { status: 'ok', mode: 'discard', tray_html: null, replay: null }];
+    confirmAnswer = true;
+    window.doStateSync('discard', true);
+    await flush(40);
+    ok(syncCalls.length === 2 && /ack_unseen=1/.test(syncCalls[1].body)
+       && /force=1/.test(syncCalls[1].body),
+       'Take live + OK: re-post acknowledges AND keeps the force already given (got: '
+       + (syncCalls[1] && syncCalls[1].body) + ')');
+    window.showToast = _st1a;
+    syncCalls.length = 0;
+
     /* ── 1b. "Keep mine — overwrite live" (docs/86) ────────────────────
        The third choice. It must be ONE confirm that actually names what it
        destroys, and it must force — an unforced push would land on the
