@@ -1,0 +1,55 @@
+{# Datasets > Trends: Parameter Differences (/trends/param-diff).
+   Only rows that DIFFER across the shown runs; the counts of runs and
+   identical rows NOT shown are exact. A highlighted cell differs from the
+   first shown run under differ.compare_equal (docs/118, the one rule).
+   data-trends-v is the same version /trends/series stamps on the charts. #}
+<div class="trends-params-body" data-trends-v="{{ d.v }}" data-window="{{ d.window }}">
+    <h3>Parameter Differences</h3>
+    {% if d.total_runs < 2 %}
+    <p class="muted">Only {{ d.total_runs }} run — nothing to compare.</p>
+    {% else %}
+    <p class="muted trends-pdiff-summary" data-role="pdiff-summary">
+        {%- if d.shown_runs < d.total_runs -%}
+        showing {{ "{:,}".format(d.shown_runs) }} of {{ "{:,}".format(d.total_runs) }} runs
+        {%- else -%}
+        showing all {{ "{:,}".format(d.total_runs) }} runs
+        {%- endif %} · {{ "{:,}".format(d.identical_rows) }} identical row{{ "" if d.identical_rows == 1 else "s" }} hidden
+        {% if d.window != "all" and d.total_runs > d.shown_runs -%}
+        · <a href="#" hx-get="{{ all_url }}" hx-target="closest .trends-params" hx-swap="innerHTML"
+             data-role="pdiff-all">show all {{ "{:,}".format(d.total_runs) }} runs</a>
+        {%- elif d.window == "all" and d.total_runs > d.param_window -%}
+        · <a href="#" hx-get="{{ recent_url }}" hx-target="closest .trends-params" hx-swap="innerHTML"
+             data-role="pdiff-recent">newest {{ d.param_window }} only</a>
+        {%- endif %}
+    </p>
+    {% if d.rows %}
+    <div class="table-scroll">
+    <table class="data-table" role="grid">
+        <thead><tr>
+            <th>Parameter</th>
+            {% for label in d.labels %}
+            <th title="{{ d.titles[loop.index0] }}">{{ label | truncate(14) }}</th>
+            {% endfor %}
+        </tr></thead>
+        <tbody>
+        {% for row in d.rows %}
+        <tr>
+            <td><code>{{ row.key }}</code></td>
+            {% for c in row.cells %}
+            <td{% if c.diff %} class="cell-diff"{% endif %}>
+                {% if c.value is none %}<span class="muted">-</span>
+                {% elif c.value is number %}{{ "%.4g" | format(c.value) }}
+                {% elif c.value is iterable and c.value is not string %}<small class="muted">[{{ c.value | length }} items]</small>
+                {% else %}{{ c.value }}{% endif %}
+            </td>
+            {% endfor %}
+        </tr>
+        {% endfor %}
+        </tbody>
+    </table>
+    </div>
+    {% else %}
+    <p class="muted">No parameter differs across these runs.</p>
+    {% endif %}
+    {% endif %}
+</div>

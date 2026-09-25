@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import bisect
 import hashlib
+import itertools
 import json
 import logging
 import math
@@ -15,7 +16,7 @@ import os
 import re
 import threading
 import time as _time
-from collections import OrderedDict
+from collections import OrderedDict, deque
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
 from datetime import datetime
@@ -67,6 +68,18 @@ _SCAN_PARSE_WORKERS = min(32, (os.cpu_count() or 4) * 4)
 # reject non-HDF5 content but the resolved path can still land on
 # arbitrary ``.h5`` files elsewhere on disk if the layout invites it.
 _H5_WHICH_WHITELIST = frozenset({"ds_raw", "ds_fit", "ds_iq_blobs"})
+
+# Design ram_design.md §1.2 (P0): every DatasetStore carries an identity that
+# is never reused in this process (``instance_seq``) and per-store counters
+# that move at EVERY ``self.runs`` insert/replace/pop (``generation``, with
+# ``exp_gen[experiment]`` = the generation that last touched that
+# experiment) and at every tag/note/bookmark write (``meta_generation``).
+# A RAM cache keyed on them is validated on read: the counter moved, the
+# entry is a miss. ``_run_events`` is the bounded log of which run ids each
+# generation touched, so a reader holding an old generation can tell "only
+# newer runs were added" (append) from anything else (rebuild).
+_STORE_SEQ = itertools.count(1)
+_RUN_EVENT_LOG_MAX = 4096
 
 # Regex for run folder names: #{id}_{node_name}_{HHMMSS}
 # The node_name can contain underscores, but the last 6 digits are always HHMMSS.
@@ -241,6 +254,29 @@ def _compact_row(run: "RunInfo") -> dict:
     }
 
 
+def trend_point(v: Any) -> "tuple[bool, Any]":
+    """``(counts, value)`` for one fit-result entry on a Datasets trend.
+
+    The ONE rule for every Datasets trend surface (``build_trend_data``,
+    ``DatasetStore.get_trend_data`` and ``core/trend_index``):
+
+    * ``counts`` -- the entry makes its (qubit, metric) a series. This is the
+      historical ``isinstance(v, (int, float))`` test, kept exactly: a bool
+      flag (``pi_amp_reachable``, ``t2_in_range``...) has always been charted
+      (as a true/false axis), and a metric whose fit failed in every run has
+      always had its (empty) chart. Dropping either would hide a recorded
+      metric -- 22 of 75 charts on the real power_rabi archive.
+    * ``value`` -- what is plotted: the entry itself, except a non-finite
+      float becomes ``None``. JSON has no NaN; Plotly drew NaN as a gap, and
+      it draws ``null`` as the same gap.
+    """
+    if not isinstance(v, (int, float)):
+        return False, None
+    if isinstance(v, float) and not math.isfinite(v):
+        return True, None
+    return True, v
+
+
 def build_trend_data(runs, qubit=None, metrics=None, folder_key_of=None) -> dict:
     """Build a trend payload from an explicit, already-sorted list of RunInfo.
 
@@ -274,11 +310,13 @@ def build_trend_data(runs, qubit=None, metrics=None, folder_key_of=None) -> dict
     for q in target_qubits:
         for m in target_metrics:
             values = []
+            counted = False
             for r in matching:
                 qvals = r.fit_results.get(q, {})
-                val = qvals.get(m) if isinstance(qvals, dict) else None
-                values.append(val if isinstance(val, (int, float)) else None)
-            if any(v is not None for v in values):
+                c, val = trend_point(qvals.get(m) if isinstance(qvals, dict) else None)
+                counted = counted or c
+                values.append(val)
+            if counted:
                 series.append({"qubit": q, "metric": m, "values": values})
 
     fig_keys: list[str] = []
@@ -366,6 +404,15 @@ class DatasetStore:
     def __init__(self, folder_path: str | Path, *,
                  cache_dir: str | Path | None = None):
         self.folder_path = Path(folder_path)
+        # RAM-cache tokens (see _STORE_SEQ). Set before anything can touch
+        # self.runs: the persisted-cache load and the cold scan below are
+        # mutations like any other and bump them.
+        self.instance_seq = next(_STORE_SEQ)
+        self.generation = 0
+        self.meta_generation = 0
+        self.exp_gen: dict[str, int] = {}
+        self._run_events: deque = deque()
+        self._run_events_floor = 0
         self.runs: dict[int, RunInfo] = {}
         self.dates: list[str] = []
         self.experiment_types: list[str] = []
@@ -744,7 +791,10 @@ class DatasetStore:
         root = self.folder_path
         if not root.is_dir():
             logger.warning("Dataset folder not found: %s", root)
-            self.runs.clear()
+            gone = {r.experiment_name for r in self.runs.values()}
+            if self.runs:
+                self.runs.clear()
+                self._note_runs_replaced(gone)
             self._data_json_cache.clear()
             self._folder_fp.clear()
             self._incomplete_paths.clear()
@@ -937,6 +987,7 @@ class DatasetStore:
                 else:
                     run_info.last_parsed = now
                 self.runs[run_id] = run_info
+                self._note_run_change(run_id, _old, run_info)
                 real_fp = (folder_fp, node_fp, data_fp)
                 if run_info.incomplete and self._retry_incomplete(run_entry, real_fp):
                     # Mid-write folder: record a SENTINEL fingerprint that
@@ -974,7 +1025,9 @@ class DatasetStore:
             existing = self.runs.get(vanished_id)
             if existing is not None and getattr(existing, "folder_path", None) != p:
                 continue
-            self.runs.pop(vanished_id, None)
+            popped = self.runs.pop(vanished_id, None)
+            if popped is not None:
+                self._note_run_change(vanished_id, popped, None)
             self._data_json_cache.pop(vanished_id, None)
             self._vanished.append((vanished_id, now_ts))
         # Drop entries older than the retention window
@@ -1126,7 +1179,9 @@ class DatasetStore:
             logger.warning("dataset store cache %s unreadable -- cold scan", p,
                            exc_info=True)
             return False
+        gone = {r.experiment_name for r in self.runs.values()}
         self.runs = runs
+        self._note_runs_replaced(gone | {r.experiment_name for r in runs.values()})
         self._folder_fp = folder_fp
         self._date_fp = date_fp
         self._run_ids_sorted = sorted(runs)
@@ -1267,11 +1322,20 @@ class DatasetStore:
         the walk (docs/105 #4); a truncated scan leaves the gate open so the
         next call continues.
         """
-        if self._current_mtime() == self._last_mtime:
+        # A run parsed mid-write (``_incomplete_paths``) keeps the gate OPEN:
+        # its files are completed INSIDE the run folder, which moves no date
+        # dir's mtime, so a closed gate froze it "incomplete" -- out of every
+        # Trends view and the Datasets table -- until some unrelated run
+        # landed. Measured on the KH rig: a run copied while the run-watch
+        # tick rescanned stayed missing from /trends/series. The bet stays
+        # bounded by ``_retry_incomplete`` (an unchanging broken folder
+        # leaves ``_incomplete_paths``), so this cannot keep the gate open
+        # forever.
+        if not self._incomplete_paths and self._current_mtime() == self._last_mtime:
             return False
         with self._scan_lock:
             inner = self._current_mtime()
-            if inner == self._last_mtime:
+            if not self._incomplete_paths and inner == self._last_mtime:
                 return False
             old_max = max(self.runs.keys()) if self.runs else -1
             # docs/105 #8: hand the inside-lock sample to _scan as its scan
@@ -1354,6 +1418,87 @@ class DatasetStore:
         """
         with self._scan_lock:
             return list(self.runs.values())
+
+    # ------------------------------------------------------------------
+    # RAM-cache tokens (design ram_design.md §1.2, P0)
+    # ------------------------------------------------------------------
+    #
+    # Called at EVERY self.runs mutation site, right after the mutation and
+    # inside the same _scan_lock hold, so a reader that snapshots under the
+    # lock always sees runs and counters that agree. A lock-free reader of a
+    # counter can at worst see the value from just before a scan's commit,
+    # which is the state it would have seen had it arrived a moment earlier.
+
+    def _note_run_change(self, run_id: int, old: "RunInfo | None",
+                         new: "RunInfo | None") -> None:
+        """One run inserted (old None), replaced, or popped (new None)."""
+        g = self.generation + 1
+        self.generation = g
+        old_exp = old.experiment_name if old is not None else None
+        new_exp = new.experiment_name if new is not None else None
+        for exp in (old_exp, new_exp):
+            if exp is not None:
+                self.exp_gen[exp] = g
+        self._run_events.append((g, run_id, old_exp, new_exp))
+        if len(self._run_events) > _RUN_EVENT_LOG_MAX:
+            dropped = self._run_events.popleft()
+            self._run_events_floor = dropped[0]
+
+    def _note_runs_replaced(self, experiments: set[str]) -> None:
+        """self.runs replaced wholesale (the persisted-cache load, a vanished
+        root). The event log cannot describe that, so it restarts: a reader
+        holding any older generation rebuilds."""
+        g = self.generation + 1
+        self.generation = g
+        for exp in experiments:
+            self.exp_gen[exp] = g
+        self._run_events.clear()
+        self._run_events_floor = g
+
+    def _note_meta_change(self) -> None:
+        """A tag / note / bookmark changed on some RunInfo (or in the tags
+        file this store mirrors)."""
+        self.meta_generation += 1
+
+    def experiment_snapshot(self, experiment: str, since_gen: int | None = None,
+                            append_above: int | None = None
+                            ) -> tuple[int, "set[int] | None", list["RunInfo"]]:
+        """One experiment's runs for an incremental consumer, atomically.
+
+        Returns ``(exp_gen, touched, runs)`` read under ``_scan_lock``:
+
+        * ``touched`` is a set of run ids when the event log covers every
+          change to ``experiment`` since ``since_gen`` AND every run id it
+          touched is greater than ``append_above`` -- then ``runs`` holds only
+          the CURRENT RunInfo of those touched ids that still belong to the
+          experiment (a consumer that has everything up to ``append_above``
+          appends them);
+        * otherwise ``touched`` is ``None`` and ``runs`` is every run of the
+          experiment (unsorted) -- the consumer rebuilds.
+        """
+        with self._scan_lock:
+            gen = self.exp_gen.get(experiment, 0)
+            if (since_gen is not None and append_above is not None
+                    and since_gen >= self._run_events_floor):
+                touched: set[int] = set()
+                appendable = True
+                for g, rid, old_exp, new_exp in reversed(self._run_events):
+                    if g <= since_gen:
+                        break
+                    if experiment in (old_exp, new_exp):
+                        if rid <= append_above:
+                            appendable = False
+                            break
+                        touched.add(rid)
+                if appendable:
+                    runs = []
+                    for rid in touched:
+                        r = self.runs.get(rid)
+                        if r is not None and r.experiment_name == experiment:
+                            runs.append(r)
+                    return gen, touched, runs
+            return gen, None, [r for r in self.runs.values()
+                               if r.experiment_name == experiment]
 
     # ------------------------------------------------------------------
     # Querying
@@ -1699,15 +1844,13 @@ class DatasetStore:
         for q in target_qubits:
             for m in target_metrics:
                 values = []
+                counted = False
                 for r in matching:
                     qvals = r.fit_results.get(q, {})
-                    val = qvals.get(m) if isinstance(qvals, dict) else None
-                    # Only include numeric values
-                    if isinstance(val, (int, float)):
-                        values.append(val)
-                    else:
-                        values.append(None)
-                if any(v is not None for v in values):
+                    c, val = trend_point(qvals.get(m) if isinstance(qvals, dict) else None)
+                    counted = counted or c
+                    values.append(val)
+                if counted:
                     series.append({"qubit": q, "metric": m, "values": values})
 
         fig_keys: list[str] = []
@@ -2361,6 +2504,7 @@ class DatasetStore:
                 continue
             if rid in self.runs:
                 self.runs[rid].note = note
+        self._note_meta_change()
 
     def _save_tags(self, touched: int | None = None):
         """Atomically save quashboard_tags.json, merging over what is on disk.
@@ -2440,6 +2584,7 @@ class DatasetStore:
             run = self.runs.get(rid)
             if run is not None:
                 run.note = note
+        self._note_meta_change()
 
     def toggle_bookmark(self, run_id: int) -> bool:
         """Toggle the run's "favorite" state. Returns the new state.
@@ -2466,6 +2611,7 @@ class DatasetStore:
             if run_id in self.runs:
                 self.runs[run_id].tags = list(tags_dict.get(rid_str, []))
                 self.runs[run_id].bookmarked = new_state
+            self._note_meta_change()
             try:
                 self._save_tags(run_id)
             except (OSError, ValueError, TypeError):
@@ -2483,6 +2629,7 @@ class DatasetStore:
                 if run_id in self.runs:
                     self.runs[run_id].tags = list(tags_dict.get(rid_str, []))
                     self.runs[run_id].bookmarked = was_fav
+                self._note_meta_change()
                 raise
             return new_state
 
@@ -2499,6 +2646,7 @@ class DatasetStore:
             if run_id in self.runs:
                 self.runs[run_id].tags = list(tags_dict[rid_str])
                 self.runs[run_id].bookmarked = FAVORITE_TAG in tags_dict[rid_str]
+            self._note_meta_change()
             try:
                 self._save_tags(run_id)
             except (OSError, ValueError, TypeError):
@@ -2508,6 +2656,7 @@ class DatasetStore:
                     if run_id in self.runs:
                         self.runs[run_id].tags = list(tags_dict[rid_str])
                         self.runs[run_id].bookmarked = FAVORITE_TAG in tags_dict[rid_str]
+                self._note_meta_change()
                 raise
             return list(tags_dict[rid_str])
 
@@ -2525,6 +2674,7 @@ class DatasetStore:
             if run_id in self.runs:
                 self.runs[run_id].tags = list(tags_dict.get(rid_str, []))
                 self.runs[run_id].bookmarked = FAVORITE_TAG in self.runs[run_id].tags
+            self._note_meta_change()
             try:
                 self._save_tags(run_id)
             except (OSError, ValueError, TypeError):
@@ -2534,6 +2684,7 @@ class DatasetStore:
                     if run_id in self.runs:
                         self.runs[run_id].tags = list(tags_dict[rid_str])
                         self.runs[run_id].bookmarked = FAVORITE_TAG in tags_dict[rid_str]
+                self._note_meta_change()
                 raise
             return list(tags_dict.get(rid_str, []))
 
@@ -2576,6 +2727,7 @@ class DatasetStore:
                 del notes[rid_str]
             if run_id in self.runs:
                 self.runs[run_id].note = note
+            self._note_meta_change()
             try:
                 self._save_tags(run_id)
             except (OSError, ValueError, TypeError):
@@ -2586,6 +2738,7 @@ class DatasetStore:
                     notes[rid_str] = previous
                 if run_id in self.runs:
                     self.runs[run_id].note = previous or ""
+                self._note_meta_change()
                 raise
 
     def list_all_tags(self) -> list[str]:

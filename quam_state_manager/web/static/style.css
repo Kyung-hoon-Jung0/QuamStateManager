@@ -6514,6 +6514,7 @@ table.h5-vars-table tr.h5-var-selected .btn-sm { background: var(--pico-primary)
 /* Trend chart boxes */
 .trend-chart-box { margin-bottom: 0.75rem; }
 .trend-chart-label { font-size: 0.85em; font-weight: 600; padding: 0.2rem 0; }
+.trend-offscale-note { font-weight: 400; }
 
 /* Figure timeline strip */
 .trend-figure-strip-section { margin-bottom: 0.5rem; }
@@ -6529,6 +6530,20 @@ table.h5-vars-table tr.h5-var-selected .btn-sm { background: var(--pico-primary)
 }
 .figure-strip-item img { width: 100%; cursor: pointer; }
 .figure-strip-label { font-size: 0.75em; font-weight: 600; padding: 0.2rem; background: var(--pico-card-background-color); }
+
+/* Trends view (P3): the notes line under "Metric Trends", the figure
+   timeline's summary + "show older", and the stale-version notice. */
+.trends-notes { font-size: 0.8em; margin: -0.25rem 0 0.5rem; }
+.trend-mini-chart.trend-chart-empty { height: auto; font-size: 0.8em; color: var(--pico-muted-color); padding: 0.25rem 0 0.5rem; }
+.trends-figtl > summary { cursor: pointer; padding: 0.3rem 0; }
+.trends-figtl-body { padding-left: 0.75rem; }
+.trends-figtl-more { font-size: 0.8em; padding: 0.15rem 0.6rem; margin: 0 0 0.5rem; width: auto; }
+.trends-pdiff-summary { font-size: 0.82em; margin-bottom: 0.4rem; }
+.trends-stale-note {
+    font-size: 0.85em; padding: 0.35rem 0.6rem; margin-bottom: 0.75rem;
+    border-left: 3px solid var(--pico-primary); background: var(--pico-card-background-color);
+}
+.trends-stale-note button { font-size: 0.85em; padding: 0.1rem 0.5rem; margin: 0 0 0 0.5rem; width: auto; }
 
 /* ---------------------------------------------------------------- */
 /* Pin & Browse                                                       */

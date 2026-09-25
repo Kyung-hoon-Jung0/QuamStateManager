@@ -1,16 +1,20 @@
 /* QA F6 -- Datasets > Trends froze the page for 4-6 s when an experiment was
  * chosen, with the old "Select an experiment" placeholder still on screen.
+ * P3 (design ram_design.md §2b) then moved the drawing out of the fragment:
+ * the shell's inline script mounts window.DatasetTrends (app.js), which
+ * fetches /trends/series and draws from it.
  *
- * Drives the SHIPPED chart script of templates/_trends_data.html (its one
- * Jinja placeholder, {{ trend_data }}, filled with a trend payload) and
- * app.js's loadTrendData under jsdom. Pinned:
+ * Drives the SHIPPED shell (templates/_trends_data.html) and app.js under
+ * jsdom (tests/trends_view_harness.cjs). Pinned:
  *   1. one chart per TASK. The old loop drew all twelve eager charts in one
  *      task (every _plotlyRender promise resolves in the same microtask
  *      checkpoint) -- that was the multi-second long task. Now one chart is
- *      drawn synchronously and the rest arrive in later macrotasks.
+ *      drawn in the task the data lands in and the rest arrive in later
+ *      macrotasks.
  *   2. IntersectionObserver bursts go through the same queue.
- *   3. a queue left over from a swapped-out fragment never draws into the
- *      next fragment's same-id divs, and stops.
+ *   3. a queue left over from a swapped-out view never draws into the next
+ *      view's same-id divs, and stops; an answer that lands after the user
+ *      picked again draws nothing.
  *   4. loadTrendData makes #trends-content the request's SOURCE, so the real
  *      bundled htmx marks it .htmx-request (the "Loading trends..." state)
  *      for the request's whole life -- also behind a queued second pick --
@@ -23,105 +27,78 @@ const fs = require('fs');
 const path = require('path');
 let JSDOM;
 try { ({ JSDOM } = require('jsdom')); } catch (e) { console.error('jsdom not installed'); process.exit(2); }
+const H = require('./trends_view_harness.cjs');
 
-const ROOT = path.join(__dirname, '..');
-const TPL = path.join(ROOT, 'quam_state_manager', 'web', 'templates', '_trends_data.html');
-const STATIC = path.join(ROOT, 'quam_state_manager', 'web', 'static');
+const STATIC = H.STATIC;
 let fails = 0;
 function ok(c, m) { if (c) console.log('ok - ' + m); else { console.error('FAIL: ' + m); fails++; } }
-const tick = (ms) => new Promise((r) => setTimeout(r, ms || 0));
+const tick = H.tick;
 // A rejected request the page leaves unhandled is a console error in a
 // browser, not a crash -- let the aria-busy assertion be what fails.
 process.on('unhandledRejection', () => {});
-// jsdom clamps nested setTimeout(0) to ~4 ms: wait for a count, bounded
-async function until(fn, ms) { const t = Date.now(); while (!fn() && Date.now() - t < (ms || 2000)) await tick(5); await tick(30); }
-
-function chartScript(trend) {
-  const src = fs.readFileSync(TPL, 'utf8');
-  const i = src.lastIndexOf('<script>');
-  const j = src.indexOf('</script>', i);
-  const body = src.slice(i + '<script>'.length, j);
-  if (body.indexOf('{{ trend_data }}') < 0) throw new Error('the chart script no longer reads {{ trend_data }}');
-  return body.replace('{{ trend_data }}', JSON.stringify(trend));
-}
-function trendOf(tag, n) {
-  const runs = [{ run_id: 1 }, { run_id: 2 }, { run_id: 3 }];
-  const series = [];
-  for (let i = 0; i < n; i++) series.push({ qubit: 'q' + i, metric: tag + i, values: [1, 2, 3] });
-  return { runs: runs, series: series };
-}
-// the template's own chart boxes: <div id="trend-chart-{{ loop.index0 }}" class="trend-mini-chart">
-function boxesHtml(trend) {
-  return '<div class="trends-section">' + trend.series.map((s, i) =>
-    '<div class="trend-chart-box"><div id="trend-chart-' + i + '" class="trend-mini-chart"></div></div>').join('') + '</div>';
-}
-
-function chartWorld() {
-  const dom = new JSDOM('<!doctype html><html><body><div id="trends-content"></div></body></html>',
-                        { url: 'http://localhost/trends', runScripts: 'outside-only', pretendToBeVisual: true });
-  const w = dom.window;
-  const calls = [];
-  w.UI_CONFIG = { plotly: { colorway: ['#111', '#222'],
-    trendsMini: { margin: {}, xTickAngle: 0, xTickFont: {}, yTickFont: {}, height: 100 } } };
-  w._plotlyRender = function (el, data, layout) {
-    calls.push({ el: el, name: data[data.length - 1].name, connected: el.isConnected });
-    return Promise.resolve(el);
-  };
-  const ios = [];
-  w.IntersectionObserver = class {
-    constructor(cb) { this.cb = cb; this.targets = []; ios.push(this); }
-    observe(t) { this.targets.push(t); }
-    unobserve() {}
-    disconnect() {}
-  };
-  return { w, calls, ios };
-}
-function mount(w, trend) {
-  w.document.getElementById('trends-content').innerHTML = boxesHtml(trend);
-  w.eval(chartScript(trend));
-}
+const until = H.until;
 
 (async () => {
   // 1. one chart per task
   {
-    const { w, calls } = chartWorld();
-    mount(w, trendOf('A', 12));
-    ok(calls.length === 1, 'one chart is drawn synchronously, not all twelve in one task (drew ' + calls.length + ')');
-    await until(() => calls.length >= 12);
-    ok(calls.length === 12, 'the other eleven arrive in later tasks (' + calls.length + ')');
-    const names = calls.map((c) => c.name.split(' / ')[1]);
+    const W = H.world();
+    W.answers.push({ body: H.payload(3, H.seriesOf('A', 12, 3)) });
+    W.mount();
+    await H.microtasks();
+    ok(W.draws.length === 1, 'one chart is drawn synchronously, not all twelve in one task (drew ' + W.draws.length + ')');
+    await until(() => W.draws.length >= 12);
+    ok(W.draws.length === 12, 'the other eleven arrive in later tasks (' + W.draws.length + ')');
+    const names = W.draws.map((c) => c.name.split(' / ')[1]);
     ok(names.join(',') === 'A0,A1,A2,A3,A4,A5,A6,A7,A8,A9,A10,A11', 'in order, each once (' + names.join(',') + ')');
   }
 
   // 2. the IntersectionObserver path is queued too
   {
-    const { w, calls, ios } = chartWorld();
-    mount(w, trendOf('B', 20));
-    await until(() => calls.length >= 12);
-    ok(calls.length === 12 && ios.length === 1 && ios[0].targets.length === 8,
-       'twelve eager charts, the other eight observed (' + calls.length + ', ' + (ios[0] && ios[0].targets.length) + ')');
-    const io = ios[0];
+    const W = H.world();
+    W.answers.push({ body: H.payload(3, H.seriesOf('B', 20, 3)) });
+    W.mount();
+    await until(() => W.draws.length >= 12);
+    ok(W.draws.length === 12 && W.ios.length === 1 && W.ios[0].targets.length === 8,
+       'twelve eager charts, the other eight observed (' + W.draws.length + ', ' + (W.ios[0] && W.ios[0].targets.length) + ')');
+    const io = W.ios[0];
     io.cb(io.targets.map((t) => ({ isIntersecting: true, target: t })));   // a fast scroll: all at once
-    ok(calls.length === 13, 'an observer burst draws ONE chart in this task (' + (calls.length - 12) + ')');
-    await until(() => calls.length >= 20);
-    ok(calls.length === 20, 'and the rest one task at a time (' + calls.length + ')');
+    ok(W.draws.length === 13, 'an observer burst draws ONE chart in this task (' + (W.draws.length - 12) + ')');
+    await until(() => W.draws.length >= 20);
+    ok(W.draws.length === 20, 'and the rest one task at a time (' + W.draws.length + ')');
   }
 
-  // 3. a swapped-out fragment's queue never reaches the next fragment
+  // 3. a swapped-out view's queue never reaches the next view
   {
-    const { w, calls } = chartWorld();
-    mount(w, trendOf('OLD', 12));          // one drawn, eleven queued
-    mount(w, trendOf('NEW', 12));          // the user picks another experiment: same ids
-    await until(() => calls.filter((c) => /NEW/.test(c.name)).length >= 12);
+    const W = H.world();
+    W.answers.push({ body: H.payload(3, H.seriesOf('OLD', 12, 3)) });
+    W.mount('old');
+    await H.microtasks();                      // one OLD drawn, eleven queued
+    W.answers.push({ body: H.payload(3, H.seriesOf('NEW', 12, 3)) });
+    W.mount('new');                            // the user picks another experiment: same ids
+    await until(() => W.draws.filter((c) => /NEW/.test(c.name)).length >= 12);
     await tick(60);
-    // the live page is NEW's boxes: an OLD draw into a box still connected
-    // now is an OLD series painted onto the NEW page
-    const intoLive = calls.filter((c) => c.el.isConnected && /OLD/.test(c.name));
-    ok(intoLive.length === 0, 'no OLD series is drawn into the NEW fragment (' + intoLive.length + ')');
-    const newDrawn = calls.filter((c) => /NEW/.test(c.name)).length;
+    const intoLive = W.draws.filter((c) => c.el.isConnected && /OLD/.test(c.name));
+    ok(intoLive.length === 0, 'no OLD series is drawn into the NEW view (' + intoLive.length + ')');
+    const newDrawn = W.draws.filter((c) => /NEW/.test(c.name)).length;
     ok(newDrawn === 12, 'every NEW chart is drawn (' + newDrawn + ')');
-    const oldAfter = calls.filter((c) => /OLD/.test(c.name)).length;
+    const oldAfter = W.draws.filter((c) => /OLD/.test(c.name)).length;
     ok(oldAfter <= 1, 'the OLD queue stops once its boxes are gone (' + oldAfter + ' OLD draws)');
+  }
+  {
+    // an answer that lands after the next pick draws nothing
+    const W = H.world();
+    let release;
+    W.w.fetch = function () {
+      return new Promise((r) => { release = () => r({ ok: true, status: 200,
+        json: () => Promise.resolve(H.payload(3, H.seriesOf('LATE', 2, 3))) }); });
+    };
+    const left = W.mount('late');
+    W.w.document.getElementById('trends-content').innerHTML = '<p>another pick</p>';
+    release();
+    await tick(60);
+    ok(W.draws.length === 0, 'an answer for a view the user already left draws nothing (' + W.draws.length + ')');
+    ok(left.querySelectorAll('.trend-chart-box').length === 0 && left.querySelector('[data-role="loading"]'),
+       'and builds nothing into it (' + left.querySelectorAll('.trend-chart-box').length + ' boxes)');
   }
 
   // 4. loadTrendData says it is loading, for the request's whole life. The box

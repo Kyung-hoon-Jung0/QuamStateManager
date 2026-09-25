@@ -104,6 +104,15 @@ class RunWatcher:
         self._cond = threading.Condition()
         self._stop = threading.Event()
         self._thread: threading.Thread | None = None
+        self._listeners: list = []
+
+    def add_listener(self, fn) -> None:
+        """``fn(changed_roots)`` is called on the watcher's thread after a
+        tick that moved (never under the condition, never with an empty list).
+        It must return fast -- hand work to another thread (``run_ingest``)."""
+        with self._cond:
+            if fn not in self._listeners:
+                self._listeners.append(fn)
 
     # ── roots ─────────────────────────────────────────────────────────
     @property
@@ -142,6 +151,7 @@ class RunWatcher:
         with self._cond:
             roots = self._roots
         changed = False
+        moved: list[str] = []
         for root in roots:
             try:
                 sig = self._signature(root)
@@ -154,6 +164,7 @@ class RunWatcher:
                 elif self._sigs[root] != sig:
                     self._sigs[root] = sig
                     changed = True
+                    moved.append(root)
         with self._cond:
             self.polls += 1
             if changed:
@@ -161,6 +172,12 @@ class RunWatcher:
                 self.tick += 1
                 self.last_change_at = time.time()
                 self._cond.notify_all()
+            listeners = list(self._listeners) if changed else []
+        for fn in listeners:
+            try:
+                fn(moved)
+            except Exception:
+                logger.exception("run watcher: listener failed")
         return changed
 
     def bump(self, reason: str = "") -> int:

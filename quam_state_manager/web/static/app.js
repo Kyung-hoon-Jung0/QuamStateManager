@@ -16148,6 +16148,515 @@ window.trendUseSingleFolder = function() {
 };
 
 /* ------------------------------------------------------------------ */
+/* Datasets > Trends view (design ram_design.md §2b, P3)               */
+/* ------------------------------------------------------------------ */
+/*
+ * The /trends/data fragment is a light shell; this draws it from data.
+ *   - the series come from /trends/series (gzipped JSON from the server's RAM
+ *     trend index): one chart slot per series, the first EAGER drawn one per
+ *     task, the rest as they scroll into view (QA F6, docs/125: one Plotly
+ *     render per task, a stale fragment's queue never draws into the next);
+ *   - x is the run's REAL instant (its folder date + time, ms, drawn as the
+ *     folder's own clock); runs whose instant does not parse are counted and
+ *     said, never placed; hover names the run; a click opens it in the
+ *     inspector (QA F19); lines only above LINES_ABOVE points;
+ *   - "Figure timeline" is built only when opened: per figure, the newest
+ *     FIG_PAGE runs that HAVE that figure, then "show older";
+ *   - Parameter Differences is fetched after the first chart, stamped with
+ *     the same version as the series -- a mismatch (a run landed in between)
+ *     is said, never mixed silently.
+ */
+window.DatasetTrends = (function () {
+    var EAGER = 12;
+    var LINES_ABOVE = 200;
+    var FIG_PAGE = 50;
+    var WARM_RETRY_MS = 400;
+    var WARM_MAX_TRIES = 25;
+
+    function part(root, role) { return root.querySelector('[data-role="' + role + '"]'); }
+    function fmtInt(n) { try { return Number(n).toLocaleString('en-US'); } catch (e) { return String(n); } }
+    function plural(n, one, many) { return fmtInt(n) + ' ' + (n === 1 ? one : (many || one + 's')); }
+    /* the folder's own clock: t_ms encodes its digits as UTC */
+    function fmtInstant(t) {
+        if (t === null || t === undefined) return 'undated';
+        var d = new Date(t);
+        function p(x) { return (x < 10 ? '0' : '') + x; }
+        return d.getUTCFullYear() + '-' + p(d.getUTCMonth() + 1) + '-' + p(d.getUTCDate()) + ' '
+            + p(d.getUTCHours()) + ':' + p(d.getUTCMinutes()) + ':' + p(d.getUTCSeconds());
+    }
+    /* a plotted point: a finite number, or a bool flag (charted as a
+       true/false axis, as it always was -- dataset.trend_point) */
+    function isPt(v) { return (typeof v === 'number' && isFinite(v)) || v === true || v === false; }
+
+    function mount(root) {
+        if (!root || root._dtState) return root && root._dtState;
+        var st = { root: root, data: null, boxes: [], queue: [], pumping: false, tries: 0,
+                   paramsAsked: false };
+        root._dtState = st;
+        var reload = part(root, 'reload');
+        if (reload) reload.addEventListener('click', function () {
+            if (typeof window.loadTrendData === 'function') window.loadTrendData();
+        });
+        // Parameter Differences swaps (the first fetch and "show all") are
+        // checked against the charts' version.
+        root.addEventListener('htmx:afterSwap', function () { checkVersion(st); });
+        load(st);
+        return st;
+    }
+
+    function setLoading(st, text) {
+        var el = part(st.root, 'loading');
+        if (el) el.textContent = text;
+    }
+
+    function load(st) {
+        var url = st.root.getAttribute('data-series-url');
+        var req = window.fetch(url, { credentials: 'same-origin', headers: { 'Accept': 'application/json' } });
+        Promise.resolve(req).then(function (r) {
+            if (r.status === 202) return { warming: true };
+            if (!r.ok) {
+                return r.json().catch(function () { return {}; }).then(function (j) {
+                    throw new Error((j && j.error) || ('HTTP ' + r.status));
+                });
+            }
+            return r.json();
+        }).then(function (data) {
+            if (!st.root.isConnected) return;          // the user picked again
+            if (data && data.warming) {
+                if (++st.tries <= WARM_MAX_TRIES) {
+                    setLoading(st, 'Preparing trends…');
+                    setTimeout(function () { if (st.root.isConnected) load(st); }, WARM_RETRY_MS);
+                } else {
+                    setLoading(st, 'Trends are still being prepared — pick the experiment again in a moment.');
+                }
+                return;
+            }
+            st.data = data;
+            render(st);
+        }).catch(function (e) {
+            if (!st.root.isConnected) return;
+            setLoading(st, 'Could not load trends: ' + ((e && e.message) || e));
+            var c = part(st.root, 'count'); if (c) c.textContent = '';
+        });
+    }
+
+    function notesFor(d) {
+        var bits = [];
+        if (d.n_runs && d.undated === d.n_runs) {
+            bits.push('No run carries a date/time that parses, so the charts are in run order.');
+        } else {
+            bits.push('x = each run’s date and time as its folder names it.');
+            if (d.undated) bits.push(plural(d.undated, 'run') + ' whose date/time does not parse '
+                + (d.undated === 1 ? 'is' : 'are') + ' not placed on the time axis.');
+        }
+        if (d.incomplete) bits.push(plural(d.incomplete, 'run') + ' whose files could not be read '
+            + '(still being written, or unreadable) ' + (d.incomplete === 1 ? 'is' : 'are') + ' not shown.');
+        if (d.indexing) bits.push('The data folder is still being indexed — runs not indexed yet are not shown.');
+        return bits.join(' ');
+    }
+
+    function render(st) {
+        var d = st.data, root = st.root;
+        var count = part(root, 'count');
+        if (count) count.textContent = '(' + plural(d.n_runs, 'run') + ')';
+        var notes = part(root, 'notes');
+        if (notes) { notes.textContent = notesFor(d); notes.hidden = !notes.textContent; }
+        var charts = part(root, 'charts');
+        charts.innerHTML = '';
+        if (!d.n_runs) {
+            charts.innerHTML = '<p class="muted section-placeholder">No runs found for this experiment.</p>';
+            return;
+        }
+        // One shared x / hover text / uid list over the dated runs (or all
+        // runs, in run order, when none is dated).
+        var allUndated = d.undated === d.n_runs;
+        var rows = [], xs = [], texts = [], uids = [];
+        for (var i = 0; i < d.runs.length; i++) {
+            var r = d.runs[i];
+            if (!allUndated && (r[1] === null || r[1] === undefined)) continue;
+            rows.push(i);
+            xs.push(allUndated ? '#' + r[0] : r[1]);
+            texts.push('#' + r[0]);
+            uids.push(r[2] || null);
+        }
+        st.rows = rows; st.xs = xs; st.texts = texts; st.uids = uids; st.dateAxis = !allUndated;
+
+        if (!d.series.length) {
+            charts.innerHTML = '<p class="muted section-placeholder">No numeric fit-result metrics found.</p>';
+        } else {
+            var frag = document.createDocumentFragment();
+            d.series.forEach(function (s, idx) {
+                var box = document.createElement('div');
+                box.className = 'trend-chart-box';
+                var label = document.createElement('div');
+                label.className = 'trend-chart-label';
+                var code = document.createElement('code');
+                code.textContent = s.q;
+                label.appendChild(code);
+                label.appendChild(document.createTextNode(' — ' + s.m));
+                var host = document.createElement('div');
+                host.id = 'trend-chart-' + idx;
+                host.className = 'trend-mini-chart';
+                host.setAttribute('data-trend-idx', String(idx));
+                box.appendChild(label); box.appendChild(host);
+                frag.appendChild(box);
+                st.boxes.push(host);
+            });
+            charts.appendChild(frag);
+            for (var k = 0; k < Math.min(EAGER, d.series.length); k++) enqueue(st, k);
+            if (d.series.length > EAGER && typeof IntersectionObserver !== 'undefined') {
+                var io = new IntersectionObserver(function (entries) {
+                    entries.forEach(function (en) {
+                        if (!en.isIntersecting) return;
+                        io.unobserve(en.target);
+                        enqueue(st, parseInt(en.target.getAttribute('data-trend-idx'), 10));
+                    });
+                }, { rootMargin: '600px 0px' });
+                for (var j = EAGER; j < d.series.length; j++) io.observe(st.boxes[j]);
+            } else {
+                for (var m = EAGER; m < d.series.length; m++) enqueue(st, m);
+            }
+            // The charts follow their container (docs/122).
+            var sec = part(root, 'metrics');
+            if (sec && window.PlotHost) window.PlotHost.observe(sec);
+        }
+        setupFigureTimeline(st);
+        if (!d.series.length) askParams(st);
+    }
+
+    /* ---- the y range: a few extreme values must not flatten the rest ----
+       [derived, a display heuristic -- no paper; its thresholds were set
+       against the KH_202608_CZ archive, 508 series: see the pin in
+       tests/trends_view_selfcheck.cjs, section I.]
+       A failed fit can report T1 = 68 ms next to 49 runs at 3-30 us; Plotly's
+       autorange then puts those 49 inside one pixel row and the trend is
+       gone. When a FEW numeric values (at most OFF_FRAC of them, at least
+       one) lie beyond Tukey's far-out fences (Q1 - 3*IQR, Q3 + 3*IQR) AND
+       they stretch the axis more than OFF_GAIN times the span of the rest,
+       the axis is set to the rest and each off-scale value is drawn as a
+       triangle on the edge it lies beyond -- hover gives its real value, a
+       click opens its run, the label counts them, and a double-click on the
+       chart shows the full range. Nothing is dropped. A series whose
+       "outliers" are a large share is a second regime (a qubit parked
+       elsewhere), not a glitch, and keeps its full autorange. */
+    var OFF_K = 3, OFF_GAIN = 20, OFF_FRAC = 0.1, OFF_MIN_N = 8;
+    function quantile(sorted, p) {
+        var i = (sorted.length - 1) * p, lo = Math.floor(i), hi = Math.ceil(i);
+        return sorted[lo] + (sorted[hi] - sorted[lo]) * (i - lo);
+    }
+    function robustRange(ys) {
+        var v = [];
+        for (var i = 0; i < ys.length; i++) {
+            var y = ys[i];
+            if (typeof y === 'boolean') return null;               // a flag axis
+            if (typeof y === 'number' && isFinite(y)) v.push(y);
+        }
+        if (v.length < OFF_MIN_N) return null;
+        var s = v.slice().sort(function (a, b) { return a - b; });
+        var q1 = quantile(s, 0.25), q3 = quantile(s, 0.75), iqr = q3 - q1;
+        if (!(iqr > 0)) return null;
+        var fLo = q1 - OFF_K * iqr, fHi = q3 + OFF_K * iqr;
+        var inMin = Infinity, inMax = -Infinity, above = [], below = [];
+        for (var k = 0; k < ys.length; k++) {
+            var x = ys[k];
+            if (typeof x !== 'number' || !isFinite(x)) continue;
+            if (x > fHi) above.push(k);
+            else if (x < fLo) below.push(k);
+            else { if (x < inMin) inMin = x; if (x > inMax) inMax = x; }
+        }
+        var nOff = above.length + below.length;
+        if (!nOff || nOff > Math.max(1, Math.floor(OFF_FRAC * v.length))) return null;
+        var spanIn = (inMax - inMin) > 0 ? inMax - inMin : iqr;
+        if (s[s.length - 1] - s[0] <= OFF_GAIN * spanIn) return null;
+        var pad = 0.06 * spanIn, edge = 0.1 * spanIn;
+        var r0 = inMin - pad - (below.length ? edge : 0);
+        var r1 = inMax + pad + (above.length ? edge : 0);
+        return { range: [r0, r1], above: above, below: below,
+                 yTop: inMax + pad + 0.5 * edge, yBot: inMin - pad - 0.5 * edge };
+    }
+
+    /* ---- one chart ---- */
+    function ysOf(st, idx) {
+        var s = st.data.series[idx];
+        return st.rows.map(function (i) { return s.v[i]; });
+    }
+    function tracesFor(st, idx) {
+        var s = st.data.series[idx];
+        var ys = ysOf(st, idx);
+        var nFinite = 0;
+        for (var i = 0; i < ys.length; i++) if (isPt(ys[i])) nFinite++;
+        var colorway = UI_CONFIG.plotly.colorway;
+        var color = colorway[idx % colorway.length];
+        // Statistics layer (moving average +- sigma) from the FULL series the
+        // server sent -- nothing is reduced (see core/trend_index M4 TODO).
+        var statTraces = window.trendStatTraces ? window.trendStatTraces(st.xs, ys, { color: color }) : [];
+        // the colour Plotly's colorway gave the data trace before: its index
+        // follows the statistics traces
+        var dataColor = colorway[statTraces.length % colorway.length];
+        var lines = nFinite > LINES_ABOVE;
+        var hover = '%{text} · %{y:.6g}<extra></extra>';
+        var trace = {
+            x: st.xs, y: ys, text: st.texts, customdata: st.uids,
+            mode: lines ? 'lines' : 'lines+markers',
+            name: s.q + ' / ' + s.m,
+            connectgaps: false,
+            line: { width: lines ? 1.5 : 2, color: dataColor },
+            marker: { size: 6, color: dataColor },
+            hovertemplate: hover
+        };
+        var out = statTraces.concat([trace]);
+        if (lines) {
+            // A point with a gap on both sides draws nothing in 'lines' mode;
+            // it gets a marker so no measured value disappears.
+            var ix = [], iy = [], it = [], iu = [];
+            for (var k = 0; k < ys.length; k++) {
+                if (!isPt(ys[k])) continue;
+                if ((k > 0 && isPt(ys[k - 1])) || (k < ys.length - 1 && isPt(ys[k + 1]))) continue;
+                ix.push(st.xs[k]); iy.push(ys[k]); it.push(st.texts[k]); iu.push(st.uids[k]);
+            }
+            if (ix.length) out.push({ x: ix, y: iy, text: it, customdata: iu, mode: 'markers',
+                                      name: s.q + ' / ' + s.m + ' (isolated)', showlegend: false,
+                                      marker: { size: 5, color: dataColor }, hovertemplate: hover });
+        }
+        var rr = robustRange(ys);
+        if (rr) {
+            [['above', rr.yTop, 'triangle-up'], ['below', rr.yBot, 'triangle-down']].forEach(function (side) {
+                var ks = rr[side[0]];
+                if (!ks.length) return;
+                out.push({
+                    x: ks.map(function (k) { return st.xs[k]; }),
+                    y: ks.map(function () { return side[1]; }),
+                    text: ks.map(function (k) { return st.texts[k] + ' · ' + fmtG(ys[k]) + ' (off-scale ' + side[0] + ')'; }),
+                    customdata: ks.map(function (k) { return st.uids[k]; }),
+                    mode: 'markers', cliponaxis: false, showlegend: false,
+                    name: s.q + ' / ' + s.m + ' (off-scale ' + side[0] + ')',
+                    marker: { size: 9, symbol: side[2], color: dataColor,
+                              line: { width: 1, color: '#ffffff' } },
+                    hovertemplate: '%{text}<extra></extra>'
+                });
+            });
+        }
+        return out;
+    }
+    /* the same 6 significant digits as the hover's %{y:.6g} */
+    function fmtG(v) { return String(parseFloat(Number(v).toPrecision(6))); }
+
+    function layoutFor(st, idx) {
+        var s = st.data.series[idx];
+        var mini = UI_CONFIG.plotly.trendsMini;
+        var xaxis = { title: '', tickfont: mini.xTickFont, ticklabeloverflow: 'allow' };
+        if (st.dateAxis) {
+            xaxis.type = 'date';
+            xaxis.hoverformat = '%Y-%m-%d %H:%M:%S';
+            xaxis.nticks = 8;
+        } else {
+            xaxis.type = 'category';
+            xaxis.tickangle = mini.xTickAngle;
+        }
+        return {
+            margin: mini.margin,
+            xaxis: xaxis,
+            yaxis: yaxisFor(st, idx, { title: s.m, tickfont: mini.yTickFont }),
+            height: mini.height,
+            colorway: UI_CONFIG.plotly.colorway,
+            showlegend: false,
+            hovermode: 'x unified'
+        };
+    }
+
+    /* a few off-scale values: the axis is the rest's (robustRange) */
+    function yaxisFor(st, idx, yaxis) {
+        var rr = robustRange(ysOf(st, idx));
+        if (rr) { yaxis.range = rr.range; yaxis.autorange = false; }
+        return yaxis;
+    }
+    /* ...and the label says so, with how to see the whole range */
+    function offScaleNote(st, idx, el) {
+        var rr = robustRange(ysOf(st, idx));
+        var label = el.parentNode && el.parentNode.querySelector('.trend-chart-label');
+        if (!label) return;
+        var old = label.querySelector('.trend-offscale-note');
+        if (old) old.remove();
+        if (!rr) return;
+        var n = rr.above.length + rr.below.length;
+        var where = rr.above.length && rr.below.length ? 'above and below (▲ top edge, ▼ bottom edge)'
+            : (rr.above.length ? 'above (▲ on the top edge)' : 'below (▼ on the bottom edge)');
+        var note = document.createElement('span');
+        note.className = 'trend-offscale-note muted';
+        note.textContent = ' · ' + plural(n, 'value') + ' off-scale ' + where
+            + ' — double-click the chart for the full range';
+        label.appendChild(note);
+    }
+
+    function renderOne(st, idx) {
+        var el = st.boxes[idx];
+        var s = st.data.series[idx];
+        if (!el || el._trendRendered || !s) return;
+        el._trendRendered = true;
+        // A metric recorded in these runs but never with a finite value (a
+        // fit that failed every time): say so instead of drawing empty axes.
+        var any = false;
+        for (var i = 0; i < st.rows.length && !any; i++) any = isPt(s.v[st.rows[i]]);
+        if (!any) {
+            el.classList.add('trend-chart-empty');
+            el.textContent = 'No finite value in any of the ' + plural(st.data.n_runs, 'run') + '.';
+            return;
+        }
+        return Promise.resolve(window._plotlyRender(el, tracesFor(st, idx), layoutFor(st, idx),
+                                                    { responsive: true, displayModeBar: false }))
+            .then(function () { offScaleNote(st, idx, el); bindRunClicks(el); });
+    }
+
+    function enqueue(st, idx) { st.queue.push(idx); if (!st.pumping) pump(st); }
+    function pump(st) {
+        if (!st.queue.length) { st.pumping = false; return; }
+        st.pumping = true;
+        var idx = st.queue.shift();
+        if (!st.boxes[idx] || !st.boxes[idx].isConnected) { st.queue.length = 0; st.pumping = false; return; }
+        var next = function () {
+            askParams(st);              // after the FIRST chart: the params table
+            setTimeout(function () { pump(st); }, 0);
+        };
+        Promise.resolve(renderOne(st, idx)).then(next, next);
+    }
+
+    /* QA F19: a point opens its run in the INSPECTOR (docs/204). With
+       'x unified' the click's points include the statistics traces (no uid),
+       so the first point that CARRIES a uid wins. */
+    function uidOf(evt, el) {
+        var pts = (evt && evt.points) || [];
+        // Several points can carry a uid at one x (the data trace and an
+        // off-scale edge marker; runs minutes apart on a weeks-wide axis):
+        // the one drawn nearest the pointer's height wins, else the first.
+        var my = null;
+        try {
+            if (el && evt.event && typeof evt.event.clientY === 'number')
+                my = evt.event.clientY - el.getBoundingClientRect().top;
+        } catch (e) { my = null; }
+        var best = null, bestD = Infinity;
+        for (var i = 0; i < pts.length; i++) {
+            var pt = pts[i], cd = pt && pt.customdata;
+            if (typeof cd !== 'string' || !cd) continue;
+            if (best === null) best = cd;
+            if (my === null) break;
+            var d = Infinity;
+            try {
+                var ya = pt.yaxis;
+                if (ya && typeof ya.l2p === 'function' && typeof pt.y === 'number')
+                    d = Math.abs(ya.l2p(pt.y) + (ya._offset || 0) - my);
+            } catch (e) { d = Infinity; }
+            if (d < bestD) { bestD = d; best = cd; }
+        }
+        return best;
+    }
+    function bindRunClicks(el) {
+        if (!el || typeof el.on !== 'function') return;
+        el.on('plotly_click', function (evt) {
+            try {
+                var uid = uidOf(evt, el);
+                if (!uid) return;
+                var url = '/dataset/' + uid;
+                if (window.htmx && window.htmx.ajax) {
+                    window.htmx.ajax('GET', url, { source: '#inspector-pane', target: '#inspector-pane',
+                                                   swap: 'innerHTML' });
+                } else {
+                    window.location.href = url;
+                }
+            } catch (e) { /* a click must never break the chart */ }
+        });
+        el.on('plotly_hover', function (evt) {
+            try { el.style.cursor = uidOf(evt, el) ? 'pointer' : ''; } catch (e) {}
+        });
+        el.on('plotly_unhover', function () {
+            try { el.style.cursor = ''; } catch (e) {}
+        });
+    }
+
+    /* ---- Parameter Differences ---- */
+    function askParams(st) {
+        if (st.paramsAsked || !st.data || !st.root.isConnected) return;
+        st.paramsAsked = true;
+        var box = part(st.root, 'params');
+        if (!box || st.data.n_runs < 2) return;
+        box.hidden = false;
+        box.innerHTML = '<h3>Parameter Differences</h3><p class="muted">Loading…</p>';
+        var url = st.root.getAttribute('data-params-url');
+        if (window.htmx && window.htmx.ajax) {
+            window.htmx.ajax('GET', url, { source: box, target: box, swap: 'innerHTML' });
+        }
+    }
+    function checkVersion(st) {
+        if (!st.data) return;
+        var box = part(st.root, 'params');
+        var got = box && box.querySelector('[data-trends-v]');
+        var stale = part(st.root, 'stale');
+        if (got && stale) stale.hidden = got.getAttribute('data-trends-v') === st.data.v;
+    }
+
+    /* ---- Figure timeline ---- */
+    function setupFigureTimeline(st) {
+        var d = st.data, det = part(st.root, 'figtl');
+        if (!det || !d.fig_keys || !d.fig_keys.length) return;
+        det.hidden = false;
+        var cnt = part(st.root, 'figtl-count');
+        if (cnt) cnt.textContent = '(' + plural(d.fig_keys.length, 'figure') + ')';
+        det.addEventListener('toggle', function () { if (det.open) buildFigureTimeline(st); });
+    }
+    function buildFigureTimeline(st) {
+        var body = part(st.root, 'figtl-body');
+        if (!body || body._built) return;
+        body._built = true;
+        var d = st.data;
+        var frag = document.createDocumentFragment();
+        d.fig_keys.forEach(function (key, k) {
+            var runIdx = d.fig_runs[k] || [];
+            var sec = document.createElement('details');
+            sec.className = 'trend-figure-strip-section';
+            sec.setAttribute('data-fig-key', key);
+            var sm = document.createElement('summary');
+            var code = document.createElement('code'); code.textContent = key;
+            var small = document.createElement('small'); small.className = 'muted';
+            small.textContent = ' (' + plural(runIdx.length, 'run') + ', newest first)';
+            sm.appendChild(code); sm.appendChild(small);
+            var strip = document.createElement('div'); strip.className = 'figure-strip';
+            var more = document.createElement('button');
+            more.type = 'button'; more.className = 'btn-small outline trends-figtl-more';
+            more.hidden = true;
+            sec.appendChild(sm); sec.appendChild(strip); sec.appendChild(more);
+            var shown = 0;
+            function page() {
+                var tpl = st.root.querySelector('template[data-role="fig-item"]');
+                var add = document.createDocumentFragment();
+                var stop = Math.min(runIdx.length, shown + FIG_PAGE);
+                for (; shown < stop; shown++) {
+                    var run = d.runs[runIdx[runIdx.length - 1 - shown]];
+                    var item = tpl.content.firstElementChild.cloneNode(true);
+                    var lab = item.querySelector('.figure-strip-label');
+                    lab.textContent = '#' + run[0];
+                    lab.title = fmtInstant(run[1]);
+                    var img = item.querySelector('img');
+                    img.setAttribute('src', '/dataset/' + run[2] + '/fig/' + key);
+                    img.setAttribute('alt', key + ' #' + run[0]);
+                    add.appendChild(item);
+                }
+                strip.appendChild(add);
+                var left = runIdx.length - shown;
+                more.hidden = left <= 0;
+                more.textContent = 'Show ' + fmtInt(Math.min(FIG_PAGE, left)) + ' older ('
+                    + fmtInt(left) + ' not shown yet)';
+            }
+            more.addEventListener('click', page);
+            sec.addEventListener('toggle', function () { if (sec.open && !shown) page(); });
+            frag.appendChild(sec);
+        });
+        body.appendChild(frag);
+    }
+
+    return { mount: mount, EAGER: EAGER, LINES_ABOVE: LINES_ABOVE, FIG_PAGE: FIG_PAGE,
+             robustRange: robustRange };
+})();
+
+/* ------------------------------------------------------------------ */
 /* Pin & Browse: pin one run, browse others side-by-side               */
 /* ------------------------------------------------------------------ */
 
