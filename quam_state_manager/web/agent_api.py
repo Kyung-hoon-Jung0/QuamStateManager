@@ -1750,22 +1750,33 @@ def _plan_view(rec: dict, *, with_may_change: bool = False) -> dict:
     out["counts"] = agent_plans.counts(rec)
     if with_may_change:
         try:
-            out["may_change"] = _may_change(rec.get("steps") or [])
+            out["may_change"], out["may_change_total"] = _may_change(rec.get("steps") or [])
         except Exception:  # noqa: BLE001
             logger.debug("may_change failed", exc_info=True)
-            out["may_change"] = []
+            out["may_change"], out["may_change_total"] = [], 0
     return out
 
 
-def _may_change(steps: list[dict], cap: int = 60) -> list[dict]:
+def _may_change(steps: list[dict], cap: int = 60) -> tuple[list[dict], int]:
     """The values a plan may write, from the families' own update targets
     (run-derived, docs/78 D-14) filled in per target, with the value the chip
-    holds NOW. Unknown family => nothing claimed."""
+    holds NOW. Unknown family => nothing claimed.
+
+    Returns ``(rows, total)``: at most ``cap`` rows, and how many there are.
+    The card used to print ``len(rows)`` as the count, so a 40-qubit /run said
+    "60 value(s) may change" when 80 would (QA agents round).
+
+    The path is followed through QUAM aliases with the SAME function the
+    autofit writer uses (``families.resolve_alias_path``): real chips carry
+    ``operations.x180 = "#./x180_DragCosine"``, so the raw
+    ``...x180.amplitude`` does not exist and every row read "now: not set" on
+    a chip that holds the value (measured on the KRISS 5Q chip)."""
     from quam_state_manager.core.autofit import families
     r = _r()
     store = r._store()
     seen: set = set()
     out: list[dict] = []
+    total = 0
     for s in steps:
         fam = families.family_for(s.get("node") or "")
         if not fam:
@@ -1787,21 +1798,33 @@ def _may_change(steps: list[dict], cap: int = 60) -> list[dict]:
                     path = path.replace("{operation}", str(op))
                 if "{" in path:
                     path = path.split("{")[0].rstrip(".") + " …"
+                via = None
+                if store is not None and "…" not in path:
+                    try:
+                        rp = families.resolve_alias_path(path, store.get_value)
+                    except Exception:  # noqa: BLE001
+                        rp = None
+                    if rp and rp != path:
+                        via, path = path, rp
                 key = (t, path)
                 if key in seen:
                     continue
                 seen.add(key)
+                total += 1
+                if len(out) >= cap:
+                    continue                      # counted, not listed
                 now = None
                 if store is not None and "…" not in path:
                     try:
-                        now = _jsonable(store.get_value(path))
+                        now = _jsonable(store.resolve_value(path))
                     except Exception:  # noqa: BLE001
                         now = None
-                out.append({"target": t, "path": path, "now": now, "family": getattr(fam, "label", None),
-                            "label": getattr(u, "label", None) or None, "note": assumed})
-                if len(out) >= cap:
-                    return out
-    return out
+                row = {"target": t, "path": path, "now": now, "family": getattr(fam, "label", None),
+                       "label": getattr(u, "label", None) or None, "note": assumed}
+                if via:
+                    row["via"] = via
+                out.append(row)
+    return out, total
 
 
 @agent_bp.route("/chat/cards")

@@ -413,6 +413,9 @@ window.AgentPanel = (function () {
     if (!el) return;
     var c = p.counts || {};
     var may = p.may_change || [];
+    // the server lists at most 60 rows; the COUNT is its total (a 40-qubit /run is 80, not 60)
+    var mayN = typeof p.may_change_total === "number" && p.may_change_total > may.length ? p.may_change_total : may.length;
+    var mayCount = mayN > may.length ? mayN + ", first " + may.length + " shown" : String(mayN);
     // compact step rows: glyph · node · targets · run · writes · why (a div, not a table)
     var rows = (p.steps || []).map(function (s) {
       return '<div class="ag-step">' + stepBadge(s) + " <code>" + esc(s.node) + "</code>" + simBadge(s.simulated) +
@@ -446,7 +449,7 @@ window.AgentPanel = (function () {
     var acts = "";
     if (!S.observer) {
       if (p.status === "draft") {
-        acts = '<button type="button" class="btn-sm ag-start" onclick="AgentPanel.startPlan(\'' + esc(p.id) + '\')">Start — ' + (may.length ? may.length + " value(s) may change" : "values may change") + "</button> " +
+        acts = '<button type="button" class="btn-sm ag-start" onclick="AgentPanel.startPlan(\'' + esc(p.id) + '\')">Start — ' + (mayN ? mayN + " value(s) may change" : "values may change") + "</button> " +
           '<button type="button" class="btn-sm ag-cancel" onclick="AgentPanel.cancelPlan(\'' + esc(p.id) + '\')">Cancel</button>';
       } else if (p.status === "running") {
         acts = '<button type="button" class="btn-sm ag-stop" onclick="AgentPanel.stop(\'after_run\')">Stop after this run</button> ' +
@@ -459,7 +462,7 @@ window.AgentPanel = (function () {
       acts += ' <a class="btn-sm ag-revert" href="/state-history" hx-get="/state-history" hx-target="#table-pane" hx-push-url="true" title="the chip as it was right before this plan started (State History → restore)">state before this plan</a>';
     }
     var html = head + '<div class="ag-steps">' + rows + "</div>" +
-      '<details class="ag-may-wrap"' + (p.status === "draft" ? " open" : "") + "><summary>values that may change" + (may.length ? " (" + may.length + ")" : "") + "</summary>" + mayHtml + "</details>" +
+      '<details class="ag-may-wrap"' + (p.status === "draft" ? " open" : "") + "><summary>values that may change" + (mayN ? " (" + mayCount + ")" : "") + "</summary>" + mayHtml + "</details>" +
       prog + '<div class="ag-plan-acts">' + modeSel + " " + acts + "</div>";
     setHtml(el, row(p.created, html), force);
   }
