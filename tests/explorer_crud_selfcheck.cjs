@@ -521,6 +521,28 @@ function nodeAt(container, p) {
     win.document.activeElement.dispatchEvent(
       new win.KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
     ok(!leaf.querySelector('.tree-type-panel'), 'C14: Esc from the focused panel closes it');
+    // JT-14 re-verify: focus back on the ⚙ that opened it (Shift+Tab), Esc
+    // there closed nothing -- the panel's own listener never heard it
+    hover(win, leaf);
+    leaf.querySelector('.tree-act-type').click();
+    await tick(20);
+    const gear = leaf.querySelector('.tree-act-type');
+    gear.focus();
+    ok(win.document.activeElement === gear && !!leaf.querySelector('.tree-type-panel'),
+      'C14 setup: panel open, focus on its ⚙');
+    gear.dispatchEvent(new win.KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
+    ok(!leaf.querySelector('.tree-type-panel'), 'C14 re-verify: Esc with focus on the ⚙ closes the panel');
+    // control: Esc typed in some other field on the page is not the panel's
+    hover(win, leaf);
+    leaf.querySelector('.tree-act-type').click();
+    await tick(20);
+    const other = win.document.createElement('input');
+    win.document.body.appendChild(other);
+    other.focus();
+    other.dispatchEvent(new win.KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
+    ok(!!leaf.querySelector('.tree-type-panel'),
+      'C14 re-verify control: Esc typed in another field leaves the panel open');
+    leaf.querySelector('.tree-type-close').click();
   }
 
   // C15 (jsontree-r2-24): a key with "." is refused in the panel, by name;

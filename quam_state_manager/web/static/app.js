@@ -10816,6 +10816,32 @@ window.clearDetailPanelSearch = function(btnEl) {
         panel.addEventListener("keydown", function (e) {
             if (e.key === "Escape") panel.remove();
         });
+        /* JT-14 (re-verify): the panel's own listener hears Esc only while
+           focus is INSIDE it. A keyboard user who Shift+Tabs back to the ⚙
+           that opened it (or whose focus is on the row, or nowhere) pressed Esc
+           and the panel stayed. One document-level listener (capture, so a
+           page-wide Esc handler does not also act on it) closes it from the
+           panel, its ⚙, its row or the body -- Esc typed anywhere else (a
+           search box, another editor) is left alone. It unhooks itself on the
+           first key after the panel is gone, however the panel went. */
+        function _escAnywhere(e) {
+            if (!panel.isConnected) {
+                document.removeEventListener("keydown", _escAnywhere, true);
+                return;
+            }
+            if (e.key !== "Escape") return;
+            var a = document.activeElement;
+            var inside = panel.contains(a);
+            if (!(inside || !a || a === document.body || a === anchorBtn
+                  || (row && row.contains(a)))) return;
+            e.preventDefault();
+            e.stopPropagation();
+            panel.remove();
+            document.removeEventListener("keydown", _escAnywhere, true);
+            // focus that was inside the removed panel goes back to its ⚙
+            if (inside && anchorBtn && anchorBtn.isConnected) anchorBtn.focus();
+        }
+        document.addEventListener("keydown", _escAnywhere, true);
         // JT-14: a pick clears "pick a type"; focus starts INSIDE the panel
         // (as the add-key panel's does) so its Escape handler hears Esc --
         // focus used to stay on the ⚙ button and Esc did nothing.
