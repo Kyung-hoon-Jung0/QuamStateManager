@@ -33,7 +33,7 @@ const byText = (sel, re) => `(() => { const e = [...document.querySelectorAll(${
   console.log('card', info);
   await p.shot(`${OUT}/plan_card_${W}.png`);
   // Start with a real mouse
-  const st = await xy(p, byText('#agent-home button', '/^\\s*Start\\s*$/'));
+  const st = await xy(p, byText('#agent-home button', '/^\\s*Start/'));
   console.log('start button', JSON.stringify(st));
   if (st) { await p.click(st[0], st[1]); await sleep(3500); }
   console.log('after start', await p.ev(`(() => { const c = document.querySelector('#agent-home [data-card^="plan:"]'); return c ? c.innerText.replace(/\\s+/g, ' ').slice(0, 300) : null; })()`));

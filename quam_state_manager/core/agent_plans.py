@@ -110,9 +110,26 @@ def normalize_steps(steps) -> list[dict]:
     return out
 
 
+TITLE_MAX = 120
+
+
+def clip_title(title: str | None) -> str:
+    """At most ``TITLE_MAX`` characters, cut at a WORD and marked. A plain
+    ``[:120]`` cut a 30-qubit /run line inside ``q28`` and the plan, its
+    ``[Start]`` card and the Calibration log line all read ``... q27 q2`` --
+    a real qubit this plan does not end on (QA agents round, 30Q chip)."""
+    t = " ".join(str(title or "").split())
+    if len(t) <= TITLE_MAX:
+        return t
+    cut = t[:TITLE_MAX - 2]
+    if not t[TITLE_MAX - 2].isspace() and " " in cut:
+        cut = cut[:cut.rindex(" ")]
+    return cut.rstrip() + " …"
+
+
 def add(instance_path, chip: str, *, title: str, steps: list, mode: str | None, created_by: str,
         source: str = "agent", reason: str | None = None, session_id: str | None = None) -> dict:
-    rec = {"id": "pl-" + uuid.uuid4().hex[:8], "chip": chip, "title": (title or "").strip()[:120] or "plan",
+    rec = {"id": "pl-" + uuid.uuid4().hex[:8], "chip": chip, "title": clip_title(title) or "plan",
            "steps": normalize_steps(steps), "mode": mode, "status": "draft", "created": time.time(),
            "created_by": created_by, "source": source, "reason": reason, "session_id": session_id,
            "started_by": None, "started_at": None, "pre_ts": None, "ended": None, "ended_by": None,

@@ -98,3 +98,18 @@ def test_agent_plan_count_selfcheck():
     if r.returncode == 2:
         pytest.skip("jsdom not installed")
     assert r.returncode == 0 and " 0 failed" in r.stdout, r.stdout[-2000:] + r.stderr[-1000:]
+
+
+def test_a_long_run_line_title_is_cut_at_a_word_never_inside_a_target(c):
+    """A plain [:120] cut the 30-qubit line inside `q28`, and the plan, its
+    [Start] card and the journal line all ended on `q27 q2` -- a real qubit."""
+    from quam_state_manager.core.agent_plans import TITLE_MAX, clip_title
+    line = "/run 05_power_rabi " + " ".join(f"qA{k}" for k in range(1, N + 1))
+    p = c.post("/api/agent/plans", json={"run_line": line}, headers=HUMAN).get_json()["plan"]
+    t = p["title"]
+    assert len(t) <= TITLE_MAX and t.endswith(" …"), t
+    words = t[:-2].split()
+    assert words[0] == "/run" and all(w in line.split() for w in words), "every word shown is a whole word of the line"
+    assert words[-1] == line.split()[len(words) - 1], "the last target shown is the target at that position"
+    assert clip_title("/run 05_power_rabi qA1 qA2") == "/run 05_power_rabi qA1 qA2", "a short title is untouched"
+    assert clip_title("x" * 300) == "x" * (TITLE_MAX - 2) + " …", "one long word still ends marked"
