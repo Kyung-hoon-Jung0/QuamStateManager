@@ -433,10 +433,13 @@ class TestTrayDiscard:
     def test_tray_has_no_confirm_and_has_discard_all(self, env):
         c = env["client"]
         _edit(c, 0.09)
-        html = c.get("/state/tray").data.decode("utf-8")
+        # sync-ux 2026-09-25 (user decision: one control + one panel): Discard all moved into the panel, and its native
+        # confirm() became nothing at all -- it is an in-panel second press
+        # (default 6), recoverable with Ctrl+Shift+Z like before
+        html = c.get("/state/review").data.decode("utf-8")
         assert "hx-confirm" not in html
-        assert "/discard_all" in html
-        assert "Discard all" in html
+        assert 'hx-post="/discard_all"' in html
+        assert "Discard my 1 edit" in html
 
     def test_discard_all_then_shift_z_restores_in_order(self, env):
         c = env["client"]

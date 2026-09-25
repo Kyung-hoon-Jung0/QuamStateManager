@@ -63,10 +63,12 @@ window.IntersectionObserver = global.IntersectionObserver;
 global.ResizeObserver = class { observe() {} disconnect() {} unobserve() {} };
 window.ResizeObserver = global.ResizeObserver;
 
-const ajaxCalls = [];
+const ajaxCalls = [], triggerCalls = [];
 window.htmx = {
-    ajax: function (method, url, opts) { ajaxCalls.push({ method, url, opts }); return Promise.resolve(); },
-    trigger: function () {},
+    ajax: function (method, url, opts) { ajaxCalls.push({ method, url, opts });
+        if (window.__ajaxHook) window.__ajaxHook(method, url, opts);
+        return Promise.resolve(); },
+    trigger: function (elt, name) { triggerCalls.push({ elt: elt, name: name }); },
     process: function () {},
 };
 global.htmx = window.htmx;
@@ -80,10 +82,14 @@ function mkResp(payload, status) {
         text: function () { return Promise.resolve(''); },
     });
 }
-const syncCalls = [], editCalls = [], preflightCalls = [];
-let syncQueue = [], editQueue = [], preflightQueue = [];
+const syncCalls = [], editCalls = [], preflightCalls = [], revertCalls = [];
+let syncQueue = [], editQueue = [], preflightQueue = [], revertQueue = [];
 window.fetch = global.fetch = function (url, opts) {
     const u = String(url);
+    if (u.indexOf('/state/revert-last-apply/preflight') === 0) {
+        revertCalls.push(u);
+        return mkResp(revertQueue.length ? revertQueue.shift() : { ok: true });
+    }
     if (u.indexOf('/state/overwrite-live/preflight') === 0) {
         preflightCalls.push(u);
         return mkResp(preflightQueue.length ? preflightQueue.shift() : { ok: true });
@@ -126,6 +132,42 @@ window.eval(fs.readFileSync(path.join(STATIC, 'app.js'), 'utf8'));
     ok(/force=1/.test(syncCalls[1] ? syncCalls[1].body : ''),
        'the retry carries force=1 (got: ' + (syncCalls[1] && syncCalls[1].body) + ')');
 
+    /* ── 1a. QA correctness-r2-03: Take live asks about ANOTHER window's
+       edits it would destroy. The server's refusal carries discard:true; the
+       confirm must ask the discard question (not "Apply everything"), a
+       decline names that nothing was discarded, and OK re-posts with
+       ack_unseen=1 -- carrying a force=1 already given, so the docs/65
+       question is never asked twice. */
+    syncCalls.length = 0; lastConfirm = '';
+    syncQueue = [{ status: 'unseen_changes', discard: true, have: 1, seen: 0,
+                   paths: ['qubits.q1.T2ramsey'],
+                   message: 'Taking the live chip now would also discard 1 unapplied edit' }];
+    confirmAnswer = false;
+    const _toasts1a = [];
+    const _st1a = window.showToast;
+    window.showToast = function (m) { _toasts1a.push(String(m)); };
+    window.doStateSync('discard');
+    await flush(20);
+    ok(/qubits\.q1\.T2ramsey/.test(lastConfirm) && /discard them too/i.test(lastConfirm)
+       && !/Apply everything/.test(lastConfirm),
+       'Take live: the confirm names the other window\'s edit and asks the DISCARD question (got: ' + lastConfirm + ')');
+    ok(syncCalls.length === 1, 'Take live + decline: no re-post');
+    ok(_toasts1a.some(function (t) { return /Nothing was discarded/.test(t); }),
+       'Take live + decline: the toast says nothing was discarded (got: ' + _toasts1a.join(' | ') + ')');
+    syncCalls.length = 0;
+    syncQueue = [{ status: 'unseen_changes', discard: true, have: 1, seen: 0,
+                   paths: ['qubits.q1.T2ramsey'], message: 'm' },
+                 { status: 'ok', mode: 'discard', tray_html: null, replay: null }];
+    confirmAnswer = true;
+    window.doStateSync('discard', true);
+    await flush(40);
+    ok(syncCalls.length === 2 && /ack_unseen=1/.test(syncCalls[1].body)
+       && /force=1/.test(syncCalls[1].body),
+       'Take live + OK: re-post acknowledges AND keeps the force already given (got: '
+       + (syncCalls[1] && syncCalls[1].body) + ')');
+    window.showToast = _st1a;
+    syncCalls.length = 0;
+
     /* ── 1b. "Keep mine — overwrite live" (docs/86) ────────────────────
        The third choice. It must be ONE confirm that actually names what it
        destroys, and it must force — an unforced push would land on the
@@ -160,6 +202,36 @@ window.eval(fs.readFileSync(path.join(STATIC, 'app.js'), 'utf8'));
     ok(push && push.opts && push.opts.target === '#pending-tray',
        'the response swaps the tray, which is where Revert last apply lives');
 
+    /* QA correctness-r2-09: the push is held to the live content the confirm
+       counted -- the preflight's hash rides the forced POST -- and a server
+       refusal (keepMineReask) re-runs the preflight + confirm with the new count. */
+    ajaxCalls.length = 0; preflightCalls.length = 0; lastConfirm = '';
+    preflightQueue = [{ ok: true, live_changes: 1, unsaved: 0, reversible: true,
+                        live_hash: 'abc123', run_active: false }];
+    confirmAnswer = true;
+    window.overwriteLiveWithWorking();
+    await flush(30);
+    const push2 = ajaxCalls.filter(function (c) {
+        return c.method === 'POST' && c.url.indexOf('/state/apply-to-live') === 0; })[0];
+    ok(push2 && /force=1/.test(push2.url) && /expect_live_hash=abc123/.test(push2.url),
+       'the forced push carries the hash the confirm counted from (got: ' + (push2 && push2.url) + ')');
+    ajaxCalls.length = 0;
+    preflightQueue = [{ ok: true, live_changes: null, unsaved: 0, reversible: false,
+                        live_read: 'unreadable', live_hash: null, run_active: false }];
+    window.overwriteLiveWithWorking();
+    await flush(30);
+    const push3 = ajaxCalls.filter(function (c) {
+        return c.method === 'POST' && c.url.indexOf('/state/apply-to-live') === 0; })[0];
+    ok(push3 && !/expect_live_hash/.test(push3.url),
+       'no hash (unreadable live) -> the plain forced push (got: ' + (push3 && push3.url) + ')');
+    preflightCalls.length = 0; lastConfirm = ''; confirmAnswer = false;
+    preflightQueue = [{ ok: true, live_changes: 3, unsaved: 0, reversible: true,
+                        live_hash: 'def456', run_active: false }];
+    document.dispatchEvent(new window.CustomEvent('keepMineReask', { bubbles: true }));
+    await flush(120);
+    ok(preflightCalls.length === 1 && /3 values/.test(lastConfirm),
+       'keepMineReask asks again with the NEW count (got: ' + preflightCalls.length + ' / ' + lastConfirm + ')');
+
     /* jsontree-r2-30: ONE unsaved edit "is" saved — the verb follows the
        count the noun already followed ("Your 1 unsaved edit are saved"). */
     ajaxCalls.length = 0; lastConfirm = '';
@@ -189,6 +261,25 @@ window.eval(fs.readFileSync(path.join(STATIC, 'app.js'), 'utf8'));
     ok(/could not be read/.test(lastConfirm),
        'an unknown live count is stated, not faked (got: ' + lastConfirm + ')');
 
+    /* QA correctness-r2-01: the server now says it CANNOT snapshot an unreadable
+       pair (reversible:false) -- the confirm must stop promising the backup
+       and say the push refuses instead of writing blind. */
+    lastConfirm = ''; confirmAnswer = false;
+    preflightQueue = [{ ok: true, live_changes: null, unsaved: 0, reversible: false,
+                        live_read: 'unreadable', run_active: false }];
+    window.overwriteLiveWithWorking();
+    await flush(30);
+    ok(/could not be read/.test(lastConfirm) && !/snapshotted first/.test(lastConfirm)
+       && /refuses the overwrite/.test(lastConfirm),
+       'an unreadable live never promises a snapshot; it says the push refuses (got: ' + lastConfirm + ')');
+    lastConfirm = '';
+    preflightQueue = [{ ok: true, live_changes: null, unsaved: 0, reversible: false,
+                        live_read: 'missing', run_active: false }];
+    window.overwriteLiveWithWorking();
+    await flush(30);
+    ok(/no state files/.test(lastConfirm) && !/snapshotted first/.test(lastConfirm),
+       'a missing live folder says nothing is replaced (got: ' + lastConfirm + ')');
+
     /* QA diagnostics-r2-04: crash-class values the push carries are named in
        the SAME confirm (one clause -- never a second dialog, never a block) */
     lastConfirm = ''; confirmAnswer = false;
@@ -206,6 +297,102 @@ window.eval(fs.readFileSync(path.join(STATIC, 'app.js'), 'utf8'));
     await flush(30);
     ok(lastConfirm && !/crash/.test(lastConfirm), 'a clean chip adds no clause');
 
+    /* QA fix6 (reviewer P1 follow-up): Keep mine is the ONLY forced door left
+       after the one-control redesign, and force=1 answers the staleness
+       question only. Its push must DECLARE the set its screen showed, so the
+       unseen-edit gate (docs/120/179) can stop another window's edit riding
+       along -- read from the panel it sits in, else from the tray. */
+    const _km = function () {
+        return ajaxCalls.filter(function (c) {
+            return c.method === 'POST' && c.url.indexOf('/state/apply-to-live') === 0; });
+    };
+    const _tray = document.getElementById('pending-tray');
+    _tray.setAttribute('data-change-count', '1');
+    _tray.setAttribute('data-change-sig', 'traysig1');
+    ajaxCalls.length = 0; lastConfirm = ''; confirmAnswer = true;
+    preflightQueue = [{ ok: true, live_changes: 1, unsaved: 0, reversible: true, run_active: false }];
+    window.overwriteLiveWithWorking();
+    await flush(30);
+    const _p1 = _km()[0];
+    ok(_p1 && /force=1/.test(_p1.url) && /seen_changes=1/.test(_p1.url)
+       && /seen_sig=traysig1/.test(_p1.url) && !/ack_unseen/.test(_p1.url),
+       'Keep mine declares the set its screen showed (got: ' + (_p1 && _p1.url) + ')');
+
+    /* from the panel: the set the PANEL rendered wins over the tray's */
+    const _panel = document.createElement('div');
+    _panel.className = 'state-review sync-panel';
+    _panel.setAttribute('data-change-count', '2');
+    _panel.setAttribute('data-change-sig', 'panelsig2');
+    const _kbtn = document.createElement('button');
+    _kbtn.className = 'sp-keep';
+    _kbtn.innerHTML = '<span class="sp-lost"></span>';
+    _panel.appendChild(_kbtn);
+    document.body.appendChild(_panel);
+    ajaxCalls.length = 0;
+    preflightQueue = [{ ok: true, live_changes: 1, unsaved: 0, reversible: true, run_active: false }];
+    window.overwriteLiveWithWorking(_kbtn);          // first press: preflight + arm
+    await flush(30);
+    ok(_km().length === 0, 'the panel press arms first, never writes on one press');
+    window.overwriteLiveWithWorking(_kbtn);          // second press writes
+    await flush(30);
+    const _p2 = _km()[0];
+    ok(_p2 && /seen_changes=2/.test(_p2.url) && /seen_sig=panelsig2/.test(_p2.url),
+       'Keep mine from the panel declares the PANEL\'s set (got: ' + (_p2 && _p2.url) + ')');
+    _panel.remove();
+
+    /* the gate refuses: never the generic error toast, never "✓ Written";
+       the confirm names the other window's edit; OK re-pushes with
+       ack_unseen=1 (not a second force token), Cancel writes nothing. */
+    const _refuse = function (method, url) {
+        if (method !== 'POST' || url.indexOf('/state/apply-to-live?force=1') !== 0
+            || /ack_unseen=1/.test(url)) return;
+        const det = { xhr: { status: 409, responseText: JSON.stringify({
+                          status: 'unseen_changes', have: 2, seen: 1,
+                          paths: ['qubits.q3.T1'],
+                          message: '1 edit(s) were made in another State Manager window' }) },
+                      target: _tray, requestConfig: { path: url },
+                      shouldSwap: true, isError: true };
+        document.dispatchEvent(new window.CustomEvent('htmx:beforeSwap', { detail: det }));
+        ok(det.shouldSwap === false && det.isError === false,
+           'the refusal is not swapped over the tray and raises no generic error toast');
+    };
+    const _kmFlashes = [];
+    const _realSC = window.SyncControl;
+    window.SyncControl = { busy: function () { return 1; }, unbusy: function () {},
+                           flash: function (m) { _kmFlashes.push(String(m)); } };
+    window.__ajaxHook = _refuse;
+    ajaxCalls.length = 0; lastConfirm = ''; confirmAnswer = true;
+    preflightQueue = [{ ok: true, live_changes: 1, unsaved: 0, reversible: true, run_active: false }];
+    // the first confirm is the Keep-mine question; the second the unseen one
+    window.overwriteLiveWithWorking();
+    await flush(60);
+    ok(/qubits\.q3\.T1/.test(lastConfirm) && /another State Manager window/.test(lastConfirm),
+       'the unseen refusal asks, naming the other window\'s edit (got: ' + lastConfirm + ')');
+    const _p3 = _km();
+    ok(_p3.length === 2 && /ack_unseen=1/.test(_p3[1].url) && /seen_sig=traysig1/.test(_p3[1].url),
+       'OK re-pushes with ack_unseen=1, still declaring the set (got: '
+       + _p3.map(function (c) { return c.url; }).join(' | ') + ')');
+    ok(_kmFlashes.length === 1,
+       'only the acknowledged push says "Written" -- the refused one never did (got: '
+       + _kmFlashes.join(' | ') + ')');
+
+    ajaxCalls.length = 0; _kmFlashes.length = 0;
+    let _nConfirm = 0;
+    const _realConfirm = window.confirm;
+    window.confirm = function (m) { _nConfirm += 1; lastConfirm = String(m); return _nConfirm === 1; };
+    preflightQueue = [{ ok: true, live_changes: 1, unsaved: 0, reversible: true, run_active: false }];
+    window.overwriteLiveWithWorking();
+    await flush(60);
+    ok(_nConfirm === 2 && _km().length === 1,
+       'Cancel on the unseen question writes nothing more (confirms ' + _nConfirm
+       + ', pushes ' + _km().length + ')');
+    ok(_kmFlashes.length === 0, 'and never says "Written" (got: ' + _kmFlashes.join(' | ') + ')');
+    window.confirm = _realConfirm;
+    window.__ajaxHook = null;
+    window.SyncControl = _realSC;
+    _tray.removeAttribute('data-change-count');
+    _tray.removeAttribute('data-change-sig');
+
     /* ...and the ⚡ pull-and-apply result line names them too */
     const _toasts = [], _realToast = window.showToast;
     window.showToast = function (m, l) { _toasts.push([String(m), l]); };
@@ -219,13 +406,42 @@ window.eval(fs.readFileSync(path.join(STATIC, 'app.js'), 'utf8'));
     ok(/applied them to the live chip/.test(_last[0]) && /would crash a node run/.test(_last[0])
        && _last[1] === 'warning',
        'pull-and-apply names the crash-class values, as a warning (got: ' + JSON.stringify(_last) + ')');
+    /* sync-ux 2026-09-25 (default 2 of the user's decisions): success toasts
+       go -- the status control says it for 4 s. Re-scoped from "keeps its
+       green line" (a success TOAST): a clean apply now adds no toast and
+       flashes the control instead; the crash-class case above stays a toast. */
+    const _flashes = [], _realFlash = window.SyncControl && window.SyncControl.flash;
+    if (window.SyncControl) window.SyncControl.flash = function (t) { _flashes.push(String(t)); };
+    const _nToasts = _toasts.length;
     syncQueue = [{ status: 'ok', mode: 'apply', tray_html: null, replay: { applied: 1, failed: [] } }];
     window.doStateSync('apply');
     await flush(40);
-    const _clean = _toasts[_toasts.length - 1] || ['', ''];
-    ok(_clean[1] === 'success' && !/crash/.test(_clean[0]),
-       'a clean pull-and-apply keeps its green line (got: ' + JSON.stringify(_clean) + ')');
+    ok(_toasts.length === _nToasts && _flashes.length === 1 && /Written to live · 1 edit/.test(_flashes[0]),
+       'a clean pull-and-apply says it on the control, not in a toast (got: ' + JSON.stringify(_flashes) + ' / '
+       + JSON.stringify(_toasts.slice(_nToasts)) + ')');
+    if (window.SyncControl) window.SyncControl.flash = _realFlash;
     window.showToast = _realToast;
+
+    /* QA correctness-r2-08: a pull that caught the live pair mid-save is
+       answered with its OWN token -- OK re-posts ack_torn=1 (never force=1),
+       Cancel pulls nothing and says so. */
+    syncCalls.length = 0; lastConfirm = '';
+    syncQueue = [{ status: 'torn_live', mode: 'discard', count: 1,
+                   message: 'The live chip looks mid-save: wiring.json still points X at Y.' },
+                 { status: 'ok', mode: 'discard', tray_html: null, replay: null }];
+    confirmAnswer = true;
+    window.doStateSync('discard');
+    await flush(40);
+    ok(/mid-save/.test(lastConfirm) && /take it as it is/.test(lastConfirm),
+       'torn_live asks, naming the mid-save (got: ' + lastConfirm + ')');
+    ok(syncCalls.length === 2 && /ack_torn=1/.test(syncCalls[1].body) && !/force=1/.test(syncCalls[1].body),
+       'OK re-posts with ack_torn=1 and not force (got: ' + (syncCalls[1] && syncCalls[1].body) + ')');
+    syncCalls.length = 0;
+    syncQueue = [{ status: 'torn_live', mode: 'discard', message: 'mid-save' }];
+    confirmAnswer = false;
+    window.doStateSync('discard');
+    await flush(40);
+    ok(syncCalls.length === 1, 'Cancel pulls nothing (one POST, no retry)');
 
     /* ── 2. stateRestored bridge ──────────────────────────────────────── */
     ajaxCalls.length = 0;
@@ -247,6 +463,29 @@ window.eval(fs.readFileSync(path.join(STATIC, 'app.js'), 'utf8'));
     ok(ajaxCalls.length >= 1, 'the surface still refreshes in that case');
     ip.innerHTML = '';
     window.closeInspector = realClose;
+
+    /* QA correctness-r2-06: the armed "Revert this session" asks through the
+       preflight, NAMES the outside values it also rolls back, says the push
+       writes at once, and fires the button's hx-post only on OK. */
+    const _btn = document.createElement('button');
+    triggerCalls.length = 0; revertCalls.length = 0; lastConfirm = '';
+    revertQueue = [{ ok: true, push_armed: true, mine_n: 2, outside_n: 1,
+                     outside: [{ path: 'qubits.q1.T2ramsey', now: '7.3779e-05', back_to: '1.817e-05' }] }];
+    confirmAnswer = false;
+    window.revertSessionConfirm(_btn);
+    await flush(30);
+    ok(revertCalls.length === 1, 'revert: preflights once before asking');
+    ok(/qubits\.q1\.T2ramsey: 7\.3779e-05 → 1\.817e-05/.test(lastConfirm) && /ALSO 1 value/.test(lastConfirm),
+       'the confirm names the outside value it rolls back (got: ' + lastConfirm + ')');
+    ok(/ARMED/.test(lastConfirm) && /immediately/.test(lastConfirm) && !/review it first/i.test(lastConfirm),
+       'it says the push writes at once, never "you review it first"');
+    ok(triggerCalls.length === 0, 'Cancel fires nothing');
+    revertQueue = [{ ok: true, push_armed: true, mine_n: 1, outside_n: 0, outside: [] }];
+    confirmAnswer = true;
+    window.revertSessionConfirm(_btn);
+    await flush(30);
+    ok(triggerCalls.length === 1 && triggerCalls[0].elt === _btn && triggerCalls[0].name === 'revertconfirmed',
+       'OK fires the button\'s own request (revertconfirmed)');
 
     /* ── 2b. LiveEditUndo boundary discipline (audit-r10) ─────────────── */
     {

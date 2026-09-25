@@ -201,7 +201,8 @@ class TestDatasetLoadStateRoundtrip:
         html = r.data.decode()
         # the OOB tray flips to the staged affordance in the SAME response
         assert 'data-working-dirty="1"' in html
-        assert "Apply to live chip" in html
+        # sync-ux 2026-09-25 (user decision: one control + one panel): the control's staged state and its direct push
+        assert 'data-sync-state="staged"' in html and 'hx-post="/state/apply-to-live"' in html
         # the client bridge (grid refresh) rides this trigger
         assert "stateRestored" in r.headers.get("HX-Trigger", "")
         assert _working_off(env) == 0.079
@@ -223,7 +224,7 @@ class TestRevertLastApplyRoundtrip:
         assert r.status_code == 200
         html = r.data.decode()
         assert 'data-working-dirty="1"' in html
-        assert "Apply to live chip" in html
+        assert 'data-sync-state="staged"' in html and 'hx-post="/state/apply-to-live"' in html
         assert "stateRestored" in r.headers.get("HX-Trigger", "")
         assert _working_off(env) == 0.08 and _live_off(env) == 0.095
         r2 = c.post("/state/sync", data={"mode": "apply"})
@@ -244,9 +245,12 @@ class TestStagedStalenessConflict:
         r = c.post("/state/sync", data={"mode": "apply"})
         body = r.get_json()
         assert body["status"] == "conflict", body
-        tray = body["tray_html"]
-        assert "Keep mine" in tray
-        assert "Pull &amp; apply" not in tray
+        # sync-ux 2026-09-25 (user decision: one control + one panel): the refused control is one row; its panel offers
+        # only the honest choices for staged content (no merge)
+        assert 'data-sync-state="refused"' in body["tray_html"]
+        panel = c.get("/state/review").data.decode()
+        assert "Keep mine" in panel
+        assert 'id="sp-merge"' not in panel
         # resolution A: force-overwrite live with the staged content
         # resolution B: pull latest (confirm-gated because staged)
         r2 = c.post("/state/sync", data={"mode": "discard"})
@@ -283,8 +287,9 @@ class TestStagedStalenessConflict:
         r = c.post("/state/sync", data={"mode": "apply"})
         body = r.get_json()
         assert body["status"] == "conflict", body
-        assert "Keep mine" in body["tray_html"]
-        assert "Pull &amp; apply" not in body["tray_html"]
+        panel = c.get("/state/review").data.decode()     # sync-ux 2026-09-25 (user decision: one control + one panel):
+        assert "Keep mine" in panel
+        assert 'id="sp-merge"' not in panel
         r2 = c.post("/state/sync", data={"mode": "discard"})
         assert r2.get_json()["status"] == "needs_confirm"
 

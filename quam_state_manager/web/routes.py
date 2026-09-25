@@ -846,6 +846,176 @@ def _refresh_live_diverged(ctx) -> None:
         lock.release()
 
 
+# sync-ux 2026-09-25 -- the ONE status control's live facts (core/sync_status.py). A live
+# file must fail to parse on two polls this far apart before the control says
+# "can't read": QUAlibrate's machine.save() truncates and rewrites in place, so a
+# single torn read is an ordinary save in progress, not a broken file.
+_LIVE_UNREADABLE_AFTER_S = 2.5
+
+
+def _sync_live_refresh(ctx) -> None:
+    """Poll-time half of the status control: recompute the cached LIVE facts
+    (``ctx["sync_live"]``) when what they depend on moved.
+
+    SE-01: the old poll judged the live chip only for a CLEAN working copy, so
+    with one unapplied edit an outside write was never announced. SE-02: an
+    unparseable live file left every surface saying "Synced". This answers both
+    for every working copy, dirty or clean, from the same read -- and it is
+    PASSIVE: it never pulls, never touches the change log or the working copy
+    (docs/87: SM never swaps what you are looking at).
+
+    Cost: two ``os.stat`` of the live pair per poll at rest; a live read + one
+    ``Differ`` pass only when the live pair or the sync point moved, or when the
+    user's edit set changed while the live chip is known to have moved (a
+    collision can appear or vanish then). Never raises into the poll.
+    """
+    if not ctx or ctx.get("type") != "quam":
+        return
+    if (ctx.get("origin") or "live") != "live":
+        return
+    wc, store = ctx.get("working_copy"), ctx.get("store")
+    if wc is None or store is None:
+        return
+    try:
+        live_mt = safe_io.state_wiring_mtimes(wc.live_folder)
+    except OSError:
+        live_mt = None
+    with store._lock:
+        sig = _change_log_sig(store)
+    prev = ctx.get("sync_live") or {}
+    key = (live_mt, getattr(wc, "synced_live_hash", None))
+    if prev.get("_key") == key:
+        # Nothing on the live side moved. Only a known live move can make the
+        # user's own edit set matter (a collision is an overlap WITH a move).
+        if not (prev.get("moved") and prev.get("_sig") != sig):
+            return
+    lock = _get_quam_build_lock(path_match.fs_key(ctx["path"]))
+    if not lock.acquire(blocking=False):
+        return          # a sync/apply is mid-flight; the next poll judges
+    try:
+        try:
+            live_state, live_wiring = working_copy.read_live(wc)
+        except FileNotFoundError:
+            _note_live_unreadable(ctx, key, "the live folder has no state.json / wiring.json")
+            return
+        except (OSError, ValueError, safe_io.LiveFileError) as exc:
+            _note_live_unreadable(ctx, key, str(exc))
+            return
+        ctx.pop("_live_bad", None)
+        _store_sync_live(ctx, live_state, live_wiring, key=key, sig=sig)
+    except Exception:   # noqa: BLE001 -- a status probe must never break a poll
+        logger.debug("sync status refresh failed", exc_info=True)
+    finally:
+        lock.release()
+
+
+def _store_sync_live(ctx, live_state: dict, live_wiring: dict, *, key=None,
+                     sig=None) -> tuple:
+    """Judge one live read against the working copy and cache the verdict as
+    ``ctx["sync_live"]``. Shared by the poll and the sync panel, so the control
+    and the panel the user opens from it can never disagree about the same read.
+    Returns ``(facts, entries, verdict)``. Caller holds no store lock."""
+    from quam_state_manager.core import sync_conflict, sync_status
+    wc, store = ctx["working_copy"], ctx["store"]
+    if key is None:
+        try:
+            key = (safe_io.state_wiring_mtimes(wc.live_folder),
+                   getattr(wc, "synced_live_hash", None))
+        except OSError:
+            key = (None, getattr(wc, "synced_live_hash", None))
+    if sig is None:
+        with store._lock:
+            sig = _change_log_sig(store)
+    synced = getattr(wc, "synced_live_hash", None)
+    moved = (None if synced is None
+             else working_copy.content_hash(live_state, live_wiring) != synced)
+    if moved is None:
+        moved = bool(ctx.get("live_diverged"))
+    entries = Differ().diff(store, (live_state, live_wiring), ignore_keys=set())
+    verdict = None
+    if moved:
+        with store._lock:
+            log = list(store.change_log or [])
+        verdict = sync_conflict.classify(
+            live_by_path={e.dot_path: e.new_value for e in entries},
+            change_log=log,
+            reapply_paths=tuple((ctx.get("pending_reapply") or {}).keys()),
+            working_dirty=bool(ctx.get("working_dirty")),
+            reapply_originals=ctx.get("pending_reapply_orig"),
+        )
+    facts = sync_status.live_facts(entries=entries, moved=moved, verdict=verdict)
+    facts["_key"], facts["_sig"] = key, sig
+    facts["checked_at"] = time.time()
+    ctx["sync_live"] = facts
+    # ctx["live_diverged"] stays owned by _refresh_live_diverged and the
+    # explicit sync/apply paths (Auto-Sync reads it); the control reads the
+    # facts above, so the two never have to agree by writing each other.
+    return facts, entries, verdict
+
+
+def _note_live_unreadable(ctx, key, reason: str) -> None:
+    """Count a failed live read; after two failures at least
+    ``_LIVE_UNREADABLE_AFTER_S`` apart the control says so (SE-02). The key is
+    kept, so a file that STAYS broken is not re-read every poll -- the next
+    write to it moves the mtimes and is judged afresh."""
+    now = time.monotonic()
+    bad = ctx.get("_live_bad")      # consecutive failures; a good read resets it
+    if not bad:
+        bad = {"since": now, "n": 0}
+    bad["n"] = bad.get("n", 0) + 1
+    bad["reason"] = (reason or "unreadable")[:200]
+    ctx["_live_bad"] = bad
+    if bad["n"] >= 2 and (now - bad["since"]) >= _LIVE_UNREADABLE_AFTER_S:
+        prev = dict(ctx.get("sync_live") or {})
+        prev["unreadable"] = bad["reason"]
+        prev["_key"] = key
+        prev["_sig"] = None
+        ctx["sync_live"] = prev
+
+
+def _sync_view(ctx=None) -> dict | None:
+    """Render-time half: the control's state from the cached live facts plus
+    the local facts read now. No IO (docs/28). None when no chip is open."""
+    from quam_state_manager.core import sync_status
+    ctx = ctx if ctx is not None else _active_ctx()
+    if not ctx or ctx.get("type") != "quam":
+        return None
+    store, wc = ctx.get("store"), ctx.get("working_copy")
+    log = list(getattr(store, "change_log", None) or []) if store is not None else []
+    facts = ctx.get("sync_live")
+    unreadable = None
+    if facts:
+        unreadable = facts.get("unreadable")
+        # facts read at a sync point that has since moved (a pull, an apply)
+        # describe a live chip SM has already reconciled with
+        k = facts.get("_key")
+        if k and wc is not None and k[1] != getattr(wc, "synced_live_hash", None):
+            facts = None
+            unreadable = None
+        elif unreadable:
+            facts = None
+    refused = ctx.get("apply_refused")
+    if refused and wc is not None and refused.get("hash") != getattr(wc, "synced_live_hash", None):
+        refused = None
+    # a refused apply stashes the edits it saved (pending_reapply) and clears
+    # the change log -- they are still the user's unapplied edits
+    paths = [getattr(c, "dot_path", None) for c in log]
+    seen = set(paths)
+    paths += [p for p in (ctx.get("pending_reapply") or {}) if p not in seen]
+    return sync_status.view(
+        facts=facts,
+        flag_moved=bool(ctx.get("live_diverged")),
+        flag_count=ctx.get("live_drift_count"),
+        flag_conflicts=ctx.get("live_conflicts") or (),
+        archive=(ctx.get("origin") or "live") == "dataset_archive",
+        unreadable=unreadable,
+        refused=refused,
+        change_paths=paths,
+        unapplied=len(paths),
+        working_dirty=bool(ctx.get("working_dirty")),
+    )
+
+
 def _evict_oldest_quam() -> None:
     """Evict the oldest CLEAN cached context to make room. Caller holds
     ``_quam_cache_lock``.
@@ -2935,6 +3105,35 @@ def _replay_updates(modifier, updates: dict) -> dict:
                         pass  # already gone on the pulled state — noop success
                 else:
                     target_path = _resolve_edit_path(store, dot_path)
+                    if target_path != dot_path:
+                        # QA correctness-r2-07: a "set" is tagged only when
+                        # NEITHER side of the user's edit was a pointer, and a
+                        # value-mode edit logs its resolved target -- so this
+                        # leaf was a plain value, reached without a pointer,
+                        # when the user edited it. If the pulled chip now
+                        # routes it elsewhere, an outside writer re-linked it
+                        # (or a parent) after the edit, and following that
+                        # link landed the value on ANOTHER qubit's parameter
+                        # while the leaf the user edited kept the pointer.
+                        # Never follow a link the user never saw: when the
+                        # leaf itself is the new pointer, the edit wins AT the
+                        # leaf, exactly like any same-field collision (the
+                        # value the user typed replaces the chip's); when a
+                        # parent moved, there is no leaf of theirs left to
+                        # write -- report it and keep the live chip.
+                        try:
+                            _raw = store.get_value(dot_path)
+                        except (KeyError, TypeError, ValueError, IndexError):
+                            _raw = _REPLAY_UNREADABLE
+                        if not (isinstance(_raw, str) and is_pointer(_raw)):
+                            failed.append({
+                                "dot_path": dot_path,
+                                "error": ("the live chip now reaches this field "
+                                          "through a link it did not have when "
+                                          "you edited it -- kept the live chip"),
+                            })
+                            continue  # skip applied += 1
+                        target_path = dot_path
                     # coerce=False: `value` is entry.new_value — already type-coerced
                     # against the working-copy field the user actually edited. Re-coercing
                     # it against the PULLED live value's type loses the user's edit when
@@ -3696,7 +3895,9 @@ def instances_banner():
     """
     return render_template("_multi_instance_banner.html",
                            instance_peers=_instance_peers_for_active(),
-                           active_name=(_active_chip_identity() or {}).get("name"))
+                           active_name=(_active_chip_identity() or {}).get("name"),
+                           # sync-ux 2026-09-25: the top bar asks for the compact marker
+                           compact=request.args.get("compact") == "1")
 
 
 @bp.route("/type-alarm/banner")
@@ -4133,6 +4334,8 @@ def _ctx(**extra: Any) -> dict[str, Any]:
         # banner does appear it can say which fields it is about rather
         # than "N values differ" over a whole chip.
         "live_conflicts": (_active_ctx() or {}).get("live_conflicts") or [],
+        # sync-ux 2026-09-25: both tray renderers stamp the status control's verdict
+        "sync": _sync_view(),
         # docs/20 v2: first-open "name this chip?" banner payload (None when
         # named / declined / archive / no chip) + declared-but-unreachable
         # extras.data_folder values (muted note, never an error).
@@ -5693,6 +5896,26 @@ def explorer():
     )
 
 
+@bp.route("/explorer/model")
+def explorer_model():
+    """QA F2 (windows): the two documents the Json Tree View renders, as data.
+
+    An open tree is drawn ONCE from the page's inlined JSON, so a value another
+    window edited or applied stayed stale on screen (under a tray reading
+    Synced) until a full reload threw away the search, expansion and scroll.
+    The drift poll's foreign-edit path reads this and patches only the leaves
+    that moved, in place (LiveSurfacePatch, docs/144). Read-only; the working
+    copy, exactly as /explorer renders it."""
+    store = _store()
+    if not store:
+        return jsonify(ok=False, error=_NO_CHIP_MSG), 400
+    with store._lock:
+        body = json.dumps({"ok": True, "state": store.state,
+                           "wiring": store.wiring})
+    return current_app.response_class(body, mimetype="application/json",
+                                      headers={"Cache-Control": "no-store"})
+
+
 # ======================================================================
 # Qubits
 # ======================================================================
@@ -6828,6 +7051,43 @@ def _fsp_bundle_gids(changes) -> dict:
     return out
 
 
+def _undo_next_preview(ctx, changes) -> dict | None:
+    """QA F1 (windows): what the tray ↶ / Ctrl+Z does next when the change
+    log is EMPTY -- a docs/107/160 journal step, which since docs/160 writes
+    the LIVE chip. The button said "Undo typed edit (anharmonicity)" (a stale
+    in-memory entry of the presser's own) or "Nothing to undo", while the
+    press rewrote another window's applied q1.chi on the live files. Display
+    only: /undo still decides on the server at press time (docs/73), this is
+    what the button NAMES. ``None`` when the log holds edits (the ordinary
+    staged undo, already named) or there is no journal step to walk."""
+    if not ctx or changes:
+        return None
+    if (ctx.get("origin") or "live") != "live":
+        return None
+    units = ctx.get("undo_units") or []
+    cursor = int(ctx.get("undo_cursor") or 0)
+    if cursor <= 0 or cursor > len(units):
+        return None
+    ents = units[cursor - 1].get("entries") or []
+    if not ents:
+        return None
+    a = ents[0]   # the step's anchor, as its toast names it (uents[-1])
+    live = False
+    try:
+        live = (_undo_live_enabled() and _archive_write_blocked(ctx) is None
+                and not _journal_unit_foreign(units[cursor - 1]))
+    except Exception:  # noqa: BLE001 -- a preview never breaks the tray
+        live = False
+    if a.get("created"):
+        what = f"{a.get('path')} (remove it)"
+    elif a.get("deleted"):
+        what = f"{a.get('path')} (restore it)"
+    else:
+        what = (f"{a.get('path')} {_fmt_msg_val(a.get('new'))} → "
+                f"{_fmt_msg_val(a.get('old'))}")
+    return {"path": a.get("path"), "what": what, "n": len(ents), "live": live}
+
+
 def _render_tray(*, oob: bool) -> str:
     """Render ``#pending-tray`` — the single tray renderer for both direct
     target swaps and OOB swaps.
@@ -6879,6 +7139,13 @@ def _render_tray(*, oob: bool) -> str:
         auto_sync=_auto_sync_state(),
         auto_pull_armable=_auto_pull_armable(),
         applied_log=_applied_log_rows(),
+        # QA F1 (windows): the ↶ names the journal step it would walk, and a
+        # window whose applied value another window undid on the live chip
+        # is told (the tray re-renders on every foreign edit_seq move).
+        undo_next=_undo_next_preview(_active_ctx(), changes),
+        last_live_undo=(_active_ctx() or {}).get("last_live_undo"),
+        # sync-ux 2026-09-25: the ONE status control's verdict (core/sync_status.py)
+        sync=_sync_view(),
         oob=oob,
     )
 
@@ -11034,8 +11301,9 @@ def state_history_stage(timestamp: str):
         "_status.html",
         message=(f"Snapshot {current_app.jinja_env.filters['format_ts'](timestamp)} "
                  "loaded as the working state."
-                 + (_push or " Review it against the live chip with the ● Working "
-                    "state badge in the top bar, then press ↑ Apply to live chip.")),
+                 + (_push or " Review it against the live chip from the sync "
+                    "status in the top bar (Staged version · not on live), then "
+                    "press ↑ Apply.")),
         level="success")
     # detail-area message + OOB tray refresh (now shows working_dirty).
     # stateRestored so an inspector/pulse pane open on another menu re-reads
@@ -11190,6 +11458,17 @@ def state_history_restore_live(timestamp: str):
     # A restore is the user deliberately writing live — rebase drift tracking on
     # the restored state so it isn't reported as accumulated live drift.
     _reset_baseline_after_apply(ctx)
+    # QA correctness-r2-04: a restore is the newest live write, so ↺ Revert last
+    # apply must put back what the chip held right before IT -- the backup taken
+    # above -- not the pre-state of some earlier apply. Without this the tray
+    # kept the previous memo and "undo my last Apply" wrote a third, older
+    # state. Same rule the two apply routes follow ("the previous apply's memo
+    # must not survive this one"). backup_meta is never None here (the restore
+    # aborted above if it was).
+    ctx["last_apply"] = {
+        "pre_ts": backup_meta.timestamp,
+        "at": datetime.now().isoformat(timespec="seconds"),
+    }
     # Record that the live chip is now this snapshot's content. NOT force=True:
     # the restored bytes are identical to an existing snapshot, so content-hash
     # dedup should recognise it and skip a redundant ~1MB write.
@@ -15743,9 +16022,11 @@ def _undo_journal_step(ctx, n_req: int = 1):
     live = bool(flush.get("live"))
     if flush.get("rolled_back"):
         # the chip refused (it moved) and the step was undone again: NOTHING
-        # changed anywhere -- say so; the drift banner is the door forward.
-        # F-DRIFTBANNER: the toast tells the user to "take the live changes
-        # (drift banner)", so the banner must actually REFRESH -- the success
+        # changed anywhere -- say so; the status control is the door forward
+        # (sync-ux 2026-09-25, SE-06: the toast named a banner that no longer
+        # exists; it names the control now, and liveDriftChanged re-polls it).
+        # F-DRIFTBANNER: the toast tells the user to take the live changes, so
+        # the control must actually REFRESH -- the success
         # path escalates liveDriftChanged and this one never did, so the page
         # showed no banner and the tray still said "Synced" until a full
         # re-render. Escalate it here too (the banner re-checks live vs synced,
@@ -15780,21 +16061,40 @@ def _undo_journal_step(ctx, n_req: int = 1):
         message = f"{head}: {anchor['path']} removed"
     else:
         from quam_state_manager.core import value_delta as _vd
-        _d = _vd.compute(anchor.get("new"), anchor.get("old"))
+        # QA SU-09: the Δ is FROM the value that was on screen before this
+        # press (the modifier's own returned old_value -- docs/107 names it as
+        # the drift source) TO the restored one. The journal's recorded `new`
+        # is only that value when nothing moved; after an Auto-Sync pull it
+        # was not, and the toast's -41.6% disagreed with the tray's -54%.
+        _was = staged[-1].old_value if staged else anchor.get("new")
+        _d = _vd.compute(_was, anchor.get("old"))
         message = f"{head}: {anchor['path']} → {_fmt_msg_val(anchor.get('old'))}"
         if _d and _d["dir"] != "same":
             message += f" ({_d['text']}"
             message += f", {_d['pct_text']})" if _d["pct_text"] else ")"
-    if drift:
-        message += f" — {drift} value(s) had moved since; the tray now holds the journal value"
+    # QA SU-09: one clause about the drift, not two. With the live walk on,
+    # a drifted step always carries the flush note ("staged only: the value
+    # had moved since — review, then Apply"), which says the same thing and
+    # names the remedy; the count line stays for the walk-off wording.
     if not live and flush.get("note"):
         message += f" — {flush['note']}"
+    elif drift:
+        message += f" — {drift} value(s) had moved since; the tray now holds the journal value"
+
+    live_undo_seq = None
+    if live:
+        # QA F1 (windows): another window showing this value is told, once,
+        # through its next tray render (the seq tells it which one it saw).
+        prev = ctx.get("last_live_undo") or {}
+        live_undo_seq = int(prev.get("seq") or 0) + 1
+        ctx["last_live_undo"] = {"seq": live_undo_seq, "message": message}
 
     resp = make_response(_tray_html())
     resp.headers["HX-Trigger"] = json.dumps({
         "cellsReverted": {
             "message": message,
             "live": live,
+            "live_undo_seq": live_undo_seq,
             "tier_note": flush.get("note") if not live else None,
             **_walk_burst_extra(n_req),
             **_walk_entries_payload(uents, lambda u: u.get("old"),
@@ -15986,7 +16286,7 @@ def _undo_live_flush(ctx, store, modifier, unit: dict, staged: list, *,
     ctx["undo_cursor"] = cursor_before
     _redo_mark(ctx, store)
     if body.get("status") == "conflict":
-        note = "the live chip changed since it was synced; nothing was written — take the live changes (drift banner), then undo again"
+        note = "the live chip changed since it was synced; nothing was written — click the sync status in the top bar (Live chip changed) and choose ↓ Take live, then undo again"
     else:
         note = f"{body.get('message') or 'apply failed'}; nothing was written"
     if not clean:
@@ -16083,7 +16383,7 @@ def _redo_journal_forward(ctx, store, modifier, index: int, unit_id: str | None 
     if body.get("status") != "ok":
         _rollback_walk_step(ctx, store, modifier, staged)
         _redo_mark(ctx, store)
-        why = ("the live chip changed since it was synced; nothing was written — take the live changes (drift banner), then redo again"
+        why = ("the live chip changed since it was synced; nothing was written — click the sync status in the top bar (Live chip changed) and choose ↓ Take live, then redo again"
                if body.get("status") == "conflict" else f"{body.get('message') or 'apply failed'}; nothing was written")
         return [], why
     ctx["undo_cursor"] = index + 1
@@ -16595,9 +16895,29 @@ def _conflict_tray(ctx, store, *, staged_conflict: bool,
     (`auto_sync`, both armable verdicts, `change_count`) -- a caller that
     forgets one makes the pill render as nothing, silently, which is exactly
     the defect this exists to prevent.
+
+    sync-ux 2026-09-25: the tray is one row now -- the status control in its "refused"
+    state ("Apply wrote nothing — live changed") -- and the choices live in the
+    sync panel, which the client opens in answer to the user's own press. What
+    the panel must say (when, staged or not, what Auto-Sync decided) rides on
+    ``ctx["apply_refused"]``, valid until the sync point moves.
     """
+    if ctx is not None:
+        wc = ctx.get("working_copy")
+        ctx["apply_refused"] = {
+            "at": time.strftime("%H:%M:%S"),
+            "hash": getattr(wc, "synced_live_hash", None),
+            "staged": bool(staged_conflict),
+            "auto_disarmed": bool(auto_disarmed),
+            "auto_merging": bool(auto_merging),
+        }
     return render_template(
         "_state_apply_conflict.html",
+        sync=_sync_view(ctx),
+        active_name=(_active_chip_identity() or {}).get("name"),
+        chip_origin=(ctx or {}).get("origin") or "live",
+        qualibrate_tray=_qualibrate_tray_badge(),
+        auto_apply=_auto_apply_state(ctx),
         change_count=len(store.change_log or []),
         change_sig=_change_log_sig(store),
         staged_conflict=staged_conflict,
@@ -16884,6 +17204,19 @@ def auto_sync_pull():
     wc = ctx.get("working_copy")
     if wc is None:
         return "", 204
+    # QA correctness-r2-08: a live pair caught between QUAlibrate's two file
+    # writes is waited out -- the next poll sees the finished save -- for a
+    # bounded number of polls, then pulled anyway (a real new dangling port
+    # reference must not stall the session).
+    _torn = _live_pair_torn(ctx)
+    if _torn:
+        _sig = tuple(sorted(_torn.items()))
+        _rec = ctx.get("_auto_pull_torn") or {}
+        _n = (_rec.get("n", 0) + 1) if _rec.get("sig") == _sig else 1
+        ctx["_auto_pull_torn"] = {"sig": _sig, "n": _n}
+        if _n <= _AUTO_PULL_TORN_POLLS:
+            return "", 204
+    ctx.pop("_auto_pull_torn", None)
     build_lock = _active_wc_lock(ctx)
     try:
         with build_lock:
@@ -17020,7 +17353,15 @@ def auto_sync_pull():
     resp.headers["HX-Trigger"] = _state_restored_trigger(
         ctx, _pre_leaves,
         extra={"liveDriftChanged": True,
-               "autoSyncPulled": {"replaced": bool(discarding),
+               # SYNCEXP-09: "replaced" means work was actually DROPPED --
+               # a change-log edit, a saved working state or a stash. Typed-
+               # but-not-entered grid cells are not dropped: the pull patches
+               # only the leaves it changed and the typed input keeps its text
+               # (and its next Enter commits it), so dom dirt alone never
+               # produces the "discarded … not recoverable" warning.
+               "autoSyncPulled": {"replaced": bool(discarding and (
+                                      _discarded_n or _discarded_saved
+                                      or _discarded_stash)),
                                   "count": _discarded_n,
                                   "saved": _discarded_saved,
                                   "stash": _discarded_stash,
@@ -17238,59 +17579,117 @@ def auto_apply_revert():
 
 @bp.route("/state/review")
 def state_review():
-    """Diff the live state files against the working copy, on demand.
+    """The sync panel (sync-ux 2026-09-25) -- opened from the status control.
 
-    Triggered by "Review changes" — the only live-file *content* read that
-    happens outside an explicit sync or apply.
+    The one live-file *content* read outside an explicit sync or apply. It
+    judges the read exactly as the drift poll does (``_store_sync_live``), so
+    the panel and the control the user clicked can never disagree, and groups
+    the differences the way the user decides about them:
 
-    Diffs in-memory: the live (state, wiring) tuple is fed directly to
-    ``Differ.diff`` without the tmp-dir-and-disk round trip the previous
-    implementation used (red-team Phase 2 finding §5.2).
+      * changed on BOTH sides -- pick mine / live per field (user decision 2);
+      * the live chip changed (the user did not touch these);
+      * your unapplied edits (each with its ✕);
+      * a staged / saved version that differs from live.
+
+    Then the choices, each naming what it loses, and History (last apply,
+    what Auto-Sync applied, a Take-live backup to bring back).
     """
+    from quam_state_manager.core import sync_status
     ctx = _active_ctx()
     if not ctx or ctx.get("type") != "quam":
         return render_template("_status.html", message="No state loaded", level="warning")
     wc = ctx["working_copy"]
     store = ctx["store"]
+    archive = (ctx.get("origin") or "live") == "dataset_archive"
+    read_error = None
+    entries, verdict, facts = [], None, None
     try:
         live_state, live_wiring = working_copy.read_live(wc)
     except FileNotFoundError:
-        return render_template(
-            "_status.html",
-            message="Live state folder not found — it may have been moved or deleted.",
-            level="error")
-    except OSError as exc:
-        return render_template(
-            "_status.html",
-            message=f"Could not read the live state: {exc}", level="error")
+        read_error = "The live state folder has no state.json / wiring.json — it may have been moved or deleted."
+    except (OSError, ValueError, safe_io.LiveFileError) as exc:
+        read_error = f"Could not read the live chip: {exc}"
+    else:
+        ctx.pop("_live_bad", None)
+        if archive:
+            entries = Differ().diff(store, (live_state, live_wiring), ignore_keys=set())
+        else:
+            facts, entries, verdict = _store_sync_live(ctx, live_state, live_wiring)
+    sv = _sync_view(ctx)
+    if read_error and sv is not None and sv["state"] not in ("archive",):
+        sv = dict(sv, state="unreadable", unreadable=read_error)
 
-    # docs/136 — `ignore_keys=set()`: a class migration IS a difference, and
-    # every LIVE-facing comparison now says so (this review, its JSON twin,
-    # the drift count + summary, the auto-pull count, the overwrite preflight).
-    # The default skips `__class__`, so when a lab's out-of-band edit moved
-    # eleven qubits from FluxTunableTransmon to QdacBiasedFixedFrequencyTransmon
-    # the banner reported the live chip had changed and this screen answered
-    # "No differences" — the worst of both answers, and the user's reasonable
-    # reading was "nothing important happened". docs/128 set the precedent for
-    # the two version-compare routes; the live doors were still blind.
-    entries = Differ().diff(store, (live_state, live_wiring), ignore_keys=set())
+    with store._lock:
+        log = list(store.change_log or [])
+    live_by_path = {e.dot_path: e.new_value for e in entries}
+    here_by_path = {e.dot_path: e.old_value for e in entries}
+    conflicts = list((sv or {}).get("conflicts") or [])
+    moved = bool((facts or {}).get("moved")) if facts else bool((sv or {}).get("live_moved"))
+    external = list((facts or {}).get("external") or []) if moved else []
+    originals = {}
+    for c in log:
+        originals.setdefault(c.dot_path, c.old_value)
 
-    # Paths the user has actually edited in this session (incl. on-the-fly
-    # accepts, which land in the change log). A row on one of these holds the
-    # USER's value in "Your copy", so its ✓ would REVERT that to the live value
-    # — mark it so the client confirms before overwriting (audit A12).
-    edited_paths = {e.dot_path for e in store.change_log}
+    conflict_rows = [{"path": p, "here": here_by_path.get(p), "live": live_by_path.get(p),
+                      "orig": originals.get(p)} for p in conflicts]
+    kind_by_path = {e.dot_path: e.change_type for e in entries}
+    external_rows = [{"path": p, "here": here_by_path.get(p), "live": live_by_path.get(p),
+                      "kind": kind_by_path.get(p, "modified")}
+                     for p in external[:300]]
+    mine_rows = []
+    cset = set(conflicts)
+    for i, c in enumerate(log):
+        if c.dot_path in cset:
+            continue
+        mine_rows.append({
+            "index": i, "path": c.dot_path, "old": c.old_value, "new": c.new_value,
+            "gid": getattr(c, "group_id", None) or "",
+            "created": bool(getattr(c, "created", False)),
+            "deleted": bool(getattr(c, "deleted", False)),
+            "live": live_by_path.get(c.dot_path, c.old_value) if not read_error else None,
+        })
+    # a staged / saved version: every difference that is neither a live change
+    # nor one of the change-log edits. With a live move over a saved version
+    # the two cannot be told apart (sync_conflict's honesty rule) -- one group.
+    mine_paths = {c.dot_path for c in log}
+    staged_rows = []
+    if ctx.get("working_dirty") or not moved:
+        seen = set(external) | cset
+        for e in entries:
+            if e.dot_path in seen or e.dot_path in mine_paths:
+                continue
+            staged_rows.append({"path": e.dot_path, "here": e.old_value, "live": e.new_value})
+            if len(staged_rows) >= 300:
+                break
+    mixed = bool(ctx.get("working_dirty") and moved and not log)
 
     return render_template(
         "_state_review.html",
-        entries=entries[:300],
-        edited_paths=edited_paths,
-        summary=Differ.summary(entries),
+        sync=sv,
+        read_error=read_error,
         total=len(entries),
-        unsaved=len(store.change_log),
+        conflict_rows=conflict_rows,
+        external_rows=external_rows,
+        external_total=len(external),
+        # every value the live chip changed, colliding ones included
+        live_total=len(external) + len(conflicts),
+        mine_rows=mine_rows,
+        staged_rows=staged_rows,
+        mixed=mixed,
+        unsaved=len(log),
         change_sig=_change_log_sig(store),
         working_dirty=bool(ctx.get("working_dirty")),
+        staged_base=bool(ctx.get("staged_base")),
         chip_origin=_active_origin(),
+        refused=ctx.get("apply_refused") if (sv or {}).get("state") == "refused" else None,
+        last_apply=ctx.get("last_apply"),
+        applied_log=_applied_log_rows(),
+        auto_apply=_auto_apply_state(),
+        auto_sync=_auto_sync_state(),
+        take_live_backup=ctx.get("take_live_backup"),
+        fsp_bundle_gids=_fsp_bundle_gids(log),
+        checked_at=time.strftime("%H:%M:%S"),
+        active_name=(_active_chip_identity() or {}).get("name"),
     )
 
 
@@ -17622,7 +18021,12 @@ def _auto_pull_due(ctx: dict | None) -> bool:
     # withholding the signal is the fix. (The DOM-only dirt the client reports
     # is still re-checked at the pull itself — this can only over-offer, never
     # over-pull.)
-    if _quam_ctx_dirty(ctx) and not sess.get("pull_replace"):
+    # SYNCEXP-04: DOM-only dirt (typed, not entered) leaves the ctx clean, so
+    # this used to skip the remembered verdict and re-advertise the pull on
+    # every 5 s poll -- each press taking the shared apply latch and killing
+    # the user's own Apply. The verdict /auto-sync/pull recorded (with the
+    # reported dom paths) is consulted whenever one exists for THIS state.
+    if not sess.get("pull_replace") and (_quam_ctx_dirty(ctx) or ctx.get("live_auto_at")):
         # A dirty working copy no longer means "the policy will refuse this".
         # Since the pull decides per FIELD, a live change that touches nothing
         # the user edited resolves itself -- and withholding the signal here
@@ -17670,6 +18074,13 @@ def state_drift():
     # — so an idle chip pays two `os.stat` calls, exactly as this route did
     # before.
     _refresh_live_diverged(ctx)
+    # sync-ux 2026-09-25: the one status control's live facts, for dirty copies too
+    # (SE-01) and for a live file that will not parse (SE-02). Passive.
+    _sync_live_refresh(ctx)
+    _sv = _sync_view(ctx)
+    sync = ({"state": _sv["state"], "sig": _sv["sig"], "stale": _sv["stale"],
+             "live_n": _sv["live_n"], "unapplied": _sv["unapplied"]}
+            if _sv else None)
     # QA review of r2-36: the flag this refresh may just have raised rides the
     # poll, so an OPEN page's pill can stop reading "Synced" (app.js re-renders
     # the tray when it does) instead of waiting for the next full render. A
@@ -17708,18 +18119,18 @@ def state_drift():
     if not _drift_tracked(ctx):
         return jsonify(ok=True, tracked=False, count=0, auto_pull=auto_pull,
                        hist_seq=hist_seq, edit_seq=_edit_seq(),
-                       live_diverged=ld)
+                       live_diverged=ld, sync=sync)
     try:
         info = _compute_drift(ctx)
     except Exception:   # noqa: BLE001 — a poll must never 500
         logger.debug("drift compute failed", exc_info=True)
         return jsonify(ok=True, tracked=True, count=0, auto_pull=auto_pull,
                        hist_seq=hist_seq, edit_seq=_edit_seq(),
-                       live_diverged=ld)
+                       live_diverged=ld, sync=sync)
     if info is None:
         return jsonify(ok=True, tracked=False, count=0, auto_pull=auto_pull,
                        hist_seq=hist_seq, edit_seq=_edit_seq(),
-                       live_diverged=ld)
+                       live_diverged=ld, sync=sync)
     # (docs/87) ``auto_pulled`` used to ride along here as a one-shot so the
     # silent clean auto-pull became a visible toast. The user-facing path no
     # longer pulls without asking, so there is nothing to announce after the
@@ -17727,7 +18138,8 @@ def state_drift():
     return jsonify({"ok": True, "tracked": True, "count": info["count"],
                     "baseline_utc": info["baseline_utc"],
                     "auto_pull": auto_pull, "hist_seq": hist_seq,
-                    "edit_seq": _edit_seq(), "live_diverged": ld})
+                    "edit_seq": _edit_seq(), "live_diverged": ld,
+                    "sync": sync})
 
 
 @bp.route("/state/drift/view")
@@ -17937,6 +18349,135 @@ def _unseen_edit_refusal(ctx) -> dict | None:
                 f"write them to the live chip too.")}
 
 
+def _discard_unseen_body(refusal: dict) -> dict:
+    """QA correctness-r2-03: the unseen-edit refusal, worded for Take live.
+
+    Same fields as the Apply door's (``status``/``have``/``seen``/``paths``)
+    so the client's one handler reads both; ``discard`` tells it which
+    question to ask. The sentence names what would be LOST, which is the
+    difference between the two doors: Apply would write those edits, Take
+    live would throw them away with no undo."""
+    have = int(refusal.get("have") or 0)
+    seen = int(refusal.get("seen") or 0)
+    unseen = max(have - seen, 0) or have
+    return {**refusal, "discard": True,
+            "message": (
+                f"Taking the live chip now would also discard "
+                f"{unseen} unapplied edit{'s' if unseen != 1 else ''} made in "
+                f"another State Manager window, which this screen is not "
+                f"showing. A discarded edit cannot be undone.")}
+
+
+def _live_pair_torn(ctx) -> dict[str, str]:
+    """QA correctness-r2-08: the port references that dangle in the live pair
+    now but did not in the pair SM holds (``{}`` when none, or when live cannot
+    be read -- the pull then reports that itself). One live read, made only on
+    a pull the user or an armed Auto-Sync asked for (docs/28)."""
+    try:
+        store = ctx["store"]
+        live_state, live_wiring = working_copy.read_live(ctx["working_copy"])
+        return working_copy.new_dangling_port_refs(
+            store.state, store.wiring, live_state, live_wiring)
+    except Exception:  # noqa: BLE001 — an advisory gate, never a failure
+        return {}
+
+
+# QA correctness-r2-08: how many consecutive Auto-Sync polls a torn-looking
+# live pair is waited out before it is pulled anyway (a genuine new dangling
+# reference must not block the session for ever). ~5 s per poll.
+_AUTO_PULL_TORN_POLLS = 3
+
+
+def _parse_picks(raw) -> dict:
+    """``{path: "mine"|"live"}`` from the panel's JSON; anything else ignored."""
+    if not raw:
+        return {}
+    try:
+        d = json.loads(raw)
+    except (TypeError, ValueError):
+        return {}
+    if not isinstance(d, dict):
+        return {}
+    return {str(k): v for k, v in d.items() if v in ("mine", "live") and k}
+
+
+def _take_live_backup(ctx, store, pending: dict) -> dict | None:
+    """Keep what ↓ Take live is about to drop (sync-ux 2026-09-25, user decision 4).
+
+    Two copies, for two uses:
+      * ``ctx["take_live_backup"]`` -- the edits as a replay map, which the
+        panel's "↶ Bring back" replays on top of the NEW live (they come back
+        as unapplied edits; nothing is written to the live chip);
+      * a History version of the working copy exactly as the user saw it,
+        labelled as a backup, so it survives a restart and can be staged from
+        State History like any other version.
+    Never raises: a backup that fails must not stop the pull the user asked
+    for, and the pull is not made to wait on it more than one snapshot write.
+    Caller holds the build lock."""
+    n = len(pending or {}) or (1 if ctx.get("working_dirty") else 0)
+    rec = {"at": time.strftime("%H:%M:%S"), "n": n,
+           "updates": copy.deepcopy(pending or {}), "snapshot": None}
+    try:
+        from quam_state_manager.core.history import chip_name_for
+        wc = ctx["working_copy"]
+        # History routes a capture by its content (extras name, fingerprint)
+        # and last by the folder's path-derived chip name -- so the temporary
+        # folder carries the live folder's chip name, or a chip with neither
+        # of the first two would file its backup under "working_state".
+        tmp_root = Path(str(wc.working_folder) + ".takelive_backup")
+        shutil.rmtree(tmp_root, ignore_errors=True)
+        tmp = tmp_root / chip_name_for(Path(ctx["path"])) / "quam_state"
+        tmp.mkdir(parents=True, exist_ok=True)
+        with store._lock:
+            safe_io.write_state_wiring(tmp, store.state, store.wiring)
+        meta = _history().check_and_snapshot(
+            tmp, "manual", force=True, kind="backup",
+            project=_scope_for(ctx["path"], ctx))
+        if meta is not None:
+            rec["snapshot"] = meta.timestamp
+            try:
+                _history().annotate_snapshot(
+                    ctx["path"], meta.timestamp,
+                    label=f"Backup before Take live ({n} unapplied edit{'s' if n != 1 else ''})")
+            except Exception:   # noqa: BLE001 -- a label is cosmetic
+                logger.debug("take-live backup label failed", exc_info=True)
+        shutil.rmtree(tmp_root, ignore_errors=True)
+    except Exception:   # noqa: BLE001
+        logger.warning("take-live backup snapshot failed", exc_info=True)
+    ctx["take_live_backup"] = rec
+    return rec
+
+
+@bp.route("/state/take-live/restore", methods=["POST"])
+def state_take_live_restore():
+    """"↶ Bring back": replay the edits the last ↓ Take live dropped, on top of
+    what the working copy holds now. They come back as UNAPPLIED edits -- the
+    live chip is not written (a live write needs its own press, docs/117)."""
+    ctx = _active_ctx()
+    if not ctx or ctx.get("type") != "quam":
+        return render_template("_status.html", message="No state loaded", level="warning"), 400
+    bk = ctx.get("take_live_backup")
+    if not bk or not bk.get("updates"):
+        resp = make_response(_tray_html(), 200)
+        resp.headers["HX-Trigger"] = json.dumps({"syncToast": {
+            "message": "Nothing to bring back — the backup holds no edits "
+                       "(a staged version is in State History).", "level": "info"}})
+        return resp
+    with _active_wc_lock(ctx):
+        replay = _replay_updates(ctx["modifier"], copy.deepcopy(bk["updates"]))
+        _invalidate_engine_cache(ctx)
+    ctx.pop("take_live_backup", None)
+    resp = make_response(_tray_html(), 200)
+    _n = replay.get("applied", 0)
+    _f = replay.get("failed") or []
+    msg = (f"Brought back {_n} edit{'s' if _n != 1 else ''} as unapplied edits"
+           + (f"; {len(_f)} could not be re-applied" if _f else "") + ".")
+    resp.headers["HX-Trigger"] = json.dumps({
+        "syncToast": {"message": msg, "level": "warning" if _f else "success"},
+        "syncValuesMoved": True})
+    return resp
+
+
 @bp.route("/state/sync", methods=["POST"])
 def state_sync():
     """Pull the live state files into the working copy (manual sync).
@@ -17960,6 +18501,11 @@ def state_sync():
     if not ctx or ctx.get("type") != "quam":
         return jsonify({"status": "error", "message": "No state loaded"}), 400
     mode = request.values.get("mode", "discard")
+    # sync-ux 2026-09-25 (user decision 2): a same-field collision is decided PER FIELD in
+    # the sync panel -- {path: "mine" | "live"}. "live" drops the user's edit at
+    # that path before the replay, so the pulled live value stands; "mine"
+    # replays it over the pull (the old ack_collision behaviour, now per field).
+    picks = _parse_picks(request.values.get("picks"))
     # "apply" writes the live chip — refuse on a read-only dataset archive
     # (pull/reapply only touch the working copy, so they stay allowed). Read
     # origin off the CAPTURED ctx, not the live-active one: a concurrent /load
@@ -18031,7 +18577,7 @@ def state_sync():
     if (mode == "apply" and request.values.get("check_collisions") == "1"
             and request.values.get("ack_collision") != "1"):
         _cv = _auto_pull_verdict(ctx, ())
-        _coll = list(getattr(_cv, "conflicts", ()) or ())
+        _coll = [c for c in (getattr(_cv, "conflicts", ()) or ()) if c not in picks]
         if _coll:
             ctx["live_diverged"] = True          # the banner names these
             ctx["live_conflicts"] = _coll
@@ -18057,11 +18603,37 @@ def state_sync():
     wc = ctx["working_copy"]
     store = ctx["store"]
 
+    # QA correctness-r2-08: a pull landing between QUAlibrate's state.json and
+    # wiring.json writes adopted a pair that never existed (wiring wired to a
+    # port the new state had removed) and recorded it as a version. Every pull
+    # door (Take live, re-apply, Pull & apply) asks first when the live pair
+    # has port references that dangle NOW but did not in the pair SM holds --
+    # its own token (`ack_torn`), never implied by force (docs/41).
+    if request.values.get("ack_torn") != "1":
+        _torn = _live_pair_torn(ctx)
+        if _torn:
+            _p0, _v0 = next(iter(_torn.items()))
+            return jsonify({
+                "status": "torn_live", "mode": mode,
+                "paths": [f"{k} -> {v}" for k, v in list(_torn.items())[:6]],
+                "count": len(_torn),
+                "message": (
+                    "The live chip looks mid-save: wiring.json still points "
+                    f"{_p0.removeprefix('wiring.')} at {_v0}, which state.json no longer defines"
+                    + (f" (and {len(_torn) - 1} more)" if len(_torn) > 1 else "")
+                    + ". QUAlibrate writes state.json first and wiring.json "
+                      "right after, so this usually settles in a moment."),
+            })
+
     # The user's edits to re-apply = whatever is stashed (saved edits the change
     # log no longer holds) plus any still-unsaved change-log edits, with the
     # latter winning per path. Snapshot BEFORE the sync's reload clears them.
     with store._lock:
         pending = _merge_reapply(_pending_reapply(), _capture_change_log_as_updates(store))
+    _use_live = [p for p, side in picks.items() if side == "live"]
+    if _use_live and mode in ("apply", "reapply"):
+        pending = {k: v for k, v in pending.items()
+                   if not any(k == p or k.startswith(p + ".") for p in _use_live)}
 
     # Build lock: sync_from_live rewrites the working folder and advances the
     # (mtime, mtime, hash) sync point on the SAME WorkingCopy a concurrent
@@ -18088,7 +18660,30 @@ def state_sync():
         # (safe_io's torn-pair refusal → ValueError → 500). Matches the
         # State-History callers, which already hold the lock across the rebuild.
         with build_lock:
+            # QA correctness-r2-03: Take live (mode=discard) DESTROYS every
+            # pending edit, and two windows share one change log -- a press
+            # made against a screen showing 0 edits dropped the other
+            # window's typed value, unjournaled and unnamed. The presser's
+            # declared view (seen_changes/seen_sig, docs/120/179) is asked
+            # about here, under the build lock right before the pull (the
+            # F5 discipline: sampled at the door, not before it). Only the
+            # DESTRUCTIVE pull: reapply keeps every edit and stays one click
+            # (test_a_pull_is_never_gated), and a screen that saw the whole
+            # set is byte-identical to before. Answered by `ack_unseen`
+            # alone, never force (docs/41).
+            if mode == "discard":
+                _unseen = _unseen_edit_refusal(ctx)
+                if _unseen is not None and not _unseen.get("nothing_pending"):
+                    return jsonify(_discard_unseen_body(_unseen)), 409
             _pre_leaves = _leaf_snapshot(ctx)
+            # sync-ux 2026-09-25 (user decision 4): ↓ Take live used to drop the pending
+            # edits for good. It keeps a backup first -- a labelled History
+            # version of the working copy AS SHOWN (edits included) plus the
+            # edits themselves, which "↶ Bring back" replays on top of the new
+            # live. Only when there is something to lose.
+            backup = None
+            if mode == "discard" and (pending or ctx.get("working_dirty")):
+                backup = _take_live_backup(ctx, store, pending)
             working_copy.sync_from_live(wc)
             pulled_other_changes = (_pre_sync_hash is not None
                                     and wc.synced_live_hash != _pre_sync_hash)
@@ -18125,6 +18720,9 @@ def state_sync():
         "mode": mode,
         "tray_html": _tray_html(),
         "replay": replay,
+        # sync-ux 2026-09-25: what Take live kept, so the control can say so
+        "backup": ({"n": backup["n"], "snapshot": backup.get("snapshot")}
+                   if backup else None),
         **_sync_patch(ctx, _pre_leaves),
     })
 
@@ -18238,6 +18836,16 @@ def _sync_pull_apply_to_live(ctx, replay, *, pulled_other_changes=False,
         except Exception:
             logger.warning("Pre-apply snapshot failed", exc_info=True)
 
+    # QA correctness-r2-01, the twin: a forced push with no backup of existing
+    # live content is refused here too (dataset "Apply to chip" forces over a
+    # drift and promises "Reversible").
+    if force and not walk and not pre_apply_ts and _live_files_present(wc):
+        logger.warning("Refusing a forced pull-apply of %s: no pre-apply "
+                       "backup could be taken", ctx.get("path"))
+        ctx["live_diverged"] = True
+        return jsonify({"status": "error", "conflict": "no_backup",
+                        "message": _UNBACKED_OVERWRITE_MSG}), 409
+
     _before_tree = None
     try:
         with _active_wc_lock(ctx):
@@ -18338,6 +18946,44 @@ def _sync_pull_apply_to_live(ctx, replay, *, pulled_other_changes=False,
     })
 
 
+def _live_files_present(wc) -> bool:
+    """True when the live folder holds state.json or wiring.json (os.stat only).
+
+    The line between "there is nothing on the live chip to lose" (a folder
+    that is gone, docs/86 point 7 -- the user may still write the working
+    state there) and "there IS content, SM just could not read it"."""
+    lf = Path(wc.live_folder)
+    return (lf / "state.json").exists() or (lf / "wiring.json").exists()
+
+
+_UNBACKED_OVERWRITE_MSG = (
+    "Nothing was written — SM could not back up the live chip first (its "
+    "files could not be read: a save in progress, or a UTF-8 BOM), and "
+    "without that backup the overwrite could not be undone. Retry once the "
+    "other program has finished saving.")
+
+
+_LIVE_MOVED_DURING_CONFIRM_MSG = (
+    "Nothing was written — the live chip changed again while the confirm was "
+    "open, so it no longer holds what the confirm named. Asking again with the "
+    "new count.")
+
+
+def _keep_mine_reask(ctx, store):
+    """The conflict tray + a status line + ``keepMineReask``, which makes the
+    page re-run the Keep-mine preflight and confirm with the NEW count
+    (QA correctness-r2-09)."""
+    _msg = render_template("_status.html", level="warning",
+                           message=_LIVE_MOVED_DURING_CONFIRM_MSG)
+    resp = make_response(
+        _conflict_tray(ctx, store, staged_conflict=bool(ctx.get("working_dirty")) and (
+            bool(ctx.get("staged_base")) or not ctx.get("pending_reapply")))
+        + "\n" + f'<div id="status-bar" hx-swap-oob="innerHTML">{_msg}</div>')
+    resp.headers["HX-Trigger"] = json.dumps({"liveDriftChanged": True,
+                                             "keepMineReask": True})
+    return resp
+
+
 @bp.route("/state/apply-to-live", methods=["POST"])
 def state_apply_to_live():
     """Push the working copy's state + wiring to the live chip.
@@ -18374,6 +19020,9 @@ def state_apply_to_live():
     store = ctx["store"]
     saver = ctx["saver"]
     force = request.values.get("force") == "1"
+    # QA correctness-r2-09: "Keep mine" hands back the live content hash its
+    # confirm counted; a forced push is held to it (absent -> unchanged).
+    expect_live_hash = (request.values.get("expect_live_hash") or None) if force else None
     # docs/117: an armed session turns THIS route into the auto-apply writer.
     # It is still the only thing that writes live; the session just presses it.
     _auto = _auto_apply_state(ctx)
@@ -18424,8 +19073,24 @@ def state_apply_to_live():
     # "revert last apply" means "put back what the chip held when I armed it"
     # (the user's own choice; per-change revert is the applied log's X). Taking
     # it once is also what stops a 10-minute session writing 200 full snapshots.
-    pre_apply_ts = (_auto or {}).get("pre_ts")
-    if not pre_apply_ts:
+    if expect_live_hash is not None:
+        # QA correctness-r2-09: the live chip moved while the Keep-mine
+        # confirm was open -- the user consented to replacing the values it
+        # named, not these. Nothing is written; the page asks again with the
+        # new count (keepMineReask). Checked before the backup, so a refused
+        # push records no version.
+        try:
+            _now = working_copy.content_hash(*working_copy.read_live(wc))
+        except (OSError, ValueError):
+            _now = None
+        if _now != expect_live_hash:
+            ctx["live_diverged"] = True
+            if request.headers.get("Accept", "").startswith("application/json"):
+                return jsonify(ok=False, conflict="live_moved",
+                               message=_LIVE_MOVED_DURING_CONFIRM_MSG), 409
+            return _keep_mine_reask(ctx, store)
+
+    def _take_pre_apply_backup():
         try:
             _hm = _history()
             _pre = _hm.check_and_snapshot(
@@ -18433,21 +19098,98 @@ def state_apply_to_live():
                 defer_index=not current_app.config.get("TESTING"),
                 project=_scope_for(ctx["path"], ctx))
             if _pre is not None:
-                pre_apply_ts = _pre.timestamp
-            else:
-                pre_apply_ts = _hm.snapshot_ts_for_current_content(ctx["path"])
+                return _pre.timestamp
+            return _hm.snapshot_ts_for_current_content(ctx["path"])
         except Exception:
             logger.warning("Pre-apply snapshot failed", exc_info=True)
+            return None
+
+    pre_apply_ts = (_auto or {}).get("pre_ts")
+    # QA F5: an UNFORCED push onto a live chip that moved since the sync point
+    # never writes -- apply_to_live refuses it (StaleLiveError) or finds live
+    # already holding the payload (the docs/116 adopt). The backup used to be
+    # taken first anyway, so every refused Apply recorded a BACKUP version for
+    # a write that never happened. Take it only once the write is certain:
+    # before the call when live has not moved (the common case, unchanged),
+    # after it for the adopt (so Revert last apply arms exactly as before).
+    _backup_deferred = False
+    try:
+        _live_moved = (not force) and working_copy.live_changed(wc)
+    except OSError:
+        # live files missing/unstatable: apply_to_live below says so in its
+        # own honest error; this pre-check must not turn it into a bare 500
+        _live_moved = False
+    if not pre_apply_ts:
+        if _live_moved:
+            _backup_deferred = True
+        else:
+            pre_apply_ts = _take_pre_apply_backup()
         if _auto is not None and pre_apply_ts:
             _auto["pre_ts"] = pre_apply_ts
+
+    # QA correctness-r2-01: a FORCED push skips every staleness check, so the
+    # pre-apply backup above is the only thing standing between it and the
+    # content it overwrites -- and "Keep mine" promises that backup ("the
+    # current live state is snapshotted first, so Revert last apply undoes
+    # this"). With the live pair unreadable (a QUAlibrate save caught mid-write,
+    # a BOM-encoded save) neither capture returns anything, and this used to
+    # write anyway: the outside values ended up in no version and no Revert was
+    # offered. Refuse instead, exactly like restore-live ("Aborted so the
+    # restore stays reversible"). A folder with NO live files has nothing to
+    # lose and still proceeds (docs/86 point 7). The edits stay saved in the
+    # working copy and the conflict tray re-offers the choice.
+    if force and not pre_apply_ts and _live_files_present(wc):
+        logger.warning("Refusing a forced apply-to-live of %s: no pre-apply "
+                       "backup could be taken", ctx.get("path"))
+        ctx["live_diverged"] = True
+        if request.headers.get("Accept", "").startswith("application/json"):
+            return jsonify(ok=False, conflict="no_backup",
+                           message=_UNBACKED_OVERWRITE_MSG), 409
+        _err = render_template("_status.html", level="error",
+                               message=_UNBACKED_OVERWRITE_MSG)
+        resp = make_response(
+            _conflict_tray(ctx, store, staged_conflict=bool(ctx.get("working_dirty")) and (
+                bool(ctx.get("staged_base")) or not ctx.get("pending_reapply")))
+            + "\n" + f'<div id="status-bar" hx-swap-oob="innerHTML">{_err}</div>')
+        # (no banner OOB: the conflict tray above already offers the three
+        # choices -- a banner beside it only repeated them)
+        resp.headers["HX-Trigger"] = "liveDriftChanged"
+        return resp
 
     _before_tree = None
     try:
         with _active_wc_lock(ctx):
-            if ctx.get("staged_base"):                  # docs/160 B (see the sync twin)
+            # docs/160 B (see the sync twin). QA correctness-r2-10: a FORCED
+            # push ("Keep mine -- overwrite live") also overwrites content the
+            # change log never saw -- the outside values it replaces -- so it
+            # needs the same "before" tree to be journaled.
+            if ctx.get("staged_base") or force:
                 _before_tree = _live_merged_tree(wc)
-            working_copy.apply_to_live(wc, force=force)
+            # the hash rides along ONLY when the Keep-mine confirm sent one:
+            # every other push keeps the exact call it always made
+            working_copy.apply_to_live(
+                wc, force=force,
+                **({"expect_live_hash": expect_live_hash} if expect_live_hash else {}))
     except working_copy.StaleLiveError:
+        if expect_live_hash is not None and _auto is None:
+            # QA correctness-r2-09: the tight re-check inside apply_to_live --
+            # a write landed between the check above and the write
+            ctx["live_diverged"] = True
+            if request.headers.get("Accept", "").startswith("application/json"):
+                return jsonify(ok=False, conflict="live_moved",
+                               message=_LIVE_MOVED_DURING_CONFIRM_MSG), 409
+            return _keep_mine_reask(ctx, store)
+        # QA F5: the refusal is a verdict about the LIVE chip, so it lives in
+        # ctx like every other one -- the conflict fragment alone was the only
+        # record, and any re-render (a reload, another page) dropped it. From
+        # the content hash, not the mtime: a save that changed nothing must
+        # not raise a banner that nothing would ever lower (raise-only while
+        # the working copy holds edits).
+        try:
+            if working_copy.live_diverged_now(wc):
+                ctx["live_diverged"] = True
+        except Exception:  # noqa: BLE001 — an advisory flag, never a failure
+            logger.debug("post-conflict divergence verdict failed", exc_info=True)
         if request.headers.get("Accept", "").startswith("application/json"):
             # docs/172: a machine caller must not read the conflict fragment
             # as success -- nothing was written (apply_to_live raises first).
@@ -18545,12 +19287,28 @@ def state_apply_to_live():
             return _auto_disarm_response(ctx, _body, "error", status=500)
         return _body, 500
 
+    if _backup_deferred and not pre_apply_ts:
+        # QA F5: the deferred case landed -- the adopt (live already held the
+        # payload), so the "pre-apply" content is what live holds now
+        pre_apply_ts = _take_pre_apply_backup()
+        if _auto is not None and pre_apply_ts:
+            _auto["pre_ts"] = pre_apply_ts
     _set_working_dirty(False, ctx)
     _auto_apply_landed(ctx)          # docs/187 R1 -- one helper, both doors
     if _auto is not None:
         _journal_mark_landed(ctx, _jrn_units)   # QA liveedit-r2-17: it landed
     if ctx.get("staged_base"):
         _journal_wholesale_commit(ctx, _before_tree, "apply-staged", edit_units=_jrn_units)   # docs/160 B
+    elif force:
+        # QA correctness-r2-10: Keep mine over an already-applied edit is a
+        # force push with an EMPTY change log, so it journaled nothing -- and
+        # Ctrl+Z right after it walked past it to the older edit unit and wrote
+        # the pre-edit value to live: neither the outside value Keep mine
+        # replaced nor the user's. Record what it overwrote (the chip's values
+        # before -> the working state) as its own unit, on top, so Ctrl+Z undoes
+        # the Keep mine first. Nothing differs -> no unit (a plain conflict
+        # resolution that overwrote nothing stays invisible, as before).
+        _journal_wholesale_commit(ctx, _before_tree, "force-overwrite", edit_units=_jrn_units)
     ctx["staged_base"] = False   # the staged content reached live (audit-r10)
     _clear_reapply(ctx)  # the edits are now on the live chip — nothing left to re-apply
     ctx["live_diverged"] = False  # live now holds the working content (incl. force)
@@ -18640,6 +19398,65 @@ def state_apply_to_live():
     return resp
 
 
+@bp.route("/state/revert-last-apply/preflight")
+def state_revert_last_apply_preflight():
+    """What "↺ Revert this session" rolls back, fetched ON CLICK (QA r2-06).
+
+    Under an armed Auto-Sync push the tray's revert stages the SESSION anchor
+    -- the chip as it was when the session started -- and the armed push
+    writes it within a second. A value the session pulled from the live chip
+    in between (a calibration node's T2) is part of that difference, so it was
+    rolled back as well, silently, under a confirm that promised "You review it
+    first". This names it before the press: the leaves the revert changes,
+    split into the ones this session applied (its applied-log units) and the
+    ones that came from the live chip.
+
+    Reads the anchor snapshot (SM's own history) and the working copy on
+    screen; never the live files (docs/28).
+    """
+    ctx = _active_ctx()
+    if not ctx or ctx.get("type") != "quam":
+        return jsonify({"ok": False, "message": "No state loaded"}), 400
+    pre_ts = (ctx.get("last_apply") or {}).get("pre_ts")
+    if not pre_ts:
+        return jsonify({"ok": False, "message": "There is no apply to revert."}), 409
+    sess = _auto_apply_state(ctx)
+    out = {"ok": True, "pre_ts": pre_ts, "push_armed": bool(sess),
+           "mine_n": 0, "outside_n": 0, "outside": [], "unknown": False}
+    try:
+        before, t1 = json_diff.flatten(_history().load_snapshot(ctx["path"], pre_ts).merged)
+        after, t2 = json_diff.flatten(ctx["store"].merged)
+    except Exception:  # noqa: BLE001 — the confirm then says it cannot tell
+        logger.info("revert preflight could not diff the anchor", exc_info=True)
+        before = after = None
+        t1 = t2 = True
+    if t1 or t2 or before is None:
+        out["unknown"] = True
+        return jsonify(out)
+    changed = sorted(k for k in set(before) | set(after)
+                     if k not in before or k not in after or _differs(before[k], after[k]))
+    # this session's own writes: the applied-log units since it armed
+    since = float((sess or {}).get("armed_at") or 0.0)
+    mine: set[str] = set()
+    for u in ctx.get("undo_units") or []:
+        meta = u.get("meta") or {}
+        if not (meta.get("src") == "auto" or meta.get("auto")):
+            continue
+        if float(u.get("ts") or 0.0) < since:
+            continue
+        mine.update(str(e["path"]) for e in (u.get("entries") or []) if e.get("path"))
+
+    def _is_mine(k: str) -> bool:
+        return any(k == m or k.startswith(m + ".") or m.startswith(k + ".") for m in mine)
+
+    outside = [k for k in changed if not _is_mine(k)]
+    out["mine_n"] = len(changed) - len(outside)
+    out["outside_n"] = len(outside)
+    out["outside"] = [{"path": k, "now": _fmt_msg_val(after.get(k)),
+                       "back_to": _fmt_msg_val(before.get(k))} for k in outside[:5]]
+    return jsonify(out)
+
+
 @bp.route("/state/overwrite-live/preflight")
 def state_overwrite_live_preflight():
     """Everything the "keep mine, overwrite live" confirm needs, in one call.
@@ -18666,13 +19483,30 @@ def state_overwrite_live_preflight():
 
     store = ctx["store"]
     live_changes = None
+    live_hash = None
+    live_paths: list = []
+    replaced = None
     try:
         live_state, live_wiring = working_copy.read_live(ctx["working_copy"])
-        live_changes = len(Differ().diff(store, (live_state, live_wiring),
-                                         ignore_keys=set()))
-    except (FileNotFoundError, OSError, ValueError):
+        # SE-07: count what the LIVE chip changed (someone else wrote it), not
+        # every difference -- the user's own pending edits differ from live
+        # too, and were being announced as values "an experiment program"
+        # wrote. Same judgment as the status control (_store_sync_live).
+        _facts, _entries, _v = _store_sync_live(ctx, live_state, live_wiring)
+        _moved_paths = list(_facts.get("conflicts") or []) + list(_facts.get("external") or [])
+        live_changes = len(_moved_paths) if _facts.get("moved") else 0
+        live_paths = _moved_paths[:8] if _facts.get("moved") else []
+        replaced = len(_entries)
+        live_hash = working_copy.content_hash(live_state, live_wiring)
+    except (FileNotFoundError, OSError, ValueError, safe_io.LiveFileError):
         logger.info("overwrite-live preflight could not read the live files",
                     exc_info=True)
+    # QA correctness-r2-01: "unreadable" (files there, content unknown -- the
+    # push will refuse unless it can back them up by then) is a different
+    # sentence from "missing" (nothing on the live chip to lose).
+    live_read = ("ok" if live_changes is not None
+                 else "unreadable" if _live_files_present(ctx["working_copy"])
+                 else "missing")
 
     # A run writing this chip right now would simply re-write whatever we push
     # the moment its node finishes — worth saying, never worth blocking (the
@@ -18710,14 +19544,25 @@ def state_overwrite_live_preflight():
     return jsonify({
         "ok": True,
         "live_changes": live_changes,
+        # SE-07: which fields those are, and how many values the push changes
+        # on the live chip in total (the user's own edits included)
+        "live_paths": live_paths,
+        "replaced": replaced,
         "unsaved": unsaved,
         "hand_tuned": marked,
         # QA diagnostics-r2-04: one more clause for the SAME confirm
         "crash_values": _crash_values_on_chip(store),
         # The push snapshots the pre-apply live first, which is what powers the
         # tray's "Revert last apply" — so this is a reversible action and the
-        # confirm should say so.
-        "reversible": True,
+        # confirm should say so. QA correctness-r2-01: only when the live read
+        # worked -- an unreadable pair cannot be snapshotted (the push then
+        # refuses), and a missing one has nothing to revert to.
+        "reversible": live_changes is not None,
+        "live_read": live_read,
+        # QA correctness-r2-09: the content this count was taken from; the
+        # push hands it back so a write landing while the confirm is open is
+        # refused and asked about, never overwritten unnamed
+        "live_hash": live_hash,
         "run_active": bool(run_active),
         "run_label": run_label,
     })
@@ -26760,6 +27605,13 @@ def dataset_load_state(uid):
                 uid, ctx["path"])
 
     if apply_req:
+        # QA F1: which history dir files this chip BEFORE the push -- a run
+        # whose state names another chip (extras.chip_name) moves it, and the
+        # result line must say so (State History then lists the other name).
+        try:
+            _key_before = _history().resolve_chip_dir(ctx["path"])[1]
+        except Exception:  # noqa: BLE001 — an advisory, never a blocker
+            _key_before = None
         # docs/108 one-click: push the just-staged snapshot through the SHARED
         # apply core — same pre-apply snapshot (arms ↺ Revert last apply),
         # same staleness handling, same bookkeeping as the ⚡ button.
@@ -26782,10 +27634,19 @@ def dataset_load_state(uid):
                           "those changes were overwritten (the run's state "
                           "wins).")
         if status == "ok":
+            ident_note = ""
+            try:
+                _key_after = _history().resolve_chip_dir(ctx["path"])[1]
+                if _key_before and _key_after and _key_after != _key_before:
+                    ident_note = (f" Its state names another chip, so State "
+                                  f"History now files this folder as "
+                                  f"{_key_after} (was {_key_before}).")
+            except Exception:  # noqa: BLE001
+                pass
             msg = render_template(
                 "_status.html",
                 message=(f"Run #{run_id}'s state is now LIVE on {chip_label}."
-                         + drift_note + replaced_note
+                         + drift_note + replaced_note + ident_note
                          # docs/198: it STAGES -- the chip moves on the
                          # following Apply, not on this press. Saying
                          # "restores" made a correct staging read as a
@@ -26798,7 +27659,11 @@ def dataset_load_state(uid):
                            "stages the pre-apply state; Apply puts it "
                            "back on the chip."),
                 level="success")
-            resp = make_response(msg + "\n" + _tray_oob())
+            # QA F1 (verification): live now holds the run's state, so a drift
+            # banner raised before the press ("you may be viewing an older
+            # chip") is answered -- take it down in place, like the tray's own
+            # apply does (QA liveedit-r2-07 review)
+            resp = make_response(msg + "\n" + _tray_oob() + _diverged_oob())
             resp.headers["HX-Trigger"] = _state_restored_trigger(ctx, _pre_leaves)
             return resp
         # error — the staging succeeded; say exactly how far things got.

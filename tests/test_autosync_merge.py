@@ -300,10 +300,17 @@ class TestTheClientPressesTheDoorItIsGiven:
         """A cross-file fact: the automatic merge must press the SAME thing the
         conflict tray's primary button offers a human."""
         root = Path(__file__).resolve().parents[1] / "quam_state_manager" / "web"
-        tray = (root / "templates" / "_state_apply_conflict.html").read_text(encoding="utf-8")
+        # sync-ux 2026-09-25 (user decision: one control + one panel): the conflict tray's buttons moved into the
+        # panel and onto the control -- the SAME door must still be what a
+        # human is offered there: the control's attached ⇄ Pull & apply and the
+        # panel's merge (SyncPanel.merge -> doStateSync("apply", ...)).
+        ctl = (root / "templates" / "_sync_control.html").read_text(encoding="utf-8")
+        app = (root / "static" / "app.js").read_text(encoding="utf-8")
         js = (root / "static" / "auto-apply.js").read_text(encoding="utf-8")
-        assert "doStateSync('apply')" in tray, (
-            "the tray no longer offers the merge the automatic path presses")
+        assert "doStateSync('apply')" in ctl, (
+            "the control no longer offers the merge the automatic path presses")
+        m = app.index("function merge(btn)")
+        assert 'window.doStateSync("apply"' in app[m:m + 600]
         i = js.index("addEventListener('autoSyncMerge'")
         assert "doStateSync('apply'" in js[i:i + 900], js[i:i + 400]
 
@@ -1180,8 +1187,9 @@ class TestTheBannerNamesTheCollision:
         assert env["client"].post("/auto-sync/pull").status_code == 204
 
         html = env["client"].get("/bulk").get_data(as_text=True)
-        assert "qubits.qA1.f_01" in html, "the banner must name what collided"
-        assert "changed both here and on" in html
+        # sync-ux 2026-09-25 (user decision: one control + one panel): the status control names it (the banner is gone)
+        assert "qubits.qA1.f_01" in html, "the control must name what collided"
+        assert "changed on both sides" in html and 'data-sync-state="collide"' in html
 
     def test_with_no_verdict_it_reads_exactly_as_before(self, env):
         # Nothing established a per-field verdict (no armed session), so the
@@ -1190,8 +1198,9 @@ class TestTheBannerNamesTheCollision:
         _write_chip(env["live"], _state(f01=7.7e9))
         _ctx(env)["live_diverged"] = True
         html = env["client"].get("/bulk").get_data(as_text=True)
-        assert "changed on disk" in html
-        assert "changed both here and on" not in html
+        # sync-ux 2026-09-25 (user decision: one control + one panel): the control's plain live-changed wording
+        assert "Live chip changed" in html
+        assert "changed on both sides" not in html
 
 class TestTheMergeSignalHasABudget:
     """Self-review of docs/195: the pull-side merge signal could loop.

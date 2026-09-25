@@ -78,6 +78,17 @@ def _has_qubit(html: str, name: str) -> bool:
     return f'"{name}"' in html
 
 
+_LIVE_STATES = ('data-sync-state="live"', 'data-sync-state="both"',
+                'data-sync-state="collide"')
+
+
+def _says_live_changed(html: str) -> bool:
+    """sync-ux 2026-09-25: the drift banner is gone (user decision); the ONE
+    status control says the live chip changed. Re-scoped from
+    ``"live-diverged-banner" in html``."""
+    return any(s in html for s in _LIVE_STATES) and "live-diverged-banner" not in html
+
+
 def _simulate_restart(folder: Path) -> None:
     """Drop the module-level in-memory context cache (what a process restart
     drops), leaving the on-disk working copy — door B."""
@@ -106,13 +117,13 @@ class TestRestartCleanCopy:
         # was the SILENCE, not the absence of automation, so what must hold is
         # that the user is told and is one click from the new chip.
         assert _has_qubit(html, "qA1")                 # not swapped underneath
-        assert "live-diverged-banner" in html          # ...and said so
+        assert _says_live_changed(html)               # ...and said so
         data = client2.post("/state/sync", data={"mode": "discard"}).get_json()
         assert data["status"] == "ok"
         html = _shown_qubits(client2)
         assert _has_qubit(html, "q0")                  # the NEW chip, one click away
         assert not _has_qubit(html, "qA1")
-        assert "live-diverged-banner" not in html
+        assert not _says_live_changed(html)
 
     def test_legacy_meta_replaced_shows_banner_not_clobber(self, tmp_path, live_folder):
         # Pre-fix working copies have no recorded hash: a replaced live can't
@@ -133,7 +144,7 @@ class TestRestartCleanCopy:
         client2.post("/load", data={"folder": str(live_folder)})
         html = _shown_qubits(client2)
         assert _has_qubit(html, "qA1")                 # never clobbered
-        assert "live-diverged-banner" in html          # ...but loudly flagged
+        assert _says_live_changed(html)               # ...but loudly flagged
 
         # One click: pull the live state -> new chip, banner gone.
         data = client2.post("/state/sync", data={"mode": "discard"}).get_json()
@@ -141,7 +152,7 @@ class TestRestartCleanCopy:
         html = _shown_qubits(client2)
         assert _has_qubit(html, "q0")
         assert not _has_qubit(html, "qA1")
-        assert "live-diverged-banner" not in html
+        assert not _says_live_changed(html)
 
 
 # ---------------------------------------------------------------------------
@@ -164,7 +175,7 @@ class TestRestartDirtyCopy:
         html = _shown_qubits(client2)
         assert _has_qubit(html, "qA1")
         assert "5000000000" in html                    # edit survived
-        assert "live-diverged-banner" in html
+        assert _says_live_changed(html)
 
 
 # ---------------------------------------------------------------------------
@@ -183,13 +194,13 @@ class TestInMemoryCache:
         client.post("/load", data={"folder": str(live_folder)})   # cache hit
         html = _shown_qubits(client)
         assert _has_qubit(html, "qA1")                 # not swapped underneath
-        assert "live-diverged-banner" in html
+        assert _says_live_changed(html)
         assert client.post("/state/sync",
                            data={"mode": "discard"}).get_json()["status"] == "ok"
         html = _shown_qubits(client)
         assert _has_qubit(html, "q0")
         assert not _has_qubit(html, "qA1")
-        assert "live-diverged-banner" not in html
+        assert not _says_live_changed(html)
 
     def test_unsaved_edit_preserved_on_reselect(self, tmp_path, live_folder):
         # An unsaved change-log edit exists nowhere on disk — the cached
@@ -204,7 +215,7 @@ class TestInMemoryCache:
         html = _shown_qubits(client)
         assert _has_qubit(html, "qA1")                 # old chip kept
         assert not _has_qubit(html, "q0")
-        assert "live-diverged-banner" in html          # divergence flagged
+        assert _says_live_changed(html)               # divergence flagged
         # The pending edit is still in the change log.
         assert "qubits.qA1.f_01" in client.get("/changes").data.decode()
 
@@ -217,7 +228,7 @@ class TestInMemoryCache:
         client.post("/load", data={"folder": str(live_folder)})
         html = _shown_qubits(client)
         assert _has_qubit(html, "qA1")
-        assert "live-diverged-banner" not in html
+        assert not _says_live_changed(html)
 
 
 # ---------------------------------------------------------------------------
@@ -265,6 +276,10 @@ class TestWorkingCopyGC:
 # ---------------------------------------------------------------------------
 
 class TestBannerSlot:
+    """sync-ux 2026-09-25: the base-level banner slot survives only as an
+    always-empty target (older windows / OOB swaps aimed at it stay harmless);
+    what used to be the banner is the status control, on every page."""
+
     def _make_diverged(self, tmp_path, live_folder):
         client = _app_client(tmp_path)
         client.post("/load", data={"folder": str(live_folder)})
@@ -282,21 +297,21 @@ class TestBannerSlot:
         client = self._make_diverged(tmp_path, live_folder)
         html = client.get("/explorer").data.decode()
         assert html.count('id="live-diverged-slot"') == 1
-        assert "live-diverged-banner" in html
+        assert _says_live_changed(html)
 
     def test_htmx_partial_carries_oob_slot(self, tmp_path, live_folder):
         client = self._make_diverged(tmp_path, live_folder)
         html = client.get("/explorer", headers={"HX-Request": "true"}).data.decode()
         assert 'hx-swap-oob' in html
         assert html.count('id="live-diverged-slot"') == 1
-        assert "live-diverged-banner" in html
+        assert "live-diverged-banner" not in html, "the OOB copy clears, never paints"
 
     def test_banner_visible_on_other_pages(self, tmp_path, live_folder):
-        # The slot is base-level on EVERY full page now — a diverged chip
-        # warns on /qubits too, not just the explorer.
+        # The control is base-level on EVERY full page — a diverged chip
+        # says so on /qubits too, not just the explorer.
         client = self._make_diverged(tmp_path, live_folder)
         html = client.get("/qubits").data.decode()
-        assert "live-diverged-banner" in html
+        assert _says_live_changed(html)
 
 
 class TestTheBadgeAndTheBannerAgree:
@@ -328,34 +343,38 @@ class TestTheBadgeAndTheBannerAgree:
         j = src.index("def _ctx(")
         assert '"live_diverged"' in src[j:j + 8000], "_ctx() does not stamp it"
 
+    # sync-ux 2026-09-25: the badge became the status control, rendered from
+    # core/sync_status.py's ONE verdict; the three template-source pins below
+    # were re-scoped from `_drifted = live_diverged and not _dirty` to that
+    # verdict and the control that renders it.
     def test_the_badge_has_a_third_state(self):
+        from quam_state_manager.core import sync_status
+        assert sync_status.derive_state(archive=False, unreadable=False, refused=False,
+                                        live_moved=True, conflicts=0, unapplied=0,
+                                        working_dirty=False) == "live"
         from pathlib import Path as _P
-        tpl = _P("quam_state_manager/web/templates/_pending_tray.html").read_text(
+        tpl = _P("quam_state_manager/web/templates/_sync_control.html").read_text(
             encoding="utf-8")
-        assert "_drifted = live_diverged and not _dirty" in tpl
-        assert "state-status-drifted" in tpl
-        assert "Live chip moved" in tpl
+        assert "'live': 'drifted'" in tpl        # the legacy class it keeps
+        assert "Live chip changed" in tpl
 
     def test_a_drifted_chip_is_not_called_synced(self):
         """The one sentence that must never appear on a diverged chip."""
         from pathlib import Path as _P
-        tpl = _P("quam_state_manager/web/templates/_pending_tray.html").read_text(
+        tpl = _P("quam_state_manager/web/templates/_sync_control.html").read_text(
             encoding="utf-8")
-        # Check the ORDER inside the title attribute itself — the same phrase
-        # also appears in this file's own explanatory comment, so a bare
-        # str.index over the whole template compares the wrong occurrences.
-        line = next(l for l in tpl.splitlines() if 'title="{% if _archive %}' in l)
-        assert line.index("_drifted") < line.index(
-            "Working state matches the live chip"), (
-            "the synced claim must sit in the FINAL else, after the drift branch")
+        i = tpl.index("'live': (")
+        assert "In sync" not in tpl[i:tpl.index("\n", i)]
+        assert "'synced': ('In sync'" in tpl
 
     def test_local_edits_still_win_the_label(self):
-        """A user's own unapplied edits stay the headline — drift is only the
-        verdict when there is nothing of theirs to report."""
-        from pathlib import Path as _P
-        tpl = _P("quam_state_manager/web/templates/_pending_tray.html").read_text(
-            encoding="utf-8")
-        assert "live_diverged and not _dirty" in tpl
+        """A user's own unapplied edits stay the headline — a plain drift is
+        only the verdict when there is nothing of theirs to report."""
+        from quam_state_manager.core import sync_status
+        st = sync_status.derive_state(archive=False, unreadable=False, refused=False,
+                                      live_moved=True, conflicts=0, unapplied=2,
+                                      working_dirty=False)
+        assert st == "both"
 
     def test_the_drifted_badge_is_not_styled_as_success(self):
         from pathlib import Path as _P

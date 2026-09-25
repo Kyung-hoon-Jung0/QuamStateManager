@@ -163,7 +163,7 @@ class TestLiveWalk:
         with env["app"].app_context():
             rows = routes_mod._applied_log_rows()
         assert rows[0]["reverted_by"] == "undo"
-        assert ">undone<" in c.get("/state/tray").get_data(as_text=True)
+        assert ">undone<" in c.get("/state/review").get_data(as_text=True)   # sync-ux 2026-09-25 (user decision: one control + one panel):
         r = c.post("/auto-apply/revert", data={"unit_id": uid})
         assert r.status_code == 409 and b"already undone" in r.data
         c.post("/redo")                                        # back on the chip → the row is live again
@@ -1254,6 +1254,10 @@ class TestFinalReviewWalk:
         trig = _trig(r)
         assert trig.get("liveDriftChanged") is True, "the refusal must refresh the drift banner"
         assert _live_off(env) == 0.99, "the chip was correctly left untouched"
+        # SE-06 (sync-ux 2026-09-25): the words name the surface that exists --
+        # the status control -- never the removed drift banner
+        msg = trig["cellsReverted"]["message"]
+        assert "banner" not in msg and "sync status in the top bar" in msg, msg
 
     def test_a_redo_over_a_skipped_unit_reports_the_consumed_step(self, env, monkeypatch):
         """F-BURST-SKIP: redoing over a skipped (too-large/empty) unit moves the
@@ -1460,3 +1464,144 @@ def _sidecar_app(app):
     files = sorted((Path(app.instance_path) / "working_state").glob("*.undo_journal.json"))
     assert files, "no journal sidecar"
     return files[0]
+
+
+class TestKeepMineIsJournaled:
+    """QA correctness-r2-10: Keep mine over an already-applied edit is a force
+    push with an EMPTY change log. It journaled nothing, so Ctrl+Z right after
+    it walked to the OLDER edit unit and wrote the pre-edit value to live --
+    neither the outside value Keep mine replaced nor the user's."""
+
+    def _outside(self, env, off):
+        _write_chip(env["live"], _state(off=off))
+
+    def test_ctrl_z_after_keep_mine_brings_back_what_it_overwrote(self, env):
+        c = env["client"]
+        _edit(c, 0.09)                       # A=0.08 -> B=0.09
+        _apply(c)
+        assert _live_off(env) == 0.09
+        self._outside(env, 0.33)             # a node writes C
+        assert c.post("/state/apply-to-live?force=1").status_code == 200   # Keep mine
+        assert _live_off(env) == 0.09
+        top = (_ctx(env).get("undo_units") or [])[-1]
+        assert top["meta"]["src"] == "force-overwrite"
+        assert [(e["path"], e["old"], e["new"]) for e in top["entries"]] == \
+            [("qubits.qA1.z.joint_offset", 0.33, 0.09)]
+        r = c.post("/undo")
+        assert r.status_code == 200, r.data
+        assert _live_off(env) == 0.33, "Ctrl+Z must undo the Keep mine, not the edit before it"
+
+    def test_a_force_push_that_overwrote_nothing_adds_no_unit(self, env):
+        c = env["client"]
+        _edit(c, 0.09)
+        _apply(c)
+        n = len(_ctx(env).get("undo_units") or [])
+        assert c.post("/state/apply-to-live?force=1").status_code == 200
+        assert len(_ctx(env).get("undo_units") or []) == n
+
+    def test_keep_mine_with_a_pending_edit_composes(self, env):
+        """edit unit on top (edited -> pre-edit), the overwrite below it
+        (pre-edit -> the outside value): two Ctrl+Z give the chip back."""
+        c = env["client"]
+        self._outside(env, 0.33)             # live moved; working still 0.08
+        _edit(c, 0.11)                       # pending tray edit
+        assert c.post("/state/apply-to-live?force=1").status_code == 200
+        assert _live_off(env) == 0.11
+        assert c.post("/undo").status_code == 200
+        assert _live_off(env) == 0.08
+        assert c.post("/undo").status_code == 200
+        assert _live_off(env) == 0.33
+
+
+class TestADriftedStepSaysItOnce:
+    """QA SU-09: a Ctrl+Z whose journal value had moved since (an Auto-Sync
+    pull landed in between) toasted the drift twice ("had moved since; ...
+    — staged only: the value had moved since — ...", a 108-px toast), and its
+    Δ was measured from the JOURNAL's recorded value instead of the value on
+    screen, so the toast's percentage disagreed with the tray's."""
+
+    def _drifted_step(self, env):
+        c = env["client"]
+        _edit(c, 0.10); _apply(c)                  # journal: 0.08 -> 0.10
+        ctx = _ctx(env)
+        wc = ctx["working_copy"]
+        for folder in (wc.working_folder, env["live"]):   # a pull brings 0.20
+            (Path(folder) / "state.json").write_text(json.dumps(_state(off=0.20)), encoding="utf-8")
+        with env["app"].app_context():
+            routes_mod._rebuild_after_working_copy_replaced(ctx)
+        c.post("/state/sync", data={"mode": "pull"})
+        return _trig(c.post("/undo"))["cellsReverted"]
+
+    def test_the_drift_is_named_once(self, env):
+        t = self._drifted_step(env)
+        assert t["live"] is False
+        assert t["message"].count("moved since") == 1, t["message"]
+
+    def test_the_delta_is_from_the_value_on_screen(self, env):
+        from quam_state_manager.core import value_delta
+        t = self._drifted_step(env)
+        on_screen = value_delta.compute(0.20, 0.08)["pct_text"]      # -60%
+        journal = value_delta.compute(0.10, 0.08)["pct_text"]        # -20%
+        assert on_screen in t["message"] and journal not in t["message"], t["message"]
+
+
+# ======================================================================
+# QA F1 (windows): the ↶ names the journal step, and the other window hears
+# ======================================================================
+
+class TestTheButtonNamesTheLiveStep:
+    """Window B's ↶ read "Undo typed edit (anharmonicity)" (a committed,
+    applied entry of its own) while the press rewrote window A's applied
+    q1.chi on the LIVE chip; A's own ↶ was hidden. With nothing pending the
+    tray now carries the journal step it would walk, and a live undo leaves
+    a numbered record every other window's next tray render shows."""
+
+    def _tray(self, c):
+        return c.get("/state/tray").get_data(as_text=True)
+
+    def test_an_empty_log_after_apply_names_the_live_step(self, env):
+        c = env["client"]
+        _edit(c, 0.10); _apply(c)
+        t = self._tray(c)
+        assert 'data-jrn-what="qubits.qA1.z.joint_offset' in t
+        assert 'data-jrn-live="1"' in t and 'data-jrn-n="1"' in t
+        # the direction: from the applied value back to the one before it
+        import re
+        what = re.search(r'data-jrn-what="([^"]*)"', t).group(1)
+        assert what.index("0.1") < what.index("0.08"), what
+
+    def test_setting_off_names_a_staged_step(self, env):
+        c = env["client"]
+        _edit(c, 0.10); _apply(c)
+        _set_setting(env, False)
+        assert 'data-jrn-live="0"' in self._tray(c)
+
+    def test_pending_edits_carry_no_journal_preview(self, env):
+        c = env["client"]
+        _edit(c, 0.10); _apply(c)
+        _edit(c, 0.12)
+        assert "data-jrn-what" not in self._tray(c)
+
+    def test_nothing_to_walk_carries_none(self, env):
+        assert "data-jrn-what" not in self._tray(env["client"])
+
+    def test_a_live_undo_is_numbered_for_the_other_window(self, env):
+        c = env["client"]
+        assert "data-live-undo-seq" not in self._tray(c)
+        _edit(c, 0.10); _apply(c)
+        r = c.post("/undo")
+        t = _trig(r)["cellsReverted"]
+        assert t["live"] is True and t["live_undo_seq"] == 1
+        tray = self._tray(c)
+        assert 'data-live-undo-seq="1"' in tray
+        assert "qubits.qA1.z.joint_offset" in tray.split('data-live-undo-msg="')[1].split('"')[0]
+        _edit(c, 0.11); _apply(c)
+        assert _trig(c.post("/undo"))["cellsReverted"]["live_undo_seq"] == 2
+
+    def test_a_staged_undo_is_not_announced_as_live(self, env):
+        c = env["client"]
+        _edit(c, 0.10); _apply(c)
+        _set_setting(env, False)
+        t = _trig(c.post("/undo"))["cellsReverted"]
+        assert t["live"] is False and t.get("live_undo_seq") is None
+        assert "data-live-undo-seq" not in self._tray(c)

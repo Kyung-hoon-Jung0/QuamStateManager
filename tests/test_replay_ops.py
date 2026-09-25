@@ -164,6 +164,37 @@ class TestReplay:
         assert ops["y90_DragCosine"]["amplitude"] == "#../x180_DragCosine/amplitude"
         assert ops["x90_DragCosine"]["amplitude"] == 0.05   # never touched
 
+    def test_an_outside_relink_after_the_edit_is_not_followed(self, store, fresh_store):
+        """QA correctness-r2-07: the user set x180.length 40 -> 28 (a plain
+        value, so the capture tags it "set"); before the replay an outside
+        writer re-linked THAT leaf to x90's length. Following the new link
+        wrote 28 onto x90 -- a field the user never touched -- while the
+        edited leaf kept the pointer. The edit now lands AT the leaf the user
+        edited (their value wins, as in any same-field collision)."""
+        Modifier(store).set_value(f"{OPS}.x180_DragCosine.length", 28)
+        pending = _capture_change_log_as_updates(store)
+        assert pending[f"{OPS}.x180_DragCosine.length"][0] == "set"
+        ops = fresh_store.merged["qubits"]["qA1"]["xy"]["operations"]
+        ops["x180_DragCosine"]["length"] = "#../x90_DragCosine/length"
+        replay = _replay_updates(Modifier(fresh_store), pending)
+        assert ops["x90_DragCosine"]["length"] == 40, "another pulse was written"
+        assert ops["x180_DragCosine"]["length"] == 28
+        assert replay["applied"] == 1 and replay["failed"] == []
+
+    def test_an_outside_relink_of_a_parent_is_reported_not_followed(self, store, fresh_store):
+        """The same, one level up: the whole pulse became a link. There is no
+        leaf of the user's left to write -- report it, keep the live chip."""
+        Modifier(store).set_value(f"{OPS}.x180_DragCosine.length", 28)
+        pending = _capture_change_log_as_updates(store)
+        ops = fresh_store.merged["qubits"]["qA1"]["xy"]["operations"]
+        ops["x180_DragCosine"] = "#./x90_DragCosine"
+        fresh_store._clear_pointer_cache()
+        replay = _replay_updates(Modifier(fresh_store), pending)
+        assert ops["x90_DragCosine"]["length"] == 40, "another pulse was written"
+        assert ops["x180_DragCosine"] == "#./x90_DragCosine"
+        assert replay["applied"] == 0
+        assert [f["dot_path"] for f in replay["failed"]] == [f"{OPS}.x180_DragCosine.length"]
+
     def test_breaklink_replays_at_the_leaf(self, store, fresh_store):
         """The literal (break-link) twin: the field HELD a pointer and now
         holds a number -- it must land at the leaf, not at the old target."""

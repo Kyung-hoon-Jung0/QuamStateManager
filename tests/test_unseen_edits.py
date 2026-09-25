@@ -168,6 +168,100 @@ class TestTheOtherWindowsEditIsRefused:
         assert r.status_code == 200, r.get_data(as_text=True)
 
 
+class TestTakeLiveAsksBeforeDiscardingTheOtherWindowsEdit:
+    """QA correctness-r2-03. Window B (tray showing 0) pressed '↓ Take live'
+    88 ms after window A typed an edit; /state/sync mode=discard returned 200
+    and A's value was gone -- from the file, from every version, never
+    journaled. A pull that KEEPS edits (reapply) stays one click; the pull
+    that DESTROYS them asks when the presser could not see them."""
+
+    def _pending(self, client):
+        store = client._app.config["contexts"][client._app.config["active_context"]]["store"]
+        return [c.dot_path for c in store.change_log]
+
+    def test_discard_asks_names_the_edit_and_drops_nothing(self, app_client):
+        _edit(app_client, "qubits.q1.f_01", "6.2e9")     # the OTHER window
+        r = app_client.post("/state/sync", data={"mode": "discard",
+                                                 "seen_changes": "0"})
+        assert r.status_code == 409, r.get_data(as_text=True)
+        body = r.get_json() or {}
+        assert body["status"] == "unseen_changes" and body.get("discard") is True
+        assert "qubits.q1.f_01" in body["paths"]
+        assert "discard" in body["message"] and "cannot be undone" in body["message"]
+        assert self._pending(app_client) == ["qubits.q1.f_01"], "the edit survives"
+
+    def test_a_stale_signature_is_asked_about_too(self, app_client):
+        """docs/179: the SET, not the count -- a screen showing a different
+        change set of the same size cannot have meant this one."""
+        _edit(app_client, "qubits.q1.f_01", "6.2e9")
+        r = app_client.post("/state/sync", data={"mode": "discard",
+                                                 "seen_changes": "1",
+                                                 "seen_sig": "000000000000"})
+        assert r.status_code == 409
+        assert self._pending(app_client) == ["qubits.q1.f_01"]
+
+    def test_acknowledging_it_discards(self, app_client):
+        _edit(app_client, "qubits.q1.f_01", "6.2e9")
+        r = app_client.post("/state/sync", data={"mode": "discard",
+                                                 "seen_changes": "0",
+                                                 "ack_unseen": "1"})
+        assert r.status_code == 200, r.get_data(as_text=True)
+        assert self._pending(app_client) == []
+
+    def test_force_is_not_the_acknowledgement(self, app_client):
+        """force=1 answers the docs/65 staged-content question (docs/41)."""
+        _edit(app_client, "qubits.q1.f_01", "6.2e9")
+        r = app_client.post("/state/sync", data={"mode": "discard",
+                                                 "seen_changes": "0", "force": "1"})
+        assert r.status_code == 409
+        assert self._pending(app_client) == ["qubits.q1.f_01"]
+
+    def test_my_own_edits_are_discarded_in_one_click(self, app_client):
+        _edit(app_client, "qubits.q1.f_01", "6.2e9")
+        r = app_client.post("/state/sync", data={"mode": "discard",
+                                                 "seen_changes": "1"})
+        assert r.status_code == 200, r.get_data(as_text=True)
+        assert self._pending(app_client) == []
+
+    def test_a_screen_showing_the_exact_set_passes(self, app_client):
+        _edit(app_client, "qubits.q1.f_01", "6.2e9")
+        tray = app_client.get("/state/tray").get_data(as_text=True)
+        import re
+        sig = re.search(r'data-change-sig="([0-9a-f]*)"', tray).group(1)
+        r = app_client.post("/state/sync", data={"mode": "discard",
+                                                 "seen_changes": "1", "seen_sig": sig})
+        assert r.status_code == 200, r.get_data(as_text=True)
+
+    def test_a_caller_that_declares_nothing_is_unchanged(self, app_client):
+        _edit(app_client, "qubits.q1.f_01", "6.2e9")
+        r = app_client.post("/state/sync", data={"mode": "discard"})
+        assert r.status_code == 200
+        assert self._pending(app_client) == []
+
+    def test_an_empty_log_with_a_stale_view_is_not_a_question(self, app_client):
+        """The other window already applied/discarded: nothing would be lost."""
+        r = app_client.post("/state/sync", data={"mode": "discard",
+                                                 "seen_changes": "2",
+                                                 "seen_sig": "000000000000"})
+        assert r.status_code == 200, r.get_data(as_text=True)
+
+
+class TestTheTreeCanReadTheWorkingCopy:
+    """QA F2 (windows): the Json Tree View follows another window's edit by
+    re-reading the documents it renders -- the WORKING copy, pending edits
+    included, exactly what /explorer inlines."""
+
+    def test_model_carries_the_other_windows_edit(self, app_client):
+        _edit(app_client, "qubits.q1.f_01", "6.2e9")
+        r = app_client.get("/explorer/model")
+        assert r.status_code == 200
+        d = r.get_json()
+        assert d["ok"] is True
+        assert d["state"]["qubits"]["q1"]["f_01"] == 6.2e9
+        assert isinstance(d["wiring"], dict)
+        assert "no-store" in r.headers.get("Cache-Control", "")
+
+
 class TestTheTopBarPublishesItsRealHeight:
     """docs/120 item 23 — `--topbar-height` declared 48px while the rendered
     bar (a wrapping <nav>) measured 201px @1600, 229 @1280, 254 @1024. Every

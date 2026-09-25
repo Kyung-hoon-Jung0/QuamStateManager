@@ -40,16 +40,14 @@ class TestReviewScroll:
         assert "flex: 0 0 auto" in b
 
     def test_actions_moved_into_header(self):
-        # Close + the sync buttons live in the pinned header cluster, with the
-        # id reviewAccept()'s reveal logic still targets.
-        assert 'class="state-review-head-actions" id="state-review-actions"' in _TPL
-        # Close button is up top; the long footer "pull the live state…" label is
-        # gone — each branch's pull is a compact directional "Take live" button (docs/97).
-        assert ">Close</button>" in _TPL
-        assert "Take live" in _TPL
-        # Reveal hooks preserved.
-        assert 'class="review-sync-clean"' in _TPL
-        assert 'class="review-sync-edits"' in _TPL
+        # sync-ux 2026-09-25 (user decision: one control + one panel): the panel's ✕ sits in the pinned head, and its
+        # choices are one labelled list (#state-review-actions) whose every
+        # entry names what it loses; Take live keeps its docs/97 wording.
+        head = _TPL[_TPL.index('state-review-head'):_TPL.index('state-review-body')]
+        assert "closeReview()" in head
+        assert 'id="state-review-actions"' in _TPL
+        assert "Take live" in _TPL and "Keep mine" in _TPL
+        assert _TPL.count('class="sp-lost"') >= 5
 
     def test_all_three_sync_spans_get_display_contents(self):
         # The working_dirty data-loss-fix branch (.review-sync-saved) must flow into the

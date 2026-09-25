@@ -96,53 +96,82 @@ class TestEveryDoorDeclaresWhatItShowed:
     """A door that declares nothing has no gate. This is the check nobody had."""
 
     def test_the_trays_own_apply_button_declares_it(self, env):
+        # Since the one-status-control decision (ef07a90) the tray IS the
+        # status control, and the door it carries for a saved/staged working
+        # state is its attached "↑ Apply" (an hx-post straight to the route).
         c = env["client"]
         _stage(env, "qubits.q1.f_01", "5.1e9")
         assert c.post("/save").status_code in (200, 204)   # → working_dirty branch
         html = c.get("/state/tray").data.decode()
-        assert "Apply to live chip" in html, "the working_dirty button did not render"
-        i = html.index("Apply to live chip")
-        btn = html[max(0, i - 1400):i]
+        m = re.search(r'<button[^>]*sync-control-act[^>]*hx-post="/state/apply-to-live"[^>]*>',
+                      html)
+        assert m, "the working_dirty Apply door did not render"
+        btn = m.group(0)
         assert "seen_changes" in btn, \
             "the button people actually press declares nothing, so the gate is off on it"
         assert "seen_sig" in btn
+        with env["app"].app_context():
+            sig = routes_mod._change_log_sig(_ctx(env)["store"])
+        assert sig in btn, "the control declared a signature that is not its own"
 
-    def test_the_conflict_force_buttons_declare_it(self, env):
+    def test_the_conflict_tray_carries_no_undeclared_force_door(self, env):
         """`force=1` answers the STALENESS question. It has never meant "and
-        another window's edits too" — one token never collapses two gates."""
+        another window's edits too" -- one token never collapses two gates.
+
+        The one-status-control decision (ef07a90) emptied the refused tray of
+        its two declared force buttons; every forced choice now lives in the
+        sync panel, where the only forced door is ↑ Keep mine (its declaration
+        is pinned below and, client-side, in state_sync_selfcheck.cjs). What
+        this template still owes: publish the set it showed (doStateSync reads
+        it), and never grow back a force button that declares nothing."""
         from flask import render_template
-        # BOTH branches. `staged_conflict` picks one of two mutually exclusive
-        # force buttons, so a render of one says nothing about the other -- and
-        # counting `seen_sig` against a number taken from that same render is
-        # an assertion about itself. Rendering only the else-branch is how the
-        # if-branch's button lost its declaration with every pin still green.
-        offered = 0
         for staged in (True, False):
             with env["app"].test_request_context():
                 html = render_template("_state_apply_conflict.html",
                                        change_count=2, change_sig="abc123",
                                        staged_conflict=staged)
-            # Per BUTTON, not per document. docs/187 R3 made the tray ROOT
-            # publish data-change-sig too (that is how the automatic merge
-            # declares its change set), so a global count of the signature is
-            # n+1 and says nothing about the buttons.
-            btns = [html[m:] for m in _find_all(html, "apply-to-live?force=1")]
-            n = len(btns)
-            assert n >= 1, (
-                "no force button rendered with staged_conflict=%r" % staged)
-            offered += n
-            for b in btns:
-                # the element's own attribute block: up to its closing '>'
-                block = b[:b.index(">")]
-                assert "seen_sig" in block, (
+            assert 'data-change-sig="abc123"' in html, staged
+            for i in _find_all(html, "apply-to-live?force=1"):
+                block = html[i:html.index(">", i)]
+                assert "seen_sig" in block and "abc123" in block, (
                     "a force button that declares nothing is an ungated door "
                     "(staged_conflict=%r): %r" % (staged, block[:200]))
-                assert "abc123" in block, (
-                    "a force button declared a signature that is not this "
-                    "screen's (staged_conflict=%r): %r" % (staged, block[:200]))
-        assert offered >= 2, (
-            "both conflict branches must offer a force button, or this pin is "
-            "only watching one door")
+
+    def test_the_panel_publishes_the_set_keep_mine_declares(self, env):
+        """↑ Keep mine -- overwrite live is a FORCED push from the sync panel.
+        The client reads the set it declares from the panel it sits in, so the
+        panel must publish the set it rendered -- through the REAL route."""
+        c = env["client"]
+        _stage(env, "qubits.q1.f_01", "5.1e9")
+        html = c.get("/state/review").data.decode()
+        assert "sp-keep" in html, "Keep mine did not render"
+        root = re.search(r'<div class="state-review sync-panel"[^>]*>', html).group(0)
+        with env["app"].app_context():
+            sig = routes_mod._change_log_sig(_ctx(env)["store"])
+        assert 'data-change-count="1"' in root, root
+        assert 'data-change-sig="%s"' % sig in root, root
+
+    def test_keep_mines_declared_push_is_stopped_by_another_windows_edit(self, env):
+        """End to end on the server: the panel showed q1 only; another window
+        then stages q3; the forced push that declares the panel's set is
+        refused (409 unseen_changes) and writes nothing. Without the
+        declaration the same forced push wrote q3 onto the live chip."""
+        c = env["client"]
+        _stage(env, "qubits.q1.f_01", "5.1e9")
+        root = re.search(r'<div class="state-review sync-panel"[^>]*>',
+                         c.get("/state/review").data.decode()).group(0)
+        n = re.search(r'data-change-count="([^"]*)"', root).group(1)
+        sig = re.search(r'data-change-sig="([^"]*)"', root).group(1)
+        _stage(env, "qubits.q3.T1", "9.9e-5")                 # the other window
+        r = c.post("/state/apply-to-live?force=1&seen_changes=%s&seen_sig=%s" % (n, sig))
+        assert r.status_code == 409, r.data[:300]
+        d = r.get_json()
+        assert d["status"] == "unseen_changes" and "qubits.q3.T1" in d["paths"], d
+        assert _live(env)["qubits"]["q3"]["T1"] == 2.3e-5, "the refusal wrote anyway"
+        r = c.post("/state/apply-to-live?force=1&ack_unseen=1&seen_changes=%s&seen_sig=%s"
+                   % (n, sig))
+        assert r.status_code == 200
+        assert _live(env)["qubits"]["q3"]["T1"] == 9.9e-5, "the acknowledged push must write"
 
     def test_the_review_modal_declares_the_set_not_only_the_count(self, env):
         # Through the REAL route. The template's actions only render with
@@ -153,9 +182,10 @@ class TestEveryDoorDeclaresWhatItShowed:
         _stage(env, "qubits.q1.f_01", "5.1e9")
         assert c.post("/save").status_code in (200, 204)
         html = c.get("/state/review").data.decode()
-        assert "Apply to live chip" in html, "the button did not render at all"
-        i = html.index("Apply to live chip")
-        btn = html[max(0, i - 1200):i]
+        # ef07a90: the panel's staged-version door is "↑ Apply to live"
+        assert "&#8593; Apply to live</span>" in html, "the button did not render at all"
+        i = html.index("&#8593; Apply to live</span>")
+        btn = html[html.rindex("<button", 0, i):i]
         assert "seen_sig" in btn and "seen_changes" in btn
         with env["app"].app_context():
             sig = routes_mod._change_log_sig(_ctx(env)["store"])

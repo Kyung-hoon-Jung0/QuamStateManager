@@ -5086,10 +5086,14 @@ window.ChipStatus.liveDetection = function () {
     function showBanner() {
         var dash = document.querySelector('.topo-dashboard');
         if (!dash) return;
-        var b = ensureBanner();
-        if (!b.parentNode) dash.insertBefore(b, dash.firstChild);
-        b.style.display = '';
+        // sync-ux 2026-09-25 (user decision 2026-09-25): Chip Status' own "Live chip state
+        // changed on disk" banner is GONE -- the status control in the top bar
+        // says it for every page, and the panel opened from it holds the
+        // choices. What stays is the part only this page can do: mark which
+        // qubits/pairs the live change touched. The control is poked so it
+        // does not wait for its own 5 s poll.
         shownSig = lastSig;
+        if (window._pollDrift) window._pollDrift();
         // mark which qubits/pairs the live change touched (Phase 4 before/after)
         if (window.ChipStatus && window.ChipStatus.liveDiff) window.ChipStatus.liveDiff.refresh();
     }
@@ -5113,14 +5117,16 @@ window.ChipStatus.liveDetection = function () {
                     if (dismissed && sig !== dismissedSig) dismissed = false;   // a NEWER write
                     // once per write: a banner already up for this write is not
                     // re-shown (each show re-reads live content for the marks)
-                    var up = banner && banner.isConnected && banner.style.display !== 'none';
-                    if (!dismissed && !(up && sig === shownSig)) {
+                    // sync-ux 2026-09-25: no banner any more -- once per write is keyed on
+                    // the write itself (each show re-reads live for the marks)
+                    if (!dismissed && sig !== shownSig) {
                         clearTimeout(debounceTimer);
                         debounceTimer = setTimeout(showBanner, DEBOUNCE_MS);
                     }
                 } else {
                     dismissed = false;  // a later change should prompt again
                     dismissedSig = null;
+                    shownSig = null;
                     clearTimeout(debounceTimer);
                     hideBanner();
                     // QA chipstatus-r2-02: live settled back to the sync point

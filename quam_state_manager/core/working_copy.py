@@ -344,6 +344,61 @@ def read_live(wc: WorkingCopy, *, attempts: int | None = None) -> tuple[dict, di
     return safe_io.read_state_wiring(wc.live_folder, attempts=attempts)
 
 
+def dangling_port_refs(state: dict, wiring: dict) -> dict[str, str]:
+    """``{wiring dot-path: "#/ports/..." pointer}`` for every port reference in
+    *wiring* that resolves in NEITHER file's ``ports`` tree. Pure.
+
+    QA correctness-r2-08: QUAlibrate's ``machine.save()`` writes state.json and
+    THEN wiring.json, each in place. A read landing between the two sees a pair
+    that never existed -- a port moved, state.json already without
+    ``con1/5/5``, wiring.json still wiring q5.z to it. Both files are complete
+    and their mtimes settled, so the mtime bracket in ``safe_io`` cannot see
+    it; a cross-file check can. Only the ``#/ports/`` class -- what a port move
+    tears -- and callers compare against the pair they already hold, because a
+    dangling pointer that was ALREADY there is ordinary customer data.
+    """
+    out: dict[str, str] = {}
+
+    def _resolves(ptr: str) -> bool:
+        segs = [x for x in ptr[2:].split("/") if x != ""]
+        for root in (state, wiring):
+            cur = root
+            for x in segs:
+                if isinstance(cur, dict) and x in cur:
+                    cur = cur[x]
+                elif isinstance(cur, list) and x.isdigit() and int(x) < len(cur):
+                    cur = cur[int(x)]
+                else:
+                    break
+            else:
+                return True
+        return False
+
+    def _walk(node, prefix: str) -> None:
+        if isinstance(node, dict):
+            for k, v in node.items():
+                _walk(v, f"{prefix}.{k}" if prefix else str(k))
+        elif isinstance(node, list):
+            for i, v in enumerate(node):
+                _walk(v, f"{prefix}.{i}")
+        elif isinstance(node, str) and node.startswith("#/ports/") and not _resolves(node):
+            out[prefix] = node
+
+    _walk(wiring if isinstance(wiring, dict) else {}, "")
+    return out
+
+
+def new_dangling_port_refs(held_state: dict, held_wiring: dict,
+                           live_state: dict, live_wiring: dict) -> dict[str, str]:
+    """The port references that dangle in the LIVE pair but did not in the pair
+    SM already holds -- the signature of a pair read between a writer's two
+    file writes (QA correctness-r2-08). Empty for a chip whose references
+    already dangled, so that data stays as tolerated as before."""
+    before = dangling_port_refs(held_state or {}, held_wiring or {})
+    now = dangling_port_refs(live_state or {}, live_wiring or {})
+    return {p: v for p, v in now.items() if before.get(p) != v}
+
+
 def live_diverged_now(wc: WorkingCopy) -> bool | None:
     """Ground-truth divergence probe: does the live content differ from the sync point?
 
@@ -616,12 +671,21 @@ def sync_from_live(wc: WorkingCopy) -> tuple[dict, dict]:
     return state, wiring
 
 
-def apply_to_live(wc: WorkingCopy, *, force: bool = False) -> None:
+def apply_to_live(wc: WorkingCopy, *, force: bool = False,
+                  expect_live_hash: str | None = None) -> None:
     """Push the working copy's state + wiring to the live folder.
 
     Unless *force*, raises :class:`StaleLiveError` if the live files changed
     since the last sync -- applying would otherwise silently overwrite an
     experiment program's write.
+
+    ``expect_live_hash`` (QA correctness-r2-09) holds even a FORCED push to the
+    live content the user was shown: "Keep mine" counts the live values it
+    replaces in a confirm, and a write landing while that confirm is open used
+    to be overwritten unnamed. When given, the live pair is re-read right
+    before the write and :class:`StaleLiveError` is raised unless its content
+    hash still matches (an unreadable pair does not match). ``None`` (every
+    other caller) is byte-identical to before.
 
     The staleness check happens *twice*: once at the top of the function
     (preserves the historical contract), then again immediately before the
@@ -708,6 +772,16 @@ def apply_to_live(wc: WorkingCopy, *, force: bool = False) -> None:
                 "The live state files changed while preparing to apply -- refusing "
                 "to overwrite an out-of-band write."
             )
+
+    if expect_live_hash is not None:
+        try:
+            now_hash = content_hash(*safe_io.read_state_wiring(wc.live_folder))
+        except (OSError, ValueError):
+            now_hash = None
+        if now_hash != expect_live_hash:
+            raise StaleLiveError(
+                "The live state files changed after the overwrite was confirmed "
+                "-- refusing to replace values the confirm did not name.")
 
     safe_io.write_state_wiring_bytes(wc.live_folder, state_b, wiring_b)
 

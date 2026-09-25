@@ -3356,44 +3356,68 @@ function _clearReviewDismiss() {
     if (_reviewDismissTimer) { clearTimeout(_reviewDismissTimer); _reviewDismissTimer = null; }
 }
 
-/* Open the live-chip-vs-working-copy review overlay.
- * opts.autoDismiss (ms) — auto-close after N ms; cancelled by user interaction
- * (hover, pointer-down, focus-within). Used by the workbench auto-open path so
- * the overlay doesn't block the screen when Qualibrate fires a burst of writes;
- * manual opens (pending-tray click, Review & sync button) pass no opts. */
+/* sync-ux 2026-09-25 -- THE sync panel, opened from the status control (user decision
+ * 2026-09-25). A popover anchored under the control, not a modal: no backdrop,
+ * the grid never moves, and it closes only on ✕, Esc, a second click on the
+ * control, or a completed choice -- never on a timer (F4). `opts.force` opens
+ * (or re-reads) without toggling. */
+function _placeSyncPanel(overlay, host) {
+    var ctl = document.querySelector("#pending-tray .sync-control")
+              || document.querySelector("#pending-tray .state-status-badge");
+    var r = ctl ? ctl.getBoundingClientRect() : null;
+    var w = Math.min(600, window.innerWidth - 16);
+    host.style.width = w + "px";
+    // QA fix6: grow to the diff table's natural width (values never split,
+    // paths on one line) up to a cap -- a fixed 600 px made the table wrap a
+    // 13-digit frequency mid-number at every window size.
+    var tb = host.querySelector(".sp-diff");
+    if (tb && tb.parentElement) {
+        var prev = tb.style.width;
+        tb.style.width = "max-content";
+        var natural = tb.offsetWidth;
+        tb.style.width = prev;
+        var chrome = host.offsetWidth - tb.parentElement.clientWidth;
+        var cap = Math.min(960, window.innerWidth - 16);
+        // +8: Chrome rounds a text run's max-content down by a fraction of a
+        // pixel, which alone re-wrapped a path at exactly its natural width
+        var need = Math.ceil(natural) + chrome + 8;
+        if (natural > 0 && need > w) {
+            w = Math.min(cap, need);
+            host.style.width = w + "px";
+        }
+    }
+    var left = r ? r.left : 8;
+    left = Math.max(8, Math.min(left, window.innerWidth - w - 8));
+    var top = r && r.bottom > 0 ? r.bottom + 6 : 54;
+    host.style.left = left + "px";
+    host.style.top = top + "px";
+    host.style.maxHeight = Math.max(200, window.innerHeight - top - 12) + "px";
+}
+function _syncPanelOpen() {
+    var o = document.getElementById("state-review-overlay");
+    return !!(o && o.style.display !== "none" && o.classList.contains("sync-panel-overlay"));
+}
+function _markControlExpanded(open) {
+    var b = document.querySelector("#pending-tray .sync-control-main");
+    if (b) b.setAttribute("aria-expanded", open ? "true" : "false");
+}
 window.openReview = function(opts) {
     var overlay = document.getElementById("state-review-overlay");
     var host = document.getElementById("state-review-host");
     if (!overlay || !host) return;
     _clearReviewDismiss();
-    host.innerHTML = '<p class="muted" style="padding:1.5rem">Reading the live state…</p>';
-    overlay.style.display = "flex";
-    overlay._releaseTrap = window.trapFocus(overlay, window.closeReview);
-    fetch("/state/review")
-        .then(function(r) { return r.text(); })
-        .then(function(html) {
-            host.innerHTML = html;
-            if (window.htmx) htmx.process(host);
-        })
-        .catch(function() {
-            host.innerHTML = '<p class="muted" style="padding:1.5rem">Could not read the live state.</p>';
-            window.showToast("Could not read the live chip state (network error).", "error");
-        });
-    // Auto-dismiss: start a timer that closes the overlay unless the user
-    // interacts (hover / pointer / focus cancels it permanently).
-    var ms = opts && opts.autoDismiss;
-    if (ms && ms > 0) {
-        _reviewDismissTimer = setTimeout(function () { window.closeReview(); }, ms);
-        var cancel = function () {
-            _clearReviewDismiss();
-            overlay.removeEventListener("pointerdown", cancel);
-            overlay.removeEventListener("pointerenter", cancel);
-            overlay.removeEventListener("focusin", cancel);
-        };
-        overlay.addEventListener("pointerdown", cancel);
-        overlay.addEventListener("pointerenter", cancel);
-        overlay.addEventListener("focusin", cancel);
+    // a second click on the control closes it (the popover's own toggle)
+    if (_syncPanelOpen() && !(opts && opts.force)) { window.closeReview(); return; }
+    var wasOpen = _syncPanelOpen();
+    overlay.classList.add("sync-panel-overlay");
+    if (!wasOpen) {
+        host.innerHTML = '<p class="muted sp-loading">Reading the live chip…</p>';
+        overlay.style.display = "block";
+        overlay._releaseTrap = window.trapFocus(overlay, window.closeReview);
     }
+    _placeSyncPanel(overlay, host);
+    _markControlExpanded(true);
+    return window.SyncPanel.refresh();
 };
 
 window.closeReview = function() {
@@ -3403,7 +3427,255 @@ window.closeReview = function() {
         overlay.style.display = "none";
         if (overlay._releaseTrap) { overlay._releaseTrap(); overlay._releaseTrap = null; }
     }
+    _markControlExpanded(false);
 };
+
+window.SyncPanel = (function () {
+    var _gen = 0;
+    function host() { return document.getElementById("state-review-host"); }
+    function panel() { var h = host(); return h && h.querySelector(".sync-panel"); }
+    function need() { var p = panel(); return p ? (+p.getAttribute("data-conflicts") || 0) : 0; }
+    /* Re-read the panel in place (after a ✕, a save, another window's move).
+       Keeps the scroll; a newer refresh wins over an older one. */
+    function refresh() {
+        var h = host();
+        if (!h) return Promise.resolve();
+        var g = ++_gen;
+        var body = h.querySelector(".sp-body");
+        var y = body ? body.scrollTop : 0;
+        return fetch("/state/review", { cache: "no-store" })
+            .then(function (r) { return r.text(); })
+            .then(function (html) {
+                if (g !== _gen || !_syncPanelOpen()) return;
+                h.innerHTML = html;
+                if (window.htmx) htmx.process(h);
+                var nb = h.querySelector(".sp-body");
+                if (nb) nb.scrollTop = y;
+                var o = document.getElementById("state-review-overlay");
+                if (o) _placeSyncPanel(o, h);
+            })
+            .catch(function () {
+                if (g !== _gen) return;
+                h.innerHTML = '<p class="muted sp-loading">Could not read the live chip.</p>';
+                window.showToast("Could not read the live chip state (network error).", "error");
+            });
+    }
+    /* The in-place second press (default 6 of the decisions): the first press
+       arms the button -- its label becomes what the second press will do -- and
+       a second press within 5 s runs it. Replaces the native confirm(). */
+    function arm(btn, ev, fn) {
+        if (ev) { ev.preventDefault(); ev.stopPropagation(); }
+        if (!btn || btn.disabled) return;
+        if (btn.getAttribute("data-armed") === "1") {
+            disarm(btn);
+            if (typeof fn === "function") fn();
+            else if (window.htmx) window.htmx.trigger(btn, "armed");
+            return;
+        }
+        Array.prototype.forEach.call(document.querySelectorAll("[data-armed='1']"), disarm);
+        var lab = btn.querySelector(".sp-choice-label") || btn;
+        btn._armOrig = lab.innerHTML;
+        lab.textContent = btn.getAttribute("data-arm-label") || "Press again to confirm";
+        btn.setAttribute("data-armed", "1");
+        btn.classList.add("sync-armed");
+        btn._armTimer = setTimeout(function () { disarm(btn); }, 5000);
+    }
+    function disarm(btn) {
+        if (!btn || btn.getAttribute("data-armed") !== "1") return;
+        clearTimeout(btn._armTimer);
+        var lab = btn.querySelector(".sp-choice-label") || btn;
+        if (btn._armOrig != null) lab.innerHTML = btn._armOrig;
+        btn.removeAttribute("data-armed");
+        btn.classList.remove("sync-armed");
+    }
+    function picks() {
+        var out = {}, h = host();
+        if (!h) return out;
+        Array.prototype.forEach.call(h.querySelectorAll("input[data-pick-path]:checked"), function (i) {
+            out[i.getAttribute("data-pick-path")] = i.value;
+        });
+        return out;
+    }
+    function cellText(td) {
+        var t = td && td.firstChild;
+        return t ? String(t.textContent || "").trim() : "";
+    }
+    /* Decision 2: ⇄ Pull & apply stays disabled until each colliding field has
+       a side picked; its Lost line then names exactly what the picks drop. */
+    function picked() {
+        var h = host();
+        if (!h) return;
+        var m = h.querySelector("#sp-merge");
+        var n0 = need(), p = picks(), n = Object.keys(p).length;
+        var ready = n >= n0;
+        if (m) {
+            m.disabled = !ready;
+            disarm(m);
+            var lost = m.querySelector(".sp-lost");
+            if (lost) {
+                if (!ready) {
+                    lost.textContent = "Pick a side for " + (n0 - n) + " more field"
+                        + ((n0 - n) === 1 ? "" : "s") + " above first.";
+                } else {
+                    var bits = [];
+                    Array.prototype.forEach.call(h.querySelectorAll(".sp-row-collide"), function (row) {
+                        var path = row.getAttribute("data-path");
+                        var vals = row.querySelectorAll(".sp-val");
+                        if (p[path] === "mine") bits.push("the live chip's " + path + " = "
+                            + cellText(vals[1]) + " (you picked mine)");
+                        else if (p[path] === "live") bits.push("your " + path + " edit "
+                            + cellText(vals[0]) + " (you picked live)");
+                    });
+                    lost.textContent = "Lost: " + bits.join("; ") + ".";
+                }
+            }
+        }
+        var re = h.querySelector(".sp-reapply");
+        if (re) { re.disabled = !ready; if (ready) re.removeAttribute("title"); }
+    }
+    function merge(btn) {
+        var n0 = need(), p = picks();
+        if (Object.keys(p).length < n0) { picked(); return; }
+        var run = function () {
+            window.doStateSync("apply", false, false, null,
+                               n0 ? { informed: true, picks: p } : { informed: true });
+        };
+        if (!n0) { run(); return; }
+        if (!btn.getAttribute("data-arm-label"))
+            btn.setAttribute("data-arm-label", "Press again to merge with your picks");
+        arm(btn, null, run);
+    }
+    function reapply() {
+        var n0 = need(), p = picks();
+        if (Object.keys(p).length < n0) { picked(); return; }
+        window.doStateSync("reapply", false, false, null, n0 ? { picks: p } : null);
+    }
+    /* the per-field ↓ on a "Live chip changed" row: the review's on-the-fly
+       accept (Phase D), fed the value the user sees in that row's input */
+    function takeOne(btn) {
+        var row = btn && btn.closest('tr');
+        var vis = row && row.querySelector('.sp-live-input');
+        var mirror = btn && btn.parentNode && btn.parentNode.querySelector('.review-live-input');
+        if (vis && mirror) mirror.value = vis.value;
+        if (window.reviewAccept) window.reviewAccept(btn);
+    }
+    function retry() {
+        if (window._pollDrift) window._pollDrift();
+        if (window.htmx) window.htmx.ajax("GET", "/state/tray", { target: "#pending-tray", swap: "outerHTML" });
+        if (_syncPanelOpen()) refresh();
+    }
+    return { refresh: refresh, arm: arm, disarm: disarm, picks: picks, picked: picked,
+             merge: merge, reapply: reapply, retry: retry, takeOne: takeOne,
+             isOpen: _syncPanelOpen };
+})();
+
+/* sync-ux 2026-09-25 -- a press of the user's own that the server refused
+ * (the live chip moved in between) swaps in the control's "refused" state;
+ * the choices live in the panel, so the panel opens in answer to THAT press
+ * (or re-reads, if it is already open). An automatic flush that is refused
+ * opens nothing -- the control says it, and the user was not pressing. */
+document.addEventListener("htmx:afterSwap", function (e) {
+    var d = e && e.detail;
+    if (!d || !d.target || d.target.id !== "pending-tray") return;
+    var tray = document.getElementById("pending-tray");
+    if (!tray || !tray.classList.contains("pending-tray-conflict")) return;
+    var elt = d.requestConfig && d.requestConfig.elt;
+    var byUser = !!(elt && elt.closest && (elt.closest(".sync-control")
+                                           || elt.closest("#state-review-host")));
+    if (byUser || (window.SyncPanel && window.SyncPanel.isOpen())) window.openReview({ force: true });
+});
+
+/* sync-ux 2026-09-25 -- the control's transient states: "Writing … / Taking live…"
+ * during a round trip (SU-04: a 5-9 s write used to leave the old state on
+ * screen with no sign anything was happening), and a 4 s "✓ Written to live ·
+ * N edits" after it (default 2 of the decisions: success toasts go; the
+ * control says it where the eye already is). Both live on the control element
+ * only, so the next tray render ends them by construction. */
+window.SyncControl = (function () {
+    function ctl() { return document.querySelector("#pending-tray .sync-control"); }
+    function busy(text) {
+        var c = ctl();
+        if (!c) return null;
+        var t = c.querySelector(".sync-control-text");
+        if (!t) return null;
+        if (c._busyOrig == null) c._busyOrig = t.textContent;
+        t.textContent = text;
+        c.classList.add("sync-busy");
+        c.setAttribute("aria-busy", "true");
+        Array.prototype.forEach.call(c.querySelectorAll(".sync-control-act"), function (b) { b.disabled = true; });
+        return c;
+    }
+    function unbusy(c) {
+        c = c || ctl();
+        if (!c || !c.isConnected || c._busyOrig == null) return;
+        var t = c.querySelector(".sync-control-text");
+        if (t) t.textContent = c._busyOrig;
+        c._busyOrig = null;
+        c.classList.remove("sync-busy");
+        c.removeAttribute("aria-busy");
+        Array.prototype.forEach.call(c.querySelectorAll(".sync-control-act"), function (b) { b.disabled = false; });
+    }
+    function flash(text) {
+        var c = ctl();
+        if (!c) return;
+        var t = c.querySelector(".sync-control-text");
+        if (!t) return;
+        var orig = t.textContent;
+        t.textContent = text;
+        c.classList.add("sync-flash");
+        setTimeout(function () {
+            if (!c.isConnected) return;
+            t.textContent = orig;
+            c.classList.remove("sync-flash");
+        }, 4000);
+    }
+    return { busy: busy, unbusy: unbusy, flash: flash };
+})();
+
+/* sync-ux 2026-09-25 -- cells stale against live show "live now …" with a blue left rule
+ * (user decision 1). The map rides the drift poll (`sync.stale`, dot path ->
+ * the live chip's value), so a cell says it is older than the chip where the
+ * eye already is, in every window, with no banner. Passive: nothing is pulled
+ * (docs/87). Re-applied after every pane swap. */
+window.SyncStale = (function () {
+    var last = {};
+    function esc(p) { return (window.CSS && CSS.escape) ? CSS.escape(p) : String(p).replace(/"/g, '\\"'); }
+    function apply(stale) {
+        if (stale) last = stale;
+        var want = last || {};
+        Array.prototype.forEach.call(document.querySelectorAll(".cell-live-stale"), function (td) {
+            if (!Object.prototype.hasOwnProperty.call(want, td.getAttribute("data-live-stale"))) unmark(td);
+        });
+        Object.keys(want).forEach(function (p) {
+            var cells = document.querySelectorAll('input.bulk-cell[data-dot-path="' + esc(p)
+                + '"], input.bulk-cell[data-resolved="' + esc(p) + '"]');
+            Array.prototype.forEach.call(cells, function (cell) { mark(cell, p, want[p]); });
+        });
+    }
+    function mark(cell, p, v) {
+        var td = cell.closest("td") || cell.parentNode;
+        if (!td) return;
+        td.classList.add("cell-live-stale");
+        td.setAttribute("data-live-stale", p);
+        var sub = td.querySelector(".cell-live-now");
+        if (!sub) {
+            sub = document.createElement("span");
+            sub.className = "cell-live-now";
+            td.appendChild(sub);
+        }
+        sub.textContent = "live now " + v;
+        sub.title = "The live chip holds " + v + " for " + p + "; this cell shows an older value. "
+            + "The sync status in the top bar offers ↓ Take live · 라이브 칩 값이 다릅니다";
+    }
+    function unmark(td) {
+        td.classList.remove("cell-live-stale");
+        td.removeAttribute("data-live-stale");
+        var sub = td.querySelector(".cell-live-now");
+        if (sub) sub.remove();
+    }
+    document.addEventListener("htmx:afterSwap", function () { apply(null); });
+    return { apply: apply, current: function () { return last; } };
+})();
 
 /* Pull the live state into the working copy. `mode` decides what happens to the
  * user's pending edits: 'apply' (replay them on top, then push the merged result
@@ -3545,14 +3817,31 @@ window.doStateSync = function(mode, forced, ackUnseen, expectChip, opts) {
     // Double-submit guard: a second click (or a grid ⚡ + tray button double-fire)
     // while one apply/sync is in flight used to queue a second /state/sync that
     // races the first's store.reload() — the "clicked twice, stuttered" report.
-    if (window._applyInFlight) return;
+    // SYNCEXP-04: but a press arriving while ANOTHER writer holds the latch (an
+    // Auto-Sync pull every 5 s, a flush) was dropped without a word -- a dead
+    // button in the middle of a conflict. Only a repeat of the press already in
+    // flight is the double click; anything else waits its turn, visibly.
+    if (window._applyInFlight) {
+        if (window._syncPressMode === mode) return;
+        if (window.SyncControl) window.SyncControl.busy("Queued — another sync is finishing…");
+        _runSyncPressesInTurn([[mode, forced, ackUnseen, expectChip, opts]]);
+        return;
+    }
     window._applyInFlight = true;
-    // Close the review overlay NOW (not after the response): its 45%-black
-    // backdrop otherwise dims the page for the whole server round-trip and then
-    // vanishes — the reported "screen suddenly BRIGHTENS" flash. A conflict
-    // response is handled by the conflict tray + toast, which never needed the
-    // modal open.
-    window.closeReview();
+    window._syncPressMode = mode;
+    // sync-ux 2026-09-25: the panel is a popover with no backdrop now, so it stays open
+    // for the round trip (it closes on success; a refusal re-reads it in
+    // place). The control says what is happening instead of the old state
+    // sitting there for 5-9 s (SU-04).
+    var _nPend = (function () {
+        var t = document.getElementById("pending-tray");
+        return +((t && t.getAttribute("data-change-count")) || 0);
+    })();
+    var _busyCtl = window.SyncControl ? window.SyncControl.busy(
+        mode === "apply" ? ("Writing " + (_nPend || "your") + " edit" + (_nPend === 1 ? "" : "s") + " to the live chip…")
+        : mode === "reapply" ? "Taking live, keeping your edits…" : "Taking live…") : null;
+    var _panelEl = document.querySelector("#state-review-host .sync-panel");
+    if (_panelEl) _panelEl.classList.add("sp-busy");
     // docs/120 item 22: declare what THIS screen is showing. Two SM windows
     // share one server-side change log, and a tray only refreshes on its own
     // actions — so an Apply pressed here can carry edits made in the other
@@ -3581,6 +3870,8 @@ window.doStateSync = function(mode, forced, ackUnseen, expectChip, opts) {
               + (expectChip ? "&expect_chip=" + encodeURIComponent(expectChip) : "")
               + (mode === "apply" && !(opts && opts.informed) ? "&check_collisions=1" : "")
               + (opts && opts.ackCollision ? "&ack_collision=1" : "")
+              + (opts && opts.ackTorn ? "&ack_torn=1" : "")
+              + (opts && opts.picks ? "&picks=" + encodeURIComponent(JSON.stringify(opts.picks)) : "")
     })
         .then(function(r) { return r.json(); })
         .then(function(data) {
@@ -3600,19 +3891,33 @@ window.doStateSync = function(mode, forced, ackUnseen, expectChip, opts) {
                         window.showToast(data.message || "Nothing left to apply.",
                                          "warning");
                     }
+                    // QA correctness-r2-03: the other window applied or
+                    // discarded the edits this screen still shows -- its
+                    // cells must stop showing values the chip does not hold.
+                    try { if (window._followValuesOnScreen) window._followValuesOnScreen(); } catch (e) {}
                     return;
                 }
                 // Never a dead end — name what would go, and let one click
                 // accept it or send the user to review it first.
                 var lines = (data.paths || []).slice(0, 6).join("\n  ");
+                // QA correctness-r2-03: Take live asks about the edits it
+                // would DESTROY (the server says which door this is).
+                var _discardQ = !!data.discard;
                 if (window.confirm((data.message || "") + "\n\n  " + lines
-                        + "\n\nApply everything, including those?")) {
+                        + (_discardQ
+                           ? "\n\nOK = discard them too and take the live chip."
+                             + "\nCancel = discard nothing; the tray will show them."
+                           : "\n\nApply everything, including those?"))) {
                     setTimeout(function () {
                         window._applyInFlight = false;
                         // `ackUnseen`, never `forced`: force=1 answers the
                         // STALENESS question and must not double as consent to
                         // another window's edits.
-                        window.doStateSync(mode, false, true, expectChip, opts);
+                        // (a Take live's force=1 answered the docs/65 staged-
+                        // content question already asked -- carry it, or that
+                        // question would be asked a second time)
+                        window.doStateSync(mode, _discardQ ? forced : false, true,
+                                           expectChip, opts);
                     }, 0);
                 } else {
                     // Refresh the tray so this screen stops lying, then show it.
@@ -3621,8 +3926,10 @@ window.doStateSync = function(mode, forced, ackUnseen, expectChip, opts) {
                                          {target: "#pending-tray", swap: "outerHTML"});
                     }
                     if (window.showToast) {
-                        window.showToast("Nothing was applied — the tray now shows "
-                                         + "every pending edit.", "info");
+                        window.showToast((_discardQ ? "Nothing was discarded"
+                                                    : "Nothing was applied")
+                                         + " — the tray now shows every pending edit.",
+                                         "info");
                     }
                 }
                 return;
@@ -3633,10 +3940,12 @@ window.doStateSync = function(mode, forced, ackUnseen, expectChip, opts) {
                 // without a word. Nothing was written. The automatic merge
                 // (expectChip) never answers for the user: it puts the banner
                 // up. A person is asked once; OK re-posts with its own token.
+                // sync-ux 2026-09-25 (user decision 2): no confirm, no banner -- the
+                // panel lists the colliding fields with "Keep mine / Use live"
+                // per field, and ⇄ Pull & apply waits for every pick.
                 var _banner = function () {
-                    if (window.htmx && document.getElementById("live-diverged-slot"))
-                        window.htmx.ajax("GET", "/state/diverged-banner",
-                        {target: "#live-diverged-slot", swap: "innerHTML"});
+                    if (window.htmx) window.htmx.ajax("GET", "/state/tray",
+                        {target: "#pending-tray", swap: "outerHTML"});
                 };
                 // (review) the automatic merge's conflict tray stops saying
                 // Auto-Sync is resolving this: the server hands it back
@@ -3645,20 +3954,29 @@ window.doStateSync = function(mode, forced, ackUnseen, expectChip, opts) {
                     try { _swapPendingTray(data.tray_html); }
                     finally { window._bulkSelfEdit = false; }
                 }
-                if (expectChip) { _banner(); return; }
-                var clines = (data.paths || []).slice(0, 6).join("\n  ");
-                if (window.confirm((data.message || "") + "\n\n  " + clines
-                        + "\n\nOK = keep YOUR value and overwrite the chip's."
-                        + "\nCancel = write nothing and decide from the banner.")) {
+                if (!data.tray_html) _banner();
+                if (expectChip) return;          // the automatic merge never opens the panel
+                // the user's own press hit a collision: answer it where the
+                // choice lives (the panel re-reads with the fields to pick)
+                window.openReview({ force: true });
+                return;
+            }
+            if (data.status === "torn_live") {
+                // QA correctness-r2-08: the live pair was caught between
+                // QUAlibrate's state.json and wiring.json writes. Nothing was
+                // pulled. The usual answer is to wait a moment; OK takes it as
+                // it is, with its OWN token (never force, docs/41).
+                if (window.confirm((data.message || "The live chip looks mid-save.")
+                        + "\n\nOK = take it as it is now."
+                        + "\nCancel = pull nothing, retry in a moment.")) {
                     setTimeout(function () {
                         window._applyInFlight = false;
                         window.doStateSync(mode, forced, ackUnseen, expectChip,
-                            Object.assign({}, opts || {}, { ackCollision: true }));
+                            Object.assign({}, opts || {}, { ackTorn: true }));
                     }, 0);
-                } else {
-                    _banner();
-                    if (window.showToast) window.showToast("Nothing was applied — "
-                        + "the banner names the field the chip changed too.", "info");
+                } else if (window.showToast) {
+                    window.showToast("Nothing was pulled — the live chip looked mid-save; "
+                                     + "retry in a moment.", "info");
                 }
                 return;
             }
@@ -3733,11 +4051,6 @@ window.doStateSync = function(mode, forced, ackUnseen, expectChip, opts) {
             // instead of showing the pre-apply count until the next 5s poll (feedback #5,
             // audit P0-5). Mirrors resetBaseline's immediate re-poll.
             if (window._pollDrift) window._pollDrift();
-            // The pull consumed any out-of-band live change — drop the
-            // "live files changed on disk" banner(s) wherever they render.
-            document.querySelectorAll(".live-diverged-banner").forEach(function(b) {
-                b.hidden = true;
-            });
             // Refresh State History surfaces that listen for these triggers.
             // Plain sync (pull/reapply) used to NOT emit them — only apply-to-live
             // did — so the timeline and drift panel stayed stale (sync red-team audit).
@@ -3764,10 +4077,12 @@ window.doStateSync = function(mode, forced, ackUnseen, expectChip, opts) {
 
             if (data.status === "conflict") {
                 window.showToast(
-                    "The live chip changed again while applying — choose how to resolve it.",
+                    "The live chip changed again while applying — nothing was written; choose in the panel.",
                     "warning");
+                window.openReview({ force: true });
                 return;
             }
+            window.closeReview();
 
             var applied = (data.replay && data.replay.applied) || 0;
             var failed = (data.replay && data.replay.failed) || [];
@@ -3784,11 +4099,17 @@ window.doStateSync = function(mode, forced, ackUnseen, expectChip, opts) {
                         "longer exists on the new live chip." + _failedPathsSummary(failed) +
                         " Re-enter them if still needed." + crash,
                         "warning");
-                } else {
+                } else if (crash) {
                     window.showToast(
                         "Pulled the live state, re-applied " + applied + " edit" +
                         (applied === 1 ? "" : "s") + ", and applied them to the live chip." + crash,
-                        crash ? "warning" : "success");
+                        "warning");
+                } else if (window.SyncControl) {
+                    // sync-ux 2026-09-25 default 2: the control says it for 4 s instead
+                    window.SyncControl.flash(applied
+                        ? "✓ Written to live · " + applied + " edit" + (applied === 1 ? "" : "s")
+                          + (data.pulled_other_changes ? " · took live changes" : "")
+                        : "✓ In sync · took the live chip's values");
                 }
             } else if (data.mode === "reapply") {
                 if (failed.length) {
@@ -3798,14 +4119,16 @@ window.doStateSync = function(mode, forced, ackUnseen, expectChip, opts) {
                         " could not be re-applied (the field changed or no longer exists)." +
                         _failedPathsSummary(failed),
                         "warning");
-                } else {
-                    window.showToast(
-                        "Pulled the live state and re-applied " + applied + " edit" +
-                        (applied === 1 ? "" : "s") + " — review them in the tray, then apply to the live chip.",
-                        "success");
+                } else if (window.SyncControl) {
+                    window.SyncControl.flash("✓ Took live · " + applied + " edit"
+                        + (applied === 1 ? "" : "s") + " kept on top");
                 }
-            } else {
-                window.showToast("Pulled the live state into the working state.", "success");
+            } else if (window.SyncControl) {
+                // decision 4: Take live kept a backup of what it dropped
+                var _bk = data.backup;
+                window.SyncControl.flash("✓ Took live" + (_bk && _bk.n
+                    ? " · " + _bk.n + " edit" + (_bk.n === 1 ? "" : "s") + " backed up (↶ Bring back in the panel)"
+                    : ""));
             }
         })
         .catch(function(err) {
@@ -3815,7 +4138,12 @@ window.doStateSync = function(mode, forced, ackUnseen, expectChip, opts) {
             console.error("doStateSync failed:", err);
             window.showToast("Sync failed (network error).", "error");
         })
-        .finally(function() { window._applyInFlight = false; });
+        .finally(function() {
+            window._applyInFlight = false;
+            window._syncPressMode = null;
+            if (window.SyncControl) window.SyncControl.unbusy(_busyCtl);
+            if (_panelEl) _panelEl.classList.remove("sp-busy");
+        });
 };
 
 /* The THIRD choice when the live chip drifted (docs/86): keep the working state
@@ -3835,8 +4163,24 @@ window.doStateSync = function(mode, forced, ackUnseen, expectChip, opts) {
  * push is forced, because the user has just been told exactly what it forces
  * past (an unforced push would land on the staleness conflict screen and ask a
  * second time). */
-window.overwriteLiveWithWorking = function () {
-    if (window._applyInFlight) return;   // shared guard with doStateSync
+window.overwriteLiveWithWorking = function (btn) {
+    if (window._applyInFlight) {
+        if (window.showToast) window.showToast("Another sync is still finishing — press again in a moment.", "info");
+        return;
+    }
+    // sync-ux 2026-09-25: the panel's ↑ Keep mine is an in-place second press (default 6
+    // of the decisions). Its SECOND press writes; the first reads the preflight
+    // and rewrites the button's own "Lost:" line with what disappears.
+    if (btn && btn.getAttribute("data-armed") === "1" && btn._keepMine) {
+        var ready = btn._keepMine;
+        window.SyncPanel.disarm(btn);
+        btn._keepMine = null;
+        _keepMinePush(ready);
+        return;
+    }
+    // docs/120/179: what THIS screen showed, read when the user looked at it
+    // (the first press) -- the panel the button sits in, else the tray.
+    var _seenView = _keepMineSeen(btn);
     fetch("/state/overwrite-live/preflight", { headers: { "HX-Request": "true" } })
         .then(function (r) { return r.json(); })
         .then(function (d) {
@@ -3844,52 +4188,228 @@ window.overwriteLiveWithWorking = function () {
                 window.showToast((d && d.message) || "Cannot overwrite the live chip.", "error");
                 return;
             }
-            var n = d.live_changes;
-            var lines = ["Overwrite the live chip with the working state?", ""];
-            if (n === null || n === undefined) {
-                lines.push("The live files could not be read, so what they hold right now is unknown.");
-            } else if (n === 0) {
-                lines.push("The live chip already matches the working state — nothing would change.");
-            } else {
-                lines.push(n + " value" + (n === 1 ? "" : "s") + " that differ on the live chip "
-                    + "will be REPLACED by the working state's. Whatever wrote them "
-                    + "(an experiment program, another window) loses those changes.");
-            }
-            if (d.unsaved) {
-                lines.push("Your " + d.unsaved + " unsaved edit" + (d.unsaved === 1 ? " is" : "s are")
-                    + " saved and pushed along with it.");   // jsontree-r2-30: the verb follows the count
-            }
-            if (d.crash_values && d.crash_values.sentence) {
-                // QA diagnostics-r2-04: one clause in the confirm that exists
-                lines.push("", "⚠ After this, " + d.crash_values.sentence);
-            }
-            if (d.run_active) {
-                lines.push("", "⚠ A run is in progress"
-                    + (d.run_label ? " (" + d.run_label + ")" : "")
-                    + " — it may write these values again when its next node finishes.");
-            }
-            if (d.reversible) {
-                lines.push("", "The current live state is snapshotted first, so the tray's "
-                    + "“Revert last apply” undoes this.");
+            d._seen = _seenView;
+            var lines = _keepMineLines(d);
+            if (btn && window.SyncPanel) {
+                var n = d.live_changes;
+                var lost = btn.querySelector(".sp-lost");
+                if (lost) lost.textContent = lines.slice(1).filter(Boolean).join(" ");
+                btn.setAttribute("data-arm-label", (n > 0)
+                    ? "Press again to overwrite " + n + " live value" + (n === 1 ? "" : "s")
+                    : "Press again to write it to the live chip");
+                btn._keepMine = d;
+                window.SyncPanel.arm(btn, null, function () {
+                    btn._keepMine = null;
+                    _keepMinePush(d);
+                });
+                return;
             }
             if (!window.confirm(lines.join("\n"))) {
                 if (window.showToast) window.showToast("Cancelled — nothing was changed.", "info");
                 return;
             }
-            window.closeReview();
-            if (!window.htmx) {
-                window.showToast("Open the top-bar tray and use “Apply to live chip”.", "info");
-                return;
-            }
-            window._applyInFlight = true;
-            htmx.ajax("POST", "/state/apply-to-live?force=1",
-                      { target: "#pending-tray", swap: "outerHTML" })
-                .finally(function () { window._applyInFlight = false; });
+            _keepMinePush(d);
         })
         .catch(function () {
             window.showToast("Could not check the live chip (network error).", "error");
         });
 };
+/* The words of the Keep-mine question, from its preflight. SE-07: the live
+ * values an outside writer changed and the user's own pending edits are two
+ * different counts -- the preflight now reports them apart. */
+function _keepMineLines(d) {
+    var n = d.live_changes;
+    var lines = ["Overwrite the live chip with the working state?", ""];
+    if ((n === null || n === undefined) && d.live_read === "missing") {
+        // QA correctness-r2-01: nothing there to lose -- say that, not "unknown"
+        lines.push("The live folder has no state files, so nothing on the live chip is replaced.");
+    } else if (n === null || n === undefined) {
+        // QA correctness-r2-01: the push backs live up first and REFUSES
+        // when it still cannot -- never "snapshotted first" here, since
+        // that promise is exactly what an unreadable file breaks.
+        lines.push("The live files could not be read just now (a save still in progress?), "
+            + "so what they hold is unknown. SM backs them up before writing and "
+            + "refuses the overwrite if it still cannot read them.");
+    } else if (n === 0) {
+        lines.push("Lost: nothing on the live chip changed since you synced.");
+    } else {
+        lines.push("Lost: " + n + " value" + (n === 1 ? "" : "s") + " the live chip changed"
+            + (d.live_paths && d.live_paths.length ? " (" + d.live_paths.slice(0, 3).join(", ")
+               + (n > 3 ? ", …" : "") + ")" : "")
+            + " — whatever wrote " + (n === 1 ? "it" : "them")
+            + " (an experiment, an editor, another window) loses " + (n === 1 ? "that change." : "those changes."));
+    }
+    if (d.unsaved) {
+        lines.push("Your " + d.unsaved + " unsaved edit" + (d.unsaved === 1 ? " is" : "s are")
+            + " saved and pushed along with it.");   // jsontree-r2-30: the verb follows the count
+    }
+    if (d.crash_values && d.crash_values.sentence) {
+        // QA diagnostics-r2-04: one clause in the confirm that exists
+        lines.push("", "⚠ After this, " + d.crash_values.sentence);
+    }
+    if (d.run_active) {
+        lines.push("", "⚠ A run is in progress"
+            + (d.run_label ? " (" + d.run_label + ")" : "")
+            + " — it may write these values again when its next node finishes.");
+    }
+    if (d.reversible) {
+        lines.push("", "Backed up first; ↺ Revert last apply undoes this.");
+    }
+    return lines;
+}
+/* The change set the pressing screen declared (docs/120/179). Keep mine is a
+ * FORCED push, and force=1 answers the staleness question only -- it must
+ * never double as consent to edits another window staged meanwhile (one
+ * token never collapses two gates). The one-control redesign routed the old
+ * conflict tray's declared force buttons through this door, which declared
+ * nothing, so the unseen-edit gate was off on it. */
+function _keepMineSeen(btn) {
+    var host = (btn && btn.closest && btn.closest(".sync-panel"))
+        || document.getElementById("pending-tray");
+    if (!host) return null;
+    var n = host.getAttribute("data-change-count");
+    var sig = host.getAttribute("data-change-sig");
+    if ((n === null || n === "") && !sig) return null;
+    return { n: n || "", sig: sig || "" };
+}
+function _keepMinePush(d, ackUnseen) {
+    d._unseenRefused = false;
+    if (!window.htmx) {
+        window.showToast("Open the sync panel and use “Apply to live”.", "info");
+        return;
+    }
+    window._applyInFlight = true;
+    var busy = window.SyncControl ? window.SyncControl.busy("Overwriting the live chip…") : null;
+    // QA correctness-r2-09: hold the push to the live content this
+    // confirm counted. A write landing while it was open is refused
+    // server-side (keepMineReask below asks again with the new count)
+    // instead of being overwritten unnamed. No hash (live unreadable
+    // or missing) keeps the plain forced push.
+    window._keepMineInFlight = d;
+    htmx.ajax("POST", "/state/apply-to-live?force=1"
+                  + (d.live_hash ? "&expect_live_hash=" + encodeURIComponent(d.live_hash) : "")
+                  + (d._seen ? "&seen_changes=" + encodeURIComponent(d._seen.n)
+                             + "&seen_sig=" + encodeURIComponent(d._seen.sig) : "")
+                  + (ackUnseen ? "&ack_unseen=1" : ""),
+              { target: "#pending-tray", swap: "outerHTML" })
+        .then(function () {
+            var t = document.getElementById("pending-tray");
+            // a refusal by the unseen-edit gate wrote nothing: never say it did
+            if (t && !t.classList.contains("pending-tray-conflict") && !d._unseenRefused) {
+                window.closeReview();
+                if (window.SyncControl) window.SyncControl.flash("✓ Written to live · kept mine");
+            }
+        })
+        .finally(function () {
+            window._applyInFlight = false;
+            window._keepMineInFlight = null;
+            if (window.SyncControl) window.SyncControl.unbusy(busy);
+        });
+}
+/* The unseen-edit gate refused Keep mine's push (docs/120): another window
+ * staged edits this screen never showed. Never a dead end and never a bare
+ * error toast -- name them, and let one press write them too (ack_unseen=1,
+ * never a second force) or leave everything as it is. */
+document.addEventListener("htmx:beforeSwap", function (evt) {
+    var det = evt.detail;
+    if (!det || !det.xhr || det.xhr.status !== 409) return;
+    if (!det.target || det.target.id !== "pending-tray") return;
+    var path = (det.requestConfig && det.requestConfig.path) || "";
+    if (path.indexOf("/state/apply-to-live?force=1") !== 0) return;
+    var d = window._keepMineInFlight;
+    var data = null;
+    try { data = JSON.parse(det.xhr.responseText || ""); } catch (e) { return; }
+    if (!d || !data || data.status !== "unseen_changes") return;
+    d._unseenRefused = true;
+    det.shouldSwap = false;
+    det.isError = false;                   // no generic "didn't go through" toast
+    var refresh = function () {
+        if (window.htmx) window.htmx.ajax("GET", "/state/tray",
+                                          { target: "#pending-tray", swap: "outerHTML" });
+        if (window.openReview) { try { window.openReview({ force: true }); } catch (e) {} }
+    };
+    setTimeout(function () {
+        if (data.nothing_pending) {
+            if (window.showToast) window.showToast(data.message || "Nothing was written.", "warning");
+            refresh();
+            return;
+        }
+        var lines = (data.paths || []).slice(0, 6).join("\n  ");
+        if (window.confirm((data.message || "") + "\n\n  " + lines
+                + "\n\nOK = overwrite the live chip with those edits too."
+                + "\nCancel = write nothing; the panel will show them.")) {
+            _keepMinePush(d, true);
+        } else {
+            if (window.showToast) window.showToast("Nothing was written — the panel now shows those edits.", "info");
+            refresh();
+        }
+    }, 0);
+});
+/* QA correctness-r2-06: "↺ Revert this session" under an armed Auto-Sync push.
+ * The revert stages the chip as it was when the session STARTED, and the armed
+ * push writes that within a second -- so a value the session pulled from the
+ * live chip in between (a calibration node's T2) was rolled back with the
+ * user's own edits, under a static confirm promising "You review it first".
+ * This asks from a preflight instead: it names the outside values the revert
+ * also rolls back and says the write is immediate. OK fires the button's own
+ * hx-post (hx-trigger="revertconfirmed"); Cancel changes nothing. */
+window.revertSessionConfirm = function (btn) {
+    if (!btn) return;
+    fetch("/state/revert-last-apply/preflight", { headers: { "HX-Request": "true" } })
+        .then(function (r) { return r.json(); })
+        .then(function (d) {
+            if (!d || !d.ok) {
+                window.showToast((d && d.message) || "Nothing to revert.", "error");
+                return;
+            }
+            var lines = ["Revert this Auto-Sync session?",
+                         "The chip goes back to how it was when the session started."];
+            if (d.unknown) {
+                lines.push("", "SM could not work out which values that changes.");
+            } else {
+                lines.push("");
+                if (d.mine_n) lines.push("• " + d.mine_n + " value" + (d.mine_n === 1 ? "" : "s")
+                    + " this session applied go back.");
+                if (d.outside_n) {
+                    lines.push("• ALSO " + d.outside_n + " value" + (d.outside_n === 1 ? "" : "s")
+                        + " that came from the live chip since (e.g. a calibration) — rolled back too:");
+                    (d.outside || []).forEach(function (o) {
+                        lines.push("    " + o.path + ": " + o.now + " → " + o.back_to);
+                    });
+                    if (d.outside_n > (d.outside || []).length)
+                        lines.push("    … and " + (d.outside_n - d.outside.length) + " more");
+                    lines.push("  To keep them, cancel and use ✕ on your own rows in the applied log.");
+                }
+            }
+            if (d.push_armed) {
+                lines.push("", "Auto-Sync (push) is ARMED, so this is written to the live chip immediately.");
+            }
+            if (!window.confirm(lines.join("\n"))) {
+                if (window.showToast) window.showToast("Cancelled — nothing was changed.", "info");
+                return;
+            }
+            if (window.htmx) window.htmx.trigger(btn, "revertconfirmed");
+        })
+        .catch(function () {
+            window.showToast("Could not check what the revert changes (network error).", "error");
+        });
+};
+/* QA correctness-r2-09: the server refused a Keep mine because the live chip
+ * moved while its confirm was open -- ask again, with the count taken NOW.
+ * Deferred a tick so the in-flight guard above has been released. */
+document.addEventListener("keepMineReask", function () {
+    setTimeout(function () {
+        // sync-ux 2026-09-25: ask where the question lives -- the panel re-reads, and its
+        // Keep mine is armed again with the count taken NOW
+        var p = window.openReview ? window.openReview({ force: true }) : null;
+        var again = function () {
+            var b = document.querySelector("#state-review-host .sp-keep");
+            if (b && window.overwriteLiveWithWorking) window.overwriteLiveWithWorking(b);
+            else if (window.overwriteLiveWithWorking) window.overwriteLiveWithWorking();
+        };
+        if (p && p.then) p.then(again); else again();
+    }, 50);
+});
 
 /* The grid ⚡ "Apply to live now" buttons push the user's edits all the way to the
  * live chip in ONE click (the grids call this after applyAll commits the edits).
@@ -3918,7 +4438,7 @@ window.applyEditsToLive = function () {
             htmx.ajax("POST", "/state/apply-to-live", { source: "#pending-tray", target: "#pending-tray", swap: "outerHTML" })
                 .finally(function () { window._applyInFlight = false; });
         } else if (window.showToast) {
-            window.showToast("Open the top-bar tray and click “Apply to live chip” to push your saved edits to the live chip.", "info");
+            window.showToast("Click the sync status in the top bar and press “↑ Apply” to push your saved edits to the live chip.", "info");
         }
         return;
     }
@@ -4046,6 +4566,73 @@ window.livePushExtrasLine = function (typedPaths) {
         window._scheduleGridResync(0);
     }
     window._followOnGrid = followOnGrid;
+    /* QA F2 (windows): the Json Tree View is drawn once from inlined JSON and
+       had no refresher here -- another window's edit + apply left chi reading
+       -353,000 under a tray reading Synced, and only F5 (which drops the
+       search, expansion and scroll) fixed it. Re-read both documents and
+       patch just the leaves that moved, model and row, in place (docs/144);
+       a changed SHAPE takes the soft re-render, which keeps the view
+       (docs/122). Never while someone is typing or reading a live diff. */
+    var _treeFollowTimer = null;
+    var _TREE_PATCH_CAP = 400;
+    function _treeLeafDiff(a, b, path, out) {
+        var ao = a !== null && typeof a === "object", bo = b !== null && typeof b === "object";
+        if (!ao && !bo) {
+            if (a !== b) out.push({ dot_path: path, value: b });
+            return out.length <= _TREE_PATCH_CAP;
+        }
+        if (!ao || !bo || Array.isArray(a) !== Array.isArray(b)) return false;
+        var ka = Object.keys(a), kb = Object.keys(b);
+        if (ka.length !== kb.length) return false;
+        for (var i = 0; i < kb.length; i++) {
+            if (!Object.prototype.hasOwnProperty.call(a, kb[i])) return false;
+            if (!_treeLeafDiff(a[kb[i]], b[kb[i]], path ? path + "." + kb[i] : kb[i], out)) return false;
+        }
+        return true;
+    }
+    window._treeLeafDiff = _treeLeafDiff;
+    function followOnExplorer() {
+        if (_treeFollowTimer) { clearTimeout(_treeFollowTimer); _treeFollowTimer = null; }
+        var st = document.getElementById("explorer-tree-state");
+        var wi = document.getElementById("explorer-tree-wiring");
+        if (!st || !wi) return null;
+        var bar = document.getElementById("explorer-livediff-bar");
+        if (bar && !bar.hidden) return null;   // the diff overlay owns the tree
+        if ((Date.now() - (window.__lastUserAct || 0)) < 2000
+                || document.querySelector(".json-tree .tree-val-editing")) {
+            _treeFollowTimer = setTimeout(followOnExplorer, 2000);
+            return null;
+        }
+        return fetch("/explorer/model", { cache: "no-store" })
+            .then(function (r) { return r.ok ? r.json() : null; })
+            .then(function (d) {
+                if (!d || !d.ok || document.getElementById("explorer-tree-state") !== st) return "gone";
+                var changes = [], same = true;
+                [[st, d.state], [wi, d.wiring]].forEach(function (p) {
+                    if (!same || p[0]._treeData == null) return;
+                    if (!_treeLeafDiff(p[0]._treeData, p[1], "", changes)) same = false;
+                });
+                if (!same) {
+                    if (typeof _keepPaneScroll === "function") _keepPaneScroll();
+                    if (typeof _softRefreshLiveSurface === "function") _softRefreshLiveSurface();
+                    return "refreshed";
+                }
+                if (!changes.length) return "unchanged";
+                window.LiveSurfacePatch.apply(changes.map(function (c) {
+                    return { dot_path: c.dot_path, value: c.value,
+                             old_value_str: typeof c.value === "string" ? c.value : JSON.stringify(c.value) };
+                }));
+                return "patched";
+            })
+            .catch(function () { return "failed"; });
+    }
+    window._followOnExplorer = followOnExplorer;
+    /* ...and the one entry point for "the working copy moved under this
+       screen": the grids and the tree, each through its own refresher. */
+    window._followValuesOnScreen = function () {
+        followOnGrid();
+        return followOnExplorer();
+    };
     /* docs/190 F05: another window changed the working copy. Re-render the tray
        (the count and the change signature the docs/179 gate reads) and re-fetch
        the rows/inspector VALUES the reader has on screen. Never a navigation:
@@ -4064,7 +4651,7 @@ window.livePushExtrasLine = function (typedPaths) {
         // refused push's conflict tray for the plain one within seconds.
         if (!foreign) { _foreignRefreshing = false; return; }
         var done = function () { _foreignRefreshing = false; };
-        var after = function () { done(); if (foreign) followOnGrid(); };
+        var after = function () { done(); if (foreign) window._followValuesOnScreen(); };
         try {
             var p = window.htmx.ajax("GET", "/state/tray",
                                      { target: "#pending-tray", swap: "outerHTML" });
@@ -4153,6 +4740,39 @@ window.livePushExtrasLine = function (typedPaths) {
         return true;
     }
     window._onDriftLiveDiverged = onLiveDiverged;
+    /* sync-ux 2026-09-25: THE rule for the status control. The poll carries the
+       server's verdict signature (`sync.sig`, core/sync_status.py); a control
+       rendered at a different one is re-rendered -- whichever way it moved.
+       SE-01 (an outside write with an unapplied edit was never announced),
+       SE-02 (an unparseable live file read "Synced"), SE-05 (a window whose
+       lab-mate took live kept "Live chip moved") and SU-03 (the stale cell was
+       unmarked) are all this one comparison. Never while this window is mid-
+       write: its own request repaints the tray when it lands. */
+    var _syncRefreshing = false;
+    function onSyncSig(d, trayAtIssue) {
+        if (!d || !d.sync) return false;
+        if (window.SyncStale) window.SyncStale.apply(d.sync.stale || {});
+        var t = document.getElementById("pending-tray");
+        if (!t || !window.htmx || _syncRefreshing) return false;
+        var shown = t.getAttribute("data-sync-sig");
+        if (shown === d.sync.sig) return false;
+        if (ownWritePending(trayAtIssue)) return false;
+        if (d.auto_pull) return false;       // the pull repaints the tray itself
+        _syncRefreshing = true;
+        var done = function () {
+            _syncRefreshing = false;
+            // the open panel follows the same verdict (F7: "resolved in
+            // another window" instead of stale buttons that still work)
+            if (window.SyncPanel && window.SyncPanel.isOpen()) window.SyncPanel.refresh();
+        };
+        try {
+            var p = window.htmx.ajax("GET", "/state/tray",
+                                     { target: "#pending-tray", swap: "outerHTML" });
+            if (p && p.then) p.then(done, done); else done();
+        } catch (e) { done(); }
+        return true;
+    }
+    window._onDriftSyncSig = onSyncSig;
 
     /* QA diagnostics-r2-11: the pill above now follows an outside write, but
        the banner that ASKS what to do about it (#live-diverged-slot: Review
@@ -4205,8 +4825,10 @@ window.livePushExtrasLine = function (typedPaths) {
                 // THIS window's tray and the values on screen -- in place, never
                 // swapping what the reader is looking at (docs/87/144).
                 onEditSeq(d, _trayAtIssue);
-                onLiveDiverged(d);
-                onDivergedBanner(d);
+                // (the diagnostics-r2-11 banner re-render is retired: the banner
+                // itself is gone, sync-ux 2026-09-25 -- the status control and the
+                // "live now" cell marks carry that signal now)
+                if (!onSyncSig(d, _trayAtIssue)) onLiveDiverged(d);
                 if (d && d.hist_seq && d.hist_seq !== window._histSeqSeen) {
                     var first = window._histSeqSeen === undefined;
                     window._histSeqSeen = d.hist_seq;
@@ -15080,6 +15702,9 @@ function _reviewRevealEditSync() {
     }
     var note = document.querySelector('.state-review .review-accept-note');
     if (note) note.hidden = false;
+    // sync-ux 2026-09-25: the panel re-reads -- the accepted field is one of
+    // your unapplied edits now, and the choices follow from that
+    if (window.SyncPanel && window.SyncPanel.isOpen()) setTimeout(window.SyncPanel.refresh, 150);
 }
 
 /* The review screen's "new" side is an EDITABLE live value, so its Δ has to
@@ -20684,9 +21309,10 @@ document.addEventListener('click', function(evt) {
         if (document.getElementById("explorer-tree-state")) {
             window.explorerLiveDiff(true);
         } else if (window.openReview) {
-            // Auto-opened by the workbench when Qualibrate touches the live
-            // chip — dismiss after 8s unless the user hovers/clicks/focuses.
-            window.openReview({ autoDismiss: 8000 });
+            // sync-ux 2026-09-25: only ever called from the nudge's own "Show" press now,
+            // so the panel stays until the user closes it (F4: the old 8 s
+            // auto-dismiss swallowed presses made after it vanished).
+            window.openReview({ force: true });
         }
     };
 
@@ -22063,14 +22689,44 @@ window.LiveEditUndo = (function () {
         var tray = document.getElementById("pending-tray");
         return tray ? parseInt(tray.getAttribute("data-change-count") || "0", 10) : 0;
     }
+    /* QA F1 (windows): an entry whose every cell is on screen and COMMITTED
+       since (tryUndo's own test) will never be restored -- tryUndo drops it
+       and the press falls through to /undo. The button kept naming it
+       ("Undo typed edit (anharmonicity)") while the press rewrote another
+       window's applied value on the live chip. Drop such entries before the
+       button or its tooltip reads the stack. A cell that is merely not on
+       screen keeps its entry (a parked pane can come back, docs/110). */
+    function _committedStale(a) {
+        if (!a || !a.cells || !a.cells.length) return true;
+        for (var i = 0; i < a.cells.length; i++) {
+            var c = a.cells[i], input = _input(c.dp);
+            if (!input || input.readOnly) return false;
+            if (!(input.getAttribute("data-orig") === String(c.next)
+                  || input.value === input.getAttribute("data-orig"))) return false;
+        }
+        return true;
+    }
+    function _prune() {
+        while (stack.length && _committedStale(stack[stack.length - 1])) stack.pop();
+    }
+    function _jrnNext(btn) {
+        return btn && btn.getAttribute("data-jrn-what")
+            ? { what: btn.getAttribute("data-jrn-what"),
+                n: parseInt(btn.getAttribute("data-jrn-n") || "1", 10) || 1,
+                live: btn.getAttribute("data-jrn-live") === "1" }
+            : null;
+    }
     function _updateTrayBtn() {
         var btn = document.getElementById("tray-undo-btn");
         if (!btn) return;
-        btn.style.display = (stack.length || _changeCount() > 0) ? "" : "none";
+        _prune();
+        btn.style.display = (stack.length || _changeCount() > 0 || _jrnNext(btn)) ? "" : "none";
     }
     function refreshTip(btn) {
         // Transparency contract: the tooltip names what the NEXT press does.
         var tip;
+        _prune();
+        var jrn = _changeCount() > 0 ? null : _jrnNext(btn);
         if (stack.length) {
             tip = "Undo " + stack[stack.length - 1].label + " (Ctrl+Z)";
         } else if (_changeCount() > 0) {
@@ -22103,11 +22759,46 @@ window.LiveEditUndo = (function () {
                 : ("Undo last staged change — removes exactly that entry "
                    + "group from Review (Ctrl+Z)");
             }
+        } else if (jrn) {
+            // QA F1 (windows): the journal step -- which may be ANOTHER
+            // window's apply -- and, with the live walk on, it writes the
+            // live chip now (docs/160). Say both before the press.
+            var more = jrn.n > 1 ? " (+" + (jrn.n - 1) + " more in that step)" : "";
+            tip = jrn.live
+                ? ("Undo on the LIVE chip: " + jrn.what + more
+                   + " — writes the live files now, whichever window applied it (Ctrl+Z)")
+                : ("Stage the undo of " + jrn.what + more
+                   + " into Review — Apply writes it (Ctrl+Z)");
         } else {
             tip = "Nothing to undo";
         }
         btn.title = tip;
     }
+
+    /* QA F1 (windows): a window whose applied value another window undid on
+       the live chip was never told -- its cell just changed back. The tray
+       (re-rendered on every foreign edit_seq move) carries the newest live
+       undo; a window that did not press it says so, once. The first tray a
+       window sees only records where it is. */
+    var _ownLiveUndo = {};
+    document.addEventListener("cellsReverted", function (evt) {
+        var d = evt && evt.detail;
+        if (d && d.live_undo_seq) _ownLiveUndo[String(d.live_undo_seq)] = true;
+    });
+    function _noticeForeignLiveUndo() {
+        var tray = document.getElementById("pending-tray");
+        if (!tray) return;
+        var seq = tray.getAttribute("data-live-undo-seq") || "";
+        if (window._liveUndoSeen === undefined) { window._liveUndoSeen = seq; return; }
+        if (!seq || seq === window._liveUndoSeen) return;
+        window._liveUndoSeen = seq;
+        if (_ownLiveUndo[seq]) return;
+        if (window.showToast) {
+            window.showToast("Another State Manager window undid a change on the live chip — "
+                             + (tray.getAttribute("data-live-undo-msg") || "") , "warning");
+        }
+    }
+    window._noticeForeignLiveUndo = _noticeForeignLiveUndo;
 
     // The tray re-renders on every staged mutation — re-evaluate the button.
     // audit-r10: ALSO on oobAfterSwap (every server _tray_oob() rides OOB,
@@ -22118,14 +22809,16 @@ window.LiveEditUndo = (function () {
         if (t && (t.id === "pending-tray"
                   || (t.querySelector && t.querySelector("#pending-tray")))) {
             _updateTrayBtn();
+            _noticeForeignLiveUndo();
         }
     }
     document.addEventListener("htmx:afterSwap", _onTraySwap);
     document.addEventListener("htmx:oobAfterSwap", _onTraySwap);
     if (document.readyState === "loading") {
-        document.addEventListener("DOMContentLoaded", _updateTrayBtn);
+        document.addEventListener("DOMContentLoaded", function () { _updateTrayBtn(); _noticeForeignLiveUndo(); });
     } else {
         _updateTrayBtn();
+        _noticeForeignLiveUndo();
     }
 
     return { record: record, tryUndo: tryUndo, tryRedo: tryRedo, resync: resync,
@@ -23251,8 +23944,22 @@ window.TopbarHold = (function () {
         closeReviewAndClearUndo: function () {
             if (window.closeReview) window.closeReview();
             if (window.LiveEditUndo) window.LiveEditUndo.clear();
+        },
+        /* sync-ux 2026-09-25: a panel button (✕, Save, Discard all, Bring back) swapped
+           the tray; re-read the open panel so it shows the same state */
+        syncPanelRefresh: function () {
+            if (window.SyncPanel && window.SyncPanel.isOpen()) window.SyncPanel.refresh();
         }
     };
+    /* sync-ux 2026-09-25: server-side words for a panel press, and a nudge that the
+       values on screen moved (↶ Bring back re-applied edits) */
+    document.addEventListener('syncToast', function (e) {
+        var d = e && e.detail;
+        if (d && d.message && window.showToast) window.showToast(d.message, d.level || 'info');
+    });
+    document.addEventListener('syncValuesMoved', function () {
+        try { if (window._followValuesOnScreen) window._followValuesOnScreen(); } catch (e2) {}
+    });
     document.addEventListener('htmx:afterRequest', function (ev) {
         var el = ev.target;
         if (!el || !el.getAttribute) return;

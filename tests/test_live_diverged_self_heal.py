@@ -182,7 +182,9 @@ def test_pending_edits_do_not_silence_an_outside_write(env):
     assert ctx.get("live_diverged") is True, (
         "an outside write must be flagged although edits are pending")
     page = c.get("/diagnostics").get_data(as_text=True)          # the F5
-    assert 'id="live-diverged-banner"' in page
+    # sync-ux 2026-09-25: said by the ONE status control, not the (removed)
+    # banner -- "1 unapplied · live changed" (re-scoped from the banner id)
+    assert 'data-sync-state="both"' in page and "live changed" in page
     assert len(store.change_log) == 1, "the edit survives"
     assert c.get("/state/drift").get_json()["auto_pull"] is False, "nothing pulls"
     # the live chip goes back to the synced content: a dirty context is never

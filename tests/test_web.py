@@ -204,7 +204,10 @@ class TestRound15ChromeHiding:
         tray = self._read("web", "templates", "_pending_tray.html")
         base = self._read("web", "templates", "base.html")
         assert 'id="topbar-tray-slot"' in base
-        assert 'class="state-status-badge' in tray and 'id="pending-tray"' in tray
+        # sync-ux 2026-09-25 (user decision: one status control + one sync panel): the badge lives in the control partial the tray includes
+        ctl = self._read("web", "templates", "_sync_control.html")
+        assert "_sync_control.html" in tray and 'id="pending-tray"' in tray
+        assert "state-status-badge" in ctl
         # the slot floats (fixed) while every sibling <li> stays hidden
         slot = css.split("html.topbar-hidden #topbar-tray-slot {", 1)[1].split("}", 1)[0]
         assert "position: fixed" in slot and "pointer-events: auto" in slot, (
@@ -1269,8 +1272,10 @@ class TestSaveFlow:
         # Pending edit, clean working state (change_count>0, not working_dirty) → the
         # tray bar offers the one-click "⚡ Apply to live now"; "Save to working state"
         # moved off the bar into the Review drawer's footer (same fragment, collapsed).
-        assert "Save to working state" in html
-        assert "Apply to live now" in html
+        # sync-ux 2026-09-25 (user decision: one status control + one sync panel): the control's one attached action is "↑ Apply 1"
+        # (the one-click merge, doStateSync('apply')); Save moved into the panel
+        assert "&#8593; Apply 1" in html and "doStateSync('apply')" in html
+        assert "Save to working state" in loaded_client.get("/state/review").data.decode()
 
     def test_pending_tray_present(self, loaded_client):
         html = loaded_client.get("/qubits").data.decode()
@@ -2485,7 +2490,7 @@ class TestPendingChangesTray:
                           headers={"HX-Request": "true"})
         html = synth_client.get("/qubits").data.decode()
         assert 'tray-empty' not in html
-        assert 'tray-bar' in html
+        assert 'sync-st-mine' in html     # sync-ux 2026-09-25 (user decision: one status control + one sync panel): was the tray-bar
 
     def test_edit_response_includes_oob_tray(self, synth_client, synth_qubit):
         resp = synth_client.post("/qubit/qA1/edit",
@@ -2501,7 +2506,7 @@ class TestPendingChangesTray:
         resp = synth_client.post("/qubit/qA1/edit",
                                   data={"dot_path": "qubits.qA1.T1", "value": "9000"},
                                   headers={"HX-Request": "true"})
-        assert b"1 unsaved change" in resp.data
+        assert b"1 unapplied edit" in resp.data     # sync-ux 2026-09-25 (user decision: one status control + one sync panel): (was "1 unsaved change")
 
     def test_save_returns_oob_tray(self, synth_client, synth_qubit):
         synth_client.post("/qubit/qA1/edit",
@@ -2513,7 +2518,10 @@ class TestPendingChangesTray:
         # Save writes the working state (working_dirty, no pending edits) → the tray
         # offers the safe direct push "Apply to live chip" (a one-click pull-merge
         # would drop the just-saved edits, so it's intentionally NOT shown here).
-        assert 'Apply to live chip' in html
+        # sync-ux 2026-09-25 (user decision: one status control + one sync panel): the staged control's action is the direct push
+        # (a /save'd edit still counts as the user's unapplied edit; a saved
+        # working state is pushed whole, never pull-merged)
+        assert 'hx-post="/state/apply-to-live"' in html and "doStateSync('apply')" not in html
 
     def test_discard_returns_full_tray(self, synth_client, synth_qubit):
         synth_client.post("/qubit/qA1/edit",
@@ -2536,8 +2544,10 @@ class TestPendingChangesTray:
                            data={"dot_path": "qubits.qA1.T1", "value": "9000"},
                            headers={"HX-Request": "true"})
         resp = synth_client.post("/discard", data={"index": "0"})
-        html = resp.data.decode()
-        assert 'hx-target="#pending-tray"' in html
+        assert resp.status_code == 200
+        # sync-ux 2026-09-25 (user decision: one status control + one sync panel): the ✕ per edit lives in the panel and still targets the tray
+        html = synth_client.get("/state/review").data.decode()
+        assert 'hx-post="/discard" hx-target="#pending-tray"' in html
 
     def test_discard_sends_hx_trigger(self, synth_client, synth_qubit):
         """Discard response includes HX-Trigger header with cellDiscarded event."""
@@ -2602,7 +2612,9 @@ class TestFieldEdit:
             "/field/edit", data={"dot_path": dot_path, "value": "0.55"}
         )
         data = json.loads(resp.data)
-        assert dot_path in data["tray_html"]
+        # sync-ux 2026-09-25 (user decision: one status control + one sync panel): the tray is one row: it counts the edit, the panel names it
+        assert "1 unapplied edit" in data["tray_html"]
+        assert dot_path in synth_client.get("/state/review").data.decode()
 
     def test_field_edit_missing_dot_path(self, synth_client):
         """Missing dot_path returns 400."""
@@ -4197,7 +4209,7 @@ class TestWorkingCopyRoutes:
         _bump_live_state(synth_folder, f_01=9.99e9)
         html = loaded_client.get("/state/review").data.decode()
         assert "qubits.qA1.f_01" in html
-        assert "modified" in html
+        assert "sp-row-live" in html     # sync-ux 2026-09-25 (user decision: one status control + one sync panel): (was the "modified" row class)
 
     def test_save_does_not_touch_live(self, loaded_client, synth_folder):
         before = (synth_folder / "state.json").read_text(encoding="utf-8")
@@ -4242,7 +4254,8 @@ class TestWorkingCopyRoutes:
                            data={"dot_path": "qubits.qA1.f_01", "value": "5.0e9"})
         _bump_live_state(synth_folder)
         html = loaded_client.post("/state/apply-to-live").data.decode()
-        assert "changed since you loaded it" in html
+        # sync-ux 2026-09-25 (user decision: one status control + one sync panel): the refused control, not the 4-row conflict tray
+        assert "Apply wrote nothing" in html and 'data-sync-state="refused"' in html
 
     def test_apply_force_overrides_conflict(self, loaded_client, synth_folder):
         loaded_client.post("/field/edit",
@@ -7813,14 +7826,14 @@ class TestUndoNavServerR16:
         # The tray rides pages/OOB swaps — render the fragment directly.
         from quam_state_manager.web import routes as routes_mod
         app = chip_client.application
-        with app.test_request_context():
-            return routes_mod._tray_html()
+        # sync-ux 2026-09-25 (user decision: one status control + one sync panel): the Review drawer's edit list moved into the panel
+        return chip_client.get("/state/review").data.decode()
 
     def test_tray_items_carry_group_id(self, chip_client):
         chip_client.post("/qubit/qA1/edit", data={
             "dot_path": "qubits.qA1.f_01", "value": "6.3e9"})
         html = self._tray(chip_client)
-        assert 'class="tray-change-item" data-group-id=' in html
+        assert 'tray-change-item" data-group-id=' in html
 
     def test_tray_created_scalar_shows_value(self, chip_client):
         # extras.data_folder-class scalar create used to render a bare

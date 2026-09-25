@@ -108,7 +108,7 @@ class TestConflictPullFlow:
         _edit(client, "qubits.qA1.f_01", value)
         _write_live_state(folder, _make_state(f_01=7.0e9))
         html = client.post("/state/apply-to-live").data.decode()
-        assert "changed since you loaded it" in html
+        assert "Apply wrote nothing" in html
 
     def test_conflict_then_reapply_restores_saved_edit(self, loaded_client, synth_folder):
         self._make_stale_conflict(loaded_client, synth_folder)
@@ -150,7 +150,7 @@ class TestConflictPullFlow:
         data = loaded_client.post("/state/sync", data={"mode": "apply"}).get_json()
         assert data["status"] == "conflict"
         assert data["mode"] == "apply"
-        assert "changed since you loaded it" in data["tray_html"]
+        assert "Apply wrote nothing" in data["tray_html"]
 
         # Stash preserved: with the real apply restored, a retry pushes the edit.
         monkeypatch.undo()
@@ -172,7 +172,7 @@ class TestConflictPullFlow:
         _edit(loaded_client, "qubits.qA1.f_01", "5.0e9")
         loaded_client.post("/save")
         _write_live_state(synth_folder, _make_state(f_01=7.0e9))
-        assert "changed since you loaded it" in loaded_client.post("/state/apply-to-live").data.decode()
+        assert "Apply wrote nothing" in loaded_client.post("/state/apply-to-live").data.decode()
         data = loaded_client.post("/state/sync", data={"mode": "reapply"}).get_json()
         assert data["replay"]["applied"] == 1
 
@@ -306,7 +306,9 @@ class TestReviewOnTheFlyAccept:
         # The changed path is offered as an editable live value + an accept button.
         assert "review-live-input" in html
         assert 'data-dot-path="qubits.qA1.f_01"' in html
-        assert "reviewAccept(this)" in html
+        # sync-ux 2026-09-25 (user decision: the review modal became the sync panel):
+        # the per-field ↓ feeds the row's (editable) value to reviewAccept
+        assert "SyncPanel.takeOne(this)" in html
         # The live value is rendered grouped (lossless full digits + commas).
         assert "7,000,000,000" in html
 
@@ -356,16 +358,15 @@ class TestAcceptThenSyncPreservesEdit:
         # Clean working copy, live drifted → unsaved==0.
         self._diverge_clean(synth_folder)
         html = loaded_client.get("/state/review").data.decode()
-        # The edit-preserving trio is rendered but hidden (so JS can reveal it),
-        # while the plain "pull the live state" button is the visible default.
-        assert '<span class="review-sync-edits" hidden>' in html
-        assert '<span class="review-sync-clean">' in html
-        # The trio markup (apply + reapply) is present even though hidden.
-        # QA liveedit-r2-05: this screen SHOWS the live values, so its apply is
-        # "informed" -- the one-click same-field collision question is not
-        # asked again here (the literal grew that argument).
-        assert "doStateSync('apply', false, false, null, {informed: true})" in html
-        assert "doStateSync('reapply')" in html
+        # sync-ux 2026-09-25 (user decision: the review modal became the sync panel):
+        # a clean copy whose live moved: ↓ Take live loses nothing and is one
+        # press; there is nothing of the user's to merge, so no merge is offered.
+        assert 'data-sync-state="live"' in html
+        i = html.index("sp-take")
+        tag = html[html.rindex("<button", 0, i):html.index(">", i)]
+        assert "doStateSync('discard')" in tag and "sync-arm" not in tag
+        assert "Lost: nothing." in html
+        assert "sp-merge" not in html
 
     def test_saved_unapplied_review_offers_safe_push_not_discard_only(
         self, loaded_client
@@ -381,13 +382,14 @@ class TestAcceptThenSyncPreservesEdit:
         )
         loaded_client.post("/save")
         html = loaded_client.get("/state/review").data.decode()
-        # The saved-but-unapplied branch is visible; the destructive plain-pull span
-        # and the (empty) change-log trio are both hidden.
-        assert '<span class="review-sync-saved">' in html
-        assert '<span class="review-sync-clean" hidden>' in html
-        assert '<span class="review-sync-edits" hidden>' in html
-        # It offers the safe direct push to live (which preserves the saved edits).
-        assert "/state/apply-to-live" in html
+        # sync-ux 2026-09-25 (user decision: the review modal became the sync panel):
+        # the saved version is pushed WHOLE (the safe direct push), and the
+        # destructive Take live is a second press that names what it drops.
+        assert 'hx-post="/state/apply-to-live"' in html
+        assert "doStateSync('apply'" not in html, "no pull-first merge over a saved version"
+        i = html.index("sp-take")
+        tag = html[html.rindex("<button", 0, i):html.index(">", i)]
+        assert "sync-arm" in tag
 
     def test_saved_then_edited_tray_routes_to_safe_direct_push(self, loaded_client):
         # Grid ⚡ steering anchor (audit fix): after "Save to working state"
@@ -407,9 +409,11 @@ class TestAcceptThenSyncPreservesEdit:
         )
         html = loaded_client.get("/qubits").data.decode()
         assert 'data-working-dirty="1"' in html
-        assert "/state/apply-to-live" in html
-        assert "Apply to live chip" in html
-        # The ⚡ pull-merge button must be suppressed in this state (it pulls first).
+        # sync-ux 2026-09-25 (user decision: the review modal became the sync panel):
+        # the status control's action is the direct push, never the pull-merge
+        tray = loaded_client.get("/state/tray").data.decode()
+        assert 'hx-post="/state/apply-to-live"' in tray
+        assert "doStateSync('apply')" not in tray
         assert "Apply to live now" not in html
 
     def test_after_accept_review_reveals_edit_preserving_sync(
@@ -423,8 +427,12 @@ class TestAcceptThenSyncPreservesEdit:
             json={"updates": [{"dot_path": "qubits.qA1.f_01", "value": "8.0e9"}]},
         )
         html = loaded_client.get("/state/review").data.decode()
-        assert '<span class="review-sync-edits">' in html  # visible (no hidden)
-        assert '<span class="review-sync-clean" hidden>' in html
+        # sync-ux 2026-09-25 (user decision: the review modal became the sync panel):
+        # the accepted (tweaked) value is the user's edit on a field the live
+        # chip also moved: a same-field collision, decided per field (decision 2)
+        # -- never a lone pull that would drop it.
+        assert 'data-pick-path="qubits.qA1.f_01"' in html
+        assert "sp-merge" in html and "disabled data-needs-picks" in html
 
     def test_accept_edit_then_apply_writes_user_value_not_live(
         self, loaded_client, synth_folder
@@ -654,14 +662,11 @@ class TestReviewCountsNameTheSide:
         live["qubits"]["qA1"]["T2echo"] = 3.3e-6       # only on the live chip
         _write_live_state(synth_folder, live)
         html = loaded_client.get("/state/review").data.decode()
-        assert '<span class="review-sync-saved">' in html   # "Apply to live chip" shown
-        assert "Only in working state: 1" in html
-        assert "Only on live chip: 1" in html
-        assert "Different: 1" in html
+        # sync-ux 2026-09-25 (user decision: the review modal became the sync panel):
+        # every row names its side by COLUMN -- "here (SM)" and "live chip" --
+        # and the delta names its direction; the ambiguous verbs stay gone.
+        assert ">here (SM)<" in html and ">live chip<" in html
+        assert "live chip − here" in html
         assert "Removed:" not in html and "Added:" not in html
-        badge = "</span>".join(html.split('class="diff-dir-badge"', 1)[1].split("</span>")[:2])
-        assert badge.index("Working state") < badge.index("Live chip")
-        # the gutter letter keeps its class contract (docs/42) and names the side
-        row = html.split('data-dot-path="qubits.qA1.T2ramsey"', 1)[0].rsplit("review-row diff-row-", 1)[1]
-        assert row.startswith("removed")
-        assert 'title="only in the working state"' in row
+        # here (the working state) is the left column, the live chip the right
+        assert html.index(">here (SM)<") < html.index(">live chip<")

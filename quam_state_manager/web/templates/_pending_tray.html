@@ -9,7 +9,15 @@
         happens to be the same SIZE. #}
      data-change-sig="{{ change_sig | default('') }}"
      data-edit-seq="{{ edit_seq | default('') }}"
+     {# QA F1 (windows): the newest undo another window wrote to the LIVE
+        chip. A window that did not press it toasts the message once. #}
+     {% if last_live_undo is defined and last_live_undo %}data-live-undo-seq="{{ last_live_undo.seq }}"
+     data-live-undo-msg="{{ last_live_undo.message }}"{% endif %}
      data-working-dirty="{{ '1' if working_dirty else '0' }}"
+     {# sync-ux 2026-09-25: what the status control shows. The drift poll re-renders the
+        tray exactly when the server's signature differs -- raised OR lowered
+        (SE-05), dirty OR clean (SE-01). #}
+     {% if sync is defined and sync %}data-sync-sig="{{ sync.sig }}" data-sync-state="{{ sync.state }}"{% endif %}
      {# docs/110 #10-A: the store's mutation_seq — PaneState's freshness beacon.
         The tray renders on every page AND OOB-swaps on every mutation, so the
         CURRENT tray always carries the current seq; a parked pane whose seq no
@@ -22,73 +30,20 @@
      data-auto-since="{{ auto_apply.armed_at | default(0) }}"{% endif %}
      {% if oob is defined and oob %}hx-swap-oob="outerHTML:#pending-tray"{% endif %}>
 {% if live_readonly %}<span class="tray-ro-lock" title="The LIVE folder does not appear writable (read-only share?). Edits save to the working copy, but Apply to live will fail until the folder is writable.">&#128274;&nbsp;<span class="tray-ro-text">read-only</span></span>{% endif %}
-{# Persistent status badge — amber when the working copy has edits not yet on
-   the live chip, neutral "Synced" otherwise. Always clickable to review the
-   working-copy ↔ live diff (the review surface used to be reachable only when
-   the tray was non-empty). #}
 {% set _archive = (chip_origin is defined and chip_origin == 'dataset_archive') %}
-{# QUAlibrate active-project badge (docs/55) — a read-only pointer into the
-   Projects page. Red = the active project's state_path doesn't exist (its
-   runs would fail); amber = SM has a DIFFERENT chip open than the one
-   qualibrate writes to; neutral otherwise. #}
-{% if qualibrate_tray is defined and qualibrate_tray and qualibrate_tray.standalone %}
-{# docs/120 item 1 — "sometimes a user just opens an arbitrary state file and
-   wants to handle the FULL state file; it's enough to indicate the user is
-   modifying a specific folder, not a project."
-
-   Editing an unaffiliated folder always worked; SM simply never said so, and
-   an absent badge reads as "not applicable yet", not as "standalone". This
-   chip is purely informational — it is NOT a warning and must never wear a
-   warn/danger colour. It can sit BESIDE the ⚗ badge: qualibrate having an
-   active project while the open chip belongs to none is exactly the case
-   worth naming, and it explains the amber ⚗ (no project, rather than a
-   different one). #}
-<span class="qualibrate-tray-badge tray-standalone-badge"
-      title="This chip is a standalone folder — it is not part of any QUAlibrate project. Everything is editable as usual; only the project association is absent.{% if qualibrate_tray.standalone_path %}&#10;{{ qualibrate_tray.standalone_path }}{% endif %}">
-    <span aria-hidden="true">&#128193;</span>&nbsp;Standalone folder</span>
-{% endif %}
-{% if qualibrate_tray is defined and qualibrate_tray and (qualibrate_tray.project or qualibrate_tray.sm_scope) %}
-{# Badge name = SM's own project scope when present (docs/63), else the
-   qualibrate-active project. When both exist and differ, the active project
-   is appended muted — informational, never a warn color (colors keep their
-   docs/55 meaning: red = active state_path dangling, amber = chip mismatch). #}
-<a href="/qualibrate" hx-get="/qualibrate" hx-target="#table-pane" hx-push-url="true"
-   class="qualibrate-tray-badge{% if qualibrate_tray.dangling %} qualibrate-tray-danger{% elif qualibrate_tray.match == false %} qualibrate-tray-warn{% endif %}"
-   title="{% if qualibrate_tray.dangling %}QUAlibrate active project — its state_path does not exist (see Projects &rarr; Doctor){% elif qualibrate_tray.match == false %}QUAlibrate writes to a different chip than the one open in SM — click to review projects{% elif qualibrate_tray.match %}QUAlibrate active project — same chip as loaded in SM{% elif qualibrate_tray.project %}QUAlibrate active project — click to manage projects{% else %}SM project scope — qualibrate has no active project set{% endif %}">
-    <span aria-hidden="true">&#9879;</span>&nbsp;{{ qualibrate_tray.sm_scope or qualibrate_tray.project }}{% if qualibrate_tray.sm_scope and qualibrate_tray.project and qualibrate_tray.sm_scope != qualibrate_tray.project %}&nbsp;<span class="qualibrate-tray-active-note">(qualibrate: {{ qualibrate_tray.project }})</span>{% endif %}</a>
-{% endif %}
+{# sync-ux 2026-09-25 (user decision 2026-09-25): ONE status control in a one-row top bar.
+   The "Standalone folder" chip and the ⚗ project badge moved to the sidebar
+   (_sidebar_folder_badge.html); the control carries a "⚗ elsewhere" marker only
+   in the one sync-relevant case -- QUAlibrate writes a DIFFERENT folder, so its
+   runs never show up as a live change here. The tray bar, the Review drawer,
+   Revert last apply and the applied log moved into the sync panel. #}
 {% if active_name or change_count > 0 or working_dirty %}
-{% set _dirty = change_count > 0 or working_dirty %}
-{# A THIRD state. `_dirty` answers "have I edited?"; it does not answer "does my
-   working state match the chip?", which is what the badge's own words claim.
-   With no local edits and a chip that moved underneath you, the badge said
-   "● Synced — Working state matches the live chip" directly above the banner
-   announcing that the live files had changed. Local-clean-but-live-moved is
-   neither dirty nor synced, and the banner beside it already offers the
-   choice — the badge only has to stop contradicting it. #}
-{% set _drifted = live_diverged and not _dirty %}
-<button type="button"
-        class="state-status-badge {{ 'state-status-archive' if _archive else 'state-status-dirty' if _dirty else 'state-status-drifted' if _drifted else 'state-status-synced' }}"
-        onclick="openReview()"
-        title="{% if _archive %}Opened from a dataset run archive (read-only) — load the live folder to edit/apply{% elif _dirty %}Local edits live in the working state — click to review and apply to the live chip{% elif _drifted %}The live chip changed on disk since your working state was synced — click to review and choose which side wins{% else %}Working state matches the live chip — click to review{% endif %}{% if not _archive %}{% if auto_apply %}{{ ' · Auto-Sync is ON: leaving an edited field writes it straight to the live chip. Every change is listed below and revertible with its ✕, or the whole session with ↺ Revert this session.' }}{% else %}{{ ' · How this works: edits stay in your working state (a private copy) until you press Apply to live — reversible with ↺ Revert last apply.' }}{% endif %}{% endif %}">
-    <span class="state-status-dot" aria-hidden="true">&#9679;</span>
-    {% if _archive %}Archive (read-only){% set _ai = archive_info() %}{% if _ai and _ai.run_label %} · run {{ _ai.run_label }}{% endif %}
-    {% elif change_count > 0 %}Working state · {{ change_count }} unsaved
-    {% elif working_dirty %}Working state · not applied
-    {% elif _drifted %}Live chip moved
-    {% else %}Synced{% endif %}
-    {# title: the name span ellipsizes at 26ch, so hover must recover the full
-       folder name (the button's own title explains the status instead). #}
-    {% if active_name %}<span class="state-status-name" title="{{ active_name }}">{{ active_name }}</span>{% endif %}
-</button>
+{% include '_sync_control.html' %}
 {# QA F13: a run archive names the way back to the chip it replaced. #}
-{% if _archive and _ai is defined and _ai and _ai.return_path %}
+{% if _archive and archive_info() and archive_info().return_path %}{% set _ai = archive_info() %}
 <button type="button" class="btn-sm outline tray-archive-back" hx-post="/load"
         hx-vals='{{ {"folder": _ai.return_path} | tojson }}' hx-target="#table-pane" hx-swap="innerHTML"
         title="Leave this read-only run archive and re-open {{ _ai.return_path }} — its working state and edits are as you left them">&larr; Back to {{ _ai.return_name }}</button>
-{% elif _archive %}
-<span class="muted tray-archive-hint"
-      title="A dataset run's frozen quam_state. Load a chip folder (State Load) to edit or apply.">Read-only run archive — load a chip folder to edit</span>
 {% endif %}
 {% endif %}
 {# docs/115's always-on "How this works" banner is GONE (customer,
@@ -116,177 +71,13 @@
    Hidden until there is something to undo (JS toggles). #}
 <button type="button" id="tray-undo-btn" class="tray-undo-btn" style="display:none"
         onclick="LiveEditUndo.trigger()" onmouseenter="LiveEditUndo.refreshTip(this)"
+        {# QA F1 (windows): with nothing pending the next press walks the
+           journal -- on the LIVE chip when the live walk is on (docs/160) --
+           so the button carries what that step would undo, to name it. #}
+        {% if undo_next is defined and undo_next %}data-jrn-what="{{ undo_next.what }}"
+        data-jrn-n="{{ undo_next.n }}" data-jrn-live="{{ '1' if undo_next.live else '0' }}"{% endif %}
         title="Undo last edit (Ctrl+Z)" aria-label="Undo last edit">&#8630;</button>
 {% endif %}
-{% if last_apply is defined and last_apply and change_count == 0 and not working_dirty and not _archive %}
-{# docs/20 v2 "Revert last apply": EXPLICIT + confirmed — never Ctrl+Z. Stages
-   the pre-apply snapshot back into the working copy for review; the user then
-   Applies to live to complete the revert (the same gated State-History
-   machinery, nothing new). Rendered only while there is nothing pending. #}
-<button type="button" class="tray-revert-apply"
-        hx-post="/state-history/{{ last_apply.pre_ts }}/stage?from=tray"
-        hx-target="#status-bar" hx-swap="innerHTML"
-        hx-confirm="Load the state as it was BEFORE your last Apply back into the working copy? You review it first — Apply to live completes the revert."
-        title="{% if auto_apply %}Revert the whole auto-apply session — stages the state as it was when you turned auto-apply ON{% else %}Revert last apply (done {{ (last_apply.at or '') | replace('T', ' ') }} local time) — stages the pre-apply state for review; nothing touches the live chip until you Apply{% endif %}.">
-  {# docs/117: under an armed session the anchor IS the session (one snapshot,
-     taken at the first flush), so the label must not promise "the last one" —
-     per-change revert is the applied log's ✕. #}
-  &#8634; Revert {% if auto_apply %}this session{% else %}last apply{% endif %}</button>
-{% endif %}
-{# docs/117: the applied log is NOT inside the pending drawer — after a flush
-   there is nothing pending, which is precisely when this list is the only
-   feedback the user has. It takes its own row (flex-basis:100%). #}
-{% if auto_apply or applied_log %}{% include '_applied_log.html' %}{% endif %}
-{% if change_count > 0 or working_dirty %}
-  <div class="tray-bar">
-    {% if change_count > 0 %}
-    <span class="tray-indicator">&#9679; {{ change_count }} unsaved change{{ 's' if change_count != 1 }}</span>
-    {% else %}
-    <span class="tray-indicator tray-indicator-applied">&#9679; Saved to the working state &mdash; not on the live chip yet</span>
-    {% endif %}
-    <div class="tray-actions">
-      {% if change_count > 0 %}
-      <button class="tray-review-btn" onclick="togglePendingTray()">
-        <span id="tray-toggle-label">&#9660; Review</span>
-      </button>
-      {# "Save to working state" used to sit HERE. It's a rare action (park a
-         draft on disk without publishing to the instrument) that was costing a
-         ~150px always-on button in an already-overcrowded topbar, so it moved
-         into the Review drawer's footer. Keep it reachable somewhere: the
-         review MODAL only offers pull/apply/discard, so the drawer is now the
-         only UI path to /save. #}
-      {% endif %}
-      {% if _archive %}
-      {# Read-only archive: applying to live is blocked server-side (409), and
-         htmx drops the 4xx body, so the button would be a silent no-op that
-         contradicts the "Archive (read-only)" badge. Show a hint instead. #}
-      <span class="muted tray-archive-hint"
-            title="This chip was opened from a dataset run archive — load it from its live folder to apply.">
-        Read-only archive — load the live folder to apply</span>
-      {% elif change_count > 0 and not working_dirty %}
-      {# One-click apply (no saved-but-unapplied edits to protect): pull the live chip,
-         re-apply the pending edits on top, and write them straight to the live chip —
-         no review-modal round-trip. Safe: it MERGES (qualibrate's other changes
-         survive). The review-before-apply path stays available via the status badge. #}
-      {# NO confirm — DELIBERATE (owner decision, docs/104 #1 reversed).
-         A confirm existed here once and was REMOVED on purpose: this button
-         exists to be the one-click path, and pressing a button labeled
-         "Apply to live now" IS the user's consent — a dialog re-asking the
-         question the label already asked is friction, not safety. The safety
-         properties live elsewhere: the write MERGES (qualibrate's changes
-         survive), the pre-apply live is snapshotted ("Revert last apply"),
-         and the review-before-apply path is one click away on the status
-         badge. Red teams: do not re-flag this as a missing confirm. #}
-      <button type="button" class="btn-sm btn-apply-live"
-              onclick="doStateSync('apply')"
-              title="One click — apply your edits to the live chip now. Pulls the live chip, re-applies your edits on top, and writes them straight to state.json / wiring.json (no review step). To review every field before applying, click the status badge above.">
-        <span aria-hidden="true">&#9889;</span> Apply to live now</button>
-      {% else %}
-      {# Saved-but-unapplied edits exist (working_dirty) — a pull-based one-click merge
-         would overwrite them, so push the whole snapshot to live directly instead (it
-         preserves the saved edits and surfaces a staleness conflict only if the live
-         chip diverged — the right moment to choose). #}
-      <button class="btn-sm btn-apply-live"
-              hx-post="/state/apply-to-live"
-              hx-target="#pending-tray"
-              hx-swap="outerHTML"
-              hx-disabled-elt="this"
-              {# docs/179: what THIS screen is showing, which is the consent
-                 record. Without it the gate sees no opinion and never fires,
-                 and another window's staged edit reaches the instrument under
-                 a press that showed nothing. #}
-              hx-vals='{"seen_changes": "{{ change_count }}", "seen_sig": "{{ change_sig }}"}'
-              hx-confirm="Apply the working state to the live chip's state.json / wiring.json now?"
-              data-after-request="clearUndo"
-              title="Push the working state (your saved, not-yet-applied edits) to the live chip.">
-        <span aria-hidden="true">&#8593;</span> Apply to live chip</button>
-      {% endif %}
-    </div>
-  </div>
-  {% if change_count > 0 %}
-  <div id="tray-drawer" class="tray-drawer" inert>
-    <div class="tray-change-list">
-      {% for c in changes %}
-      <div class="tray-change-item" data-group-id="{{ c.group_id or '' }}">
-        <code class="tray-change-path" title="{{ c.dot_path }}">{{ c.dot_path }}</code>
-        <div class="tray-change-vals">
-          {# r16 ②: created/deleted entries show their VALUES — the change
-             log always carried the full subtree; only the render dropped it.
-             Scalars render inline; mappings expand to a leaf list. #}
-          {% if c.created %}
-          {% if c.new_value is mapping %}
-          <details class="tray-subtree">
-            <summary class="change-new tray-op-pill" title="New key created by this change — expand to see the values">+ added ({{ c.new_value | length }} field{{ 's' if c.new_value | length != 1 }})</summary>
-            <div class="tray-subtree-leaves">
-              {% for lp, lv in c.new_value | flatten_leaves %}
-              <div class="tray-subtree-leaf"><code>{{ lp }}</code> <span class="change-new">{{ lv | groupdigits if lv is not none else 'null' }}</span></div>
-              {% endfor %}
-            </div>
-          </details>
-          {% else %}
-          <span class="change-new tray-op-pill" title="New key created by this change">+ {{ c.new_value | groupdigits if c.new_value is not none else 'null' }}</span>
-          {% endif %}
-          {% elif c.deleted %}
-          {% if c.old_value is mapping %}
-          <details class="tray-subtree">
-            <summary class="change-old tray-op-pill" title="Key deleted by this change — discard restores it; expand to see the removed values">&minus; deleted ({{ c.old_value | length }} field{{ 's' if c.old_value | length != 1 }})</summary>
-            <div class="tray-subtree-leaves">
-              {% for lp, lv in c.old_value | flatten_leaves %}
-              <div class="tray-subtree-leaf"><code>{{ lp }}</code> <span class="change-old">{{ lv | groupdigits if lv is not none else 'null' }}</span></div>
-              {% endfor %}
-            </div>
-          </details>
-          {% else %}
-          <span class="change-old tray-op-pill" title="Key deleted by this change — discard restores it">&minus; {{ c.old_value | groupdigits if c.old_value is not none else 'null' }}</span>
-          {% endif %}
-          {% else %}
-          <span class="change-old">{{ c.old_value | groupdigits if c.old_value is not none else 'null' }}</span>
-          <span class="tray-arrow">&#8594;</span>
-          <span class="change-new">{{ c.new_value | groupdigits if c.new_value is not none else 'null' }}</span>
-          {{ delta_chip(c.old_value, c.new_value) }}
-          {% endif %}
-          {# docs/107: no hx-confirm — the ✕ discards immediately. Recoverable
-             by design: /discard pushes the change onto the redo stack, so
-             Ctrl+Shift+Z brings it back (recoverability licenses no-confirm). #}
-          <button class="outline btn-sm btn-discard"
-                  hx-post="/discard"
-                  hx-target="#pending-tray"
-                  hx-swap="outerHTML"
-                  hx-vals='{"index": "{{ loop.index0 }}", "expect_path": {{ c.dot_path | tojson }}}'
-                  aria-label="Discard pending change to {{ c.dot_path }}"
-                  {# QA liveedit-r2-16: an FSP bundle's ✕ takes the whole bundle #}
-                  {% set _fb = (fsp_bundle_gids | default({})).get(c.group_id) if c.group_id else none %}
-                  title="{% if _fb and c.dot_path in _fb.paths %}Discard this change with its full-scale-power bundle ({{ _fb.n }} changes, one unit: no pulse changes output power). Ctrl+Shift+Z restores them{% else %}Discard this change (Ctrl+Shift+Z restores it){% endif %}">&#10005;</button>
-        </div>
-      </div>
-      {% endfor %}
-    </div>
-    <div class="tray-drawer-foot">
-      <button class="btn-sm btn-save"
-              hx-post="/save"
-              hx-target="#pending-tray"
-              hx-swap="outerHTML"
-              hx-disabled-elt="this"
-              title="Save these edits to the working state — a durable draft on disk that survives an app restart. The live chip stays untouched.">Save to working state</button>
-      {# docs/107: mass-undo of every pending change. No confirm — each popped
-         group lands on the redo stack, so Ctrl+Shift+Z restores them in order. #}
-      <button class="outline btn-sm btn-discard-all"
-              hx-post="/discard_all"
-              hx-target="#pending-tray"
-              hx-swap="outerHTML"
-              hx-disabled-elt="this"
-              title="Revert every pending change (Ctrl+Shift+Z restores them one by one)">Discard all</button>
-      {# The armed session is exactly when this promise stops being true — and
-   the same panel already says so at the top. Two lines, one panel,
-   opposite claims is worse than either alone. #}
-      {% if auto_apply and auto_apply.on %}
-      <span class="muted tray-foot-hint">Durable draft &mdash; and Auto-Sync is applying it as you go.</span>
-      {% else %}
-      <span class="muted tray-foot-hint">Durable draft &mdash; the live chip stays untouched.</span>
-      {% endif %}
-
-    </div>
-  </div>
-  {% endif %}
-{% endif %}
+{# sync-ux 2026-09-25: Revert last apply, the applied log, the unapplied-edit list, Save
+   to working state and Discard all live in the sync panel (/state/review) now. #}
 </div>

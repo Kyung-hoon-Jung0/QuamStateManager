@@ -613,6 +613,28 @@ def atomic_write_json(path: Path | str, data, *, compact: bool = False) -> None:
     _replace_into_place(_write_tmp_json(path, data, compact=compact), path)
 
 
+def _replace_state_or_drop_wiring_tmp(state_tmp: Path, state_path: Path,
+                                      wiring_tmp: Path) -> None:
+    """The pair writers' FIRST replace (state), cleaning up after itself.
+
+    Both pair writers stage the wiring tmp BEFORE the state replace, so when
+    that replace fails -- a QUAlibrate save holding state.json open past every
+    retry is the measured case (WinError 32, QA correctness-r2-02) --
+    :func:`_replace_into_place` removes only its own tmp and the staged
+    ``wiring.json.<pid>.<tid>.<n>.tmp`` stayed in the customer's chip folder
+    for good. Nothing was replaced yet, so dropping it restores the folder
+    exactly; the original error propagates unchanged.
+    """
+    try:
+        _replace_into_place(state_tmp, state_path)
+    except OSError:
+        try:
+            wiring_tmp.unlink(missing_ok=True)
+        except OSError:
+            pass
+        raise
+
+
 def write_state_wiring(folder: Path | str, state: dict, wiring: dict,
                        *, like: Path | str | None = None) -> None:
     """Write ``state.json`` + ``wiring.json`` into *folder* as a near-atomic pair.
@@ -660,7 +682,7 @@ def write_state_wiring(folder: Path | str, state: dict, wiring: dict,
         except OSError:
             pass
         raise
-    _replace_into_place(state_tmp, state_path)
+    _replace_state_or_drop_wiring_tmp(state_tmp, state_path, wiring_tmp)
     try:
         _replace_into_place(wiring_tmp, wiring_path)
     except OSError:   # LiveFileError is an OSError — covers exhausted retries too
@@ -742,7 +764,7 @@ def write_state_wiring_bytes(folder: Path | str, state_bytes: bytes,
         except OSError:
             pass
         raise
-    _replace_into_place(state_tmp, state_path)
+    _replace_state_or_drop_wiring_tmp(state_tmp, state_path, wiring_tmp)
     try:
         _replace_into_place(wiring_tmp, wiring_path)
     except OSError:

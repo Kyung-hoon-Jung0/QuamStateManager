@@ -26,6 +26,7 @@ that a unit exists: the row is what gives the user the ✕.
 from __future__ import annotations
 
 import json
+import re
 from pathlib import Path
 
 import pytest
@@ -292,3 +293,59 @@ class TestTheStageDoorsSayIt:
         c.post("/auto-apply/arm")
         with env["app"].test_request_context():
             assert "ARMED" in render_template_string(tpl)
+
+
+def _revert_button(client):
+    """The Revert button's opening tag. Since the one-status-control decision
+    (ef07a90) it lives in the sync panel's History section (GET /state/review),
+    no longer in the pending tray; the old static "You review it first"
+    confirm became the unarmed button's title plus an in-panel second press."""
+    html = client.get("/state/review").get_data(as_text=True)
+    m = re.search(r'<button[^>]*class="[^"]*tray-revert-apply[^"]*"[^>]*>', html)
+    assert m, "no Revert button in the sync panel: " + html[:500]
+    return m.group(0)
+
+
+class TestRevertThisSessionNamesWhatItRollsBack:
+    """QA correctness-r2-06: '↺ Revert this session' stages the chip as it was
+    when the session STARTED and the armed push writes it at once -- so a
+    calibration the session auto-pulled in between was rolled back too,
+    silently, under a confirm that promised "You review it first"."""
+
+    def _session_with_a_pulled_value(self, env):
+        c = env["client"]
+        assert c.post("/auto-sync/set", data={"pull": "1", "pull_replace": "1",
+                                              "push": "1"}).status_code == 200
+        c.post("/field/edit", data={"dot_path": "qubits.qA1.T1", "value": "2.5e-05"})
+        assert c.post("/state/apply-to-live").status_code == 200      # the flusher
+        _write_chip(env["live"], _state(f01=5.5e9, t1=2.5e-5))       # a node writes f_01
+        with env["app"].test_request_context():
+            ctx = routes_mod._active_ctx()
+            ctx["_live_hash_checked_at"] = None
+            routes_mod._refresh_live_diverged(ctx)
+        assert c.post("/auto-sync/pull", data={"dom_dirty": "0"}).status_code == 200
+        assert _ctx(env)["store"].merged["qubits"]["qA1"]["f_01"] == 5.5e9
+        c.post("/field/edit", data={"dot_path": "qubits.qA1.T1", "value": "2.7e-05"})
+        assert c.post("/state/apply-to-live").status_code == 200
+
+    def test_the_preflight_splits_mine_from_the_chips(self, env):
+        self._session_with_a_pulled_value(env)
+        d = env["client"].get("/state/revert-last-apply/preflight").get_json()
+        assert d["ok"] and d["push_armed"] is True
+        assert d["mine_n"] == 1, d
+        assert d["outside_n"] == 1 and d["outside"][0]["path"] == "qubits.qA1.f_01", d
+
+    def test_the_armed_button_asks_through_the_preflight_not_a_review_promise(self, env):
+        self._session_with_a_pulled_value(env)
+        btn = _revert_button(env["client"])
+        assert 'hx-trigger="revertconfirmed"' in btn
+        assert "revertSessionConfirm(this)" in btn
+        assert "nothing touches the live chip" not in btn,             "an armed push never promises a review"
+
+    def test_unarmed_it_keeps_the_review_promise(self, env):
+        c = env["client"]
+        c.post("/field/edit", data={"dot_path": "qubits.qA1.T1", "value": "2.5e-05"})
+        assert c.post("/state/apply-to-live").status_code == 200
+        btn = _revert_button(c)
+        assert "nothing touches the live chip until you apply" in btn
+        assert "revertconfirmed" not in btn and "SyncPanel.arm(this, event)" in btn

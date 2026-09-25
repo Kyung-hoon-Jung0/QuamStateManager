@@ -435,35 +435,48 @@ function discard(w, detail) {
     await sleep(20);
     ok(!/check_collisions/.test(S.sync[0] ? S.sync[0].body : 'x'), 'D4 the review modal (informed) is not asked again');
 
-    // human, declines
+    /* sync-ux 2026-09-25 (user decision 2): a same-field collision is decided
+       PER FIELD in the sync panel -- no confirm() that makes "my value wins"
+       one OK away, and no banner (the banner is gone). Re-scoped from D5-D13
+       ("asked ONCE by confirm", "Cancel puts the banner up", "OK re-posts
+       with ack_collision"): the human press opens the panel, nothing is
+       re-posted, and the control is re-rendered in place; the panel's merge
+       posts the PICKS as its own token. */
+    const trayGets = function () { return S.ajax.filter(function (a) { return a.url === '/state/tray'; }); };
+    const opened = [];
+    w.openReview = function (o) { opened.push(o || {}); };
     S.sync.length = 0; S.confirms.length = 0; S.ajax.length = 0; S.toasts.length = 0;
-    S.syncQueue = [COLL]; S.confirmAnswer = false;
+    S.syncQueue = [COLL]; S.confirmAnswer = true;
     w.doStateSync('apply');
     await sleep(40);
-    ok(S.confirms.length === 1 && /qubits\.q1\.T2ramsey/.test(S.confirms[0]),
-       'D5 a collision is asked ONCE, naming the field');
-    ok(S.sync.length === 1, 'D6 Cancel: nothing is re-posted');
-    ok(bannerGets().length === 1 && bannerGets()[0].opts.target === '#live-diverged-slot',
-       'D7 Cancel: the banner is put up in place');
+    ok(S.confirms.length === 0 && opened.length === 1 && opened[0].force === true,
+       'D5 a collision asks no confirm: it opens the sync panel, where each field is picked');
+    ok(S.sync.length === 1, 'D6 nothing is re-posted');
+    ok(trayGets().length === 1 && trayGets()[0].opts.target === '#pending-tray',
+       'D7 the status control is re-rendered in place (it names the collision)');
     ok(!w._applyInFlight, 'D8 the latch is released');
+    ok(bannerGets().length === 0, 'D7b no banner is fetched any more');
 
-    // human, accepts
+    // the panel's merge: the picks ride the press, as their own token
     S.sync.length = 0; S.confirms.length = 0; S.ajax.length = 0;
-    S.syncQueue = [COLL, { status: 'ok', mode: 'apply' }]; S.confirmAnswer = true;
-    w.doStateSync('apply');
+    S.syncQueue = [{ status: 'ok', mode: 'apply' }];
+    w.doStateSync('apply', false, false, null, { informed: true, picks: { 'qubits.q1.T2ramsey': 'live' } });
     await sleep(60);
-    ok(S.sync.length === 2, 'D9 OK re-posts once');
-    const retry = S.sync[1] ? S.sync[1].body : '';
-    ok(/ack_collision=1/.test(retry) && !/force=1/.test(retry) && !/ack_unseen=1/.test(retry),
-       'D10 ...with its OWN token, never force=1 / ack_unseen=1: ' + retry);
+    const retry = S.sync[0] ? S.sync[0].body : '';
+    ok(S.sync.length === 1 && /picks=/.test(retry)
+       && decodeURIComponent(retry).indexOf('"qubits.q1.T2ramsey":"live"') >= 0,
+       'D9 the panel merge posts the picks: ' + decodeURIComponent(retry));
+    ok(!/force=1/.test(retry) && !/ack_unseen=1/.test(retry) && !/ack_collision=1/.test(retry),
+       'D10 ...never force=1 / ack_unseen=1 / a blanket ack_collision: ' + retry);
 
     // the automatic merge (expectChip) never answers for the user
-    S.sync.length = 0; S.confirms.length = 0; S.ajax.length = 0;
+    S.sync.length = 0; S.confirms.length = 0; S.ajax.length = 0; opened.length = 0;
     S.syncQueue = [COLL]; S.confirmAnswer = true;
     w.doStateSync('apply', false, false, 'CHIP-A');
     await sleep(40);
     ok(S.confirms.length === 0 && S.sync.length === 1, 'D11 the automatic merge shows no dialog and does not retry');
-    ok(bannerGets().length === 1, 'D12 ...it puts the naming banner up instead');
+    ok(trayGets().length === 1 && opened.length === 0,
+       'D12 ...it re-renders the control and opens nothing (the user was not pressing)');
 
     // (review) the server now returns this on the real automatic path, with
     // the conflict tray re-rendered without "Auto-Sync is resolving this"
@@ -473,8 +486,8 @@ function discard(w, detail) {
     w.doStateSync('apply', false, false, 'CHIP-A');
     await sleep(40);
     const t = w.document.getElementById('pending-tray');
-    ok(t && t.getAttribute('data-edit-seq') === 'Z1' && bannerGets().length === 1,
-       'D13 the automatic collision swaps in the tray the server rendered, and bannered');
+    ok(t && t.getAttribute('data-edit-seq') === 'Z1' && trayGets().length === 0,
+       'D13 the automatic collision swaps in the tray the server rendered (no second tray read)');
 }
 
 /* ── E. r2-07: liveConflict re-renders the banner in place ───────────── */
@@ -487,10 +500,12 @@ function discard(w, detail) {
     w.document.dispatchEvent(new w.Event('DOMContentLoaded'));
     S.ajax.length = 0;
     w.document.dispatchEvent(new w.CustomEvent('liveConflict', { detail: { chip: 'CHIP-A', paths: ['qubits.q1.T2ramsey'] } }));
-    const g = S.ajax.filter(function (a) { return a.url === '/state/diverged-banner'; });
-    ok(g.length === 1 && g[0].method === 'GET' && g[0].opts.target === '#live-diverged-slot'
-       && g[0].opts.swap === 'innerHTML',
-       'E1 the declined pull puts the "choose which to keep" banner up on the OPEN page');
+    // sync-ux 2026-09-25: the banner is gone -- the status control IS the
+    // question, so the declined pull re-renders it (state "collide") in place.
+    const g = S.ajax.filter(function (a) { return a.url === '/state/tray'; });
+    ok(g.length === 1 && g[0].method === 'GET' && g[0].opts.target === '#pending-tray'
+       && g[0].opts.swap === 'outerHTML',
+       'E1 the declined pull re-renders the status control on the OPEN page');
     S.ajax.length = 0;
     w.document.dispatchEvent(new w.CustomEvent('liveConflict', { detail: { chip: 'CHIP-B', paths: [] } }));
     ok(S.ajax.length === 0, 'E2 a signal for another chip paints nothing');
@@ -968,6 +983,71 @@ function discard(w, detail) {
     ok(ps === '', 'K3 the pair grid gives a coordinate column no min/max (got ' + JSON.stringify(ps) + ')');
     ps = pairStats(['1,000', '2,000']);
     ok(ps === 'min 1,000 · max 2,000', 'K4 ...while grouped numbers keep theirs (got ' + JSON.stringify(ps) + ')');
+}
+
+/* ── QA F2 (windows): the Json Tree View follows another window's edit ──
+   A foreign edit_seq move re-reads /explorer/model and patches the leaf in
+   place -- the row text AND the model the search reads -- keeping the
+   expansion; a changed shape takes the soft re-render; a user mid-edit or a
+   live-diff overlay is left alone. */
+{
+    const ST = { qubits: { q3: { chi: -353000, f_01: 5.1e9 } }, ports: { a: 1 } };
+    const WI = { wiring: { qubits: { q3: { xy: '#/ports/a' } } } };
+    let model = null;
+    const html = '<div id="pending-tray" data-change-count="0" data-change-sig="" data-edit-seq="T1"></div>'
+        + '<div id="table-pane"><div id="explorer-livediff-bar" class="livediff-bar" hidden></div>'
+        + '<div id="explorer-tree-state"></div><div id="explorer-tree-wiring" style="display:none"></div></div>';
+    const { w, S } = world(html, 'http://localhost/explorer', ['app.js'], function (w, S) {
+        const f0 = w.fetch;
+        w.fetch = function (u, o) {
+            if (String(u).indexOf('/explorer/model') === 0) { S.modelGets = (S.modelGets || 0) + 1; return mkResp(model); }
+            return f0(u, o);
+        };
+    });
+    w.renderJsonTree('explorer-tree-state', JSON.parse(JSON.stringify(ST)), { defaultDepth: 3, crud: true });
+    w.renderJsonTree('explorer-tree-wiring', JSON.parse(JSON.stringify(WI)), { defaultDepth: 1, crud: true });
+    w.jsonTreeSetExpanded('explorer-tree-state', ['qubits', 'qubits.q3']);
+    const rowVal = function () {
+        const n = w.document.querySelector('#explorer-tree-state .tree-node[data-path="qubits.q3.chi"] .tree-val');
+        return n && n.textContent;
+    };
+    ok(/353/.test(rowVal() || ''), 'X0 the tree renders chi (got ' + rowVal() + ')');
+    w.__lastUserAct = 0;
+    model = { ok: true, state: { qubits: { q3: { chi: -363000, f_01: 5.1e9 } }, ports: { a: 1 } }, wiring: WI };
+    let r = await w._followOnExplorer();
+    ok(r === 'patched' && /363/.test(rowVal() || '') && !/353/.test(rowVal() || ''),
+       'X1 another window\'s value is patched into the row in place (got ' + r + ', ' + rowVal() + ')');
+    const st = w.document.getElementById('explorer-tree-state');
+    ok(st._treeData.qubits.q3.chi === -363000, 'X2 ...and into the model the search reads');
+    ok(!S.ajax.some(function (a) { return a.url === '/explorer'; }), 'X3 ...without re-rendering the tree');
+    // the foreign-edit path reaches it
+    S.modelGets = 0;
+    w._editSeqSeen = 'T1';
+    model.state.qubits.q3.chi = -370000;
+    w._onDriftEditSeq({ edit_seq: 'T2' });
+    await sleep(80);
+    ok(S.modelGets === 1 && /370/.test(rowVal() || ''),
+       'X4 a foreign edit_seq move follows the tree (gets=' + S.modelGets + ', ' + rowVal() + ')');
+    // a changed shape: soft re-render (keeps the view), never a patch
+    S.ajax.length = 0;
+    model = { ok: true, state: { qubits: { q3: { chi: -370000, f_01: 5.1e9, new_key: 1 } }, ports: { a: 1 } }, wiring: WI };
+    r = await w._followOnExplorer();
+    ok(r === 'refreshed' && S.ajax.some(function (a) { return a.url === '/explorer'; }),
+       'X5 a new key takes the soft re-render (got ' + r + ')');
+    // a user in the window: deferred
+    S.modelGets = 0;
+    w.__lastUserAct = Date.now();
+    r = w._followOnExplorer();
+    ok(r === null && S.modelGets === 0, 'X6 a window with a user in it is not patched now');
+    w.__lastUserAct = 0;
+    // the live-diff overlay owns the tree
+    w.document.getElementById('explorer-livediff-bar').hidden = false;
+    r = w._followOnExplorer();
+    ok(r === null && S.modelGets === 0, 'X7 a live-diff overlay is left alone');
+    w.document.getElementById('explorer-livediff-bar').hidden = true;
+    ok(w._treeLeafDiff({ a: [1, 2] }, { a: [1, 3] }, '', []) === true
+       && w._treeLeafDiff({ a: [1, 2] }, { a: [1, 2, 3] }, '', []) === false,
+       'X8 a list element is a leaf, a list length change is a shape change');
 }
 
 console.log(fails ? (fails + ' failed') : ('all checks passed (' + asserts + ' assertions)'));
