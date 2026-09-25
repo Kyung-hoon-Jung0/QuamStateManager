@@ -26,6 +26,7 @@ const dom = new JSDOM('<!doctype html><html><body>'
     + '<div id="quam-loader" class="quam-loader"><div class="quam-loader-spinner"></div>'
     + '<div class="quam-loader-text"><span>Q</span></div>'
     + '<div class="quam-loader-sub">Please wait</div>'
+    + '<span id="quam-loader-elapsed"></span>'
     + '<div id="quam-loader-progress"></div></div>'
     + '</body></html>', { url: 'http://localhost/bulk', pretendToBeVisual: true });
 const { window } = dom;
@@ -257,6 +258,27 @@ function fireCancelable(name, path) {
         ok(!loader.classList.contains('visible'), '(and still hides it when done)');
     }
 
+    // 4q. queue #7: the strip counts the wait in whole seconds -- blank for
+    // the first second, "1 s" after it, and wiped with the hide so the next
+    // wait never starts from a stale number.
+    {
+        const el = d.getElementById('quam-loader-elapsed');
+        window._slowLoaderHide();
+        fire('htmx:beforeRequest', '/bulk');
+        await sleep(140);
+        ok(loader.classList.contains('visible') && el.textContent === '',
+           'q#7 elapsed is blank inside the first second (' + JSON.stringify(el.textContent) + ')');
+        await sleep(1150);
+        ok(/^1 s$/.test(el.textContent), 'q#7 elapsed reads "1 s" after a second (' + JSON.stringify(el.textContent) + ')');
+        fire('htmx:afterRequest', '/bulk');
+        d.dispatchEvent(new window.CustomEvent('htmx:afterSettle', { detail: {} }));
+        await sleep(60);
+        ok(!loader.classList.contains('visible') && el.textContent === '',
+           'q#7 the hide wipes the count (' + JSON.stringify(el.textContent) + ')');
+        await sleep(400);
+        ok(el.textContent === '', 'q#7 and no ticker survives the hide to repaint it');
+    }
+
     // 5. markup + CSS contracts
     const base = fs.readFileSync(path.join(__dirname, '..', 'quam_state_manager', 'web', 'templates', 'base.html'), 'utf8');
     ok(base.indexOf('quam-loader-spinner') > -1 && /quam-loader-sub[^>]*>Please wait a moment/.test(base),
@@ -267,6 +289,15 @@ function fireCancelable(name, path) {
     ok(/prefers-reduced-motion[^}]*\{\s*\n?\s*\.quam-loader-spinner \{ animation: none; \}/.test(css)
        || /\.quam-loader-spinner \{ animation: none; \}/.test(css),
        'reduced-motion users get a static ring');
+    // queue #7 (2026-09-26): a slim strip under the top bar, not a centred card
+    const rule = (css.match(/\n\.quam-loader \{[^}]*\}/) || [''])[0];
+    ok(/top: calc\(var\(--topbar-height[^)]*\) \+ \d+px\)/.test(rule) && !/top: 50%/.test(rule)
+       && !/translate\(-50%, -50%\)/.test(rule),
+       'q#7 the loader is pinned just below the MEASURED top bar, not centred (' + rule.replace(/\s+/g, ' ').slice(0, 90) + ')');
+    ok(/white-space: nowrap/.test(rule) && /pointer-events: none/.test(rule) && /font-size: 0\.\d+rem/.test(rule),
+       'q#7 one small line that never takes a click');
+    ok(base.indexOf('quam-loader-text') === -1 && base.indexOf('id="quam-loader-elapsed"') > -1,
+       'q#7 the big letter-by-letter title is gone; the elapsed slot is there');
 
     // docs/163: computed, never a literal. Both branches added assertions to
     // this file; a hardcoded count would have been wrong the moment they met,

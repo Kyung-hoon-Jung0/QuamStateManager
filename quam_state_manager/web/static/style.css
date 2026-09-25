@@ -739,104 +739,55 @@ html[data-font-size="large"] { --font-size-base: 19px; }
 @keyframes dots { 0% { content: "."; } 33% { content: ".."; } 66% { content: "..."; } }
 
 /* ---------------------------------------------------------------- */
-/* Slow-route loader — pixel-by-pixel "QUAM STATE MANAGER" reveal    */
+/* Slow-route loader -- a slim strip under the top bar               */
 /*                                                                   */
-/* Markup is in base.html. Each character of the title is one <span> */
-/* so we can stagger an ink-fill gradient across them. The container */
-/* is hidden by default; app.js adds .visible after a 200 ms delay   */
-/* on slow routes (currently `/param-history*`).                     */
+/* Markup is in base.html; app.js adds .visible 80 ms into a slow     */
+/* route (docs/146) and clears it at afterSettle + one painted frame. */
+/* Queue #7 (2026-09-26): it used to be a centred card with a        */
+/* letter-by-letter "QUAM STATE MANAGER" title, big and sitting in    */
+/* the middle of whatever the user was looking at. It is now one      */
+/* small line pinned just below the top bar -- ring, the please-wait  */
+/* text, elapsed seconds, and (during a Param History import) the     */
+/* progress count -- and it never takes a click (pointer-events none).*/
 /* ---------------------------------------------------------------- */
 .quam-loader {
     position: fixed;
-    top: 50%;
+    top: calc(var(--topbar-height, 48px) + 4px);
     left: 50%;
-    transform: translate(-50%, -50%) scale(0.96);
-    padding: 1.1rem 2rem;
+    transform: translate(-50%, -4px);
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    max-width: calc(100vw - 32px);
+    padding: 0.22rem 0.75rem 0.22rem 0.55rem;
+    font-size: 0.78rem;
+    line-height: 1.3;
+    white-space: nowrap;
     background: var(--pico-card-background-color, var(--pico-background-color));
     border: 1px solid var(--pico-muted-border-color);
-    border-radius: 10px;
-    box-shadow: 0 8px 32px rgba(0, 0, 0, 0.35),
-                0 1px 4px rgba(0, 0, 0, 0.2);
+    border-radius: 999px;
+    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.18);
     z-index: 99999;
     pointer-events: none;
     opacity: 0;
     visibility: hidden;
-    transition: opacity 0.18s ease,
-                visibility 0.18s ease,
-                transform 0.18s ease;
+    transition: opacity 0.15s ease,
+                visibility 0.15s ease,
+                transform 0.15s ease;
 }
 .quam-loader.visible {
     opacity: 1;
     visibility: visible;
-    transform: translate(-50%, -50%) scale(1);
+    transform: translate(-50%, 0);
 }
 
-.quam-loader-text {
-    font-family: var(--font-mono);
-    font-size: 1.05rem;
-    font-weight: 600;
-    letter-spacing: 0.18em;
-    white-space: nowrap;
-    line-height: 1;
-}
-
-/* Each letter is rendered transparent with a moving gradient clipped to
- * the glyph shape. The gradient flips between left (filled) and right
- * (empty) on a 1.6 s loop, producing the "ink filling in" feel.
- * animation-delay staggers each letter so the wave moves Q → R. */
-.quam-loader-text span {
-    display: inline-block;
-    color: transparent;
-    background: linear-gradient(
-        90deg,
-        var(--pico-primary, #4a9eff) 0%,
-        var(--pico-primary, #4a9eff) 50%,
-        var(--pico-muted-color, #8a8a8a) 50%,
-        var(--pico-muted-color, #8a8a8a) 100%
-    );
-    background-size: 220% 100%;
-    background-position: 100% 0;
-    -webkit-background-clip: text;
-    background-clip: text;
-    -webkit-text-fill-color: transparent;
-    animation: quam-loader-fill 1.6s infinite ease-in-out;
-}
-
-@keyframes quam-loader-fill {
-    0%, 100% { background-position: 100% 0; }   /* empty (muted on the visible side) */
-    50%      { background-position: 0% 0;   }   /* filled (primary on the visible side) */
-}
-
-/* Stagger so the wave sweeps Q → R. 18 spans (16 letters + 2 spaces).
- * 0.05 s per character keeps the visible offset moving without ever
- * having all letters in the same phase. */
-.quam-loader-text span:nth-child(1)  { animation-delay: 0.00s; }
-.quam-loader-text span:nth-child(2)  { animation-delay: 0.05s; }
-.quam-loader-text span:nth-child(3)  { animation-delay: 0.10s; }
-.quam-loader-text span:nth-child(4)  { animation-delay: 0.15s; }
-.quam-loader-text span:nth-child(5)  { animation-delay: 0.20s; }
-.quam-loader-text span:nth-child(6)  { animation-delay: 0.25s; }
-.quam-loader-text span:nth-child(7)  { animation-delay: 0.30s; }
-.quam-loader-text span:nth-child(8)  { animation-delay: 0.35s; }
-.quam-loader-text span:nth-child(9)  { animation-delay: 0.40s; }
-.quam-loader-text span:nth-child(10) { animation-delay: 0.45s; }
-.quam-loader-text span:nth-child(11) { animation-delay: 0.50s; }
-.quam-loader-text span:nth-child(12) { animation-delay: 0.55s; }
-.quam-loader-text span:nth-child(13) { animation-delay: 0.60s; }
-.quam-loader-text span:nth-child(14) { animation-delay: 0.65s; }
-.quam-loader-text span:nth-child(15) { animation-delay: 0.70s; }
-.quam-loader-text span:nth-child(16) { animation-delay: 0.75s; }
-.quam-loader-text span:nth-child(17) { animation-delay: 0.80s; }
-.quam-loader-text span:nth-child(18) { animation-delay: 0.85s; }
-
-/* docs/146: compositor-driven ring — transform animations keep running on
- * the compositor while the main thread is blocked by the 10 MB /bulk swap,
- * which is exactly when the letter-fill (a background-position animation)
- * freezes. The ring is the "still alive" signal through that block. */
-.quam-loader { text-align: center; }
+/* docs/146: compositor-driven ring -- transform animations keep running on
+ * the compositor while the main thread is blocked by the 10 MB /bulk swap.
+ * The ring is the "still alive" signal through that block. */
 .quam-loader-spinner {
-    width: 26px; height: 26px; margin: 0 auto 0.65rem;
-    border: 3px solid var(--pico-muted-border-color);
+    flex: none;
+    width: 13px; height: 13px; margin: 0;
+    border: 2px solid var(--pico-muted-border-color);
     border-top-color: var(--pico-primary, #4a9eff);
     border-radius: 50%;
     animation: quam-loader-spin 0.8s linear infinite;
@@ -844,33 +795,32 @@ html[data-font-size="large"] { --font-size-base: 19px; }
 }
 @keyframes quam-loader-spin { to { transform: rotate(360deg); } }
 .quam-loader-sub {
-    margin-top: 0.55rem;
-    font-size: 0.82rem;
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
     color: var(--pico-muted-color);
-    letter-spacing: 0.02em;
+    letter-spacing: 0.01em;
 }
+.quam-loader-elapsed {
+    flex: none;
+    font-family: var(--font-mono);
+    font-variant-numeric: tabular-nums;
+    color: var(--pico-muted-color);
+}
+.quam-loader-elapsed:empty { display: none; }
 
-/* Honour reduced-motion users — fall back to a static dim text. */
+/* Honour reduced-motion users -- a static ring. */
 @media (prefers-reduced-motion: reduce) {
     .quam-loader-spinner { animation: none; }
-    .quam-loader-text span {
-        animation: none;
-        color: var(--pico-muted-color);
-        -webkit-text-fill-color: var(--pico-muted-color);
-        background: none;
-    }
 }
 
-/* Progress line under the title (shown only during workspace backfill).
- * Hidden when empty so the loader stays compact for non-import waits. */
+/* Progress count (shown only during a Param History import); hidden when
+ * empty so the strip stays one short line for an ordinary wait. */
 .quam-loader-progress {
-    margin-top: 0.6rem;
-    text-align: center;
+    flex: none;
     font-family: var(--font-mono);
-    font-size: 0.85rem;
-    color: var(--pico-muted-color);
-    letter-spacing: 0.04em;
-    min-height: 1.2em;   /* reserve space so layout doesn't jump */
+    color: var(--pico-primary, #4a9eff);
+    letter-spacing: 0.02em;
 }
 .quam-loader-progress:empty {
     display: none;
