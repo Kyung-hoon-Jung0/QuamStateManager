@@ -160,3 +160,34 @@ def test_the_poll_carries_the_flag_only_for_a_clean_context(env):
     assert c.get("/state/drift").get_json()["live_diverged"] is True
     ctx["working_dirty"] = True
     assert c.get("/state/drift").get_json()["live_diverged"] is False
+
+
+def test_pending_edits_do_not_silence_an_outside_write(env):
+    """QA diagnostics-r2-12: with one staged edit, an outside rewrite of the
+    live chip raised no banner at all -- not on the poll, not after F5 --
+    because the refresh returned early for every dirty context that had not
+    armed an Auto-Sync pull. A dirty context is now RAISE-only: the flag goes
+    up, the banner renders on the next full page, the edit survives, nothing
+    is pulled, and the flag is never lowered while the edit is pending."""
+    c = env["client"]
+    r = c.post("/field/edit", data={"dot_path": "qubits.qA1.f_01", "value": "5.1e9"})
+    assert r.status_code == 200, r.get_data(as_text=True)[:300]
+    ctx = _ctx(env)
+    store = ctx["store"]
+    assert len(store.change_log) == 1, "the staged edit is what makes it dirty"
+    assert not (ctx.get("auto_apply") or {}).get("pull"), "no Auto-Sync pull armed"
+    (env["live"] / "state.json").write_text(json.dumps(_state(off_a=0.222)),
+                                             encoding="utf-8")
+    ctx = _poll(env)
+    assert ctx.get("live_diverged") is True, (
+        "an outside write must be flagged although edits are pending")
+    page = c.get("/diagnostics").get_data(as_text=True)          # the F5
+    assert 'id="live-diverged-banner"' in page
+    assert len(store.change_log) == 1, "the edit survives"
+    assert c.get("/state/drift").get_json()["auto_pull"] is False, "nothing pulls"
+    # the live chip goes back to the synced content: a dirty context is never
+    # LOWERED by the poll (the explicit sync / apply / discard paths own that)
+    (env["live"] / "state.json").write_text(json.dumps(_state()), encoding="utf-8")
+    ctx = _poll(env)
+    assert ctx.get("live_diverged") is True
+    assert len(store.change_log) == 1

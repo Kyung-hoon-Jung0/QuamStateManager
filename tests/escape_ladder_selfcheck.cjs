@@ -444,15 +444,22 @@ doc.getElementById('inspector-pane').remove();
     const calls = [];
     window.htmx.ajax = (verb, path) => { calls.push(path); return Promise.resolve(); };
     window.__lastUserAct = 0;                       // nobody has touched this window
+    // QA F-M: the diagnostics badge / crash banner / findings list re-lint on
+    // `diagnostics-changed`, announced through _diagChanged (read at call time)
+    let diag = 0;
+    window._diagChanged = () => { diag++; };
     // drive the POLL's own decision, not a copy of it
     window._editSeqSeen = undefined;
     ok(window._onDriftEditSeq({ edit_seq: "sig-a:0" }) === false,
        'the first payload only records where the chip is');
     ok(calls.length === 0, 'and refreshes nothing');
+    ok(diag === 0, 'and re-lints nothing');
     ok(window._onDriftEditSeq({ edit_seq: "sig-a:0" }) === false,
        'an unchanged payload is not a signal');
+    ok(diag === 0, 'an unchanged payload re-lints nothing');
     ok(window._onDriftEditSeq({ edit_seq: "sig-b:1" }) === true,
        'a changed change-set IS a signal');
+    ok(diag === 1, 'a foreign edit re-lints diagnostics once (F-M; got ' + diag + ')');
     ok(calls.some(p => p.indexOf('/state/tray') === 0), 'the tray is refreshed (got ' + JSON.stringify(calls) + ')');
     ok(calls.some(p => p.indexOf('/pulse/detail') === 0), 'an idle window re-reads the open pulse');
 
@@ -471,6 +478,7 @@ doc.getElementById('inspector-pane').remove();
            'a busy window still gets the truthful tray (got ' + JSON.stringify(calls) + ')');
         ok(!calls.some(p => p.indexOf('/pulse/detail') === 0),
            'a window with a user in it keeps its pane');
+        ok(diag === 2, 'a busy window still re-lints its badge and banner (got ' + diag + ')');
 
         setTimeout(function () {
             // and never while the focus is inside the inspector

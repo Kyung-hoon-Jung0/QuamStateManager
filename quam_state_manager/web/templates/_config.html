@@ -1,6 +1,7 @@
 <div class="table-header-row">
     <h2>Config Viewer <small class="muted">offline preview of <code>machine.generate_config()</code> for the loaded chip</small></h2>
-    <span class="diag-header-slot" hx-get="/diagnostics/summary" hx-trigger="load" hx-swap="outerHTML"></span>
+    <span class="diag-header-slot" hx-get="/diagnostics/summary"
+          hx-trigger="load, diagnostics-changed from:body delay:500ms" hx-swap="innerHTML"></span>
 </div>
 {# Re-fetch the whole page in place when a regenerate completes (the
    Regenerate button only swaps the status host) — so the config list updates

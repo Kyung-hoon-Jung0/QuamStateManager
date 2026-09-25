@@ -21,9 +21,15 @@
    apply fixed the values the red rows stayed until F5. `hx-select` lifts this
    very slot out of the re-rendered page, so no second route and no second
    template -- one render path. The 600 ms delay is the same trailing pause
-   the pill uses (the lint is ~130 ms on a 21-qubit chip). #}
+   the pill uses (the lint is ~130 ms on a 21-qubit chip).
+   hx-select and hx-swap are INHERITED htmx attributes (the F-PH1 trap,
+   _param_history.html): without hx-disinherit the Config Viewer links below
+   would select #diag-findings out of /config (nothing) and outerHTML-swap
+   #table-pane itself away -- a blank pane and a dead sidebar (QA
+   diagnostics-r2-01). #}
 <div id="diag-findings"
      hx-get="/diagnostics" hx-select="#diag-findings" hx-swap="outerHTML"
+     hx-disinherit="hx-select hx-swap"
      hx-trigger="diagnostics-changed from:body delay:600ms, stateRestored from:body delay:600ms, liveDriftChanged from:body delay:600ms">
 {% if not has_config %}
 <p class="muted diag-hint">

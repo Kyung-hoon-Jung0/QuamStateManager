@@ -59,3 +59,21 @@ def test_every_jump_entry_point_goes_through_the_one_helper():
     # …and Diagnostics still routes through the navigator rather than its own.
     j = js.index("window.goToDiagField = function")
     assert "_navigateToExplorerPath" in js[j:j + 400]
+
+
+@pytest.mark.skipif(shutil.which("node") is None, reason="node not on PATH")
+def test_a_jump_is_a_navigation_with_a_history_entry():
+    """QA F-C: every jump into the Json Tree (Go to field, Show in Json Tree
+    View, I'll fix them myself, ...) goes through `_navigateToExplorerPath`,
+    which swapped /explorer in with a source-less htmx.ajax -- no history
+    entry, the URL and sidebar stayed on the page the user left, and Back
+    skipped it. The request is now sourced from the sidebar's hx-push-url
+    Json Tree View link (jump_history_selfcheck.cjs)."""
+    r = subprocess.run(
+        ["node", str(_ROOT / "tests" / "jump_history_selfcheck.cjs")],
+        capture_output=True, text=True, encoding="utf-8", cwd=str(_ROOT), timeout=180,
+    )
+    if r.returncode == 2:
+        pytest.skip("jsdom not installed (run `npm install jsdom`)")
+    assert r.returncode == 0, (r.stdout + r.stderr)
+    assert "jump_history_selfcheck ok" in r.stdout, (r.stdout + r.stderr)

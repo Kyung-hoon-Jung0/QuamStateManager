@@ -2899,6 +2899,10 @@ document.addEventListener("stateRestored", function(evt) {
         window._stateRestoredRefresh = Date.now();
         try {
             window.LiveSurfacePatch.apply(d.changes);
+            // QA diagnostics-r2-10 (review): a pane drawn once from inlined
+            // JSON cannot take the patch, so re-GET THE PANE -- but the
+            // inspector took its patch above and stays open (docs/144).
+            if (_paneNeedsRerender(d)) { _keepJsonPanel(); _keepPaneScroll(); _softRefreshLiveSurface(); }
             return;
         } catch (e) { console.error("stateRestored patch failed", e); }
     }
@@ -3887,6 +3891,11 @@ window.livePushExtrasLine = function (typedPaths) {
         // the values on screen: the pulses table patches its own rows, the
         // grids and the inspector re-read through their existing refreshers
         try { window.htmx.trigger(document.body, "pulses-changed"); } catch (e) {}
+        // QA F-M: the badge, the crash banner, the type alarm and the
+        // /diagnostics list follow `diagnostics-changed`, which every LOCAL
+        // mutation announces through _diagChanged. A foreign edit is a state
+        // change too (debounced there, so it coalesces with a local one).
+        try { if (window._diagChanged) window._diagChanged(); } catch (e) {}
         try {
             var insp = document.getElementById("inspector-pane");
             var root = insp && insp.querySelector("#pulse-detail-root");
@@ -4395,13 +4404,42 @@ function _keepPaneScroll() {
     setTimeout(function () { document.removeEventListener("htmx:afterSwap", once); }, 15000);
 }
 
+/* QA diagnostics-r2-10: a pane drawn ONCE from inlined JSON (the Instrument
+   Wiring SVG + its problem-port rings) has no leaf for LiveSurfacePatch to
+   reach, so an in-place patch "succeeded" while the diagram kept the old
+   wiring. Such a pane marks itself [data-rerender-on-pull] and a non-empty
+   change set takes the wholesale re-GET instead (it is in STATE_PAGES). */
+function _paneNeedsRerender(d) {
+    return !!(d && d.changes && d.changes.length &&
+              document.querySelector("#table-pane [data-rerender-on-pull]"));
+}
+window._paneNeedsRerender = _paneNeedsRerender;
+/* (review of r2-10) that re-GET also re-renders the pane's own JSON
+   drill-down (#json-panel, hidden in fresh markup). Re-open it on the
+   element it was showing, from the FRESH wiring, instead of dropping what
+   the user was reading. One-shot, like _keepPaneScroll; afterSettle, since
+   the fresh page's inline script publishes window._rawWiring. */
+function _keepJsonPanel() {
+    var jp = document.querySelector("#table-pane #json-panel:not(.hidden)");
+    var elem = jp && jp.getAttribute("data-element");
+    if (!elem) return;
+    var once = function (evt) {
+        if (!evt.detail || !evt.detail.target || evt.detail.target.id !== "table-pane") return;
+        document.removeEventListener("htmx:afterSettle", once);
+        try { _showInstrumentJsonPanel({ element: elem }, window._rawWiring); } catch (e) {}
+    };
+    document.addEventListener("htmx:afterSettle", once);
+    setTimeout(function () { document.removeEventListener("htmx:afterSettle", once); }, 15000);
+}
+
 /* Sync response → in-place patch when the shape is unchanged, wholesale
    refresh (scroll kept) when it is not. */
 function _patchOrRefreshLiveSurface(data) {
-    if (data && data.changes && !data.structural) {
+    if (data && data.changes && !data.structural && !_paneNeedsRerender(data)) {
         window.LiveSurfacePatch.apply(data.changes);
         return "patched";
     }
+    if (_paneNeedsRerender(data)) _keepJsonPanel();
     _keepPaneScroll();
     _softRefreshLiveSurface();
     return "refreshed";
@@ -5860,6 +5898,7 @@ window.PaneState = (function () {
     });
     document.addEventListener('htmx:afterSwap', function (evt) {
         if (!evt.target || evt.target.id !== 'table-pane') return;
+        var prevRoute = _cur;
         var route = _routeOf(evt.detail);
         if (route) _cur = route;
         // The content's own route, stamped ON the pane (docs/139 fix 1): a
@@ -5868,7 +5907,22 @@ window.PaneState = (function () {
         // htmx's history snapshot preserves the attribute, so it stays
         // truthful through both machineries.
         evt.target.setAttribute('data-pane-route', _cur);
-        if (!_tryRestore(_cur)) _reapplySoft(_cur);
+        if (!_tryRestore(_cur)) {
+            // QA F-15: a page you OPEN starts at the top (docs/147's rule,
+            // app-wide). The pane is persistent, so a new route kept the
+            // outgoing page's scrollTop clamped to its own maximum --
+            // Diagnostics opened from a scrolled Chip Status showed its
+            // bottom, title above the fold. GET only: a POST answering its
+            // own page (Datasets' Rescan) keeps its place; same-route
+            // refreshes, parked restores (above), the SOFT tier's retries,
+            // _keepPaneScroll's rAF and htmx show: modifiers all run later.
+            var verb = String(((evt.detail && evt.detail.requestConfig) || {}).verb || 'get');
+            if (route && route !== prevRoute && verb.toLowerCase() === 'get') {
+                evt.target.scrollTop = 0;
+                evt.target.scrollLeft = 0;
+            }
+            _reapplySoft(_cur);
+        }
     });
     // A wholesale working-copy replacement invalidates every parked pane;
     // back/forward belongs to htmx's own history machinery -- clear AND
@@ -5902,6 +5956,7 @@ window.PaneState = (function () {
             // load: the server rendered it for THIS url, leave it alone.
             var stamped = p.getAttribute('data-pane-route');
             var mismatch = stamped && stamped !== location.pathname;
+            _historyFreshness(!p.firstElementChild || mismatch);
             if (!p.firstElementChild || mismatch) {
                 // A mismatch also means htmx's history cache is POISONED:
                 // its private currentPathForHistory does not move on a skip
@@ -5922,6 +5977,40 @@ window.PaneState = (function () {
                                    swap: 'innerHTML' });
             }
         }, 60);
+    }
+    // QA diagnostics-r2-07: htmx's history snapshot is the WHOLE body as it
+    // was when the user left -- the tray (seq, count, sig) and the pane's
+    // values included. The route checks above catch a blank or foreign pane;
+    // this catches a pane (stamped or not) and a tray that are simply BEHIND
+    // the server: a mutation since the snapshot moves the tray's data-seq.
+    // Same server-truth signal _verifyRestore uses for parked panes. The tray
+    // always follows; the pane is refetched unless the route check already
+    // is; the badge + banner re-lint through the one announcer.
+    function _historyFreshness(paneRefetching) {
+        if (!document.getElementById('pending-tray')) return;
+        // popstate AND htmx:historyRestore both funnel here - one probe
+        if (window.PaneState.__freshFor === location.pathname) return;
+        window.PaneState.__freshFor = location.pathname;
+        setTimeout(function () { window.PaneState.__freshFor = null; }, 1000);
+        var shown = seqNow(), route = location.pathname;
+        try {
+            fetch('/state/tray', { cache: 'no-store' })
+                .then(function (r) { return r.ok ? r.text() : null; })
+                .then(function (html) {
+                    if (!html || !window.htmx) return;
+                    var m = html.match(/data-seq="([^"]*)"/);
+                    if (!m || m[1] === shown || location.pathname !== route) return;
+                    window.htmx.ajax('GET', '/state/tray',
+                                     { target: '#pending-tray', swap: 'outerHTML' });
+                    if (!paneRefetching) {
+                        window.htmx.ajax('GET', location.pathname + location.search,
+                                         { source: '#table-pane', target: '#table-pane',
+                                           swap: 'innerHTML' });
+                    }
+                    if (window._diagChanged) window._diagChanged();
+                })
+                .catch(function () {});
+        } catch (e) {}
     }
     document.addEventListener('stateRestored', function () {
         for (var k in stash) _purge(stash[k].holder);
@@ -11235,6 +11324,7 @@ function _showInstrumentJsonPanel(assignment, rawWiring) {
     else if (twpas[elem]) subtree = twpas[elem];
 
     document.getElementById('json-panel-title').textContent = 'Wiring JSON — ' + elem;
+    panel.setAttribute('data-element', elem);   // a pull's re-GET re-opens it (_keepJsonPanel)
     treeEl.innerHTML = '';
     if (subtree) renderJsonTree('json-panel-tree', subtree, {defaultDepth: 2});
     panel.classList.remove('hidden');
@@ -13955,7 +14045,13 @@ function _showPlotClickToast(coordText, qubitName, dotPath) {
  */
 function _navigateToExplorerPath(dotPath) {
     function openExplorer() {
-        htmx.ajax('GET', '/explorer', {target: '#table-pane', swap: 'innerHTML'}).then(function() {
+        // A jump is a NAVIGATION (QA F-C): htmx 2's ajax has no pushUrl option,
+        // so source the request from the sidebar's own Json Tree View link --
+        // it carries hx-push-url, giving the same history entry + sidebar sync
+        // as clicking it. Already on /explorer -> no source, no same-URL entry.
+        var src = location.pathname === '/explorer' ? null
+            : document.querySelector('.sidebar-nav a[href="/explorer"][hx-push-url="true"]');
+        htmx.ajax('GET', '/explorer', {source: src || undefined, target: '#table-pane', swap: 'innerHTML'}).then(function() {
             var attempts = 0;
             var maxAttempts = 15;
             function tryExpand() {
@@ -14142,6 +14238,19 @@ function _expandTreeToPath(containerId, dotPath) {
         // Delay scroll to let DOM settle after expanding nodes, then start dismiss timers after scroll
         setTimeout(function() {
             target.scrollIntoView({behavior: 'smooth', block: 'center'});
+            // QA diagnostics-r2-20: the jump's own pane swap destroyed the
+            // button that started it (Go to field), leaving focus on <body> --
+            // a keyboard user restarted 40+ Tab stops from the top. Land it
+            // on the row, but ONLY when the swap dropped it (the docs/75
+            // rule): focus the user kept elsewhere (the Config Manual, the
+            // undo trail, an inspector input) is never stolen. tabindex=-1
+            // takes focus from code without adding a Tab stop.
+            var fa = document.activeElement;
+            if (row && row.isConnected &&
+                (!fa || fa === document.body || !document.contains(fa))) {
+                if (!row.hasAttribute('tabindex')) row.setAttribute('tabindex', '-1');
+                try { row.focus({ preventScroll: true }); } catch (e) {}
+            }
             // Start dismiss timers after scroll finishes (~600ms for smooth scroll)
             setTimeout(function() {
                 if (popup && popup.parentNode) {
@@ -16921,6 +17030,11 @@ window.PendingMarkers = (function () {
     document.addEventListener('htmx:responseError', hide);
     document.addEventListener('htmx:sendError', hide);
     document.addEventListener('htmx:swapError', hide);
+    // QA diagnostics-r2-07: htmx snapshots the outgoing body when a slow
+    // navigation's response ARRIVES -- by then this loader is .visible -- and
+    // Back swaps that snapshot in with pending at 0, so nothing ever hid it.
+    // A restored body is never in flight.
+    document.addEventListener('htmx:historyRestore', hide);
 })();
 
 
@@ -17832,6 +17946,7 @@ document.addEventListener('click', function(evt) {
         body.append("value", btn.getAttribute("data-value") || "");
         var orig = btn.textContent;
         btn.disabled = true; btn.textContent = "Applying…";
+        _diagFocusAnchor = _diagFocusAnchorFor(btn);
         fetch("/diagnostics/apply-fix", {
             method: "POST",
             headers: { "Content-Type": "application/x-www-form-urlencoded" },
@@ -17846,15 +17961,106 @@ document.addEventListener('click', function(evt) {
                     window._swapPendingTray(d.tray_html);
                     if (window._restoreTrayState) window._restoreTrayState();
                 }
-                if (window.htmx) htmx.ajax("GET", "/diagnostics", { target: "#table-pane", swap: "innerHTML" });
+                // QA F-S: through the one announcer, not a whole-page GET of
+                // /diagnostics into #table-pane -- that re-rendered every
+                // domain with the server's default open state (a folded
+                // Config sprang open) and yanked the pane back here if the
+                // user had navigated away mid-POST. The #diag-findings slot
+                // re-fetches itself on diagnostics-changed, keeping the
+                // folds (docs/141 4l-review); the button stays disabled on
+                // "Applying..." until that swap replaces its row.
+                if (window._diagChanged) window._diagChanged();
+                if (_diagFocusAnchor) _diagFocusAnchor.until = Date.now() + 4000;
                 if (window._refreshSidebarDiagDots) window._refreshSidebarDiagDots();
             } else {
+                _diagFocusAnchor = null;
                 btn.disabled = false; btn.textContent = orig;
                 alert((d && d.error) || "Convert failed");
             }
         })
-        .catch(function() { btn.disabled = false; btn.textContent = orig; alert("Convert request failed"); });
+        .catch(function() { _diagFocusAnchor = null; btn.disabled = false; btn.textContent = orig; alert("Convert request failed"); });
     };
+    /* QA diagnostics-r2-20: the self-refresh replaces the fixed row -- and the
+       focused button with it -- so focus fell to <body> and a keyboard user
+       restarted from the top of the page. Remember where they were; after
+       the #diag-findings swap focus lands on the finding that took the fixed
+       one's place (then a neighbour, the domain's summary, the page title).
+       Only when the swap DROPPED focus (docs/75): the anchor expires, and a
+       mouse press anywhere cancels it, so a later self-refresh (sync, undo,
+       live drift) never moves focus the user placed. */
+    var _diagFocusAnchor = null;
+    function _diagFocusAnchorFor(btn) {
+        var dt = btn.closest && btn.closest("details.diag-domain[data-domain]");
+        var tr = btn.closest && btn.closest("tr.diag-row");
+        if (!dt || !tr) return null;
+        var rows = Array.prototype.slice.call(dt.querySelectorAll("tr.diag-row"));
+        // the domains in document order: when the fixed row was its domain's
+        // last, the domain is gone and the nearest finding is in the next one
+        var order = [];
+        document.querySelectorAll("#diag-findings details.diag-domain[data-domain]").forEach(function (d2) {
+            order.push(d2.getAttribute("data-domain"));
+        });
+        return { domain: dt.getAttribute("data-domain"), idx: rows.indexOf(tr), order: order,
+                 until: Date.now() + 15000 };   // re-armed to 4 s on success
+    }
+    function _restoreDiagFocus() {
+        var a = _diagFocusAnchor;
+        if (!a) return;
+        if (Date.now() > a.until) { _diagFocusAnchor = null; return; }
+        var cur = document.activeElement;
+        if (cur && cur !== document.body && document.contains(cur)) return;
+        function take(el) {
+            if (!el) return false;
+            try { el.focus(); } catch (e) {}
+            return document.activeElement === el;
+        }
+        function domainNamed(name) {
+            var hit = null;
+            document.querySelectorAll("#diag-findings details.diag-domain[data-domain]").forEach(function (d2) {
+                if (d2.getAttribute("data-domain") === name) hit = d2;
+            });
+            return hit;
+        }
+        var dt = domainNamed(a.domain);
+        if (dt && dt.style.display !== "none") {
+            if (dt.open) {
+                var rows = dt.querySelectorAll("tr.diag-row");
+                var order = [], i;
+                for (i = Math.max(a.idx, 0); i < rows.length; i++) order.push(rows[i]);
+                for (i = Math.min(a.idx, rows.length) - 1; i >= 0; i--) order.push(rows[i]);
+                for (i = 0; i < order.length; i++) {
+                    if (order[i].style.display === "none") continue;
+                    if (take(order[i].querySelector("button:not([disabled])"))) return;
+                }
+            }
+            if (take(dt.querySelector(":scope > summary"))) return;
+        }
+        // QA diagnostics-r2-20 (review): the domain went with its last row --
+        // the next domain down (its first finding, else its summary), then
+        // the one above (its last finding); the title only when none is left.
+        var names = a.order || [], at = names.indexOf(a.domain);
+        var near = names.slice(at + 1).concat(at > 0 ? names.slice(0, at).reverse() : []);
+        for (var n = 0; n < near.length; n++) {
+            var od = domainNamed(near[n]);
+            if (!od || od === dt || od.style.display === "none") continue;
+            if (od.open) {
+                var orows = Array.prototype.slice.call(od.querySelectorAll("tr.diag-row"));
+                if (n >= names.length - at - 1) orows.reverse();   // a domain above: its LAST finding
+                for (var r = 0; r < orows.length; r++) {
+                    if (orows[r].style.display === "none") continue;
+                    if (take(orows[r].querySelector("button:not([disabled])"))) return;
+                }
+            }
+            if (take(od.querySelector(":scope > summary"))) return;
+        }
+        var h = document.querySelector("#table-pane .diag-header-row h2");
+        if (h) {
+            if (!h.hasAttribute("tabindex")) h.setAttribute("tabindex", "-1");
+            take(h);
+        }
+    }
+    window._restoreDiagFocus = _restoreDiagFocus;
+    document.addEventListener("mousedown", function () { _diagFocusAnchor = null; }, true);
     window.togglePreviewIssues = function() {
         var el = document.getElementById("preview-issues");
         if (el) el.classList.toggle("hidden");
@@ -18438,13 +18644,13 @@ document.addEventListener('click', function(evt) {
     // QA F-E: the marks were re-applied only on a #table-pane swap or a full
     // load, so a repaired value (type fix, tree edit, Ctrl+Z) kept its stale
     // ⚠ until a reload. Every mutation fires diagnostics-changed -- re-mark
-    // then (debounced; no expansion) and refresh the sidebar dots with it.
+    // then (debounced; no expansion). The sidebar dots follow the same event
+    // through their own listener below (QA diagnostics-r2-10) -- once per burst.
     var _specMarkTimer = null;
     document.addEventListener('diagnostics-changed', function() {
         if (_specMarkTimer) clearTimeout(_specMarkTimer);
         _specMarkTimer = setTimeout(function() {
             _specMarkTimer = null;
-            if (window._refreshSidebarDiagDots) window._refreshSidebarDiagDots();
             if (document.getElementById('explorer-tree-state')) {
                 window._applyExplorerSpecMarks({ noExpand: true });
             }
@@ -18492,6 +18698,14 @@ document.addEventListener('click', function(evt) {
         _DIAG_BUCKETS.forEach(function(b) { if (s[b] === undefined) s[b] = true; });
         return s;
     }
+    // QA F-D: an entry point that is ABOUT a bucket (the crash banner's
+    // "Review diagnostics" -> errors) turns that bucket back on before the
+    // page renders; the #table-pane afterSwap / load paths re-apply it.
+    window._diagShowBucket = function (b) {
+        var st = _diagFilterState();
+        st[b] = true;
+        try { localStorage.setItem('quam_diag_filter', JSON.stringify(st)); } catch (e) {}
+    };
     function _applyDiagFilter() {
         var bar = document.getElementById('diag-filter-bar');
         if (!bar) return;
@@ -18520,6 +18734,36 @@ document.addEventListener('click', function(evt) {
         }
         var cnt = bar.querySelector('.diag-shown-count');
         if (cnt) cnt.textContent = (shown === total || total === 0) ? '' : (shown + ' of ' + total + ' shown');
+        // QA F-D: a saved filter (it persists across reloads and chips) must
+        // never hide crash errors -- or everything -- behind a muted count.
+        // A sibling of .diag-shown-count, never inside it (its text is pinned).
+        var hiddenErr = (results && st.error === false)
+            ? results.querySelectorAll('tr.diag-row[data-bucket="error"]:not(.diag-row-acknowledged)').length : 0;
+        var allHidden = total > 0 && shown === 0;
+        var note = bar.querySelector('.diag-filter-hidden-note');
+        if (cnt && (hiddenErr || allHidden)) {
+            if (!note) {
+                note = document.createElement('span');
+                note.className = 'diag-filter-hidden-note';
+                note.setAttribute('role', 'status');
+                cnt.parentNode.insertBefore(note, cnt);
+            }
+            note.textContent = hiddenErr
+                ? '\u26a0 ' + hiddenErr + ' error' + (hiddenErr === 1 ? '' : 's') + ' hidden by your filter '
+                : 'Every finding is hidden by your filter ';
+            var showBtn = document.createElement('button');
+            showBtn.type = 'button';
+            showBtn.className = 'btn-xs outline diag-filter-show';
+            showBtn.textContent = hiddenErr ? 'Show errors' : 'Show all';
+            showBtn.addEventListener('click', function () {
+                if (hiddenErr) window._diagShowBucket('error');
+                else _DIAG_BUCKETS.forEach(function (b) { window._diagShowBucket(b); });
+                _applyDiagFilter();
+            });
+            note.appendChild(showBtn);
+        } else if (note) {
+            note.parentNode.removeChild(note);
+        }
     }
     window._applyDiagFilter = _applyDiagFilter;
     document.addEventListener('click', function(e) {
@@ -18560,6 +18804,9 @@ document.addEventListener('click', function(evt) {
                 });
             }
             _applyDiagFilter();
+            // QA diagnostics-r2-20: after the filter (a hidden row cannot
+            // take focus) -- a one-click fix's focused button went with it.
+            if (window._restoreDiagFocus) window._restoreDiagFocus();
             return;
         }
         if (evt.detail.target.id !== 'table-pane') return;
@@ -18568,6 +18815,18 @@ document.addEventListener('click', function(evt) {
             window._applyExplorerSpecMarks();
         }
         _applyDiagFilter();
+    });
+    // QA diagnostics-r2-10: an edit or a patched pull re-lints (the topbar
+    // pill follows `diagnostics-changed`) but the sidebar dots only refreshed
+    // on a #table-pane swap -- Instrument Wiring's dot stayed red after the
+    // collision was fixed. Same trailing pause the pill uses.
+    var _diagDotsTimer = null;
+    document.addEventListener('diagnostics-changed', function () {
+        if (_diagDotsTimer) clearTimeout(_diagDotsTimer);
+        _diagDotsTimer = setTimeout(function () {
+            _diagDotsTimer = null;
+            if (window._refreshSidebarDiagDots) window._refreshSidebarDiagDots();
+        }, 500);
     });
     // Once on first full-page load so the dots + filter show immediately.
     function _diagInitOnLoad() {

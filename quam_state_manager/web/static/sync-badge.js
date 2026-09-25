@@ -16,8 +16,9 @@
  *
  * Two announcements ship, and the reasons the other two did not are worth
  * recording because they are about honesty rather than effort:
- *   - `live changed` was cut: /state/drift's refresh returns early on a dirty
- *     context, so the 5-second poll cannot keep the flag true there, and a
+ *   - `live changed` was cut: /state/drift's refresh only ever RAISES the
+ *     flag on a dirty context (QA diagnostics-r2-12; it cannot lower it
+ *     there), so the 5-second poll cannot keep it current, and a
  *     chip that is right only sometimes is worse than no chip. The pill's own
  *     server-rendered `state-status-drifted` state already covers the clean
  *     case honestly.

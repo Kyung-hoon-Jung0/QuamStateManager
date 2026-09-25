@@ -5163,6 +5163,12 @@ a.topo-health-tile:hover { background: var(--pico-card-sectioning-background-col
 .diag-error-banner .topo-change-banner-btn { background: var(--color-error-border); color: #fff; }
 .diag-error-banner .topo-change-banner-btn:hover { background: #b02a37; }
 .diag-error-banner .topo-change-banner-dismiss { color: var(--color-error-text); }
+/* QA F-I: the crash banner points AT /diagnostics; on that page it repeats the
+   error pill and its Review button reloads the page you are on, while taking
+   ~70 px from a short window. :has() follows the pane across htmx swaps both
+   ways (PaneState parks a pane DETACHED, so a parked Diagnostics pane cannot
+   match); #diag-findings exists only in _diagnostics.html. */
+body:has(#table-pane #diag-findings) #diagnostics-banner-slot { display: none; }
 
 /* Live-drift banner — the accumulating "N params changed on the live chip"
    notice. Info (cyan) accent to set it apart from the amber out-of-band
@@ -9487,8 +9493,17 @@ button.diag-badge { cursor: pointer; }
     border-bottom: 1px solid var(--pico-muted-border-color, #e0e0e0);
     vertical-align: top;
 }
-.diag-loc { font-size: 0.82rem; word-break: break-all; }
+/* QA F-Q: break-all gave the path a ONE-character min-content, so the two
+   columns that could not give -- the nowrap action buttons and the detail's
+   unbreakable `a.b.c=6590714813.32` token -- squeezed it into
+   'qubits. / q2.reso / nator.f / _01'. The template puts <wbr> after each dot,
+   the cell gets a floor (the .sv-q-path fix), and the detail may break so the
+   floor never pushes the table past the pane (measured: 1280-1600 px wide at
+   the 20 px UI scale, no horizontal scroll). */
+.diag-loc { font-size: 0.82rem; word-break: normal; overflow-wrap: anywhere; }
+.diag-loc-cell { min-width: 10rem; }
 .diag-detail { font-size: 0.78rem; margin-top: 0.15rem; }
+.diag-detail code { overflow-wrap: anywhere; }
 .diag-row-error   td:first-child { box-shadow: inset 3px 0 0 var(--outcome-fail-color, #c0392b); }
 .diag-row-warning td:first-child { box-shadow: inset 3px 0 0 var(--outcome-warn-color, #e67e22); }
 .diag-action { white-space: nowrap; }
@@ -9520,6 +9535,16 @@ button.diag-badge { cursor: pointer; }
     color: var(--pico-color);
     display: flex; flex-direction: column;
     box-shadow: 0 14px 44px rgba(0, 0, 0, 0.28);
+    /* QA F-P: Pico styles <dialog> ITSELF as the full-screen overlay (its
+       dialog rule sets min-width/min-height 100%, align-items center and a
+       backdrop-filter). The minimums beat the width/max-height above, so the
+       dialog filled the viewport (no outside to click) and align-items shrank
+       the head to a narrow card. Undo it: the dialog is the card, its
+       ::backdrop the overlay. */
+    min-width: 0; min-height: 0;
+    height: fit-content; margin: auto;
+    align-items: stretch; justify-content: flex-start;
+    -webkit-backdrop-filter: none; backdrop-filter: none;
 }
 .diag-checks-dialog::backdrop { background: rgba(0, 0, 0, 0.38); }
 .diag-checks-head {
@@ -9578,6 +9603,8 @@ button.diag-badge { cursor: pointer; }
 .diag-pill.diag-info     { color: var(--diag-info-text); border-color: var(--diag-info-text); }
 .diag-pill.diag-pill-off { opacity: 0.45; text-decoration: line-through; }
 .diag-shown-count { font-size: 0.8rem; margin-left: auto; }
+.diag-filter-hidden-note { font-size: 0.8rem; font-weight: 600; color: var(--outcome-fail-color, #c0392b); }
+.diag-filter-hidden-note .diag-filter-show { margin-left: 0.3rem; }
 
 /* Collapsible domain sections + per-domain severity mini-counts. */
 .diag-domain { margin-bottom: 0.2rem; }
@@ -10102,6 +10129,7 @@ tr.bulk-row-pinned > th, tr.bulk-row-pinned > td { background: color-mix(in srgb
 /* before / after hover panel on a modified cell */
 .bulk-td { position: relative; }
 .bulk-ba { display: none; position: absolute; left: 4px; top: 100%; z-index: 6; margin-top: 2px;
+    pointer-events: none; /* QA SIDE-1: a hover panel, never the click target of the row below */
     padding: 2px 6px; font-size: 0.74em; font-family: var(--font-mono); white-space: nowrap;
     background: var(--pico-card-background-color); border: 1px solid var(--pico-muted-border-color);
     border-radius: 4px; box-shadow: 0 2px 8px rgba(0,0,0,0.25); }

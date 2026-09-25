@@ -1,6 +1,9 @@
 <div class="table-header-row">
     <h2>Instrument Wiring</h2>
-    <span class="diag-header-slot" hx-get="/diagnostics/summary" hx-trigger="load" hx-swap="outerHTML"></span>
+    {# QA diagnostics-r2-10: follows the state like the topbar pill (#diag-tray-slot) --
+       an outerHTML swap on `load` replaced its own trigger, so it could never refresh. #}
+    <span class="diag-header-slot" hx-get="/diagnostics/summary"
+          hx-trigger="load, diagnostics-changed from:body delay:500ms" hx-swap="innerHTML"></span>
     {# r15 CG1 (docs/70): jump straight into the Re-generate wizard's Wiring
        step (step 5) pre-filled with THIS chip — the wizard's drag-and-drop is
        the editing surface for the rack this page only displays. Always shown:
@@ -16,7 +19,10 @@
         Modify wiring&hellip;</button>
 </div>
 
-<div id="instrument-diagram">
+{# data-rerender-on-pull: drawn once from inlined JSON, so a pull that changes
+   anything re-GETs the page instead of a leaf patch that cannot reach it
+   (QA diagnostics-r2-10, _paneNeedsRerender in app.js). #}
+<div id="instrument-diagram" data-rerender-on-pull>
     <p style="padding:1rem;color:var(--pico-muted-color)">Initializing diagram&hellip;</p>
 </div>
 

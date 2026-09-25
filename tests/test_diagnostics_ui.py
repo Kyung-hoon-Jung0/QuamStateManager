@@ -80,6 +80,42 @@ class TestDiagnosticsListRender:
         assert "No structural issues found" in html
         assert 'class="diag-pill' not in html
 
+    def test_error_domains_come_first_and_carry_the_scroll_anchor(self):
+        """QA F-H: the crash banner's Review diagnostics landed on the Values
+        warnings with the waveform errors two screens down, because domains
+        rendered in the fixed DIAG_DOMAINS order. A domain with an ACTIVE error
+        is listed first (the rest keep their order) and the first one carries
+        the #diag-first-error anchor the banner scrolls to."""
+        findings = [
+            Finding("warning", "value_spec_if_floor", "q1.resonator.intermediate_frequency",
+                    "IF below floor", jump_path="q1.resonator.RF_frequency"),
+            Finding("warning", "connectivity_band_edge", "con1/p1",
+                    "near edge. Optional, not required.", jump_path="ports.a", advisory=True),
+            Finding("error", "waveform_range", "q1.readout", "sample>1", jump_path="q1.amp"),
+        ]
+        html = _render(findings)
+        order = re.findall(r'data-domain="([a-z_]+)"', html)
+        assert order == ["waveforms", "connectivity", "values"], order
+        assert html.count('id="diag-first-error"') == 1
+        tag = re.search(r'<details[^>]*id="diag-first-error"[^>]*>', html).group(0)
+        assert 'data-domain="waveforms"' in tag
+
+    def test_an_acknowledged_error_is_not_promoted(self):
+        from quam_state_manager.core.diagnostics import Finding as F
+        findings = [
+            Finding("warning", "value_spec_if_floor", "q1.resonator.intermediate_frequency",
+                    "IF below floor", jump_path="q1.resonator.RF_frequency"),
+            # (acknowledging is offered on env findings only; the template is
+            # generic, and a domain AFTER values is what makes a promotion show)
+            F(severity="error", category="waveform_range", location="q1.readout",
+              message="sample>1", jump_path="q1.amp", acknowledged={"at": 1},
+              ack_key="k|q1.readout"),
+        ]
+        html = _render(findings)
+        order = re.findall(r'data-domain="([a-z_]+)"', html)
+        assert order == ["values", "waveforms"], order      # DIAG_DOMAINS order kept
+        assert 'id="diag-first-error"' not in html
+
 
 class TestAcknowledgedRowsReadAsSettled:
     """docs/168 + on-site 2026-09-07: after every env finding was confirmed the
@@ -202,3 +238,64 @@ class TestChipStatusCountsWhatDiagnosticsCounts:
         if r.returncode == 2 and "jsdom not installed" in (r.stderr or ""):
             pytest.skip("jsdom not installed")
         assert r.returncode == 0, (r.stdout + r.stderr)
+
+
+_STATIC = __import__("pathlib").Path(__file__).resolve().parent.parent / "quam_state_manager" / "web"
+
+
+def _css_block(css: str, selector: str) -> str:
+    i = css.index(selector + " {")
+    return css[i:css.index("}", i)]
+
+
+class TestLocationColumnReadable:
+    """QA F-Q: ``.diag-loc`` used ``word-break: break-all`` -- a ONE-character
+    min-content -- so the nowrap action column squeezed the path into
+    'qubits. / q2.reso / nator.f / _01' (72 px, four lines). Same mechanism as
+    test_state_versions' quick-diff key column; the detail's unbreakable
+    `path=value` token was the other column that would not give."""
+
+    def test_the_location_cell_has_a_floor(self):
+        css = (_STATIC / "static" / "style.css").read_text(encoding="utf-8")
+        assert "min-width" in _css_block(css, ".diag-loc-cell")
+        assert "break-all" not in _css_block(css, ".diag-loc")
+        # the floor must take its width from a column that can give: the
+        # detail's long `path=value` token breaks, or the table overflows
+        assert "overflow-wrap: anywhere" in _css_block(css, ".diag-detail code")
+        html = _render([Finding("warning", "value_spec", "qubits.q2.resonator.f_01", "m")])
+        assert '<td class="diag-loc-cell"><code class="diag-loc">' in html
+
+    def test_the_path_breaks_at_its_dots_and_copies_unchanged(self):
+        html = _render([Finding("warning", "value_spec", "qubits.q2.resonator.f_01", "m")])
+        m = re.search(r'<code class="diag-loc">(.*?)</code>', html)
+        assert m and m.group(1) == "qubits.<wbr>q2.<wbr>resonator.<wbr>f_01"
+        # <wbr> carries no text: what a copy / textContent gives is the path
+        assert m.group(1).replace("<wbr>", "") == "qubits.q2.resonator.f_01"
+
+    def test_a_path_segment_is_still_escaped(self):
+        html = _render([Finding("warning", "value_spec", "a.<b>.c", "m")])
+        assert "a.<wbr>&lt;b&gt;.<wbr>c" in html
+
+
+class TestWhatIsCheckedDialog:
+    """QA F-P: Pico styles ``<dialog>`` itself as the full-screen overlay
+    (``min-width:100%; min-height:100%; align-items:center``), which beat the
+    card's width/max-height: the dialog filled the viewport (0,0,1600,950),
+    the head shrank to a narrow centred card, and there was no outside to
+    click. Layout needs a real browser; these pin the two halves of the fix."""
+
+    def test_the_card_undoes_picos_overlay_sizing(self):
+        css = (_STATIC / "static" / "style.css").read_text(encoding="utf-8")
+        block = _css_block(css, ".diag-checks-dialog")
+        for decl in ("min-width: 0", "min-height: 0", "align-items: stretch",
+                     "backdrop-filter: none"):
+            assert decl in block, decl
+
+    def test_a_backdrop_click_closes_it(self):
+        src = (_STATIC / "templates" / "_diagnostics_checks.html").read_text(encoding="utf-8")
+        tag = src[src.index('<dialog id="diag-checks-dialog"'):]
+        tag = tag[:tag.index(">")]
+        assert "onclick=" in tag and "event.target === this" in tag and "this.close()" in tag
+        # a text-selection drag that started inside the card must not close it
+        assert "onmousedown=" in tag and "_downOnBackdrop" in tag
+

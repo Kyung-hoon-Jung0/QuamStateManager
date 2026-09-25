@@ -236,6 +236,27 @@ function fireCancelable(name, path) {
     ok(/#topo-trends\.htmx-request \{[^}]*opacity/.test(fs.readFileSync(path.join(STATIC, 'style.css'), 'utf8')),
        'the section shows its own quiet in-flight cue instead (#topo-trends.htmx-request)');
 
+    // 9. QA diagnostics-r2-07: Back restores htmx's snapshot of the page the
+    //    user LEFT, taken when the slow navigation's response arrived -- i.e.
+    //    with this loader already .visible. The restored body has nothing in
+    //    flight (pending 0), so no afterRequest will ever hide it: the
+    //    history restore itself must.
+    {
+        window._slowLoaderHide();                  // pending 0, like a fresh restore
+        loader.classList.add('visible');           // ...of a snapshot that shows it
+        d.body.dispatchEvent(new window.CustomEvent('htmx:historyRestore',
+            { bubbles: true, detail: { path: '/diagnostics' } }));
+        ok(!loader.classList.contains('visible'),
+           'a history restore never leaves the please-wait loader standing');
+        fire('htmx:beforeRequest', '/bulk');
+        await sleep(140);
+        ok(loader.classList.contains('visible'), '(a slow request after it still shows the loader)');
+        fire('htmx:afterRequest', '/bulk');
+        d.dispatchEvent(new window.CustomEvent('htmx:afterSettle', { detail: {} }));
+        await sleep(60);
+        ok(!loader.classList.contains('visible'), '(and still hides it when done)');
+    }
+
     // 5. markup + CSS contracts
     const base = fs.readFileSync(path.join(__dirname, '..', 'quam_state_manager', 'web', 'templates', 'base.html'), 'utf8');
     ok(base.indexOf('quam-loader-spinner') > -1 && /quam-loader-sub[^>]*>Please wait a moment/.test(base),

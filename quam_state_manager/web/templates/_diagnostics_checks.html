@@ -1,8 +1,12 @@
 {# "What is checked?" popup — a static, chip-independent inventory of every check
    the diagnostics linter runs, grouped by domain. Driven by diagnostics.check_catalog()
    (the single source of truth in core/diagnostics.py). Native <dialog> so the
-   backdrop + Esc-to-close come for free. #}
-<dialog id="diag-checks-dialog" class="diag-checks-dialog">
+   backdrop + Esc-to-close come for free; a click on the backdrop closes it
+   (QA F-P) -- a press that STARTED inside the card (a text-selection drag
+   released over the backdrop) does not. #}
+<dialog id="diag-checks-dialog" class="diag-checks-dialog"
+        onmousedown="this._downOnBackdrop = (event.target === this)"
+        onclick="if (event.target === this &amp;&amp; this._downOnBackdrop) this.close()">
   <div class="diag-checks-head">
     <div>
       <strong class="diag-checks-title">What this page checks</strong>
