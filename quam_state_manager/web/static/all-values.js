@@ -1112,11 +1112,56 @@
         // touched All values. We only auto-switch INTO 'allvalues'; if the saved pane
         // is 'grid' the template's default-visible grid pane already matches.
         if (lsGet(TAB_KEY) === 'allvalues') switchPane('allvalues', true);
+        // QA liveedit F17: the entry this render sits on records which pane
+        // it shows, so Back / Forward between the two panes can put it back
+        _stampPane(lsGet(TAB_KEY) === 'allvalues' ? 'allvalues' : 'grid');
+        _hookPaneHistory();
+    }
+
+    /* QA liveedit F17 (re-verify): Table View / Flat View are two views of one
+       page, and a user who pressed Flat View and then Back expected Table View
+       -- Back left /bulk altogether. A pane switch the user makes is now a
+       history entry (same URL, the pane in history.state beside htmx's own
+       marker, which is kept so an entry htmx has to restore still restores).
+       Popping between two entries of THIS page switches the pane in place
+       and never reaches htmx (it would re-GET the whole page); anything else
+       -- another page is on screen, a different URL -- goes to htmx as before. */
+    var _shownUrl = null;
+    function _here() { return location.pathname + location.search; }
+    function _stampPane(pane) {
+        _shownUrl = _here();
+        try {
+            var s = history.state || {};
+            if (s.smBulkPane !== pane) history.replaceState(Object.assign({}, s, { smBulkPane: pane }), '');
+        } catch (e) { /* no history API: nothing to record */ }
+    }
+    function _pushPane(pane) {
+        try {
+            var s = history.state || {};
+            if (s.smBulkPane === pane) return;
+            history.pushState(Object.assign({}, s, { smBulkPane: pane }), '', location.href);
+            _shownUrl = _here();
+        } catch (e) { /* nicety */ }
+    }
+    function _hookPaneHistory() {
+        var prev = window.onpopstate;
+        if (prev && prev._smBulkPane) return;
+        var hook = function (e) {
+            var s = e && e.state;
+            if (s && (s.smBulkPane === 'grid' || s.smBulkPane === 'allvalues')
+                    && _shownUrl === _here() && document.querySelector('.bulk-seg')) {
+                switchPane(s.smBulkPane, false, true);
+                return;
+            }
+            if (typeof prev === 'function') return prev.call(window, e);
+        };
+        hook._smBulkPane = true;
+        window.onpopstate = hook;
     }
     // restoring=true → triggered by setup() on (re)render, not a user click: don't
     // re-persist (no behavioural change) and it's safe to run before the user ever
     // interacts. activate() handles the fresh-DOM re-wire + re-paint.
-    function switchPane(pane, restoring) {
+    function switchPane(pane, restoring, fromHistory) {
         var panes = document.querySelectorAll('[data-bulk-pane]');
         for (var i = 0; i < panes.length; i++)
             panes[i].hidden = (panes[i].getAttribute('data-bulk-pane') !== pane);
@@ -1127,6 +1172,7 @@
             segs[j].setAttribute('aria-pressed', on ? 'true' : 'false');
         }
         if (!restoring) lsSet(TAB_KEY, pane);
+        if (!restoring && !fromHistory) _pushPane(pane);      // QA liveedit F17
         if (pane === 'allvalues') activate();
         // QA liveedit-r2-02: a Flat edit the in-place patch could not express
         // -> the honest full resync (it still refuses to wipe unapplied edits)
