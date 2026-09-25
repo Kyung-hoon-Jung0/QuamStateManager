@@ -97,6 +97,9 @@ function hydrate(win, mode) {
        sourcePath: 'D:\\src' });
   G._test.state.env = 'C:/py/python.exe';
   win.document.getElementById('gen-output-path').value = 'D:\\out\\chip';
+  // gen-session (QA regenerate-r2-18) refuses a ticked scripts export with no
+  // folder; give it the folder the output path implies (merged at integration).
+  win.document.getElementById('gen-scripts-path').value = 'D:\\out\\chip\\state_gen_scripts';
   return G;
 }
 

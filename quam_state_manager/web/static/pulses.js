@@ -391,7 +391,10 @@ window.PulsesPage = (function () {
         renderPulsePlot('pulse-detail-plot');
     });
 
-    function renderPulsePlot(divId, committed, preview, verify) {
+    /* `opts.plotHeight` (optional): a caller outside the inspector sizes the
+       plot to ITS pane -- plotHeight() measures #inspector-pane, which the
+       Generate wizard hides (QA F18: its preview always drew 260px). */
+    function renderPulsePlot(divId, committed, preview, verify, opts) {
         var root = divId === 'pulse-detail-plot' ? detailRoot() : null;
         var secs = root ? sectionsOf(root) : [];
         var colors = traceColors();
@@ -450,6 +453,7 @@ window.PulsesPage = (function () {
             font: { size: 11, color: cssVar('--pico-color', '#888') },
             height: plotHeight() + legendRoom
         };
+        if (opts && opts.plotHeight > 0) layout.height = opts.plotHeight + legendRoom;
         return window._plotlyRender(divId, data, layout,
             { displayModeBar: false, responsive: true });
     }

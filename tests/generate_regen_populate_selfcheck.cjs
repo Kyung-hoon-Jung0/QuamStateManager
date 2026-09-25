@@ -263,6 +263,9 @@ const SPEC = {
   };
   st.env = 'C:/py/python.exe';
   win.document.getElementById('gen-output-path').value = 'D:\\out\\chip';
+  // gen-session (QA regenerate-r2-18) refuses a ticked scripts export with no
+  // folder; give it the folder the output path implies (merged at integration).
+  win.document.getElementById('gen-scripts-path').value = 'D:\\out\\chip\\state_gen_scripts';
   G._test.runBuild();
   const pf = (posted && posted.populate_filled || []).map(function (c) { return c.join('|'); });
   ok(pf.indexOf('qubit|q1|anharmonicity') >= 0 && pf.indexOf('qubit|q2|anharmonicity') >= 0,

@@ -26677,15 +26677,58 @@ def _build_output_guard(output_path: str) -> dict | None:
     existing_chip = (out / "state.json").exists()
     if not stray and not existing_chip:
         return None
+    # QA F20: the chip may be the user's OWN re-generate, unchanged since (a
+    # reload mid-build lost its report) -- say so, and hand the report back.
+    own = regenerate.own_build(out) if existing_chip else None
     parts = []
-    if existing_chip:
+    if own is not None:
+        when = (own.get("built_at") or "")[:16].replace("T", " ")
+        src = own.get("source_folder")
+        parts.append("This folder holds the chip State Manager re-generated here"
+                     + (f" at {when}" if when else "")
+                     + (f" from {src}" if src else "")
+                     + ", unchanged since. A new build here REPLACES it "
+                       "with no backup.")
+    elif existing_chip:
         parts.append("This folder already contains a chip (state.json + wiring.json) "
                      "that would be OVERWRITTEN with no backup.")
     if stray:
         parts.append("QUAM's loader reads every .json under a folder recursively, so "
                      "these would corrupt the generated state: " + ", ".join(stray[:20]))
-    return {"ok": False, "needs_confirm": True, "conflict_files": stray,
-            "existing_chip": existing_chip, "error": " ".join(parts)}
+    payload = {"ok": False, "needs_confirm": True, "conflict_files": stray,
+               "existing_chip": existing_chip, "error": " ".join(parts)}
+    if own is not None:
+        payload["own_build"] = own
+    return payload
+
+
+# QA F8 (gen-session): one build per output folder at a time. The empty-folder
+# guard above is check-then-act: two builds into one folder (a double press,
+# or two SM windows) both saw it empty and both wrote it. Non-blocking by
+# design -- a second build must be REFUSED, never queued to overwrite the
+# first. Keyed like every folder identity here (path_match.fs_key).
+_BUILD_OUT_INFLIGHT: set[str] = set()
+_BUILD_OUT_LOCK = threading.Lock()
+
+
+def _claim_build_output(output_path: str) -> str | None:
+    """The claim key, or None when a build into this folder is running."""
+    key = path_match.fs_key(output_path)
+    with _BUILD_OUT_LOCK:
+        if key in _BUILD_OUT_INFLIGHT:
+            return None
+        _BUILD_OUT_INFLIGHT.add(key)
+    return key
+
+
+def _release_build_output(key: str) -> None:
+    with _BUILD_OUT_LOCK:
+        _BUILD_OUT_INFLIGHT.discard(key)
+
+
+_BUILD_BUSY_MSG = ("A build into this folder is already running (a second press, "
+                   "or another State Manager window). Wait for it to finish, "
+                   "then check the folder before generating again.")
 
 
 @bp.route("/generate/build", methods=["POST"])
@@ -26773,47 +26816,55 @@ def generate_build():
                           "environment and will be skipped or downgraded."),
             })
 
-    # Output-folder guard: QUAM's loader reads *every* .json in a folder, so a
-    # stray file there would corrupt the state.json the build is about to
-    # write. Block on any non-state/wiring .json unless the user forces it.
-    if not bool(data.get("force")):
-        guard = _build_output_guard(output_path)
-        if guard is not None:
-            return jsonify(guard)
+    # QA F8: claimed BEFORE the guard below reads the folder, released after
+    # the build (and its scripts export) wrote it.
+    claim = _claim_build_output(output_path)
+    if claim is None:
+        return jsonify({"ok": False, "busy": True, "error": _BUILD_BUSY_MSG}), 409
+    try:
+        # Output-folder guard: QUAM's loader reads *every* .json in a folder, so a
+        # stray file there would corrupt the state.json the build is about to
+        # write. Block on any non-state/wiring .json unless the user forces it.
+        if not bool(data.get("force")):
+            guard = _build_output_guard(output_path)
+            if guard is not None:
+                return jsonify(guard)
 
-    outcome = config_generator.run_generator(
-        python_path, "build", spec, Path(output_path), timeout=600
-    )
-    # QA F12: a success whose QM config the QM would reject says so.
-    if outcome.get("ok"):
-        try:
-            _st, _wr = safe_io.read_state_wiring(Path(output_path))
-            config_generator.annotate_unplayable(outcome, _st, _wr)
-        except (OSError, ValueError) as exc:
-            logger.warning("frequency check skipped: %s", exc)
+        outcome = config_generator.run_generator(
+            python_path, "build", spec, Path(output_path), timeout=600
+        )
+        # QA F12: a success whose QM config the QM would reject says so.
+        if outcome.get("ok"):
+            try:
+                _st, _wr = safe_io.read_state_wiring(Path(output_path))
+                config_generator.annotate_unplayable(outcome, _st, _wr)
+            except (OSError, ValueError) as exc:
+                logger.warning("frequency check skipped: %s", exc)
 
-    # Optional editable-scripts export (customer requirement: "generate/
-    # populate python scripts in a different user-defined folder"). Runs
-    # app-side from the same spec + the build's allocation — pure templating,
-    # no QM stack — and never fails a successful build.
-    if scripts_dir and outcome.get("ok"):
-        try:
-            from quam_state_manager.core import script_emitter
-            result = outcome.get("result") or {}
-            bundle = script_emitter.emit_bundle(
-                spec,
-                result.get("allocation") or {},
-                result.get("versions") or probe.get("versions") or {},
-                chip_name=Path(output_path).name or "chip",
-            )
-            outcome["scripts"] = {
-                "dir": scripts_dir,
-                "files": script_emitter.write_bundle(Path(scripts_dir), bundle),
-            }
-        except Exception as exc:  # noqa: BLE001 — best-effort side artefact
-            logger.warning("script bundle emission failed: %s", exc)
-            outcome["scripts_error"] = str(exc)
-    return jsonify(outcome)
+        # Optional editable-scripts export (customer requirement: "generate/
+        # populate python scripts in a different user-defined folder"). Runs
+        # app-side from the same spec + the build's allocation — pure templating,
+        # no QM stack — and never fails a successful build.
+        if scripts_dir and outcome.get("ok"):
+            try:
+                from quam_state_manager.core import script_emitter
+                result = outcome.get("result") or {}
+                bundle = script_emitter.emit_bundle(
+                    spec,
+                    result.get("allocation") or {},
+                    result.get("versions") or probe.get("versions") or {},
+                    chip_name=Path(output_path).name or "chip",
+                )
+                outcome["scripts"] = {
+                    "dir": scripts_dir,
+                    "files": script_emitter.write_bundle(Path(scripts_dir), bundle),
+                }
+            except Exception as exc:  # noqa: BLE001 — best-effort side artefact
+                logger.warning("script bundle emission failed: %s", exc)
+                outcome["scripts_error"] = str(exc)
+        return jsonify(outcome)
+    finally:
+        _release_build_output(claim)
 
 
 @bp.route("/regenerate/reconstruct", methods=["POST"])
@@ -26823,7 +26874,8 @@ def regenerate_reconstruct():
     data = request.get_json(silent=True) or {}
     # Prefer the WORKING COPY (like the Config Viewer's _ctx_path), so a
     # reconstruct carries the user's in-app edits instead of the stale live files.
-    folder = (data.get("folder") or "").strip() or _ctx_path()
+    explicit = (data.get("folder") or "").strip()
+    folder = explicit or _ctx_path()
     if not folder:
         return jsonify({"ok": False, "error": "No chip loaded and no folder given."}), 400
     # The exact-spec sidecar lives in the chip's REAL folder, never in the
@@ -26875,7 +26927,15 @@ def regenerate_reconstruct():
         "unsaved_included": unsaved[2] if unsaved else 0,
         "flavor": flavor,
         "source_folder": str(folder),
-        "source_name": ident["name"] if ident else Path(folder).name,
+        # QA regenerate-r2-35: what was read, so the build can ask when the
+        # source changed under the wizard's displayed values.
+        "source_hash": rec.source_hash,
+        # QA F9: name the folder that was READ. The loaded chip's name is right
+        # only on the default path (whose folder is the working-copy key); an
+        # explicit "Load different…" folder used to wear it too, so the bar
+        # named the loaded chip over another chip's counts.
+        "source_name": (_chip_display_name(folder) if explicit
+                        else (ident["name"] if ident else Path(folder).name)),
     })
 
 
@@ -27038,6 +27098,9 @@ def regenerate_build():
     if not isinstance(populate_filled, list):
         populate_filled = None
     scripts_dir = (data.get("scripts_dir") or "").strip() or None
+    # QA regenerate-r2-18: the wizard's export checkbox. Absent (an older
+    # client) keeps today's behaviour; an explicit false writes no bundle.
+    scripts_enabled = data.get("scripts_enabled") is not False
 
     errors = config_generator.validate_spec(spec)
     if errors:
@@ -27140,12 +27203,40 @@ def regenerate_build():
                           "environment and will be skipped or downgraded."),
             })
 
-    # Same stray-.json guard as /generate/build — QUAM's loader reads every
-    # .json in a folder, so a stray file would corrupt the generated state.
-    if not bool(data.get("force")):
-        guard = _build_output_guard(output_path)
-        if guard is not None:
-            return jsonify(guard)
+    # QA regenerate-r2-35: the merge reads the source NOW (docs/72: the
+    # working copy wins every cell the user did not edit), so a save made in
+    # another tab since the wizard loaded would be built while the wizard
+    # still shows the old value. Ask first; what is built does not change.
+    # No source_hash (an older client) = the old behaviour.
+    # QA regenerate-r2-21: an open chip's unsaved edits are part of the
+    # source -- read once; the drift check, the FSP offers and the merge all
+    # judge that same source (r2-21 x r2-35 x r2-06, merged at integration).
+    unsaved = _regen_inmemory_source(src_p)
+    source_hash = str(data.get("source_hash") or "").strip()
+    if (source_hash and populate_baseline is not None
+            and not bool(data.get("ack_source_changed"))):
+        _ctx = _active_ctx()
+        _live = (_ctx or {}).get("path")
+        try:
+            drift = regenerate.source_drift(
+                source_folder, source_hash, populate_baseline, spec=spec,
+                populate_touched=populate_touched,
+                sidecar_dirs=((str(_live),) if _live and str(_live) != source_folder
+                              else ()),
+                source=unsaved[:2] if unsaved else None)
+        except Exception:  # noqa: BLE001 -- the build reads it again and reports
+            logger.warning("source drift check failed on %s", source_folder,
+                           exc_info=True)
+            drift = []
+        if drift:
+            return jsonify({
+                "ok": False, "needs_confirm": True, "confirm_kind": "source_changed",
+                "source_drift": drift[:50], "source_drift_total": len(drift),
+                "error": ("The source chip changed since this wizard read it "
+                          "(saved from another tab or window) — "
+                          + str(len(drift)) + " value(s) shown here differ "
+                          "from the chip now."),
+            })
 
     # QA regenerate-r2-06: a port FSP changed in the wizard (manual power
     # mode) moves every calibrated pulse on that port unless its amplitudes
@@ -27156,34 +27247,46 @@ def regenerate_build():
     fsp_ack = data.get("fsp_ack")
     if not isinstance(fsp_ack, dict):
         fsp_ack = None
-    # QA regenerate-r2-21: an open chip's unsaved edits are part of the
-    # source -- read once, and the FSP offers are judged on the same source
-    # the merge will read (regenerate-r2-06 x r2-21, merged at integration).
-    unsaved = _regen_inmemory_source(src_p)
-    if power_mode != "absolute":
-        pending = regenerate.pending_fsp_offers(
-            source_folder, spec, populate_baseline, populate_touched, fsp_ack,
-            old_source=unsaved[:2] if unsaved else None)
-        if pending:
-            return jsonify({
-                "ok": False, "needs_confirm": True, "confirm_kind": "fsp",
-                "fsp_compensation": pending[0], "fsp_pending": len(pending),
-                "error": ("A port's full-scale power changed — choose whether "
-                          "its calibrated amplitudes keep their power."),
-            })
 
-    live_note = _regen_source_live_note(src_p)   # judged as the source is read
-    outcome = regenerate.run_regenerate(
-        python_path, source_folder, spec, Path(output_path), timeout=600,
-        populate_baseline=populate_baseline,
-        populate_touched=populate_touched,
-        scripts_dir=scripts_dir,
-        instance_path=current_app.instance_path,
-        **({"old_source": unsaved[:2]} if unsaved else {}),
-        power_mode=power_mode if isinstance(power_mode, str) else None,
-        fsp_ack=fsp_ack,
-        populate_filled=populate_filled,
-    )
+    # QA F8: one build per output folder at a time (see _claim_build_output).
+    claim = _claim_build_output(output_path)
+    if claim is None:
+        return jsonify({"ok": False, "busy": True, "error": _BUILD_BUSY_MSG}), 409
+    try:
+        # Same stray-.json guard as /generate/build — QUAM's loader reads every
+        # .json in a folder, so a stray file would corrupt the generated state.
+        if not bool(data.get("force")):
+            guard = _build_output_guard(output_path)
+            if guard is not None:
+                return jsonify(guard)
+
+        if power_mode != "absolute":
+            pending = regenerate.pending_fsp_offers(
+                source_folder, spec, populate_baseline, populate_touched, fsp_ack,
+                old_source=unsaved[:2] if unsaved else None)
+            if pending:
+                return jsonify({
+                    "ok": False, "needs_confirm": True, "confirm_kind": "fsp",
+                    "fsp_compensation": pending[0], "fsp_pending": len(pending),
+                    "error": ("A port's full-scale power changed — choose whether "
+                              "its calibrated amplitudes keep their power."),
+                })
+
+        live_note = _regen_source_live_note(src_p)   # judged as the source is read
+        outcome = regenerate.run_regenerate(
+            python_path, source_folder, spec, Path(output_path), timeout=600,
+            populate_baseline=populate_baseline,
+            populate_touched=populate_touched,
+            scripts_dir=scripts_dir,
+            instance_path=current_app.instance_path,
+            **({"old_source": unsaved[:2]} if unsaved else {}),
+            power_mode=power_mode if isinstance(power_mode, str) else None,
+            fsp_ack=fsp_ack,
+            populate_filled=populate_filled,
+            scripts_enabled=scripts_enabled,
+        )
+    finally:
+        _release_build_output(claim)
     if unsaved and isinstance(outcome, dict):
         outcome["unsaved_included"] = unsaved[2]
     if live_note and isinstance(outcome, dict):
@@ -27192,6 +27295,12 @@ def regenerate_build():
         if isinstance(res, dict):
             # the result panel prints result.warnings as "⚠ ..." lines
             res["warnings"] = list(res.get("warnings") or []) + [live_note]
+    # QA F20: the report also lands beside the chip (hash-keyed sidecar), so a
+    # page reloaded or left mid-build can get it back -- naming the chip the
+    # user loaded (its live folder), not the working copy it was read from.
+    src_label = next((str(f) for f, role in _regen_protected_folders(src_p)
+                      if role == "source_live"), source_folder)
+    regenerate.record_build_report(output_path, outcome, src_label)
     return jsonify(outcome)
 
 

@@ -142,7 +142,18 @@
   // step number -> function() returning an error string (block) or null (ok)
   var stepGuards = {
     1: function () {
-      return state.env ? null : "Select an environment before continuing.";
+      if (!state.env) return "Select an environment before continuing.";
+      // QA generate-r2-18: an env whose probe answered "missing: …" can never
+      // build — Next used to accept it and the user learned so at Review /
+      // Generate, five steps later. Only that definite verdict blocks: a
+      // failed / still-running probe, or an env with no row, stays allowed
+      // (fail-open, like the build route's capability probe).
+      var miss = _envMissing[state.env];
+      if (miss && miss.length) {
+        return "This environment is missing " + miss.join(", ") +
+               " and cannot build a chip — pick one marked ✓.";
+      }
+      return null;
     },
     2: function () {
       var net = state.spec.network;
@@ -377,7 +388,7 @@
 
   // -- shell -----------------------------------------------------------
 
-  function showMessage(msg, kind) {
+  function showMessage(msg, kind, opts) {
     var el = document.getElementById("gen-message");
     if (!el) return;
     if (!msg) {
@@ -388,6 +399,14 @@
     el.textContent = msg;
     el.className = "gen-message gen-message-" + (kind || "warn");
     el.hidden = false;
+    // QA F3: #gen-message sits below every panel — far below the fold after
+    // the header Next, a long step 4 or step 5 — so a refused press looked
+    // dead. A message a user PRESS produced brings itself into view
+    // ('nearest' = no scroll when already visible). Opt-in: automatic
+    // messages (step-entry probes, auto-allocate) never move the page.
+    if (opts && opts.reveal && typeof el.scrollIntoView === "function") {
+      try { el.scrollIntoView({ block: "nearest" }); } catch (e) { /* old engine */ }
+    }
   }
 
   function render() {
@@ -445,6 +464,7 @@
     if (state.step === 5) enterWiringStep();
     if (state.step === 6) enterPopulateStep();
     if (state.step === 8) enterReviewStep();
+    syncPreviewPanel();   // QA r2-10
 
     focusStep(state.step);
   }
@@ -470,7 +490,7 @@
     var guard = stepGuards[state.step];
     var err = guard ? guard() : null;
     if (err) {
-      showMessage(err, "warn");
+      showMessage(err, "warn", { reveal: true });
       // Step 5's Next sits on the Auto-allocate row, and #gen-message is below
       // the fold there: say it beside the button too (QA review of F7/F5).
       var st = state.step === 5 && document.getElementById("gen-allocate-status");
@@ -494,7 +514,7 @@
   function jumpToStep(target) {
     if (target > state.step) {
       var topoErr = topologyBlocker();
-      if (topoErr) { goToStep(4); showMessage(topoErr, "warn"); return; }
+      if (topoErr) { goToStep(4); showMessage(topoErr, "warn", { reveal: true }); return; }
     }
     goToStep(target);
   }
@@ -617,12 +637,31 @@
   // The server knows the current selection (data.selected or a user click).
   // An auto-picked env is client-side only until a build persists it.
   var _envPersisted = false;
+  // QA F8: one build at a time from this wizard — a double press (header or
+  // bottom Generate, "Generate anyway", "Build without these features", or
+  // during the select-env round-trip) used to POST two builds into ONE
+  // folder. Set from the first press until its response lands.
+  var _buildInFlight = false;
+  // QA regenerate-r2-37: the docs/134 allocate rule, for the build — every
+  // build captures this token and its handlers stand down once a content
+  // swap (hydrateFromSpec / resetWizard) bumped it, so an answer computed
+  // for one session never renders (or re-enables Generate) in the next.
+  var _buildRunSeq = 0;
+  // QA review (r2-37 gap): the MODE the running build was sent from. A plain
+  // mount after a Re-generate build (sidebar → Generate Config while it runs:
+  // an htmx swap, no hydrate or Reset on the way) bumps nothing by itself,
+  // so init() reads this to strand a build that is not the mount's own.
+  var _buildMode = null;
+  // QA generate-r2-18: python -> the QM packages its probe reported MISSING
+  // (a definite verdict; a failed probe is not recorded). Step 1's guard.
+  var _envMissing = {};
 
   function probeEnv(python, statusEl, done) {
     fetch("/generate/probe?python=" + encodeURIComponent(python))
       .then(function (r) { return r.json(); })
       .then(function (info) {
         if (info && info.usable) {
+          delete _envMissing[python];   // QA generate-r2-18
           var v = info.versions || {};
           statusEl.dataset.state = "ok";
           statusEl.textContent =
@@ -644,6 +683,7 @@
             applySelection(python);
           }
         } else if (info && info.missing && info.missing.length) {
+          _envMissing[python] = info.missing.slice();   // QA generate-r2-18
           statusEl.dataset.state = "bad";
           statusEl.textContent = "✗ missing: " + info.missing.join(", ");
         } else {
@@ -697,12 +737,13 @@
           applySelection(python);
           showMessage(null);
         } else {
-          showMessage((res && res.error) || "Could not select environment.", "error");
+          showMessage((res && res.error) || "Could not select environment.", "error",
+                      { reveal: true });
         }
       })
       .catch(function () {
         if (mySeq !== _envSelectSeq) return;
-        showMessage("Could not select environment.", "error");
+        showMessage("Could not select environment.", "error", { reveal: true });
       });
   }
 
@@ -1359,11 +1400,11 @@
   function applyNamingScheme() {
     var old = state.spec.qubits.slice();
     var r = schemeNames(old.length);
-    if (r.error) { showMessage(r.error, "warn"); return; }
+    if (r.error) { namingRefusal(r.error); return; }
     var names = r.names, seen = {};
     for (var i = 0; i < names.length; i++) {
       var err = validateQubitName(names[i], seen);
-      if (err) { showMessage("Naming scheme: " + err, "warn"); return; }
+      if (err) { namingRefusal("Naming scheme: " + err); return; }
       seen[names[i]] = true;
     }
     var map = {}, changed = false;
@@ -1408,6 +1449,19 @@
     return null;
   }
 
+  // QA F3: a refused rename / Apply names answers AT the naming block (the
+  // docs/134 answer-at-the-button pattern) — #gen-message is a screen below
+  // it, and a scroll there is undone the moment Tab moves focus to the next
+  // rename box. renderNamingUi puts the normal note back on the next render.
+  function namingRefusal(msg) {
+    showMessage(msg, "warn");
+    var note = document.getElementById("gen-naming-note");
+    if (note) {
+      note.textContent = "✗ " + msg;
+      note.classList.add("gen-topo-caption-warn");   // the existing warning-text colour
+    }
+  }
+
   // Per-qubit rename inputs (inside the step-4 naming block).
   function renderQubitNameList() {
     var host = document.getElementById("gen-qubit-name-list");
@@ -1425,7 +1479,7 @@
         if (v === q) return;
         var err = renameQubit(q, v);
         if (err) {
-          showMessage(err, "warn");
+          namingRefusal(err);
           input.value = q;               // restore the valid name
         } else {
           showMessage(null);
@@ -1469,6 +1523,7 @@
     if (sin) sin.value = (nm.start == null ? 1 : nm.start);
     var note = document.getElementById("gen-naming-note");
     if (note) {
+      note.classList.remove("gen-topo-caption-warn");   // QA F3: clear a refusal
       if (nm.preset === "grid") {
         var r = schemeNames(state.spec.qubits.length);
         note.textContent = r.error ? r.error
@@ -2821,7 +2876,11 @@
     var qdIp = document.getElementById("gen-qdac-ip");
     var qdPort = document.getElementById("gen-qdac-port");
     var qdUsb = document.getElementById("gen-qdac-usb");
+    // QA F5: read the CURRENT spec's qdac on every edit — a captured object
+    // went stale the moment Reset / hydrateFromSpec replaced state.spec, and
+    // typed IP/port/link edits then landed on a discarded object.
     function curQd() { return (state.spec.qdac = state.spec.qdac || qdacInstrumentDefaults()); }
+    curQd();
     if (qdComm) {
       qdComm.addEventListener("change", function () {
         curQd().communication_type = qdComm.value;
@@ -2872,6 +2931,7 @@
       if (rows) rows.value = z.rows;
     }
     window.WiringGrid.setOnChange(function (kind) {
+      regenMarkEdited(null);   // QA F6: every board commit is a user act
       // Placement / drag change only grid_location — NOT the qubit set or pairs —
       // so they must NOT trigger the expensive pair-dropdown rebuild + line
       // re-derivation. Skipping them is what keeps a 50-qubit hand-placement fast
@@ -3938,6 +3998,51 @@
     if (p) p.classList.add("hidden");
   };
 
+  // The wizard's OWN #json-panel (Preview config's "View config JSON"). The id
+  // repeats in other partials and window.closeJsonPanel is whichever page
+  // defined it last, so the wizard looks its panel up under #generate-root.
+  function wizJsonPanel() {
+    var r = root();
+    return r ? r.querySelector("#json-panel") : null;
+  }
+  // QA r2-10: the panel is fixed over the lower half of the viewport and
+  // belongs to step 8's preview — on any other step it covered the wizard
+  // and swallowed its clicks (stale title and all). Leaving step 8 PARKS it
+  // (hidden, tree kept); coming back shows it again. Closed = stays closed.
+  var _previewPanelParked = false;
+  function syncPreviewPanel() {
+    var p = wizJsonPanel();
+    if (!p) return;
+    if (state.step !== STEP_COUNT) {
+      if (!p.classList.contains("hidden")) {
+        p.classList.add("hidden");
+        _previewPanelParked = true;
+      }
+    } else if (_previewPanelParked) {
+      _previewPanelParked = false;
+      p.classList.remove("hidden");
+    }
+  }
+  // QA F14: Escape closes it, like the Couplers / Flux pages' panels — it is
+  // the innermost thing on screen once open. Never while typing, during a
+  // wire drag (its own Escape cancels the drag), or under a modal.
+  document.addEventListener("keydown", function (evt) {
+    if (evt.key !== "Escape" || evt.defaultPrevented) return;
+    if (window.smModalOpen && window.smModalOpen()) return;
+    var t = evt.target;
+    var tag = t && t.tagName ? t.tagName.toLowerCase() : "";
+    var typing = (tag === "input" &&
+                  !/^(checkbox|radio|button|submit|reset)$/i.test(t.type || "")) ||
+                 tag === "textarea" || tag === "select" || (t && t.isContentEditable);
+    if (typing) return;
+    if (_wireDrag) return;
+    var p = wizJsonPanel();
+    if (!p || p.classList.contains("hidden")) return;
+    p.classList.add("hidden");
+    _previewPanelParked = false;
+    evt.preventDefault();
+  });
+
   // -- step 5: drag-and-drop port editing -------------------------------
   // Drag a port circle (a line) onto another port. xy/z/coupler move or
   // swap; a qubit's readout joins another feedline (or starts a new one).
@@ -4604,6 +4709,7 @@
           var wu = wireUndo();
           _wizPushRestore("wiring drag", wu.restore, wu.valid);
         }
+        regenMarkEdited(null);   // QA F6 (a QDAC trigger move escapes topoSig)
         if (drag.role === "digital") {
           applyQdacTriggerEdit(drag, target);    // the whole trigger cable
         } else if (!drag.whole && (drag.role === "rr" || drag.role === "rr_in")) {
@@ -4819,6 +4925,9 @@
           if (auto) { _allocAutoBlocked = true; _allocFailSig = failSigAtRequest; }
           var why = res.error || (res.errors || []).join("; ") || "Allocation failed.";
           _allocLastErr = { sig: failSigAtRequest, msg: why };
+          // QA F3: the reason answers AT the button (the docs/134 pattern)
+          // — #gen-message is far below the fold here and a step change
+          // clears it. No scroll: the answer is already beside the press.
           dropStaleAllocation(sigAtRequest);
           if (status) status.textContent = "✗ allocation failed — " + why;
           renderWiringTable();     // no row keeps a "re-allocating…" that never comes
@@ -4833,7 +4942,7 @@
         if (auto) { _allocAutoBlocked = true; _allocFailSig = failSigAtRequest; }
         if (btn) btn.disabled = false;
         dropStaleAllocation(sigAtRequest);
-        if (status) status.textContent = "✗ allocation failed";
+        if (status) status.textContent = "✗ allocation failed: the request did not complete";
         renderWiringTable();
         renderWiringDiagram();
         showMessage("Allocation request failed.", "error");
@@ -6820,6 +6929,7 @@
     if (state.mode !== "regenerate") return;
     if (!state.regenTouched) state.regenTouched = {};
     state.regenTouched[group + "|" + rid + "|" + field] = 1;
+    state.regenEdited = true;   // QA F6: a populate edit is a leave-worthy edit
   }
   // A fill-empty preset cell (QA review of regenerate-r2-03): not "touched" —
   // run_regenerate protects it only over a null source leaf
@@ -8502,10 +8612,18 @@
         (tees.length ? " · " + tees.length + " through a bias tee ("
           + tees.join(", ") + ")" : "")]);
     }
+    // QA F21: a step-rail jump skips the step-7 guard (by design), so Review
+    // flags the relative path Generate is certain to refuse — it used to list
+    // it as a normal value. Same predicate as step 7 and runBuild.
+    var REL_FLAG = "  ⚠ not an absolute path — Generate will refuse it; fix it in step 7";
+    var outP = getOutputPath();
+    var spP = state.scriptsEnabled ? getScriptsPath() : "";
     rows.push(
-      ["Output folder", getOutputPath() || "(not set — step 7)"],
-      ["Python scripts", state.scriptsEnabled
-        ? (getScriptsPath() || "(folder not set — step 7)") : "(off)"]
+      ["Output folder", !outP ? "(not set — step 7)"
+        : looksAbsolutePath(outP) ? outP : outP + REL_FLAG],
+      ["Python scripts", !state.scriptsEnabled ? "(off)"
+        : !spP ? "(folder not set — step 7)"
+        : looksAbsolutePath(spP) ? spP : spP + REL_FLAG]
     );
     // CZ chips: surface how the pair roles were assigned before generating.
     if (czOrderActive() && sp.qubit_pairs.length) {
@@ -8575,9 +8693,14 @@
       '<div id="gen-capability-report" class="gen-cap-report"></div>';
     // Fill values via textContent so user-entered strings can't inject HTML.
     var cells = el.querySelectorAll("td");
-    rows.forEach(function (r, i) { cells[i].textContent = r[1]; });
+    rows.forEach(function (r, i) {
+      cells[i].textContent = r[1];
+      // QA F21: the flagged path cells wear the warning colour
+      if (String(r[1]).indexOf(REL_FLAG) >= 0) cells[i].classList.add("gen-cap-degrade");
+    });
 
     state._buildForce = false; state._buildAck = false;   // fresh review → fresh gates
+    state._buildAckSource = false;   // QA regenerate-r2-35
     renderCapabilityReport(document.getElementById("gen-capability-report"));
   }
 
@@ -8780,6 +8903,15 @@
       .then(function (r) { return r.json(); })
       .then(function (res) {
         if (res.ok && res.redirect) {
+          // QA generate-r2-14: built AND loaded — the Generate draft is
+          // finished work. Retire it (and stop pagehide writing it back) so
+          // the next Generate Config starts a new chip at step 1 instead of
+          // reopening this one's step 8 with Generate primed over the folder
+          // now open in the app. Re-generate never touches it (QA F7).
+          if (state.mode !== "regenerate" && !onRegenPage()) {
+            _draftRetired = true;
+            try { sessionStorage.removeItem(DRAFT_KEY); } catch (e) {}
+          }
           window.location.href = res.redirect;
         } else {
           showMessage(res.error || "Could not load the generated config.", "error");
@@ -8867,6 +8999,29 @@
           a.textContent = "↓ " + pair[0];
           exp.appendChild(a);
         });
+        // QA regenerate-r2-20: the config tree opens when ASKED. The panel is
+        // fixed over the lower ~55% of the viewport, and opening it by itself
+        // covered this very result — the downloads, the pulse gallery and the
+        // Generate button — until its × was found.
+        var jsonBtn = document.createElement("button");
+        jsonBtn.type = "button";
+        jsonBtn.className = "outline gen-config-export-btn gen-config-json-btn";
+        jsonBtn.textContent = "{ } View config JSON";
+        jsonBtn.addEventListener("click", function () {
+          // Reuse the shared slide-up JSON panel (read-only copy mode — the
+          // default "edit" mode is for live-state trees only).
+          var panel = wizJsonPanel();
+          var treeEl = document.getElementById("json-panel-tree");
+          var title = document.getElementById("json-panel-title");
+          if (panel && treeEl && title && typeof window.renderJsonTree === "function") {
+            title.textContent = "Generated config — " + pathBasename(outPath);
+            treeEl.innerHTML = "";
+            window.renderJsonTree("json-panel-tree", res.config,
+                                  { defaultDepth: 1, valueClick: "copy" });
+            panel.classList.remove("hidden");
+          }
+        });
+        exp.appendChild(jsonBtn);
         out.appendChild(exp);
 
         // 2Q-gate pulse gallery (supercritical feedback): the default-seeded
@@ -8874,19 +9029,6 @@
         // exact waveform this config plays (the config's own sample arrays,
         // the same traces the Config Viewer shows after load).
         renderPreviewPulseGallery(out, outPath);
-
-        // Reuse the shared slide-up JSON panel (read-only copy mode — the
-        // default "edit" mode is for live-state trees only).
-        var panel = document.getElementById("json-panel");
-        var treeEl = document.getElementById("json-panel-tree");
-        var title = document.getElementById("json-panel-title");
-        if (panel && treeEl && title && typeof window.renderJsonTree === "function") {
-          title.textContent = "Generated config — " + pathBasename(outPath);
-          treeEl.innerHTML = "";
-          window.renderJsonTree("json-panel-tree", res.config,
-                                { defaultDepth: 1, valueClick: "copy" });
-          panel.classList.remove("hidden");
-        }
       })
       .catch(function () {
         btn.disabled = false;
@@ -8943,13 +9085,29 @@
                   return { x: t.x, y: t.y, mode: "lines", type: "scatter",
                            name: t.label, line: { width: 2 } };
                 });
-                window._plotlyRender(canvas, traces, {
+                var lay = {
                   margin: { l: 50, r: 10, t: 10, b: 40 },
                   xaxis: { title: "time (ns)" },
                   yaxis: { title: "voltage (V at 50 Ω)" },
                   showlegend: traces.length > 1,
                   legend: { orientation: "h", y: -0.3 },
-                }, { responsive: true, displayModeBar: false });
+                };
+                // QA F14: the house theme (axis text / grid follow the theme
+                // tokens) — Plotly's default #444 ticks were nearly invisible
+                // on the dark result box.
+                if (window.PlotTheme && window.PlotTheme.houseLayout) {
+                  lay = window.PlotTheme.houseLayout(lay);
+                }
+                // QA F14: the plot draws under the whole op list — bring it
+                // into view (clear of the JSON panel when that is open).
+                var jp = wizJsonPanel();
+                plot.style.scrollMarginBottom = (jp && !jp.classList.contains("hidden"))
+                  ? jp.offsetHeight + "px" : "0px";
+                if (typeof plot.scrollIntoView === "function") {
+                  try { plot.scrollIntoView({ block: "nearest" }); } catch (e) { /* old engine */ }
+                }
+                window._plotlyRender(canvas, traces, lay,
+                  { responsive: true, displayModeBar: false });
               })
               .catch(function () { plot.textContent = "waveform request failed"; });
           });
@@ -8962,6 +9120,68 @@
       .catch(function () { /* gallery is best-effort */ });
   }
 
+  // QA r2-13: the fields showBuildResult reads — never result.allocation /
+  // versions, which can be large on a big chip and the draft already holds.
+  function trimBuildRes(res) {
+    var out = {};
+    ["ok", "error", "errors", "capability_blockers", "merge", "script",
+     "script_error", "script_in_output", "scripts", "scripts_error"
+    ].forEach(function (k) { if (res && res[k] != null) out[k] = res[k]; });
+    var r = res && res.result;
+    if (r && typeof r === "object") {
+      out.result = { qubits: r.qubits || [], qubit_pairs: r.qubit_pairs || [],
+                     warnings: r.warnings || [] };
+      if (r.error) out.result.error = r.error;
+    }
+    return out;
+  }
+
+  function hhmm(at) {
+    try {
+      return new Date(at).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+    } catch (e) { return ""; }
+  }
+
+  // QA r2-13: on a (re-)mount, step 8 says what became of the last build —
+  // still running (left and came back), its result (reload / leave after it
+  // landed), or started with no answer received (F5 during the build).
+  function restoreBuildOutcome() {
+    var el = document.getElementById("gen-build-result");
+    if (!el) return;
+    if (_buildInFlight) {
+      ["gen-next", "gen-next-top"].forEach(function (id) {
+        var b = document.getElementById(id);
+        if (b) b.disabled = true;
+      });
+      el.hidden = false;
+      el.className = "gen-build-result";
+      el.textContent = "Generating… a build started on this page" +
+        (state.buildPending ? " at " + hhmm(state.buildPending.at) + " into " +
+          state.buildPending.outPath : "") +
+        " is still running — its result appears here when it finishes.";
+      return;
+    }
+    var lb = state.lastBuild;
+    if (lb && lb.res && lb.outPath) {
+      showBuildResult(lb.res, lb.outPath);
+      var note = document.createElement("p");
+      note.className = "muted gen-build-restored";
+      note.textContent = "Result of the build at " + hhmm(lb.at) +
+        " (shown again after the page was reloaded or left — the wizard " +
+        "may have changed since).";
+      el.insertBefore(note, el.firstChild);
+      return;
+    }
+    var bp = state.buildPending;
+    if (bp && bp.outPath) {
+      el.hidden = false;
+      el.className = "gen-build-result gen-build-confirm";
+      el.textContent = "⚠ A build into " + bp.outPath + " was started at " +
+        hhmm(bp.at) + " and its outcome was not received (the page was " +
+        "reloaded or left). Check that folder before generating again.";
+    }
+  }
+
   function showBuildResult(res, outPath) {
     var el = document.getElementById("gen-build-result");
     if (!el) return;
@@ -8970,11 +9190,12 @@
 
     if (res.ok && res.result) {
       state._buildForce = false; state._buildAck = false;   // consumed — reset gates
+      state._buildAckSource = false;   // QA regenerate-r2-35
       el.className = "gen-build-result gen-build-ok";
       var r = res.result;
       var msg = document.createElement("p");
       var nQ = (r.qubits || []).length, nP = (r.qubit_pairs || []).length;
-      msg.textContent = "✓ Generated " +
+      msg.textContent = "✓ Generated " +   // QA F8 side note: "1 pairs"
         nQ + (nQ === 1 ? " qubit" : " qubits") + " and " +
         nP + (nP === 1 ? " pair" : " pairs") + " into " + outPath;
       // QA F12: built, but the QM will reject its config until the named
@@ -9434,10 +9655,16 @@
           '<span class="gen-merge-h">Build recipe</span>' +
           '<span class="gen-merge-stat gen-merge-ok" title="Editable build scripts ' +
           '(01 wiring / 02 populate+gates / 03 config check) reproducing this chip ' +
-          '— edit the data blocks and re-run to rebuild">&#128196; ' +
-          res.script + '</span>' +
+          '— edit the data blocks and re-run to rebuild"></span>' +
           '<span class="gen-merge-muted gen-merge-detail" style="margin-left:.4rem">' +
-          'written to the output folder</span>';
+          '</span>';
+        // QA regenerate-r2-18: the folder is the user's own (step-7 box), so
+        // it goes in as text, and "where" is the server's verdict — the fixed
+        // "written to the output folder" was false for any custom folder.
+        sc.children[1].textContent = "📄 " + res.script;
+        sc.children[2].textContent = res.script_in_output === true
+          ? "written inside the output folder"
+          : (res.script_in_output === false ? "written outside the output folder" : "");
         el.appendChild(sc);
       } else if (res.script_error) {
         var se = document.createElement("div");
@@ -9549,6 +9776,63 @@
       return;
     }
 
+    if (res.confirm_kind === "source_changed") {
+      // QA regenerate-r2-35: the source chip changed (another tab / window
+      // saved it) since this wizard read it — the merge carries the chip's
+      // values as they are NOW, so name every displayed value that differs.
+      var drift = res.source_drift || [];
+      // In the Populate step's own units (GHz / ns / V as chosen there) —
+      // "shown 200607661.787" is not what the step showed.
+      var driftCols = { qubit: POP_QUBIT_COLS, resonator: POP_RESONATOR_COLS,
+                        flux: POP_FLUX_COLS, pulses: POP_PULSE_FIELDS };
+      var driftVal = function (col, v) {
+        if (!col || !col.dim || col.dim === "amp" || typeof v !== "number") return String(v);
+        return toDisplayValue(v, col.dim) + " " + state.populateUnits[col.dim];
+      };
+      drift.forEach(function (d) {
+        var col = (driftCols[d.group] || []).filter(function (c) {
+          return c.field === d.field;
+        })[0];
+        var line = document.createElement("p");
+        line.className = "gen-build-warn-line";
+        line.textContent = "• " + d.group + " " + d.id + " " + d.field +
+          ": shown " + driftVal(col, d.shown) + " → chip now " + driftVal(col, d.now) +
+          (d.yours ? " — you edited it here, so your value is built"
+                   : " — the chip's value is built");
+        el.appendChild(line);
+      });
+      if ((res.source_drift_total || 0) > drift.length) {
+        var more = document.createElement("p");
+        more.className = "gen-build-warn-line";
+        more.textContent = "• … and " + (res.source_drift_total - drift.length) + " more";
+        el.appendChild(more);
+      }
+      var shint = document.createElement("p");
+      shint.className = "muted";
+      shint.textContent = "Reload the wizard to see the chip's current values " +
+        "(this re-reads the chip and drops the edits made here), or generate " +
+        "as listed.";
+      el.appendChild(shint);
+      var rl = document.createElement("button");
+      rl.type = "button";
+      rl.textContent = "Reload the wizard from the chip";
+      rl.addEventListener("click", function () {
+        if (regenDirty() && !window.confirm("Reloading re-reads the source " +
+            "chip and discards the edits made in this wizard. Reload?")) return;
+        el.hidden = true; el.textContent = "";   // this question is answered
+        var rr = root();
+        if (rr) rr.dispatchEvent(new CustomEvent("quamgen:rehydrate",
+          { bubbles: true, detail: { step: state.step } }));
+      });
+      el.appendChild(rl);
+      var sgo = document.createElement("button");
+      sgo.type = "button";
+      sgo.textContent = "Generate anyway";
+      sgo.addEventListener("click", function () { runBuild(false, false, true); });
+      el.appendChild(sgo);
+      return;
+    }
+
     (res.conflict_files || []).forEach(function (name) {
       var line = document.createElement("p");
       line.className = "gen-build-warn-line";
@@ -9556,11 +9840,32 @@
       el.appendChild(line);
     });
 
+    var own = res.own_build;   // QA F20: the user's own re-generate, unchanged
     var hint = document.createElement("p");
     hint.className = "muted";
-    hint.textContent =
-      "Go back to step 7 to choose an empty folder, or generate anyway.";
+    hint.textContent = (own && own.report)
+      ? "Its report is kept with it: show it, go back to step 7 to choose " +
+        "another folder, or generate again over it."
+      : "Go back to step 7 to choose an empty folder, or generate anyway.";
     el.appendChild(hint);
+
+    if (own && own.report) {
+      var ob = document.createElement("button");
+      ob.type = "button";
+      ob.textContent = "Show that build's report";
+      ob.addEventListener("click", function () {
+        showBuildResult(Object.assign({}, own.report, { ok: true }), outPath);
+        if (!el.firstChild) return;
+        var note = document.createElement("p");
+        note.className = "muted gen-build-restored";
+        note.textContent = "Report of the build" +
+          (own.built_at ? " at " + String(own.built_at).slice(0, 16).replace("T", " ") : "") +
+          ", read back from this folder (the page that started it was " +
+          "reloaded or left).";
+        el.insertBefore(note, el.firstChild);
+      });
+      el.appendChild(ob);
+    }
 
     var go = document.createElement("button");
     go.type = "button";
@@ -9605,15 +9910,114 @@
     });
   }
 
-  function runBuild(force, ackDegrades) {
+  // QA regenerate-r2-37: the wizard's CONTENT was replaced (hydrateFromSpec:
+  // regenerate boot / "Load different…" / Reset's re-fill; resetWizard) — a
+  // build still running belongs to the earlier session (its handlers stand
+  // down on the bumped token), and the new session starts with an empty
+  // result slot, no build record and both Generate buttons usable.
+  function resetBuildRuntime() {
+    _buildRunSeq++;
+    _buildInFlight = false;
+    state.buildPending = null;
+    state.lastBuild = null;
+    var el = document.getElementById("gen-build-result");
+    if (el) { el.hidden = true; el.innerHTML = ""; el.className = "gen-build-result"; }
+    ["gen-next", "gen-next-top"].forEach(function (id) {
+      var b = document.getElementById(id);
+      if (b) b.disabled = false;
+    });
+  }
+
+  // A stranded build that still wrote its folder is named — never shown as
+  // this session's result (no "Load into app") — and only on an idle slot
+  // (never over the new session's own "Generating…", result or question).
+  function noteStrandedBuild(res, outPath, source) {
+    if (!res || !res.ok) return;
+    var el = document.getElementById("gen-build-result");
+    if (!el || !el.hidden) return;
+    el.hidden = false;
+    el.className = "gen-build-result";
+    el.innerHTML = "";
+    var p = document.createElement("p");
+    p.className = "muted gen-build-stranded";
+    p.textContent = "ℹ A build from the earlier session" +
+      (source ? " (source " + source + ")" : "") + " finished into " + outPath +
+      " — not loaded here: this wizard was reset or re-filled while it ran.";
+    el.appendChild(p);
+  }
+
+  // QA review (r2-37 / r2-13): a PLAIN build stranded by a Re-generate
+  // hydrate still answered — the plain draft it was saved into (buildPending
+  // at the press) must learn the outcome, or the next Generate Config mount
+  // warns "its outcome was not received" over a build that finished. The
+  // record is the .then path's own (a question / busy refusal is no result),
+  // written straight to storage because saveDraft stands down on the regen
+  // page; a plain wizard back on screen with that same pending build takes
+  // it too (its next saveDraft would otherwise write the stale pending record
+  // back). Never while a plain build of the current session runs — then the
+  // stored pending record is that build's.
+  function recordStrandedOutcome(res, outPath, mode) {
+    if (mode !== "generate" || !res) return;
+    if (_buildInFlight && state.mode === "generate") return;
+    var lastBuild = (res.needs_confirm || res.busy) ? null
+      : { res: trimBuildRes(res), outPath: outPath, at: Date.now() };
+    var d = loadDraft();
+    if (d && d.buildPending && d.buildPending.outPath === outPath) {
+      d.buildPending = null;
+      d.lastBuild = lastBuild;
+      try { sessionStorage.setItem(DRAFT_KEY, JSON.stringify(d)); } catch (e) {}
+    }
+    if (state.mode === "generate" && !onRegenPage() && root() &&
+        state.buildPending && state.buildPending.outPath === outPath) {
+      state.buildPending = null;
+      state.lastBuild = lastBuild;
+      restoreBuildOutcome();
+    }
+  }
+
+  function runBuild(force, ackDegrades, ackSource) {
+    // QA F3b: a pre-flight refusal answers in the result slot under Generate
+    // and REPLACES whatever it held — the previous build's green "Generated"
+    // box used to stay on screen, so a refused press read as a new success
+    // (the wiring-error gate below already overwrites the slot the same way).
+    function refuseBuild(msg, kind) {
+      var rEl = document.getElementById("gen-build-result");
+      if (rEl) {
+        rEl.hidden = false;
+        rEl.className = "gen-build-result gen-build-error";
+        rEl.textContent = "✗ " + msg;
+      }
+      showMessage(msg, kind, { reveal: true });   // after the slot's reflow
+    }
+    // QA F10: the header "Generate" sits a whole Review table above the result
+    // slot, so "Generating…", the result and a wiring refusal all rendered
+    // off-screen and the press looked dead. The press's answer is brought
+    // into view ('nearest' = no scroll when already visible).
+    function revealResult(el) {
+      if (!el || el.hidden || typeof el.scrollIntoView !== "function") return;
+      try { el.scrollIntoView({ block: "nearest" }); } catch (e) { /* old engine */ }
+    }
+    // QA F10 + F8: BOTH Generate buttons are busy for the build (only the
+    // bottom one used to be), and the in-flight flag refuses a second press
+    // from any entry point until the first one's response lands.
+    function setBuildBusy(busy) {
+      _buildInFlight = busy;
+      ["gen-next", "gen-next-top"].forEach(function (id) {
+        var b = document.getElementById(id);
+        if (b) b.disabled = busy;
+      });
+    }
+    if (_buildInFlight) return;   // QA F8: a build of this wizard is running
     if (!state.env) {
-      showMessage("Select an environment in step 1.", "warn");
+      refuseBuild("Select an environment in step 1.", "warn");
       return;
     }
     // An auto-picked env lives client-side only (review [7]) — the BUILD is
     // the explicit act that persists it (the server-side build reads the
     // persisted selection). One round-trip, then re-enter with identical args.
     if (!_envPersisted) {
+      setBuildBusy(true);   // QA F8: a second press during this round-trip
+      var envSeq = _buildRunSeq;   // QA r2-37: a swap strands this press
       fetch("/generate/select-env", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -9621,17 +10025,21 @@
       })
         .then(function (r) { return r.json(); })
         .then(function (res) {
+          if (envSeq !== _buildRunSeq) return;
+          setBuildBusy(false);
           if (res && res.ok) {
             _envPersisted = true;
-            runBuild(force, ackDegrades);
+            runBuild(force, ackDegrades, ackSource);
           } else {
-            showMessage((res && res.error) ||
+            refuseBuild((res && res.error) ||
               "Could not select the build environment — pick one in step 1.",
               "error");
           }
         })
         .catch(function () {
-          showMessage(
+          if (envSeq !== _buildRunSeq) return;
+          setBuildBusy(false);
+          refuseBuild(
             "Could not select the build environment — pick one in step 1.",
             "error");
         });
@@ -9642,21 +10050,38 @@
     // drop the other. enterReviewStep()/a successful build reset these.
     if (force) state._buildForce = true;
     if (ackDegrades) state._buildAck = true;
+    if (ackSource) state._buildAckSource = true;   // QA regenerate-r2-35
     // Re-derive lines from the current qubits/pairs in case the wiring step
     // was skipped via the step chips — otherwise the build gets no lines.
     czAutoOrient();   // defense-in-depth: never build a CZ pair backwards
     deriveLines();
     var outPath = getOutputPath();
     if (!outPath) {
-      showMessage("Choose an output folder in step 7.", "warn");
+      refuseBuild("Choose an output folder in step 7.", "warn");
       return;
     }
     if (!looksAbsolutePath(outPath)) {
       // Defense-in-depth (a draft-restored relative path can bypass the
       // step-7 validator via the step chips) — the server 400s it anyway.
-      showMessage("Output folder must be an absolute path — fix it in step 7.",
+      refuseBuild("Output folder must be an absolute path — fix it in step 7.",
                   "warn");
       return;
+    }
+    // QA regenerate-r2-18: the step-7 scripts rule, re-checked here like the
+    // output path (a step-chip jump skips the step-7 guard) — a ticked export
+    // with no folder used to build anyway while Review said "folder not set".
+    if (state.scriptsEnabled) {
+      var scriptsPath = getScriptsPath();
+      if (!scriptsPath) {
+        refuseBuild("Choose a folder for the editable Python scripts in " +
+                    "step 7, or untick the export.", "warn");
+        return;
+      }
+      if (!looksAbsolutePath(scriptsPath)) {
+        refuseBuild("Scripts folder must be an absolute path — fix it in step 7.",
+                    "warn");
+        return;
+      }
     }
 
     // Final topology gate (defense-in-depth) — a hole-y / dangling / partially-placed
@@ -9664,8 +10089,12 @@
     // guard. Send the user back to the Qubits step with the reason.
     var topoErr = topologyBlocker();
     if (topoErr) {
+      // QA F3b: this refusal leaves step 8 — clear the slot so a return
+      // there never shows the previous build's success as current.
+      var tEl = document.getElementById("gen-build-result");
+      if (tEl) { tEl.hidden = true; tEl.textContent = ""; }
       goToStep(4);
-      showMessage(topoErr, "warn");
+      showMessage(topoErr, "warn", { reveal: true });
       return;
     }
 
@@ -9688,19 +10117,30 @@
           gEl.appendChild(gp);
         });
       }
+      revealResult(gEl);
       return;
     }
 
     var resultEl = document.getElementById("gen-build-result");
-    var nextBtn = document.getElementById("gen-next");
-    if (nextBtn) nextBtn.disabled = true;
+    setBuildBusy(true);
+    // QA r2-13: the draft knows a build was started, so a reload before its
+    // answer lands can say so instead of showing an empty step 8.
+    state.buildPending = { outPath: outPath, at: Date.now() };
+    state.lastBuild = null;
+    saveDraft();
     if (resultEl) {
       resultEl.hidden = false;
       resultEl.className = "gen-build-result";
       resultEl.textContent =
         "Generating… this can take up to a minute while the QM stack loads.";
+      revealResult(resultEl);
     }
 
+    var myBuild = ++_buildRunSeq;   // QA r2-37: this answer is this session's
+    var buildMode = state.mode;     // QA review: … and this mode's
+    _buildMode = buildMode;
+    var buildSource = state.mode === "regenerate"
+      ? (state.regenSourceName || state.sourcePath || null) : null;
     fetch(state.buildEndpoint || "/generate/build", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -9710,6 +10150,10 @@
         source_folder: state.sourcePath || null,  // regenerate: merge from here
         // optional editable-scripts export (step 7 checkbox)
         scripts_dir: (state.scriptsEnabled && state.scriptsPath) || null,
+        // QA regenerate-r2-18: the box's own verdict — /regenerate/build read
+        // a null scripts_dir as "the legacy build_scripts/ folder" and wrote
+        // a bundle with the export unticked.
+        scripts_enabled: !!state.scriptsEnabled,
         // populate-protect (docs/72): the hydration-time populate snapshot +
         // explicitly-touched cells — the server diffs them against
         // spec.populate so in-wizard edits beat the tier-1 value merge.
@@ -9728,27 +10172,67 @@
         // carried amplitudes — automatically in absolute mode, else per the
         // user's answer to the server's offer (askFspCompensation).
         power_mode: state.mode === "regenerate" ? state.powerMode : null,
-        fsp_ack: state.mode === "regenerate" ? (state.regenFspAck || {}) : null
+        fsp_ack: state.mode === "regenerate" ? (state.regenFspAck || {}) : null,
+        // QA regenerate-r2-35: the hydrate-time source stamp + the user's
+        // "build anyway" to a changed source.
+        source_hash: state.mode === "regenerate" ? (state.regenSourceHash || null) : null,
+        ack_source_changed: !!state._buildAckSource
       })
     })
       .then(function (r) { return r.json(); })
       .then(function (res) {
-        if (nextBtn) nextBtn.disabled = false;
+        if (myBuild !== _buildRunSeq) {   // QA r2-37: the wizard was re-filled
+          noteStrandedBuild(res, outPath, buildSource);
+          recordStrandedOutcome(res, outPath, buildMode);   // QA review
+          return;
+        }
+        setBuildBusy(false);
+        // QA review (r2-13): the slot on screen NOW — a leave-and-return
+        // re-mounted the wizard, and the pre-fetch node is detached.
+        var slot = document.getElementById("gen-build-result");
+        // QA r2-13: the outcome rides the draft (a question, or a refusal
+        // because another build holds the folder, is not one), so F5 or
+        // leaving and coming back shows it again — even when the answer
+        // lands while another page is on screen.
+        state.buildPending = null;
+        state.lastBuild = (res.needs_confirm || res.busy) ? null
+          : { res: trimBuildRes(res), outPath: outPath, at: Date.now() };
+        saveDraft();
         if (res.needs_confirm && res.confirm_kind === "fsp") {
-          askFspCompensation(res);
+          askFspCompensation(res);   // QA regenerate-r2-06
+          revealResult(slot);
           return;
         }
         if (res.needs_confirm) {
           showBuildConfirm(res, outPath);
+          revealResult(slot);
           return;
         }
+        // QA F6: a finished re-generate build holds the session's edits — a
+        // later leave must not warn that they are about to be lost.
+        if (res.ok && state.mode === "regenerate") regenMarkClean();
         showBuildResult(res, outPath);
+        revealResult(slot);
       })
       .catch(function () {
-        if (nextBtn) nextBtn.disabled = false;
-        if (resultEl) {
-          resultEl.className = "gen-build-result gen-build-error";
-          resultEl.textContent = "Generate request failed.";
+        if (myBuild !== _buildRunSeq) return;   // QA r2-37
+        setBuildBusy(false);
+        // QA review (r2-13): a failed request is an outcome too — the draft's
+        // pending record closes (a re-mount otherwise kept "still running"
+        // beside a usable Generate, and a reload "outcome not received"), and
+        // the failure is what comes back after a reload. Written to the slot
+        // on screen NOW, not the pre-fetch node a re-mount detached.
+        var failed = "Generate request failed — the build's outcome was not " +
+          "received; check " + outPath + " before generating again.";
+        state.buildPending = null;
+        state.lastBuild = { res: { ok: false, error: failed }, outPath: outPath, at: Date.now() };
+        saveDraft();
+        var slot = document.getElementById("gen-build-result");
+        if (slot) {
+          slot.hidden = false;
+          slot.className = "gen-build-result gen-build-error";
+          slot.textContent = "✗ " + failed;
+          revealResult(slot);
         }
       });
   }
@@ -9761,6 +10245,9 @@
   // out, restore on the way back. Cleared by Reset or by closing the app.
   var DRAFT_KEY = "quam_generate_draft";
   var DRAFT_VERSION = 2;
+  // QA generate-r2-14: set once "Load into app" succeeded — the page is
+  // leaving and its finished draft must not be saved again on the way out.
+  var _draftRetired = false;
 
   // Mirror live DOM input values into state before serialising / navigating.
   // Flushes any value typed but not yet committed: the pywebview webview can
@@ -9809,11 +10296,19 @@
     if (sp) state.scriptsPath = unquotePath(sp.value);
   }
 
+  // QA F7: the Re-generate page mounts this same wizard inside #regen-surface.
+  function onRegenPage() { return !!document.getElementById("regen-surface"); }
+
   function saveDraft() {
     // Re-generate re-hydrates from the source chip on every visit, so it must
     // NOT write the shared Generate draft — otherwise its (named, non-contiguous)
     // spec leaks into a later plain Generate session and triggers the renumber gate.
     if (state.mode === "regenerate") return;
+    // QA F7: nor from the regen PAGE before its hydrate lands (init() leaves
+    // plain-Generate mode there) — that save would overwrite the user's
+    // Generate draft with the regen page's empty session.
+    if (onRegenPage()) return;
+    if (_draftRetired) return;   // QA generate-r2-14
     try {
       sessionStorage.setItem(DRAFT_KEY, JSON.stringify({
         v: DRAFT_VERSION, step: state.step, env: state.env,
@@ -9824,12 +10319,19 @@
         populateUnits: state.populateUnits,
         muxSize: state.muxSize, outputPath: state.outputPath,
         scriptsEnabled: state.scriptsEnabled, scriptsPath: state.scriptsPath,
+        // QA F2: whether the scripts box is the USER's (typed) or still
+        // following the output folder — a draft path alone can't tell.
+        scriptsPathTouched: !!state._scriptsPathTouched,
         qubitFlux: state.qubitFlux, couplerFlux: state.couplerFlux,
         pairGate: state.pairGate, chipArch: state.chipArch,
         heldChipArch: state.heldChipArch, heldPins: state.heldPins,
         crPortMode: state.crPortMode, zzEnabled: state.zzEnabled,
         topoZone: state.topoZone,
-        autoPresetRows: state.autoPresetRows
+        autoPresetRows: state.autoPresetRows,
+        // QA r2-13: what became of the last build (trimmed) / one started
+        // whose answer has not landed yet.
+        lastBuild: state.lastBuild || null,
+        buildPending: state.buildPending || null
       }));
     } catch (e) { /* quota / serialisation — non-fatal */ }
   }
@@ -9904,20 +10406,35 @@
     // historical behavior).
     state.crPortMode = (d.crPortMode === "shared_xy") ? "shared_xy" : "dedicated";
     state.zzEnabled = !!d.zzEnabled;
+    var scriptsFromDraft = !!d.scriptsPath;
     state.scriptsPath = d.scriptsPath || "";
     if (!state.scriptsPath) {
       try { state.scriptsPath = localStorage.getItem("quam_gen_scripts_path") || ""; }
       catch (e) { /* private mode */ }
     }
-    // A restored non-empty path is the user's earlier explicit choice; an
-    // empty one auto-follows the state folder until they touch the box.
-    state._scriptsPathTouched = !!state.scriptsPath;
+    // QA F2: a DRAFT path is saved whether or not the user typed it (the
+    // auto-followed value rides the draft too), so treating it as "touched"
+    // latched the box after any reload / re-mount and the next chip's build
+    // silently rewrote the previous chip's scripts. The draft carries its own
+    // flag; a legacy draft without it follows when its path IS the derived
+    // one. The localStorage mirror is written only by the box's own listener
+    // — a restored value from there is the user's earlier explicit choice.
+    if (scriptsFromDraft) {
+      state._scriptsPathTouched = (typeof d.scriptsPathTouched === "boolean")
+        ? d.scriptsPathTouched
+        : state.scriptsPath !== autoScriptsPath(state.outputPath);
+    } else {
+      state._scriptsPathTouched = !!state.scriptsPath;
+    }
     maybeFollowScriptsPath();
     // Line-type toggles — default true for backward compat with old drafts.
     state.qubitFlux = d.qubitFlux !== false;
     state.couplerFlux = d.couplerFlux !== false;
     // Per-row standard-defaults auto-apply (QA generate-r2-05) — restored
     // below, once the pair gate its pair keys carry is restored.
+    // QA r2-13: optional (older drafts lack them).
+    state.lastBuild = (d.lastBuild && d.lastBuild.res) ? d.lastBuild : null;
+    state.buildPending = (d.buildPending && d.buildPending.outPath) ? d.buildPending : null;
     // 2-qubit gate — default to the tunable-coupler CZ, and migrate the
     // pre-redesign vocabulary (coupler / cross_resonance / zz_drive).
     state.pairGate = d.pairGate || "cz_tunable";
@@ -9975,14 +10492,29 @@
 
   // Discard the draft and start the wizard over.
   function resetWizard() {
-    if (!window.confirm(
-        "Discard everything entered in this wizard and start over?")) {
+    // QA F8: on the Re-generate page, starting over means starting over FROM
+    // THE SOURCE CHIP — the page re-reads it on `quamgen:reset` (below)
+    // instead of leaving an empty plain Generate under a header that still
+    // names the source and promises carried-over values.
+    var wasRegen = state.mode === "regenerate";
+    var prevSource = state.sourcePath;
+    if (!window.confirm(wasRegen
+        ? "Discard every edit made in this wizard and start over from the source chip?"
+        : "Discard everything entered in this wizard and start over?")) {
       return;
     }
-    try { sessionStorage.removeItem(DRAFT_KEY); } catch (e) {}
+    // QA F7: the Generate draft belongs to the Generate wizard — a Reset on
+    // the Re-generate page never clears it.
+    if (!onRegenPage()) {
+      try { sessionStorage.removeItem(DRAFT_KEY); } catch (e) {}
+    }
     state.step = 1;
     state.spec = freshSpec();
-    state.env = null;
+    // QA F4: env: KEEP the current selection (the docs/134 hydrateFromSpec
+    // rule). It is a machine-wide choice the server keeps saved, not wizard
+    // content — nulling it left the row highlighted while Next refused
+    // "Select an environment", and the one-shot auto-pick latches stopped
+    // anything from re-selecting it.
     state.allocation = null;
     state.pairsTouched = false;
     state.wiringTouched = false;
@@ -10012,7 +10544,11 @@
     state.regenSourcePairGate = null;
     regenPairOrient = null;
     state.autoPresetRows = null;   // a fresh chip prefills again (QA generate-r2-05)
+    state.regenSourceHash = null;   // QA regenerate-r2-35
+    state.lastBuild = null;      // QA r2-13: a Reset forgets the build record
+    state.buildPending = null;
     resetAllocRuntime();   // strand any in-flight allocate for the old content
+    resetBuildRuntime();   // QA r2-37: … and any in-flight build
     try {
       localStorage.removeItem("quam_gen_output_path");
       localStorage.removeItem("quam_gen_scripts_path");
@@ -10034,6 +10570,14 @@
     setChassisCount(5);   // re-seed 5 OPX1000 chassis (also renders the grid)
     setQubitCount(0);     // clears qubits / pairs / TWPAs and re-renders
     goToStep(1);
+    _previewPanelParked = false;   // QA r2-10: the old preview never comes back
+    if (wasRegen) {
+      // From #generate-root, so the listener lives on the page's own
+      // #regen-surface and leaves with it on the next swap.
+      var rr = root();
+      if (rr) rr.dispatchEvent(new CustomEvent("quamgen:reset",
+        { bubbles: true, detail: { sourcePath: prevSource } }));
+    }
   }
 
   function init() {
@@ -10041,9 +10585,20 @@
     // Idempotent: skip if absent or already wired (HTMX re-swaps a fresh node).
     if (!r || r._quamGenInit) return;
     r._quamGenInit = true;
+    installRegenLeaveGuard();   // QA F6 (latched: installs once per page load)
+    // QA review (r2-37 gap): a build sent from a Re-generate session is not
+    // this mount's. Sidebar → Generate Config while it ran was a bare htmx
+    // swap (no hydrate, no Reset), so its answer rendered "Generated 5 qubits
+    // … Load into app" into a 0-qubit plain wizard and the plain draft kept
+    // it as lastBuild. Strand it before the draft is read: the answer is
+    // named (noteStrandedBuild), never rendered or recorded here.
+    if (_buildInFlight && _buildMode === "regenerate") resetBuildRuntime();
 
     // Restore an in-progress draft if one exists, else start fresh.
-    var draft = loadDraft();
+    // QA F7: the Re-generate page never reads the Generate draft — its
+    // hydrate replaces the session anyway, and applying the draft first only
+    // leaked the draft's env / units into the regen session.
+    var draft = onRegenPage() ? null : loadDraft();
     if (draft) {
       applyDraft(draft);
     } else {
@@ -10062,6 +10617,8 @@
       catch (e) { /* private mode */ }
       var outEl = document.getElementById("gen-output-path");
       if (outEl && state.outputPath) outEl.value = state.outputPath;
+      state.lastBuild = null;      // QA r2-13: no draft, no build record
+      state.buildPending = null;
     }
 
     // Mode is NEVER restored from a draft (regen sessions don't persist one),
@@ -10075,6 +10632,7 @@
     state.regenLineInventory = null;
     state.regenSourcePairGate = null;
     regenPairOrient = null;
+    state.regenSourceHash = null;   // QA regenerate-r2-35
 
     // Bottom nav + the top header mirror share the same handlers.
     ["gen-back", "gen-back-top"].forEach(function (id) {
@@ -10107,7 +10665,9 @@
     bindWiringStep();
     bindOutputStep();
     if (draft) repaintFromState();
+    _previewPanelParked = false;   // QA r2-10: a fresh mount's panel is empty
     render();
+    restoreBuildOutcome();   // QA r2-13
     loadEnvs();
   }
 
@@ -10127,6 +10687,85 @@
     captureDomFields();
     saveDraft();
   });
+  // QA F1: a full-page unload (F5 / Ctrl+R / tab close / full navigation)
+  // never raises the htmx hook above, and the draft is otherwise written only
+  // on a step change — so a reload restored the draft as it was when the
+  // current step was ENTERED and silently dropped every edit made on it.
+  // pagehide fires on reload, close and bfcache entry alike.
+  window.addEventListener("pagehide", function () {
+    if (!root()) return;   // the wizard isn't currently mounted
+    captureDomFields();
+    saveDraft();
+  });
+
+  // ── QA F6: leaving a Re-generate session with edits asks first ─────────
+  // Regen keeps no draft (docs/72: a return re-reads the source chip, so the
+  // populate-protect baseline always matches the working copy), so every
+  // leave DISCARDS the session — and used to do it without a word. Dirty =
+  // an explicit edit since the post-hydrate baseline (a committed wizard
+  // field, a board edit, a wire drag, a touched populate cell), a topology
+  // change against that baseline (the step-4 buttons), or a value typed and
+  // not committed yet. The output / scripts folders are exempt: both are
+  // mirrored in localStorage and come back on the next visit.
+  var REGEN_DURABLE_FIELDS = { "gen-output-path": 1, "gen-scripts-path": 1 };
+  var REGEN_LEAVE_MSG = "Re-generate keeps no draft — leaving discards the " +
+    "edits made in this wizard (coming back re-reads the source chip). " +
+    "Leave anyway?";
+  var REGEN_BUILD_LEAVE_MSG = "A Re-generate build is still running — its " +
+    "result reaches only this page (the folder is still written, and a later " +
+    "Re-generate into it offers the report back). Leave anyway?";
+  function regenMarkEdited(el) {
+    if (state.mode !== "regenerate") return;
+    if (el && el.id && REGEN_DURABLE_FIELDS[el.id]) return;
+    state.regenEdited = true;
+  }
+  function regenMarkClean() {
+    state.regenCleanTopo = topoSig();
+    state.regenEdited = false;
+  }
+  function regenDirty() {
+    if (state.mode !== "regenerate" || !root() || state.regenCleanTopo == null) {
+      return false;
+    }
+    if (state.regenEdited) return true;
+    if (document.querySelector('.gen-pop-in[data-field][data-dirty="1"]')) return true;
+    var f = _wizField(document.activeElement);
+    if (f && !REGEN_DURABLE_FIELDS[f.id] && f.__wizPrev !== undefined &&
+        _wizVal(f) !== f.__wizPrev) {
+      return true;
+    }
+    return topoSig() !== state.regenCleanTopo;
+  }
+  function installRegenLeaveGuard() {
+    if (window._regenLeaveGuard || !document.body) return;
+    window._regenLeaveGuard = true;
+    // On BODY, so it speaks before app.js's document-level swap teardown
+    // (PaneState park, Plotly purge) — those all stand down on a veto.
+    document.body.addEventListener("htmx:beforeSwap", function (evt) {
+      var d = evt.detail;
+      if (!d || !d.target || d.target.id !== "table-pane") return;
+      if (d.shouldSwap === false || state.mode !== "regenerate" || !root()) return;
+      captureDomFields();   // flushes a typed-but-uncommitted cell first
+      // QA review (F20's rule, for a swap): a running re-generate build asks
+      // too — its answer reaches only this page.
+      var building = _buildInFlight && state.mode === "regenerate";
+      if ((regenDirty() || building) &&
+          !window.confirm(building ? REGEN_BUILD_LEAVE_MSG : REGEN_LEAVE_MSG)) {
+        evt.preventDefault();
+        d.shouldSwap = false;
+      }
+    });
+    // F5 / tab close: the browser's own "Leave site?" prompt.
+    window.addEventListener("beforeunload", function (ev) {
+      // QA F20: nor while a re-generate build runs — its answer reaches only
+      // this page (once it lands, the next Generate into that folder offers
+      // its report back from the .regen sidecar).
+      if (!regenDirty() && !(_buildInFlight && state.mode === "regenerate")) return;
+      ev.preventDefault();
+      ev.returnValue = "";
+      return "";
+    });
+  }
 
   // ── Wizard field undo (Ctrl+Z) ────────────────────────────────────────────
   // A client-side undo stack for COMMITTED wizard field edits (value typed →
@@ -10186,6 +10825,7 @@
     }
     var now = _wizVal(el);
     if (old === now) { el.__wizPrev = now; return; }
+    regenMarkEdited(el);   // QA F6
     _wizStack.push({ el: el, id: el.id || null, old: old, restore: restore });
     if (_wizStack.length > _WIZ_STACK_CAP) _wizStack.shift();
     el.__wizPrev = now;
@@ -10295,10 +10935,10 @@
   // auto-refilled. Idempotent — call after QuamGen.init() has mounted the wizard.
   function hydrateFromSpec(spec, opts) {
     var o = opts || {};
-    // Re-generate owns the wizard state fresh from the source chip: drop any
-    // stale/Generate draft so (a) it can't interfere here and (b) this named,
-    // non-contiguous spec never lingers as a draft for a later plain Generate.
-    try { sessionStorage.removeItem(DRAFT_KEY); } catch (e) {}
+    // QA F7: Re-generate neither reads nor clears the Generate draft (it used
+    // to delete it here, wiping the user's in-progress Generate session). A
+    // leak the other way is closed by saveDraft's regen guards and init()'s
+    // mode reset; the regen page's init() never applies the draft at all.
     // Normalize TWPAs to the wizard's object shape. Old exact-spec sidecars
     // (and the pre-fix reconstructor) carry bare id strings; the step-4 rows
     // bind twpa.id, so strings rendered as broken empty rows and edits
@@ -10327,9 +10967,14 @@
     // line per qubit) before the inventory could be read from them. Read the
     // INCOMING spec, the one surface that is still the reconstruct's truth.
     resetAllocRuntime();   // strand any in-flight allocate for the OLD content
+    resetBuildRuntime();   // QA r2-37: … and any in-flight / finished build
     state.mode = o.mode || "regenerate";
     state.buildEndpoint = o.buildEndpoint || "/regenerate/build";
     state.sourcePath = o.sourcePath || null;
+    // QA regenerate-r2-35: what the source read was, so the build can ask
+    // when the chip changed under the values this wizard shows.
+    state.regenSourceHash = o.sourceHash || null;
+    state.regenSourceName = o.sourceName || null;   // QA r2-37: the Source bar's name
     // The source's 2Q gate — an in-wizard architecture switch away from it is
     // an explicit act the inventory gate must not veto (review [2]).
     state.regenSourcePairGate = pg;
@@ -10415,6 +11060,9 @@
     if (typeof renderChassis === "function") renderChassis();
     if (typeof renderQubitsStep === "function") renderQubitsStep();
     render();
+    _previewPanelParked = false;   // QA r2-10: the old chip's preview stays gone
+    // QA F6: the leave guard's clean baseline — exactly what is on screen now.
+    if (state.mode === "regenerate") regenMarkClean();
   }
 
   window.QuamGen = {
@@ -10438,6 +11086,7 @@
       setTimeout(function () { if (btn) btn.disabled = false; }, 1500);
     },
     hydrateFromSpec: hydrateFromSpec,
+    regenDirty: regenDirty,   // QA F6: the page's "Load different…" asks too
     // Pure allocation internals, exposed for the node selfcheck harness only
     // (tests/generate_power_selfcheck.cjs) — not a public API.
     _test: {

@@ -49,6 +49,9 @@ def reconstruct_from_folder(
     """
     folder = Path(folder)
     state, wiring = source if source is not None else safe_io.read_state_wiring(folder)
+    # QA regenerate-r2-35: stamp WHAT was read (from this one read), so the
+    # build can tell the wizard's displayed values went stale under it.
+    source_hash = regen_spec.content_hash(state, wiring)
     for cand in (folder, *(Path(d) for d in sidecar_dirs)):
         sidecar = regen_spec.load_spec_sidecar(cand, state, wiring)
         if sidecar is not None:
@@ -57,8 +60,96 @@ def reconstruct_from_folder(
             merged = dict(state)
             merged["wiring"] = wiring.get("wiring", {})
             sidecar["populate"] = regen_spec._extract_populate(state, merged)
-            return regen_spec.ReconstructedSpec(spec=sidecar, exact=True)
-    return regen_spec.reconstruct_spec(state, wiring)
+            return regen_spec.ReconstructedSpec(spec=sidecar, exact=True,
+                                                source_hash=source_hash)
+    rec = regen_spec.reconstruct_spec(state, wiring)
+    rec.source_hash = source_hash
+    return rec
+
+
+def source_drift(
+    folder: Path | str,
+    baseline_hash: str,
+    populate_baseline: dict | None,
+    spec: dict | None = None,
+    populate_touched: list | None = None,
+    sidecar_dirs: tuple[Path | str, ...] = (),
+    source: tuple[dict, dict] | None = None,
+) -> list[dict]:
+    """The Populate cells the wizard DISPLAYS whose source value changed since
+    the wizard read the chip (QA regenerate-r2-35).
+
+    The value-merge reads the source at BUILD time (docs/72: the working copy
+    wins every cell the user did not edit), so a save made in another tab
+    after the wizard loaded was built while the wizard still showed the old
+    value, with no word anywhere. This does not change what is built; it
+    names the difference so the build can ask first.
+
+    ``baseline_hash`` is :attr:`ReconstructedSpec.source_hash` from the
+    wizard's hydrate; ``populate_baseline`` is what the wizard displayed then.
+    Returns ``[]`` when the source is unchanged, or changed only in values the
+    wizard does not show. Each entry: ``{group, id, field, shown, now,
+    yours}`` -- ``yours`` when the user also edited that cell in the wizard,
+    whose value then wins (populate-protect). Raises what the source read
+    raises (the caller decides how to degrade).
+
+    ``source`` -- the open chip's in-memory ``(state, wiring)`` when it holds
+    unsaved edits (QA regenerate-r2-21): the same source the reconstruct
+    stamped and the build will merge from, so the user's own unsaved edits
+    are never reported as a change made elsewhere (merged at integration).
+    """
+    from . import regen_populate
+    state, wiring = source if source is not None else safe_io.read_state_wiring(Path(folder))
+    if not baseline_hash or regen_spec.content_hash(state, wiring) == baseline_hash:
+        return []
+    baseline = populate_baseline if isinstance(populate_baseline, dict) else {}
+    now_view = regen_populate.populate_view(
+        reconstruct_from_folder(folder, sidecar_dirs=sidecar_dirs,
+                                source=source).spec)
+    drifted = regen_populate.changed_fields(now_view, baseline, None)
+    yours = set(regen_populate.changed_fields(
+        regen_populate.populate_view(spec or {}), baseline, populate_touched))
+    return [{"group": g, "id": i, "field": f,
+             "shown": baseline[g][i][f], "now": now_view[g][i][f],
+             "yours": (g, i, f) in yours}
+            for g, i, f in drifted]
+
+
+def _trim_build_outcome(outcome: dict) -> dict:
+    """What the wizard's result panel reads, without the bulky allocation /
+    class schemas (the client's trimBuildRes keeps the same keys)."""
+    out = {k: outcome[k] for k in (
+        "ok", "error", "merge", "script", "script_error", "script_in_output",
+        "source_live_changed") if outcome.get(k) is not None}
+    res = outcome.get("result")
+    if isinstance(res, dict):
+        out["result"] = {"qubits": res.get("qubits") or [],
+                         "qubit_pairs": res.get("qubit_pairs") or [],
+                         "warnings": res.get("warnings") or []}
+        if res.get("error"):
+            out["result"]["error"] = res["error"]
+    return out
+
+
+def record_build_report(out_dir: Path | str, outcome: dict,
+                        source_folder: Path | str | None = None) -> None:
+    """Keep a finished re-generate's report beside the chip it built (QA F20),
+    in the hash-keyed ``.regen`` sidecar, so a page reloaded mid-build can get
+    it back. Only a successful merge is recorded. Never raises."""
+    if isinstance(outcome, dict) and outcome.get("ok") and outcome.get("merge"):
+        regen_spec.attach_build_report(out_dir, _trim_build_outcome(outcome),
+                                       source_folder)
+
+
+def own_build(folder: Path | str) -> dict | None:
+    """``{built_at, source_folder, report}`` when *folder* holds a chip State
+    Manager re-generated there and nobody changed since (QA F20); else None.
+    An unreadable pair is simply "not known to be ours"."""
+    try:
+        state, wiring = safe_io.read_state_wiring(Path(folder))
+    except (OSError, ValueError):
+        return None
+    return regen_spec.load_build_report(folder, state, wiring)
 
 
 def _source_classes_the_env_holds(python_path, old_state, instance_path=None,
@@ -181,6 +272,7 @@ def run_regenerate(
     power_mode: str | None = None,
     fsp_ack: dict | None = None,
     populate_filled: list | None = None,
+    scripts_enabled: bool = True,
 ) -> dict:
     """Build ``spec`` fresh into ``out_dir`` then merge the OLD chip's values on.
 
@@ -216,7 +308,11 @@ def run_regenerate(
 
     ``scripts_dir`` — where to write the editable build-script bundle
     (r16 ⓪-4: the wizard's script-path box). ``None`` keeps the legacy
-    ``<out_dir>/build_scripts`` location.
+    ``<out_dir>/build_scripts`` location. ``scripts_enabled=False`` (the
+    wizard's export checkbox unticked) writes no bundle at all; the outcome's
+    ``script`` is then ``None``. When written, ``script`` is the bundle's
+    absolute folder and ``script_in_output`` says whether it sits inside
+    ``out_dir``.
 
     ``old_source`` -- ``(state, wiring)`` to merge from INSTEAD of
     ``old_folder``'s files: the open chip's in-memory content when it holds
@@ -366,22 +462,32 @@ def run_regenerate(
     # subfolder so the chip dir stays clean (Quam.load ignores non-.json
     # either way). Best-effort: a script-emit hiccup never fails the merge.
     script_name = None
-    try:
-        from . import script_emitter
-        chip = out_dir.name or "chip"
-        res = outcome.get("result") or {}
-        bundle = script_emitter.emit_bundle(
-            spec, res.get("allocation"), res.get("versions"), chip)
-        # r16 ⓪-4: honor the wizard's script-path box (previously ignored here —
-        # everything landed in a hardcoded build_scripts/ regardless).
-        bundle_dir = Path(scripts_dir) if scripts_dir else out_dir / "build_scripts"
-        bundle_dir.mkdir(parents=True, exist_ok=True)
-        for name, src in bundle.items():
-            (bundle_dir / name).write_text(src, encoding="utf-8")
-        script_name = str(bundle_dir) if scripts_dir else "build_scripts/"
-    except Exception as exc:  # noqa: BLE001 — transparency, not a hard failure
-        outcome["script_error"] = str(exc)
-        script_name = None
+    script_in_output = None
+    # QA regenerate-r2-18: an unticked export writes NOTHING — a None
+    # scripts_dir alone used to mean "the legacy folder", bundle and all.
+    if scripts_enabled:
+        try:
+            from . import script_emitter
+            chip = out_dir.name or "chip"
+            res = outcome.get("result") or {}
+            bundle = script_emitter.emit_bundle(
+                spec, res.get("allocation"), res.get("versions"), chip)
+            # r16 ⓪-4: honor the wizard's script-path box (previously ignored
+            # here — everything landed in a hardcoded build_scripts/ regardless).
+            bundle_dir = Path(scripts_dir) if scripts_dir else out_dir / "build_scripts"
+            bundle_dir.mkdir(parents=True, exist_ok=True)
+            for name, src in bundle.items():
+                (bundle_dir / name).write_text(src, encoding="utf-8")
+            # The real folder + whether it is inside the output: the report
+            # used to claim "written to the output folder" for any folder.
+            script_name = str(bundle_dir)
+            o = Path(path_match.fs_key(bundle_dir)).parts
+            c = Path(path_match.fs_key(out_dir)).parts
+            script_in_output = len(o) > len(c) and o[:len(c)] == c
+        except Exception as exc:  # noqa: BLE001 — transparency, not a hard failure
+            outcome["script_error"] = str(exc)
+            script_name = None
+            script_in_output = None
 
     # Exact-spec sidecar keyed by the OUTPUT chip's hash, so a later re-generate
     # FROM this folder uses the exact spec instead of re-inferring. Best-effort.
@@ -486,4 +592,5 @@ def run_regenerate(
         "fsp_compensated_total": len(fsp_compensated),
     }
     outcome["script"] = script_name   # emitted build recipe filename, or None
+    outcome["script_in_output"] = script_in_output
     return outcome

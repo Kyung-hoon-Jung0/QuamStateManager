@@ -19,6 +19,8 @@ window.GenPreview = (function () {
   var _timer = null;
   var _gen = 0;          // drops stale synth responses
   var _last = null;      // last previewed {group, rid}
+  var _srcEl = null;     // the populate cell the panel is previewing
+  var _io = null;        // QA F18: watches _srcEl leave the pane
 
   // User on/off preference (persisted): some users find the auto-popping preview
   // distracting and want it gone. Default ON; the × on the panel or the toggle
@@ -37,6 +39,7 @@ window.GenPreview = (function () {
     if (off) {
       if (_timer) { clearTimeout(_timer); _timer = null; }
       _gen++; _last = null;
+      unwatchSource();   // QA F18
       var p = panel(); if (p) p.hidden = true;
     }
   }
@@ -176,6 +179,45 @@ window.GenPreview = (function () {
 
   function panel() { return document.getElementById("gen-pop-preview"); }
 
+  // QA F18: the panel is sticky over the populate tables. Once the cell it
+  // previews has scrolled out of the pane, it no longer answers for anything
+  // on screen and only covers the rows being read — so it steps aside. The
+  // on/off preference is untouched: focusing or typing in a pulse cell shows
+  // it again. Hidden only after the cell was SEEN in the pane (no flicker
+  // when the observer's first report comes in late).
+  function unwatchSource() {
+    if (_io) { try { _io.disconnect(); } catch (e) { /* ignore */ } _io = null; }
+  }
+  function watchSource(el) {
+    unwatchSource();
+    var IO = window.IntersectionObserver;
+    if (typeof IO !== "function" || !el) return;
+    var seen = false;
+    try {
+      _io = new IO(function (entries) {
+        entries.forEach(function (en) {
+          if (en.isIntersecting) { seen = true; return; }
+          if (!seen) return;
+          unwatchSource();
+          if (_timer) { clearTimeout(_timer); _timer = null; }
+          _last = null;
+          var p = panel(); if (p) p.hidden = true;
+        });
+      }, { root: document.getElementById("table-pane") || null, threshold: 0 });
+      _io.observe(el);
+    } catch (e) { _io = null; }
+  }
+
+  // QA F18: size the plot to the pane it sits in — PulsesPage measures the
+  // inspector pane, hidden on the wizard, so it always drew its 260px
+  // maximum (~300px with the head: over half the pane at 1366x768).
+  function previewPlotHeight() {
+    var tp = document.getElementById("table-pane");
+    var h = tp ? tp.clientHeight : 0;
+    if (!(h > 0)) return 0;   // hidden step / no layout: PulsesPage's own size
+    return Math.max(120, Math.min(260, Math.round(h * 0.28)));
+  }
+
   function showErr(p, msg) {
     var el = p && p.querySelector(".gen-pop-preview-err");
     if (el) { el.textContent = msg || ""; el.hidden = !msg; }
@@ -212,6 +254,7 @@ window.GenPreview = (function () {
     if (_timer) { clearTimeout(_timer); _timer = null; }
     _gen++;            // invalidate any in-flight synth response
     _last = null;
+    _srcEl = null; unwatchSource();   // QA F18
     syncToggle();      // reflect the persisted on/off pref on (re-)entry
     var p = panel();
     if (!p) return;
@@ -231,13 +274,15 @@ window.GenPreview = (function () {
     if (!d) { p.hidden = true; return; }
     _last = { group: group, rid: rid, field: field };
     p.hidden = false;
+    watchSource(_srcEl);   // QA F18
     var title = p.querySelector(".gen-pop-preview-title");
     if (title) title.textContent = d.title;
     fetchSynth({ qclass: d.qclass, params: d.params }, function (data) {
       if (!document.body.contains(p) || !stepActive(p)) return;
       if (data.ok && data.plot && data.plot.ok &&
           window.PulsesPage && window.PulsesPage.renderPulsePlot) {
-        window.PulsesPage.renderPulsePlot("gen-pop-preview-plot", data.plot);
+        window.PulsesPage.renderPulsePlot("gen-pop-preview-plot", data.plot,
+          null, null, { plotHeight: previewPlotHeight() });   // QA F18
         showErr(p, "");
       } else {
         // Clear the old trace so a stale waveform isn't left drawn under the error.
@@ -264,8 +309,10 @@ window.GenPreview = (function () {
       // pulse over an unrelated edit.
       if (_timer) { clearTimeout(_timer); _timer = null; }
       var p = panel(); if (p) p.hidden = true; _last = null;
+      _srcEl = null; unwatchSource();   // QA F18
       return;
     }
+    _srcEl = el;   // QA F18: the cell this preview answers for
     schedule(g, rid, field);
   }
 
