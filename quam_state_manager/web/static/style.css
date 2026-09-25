@@ -731,6 +731,10 @@ html[data-font-size="large"] { --font-size-base: 19px; }
    left the old page fully interactive-looking, so users double-clicked. */
 #table-pane.htmx-request { opacity: 0.6; transition: opacity 0.15s; }
 .clickable-row.htmx-request { opacity: 0.6; pointer-events: none; }
+/* QA chipstatus-r2-19: a Chip Status Trends toggle re-renders only this section
+   (the global loader no longer flashes over it — app.js isSlow), so it gets the
+   same quiet in-flight cue #table-pane has. */
+#topo-trends.htmx-request { opacity: 0.6; transition: opacity 0.15s; }
 .spinner::after { content: " ..."; animation: dots 1s steps(3, end) infinite; }
 @keyframes dots { 0% { content: "."; } 33% { content: ".."; } 66% { content: "..."; } }
 
@@ -953,6 +957,10 @@ html.topbar-hidden #pending-tray > .auto-sync-wrap {
     display: inline-flex; margin: 0; box-shadow: 0 2px 8px rgba(0,0,0,.25);
 }
 html.topbar-hidden { --topbar-height: 0px; }
+/* QA chipstatus-r2-10: the band the floating ☰ + tray card above covers at
+   the top of the pane (card top 6px + ~42px tall: bottom measured 48px at a
+   20px root). A bar that PINS there reserves it -- see .topo-subnav. */
+html.topbar-hidden { --floating-chrome-h: 2.5rem; }
 /* Always-reachable handle to bring the bar back (the Hide toggle is in the bar).
    It's a <button>, so set explicit colors — Pico would otherwise white-on-blue it. */
 .topbar-reveal {
@@ -3713,6 +3721,14 @@ input.edit-input {
     box-shadow: 0 -4px 16px rgba(0,0,0,0.1);
     overflow: auto;
 }
+/* QA chipstatus-r2-21: full width, the sheet covered the sidebar's lower links
+   (unclickable). It starts where the sidebar (its own clamp, so a dragged
+   --sidebar-width is followed) and its 6px resizer end; a collapsed sidebar
+   takes no room, so the sheet goes back to the left edge. */
+.app-layout .json-panel {
+    left: calc(clamp(var(--sidebar-min-width), var(--sidebar-width), var(--sidebar-max-width)) + 6px);
+}
+.app-layout.sidebar-collapsed .json-panel { left: 0; }
 .json-panel.hidden { display: none; }
 .json-panel-resizer {
     height: 6px; cursor: ns-resize;
@@ -4131,6 +4147,15 @@ td.col-delta .val-delta { margin-left: 0; }
     border-bottom: 1px solid var(--pico-muted-border-color);
     background: var(--pico-background-color);
 }
+/* QA chipstatus-r2-10: with the chrome collapsed the pane starts at y=0, the
+   very band the floating ☰ + sync/Auto-Sync card (fixed, z 120) sits on. The
+   pinned tabs under it could not be pressed; a press on Overview hit the
+   badge and opened the review modal. Same flush pin (negative top, so the
+   docs/126 see-through strip stays covered); the opaque padding now fills
+   the floating band and the buttons start below it. */
+html.topbar-hidden .topo-subnav {
+    padding-top: calc(0.45rem + var(--table-pane-pad-v) + var(--floating-chrome-h));
+}
 .topo-subnav-btn {
     margin: 0; padding: 0.25rem 0.7rem;
     font-size: 0.85em; line-height: 1.3;
@@ -4259,6 +4284,11 @@ td.col-delta .val-delta { margin-left: 0; }
     stroke: var(--pico-card-background-color, #fff); stroke-width: 3px;
     stroke-linejoin: round;
 }
+/* QA F-26: a label set BESIDE a vertical edge grows away from it. The anchor
+   comes from a class: the rules above set text-anchor, and a stylesheet rule
+   beats a presentation attribute. */
+.topo-hero-svg .topo-hero-lbl-start { text-anchor: start; }
+.topo-hero-svg .topo-hero-lbl-end { text-anchor: end; }
 .topo-hero-node-neutral .topo-hero-id { fill: var(--pico-muted-color); font-size: 13px; }
 .topo-hero-map { position: relative; }
 /* docs/126 ②: the container owns the overflow on BOTH axes — the map renders
@@ -4551,6 +4581,13 @@ td.col-delta .val-delta { margin-left: 0; }
     box-shadow: 0 2px 6px rgba(0,0,0,0.10), 0 12px 32px rgba(0,0,0,0.18);
     border-radius: 14px;
     animation: topo-popup-in 0.15s ease-out;
+    /* QA F-12: positionPopup pins a popup taller than the viewport at top 6px
+       and it ran off the bottom (the pair popup's Parameters section, 891px
+       tall at 1366x768), with nothing to scroll -- the wheel moved the page
+       under it. Cap it to the viewport (12px = positionPopup's 2 x pad) and
+       let it scroll, as F-SETTINGS-TALL did for the settings popover; contain
+       the wheel so its end does not scroll the pane underneath. */
+    max-height: calc(100vh - 12px); overflow-y: auto; overscroll-behavior: contain;
 }
 .topo-card-popup { padding: 6px 2px; min-width: 200px; }
 .topo-card-popup .topo-prop-row { padding: 0 8px; }
@@ -4693,6 +4730,13 @@ td.col-delta .val-delta { margin-left: 0; }
 .topo-density-ctl-panel input.topo-density-pslider { width: 4rem; min-width: 0; margin: 0 0 0 0.15rem; padding: 0; height: 0.9rem; vertical-align: middle; }
 /* a jump from the sticky sub-nav lands the section title BELOW the bar */
 .topo-dashboard .topo-section { scroll-margin-top: 3.2rem; }
+/* QA F-07: Coherence / Frequencies / Calibration land on the group's injected
+   <h3 data-group> header, which is not a .topo-section -- it went under the bar */
+.topo-dashboard .topo-section-title[data-group] { scroll-margin-top: 3.2rem; }
+/* QA chipstatus-r2-10: the bar is taller by the floating band when the chrome
+   is collapsed, so every jump target clears that too */
+html.topbar-hidden .topo-dashboard .topo-section,
+html.topbar-hidden .topo-dashboard .topo-section-title[data-group] { scroll-margin-top: calc(3.2rem + var(--floating-chrome-h)); }
 .topo-density-ctl { display: inline-flex; align-items: center; gap: 0.3rem; font-size: 0.82em; }
 .topo-density-ctl .density-label { color: var(--pico-muted-color); }
 .topo-density-ctl .density-preset {
@@ -6739,6 +6783,10 @@ body.cmp-resizing { cursor: col-resize; user-select: none; }
     display: inline-grid;
     gap: var(--topo-panel-cell-gap);
 }
+/* QA F-03: contained like the 1Q grid (.topo-metric-topo-grid): a pair grid
+   wider than the pane scrolls inside its own box instead of pushing the whole
+   pane sideways. The padding keeps the focus ring and corner mark unclipped. */
+.topo-metric-panel-row .topo-2q-pair-grid { flex: 0 0 auto; max-width: 100%; overflow-x: auto; padding: 3px; }
 .topo-2q-pair-grid .heatmap-cell {
     width: var(--topo-panel-cell-size);
     min-height: var(--topo-panel-cell-size);
@@ -12852,6 +12900,10 @@ td.vc-cell-takeable:focus-within .vc-take,
     color: inherit; font-family: var(--font-mono); font-size: .72rem;
     cursor: pointer; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .topo-trend-sug:hover { background: var(--pico-primary); color: var(--pico-primary-inverse); }
+/* QA F-10: an empty / failed answer is a statement, not a row to click. */
+.topo-trend-sug-empty { padding: .3rem .5rem; font-size: .72rem; line-height: 1.35;
+    color: var(--pico-muted-color); cursor: default; }
+.topo-trend-sug-empty code { font-size: inherit; padding: 0 .2rem; }
 
 /* The column control, beside the "Trends" heading (customer feedback
    2026-09-09). Reuses .topo-trend-chip so the badges read identically to the
@@ -12904,6 +12956,10 @@ td.vc-cell-takeable:focus-within .vc-take,
 .topo-trend-title .muted { font-family: var(--font-sans, inherit); font-weight: 400; }
 .topo-trend-chart { min-height: 300px; }
 .topo-trend-empty { font-size: .76rem; margin: .6rem 0 .9rem; line-height: 1.4; }
+/* QA chipstatus-r2-17: the families a typed fragment matches, in its slot --
+   the typeahead's rows (.topo-trend-sug), framed like its dropdown. */
+.topo-trend-matches { margin: -.4rem 0 .9rem; max-width: 42rem;
+    border: 1px solid var(--pico-muted-border-color); border-radius: .3rem; overflow: hidden; }
 
 /* docs/121 — a reference cell. The value shown IS the pointer, so it reads as
    code, not as a quantity; a dangling one is warning-tinted because it resolves

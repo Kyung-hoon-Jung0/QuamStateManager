@@ -10395,12 +10395,16 @@ def wiring_view():
     # Optional ?view= picks the Chip Status sub-view (Topology / Full View /
     # Overview / Fidelity / …) so the left-nav sub-items and shareable links land
     # directly on a section. Validated against the known set; anything else (incl.
-    # bare /topology from the main "Chip Status" item) → client default, which is
-    # the topology-diagram-only view.
+    # bare /topology from the main "Chip Status" item) → client default: the top
+    # of the page, Overview lit (QA F-08).
     # Phase C scroll-spy sections (+ "full" kept for old bookmarks → topology).
     # docs/141 4o: "health" joined; "gate" stays accepted (old links) and the
     # client maps it onto the Fidelity section that absorbed it.
+    # docs/148 split Fidelity into three CLIENT views (TAB_SPEC); the server
+    # must accept them too, or a deep link / F5 / a sidebar sub-link pressed
+    # from another page silently lands on Topology (QA F-01).
     _CHIP_VIEWS = {"topology", "overview", "health", "gate", "fidelity",
+                   "fidelity2q", "fidelity1q", "readout",
                    "coherence", "frequencies", "calibration", "trends", "full"}
     chip_view = request.args.get("view", "").strip().lower()
     if chip_view not in _CHIP_VIEWS:
@@ -10993,18 +10997,37 @@ def _snapshot_run_uid(folder: Any, run_id: Any,
     Every path operation is guarded. ``folder`` is a string recorded by a past
     snapshot; it can be malformed, or name a drive that has since gone away,
     and computing a hover hint must never 500 the section.
+
+    QA F-09 (review): a dataset root that was COPIED or MOVED since the
+    snapshot (another machine, a renamed share, a lab's archive copy) left
+    every point of it dead although the very same run folder sits under a
+    registered root. When the recorded grandparent is not registered, the
+    run's own ``<date dir>/<run folder>`` is looked for under each registered
+    root; exactly one hit is that run and gets its uid. None or several (two
+    copies registered at once) stays None -- the click never guesses which.
     """
     if not folder or run_id is None:
         return None
     try:
-        gp = Path(folder).parent.parent.resolve()
+        rp = Path(folder)
+        gp = rp.parent.parent.resolve()
         rid = int(run_id)
     except (OSError, ValueError, TypeError):
         return None
     for root, key in roots:
         if gp == root:
             return _dataset_uid(key, rid)
-    return None
+    date_dir, run_dir = rp.parent.name, rp.name
+    if not date_dir or not run_dir:
+        return None
+    hits = []
+    for root, key in roots:
+        try:
+            if key not in hits and (root / date_dir / run_dir).is_dir():
+                hits.append(key)
+        except (OSError, ValueError):
+            continue
+    return _dataset_uid(hits[0], rid) if len(hits) == 1 else None
 
 
 def _snapshot_provenance_map(hm, path: Path,
@@ -11804,6 +11827,57 @@ def _trend_metric_label(metric: str | None) -> str:
         return m
 
 
+# QA chipstatus-r2-17: the empty slot's "Nothing recorded for X yet. It appears
+# here once a run or a save writes it." is only true when X NAMES a parameter.
+# Typed into the box, a typo ("zzz_not_a_param") and a fragment of a real
+# family ("interleaved" -- the placeholder's own example, whose family this
+# chip HAS recorded) got the same promise of data that can never arrive.
+def _trend_state_has_leaf(store, dot_path: str) -> bool:
+    """Does the chip's state hold a LEAF (not a subtree) at *dot_path*?
+    Pointers met on the way are followed, as the rest of the page does."""
+    if store is None:
+        return False
+    keys = str(dot_path or "").split(".")
+    cur: Any = store.merged
+    for i, k in enumerate(keys):
+        if isinstance(cur, str) and is_pointer(cur):
+            try:
+                cur = store.resolve_pointer(cur, tuple(keys[:i]))
+            except Exception:  # noqa: BLE001 -- a dangling pointer names nothing
+                return False
+        if isinstance(cur, dict):
+            if k not in cur:
+                return False
+            cur = cur[k]
+        elif isinstance(cur, list):
+            try:
+                cur = cur[int(k)]
+            except (ValueError, IndexError):
+                return False
+        else:
+            return False
+    return not isinstance(cur, (dict, list))
+
+
+def _trend_typed_names_a_leaf(hm, path: Path, store, dot_path: str,
+                              qubits: list[str], pairs: list[str]) -> bool:
+    """A typed Trends entry names a real parameter: some entity's state holds
+    that leaf (a ``*`` / one-entity path is the whole family), or the change
+    index knows it (a parameter the current state no longer carries)."""
+    fam = _trend_family_of(dot_path)
+    if fam:
+        scope, tail = fam
+        ents = qubits if scope == "qubits" else pairs
+        if any(_trend_state_has_leaf(store, f"{scope}.{e}.{tail}") for e in ents):
+            return True
+        want, q = f"{scope}.*.{tail}", tail
+    else:
+        if _trend_state_has_leaf(store, dot_path):
+            return True
+        want, q = dot_path, dot_path
+    return any(r.get("path") == want for r in hm.leaf_families(path, q))
+
+
 @bp.route("/topology/trends")
 def topology_trends():
     """The Trends section: one chart per metric, one line per qubit.
@@ -11940,11 +12014,26 @@ def topology_trends():
     # the user typed. An empty slot renders the template's honest "Nothing
     # recorded" line against WHAT WAS TYPED, which at least distinguishes
     # "asked and found nothing" from "the box ignored you".
+    # QA chipstatus-r2-17: ...but only what NAMES a parameter gets the "yet".
+    # Something TYPED into the box (never a badge: the 2Q gate-fidelity
+    # template's empty slot is by design) that names none says so, and lists
+    # the recorded families it does match, one press each -- the typeahead's
+    # own query and row shape. A `*` is not a LIKE wildcard, so it is searched
+    # as the gap it stands for.
+    _typed = {s.strip() for s in (request.args.get("path") or "").split(",")
+              if s.strip()}
     for _p in extras:
         if extra_series_by_path.get(_p):
             continue
         _fam = _trend_family_of(_p)
         _kind = _TREND_ENTITY_ROOTS[_fam[0]] if _fam else ""
+        if _p in _typed and not _trend_typed_names_a_leaf(
+                hm, path, store, _p, qubits, pairs):
+            _c = _chart(_p, "", [], typed=_p)
+            _m = hm.leaf_families(path, _p.replace("*", " "))
+            _c.update(unmatched=True, matches=_m[:6], n_matches=len(_m))
+            charts.append(_c)
+            continue
         charts.append(_chart(_fam[1] if _fam else _p, _kind, [], typed=_p))
 
     # ONE NAME FOR ONE FAMILY, on the badge and on the chart it opens. The
@@ -12060,7 +12149,11 @@ def topology_trends_paths():
         return jsonify([])
     # Grouped in SQL, so each row's entity count is exact and the 25 is a limit
     # on FAMILIES rather than on the rows a count was folded from.
-    return jsonify(_history().leaf_families(Path(ctx["path"]), q, limit=25))
+    # fresh=True (QA F-10): an explicit leaf-tier query, like the chart query,
+    # so it pays the freshness gate -- a stale index answered [] for the
+    # placeholder's own example.
+    return jsonify(_history().leaf_families(Path(ctx["path"]), q, limit=25,
+                                            fresh=True))
 
 
 # ── docs/120 item 10 — the working-state version, from the top bar ────────

@@ -437,6 +437,54 @@ class TestTheUidIsOnlyOfferedWhenItOpens:
         got = _snaps(r.get_data(as_text=True))[meta.timestamp]
         assert got["run"] == 7 and got["uid"] is None
 
+    def _moved(self, env, roots, run_id=31):
+        """Seed run *run_id* under each of *roots* (registered), and snapshot it
+        as recorded under a root that is registered NOWHERE -- the dataset was
+        copied / moved after the snapshot was taken."""
+        c = env["client"]
+        runs = [_seed_run(r, run_id) for r in roots]
+        for r in roots:
+            c.post("/workspace/add", data={"folder": str(r)})
+        gone = env["tmp"] / "old_share" / runs[0].parent.name / runs[0].name
+        _snap(env, _state(f01=6.0e9))
+        meta = _snap(env, _state(f01=6.1e9), trigger="experiment",
+                     experiment_name="03_resonator_spectroscopy_single",
+                     run_id=run_id, experiment_folder_path=str(gone))
+        body = c.get("/topology/trends?metrics=f_01").get_data(as_text=True)
+        return _snaps(body)[meta.timestamp]
+
+    def test_a_moved_dataset_root_still_opens_the_same_run(self, env):
+        """QA F-09 (review): the hover said "not openable here" and the click
+        did nothing for every point of a copied / moved dataset root, although
+        the very same run folder sits under a registered root."""
+        data_root = env["tmp"] / "data"
+        got = self._moved(env, [data_root])
+        assert got["run"] == 31
+        assert got["uid"] == f"{routes_mod._folder_key(data_root)}:31", got
+        with env["app"].test_request_context():
+            resolved = routes_mod._resolve_run(got["uid"])
+        assert resolved is not None and resolved[0].get_run(31) is not None,             "the uid must open the run under the root it was found in"
+
+    def test_a_run_found_under_two_registered_roots_is_not_guessed(self, env):
+        """Two copies registered at once: which one the point meant is not
+        knowable, so the click is not offered (the hover still says why)."""
+        got = self._moved(env, [env["tmp"] / "copyA", env["tmp"] / "copyB"])
+        assert got["run"] == 31 and got["uid"] is None, got
+
+    def test_a_registered_root_without_that_run_folder_does_not_match(self, env):
+        """Only the run's OWN <date>/<run folder> counts -- a registered root
+        holding other runs of the same day is not that run."""
+        c, data_root = env["client"], env["tmp"] / "data"
+        _seed_run(data_root, 32)
+        c.post("/workspace/add", data={"folder": str(data_root)})
+        gone = env["tmp"] / "old_share" / "2026-09-01" / "#31_03_resonator_spectroscopy_single_010000"
+        _snap(env, _state(f01=6.0e9))
+        meta = _snap(env, _state(f01=6.1e9), trigger="experiment",
+                     experiment_name="03_resonator_spectroscopy_single",
+                     run_id=31, experiment_folder_path=str(gone))
+        got = _snaps(c.get("/topology/trends?metrics=f_01").get_data(as_text=True))[meta.timestamp]
+        assert got["run"] == 31 and got["uid"] is None, got
+
     def test_the_helper_itself_swallows_a_bad_path(self, env):
         with env["app"].test_request_context():
             roots = routes_mod._uid_roots()

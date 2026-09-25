@@ -58,6 +58,9 @@ win._plotlyRender = function (el, data, layout) {
   charts[id] = { data: data, layout: layout };
   return Promise.resolve();
 };
+// QA F-02 (cs-ui): the chart pump waits for Plotly to load first; the renderer
+// above is stubbed, so Plotly counts as loaded.
+win.Plotly = win.Plotly || {};
 
 function node(id, gl) { return { id: id, grid_location: gl, f_01: 5e9 }; }
 function edge(pid, s, t, gfs) {

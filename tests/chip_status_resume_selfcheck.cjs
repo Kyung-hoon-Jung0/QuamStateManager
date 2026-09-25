@@ -245,7 +245,8 @@ function mutate(to) {
   swapElt = doc.getElementById('nav-cs');
   win.htmx.ajax('GET', '/topology', { target: '#table-pane', swap: 'innerHTML' });
   await sleep(120);
-  ok(tab() === 'topology', 'P6: a navigation (not <body>) still lands on Topology — ' + tab());
+  ok(tab() === 'overview',   // QA F-08: the first section is Overview
+     'P6: a navigation (not <body>) still lands at the top (Overview) — ' + tab());
   ok(!doc.querySelector('#topo-metric-panels [data-group="coherence"]'),
     'P6: …and does not build what the last page had built');
 

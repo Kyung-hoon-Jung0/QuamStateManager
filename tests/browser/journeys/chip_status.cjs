@@ -86,7 +86,7 @@ async function center(p, sel) { return JSON.parse(await p.ev(`(function(){ var b
     const SEL = {overview:'[data-topo-section="overview"]',health:'[data-topo-section="health"]',topology:'#sec-topology',fidelity2q:'[data-topo-section="fidelity"]',fidelity1q:'#sec-fidelity-1q',readout:'#sec-readout',coherence:'#topo-metric-panels [data-group="coherence"]',frequencies:'#topo-metric-panels [data-group="frequency"]',calibration:'#topo-metric-panels [data-group="calibration"]',trends:'[data-topo-section="trends"]'};
     const p = await open(`${BASE}/topology?view=overview`); await p.sleep(8000);
     const views = JSON.parse(await p.ev(`JSON.stringify(Array.from(document.querySelectorAll('#chip-status-subnav a[data-view]')).map(function(a){return a.getAttribute('data-view');}))`));
-    const out = [];
+    const out = [], lit = [];
     for (const v of views) {
       const c = await center(p, `#chip-status-subnav a[data-view="${v}"]`);
       if (!c) { out.push(v + ':no-link'); continue; }
@@ -94,8 +94,12 @@ async function center(p, sel) { return JSON.parse(await p.ev(`(function(){ var b
       const sel = JSON.stringify('#table-pane ' + SEL[v]);
       const r = await p.ev(`(function(){ var els=document.querySelectorAll(${sel}); if(!els.length) return 'none'; var pr=document.getElementById('table-pane').getBoundingClientRect(); var inView=Array.from(els).some(function(s){var r=s.getBoundingClientRect(); return r.bottom>pr.top+80 && r.top<pr.bottom-40;}); return inView?'in-view':'off'; })()`);
       out.push(v + ':' + r);
+      // QA F-02/F-07: the PRESSED item is lit (strip and sidebar), and once the
+      // strip is pinned the target's title starts below it, not under it
+      lit.push(v + ':' + await p.ev(`(function(){ var pr=document.getElementById('table-pane').getBoundingClientRect(); var sn=document.querySelector('.topo-subnav').getBoundingClientRect(); var el=document.querySelector(${sel}); var a=document.querySelector('.topo-subnav-btn.active'), s=document.querySelector('#chip-status-subnav a.active'); var clear=!el || sn.top>pr.top+1 || el.getBoundingClientRect().top>=sn.bottom-2; return (a&&a.getAttribute('data-view'))+'/'+(s&&s.getAttribute('data-view'))+(clear?'':'/UNDER-STRIP'); })()`));
     }
     rec('S3 every Chip Status sub-item brings its section into view', out.every(s => /:(in-view|none)$/.test(s)) && !out.some(s => /:none$/.test(s) && !/coherence/.test(s)), out);
+    rec('S3c the pressed item is lit and its title clears the sticky strip', lit.every(s => { const [v, rest] = s.split(':'); return rest === v + '/' + v; }), lit);
     rec('S3b no JS exceptions', ERRS(p).length === 0, ERRS(p));
     await p.close();
   }

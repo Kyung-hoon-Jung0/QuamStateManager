@@ -333,6 +333,7 @@ function part5() {
     overviewTilesStateBothErrorRates();
     anharmSubLine();
     edgeDeltaLabels();
+    edgeLabelsBesideTheBar();
     finish();
   }, 400);
 }
@@ -599,6 +600,135 @@ function edgeDeltaLabels() {
      'edelta: compact mode keeps it anharmonicity-sized too (' + cD + ' == ' + cS + ' < ' + cE + ')');
   ok(/\.topo-hero-edelta \{[^}]*paint-order: stroke/.test(css),
      'edelta: halo (paint-order stroke) so it reads over the edge line');
+}
+
+// ── QA F-26: a printed edge value sits BESIDE its bar, never on it ──────────
+// On the real 5Q chip the Δf number sat exactly on the edge line ('1.49' read
+// as '1:49'), the chevron touched 'Δf', and the on-line C/T circles crowded the
+// IRB percentage ('C95:7%T'). Every label is now placed off the centre line on
+// the side the chevron leaves free, outside the bar band, and clear of an M
+// stacked on that side. Measured here from the DOM the hero actually emits,
+// against the chevron / marker geometry the SHARED TopoGraph.pairGlyphs draws
+// (pinned byte-identical elsewhere and untouched by the fix). A vertical
+// pair's chevron side depends on the layout's row direction, so it is READ
+// from the drawn chevron, never assumed.
+function edgeLabelsBesideTheBar() {
+  const win = makeWorld();
+  const topo = {
+    nodes: [
+      { id: 'q1', grid_location: '0,0', T1: 1e-5, f_01: 4.8e9 },
+      { id: 'q2', grid_location: '1,0', T1: 2e-5, f_01: 5.1e9 },
+      { id: 'q3', grid_location: '0,1', T1: 3e-5, f_01: 4.9e9 },
+      { id: 'q4', grid_location: '1,1', T1: 4e-5, f_01: 4.95e9 },
+    ],
+    edges: [
+      // horizontal, undirected, no role: hi = q2 (right) → chevron BELOW
+      { pair_id: 'q1-2', source: 'q1', target: 'q2', has_cz: true, cz_fidelity: 0.97,
+        gate_kind: 'cz', directed: false, active: null, best_gate: 'cz' },
+      // a vertical CR pair, both directions (two lines ±6 off the column)
+      { pair_id: 'q1-3', source: 'q1', target: 'q3', has_cz: true, cz_fidelity: 0.93,
+        gate_kind: 'cr', directed: true, active: null, best_gate: 'cr' },
+      { pair_id: 'q3-1', source: 'q3', target: 'q1', has_cz: true, cz_fidelity: 0.91,
+        gate_kind: 'cr', directed: true, active: null, best_gate: 'cr' },
+      // vertical, undirected, the higher f_01 at the OTHER end → chevron on the other side
+      { pair_id: 'q2-4', source: 'q2', target: 'q4', has_cz: true, cz_fidelity: 0.90,
+        gate_kind: 'cz', directed: false, active: null, best_gate: 'cz', moving_qubit: 'control' },
+      // horizontal with a MOVING qubit: hi = q4 → chevron BELOW, M ABOVE — the
+      // value goes above too and must clear the M circle, not just the bar
+      { pair_id: 'q3-4', source: 'q3', target: 'q4', has_cz: true, cz_fidelity: 0.88,
+        gate_kind: 'cz', directed: false, active: null, best_gate: 'cz', moving_qubit: 'target' },
+    ],
+  };
+  mount(win, topo, []);
+  const hero = win.document.getElementById('topo-hero');
+  const num = (el, a) => parseFloat(el && el.getAttribute(a));
+  const fin = (v) => typeof v === 'number' && isFinite(v);
+  const hasCls = (el, c) => !!el && (' ' + (el.getAttribute('class') || '') + ' ').indexOf(' ' + c + ' ') >= 0;
+  // a pair's centre line, from the line(s) the hero draws: an undirected pair's
+  // one line IS the centre; a CR pair's two lines sit ±6 either side of it
+  const lineOf = (pairId) => hero.querySelector('.topo-hero-edge[data-hero-pair="' + pairId + '"] line');
+  const lineMid = (pairId) => {
+    const l = lineOf(pairId);
+    return { x: (num(l, 'x1') + num(l, 'x2')) / 2, y: (num(l, 'y1') + num(l, 'y2')) / 2 };
+  };
+  const mid = (pa, pb) => pb ? { x: (lineMid(pa).x + lineMid(pb).x) / 2, y: (lineMid(pa).y + lineMid(pb).y) / 2 }
+                             : lineMid(pa);
+  // half the drawn width of a pair's first line
+  const barHalf = (pairId) => num(lineOf(pairId), 'stroke-width') / 2;
+  // the chevron's centre, from the polyline points pairGlyphs emits
+  const chevron = (a, b) => {
+    const g = hero.querySelector('.cm-freq[data-cm-freq="' + (a < b ? a + '|' + b : b + '|' + a) + '"]');
+    const pts = g ? Array.prototype.map.call(g.querySelectorAll('polyline'), (p) => p.getAttribute('points'))
+        .join(' ').trim().split(/\s+/).map((s) => s.split(',').map(parseFloat)) : [];
+    return pts.length ? { x: pts.reduce((s, p) => s + p[0], 0) / pts.length,
+                          y: pts.reduce((s, p) => s + p[1], 0) / pts.length } : null;
+  };
+  const textLike = (sel, re) => Array.prototype.find.call(
+      hero.querySelectorAll(sel), (t) => re.test(t.textContent));
+  // for a VERTICAL pair: which side of the column the chevron took (+1 right / -1 left),
+  // a label's offset AWAY from it (positive = the free side), and the anchor class
+  // that makes the text grow away from the column on that side
+  const chevSide = (c, m) => (c && Math.abs(c.x - m.x) > 5) ? Math.sign(c.x - m.x) : 0;
+  const away = (el, m, side) => el ? (num(el, 'x') - m.x) * -side : NaN;
+  const anchorFor = (side) => side < 0 ? 'topo-hero-lbl-start' : 'topo-hero-lbl-end';
+
+  // ── Qubit-freq view (the default): the Δf labels ──
+  // (1) horizontal q1-q2: the stacked block sits entirely ABOVE the bar, chevron below
+  const m12 = mid('q1-2'), c12 = chevron('q1', 'q2');
+  const st = Array.prototype.find.call(hero.querySelectorAll('.topo-hero-edelta-stack'),
+      (t) => Array.prototype.map.call(t.querySelectorAll('tspan'), (s) => s.textContent).join('|') === 'Δf|300|MHz');
+  ok(!!st && fin(m12.y) && !!c12, 'F-26 fixture: the q1-q2 stacked Δf, its line and its chevron all render');
+  ok(c12 && c12.y > m12.y + 5, 'F-26 fixture: the q1-q2 chevron sits BELOW the line (hi = q2 on the right)');
+  const lastBase = st ? num(st, 'y') + Array.prototype.reduce.call(st.querySelectorAll('tspan'),
+      (s, t) => s + (parseFloat(t.getAttribute('dy')) || 0), 0) : NaN;
+  ok(fin(lastBase) && lastBase <= m12.y - barHalf('q1-2') - 1,
+     'F-26: the stacked Δf block sits entirely ABOVE the q1-q2 bar band, opposite the chevron '
+     + '(last baseline ' + lastBase.toFixed(1) + ', band top ' + (m12.y - barHalf('q1-2')).toFixed(1) + ')');
+  // (2) the vertical CR pair q1-q3: one line beside BOTH ±6 lines, opposite the chevron
+  const m13 = mid('q1-3', 'q3-1'), c13 = chevron('q1', 'q3'), s13 = chevSide(c13, m13);
+  const v13 = textLike('.topo-hero-edelta', /^Δf 100 MHz$/);
+  ok(!!v13 && s13 !== 0, 'F-26 fixture: the q1-q3 chevron sits beside the column (side ' + s13 + ')');
+  ok(away(v13, m13, s13) >= 6 + barHalf('q1-3') + 1 && hasCls(v13, anchorFor(s13)),
+     'F-26: a vertical CR pair\'s Δf sits beside BOTH offset lines on the side the chevron leaves free, '
+     + 'anchored to grow away (offset ' + away(v13, m13, s13).toFixed(1) + ', column ' + m13.x.toFixed(1) + ')');
+  // (3) vertical undirected q2-q4: the chevron took the other side, so the label flips with it
+  const m24 = mid('q2-4'), c24 = chevron('q2', 'q4'), s24 = chevSide(c24, m24);
+  const v24 = textLike('.topo-hero-edelta', /^Δf 150 MHz$/);
+  ok(!!v24 && s24 !== 0 && s24 === -s13,
+     'F-26 fixture: the q2-q4 chevron sits on the OTHER side from q1-q3\'s (side ' + s24 + ')');
+  ok(away(v24, m24, s24) >= barHalf('q2-4') + 1 && hasCls(v24, anchorFor(s24)),
+     'F-26: the label takes whichever side the chevron leaves free (offset '
+     + away(v24, m24, s24).toFixed(1) + ', ' + anchorFor(s24) + ')');
+
+  // ── Edge-metric view: the 2Q value beside the 9px bar ──
+  hero.querySelector('[data-hero-metric="cz_fidelity"]').click();
+  const e12 = textLike('.topo-hero-eval', /^97\.0/), h12 = barHalf('q1-2');
+  ok(h12 >= 4 && !!e12, 'F-26 fixture: edge-metric mode draws the thick bar (half ' + h12 + ') with its value');
+  ok(e12 && num(e12, 'y') <= m12.y - h12 - 1,
+     'F-26: the undirected q1-q2 value sits ABOVE the 9px bar, opposite the chevron '
+     + '(baseline ' + (e12 && num(e12, 'y').toFixed(1)) + ', band top ' + (m12.y - h12).toFixed(1) + ')');
+  const e24 = textLike('.topo-hero-eval', /^90\.0/);
+  ok(away(e24, m24, s24) >= barHalf('q2-4') + 1 && hasCls(e24, anchorFor(s24)),
+     'F-26: the vertical q2-q4 value sits beside the 9px bar opposite the chevron, anchored to grow away '
+     + '(offset ' + away(e24, m24, s24).toFixed(1) + ')');
+  const e34 = textLike('.topo-hero-eval', /^88\.0/), m34 = mid('q3-4');
+  const mC = hero.querySelector('.cm-role-m[data-cm-pair="q3-4"] circle');
+  ok(!!e34 && !!mC && num(mC, 'cy') < m34.y - 5, 'F-26 fixture: q3-q4 carries an M circle ABOVE its line');
+  ok(e34 && num(e34, 'y') <= m34.y - barHalf('q3-4') - 1
+     && num(e34, 'y') <= num(mC, 'cy') - num(mC, 'r') - 1,
+     'F-26: a value pushed onto the M side clears the M circle entirely, not just the bar '
+     + '(baseline ' + (e34 && num(e34, 'y').toFixed(1)) + ', M top ' + (num(mC, 'cy') - num(mC, 'r')).toFixed(1) + ')');
+  // a CR pair's two directed values keep their anti-parallel separation (untouched by the fix)
+  const e13 = textLike('.topo-hero-eval', /^93\.0/), e31 = textLike('.topo-hero-eval', /^91\.0/);
+  ok(e13 && e31 && (num(e13, 'x') - m13.x) * (num(e31, 'x') - m13.x) < 0
+     && Math.abs(num(e13, 'x') - num(e31, 'x')) >= 30,
+     'F-26: a CR pair\'s two directed values keep their ±(6+15) anti-parallel placement');
+  // the side anchors are stylesheet rules: `.topo-hero-eval { text-anchor: middle }`
+  // beats a presentation attribute (the trap CLAUDE.md records three times)
+  const css = read('style.css');
+  ok(/\.topo-hero-svg \.topo-hero-lbl-start \{ text-anchor: start; \}/.test(css)
+     && /\.topo-hero-svg \.topo-hero-lbl-end \{ text-anchor: end; \}/.test(css),
+     'F-26: the start/end anchors exist as class rules in style.css');
 }
 
 function finish() {

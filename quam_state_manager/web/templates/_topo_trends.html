@@ -104,6 +104,23 @@
                — an axis implying a measurement over time that was never made.
                The value IS recorded, so this is not "nothing recorded". #}
             <p class="muted topo-trend-empty">{{ c.note }}</p>
+            {% elif c.unmatched %}
+            {# QA chipstatus-r2-17: typed text that names no parameter is not
+               "nothing recorded YET" -- nothing will ever arrive for a typo.
+               The rows are the typeahead's (same markup, same one press),
+               pinned row for row against ChipTrends.suggest() by
+               test_trends_all_entities.py::test_the_two_row_renderers_agree. #}
+            {% if c.matches %}
+            <p class="muted topo-trend-empty topo-trend-unmatched"><code>{{ c.typed }}</code> is not one parameter &mdash; it matches {{ c.n_matches }} recorded parameter{{ '' if c.n_matches == 1 else 's' }}{% if c.n_matches > c.matches|length %} (the {{ c.matches|length }} that changed most below){% endif %}. Pick one to chart it:</p>
+            <div class="topo-trend-matches">
+            {% for m in c.matches %}
+                <button type="button" class="topo-trend-sug" data-path="{{ m.path }}" title="{{ m.path }}"
+                        onclick="ChipTrends.setPath(this.getAttribute('data-path'))">{{ m.label or m.path }}{% if m.n > 1 %}<span class="topo-trend-sug-n"> · {{ m.n }} {{ 'pair' if m.scope == 'qubit_pairs' else 'qubit' }}s</span>{% endif %}</button>
+            {% endfor %}
+            </div>
+            {% else %}
+            <p class="muted topo-trend-empty topo-trend-unmatched">No recorded parameter on this chip matches <code>{{ c.typed }}</code>. Check the spelling &mdash; the box suggests recorded parameters as you type.</p>
+            {% endif %}
             {% else %}
             {# Never an empty axis pretending to be a plot. #}
             <p class="muted topo-trend-empty">Nothing recorded for {% if c.typed %}<code>{{ c.typed }}</code>{% else %}this metric{% endif %} yet. It appears here once a run or a save writes it.</p>

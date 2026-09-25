@@ -270,8 +270,14 @@ world.push((function () {
        '3d a run point names the run and the NUMBERED node name');
     ok(/click to open the dataset/.test(tr.customdata[1][2]),
        '3e ...with the click hint, because it has a uid');
-    ok(tr.customdata[2][1] === '#99 · 06 Ramsey' && tr.customdata[2][2] === '',
-       '3f a run whose folder is not a dataset root keeps its number, loses the click');
+    ok(tr.customdata[2][1] === '#99 · 06 Ramsey',
+       '3f a run whose folder is not a dataset root keeps its number...');
+    // QA F-09: it used to lose the click SILENTLY -- no hint, no reason, and a
+    // click that did nothing. The hover now says why, and never offers a click.
+    ok(/not under a loaded Datasets folder/.test(tr.customdata[2][2])
+       && !/click/i.test(tr.customdata[2][2]),
+       '3f1 ...and its hover says WHY it cannot open, without offering a click: '
+       + JSON.stringify(tr.customdata[2][2]));
     ok(/%\{customdata\[0\]\}/.test(tr.hovertemplate)
        && /%\{customdata\[1\]\}/.test(tr.hovertemplate),
        '3g the snapshot id stays in the hover beside the provenance line');

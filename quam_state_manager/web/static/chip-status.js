@@ -19,13 +19,16 @@ window.ChipStatus.density = (function () {
     var PRESETS = [['S', 0.7], ['M', 0.85], ['L', 1]];
     var _store = null;
     function clamp(v) { return Math.max(MIN, Math.min(MAX, v)); }
-    function load() {
-        if (_store) return _store;
-        _store = {};
+    function _readStored() {
         try {
             var o = JSON.parse(localStorage.getItem(KEY) || '{}');
-            if (o && typeof o === 'object' && !Array.isArray(o)) _store = o;
+            if (o && typeof o === 'object' && !Array.isArray(o)) return o;
         } catch (e) {}
+        return null;
+    }
+    function load() {
+        if (_store) return _store;
+        _store = _readStored() || {};
         return _store;
     }
     function get(key) {
@@ -58,10 +61,30 @@ window.ChipStatus.density = (function () {
         }, 150);
     }
     function set(key, v) {
-        load()[String(key)] = clamp(v);
+        // QA chipstatus-r2-09: read-modify-write. The cache is loaded once per
+        // tab, so writing it back whole let a second open tab's stale copy
+        // overwrite a size chosen in the first. Blocked / garbage storage
+        // keeps the in-memory store, as before.
+        var fresh = _readStored();
+        if (fresh) _store = fresh; else load();
+        _store[String(key)] = clamp(v);
         try { localStorage.setItem(KEY, JSON.stringify(_store)); } catch (e) {}
         applyPanel(String(key));
     }
+    // ...and a size set in another tab shows here too (the `storage` event
+    // fires only in the OTHER tabs); only the panels whose size changed.
+    try {
+        window.addEventListener('storage', function (ev) {
+            if (ev.key !== KEY && ev.key !== null) return;     // null: storage cleared
+            var old = _store || {};
+            _store = null;
+            var now = load(), keys = {};
+            Object.keys(old).concat(Object.keys(now)).forEach(function (k) { keys[k] = 1; });
+            Object.keys(keys).forEach(function (k) {
+                if (String(old[k]) !== String(now[k])) applyPanel(k);
+            });
+        });
+    } catch (e) { /* no window events: the next set() still re-reads */ }
     // apply every remembered size under `root` (a freshly built container)
     function applyAll(root) {
         (root || document).querySelectorAll('.topo-section[data-density-panel]').forEach(function (el) {
@@ -109,36 +132,97 @@ window.ChipStatus.density = (function () {
    of the pane. A core with no DOM assumptions of its own: the caller hands it
    the selector for a view. */
 window.ChipStatus.jumpGuard = (function () {
-    var last = null, WINDOW_MS = 8000, armedPane = null;
+    /* QA F-06 / F-20 (review): the window used to run from the CLICK. On a
+       fresh page the charts that give the sections their height land in 1-2 s
+       long tasks for 7-15 s on the 5-qubit rig, so the re-anchor that would
+       have put the jump right came after the window: a Trends jump stayed
+       clamped two-thirds down the pane, and an F5 inside Trends ended 1876 px
+       low on the 2Q panels. The window now runs from the last LANDING: every
+       re-anchor the page's growth triggers keeps the jump live WINDOW_MS
+       longer, never past CAP_MS from the click (a page that keeps resizing
+       cannot hold the pane for ever; any wheel / touch / key / press still
+       ends it at once). */
+    var last = null, WINDOW_MS = 8000, CAP_MS = 60000, armedPane = null;
+    function live() {
+        var now = Date.now();
+        return !!last && now - last.act <= WINDOW_MS && now - last.at <= CAP_MS;
+    }
+    /* QA F-20 (review): an offset INSIDE a section that has not got its content
+       yet (Trends is a 51 px placeholder until its fetch lands) points past the
+       section, into the 2Q panels below it -- and when Trends then grew, the
+       browser's scroll anchoring carried the pane down with those panels.
+       Until the section can hold the offset, land on its top; the growth that
+       fills it re-anchors to top + offset. */
+    function land(el, pane, off) {
+        var r = el.getBoundingClientRect();
+        var o = (off > 0 && off >= r.height) ? 0 : off;
+        pane.scrollTop += r.top - pane.getBoundingClientRect().top + o;
+    }
     var BELOW = ['fidelity2q', 'fidelity1q', 'readout',
                  'coherence', 'frequencies', 'calibration'];   // rendered below Trends
+    /* QA F-06: a jump TO Trends is re-anchored too. It is not displaced but
+       CLAMPED: its smooth scroll starts before its own charts are fetched, so
+       it stops at the pre-Trends maximum scroll with the heading 450-630 px
+       down the pane, and nothing moved it once the charts arrived. */
+    var REANCHOR = BELOW.concat(['trends']);
     /* docs/141 4ac: the guard must not fight the USER. It used to re-anchor on
        nothing but the age of the jump, so a deliberate scroll made inside the
        8 s window was yanked back the moment the lazy Trends charts landed
        (measured: the user scrolled up 900 px and the pane jumped back 7 s
        later). Position cannot answer "did the user move?" -- the jump itself
        moves the pane by thousands of px, and `note()` runs BEFORE the smooth
-       scroll starts. So ask for INTENT: a wheel, a touch or a key on the pane
-       cancels the pending re-anchor. A smooth scrollIntoView emits none of
-       those three. */
+       scroll starts. So ask for INTENT: a wheel, a touch, a key or a pointer
+       press on the pane cancels the pending re-anchor. A smooth
+       scrollIntoView emits none of those four. QA chipstatus-r2-13: a
+       scrollbar thumb drag or track click fires only pointerdown (on the
+       pane itself), so without it the pane was yanked back to the jumped
+       section when Trends landed. A tab press still works: its pointerdown
+       cancels, then its click re-notes. */
     function cancel() { last = null; }
     function arm(pane) {
         if (!pane || armedPane === pane) return;
         armedPane = pane;
-        ['wheel', 'touchstart', 'keydown'].forEach(function (t) {
+        ['wheel', 'touchstart', 'keydown', 'pointerdown'].forEach(function (t) {
             pane.addEventListener(t, cancel, { passive: true });
         });
     }
     return {
-        note: function (view, pane) { last = { view: view, at: Date.now() }; arm(pane); },
+        /* QA F-20: `off` (optional) is a position INSIDE the section -- px past
+           its top edge -- so a Back restore survives the lazy content above it
+           the same way a jump does. Without it: the section's own top, as ever. */
+        note: function (view, pane, off) {
+            var now = Date.now();
+            last = { view: view, at: now, act: now, off: (typeof off === 'number') ? off : null };
+            arm(pane);
+        },
         below: BELOW,
         cancel: cancel,
+        // QA F-07: the view of a jump that is still live (fresh, not cancelled
+        // by a wheel / touch / key), so the scroll-spy can keep the CLICKED
+        // item lit while its target is on screen but cannot reach the top.
+        current: function () {
+            return live() ? last.view : null;
+        },
+        // QA F-20 (review): the {view, off} a restore is still putting back, or
+        // null -- so the scroll record keeps what is being restored instead of
+        // a mid-landing position (a second F5 during it lost the place).
+        intent: function () {
+            return (live() && last.off !== null) ? { view: last.view, off: last.off } : null;
+        },
+        land: land,
         reanchor: function (selOf) {
-            if (!last || Date.now() - last.at > WINDOW_MS) return false;
-            if (BELOW.indexOf(last.view) < 0) return false;
+            if (!live()) return false;
+            // a restore (an offset) is re-anchored in ANY section: above Trends
+            // it is not displaced, but it can be clamped by the unbuilt page
+            if (REANCHOR.indexOf(last.view) < 0 && last.off === null) return false;
             var sel = selOf ? selOf(last.view) : null;
             var el = sel && document.querySelector(sel);
             if (!el || !el.scrollIntoView) return false;
+            last.act = Date.now();
+            if (last.off !== null && armedPane) {
+                land(el, armedPane, last.off);
+                return true;
+            }
             el.scrollIntoView({ behavior: 'auto', block: 'start' });
             return true;
         }
@@ -197,6 +281,27 @@ window.ChipStatus.paneResume = (function () {
             });
         },
         movedSince: function (t) { return movedAt >= t; }
+    };
+})();
+
+/* QA F-20 — the scroll record a Back arrived with. htmx's own Back handling
+   saves the page it is leaving and, doing so, REPLACES the state of the entry
+   being returned to with a bare {htmx:true} (measured in real Chrome) -- before
+   the Chip Status it restores has mounted. The popstate EVENT still carries
+   that entry's state as it was. Handed out once, for its own URL, shortly
+   after the Back, so a later forward visit to the same URL cannot pick it up. */
+window.ChipStatus.popRec = (function () {
+    var got = null;
+    try {
+        window.addEventListener('popstate', function (e) {
+            var r = e && e.state && e.state.smChipScroll;
+            got = r ? { rec: r, at: Date.now() } : null;
+        });
+    } catch (e) { /* no window events: nothing to keep */ }
+    return function take(url) {
+        var g = got;
+        got = null;
+        return (g && g.rec.url === url && Date.now() - g.at < 10000) ? g.rec : null;
     };
 })();
 
@@ -342,6 +447,37 @@ window.ChipStatus.liveDiff = (function () {
     }
     return { refresh: refresh, decorate: decorate, bind: bind };
 })();
+
+/* QA chipstatus-r2-04: every per-mount teardown was a body htmx:beforeSwap
+   listener gated on #table-pane, and htmx's history restore (Back/Forward)
+   replaces the body WITHOUT firing beforeSwap -- so each Back/Forward cycle
+   left the previous mount's document click/keydown handlers, its 3 s live
+   poller and its state listeners running (measured: body beforeSwap 5 -> 60,
+   the mtime poll still alive on /qubits, one diagnostics-changed -> 12 GETs).
+   One registry, two triggers: a #table-pane swap runs every teardown (the old
+   behaviour); a history restore runs the ones whose dashboard is no longer in
+   the document -- the restored page's own mount has already run by then and
+   its dashboard IS connected, so it is left alone. On `document`: this file
+   loads in <head>, before <body> exists. */
+window.ChipStatus._teardowns = window.ChipStatus._teardowns || [];
+window.ChipStatus._onLeave = function (dash, fn) {
+    window.ChipStatus._teardowns.push({ dash: dash, fn: fn });
+};
+window.ChipStatus._sweep = function (all) {
+    var list = window.ChipStatus._teardowns, keep = [];
+    window.ChipStatus._teardowns = keep;
+    list.forEach(function (t) {
+        if (all || !t.dash || !t.dash.isConnected) { try { t.fn(); } catch (e) { /* one undo never blocks the rest */ } }
+        else keep.push(t);
+    });
+};
+if (!window.ChipStatus._sweepBound) {
+    window.ChipStatus._sweepBound = true;
+    document.addEventListener('htmx:beforeSwap', function (evt) {
+        if (evt.detail && evt.detail.target && evt.detail.target.id === 'table-pane') window.ChipStatus._sweep(true);
+    });
+    document.addEventListener('htmx:historyRestore', function () { window.ChipStatus._sweep(false); });
+}
 
 window.ChipStatus.mount = function (opts) {
     opts = opts || {};
@@ -1121,6 +1257,12 @@ window.ChipStatus.mount = function (opts) {
             t2ramsey: { kind: 'qubit', fmt: us, range: tRange, entries: nodeEntries('T2ramsey') }
         };
 
+        // QA F-23: remember the removed DEFAULT tiles (id + title) before they
+        // are dropped, so "+ Add panel" can offer them back one at a time
+        // (Reset all was the only way back, and it discards everything else).
+        _ovRemovedTiles = tiles.filter(Boolean).filter(function(t) {
+            return t.id && ovPrefs.removed.indexOf(t.id) >= 0;
+        }).map(function(t) { return { id: t.id, title: t.title }; });
         // docs/150: apply the stored preferences -- drop removed tiles, then
         // append user-added ones. With nothing stored this is a no-op.
         tiles = tiles.filter(Boolean).filter(function(t) {
@@ -1227,8 +1369,11 @@ window.ChipStatus.mount = function (opts) {
     }
     var _ovScrollBound = false;
     function _ovWire(container) {
-        if (container.dataset.ovWired) return;
-        container.dataset.ovWired = '1';
+        // A property, not a data- attribute: htmx's history snapshot is the
+        // serialized DOM, so an attribute came back on Back/Forward and the
+        // restored Overview was never wired (+ Add panel / ⋮ dead).
+        if (container._ovWired) return;
+        container._ovWired = true;
         container.addEventListener('click', function(ev) {
             var btn = ev.target.closest ? ev.target.closest('.ov-tile-menu') : null;
             if (btn) { ev.stopPropagation(); _ovOpenPopover(btn, btn.getAttribute('data-tile-id')); return; }
@@ -1282,6 +1427,9 @@ window.ChipStatus.mount = function (opts) {
         if (!_ovScrollBound) {
             _ovScrollBound = true;
             window.addEventListener('scroll', _ovHideHover, true);
+            window.ChipStatus._onLeave(document.querySelector('.topo-dashboard'), function () {
+                window.removeEventListener('scroll', _ovHideHover, true);
+            });
         }
     }
 
@@ -1361,6 +1509,30 @@ window.ChipStatus.mount = function (opts) {
         if (p) p.remove();
         document.removeEventListener('mousedown', _ovDocClose, true);
     }
+    /* QA chipstatus-r2-20: both popovers are appended to <body>, and opening
+       one left focus on its opener -- so Tab went on to the next tile's ⋮ and
+       a keyboard user could never reach a control inside. Focus moves in on
+       open (Escape hands it back: the F-17 branch in onKey) -- onto the
+       popover itself, not its first control: that is "avg for ALL panels" or,
+       on a computed tile, "Remove panel", and a second Enter must not press
+       it. The next Tab reaches the first control. */
+    function _ovFocusFirst(pop) {
+        if (!pop) return;
+        pop.setAttribute('tabindex', '-1');
+        try { pop.focus({ preventScroll: true }); } catch (e) {}
+    }
+    // ...and an apply that closes the popover and rebuilds the tiles hands
+    // focus to the rebuilt opener (the old one is detached), not to <body>.
+    function _ovRefocusOpener(tileId) {
+        var t = null;
+        if (tileId) {
+            Array.prototype.forEach.call(document.querySelectorAll('.ov-tile-menu[data-tile-id]'), function(b) {
+                if (!t && b.getAttribute('data-tile-id') === tileId) t = b;
+            });
+        }
+        t = t || document.getElementById('ov-add-tile') || document.getElementById('ov-settings-btn');
+        if (t) try { t.focus({ preventScroll: true }); } catch (e) {}
+    }
     window._ovResetTiles = function() {
         _ovSave({ removed: [], stats: {}, added: [] });
         _ovClosePopover();
@@ -1368,6 +1540,7 @@ window.ChipStatus.mount = function (opts) {
     };
     // ── docs/152: the visible settings panel (global + per-tile stat) ─────
     var _ovStatTiles = [];
+    var _ovRemovedTiles = [];      // QA F-23: removed default tiles, {id, title}
     var _ovDefaultOrder = [];
     var _ovDragEl = null;
     function _ovSetDocClose(ev) {
@@ -1424,7 +1597,26 @@ window.ChipStatus.mount = function (opts) {
             + (_ovCustomized(prefs) ? '' : ' disabled') + '>Reset all</button>'
             + '<span class="muted ov-set-hint">drag a tile to reorder \u00b7 each tile\u2019s \u22ee can remove it \u00b7 \u201c+ Add panel\u201d adds one</span>'
             + '</div>';
-        function applyAnd(fn) { var p2 = _ovLoad(); fn(p2); _ovSave(p2); buildOverviewTiles(); _ovRenderSettingsBody(pop); }
+        /* QA chipstatus-r2-20: every change re-renders this whole body, which
+           dropped a keyboard user's focus to <body> mid-walk. The same control
+           (matched by what it controls, never by DOM index) gets it back. */
+        function rerender() {
+            var a = document.activeElement, had = !!(a && pop.contains(a));
+            var gs = had && a.getAttribute('data-global-stat');
+            var tid = had && a.getAttribute('data-tile-id');
+            var aid = had && a.id;
+            _ovRenderSettingsBody(pop);
+            if (!had) return;
+            var t = null;
+            Array.prototype.forEach.call(pop.querySelectorAll('button, select'), function(el) {
+                if (t || el.disabled) return;
+                if ((gs && el.getAttribute('data-global-stat') === gs)
+                    || (tid && el.getAttribute('data-tile-id') === tid) || (aid && el.id === aid)) t = el;
+            });
+            if (t) { try { t.focus({ preventScroll: true }); } catch (e) {} }
+            else _ovFocusFirst(pop);
+        }
+        function applyAnd(fn) { var p2 = _ovLoad(); fn(p2); _ovSave(p2); buildOverviewTiles(); rerender(); }
         Array.prototype.forEach.call(pop.querySelectorAll('[data-global-stat]'), function(b) {
             b.addEventListener('click', function() {
                 var s = b.getAttribute('data-global-stat');
@@ -1440,7 +1632,7 @@ window.ChipStatus.mount = function (opts) {
         if (rs) rs.addEventListener('click', function() {
             _ovSave({ removed: [], stats: {}, added: [] });
             buildOverviewTiles();
-            _ovRenderSettingsBody(pop);
+            rerender();
         });
     }
     window._ovOpenSettings = function(btn) {
@@ -1455,6 +1647,7 @@ window.ChipStatus.mount = function (opts) {
         var vw = window.innerWidth || 1200, vh = window.innerHeight || 800;
         pop.style.top = Math.max(4, Math.min(r.bottom + 6, vh - (pop.offsetHeight || 320) - 8)) + 'px';
         pop.style.left = Math.max(8, Math.min(r.left, vw - (pop.offsetWidth || 330) - 8)) + 'px';
+        _ovFocusFirst(pop);                 // QA chipstatus-r2-20
         document.addEventListener('mousedown', _ovSetDocClose, true);
     };
 
@@ -1488,20 +1681,38 @@ window.ChipStatus.mount = function (opts) {
             }
             body += '<label>Statistic<select id="ov-pop-stat">' + statOpts + '</select></label>';
         }
+        // QA F-23: a removed default panel comes back under its own id and
+        // title (a custom copy of its metric is not the same tile).
+        var restorable = isAdd ? _ovRemovedTiles.filter(function(t) {
+            return prefs.removed.indexOf(t.id) >= 0;
+        }) : [];
+        if (restorable.length) {
+            body += '<label>Restore a removed panel<select id="ov-pop-restore">'
+                 + restorable.map(function(t) {
+                       return '<option value="' + _esc(t.id) + '">' + _esc(t.title) + '</option>';
+                   }).join('')
+                 + '</select></label>';
+        }
         body += '<div class="ov-pop-actions">'
              + (isAdd ? '<button type="button" class="btn-sm" id="ov-pop-add">Add panel</button>'
                       : '<button type="button" class="btn-sm outline" id="ov-pop-remove">Remove panel</button>')
+             + (restorable.length ? '<button type="button" class="btn-sm outline" id="ov-pop-restore-btn">Restore</button>' : '')
              + '<button type="button" class="btn-sm outline" id="ov-pop-reset"' + (_ovCustomized(prefs) ? '' : ' hidden') + '>Reset all</button>'
              + '</div>';
         var pop = document.createElement('div');
         pop.id = 'ov-tile-popover';
+        pop._opener = anchor;              // QA F-17: Escape hands focus back here
         pop.innerHTML = body;
         document.body.appendChild(pop);
         var r = anchor.getBoundingClientRect ? anchor.getBoundingClientRect() : { bottom: 0, left: 0 };
         pop.style.top = Math.max(4, Math.min(r.bottom + 4, (window.innerHeight || 800) - (pop.offsetHeight || 120) - 8)) + 'px';
         pop.style.left = Math.max(8, Math.min(r.left, (window.innerWidth || 1200) - (pop.offsetWidth || 240) - 8)) + 'px';
 
-        function apply(fn) { fn(); _ovSave(prefs); _ovClosePopover(); buildOverviewTiles(); }
+        function apply(fn) {
+            var had = pop.contains(document.activeElement);
+            fn(); _ovSave(prefs); _ovClosePopover(); buildOverviewTiles();
+            if (had) _ovRefocusOpener(isAdd ? null : tileId);   // QA chipstatus-r2-20
+        }
         var statSel = pop.querySelector('#ov-pop-stat');
         if (statSel && !isAdd) {
             statSel.addEventListener('change', function() {
@@ -1525,7 +1736,7 @@ window.ChipStatus.mount = function (opts) {
             addBtn.addEventListener('click', function() {
                 var k = keySel ? keySel.value : '';
                 var s = statSel ? statSel.value : 'median';
-                if (!k) { _ovClosePopover(); return; }
+                if (!k) { _ovClosePopover(); _ovRefocusOpener(null); return; }
                 apply(function() { prefs.added.push({ key: k, stat: s }); });
             });
         }
@@ -1539,8 +1750,24 @@ window.ChipStatus.mount = function (opts) {
                 });
             });
         }
+        var restoreBtn = pop.querySelector('#ov-pop-restore-btn');
+        var restoreSel = pop.querySelector('#ov-pop-restore');
+        if (restoreBtn && restoreSel) {
+            restoreBtn.addEventListener('click', function() {
+                var rid = restoreSel.value;
+                apply(function() {
+                    var i = prefs.removed.indexOf(rid);
+                    if (i >= 0) prefs.removed.splice(i, 1);
+                });
+            });
+        }
         var rsBtn = pop.querySelector('#ov-pop-reset');
-        if (rsBtn) rsBtn.addEventListener('click', function() { window._ovResetTiles(); });
+        if (rsBtn) rsBtn.addEventListener('click', function() {
+            var had = pop.contains(document.activeElement);
+            window._ovResetTiles();
+            if (had) _ovRefocusOpener(isAdd ? null : tileId);   // QA chipstatus-r2-20
+        });
+        _ovFocusFirst(pop);                 // QA chipstatus-r2-20
         document.addEventListener('mousedown', _ovDocClose, true);
     }
 
@@ -1631,19 +1858,22 @@ window.ChipStatus.mount = function (opts) {
             }
         }
         document.addEventListener('click', _topoDocClick);
-        document.body.addEventListener('htmx:beforeSwap', function _topoCleanup(evt) {
-            if (!evt.detail.target || evt.detail.target.id !== 'table-pane') return;
+        // QA chipstatus-r2-04: registered with the leave registry (a #table-pane
+        // swap AND a Back/Forward history restore), not a beforeSwap listener.
+        var _topoDash = document.querySelector('.topo-dashboard');
+        window.ChipStatus._onLeave(_topoDash, function _topoCleanup() {
             document.removeEventListener('click', _topoDocClick);
             closePopup();   // the popup now lives in <body>, not in the swapped pane
             clearTimeout(_moreHoverTimer); clearTimeout(_moreLeaveTimer);
             // An innerHTML swap drops the plot nodes but not Plotly's global (window
             // resize) registrations for them — purge so they don't accumulate per visit.
-            if (window.Plotly) {
-                document.querySelectorAll('.topo-dashboard .js-plotly-plot').forEach(function(p) {
+            // Scoped to THIS mount's dashboard: on a history restore the page on
+            // screen is a newer mount whose charts must not be purged.
+            if (window.Plotly && _topoDash) {
+                _topoDash.querySelectorAll('.js-plotly-plot').forEach(function(p) {
                     try { Plotly.purge(p); } catch (e) {}
                 });
             }
-            document.body.removeEventListener('htmx:beforeSwap', _topoCleanup);
         });
 
         // ── Qubit "... more" details popup ───────────
@@ -1825,6 +2055,7 @@ window.ChipStatus.mount = function (opts) {
             openPair: openPairPopup,
             scheduleClose: _scheduleMoreClose,
             cancelClose: function() { clearTimeout(_moreHoverTimer); clearTimeout(_moreLeaveTimer); },
+            current: function() { return activePopup; },   // QA chipstatus-r2-22
         };
     })();
 
@@ -2194,6 +2425,59 @@ window.ChipStatus.mount = function (opts) {
             var _nById = {};
             topo.nodes.forEach(function(n) { _nById[n.id] = n; });
             var _deltaDone = {};
+            // QA F-26: the printed Δf / edge value used to sit ON its bar (the
+            // bar read through '1.49' as '1:49') and between the C/T markers
+            // ('C95:7%T'), with the chevron over 'Δf'. It now sits BESIDE its
+            // own edge, on the side the shared TopoGraph.pairGlyphs leaves
+            // free: never the chevron's side (+0.16·CELL on the lo→hi normal),
+            // and — only when the value is wide enough to reach them — clear of
+            // the on-line C/T circles and of an M stacked on that side (-rn).
+            // The numbers mirror pairGlyphs(compactRoles) and style.css; both
+            // are pinned against the real output in chip_status_hero_selfcheck.
+            // pairGlyphs itself is untouched (the component maps are pinned).
+            var _lblFs = { edelta: compactMode ? 11 : 8, eval: compactMode ? 19 : 15 };
+            var _roleR = Math.max(3.6, CELL * 0.062);
+            function _heroLabelSide(e, x1, y1, x2, y2) {
+                var dx = x2 - x1, dy = y2 - y1, L = Math.sqrt(dx * dx + dy * dy) || 1;
+                var ux = dx / L, uy = dy / L, rnx = -uy, rny = ux;   // pairGlyphs' rn
+                var fnum = function (n) {
+                    return n && typeof n.f_01 === 'number' && isFinite(n.f_01) ? n.f_01 : null;
+                };
+                var fS = fnum(_nById[e.source]), fT = fnum(_nById[e.target]);
+                var mv = e.moving_qubit === 'control' || e.moving_qubit === 'target';
+                var sx, sy;
+                if (fS != null && fT != null && Math.abs(fS - fT) >= 1e6) {
+                    var sg = fT > fS ? 1 : -1;       // the chevron sits on +sg·rn
+                    sx = -sg * rnx; sy = -sg * rny;
+                } else if (mv) {
+                    sx = rnx; sy = rny;              // M sits on -rn
+                } else {
+                    var flip = Math.abs(dx) >= Math.abs(dy) ? (rny > 0 ? -1 : 1) : (rnx < 0 ? -1 : 1);
+                    sx = flip * rnx; sy = flip * rny;   // above / right
+                }
+                return { sx: sx, sy: sy, ux: ux, uy: uy, L: L,
+                         horiz: Math.abs(dx) >= Math.abs(dy),
+                         mOnSide: mv && (-rnx * sx - rny * sy) > 0 };
+            }
+            // distance from the centre line to the label's near edge
+            function _heroLabelClear(sd, barHalf, hwAlong) {
+                var inner = sd.L / 2 - CELL * 0.30 - _roleR;   // C/T/M inner reach
+                if (hwAlong + 2 < inner) return barHalf + 3;
+                return sd.mOnSide ? 3.1 * _roleR + 3 : Math.max(barHalf, _roleR) + 3;
+            }
+            // {x, y (first baseline), cls} for a label beside its edge
+            function _heroLabelAt(sd, mx, my, barHalf, fs, chars, stackH) {
+                var ax = Math.abs(sd.ux) || 1e-9, ay = Math.abs(sd.uy) || 1e-9;
+                if (sd.horiz) {
+                    var hw = 0.3 * fs * chars;
+                    var gapV = _heroLabelClear(sd, barHalf, hw / ax) / ax + (ay / ax) * hw;
+                    return { x: mx, cls: '',
+                             y: sd.sy < 0 ? my - gapV - stackH : my + gapV + 0.76 * fs };
+                }
+                var gapH = _heroLabelClear(sd, barHalf, 0.5 * fs) / ay + (ax / ay) * 0.4 * fs;
+                return { x: mx + (sd.sx > 0 ? gapH : -gapH), y: my + 0.36 * fs,
+                         cls: sd.sx > 0 ? ' topo-hero-lbl-start' : ' topo-hero-lbl-end' };
+            }
             topo.edges.forEach(function(e) {
                 var a = lay.positions[e.source], b = lay.positions[e.target];
                 if (!a || !b) return;
@@ -2218,19 +2502,26 @@ window.ChipStatus.mount = function (opts) {
                                      : (ad / 1e6).toFixed(1);
                             var dUnit = ad >= 1e9 ? 'GHz' : 'MHz';
                             var dmx = (x1 + x2) / 2, dmy = (y1 + y2) / 2;
+                            // QA F-26: beside the bar (a CR pair's two lines
+                            // sit ±6 off the centre line), never on it
+                            var dSd = _heroLabelSide(e, x1, y1, x2, y2);
+                            var dBar = (_edgePaint(e).width + 3) / 2 + (e.directed ? 6 : 0);
                             if (Math.abs(x2 - x1) >= Math.abs(y2 - y1)) {
                                 // A HORIZONTAL edge has only the stone gap
                                 // to write in, so the label stacks: Δf /
                                 // number / unit on three short lines.
+                                var dAt = _heroLabelAt(dSd, dmx, dmy, dBar, _lblFs.edelta,
+                                    Math.max(mCur.edgeDelta.label.length, dNum.length, dUnit.length), 18);
                                 evalSvg += '<text class="topo-hero-edelta topo-hero-edelta-stack" x="' + dmx
-                                    + '" y="' + (dmy - 6) + '">'
+                                    + '" y="' + dAt.y + '">'
                                     + '<tspan x="' + dmx + '">' + _esc(mCur.edgeDelta.label) + '</tspan>'
                                     + '<tspan x="' + dmx + '" dy="9">' + _esc(dNum) + '</tspan>'
                                     + '<tspan x="' + dmx + '" dy="9">' + _esc(dUnit) + '</tspan>'
                                     + '</text>';
                             } else {
-                                evalSvg += '<text class="topo-hero-edelta" x="' + dmx
-                                    + '" y="' + (dmy + 3) + '">'
+                                var dAtV = _heroLabelAt(dSd, dmx, dmy, dBar, _lblFs.edelta, 0, 0);
+                                evalSvg += '<text class="topo-hero-edelta' + dAtV.cls + '" x="' + dAtV.x
+                                    + '" y="' + dAtV.y + '">'
                                     + _esc(mCur.edgeDelta.label + ' ' + dNum + ' ' + dUnit)
                                     + '</text>';
                             }
@@ -2282,9 +2573,16 @@ window.ChipStatus.mount = function (opts) {
                 // docs/126: the value draws in a TOP layer, after the stones
                 // and the role markers — on the real chip the C/T circles sat
                 // exactly on the midpoint and covered every printed number.
-                if (evTxt != null) {
-                    evalSvg += '<text class="topo-hero-eval" x="' + (mx + pdx * (e.directed ? 15 : 0))
-                        + '" y="' + (my + pdy * (e.directed ? 15 : 0) + 4) + '">'
+                if (evTxt != null && e.directed) {
+                    evalSvg += '<text class="topo-hero-eval" x="' + (mx + pdx * 15)
+                        + '" y="' + (my + pdy * 15 + 4) + '">'
+                        + _esc(evTxt) + '</text>';
+                } else if (evTxt != null) {
+                    // QA F-26: beside the 9px bar, clear of C/T (and M)
+                    var eAt = _heroLabelAt(_heroLabelSide(e, x1, y1, x2, y2), mx, my,
+                                           width / 2, _lblFs.eval, String(evTxt).length, 0);
+                    evalSvg += '<text class="topo-hero-eval' + eAt.cls + '" x="' + eAt.x
+                        + '" y="' + eAt.y + '">'
                         + _esc(evTxt) + '</text>';
                 }
             });
@@ -2437,15 +2735,66 @@ window.ChipStatus.mount = function (opts) {
             if (_coarseHero) return;
             var nodesById = {};
             topo.nodes.forEach(function(n) { nodesById[n.id] = n; });
+            var edgesById = {};
+            topo.edges.forEach(function(e) { edgesById[e.pair_id] = e; });
+            /* QA chipstatus-r2-22: the popup opens BESIDE its stone and, at Fit
+               zoom, over the next one -- so moving from q1 to q2 landed on q1's
+               popup and q2's never opened. The popup stays a real surface (it
+               scrolls when taller than the pane, QA F-12, and its rows carry
+               tooltips), so it is not made click-through; instead the pointer
+               resting over another stone THROUGH it is hovering that stone:
+               the same 260 ms intent, then that stone's details replace these.
+               Off the stones the popup is the popup, as before. */
+            var _handTo = null;
+            function _openHero(g) {
+                _handTo = null;
+                var qid = g.getAttribute('data-hero-qubit');
+                if (qid) {
+                    var n = nodesById[qid];
+                    if (n) _sharedQubitPopup.open(n, g, false);
+                } else {
+                    var e = edgesById[g.getAttribute('data-hero-pair')];
+                    if (e && _sharedQubitPopup.openPair) _sharedQubitPopup.openPair(e, g, false);
+                }
+                var pop = _sharedQubitPopup.current && _sharedQubitPopup.current();
+                if (!pop || pop._heroAnchor) return;
+                pop._heroAnchor = g;
+                pop.addEventListener('mousemove', _handOff);
+                pop.addEventListener('mouseleave', function() {
+                    if (_handTo) { _handTo = null; clearTimeout(_heroHoverTimer); }
+                });
+            }
+            function _handOff(ev) {
+                var pop = ev.currentTarget, hit = null;
+                var els = document.elementsFromPoint ? document.elementsFromPoint(ev.clientX, ev.clientY) : [];
+                for (var i = 0; i < els.length; i++) {
+                    if (els[i] === pop || pop.contains(els[i])) continue;
+                    // the first thing UNDER the popup, and only a stone of this map
+                    var h = els[i].closest && els[i].closest('[data-hero-qubit]');
+                    if (h && host.contains(h) && h !== pop._heroAnchor) hit = h;
+                    break;
+                }
+                if (hit === _handTo) return;
+                _handTo = hit;
+                clearTimeout(_heroHoverTimer);
+                if (!hit) return;
+                _heroHoverTimer = setTimeout(function() {
+                    if (_handTo === hit && hit.isConnected) _openHero(hit);
+                }, 260);
+            }
+            // a stone whose popup is already up (just handed off to, or
+            // re-entered from its own popup) keeps it rather than re-opening it
+            function _showing(g) {
+                var cur = _sharedQubitPopup.current && _sharedQubitPopup.current();
+                return !!(cur && cur.isConnected && cur._heroAnchor === g);
+            }
             host.querySelectorAll('[data-hero-qubit]').forEach(function(g) {
                 g.addEventListener('mouseenter', function() {
                     if (!_sharedQubitPopup) return;
                     _sharedQubitPopup.cancelClose();
                     clearTimeout(_heroHoverTimer);
-                    _heroHoverTimer = setTimeout(function() {
-                        var n = nodesById[g.getAttribute('data-hero-qubit')];
-                        if (n) _sharedQubitPopup.open(n, g, false);
-                    }, 260);
+                    if (_showing(g)) return;
+                    _heroHoverTimer = setTimeout(function() { _openHero(g); }, 260);
                 });
                 g.addEventListener('mouseleave', function() {
                     clearTimeout(_heroHoverTimer);
@@ -2453,17 +2802,13 @@ window.ChipStatus.mount = function (opts) {
                 });
             });
             // docs/126 ②: pairs hover too — same singleton popup, pair flavor.
-            var edgesById = {};
-            topo.edges.forEach(function(e) { edgesById[e.pair_id] = e; });
             host.querySelectorAll('[data-hero-pair]').forEach(function(g) {
                 g.addEventListener('mouseenter', function() {
                     if (!_sharedQubitPopup || !_sharedQubitPopup.openPair) return;
                     _sharedQubitPopup.cancelClose();
                     clearTimeout(_heroHoverTimer);
-                    _heroHoverTimer = setTimeout(function() {
-                        var e = edgesById[g.getAttribute('data-hero-pair')];
-                        if (e) _sharedQubitPopup.openPair(e, g, false);
-                    }, 260);
+                    if (_showing(g)) return;
+                    _heroHoverTimer = setTimeout(function() { _openHero(g); }, 260);
                 });
                 g.addEventListener('mouseleave', function() {
                     clearTimeout(_heroHoverTimer);
@@ -2573,7 +2918,7 @@ window.ChipStatus.mount = function (opts) {
     // offsetHeight mid-build (the old per-panel innerHTML += pattern) is what
     // re-serialized the growing DOM and froze the page.
     function _renderChartSpecsProgressively(specs) {
-        var i = 0, BATCH = 3;
+        var i = 0, BATCH = 3, drawn = [];
         function pump() {
             var end = Math.min(i + BATCH, specs.length);
             for (; i < end; i++) {
@@ -2589,13 +2934,43 @@ window.ChipStatus.mount = function (opts) {
                 if (window.PlotTheme && window.PlotTheme.houseLayout) {
                     layout = window.PlotTheme.houseLayout(layout);
                 }
-                _plotlyRender(el, s.data, layout, s.config);
+                drawn.push(_plotlyRender(el, s.data, layout, s.config));
             }
             if (i < specs.length) {
-                (window.requestAnimationFrame || function(f) { setTimeout(f, 16); })(pump);
+                /* QA F-02 (review): chained on rAF alone, the batches ran
+                   back to back -- Chrome runs the next frame's callbacks ahead
+                   of queued tasks after a long one -- so the main thread was
+                   unavailable for 6-8 s at a stretch after a Trends deep link
+                   (measured: a 50 ms CDP sampler starved that long; clicks and
+                   the Trends fetch's own swap waited behind it). A frame for
+                   the paint, then a TASK for the next batch: anything queued
+                   meanwhile runs first. */
+                (window.requestAnimationFrame || function(f) { setTimeout(f, 16); })(function () {
+                    setTimeout(pump, 0);
+                });
+            } else {
+                // QA F-02: a chart takes its height only when Plotly has DRAWN
+                // it (async: _plotlyRender is a promise chain, the first one may
+                // still be loading Plotly), up to 640 px each. A jump measured
+                // before that lands thousands of px off once the section above
+                // its target has grown. When the last chart is drawn, a jump
+                // made a moment ago goes back to where it pointed -- the same
+                // guard the Trends landing runs, which yields to the user.
+                Promise.all(drawn).then(function () {
+                    (window.requestAnimationFrame || function(f) { setTimeout(f, 16); })(function () {
+                        if (_jump) _jump.reanchor();
+                    });
+                });
             }
         }
-        if (specs.length) pump();
+        if (!specs.length) return;
+        // QA F-02/F-06: _plotlyRender waits for Plotly, so on a page where it
+        // is not loaded yet the pump only QUEUED promise chains, and they all
+        // ran in one microtask flush once it arrived -- measured: 19 charts in
+        // one 7.5 s long task, which outlived the jump guard's 8 s window and
+        // stranded every jump. Load first, then pump 3 per frame as intended.
+        if (!window.Plotly && window.requirePlotly) window.requirePlotly().then(pump, pump);
+        else pump();
     }
 
     // ══════════════════════════════════════════════════════════════════
@@ -2657,6 +3032,25 @@ window.ChipStatus.mount = function (opts) {
             if (mc + 1 > pairGridCols) pairGridCols = mc + 1;
             if (mr + 1 > pairGridRows) pairGridRows = mr + 1;
         });
+        // QA F-03: drop the tracks no pair uses. A chain puts every pair on an
+        // ODD doubled column, so half the tracks were empty full-width cells
+        // (4 pairs of a 5-qubit chain took 8 x 132 px and pushed the whole
+        // pane sideways at 1366 px). Order and row alignment are kept; a
+        // square lattice uses every doubled track and is unchanged. The set
+        // comes from topo.edges, so every gate panel shares one layout.
+        (function () {
+            var cs = {}, rs = {};
+            Object.keys(pairGridPositions).forEach(function (k) {
+                cs[pairGridPositions[k].col] = 1; rs[pairGridPositions[k].row] = 1;
+            });
+            var num = function (a, b) { return a - b; };
+            var cl = Object.keys(cs).map(Number).sort(num), rl = Object.keys(rs).map(Number).sort(num);
+            Object.keys(pairGridPositions).forEach(function (k) {
+                var p = pairGridPositions[k];
+                pairGridPositions[k] = {col: cl.indexOf(p.col), row: rl.indexOf(p.row)};
+            });
+            if (cl.length) { pairGridCols = cl.length; pairGridRows = rl.length; }
+        })();
         var hasPairGrid = Object.keys(pairGridPositions).length > 0;
 
         var stops = dCfg.colorScale;
@@ -3274,6 +3668,37 @@ window.ChipStatus.mount = function (opts) {
         }
     };
 
+    /* QA F-06 / F-20 (review): re-anchor when the page GROWS, not only when the
+       Trends fetch or a chart batch reports in. Those callbacks ran once each,
+       and on the 5-qubit rig the one that mattered came 7-15 s after the jump,
+       behind 1-2 s chart long tasks; meanwhile the pane sat clamped at the
+       pre-build maximum, or was carried off by the browser's scroll anchoring
+       as Trends grew above the 2Q panels it had landed on. The dashboard's own
+       height is the event: every change re-lands a live jump (the guard decides
+       whether one is live and whether the user has taken over). The height a
+       smooth jump measured its target against is the baseline, so the sections
+       a jump builds before it starts do not turn it into an instant one. */
+    var _jumpBaseH = -1;
+    function _dashH() {
+        var d = document.querySelector('.topo-dashboard');
+        return d ? d.offsetHeight : -1;
+    }
+    function _setupJumpFollow() {
+        var dash = document.querySelector('.topo-dashboard');
+        if (!dash || !window.ResizeObserver) return;
+        _jumpBaseH = dash.offsetHeight;
+        var ro = new ResizeObserver(function () {
+            var h = dash.offsetHeight;
+            if (h === _jumpBaseH) return;
+            _jumpBaseH = h;
+            _jump.reanchor();
+        });
+        ro.observe(dash);
+        window.ChipStatus._onLeave(dash, function _jumpFollowTeardown() {
+            try { ro.disconnect(); } catch (e) {}
+        });
+    }
+
     function _ensureSectionBuilt(key) {
         if (Array.isArray(key)) { key.forEach(_ensureSectionBuilt); return; }
         if (!key || _chipSectionBuilt[key]) return;
@@ -3293,7 +3718,9 @@ window.ChipStatus.mount = function (opts) {
                and back never retried. Mark built only on success; a failure
                leaves the section eligible for the next intersection. */
             _chipSectionBuilt[key] = true;
-            var p = htmx.ajax('GET', '/topology/trends',
+            // QA chipstatus-r2-18: F5 / Back replays the remembered selection
+            var p = htmx.ajax('GET', '/topology/trends'
+                              + ((window.ChipTrends && ChipTrends.storedQuery) ? ChipTrends.storedQuery() : ''),
                               { source: '#topo-trends', target: '#topo-trends',
                                 swap: 'outerHTML' });
             if (p && typeof p.then === 'function') {
@@ -3331,12 +3758,11 @@ window.ChipStatus.mount = function (opts) {
         }, 400);
     }
     document.addEventListener('stateHistoryChanged', _onHistoryChanged);
-    document.body.addEventListener('htmx:beforeSwap', function _histTeardown(evt) {
-        if (evt.detail && evt.detail.target && evt.detail.target.id === 'table-pane') {
-            clearTimeout(_histTimer);
-            document.removeEventListener('stateHistoryChanged', _onHistoryChanged);
-            document.body.removeEventListener('htmx:beforeSwap', _histTeardown);
-        }
+    // torn down through the r2-04 registry: a #table-pane swap AND a history
+    // restore (which fires no beforeSwap) both leave nothing behind
+    window.ChipStatus._onLeave(document.querySelector('.topo-dashboard'), function _histTeardown() {
+        clearTimeout(_histTimer);
+        document.removeEventListener('stateHistoryChanged', _onHistoryChanged);
     });
 
     function _throttle(fn, ms) {
@@ -3365,13 +3791,29 @@ window.ChipStatus.mount = function (opts) {
         if (view === 'gate' || view === 'fidelity') view = 'fidelity2q';   // docs/141 4o + docs/148 aliases
         var spec = TAB_SPEC[view] || TAB_SPEC.overview;
         try { localStorage.setItem('quam_chipstatus_view', view); } catch (e) {}
+        // QA F-19: the in-page jump bar (the only caller that passes its button)
+        // left the URL at the section the page was opened on, so F5 or a copied
+        // link went back there. Only the sidebar's chipNavView wrote it. The
+        // mount's deep link passes no button: it runs mid-swap, before htmx has
+        // pushed the new entry, and must not rewrite the previous page's URL.
+        // history.state is kept (htmx's {htmx:true} marker rides the entry).
+        if (btn && TAB_SPEC[view]) {
+            try { history.replaceState(history.state, '', '/topology?view=' + view); } catch (e) {}
+            if (window.syncSidebarNavActive) window.syncSidebarNavActive();
+        }
         if (scroll !== false) _jump.note(view);
         _setActiveTab(view);
         _suppressSpyUntil = Date.now() + 800;     // don't let the spy fight the jump
         _ensureSectionBuilt(spec.build);
         if (scroll === false) return;
+        // QA F-02: every 'metrics' view sits BELOW the lazy 2Q RB host, which
+        // the smooth scroll passes (within the observer's margin) and builds
+        // mid-flight: ~2.5k px landed above the measured target and a 1Q jump
+        // ended on the 2Q panels. Build it now, before the target is measured.
+        if (spec.build === 'metrics') _ensureSectionBuilt('2qrb');
         requestAnimationFrame(function() {        // let a just-built section lay out
             var el = document.querySelector(spec.sel);
+            _jumpBaseH = _dashH();                // what the smooth jump measured against
             if (el) el.scrollIntoView({ behavior: 'smooth', block: 'start' });
             else { var p = _scrollPane(); if (p) p.scrollTo({ top: 0, behavior: 'smooth' }); }
         });
@@ -3393,11 +3835,8 @@ window.ChipStatus.mount = function (opts) {
         // whose charts carry ~1 MB of data and live Plotly divs. Mirrors the
         // scroll-spy teardown below; pre-existing, but this change is what made
         // it expensive.
-        document.body.addEventListener('htmx:beforeSwap', function _ioTeardown(evt) {
-            if (evt.detail && evt.detail.target && evt.detail.target.id === 'table-pane') {
-                try { io.disconnect(); } catch (e) {}
-                document.body.removeEventListener('htmx:beforeSwap', _ioTeardown);
-            }
+        window.ChipStatus._onLeave(document.querySelector('.topo-dashboard'), function _ioTeardown() {
+            try { io.disconnect(); } catch (e) {}
         });
         ['2qrb', 'metrics', 'trends', 'fid1q', 'fidro'].forEach(function(k) {
             var el = document.querySelector('[data-topo-section="' + k + '"]');
@@ -3408,33 +3847,176 @@ window.ChipStatus.mount = function (opts) {
     // Scroll-spy: highlight the tab whose section sits at the top of the pane.
     function _setupScrollSpy() {
         var pane = _scrollPane();
+        var _spyLate = null;
         function onScroll() {
-            if (Date.now() < _suppressSpyUntil) return;
+            // QA F-02: a scroll made while the spy is suppressed (the tail of a
+            // smooth jump, a re-anchor's instant jump) was dropped for good, so
+            // the tab the pane PASSED on the way stayed lit. Look again once the
+            // suppression is over.
+            if (Date.now() < _suppressSpyUntil) {
+                clearTimeout(_spyLate);
+                _spyLate = setTimeout(onScroll, _suppressSpyUntil - Date.now() + 30);
+                return;
+            }
             var paneTop = pane ? pane.getBoundingClientRect().top : 0;
-            var best = null, bestTop = -Infinity;
+            var paneH = pane ? pane.clientHeight : 0;
+            var best = null, bestTop = -Infinity, lastVis = null, lastVisTop = -Infinity, jumped = null;
+            var live = window.ChipStatus.jumpGuard.current();
             Object.keys(TAB_SPEC).forEach(function(v) {
                 var el = document.querySelector(TAB_SPEC[v].sel);
                 if (!el) return;
-                var top = el.getBoundingClientRect().top - paneTop;
+                var r = el.getBoundingClientRect();
+                var top = r.top - paneTop;
                 if (top <= 130 && top > bestTop) { bestTop = top; best = v; }
+                if (top < paneH && top > lastVisTop) { lastVisTop = top; lastVis = v; }
+                if (v === live && top < paneH && r.bottom - paneTop > 0) jumped = v;
             });
+            // QA F-07: at the bottom of the pane the last sections can never
+            // reach the top, so the last one on screen wins (the usual
+            // scroll-spy convention; picked by position, not TAB_SPEC order),
+            // unless that section is a lazy placeholder not built yet: a fresh
+            // page scrolled straight to its end lit "Read. Fid." over the
+            // Topology palette, and kept it after the page grew --
+            if (pane && lastVis && pane.scrollTop + paneH >= pane.scrollHeight - 2
+                && (!TAB_SPEC[lastVis].build || _chipSectionBuilt[TAB_SPEC[lastVis].build])) best = lastVis;
+            // -- and while a jump is live, the item the user CLICKED stays lit
+            // as long as its target is on screen (Calibration, the last group,
+            // stops ~150 px short of the top and used to light Frequencies).
+            if (jumped) best = jumped;
             if (best) _setActiveTab(best);
         }
+        /* QA F-20: Back to Chip Status landed on the section ANCHOR, 300 px above
+           where the user had scrolled to. The scroller is #table-pane, and
+           htmx's history snapshot records only window.scrollY, so nothing kept
+           the pane's offset. Record it ON the history entry (merged into
+           history.state, so htmx's {htmx:true} marker stays), relative to the
+           nearest section above -- the lazy Trends / metrics content above it
+           has not been built yet when a Back re-renders the page. The section
+           is the one the spy calls "at the top" (a jump lands its target just
+           under the sticky bar, not at 0). Unthrottled by the jump suppression,
+           so the end of a smooth jump is recorded too; written only while this
+           dashboard is the one on screen. */
+        var _dashEl = document.querySelector('.topo-dashboard');
+        var _recT = null, _lastRec = null;
+        function _recWrite(rec) {
+            history.replaceState(Object.assign({}, history.state || {}, { smChipScroll: rec }), '');
+        }
+        function _recordScroll() {
+            _recT = null;
+            try {
+                if (!pane || !_dashEl || !_dashEl.isConnected
+                    || location.pathname !== '/topology') return;
+                // QA F-20 (review): mid-restore the pane is where the page lets
+                // it be, not where the record says; keep the record until the
+                // restore ends (landed and settled, or the user took over)
+                var it = window.ChipStatus.jumpGuard.intent();
+                if (it && _restoring && it.view === _restoring.view
+                    && _restoring.url === location.pathname + location.search) {
+                    _recWrite(_restoring);
+                    _lastRec = _restoring;
+                    return;
+                }
+                var paneTop = pane.getBoundingClientRect().top;
+                var best = null, bestTop = -Infinity;
+                Object.keys(TAB_SPEC).forEach(function(v) {
+                    var el = document.querySelector(TAB_SPEC[v].sel);
+                    if (!el) return;
+                    var top = el.getBoundingClientRect().top - paneTop;
+                    if (top <= 130 && top > bestTop) { bestTop = top; best = v; }
+                });
+                var rec = { url: location.pathname + location.search,
+                            view: best, d: best ? Math.round(-bestTop) : 0,
+                            top: Math.round(pane.scrollTop) };
+                _recWrite(rec);
+                _lastRec = rec;
+            } catch (e) { /* a record is a nicety; scrolling must never break */ }
+        }
+        function _recHandler() { clearTimeout(_recT); _recT = setTimeout(_recordScroll, 250); }
+        /* A pushed htmx navigation saves the outgoing page first, and that save
+           REPLACES this entry's state with a bare {htmx:true} -- after
+           beforeSwap, just before it pushes the next URL. Put the record back
+           then, on the entry it was taken on (same URL, dashboard still up). */
+        function _recKeep() {
+            if (!_dashEl || !_dashEl.isConnected) {
+                document.body.removeEventListener('htmx:beforeHistoryUpdate', _recKeep);
+                return;
+            }
+            try {
+                if (_lastRec && _lastRec.url === location.pathname + location.search
+                    && !(history.state && history.state.smChipScroll)) _recWrite(_lastRec);
+            } catch (e) { /* nicety */ }
+        }
+        document.body.addEventListener('htmx:beforeHistoryUpdate', _recKeep);
         if (pane) {
             var _spyHandler = _throttle(onScroll, 120);
             pane.addEventListener('scroll', _spyHandler, { passive: true });
+            pane.addEventListener('scroll', _recHandler, { passive: true });
             // Teardown: #table-pane is the PERSISTENT HTMX swap target (survives
             // navigation), so without removing this the scroll listener accumulates
             // one per Chip Status visit — every OTHER per-mount listener here has this
             // beforeSwap teardown; the scroll-spy was the one that was missed.
-            function _spyTeardown(evt) {
-                if (evt.detail && evt.detail.target && evt.detail.target.id === 'table-pane') {
-                    pane.removeEventListener('scroll', _spyHandler);
-                    document.body.removeEventListener('htmx:beforeSwap', _spyTeardown);
-                }
+            function _spyTeardown() {
+                clearTimeout(_spyLate);
+                // htmx pushes the next URL AFTER beforeSwap: a record still
+                // pending lands on THIS entry, not the next page's
+                if (_recT) { clearTimeout(_recT); _recordScroll(); }
+                // _recKeep still has to see this navigation's history update,
+                // which htmx fires after this event, in the same task
+                setTimeout(function() {
+                    document.body.removeEventListener('htmx:beforeHistoryUpdate', _recKeep);
+                }, 0);
+                pane.removeEventListener('scroll', _recHandler);
+                pane.removeEventListener('scroll', _spyHandler);
             }
-            document.body.addEventListener('htmx:beforeSwap', _spyTeardown);
+            window.ChipStatus._onLeave(_dashEl, _spyTeardown);
         }
+    }
+
+    /* QA F-20: the record _setupScrollSpy left on THIS history entry, or null.
+       Only for the very URL it was taken at: a forward navigation is a new entry
+       (htmx pushes before it swaps) and an in-page jump rewrites the URL, so
+       neither can pick up a stale record. When htmx's Back has already wiped
+       the entry's state, the record the popstate carried stands in (popRec). */
+    function _chipScrollRecord() {
+        var hs = null;
+        try {
+            var here = location.pathname + location.search;
+            var popped = window.ChipStatus.popRec ? window.ChipStatus.popRec(here) : null;
+            hs = (history.state && history.state.smChipScroll) || popped;
+        } catch (e) { return null; }
+        if (!hs || typeof hs !== 'object' || typeof hs.top !== 'number') return null;
+        if (hs.url !== location.pathname + location.search) return null;
+        if (hs.view && !TAB_SPEC[hs.view]) return null;
+        return hs;
+    }
+    /* Put the pane back where the record says: the section it was in, plus the
+       offset inside it. The section is built (and, for a metrics view, the 2Q
+       RB host above it, as a jump does); the jump guard carries the offset so
+       the lazy content landing above re-anchors it, and a wheel / key / touch
+       still hands the pane back to the user. */
+    var _restoring = null;   // the record a live restore is putting back
+    function _restoreChipScroll(hs) {
+        var pane = _scrollPane();
+        if (!pane) return;
+        if (!hs.view) {                        // above the first section
+            window.ChipStatus.jumpGuard.cancel();
+            _setActiveTab('overview');         // QA F-08: the first section
+            pane.scrollTop = hs.top;
+            return;
+        }
+        var spec = TAB_SPEC[hs.view];
+        window.setChipStatusView(hs.view, null, false);
+        if (spec.build === 'metrics') _ensureSectionBuilt('2qrb');
+        window.ChipStatus.jumpGuard.note(hs.view, pane, hs.d || 0);
+        _restoring = hs;
+        requestAnimationFrame(function() {     // let the just-built section lay out
+            var el = document.querySelector(spec.sel);
+            if (el) {
+                window.ChipStatus.jumpGuard.land(el, pane, hs.d || 0);
+            } else {
+                pane.scrollTop = hs.top;
+            }
+        });
     }
 
     // Re-fit the topology diagram to the current pane width (no rebuild) — runs
@@ -3476,10 +4058,21 @@ window.ChipStatus.mount = function (opts) {
         return v <= warn ? 'pass' : (v <= fail ? 'warn' : 'fail');
     }
     window._chipThresholds = thresholds;   // Phase D editor mutates this + re-runs the summary
+    /* QA chipstatus-r2-21: the wiring-JSON sheet a double-click opened kept
+       naming the old qubit while the inspector moved on. An open sheet follows
+       the qubit now inspected; it only knows qubit wiring, so a PAIR closes it
+       rather than leave a qubit's wiring beside a pair. Every inspect path
+       (stone click, keyboard Enter, verdict / worst-offender chips) is here. */
+    function _jsonSheetOpen() {
+        var jp = document.getElementById('json-panel');
+        return !!(jp && !jp.classList.contains('hidden'));
+    }
     window._inspectQubit = function(id) {
+        if (_jsonSheetOpen()) showQubitJsonPanel(id, rawWiring);
         if (window.htmx) htmx.ajax('GET', '/qubit/' + encodeURIComponent(id), {source: '#inspector-pane', target: '#inspector-pane', swap: 'innerHTML'});
     };
     window._inspectPair = function(id) {
+        if (_jsonSheetOpen() && window.closeJsonPanel) window.closeJsonPanel();
         if (window.htmx) htmx.ajax('GET', '/pair/' + encodeURIComponent(id), {source: '#inspector-pane', target: '#inspector-pane', swap: 'innerHTML'});
     };
     // ONE delegated handler for every "inspect this qubit/pair" chip (verdict
@@ -3523,10 +4116,14 @@ window.ChipStatus.mount = function (opts) {
         }
 
         // Per-qubit worst verdict across its metrics → "below spec" count.
-        var below = {};
+        // failWhy keeps WHICH metrics failed, so the banner's "avoid" list can
+        // name its reason (it used to read as caused by the structural issues
+        // printed right before it).
+        var below = {}, failWhy = {};
         nodes.forEach(function(n) {
             NODE_METRICS.forEach(function(m) {
                 var vr = _verdict(_mval(n, m), thresholds[m]);
+                if (vr === 'fail') (failWhy[n.id] = failWhy[n.id] || []).push(m);
                 if (vr === 'fail') below[n.id] = 'fail';
                 else if (vr === 'warn' && below[n.id] !== 'fail') below[n.id] = 'warn';
             });
@@ -3641,10 +4238,30 @@ window.ChipStatus.mount = function (opts) {
             var avoid = '';
             if (failQubits.length) {
                 var moreN = failQubits.length - 8;
-                avoid = ' <span class="verdict-avoid">avoid: ' + failQubits.slice(0, 8).map(function(id) {
+                // Name the failing metric(s): "avoid (below fail spec on
+                // Readout fidelity (GE)): q2 q4 q5", each chip titled with its
+                // own values, so the list cannot be read as the structural count.
+                var whyKeys = [];
+                failQubits.forEach(function(id) {
+                    (failWhy[id] || []).forEach(function(m) { if (whyKeys.indexOf(m) < 0) whyKeys.push(m); });
+                });
+                whyKeys.sort(function(a, b) { return NODE_METRICS.indexOf(a) - NODE_METRICS.indexOf(b); });
+                function _whyVal(id, m) {
+                    var n = nodes.filter(function(x) { return x.id === id; })[0];
+                    var v = n ? _mval(n, m) : null, th = thresholds[m] || {};
+                    var d = (typeof METRIC_DISPLAY !== 'undefined' && METRIC_DISPLAY && METRIC_DISPLAY[m])
+                            || { unit: '', scale: 1, dec: 3 };
+                    function f(x) { return (typeof x === 'number' && isFinite(x)) ? (x * d.scale).toFixed(d.dec) + ' ' + d.unit : '—'; }
+                    var lower = (th.direction || 'higher') === 'lower';
+                    return metricLabel(m) + ' ' + f(v) + ' (fail ' + (lower ? '> ' : '< ') + f(+th.fail) + ')';
+                }
+                avoid = ' &middot; <span class="verdict-avoid">avoid (below fail spec on '
+                    + _esc(whyKeys.map(metricLabel).join(', ')) + '): ' + failQubits.slice(0, 8).map(function(id) {
                     // Escaped data-attr + delegated handler (no id in a JS string / onclick)
                     // so a hostile qubit name can't break out and execute. See _setupInspectDelegation.
-                    return '<button type="button" class="verdict-avoid-chip" data-inspect-id="' + _esc(id) + '" data-inspect-kind="q">' + _esc(id) + '</button>';
+                    return '<button type="button" class="verdict-avoid-chip" data-inspect-id="' + _esc(id) + '" data-inspect-kind="q"'
+                        + ' title="' + _esc(id + ': ' + (failWhy[id] || []).map(function(m) { return _whyVal(id, m); }).join(', ')) + '">'
+                        + _esc(id) + '</button>';
                 }).join('')
                     + (moreN > 0 ? ' <span class="verdict-avoid-more">+' + moreN + ' more</span>' : '')
                     + '</span>';
@@ -3670,6 +4287,11 @@ window.ChipStatus.mount = function (opts) {
             var lt = lowest(nodes, 'T1');
             if (lt) items.push({ id: lt.id, v: us(_mval(lt, 'T1')), t: 'lowest T1',
                                  vr: _verdict(_mval(lt, 'T1'), thresholds.T1), kind: 'q' });
+            // Readout fidelity sets the verdict too (NODE_METRICS), and the
+            // exported report's "Worst offenders" lists it (report_card.py).
+            var la = lowest(nodes, 'assignment_fidelity');
+            if (la) items.push({ id: la.id, v: pct(_mval(la, 'assignment_fidelity')), t: 'lowest readout fidelity (GE)',
+                                 vr: _verdict(_mval(la, 'assignment_fidelity'), thresholds.assignment_fidelity), kind: 'q' });
             var lc = lowest(edges, 'cz_fidelity');
             // QA F-04: "Bell" only when the number IS the Bell-state one
             // (fidelity_source 'macro'); an interleaved-RB or channel number
@@ -3958,11 +4580,8 @@ window.ChipStatus.mount = function (opts) {
     }
     function _specOnVisible() { if (!document.hidden) _refreshSpec(); }
     document.addEventListener('visibilitychange', _specOnVisible);
-    document.body.addEventListener('htmx:beforeSwap', function _specTeardown(evt) {
-        if (evt.detail && evt.detail.target && evt.detail.target.id === 'table-pane') {
-            document.removeEventListener('visibilitychange', _specOnVisible);
-            document.body.removeEventListener('htmx:beforeSwap', _specTeardown);
-        }
+    window.ChipStatus._onLeave(document.querySelector('.topo-dashboard'), function _specTeardown() {
+        document.removeEventListener('visibilitychange', _specOnVisible);
     });
     window.resetThresholds = function() {
         // QA chipstatus-r2-05: a refused clear used to rebuild as if it had
@@ -4039,6 +4658,7 @@ window.ChipStatus.mount = function (opts) {
     // — or, as this block existed to guarantee, to tear down on nav-away.
     _setupLazyBuild();
     _setupScrollSpy();
+    _setupJumpFollow();
 
     // QA chipstatus-r2-01 (review): hand the reader's place to the next mount
     // when this pane is re-rendered in place (PaneResume, top of file).
@@ -4063,19 +4683,26 @@ window.ChipStatus.mount = function (opts) {
                  anchor: anchor, offset: anchor ? -at : 0, top: pane.scrollTop,
                  built: Object.keys(_chipSectionBuilt).filter(function (k) { return _chipSectionBuilt[k]; }) };
     }
-    document.body.addEventListener('htmx:beforeSwap', function _resumeCapture(evt) {
+    function _resumeCapture(evt) {
         if (!evt.detail || !evt.detail.target || evt.detail.target.id !== 'table-pane') return;
         if (evt.detail.shouldSwap === false) return;       // this pane stays
         document.body.removeEventListener('htmx:beforeSwap', _resumeCapture);
         if (window.ChipStatus.paneResume.isRefresh(evt.detail)) {
             window.ChipStatus.paneResume.hold(_readerPlace());
         }
+    }
+    document.body.addEventListener('htmx:beforeSwap', _resumeCapture);
+    // a history restore fires no beforeSwap: the r2-04 registry drops the
+    // capture with the page (on a #table-pane swap this body listener runs
+    // before the registry's document one, captures, and removes itself)
+    window.ChipStatus._onLeave(document.querySelector('.topo-dashboard'), function _resumeDrop() {
+        document.body.removeEventListener('htmx:beforeSwap', _resumeCapture);
     });
     function _resumePlace(r) {
         _resumePending = r;
         window.ChipStatus.jumpGuard.cancel();     // an older jump must not pull the pane after this
         _ensureSectionBuilt(r.built || []);       // what the reader had, before anything is measured
-        var view = TAB_SPEC[r.view] ? r.view : 'topology';
+        var view = TAB_SPEC[r.view] ? r.view : 'overview';   // QA F-08: the first section
         _setActiveTab(view);
         // the swap's own scroll events (the pane shrank before the builds
         // landed) must not let the spy re-pick the tab before put() runs
@@ -4112,24 +4739,34 @@ window.ChipStatus.mount = function (opts) {
     }
 
     // A deep-link ?view= (left-nav sub-item or a shared link) scrolls to that
-    // section; a bare /topology load stays at the top (topology), by design — we
-    // do NOT resume the last-used localStorage view.
+    // section; a bare /topology load stays at the top, by design — we do NOT
+    // resume the last-used localStorage view. QA F-08: the top is Overview since
+    // docs/141 4o put it first; lighting Topology there was a leftover from when
+    // Topology was the first section (a bogus ?view= lands here too). QA F-20: returning to the
+    // SAME history entry (Back, forward, reload) is not a fresh load: it goes
+    // back to where the user had scrolled to on it (_chipScrollRecord).
     // docs/141 4ac: normalise the alias HERE. 4o kept accepting ?view=gate for
     // old links and maps it onto Fidelity inside setChipStatusView -- but this
     // guard tests the RAW value against TAB_SPEC, from which the same commit
     // deliberately removed `gate`, so the branch was skipped and the mapping
     // never ran: an old bookmark landed on Topology with no sign anything was
     // ignored.
+    var _hs = _chipScrollRecord();
     var _deepView = (_serverChipView === 'gate' || _serverChipView === 'fidelity')
         ? 'fidelity2q' : _serverChipView;
     // a refresh of this page resumes the reader's place (PaneResume), ?view= or not
     var _resume = window.ChipStatus.paneResume.take();
     if (_resume) {
         _resumePlace(_resume);
+    } else if (_hs) {
+        _restoreChipScroll(_hs);           // QA F-20: Back / reload of THIS entry
     } else if (_deepView && TAB_SPEC[_deepView]) {
         window.setChipStatusView(_deepView, null, true);
     } else {
-        _setActiveTab('topology');
+        // a fresh page with no deep view has no live jump: a jump made on the
+        // previous visit must not re-anchor (or light the spy) on this one
+        window.ChipStatus.jumpGuard.cancel();
+        _setActiveTab('overview');
     }
 
     _setupKeyboardNav();
@@ -4192,6 +4829,25 @@ window.ChipStatus.mount = function (opts) {
             next.focus();
             next.scrollIntoView({ block: 'nearest', inline: 'nearest' });
         }
+        /* QA chipstatus-r2-20: the inspector's × lives inside the pane
+           closeInspector() empties, so closing it dropped focus to <body> (only
+           the grid's own Escape handed it back). Remember the cell that opened
+           the inspector -- a mouse click or Enter's synthetic one -- and give
+           it focus back, but only when focus really was lost: never steal it
+           from a field the user moved to. */
+        var _lastCell = null;
+        dash.addEventListener('click', function(e) {
+            var c = e.target && e.target.closest && e.target.closest(SEL);
+            if (c) _lastCell = c;
+        }, true);
+        function _onInspectorClosed() {
+            var a = document.activeElement;
+            if (!_lastCell || !_lastCell.isConnected || (a && a !== document.body)) return;
+            decorate();                    // a lazily-built panel's cell gets its tabindex
+            cells().forEach(function(c) { c.setAttribute('tabindex', c === _lastCell ? '0' : '-1'); });
+            try { _lastCell.focus({ preventScroll: true }); } catch (err) { /* nothing to hand back */ }
+        }
+        document.body.addEventListener('inspector-closed', _onInspectorClosed);
         // Keep the roving "0" on whatever the user focused.
         dash.addEventListener('focusin', function(e) {
             var cell = e.target.closest && e.target.closest('[data-kbd-cell]');
@@ -4210,8 +4866,35 @@ window.ChipStatus.mount = function (opts) {
                 // is not defined` on EVERY Escape press. The popup is a body-level
                 // .topo-card-popup / .topo-pair-popup; removing the node is equivalent
                 // (the IIFE's stale activePopup is handled by its isConnected guards).
+                // QA chipstatus-r2-14: the Health "Report" menu is a native
+                // <details>, which closes on neither Escape nor an outside
+                // click. The innermost transient, so it goes first.
+                var rep = document.querySelector('details.topo-report-export[open]');
+                if (rep && !e.defaultPrevented) {
+                    rep.open = false;
+                    var rsum = rep.querySelector('summary');
+                    if (rsum) try { rsum.focus(); } catch (err) {}
+                    e.preventDefault(); return;
+                }
                 var pop = document.querySelector('.topo-card-popup, .topo-pair-popup');
                 if (pop) { pop.remove(); e.preventDefault(); return; }
+                // QA F-17: the Overview's click-opened popovers (a tile's ⋮ and
+                // ⚙ Panels, both body-level) closed only on an outside click.
+                // Same closers the outside click uses, so their mousedown
+                // listeners go too; focus goes back to the opener, not <body>.
+                var ovp = document.getElementById('ov-tile-popover');
+                if (ovp) {
+                    var ovIn = ovp.contains(document.activeElement);
+                    _ovClosePopover();
+                    if (ovIn && ovp._opener) try { ovp._opener.focus(); } catch (err) {}
+                    e.preventDefault(); return;
+                }
+                if (document.getElementById('ov-settings-pop')) {
+                    _ovCloseSettings();
+                    var osb = document.getElementById('ov-settings-btn');
+                    if (osb) try { osb.focus(); } catch (err) {}
+                    e.preventDefault(); return;
+                }
                 var jp = document.getElementById('json-panel');
                 if (jp && !jp.classList.contains('hidden')) { window.closeJsonPanel(); e.preventDefault(); return; }
                 // docs/192 CS01: the map's own tip line reads "Enter to inspect,
@@ -4226,6 +4909,22 @@ window.ChipStatus.mount = function (opts) {
                 if (kc && ip && ip.innerHTML.trim() && window.closeInspector) {
                     window.closeInspector();
                     try { kc.focus(); } catch (err) { /* the cell may have gone */ }
+                    e.preventDefault();
+                    return;
+                }
+                // QA F-17: the State History drawer, outermost -- after the
+                // grid's inspector rule above. Through its one toggle, so the
+                // remembered open/closed flag moves exactly as the ✕ moves it.
+                // A modal open over the page, or an Escape another layer has
+                // already consumed (app.js's ladder runs first), is not the
+                // drawer's: one press closes one layer.
+                var hp = document.getElementById('history-panel');
+                if (hp && hp.classList.contains('history-panel-open') && window.toggleHistoryPanel
+                        && !e.defaultPrevented && !(window.smModalOpen && window.smModalOpen())) {
+                    var hpIn = hp.contains(document.activeElement);
+                    window.toggleHistoryPanel();
+                    var htb = hpIn && document.querySelector('.history-toggle-btn');
+                    if (htb) try { htb.focus(); } catch (err) {}
                     e.preventDefault();
                     return;
                 }
@@ -4260,13 +4959,20 @@ window.ChipStatus.mount = function (opts) {
             e.preventDefault();
         }
         document.addEventListener('keydown', onKey);
-        function teardown(evt) {
-            if (evt.detail && evt.detail.target && evt.detail.target.id === 'table-pane') {
-                document.removeEventListener('keydown', onKey);
-                document.body.removeEventListener('htmx:beforeSwap', teardown);
-            }
+        // QA chipstatus-r2-14: an outside click closes the Report menu (it
+        // stayed open over the Health tiles, under the Panels popover). CAPTURE
+        // phase: the Overview's tile ⋮ / + Add clicks stop propagation.
+        function _reportDocClick(ev) {
+            document.querySelectorAll('details.topo-report-export[open]').forEach(function(d) {
+                if (!d.contains(ev.target)) d.open = false;
+            });
         }
-        document.body.addEventListener('htmx:beforeSwap', teardown);
+        document.addEventListener('click', _reportDocClick, true);
+        window.ChipStatus._onLeave(dash, function teardown() {
+            document.removeEventListener('keydown', onKey);
+            document.removeEventListener('click', _reportDocClick, true);
+            document.body.removeEventListener('inspector-closed', _onInspectorClosed);
+        });
         decorate();
     }
 };
@@ -4286,6 +4992,10 @@ window.ChipStatus.reportHref = function (linkEl, fmt) {
     try {
         linkEl.href = '/topology/report?format=' + encodeURIComponent(fmt);
     } catch (e) { /* fall back to the plain href */ }
+    // QA chipstatus-r2-14: a picked format closes the menu (after the default
+    // download has started from the rewritten href).
+    var menu = linkEl.closest && linkEl.closest('details');
+    if (menu) setTimeout(function () { menu.open = false; }, 0);
     return true;   // allow the default download
 };
 
@@ -4444,17 +5154,16 @@ window.ChipStatus.liveDetection = function () {
     document.body.addEventListener('pulses-rows-changed', onStateMutated);   // a value change (docs/141 4j)
     document.body.addEventListener('diagnostics-changed', onStateMutated);
 
-    // Cleanup on navigation away from the topology view.
-    document.body.addEventListener('htmx:beforeSwap', function cleanup(evt) {
-        if (evt.detail.target && evt.detail.target.id === 'table-pane') {
-            clearInterval(pollTimer);
-            clearTimeout(debounceTimer);
-            clearTimeout(metricsRefreshTimer);
-            document.body.removeEventListener('pulses-changed', onStateMutated);
-            document.body.removeEventListener('pulses-rows-changed', onStateMutated);
-            document.body.removeEventListener('diagnostics-changed', onStateMutated);
-            document.body.removeEventListener('htmx:beforeSwap', cleanup);
-        }
+    // Cleanup on navigation away from the topology view -- a #table-pane swap
+    // or a Back/Forward history restore (QA chipstatus-r2-04: the poller used
+    // to keep polling /api/topology-mtime on the page Back landed on).
+    window.ChipStatus._onLeave(document.querySelector('.topo-dashboard'), function cleanup() {
+        clearInterval(pollTimer);
+        clearTimeout(debounceTimer);
+        clearTimeout(metricsRefreshTimer);
+        document.body.removeEventListener('pulses-changed', onStateMutated);
+        document.body.removeEventListener('pulses-rows-changed', onStateMutated);
+        document.body.removeEventListener('diagnostics-changed', onStateMutated);
     });
 };
 
@@ -4521,11 +5230,54 @@ window.ChipTrends = (function () {
        polls held the body queue, and the chips lit with no chart behind them.
        Sourcing it on the element it targets also gives htmx the per-element
        bookkeeping that stops a fast second toggle racing the first. */
+    /* QA chipstatus-r2-18: the selection (qubit chips, pair badges, the box)
+       lived only in the fragment DOM, so F5 or Back rebuilt the section from a
+       BARE request -- the server's first-visit defaults -- while Columns,
+       palettes, hero metric and zoom all came back. Every change goes through
+       _reload, which now remembers the exact query it sent; the section's
+       first build replays it. Always `metrics=`-led (even empty), so turning
+       every chip off stays a remembered choice and the bare-request defaults
+       stay a first-visit thing. Per chip (below). */
+    var SEL_KEY = 'quam_trends_sel_v1';
+    var SEL_MAX = 4096;
+    /* QA chipstatus-r2-18 (review): ...per CHIP, not per browser. Columns are
+       chip-agnostic; a selection is not -- a pair badge or a typed family
+       chosen on one chip was replayed on the next chip's first Trends build,
+       which rendered it as "no recorded parameter matches". Keyed by the
+       page's chip token (the fingerprint window.__chipToken carries, as
+       PaneState and the bulk grid's pinned rows key theirs); no token, the
+       bare key. */
+    function _selKey() {
+        var t = String(window.__chipToken || '');
+        return t ? SEL_KEY + '::' + t : SEL_KEY;
+    }
+    /* '?<query>' to replay, or '' (nothing stored, a private window, a value
+       that is not ours). Seeds the badge press order from the stored list,
+       which _params wrote newest first, so the families cap trims the same
+       badge after the reload as before it. */
+    function storedQuery() {
+        var v;
+        try { v = window.localStorage.getItem(_selKey()); } catch (e) { return ''; }
+        if (typeof v !== 'string' || v.indexOf('metrics=') !== 0 || v.length > SEL_MAX) return '';
+        if (!_pathOrder.length) {
+            var m = /(?:^|&)paths=([^&]*)/.exec(v);
+            if (m) {
+                try {
+                    decodeURIComponent(m[1]).split(',').forEach(function (s) {
+                        if (s && _pathOrder.indexOf(s) < 0) _pathOrder.push(s);
+                    });
+                } catch (e) { /* a malformed escape: DOM order, as before */ }
+            }
+        }
+        return '?' + v;
+    }
     var _reloadSeq = 0;
     function _reload() {
         if (!window.htmx || !document.getElementById('topo-trends')) return;
         var mine = ++_reloadSeq;
-        var p = htmx.ajax('GET', '/topology/trends?' + _params(),
+        var q = _params();
+        try { window.localStorage.setItem(_selKey(), q); } catch (e) { /* private window */ }
+        var p = htmx.ajax('GET', '/topology/trends?' + q,
                           { source: '#topo-trends', target: '#topo-trends',
                             swap: 'outerHTML' });
         // A late response swaps into a target that no longer exists (htmx
@@ -4571,6 +5323,7 @@ window.ChipTrends = (function () {
         if (el) el.value = p || '';
         var s = document.getElementById('topo-trend-suggest');
         if (s) s.hidden = true;
+        _sugSeq++; clearTimeout(_sugTimer);   // QA F-10: a late answer must not reopen it
         _reload();
     }
     /* ── Columns (customer feedback 2026-09-09) ────────────────────────────
@@ -4700,8 +5453,19 @@ window.ChipTrends = (function () {
        the "click it again for every single qubit" the customer reported. Each
        row now says how many entities it covers, and clicking it charts them
        all. */
+    /* QA F-10: an empty answer used to HIDE the box, so "interleaved" (the
+       placeholder's own example) showed nothing at all -- no rows, no "no
+       matches". It now says so, and a failed request says that. The first
+       query after a capture can now pay the index rebuild (seconds), so an
+       answer to an older keystroke must not overwrite a newer one. */
+    var _sugSeq = 0;
+    function _sugNote(box, html) {
+        box.innerHTML = '<div class="topo-trend-sug-empty">' + html + '</div>';
+        box.hidden = false;
+    }
     function suggest(q) {
         clearTimeout(_sugTimer);
+        var seq = ++_sugSeq;
         var box = document.getElementById('topo-trend-suggest');
         if (!box) return;
         if (!q || q.trim().length < 2) { box.hidden = true; return; }
@@ -4709,7 +5473,15 @@ window.ChipTrends = (function () {
             fetch('/topology/trends/paths?q=' + encodeURIComponent(q.trim()))
                 .then(function (r) { return r.json(); })
                 .then(function (rows) {
-                    if (!rows || !rows.length) { box.hidden = true; return; }
+                    if (seq !== _sugSeq) return;      // a newer keystroke owns the box
+                    if (!rows || !rows.length) {
+                        _sugNote(box, 'No recorded parameter matches <code>'
+                                      + _esc(q.trim()) + '</code>');
+                        return;
+                    }
+                    // QA chipstatus-r2-17 (review): _topo_trends.html's
+                    // unmatched slot renders these rows a second time --
+                    // pinned row for row by test_the_two_row_renderers_agree
                     box.innerHTML = rows.map(function (r) {
                         var isStr = (typeof r === 'string');
                         var p = isStr ? r : (r.path || r.dot_path || '');
@@ -4727,7 +5499,10 @@ window.ChipTrends = (function () {
                     }).join('');
                     box.hidden = false;
                 })
-                .catch(function () { box.hidden = true; });
+                .catch(function () {
+                    if (seq !== _sugSeq) return;
+                    _sugNote(box, 'Parameter search failed — type again to retry');
+                });
         }, 220);
     }
     /* Charts arrive as [{metric, series:[{entity, points:[[snapId, value]]}]}].
@@ -4826,9 +5601,19 @@ window.ChipTrends = (function () {
         }
         return info.why ? _esc(info.why) : '';
     }
+    /* QA F-09: a run whose folder is not under a loaded Datasets folder (moved,
+       copied, never added) keeps its number and loses the click -- and the
+       hover now SAYS so; it used to show "#142 · 11 Rabi" with no hint and a
+       click that silently did nothing. A constant, so nothing to escape, and
+       it never says "click": it is not an offer. A no-run point gets no hint
+       (its provenance line already carries the why). */
     function _hintLine(info) {
-        return (info && info.uid)
-            ? '<i style="opacity:.7">click to open the dataset</i>' : '';
+        if (info && info.uid) return '<i style="opacity:.7">click to open the dataset</i>';
+        if (info && info.run) {
+            return '<i style="opacity:.7">not openable here: its run folder is not'
+                 + ' under a loaded Datasets folder</i>';
+        }
+        return '';
     }
 
     function _openSnapDataset(evt) {
@@ -4840,8 +5625,9 @@ window.ChipTrends = (function () {
             var map = _snaps();
             var info = map && map[String(sid)];
             // No uid => the point is not clickable and the hover has already
-            // said why. Doing NOTHING is the contract: no navigation to a 404,
-            // no error.
+            // said why (_hintLine names the unloaded run folder; a no-run point's
+            // provenance line is the why). Doing NOTHING is the contract: no
+            // navigation to a 404, no error.
             if (!info || !info.uid) return;
             var url = '/dataset/' + info.uid;
             if (window.htmx && window.htmx.ajax) {
@@ -5088,5 +5874,6 @@ window.ChipTrends = (function () {
         }
     }
     return { toggle: toggle, togglePath: togglePath, setPath: setPath,
-             suggest: suggest, render: render, setCols: setCols, reload: _reload };
+             suggest: suggest, render: render, setCols: setCols, reload: _reload,
+             storedQuery: storedQuery };
 })();

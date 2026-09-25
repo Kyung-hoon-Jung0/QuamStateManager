@@ -10318,9 +10318,10 @@ window.syncSidebarNavActive = function() {
         var hView = null;
         if (q >= 0) { try { hView = new URLSearchParams(href.slice(q)).get("view"); } catch (e) {} }
         // a view-scoped link matches its own view; bare /topology means the
-        // page's first section (the spy moves the subnav highlight later)
+        // page's first section (the spy moves the subnav highlight later) --
+        // Overview since docs/141 4o (QA F-08)
         if (hView && view && hView !== view) return;
-        if (hView && !view && hView !== "topology") return;
+        if (hView && !view && hView !== "overview") return;
         matches.push({ a: a, href: href, sub: !!a.closest(".nav-subitems") });
     });
     // same-href parent+child (Chip Components + Qubits are both /qubits):
@@ -16751,6 +16752,14 @@ window.PendingMarkers = (function () {
         // both events (before/after), so the pending counter stays paired.
         var elt = detail && detail.elt;
         if (elt && elt.closest && elt.closest('#param-history-filters')) return false;
+        // QA chipstatus-r2-19: a Chip Status Trends chip/badge toggle (and the
+        // section's lazy first build) re-renders only #topo-trends through
+        // /topology/trends — an in-page refinement, not a page open, the same
+        // rule as docs/158. A path check answers identically on beforeRequest
+        // and afterRequest (the source element does not survive its own
+        // outerHTML swap), so the pending counter stays paired. The page
+        // itself (/topology, /topology?view=trends) still shows the loader.
+        if (path.indexOf('/topology/trends') === 0) return false;
         for (var i = 0; i < SLOW_PREFIXES.length; i++) {
             if (path.indexOf(SLOW_PREFIXES[i]) === 0) return true;
         }

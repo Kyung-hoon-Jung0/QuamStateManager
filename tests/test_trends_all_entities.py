@@ -246,6 +246,68 @@ class TestTheTypeaheadOffersFamilies:
         assert client.get("/topology/trends/paths?q=").get_json() == []
 
 
+class TestTheTypeaheadReadsAFreshIndex:
+    """QA F-10: the typeahead answered from the leaf index AS IT WAS. A real
+    customer instance held 4 of its snapshots, ``dirty=1``, so the
+    placeholder's own example ("interleaved") returned ``[]`` -- until some
+    other query (a charted typed path) happened to rebuild the index. The
+    typeahead now runs the same freshness gate the chart query runs; the
+    curated page render still does not (it calls ``leaf_families`` too, for
+    the 2Q badges, and must stay off the index write lock)."""
+
+    def _stale(self, client, folder: Path, needle: str):
+        """Make the index forget every path matching *needle*, and say it is
+        dirty -- the shape the customer's instance was in."""
+        import sqlite3
+
+        from quam_state_manager.core import leaf_index
+        hm = client.application.config["history_manager"]
+        conn = sqlite3.connect(hm._index_path(folder))
+        try:
+            ids = [r[0] for r in conn.execute(
+                "SELECT id FROM leaf_paths WHERE path LIKE ?", (f"%{needle}%",))]
+            assert ids, "setup: the capture indexed the family"
+            conn.executemany("DELETE FROM leaf_cp WHERE path_id = ?", [(i,) for i in ids])
+            conn.executemany("DELETE FROM leaf_paths WHERE id = ?", [(i,) for i in ids])
+            leaf_index.mark_dirty(conn, "test: a stale index")
+            conn.commit()
+        finally:
+            conn.close()
+        return hm
+
+    def test_a_stale_index_still_finds_the_family(self, client, tmp_path):
+        folder = tmp_path / "quam_state"
+        _versions(client, folder)
+        hm = self._stale(client, folder, "interaction_offset")
+        assert hm.leaf_families(folder, "interaction_offset") == [], \
+            "setup: read as it is, the stale index knows nothing of it"
+        rows = client.get("/topology/trends/paths?q=interaction_offset").get_json()
+        assert [r["path"] for r in rows] == ["qubit_pairs.*.coupler.interaction_offset"], rows
+        assert rows[0]["n"] == 3
+
+    def test_only_the_typeahead_pays_the_freshen(self, client, tmp_path, monkeypatch):
+        """The page render with PAIRS (so ``_trend_pair_chips`` ->
+        ``leaf_families`` is really reached) must not freshen; the typeahead
+        must. The provenance suite's version of this pin has no pairs."""
+        folder = tmp_path / "quam_state"
+        _versions(client, folder)
+        hm = client.application.config["history_manager"]
+        calls = []
+        real = hm._ensure_leaf_index_fresh
+        monkeypatch.setattr(hm, "_ensure_leaf_index_fresh",
+                            lambda p: (calls.append(str(p)), real(p))[1])
+        fam = []
+        real_fam = hm.leaf_families
+        monkeypatch.setattr(hm, "leaf_families",
+                            lambda *a, **k: (fam.append(k.get("fresh", False)),
+                                             real_fam(*a, **k))[1])
+        assert client.get("/topology/trends?metrics=f_01").status_code == 200
+        assert fam and not any(fam), f"setup: the render reached leaf_families: {fam}"
+        assert calls == [], f"the page render rebuilt the leaf index: {calls}"
+        client.get("/topology/trends/paths?q=interaction_offset")
+        assert len(calls) == 1, f"the typeahead ran the freshness gate: {calls}"
+
+
 class TestSeveralFamiliesAtOnce:
     """Mechanism 3: ?paths= is comma-separated, ?path= keeps working, and the
     cap SAYS when it trims."""
@@ -1441,6 +1503,126 @@ class TestNothingOldBroke:
         assert "'&path=' + encodeURIComponent(pathEl.value.trim())" in body
         assert "data-trend-path" in body
         assert "togglePath: togglePath" in js
+
+
+class TestTypedTextThatNamesNoParameter:
+    """QA chipstatus-r2-17: Enter in the box charted ANY string, and the empty
+    slot promised "Nothing recorded for zzz_not_a_param yet. It appears here
+    once a run or a save writes it." -- for a typo, and for "interleaved" (the
+    placeholder's own example) on a chip that HAS recorded that family. The
+    "yet" belongs only to something that names a parameter."""
+
+    NOTHING = "Nothing recorded for"
+    NONE = "No recorded parameter on this chip matches"
+
+    def _slot(self, body: str) -> str:
+        i = body.find('class="topo-trend-box"')
+        return body[i:body.find("topo-trends-data", i)]
+
+    def test_a_typo_says_nothing_matches_not_yet(self, client, tmp_path):
+        _versions(client, tmp_path / "quam_state", n=2)
+        body = client.get(
+            "/topology/trends?metrics=&path=zzz_not_a_param").get_data(as_text=True)
+        slot = self._slot(body)
+        assert self.NONE in slot and "<code>zzz_not_a_param</code>" in slot, slot
+        assert self.NOTHING not in body, slot
+        charts = _charts(body)
+        assert len(charts) == 1 and charts[0]["unmatched"] is True             and charts[0]["series"] == [] and charts[0]["matches"] == [], charts
+
+    def test_a_typo_in_a_family_path_too(self, client, tmp_path):
+        """`qubits.*.not_a_leaf` has the family SHAPE, so it used to borrow
+        the tail as its title and the promise with it."""
+        _versions(client, tmp_path / "quam_state", n=2)
+        for p in ("qubits.*.not_a_leaf", "qubits.q1.not_a_leaf"):
+            body = client.get("/topology/trends?metrics=&path=" + p).get_data(as_text=True)
+            assert self.NONE in self._slot(body) and self.NOTHING not in body, (p, self._slot(body))
+
+    def test_a_fragment_lists_the_families_it_matches(self, tmp_path):
+        c, _ = _chip_with(tmp_path, "irbfrag", PAIRS, {IRB_TAIL: 0.99, SRB_TAIL: 0.97})
+        body = c.get("/topology/trends?metrics=&path=interleaved").get_data(as_text=True)
+        slot = self._slot(body)
+        assert self.NOTHING not in body, slot
+        assert "is not one parameter" in slot and "matches 1 recorded parameter." in slot, slot
+        fam = "qubit_pairs.*." + IRB_TAIL
+        # the typeahead's own row: same class, same data-path, same press
+        assert ('class="topo-trend-sug" data-path="' + fam + '"') in slot, slot
+        assert "onclick=\"ChipTrends.setPath(this.getAttribute('data-path'))\"" in slot
+        assert "· 3 pairs" in slot, slot
+        assert "StandardRB" not in slot, "only what the text matches is offered"
+        # ...and pressing it charts every pair
+        picked = c.get("/topology/trends?metrics=&path=" + fam).get_data(as_text=True)
+        ch = _charts(picked)
+        assert len(ch) == 1 and len(ch[0]["series"]) == len(PAIRS), ch
+
+    def test_a_real_parameter_with_no_numeric_history_keeps_the_yet(self, tmp_path):
+        """The honest "nothing recorded yet" still belongs to a leaf the chip
+        HAS -- here T2echo, null on every qubit (the real 20-qubit chip's case)."""
+        folder = _chip(tmp_path / "quam_state")
+        doc = json.loads((folder / "state.json").read_text(encoding="utf-8"))
+        for q in doc["qubits"].values():
+            q["T2echo"] = None
+        (folder / "state.json").write_text(json.dumps(doc), encoding="utf-8")
+        app = create_app(testing=True, instance_path=str(tmp_path / "_i"))
+        c = app.test_client()
+        c.post("/load", data={"folder": str(folder)})
+        for p in ("qubits.*.T2echo", "qubits.q2.T2echo"):
+            body = c.get("/topology/trends?metrics=&path=" + p).get_data(as_text=True)
+            slot = self._slot(body)
+            assert self.NOTHING in slot and self.NONE not in slot, (p, slot)
+            assert _charts(body)[0].get("unmatched") in (None, False), _charts(body)
+
+    def test_a_subtree_is_not_a_parameter(self, client, tmp_path):
+        """`qubits.*.xy` exists in state, but it is a dict: nothing will ever
+        chart it, so it is offered the leaves under it instead of a "yet"."""
+        _versions(client, tmp_path / "quam_state", n=2)
+        body = client.get("/topology/trends?metrics=&path=qubits.*.xy").get_data(as_text=True)
+        assert self.NOTHING not in body, self._slot(body)
+
+    def test_the_two_row_renderers_agree(self, client, tmp_path, monkeypatch):
+        """Review of r2-17: the slot's rows are the typeahead's rows rendered a
+        SECOND time (Jinja here, suggest() in chip-status.js). Drift between
+        them -- a label, a count, an escape, the press -- is a user seeing two
+        spellings of one parameter. Both halves render the same rows (the
+        server's own /topology/trends/paths answer) and must agree on
+        everything a user can read or press, including an HTML-hostile label,
+        a one-entity family, a pair family and a row with no label."""
+        node = shutil.which("node")
+        if node is None:
+            pytest.skip("node not available")
+        _versions(client, tmp_path / "quam_state", n=2)
+        rows = [
+            {"path": "qubits.*.T<1>&\"q'", "label": "T<1>&\"q'", "scope": "qubits", "n": 5},
+            {"path": "qubit_pairs.*.cz.phase", "label": "cz.phase", "scope": "qubit_pairs", "n": 3},
+            {"path": "qubits.*.solo", "label": "solo", "scope": "qubits", "n": 1},
+            {"path": "extras.lone_leaf", "label": "", "scope": "", "n": 1},
+            {"path": "qubit_pairs.*.two", "label": "two", "scope": "qubit_pairs", "n": 2},
+        ]
+        hm = client.application.config["history_manager"]
+        monkeypatch.setattr(hm, "leaf_families", lambda *a, **k: [dict(r) for r in rows])
+        slot = self._slot(client.get("/topology/trends?metrics=&path=zzq").get_data(as_text=True))
+        assert "is not one parameter" in slot, slot
+        served = client.get("/topology/trends/paths?q=zzq").get_json()
+        assert served == rows, served
+        inp = tmp_path / "parity.json"
+        inp.write_text(json.dumps({"rows": served, "server_html": slot}), encoding="utf-8")
+        root = Path(__file__).resolve().parent.parent
+        r = subprocess.run([node, str(root / "tests" / "trends_sug_parity.cjs"), str(inp)],
+                           capture_output=True, text=True, encoding="utf-8",
+                           timeout=120, cwd=str(root))
+        if r.returncode == 2:
+            pytest.skip("jsdom not installed")
+        assert r.returncode == 0, r.stdout + r.stderr
+        got = json.loads(r.stdout)
+        assert len(got["server"]) == len(rows) == len(got["js"]), got
+        for js, srv in zip(got["js"], got["server"]):
+            assert js == srv, (js, srv)
+
+    def test_a_badge_keeps_its_honest_empty_slot(self, client, tmp_path):
+        """Only the BOX is judged: a `?paths=` badge (the 2Q gate-fidelity
+        template) keeps the by-design "Nothing recorded" slot."""
+        body = client.get("/topology/trends?metrics=&paths=qubit_pairs.*.gate_fidelity"
+                          ).get_data(as_text=True)
+        assert self.NOTHING in body and self.NONE not in body
 
 
 @pytest.mark.skipif(shutil.which("node") is None, reason="node not available")

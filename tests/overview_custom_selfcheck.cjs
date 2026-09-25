@@ -437,6 +437,60 @@ function stored(win) { return win.localStorage.getItem('quam_overview_tiles_v1')
     }
   }
 
+  // C11 (QA F-23): a removed DEFAULT panel is offered back by "+ Add panel"
+  // -- under its own id and title, not as a custom copy -- and restoring it
+  // keeps every other customization (Reset all was the only way back).
+  {
+    const win = makeWorld();
+    mount(win);
+    const openAdd = function () {
+      win.document.getElementById('ov-add-tile')
+        .dispatchEvent(new win.MouseEvent('click', { bubbles: true }));
+      return win.document.getElementById('ov-tile-popover');
+    };
+    let pop = openAdd();
+    ok(!pop.querySelector('#ov-pop-restore') && !pop.querySelector('#ov-pop-restore-btn'),
+      'C11: nothing removed -> no restore row');
+    const srbTitle = tileById(win, 'srb_gate').querySelector('.topo-card-title').textContent;
+    pop = openMenu(win, 'srb_gate');
+    pop.querySelector('#ov-pop-remove').dispatchEvent(new win.MouseEvent('click', { bubbles: true }));
+    pop = openMenu(win, 'chip_size');
+    pop.querySelector('#ov-pop-remove').dispatchEvent(new win.MouseEvent('click', { bubbles: true }));
+    pop = openMenu(win, 't1');
+    pop.querySelector('#ov-pop-stat').value = 'max';
+    pop.querySelector('#ov-pop-stat').dispatchEvent(new win.Event('change', { bubbles: true }));
+    ok(!tileById(win, 'srb_gate') && !tileById(win, 'chip_size'), 'C11 setup: two defaults removed');
+    pop = openAdd();
+    const rsel = pop.querySelector('#ov-pop-restore');
+    const opts = rsel ? Array.prototype.map.call(rsel.options, function (o) { return o.value + '=' + o.textContent; }) : [];
+    ok(opts.indexOf('srb_gate=' + srbTitle) >= 0 && opts.some(function (o) { return /^chip_size=/.test(o); }),
+      'C11: "+ Add panel" lists each removed panel by its title (got ' + JSON.stringify(opts) + ')');
+    const keys = Array.prototype.map.call(pop.querySelector('#ov-pop-key').options, function (o) { return o.value; });
+    ok(JSON.stringify(keys) === JSON.stringify(['anharmonicity', 'cz_fidelity', 'gate_fidelity_avg', 'T1']),
+      'C11: the metric list itself is unchanged (C4 contract)');
+    rsel.value = 'srb_gate';
+    pop.querySelector('#ov-pop-restore-btn').dispatchEvent(new win.MouseEvent('click', { bubbles: true }));
+    ok(!!tileById(win, 'srb_gate') && !tileById(win, 'custom:0'),
+      'C11: Restore brings the tile back under its ORIGINAL id, not as custom:N');
+    ok(!tileById(win, 'chip_size'), 'C11: the other removed panel stays removed');
+    ok(/60\.0/.test(tileById(win, 't1').querySelector('.topo-card-value').textContent),
+      'C11: an unrelated stat override survives the restore (T1 max = 60.0)');
+    const st = JSON.parse(stored(win) || '{}');
+    ok((st.removed || []).indexOf('srb_gate') < 0 && (st.removed || []).indexOf('chip_size') >= 0,
+      'C11: the restore persisted (got ' + JSON.stringify(st.removed) + ')');
+    // restoring the last deviation leaves nothing stored (default elision)
+    pop = openMenu(win, 't1');
+    pop.querySelector('#ov-pop-stat').value = 'avg';
+    pop.querySelector('#ov-pop-stat').dispatchEvent(new win.Event('change', { bubbles: true }));
+    pop = openAdd();
+    pop.querySelector('#ov-pop-restore').value = 'chip_size';
+    pop.querySelector('#ov-pop-restore-btn').dispatchEvent(new win.MouseEvent('click', { bubbles: true }));
+    ok(!!tileById(win, 'chip_size') && stored(win) === null,
+      'C11: restoring the last deviation clears the stored key');
+    pop = openMenu(win, 'chip_size');
+    ok(!pop.querySelector('#ov-pop-restore'), 'C11: a tile kebab never shows the restore row');
+  }
+
   if (fails) { console.error(fails + ' check(s) failed'); process.exit(1); }
   console.log('overview_custom_selfcheck: all checks passed');
   process.exit(0);
