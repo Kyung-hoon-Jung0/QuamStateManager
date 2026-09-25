@@ -3367,6 +3367,25 @@ function _placeSyncPanel(overlay, host) {
     var r = ctl ? ctl.getBoundingClientRect() : null;
     var w = Math.min(600, window.innerWidth - 16);
     host.style.width = w + "px";
+    // QA fix6: grow to the diff table's natural width (values never split,
+    // paths on one line) up to a cap -- a fixed 600 px made the table wrap a
+    // 13-digit frequency mid-number at every window size.
+    var tb = host.querySelector(".sp-diff");
+    if (tb && tb.parentElement) {
+        var prev = tb.style.width;
+        tb.style.width = "max-content";
+        var natural = tb.offsetWidth;
+        tb.style.width = prev;
+        var chrome = host.offsetWidth - tb.parentElement.clientWidth;
+        var cap = Math.min(960, window.innerWidth - 16);
+        // +8: Chrome rounds a text run's max-content down by a fraction of a
+        // pixel, which alone re-wrapped a path at exactly its natural width
+        var need = Math.ceil(natural) + chrome + 8;
+        if (natural > 0 && need > w) {
+            w = Math.min(cap, need);
+            host.style.width = w + "px";
+        }
+    }
     var left = r ? r.left : 8;
     left = Math.max(8, Math.min(left, window.innerWidth - w - 8));
     var top = r && r.bottom > 0 ? r.bottom + 6 : 54;

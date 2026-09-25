@@ -200,6 +200,55 @@ const GRID = '<table id="bulk-table"><tr><td class="bulk-td"><input class="bulk-
            'P4 ...and posts the picks (' + body + ')');
     }
 
+    /* ── W. QA fix6 (reviewer P1): the panel grows to its diff table ──
+       A fixed 600 px panel made the table wrap a 13-digit frequency
+       mid-number at every window size. _placeSyncPanel now measures the
+       table at max-content and widens the host to fit, capped at
+       min(960, viewport - 16). jsdom has no layout, so the widths are
+       stubbed on the elements: max-content 820, the body inset 40. */
+    {
+        const OVER = '<div id="state-review-overlay" style="display:none"><div id="state-review-host"></div></div>';
+        const { w, S } = world(TRAY('A', 'collide', '1 field changed on both sides') + OVER);
+        S.reviewHtml = '<div class="sync-panel" data-conflicts="0"><div class="sp-body"><table class="sp-diff">'
+            + '<tr class="sp-row"><td>qubits.q2.xy.RF_frequency</td><td class="sp-val">3,400,810,798.2070656</td></tr>'
+            + '</table></div></div>';
+        const stub = function (natural, vw) {
+            Object.defineProperty(w, 'innerWidth', { configurable: true, value: vw });
+            const host = w.document.getElementById('state-review-host');
+            Object.defineProperty(host, 'offsetWidth', { configurable: true,
+                get: function () { return parseFloat(host.style.width) || 0; } });
+            const origQS = function (sel) { return w.Element.prototype.querySelector.call(host, sel); };
+            host.querySelector = function (sel) {
+                const el = origQS(sel);
+                if (el && sel === '.sp-diff' && !el.__stubbed) {
+                    el.__stubbed = true;
+                    Object.defineProperty(el, 'offsetWidth', { configurable: true,
+                        get: function () { return el.style.width === 'max-content' ? natural
+                                                  : (parseFloat(host.style.width) || 0) - 40; } });
+                    Object.defineProperty(el.parentElement, 'clientWidth', { configurable: true,
+                        get: function () { return (parseFloat(host.style.width) || 0) - 40; } });
+                }
+                return el;
+            };
+            return host;
+        };
+        let host = stub(820, 1366);
+        await w.openReview({ force: true }); await sleep(30);
+        const w1 = parseFloat(host.style.width);
+        ok(w1 >= 820 + 40 && w1 <= 960, 'W1 the panel widens to the table\'s natural width (got ' + w1 + ')');
+        const tb = host.querySelector('.sp-diff');
+        ok(tb && tb.style.width !== 'max-content', 'W2 the measuring width is restored on the table');
+        host = stub(2000, 1366);
+        await w.openReview({ force: true }); await sleep(30);
+        ok(parseFloat(host.style.width) === 960, 'W3 ...never past its cap (got ' + host.style.width + ')');
+        host = stub(2000, 700);
+        await w.openReview({ force: true }); await sleep(30);
+        ok(parseFloat(host.style.width) === 684, 'W4 ...nor past the viewport (got ' + host.style.width + ')');
+        host = stub(300, 1366);
+        await w.openReview({ force: true }); await sleep(30);
+        ok(parseFloat(host.style.width) === 600, 'W5 a small table keeps the 600 px panel (got ' + host.style.width + ')');
+    }
+
     console.log(fails ? ('FAILED (' + fails + ' of ' + asserts + ')')
         : ('sync_control_selfcheck: all ' + asserts + ' assertions passed'));
     process.exit(fails ? 1 : 0);

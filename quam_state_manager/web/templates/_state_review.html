@@ -79,7 +79,7 @@
       <tr class="sp-group-head"><td colspan="5">Changed on both sides &mdash; pick one ({{ _nc }})</td></tr>
       {% for r in conflict_rows %}
       <tr class="sp-row sp-row-collide" data-path="{{ r.path }}">
-        <td class="sp-path"><code title="{{ r.path }}">{{ r.path }}</code></td>
+        <td class="sp-path"><code title="{{ r.path }}">{{ r.path.split('.') | map('e') | join('.<wbr>' | safe) }}</code></td>
         <td class="sp-val">{{ r.here | groupdigits if r.here is not none else '—' }}<small class="sp-sub">yours{% if r.orig is not none %} · both were {{ r.orig | groupdigits }}{% endif %}</small></td>
         <td class="sp-val">{{ r.live | groupdigits if r.live is not none else '—' }}</td>
         <td class="sp-delta">{{ delta_pct(r.here, r.live) }}</td>
@@ -99,11 +99,11 @@
           review's on-the-fly accept, Phase D): take just this field, as shown
           or tweaked, into what you see -- no full pull. -#}
       <tr class="sp-row sp-row-live diff-row-{{ r.kind }}" data-path="{{ r.path }}">
-        <td class="sp-path"><code title="{{ r.path }}">{{ r.path }}</code></td>
+        <td class="sp-path"><code title="{{ r.path }}">{{ r.path.split('.') | map('e') | join('.<wbr>' | safe) }}</code></td>
         <td class="sp-val">{{ r.here | groupdigits if r.here is not none else '—' }}</td>
         {% if r.live is not none %}
         <td class="sp-val sp-val-live"><span class="review-live-edit"><input type="text" class="review-live-input sp-live-input"
-               value="{{ r.live | groupdigits }}" data-dot-path="{{ r.path }}" data-old-raw="{{ r.here | tojson }}"
+               value="{{ r.live | groupdigits }}" size="{{ [(r.live | groupdigits | string) | length, 6] | max }}" data-dot-path="{{ r.path }}" data-old-raw="{{ r.here | tojson }}"
                aria-label="Live value for {{ r.path }} (editable)"
                title="The live chip's value — editable; ↓ takes just this field"></span></td>
         <td class="sp-delta">{{ delta_pct(r.here, r.live, 'review-delta') }}</td>
@@ -123,7 +123,7 @@
       <tr class="sp-group-head"><td colspan="5">Your unapplied edits ({{ mine_rows | length }})</td></tr>
       {% for r in mine_rows %}
       <tr class="sp-row sp-row-mine tray-change-item" data-group-id="{{ r.gid or '' }}" data-path="{{ r.path }}">
-        <td class="sp-path"><code class="tray-change-path" title="{{ r.path }}">{{ r.path }}</code></td>
+        <td class="sp-path"><code class="tray-change-path" title="{{ r.path }}">{{ r.path.split('.') | map('e') | join('.<wbr>' | safe) }}</code></td>
         {#- r16 ②: a created / deleted entry shows its VALUES (the drawer's rule,
             carried into the panel): a scalar inline, a mapping as a leaf list -#}
         <td class="sp-val">{% if r.created or r.deleted %}{% set _v = r.new if r.created else r.old %}{% set _cls = 'change-new' if r.created else 'change-old' %}{% set _sg = '+' if r.created else '&minus;' %}{% if _v is mapping %}<details class="tray-subtree"><summary class="{{ _cls }} tray-op-pill">{{ _sg | safe }} {{ 'added' if r.created else 'deleted' }} ({{ _v | length }} field{{ 's' if _v | length != 1 }})</summary><div class="tray-subtree-leaves">{% for lp, lv in _v | flatten_leaves %}<div class="tray-subtree-leaf"><code>{{ lp }}</code> <span class="{{ _cls }}">{{ lv | groupdigits if lv is not none else 'null' }}</span></div>{% endfor %}</div></details>{% else %}<span class="{{ _cls }} tray-op-pill">{{ _sg | safe }} {{ _v | groupdigits if _v is not none else 'null' }}</span>{% endif %}{% else %}{{ r.new | groupdigits if r.new is not none else 'null' }}<small class="sp-sub">was {{ r.old | groupdigits if r.old is not none else 'null' }}</small>{% endif %}</td>
@@ -146,7 +146,7 @@
       <tr class="sp-group-head"><td colspan="5">{% if working_dirty %}Staged / saved version vs the live chip{% else %}Here vs the live chip{% endif %} ({{ staged_rows | length }})</td></tr>
       {% for r in staged_rows %}
       <tr class="sp-row sp-row-staged" data-path="{{ r.path }}">
-        <td class="sp-path"><code title="{{ r.path }}">{{ r.path }}</code></td>
+        <td class="sp-path"><code title="{{ r.path }}">{{ r.path.split('.') | map('e') | join('.<wbr>' | safe) }}</code></td>
         <td class="sp-val">{{ r.here | groupdigits if r.here is not none else '—' }}</td>
         <td class="sp-val">{{ r.live | groupdigits if r.live is not none else '—' }}</td>
         <td class="sp-delta">{{ delta_pct(r.here, r.live) }}</td>

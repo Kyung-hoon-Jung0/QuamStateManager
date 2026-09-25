@@ -343,3 +343,47 @@ class TestNoBanners:
         if r.returncode == 2 and "jsdom not installed" in (r.stderr or ""):
             pytest.skip("jsdom not installed")
         assert r.returncode == 0, (r.stdout or "")[-3000:] + (r.stderr or "")[-2000:]
+
+
+
+class TestTheDiffTableNeverSplitsAToken:
+    """QA fix6 (reviewer P1): the sync panel's diff table wrapped a 13-digit
+    frequency mid-number ("3,400,810,798.207" / "0656") and a path mid-word
+    ("qubits.q2.xy.RF_fre" / "quency") at 1366 AND 1920 px. The layout is
+    real-Chrome verified; these pin the three rules that make it."""
+
+    _CSS = (Path(__file__).resolve().parent.parent / "quam_state_manager" / "web"
+            / "static" / "style.css")
+
+    def _rule(self, css, selector):
+        import re as _re
+        m = _re.search(r"(?m)^" + _re.escape(selector) + r"\s*\{([^}]*)\}", css)
+        assert m, selector
+        return m.group(1)
+
+    def test_the_table_sizes_its_columns_by_content(self):
+        css = self._CSS.read_text(encoding="utf-8")
+        body = self._rule(css, ".sp-diff")
+        assert "table-layout: auto" in body and "fixed" not in body, body
+        assert ".sp-diff th:nth-child(" not in css, \
+            "percent column widths lock a value column to a share of the panel"
+
+    def test_values_never_wrap_and_nothing_breaks_anywhere(self):
+        css = self._CSS.read_text(encoding="utf-8")
+        assert "white-space: nowrap" in self._rule(css, ".sp-diff .sp-val, .sp-diff .sp-delta")
+        for sel in (".sp-diff td", ".sp-diff code"):
+            body = self._rule(css, sel)
+            assert "anywhere" not in body and "break-all" not in body, (sel, body)
+
+    def test_a_path_breaks_only_at_its_dots(self, tmp_path):
+        from flask import render_template
+        app = create_app(testing=True, instance_path=str(tmp_path / "_inst"))
+        with app.test_request_context():
+            html = render_template(
+                "_state_review.html", sync={"state": "mine", "sig": "s"},
+                mine_rows=[{"path": "qubits.q2.xy.RF_<b>freq", "new": 3400900000.0,
+                            "old": 3400810798.2070656, "live": 3400810798.2070656,
+                            "index": 0, "gid": "", "created": False, "deleted": False}],
+                unsaved=1, change_sig="x")
+        assert "qubits.<wbr>q2.<wbr>xy.<wbr>RF_&lt;b&gt;freq</code>" in html, \
+            "the path is split at dots only, and each segment stays escaped"

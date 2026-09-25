@@ -13862,14 +13862,22 @@ html.topbar-hidden #pending-tray > :not(.state-status-badge):not(.auto-sync-wrap
 .sp-note { font-size: .8rem; margin: 0 0 .4rem; padding: .3rem .5rem; border-radius: 6px;
     background: color-mix(in srgb, var(--pico-muted-border-color) 35%, transparent); }
 .sp-note-warn { background: color-mix(in srgb, #ef4444 14%, transparent); }
-.sp-diff { width: 100%; border-collapse: collapse; font-size: .76rem; margin: 0 0 .5rem; table-layout: fixed; }
+/* QA fix6 (reviewer P1): a value is never split mid-digit and a path breaks only
+   at its dots. The old fixed layout (20% per value column of a 600 px panel) had
+   no way to ask for room, so a 13-digit frequency wrapped mid-number
+   ("3,400,810,798.207" / "0656") and a path mid-word ("RF_fre" / "quency").
+   Auto layout + nowrap values give each column its real minimum, and
+   _placeSyncPanel widens the panel to the table's natural width (capped). */
+.sp-diff { width: 100%; border-collapse: collapse; font-size: .76rem; margin: 0 0 .5rem; table-layout: auto; }
 .sp-diff th { text-align: left; font-weight: 600; color: var(--pico-muted-color);
-    padding: .15rem .3rem; border-bottom: 1px solid var(--pico-muted-border-color); font-size: .72rem; }
-.sp-diff th:nth-child(1) { width: 27%; } .sp-diff th:nth-child(2), .sp-diff th:nth-child(3) { width: 20%; }
-.sp-diff th:nth-child(4) { width: 12%; } .sp-diff th:nth-child(5) { width: 21%; }
+    padding: .15rem .3rem; border-bottom: 1px solid var(--pico-muted-border-color); font-size: .72rem;
+    white-space: nowrap; }
 .sp-diff td { padding: .22rem .3rem; vertical-align: top; border-bottom: 1px solid color-mix(in srgb, var(--pico-muted-border-color) 55%, transparent);
-    overflow-wrap: anywhere; }
-.sp-diff code { font-size: .95em; background: none; padding: 0; overflow-wrap: anywhere; }
+    overflow-wrap: normal; word-break: normal; }
+.sp-diff code { font-size: .95em; background: none; padding: 0; overflow-wrap: normal; word-break: normal; }
+.sp-diff .sp-val, .sp-diff .sp-delta { white-space: nowrap; }
+.sp-diff .sp-val .sp-sub { white-space: normal; }   /* "was X": wraps at its spaces, X never splits */
+.state-review.sync-panel .sp-live-input { max-width: none; field-sizing: content; min-width: 6ch; }
 .sp-group-head td { font-weight: 700; font-size: .74rem; padding-top: .4rem;
     background: color-mix(in srgb, var(--pico-muted-border-color) 30%, transparent); }
 .sp-group-collide .sp-group-head td { color: #ef4444; }
