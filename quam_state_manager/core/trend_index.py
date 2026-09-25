@@ -56,6 +56,7 @@ import gzip
 import hashlib
 import json
 import secrets
+import threading
 import weakref
 from datetime import datetime
 from typing import Any, Callable, Iterable, Sequence
@@ -514,8 +515,60 @@ def series_blob(selection: Selection, experiment: str, qubit: str | None, *,
         gz, raw_len = _encode(payload)
         return Keyed(SeriesBlob(gz, v, raw_len), token)
 
+    _remember(selection, experiment, qubit)
     return SERIES_MEMO.get(slot, _data_token(selection, experiment, gens, trunc0), compute,
                            wait_s=WAIT_S, forbid_held=forbid)
+
+
+# ---------------------------------------------------------------------------
+# the run-watch tick (core/run_ingest): bring what was asked for up to date
+# BEFORE the next request. Never needed for correctness -- every memo above is
+# validated on read -- only for the "after a new run <= 30 ms" budget.
+# ---------------------------------------------------------------------------
+
+#: The series views asked for most recently: (folder keys, weak store refs,
+#: experiment, qubit). Weak, so a store that left the route's LRU is not kept
+#: alive by this list.
+_RECENT_MAX = 8
+_recent: list[tuple[tuple[str, ...], tuple[Any, ...], str, str | None]] = []
+_recent_lock = threading.Lock()
+
+
+def _remember(selection: Selection, experiment: str, qubit: str | None) -> None:
+    fks = tuple(fk for fk, _s in selection)
+    try:
+        refs = tuple(weakref.ref(s) for _fk, s in selection)
+    except TypeError:
+        return
+    with _recent_lock:
+        for i, (f, r, e, q) in enumerate(_recent):
+            if f == fks and e == experiment and q == qubit and                     all(a() is b for a, (_fk, b) in zip(r, selection)):
+                _recent.pop(i)
+                break
+        _recent.append((fks, refs, experiment, qubit))
+        del _recent[:-_RECENT_MAX]
+
+
+def refresh_store(store: Any) -> dict[str, int]:
+    """After *store* rescanned: bring every Trends index already built for it
+    to the store's current generation (a new newest run is the append path)
+    and re-encode the recently asked series views that read it. Call without
+    the store's locks held (the memos assert it)."""
+    seq = store.instance_seq
+    exps = sorted({dict(slot).get("index_exp") for slot in INDEX_MEMO.slots()
+                   if dict(slot).get("store") == seq} - {None})
+    for exp in exps:
+        experiment_index(store, exp)
+    with _recent_lock:
+        views = list(_recent)
+    n_series = 0
+    for fks, refs, exp, qubit in views:
+        stores = [r() for r in refs]
+        if any(s is None for s in stores) or not any(s is store for s in stores):
+            continue
+        series_blob(list(zip(fks, stores)), exp, qubit)
+        n_series += 1
+    return {"indexes": len(exps), "series": n_series}
 
 
 def cold_series_payload(selection: Selection, experiment: str, qubit: str | None) -> dict:

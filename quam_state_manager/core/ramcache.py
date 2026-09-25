@@ -349,6 +349,12 @@ class KeyedMemo:
                 _TOTAL[0] -= e.nbytes
             return len(victims)
 
+    def slots(self) -> list[Any]:
+        """The slots held right now (a warm job decides what to refresh from
+        them; a request must go through :meth:`get`)."""
+        with _LOCK:
+            return list(self._entries)
+
     def clear(self) -> None:
         self.drop_where(lambda _s: True)
 

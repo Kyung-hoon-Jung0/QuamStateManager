@@ -25578,9 +25578,42 @@ def _run_watcher():
     if w is None:
         w = run_watch.RunWatcher()
         app.config["run_watcher"] = w
+        # design ram_design.md §3 "Run-watch tick": the store rescan and the
+        # Trends index append happen HERE, off the request path, so the first
+        # Trends request after a run lands is served from RAM (P3's
+        # <= 30 ms). Only speed rides on it: every memo is validated on read.
+        w.add_listener(_run_ingest(app).kick)
     if not w.running:
         w.start()
     return w
+
+
+def _run_ingest(app):
+    """The one RunIngest per app: resolves a watched root to the store the
+    routes already hold (never creates one -- a root nobody opened has no
+    RAM index to refresh)."""
+    from quam_state_manager.core import run_ingest
+    ing = app.config.get("run_ingest")
+    if ing is not None:
+        return ing
+
+    def resolve(roots: list[str]) -> list[DatasetStore]:
+        want = {Path(r) for r in roots}
+        found: list[DatasetStore] = []
+        lru = app.config.get("dataset_store_lru") or {}
+        for folder, store in list(lru.items()):
+            if Path(folder) in want and store not in found:
+                found.append(store)
+        injected = app.config.get("dataset_store")
+        inj_path = getattr(injected, "folder_path", None)
+        if inj_path is not None and Path(inj_path) in want and injected not in found:
+            found.append(injected)
+        return found
+
+    ing = run_ingest.RunIngest(resolve)
+    app.config["run_ingest"] = ing
+    ing.start()
+    return ing
 
 
 @bp.route("/datasets/wait")
@@ -27078,8 +27111,12 @@ def trends_param_diff():
 def debug_ram():
     """Read-only: what the RAM caches hold (design §1.3) -- the budget, the
     total (and the sum of every entry's size, which must equal it), and per
-    memo entries / bytes / hits / misses / compute ms."""
-    return jsonify(_ramcache.snapshot())
+    memo entries / bytes / hits / misses / compute ms -- plus the run-watch
+    ingest worker's counters (passes, last pass ms)."""
+    snap = _ramcache.snapshot()
+    ing = current_app.config.get("run_ingest")
+    snap["run_ingest"] = ing.stats() if ing is not None else None
+    return jsonify(snap)
 
 
 @bp.route("/dataset/<uid>/note", methods=["POST"])
