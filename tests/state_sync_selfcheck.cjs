@@ -65,7 +65,9 @@ window.ResizeObserver = global.ResizeObserver;
 
 const ajaxCalls = [], triggerCalls = [];
 window.htmx = {
-    ajax: function (method, url, opts) { ajaxCalls.push({ method, url, opts }); return Promise.resolve(); },
+    ajax: function (method, url, opts) { ajaxCalls.push({ method, url, opts });
+        if (window.__ajaxHook) window.__ajaxHook(method, url, opts);
+        return Promise.resolve(); },
     trigger: function (elt, name) { triggerCalls.push({ elt: elt, name: name }); },
     process: function () {},
 };
@@ -294,6 +296,102 @@ window.eval(fs.readFileSync(path.join(STATIC, 'app.js'), 'utf8'));
     window.overwriteLiveWithWorking();
     await flush(30);
     ok(lastConfirm && !/crash/.test(lastConfirm), 'a clean chip adds no clause');
+
+    /* QA fix6 (reviewer P1 follow-up): Keep mine is the ONLY forced door left
+       after the one-control redesign, and force=1 answers the staleness
+       question only. Its push must DECLARE the set its screen showed, so the
+       unseen-edit gate (docs/120/179) can stop another window's edit riding
+       along -- read from the panel it sits in, else from the tray. */
+    const _km = function () {
+        return ajaxCalls.filter(function (c) {
+            return c.method === 'POST' && c.url.indexOf('/state/apply-to-live') === 0; });
+    };
+    const _tray = document.getElementById('pending-tray');
+    _tray.setAttribute('data-change-count', '1');
+    _tray.setAttribute('data-change-sig', 'traysig1');
+    ajaxCalls.length = 0; lastConfirm = ''; confirmAnswer = true;
+    preflightQueue = [{ ok: true, live_changes: 1, unsaved: 0, reversible: true, run_active: false }];
+    window.overwriteLiveWithWorking();
+    await flush(30);
+    const _p1 = _km()[0];
+    ok(_p1 && /force=1/.test(_p1.url) && /seen_changes=1/.test(_p1.url)
+       && /seen_sig=traysig1/.test(_p1.url) && !/ack_unseen/.test(_p1.url),
+       'Keep mine declares the set its screen showed (got: ' + (_p1 && _p1.url) + ')');
+
+    /* from the panel: the set the PANEL rendered wins over the tray's */
+    const _panel = document.createElement('div');
+    _panel.className = 'state-review sync-panel';
+    _panel.setAttribute('data-change-count', '2');
+    _panel.setAttribute('data-change-sig', 'panelsig2');
+    const _kbtn = document.createElement('button');
+    _kbtn.className = 'sp-keep';
+    _kbtn.innerHTML = '<span class="sp-lost"></span>';
+    _panel.appendChild(_kbtn);
+    document.body.appendChild(_panel);
+    ajaxCalls.length = 0;
+    preflightQueue = [{ ok: true, live_changes: 1, unsaved: 0, reversible: true, run_active: false }];
+    window.overwriteLiveWithWorking(_kbtn);          // first press: preflight + arm
+    await flush(30);
+    ok(_km().length === 0, 'the panel press arms first, never writes on one press');
+    window.overwriteLiveWithWorking(_kbtn);          // second press writes
+    await flush(30);
+    const _p2 = _km()[0];
+    ok(_p2 && /seen_changes=2/.test(_p2.url) && /seen_sig=panelsig2/.test(_p2.url),
+       'Keep mine from the panel declares the PANEL\'s set (got: ' + (_p2 && _p2.url) + ')');
+    _panel.remove();
+
+    /* the gate refuses: never the generic error toast, never "✓ Written";
+       the confirm names the other window's edit; OK re-pushes with
+       ack_unseen=1 (not a second force token), Cancel writes nothing. */
+    const _refuse = function (method, url) {
+        if (method !== 'POST' || url.indexOf('/state/apply-to-live?force=1') !== 0
+            || /ack_unseen=1/.test(url)) return;
+        const det = { xhr: { status: 409, responseText: JSON.stringify({
+                          status: 'unseen_changes', have: 2, seen: 1,
+                          paths: ['qubits.q3.T1'],
+                          message: '1 edit(s) were made in another State Manager window' }) },
+                      target: _tray, requestConfig: { path: url },
+                      shouldSwap: true, isError: true };
+        document.dispatchEvent(new window.CustomEvent('htmx:beforeSwap', { detail: det }));
+        ok(det.shouldSwap === false && det.isError === false,
+           'the refusal is not swapped over the tray and raises no generic error toast');
+    };
+    const _kmFlashes = [];
+    const _realSC = window.SyncControl;
+    window.SyncControl = { busy: function () { return 1; }, unbusy: function () {},
+                           flash: function (m) { _kmFlashes.push(String(m)); } };
+    window.__ajaxHook = _refuse;
+    ajaxCalls.length = 0; lastConfirm = ''; confirmAnswer = true;
+    preflightQueue = [{ ok: true, live_changes: 1, unsaved: 0, reversible: true, run_active: false }];
+    // the first confirm is the Keep-mine question; the second the unseen one
+    window.overwriteLiveWithWorking();
+    await flush(60);
+    ok(/qubits\.q3\.T1/.test(lastConfirm) && /another State Manager window/.test(lastConfirm),
+       'the unseen refusal asks, naming the other window\'s edit (got: ' + lastConfirm + ')');
+    const _p3 = _km();
+    ok(_p3.length === 2 && /ack_unseen=1/.test(_p3[1].url) && /seen_sig=traysig1/.test(_p3[1].url),
+       'OK re-pushes with ack_unseen=1, still declaring the set (got: '
+       + _p3.map(function (c) { return c.url; }).join(' | ') + ')');
+    ok(_kmFlashes.length === 1,
+       'only the acknowledged push says "Written" -- the refused one never did (got: '
+       + _kmFlashes.join(' | ') + ')');
+
+    ajaxCalls.length = 0; _kmFlashes.length = 0;
+    let _nConfirm = 0;
+    const _realConfirm = window.confirm;
+    window.confirm = function (m) { _nConfirm += 1; lastConfirm = String(m); return _nConfirm === 1; };
+    preflightQueue = [{ ok: true, live_changes: 1, unsaved: 0, reversible: true, run_active: false }];
+    window.overwriteLiveWithWorking();
+    await flush(60);
+    ok(_nConfirm === 2 && _km().length === 1,
+       'Cancel on the unseen question writes nothing more (confirms ' + _nConfirm
+       + ', pushes ' + _km().length + ')');
+    ok(_kmFlashes.length === 0, 'and never says "Written" (got: ' + _kmFlashes.join(' | ') + ')');
+    window.confirm = _realConfirm;
+    window.__ajaxHook = null;
+    window.SyncControl = _realSC;
+    _tray.removeAttribute('data-change-count');
+    _tray.removeAttribute('data-change-sig');
 
     /* ...and the ⚡ pull-and-apply result line names them too */
     const _toasts = [], _realToast = window.showToast;

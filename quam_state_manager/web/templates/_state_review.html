@@ -28,7 +28,11 @@
 {%- set _ne = external_total | default(0) -%}
 {%- set _nm = unsaved -%}
 <div class="state-review sync-panel" data-sync-state="{{ _st }}" data-sync-sig="{{ _sv.sig | default('') }}"
-     data-conflicts="{{ _nc }}">
+     data-conflicts="{{ _nc }}"
+     {#- docs/120/179: the change set THIS panel showed. Keep mine's forced push
+         declares it, so force=1 (the staleness answer) never doubles as consent
+         to another window's edits -- one token never collapses two gates. #}
+     data-change-count="{{ _nm }}" data-change-sig="{{ change_sig | default('') }}">
   <div class="state-review-head sp-head">
     <div class="sp-title-wrap">
       <h3 class="sp-title">{% if _archive %}Run{% if _ai and _ai.run_label %} {{ _ai.run_label }}{% endif %} archive · read-only

@@ -4159,6 +4159,9 @@ window.overwriteLiveWithWorking = function (btn) {
         _keepMinePush(ready);
         return;
     }
+    // docs/120/179: what THIS screen showed, read when the user looked at it
+    // (the first press) -- the panel the button sits in, else the tray.
+    var _seenView = _keepMineSeen(btn);
     fetch("/state/overwrite-live/preflight", { headers: { "HX-Request": "true" } })
         .then(function (r) { return r.json(); })
         .then(function (d) {
@@ -4166,6 +4169,7 @@ window.overwriteLiveWithWorking = function (btn) {
                 window.showToast((d && d.message) || "Cannot overwrite the live chip.", "error");
                 return;
             }
+            d._seen = _seenView;
             var lines = _keepMineLines(d);
             if (btn && window.SyncPanel) {
                 var n = d.live_changes;
@@ -4234,7 +4238,23 @@ function _keepMineLines(d) {
     }
     return lines;
 }
-function _keepMinePush(d) {
+/* The change set the pressing screen declared (docs/120/179). Keep mine is a
+ * FORCED push, and force=1 answers the staleness question only -- it must
+ * never double as consent to edits another window staged meanwhile (one
+ * token never collapses two gates). The one-control redesign routed the old
+ * conflict tray's declared force buttons through this door, which declared
+ * nothing, so the unseen-edit gate was off on it. */
+function _keepMineSeen(btn) {
+    var host = (btn && btn.closest && btn.closest(".sync-panel"))
+        || document.getElementById("pending-tray");
+    if (!host) return null;
+    var n = host.getAttribute("data-change-count");
+    var sig = host.getAttribute("data-change-sig");
+    if ((n === null || n === "") && !sig) return null;
+    return { n: n || "", sig: sig || "" };
+}
+function _keepMinePush(d, ackUnseen) {
+    d._unseenRefused = false;
     if (!window.htmx) {
         window.showToast("Open the sync panel and use “Apply to live”.", "info");
         return;
@@ -4246,21 +4266,66 @@ function _keepMinePush(d) {
     // server-side (keepMineReask below asks again with the new count)
     // instead of being overwritten unnamed. No hash (live unreadable
     // or missing) keeps the plain forced push.
+    window._keepMineInFlight = d;
     htmx.ajax("POST", "/state/apply-to-live?force=1"
-                  + (d.live_hash ? "&expect_live_hash=" + encodeURIComponent(d.live_hash) : ""),
+                  + (d.live_hash ? "&expect_live_hash=" + encodeURIComponent(d.live_hash) : "")
+                  + (d._seen ? "&seen_changes=" + encodeURIComponent(d._seen.n)
+                             + "&seen_sig=" + encodeURIComponent(d._seen.sig) : "")
+                  + (ackUnseen ? "&ack_unseen=1" : ""),
               { target: "#pending-tray", swap: "outerHTML" })
         .then(function () {
             var t = document.getElementById("pending-tray");
-            if (t && !t.classList.contains("pending-tray-conflict")) {
+            // a refusal by the unseen-edit gate wrote nothing: never say it did
+            if (t && !t.classList.contains("pending-tray-conflict") && !d._unseenRefused) {
                 window.closeReview();
                 if (window.SyncControl) window.SyncControl.flash("✓ Written to live · kept mine");
             }
         })
         .finally(function () {
             window._applyInFlight = false;
+            window._keepMineInFlight = null;
             if (window.SyncControl) window.SyncControl.unbusy(busy);
         });
 }
+/* The unseen-edit gate refused Keep mine's push (docs/120): another window
+ * staged edits this screen never showed. Never a dead end and never a bare
+ * error toast -- name them, and let one press write them too (ack_unseen=1,
+ * never a second force) or leave everything as it is. */
+document.addEventListener("htmx:beforeSwap", function (evt) {
+    var det = evt.detail;
+    if (!det || !det.xhr || det.xhr.status !== 409) return;
+    if (!det.target || det.target.id !== "pending-tray") return;
+    var path = (det.requestConfig && det.requestConfig.path) || "";
+    if (path.indexOf("/state/apply-to-live?force=1") !== 0) return;
+    var d = window._keepMineInFlight;
+    var data = null;
+    try { data = JSON.parse(det.xhr.responseText || ""); } catch (e) { return; }
+    if (!d || !data || data.status !== "unseen_changes") return;
+    d._unseenRefused = true;
+    det.shouldSwap = false;
+    det.isError = false;                   // no generic "didn't go through" toast
+    var refresh = function () {
+        if (window.htmx) window.htmx.ajax("GET", "/state/tray",
+                                          { target: "#pending-tray", swap: "outerHTML" });
+        if (window.openReview) { try { window.openReview({ force: true }); } catch (e) {} }
+    };
+    setTimeout(function () {
+        if (data.nothing_pending) {
+            if (window.showToast) window.showToast(data.message || "Nothing was written.", "warning");
+            refresh();
+            return;
+        }
+        var lines = (data.paths || []).slice(0, 6).join("\n  ");
+        if (window.confirm((data.message || "") + "\n\n  " + lines
+                + "\n\nOK = overwrite the live chip with those edits too."
+                + "\nCancel = write nothing; the panel will show them.")) {
+            _keepMinePush(d, true);
+        } else {
+            if (window.showToast) window.showToast("Nothing was written — the panel now shows those edits.", "info");
+            refresh();
+        }
+    }, 0);
+});
 /* QA correctness-r2-06: "↺ Revert this session" under an armed Auto-Sync push.
  * The revert stages the chip as it was when the session STARTED, and the armed
  * push writes that within a second -- so a value the session pulled from the
