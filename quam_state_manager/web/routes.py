@@ -18382,8 +18382,7 @@ def state_apply_to_live():
     # "revert last apply" means "put back what the chip held when I armed it"
     # (the user's own choice; per-change revert is the applied log's X). Taking
     # it once is also what stops a 10-minute session writing 200 full snapshots.
-    pre_apply_ts = (_auto or {}).get("pre_ts")
-    if not pre_apply_ts:
+    def _take_pre_apply_backup():
         try:
             _hm = _history()
             _pre = _hm.check_and_snapshot(
@@ -18391,11 +18390,26 @@ def state_apply_to_live():
                 defer_index=not current_app.config.get("TESTING"),
                 project=_scope_for(ctx["path"], ctx))
             if _pre is not None:
-                pre_apply_ts = _pre.timestamp
-            else:
-                pre_apply_ts = _hm.snapshot_ts_for_current_content(ctx["path"])
+                return _pre.timestamp
+            return _hm.snapshot_ts_for_current_content(ctx["path"])
         except Exception:
             logger.warning("Pre-apply snapshot failed", exc_info=True)
+            return None
+
+    pre_apply_ts = (_auto or {}).get("pre_ts")
+    # QA F5: an UNFORCED push onto a live chip that moved since the sync point
+    # never writes -- apply_to_live refuses it (StaleLiveError) or finds live
+    # already holding the payload (the docs/116 adopt). The backup used to be
+    # taken first anyway, so every refused Apply recorded a BACKUP version for
+    # a write that never happened. Take it only once the write is certain:
+    # before the call when live has not moved (the common case, unchanged),
+    # after it for the adopt (so Revert last apply arms exactly as before).
+    _backup_deferred = False
+    if not pre_apply_ts:
+        if not force and working_copy.live_changed(wc):
+            _backup_deferred = True
+        else:
+            pre_apply_ts = _take_pre_apply_backup()
         if _auto is not None and pre_apply_ts:
             _auto["pre_ts"] = pre_apply_ts
 
@@ -18422,8 +18436,9 @@ def state_apply_to_live():
         resp = make_response(
             _conflict_tray(ctx, store, staged_conflict=bool(ctx.get("working_dirty")) and (
                 bool(ctx.get("staged_base")) or not ctx.get("pending_reapply")))
-            + "\n" + f'<div id="status-bar" hx-swap-oob="innerHTML">{_err}</div>'
-            + _diverged_oob())
+            + "\n" + f'<div id="status-bar" hx-swap-oob="innerHTML">{_err}</div>')
+        # (no banner OOB: the conflict tray above already offers the three
+        # choices -- a banner beside it only repeated them)
         resp.headers["HX-Trigger"] = "liveDriftChanged"
         return resp
 
@@ -18434,6 +18449,17 @@ def state_apply_to_live():
                 _before_tree = _live_merged_tree(wc)
             working_copy.apply_to_live(wc, force=force)
     except working_copy.StaleLiveError:
+        # QA F5: the refusal is a verdict about the LIVE chip, so it lives in
+        # ctx like every other one -- the conflict fragment alone was the only
+        # record, and any re-render (a reload, another page) dropped it. From
+        # the content hash, not the mtime: a save that changed nothing must
+        # not raise a banner that nothing would ever lower (raise-only while
+        # the working copy holds edits).
+        try:
+            if working_copy.live_diverged_now(wc):
+                ctx["live_diverged"] = True
+        except Exception:  # noqa: BLE001 — an advisory flag, never a failure
+            logger.debug("post-conflict divergence verdict failed", exc_info=True)
         if request.headers.get("Accept", "").startswith("application/json"):
             # docs/172: a machine caller must not read the conflict fragment
             # as success -- nothing was written (apply_to_live raises first).
@@ -18531,6 +18557,12 @@ def state_apply_to_live():
             return _auto_disarm_response(ctx, _body, "error", status=500)
         return _body, 500
 
+    if _backup_deferred and not pre_apply_ts:
+        # QA F5: the deferred case landed -- the adopt (live already held the
+        # payload), so the "pre-apply" content is what live holds now
+        pre_apply_ts = _take_pre_apply_backup()
+        if _auto is not None and pre_apply_ts:
+            _auto["pre_ts"] = pre_apply_ts
     _set_working_dirty(False, ctx)
     _auto_apply_landed(ctx)          # docs/187 R1 -- one helper, both doors
     if _auto is not None:

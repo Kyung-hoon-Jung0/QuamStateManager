@@ -254,3 +254,65 @@ class TestNoBackupNoOverwrite:
         (env["live"] / "wiring.json").unlink()
         d = env["client"].get("/state/overwrite-live/preflight").get_json()
         assert d["reversible"] is False and d["live_read"] == "missing"
+
+
+class TestARefusedApplyWritesNoVersion:
+    """QA F5: an Apply refused by the staleness gate (a staged snapshot, then
+    an outside write) recorded a BACKUP version -- byte-identical to the live
+    chip -- for a write that never happened, because the pre-apply backup was
+    taken before the gate. And the conflict lived only in the returned
+    fragment, never in ctx."""
+
+    @staticmethod
+    def _versions(env) -> set[str]:
+        root = env["tmp"] / "_inst" / "history"
+        return {f"{d.parent.name}/{d.name}" for d in root.glob("*/*")
+                if d.is_dir() and re.match(r"^\d{8}_\d{6}", d.name)}
+
+    def _stage_then_drift(self, env):
+        c = env["client"]
+        c.post("/api/history/snapshot")
+        ts = sorted(v.split("/")[1] for v in self._versions(env))[0]
+        assert c.post(f"/state-history/{ts}/stage").status_code == 200
+        _rewrite_live_out_of_band(env, off=0.5)
+
+    def test_a_refused_apply_records_no_backup(self, env):
+        self._stage_then_drift(env)
+        before = self._versions(env)
+        live_before = (env["live"] / "state.json").read_bytes()
+        r = env["client"].post("/state/apply-to-live")
+        body = r.get_data(as_text=True)
+        assert "tray-force-btn" in body, "the conflict tray answers"
+        assert (env["live"] / "state.json").read_bytes() == live_before
+        assert self._versions(env) == before, \
+            "a refused Apply recorded a version for a write that never happened"
+
+    def test_the_conflict_is_kept_in_ctx(self, env):
+        self._stage_then_drift(env)
+        env["client"].post("/state/apply-to-live")
+        ctx = next(iter(env["app"].config["contexts"].values()))
+        assert ctx.get("live_diverged") is True
+
+    def test_the_forced_push_after_it_still_takes_the_backup(self, env):
+        """Keep mine after the refusal: the write is certain, so the backup
+        (holding the outside value) is taken and Revert is armed."""
+        self._stage_then_drift(env)
+        env["client"].post("/state/apply-to-live")
+        before = self._versions(env)
+        assert env["client"].post("/state/apply-to-live?force=1").status_code == 200
+        ctx = next(iter(env["app"].config["contexts"].values()))
+        assert ctx.get("last_apply", {}).get("pre_ts")
+        assert self._versions(env) - before, "the pre-push backup was taken"
+
+    def test_an_adopt_still_arms_revert(self, env):
+        """docs/116: live already holds the payload -> no write, and Revert
+        last apply is armed exactly as before (the backup is taken after)."""
+        c = env["client"]
+        c.post("/field/edit-batch", json={"updates": [
+            {"dot_path": "qubits.qA1.z.joint_offset", "value": "0.5"}], "expect_chip": ""})
+        c.post("/save")
+        _rewrite_live_out_of_band(env, off=0.5)     # live == the payload now
+        r = c.post("/state/apply-to-live")
+        assert r.status_code == 200 and "tray-force-btn" not in r.get_data(as_text=True)
+        ctx = next(iter(env["app"].config["contexts"].values()))
+        assert ctx.get("last_apply", {}).get("pre_ts")
