@@ -78,6 +78,7 @@ from quam_state_manager.core import (
 )
 from quam_state_manager.core import compare as compare_engine
 from quam_state_manager.core import qdac as qdac_mod
+from quam_state_manager.core import ramcache as _ramcache
 from quam_state_manager.core.dataset import DatasetStore
 from quam_state_manager.core.differ import Differ
 from quam_state_manager.core.experiment_data import ExperimentContext, load_experiment_context
@@ -26950,6 +26951,14 @@ def trends_data():
                            qubit=qubit,
                            param_diff_rows=param_diff_rows,
                            labels=trend_labels)
+
+
+@bp.route("/debug/ram")
+def debug_ram():
+    """Read-only: what the RAM caches hold (design §1.3) -- the budget, the
+    total (and the sum of every entry's size, which must equal it), and per
+    memo entries / bytes / hits / misses / compute ms."""
+    return jsonify(_ramcache.snapshot())
 
 
 @bp.route("/dataset/<uid>/note", methods=["POST"])
