@@ -545,6 +545,31 @@ function nodeAt(container, p) {
     leaf.querySelector('.tree-type-close').click();
   }
 
+  // C14b (jsontree-r2-23 re-verify): every panel the tree opens is handed to
+  //      the Config Manual so an open manual moves off its controls.
+  {
+    const win = makeWorld(function (url) {
+      if (url.indexOf('/schema/missing-keys') === 0) return jsonResp({ ok: true, warm: false, missing: [] });
+      return jsonResp({ ok: true, values: {}, expected: {} });
+    });
+    const handed = [];
+    win.configManualAvoid = function (el) { handed.push(el.className); return false; };
+    const c = win.document.getElementById('tree');
+    expandAll(c);
+    const ex = nodeAt(c, 'qubits.qA1.extras');
+    hover(win, ex);
+    ex.querySelector('.tree-act-add').click();
+    await tick();
+    ok(handed.length === 1 && handed[0] === 'tree-crud-panel',
+      'C14b: the + panel is handed to the manual (' + JSON.stringify(handed) + ')');
+    const leaf = nodeAt(c, 'qubits.qA1.f_01');
+    hover(win, leaf);
+    leaf.querySelector('.tree-act-type').click();
+    await tick(20);
+    ok(handed.length === 2 && /tree-type-panel/.test(handed[1]),
+      'C14b: ...and so is the type picker (' + JSON.stringify(handed) + ')');
+  }
+
   // C15 (jsontree-r2-24): a key with "." is refused in the panel, by name;
   //      a plain key travels on its own (`key=`) for the route's backstop.
   {

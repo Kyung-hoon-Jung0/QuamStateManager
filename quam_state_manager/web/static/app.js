@@ -10548,6 +10548,7 @@ window.clearDetailPanelSearch = function(btnEl) {
             '<span class="tree-crud-err"></span>';
         var row = node.querySelector(":scope > .tree-row");
         row.after(panel);
+        if (window.configManualAvoid) window.configManualAvoid(panel);   // jsontree-r2-23
         var keyIn = panel.querySelector(".tree-crud-key");
         var typeSel = panel.querySelector(".tree-crud-type");
         var valIn = panel.querySelector(".tree-crud-val");
@@ -10744,6 +10745,7 @@ window.clearDetailPanelSearch = function(btnEl) {
             '<button type="button" class="btn-sm outline tree-type-close">Close</button>' +
             '<span class="tree-crud-err"></span>';
         row.after(panel);
+        if (window.configManualAvoid) window.configManualAvoid(panel);   // jsontree-r2-23
         var head = panel.querySelector(".tree-type-head");
         var err = panel.querySelector(".tree-crud-err");
         fetch("/field/peek?dot_path=" + encodeURIComponent(m.path))

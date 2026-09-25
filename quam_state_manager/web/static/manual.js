@@ -428,6 +428,56 @@ window.ConfigManual = (function () {
         p.style.top = Math.round(top) + 'px';
     }
 
+    /* jsontree-r2-23 (re-verify): the manual opens beside the row's ?, and a
+       ＋ / ⚙ / ✕ pressed on that row then opens its panel UNDER the manual --
+       the panel's Add button sat inside the manual's rect and a click on it
+       landed on the manual (only Enter worked). The tree hands each panel it
+       opens to this, and an open manual that covers the panel's controls
+       moves off them: right of them, else left, else into the taller free
+       band above/below with its height fitted to that band. A manual that
+       covers nothing stays where it is (a dragged one included). */
+    function _rectOf(els) {
+        var r = null;
+        for (var i = 0; i < els.length; i++) {
+            var b = els[i].getBoundingClientRect();
+            if (!b.width && !b.height) continue;
+            if (!r) r = { left: b.left, top: b.top, right: b.right, bottom: b.bottom };
+            else {
+                r.left = Math.min(r.left, b.left); r.top = Math.min(r.top, b.top);
+                r.right = Math.max(r.right, b.right); r.bottom = Math.max(r.bottom, b.bottom);
+            }
+        }
+        return r;
+    }
+    window.configManualAvoid = function (el) {
+        var p = pop();
+        if (!p || !isOpen() || !el || !el.getBoundingClientRect || !el.isConnected) return false;
+        var ctrls = el.querySelectorAll('input, select, textarea, button');
+        var r = _rectOf(ctrls.length ? ctrls : [el]);
+        if (!r) return false;
+        var m = p.getBoundingClientRect();
+        if (m.right <= r.left || m.left >= r.right || m.bottom <= r.top || m.top >= r.bottom) return false;
+        var w = p.offsetWidth || m.width, h = p.offsetHeight || m.height, pad = 6, gap = 8;
+        var vw = window.innerWidth || 0, vh = window.innerHeight || 0;
+        var left = null, top = null, height = null;
+        if (r.right + gap + w <= vw - pad) left = r.right + gap;
+        else if (r.left - gap - w >= pad) left = r.left - gap - w;
+        if (left !== null) {
+            top = Math.max(pad, Math.min(m.top, vh - h - pad));
+        } else {
+            var above = r.top - gap - pad, below = vh - pad - (r.bottom + gap);
+            left = Math.max(pad, Math.min(m.left, vw - w - pad));
+            if (above >= below) { height = Math.min(h, above); top = r.top - gap - height; }
+            else { height = Math.min(h, below); top = r.bottom + gap; }
+        }
+        p.classList.add('pop-anchored');
+        p.style.right = 'auto'; p.style.bottom = 'auto';
+        p.style.left = Math.round(left) + 'px';
+        p.style.top = Math.round(top) + 'px';
+        if (height !== null && height < h) p.style.height = Math.round(height) + 'px';
+        return true;
+    };
+
     /* Deep link: {q} pre-fills the search, {path} opens the "this place" view. */
     window.openConfigManual = function (opts) {
         opts = opts || {};

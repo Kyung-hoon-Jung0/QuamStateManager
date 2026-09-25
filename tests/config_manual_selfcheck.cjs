@@ -403,6 +403,49 @@ function besideAndLivePins(done) {
         q.getBoundingClientRect = () => ({ left: 900, right: 916, top: 200, bottom: 216, width: 16, height: 16 });
         window.openConfigManual({ path: 'qubits.q1.z.joint_offset', trigger: q });
         ok(parseInt(pop.style.left, 10) + 660 <= 900, 'r2-23: near the right edge it opens left of the ? instead (left=' + pop.style.left + ')');
+        // (iii) re-verify: the row's + then opened its add panel UNDER the
+        // manual -- the Add button sat inside the manual's rect (5Q rig:
+        // Add 909-952 x, manual 709-1269) and a click landed on the manual.
+        // A panel handed to configManualAvoid moves an open manual off it.
+        {
+            const vw0 = window.innerWidth;
+            Object.defineProperty(window, 'innerWidth', { value: 1600, configurable: true });
+            Object.defineProperty(window, 'innerHeight', { value: 950, configurable: true });
+            Object.defineProperty(pop, 'offsetWidth', { value: 560, configurable: true });
+            Object.defineProperty(pop, 'offsetHeight', { value: 720, configurable: true });
+            const panel = d.createElement('div');
+            panel.innerHTML = '<input id="av-key"><button type="button" id="av-ok">Add</button><button type="button" id="av-cancel">Cancel</button>';
+            d.body.appendChild(panel);
+            d.getElementById('av-key').getBoundingClientRect = () => ({ left: 411, right: 597, top: 555, bottom: 577, width: 186, height: 22 });
+            d.getElementById('av-ok').getBoundingClientRect = () => ({ left: 909, right: 952, top: 552, bottom: 581, width: 43, height: 29 });
+            d.getElementById('av-cancel').getBoundingClientRect = () => ({ left: 959, right: 1024, top: 552, bottom: 581, width: 65, height: 29 });
+            const where = { left: 709, top: 224 };
+            const prevRect = pop.getBoundingClientRect;
+            pop.getBoundingClientRect = () => ({ left: where.left, top: where.top, right: where.left + 560, bottom: where.top + 720, width: 560, height: 720 });
+            ok(window.configManualAvoid && window.configManualAvoid(panel) === true,
+               'r2-23 re-verify: a manual covering the add panel is moved');
+            const nl = parseInt(pop.style.left, 10);
+            ok(nl >= 1024 + 8 && nl + 560 <= 1600 - 6,
+               'r2-23 re-verify: ...right of the panel controls, inside the viewport (left=' + pop.style.left + ')');
+            // control: a manual that covers nothing stays where it is
+            where.left = nl; pop.style.left = nl + 'px';
+            ok(window.configManualAvoid(panel) === false && pop.style.left === nl + 'px',
+               'r2-23 re-verify control: a manual clear of the panel is not moved');
+            // no room either side: it takes the taller band and fits its height to it
+            Object.defineProperty(window, 'innerWidth', { value: 1100, configurable: true });
+            where.left = 500; where.top = 100;
+            pop.style.height = '';
+            ok(window.configManualAvoid(panel) === true, 'r2-23 re-verify: narrow window -- still moved');
+            const t = parseInt(pop.style.top, 10), h = parseInt(pop.style.height || '720', 10);
+            ok(t + h <= 552 - 8 || t >= 581 + 8,
+               'r2-23 re-verify: ...above or below the controls, never over them (top=' + pop.style.top + ' height=' + pop.style.height + ')');
+            pop.style.height = '';
+            pop.getBoundingClientRect = prevRect;
+            panel.remove();
+            Object.defineProperty(window, 'innerWidth', { value: vw0, configurable: true });
+            Object.defineProperty(pop, 'offsetWidth', { value: 660, configurable: true });
+            Object.defineProperty(pop, 'offsetHeight', { value: 707, configurable: true });
+        }
         // (ii) the node view follows an edit
         setTimeout(function () {
             ok(/Keys you could add \(1\)/.test(body().textContent), 'r2-23 setup: independent_offset is addable');
