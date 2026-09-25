@@ -110,6 +110,7 @@ from quam_state_manager.core.pointer_resolver import (
 )
 from quam_state_manager.core.pulse_index import PulseIndex
 from quam_state_manager.core.query import QueryEngine
+from quam_state_manager.core import query as _query_mod
 from quam_state_manager.core.saver import Saver
 from quam_state_manager.core.scanner import Workspace
 from quam_state_manager.core.search_index import SearchIndex
@@ -10626,7 +10627,7 @@ def chip_status_report():
         couplers=[p for p in pairs if p.get("has_coupler")],
         topo_nodes=topo_nodes,
         topo_edges=topo_edges,
-        gate_params=_report_gate_param_rows(pairs),
+        gate_params=_report_gate_param_rows(pairs, store),
         cal=cal,
         qdac_qubits=[q for q in qubits if q.get("has_qdac")],
         xy_freq=xy_freq,
@@ -10640,7 +10641,7 @@ _REPORT_GATE_FIELDS = ("amplitude", "coupler_amplitude", "length", "flat_length"
                        "phase_shift_target")
 
 
-def _report_gate_param_rows(pairs: list[dict]) -> list[dict]:
+def _report_gate_param_rows(pairs: list[dict], store=None) -> list[dict]:
     """One row per (pair, CZ-shaped gate) carrying that gate's pulse parameters.
 
     The gate NAMES are discovered from the flat pair dict itself -- `get_pair`
@@ -10668,6 +10669,15 @@ def _report_gate_param_rows(pairs: list[dict]) -> list[dict]:
             row: dict = {"pair": pair.get("id"), "gate": gate}
             for field in _REPORT_GATE_FIELDS:
                 row[field] = pair.get(f"{gate}_{field}")
+            # QA F-13 (remainder): a length stored as the quam alias
+            # "#./inferred_(total_)length" has no JSON value -- the report is a
+            # customer document, so it prints the NUMBER quam computes, or '-'
+            # (None) when SM cannot compute it (a lab's own pulse class). The
+            # pointer string itself is never printed.
+            ln = row.get("length")
+            if isinstance(ln, str) and ln.startswith("#"):
+                row["length"] = (_query_mod.gate_flux_length(
+                    store, pair.get("id"), gate) if store is not None else None)
             rows.append(row)
     return rows
 

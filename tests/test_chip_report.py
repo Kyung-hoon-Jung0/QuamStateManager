@@ -473,3 +473,80 @@ class TestXyFrequenciesAreNumbers:
         assert rf == 4895431254.26
         assert abs(if_ - 195431254.26) < 1e-3
 
+
+
+def _inferred_len_chip(folder: Path) -> Path:
+    """A pair whose gate pulses store ``length`` as the quam alias -- one by
+    reference (the customer's 5Q layout), one inline, one of a lab's own
+    class SM has no formula for."""
+    folder.mkdir(parents=True, exist_ok=True)
+    ft = {"__class__": "quam.components.pulses._FlatTopGaussianPulse",
+          "length": "#./inferred_total_length", "amplitude": 0.4,
+          "flat_length": 52, "smoothing_length": 20,
+          "post_zero_padding_length": 20}
+    (folder / "state.json").write_text(json.dumps({
+        "qubits": {"q1": {"id": "q1", "z": {"operations": {"cz_ft": ft}}},
+                   "q2": {"id": "q2"}},
+        "qubit_pairs": {"q1-q2": {
+            "id": "q1-q2", "qubit_control": "#/qubits/q1",
+            "qubit_target": "#/qubits/q2",
+            "macros": {
+                "cz_flattop": {"flux_pulse_qubit": "#/qubits/q1/z/operations/cz_ft",
+                               "phase_shift_control": 0.1,
+                               "phase_shift_target": 0.2},
+                "cz_erf": {"flux_pulse_qubit": {
+                    "__class__": "quam_builder.architecture.superconducting."
+                                 "components.pulses.ErfSquarePulse",
+                    "length": "#./inferred_length", "amplitude": 0.4,
+                    "flat_length": 100, "risetime_samples": 16,
+                    "post_zero_padding_length": 20},
+                    "phase_shift_control": 0.0, "phase_shift_target": 0.0},
+                "cz_lab": {"flux_pulse_qubit": {
+                    "__class__": "lab_config.two_flux_gate.SNZTwoFluxPulse",
+                    "length": "#./inferred_length", "amplitude": 0.3,
+                    "flat_length": 78, "padding": 4},
+                    "phase_shift_control": 0.0, "phase_shift_target": 0.0},
+            }}},
+        "active_qubit_names": ["q1", "q2"],
+    }), encoding="utf-8")
+    (folder / "wiring.json").write_text(json.dumps(
+        {"network": {"host": "1.2.3.4"}, "wiring": {"qubits": {}}}),
+        encoding="utf-8")
+    return folder
+
+
+class TestGateLengthsAreNumbers:
+    """QA F-13 remainder: the 2Q gate table's Length column printed
+    ``#./inferred_total_length`` / ``#./inferred_length`` for every gate whose
+    pulse stores the quam alias. The report prints quam's number, or '-'."""
+
+    @pytest.fixture
+    def body(self, tmp_path):
+        _inferred_len_chip(tmp_path / "quam_state")
+        app = create_app(testing=True, instance_path=str(tmp_path / "_len"))
+        c = app.test_client()
+        c.post("/load", data={"folder": str(tmp_path / "quam_state")})
+        return c.get("/chip-status/report").get_data(as_text=True)
+
+    @staticmethod
+    def _gate_cells(body, gate):
+        import re
+        i = body.index("<table", body.index("2Q gate parameters"))
+        table = body[i:body.index("</table>", i)]
+        j = table.index(f">{gate}</td>")
+        row = table[table.rindex("<tr>", 0, j):table.index("</tr>", j)]
+        return [re.sub(r"<[^>]+>", "", c).strip()
+                for c in re.findall(r"<td[^>]*>(.*?)</td>", row, flags=re.S)]
+
+    def test_no_pointer_reaches_the_gate_table(self, body):
+        i = body.index("<table", body.index("2Q gate parameters"))
+        assert "#./inferred" not in body[i:body.index("</table>", i)]
+
+    def test_a_referenced_flattop_is_flat_plus_smoothing_plus_padding(self, body):
+        assert self._gate_cells(body, "cz_flattop")[4] == "92"
+
+    def test_an_inline_erf_pulse_is_ceil4_of_its_parts(self, body):
+        assert self._gate_cells(body, "cz_erf")[4] == "136"
+
+    def test_a_lab_class_sm_has_no_formula_for_prints_a_dash(self, body):
+        assert self._gate_cells(body, "cz_lab")[4] == "-"

@@ -1709,6 +1709,47 @@ def _deref_pulse_ref(
     return {}, path_tuple
 
 
+def gate_flux_length(store: QuamStore, pair_id: str, gate_name: str) -> int | None:
+    """The sample count of a pair gate's ``flux_pulse_qubit``, or None.
+
+    A modern chip stores such a pulse's ``length`` as the quam alias
+    ``"#./inferred_length"`` / ``"#./inferred_total_length"`` -- a Python
+    property with no JSON value, so ``get_pair`` hands back the pointer string.
+    This computes the NUMBER through the one re-implementation SM already has
+    of those properties (``pulse_catalog.resolve_length``, the same call the
+    Pulses page's LENGTH column makes), after following the macro's pulse
+    reference exactly as ``get_pair`` does. A class the catalog does not know
+    (a lab's own pulse class) or any unreadable input gives None -- never a
+    guess. (QA F-13: the printable report printed the pointer.)
+    """
+    from quam_state_manager.core import pulse_catalog  # light, pure module
+
+    pair = (store.merged.get("qubit_pairs") or {}).get(pair_id)
+    if not isinstance(pair, dict):
+        return None
+    macro = (pair.get("macros") or {}).get(gate_name)
+    if not isinstance(macro, dict):
+        return None
+    base = ("qubit_pairs", pair_id, "macros", gate_name, "flux_pulse_qubit")
+    body, body_base = _deref_pulse_ref(
+        store, macro.get("flux_pulse_qubit") or {}, base)
+    if not body:
+        return None
+    spec = pulse_catalog.infer_spec(body, context_slot="flux_pulse_qubit")
+    if spec is None:
+        return None
+    params: dict[str, Any] = {}
+    for k, v in body.items():
+        if k == "__class__":
+            continue
+        params[k] = _resolve(store, v, body_base + (k,))
+    try:
+        n = pulse_catalog.resolve_length(spec, params)
+    except Exception:  # noqa: BLE001 -- a cell degrades, never the caller
+        return None
+    return n if isinstance(n, int) and n > 0 else None
+
+
 def _pair_qubit_ref(store: QuamStore, raw: Any, path_tuple: tuple[str, ...]) -> Any:
     """Resolve a pair's ``qubit_control``/``qubit_target`` to a bare qubit id.
 

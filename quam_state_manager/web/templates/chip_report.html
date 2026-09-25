@@ -461,8 +461,8 @@
     <h2>2Q gate parameters ({{ gate_params | length }})</h2>
     {% if gate_params %}
     <p class="rep-cap">One row per gate variant the pair carries, calibrated or
-       not. A length stored as a JSON pointer (an inferred total) is printed as
-       the pointer, which is what the file holds.</p>
+       not. A length the file stores as an inferred total is computed the way
+       quam computes it; &lsquo;-&rsquo; where SM does not know the pulse class.</p>
     <table class="rep-wide">
         <thead><tr><th>Pair</th><th>Gate</th><th>Amplitude</th><th>Coupler amp</th>
             <th>Length (ns)</th><th>Flat length (ns)</th><th>Smoothing (ns)</th>
