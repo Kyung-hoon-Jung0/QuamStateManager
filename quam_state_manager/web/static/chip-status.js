@@ -5307,7 +5307,7 @@ window.ChipTrends = (function () {
         // "metrics=" and store it, and aborting the build request for that
         // left the section empty for good. The build request is already
         // asking with the remembered selection; let it land.
-        if (!host.querySelector('.topo-trends-controls')) return;
+        if (!host.querySelector('.topo-trends-controls, .topo-trend-chip, .topo-trend-box')) return;
         if (htmx.trigger) htmx.trigger('#topo-trends', 'htmx:abort');
         var loading = host.querySelector('.topo-trends-loading');
         if (!loading) {

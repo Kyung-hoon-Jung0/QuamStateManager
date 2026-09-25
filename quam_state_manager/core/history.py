@@ -3685,6 +3685,11 @@ class HistoryManager:
                 return
             if time.monotonic() < self._leaf_rebuild_failed.get(key, 0.0):
                 return
+        # A capture's own deferred insert is NOT a gap to rebuild: wait for it
+        # (bounded, one snapshot's ingest) exactly as before, so the common
+        # "one snapshot behind" case never schedules a whole-index rebuild
+        # (tests/test_deferred_index_join.py).
+        self._join_deferred_index()
         try:
             if self._leaf_repair_gate(path) is None:
                 return
