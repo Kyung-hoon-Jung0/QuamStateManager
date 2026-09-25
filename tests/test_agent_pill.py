@@ -326,3 +326,43 @@ class TestTheAgentClockIsItsOwnCursor:
         d = client.get("/datasets/wait?since=-1&aseq=0").get_json()
         assert d["changed"] is False and d["agent_changed"] is False
         assert d["agent_seq"] == 3, "but it does hand over the cursor to start from"
+
+
+class TestAStoppedSessionIsNotThinking:
+    """QA agents round: after Stop now killed SM's own session, the pill and the
+    Agent strip said "thinking" for the event window's whole 15 minutes."""
+
+    def test_stop_now_ends_thinking_and_a_later_event_revives_it(self, client, app):
+        from quam_state_manager.core import agent_session
+        with app.app_context():
+            from quam_state_manager.web import agent_api
+            chip = agent_api._chip_key()
+            inst = app.instance_path
+        _ev(client, hook_event_name="PostToolUse", tool_name="mcp__sm__state_get", tool_use_id="a", summary="{}",
+            session_id="S1")
+        agent_session.save(inst, chip, session_id="S1", owner="human", backend="claude", pid=None)
+        assert _now(client)["state"] == "between", "precondition: a live-looking session reads as thinking"
+        agent_session.request_stop(inst, chip, who="human", mode="now")
+        _ev(client, hook_event_name="Stop", stopped=True, summary="stopped by a human", session_id="S1")
+        d = _now(client)
+        assert d["state"] != "between" and d["alive"] is False, d
+        assert d["session"]["stopped"] is True
+        time.sleep(0.01)
+        _ev(client, hook_event_name="PostToolUse", tool_name="mcp__sm__state_get", tool_use_id="b", summary="{}",
+            session_id="S1")
+        assert _now(client)["state"] == "between", "a sign of life after the stop still counts (a resumed session)"
+
+    def test_a_stop_of_another_session_does_not_silence_this_one(self, client, app):
+        from quam_state_manager.core import agent_session
+        with app.app_context():
+            from quam_state_manager.web import agent_api
+            chip = agent_api._chip_key()
+            inst = app.instance_path
+        _ev(client, hook_event_name="PostToolUse", tool_name="mcp__sm__state_get", tool_use_id="a", summary="{}",
+            session_id="TERMINAL")
+        time.sleep(0.01)
+        # SM's own (different) session is stopped AFTER the terminal session's last event
+        agent_session.save(inst, chip, session_id="OLD", owner="human", backend="claude", pid=None)
+        agent_session.request_stop(inst, chip, who="human", mode="now")
+        d = _now(client)
+        assert d["session_id"] == "TERMINAL" and d["state"] == "between", d

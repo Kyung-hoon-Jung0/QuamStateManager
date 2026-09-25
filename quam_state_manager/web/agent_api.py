@@ -919,6 +919,18 @@ def _now_state() -> dict:
             open_tools.clear()
             last_stop = e
     alive = _alive(es, now) or agent_session.alive(sess)
+    # A session a person STOPPED is not "thinking". The event window above is
+    # a guess for sessions SM cannot see into; for its own session SM KNOWS:
+    # the stop is on record and the process is gone. Measured before this: the
+    # pill and the strip said "thinking · by_claude" for the window's whole
+    # 15 min after Stop now had killed the agent (QA agents round). A sign of
+    # life after the stop (a resumed session) still counts.
+    stop = (sess or {}).get("agent_stop") or {}
+    if (alive and stop.get("at") and str((sess or {}).get("session_id") or "") == str(sid)
+            and not agent_session.alive(sess)):
+        stop_at = float(stop["at"])
+        if not any(float(e.get("ts") or 0) > stop_at and e.get("hook_event_name") != "Stop" for e in es):
+            alive = False
     running = None
     if open_tools and alive:
         e = sorted(open_tools.values(), key=lambda x: float(x.get("ts") or 0))[-1]
