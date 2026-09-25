@@ -43,7 +43,7 @@
                    placeholder="…or any parameter: x180 amplitude, interleaved, coupler offset…"
                    value="{{ extra }}" autocomplete="off"
                    oninput="ChipTrends.suggest(this.value)"
-                   onkeydown="if(event.key==='Enter'){ChipTrends.setPath(this.value);}">
+                   onkeydown="if(event.key==='Enter'){event.preventDefault();ChipTrends.enter(this.value);}">
             <div class="topo-trend-suggest" id="topo-trend-suggest" hidden></div>
         </span>
         {% if snapshots is defined %}
@@ -86,6 +86,13 @@
     <p class="muted topo-trend-trim">{{ trim_note }}</p>
     {% endif %}
 
+    {% if index_updating %}
+    {# Re-fetched by ChipTrends with the CURRENT selection, and only when the
+       user has not asked for anything newer since (docs/208 D1: an hx-get of
+       this fragment's own URL aborted the user's badge press and brought
+       the old selection back). #}
+    <p class="muted topo-trends-updating" data-trends-updating="1">History index updating ({{ snapshots }} snapshots)…</p>
+    {% endif %}
     {% if not charts %}
     <p class="muted">Pick a metric above.</p>
     {% endif %}

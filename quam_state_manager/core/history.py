@@ -19,6 +19,7 @@ import shutil
 import sqlite3
 import threading
 import time
+import zlib
 from collections import OrderedDict
 from collections.abc import Callable
 from dataclasses import asdict, dataclass, fields
@@ -888,6 +889,11 @@ class HistoryManager:
         # and start a full rebuild while the deferred insert was still running.
         self._deferred_index_threads: list[threading.Thread] = []
         self._deferred_index_lock = threading.Lock()
+        self._leaf_rebuild_lock = threading.Lock()
+        self._leaf_rebuild_threads: dict[str, threading.Thread] = {}
+        # index path -> monotonic time before which a FAILED background
+        # repair is not retried (see _ensure_leaf_index_fresh).
+        self._leaf_rebuild_failed: dict[str, float] = {}
         self._store_cache: OrderedDict[tuple[str, str], QuamStore] = OrderedDict()
         # Hashes of (state+wiring) per chip dir, lazily populated on first access.
         # Used to dedup snapshots whose content matches one already on disk.
@@ -900,6 +906,8 @@ class HistoryManager:
         self._content_ts_cache: dict[str, tuple[object, dict[str, str]]] = {}
         # history_seq_for's last-seen chip-dir mtimes (docs/132)
         self._hist_seq_seen: dict[str, int] = {}
+        # hist dir -> (its mtime_ns, the seq of its snapshot-dir NAMES)
+        self._hist_seq_names: dict[str, tuple[int, int]] = {}
         # history_seq_for's TTL memo of resolved chip dirs (see its docstring)
         self._hist_seq_dir_memo: dict[str, tuple[Path, float]] = {}
         # docs/155 10h — the background sidecar verifier: last sweep start and
@@ -3634,6 +3642,11 @@ class HistoryManager:
         try:
             conn.execute("BEGIN IMMEDIATE")
             try:
+                # Another worker may have repaired it while we waited for the writer.
+                known = leaf_index.snapshot_timestamps(conn)
+                if not leaf_index.is_dirty(conn) and set(available) <= known:
+                    conn.execute("COMMIT")
+                    return {"snapshots": len(known), "rows": 0, "kept": 0}
                 res = leaf_index.rebuild(
                     conn, timestamps=available,
                     load=self._leaf_load_snapshot(hist_dir, meta_by_ts))
@@ -3649,7 +3662,106 @@ class HistoryManager:
         self._bump_chip_version(hist_dir)
         return res
 
+    _LEAF_REPAIR_RETRY_S = 60.0
+
     def _ensure_leaf_index_fresh(self, quam_state_path: Path) -> None:
+        """Schedule at most ONE background repair per chip and return at once.
+
+        A read never waits for a rebuild. Measured on a 1,590-snapshot chip
+        (docs/208): the first Trends read after the index went dirty rebuilt
+        the whole index INSIDE the request, 70.9 s and 72.3 s, and the page
+        showed only the loader. Readers keep the last committed index instead
+        (the file is WAL, so a reader never sees the rebuild's open write
+        transaction); ``rebuild_leaf_index`` re-checks under its write lock,
+        so a second queued rebuild is a no-op. A repair that did not leave
+        the index healthy is not retried for ``_LEAF_REPAIR_RETRY_S``, so a
+        chip whose rebuild keeps failing never turns every read (or the
+        Trends section's own re-fetch) into a new attempt.
+        """
+        path = Path(quam_state_path)
+        key = str(self._index_path(path))
+        with self._leaf_rebuild_lock:
+            if key in self._leaf_rebuild_threads:
+                return
+            if time.monotonic() < self._leaf_rebuild_failed.get(key, 0.0):
+                return
+        try:
+            if self._leaf_repair_gate(path) is None:
+                return
+        except sqlite3.Error:
+            logger.warning("Leaf index freshness check failed", exc_info=True)
+            return
+
+        def repair() -> None:
+            healthy = False
+            try:
+                self._repair_leaf_index_if_needed(path)
+                healthy = self._leaf_repair_gate(path) is None
+            except Exception:  # noqa: BLE001 - a daemon thread must not die loud
+                logger.warning("Background leaf rebuild failed", exc_info=True)
+            finally:
+                with self._leaf_rebuild_lock:
+                    self._leaf_rebuild_threads.pop(key, None)
+                    if healthy:
+                        self._leaf_rebuild_failed.pop(key, None)
+                    else:
+                        self._leaf_rebuild_failed[key] = (
+                            time.monotonic() + self._LEAF_REPAIR_RETRY_S)
+
+        with self._leaf_rebuild_lock:
+            if key in self._leaf_rebuild_threads:
+                return
+            worker = threading.Thread(target=repair, daemon=True,
+                                      name="leaf-history-rebuild")
+            self._leaf_rebuild_threads[key] = worker
+            worker.start()
+
+    def leaf_index_updating(self, quam_state_path: str | Path) -> bool:
+        """True while a background repair of this chip's index is running.
+
+        Deliberately NOT "the index is dirty or behind": a snapshot dir a
+        rebuild cannot absorb keeps the index behind forever, and a Trends
+        note that polls until the index is complete would then poll forever.
+        """
+        key = str(self._index_path(Path(quam_state_path)))
+        with self._leaf_rebuild_lock:
+            return key in self._leaf_rebuild_threads
+
+    def _leaf_repair_gate(self, quam_state_path: Path):
+        """``None`` when the index needs no repair, else ``(ingestible,
+        dirset_sig)``; ``ingestible`` is ``None`` for a dirty-triggered repair.
+        The decision half of :meth:`_repair_leaf_index_if_needed`, shared
+        with the scheduler above so both answer the same question."""
+        snapshots = self.list_snapshots(quam_state_path)
+        if not snapshots:
+            return None
+        if not self._index_path(quam_state_path).exists():
+            return None                      # nothing captured yet — no repair
+        conn = self._open_index(quam_state_path)
+        try:
+            if leaf_index.is_dirty(conn):
+                return (None, "")
+            if leaf_index.snapshot_count(conn) >= len(snapshots):
+                return None                  # steady state: two small reads
+            # Behind by count. Find WHAT is missing and whether a rebuild
+            # could actually ingest it.
+            known = leaf_index.snapshot_timestamps(conn)
+            hist_dir = self._history_dir(quam_state_path)
+            ingestible = sorted(
+                m.timestamp for m in snapshots
+                if m.timestamp not in known
+                and (hist_dir / m.timestamp / "state.json").exists())
+            if not ingestible:
+                return None                  # meta-only dirs: a rebuild cannot help
+            dirset_sig = _leaf_dirset_sig(snapshots)
+            if leaf_index.get_meta(conn, _LEAF_INGEST_FAILED_KEY) == dirset_sig:
+                return None                  # this dir set already failed — wait
+                                             # for it to change before retrying
+            return (ingestible, dirset_sig)
+        finally:
+            conn.close()
+
+    def _repair_leaf_index_if_needed(self, quam_state_path: Path) -> None:
         """Rebuild when dirty or behind. Cheap in the steady state: two small
         reads against a table that is ~10k rows on a real chip.
 
@@ -3675,38 +3787,10 @@ class HistoryManager:
         """
         try:
             self._join_deferred_index()
-            snapshots = self.list_snapshots(quam_state_path)
-            if not snapshots:
+            gate = self._leaf_repair_gate(quam_state_path)
+            if gate is None:
                 return
-            idx = self._index_path(quam_state_path)
-            if not idx.exists():
-                return                       # nothing captured yet — no repair
-            ingestible: list[str] | None = None
-            dirset_sig = ""
-            conn = self._open_index(quam_state_path)
-            try:
-                dirty = leaf_index.is_dirty(conn)
-                have = leaf_index.snapshot_count(conn)
-                if not dirty:
-                    if have >= len(snapshots):
-                        return               # steady state: two small reads
-                    # Behind by count. Find WHAT is missing and whether a
-                    # rebuild could actually ingest it.
-                    known = leaf_index.snapshot_timestamps(conn)
-                    hist_dir = self._history_dir(quam_state_path)
-                    ingestible = sorted(
-                        m.timestamp for m in snapshots
-                        if m.timestamp not in known
-                        and (hist_dir / m.timestamp / "state.json").exists())
-                    if not ingestible:
-                        return               # meta-only dirs: a rebuild cannot help
-                    dirset_sig = _leaf_dirset_sig(snapshots)
-                    if leaf_index.get_meta(
-                            conn, _LEAF_INGEST_FAILED_KEY) == dirset_sig:
-                        return               # this dir set already failed — wait
-                                             # for it to change before retrying
-            finally:
-                conn.close()
+            ingestible, dirset_sig = gate
             self.rebuild_leaf_index(quam_state_path)
             if ingestible is None:
                 return                       # dirty-triggered — count untouched
@@ -3747,7 +3831,7 @@ class HistoryManager:
 
     def leaf_field_series_many(
             self, quam_state_path: str | Path,
-            dot_paths: list[str]) -> dict[str, list[tuple]]:
+            dot_paths: list[str], *, hold_to_newest: bool = False) -> dict[str, list[tuple]]:
         """:meth:`leaf_field_series` for MANY paths over ONE connection.
 
         The per-path variant opens and closes its own SQLite connection, and
@@ -3756,6 +3840,11 @@ class HistoryManager:
         of its time in connect/close rather than in the query -- measured 458 ms
         for 20 qubits, of which the queries were a small fraction, and it scaled
         with QUBIT COUNT while being independent of history depth.
+
+        With hold_to_newest, append a numeric held endpoint at the newest
+        committed snapshot. Its seventh tuple field is the last change timestamp;
+        provenance fields are None because this is not a new measurement.
+        A disappearance (last value None) is never extended.
 
         Same semantics per path: a path this index must decline (a pointer
         somewhere in its history) is simply absent from the result, exactly as
@@ -3770,11 +3859,16 @@ class HistoryManager:
         except sqlite3.Error:
             return out
         try:
+            newest = conn.execute("SELECT MAX(ts) FROM leaf_snaps").fetchone()[0] if hold_to_newest else None
             for dp in dot_paths:
                 try:
                     if leaf_index.path_needs_scan(conn, dp):
                         continue
                     rows = leaf_index.series(conn, dp)
+                    if (rows and newest and newest > rows[-1][0]
+                            and isinstance(rows[-1][1], (int, float))):
+                        rows.append((newest, rows[-1][1], None, None, None, None,
+                                     rows[-1][0]))
                     if rows:
                         out[dp] = rows
                 except sqlite3.Error:
@@ -3932,6 +4026,13 @@ class HistoryManager:
         except sqlite3.Error:
             logger.debug("family grouping failed", exc_info=True)
             return []
+        finally:
+            conn.close()
+
+    def leaf_matching_paths(self, quam_state_path, pattern):
+        conn = self._open_index(Path(quam_state_path))
+        try:
+            return leaf_index.matching_paths(conn, pattern)
         finally:
             conn.close()
 
@@ -4785,11 +4886,38 @@ class HistoryManager:
             except OSError:
                 return 0
             self._hist_seq_dir_memo[key_src] = (hist_dir, now_t)
+        # The signal is the SET OF SNAPSHOT DIRS, not the dir's mtime (docs/208).
+        # The leaf/param index lives in this dir in WAL mode, and every read
+        # that opens and closes it creates and deletes index.sqlite-wal/-shm --
+        # which moves the dir mtime. Read as "another process captured
+        # something", that re-fetched an open Trends section every ~5 s,
+        # forever, mangling what the user was typing (measured on the rig).
+        # The mtime still gates the work: names are re-listed only when it
+        # moved, and a file coming or going never changes the answer.
         try:
-            seq = hist_dir.stat().st_mtime_ns
+            dir_mtime = hist_dir.stat().st_mtime_ns
         except OSError:
             return 0
         key = str(hist_dir)
+        memo = self._hist_seq_names.get(key)
+        # Racy-clean (the git index rule): a dir modified within the last 2 s
+        # may be modified again inside the SAME clock tick (Windows file times
+        # advance in ~1-16 ms steps), so an equal mtime proves nothing there
+        # and the names are re-listed. Measured: a snapshot dir created right
+        # after a -wal delete kept the old mtime and was missed.
+        if (memo is not None and memo[0] == dir_mtime
+                and time.time_ns() - dir_mtime > 2_000_000_000):
+            seq = memo[1]
+        else:
+            try:
+                names = sorted(e.name for e in os.scandir(hist_dir)
+                               if e.is_dir(follow_symlinks=False))
+            except OSError:
+                return 0
+            # >= 1 for an existing dir (0 means "no history dir" to callers)
+            seq = ((len(names) << 32)
+                   | zlib.crc32(chr(10).join(names).encode("utf-8"))) + 1
+            self._hist_seq_names[key] = (dir_mtime, seq)
         with self._lock:
             last = self._hist_seq_seen.get(key)
             if last != seq:
@@ -5642,6 +5770,8 @@ class HistoryManager:
         # Invalidate the snapshot list cache so newly added folders are seen
         with self._lock:
             self._snapshot_list_cache.pop(str(path.resolve()), None)
+
+        self._repair_leaf_index_if_needed(path)
 
         skipped_different_after_routing = sum(
             len(v) - other_chips[label_to_key.get(k, _sanitize_name(k))]["ingested"]

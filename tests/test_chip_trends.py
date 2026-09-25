@@ -271,7 +271,9 @@ class TestTheReviewFindings:
         from quam_state_manager.web import routes as R
         src = Path(R.__file__).read_text(encoding="utf-8")
         i = src.index("def _trend_series_leaf")
-        body = src[i:i + 2200]
+        # Bounded by the function's own marker, not a character count (the
+        # docs/208 wildcard fan-out made the body longer, not per-entity).
+        body = src[i:src.index("# Not entity-scoped", i) + len("# Not entity-scoped")]
         assert "leaf_field_series_many" in body
         # the FAN-OUT must be batched; the non-entity-scoped fallback below it
         # charts a single path and correctly still uses the singular form
@@ -471,7 +473,8 @@ class TestTheAxisSaysWhatItMeans:
             "the chart must ask the one shared axis rule"
         assert "tickformat: '~s'" not in src, \
             "the retired workaround must not come back"
-        assert "c.metric + (c.unit ? ' (' + c.unit + ')' : '')" in src
+        # docs/208: a wildcard family's title is its label; the unit rides on either
+        assert "+ (c.unit ? ' (' + c.unit + ')' : '')" in src
 
     def test_a_constant_series_is_not_drawn_against_zero(self):
         src = _P_read()

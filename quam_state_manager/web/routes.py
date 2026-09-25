@@ -11523,6 +11523,10 @@ def _trend_family_of(dot_path: str) -> tuple[str, str] | None:
     return None
 
 
+def _trend_is_num(v) -> bool:
+    return isinstance(v, (int, float))      # bool included, as before
+
+
 def _trend_series_leaf(hm, path: Path, dot_path: str, qubits: list[str],
                        pairs: list[str] | None = None) -> list[dict]:
     """Any numeric leaf, via the docs/83 change-point index.
@@ -11546,13 +11550,35 @@ def _trend_series_leaf(hm, path: Path, dot_path: str, qubits: list[str],
         by_e = {}
         for e in entities:
             by_e[".".join((scope, e, label))] = e
-        got = hm.leaf_field_series_many(path, list(by_e))
+        if "*" in label:
+            # A second wildcard (`qubit_pairs.*.macros.*.fidelity.InterleavedRB`,
+            # one IRB family across every CZ variant): one line per concrete
+            # path, named "<pair> · <what the extra wildcard stood for>".
+            _segs = dot_path.split(".")
+            _wild = [i for i, seg in enumerate(_segs) if seg == "*" and i > 1]
+            by_e = {}
+            for dp in hm.leaf_matching_paths(path, dot_path):
+                _parts = dp.split(".")
+                if _parts[1] in entities:
+                    by_e[dp] = _parts[1] + " · " + ".".join(
+                        _parts[i] for i in _wild)
+        # hold_to_newest: a value set once and never changed still has a
+        # duration — it is carried to the newest snapshot as a HELD point the
+        # chart draws hollow ("unchanged since …"), never as a new measurement.
+        got = hm.leaf_field_series_many(path, list(by_e), hold_to_newest=True)
         for dp, e in by_e.items():
-            pts = [(r[0], r[1]) for r in (got.get(dp) or [])
-                   if isinstance(r[1], (int, float))]
-            if pts:
-                out.append({"metric": label, "entity": e, "kind": kind,
-                            "points": pts})
+            rows = got.get(dp) or []
+            # A non-numeric row (the leaf disappeared, or held text) is a GAP,
+            # never dropped: dropping it would join the line straight through
+            # the time the value did not exist.
+            pts = [(r[0], r[1] if _trend_is_num(r[1]) else None) for r in rows]
+            if any(v is not None for _, v in pts):
+                ser = {"metric": label, "entity": e, "kind": kind,
+                       "points": pts}
+                held = {r[0]: r[6] for r in rows if len(r) > 6}
+                if held:
+                    ser["held"] = held
+                out.append(ser)
         return out
     # Not entity-scoped (a port, a top-level key) — one line, and the path
     # itself is the legend, because there is nothing to fan out over.
@@ -11572,6 +11598,7 @@ def _trend_series_leaf(hm, path: Path, dot_path: str, qubits: list[str],
 # any chip with more indexed paths than the pull: measured, a real chip's index
 # holds 9,793 paths of which 5,224 are pair-scoped. A cap on FAMILIES is a
 # display choice; a cap that silently changes a count is a wrong number.
+_TREND_IRB = "qubit_pairs.*.macros.*.fidelity.InterleavedRB"
 _TRENDS_MAX_FAMILIES = 8        # charted at once; see the trim note
 
 
@@ -11965,7 +11992,9 @@ def _trend_pair_labels(tails: list[str]) -> dict[str, str]:
         segs = {t: [s for s in t.split(".") if s] for t in ts}
         shared = set(segs[ts[0]]).intersection(*[set(segs[t]) for t in ts[1:]])
         for t in ts:
-            extra = [s for s in segs[t] if s not in shared]
+            # a wildcard segment is what the family SPANS, not a name
+            extra = [("all variants" if s == "*" else s)
+                     for s in segs[t] if s not in shared]
             out[t] = lbl + " · " + (".".join(extra) if extra else t)
     # ...and if a tail was a SUBSET of its rival's it has no distinguishing
     # segment at all, so the whole tail settles it.
@@ -12019,6 +12048,17 @@ def _trend_pair_chips(hm, path: Path, active: list[str]) -> tuple[list[dict], in
     except Exception:  # noqa: BLE001
         logger.debug("pair-family scan failed", exc_info=True)
         rows = []
+    irb = [f for f in rows if len(f["path"].split(".")) == 6
+           and f["path"].endswith(".fidelity.InterleavedRB")
+           and f["path"].split(".")[2] == "macros"]
+    if irb:
+        concrete = hm.leaf_matching_paths(path, _TREND_IRB)
+        rows = [f for f in rows if f not in irb] + [{
+            "path": _TREND_IRB, "label": "macros.*.fidelity.InterleavedRB",
+            "scope": "qubit_pairs", "n": len({p.split(".")[1] for p in concrete}),
+            "changes": sum(f.get("changes", 0) for f in irb)}]
+    rows.sort(key=lambda f: (not _is_fidelity_tail(f["label"]),
+                             f["path"] != _TREND_IRB))
     fams = [f for f in rows
             if f["scope"] == "qubit_pairs" and _is_2q_vocabulary(f["label"])]
     # What the Overview REPORTS comes before what was SET. Ranked by change
@@ -12273,7 +12313,7 @@ def topology_trends():
     # Default only on a BARE request. Turning every chip off is a choice, and
     # re-injecting the defaults over it would make the last chip un-turn-off-able
     # whenever a parameter path was also being charted.
-    if not sel and "metrics" not in request.args and not extra:
+    if not sel and "metrics" not in request.args and "paths" not in request.args and not extra:
         # The default has to be metrics this chip ACTUALLY HAS. Preferring the
         # coherence/fidelity trio looked right and opened empty on the real
         # 20-qubit chip, where T1/T2/gate_fidelity are null chip-wide while
@@ -12287,6 +12327,10 @@ def topology_trends():
                      "x180_amplitude", "readout_amplitude"]
         have = _trend_metrics_with_data(hm, path, curated)
         sel = [m for m in preferred if m in have][:3] or preferred[:3]
+        if any(c["path"] == _TREND_IRB for c in pair_chips):
+            extras.append(_TREND_IRB)
+            for c in pair_chips:
+                c["active"] = c["path"] in extras
     sel = [m for m in sel if m in curated][:8]
 
     series = _trend_series_curated(hm, path, sel) if sel else []
@@ -12335,7 +12379,7 @@ def topology_trends():
 
     def _chart(metric: str, kind: str, rows: list[dict], typed: str = "") -> dict:
         return {"metric": metric, "kind": kind, "series": rows,
-                "n_entities": len(rows), "unit": _trend_unit(metric),
+                "n_entities": len({r["entity"].split(" · ")[0] for r in rows}), "unit": _trend_unit(metric),
                 "label": _trend_pair_label(metric) if kind == "pair" else "",
                 "typed": typed}
 
@@ -12398,19 +12442,13 @@ def topology_trends():
         if c.get("kind") == "pair" and c["metric"] in _pair_labels:
             c["label"] = _pair_labels[c["metric"]]
 
-    # ONE POINT IS NOT A TREND. Measured through this route on a real 5-qubit
-    # chip: `qubit_pairs.*.mutual_flux_bias.0` and
-    # `qubit_pairs.*.macros.cz_bipolar.phase_shift_control` each return 4 series
-    # of exactly 1 point, all four at the same snapshot and all at 0.0 — and
-    # Plotly, handed that, auto-ranges x to a ~2 ms window and draws a time axis
-    # spanning two milliseconds. That reads as a broken plot, and it is worse
-    # than nothing: it IMPLIES a measurement over time that was never made. So
-    # the slot says what is true — the value exists, it just has not moved. The
-    # badge is never hidden for it: the family is real, and hiding it would
-    # answer a question the user did not ask.
+    # A value first seen at the newest snapshot has no duration to plot.
+    # Earlier constant values carry an explicit held endpoint and draw a line.
     for c in charts:
         rows = c.get("series") or []
-        if not rows or any(len(r.get("points") or []) > 1 for r in rows):
+        if not rows or any(
+                sum(1 for p in (r.get("points") or []) if p[1] is not None) > 1
+                for r in rows):
             continue
         c["series"] = []
         # Name it the way the TITLE above it names it, so the note is about
@@ -12424,7 +12462,7 @@ def topology_trends():
                  "qubit" if c.get("kind") == "qubit" else "entity")
         c["note"] = (f"One value recorded for {_what} on {_n} "
                      f"{_word}{'' if _n == 1 else 's'} — no trend yet. "
-                     "A second, different value draws the line.")
+                     "A later snapshot draws the line, including an unchanged value.")
 
     # Whatever was trimmed, the section SAYS it was trimmed. A cap that quietly
     # drops families is indistinguishable from a badge that does not work.
@@ -12460,12 +12498,18 @@ def topology_trends():
     # behind a handful of drawn ids — shipping the whole vocabulary made the
     # map 78% of the fragment for entries nothing could look up, and a typed
     # path that matched no series shipped the entire map for ZERO points.
+    # A leaf-tier read above scheduled a background repair if the index
+    # needed one (a curated-only render never touches the freshness gate —
+    # TestTheReadStaysOffTheIndexWriteLock); while it runs, the section says
+    # so and re-fetches itself (the note's own hx-trigger), and stops the
+    # moment the repair is over.
+    updating = hm.leaf_index_updating(path)
     charted = {str(p[0]) for c in charts for s in c["series"] for p in s["points"]}
     return render_template("_topo_trends.html", charts=charts, curated=curated,
                            selected=sel, extra=extra, no_chip=False,
                            metric_labels=metric_labels, pair_chips=pair_chips,
                            pair_chips_more=pair_chips_more,
-                           trim_note=trim_note,
+                           trim_note=trim_note, index_updating=updating,
                            snaps=_snapshot_provenance_map(hm, path, only=charted),
                            snapshots=len(hm.list_snapshots(path)))
 
