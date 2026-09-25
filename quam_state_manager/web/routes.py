@@ -22862,7 +22862,12 @@ def _topology_with_derived_rb(engine):
             return topo                      # nothing to enrich; skip the copy
         topo = copy.deepcopy(topo)           # get_topology's result is CACHED
 
-        stores = None
+        # docs/207: resolved from memory, not by an archive sweep per render.
+        # Run ids are unique only WITHIN a data folder, so the cache key carries
+        # the set of folders this chip reads from -- another chip's run #1477
+        # is never this chip's #1477.
+        stores = _active_dataset_stores(fast=True, rescan=False)
+        scope = tuple(sorted(str(e.get("path")) for e in stores))
         rescanned = False
 
         def _resolve_rb_run(load_id):
@@ -22872,13 +22877,11 @@ def _topology_with_derived_rb(engine):
             except (TypeError, ValueError):
                 return None
             with _RB_CACHE_LOCK:
-                cached = _RB_RUN_FOLDERS.get(rid)
+                cached = _RB_RUN_FOLDERS.get((scope, rid))
                 if cached is not None:
                     folder, expires = cached
                     if folder is not None or time.monotonic() < expires:
                         return folder
-                if stores is None:
-                    stores = _active_dataset_stores(fast=True, rescan=False)
                 folder = _rb_run_folder(rid, stores=stores)
                 if folder is None and not rescanned:
                     # Only a genuine RAM-index miss may sweep the archive,
@@ -22887,7 +22890,7 @@ def _topology_with_derived_rb(engine):
                     stores = _active_dataset_stores(fast=True)
                     folder = _rb_run_folder(rid, stores=stores)
                 folder = str(Path(folder).resolve()) if folder is not None else None
-                _rb_cache_put(_RB_RUN_FOLDERS, rid,
+                _rb_cache_put(_RB_RUN_FOLDERS, (scope, rid),
                               (folder, time.monotonic() + _RB_MISS_TTL_S))
                 return folder
 

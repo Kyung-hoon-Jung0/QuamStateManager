@@ -1,4 +1,4 @@
-﻿"""Chip Status RB renders must not sweep the archive or reread unchanged fits."""
+"""Chip Status RB renders must not sweep the archive or reread unchanged fits."""
 import copy
 import json
 import os
@@ -68,7 +68,8 @@ def test_second_render_neither_rescans_nor_reads_data(rb_render):
     assert r.render() == first
     r.rescans.assert_not_called()
     r.reader.assert_not_called()
-    r.active.assert_not_called()
+    # the store LIST may be read (rescan=False is the in-RAM index), never swept
+    assert all(c.kwargs.get("rescan") is False for c in r.active.call_args_list)
     assert r.plain == original
 
 
@@ -102,3 +103,40 @@ def test_unknown_ids_share_one_sweep_and_remember_misses(rb_render, monkeypatch)
     assert "derived_gate_fidelity" not in r.render()
     assert r.rescans.call_count == 2
     r.reader.assert_not_called()
+
+
+def test_run_ids_are_scoped_to_the_chips_folders(tmp_path, monkeypatch):
+    """docs/207: run ids are unique only within a data folder. Chip A's run #7
+    and chip B's run #7 are different runs; a cache keyed by the id alone
+    handed chip B the value derived for chip A."""
+    with routes._RB_CACHE_LOCK:
+        monkeypatch.setattr(routes, "_RB_RUN_FOLDERS", {})
+        monkeypatch.setattr(routes, "_RB_DERIVED_VALUES", {})
+
+    def make(root, value):
+        run = root / "2026-09-25" / "#7_standard_rb_120000"
+        run.mkdir(parents=True)
+        (run / "node.json").write_text(json.dumps({
+            "id": 7, "metadata": {"name": "standard_rb", "status": "successful"},
+            "created_at": "2026-09-25T12:00:00", "data": {}}), encoding="utf-8")
+        (run / "data.json").write_text(json.dumps({"fit_results": {"q1-2": {
+            "average_gate_fidelity": value, "average_gates_per_clifford": 5.371}}}),
+            encoding="utf-8")
+        return DatasetStore(root)
+
+    a, b = make(tmp_path / "chipA", 0.99), make(tmp_path / "chipB", 0.95)
+    current = [a]
+    monkeypatch.setattr(routes, "_active_dataset_stores",
+                        lambda *, fast=False, rescan=True: [{"path": str(current[0].folder_path), "store": current[0]}])
+    plain = {"edges": [{"pair_id": "q1-2", "gate_fidelities": [
+        {"level": "clifford", "load_id": 7, "value": 0.97}]}]}
+    engine = SimpleNamespace(get_topology=lambda: plain)
+
+    def render():
+        return routes._topology_with_derived_rb(engine)["edges"][0]["gate_fidelities"][0]
+
+    assert render()["derived_gate_fidelity"] == 0.99
+    current[0] = b
+    assert render()["derived_gate_fidelity"] == 0.95
+    current[0] = a
+    assert render()["derived_gate_fidelity"] == 0.99
