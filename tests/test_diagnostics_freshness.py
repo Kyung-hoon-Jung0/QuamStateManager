@@ -168,3 +168,23 @@ def test_a_passive_window_re_lints_after_a_foreign_edit():
         pytest.skip("jsdom not installed")
     assert r.returncode == 0, r.stdout[-3000:] + r.stderr[-3000:]
     assert "a foreign edit re-lints diagnostics once" in r.stdout, r.stdout[-3000:]
+
+
+def test_an_open_page_shows_the_live_diverged_banner():
+    """QA diagnostics-r2-11: the drift poll re-renders #live-diverged-slot when
+    its verdict and the slot disagree (tests/drift_banner_follow_selfcheck.cjs)."""
+    import shutil
+    import subprocess
+    from pathlib import Path
+
+    import pytest
+    if shutil.which("node") is None:
+        pytest.skip("node not available")
+    root = Path(__file__).resolve().parent.parent
+    r = subprocess.run(["node", str(root / "tests" / "drift_banner_follow_selfcheck.cjs")],
+                       capture_output=True, text=True, encoding="utf-8", errors="replace",
+                       cwd=str(root), timeout=300)
+    if "Cannot find module 'jsdom'" in (r.stderr or ""):
+        pytest.skip("jsdom not installed")
+    assert r.returncode == 0, r.stdout[-3000:] + r.stderr[-3000:]
+    assert "all checks passed" in r.stdout, r.stdout[-3000:]
