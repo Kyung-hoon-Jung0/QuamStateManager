@@ -80,20 +80,25 @@ window.WiringGrid = (function () {
     }
     return { cols: maxc + 1, rows: maxr + 1 };
   }
-  function zone() {
+  // The zone the user ASKED for (typed cols × rows), or the near-square default —
+  // WITHOUT the placed-extent floor. A preset re-places every qubit, so it lays
+  // out in this zone: flooring it at the OLD placement made "Grid 3 × 2" after a
+  // 6-wide chain lay out 6 wide again (QA generate-r2-16).
+  function requestedZone() {
     var s = S();
-    var z = s && s.topoZone, cols, rows;
-    if (z && z.cols && z.rows) { cols = z.cols; rows = z.rows; }   // explicit wins…
-    else {
-      // …otherwise a near-square default that comfortably holds the qubit count,
-      // recomputed each call (NOT cached) so it grows with the qubit count.
-      var n = ((spec() && spec().qubits) || []).length || 1;
-      var side = Math.max(3, Math.ceil(Math.sqrt(n)) + 1);
-      cols = side; rows = side;
-    }
+    var z = s && s.topoZone;
+    if (z && z.cols && z.rows) return { cols: z.cols, rows: z.rows };   // explicit wins…
+    // …otherwise a near-square default that comfortably holds the qubit count,
+    // recomputed each call (NOT cached) so it grows with the qubit count.
+    var n = ((spec() && spec().qubits) || []).length || 1;
+    var side = Math.max(3, Math.ceil(Math.sqrt(n)) + 1);
+    return { cols: side, rows: side };
+  }
+  function zone() {
+    var r = requestedZone();
     // Never smaller than the placed bounding box — keeps every stone on-board.
     var ext = placedExtent();
-    return { cols: Math.max(cols, ext.cols), rows: Math.max(rows, ext.rows) };
+    return { cols: Math.max(r.cols, ext.cols), rows: Math.max(r.rows, ext.rows) };
   }
   function setZone(cols, rows) {
     var s = S(); if (!s) return;
@@ -269,9 +274,15 @@ window.WiringGrid = (function () {
       // Persistent recovery affordance: stays until undone or superseded, so an
       // accidental delete is never a wizard restart.
       var last = _undoStack[_undoStack.length - 1];
-      el.innerHTML = esc(last.qid) + " deleted — " +
+      var html = esc(last.qid) + " deleted — " +
         '<button type="button" class="gen-topo-undo" ' +
         'onclick="WiringGrid.undoDelete()">Undo</button> <span class="muted">(or Ctrl+Z)</span>';
+      // Same row already showing: keep its button node, so a re-render between
+      // press and release cannot swallow the click (QA regenerate-r2-22).
+      if (el.getAttribute("data-undo-html") !== html || !el.querySelector(".gen-topo-undo")) {
+        el.innerHTML = html;
+        el.setAttribute("data-undo-html", html);
+      }
       el.className = "gen-topo-status gen-topo-status--undo";
     } else {
       el.textContent = "";
@@ -293,6 +304,14 @@ window.WiringGrid = (function () {
   function onDown(e) {
     var stone = e.target.closest && e.target.closest(".gen-topo-stone");
     if (stone) {
+      // preventDefault below keeps focus where it was, so a form field focused
+      // before the click (step 4 focuses the qubit count on entry) would still
+      // own the keyboard and eat the board's Del -- blanking the count, which
+      // then wipes every qubit. Blur it first, as a native click would.
+      var ae = document.activeElement, host = root();
+      if (ae && ae !== document.body && /^(INPUT|SELECT|TEXTAREA)$/.test(ae.tagName) &&
+          !(host && host.contains(ae)) && typeof ae.blur === "function") ae.blur();
+      if (!stone.isConnected) return;   // a dirty field's change may have rebuilt the board
       _drag = { qid: stone.dataset.qubit, startX: e.clientX, startY: e.clientY, moved: false };
       e.preventDefault();
     }
@@ -338,7 +357,10 @@ window.WiringGrid = (function () {
       if (_sel) { setCell(_sel, c.col, c.row); _sel = null; _armed = null; }
       else { var nx = nextUnplaced(); if (nx) setCell(nx, c.col, c.row); }
       commit("place");
-    } else { _armed = null; _sel = null; render(); }
+    } else if (_armed || _sel) { _armed = null; _sel = null; render(); }
+    // QA regenerate-r2-22: with nothing to clear, do NOT re-render -- this
+    // handler is page-wide, and render() rewrote the status row, replacing
+    // its Undo button between mouseup and click (the click never fired).
   }
 
   // Remove a qubit entirely (creates an id gap; the step-4 gate enforces a
@@ -451,7 +473,7 @@ window.WiringGrid = (function () {
   // EDGE topology is the point (chain=line, ring=cycle, star=hub, grid=4-NN).
 
   function layoutChain(qs) {        // snake fill + consecutive edges
-    var cols = Math.max(1, zone().cols), pos = {}, edges = [];
+    var cols = Math.max(1, requestedZone().cols), pos = {}, edges = [];
     qs.forEach(function (q, i) {
       var r = Math.floor(i / cols), inRow = i % cols;
       pos[q] = { col: (r % 2 === 0) ? inRow : (cols - 1 - inRow), row: r };
@@ -461,7 +483,7 @@ window.WiringGrid = (function () {
   }
 
   function layoutGrid(qs) {         // row-major fill + 4-adjacency edges
-    var cols = Math.max(1, zone().cols), pos = {}, byCell = {};
+    var cols = Math.max(1, requestedZone().cols), pos = {}, byCell = {};
     qs.forEach(function (q, i) { var c = i % cols, r = Math.floor(i / cols); pos[q] = { col: c, row: r }; byCell[c + ',' + r] = q; });
     var edges = [];
     qs.forEach(function (q) {
@@ -519,7 +541,7 @@ window.WiringGrid = (function () {
     if (!isFinite(minC)) return;
     var maxC = 0, maxR = 0;
     qs.forEach(function (q) { if (pos[q]) { pos[q] = { col: pos[q].col - minC, row: pos[q].row - minR }; if (pos[q].col > maxC) maxC = pos[q].col; if (pos[q].row > maxR) maxR = pos[q].row; } });
-    var z = zone();
+    var z = requestedZone();   // the new layout sizes the board, not the old one
     if (maxC + 1 > z.cols || maxR + 1 > z.rows) setZone(Math.max(z.cols, maxC + 1), Math.max(z.rows, maxR + 1));
     qs.forEach(function (q) { if (pos[q]) setCell(q, pos[q].col, pos[q].row); });
     var sp = spec(); if (sp) sp.qubit_pairs = edges.slice();

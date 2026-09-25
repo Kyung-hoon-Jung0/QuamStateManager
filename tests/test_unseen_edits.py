@@ -229,6 +229,24 @@ class TestABuildFailureSaysWhatToDo:
         assert "step" in out.lower(), out
         assert "re-allocate" in out.lower(), out
 
+    def test_the_step_numbers_name_the_real_steps(self):
+        """QA F6: the help said "controller/FEM in step 2" and "qubits ... in
+        step 3-4", but the wizard is 1 Environment, 2 Network, 3 Chassis,
+        4 Qubits, 5 Wiring (_generate.html) -- and pins live on step 5."""
+        from pathlib import Path
+        from quam_state_manager.core.config_generator import explain_build_error
+        nec = explain_build_error("NotEnoughChannelsException: x")
+        assert "controller/FEM in step 3" in nec, nec
+        assert "lines in step 4" in nec, nec
+        assert "step 2" not in nec and "3–4" not in nec, nec
+        cts = explain_build_error("ConstraintsTooStrictException: x")
+        assert "pinned port in step 5" in cts, cts
+        html = (Path(__file__).resolve().parent.parent / "quam_state_manager"
+                / "web" / "templates" / "_generate.html").read_text("utf-8")
+        for n, label in ((3, "Chassis"), (4, "Qubits"), (5, "Wiring")):
+            assert (f'<span class="gen-step-num">{n}</span>'
+                    f'<span class="gen-step-label">{label}</span>') in html
+
     def test_the_original_text_is_never_hidden(self):
         """A message that swallows the original makes the failure unreportable."""
         from quam_state_manager.core.config_generator import explain_build_error

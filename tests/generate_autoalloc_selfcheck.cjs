@@ -373,6 +373,290 @@ function statusText(win) {
       'A4c: a changed spec re-arms the failed-auto latch on its own');
   })();
 
+  // ── A4d (QA F7): a failed RE-allocation for a changed chip drops the old ──
+  // allocation (diagram, "✓ Wiring valid"), Next refuses with the reason, and
+  // a later success clears the stale error beside "Allocated.".
+  await (async function failedReallocDropsStale() {
+    let allocReply = { ok: true, result: { allocation: GOOD_ALLOC } };
+    const { win, log } = makeWorld([
+      { match: '/generate/envs', reply: { envs: [] } },
+      { match: '/generate/allocate', reply: () => allocReply }
+    ]);
+    const G = buildWizard(win);
+    G.state.env = 'C:/envs/test/python.exe';
+    G.goToStep(5);
+    await settle();
+    const issues = () => win.document.getElementById('gen-wiring-issues').textContent;
+    const msg = win.document.getElementById('gen-message');
+    ok(!!G.state.allocation && issues().indexOf('Wiring valid') >= 0,
+      'A4d: first allocation drawn + validated (got "' + issues() + '")');
+    G.goToStep(4);
+    setInput(win, win.document.getElementById('gen-qubit-count'), '6');
+    allocReply = { ok: false, error: 'NotEnoughChannelsException: cr line q2-3' };
+    G.goToStep(5);
+    await settle();
+    ok(allocCalls(log).length === 2, 'A4d: the changed chip auto-re-allocated');
+    ok(G.state.allocation === null, 'A4d: the failed re-allocation drops the stale allocation');
+    ok(diagramHost(win).textContent.indexOf('Run Auto-allocate') >= 0,
+      'A4d: the diagram falls back to the placeholder (got "' + diagramHost(win).textContent + '")');
+    ok(issues().indexOf('Wiring valid') < 0, 'A4d: no "✓ Wiring valid" for a failed chip');
+    ok(statusText(win).indexOf('NotEnoughChannels') >= 0,
+      'A4d: the reason sits at the button (got "' + statusText(win) + '")');
+    G.tryNext();
+    ok(G.state.step === 5, 'A4d: Next refuses while the allocation failed for this chip');
+    ok(!msg.hidden && msg.textContent.indexOf('Wiring allocation failed') >= 0 &&
+       msg.textContent.indexOf('NotEnoughChannels') >= 0,
+      'A4d: Next names the failure (got "' + msg.textContent + '")');
+    // a pin typed on the failing chip fails too: its row must not keep saying
+    // "re-allocating…" (there is no allocation left to re-render from)
+    const di = G.state.spec.lines.findIndex(l => l.element === 'q2' && l.line === 'drive');
+    const dp = win.document.querySelector('#gen-wiring-table tr[data-idx="' + di + '"] .gen-wiring-pin');
+    dp.value = '1/1/5';
+    dp.dispatchEvent(new win.Event('change', { bubbles: true }));
+    await settle();
+    const dcell = win.document.querySelector('#gen-wiring-table tr[data-idx="' + di + '"] .gen-wiring-alloc');
+    ok(allocCalls(log).length === 3 && dcell.textContent === '—',
+      'A4d: a failed pin re-allocation leaves no "re-allocating…" behind (got "' + dcell.textContent + '")');
+    // a manual success clears the old error beside "Allocated."
+    msg.hidden = false; msg.textContent = 'NotEnoughChannelsException: old';
+    allocReply = { ok: true, result: { allocation: GOOD_ALLOC } };
+    win.document.getElementById('gen-allocate-btn')
+      .dispatchEvent(new win.Event('click', { bubbles: true }));
+    await settle();
+    ok(statusText(win) === 'Allocated.' && msg.hidden,
+      'A4d: success clears the stale error (status "' + statusText(win) + '", msg "' + msg.textContent + '")');
+    G.tryNext();
+    ok(G.state.step === 6, 'A4d: Next proceeds once the allocation succeeded');
+    G.goToStep(5);
+    await settle();
+    // a manual re-press failure on an UNCHANGED chip keeps the good allocation
+    allocReply = { ok: false, error: 'transient' };
+    win.document.getElementById('gen-allocate-btn')
+      .dispatchEvent(new win.Event('click', { bubbles: true }));
+    await settle();
+    ok(!!G.state.allocation, 'A4d: an unchanged chip keeps its allocation on a transient failure');
+  })();
+
+  // ── A4e (QA generate-r2-12): fixing a QDAC channel clash re-arms the latch ─
+  // The latch keyed on topoSig, which holds only the QDAC qubit KEYS -- the
+  // clashing channel values, validated server-side, were invisible to it, so
+  // the fixed chip stayed latched (no retry) and Next kept the old reason.
+  await (async function qdacFixRearms() {
+    const { win, log } = makeWorld([
+      { match: '/generate/envs', reply: { envs: [] } },
+      { match: '/generate/allocate', reply: (e) => {
+          const qs = (e.body.spec.qdac || {}).qubits || {};
+          const seen = {};
+          for (const q of Object.keys(qs).sort()) {
+            const ch = qs[q].channel;
+            if (seen[ch]) return { ok: false, errors: ['qdac.qubits.' + q + '.channel: ' + ch +
+                                                      ' is already used by qubit ' + seen[ch]] };
+            seen[ch] = q;
+          }
+          return { ok: true, result: { allocation: GOOD_ALLOC } };
+        } }
+    ]);
+    const G = buildWizard(win);
+    G.state.env = 'C:/envs/test/python.exe';
+    G.state.spec.qdac = { communication_type: 'Ethernet', ip_address: '1.2.3.4', port: 5025,
+                          usb_device: null, lib: '@py',
+                          qubits: { q2: { channel: 1, dc_offset: 0 }, q3: { channel: 1, dc_offset: 0 } } };
+    const msg = win.document.getElementById('gen-message');
+    G.goToStep(5); await settle();
+    ok(allocCalls(log).length === 1 && G.state.allocation === null,
+      'A4e: the clashing QDAC channels fail the auto attempt');
+    // an unchanged input stays latched -- and says why again on re-entry
+    G.goToStep(4); G.goToStep(5); await settle();
+    ok(allocCalls(log).length === 1, 'A4e: an unchanged input stays latched (no hammering)');
+    ok(!msg.hidden && msg.textContent.indexOf('already used by qubit q2') >= 0,
+      'A4e: a latched re-entry shows the reason again (got hidden=' + msg.hidden + ' "' + msg.textContent + '")');
+    // fix the clash (step 4's QDAC row writes spec.qdac.qubits.q3.channel)
+    G.goToStep(4);
+    G.state.spec.qdac.qubits.q3.channel = 3;
+    G.goToStep(5); await settle();
+    ok(allocCalls(log).length === 2, 'A4e: the fixed QDAC channel re-arms the auto retry (calls ' +
+      allocCalls(log).length + ')');
+    ok(!!G.state.allocation && statusText(win) === 'Allocated.',
+      'A4e: ...and it succeeds (status "' + statusText(win) + '")');
+    G.tryNext();
+    ok(G.state.step === 6, 'A4e: Next is no longer refused with the old reason');
+    // the success is stable: re-entry neither re-runs nor re-latches
+    G.goToStep(5); await settle();
+    ok(allocCalls(log).length === 2, 'A4e: a successful QDAC chip does not re-run on re-entry');
+  })();
+
+  // ── A20 (QA F5): a typed pin re-allocates; the table/diagram follow it ──
+  await (async function typedPinReallocates() {
+    const moved = JSON.parse(JSON.stringify(GOOD_ALLOC));
+    moved.q1.xy = [{ con: 1, slot: 1, port: 6, io_type: 'output' }];
+    let allocReply = { ok: true, result: { allocation: GOOD_ALLOC } };
+    const { win, log } = makeWorld([
+      { match: '/generate/envs', reply: { envs: [] } },
+      { match: '/generate/allocate', reply: () => allocReply }
+    ]);
+    const G = buildWizard(win);
+    G.state.env = 'C:/envs/test/python.exe';
+    G.goToStep(5);
+    await settle();
+    ok(allocCalls(log).length === 1, 'A20: entry allocation');
+    const rowOf = (w, g, el, line) => {
+      const i = g.state.spec.lines.findIndex(l => l.element === el && l.line === line);
+      return w.document.querySelector('#gen-wiring-table tr[data-idx="' + i + '"]');
+    };
+    // QA F6: the LO-safe partial readout pre-pin is not a "//8" pin
+    const rr1 = rowOf(win, G, 'q1', 'resonator').querySelector('.gen-wiring-pin');
+    const rr2 = rowOf(win, G, 'q2', 'resonator').querySelector('.gen-wiring-pin');
+    ok(rr1.value === '' && rr1.placeholder === 'auto · out 8 / in 2' &&
+       !rr1.closest('tr').classList.contains('pinned'),
+      'F6: the partial pre-pin renders blank with its ports as the placeholder (got "' +
+      rr1.value + '" / "' + rr1.placeholder + '")');
+    ok(rr2.value === '' && rr2.placeholder === "auto · q1's feedline",
+      'F6: a later feedline member names the lead whose pin the build uses (got "' + rr2.placeholder + '")');
+    rr1.focus(); rr1.dispatchEvent(new win.Event('blur'));
+    const rrCh = G.state.spec.lines.find(l => l.element === 'q1' && l.line === 'resonator').channel;
+    ok(!!rrCh && rrCh.out_port === 8 &&
+       allocCalls(log).length === 1,
+      'F6: focusing and leaving the blank box keeps the LO-safe pre-pin (no re-allocation)');
+    let tr = rowOf(win, G, 'q1', 'drive');
+    ok(tr.querySelector('.gen-wiring-alloc').textContent.indexOf('p2') >= 0, 'A20: row shows p2 first');
+    allocReply = { ok: true, result: { allocation: moved } };
+    const pin = tr.querySelector('.gen-wiring-pin');
+    pin.value = '1/1/6';
+    pin.dispatchEvent(new win.Event('change', { bubbles: true }));
+    const calls = allocCalls(log);
+    ok(calls.length === 2, 'A20: a changed pin re-allocates at once (calls ' + calls.length + ')');
+    const sent = calls[calls.length - 1].body.spec.lines.find(l => l.element === 'q1' && l.line === 'drive');
+    ok(sent && sent.channel && sent.channel.out_port === 6, 'A20: the request carries the typed pin');
+    await settle();
+    tr = rowOf(win, G, 'q1', 'drive');
+    ok(tr.querySelector('.gen-wiring-alloc').textContent.indexOf('p6') >= 0,
+      'A20: the Auto-allocated column follows the pin (got "' + tr.querySelector('.gen-wiring-alloc').textContent + '")');
+    ok(G.state.allocation.q1.xy[0].port === 6, 'A20: the allocation the diagram draws follows the pin');
+    // an unchanged box (blur) does nothing
+    tr.querySelector('.gen-wiring-pin').dispatchEvent(new win.Event('blur'));
+    ok(allocCalls(log).length === 2, 'A20: an unchanged pin does not re-allocate');
+    // review of F6: a readout pin retyped in the box keeps the input its line
+    // is cabled to (here in 2 with out 1 -- not the pair the wizard derives)
+    win.document.activeElement.blur();   // (the focused box would commit its stale text)
+    G.state.spec.lines.find(l => l.element === 'q1' && l.line === 'resonator').channel =
+      { kind: 'mw_fem', con: 1, slot: 1, out_port: 1, in_port: 2 };
+    G.state.wiringTouched = true;   // a drag / CSV / re-generate made it (deriveLines keeps it)
+    G.goToStep(4); G.goToStep(5); await settle();
+    const rrBox = rowOf(win, G, 'q1', 'resonator').querySelector('.gen-wiring-pin');
+    rrBox.value = '1/1/3';
+    rrBox.dispatchEvent(new win.Event('change', { bubbles: true }));
+    const rrNow = G.state.spec.lines.find(l => l.element === 'q1' && l.line === 'resonator').channel;
+    ok(rrNow && rrNow.out_port === 3 && rrNow.in_port === 2,
+      'A20/F6: the typed readout pin keeps its input cable (got ' + JSON.stringify(rrNow) + ')');
+    await settle();
+
+    // a pin typed while a request is in flight runs once more when it answers
+    let release;
+    const w2 = makeWorld([{ match: '/generate/envs', reply: { envs: [] } }]);
+    const gate = new w2.win.Promise(r => { release = r; });
+    const G2 = buildWizard(w2.win);
+    G2.state.env = 'C:/envs/test/python.exe';
+    let n2 = 0, hold = null;
+    const base = w2.win.fetch;
+    w2.win.fetch = function (url, opts) {
+      if (String(url).indexOf('/generate/allocate') < 0) return base(url, opts);
+      n2++;
+      const body = JSON.parse(opts.body);
+      const reply = { ok: true, result: { allocation: GOOD_ALLOC } };
+      if (n2 === 1) return gate.then(() => ({ json: () => w2.win.Promise.resolve(reply) }));
+      hold = body;
+      return w2.win.Promise.resolve({ json: () => w2.win.Promise.resolve(reply) });
+    };
+    G2.goToStep(5);
+    await settle();
+    ok(n2 === 1, 'A20: entry request in flight');
+    const i2 = G2.state.spec.lines.findIndex(l => l.element === 'q2' && l.line === 'drive');
+    const p2 = w2.win.document.querySelector('#gen-wiring-table tr[data-idx="' + i2 + '"] .gen-wiring-pin');
+    p2.value = '1/1/7';
+    p2.dispatchEvent(new w2.win.Event('change', { bubbles: true }));
+    ok(n2 === 1, 'A20: no second request while one is in flight');
+    // the user is mid-way through typing the NEXT pin when the answer lands:
+    // the table re-render must not eat the text or the focus
+    const i3 = G2.state.spec.lines.findIndex(l => l.element === 'q3' && l.line === 'drive');
+    const p3 = w2.win.document.querySelector('#gen-wiring-table tr[data-idx="' + i3 + '"] .gen-wiring-pin');
+    p3.focus();
+    p3.value = '1/1/';
+    release();
+    await settle(12);
+    ok(n2 === 2 && hold && hold.spec.lines[i2].channel.out_port === 7,
+      'A20: the in-flight pin re-runs once with the new pin (calls ' + n2 + ')');
+    const ae = w2.win.document.activeElement;
+    ok(ae !== p3 && ae.classList.contains('gen-wiring-pin') &&
+       ae.closest('tr').dataset.idx === String(i3) && ae.value === '1/1/',
+      'A20: a re-render keeps the pin being typed (focus + text "' + (ae && ae.value) + '")');
+    ok(!G2.state.spec.lines[i3].channel, 'A20: a half-typed pin is not committed by the re-render');
+    ae.value = '1/1/5';
+    ae.dispatchEvent(new w2.win.Event('blur'));
+    await settle();
+    ok(n2 === 3 && G2.state.spec.lines[i3].channel && G2.state.spec.lines[i3].channel.out_port === 5,
+      'A20: the restored box commits on blur (calls ' + n2 + ')');
+
+    // Next is refused while the allocation is stale for the current pins
+    const w3 = makeWorld([
+      { match: '/generate/envs', reply: { envs: [] } },
+      { match: '/generate/allocate', reply: { ok: true, result: { allocation: GOOD_ALLOC } } }
+    ]);
+    const G3 = buildWizard(w3.win);
+    G3.state.env = 'C:/envs/test/python.exe';
+    G3.goToStep(5);
+    await settle();
+    G3.state.spec.lines.find(l => l.element === 'q3' && l.line === 'drive').channel =
+      { kind: 'mw_fem', con: 1, slot: 1, out_port: 5 };   // a pin the allocation never saw
+    G3.tryNext();
+    ok(G3.state.step === 5 &&
+       w3.win.document.getElementById('gen-message').textContent.indexOf('changed since the last allocation') >= 0,
+      'A20: Next refuses a stale allocation');
+    // review of F7/F5: #gen-message is below the fold on step 5 -- the
+    // refusal is said beside the step's own Next too
+    const st3 = w3.win.document.getElementById('gen-allocate-status').textContent;
+    ok(st3.indexOf('changed since the last allocation') >= 0,
+      'A20: the refusal is also at the Auto-allocate row (got "' + st3 + '")');
+  })();
+
+  // ── A21 (QA generate-r2-06): an xy-only drag must not freeze the feedlines ──
+  await (async function xyDragKeepsMuxLive() {
+    const { win } = makeWorld([
+      { match: '/generate/envs', reply: { envs: [] } },
+      { match: '/generate/allocate', reply: { ok: true, result: { allocation: GOOD_ALLOC } } }
+    ]);
+    const G = buildWizard(win);
+    const T = G._test;
+    G.state.env = 'C:/envs/test/python.exe';
+    G.goToStep(5);
+    await settle();
+    // drag q1's xy p2 -> the free p6
+    T.applyPortEdit({ con: 1, slot: 1, port: 2, io: 'output' }, { con: 1, slot: 1, port: 6 });
+    ok(G.state.allocation.q1.xy[0].port === 6, 'A21: the xy drag moved q1');
+    G.tryNext();   // a drag edits allocation + pins together: not "stale"
+    ok(G.state.step === 6, 'A21: Next after a drag is not refused as a stale allocation (step ' + G.state.step + ')');
+    G.goToStep(4);
+    const mux = win.document.getElementById('gen-mux-size');
+    mux.value = '2';
+    mux.dispatchEvent(new win.Event('input', { bubbles: true }));
+    const sum = win.document.getElementById('gen-qubit-summary');
+    ok(/3 qubits · 2 feedlines: q1–q2 · q3$/.test(sum.textContent),
+      'A21: caption shows the mux split (got "' + sum.textContent + '")');
+    G.goToStep(5);
+    const groups = new Set(G.state.spec.lines.filter(l => l.line === 'resonator').map(l => l.group));
+    ok(groups.size === 2, 'A21: after an xy-only drag the mux change regroups (' + [...groups] + ')');
+    const q1d = G.state.spec.lines.find(l => l.element === 'q1' && l.line === 'drive');
+    ok(q1d.channel && q1d.channel.out_port === 6, 'A21: the xy drag itself is kept');
+    await settle();
+    // a READOUT drag does keep its grouping — and step 4 then says so
+    T.applyQubitReadoutEdit({ element: 'q3', io: 'output' }, { con: 1, slot: 1, port: 8 });
+    G.goToStep(4);
+    mux.value = '3';
+    mux.dispatchEvent(new win.Event('input', { bubbles: true }));
+    ok(/kept from the step-5 readout wiring/.test(sum.textContent) &&
+       sum.classList.contains('gen-qubit-summary-kept'),
+      'A21: a kept readout grouping is named in the caption (got "' + sum.textContent + '")');
+  })();
+
   // ── A10: a response for superseded content is DROPPED (review CRITICAL) ──
   await (async function staleResponseDropped() {
     const pending = [];
@@ -674,6 +958,134 @@ function statusText(win) {
     G.goToStep(5); await settle();
     ok(flux().indexOf('q2') >= 0,
       'A6: q2\'s flux line survives an LF-FEM remove/re-add round-trip');
+    // QA regenerate-r2-12: the same round trip THROUGH step 4 -- where the
+    // hardware fallback runs -- used to leave the chip fixed-frequency / CR.
+    G.goToStep(3);
+    G.state.spec.instruments.controllers[0].fems = [{ slot: 1, fem: 'mw' }];
+    G.goToStep(4); G.goToStep(5); await settle();
+    ok(G.state.chipArch === 'fixed_frequency' && G.state.pairGate === 'cr',
+      'A6/r2-12: without an LF-FEM the chip builds as fixed-frequency meanwhile');
+    G.goToStep(3);
+    G.state.spec.instruments.controllers[0].fems = [
+      { slot: 1, fem: 'mw' }, { slot: 2, fem: 'lf' }];
+    G.goToStep(4); G.goToStep(5); await settle();
+    ok(G.state.chipArch === 'flux_tunable_coupler' && G.state.pairGate === 'cz_tunable' &&
+       G.state.qubitFlux === true,
+      'A6/r2-12: re-adding the LF-FEM gives the CZ architecture back (got ' +
+      G.state.chipArch + '/' + G.state.pairGate + ')');
+    ok(flux().join(',') === 'q2,q4' &&
+       G.state.spec.lines.filter(l => l.line === 'coupler').length === 1 &&
+       !G.state.spec.lines.some(l => l.line === 'cross_resonance'),
+      'A6/r2-12: ...with the source line inventory, not CR lines (flux ' + flux().join(',') + ')');
+    // the re-add followed by a rail jump PAST step 4 derives the right chip too
+    G.goToStep(3);
+    G.state.spec.instruments.controllers[0].fems = [{ slot: 1, fem: 'mw' }];
+    G.goToStep(4);
+    G.goToStep(3);
+    G.state.spec.instruments.controllers[0].fems = [
+      { slot: 1, fem: 'mw' }, { slot: 2, fem: 'lf' }];
+    G.goToStep(5); await settle();
+    ok(G.state.pairGate === 'cz_tunable' && flux().join(',') === 'q2,q4' &&
+       !G.state.spec.lines.some(l => l.line === 'cross_resonance'),
+      'A6/r2-12: step 3 -> 5 straight after the re-add builds the CZ lines (got ' +
+      G.state.pairGate + ', flux ' + flux().join(',') + ')');
+  })();
+
+  // ── A24 (QA regenerate-r2-12): a module round trip is lossless ───────────
+  await (async function archHoldRoundTrip() {
+    const { win } = makeWorld([{ match: '/generate/envs', reply: { envs: [] } }]);
+    const G = buildWizard(win);
+    const note = () => win.document.getElementById('gen-chip-arch-note');
+    const setFems = (fems) => { G.goToStep(3); G.state.spec.instruments.controllers[0].fems = fems; G.goToStep(4); };
+    const MW = { slot: 1, fem: 'mw' }, LF = { slot: 2, fem: 'lf' };
+    // CZ through an LF-FEM remove / re-add
+    G.goToStep(4);
+    ok(G.state.chipArch === 'flux_tunable_coupler', 'A24: starts as the default CZ chip');
+    G.state.spec.populate.pairs = { 'q1-q2': { cz_interaction_duration: 4.8e-8 } };
+    // review of r2-12: the LINE PINS of a held architecture come back too --
+    // deriveLines used to drop the flux/coupler pins with their lines, so the
+    // allocator re-chose every z port after the module returned.
+    G.goToStep(5);
+    const lineOf = (el, lt) => G.state.spec.lines.find(l => l.element === el && l.line === lt);
+    const pinOf = (el, lt) => { const l = lineOf(el, lt); return l && l.channel ? G._test.channelToPin(l.channel) : (l ? 'auto' : 'none'); };
+    lineOf('q1', 'flux').channel = { kind: 'lf_fem', con: 1, out_slot: 2, out_port: 8 };
+    lineOf('q1-q2', 'coupler').channel = { kind: 'lf_fem', con: 1, out_slot: 2, out_port: 7 };
+    setFems([MW]);
+    ok(G.state.chipArch === 'fixed_frequency' && G.state.heldChipArch === 'flux_tunable_coupler',
+      'A24: no LF-FEM -> builds fixed-frequency, CZ held');
+    G.goToStep(5); G.goToStep(4);   // the fallback's lines are derived: no z / coupler
+    ok(pinOf('q1', 'flux') === 'none' && pinOf('q1-q2', 'coupler') === 'none',
+      'A24: on hold the flux / coupler lines are gone (' + pinOf('q1', 'flux') + ')');
+    ok(note().classList.contains('gen-arch-held') &&
+       /Flux-tunable qubits \+ tunable coupler is on hold: it needs an LF-FEM/.test(note().textContent),
+      'A24: the note says what is on hold and why (got "' + note().textContent + '")');
+    G.goToStep(6); G.goToStep(4);   // a Populate visit while downgraded
+    ok(JSON.stringify(G.state.spec.populate.pairs['q1-q2'] || null) === '{"cz_interaction_duration":4.8e-8}',
+      'A24: the CZ pair values survive a Populate visit on hold (got ' +
+      JSON.stringify(G.state.spec.populate.pairs) + ')');
+    // the hold survives a draft reload
+    G.goToStep(4);
+    delete win.document.getElementById('generate-root')._quamGenInit;
+    G.state.heldChipArch = null;   // a fresh page starts with nothing in memory
+    G.state.heldPins = {};
+    G.init();
+    ok(G.state.heldChipArch === 'flux_tunable_coupler', 'A24: the hold survives a draft reload');
+    setFems([MW, LF]);
+    ok(G.state.chipArch === 'flux_tunable_coupler' && G.state.pairGate === 'cz_tunable' &&
+       G.state.qubitFlux === true && G.state.heldChipArch === null,
+      'A24: the LF-FEM back -> the CZ architecture is back (got ' + G.state.chipArch + '/' + G.state.pairGate + ')');
+    G.goToStep(5);
+    ok(pinOf('q1', 'flux') === '1/2/8' && pinOf('q1-q2', 'coupler') === '1/2/7',
+      'A24: ...with the flux and coupler pins it had, through a draft reload (q1 flux ' +
+      pinOf('q1', 'flux') + ', coupler ' + pinOf('q1-q2', 'coupler') + ')');
+    ok(pinOf('q2', 'flux') === 'auto' && Object.keys(G.state.heldPins).length === 0,
+      'A24: an unpinned line stays auto, and nothing is left on hold (' + JSON.stringify(G.state.heldPins) + ')');
+    lineOf('q2', 'drive').channel = { kind: 'mw_fem', con: 1, slot: 1, out_port: 5 };
+    G.goToStep(4);
+    ok(!note().classList.contains('gen-arch-held') && !/on hold/.test(note().textContent),
+      'A24: ...and the note stops saying "on hold"');
+    // CR through an MW-FEM remove / re-add
+    const arch = win.document.getElementById('gen-chip-arch');
+    arch.value = 'fixed_frequency';
+    arch.dispatchEvent(new win.Event('change', { bubbles: true }));
+    ok(G.state.pairGate === 'cr' && G.state.heldChipArch === null, 'A24: CR picked');
+    setFems([LF]);
+    ok(G.state.heldChipArch === 'fixed_frequency' && G.state.pairGate !== 'cr',
+      'A24: no MW-FEM -> CR held');
+    G.goToStep(5); G.goToStep(4);
+    ok(pinOf('q2', 'drive') === 'none', 'A24: with no MW-FEM the drive lines are gone');
+    // a held pin whose element is gone (q9: removed while on hold) is dropped,
+    // so a later qubit of that name never inherits it
+    G.state.heldPins['q9|drive'] = { channel: { kind: 'mw_fem', con: 1, slot: 1, out_port: 6 }, group: null };
+    G.goToStep(5); G.goToStep(4);
+    ok(!('q9|drive' in G.state.heldPins) && 'q2|drive' in G.state.heldPins,
+      'A24: a held pin of an element that is gone is dropped (' + Object.keys(G.state.heldPins).join(',') + ')');
+    setFems([MW, LF]);
+    ok(G.state.chipArch === 'fixed_frequency' && G.state.pairGate === 'cr' && G.state.qubitFlux === false,
+      'A24: the MW-FEM back -> CR is back (got ' + G.state.chipArch + '/' + G.state.pairGate + ')');
+    G.goToStep(5);
+    ok(pinOf('q2', 'drive') === '1/1/5', 'A24: ...and q2 drive has its pin back (got ' + pinOf('q2', 'drive') + ')');
+    G.goToStep(4);
+    // an explicit pick while on hold replaces the hold
+    arch.value = 'flux_tunable_fixed_coupler';
+    arch.dispatchEvent(new win.Event('change', { bubbles: true }));
+    setFems([MW]);
+    ok(G.state.heldChipArch === 'flux_tunable_fixed_coupler' && G.state.chipArch === 'fixed_frequency',
+      'A24: the fixed-coupler CZ chip is held on an MW-only rack (got ' + G.state.heldChipArch + ')');
+    arch.value = 'fixed_frequency';
+    arch.dispatchEvent(new win.Event('change', { bubbles: true }));
+    ok(G.state.heldChipArch === null, 'A24: an explicit pick clears the hold');
+    setFems([MW, LF]);
+    ok(G.state.chipArch === 'fixed_frequency', 'A24: ...so adding the LF-FEM changes nothing');
+    // review of r2-12: an EMPTY rack builds no fallback either -- the note
+    // names both modules and claims no "building as" chip
+    arch.value = 'flux_tunable_coupler';
+    arch.dispatchEvent(new win.Event('change', { bubbles: true }));
+    setFems([]);
+    ok(note().classList.contains('gen-arch-held') && /no FEM yet/.test(note().textContent) &&
+       /MW-FEM/.test(note().textContent) && /LF-FEM/.test(note().textContent) &&
+       !/Building as/.test(note().textContent),
+      'A24: an empty rack names both modules, no fallback build (got "' + note().textContent + '")');
   })();
 
   // ── A8: a step-4 topology edit re-allocates on the next Wiring entry ─────
@@ -747,6 +1159,176 @@ function statusText(win) {
       .dispatchEvent(new win.Event('click', { bubbles: true }));
     ok(G.state.mode === 'generate' && G.state.sourcePath === null,
       'A7: Reset wizard drops regen mode + source path');
+  })();
+
+  // ── A22 (QA generate-r2-11): a box that is not a pin is flagged, kept ────
+  // (a fresh copy: earlier worlds' drags mutate the shared GOOD_ALLOC object)
+  const cleanAlloc = () => ({
+    q1: { xy: [{ con: 1, slot: 1, port: 2, io_type: 'output' }],
+          rr: [{ con: 1, slot: 1, port: 1, io_type: 'output' }, { con: 1, slot: 1, port: 1, io_type: 'input' }] },
+    q2: { xy: [{ con: 1, slot: 1, port: 3, io_type: 'output' }],
+          rr: [{ con: 1, slot: 1, port: 1, io_type: 'output' }, { con: 1, slot: 1, port: 1, io_type: 'input' }] },
+    q3: { xy: [{ con: 1, slot: 1, port: 4, io_type: 'output' }],
+          rr: [{ con: 1, slot: 1, port: 1, io_type: 'output' }, { con: 1, slot: 1, port: 1, io_type: 'input' }] }
+  });
+  await (async function badPinFlagged() {
+    const { win, log } = makeWorld([
+      { match: '/generate/envs', reply: { envs: [] } },
+      { match: '/generate/allocate', reply: () => ({ ok: true, result: { allocation: cleanAlloc() } }) }
+    ]);
+    const G = buildWizard(win);
+    G.state.env = 'C:/envs/test/python.exe';
+    G.goToStep(5); await settle();
+    const issues = () => win.document.getElementById('gen-wiring-issues').textContent;
+    const di = G.state.spec.lines.findIndex(l => l.element === 'q1' && l.line === 'drive');
+    const box = () => win.document.querySelector('#gen-wiring-table tr[data-idx="' + di + '"] .gen-wiring-pin');
+    function type(v) {
+      const b = box(); b.value = v;
+      b.dispatchEvent(new win.Event('change', { bubbles: true }));
+    }
+    ok(issues().indexOf('Wiring valid') >= 0, 'A22: entry allocation validated (got "' + issues() + '" calls ' + allocCalls(log).length + ')');
+    for (const bad of ['1/1/99', 'x9', '1.5/1/1', '1/9/1']) {
+      type(bad);
+      await settle();
+      G.goToStep(4); G.goToStep(5); await settle();   // a full re-render
+      ok(box().value === bad && box().classList.contains('gen-wiring-pin-invalid') &&
+         box().getAttribute('aria-invalid') === 'true',
+        'A22: "' + bad + '" stays in its box, flagged invalid (value "' + box().value + '")');
+      ok(G.state.spec.lines[di].channel === null,
+        'A22: "' + bad + '" is not stored as a pin (' + JSON.stringify(G.state.spec.lines[di].channel) + ')');
+      ok(issues().indexOf('is not a pin') >= 0 && issues().indexOf('Wiring valid') < 0,
+        'A22: the issues panel names it, no "✓ Wiring valid" beside it (got "' + issues() + '")');
+    }
+    type('1/1/5');
+    await settle();
+    ok(!box().classList.contains('gen-wiring-pin-invalid') &&
+       G.state.spec.lines[di].channel && G.state.spec.lines[di].channel.out_port === 5,
+      'A22: a real pin clears the flag and pins port 5');
+    ok(issues().indexOf('is not a pin') < 0, 'A22: ...and leaves the issues panel');
+  })();
+
+  // ── A23 (QA regenerate-r2-13): pins left on a moved module are named ─────
+  // and carried in one press (MW-FEM moved slot 1 -> 3 in step 3).
+  await (async function stalePinsCarried() {
+    const { win, log } = makeWorld([
+      { match: '/generate/envs', reply: { envs: [] } },
+      { match: '/generate/allocate', reply: (e) => {
+          const onOne = (e.body.spec.lines || []).some(l => l.channel && l.channel.kind === 'mw_fem' && l.channel.slot === 1);
+          return onOne ? { ok: false, errors: ['stale pins (server)'] }
+                       : { ok: true, result: { allocation: cleanAlloc() } };
+        } }
+    ]);
+    const G = buildWizard(win);
+    G.state.env = 'C:/envs/test/python.exe';
+    G.goToStep(5); await settle();
+    G.state.spec.lines.forEach(l => {
+      if (l.element === 'q1' && l.line === 'drive') l.channel = { kind: 'mw_fem', con: 1, slot: 1, out_port: 2 };
+      if (l.element === 'q2' && l.line === 'drive') l.channel = { kind: 'mw_fem', con: 1, slot: 1, out_port: 3 };
+    });
+    G.goToStep(3);
+    G.state.spec.instruments.controllers[0].fems = [{ slot: 3, fem: 'mw' }, { slot: 2, fem: 'lf' }];
+    G.goToStep(5); await settle();
+    const host = win.document.getElementById('gen-wiring-issues');
+    ok(host.textContent.indexOf('2 pinned lines (q1 drive, q2 drive) name con1 slot 1') >= 0 &&
+       host.textContent.indexOf('no MW-FEM') >= 0,
+      'A23: the issues panel names the pins left on the empty slot (got "' + host.textContent + '")');
+    const flagged = win.document.querySelectorAll('#gen-wiring-table .gen-wiring-pin-invalid').length;
+    ok(flagged === 2, 'A23: both pin boxes are flagged (got ' + flagged + ')');
+    const mv = host.querySelector('.gen-wiring-pin-move');
+    ok(!!mv && mv.textContent === 'Move them to con1 slot 3',
+      'A23: the one free MW-FEM slot is offered (got "' + (mv && mv.textContent) + '")');
+    const before = allocCalls(log).length;
+    if (mv) mv.dispatchEvent(new win.Event('click', { bubbles: true }));
+    await settle();
+    const slots = G.state.spec.lines.filter(l => l.line === 'drive' && l.channel && l.channel.con === 1)
+      .map(l => l.element + '@' + l.channel.slot + '/' + l.channel.out_port).join(',');
+    ok(slots === 'q1@3/2,q2@3/3', 'A23: the pins moved with the module, ports kept (got ' + slots + ')');
+    ok(allocCalls(log).length === before + 1 && !!G.state.allocation,
+      'A23: the carry re-allocates at once and succeeds');
+    ok(host.textContent.indexOf('pinned line') < 0 &&
+       !win.document.querySelector('#gen-wiring-table .gen-wiring-pin-invalid'),
+      'A23: nothing is flagged any more');
+    // Clear: a second move with TWO free slots offers no guess, only Clear.
+    G.goToStep(3);
+    G.state.spec.instruments.controllers[0].fems = [{ slot: 4, fem: 'mw' }, { slot: 6, fem: 'mw' }, { slot: 2, fem: 'lf' }];
+    G.goToStep(5); await settle();
+    ok(!host.querySelector('.gen-wiring-pin-move') && !!host.querySelector('.gen-wiring-pin-clear'),
+      'A23: two candidate slots -> no guessed move, only Clear');
+    host.querySelector('.gen-wiring-pin-clear').dispatchEvent(new win.Event('click', { bubbles: true }));
+    await settle();
+    ok(G.state.spec.lines.filter(l => l.line === 'drive').every(l => !l.channel || l.channel.slot !== 3),
+      'A23: Clear drops the stale pins so they auto-allocate');
+  })();
+
+  // ── A25 (QA regenerate-r2-24): two pins on ONE output are named ─────────
+  // q2's drive typed onto q1's drive port used to show nothing but the
+  // allocator's "not enough channels ... add a FEM". A feedline is one line
+  // (all three resonators on one pinned port are fine); a CR line may share.
+  await (async function pinCollisionNamed() {
+    const { win, log } = makeWorld([
+      { match: '/generate/envs', reply: { envs: [] } },
+      { match: '/generate/allocate', reply: (e) => {
+          const outs = {};
+          let clash = false;
+          (e.body.spec.lines || []).forEach(l => {
+            if (l.line === 'drive' && l.channel && l.channel.out_port) {
+              const k = l.channel.slot + '/' + l.channel.out_port;
+              if (outs[k]) clash = true; outs[k] = 1;
+            }
+          });
+          return clash ? { ok: false, errors: ['q1 drive and q2 drive are both pinned (server)'] }
+                       : { ok: true, result: { allocation: cleanAlloc() } };
+        } }
+    ]);
+    const G = buildWizard(win);
+    G.state.env = 'C:/envs/test/python.exe';
+    G.goToStep(5); await settle();
+    const issues = () => win.document.getElementById('gen-wiring-issues').textContent;
+    const idx = (el, line) => G.state.spec.lines.findIndex(l => l.element === el && l.line === line);
+    const box = (el, line) => win.document.querySelector('#gen-wiring-table tr[data-idx="' + idx(el, line) + '"] .gen-wiring-pin');
+    function type(el, line, v) {
+      const b = box(el, line); b.value = v;
+      b.dispatchEvent(new win.Event('change', { bubbles: true }));
+    }
+    // one feedline, every member pinned to the same port: not a collision
+    ['q1', 'q2', 'q3'].forEach(q => type(q, 'resonator', '1/1/1'));
+    await settle();
+    type('q1', 'drive', '1/1/2');
+    await settle();
+    ok(!win.document.querySelector('#gen-wiring-table .gen-wiring-pin-invalid') &&
+       issues().indexOf('pinned to') < 0,
+      'A25: a feedline pinned to one port is one line, nothing flagged (got "' + issues() + '")');
+    type('q2', 'drive', '1/1/2');
+    await settle();
+    ok(issues().indexOf('q1 drive and q2 drive are both pinned to con1 slot 1 output 2') >= 0 &&
+       issues().indexOf('Wiring valid') < 0,
+      'A25: the issues panel names both lines and the port (got "' + issues() + '")');
+    ok(box('q1', 'drive').getAttribute('aria-invalid') === 'true' &&
+       box('q2', 'drive').getAttribute('aria-invalid') === 'true' &&
+       /both pinned/.test(box('q2', 'drive').title),
+      'A25: both pin boxes are flagged, with the reason as their title');
+    G.goToStep(4); G.goToStep(5); await settle();
+    ok(box('q2', 'drive').classList.contains('gen-wiring-pin-invalid') && issues().indexOf('both pinned') >= 0,
+      'A25: the flag survives leaving and re-entering step 5');
+    // a drive onto the feedline's output port is a collision too
+    type('q2', 'drive', '1/1/1');
+    await settle();
+    ok(issues().indexOf('q1 resonator and q2 drive are both pinned to con1 slot 1 output 1') >= 0,
+      'A25: a drive on the feedline output names the feedline once (got "' + issues() + '")');
+    // re-pin to a free port: every flag clears and the allocation comes back
+    type('q2', 'drive', '1/1/3');
+    await settle();
+    ok(!win.document.querySelector('#gen-wiring-table .gen-wiring-pin-invalid') &&
+       issues().indexOf('pinned to') < 0 && !!G.state.allocation,
+      'A25: a free port clears every flag (got "' + issues() + '")');
+    // a CR line on its control's xy port shares it by design
+    G.state.spec.lines.push({ element: 'q1-q2', line: 'cross_resonance',
+                              channel: { kind: 'mw_fem', con: 1, slot: 1, out_port: 2 } });
+    type('q3', 'drive', '1/1/4');   // any commit re-reads the pins (no step re-entry: deriveLines would drop the CR line)
+    await settle();
+    ok(idx('q1-q2', 'cross_resonance') >= 0 && issues().indexOf('pinned to') < 0,
+      'A25: a CR line on the control xy port is not flagged (line kept: ' + (idx('q1-q2', 'cross_resonance') >= 0) + ')');
+    ok(allocCalls(log).length > 0, 'A25: the allocator was asked (world is live)');
   })();
 
   if (fails) {

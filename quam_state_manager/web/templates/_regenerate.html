@@ -75,6 +75,26 @@
               ? "⚠ " + notes.join("  ")
               : "Pre-filled from the source chip — edit ports · bands · qubits/pairs, then pick a NEW output folder (step 7) and Generate. Calibrated values are carried over.",
             notes.length ? "regen-status-warn" : "", infos);
+        // QA F19: the "Modify wiring…" deep link exists to show the rack, but
+        // on a short window (1366x768: the topbar wraps) the status, header,
+        // steps and description push it below the fold. Scroll the step's own
+        // Auto-allocate row to the pane top — its Back/Next and status stay in
+        // view and the rack follows directly below. Only for step 5, only when
+        // no ⚠ note would be scrolled out of sight, and only when the rack
+        // starts in the lower half of the pane (a tall window is left alone).
+        // A fraction of the pane, not px: html zoom (quam_ui_scale) scales both.
+        if ({{ (regen_step if regen_step is defined else None) | tojson }} === 5 && !notes.length) {
+          (window.requestAnimationFrame || setTimeout)(function () {
+            try {
+              var pane = document.getElementById("table-pane");
+              var row = document.querySelector("#regen-body .gen-allocate-row");
+              var host = document.getElementById("gen-wiring-diagram");
+              if (!pane || !row || !host || !row.scrollIntoView) return;
+              var p = pane.getBoundingClientRect(), h = host.getBoundingClientRect();
+              if (h.top - p.top > p.height * 0.5) row.scrollIntoView({ block: "start" });
+            } catch (e) { /* old engines */ }
+          });
+        }
       }).catch(function (e) { say("✗ " + e, "regen-status-err"); });
     }
     hydrate(null);   // the currently loaded chip

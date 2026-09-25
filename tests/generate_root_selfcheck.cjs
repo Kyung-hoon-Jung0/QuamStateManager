@@ -276,6 +276,28 @@ async function main() {
   ok(!box.querySelector('#gen-quam-class'),
     'R4: an env that reports no roots gets no picker');
 
+  // ── R5 (QA regenerate-r2-25): a build failure shows what to do ───────────
+  // res.error is explain_build_error's advice + the raw text it keeps; the
+  // panel used to prefer the raw res.result.error and drop the advice.
+  const RAW = 'NotEnoughChannelsException: no free channel for q2:xy';
+  const HELP = "This environment's instrument list does not have enough channels. Add or enlarge a controller/FEM in step 3 ...";
+  T.showBuildResult({ ok: false, error: HELP + '\n\n(reported as: ' + RAW + ')',
+                      result: { status: 'error', error: RAW } }, null);
+  const r5 = doc.getElementById('gen-build-result');
+  const r5lines = Array.prototype.map.call(r5.querySelectorAll('.gen-build-err-line'),
+    function (p) { return p.textContent; });
+  ok(r5lines.length === 1 && r5lines[0].indexOf('controller/FEM in step 3') >= 0,
+    'R5: the explained error (what to do) is shown — got ' + JSON.stringify(r5lines));
+  ok(r5lines.length === 1 && r5lines[0].indexOf(RAW) >= 0,
+    'R5: ...with the raw exception still in it');
+  // no explained text (an older server): the raw result error still shows
+  T.showBuildResult({ ok: false, result: { status: 'error', error: RAW } }, null);
+  ok(r5.querySelector('.gen-build-err-line').textContent === RAW,
+    'R5: a result error alone still renders');
+  T.showBuildResult({ ok: false, errors: ['a', 'b'] }, null);
+  ok(r5.querySelectorAll('.gen-build-err-line').length === 2,
+    'R5: validation errors (a list) still render one per line');
+
   console.log(fails ? 'FAILED (' + fails + ')'
     : 'generate_root_selfcheck ok (' + asserts + ' assertions)');
   process.exit(fails ? 1 : 0);

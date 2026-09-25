@@ -40,7 +40,7 @@
     env: null,            // selected interpreter path
     allocation: null,     // last /generate/allocate result, keyed by element
     pairsTouched: false,  // user hand-edited pairs -> stop auto-filling them
-    wiringTouched: false, // user drag-edited the wiring -> keep their groups
+    wiringTouched: false, // user edited the READOUT wiring (drag/pin/CSV/regen) -> keep their feedline groups
     // Qubit naming scheme (step 4): "one_based" (q1, q2, … — the historical
     // default), "zero_based" (q0, q1, …), "grid" (board-derived letters —
     // qA1, qB2; one-shot Apply), or "custom" (prefix + start index).
@@ -86,6 +86,14 @@
     //   "flux_tunable_fixed_coupler"  flux-tunable qubits + fixed coupler   → cz_fixed
     //   "fixed_frequency"             fixed-frequency qubits                → cr
     chipArch: "flux_tunable_coupler",
+    // QA regenerate-r2-12: the DECLARED architecture while the step-3 rack
+    // cannot build it (an LF-FEM / MW-FEM removed). syncLineTypeToggles builds
+    // the fallback meanwhile and gives this back once the module returns; an
+    // explicit pick (applyChipArch) replaces it. null = nothing on hold.
+    heldChipArch: null,
+    // The pins of lines the rack cannot carry meanwhile (deriveLines), keyed
+    // "element|line" -> {channel, group}; given back when the module returns.
+    heldPins: {},
 
     // Re-generate mode — set by QuamGen.hydrateFromSpec() when the wizard is
     // re-opened pre-filled from an existing chip. "generate" builds fresh;
@@ -302,6 +310,24 @@
       }
       return null;
     },
+    // QA F7/F5: Next used to carry a failed or stale allocation into Populate
+    // (its LO/FSP banks and wiring panel read state.allocation). Only a KNOWN
+    // problem for the CURRENT topology blocks; the rail's forward jumps stay
+    // free (docs/134), and a never-allocated chip keeps the single-tone path.
+    5: function () {
+      var sig = topoSig();
+      if (_allocLastErr && _allocLastErr.sig === allocFailSig()) {
+        return "Wiring allocation failed for this chip (" + _allocLastErr.msg +
+               ") — change the pins here, the qubits/lines in step 4 or the " +
+               "FEMs in step 3, then Auto-allocate, before continuing.";
+      }
+      if (state.allocation && _allocSpecSig !== null && _allocSpecSig !== sig) {
+        return "The wiring changed since the last allocation — " +
+               (_allocInFlight ? "wait for Auto-allocate to finish"
+                               : "press Auto-allocate") + " before continuing.";
+      }
+      return null;
+    },
     7: function () {
       var out = getOutputPath();
       if (!out) return "Choose an output folder.";
@@ -401,7 +427,7 @@
     // Downstream steps consume the derived spec.lines — rebuild it on entry so
     // edits made in step 4 (qubit count, pairs, 2Q-gate, flux) always propagate
     // forward, even via change paths that didn't re-derive. Respects wiringTouched.
-    if (state.step >= 5) deriveLines();
+    if (state.step >= 5) { restoreHeldChipArch(); deriveLines(); }
     if (state.step === 4) {
       syncLineTypeToggles();
       renderFluxSource();   // QA F9: a revisit repaints the row from state
@@ -445,6 +471,10 @@
     var err = guard ? guard() : null;
     if (err) {
       showMessage(err, "warn");
+      // Step 5's Next sits on the Auto-allocate row, and #gen-message is below
+      // the fold there: say it beside the button too (QA review of F7/F5).
+      var st = state.step === 5 && document.getElementById("gen-allocate-status");
+      if (st) st.textContent = "✗ " + err;
       return;
     }
     if (state.step < STEP_COUNT) {
@@ -1622,10 +1652,91 @@
       groups.push(chunk.length === 1 ? chunk[0]
         : chunk[0] + "–" + chunk[chunk.length - 1]);
     }
+    // QA generate-r2-06: once the readout wiring was edited (drag, pin, CSV,
+    // regenerate), deriveLines KEEPS those feedline groups and ignores the mux
+    // size — so the caption must show the kept split, not the mux one.
+    var kept = keptFeedlineGroups(qs, mux);
+    var note = "";
+    if (kept) {
+      var keptShown = kept.map(function (m) {
+        var a = qs.indexOf(m[0]), b = qs.indexOf(m[m.length - 1]);
+        return m.length === 1 ? m[0]
+          : (b - a === m.length - 1) ? m[0] + "–" + m[m.length - 1] : m.join(", ");
+      });
+      if (keptShown.join("|") !== groups.join("|")) {
+        note = " (kept from the step-5 readout wiring — Per feedline does not " +
+               "regroup it; drag the readout ports in step 5 to change it)";
+      }
+      groups = keptShown;
+    }
     var shown = groups.slice(0, 4).join(" · ") + (groups.length > 4 ? " · …" : "");
     el.textContent = qs.length + " qubit" + (qs.length === 1 ? "" : "s") +
       " · " + groups.length + " feedline" + (groups.length === 1 ? "" : "s") +
-      ": " + shown;
+      ": " + shown + note;
+    el.classList.toggle("gen-qubit-summary-kept", !!note);
+  }
+
+  // The feedline membership deriveLines will build when the readout wiring is
+  // kept (state.wiringTouched): a qubit's kept resonator group, else the mux
+  // chunk it falls in. Null when nothing is kept (the caption's mux path).
+  function keptFeedlineGroups(qs, mux) {
+    if (!state.wiringTouched) return null;
+    var groupOf = {};
+    (state.spec.lines || []).forEach(function (ln) {
+      if (ln.line === "resonator" && ln.group) groupOf[ln.element] = ln.group;
+    });
+    if (!Object.keys(groupOf).length) return null;
+    var order = [], members = {};
+    qs.forEach(function (q, idx) {
+      var g = groupOf[q] || ("feedline" + (Math.floor(idx / mux) + 1));
+      if (!members[g]) { members[g] = []; order.push(g); }
+      members[g].push(q);
+    });
+    return order.map(function (g) { return members[g]; });
+  }
+
+  // QA regenerate-r2-30: a pair edit (Control/Target pick, + Add pair, ×)
+  // as one wizard Ctrl+Z step. Snapshots what the handlers change -- the pair
+  // list, pairsTouched, each pair's CZ orientation flag (markPairManual
+  // touches only cz_order; populate values typed later are left alone) and the
+  // pins of lines the edit may drop (a × delete loses its pair's line pin).
+  // `structural` repaints like the add/delete handlers, else like a pick.
+  function pairUndo(structural) {
+    var pop = (state.spec.populate || {}).pairs || {};
+    var cz = {}, had = {}, pins = {};
+    Object.keys(pop).forEach(function (id) {
+      had[id] = true;
+      if (pop[id] && "cz_order" in pop[id]) cz[id] = pop[id].cz_order;
+    });
+    var pairs = JSON.parse(JSON.stringify(state.spec.qubit_pairs));
+    var touched = state.pairsTouched;
+    state.spec.lines.forEach(function (ln) {
+      if (ln.channel) pins[ln.element + "|" + ln.line] = JSON.parse(JSON.stringify(ln.channel));
+    });
+    return function () {
+      state.spec.qubit_pairs = pairs;
+      state.pairsTouched = touched;
+      var popObj = state.spec.populate || (state.spec.populate = {});
+      var pp = popObj.pairs || (popObj.pairs = {});
+      Object.keys(pp).forEach(function (id) {
+        if (!pp[id] || !("cz_order" in pp[id]) || id in cz) return;
+        delete pp[id].cz_order;
+        if (!had[id] && !Object.keys(pp[id]).length) delete pp[id];
+      });
+      Object.keys(cz).forEach(function (id) { (pp[id] = pp[id] || {}).cz_order = cz[id]; });
+      var present = {};
+      state.spec.lines.forEach(function (ln) { present[ln.element + "|" + ln.line] = true; });
+      renderPairs();
+      if (structural) {
+        syncLineTypeToggles();
+        deriveLines();
+        state.spec.lines.forEach(function (ln) {   // a line the undo brings back gets its pin back
+          var k = ln.element + "|" + ln.line;
+          if (!present[k] && pins[k] && !ln.channel) ln.channel = pins[k];
+        });
+      }
+      if (window.WiringGrid) window.WiringGrid.refresh();
+    };
   }
 
   function renderPairs() {
@@ -1711,6 +1822,7 @@
           "back to keep the calibration.";
       }
       row.querySelector(".gen-pair-c").addEventListener("change", function (e) {
+        _wizPushRestore("pair " + pair[0] + "–" + pair[1] + " change", pairUndo(false));
         pair[0] = e.target.value;
         state.pairsTouched = true;
         markPairManual(pair);
@@ -1718,6 +1830,7 @@
         refreshBoard();  // QA F15: the edge moved
       });
       row.querySelector(".gen-pair-t").addEventListener("change", function (e) {
+        _wizPushRestore("pair " + pair[0] + "–" + pair[1] + " change", pairUndo(false));
         pair[1] = e.target.value;
         state.pairsTouched = true;
         markPairManual(pair);
@@ -1725,6 +1838,7 @@
         refreshBoard();
       });
       row.querySelector(".gen-row-del").addEventListener("click", function () {
+        _wizPushRestore("pair " + pair[0] + "–" + pair[1] + " delete", pairUndo(true));
         state.pairsTouched = true;
         state.spec.qubit_pairs.splice(idx, 1);
         renderPairs();
@@ -2192,6 +2306,7 @@
   // for qubitFlux + pairGate. syncLineTypeToggles then enforces hardware limits
   // and reflects the effective result back into the selector.
   function applyChipArch(arch) {
+    state.heldChipArch = null;   // an explicit choice replaces a held one (QA r2-12)
     var map = CHIP_ARCH[arch] || CHIP_ARCH.flux_tunable_coupler;
     state.chipArch = (arch in CHIP_ARCH) ? arch : "flux_tunable_coupler";
     state.qubitFlux = map.qubitFlux;
@@ -2208,10 +2323,39 @@
     if (window.WiringGrid) window.WiringGrid.refresh();
   }
 
+  var ARCH_LABEL = {
+    flux_tunable_coupler: "Flux-tunable qubits + tunable coupler",
+    flux_tunable_fixed_coupler: "Flux-tunable qubits + fixed coupler",
+    fixed_frequency: "Fixed-frequency qubits (cross-resonance)"
+  };
+
+  // Give a held architecture back once the rack can build it; returns what is
+  // STILL held (null = nothing). Also run on a step-5+ entry, so a rail jump
+  // from step 3 straight past step 4 derives the lines of the right chip.
+  function restoreHeldChipArch() {
+    var held = CHIP_ARCH[state.heldChipArch] ? state.heldChipArch : null;
+    if (held && (held === "fixed_frequency" ? (hasMwFem() || hasOpxPlus())
+                                            : (hasLfFem() || hasOpxPlus()))) {
+      state.qubitFlux = CHIP_ARCH[held].qubitFlux;
+      state.pairGate = CHIP_ARCH[held].pairGate;
+      state.chipArch = held;
+      state.heldChipArch = held = null;
+    }
+    return held;
+  }
+
   function syncLineTypeToggles() {
     var mw = hasMwFem() || hasOpxPlus();
     var lf = hasLfFem() || hasOpxPlus();
     var hasPairs = state.spec.qubit_pairs.length > 0;
+
+    // QA regenerate-r2-12: the hardware fallback below rewrites the fields
+    // that HOLD the user's architecture (qubitFlux, pairGate), one way: an
+    // LF-FEM removed and re-added in step 3 left a CZ chip building as
+    // fixed-frequency/CR. The declared architecture is held aside while the
+    // rack cannot build it, and given back as soon as it can.
+    var held = restoreHeldChipArch();
+    var declared = deriveChipArch();
 
     var rdIndicator = document.getElementById("gen-rd-indicator");
     var rdRow = document.getElementById("gen-line-resonator-drive");
@@ -2270,6 +2414,7 @@
     // Reflect the effective architecture back into the explicit selector, and
     // disable arch options the current hardware can't build.
     state.chipArch = deriveChipArch();
+    if (!held && state.chipArch !== declared) state.heldChipArch = held = declared;
     var archSel = document.getElementById("gen-chip-arch");
     var archNote = document.getElementById("gen-chip-arch-note");
     if (archSel) {
@@ -2280,7 +2425,20 @@
       });
       archSel.value = state.chipArch;
     }
-    if (archNote) {
+    if (archNote) archNote.classList.toggle("gen-arch-held", !!held);
+    if (archNote && held) {
+      // The visible notice for every removal path (Delete, the slot menu,
+      // M/L keys, arrow cycling) -- not a confirm on one of them.
+      archNote.textContent = (!mw && !lf)
+        // an empty rack builds no fallback either (QA review of r2-12)
+        ? ARCH_LABEL[held] + " is on hold: step 3 has no FEM yet — add an MW-FEM " +
+          "(readout, drive)" + (held === "fixed_frequency" ? "" : " and an LF-FEM (flux)") +
+          " there. Nothing can be built until then; it comes back on its own."
+        : ARCH_LABEL[held] + " is on hold: it needs " +
+        (held === "fixed_frequency" ? "an MW-FEM" : "an LF-FEM") + ", and step 3 has none. " +
+        "Building as " + ARCH_LABEL[state.chipArch].toLowerCase() + " until you add one — " +
+        "it comes back on its own, line pins too; picking an architecture here replaces it.";
+    } else if (archNote) {
       if (state.chipArch === "fixed_frequency") {
         archNote.textContent = !mw
           ? "Fixed-frequency needs an MW-FEM — add one in step 3."
@@ -2455,6 +2613,7 @@
     // the select dispatch so the bound applyChipArch refreshes the step-4 UI.
     state.crPortMode = "shared_xy";
     state.chipArch = "fixed_frequency";
+    state.heldChipArch = null;   // the CSV is an explicit architecture
     state.pairGate = "cr";
     state.qubitFlux = false;
     seedSharedCrShapes();      // the customer flow gets the customer library
@@ -2571,7 +2730,11 @@
 
     if (countInput) {
       countInput.addEventListener("change", function () {
-        setQubitCount(parseInt(countInput.value, 10));
+        // A blank/unparsable box reverts instead of committing 0 (an emptied
+        // field is not "delete every qubit"; an explicit 0 still clears).
+        var n = parseInt(countInput.value, 10);
+        if (isNaN(n)) { countInput.value = state.spec.qubits.length; return; }
+        setQubitCount(n);
         countInput.value = state.spec.qubits.length;
       });
     }
@@ -2588,6 +2751,7 @@
     }
     if (addPair) {
       addPair.addEventListener("click", function () {
+        _wizPushRestore("+ Add pair", pairUndo(true));   // QA regenerate-r2-30
         state.pairsTouched = true;
         state.spec.qubit_pairs.push(nextFreePair(state.spec.qubits,
                                                  state.spec.qubit_pairs));
@@ -2792,6 +2956,21 @@
       if (ln.channel) pinned[ln.element + "|" + ln.line] = ln.channel;
       if (ln.line === "resonator" && ln.group) groupOf[ln.element] = ln.group;
     });
+    // QA review of regenerate-r2-12: a line the step-3 rack cannot carry right
+    // now (no LF-FEM: flux / coupler; no MW-FEM: readout / drive / CR / ZZ /
+    // TWPA) took its pin with it, so a module removed and re-added came back
+    // with those lines on "auto" and the allocator re-chose their ports. The
+    // pins (and feedline) of such lines are held aside below and given back
+    // here when the line returns; a pin the line itself carries wins.
+    var heldPins = state.heldPins || {};
+    Object.keys(heldPins).forEach(function (k) {
+      var h = heldPins[k], cut = k.lastIndexOf("|");
+      if (!h) return;
+      if (!pinned[k] && h.channel) pinned[k] = h.channel;
+      if (h.group && k.slice(cut + 1) === "resonator" && !groupOf[k.slice(0, cut)]) {
+        groupOf[k.slice(0, cut)] = h.group;
+      }
+    });
 
     // docs/134: a re-generated chip's OPTIONAL line inventory (qubit z, pair
     // coupler/CR) is the SOURCE CHIP's truth, not a per-element derivation —
@@ -2930,6 +3109,23 @@
         }
       });
     }
+    // Hold the pins this derive dropped for want of a module, for elements that
+    // still exist; a line derived again, or an element gone, leaves the hold.
+    var emitted = {}, alive = {}, nextHeld = {};
+    lines.forEach(function (ln) { emitted[ln.element + "|" + ln.line] = true; });
+    state.spec.qubits.forEach(function (q) { alive[q] = true; });
+    state.spec.qubit_pairs.forEach(function (p) { if (p[0] && p[1]) alive[p[0] + "-" + p[1]] = true; });
+    (state.spec.twpas || []).forEach(function (tw) {
+      var tid = (tw && typeof tw === "object") ? tw.id : tw;
+      if (tid) alive[tid] = true;
+    });
+    Object.keys(pinned).forEach(function (k) {
+      var cut = k.lastIndexOf("|"), el = k.slice(0, cut), lt = k.slice(cut + 1);
+      if (emitted[k] || !alive[el]) return;
+      if ((lt === "flux" || lt === "coupler") ? lf : mw) return;   // dropped for another reason
+      nextHeld[k] = { channel: pinned[k], group: lt === "resonator" ? (groupOf[el] || null) : null };
+    });
+    state.heldPins = nextHeld;
     state.spec.lines = lines;
     // CR drive port mode (docs/54): 'shared_xy' = the customer's dual-
     // upconverter layout (CR/ZZ ride the control's xy port, LO 2).
@@ -2944,15 +3140,57 @@
     if (!ch) return "";
     var slot = ch.slot != null ? ch.slot : ch.out_slot;
     var port = ch.out_port != null ? ch.out_port : ch.port;
+    // A PARTIAL channel (deriveLines' LO-safe readout pre-pin carries ports but
+    // no con/slot) is not a con/slot/port pin: join() rendered it "//8".
+    if (ch.con == null || slot == null || port == null) return "";
     return [ch.con, slot, port].join("/");
   }
 
-  function pinToChannel(str, lineType) {
-    var parts = str.split("/").map(function (s) { return parseInt(s.trim(), 10); });
-    if (parts.length !== 3 || parts.some(isNaN)) return null;
+  // The MW-FEM input that shares an LO with output `port` (MW_LO_PAIRS: Out1+In1,
+  // Out8+In2), or null when that output's LO partner is another output.
+  function loPairedInput(port) {
+    for (var i = 0; i < MW_LO_PAIRS.length; i++) {
+      var a = MW_LO_PAIRS[i][0], b = MW_LO_PAIRS[i][1];
+      if (a[1] === "output" && a[0] === port && b[1] === "input") return b[0];
+      if (b[1] === "output" && b[0] === port && a[1] === "input") return a[0];
+    }
+    return null;
+  }
+
+  // The readout INPUT a retyped resonator pin keeps (QA review of F6): the
+  // input is a cable of its own, and retyping the OUTPUT pin does not move it
+  // -- real chips read out on (out 1, in 2) or (out 8, in 1), and deriving
+  // the input from the new output silently rewired it. Kept when the line
+  // already names one on real hardware; null (derive the LO partner) when
+  // there is none, when it is only the wizard's partial LO-safe pre-pin, or
+  // when a Generate pin's input is exactly the LO partner the wizard derived.
+  function keptReadoutInput(prev) {
+    if (!prev || prev.in_port == null || !channelToPin(prev)) return null;
+    if (state.mode !== "regenerate" && prev.in_port === loPairedInput(prev.out_port)) return null;
+    return prev.in_port;
+  }
+
+  function pinToChannel(str, lineType, prev) {
+    // QA generate-r2-11: parseInt accepted '1.5' (-> 1), '1e999' (-> 1) and any
+    // range, so '1/1/99' pinned output 99 and the allocator answered "not
+    // enough channels". A pin is three whole numbers naming real hardware:
+    // con >= 1, slot 1-8 (OPX1000 chassis), port 1-8 (a FEM's 8 analog
+    // outputs -- QM docs, opx1000_fems.md). Anything else is not a pin (null).
+    var raw = String(str).split("/");
+    if (raw.length !== 3 || !raw.every(function (s) { return /^\s*\d+\s*$/.test(s); })) return null;
+    var parts = raw.map(function (s) { return parseInt(s, 10); });
     var con = parts[0], slot = parts[1], port = parts[2];
+    if (con < 1 || slot < 1 || slot > OPX1000_SLOTS || port < 1 || port > 8) return null;
     if (lineType === "resonator") {
-      return { kind: "mw_fem", con: con, slot: slot, in_port: port, out_port: port };
+      // The typed port is the OUTPUT (what the pin box and the Auto-allocated
+      // column show). It used to set in_port = out_port too, and a MW-FEM has
+      // inputs 1-2 only, so '1/1/8' could never allocate. The input follows the
+      // output's LO partner; an output with no input partner leaves it free.
+      var rch = { kind: "mw_fem", con: con, slot: slot, out_port: port };
+      var inp = keptReadoutInput(prev);
+      if (inp == null) inp = loPairedInput(port);
+      if (inp != null) rch.in_port = inp;
+      return rch;
     }
     if (lineType === "drive" || lineType === "cross_resonance" || lineType === "zz_drive") {
       // CR/ZZ are MW drive tones — the old lf_fem fallthrough mis-pinned a
@@ -2962,10 +3200,180 @@
     return { kind: "lf_fem", con: con, out_slot: slot, out_port: port };
   }
 
-  function allocText(element, lineType) {
+  // -- step 5: pins that cannot be built (QA generate-r2-11 / regenerate-r2-13)
+  // A typed box that is not a pin, keyed element|line -> the text typed, so a
+  // re-render keeps showing (and flagging) what the user typed.
+  var _pinBad = {};
+  var PIN_HINT = "con/slot/port — slot 1–8, port 1–8";
+  function escapeAttr(s) {
+    return String(s).replace(/&/g, "&amp;").replace(/</g, "&lt;")
+      .replace(/>/g, "&gt;").replace(/"/g, "&quot;");
+  }
+
+  // The (con, slot) a FEM pin names, read the way run_build._make_constraint
+  // hands it to the allocator (mirror of config_generator._pinned_fem_slots).
+  function pinnedFemSlots(ch) {
+    if (!ch || ch.con == null) return [];
+    var slots = [];
+    if (ch.kind === "mw_fem") slots.push(ch.slot);
+    else if (ch.kind === "lf_fem") {
+      slots.push("out_slot" in ch ? ch.out_slot : ch.slot);
+      if (ch.in_port != null || ch.in_slot != null) slots.push("in_slot" in ch ? ch.in_slot : ch.slot);
+    }
+    var out = [];
+    slots.forEach(function (s) {
+      if (s != null && out.indexOf(s) < 0) out.push(s);
+    });
+    return out.map(function (s) { return { con: ch.con, slot: s }; });
+  }
+
+  function femKindAt(con, slot) {
+    var kind = null;
+    (state.spec.instruments.controllers || []).forEach(function (c) {
+      if (c.con !== con) return;
+      (c.fems || []).forEach(function (f) { if (f.slot === slot && !kind) kind = f.fem; });
+    });
+    return kind;
+  }
+
+  // Pins naming a slot the chassis step does not hold a FEM of that kind in (a
+  // module deleted or moved in step 3): one entry per (con, slot, kind) with the
+  // line indices, plus the ONE same-kind slot on that con no pin names, when
+  // there is exactly one -- the "module moved" case the carry button offers.
+  function stalePinGroups() {
+    var groups = {}, named = {};
+    // (mirrors validate_spec: only against a declared OPX1000 chassis)
+    if (!(state.spec.instruments.controllers || []).length) return [];
+    state.spec.lines.forEach(function (ln, idx) {
+      var want = ln.channel && ({ mw_fem: "mw", lf_fem: "lf" })[ln.channel.kind];
+      if (!want) return;
+      pinnedFemSlots(ln.channel).forEach(function (p) {
+        named[p.con + "/" + p.slot] = true;
+        if (femKindAt(p.con, p.slot) === want) return;
+        var k = p.con + "/" + p.slot + "/" + want;
+        (groups[k] || (groups[k] = { con: p.con, slot: p.slot, want: want, idx: [] })).idx.push(idx);
+      });
+    });
+    return Object.keys(groups).sort().map(function (k) {
+      var g = groups[k], free = [];
+      (state.spec.instruments.controllers || []).forEach(function (c) {
+        if (c.con !== g.con) return;
+        (c.fems || []).forEach(function (f) {
+          if (f.fem === g.want && !named[g.con + "/" + f.slot]) free.push(f.slot);
+        });
+      });
+      g.moveTo = free.length === 1 ? free[0] : null;
+      return g;
+    });
+  }
+
+  function stalePinText(g) {
+    var fem = g.want === "mw" ? "MW-FEM" : "LF-FEM";
+    var have = femKindAt(g.con, g.slot);
+    var who = g.idx.map(function (i) {
+      var ln = state.spec.lines[i]; return ln.element + " " + ln.line;
+    });
+    var shown = who.slice(0, 6).join(", ") + (who.length > 6 ? ", …" : "");
+    return who.length + " pinned line" + (who.length === 1 ? "" : "s") + " (" + shown + ") " +
+      (who.length === 1 ? "names" : "name") + " con" + g.con + " slot " + g.slot + ", " +
+      (have ? "which holds an " + (have === "lf" ? "LF-FEM" : "MW-FEM") + ", not an " + fem
+            : "which has no " + fem + " in the chassis (step 3)") + ".";
+  }
+
+  // Two lines pinned to ONE FEM output (QA regenerate-r2-24; mirror of
+  // config_generator.validate_spec): the wirer blocks a channel once a line
+  // took it, so the allocator failed as "not enough channels ... add a FEM".
+  // A feedline is one line (run_build uses its FIRST member's pin); CR / ZZ
+  // lines share the control's xy port by design (shared_xy) and are left out,
+  // as is a pin on a missing module (stalePinGroups names that).
+  function pinCollisionGroups() {
+    var byPort = {}, feeds = {};
+    var chassis = (state.spec.instruments.controllers || []).length > 0;
+    state.spec.lines.forEach(function (ln, idx) {
+      if (ln.line === "resonator") {
+        var feed = ln.group !== undefined ? ln.group : "__solo__" + ln.element;
+        if (feeds[feed]) return;
+        feeds[feed] = true;
+      }
+      if (ln.line === "cross_resonance" || ln.line === "zz_drive") return;
+      var ch = ln.channel, want = ch && ({ mw_fem: "mw", lf_fem: "lf" })[ch.kind];
+      if (!want || ch.con == null || ch.out_port == null) return;
+      var slot = (ch.kind === "lf_fem" && "out_slot" in ch) ? ch.out_slot : ch.slot;
+      if (slot == null || (chassis && femKindAt(ch.con, slot) !== want)) return;
+      var k = ch.kind + "|" + ch.con + "/" + slot + "/" + ch.out_port;
+      (byPort[k] || (byPort[k] = { con: ch.con, slot: slot, port: ch.out_port, idx: [] })).idx.push(idx);
+    });
+    return Object.keys(byPort).sort().map(function (k) { return byPort[k]; })
+      .filter(function (g) { return g.idx.length > 1; });
+  }
+
+  function pinCollisionText(g) {
+    var who = g.idx.map(function (i) {
+      var ln = state.spec.lines[i]; return ln.element + " " + ln.line;
+    });
+    return (who.length === 2 ? who.join(" and ") + " are both" : who.join(", ") + " are all") +
+      " pinned to con" + g.con + " slot " + g.slot + " output " + g.port +
+      " — the allocator gives each line its own output port (a feedline counts as one), so re-pin or " +
+      (who.length === 2 ? "clear one of them." : "clear all but one of them.");
+  }
+
+  // Rewrite (move=true) or drop (move=false) the pins of one stale group, then
+  // re-allocate -- one press instead of retyping every pin. Never automatic:
+  // a user who removed a module may want those lines re-allocated, not moved.
+  function fixStalePins(g, move) {
+    g.idx.forEach(function (i) {
+      var ln = state.spec.lines[i], ch = ln && ln.channel;
+      if (!ch) return;
+      if (!move) { ln.channel = null; return; }
+      ["slot", "in_slot", "out_slot"].forEach(function (f) {
+        if (ch[f] === g.slot) ch[f] = g.moveTo;
+      });
+    });
+    renderWiringTable();
+    renderWiringDiagram();
+    if (_allocInFlight) { _allocRerun = true; return; }
+    if (typeof fetch === "function") runAutoAllocate(true);
+  }
+
+  // Everything wrong with the pins themselves, for the step-5 issues panel.
+  function pinIssues() {
+    var out = [];
+    state.spec.lines.forEach(function (ln) {
+      var bad = _pinBad[ln.element + "|" + ln.line];
+      if (bad != null && !channelToPin(ln.channel)) {
+        out.push({ level: "error", message: ln.element + " " + ln.line + ": “" + bad +
+          "” is not a pin (" + PIN_HINT + ") — this line auto-allocates until it is fixed." });
+      }
+    });
+    stalePinGroups().forEach(function (g) {
+      out.push({ level: "error", message: stalePinText(g), stale: g });
+    });
+    pinCollisionGroups().forEach(function (g) {
+      out.push({ level: "error", message: pinCollisionText(g) });
+    });
+    return out;
+  }
+
+  // The allocation entry for a spec line element. QA F11: a pair line is
+  // "q1-q2" in the spec but the wirer keys it "q1-2" (run_build._quam_pair_id
+  // / QubitPairReference.__str__: the target drops its leading "q" --
+  // docs/137 §139), so a verbatim lookup missed EVERY coupler/CR/ZZ row.
+  // The exact key wins first, so an entry already in either form is unchanged.
+  function allocEntry(element) {
     var alloc = state.allocation;
-    if (!alloc || !alloc[element]) return "—";
-    var chans = alloc[element][ALLOC_KEY[lineType]];
+    if (!alloc) return null;
+    if (alloc[element]) return alloc[element];
+    var s = String(element), i = s.indexOf("-");
+    if (i <= 0) return null;
+    var q = window.TopoGraph ? window.TopoGraph.quamPairId(s)
+      : "q" + s.slice(0, i).replace(/^[qQ]/, "") + "-" + s.slice(i + 1).replace(/^[qQ]/, "");
+    return alloc[q] || null;
+  }
+
+  function allocText(element, lineType) {
+    var entry = allocEntry(element);
+    if (!entry) return "—";
+    var chans = entry[ALLOC_KEY[lineType]];
     if (!chans || !chans.length) return "—";
     return chans.map(function (c) {
       return c.instrument_id + " con" + c.con +
@@ -2974,21 +3382,66 @@
     }).join(", ");
   }
 
+  // A pin box's id is its line's (QA review of F5/F7): a typed pin now
+  // re-allocates and the answer re-renders this table, so the wizard Ctrl+Z
+  // entry for an id-less box was stale ("Nothing to undo in the wizard.").
+  // With an id, tryUndo finds the re-rendered box and its change re-allocates.
+  function pinBoxId(ln) {
+    return "gen-pin-" + String(ln.element + "--" + ln.line).replace(/\s/g, "_");
+  }
+
   function renderWiringTable() {
     var host = document.getElementById("gen-wiring-table");
     if (!host) return;
+    // An allocation answering re-renders this table (QA F5: a typed pin now
+    // re-allocates) — a pin box being typed in must keep its text and focus.
+    var ae = document.activeElement, keep = null;
+    if (ae && ae.classList && ae.classList.contains("gen-wiring-pin") && host.contains(ae)) {
+      keep = { idx: ae.closest("tr").dataset.idx, value: ae.value,
+               s: ae.selectionStart, e: ae.selectionEnd, prev: ae.__wizPrev };
+    }
     if (!state.spec.lines.length) {
       host.innerHTML = '<p class="muted">Add qubits in step 4 first.</p>';
       return;
     }
+    // A feedline's ports come from its FIRST member's pin (run_build
+    // build_connectivity), so a later member's own partial pin says nothing.
+    var feedLead = {};
+    state.spec.lines.forEach(function (ln) {
+      if (ln.line === "resonator" && ln.group && !feedLead[ln.group]) feedLead[ln.group] = ln.element;
+    });
+    var staleIdx = {};
+    stalePinGroups().forEach(function (g) {
+      g.idx.forEach(function (i) { staleIdx[i] = stalePinText(g); });
+    });
+    pinCollisionGroups().forEach(function (g) {   // QA regenerate-r2-24
+      g.idx.forEach(function (i) { if (!staleIdx[i]) staleIdx[i] = pinCollisionText(g); });
+    });
     var body = state.spec.lines.map(function (ln, idx) {
-      return '<tr data-idx="' + idx + '"' + (ln.channel ? ' class="pinned"' : "") + ">" +
+      var pin = channelToPin(ln.channel);
+      // QA generate-r2-11 / regenerate-r2-13: a box that is not a pin keeps
+      // what was typed, flagged; a pin naming a missing module is flagged too.
+      var bad = _pinBad[ln.element + "|" + ln.line];
+      var why = null;
+      if (bad != null && !pin) { pin = bad; why = "Not a pin: " + PIN_HINT + ". This line auto-allocates until it is fixed."; }
+      else if (staleIdx[idx]) why = staleIdx[idx];
+      // a partial (LO-safe) channel shows its ports as the placeholder, not "//8"
+      var lead = ln.line === "resonator" && ln.group ? feedLead[ln.group] : null;
+      var ph = (!pin && lead && lead !== ln.element) ? "auto · " + lead + "'s feedline"
+        : (!pin && ln.channel && ln.channel.out_port != null)
+        ? "auto · out " + ln.channel.out_port +
+          (ln.channel.in_port != null ? " / in " + ln.channel.in_port : "")
+        : "auto";
+      return '<tr data-idx="' + idx + '"' + (pin ? ' class="pinned"' : "") + ">" +
         "<td>" + ln.element + "</td>" +
         "<td>" + ln.line +
         (ln.group ? ' <span class="muted">· ' + ln.group + "</span>" : "") + "</td>" +
         '<td class="gen-wiring-alloc">' + allocText(ln.element, ln.line) + "</td>" +
-        '<td><input type="text" class="gen-wiring-pin" placeholder="auto" value="' +
-        channelToPin(ln.channel) + '"></td></tr>';
+        '<td><input type="text" id="' + escapeAttr(pinBoxId(ln)) + '" aria-label="' +
+        escapeAttr(ln.element + " " + ln.line + " pin") + '" class="gen-wiring-pin' +
+        (why ? ' gen-wiring-pin-invalid" aria-invalid="true" title="' +
+        escapeAttr(why) : "") + '" placeholder="' + ph + '" value="' +
+        escapeAttr(pin) + '"></td></tr>';
     }).join("");
     host.innerHTML =
       '<table class="gen-wiring" id="gen-wiring-tbl"><thead><tr>' +
@@ -3000,15 +3453,58 @@
       // pins are "con/slot/port" strings, not numbers — auto-grow only (no comma).
       window.NumberInput.fit(input);
       input.addEventListener("input", function () { window.NumberInput.fit(input); });
-      input.addEventListener("change", function () {
-        var tr = input.closest("tr");
-        var ln = state.spec.lines[Number(tr.dataset.idx)];
-        var v = input.value.trim();
-        ln.channel = v ? pinToChannel(v, ln.line) : null;
-        tr.classList.toggle("pinned", !!ln.channel);
-      });
+      input.addEventListener("change", function () { commitWiringPin(input); });
+      // blur too: a box restored mid-typing by a re-render fires no change
+      input.addEventListener("blur", function () { commitWiringPin(input); });
     });
     if (window.armPlainResize) window.armPlainResize("gen-wiring-tbl", "quam_gen_wiring_cols");
+    if (keep) {
+      var again = host.querySelector('tr[data-idx="' + keep.idx + '"] .gen-wiring-pin');
+      if (again) {
+        again.value = keep.value;
+        window.NumberInput.fit(again);
+        again.focus();
+        // focus() re-snapshots the Ctrl+Z "before" value from the half-typed
+        // text; the box's committed value is what an undo must go back to.
+        if (keep.prev !== undefined) again.__wizPrev = keep.prev;
+        try { again.setSelectionRange(keep.s, keep.e); } catch (e) {}
+      }
+    }
+  }
+
+  // Commit one typed pin. QA F5: it used to write spec.lines only, so the
+  // Auto-allocated column, the diagram, "✓ Wiring valid" and the step-6 LO map
+  // kept the OLD port while the build used the new one. A changed pin now
+  // re-allocates (the allocator enforces pins as constraints), exactly as a
+  // drag redraws. Idempotent: an unchanged box or channel does nothing.
+  function commitWiringPin(input) {
+    if (!input.isConnected) return;   // a re-render replaced it (its text moved on)
+    var tr = input.closest("tr");
+    var ln = tr && state.spec.lines[Number(tr.dataset.idx)];
+    if (!ln) return;
+    var v = input.value.trim();
+    var key = ln.element + "|" + ln.line;
+    if (v === channelToPin(ln.channel)) {         // e.g. a partial LO-safe pre-pin left blank
+      if (_pinBad[key] != null) { delete _pinBad[key]; markPinBox(input, null); renderWiringIssuesKeep(); }
+      return;
+    }
+    if (v && _pinBad[key] === v) return;          // the same non-pin again (change + blur)
+    var before = JSON.stringify(ln.channel || null);
+    ln.channel = v ? pinToChannel(v, ln.line, ln.channel) : null;
+    // QA generate-r2-11: typed text that is not a pin is flagged where it was
+    // typed (and in the issues panel), never silently read as "auto".
+    if (v && !ln.channel) _pinBad[key] = v; else delete _pinBad[key];
+    markPinBox(input, _pinBad[key] != null
+      ? "Not a pin: " + PIN_HINT + ". This line auto-allocates until it is fixed." : null);
+    renderWiringIssuesKeep();
+    tr.classList.toggle("pinned", !!channelToPin(ln.channel));
+    if (JSON.stringify(ln.channel || null) === before) return;
+    // a typed readout pin is a readout edit: deriveLines must keep it
+    if (ln.line === "resonator") state.wiringTouched = true;
+    var cell = tr.querySelector(".gen-wiring-alloc");
+    if (cell) cell.textContent = "re-allocating…";
+    if (_allocInFlight) { _allocRerun = true; return; }
+    if (typeof fetch === "function") runAutoAllocate(true);
   }
 
   // -- step 5: QDAC trigger cabling (docs/136 WS7) ------------------------
@@ -3414,6 +3910,7 @@
                  '<br><small>the first usable env from step 1 is selected ' +
                  'automatically</small></p>')
             : '<p class="muted">Run Auto-allocate to see the wiring diagram.</p>';
+      renderWiringIssues(null);   // no allocation, no "✓ Wiring valid" (QA F7)
       return;
     }
     renderInstrumentWiring("gen-wiring-diagram",
@@ -3700,12 +4197,66 @@
     });
   }
 
+  // QA F25: a feedline keeps its NAME through a drag. Membership is still
+  // re-derived from the dragged layout — same rr output port <=> same group,
+  // because every builder pins a whole group to its first member's channel,
+  // so a stale shared name would silently multiplex a qubit onto another
+  // feedline's port — but each port inherits the name most of its members
+  // already carried (no name twice); a port no old name can go to gets a
+  // fresh "feedline<n>" (freshFeedlineGroup's convention). Any drag, a
+  // drive drag included, used to rename every feedline "fl_<con>_<slot>_<port>".
+  function rrPortKey(ro) { return ro.con + "_" + ro.slot + "_" + ro.port; }
+  function feedlineNamesByPort() {
+    // null-prototype maps: a group is free text ("constructor" is a name)
+    var order = [], members = Object.create(null), used = Object.create(null);
+    state.spec.lines.forEach(function (ln) {
+      if (ln.line !== "resonator") return;
+      if (ln.group) used[ln.group] = true;
+      var rr = (allocEntry(ln.element) || {}).rr;
+      if (!rr) return;
+      var ro = rr.filter(function (x) { return (x.io_type || "output") === "output"; })[0];
+      var ri = rr.filter(function (x) { return x.io_type === "input"; })[0];
+      if (!ro || !ri) return;   // syncSpecChannels skips it too
+      var key = rrPortKey(ro);
+      if (!members[key]) { members[key] = []; order.push(key); }
+      members[key].push(ln.group);
+    });
+    var cands = [];
+    order.forEach(function (key, ki) {
+      var count = Object.create(null), seen = [];
+      members[key].forEach(function (g) {
+        if (!g) return;
+        if (!count[g]) { count[g] = 0; seen.push(g); }
+        count[g]++;
+      });
+      seen.forEach(function (g, gi) {
+        cands.push({ key: key, name: g, n: count[g], ki: ki, gi: gi });
+      });
+    });
+    cands.sort(function (a, b) { return (b.n - a.n) || (a.ki - b.ki) || (a.gi - b.gi); });
+    var nameOf = Object.create(null), taken = Object.create(null);
+    cands.forEach(function (c) {
+      if (nameOf[c.key] !== undefined || taken[c.name]) return;
+      nameOf[c.key] = c.name;
+      taken[c.name] = true;
+    });
+    var k = 1;
+    order.forEach(function (key) {
+      if (nameOf[key] !== undefined) return;
+      while (used["feedline" + k] || taken["feedline" + k]) k++;
+      nameOf[key] = "feedline" + k;
+      taken[nameOf[key]] = true;
+    });
+    return nameOf;
+  }
+
   // A feedline's readout output + input must share one MW-FEM. After a port
   // swap, pull any stray readout-input back onto its output's FEM.
   // Rewrite every spec line's channel pin from the drag-mutated allocation.
   function syncSpecChannels() {
+    var feedName = feedlineNamesByPort();   // from the PRE-sync groups
     state.spec.lines.forEach(function (ln) {
-      var a = state.allocation[ln.element] || {};
+      var a = allocEntry(ln.element) || {};   // QA F11: pair lines are "q1-2" there
       if (ln.line === "drive" && (a.xy || [])[0]) {
         var d = a.xy[0];
         ln.channel = { kind: "mw_fem", con: d.con, slot: d.slot, out_port: d.port };
@@ -3723,7 +4274,7 @@
                          out_port: ro.port, in_port: ri.port };
           // Feedline = qubits sharing one rr output port — re-derive `group`
           // from the dragged layout so build_connectivity multiplexes them.
-          ln.group = "fl_" + ro.con + "_" + ro.slot + "_" + ro.port;
+          ln.group = feedName[rrPortKey(ro)];
         }
       } else if (ln.line === "twpa_pump" && (a.p || [])[0]) {
         var tp = a.p[0];
@@ -3809,13 +4360,53 @@
     return issues;
   }
 
-  // Render the validation issues panel for step 5.
+  function markPinBox(input, why) {
+    input.classList.toggle("gen-wiring-pin-invalid", !!why);
+    if (why) { input.setAttribute("aria-invalid", "true"); input.title = why; }
+    else { input.removeAttribute("aria-invalid"); input.removeAttribute("title"); }
+  }
+
+  // Re-render the issues panel with whatever allocation issues it last had.
+  var _lastWiringIssues = null;
+  function renderWiringIssuesKeep() { renderWiringIssues(_lastWiringIssues); }
+
+  // Render the validation issues panel for step 5. Pin problems (a box that is
+  // not a pin, a pin naming a module step 3 no longer holds) are listed even
+  // with no allocation -- they are usually WHY there is none.
   function renderWiringIssues(issues) {
     var host = document.getElementById("gen-wiring-issues");
     if (!host) return;
+    _lastWiringIssues = issues;
     host.innerHTML = "";
+    var pins = pinIssues();
+    pins.forEach(function (it) {
+      var row = document.createElement("div");
+      row.className = "gen-wiring-issue gen-wiring-error gen-wiring-pin-issue";
+      row.textContent = "✗ " + it.message + " ";
+      var g = it.stale;
+      if (g) {
+        if (g.moveTo != null) {
+          var mv = document.createElement("button");
+          mv.type = "button";
+          mv.className = "secondary outline gen-wiring-pin-move";
+          mv.textContent = "Move " + (g.idx.length === 1 ? "it" : "them") + " to con" + g.con +
+                           " slot " + g.moveTo;
+          mv.addEventListener("click", function () { fixStalePins(g, true); });
+          row.appendChild(mv);
+        }
+        var cl = document.createElement("button");
+        cl.type = "button";
+        cl.className = "secondary outline gen-wiring-pin-clear";
+        cl.textContent = "Clear " + (g.idx.length === 1 ? "this pin" : "these " + g.idx.length + " pins");
+        cl.title = "Drop the pins so the allocator picks the ports";
+        cl.addEventListener("click", function () { fixStalePins(g, false); });
+        row.appendChild(cl);
+      }
+      host.appendChild(row);
+    });
     if (!issues || !state.allocation) return;
     if (!issues.length) {
+      if (pins.length) return;   // never "✓ Wiring valid" beside a broken pin
       var ok = document.createElement("div");
       ok.className = "gen-wiring-ok";
       ok.textContent = "✓ Wiring valid";
@@ -3834,13 +4425,21 @@
   // readout-outputs are interchangeable on MW output ports; a feedline (all
   // its qubits) moves as a unit.
   function applyPortEdit(src, t) {
+    var wasCurrent = _allocSpecSig !== null && _allocSpecSig === topoSig();
     var io = src.io;
     var srcLines = linesAtPort(src.con, src.slot, src.port, io);
     var tgtLines = linesAtPort(t.con, t.slot, t.port, io);
     srcLines.forEach(function (x) { moveChannel(x, t.con, t.slot, t.port, io); });
     tgtLines.forEach(function (x) { moveChannel(x, src.con, src.slot, src.port, io); });
-    state.wiringTouched = true;
+    // Only a drag that moves READOUT freezes the feedline grouping (QA
+    // generate-r2-06): an xy-only drag used to set it too, after which
+    // step 4's "Per feedline" was silently ignored while its caption claimed
+    // the new split. syncSpecChannels still pins every line (diagram == build).
+    if (srcLines.concat(tgtLines).some(function (x) { return x.allocKey === "rr"; })) {
+      state.wiringTouched = true;
+    }
     syncSpecChannels();
+    if (wasCurrent) _allocSpecSig = topoSig();   // the drag moved both in lockstep
     renderWiringDiagram();
     renderWiringTable();
   }
@@ -3850,6 +4449,7 @@
   // only the input. Consistency is checked later (the Populate band check),
   // never enforced by snapping the two ports together.
   function applyQubitReadoutEdit(src, t) {
+    var wasCurrent = _allocSpecSig !== null && _allocSpecSig === topoSig();
     (state.allocation[src.element].rr || []).forEach(function (ch) {
       if ((ch.io_type || "output") === src.io) {
         ch.con = t.con; ch.slot = t.slot; ch.port = t.port;
@@ -3857,6 +4457,7 @@
     });
     state.wiringTouched = true;
     syncSpecChannels();
+    if (wasCurrent) _allocSpecSig = topoSig();   // the drag moved both in lockstep
     renderWiringDiagram();
     renderWiringTable();
   }
@@ -3937,6 +4538,59 @@
     }
   }
 
+  // QA regenerate-r2-30: a wiring drag as one wizard Ctrl+Z step. The three
+  // drag editors mutate the allocation IN PLACE, so it keeps its identity
+  // until the allocator answers again -- that identity is the staleness guard
+  // (a re-allocation or a dropped allocation makes the snapshot stale), and
+  // the restore is in place too so an older drag keeps its guard. Also put
+  // back: the spec pins + feedline groups (by element|line), wiringTouched,
+  // the allocation-matches-spec signature and the QDAC trigger pins.
+  function wizSnapKeys(o, keys) {
+    var snap = {};
+    keys.forEach(function (k) {
+      if (o && Object.prototype.hasOwnProperty.call(o, k)) {
+        snap[k] = o[k] === undefined ? undefined : JSON.parse(JSON.stringify(o[k]));
+      }
+    });
+    return snap;
+  }
+  function wizPutKeys(o, keys, snap) {
+    keys.forEach(function (k) {
+      if (Object.prototype.hasOwnProperty.call(snap, k)) o[k] = snap[k];
+      else delete o[k];
+    });
+  }
+  function wireUndo() {
+    var alloc = state.allocation;
+    var allocSnap = JSON.parse(JSON.stringify(alloc));
+    var lines = {}, trig = {};
+    state.spec.lines.forEach(function (ln) {
+      lines[ln.element + "|" + ln.line] = wizSnapKeys(ln, ["channel", "group"]);
+    });
+    var qq = (state.spec.qdac || {}).qubits || {};
+    Object.keys(qq).forEach(function (q) { trig[q] = wizSnapKeys(qq[q], ["trigger_pin", "pin_source"]); });
+    var touched = state.wiringTouched, specSig = _allocSpecSig;
+    return {
+      valid: function () { return state.allocation === alloc; },
+      restore: function () {
+        Object.keys(alloc).forEach(function (k) { delete alloc[k]; });
+        Object.keys(allocSnap).forEach(function (k) { alloc[k] = allocSnap[k]; });
+        state.spec.lines.forEach(function (ln) {
+          var snap = lines[ln.element + "|" + ln.line];
+          if (snap) wizPutKeys(ln, ["channel", "group"], snap);
+        });
+        Object.keys(trig).forEach(function (q) {
+          if (qq[q]) wizPutKeys(qq[q], ["trigger_pin", "pin_source"], trig[q]);
+        });
+        state.wiringTouched = touched;
+        _allocSpecSig = specSig;
+        renderQdacCabling();
+        renderWiringDiagram();
+        renderWiringTable();
+      }
+    };
+  }
+
   function onWireDragEnd(ev) {
     if (!_wireDrag) return;
     var drag = _wireDrag;
@@ -3946,6 +4600,10 @@
     if (cell) {
       var target = readCell(cell);
       if (isValidDrop(drag, target)) {
+        if (state.allocation) {
+          var wu = wireUndo();
+          _wizPushRestore("wiring drag", wu.restore, wu.valid);
+        }
         if (drag.role === "digital") {
           applyQdacTriggerEdit(drag, target);    // the whole trigger cable
         } else if (!drag.whole && (drag.role === "rr" || drag.role === "rr_in")) {
@@ -3990,7 +4648,7 @@
   // never before an env exists (env auto-select / applySelection re-arms).
   var _allocInFlight = false;
   var _allocAutoBlocked = false;
-  var _allocFailSig = null;    // topoSig at the failed attempt — an input change re-arms
+  var _allocFailSig = null;    // allocFailSig() at the failed attempt — an input change re-arms
   // Monotonic run token (docs/134 review, CRITICAL): every allocate request
   // captures it, and its handlers stand down if a newer run OR a wizard-content
   // swap (hydrateFromSpec / resetWizard / a fresh mount) bumped it since — a
@@ -4002,6 +4660,17 @@
   // relevant edit auto-re-allocates on the next Wiring entry instead of
   // silently showing the stale diagram.
   var _allocTopoSig = null;
+  // QA F7: the last allocator failure {sig, msg} (auto OR manual press) — the
+  // step-5 Next guard names it. Separate from the auto-latch above.
+  var _allocLastErr = null;
+  // QA F5: a pin typed while a request is in flight is not in that request's
+  // spec — run once more when it answers.
+  var _allocRerun = false;
+  // QA F5/F7: the spec signature state.allocation currently DESCRIBES — the
+  // allocator's answer, or a drag edit made on it (which moves allocation and
+  // pins in lockstep). Unlike _allocTopoSig it follows drags, so the step-5
+  // Next guard never refuses the user's own drag. null = unknown (draft).
+  var _allocSpecSig = null;
 
   // Allocator-relevant signature of the spec: entity membership, the derived
   // line set with pins, hardware layout, gate, QDAC bias, TWPAs. Pair ids are
@@ -4036,14 +4705,30 @@
     ]);
   }
 
+  // The INPUT a failed allocation was refused for (QA generate-r2-12). The
+  // failure latch and the step-5 Next guard key on this, not on topoSig:
+  // /generate/allocate validates the WHOLE spec, and a QDAC channel clash or a
+  // blank network host fails it while topoSig (which answers "is a successful
+  // allocation stale?") cannot see those fields -- fixing one never re-armed
+  // the retry, and Next kept refusing with the old reason. populate is left
+  // out on purpose: a step-6 visit alone must not re-arm the latch.
+  function allocFailSig() {
+    var sp = state.spec;
+    return JSON.stringify([topoSig(), sp.qdac || null, sp.network || null]);
+  }
+
   // Strand any in-flight allocate and forget per-content latches — called when
   // the wizard's CONTENT is replaced (hydrate / reset / fresh mount).
   function resetAllocRuntime() {
+    _pinBad = {};   // per-content: a new chip starts with no flagged pin boxes
     _allocRunSeq++;
     _allocInFlight = false;
     _allocAutoBlocked = false;
     _allocFailSig = null;
     _allocTopoSig = null;
+    _allocLastErr = null;
+    _allocRerun = false;
+    _allocSpecSig = null;
   }
 
   function maybeAutoAllocate() {
@@ -4051,9 +4736,14 @@
     // A failed AUTO attempt latches — but only for the input that failed:
     // fixing the spec (or switching env, via applySelection) re-arms.
     if (_allocAutoBlocked) {
-      if (_allocFailSig !== null && topoSig() !== _allocFailSig) {
+      if (_allocFailSig !== null && allocFailSig() !== _allocFailSig) {
         _allocAutoBlocked = false;
       } else {
+        // Latched on the same input: say why again -- goToStep's
+        // showMessage(null) just cleared it (QA generate-r2-12).
+        if (_allocLastErr && _allocLastErr.sig === _allocFailSig && state.step === 5) {
+          showMessage(_allocLastErr.msg, "error");
+        }
         return;
       }
     }
@@ -4083,6 +4773,7 @@
     if (_allocInFlight) return;
     var myRun = ++_allocRunSeq;
     var sigAtRequest = topoSig();
+    var failSigAtRequest = allocFailSig();
     _allocInFlight = true;
     if (btn) btn.disabled = true;
     if (status) status.innerHTML = busyHtml("Checking wiring");
@@ -4103,9 +4794,14 @@
         if (res.ok && res.result) {
           _allocAutoBlocked = false;
           _allocFailSig = null;
+          _allocLastErr = null;
           state.allocation = res.result.allocation || {};
           _allocTopoSig = sigAtRequest;   // the spec this response was computed FOR
+          _allocSpecSig = sigAtRequest;
           if (status) status.textContent = "Allocated.";
+          // QA F7: an earlier allocation error must not stay beside "Allocated."
+          // (step-gated: a late answer never wipes another step's message).
+          if (state.step === 5) showMessage(null);
           renderWiringTable();
           // docs/136 WS7: grouping runs on the FRESH allocation — before the
           // diagram, so the picture shows the grouped cables, not the
@@ -4120,24 +4816,47 @@
           var warns = res.result.warnings || [];
           if (warns.length) showMessage(warns.join(" "), "warn");
         } else {
-          if (auto) { _allocAutoBlocked = true; _allocFailSig = sigAtRequest; }
-          if (status) status.textContent = "✗ allocation failed";
+          if (auto) { _allocAutoBlocked = true; _allocFailSig = failSigAtRequest; }
+          var why = res.error || (res.errors || []).join("; ") || "Allocation failed.";
+          _allocLastErr = { sig: failSigAtRequest, msg: why };
+          dropStaleAllocation(sigAtRequest);
+          if (status) status.textContent = "✗ allocation failed — " + why;
+          renderWiringTable();     // no row keeps a "re-allocating…" that never comes
           renderWiringDiagram();   // back to the manual placeholder
-          showMessage(
-            res.error || (res.errors || []).join("; ") || "Allocation failed.",
-            "error"
-          );
+          showMessage(why, "error");
         }
+        rerunIfPinned();
       })
       .catch(function () {
         if (myRun !== _allocRunSeq) return;
         _allocInFlight = false;
-        if (auto) { _allocAutoBlocked = true; _allocFailSig = sigAtRequest; }
+        if (auto) { _allocAutoBlocked = true; _allocFailSig = failSigAtRequest; }
         if (btn) btn.disabled = false;
+        dropStaleAllocation(sigAtRequest);
         if (status) status.textContent = "✗ allocation failed";
+        renderWiringTable();
         renderWiringDiagram();
         showMessage("Allocation request failed.", "error");
+        rerunIfPinned();
       });
+  }
+
+  // QA F7: a failed allocation for a CHANGED topology leaves nothing to show —
+  // the previous allocation (and its "✓ Wiring valid") describes another chip.
+  // An unchanged topology's transient failure keeps the good allocation; the
+  // user's drag/pin edits live in spec.lines either way.
+  function dropStaleAllocation(sigAtRequest) {
+    if (!state.allocation || sigAtRequest === _allocSpecSig) return;
+    state.allocation = null;   // the caller re-renders: the column falls back to "—"
+    _allocTopoSig = null;
+    _allocSpecSig = null;
+  }
+
+  // QA F5: a pin changed while that request was in flight — allocate again.
+  function rerunIfPinned() {
+    if (!_allocRerun) return;
+    _allocRerun = false;
+    runAutoAllocate(true);
   }
 
   function bindWiringStep() {
@@ -4474,13 +5193,14 @@
 
   // The pair populate columns for the chip's current 2Q gate. CR uses its own
   // set; CZ drops the coupler-only column unless there's a tunable coupler.
-  function pairPopCols() {
-    if (state.pairGate === "cr") {
+  function pairPopCols(gate) {
+    gate = gate || state.pairGate;
+    if (gate === "cr") {
       return state.zzEnabled
         ? POP_CR_PAIR_COLS.concat(POP_ZZ_PAIR_COLS)
         : POP_CR_PAIR_COLS;
     }
-    if (state.pairGate === "cz_tunable") return POP_CZ_PAIR_COLS;
+    if (gate === "cz_tunable") return POP_CZ_PAIR_COLS;
     return POP_CZ_PAIR_COLS.filter(function (c) {
       return c.field !== "coupler_interaction_offset";
     });
@@ -4503,6 +5223,11 @@
     });
     var keep = {};
     pairPopCols().forEach(function (c) { keep[c.field] = true; });
+    // QA regenerate-r2-12: a HELD architecture's pair values are the user's,
+    // not stale -- a Populate visit while its module is out must not delete them.
+    if (CHIP_ARCH[state.heldChipArch]) {
+      pairPopCols(CHIP_ARCH[state.heldChipArch].pairGate).forEach(function (c) { keep[c.field] = true; });
+    }
     Object.keys(pop.pairs).forEach(function (id) {
       if (!liveIds[id]) {
         // Not the canonical spelling. A reconstructed draft can key the SAME
@@ -8768,10 +9493,15 @@
     } else {
       el.className = "gen-build-result gen-build-error";
       var errs;
-      if (res.result && res.result.error) {
+      // QA regenerate-r2-25: res.error is explain_build_error's text -- what
+      // to do, THEN the raw exception it keeps verbatim. Preferring the raw
+      // res.result.error hid that advice from every build failure.
+      if (res.error) {
+        errs = [res.error];
+      } else if (res.result && res.result.error) {
         errs = [res.result.error];
       } else {
-        errs = res.errors || (res.error ? [res.error] : ["Generation failed."]);
+        errs = res.errors || ["Generation failed."];
       }
       var head = document.createElement("p");
       head.textContent = "✗ Generation failed:";
@@ -9096,6 +9826,7 @@
         scriptsEnabled: state.scriptsEnabled, scriptsPath: state.scriptsPath,
         qubitFlux: state.qubitFlux, couplerFlux: state.couplerFlux,
         pairGate: state.pairGate, chipArch: state.chipArch,
+        heldChipArch: state.heldChipArch, heldPins: state.heldPins,
         crPortMode: state.crPortMode, zzEnabled: state.zzEnabled,
         topoZone: state.topoZone,
         autoPresetRows: state.autoPresetRows
@@ -9135,6 +9866,8 @@
     // exempt from topology-staleness forever. An old draft lacks the field —
     // null keeps the previous trust-the-draft behavior for those only.
     _allocTopoSig = d.allocation ? (d.allocSig || null) : null;
+    _allocSpecSig = null;   // a restored allocation's match to the spec is unknown
+    _allocLastErr = null;
     // Naming scheme — old drafts lack it: default = the historical q1…qN.
     var nm = (d.naming && typeof d.naming === "object") ? d.naming : {};
     state.naming = {
@@ -9203,6 +9936,9 @@
     state.autoPresetRows = (dr && typeof dr === "object")
       ? { q: dr.q || {}, pairs: dr.pairs || {} }
       : (d.autoPresetApplied ? autoPresetRecordOf(true) : null);
+    // a reload between a step-3 remove and re-add keeps the hold (QA r2-12)
+    state.heldChipArch = (d.heldChipArch && CHIP_ARCH[d.heldChipArch]) ? d.heldChipArch : null;
+    state.heldPins = (d.heldPins && typeof d.heldPins === "object") ? d.heldPins : {};
   }
 
   // Paint the steps that render() / the bind functions do not repaint from
@@ -9258,6 +9994,8 @@
     // fixed-frequency (CR) chip silently survives Reset and the user rebuilds a
     // CR chip by accident.
     state.chipArch = "flux_tunable_coupler";
+    state.heldChipArch = null;
+    state.heldPins = {};
     state.pairGate = "cz_tunable";
     state.muxSize = 6;
     state.outputPath = "";
@@ -9311,6 +10049,7 @@
     } else {
       state.step = 1;
       state.spec = freshSpec();
+      state.heldPins = {};   // a fresh spec holds nothing of an earlier one
       state.env = null;
       state.allocation = null;
       state.pairsTouched = false;
@@ -9401,6 +10140,20 @@
   var _WIZ_STACK_CAP = 100;
   var _wizApplying = false;
 
+  // QA regenerate-r2-30: a structural wizard edit (pair pick / add / delete, a
+  // wiring drag) is undoable like a field. `restore` puts its snapshot back and
+  // repaints; `valid` (optional) says whether the snapshot still describes the
+  // wizard. A content swap (hydrate / reset / draft restore reassigns
+  // state.spec) always makes it stale -- skipped like a detached field.
+  function _wizPushRestore(label, restore, valid) {
+    if (typeof _wizStack === "undefined" || !_wizStack || _wizApplying) return;
+    // `structural` tells it apart from a field entry that carries a Set-all's
+    // per-row `restore` (QA r2-23 / generate-r2-19; merged at integration).
+    _wizStack.push({ structural: true, restore: restore, label: label,
+                     spec: state.spec, valid: valid || null });
+    if (_wizStack.length > _WIZ_STACK_CAP) _wizStack.shift();
+  }
+
   function _wizField(t) {
     if (!t || !t.matches) return null;
     if (!t.matches('input, select, textarea')) return null;
@@ -9475,6 +10228,14 @@
             return true;
           }
           continue;
+        }
+        if (entry.structural) {
+          if (entry.spec !== state.spec || (entry.valid && !entry.valid())) continue;
+          _wizApplying = true;
+          try { entry.restore(); } finally { _wizApplying = false; }
+          try { captureDomFields(); saveDraft(); } catch (e3) { /* best-effort */ }
+          if (window.showToast) window.showToast('Undid: ' + entry.label, 'success');
+          return true;
         }
         var el = (entry.el && entry.el.isConnected) ? entry.el
                : (entry.id ? document.getElementById(entry.id) : null);
@@ -9708,6 +10469,12 @@
       applyPreset: applyPreset,
       applyPortCsv: applyPortCsv,
       pinToChannel: pinToChannel,
+      channelToPin: channelToPin,
+      femKindAt: femKindAt,                     // pin-rule parity with validate_spec
+      stalePinGroups: stalePinGroups,
+      pinCollisionGroups: pinCollisionGroups,
+      allocEntry: allocEntry,
+      allocText: allocText,
       deriveLines: deriveLines,
       isQdacBiased: isQdacBiased,
       isBiasTee: isBiasTee,
@@ -9729,6 +10496,8 @@
       qtElementsAtPort: qtElementsAtPort,
       applyQdacTriggerEdit: applyQdacTriggerEdit,
       syncSpecChannels: syncSpecChannels,
+      applyPortEdit: applyPortEdit,
+      applyQubitReadoutEdit: applyQubitReadoutEdit,
       // docs/176 seams — the review's verdict + root picker, and the
       // build-result renderer that has to take TWO blocker shapes.
       renderCapabilityReport: renderCapabilityReport,

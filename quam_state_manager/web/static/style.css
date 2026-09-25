@@ -8146,6 +8146,17 @@ table.gen-wiring tbody tr.pinned {
     font-size: 0.867em; font-weight: 500;
 }
 .gen-wiring-pin:focus { position: relative; z-index: 4; }
+/* A pin box that is not a pin, or names a module step 3 no longer holds (QA
+   generate-r2-11 / regenerate-r2-13); the issues row carries the one-press fix. */
+.gen-wiring-pin.gen-wiring-pin-invalid {
+    border-color: var(--color-error-border) !important;
+    background-color: var(--color-error-bg); color: var(--color-error-text);
+    /* Pico's aria-invalid icon does not fit this compact box (it tiled) */
+    background-image: none !important; padding-inline-end: 0.3rem !important;
+}
+.gen-wiring-pin-issue button {
+    margin: 0 0 0 0.4rem; padding: 0.05rem 0.5rem; font-size: 0.95em; width: auto;
+}
 
 /* step 7 — review & generate */
 .gen-review-table { font-size: 0.88em; }
@@ -8319,6 +8330,10 @@ button.gen-mini-btn:hover {
 .gen-band-head .muted { font-weight: 400; }
 .gen-band-sublabel { font-weight: 600; font-size: 0.9em; }
 .gen-oneline { margin: 0.2rem 0; font-size: 0.9em; }
+/* QA generate-r2-06: the caption names a feedline split the mux size did not make */
+.gen-oneline.gen-qubit-summary-kept { color: var(--color-warning-text); }
+/* QA regenerate-r2-12: the declared architecture is on hold until step 3 can build it */
+.gen-oneline.gen-arch-held { color: var(--color-warning-text); }
 /* DEFINE band: architecture radios + count + mux inline on one wrapping row */
 .gen-define-row { display: flex; gap: 1.6rem; align-items: flex-start; flex-wrap: wrap; }
 .gen-define-row .gen-chassis-count-field { margin: 0; font-size: 0.933em; }

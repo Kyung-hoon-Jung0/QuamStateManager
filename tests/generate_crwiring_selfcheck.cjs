@@ -64,6 +64,61 @@ ok(T.pinToChannel('1/2/3', 'coupler').kind === 'lf_fem',
 ok(T.pinToChannel('1/2/3', 'cross_resonance').out_port === 3,
    'cr pin carries out_port');
 
+// --- QA F6: a resonator pin names the OUTPUT; the input follows its LO ------
+// pinToChannel set in_port = out_port, so '1/1/8' asked for MW input 8 (a
+// MW-FEM has inputs 1-2) and allocation failed with NotEnoughChannels.
+(function () {
+  const r8 = T.pinToChannel('1/1/8', 'resonator');
+  ok(r8 && r8.kind === 'mw_fem' && r8.con === 1 && r8.slot === 1 && r8.out_port === 8 && r8.in_port === 2,
+     'F6: resonator 1/1/8 -> out 8 + its LO partner in 2 (got ' + JSON.stringify(r8) + ')');
+  const r1 = T.pinToChannel('1/1/1', 'resonator');
+  ok(r1 && r1.out_port === 1 && r1.in_port === 1, 'F6: resonator 1/1/1 -> out 1 + in 1');
+  const r3 = T.pinToChannel('1/1/3', 'resonator');
+  ok(r3 && r3.out_port === 3 && !('in_port' in r3),
+     'F6: an output with no input LO partner leaves in_port to the allocator');
+  ok(T.pinToChannel('1//1', 'resonator') === null, 'F6: a blank segment is still refused');
+  // QA review of F6: the readout INPUT is its own cable -- retyping the output
+  // pin must not rewire it. Real chips read out on (out 1, in 2) (KRS_5Q) and
+  // (out 8, in 1); deriving the input from the new output rewired them.
+  const was = state.mode;
+  state.mode = 'regenerate';
+  const krs = { kind: 'mw_fem', con: 1, slot: 3, out_port: 1, in_port: 2 };
+  const moved = T.pinToChannel('1/4/1', 'resonator', krs);
+  ok(moved && moved.slot === 4 && moved.out_port === 1 && moved.in_port === 2,
+     'F6 review: a pin retyped over (out 1, in 2) keeps in 2 (got ' + JSON.stringify(moved) + ')');
+  const r81 = T.pinToChannel('1/1/1', 'resonator', { kind: 'mw_fem', con: 1, slot: 1, out_port: 8, in_port: 1 });
+  ok(r81 && r81.out_port === 1 && r81.in_port === 1, 'F6 review: (out 8, in 1) retyped to out 1 keeps in 1');
+  const r11 = T.pinToChannel('1/1/8', 'resonator', { kind: 'mw_fem', con: 1, slot: 1, out_port: 1, in_port: 1 });
+  ok(r11 && r11.out_port === 8 && r11.in_port === 1,
+     'F6 review: a source chip\'s (out 1, in 1) retyped to out 8 keeps in 1 (got ' + JSON.stringify(r11) + ')');
+  // a partial LO-safe pre-pin is the wizard's guess, not a cable: derive
+  const part = T.pinToChannel('1/1/1', 'resonator', { kind: 'mw_fem', out_port: 8, in_port: 2 });
+  ok(part && part.in_port === 1, 'F6 review: over a partial pre-pin the input is derived (got ' + JSON.stringify(part) + ')');
+  ok(T.pinToChannel('1/1/8', 'resonator', null).in_port === 2, 'F6 review: no previous pin -> derived');
+  state.mode = 'generate';
+  // Generate: an input that IS the LO partner the wizard derived is re-derived
+  const g = T.pinToChannel('1/1/1', 'resonator', { kind: 'mw_fem', con: 1, slot: 1, out_port: 8, in_port: 2 });
+  ok(g && g.in_port === 1, 'F6 review: Generate re-derives its own LO-partner input (got ' + JSON.stringify(g) + ')');
+  // ...but one it did not derive (a drag, a CSV) is a cable and stays
+  const gk = T.pinToChannel('1/1/3', 'resonator', { kind: 'mw_fem', con: 1, slot: 1, out_port: 1, in_port: 2 });
+  ok(gk && gk.in_port === 2, 'F6 review: Generate keeps an input it did not derive (got ' + JSON.stringify(gk) + ')');
+  state.mode = was;
+  // QA generate-r2-11: a pin names real hardware -- con >= 1, slot 1-8, port 1-8,
+  // whole numbers only (parseInt read '1.5' and '1e999' as 1)
+  ['1/1/99', '1/1/0', '1/9/1', '0/1/1', '1.5/1/1', '1e999/1/1', '1/1/-1', 'x9', '1/1/8a'].forEach(function (p) {
+    ok(T.pinToChannel(p, 'drive') === null, 'r2-11: "' + p + '" is not a pin');
+  });
+  const sp = T.pinToChannel('  2 / 8 / 8  ', 'flux');
+  ok(sp && sp.con === 2 && sp.out_slot === 8 && sp.out_port === 8, 'r2-11: spaced, in-range pins still parse');
+  // channelToPin: a partial LO-safe pre-pin is not "//8"
+  ok(T.channelToPin({ kind: 'mw_fem', out_port: 8, in_port: 2 }) === '',
+     'F6: a partial channel renders as an empty pin box, not "//8"');
+  ok(T.channelToPin({ kind: 'mw_fem', con: 1, slot: 1, out_port: 8, in_port: 2 }) === '1/1/8',
+     'F6: a full channel still renders con/slot/port');
+  ok(T.channelToPin({ kind: 'lf_fem', con: 1, out_slot: 3, out_port: 5 }) === '1/3/5',
+     'F6: an lf_fem channel renders con/out_slot/port');
+})();
+
 // --- ALLOC_KEY: WiringLineType values ---------------------------------------
 ok(T.ALLOC_KEY.cross_resonance === 'cr', 'ALLOC_KEY.cross_resonance === cr');
 ok(T.ALLOC_KEY.zz_drive === 'zz', 'ALLOC_KEY.zz_drive === zz');
@@ -180,6 +235,35 @@ ok(q1again && q1again.channel && q1again.channel.out_port === 3,
    'CSV pins survive deriveLines');
 ok(T.applyPortCsv({ ok: false, errors: ['x'] }) === false,
    'rejected payloads are not applied');
+
+// --- QA F11: pair lines are "q1-q2" in the spec, "q1-2" in the allocation ----
+// allocText/syncSpecChannels looked the spec element up verbatim, so EVERY
+// coupler / CR / ZZ row read "—" and a dragged coupler never reached its pin.
+(function () {
+  state.allocation = {
+    'q1': { xy: [{ instrument_id: 'mw-fem', con: 1, slot: 1, port: 2 }] },
+    'q1-2': { c: [{ instrument_id: 'lf-fem', con: 1, slot: 3, port: 6 }] },
+    'q0-1': { cr: [{ instrument_id: 'mw-fem', con: 1, slot: 1, port: 5 }],
+              zz: [{ instrument_id: 'mw-fem', con: 1, slot: 1, port: 6 }] }
+  };
+  ok(T.allocText('q1-q2', 'coupler') === 'lf-fem con1 s3 p6',
+     'F11: the coupler row shows its allocated port (got ' + T.allocText('q1-q2', 'coupler') + ')');
+  ok(T.allocText('q0-q1', 'cross_resonance') === 'mw-fem con1 s1 p5',
+     'F11: the CR row shows its allocated port (got ' + T.allocText('q0-q1', 'cross_resonance') + ')');
+  ok(T.allocText('q0-q1', 'zz_drive') === 'mw-fem con1 s1 p6', 'F11: the ZZ row too');
+  ok(T.allocText('q1-2', 'coupler') === 'lf-fem con1 s3 p6', 'F11: a short-form spec id still hits');
+  ok(T.allocText('q1', 'drive') === 'mw-fem con1 s1 p2', 'F11: a qubit row is unchanged');
+  ok(T.allocText('q2-q3', 'coupler') === '—', 'F11: an unallocated pair still reads "—"');
+  // a drag moved the coupler to port 7: syncSpecChannels must pin the LINE
+  state.spec.qubits = ['q1', 'q2'];
+  state.spec.lines = [{ element: 'q1-q2', line: 'coupler', channel: null }];
+  state.allocation['q1-2'].c[0].port = 7;
+  T.syncSpecChannels();
+  const cl = state.spec.lines[0].channel;
+  ok(cl && cl.kind === 'lf_fem' && cl.con === 1 && cl.out_slot === 3 && cl.out_port === 7,
+     'F11: a dragged coupler port reaches its spec pin (got ' + JSON.stringify(cl) + ')');
+  state.allocation = null;
+})();
 
 if (fails) {
   console.error(fails + ' failure(s)');

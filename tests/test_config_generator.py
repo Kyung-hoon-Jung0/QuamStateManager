@@ -273,6 +273,189 @@ class TestValidateSpecErrors:
         assert any("qubit" in e for e in errors)
 
 
+class TestPinnedPortsNameRealHardware:
+    """QA generate-r2-11 / regenerate-r2-13: a pin was type-checked only.
+
+    ``1/1/99`` (a port an FEM does not have) and a pin left on a slot the
+    chassis step no longer holds (a module deleted or moved in step 3) both
+    reached the allocator and came back as "not enough channels ... add a
+    FEM" -- the wrong cause, with the FEM sitting one slot over. Both are
+    static facts, refused here with the line named and where to fix it.
+    """
+
+    @staticmethod
+    def _pin(spec, idx, channel):
+        spec["lines"][idx]["channel"] = channel
+        return validate_spec(spec)
+
+    def test_out_of_range_output_port_is_named(self):
+        errs = self._pin(_valid_spec(), 1,
+                         {"kind": "mw_fem", "con": 1, "slot": 1, "out_port": 99})
+        assert any("lines[1] (q1 drive)" in e and "output port 99 does not exist" in e
+                   and "step 5" in e for e in errs), errs
+
+    def test_mw_input_port_3_does_not_exist(self):
+        errs = self._pin(_valid_spec(), 0,
+                         {"kind": "mw_fem", "con": 1, "slot": 1, "out_port": 1, "in_port": 3})
+        assert any("input port 3 does not exist" in e and "MW-FEM" in e for e in errs), errs
+
+    def test_slot_9_and_con_0_are_refused(self):
+        errs = self._pin(_valid_spec(), 2,
+                         {"kind": "lf_fem", "con": 0, "out_slot": 9, "out_port": 1})
+        assert any("con0 does not exist" in e for e in errs), errs
+        assert any("slot 9 does not exist" in e for e in errs), errs
+
+    def test_in_range_pins_stay_clean(self):
+        spec = _valid_spec()
+        spec["lines"][0]["channel"] = {"kind": "mw_fem", "con": 1, "slot": 1,
+                                       "out_port": 8, "in_port": 2}
+        spec["lines"][1]["channel"] = {"kind": "mw_fem", "con": 1, "slot": 1, "out_port": 2}
+        spec["lines"][2]["channel"] = {"kind": "lf_fem", "con": 1, "out_slot": 5, "out_port": 8}
+        spec["lines"][3]["channel"] = {"kind": "lf_fem", "con": 1, "slot": 5, "out_port": 1}
+        assert validate_spec(spec) == []
+
+    def test_opx_kind_is_not_range_checked(self):
+        # an OPX+ has 10 analog outputs -- the FEM rule must not reach it
+        spec = _valid_spec()
+        spec["instruments"]["opx_plus"] = [{"con": 2}]
+        assert self._pin(spec, 1, {"kind": "opx", "con": 2, "out_port": 10}) == []
+
+    def test_a_pin_on_a_slot_the_chassis_does_not_hold_is_named(self):
+        # the r2-13 move: MW-FEM slot 3 deleted, re-added at slot 4, pins left on 3
+        spec = _valid_spec()
+        spec["instruments"]["controllers"][0]["fems"] = [
+            {"slot": 4, "fem": "mw"}, {"slot": 5, "fem": "lf"}]
+        spec["lines"][0]["channel"] = {"kind": "mw_fem", "con": 1, "slot": 3,
+                                       "out_port": 1, "in_port": 1}
+        spec["lines"][1]["channel"] = {"kind": "mw_fem", "con": 1, "slot": 3, "out_port": 2}
+        errs = validate_spec(spec)
+        stale = [e for e in errs if "con1 slot 3" in e]
+        assert len(stale) == 1, errs                      # one message per slot, not per line
+        assert "2 pinned lines (q1 resonator, q1 drive)" in stale[0]
+        assert "no MW-FEM" in stale[0] and "step 3" in stale[0] and "step 5" in stale[0]
+
+    def test_a_pin_on_the_wrong_module_kind_is_named(self):
+        errs = self._pin(_valid_spec(), 1,
+                         {"kind": "mw_fem", "con": 1, "slot": 5, "out_port": 2})
+        assert any("con1 slot 5" in e and "holds an LF-FEM, not an MW-FEM" in e
+                   for e in errs), errs
+
+    def test_lf_pin_spelled_with_slot_reads_like_make_constraint(self):
+        # regen_spec writes lf pins as {"slot": s}; run_build reads out_slot/in_slot
+        # falling back to slot -- the check must too, or it false-positives
+        spec = _valid_spec()
+        assert self._pin(spec, 2, {"kind": "lf_fem", "con": 1, "slot": 5, "out_port": 3}) == []
+        errs = self._pin(_valid_spec(), 2, {"kind": "lf_fem", "con": 1, "slot": 6, "out_port": 3})
+        assert any("con1 slot 6" in e and "no LF-FEM" in e for e in errs), errs
+
+    def test_partial_pins_stay_legal(self):
+        # con-only / slot-less pins are "any subset" constraints, never stale
+        spec = _valid_spec()
+        spec["instruments"]["controllers"][0]["fems"] = [
+            {"slot": 4, "fem": "mw"}, {"slot": 5, "fem": "lf"}]
+        spec["lines"][0]["channel"] = {"kind": "mw_fem", "con": 1}
+        spec["lines"][1]["channel"] = {"kind": "mw_fem", "out_port": 8, "in_port": 2}
+        spec["lines"][2]["channel"] = {"kind": "lf_fem", "con": 1}
+        assert validate_spec(spec) == []
+
+
+class TestTwoPinsOnOneOutputAreNamed:
+    """QA regenerate-r2-24: q2's drive pinned to q1's drive port (1/3/2) reached
+    the allocator and came back as "NotEnoughChannelsException ... add a FEM".
+    Inside one allocate_wiring call the wirer blocks a channel once a line took
+    it, so two pinned lines on one output can never build -- measured on the
+    KRS 5Q rig for drive/drive, flux/flux, drive onto the feedline output and
+    drive onto the TWPA pump. A feedline is ONE line (run_build uses its first
+    member's pin); CR / ZZ lines share the control's xy port by design
+    (cr_port_mode=shared_xy) and are never flagged.
+    """
+
+    @staticmethod
+    def _spec():
+        spec = _valid_spec()
+        spec["qubits"] = ["q1", "q2", "q3"]
+        spec["lines"] = [
+            {"element": q, "line": "resonator", "group": "feedline1",
+             "channel": {"kind": "mw_fem", "con": 1, "slot": 1, "out_port": 1, "in_port": 1}}
+            for q in ("q1", "q2", "q3")
+        ] + [
+            {"element": "q1", "line": "drive",
+             "channel": {"kind": "mw_fem", "con": 1, "slot": 1, "out_port": 2}},
+            {"element": "q2", "line": "drive",
+             "channel": {"kind": "mw_fem", "con": 1, "slot": 1, "out_port": 3}},
+            {"element": "q1", "line": "flux",
+             "channel": {"kind": "lf_fem", "con": 1, "slot": 5, "out_port": 1}},
+            {"element": "q2", "line": "flux",
+             "channel": {"kind": "lf_fem", "con": 1, "out_slot": 5, "out_port": 2}},
+        ]
+        return spec
+
+    def test_a_carried_chip_with_one_feedline_is_clean(self):
+        assert validate_spec(self._spec()) == []
+
+    def test_two_drives_on_one_output_are_named(self):
+        spec = self._spec()
+        spec["lines"][4]["channel"]["out_port"] = 2        # q2 drive onto q1's port
+        errs = validate_spec(spec)
+        hit = [e for e in errs if "output 2" in e]
+        assert len(hit) == 1, errs
+        assert hit[0].startswith("q1 drive and q2 drive are both pinned to con1 slot 1 output 2")
+        assert "step 5" in hit[0], hit[0]
+
+    def test_lf_slot_and_out_slot_spellings_collide(self):
+        # regen writes {"slot": 5}; a typed pin writes {"out_slot": 5}
+        spec = self._spec()
+        spec["lines"][6]["channel"]["out_port"] = 1
+        errs = validate_spec(spec)
+        assert any(e.startswith("q1 flux and q2 flux are both pinned to con1 slot 5 output 1")
+                   for e in errs), errs
+
+    def test_a_drive_on_the_feedline_output_is_named_once(self):
+        spec = self._spec()
+        spec["lines"][3]["channel"]["out_port"] = 1        # q1 drive onto the feedline
+        errs = validate_spec(spec)
+        hit = [e for e in errs if "output 1" in e]
+        assert hit == ["q1 resonator and q1 drive are both pinned to con1 slot 1 output 1"
+                       " — the allocator gives each line its own output port (a feedline "
+                       "counts as one), so re-pin or clear one of them in step 5 (Wiring)."], errs
+
+    def test_two_feedlines_on_one_output_are_named(self):
+        spec = self._spec()
+        spec["lines"][2]["group"] = "feedline2"            # q3 alone, same pin
+        errs = validate_spec(spec)
+        assert any(e.startswith("q1 resonator and q3 resonator are both pinned") for e in errs), errs
+
+    def test_cr_lines_may_share_the_control_xy_port(self):
+        spec = self._spec()
+        spec["cr_port_mode"] = "shared_xy"
+        spec["pair_gate"] = "cr"
+        spec["lines"].append({"element": "q1-q2", "line": "cross_resonance",
+                              "channel": {"kind": "mw_fem", "con": 1, "slot": 1, "out_port": 2}})
+        spec["lines"].append({"element": "q1-q3", "line": "zz_drive",
+                              "channel": {"kind": "mw_fem", "con": 1, "slot": 1, "out_port": 2}})
+        assert validate_spec(spec) == []
+
+    def test_partial_and_stale_pins_are_not_counted(self):
+        spec = self._spec()
+        spec["lines"][4]["channel"] = {"kind": "mw_fem", "con": 1, "out_port": 2}   # no slot: "any"
+        assert validate_spec(spec) == []
+        spec = self._spec()
+        spec["lines"][3]["channel"]["slot"] = 5            # q1 drive on the LF slot
+        spec["lines"][4]["channel"].update(slot=5, out_port=2)
+        errs = validate_spec(spec)
+        assert not any("are both pinned" in e for e in errs), errs
+        assert any("holds an LF-FEM, not an MW-FEM" in e for e in errs), errs
+
+    def test_three_on_one_port(self):
+        spec = self._spec()
+        spec["lines"].append({"element": "q3", "line": "drive",
+                              "channel": {"kind": "mw_fem", "con": 1, "slot": 1, "out_port": 2}})
+        spec["lines"][4]["channel"]["out_port"] = 2
+        errs = validate_spec(spec)
+        assert any(e.startswith("q1 drive, q2 drive, q3 drive are all pinned")
+                   and "all but one of them" in e for e in errs), errs
+
+
 class TestQdacBlocksNothingUntilItIsUsed:
     """An untouched QDAC section failed EVERY build.
 

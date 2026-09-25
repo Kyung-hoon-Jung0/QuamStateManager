@@ -434,6 +434,108 @@ function stone(win, qid) {
     ok((board.innerHTML.match(/gen-topo-stone-ro/g) || []).length === 5, 'reopen redraws CURRENT topology, not a stale closure');
   }
 
+  // QA regenerate-r2-01: step 4 focuses the qubit count on entry, and a stone's
+  // mousedown preventDefaults, so focus used to STAY in the count box -- the
+  // board's Del was then skipped as "typing" and the browser blanked the count
+  // (blur committed 0 = every qubit gone). A stone click must take the keyboard.
+  {
+    const w = freshChip();
+    w.WiringGrid.preset('chain');
+    w.QuamGen.goToStep(4);
+    const qc = w.document.getElementById('gen-qubit-count');
+    ok(w.document.activeElement === qc, 'r2-01: step 4 focuses the qubit count (the trap state)');
+    clickEl(w, stone(w, 'q3'));
+    ok(w.document.activeElement !== qc, 'r2-01: a stone click moves focus off the count box');
+    w.document.activeElement.dispatchEvent(new w.KeyboardEvent('keydown', { key: 'Delete', bubbles: true }));
+    const qs = w.QuamGen.state.spec.qubits;
+    ok(qs.indexOf('q3') < 0 && qs.length === 5, 'r2-01: Del removes the selected stone q3 (got ' + JSON.stringify(qs) + ')');
+    // the hardening: a blank count reverts instead of committing 0.
+    qc.value = '';
+    qc.dispatchEvent(new w.Event('change', { bubbles: true }));
+    ok(w.QuamGen.state.spec.qubits.length === 5 && qc.value === '5',
+       'r2-01: a blank count box reverts (spec ' + w.QuamGen.state.spec.qubits.length + ', box "' + qc.value + '")');
+    setInput(w, 'gen-qubit-count', '0');
+    ok(w.QuamGen.state.spec.qubits.length === 0, 'r2-01: an explicit 0 still clears');
+  }
+
+  // QA regenerate-r2-22: the status row's "q3 deleted -- Undo" button did
+  // nothing when clicked. The board's mouseup handler is page-wide, and its
+  // empty-click branch re-rendered the board -- rewriting the status row and
+  // replacing the Undo button between mouseup and click, so no click fired.
+  {
+    const w = freshChip();
+    w.WiringGrid.preset('chain');
+    w.WiringGrid._removeQubit('q3');
+    const btn = w.document.querySelector('#gen-topo-status .gen-topo-undo');
+    ok(!!btn, 'r2-22: the delete shows the status-row Undo button');
+    // layer 1: a page mouseup with nothing armed/selected does not rebuild the board
+    const cell0 = w.document.querySelector('.gen-topo-cell');
+    w.document.body.dispatchEvent(new w.MouseEvent('mouseup', { bubbles: true, clientX: 0, clientY: 0 }));
+    ok(cell0 && cell0.isConnected, 'r2-22: an idle page mouseup leaves the board DOM alone');
+    // layer 2: any other re-render (e.g. a field's change firing as focus moves)
+    // keeps the SAME button node while the row says the same thing
+    w.WiringGrid.refresh();
+    ok(btn && btn.isConnected, 'r2-22: a board re-render keeps the Undo button node');
+    if (btn) {
+      btn.dispatchEvent(new w.MouseEvent('mousedown', { bubbles: true, clientX: 0, clientY: 0 }));
+      btn.dispatchEvent(new w.MouseEvent('mouseup', { bubbles: true, clientX: 0, clientY: 0 }));
+      ok(btn.isConnected, 'r2-22: the pressed Undo button survives its own mouseup (the click can fire)');
+      // jsdom (runScripts outside-only) does not run inline handlers: run the
+      // button's own onclick on the node that survived, as the browser would.
+      if (btn.isConnected) new w.Function(btn.getAttribute('onclick')).call(btn);
+      const qs = w.QuamGen.state.spec.qubits;
+      ok(qs.indexOf('q3') >= 0 && qs.length === 6, 'r2-22: clicking Undo restores q3 (got ' + JSON.stringify(qs) + ')');
+      ok(w.QuamGen.state.spec.qubit_pairs.some(p => p.indexOf('q3') >= 0), 'r2-22: ...with its pairs');
+    }
+    // A click on the page with nothing armed/selected re-renders nothing; with a
+    // stone selected it still deselects (click-away behaviour kept).
+    clickEl(w, stone(w, 'q2'));
+    const st = w.document.getElementById('gen-topo-status');
+    ok(/q2 armed/.test(st.textContent), 'r2-22: status says q2 armed (got "' + st.textContent + '")');
+    clickEl(w, w.document.getElementById('gen-topo-status'));
+    ok(!/armed|selected/.test(st.textContent), 'r2-22: a click away still disarms (got "' + st.textContent + '")');
+  }
+
+  // QA generate-r2-16: a preset lays out in the zone the user TYPED, not in the
+  // zone floored at the old placement. 6 qubits in one row (a 20 x 1 chain),
+  // then "3 x 2" + Grid (NN) must give the 3 x 2 nearest-neighbour grid.
+  {
+    const w = freshChip();
+    const G = w.WiringGrid;
+    setInput(w, 'gen-topo-cols', '20'); setInput(w, 'gen-topo-rows', '1');
+    G.preset('chain');
+    const row = QS.every(function (q) { const c = G._cellOf(q); return c && c.row === 0; });
+    ok(row, 'r2-16: 20 x 1 chain puts all 6 qubits in one row');
+    setInput(w, 'gen-topo-cols', '3'); setInput(w, 'gen-topo-rows', '2');
+    G.preset('grid');
+    const pairs = w.QuamGen.state.spec.qubit_pairs;
+    ok(pairs.length === 7, 'r2-16: Grid (NN) 3 x 2 gives 7 pairs (got ' + pairs.length + ')');
+    const cells = QS.map(function (q) { const c = G._cellOf(q); return c ? c.col + ',' + c.row : '?'; }).sort();
+    ok(JSON.stringify(cells) === JSON.stringify(['0,0', '0,1', '1,0', '1,1', '2,0', '2,1']),
+       'r2-16: Grid (NN) 3 x 2 fills cells {0..2} x {0..1} (got ' + cells.join(' ') + ')');
+    const z = G.zone();
+    ok(z.cols === 3 && z.rows === 2, 'r2-16: the board is 3 x 2 afterwards (got ' + z.cols + 'x' + z.rows + ')');
+    ok(w.document.getElementById('gen-topo-cols').value === '3' && w.document.getElementById('gen-topo-rows').value === '2',
+       'r2-16: the fields keep 3 x 2 (got ' + w.document.getElementById('gen-topo-cols').value + 'x' +
+       w.document.getElementById('gen-topo-rows').value + ')');
+    // 2 x 2 is too small for 6: the grid is 2 wide and the board GROWS to fit it (2 x 3)
+    setInput(w, 'gen-topo-cols', '2'); setInput(w, 'gen-topo-rows', '2');
+    G.preset('grid');
+    const z2 = G.zone();
+    ok(w.QuamGen.state.spec.qubit_pairs.length === 7 && z2.cols === 2 && z2.rows === 3,
+       'r2-16: Grid (NN) 2 x 2 for 6 qubits = 2 wide, 7 pairs, board grows to 2 x 3 (got ' +
+       w.QuamGen.state.spec.qubit_pairs.length + ' pairs, ' + z2.cols + 'x' + z2.rows + ')');
+    // Chain honours a typed zone the same way: 1 x 20 is one vertical line
+    setInput(w, 'gen-topo-cols', '1'); setInput(w, 'gen-topo-rows', '20');
+    G.preset('chain');
+    ok(QS.every(function (q) { const c = G._cellOf(q); return c && c.col === 0; }),
+       'r2-16: Chain in a 1 x 20 zone is one column');
+    // the manual-shrink floor is unchanged: every stone stays on the board
+    setInput(w, 'gen-topo-cols', '1'); setInput(w, 'gen-topo-rows', '1');
+    const z3 = G.zone();
+    ok(z3.cols >= 1 && z3.rows >= 6, 'r2-16: a typed zone below the placement is still floored (got ' + z3.cols + 'x' + z3.rows + ')');
+  }
+
   if (fails) { console.error(fails + ' check(s) FAILED'); process.exit(1); }
   console.log('generate_topoboard_selfcheck: all checks passed');
 })();
