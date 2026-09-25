@@ -14,21 +14,40 @@
     {% endif %}
     {% if type_alarm.env and type_alarm.env.count %}
     {% if type_alarm.count %}<br>{% endif %}
+    {% if type_alarm.count and type_alarm.env.restated_text == type_alarm.env.count %}
+    {# QA F-F (review): every env finding here restates a text value listed
+       above -- the field is typed as a number -- so it is not a second
+       problem, and not one "SM does not change": the Fix button repairs it.
+       The popup already says so; the banner said the opposite. #}
+    The selected environment's schema expects a number there too, so storing
+    {{ 'them' if type_alarm.count != 1 else 'it' }} as
+    {{ 'numbers' if type_alarm.count != 1 else 'a number' }} fixes that as well.
+    {% else %}
     <strong>{{ type_alarm.env.count }} field{{ 's' if type_alarm.env.count != 1 }}</strong>
     {{ "don't" if type_alarm.env.count != 1 else "doesn't" }} match the selected
     environment's schema{% if type_alarm.env.entries %}
     (e.g. <code>{{ type_alarm.env.entries[0].location }}</code>){% endif %} —
     SM does not change these; review them on Diagnostics.
     {% endif %}
+    {% endif %}
   </span>
   {# docs/77: the repair itself, one click away — SM shows what it proposes
      for every field and converts only after the user confirms. Primary
      action: nobody wants to retype 40 values by hand. An archive is told
      what is wrong but never offered a repair it could not apply. #}
-  {% if type_alarm.count and type_alarm.editable %}
+  {# QA F-G: the primary offer counts what SM WILL convert, never every text
+     value -- "Fix 1 value..." for a leading-zero label SM refuses to touch
+     opened a plan with nothing to convert. #}
+  {% if type_alarm.editable and type_alarm.strnum and type_alarm.strnum.fixable %}
   <button type="button" class="btn-sm primary"
           onclick="window.openTypeFixPlan && window.openTypeFixPlan()"
-          title="Show what SM would store instead, then convert the ones you confirm">Fix {{ type_alarm.count }} value{{ 's' if type_alarm.count != 1 }}&hellip;</button>
+          title="Show what SM would store instead, then convert the ones you confirm">Fix {{ type_alarm.strnum.fixable }} value{{ 's' if type_alarm.strnum.fixable != 1 }}&hellip;</button>
+  {% elif type_alarm.count and type_alarm.editable %}
+  <span class="muted type-alarm-hand">SM won&rsquo;t convert {{ 'these' if type_alarm.count != 1 else 'this one' }}
+    automatically{% if type_alarm.strnum and type_alarm.strnum.hand_fixable %} &mdash; to change one, type the number in the Json Tree View{% endif %}.</span>
+  <button type="button" class="btn-sm outline"
+          onclick="window.openTypeFixPlan && window.openTypeFixPlan()"
+          title="Why SM leaves these alone">Why not&hellip;</button>
   {% endif %}
   {% if type_alarm.first %}
   <button type="button" class="btn-sm" data-path="{{ type_alarm.first }}"

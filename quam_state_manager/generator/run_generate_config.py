@@ -38,6 +38,12 @@ RESULT_FILENAME = "_result.json"
 # Load + generate
 # ---------------------------------------------------------------------------
 
+# QA F-R: how the machine actually loaded (a fallback root, a stripped empty
+# key) -- reported as warnings instead of only on stderr, so a "succeeded"
+# verdict never hides that the chip's own class did not load.
+_LOAD_NOTES: list[str] = []
+
+
 def _load_machine(state_folder: Path):
     """Load a QUAM machine from a folder containing state.json + wiring.json.
 
@@ -54,6 +60,7 @@ def _load_machine(state_folder: Path):
     os.environ["QUAM_STATE_PATH"] = str(state_folder)
 
     errors: list[str] = []
+    _LOAD_NOTES.clear()
 
     # 1. The state file's own __class__ marker.
     try:
@@ -92,7 +99,12 @@ def _load_machine(state_folder: Path):
         os.environ["QUAM_STATE_PATH"] = str(state_folder)
         try:
             machine_cls = getattr(importlib.import_module(module_name), cls_name)
-            return machine_cls.load()
+            machine = machine_cls.load()
+            if errors:
+                # QA F-R: never let a fallback root pass as the chip's own class
+                _LOAD_NOTES.append(
+                    f"loaded as fallback root {cls_name} after: {errors[0]}")
+            return machine
         except AttributeError as exc:
             # "Unexpected attribute 'X'": the state carries a TOP-LEVEL key
             # this root generation lacks (schema drift across the CR branch —
@@ -103,6 +115,9 @@ def _load_machine(state_folder: Path):
             retried = _retry_without_unknown_empty_keys(
                 state_folder, machine_cls, exc)
             if retried is not None:
+                if errors:
+                    _LOAD_NOTES.append(
+                        f"loaded as fallback root {cls_name} after: {errors[0]}")
                 return retried
             errors.append(f"{cls_name}.load() failed with AttributeError: {exc}")
         except Exception as exc:  # noqa: BLE001
@@ -168,6 +183,9 @@ def _retry_loop(state_folder: Path, machine_cls, probe, dropped, m):
                 sys.stderr.write(
                     "preview shim: dropped empty root key(s) "
                     f"{dropped} for {machine_cls.__name__}.load()\n")
+                _LOAD_NOTES.append(
+                    f"dropped empty root key(s) {dropped} the environment's "
+                    f"{machine_cls.__name__} does not declare")
                 return machine
             except AttributeError as exc2:
                 m = _re.search(r"Unexpected attribute '([^']+)'", str(exc2))
@@ -211,6 +229,29 @@ def _annotate_load_error(message: str, chip_class, versions) -> str:
     that wall of red, a user reinstalls libraries instead of selecting the
     matching env. Lead with the likely cause + remedy so the fix is obvious.
     """
+    # QA diagnostics-r2-02: quam's load-time type check names ONE value of the
+    # wrong type ("Wrong object type found during validation. Path: ...").
+    # That is a value to fix, not an env to switch -- the env-mismatch lead
+    # below sent users after the wrong cause. Checked first, so it never
+    # steals a genuine mismatch message.
+    if "Wrong object type found during validation" in message:
+        def _line(tag):
+            for ln in message.splitlines():
+                if ln.strip().startswith(tag):
+                    return ln.strip()[len(tag):].strip()
+            return ""
+        where = _line("Path:")
+        want, got = _line("Required type:"), _line("Actual type:")
+        what = f" {where}" if where else ""
+        types = (f" (must be {want}, stored as {got})" if want and got else "")
+        hint = (
+            f"Quam.load() rejected the value at{what or ' one field'}{types}. "
+            "This is a stored value of the wrong type (e.g. a number saved as "
+            "text), NOT an environment mismatch: fix that value — "
+            "Diagnostics › Environment match lists it — and every node run "
+            "will load again. Technical detail follows.\n\n"
+        )
+        return hint + message
     needles = ("Could not load QUAM machine", "ModuleNotFoundError",
                "No module named", "is not a valid attr")
     if not any(n in message for n in needles):
@@ -264,6 +305,8 @@ def run_generate_config(state_folder: Path) -> dict:
     machine = _load_machine(state_folder)
     config = machine.generate_config()
     return {
+        "loaded_class": f"{type(machine).__module__}.{type(machine).__qualname__}",
+        "warnings": list(_LOAD_NOTES),
         "config": _make_config_json_safe(config),
         "qubits": sorted(str(q) for q in getattr(machine, "qubits", {}) or {}),
         "qubit_pairs": sorted(

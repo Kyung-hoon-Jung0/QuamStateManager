@@ -61,12 +61,67 @@ class TestAnalyzeState:
                  for p in f["example_paths"]]
         assert not any("extras" in p or "brand_new_op" in p for p in paths)
 
-    def test_type_mismatch_is_warning_tier(self):
+    def test_type_mismatch_is_error_tier(self):
+        # QA diagnostics-r2-02 (this pin used to say "warning"): quam's
+        # load-time typeguard check raises on a str in a float field -- every
+        # node run dies on Quam.load(), exactly like unknown_field. Verified in
+        # quam 0.6.0: "Wrong object type found during validation".
         state = _state()
-        state["qubits"]["qA1"]["f_01"] = "oops-a-string"
+        state["qubits"]["qA1"]["f_01"] = "1.1349480376211927e-05"
         k = _by_kind(_findings(state))
         rec = k["type_mismatch"][0]
-        assert rec["severity"] == "warning"
+        assert rec["severity"] == "error"
+        assert "Wrong object type" in rec["detail"]
+
+    @pytest.mark.parametrize("field,value,code", [
+        ("confusion_matrix", [[0.9, "x"], [0.1, 0.9]], "element_mismatch"),
+        ("confusion_matrix", [0.9, 0.1], "list_shape"),
+        ("active", 1, "type_mismatch"),          # int in a bool field
+        ("xy", "not-a-pointer", "type_mismatch"),  # str in a PLAIN component
+    ])
+    def test_load_breaking_codes_are_error_tier(self, field, value, code):
+        state = _state()
+        state["qubits"]["qA1"][field] = value
+        recs = [r for r in _findings(state) if r.get("code") == code]
+        assert recs and recs[0]["severity"] == "error", recs
+
+    @pytest.mark.parametrize("field,value,code", [
+        ("f_01", True, "bool_in_numeric"),       # quam loads it (verified)
+        ("f_01", float("nan"), "non_finite"),    # quam loads it (verified)
+        ("length", 40.5, "non_integral_int"),    # quam int()s it (verified)
+        ("flux_point", "sideways", "enum_miss"),  # explicit v1 design: advisory
+    ])
+    def test_codes_that_load_stay_warning_tier(self, field, value, code):
+        state = _state()
+        state["qubits"]["qA1"][field] = value
+        recs = [r for r in _findings(state) if r.get("code") == code]
+        assert recs and recs[0]["severity"] == "warning", recs
+
+    def test_component_or_str_union_string_stays_warning(self):
+        # the probe collapses Union[Component, str] to `component` (raw keeps
+        # the Union); quam's str arm accepts any string there, so it LOADS
+        import copy
+        man = copy.deepcopy(MANIFEST)
+        man["classes"]["q.Transmon"]["fields"]["gate_pulse"] = {
+            "type": {"base": "component", "optional": False, "item": None,
+                     "enum": None, "union": None, "class": "q.Pulse",
+                     "raw": "typing.Union[q.Pulse, str]"},
+            "optional": False, "has_default": True, "default": None,
+            "default_repr": None, "default_is_reference": False,
+            "raw": "typing.Union[q.Pulse, str]"}
+        state = _state()
+        state["qubits"]["qA1"]["gate_pulse"] = "qA1"
+        recs = [r for r in _findings(state, man) if r.get("field") == "gate_pulse"]
+        assert recs and recs[0]["severity"] == "warning", recs
+
+    def test_a_text_number_reaches_the_crash_banner_count(self):
+        # the chain the banner reads: analyzer -> diagnostics Finding -> summary
+        from quam_state_manager.core import diagnostics
+        state = _state()
+        del state["custom"]                       # drop the fixture's own error
+        state["qubits"]["qA1"]["f_01"] = "1.1349480376211927e-05"
+        found = sev.to_diag_findings(sev.analyze_state(state, MANIFEST))
+        assert diagnostics.summarize(found)["error"] == 1
 
     def test_pointer_and_inferred_refs_pass(self):
         state = _state()
@@ -195,7 +250,13 @@ class TestDiagnosticsIntegration:
         the store's manifest, which is bound to the env it was probed in
         (store._type_manifest_env). Another SM process sharing the instance can
         switch the selection file meanwhile; the card must still name the env
-        whose results it shows, not the new selection."""
+        whose results it shows, not the new selection.
+
+        Integrated with QA diagnostics-r2-16 (fix/qa2-dg-core): a manifest
+        probed from an env that is no longer selected is WITHDRAWN, so the
+        card shows no results at all under the new selection (never the
+        probed env's results under the picked env's name); with the probed env
+        selected again it is warm and names the manifest's env."""
         from quam_state_manager.core import config_generator
         probed = tmp_path / "envs" / "probed_env_r208" / "python.exe"
         picked = tmp_path / "envs" / "picked_later_r208" / "python.exe"
@@ -208,11 +269,91 @@ class TestDiagnosticsIntegration:
             ctx["store"]._type_manifest_env = str(probed)
         config_generator.set_selected_env(app.instance_path, str(picked))
         html = client.get("/diagnostics/env-card").get_data(as_text=True)
+        # r2-16: withdrawn -- no "checked against", no probed-env results shown
+        assert "checked against" not in html
+        assert "probed_env_r208" not in html
+        assert 'class="diag-env-name"' not in html
+        config_generator.set_selected_env(app.instance_path, str(probed))
+        html = client.get("/diagnostics/env-card").get_data(as_text=True)
         assert "checked against" in html            # the warm branch rendered
         name = html.split('class="diag-env-name"', 1)[1].split("</code>", 1)[0]
         assert "probed_env_r208" in name, name
         assert "picked_later_r208" not in name, name
         assert str(probed) in name                  # the title is its interpreter
+    def test_the_probe_poll_announces_its_finish_once(self, client, monkeypatch):
+        """QA F-L: after Re-probe the Types card kept the pre-probe count until
+        a reload -- nothing told it the schema had changed. The probe's own
+        poll (?poll=1) now says diagnostics-changed when it finds the probe
+        done; a plain GET never does (no loop), nor does a poll mid-probe."""
+        from quam_state_manager.web import routes
+        done = client.get("/diagnostics/env-card?poll=1")
+        assert done.status_code == 200
+        assert done.headers.get("HX-Trigger") == "diagnostics-changed"
+        assert "HX-Trigger" not in client.get("/diagnostics/env-card").headers
+        real = routes._env_card_state
+        monkeypatch.setattr(routes, "_env_card_state",
+                            lambda store: {**real(store), "probing": True})
+        busy = client.get("/diagnostics/env-card?poll=1")
+        assert "HX-Trigger" not in busy.headers
+        # ...and the self-poll it renders mid-probe is the announcing one
+        assert 'hx-get="/diagnostics/env-card?poll=1"' in busy.get_data(as_text=True)
+
+    def test_same_quam_version_reads_as_such(self, client):
+        from flask import render_template
+        app = client.application
+        with app.test_request_context():
+            html = render_template("_env_schema_changes.html", transition={
+                "changed": True, "first": False, "from_label": "quam 0.6.0 · qm 1.3.1",
+                "to_label": "quam 0.6.0 · qm 1.4.1", "distance": "same",
+                "diff": {"total": 1, "truncated": False, "rows": []}, "sig": "x",
+                "from_key": "a", "to_key": "b"}, verdicts={}, rows=[])
+        assert "same quam version" in html
+        assert "same version step" not in html
+
+    def test_env_findings_follow_the_selected_env(self, client, tmp_path):
+        """QA diagnostics-r2-16: the findings (list, findings.json, Types card)
+        are verdicts against the env the manifest was probed FROM. Once that
+        env is no longer selected, or its interpreter is gone, they are
+        withdrawn -- the card already said "no longer exists" beside them --
+        and the card links to where the env is reselected."""
+        from quam_state_manager.core import config_generator
+        app = client.application
+        inst = app.instance_path
+        py = tmp_path / "envs" / "lab" / "python.exe"
+        py.parent.mkdir(parents=True)
+        py.write_text("", encoding="utf-8")
+        with app.app_context():
+            store = app.config["contexts"][app.config["active_context"]]["store"]
+        store._type_manifest_env = str(py)       # what every production writer sets
+
+        def flat():
+            return json.dumps(client.get("/diagnostics/findings.json").get_json())
+
+        def card():
+            return client.get("/diagnostics/types-card").get_data(as_text=True)
+
+        # selected + present: the verdicts stand
+        config_generator.set_selected_env(inst, str(py))
+        assert "env_unknown_field" in flat()
+        mismatch = card()
+        assert "match" in mismatch
+        # the interpreter is gone (conda env remove / rename): withdrawn
+        py.unlink()
+        assert "env_unknown_field" not in flat()
+        assert "duration_qubit" not in card()
+        env_card = client.get("/diagnostics/env-card").get_data(as_text=True)
+        assert "no longer exists" in env_card and 'hx-get="/generate"' in env_card
+        # a different env selected (settings edited outside SM): withdrawn too
+        other = tmp_path / "envs" / "other" / "python.exe"
+        other.parent.mkdir(parents=True)
+        other.write_text("", encoding="utf-8")
+        config_generator.set_selected_env(inst, str(other))
+        assert "env_unknown_field" not in flat()
+        # back to the probed env: they return (no mutation needed)
+        py.write_text("", encoding="utf-8")
+        config_generator.set_selected_env(inst, str(py))
+        assert "env_unknown_field" in flat()
+        assert "duration_qubit" in card()
 
     def test_env_probe_requires_selected_env(self, client):
         r = client.post("/diagnostics/env-probe")

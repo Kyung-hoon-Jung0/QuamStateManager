@@ -3431,8 +3431,15 @@ def _type_alarm_memo(ctx: dict) -> dict:
     """
     store = ctx["store"]
     seq = getattr(store, "mutation_seq", None)
+    # QA diagnostics-r2-16: the env half follows the SELECTED env -- a probe
+    # landing or the env going away changes it without a mutation
+    try:
+        live_manifest = _live_env_manifest(store)
+    except Exception:  # noqa: BLE001
+        live_manifest = None
     memo = ctx.get("_type_alarm_memo")
-    if isinstance(memo, dict) and memo.get("seq") == seq:
+    if (isinstance(memo, dict) and memo.get("seq") == seq
+            and memo.get("manifest") is live_manifest):
         return memo
     from quam_state_manager.core import diagnostics as _diag
     from quam_state_manager.core import type_fix as _tf
@@ -3444,14 +3451,14 @@ def _type_alarm_memo(ctx: dict) -> dict:
         from quam_state_manager.core import state_env_validate as _sev
         # The WARM manifest already attached to the store (cached_only at
         # activation) — the request path never spawns a probe. Cold env → [].
-        policy = getattr(store, "type_policy", None)
-        manifest = policy.manifest if policy is not None else None
+        manifest = live_manifest
         if manifest:
             env_findings = list(
                 _sev.analysis_for_store(store, manifest).get("findings") or [])
     except Exception:  # noqa: BLE001 — a cold/broken env must not break the scan
         logger.debug("env-schema scan for the type alarm failed", exc_info=True)
-    memo = {"seq": seq, "paths": paths, "sig": _tf.strnum_signature(paths),
+    memo = {"seq": seq, "manifest": live_manifest,
+            "paths": paths, "sig": _tf.strnum_signature(paths),
             "env_findings": env_findings,
             "env_sig": _tf.env_signature(env_findings)}
     ctx["_type_alarm_memo"] = memo
@@ -3809,11 +3816,25 @@ def type_fix_apply():
             for entry in applied:
                 modifier.store.search_index.update_entry(entry.dot_path,
                                                          entry.new_value)
-        _set_working_dirty(True, ctx)
+        # QA diagnostics-r2-14: no _set_working_dirty here -- the repair lives
+        # in the change log like /field/edit-batch (the tray counts it); the
+        # flag means "saved but not applied", which /save and apply-to-live
+        # raise. Raising it here outlived a Ctrl+Z: "Working state · not
+        # applied" with nothing differing from live.
         _invalidate_engine_cache(ctx)
 
+    # QA F-E: name every converted leaf in the ONE patch shape the sync pull
+    # and undo already ship, so an open Explorer tree repaints the stored
+    # number in place (it kept the quoted text until a full reload). The value
+    # is what the modifier STORED, not the proposal (int vs float).
+    changes = []
+    for e in applied:
+        c = _revert_entry_payload(e.dot_path, e.new_value,
+                                  source_file=getattr(e, "source_file", "state"))
+        c["value"] = e.new_value
+        changes.append(c)
     return jsonify(ok=True, converted=converted, count=len(converted),
-                   failures=failures, unknown=unknown,
+                   failures=failures, unknown=unknown, changes=changes,
                    tray_html=_tray_html())
 
 
@@ -8740,10 +8761,13 @@ def env_schema_dismiss():
     baselines rather than in the chip-keyed prompt memo — and it is delta-gated:
     a further schema change raises it again."""
     from quam_state_manager.core import state_env_baseline as _seb
-    _seb.dismiss_transition(current_app.instance_path,
-                            (request.form.get("from_key") or "").strip(),
-                            (request.form.get("to_key") or "").strip(),
-                            (request.form.get("sig") or "").strip())
+    # QA diagnostics-r2-17: a memo that was not written is not a 200 -- the
+    # client refreshes the card only on success and says so otherwise.
+    if not _seb.dismiss_transition(current_app.instance_path,
+                                   (request.form.get("from_key") or "").strip(),
+                                   (request.form.get("to_key") or "").strip(),
+                                   (request.form.get("sig") or "").strip()):
+        return "Could not hide this set", 400
     return ""
 
 
@@ -9114,8 +9138,22 @@ def field_edit_batch():
     # several edited cells, a plot Apply-All) so a single Ctrl+Z undoes the whole
     # batch atomically. A single-field batch stays ungrouped (undoes on its own).
     _batch_gid = modifier.new_group_id() if len(pairs) > 1 else None
+    # QA diagnostics-r2-15: a multi-request gesture (the grids' Apply all posts
+    # one atomic batch per row) asks for ONE group: "new" mints one even for a
+    # single field; a gid is JOINED only while it is still the top of the log
+    # (checked under the lock -- never spliced across another window's edit)
+    # and never a journal step's. Anything else gets a fresh gid.
+    _grp = _pj.get("group")
 
     with modifier.store._lock:
+        if isinstance(_grp, str) and _grp:
+            _log = modifier.store.change_log
+            _top = _log[-1].group_id if _log else None
+            if (_grp != "new" and _grp == _top
+                    and not _grp.startswith(undo_journal.GID_PREFIX)):
+                _batch_gid = _grp
+            elif _batch_gid is None:
+                _batch_gid = modifier.new_group_id()
         ok_overall = True
         for dot_path, raw_value, allow_create in pairs:
             try:
@@ -9225,7 +9263,8 @@ def field_edit_batch():
     if applied_entries:
         _invalidate_engine_cache(ctx)
     return jsonify(ok=ok_overall, tray_html=_tray_html(), results=results,
-                   modified=_modified_delta())
+                   modified=_modified_delta(),
+                   group_id=_batch_gid if applied_entries else None)
 
 
 # ======================================================================
@@ -17706,6 +17745,40 @@ def state_sync():
     })
 
 
+def _crash_values_on_chip(store) -> dict | None:
+    """QA diagnostics-r2-04: the crash-class values a live write carries.
+
+    Every live-write door pushes the WHOLE working copy, so after it the live
+    chip holds every value the red banner counts -- the same filter
+    (``summarize``'s error tier: not acknowledged, not advisory), so the write
+    and the banner never disagree. ADVISORY ONLY: it names them in the result
+    line / confirm the door already has; it never blocks or asks (docs/104 #1,
+    the researcher-trust rule). ``None`` when there are none, and on any
+    failure -- an advisory must never break a write that succeeded. Reads only
+    the memoized lint (no live read)."""
+    try:
+        errs = [f for f in _active_chip_findings(store)
+                if f.severity == "error" and not getattr(f, "advisory", False)
+                and not getattr(f, "acknowledged", None)]
+    except Exception:  # noqa: BLE001
+        logger.debug("crash-value advisory failed", exc_info=True)
+        return None
+    if not errs:
+        return None
+    locs = [f.location for f in errs]
+    shown = "; ".join(locs[:5]) + (f" (+{len(locs) - 5} more)" if len(locs) > 5 else "")
+    n = len(errs)
+    return {
+        "count": n,
+        "values": [{"location": f.location, "message": f.message,
+                    "jump_path": f.jump_path} for f in errs[:8]],
+        "sig": "\n".join(sorted(locs)),
+        "sentence": (f"{n} error{'s' if n != 1 else ''} on the live chip would "
+                     f"crash a node run: {shown}. Fix before running an "
+                     "experiment (Diagnostics lists them)."),
+    }
+
+
 def _sync_pull_apply_to_live(ctx, replay, *, pulled_other_changes=False,
                              force=False, patch=None, journal=True, walk=False):
     """Finish a ``mode=apply`` sync: save the re-applied edits to the working
@@ -17869,6 +17942,7 @@ def _sync_pull_apply_to_live(ctx, replay, *, pulled_other_changes=False,
                 ctx["walk_last_snap"] = time.time()
         except Exception:
             logger.warning("History snapshot after pull-apply failed", exc_info=True)
+    _crash = _crash_values_on_chip(store)      # QA diagnostics-r2-04 (advisory)
     return jsonify({
         "status": "ok",
         "mode": "apply",
@@ -17876,6 +17950,7 @@ def _sync_pull_apply_to_live(ctx, replay, *, pulled_other_changes=False,
         "replay": replay,
         "pulled_other_changes": pulled_other_changes,
         **(patch or {}),
+        **({"crash_values": _crash} if _crash else {}),
     })
 
 
@@ -18127,6 +18202,9 @@ def state_apply_to_live():
                 _auto["last_snap"] = time.time()
         except Exception:
             logger.warning("History snapshot after apply failed", exc_info=True)
+    # QA diagnostics-r2-04: name the crash-class values the write carried
+    # (advisory -- the result line only; a clean chip's response is unchanged)
+    _crash = _crash_values_on_chip(store)
     if _auto is not None:
         # The applied log IS the feedback; one success toast per edit would be
         # noise the user cannot dismiss fast enough.
@@ -18136,10 +18214,18 @@ def state_apply_to_live():
         # place (the OOB slot renders empty once live_diverged is cleared)
         resp = make_response(_tray_html() + "\n" + _diverged_oob())
         resp.headers["HX-Trigger"] = ("liveDriftChanged, stateHistoryChanged, "
-                                      "autoApplyApplied")
+                                      "autoApplyApplied") if not _crash else json.dumps({
+            "liveDriftChanged": None, "stateHistoryChanged": None,
+            # auto-apply.js toasts this once per distinct set, not per flush
+            "autoApplyApplied": {"crash": _crash}})
         return resp
-    toast = render_template(
-        "_status.html", message="Applied to the live chip.", level="success")
+    if _crash:
+        toast = render_template(
+            "_status.html", level="warning",
+            message="Applied to the live chip — ⚠ " + _crash["sentence"])
+    else:
+        toast = render_template(
+            "_status.html", message="Applied to the live chip.", level="success")
     resp = make_response(_tray_html() + "\n"
                          + f'<div id="status-bar" hx-swap-oob="innerHTML">{toast}</div>'
                          + _diverged_oob())      # QA liveedit-r2-07 (review), as above
@@ -18225,6 +18311,8 @@ def state_overwrite_live_preflight():
         "live_changes": live_changes,
         "unsaved": unsaved,
         "hand_tuned": marked,
+        # QA diagnostics-r2-04: one more clause for the SAME confirm
+        "crash_values": _crash_values_on_chip(store),
         # The push snapshots the pre-apply live first, which is what powers the
         # tray's "Revert last apply" — so this is a reversible action and the
         # confirm should say so.
@@ -27830,6 +27918,18 @@ def _config_stale(store: QuamStore) -> bool:
     return _config_state_hash(store) != basis
 
 
+def _config_needs_save(store: QuamStore) -> bool:
+    """QA diagnostics-r2-09: stale AND a Regenerate right now still could not
+    fix it -- the edits are unsaved, and the previewer reads the working-copy
+    FILES (docs/30), so pressing Regenerate again stays stale forever. The
+    notes then have to say "save first", not "Regenerate". The same "unsaved"
+    test config_regenerate records as ``unsaved_at_generate``."""
+    if not _config_stale(store):
+        return False
+    with store._lock:
+        return bool(store.change_log)
+
+
 @bp.route("/config", methods=["GET"])
 def config_browser():
     """Top-level Config Viewer page (Surface C)."""
@@ -27848,6 +27948,7 @@ def config_browser():
             meta=store.generated_config_meta,
             top_level_keys=top_keys,
             config_stale=_config_stale(store),
+            config_needs_save=_config_needs_save(store),
             env_selected=env_selected,
         ),
     )
@@ -27956,14 +28057,35 @@ def config_preview():
 _DIAG_RANK = {"error": 0, "warning": 1, "info": 2}
 
 
+def _live_env_manifest(store):
+    """The attached env manifest, or None when the env it was probed from is
+    no longer the selected one or its interpreter is gone (QA
+    diagnostics-r2-16; docs/94: degrade, never a verdict against an env that
+    is not there). Keyed on the manifest's own provenance
+    (``_type_manifest_env``, set by every production writer); the same
+    ``is_file`` rule the env card uses, so the card and the list agree."""
+    policy = getattr(store, "type_policy", None)
+    manifest = policy.manifest if policy is not None else None
+    if manifest is None:
+        return None
+    prov = getattr(store, "_type_manifest_env", None)
+    if prov:
+        try:
+            sel = config_generator.get_selected_env(current_app.instance_path)
+        except Exception:  # noqa: BLE001
+            sel = None
+        if sel != prov or not Path(prov).is_file():
+            return None
+    return manifest
+
+
 def _env_findings_context(store) -> tuple[dict, str, bool] | None:
     """``(manifest, env_label, probing)`` for the SELECTED env, or None while
     the schema cache is cold / no env. Request-path safe: the warm manifest
     only, never a probe. ONE derivation shared by the diagnostics table, the
     Types & values card and the chip-open alarm, so the sentence an
     acknowledgement is compared against is composed identically everywhere."""
-    policy = getattr(store, "type_policy", None)
-    manifest = policy.manifest if policy is not None else None
+    manifest = _live_env_manifest(store)
     if manifest is None:
         return None
     versions = manifest.get("versions") or {}
@@ -28128,8 +28250,10 @@ def _env_card_state(store: QuamStore) -> dict:
         python_path = config_generator.get_selected_env(inst)
     except Exception:  # noqa: BLE001
         pass
-    policy = getattr(store, "type_policy", None)
-    manifest = policy.manifest if policy is not None else None
+    # QA diagnostics-r2-16: warm only for the env the manifest came FROM --
+    # the same gate the findings use, so the card never vouches for a list
+    # that was withdrawn
+    manifest = _live_env_manifest(store)
     with _schema_warm_lock:
         probing = any(k.startswith((python_path or "\0") + "|")
                       for k in _schema_warm_inflight)
@@ -28180,8 +28304,7 @@ def _types_card_state(ctx: dict | None) -> dict | None:
         card["env"]["acknowledged"] = n_acked
         card["editable"] = editable
         card["strnum"]["first"] = memo["paths"][0] if memo["paths"] else ""
-        policy = getattr(store, "type_policy", None)
-        card["env"]["warm"] = bool(policy is not None and policy.manifest)
+        card["env"]["warm"] = _live_env_manifest(store) is not None   # QA diagnostics-r2-16
         # docs/79: the library's own movements + what the user has taught SM.
         card["env_change"], card["taught"] = _env_change_summary(store)
         return card
@@ -28245,6 +28368,9 @@ def diagnostics_view():
             diag_summary=diagnostics.summarize(findings),
             diag_catalog=diagnostics.check_catalog(),
             allow_jump=True,
+            # QA diagnostics-r2-13: a read-only archive is never OFFERED a
+            # one-click state fix (the route refuses it too); fails closed.
+            allow_fix=((_active_ctx() or {}).get("origin") or "live") == "live",
             has_config=bool(store.generated_config),
             env_card=_env_card_state(store),
             types_card=_types_card_state(_active_ctx()),
@@ -28253,6 +28379,7 @@ def diagnostics_view():
             # that so a stale config doesn't pass off old findings as current
             # (the one staleness primitive, shared with the Config Viewer).
             config_stale=_config_stale(store),
+            config_needs_save=_config_needs_save(store),
         ),
     )
 
@@ -28314,8 +28441,16 @@ def diagnostics_env_card():
     store = _store()
     if not store:
         return ("", 204)
-    return render_template("_diagnostics_env.html",
-                           env_card=_env_card_state(store), oob=False)
+    env_card = _env_card_state(store)
+    resp = make_response(render_template("_diagnostics_env.html",
+                                          env_card=env_card, oob=False))
+    # QA F-L: the probe's own poll (?poll=1) announces the finish ONCE, so the
+    # Types card / findings / pill re-read the new schema through their
+    # existing diagnostics-changed listeners -- they kept the pre-probe count
+    # until a reload. A plain GET never triggers (no loop, no new poller).
+    if request.args.get("poll") == "1" and not env_card.get("probing"):
+        resp.headers["HX-Trigger"] = "diagnostics-changed"
+    return resp
 
 
 @bp.route("/diagnostics/summary")
@@ -28338,16 +28473,47 @@ def diagnostics_banner():
     ``machine.generate_config()`` provably rejects (e.g. a waveform sample
     outside the DAC range, a missing/colliding port, a NaN) — i.e. something that
     would crash the next node run. Warnings/suggestions stay in the quiet tray
-    badge; only crash-class errors get the banner. Empty (204) otherwise."""
+    badge; only crash-class errors get the banner. Empty 200 otherwise -- never
+    204: htmx 2.x does not swap a 204, so the previous banner would outlive the
+    error set it describes until a full reload (the type_alarm_banner contract).
+
+    ``diag_sig`` (the dismissal signature) names WHICH findings are errors, not
+    only how many: count:chip alone let a new same-count error set match a
+    dismissed one and stay hidden. The identity is category|location|jump_path
+    -- never the message, which carries the live value, so lowering a still-bad
+    value does not re-pop a dismissed banner (A13)."""
     store = _store()
     if not store:
-        return ("", 204)
-    summary = diagnostics.summarize(_active_chip_findings(store))
+        return ""
+    findings = _active_chip_findings(store)
+    summary = diagnostics.summarize(findings)
     if not summary.get("error"):
-        return ("", 204)
+        return ""
     ident = _active_chip_identity()
+    name = ident["name"] if ident else None
+    # the same filter summarize() counts as an error (acknowledged/advisory
+    # findings drive no banner, so they must not move its signature either)
+    errs = [f for f in findings
+            if f.severity == "error" and not getattr(f, "acknowledged", None)
+            and not getattr(f, "advisory", False)]
+    ids = sorted(f"{f.category}|{f.location}|{f.jump_path}" for f in errs)
+    sig = "%d:%s:%s" % (summary["error"], name or "this chip",
+                        hashlib.sha1("\n".join(ids).encode("utf-8")).hexdigest()[:12])
+    # QA F-N: the example is one of THESE errors (same filter as the count),
+    # never a fixed "waveform sample" line whatever the error kind.
+    first = errs[0] if errs else None
+    # QA F-N (review): an env finding's message already opens with the same
+    # "<Class>.<field>: " the banner prints as its location (state_env_validate
+    # composes it so; the location may carry a " (N×)" suffix) -- strip it, or
+    # the banner reads "FluxTunableTransmon.T1: FluxTunableTransmon.T1: ...".
+    first_msg = first.message if first else ""
+    if first:
+        _loc = str(first.location).split(" (")[0]
+        if first_msg.startswith(_loc + ": "):
+            first_msg = first_msg[len(_loc) + 2:]
     return render_template("_diagnostics_banner.html", diag_summary=summary,
-                           active_name=ident["name"] if ident else None)
+                           active_name=name, diag_sig=sig,
+                           first_error=first, first_error_msg=first_msg)
 
 
 @bp.route("/diagnostics/findings.json")
@@ -28397,9 +28563,18 @@ def diagnostics_apply_fix():
     runs with ``coerce=False``). The edit lands in the working copy like any
     other, so the user still Saves / Applies it. Guarded to that one link shape.
     """
-    modifier = _modifier()
+    ctx = _active_ctx()
+    modifier = ctx.get("modifier") if ctx else None
     if not modifier:
         return jsonify(ok=False, error="No active context"), 400
+    if ctx.get("type") == "quam" and (ctx.get("origin") or "live") != "live":
+        # QA diagnostics-r2-13: same refusal as /type-fix/apply -- a dataset
+        # run archive is a frozen record; a staged "fix" could only ever be
+        # refused later, at apply. JSON, because applyDiagFix reads r.json().
+        return jsonify(
+            ok=False, error_kind="archive_read_only",
+            error=("This chip was opened from a dataset run archive "
+                   "(read-only). Load it from its live folder to repair.")), 409
     action = request.form.get("action", "")
     dot_path = request.form.get("dot_path", "").strip()
     pointer = request.form.get("pointer", "").strip()
@@ -28671,9 +28846,31 @@ def _explain_config_error(err: str, store) -> str:
     return f"{head} On this chip: {shown}{more}."
 
 
+def _deep_validate_verdict(python_path, *, meta=None, error=None, **extra):
+    """QA F-R: the /diagnostics "Validate deeply" answer -- one verdict line
+    (succeeded / failed, in which env, when) instead of the Config Viewer's
+    controls. Same subprocess and status codes as the viewer (docs/56)."""
+    p = Path(python_path) if python_path else None
+    env_dir = p.parent if p else None
+    if env_dir is not None and env_dir.name.lower() in ("bin", "scripts"):
+        env_dir = env_dir.parent
+    at = (meta or {}).get("at") if not error else None
+    at = at or datetime.now(timezone.utc).isoformat(timespec="seconds")
+    try:
+        at_local = datetime.fromisoformat(at).astimezone().strftime("%Y-%m-%d %H:%M:%S")
+    except ValueError:
+        at_local = at
+    return render_template(
+        "_diagnostics_env_deep.html", meta=meta, error=error,
+        python_path=python_path or "",
+        env_name=(env_dir.name if env_dir is not None and env_dir.name else (python_path or "")),
+        checked_at=at, checked_at_local=at_local, **extra)
+
+
 @bp.route("/config/regenerate", methods=["POST"])
 def config_regenerate():
     """Run the previewer subprocess and cache the result on the store."""
+    deep = request.values.get("deep") == "1"      # QA F-R: the diagnostics verdict
     store = _store()
     if not store:
         return render_template("_status.html", message="No state loaded", level="warning"), 400
@@ -28724,12 +28921,19 @@ def config_regenerate():
             "qubit_pairs": result.get("qubit_pairs") or [],
             "basis_hash": basis_hash,
             "unsaved_at_generate": unsaved,
+            # QA F-R: what the chip was saved as vs what actually loaded -- a
+            # fallback root is not the chip's own class loading
+            "chip_class": result.get("chip_class"),
+            "loaded_class": result.get("loaded_class"),
         }
-        resp = make_response(render_template(
+        resp = make_response(_deep_validate_verdict(
+            python_path, meta=store.generated_config_meta, unsaved=unsaved,
+        ) if deep else render_template(
             "_config_status.html",
             meta=store.generated_config_meta,
             error=None,
             config_stale=_config_stale(store),
+            config_needs_save=_config_needs_save(store),
         ))
         # Lets the per-qubit/pair Generated Config sections re-GET themselves.
         resp.headers["HX-Trigger"] = "configRegenerated"
@@ -28739,6 +28943,10 @@ def config_regenerate():
     trace = ""
     if outcome.get("result"):
         trace = outcome["result"].get("traceback") or ""
+    if deep:
+        return _deep_validate_verdict(
+            python_path, error=err, error_explained=_explain_config_error(err, store),
+            traceback=trace, unsaved=unsaved), 502
     return render_template(
         "_config_status.html",
         meta=store.generated_config_meta,  # keep showing the last-good info
@@ -28750,6 +28958,7 @@ def config_regenerate():
         # Keep the export row's stale hint honest even when the refresh failed —
         # the last-good config the buttons export may predate current edits.
         config_stale=_config_stale(store),
+        config_needs_save=_config_needs_save(store),
     ), 502
 
 
@@ -29103,6 +29312,24 @@ def _gather_preflight(inst: str, data: dict) -> dict:
     dataset_roots = scheduler.find_dataset_roots(cfg.get("storage_location"))
     workspace_roots = [str(p) for p in _ws().root_folders]
 
+    # QA diagnostics-r2-05: the red banner's own crash-class count -- the same
+    # findings and the same summarize() error tier -- so the pre-flight can
+    # never read "ready to run" under a banner that says the chip would crash
+    # a node run. None when it cannot be computed (skip, never a guess).
+    diag_errors, diag_examples = None, []
+    diag_store = _store() if ctx_type == "quam" else None
+    if diag_store is not None:
+        try:
+            diag_findings = _active_chip_findings(diag_store)
+            diag_errors = int(diagnostics.summarize(diag_findings).get("error") or 0)
+            diag_examples = [f.location for f in diag_findings
+                             if f.severity == "error"
+                             and not getattr(f, "acknowledged", None)
+                             and not getattr(f, "advisory", False)]
+        except Exception:  # noqa: BLE001 -- a lint bug must never break a gate
+            logger.warning("pre-flight diagnostics count failed", exc_info=True)
+            diag_errors, diag_examples = None, []
+
     result = scheduler.build_preflight({
         "chip_open": open_folder is not None,
         "chip_type": ctx_type,
@@ -29117,6 +29344,8 @@ def _gather_preflight(inst: str, data: dict) -> dict:
         "chip_clean": chip_clean,
         "dataset_roots": dataset_roots,
         "workspace_roots": workspace_roots,
+        "diagnostics_errors": diag_errors,
+        "diagnostics_examples": diag_examples,
     })
     result["effective_config"] = cfg
     result["editable_install"] = eff.get("editable_install")

@@ -1,0 +1,53 @@
+{# QA F-R: the /diagnostics "Validate deeply (Quam.load)" verdict. Same
+   /config/regenerate subprocess as the Config Viewer (docs/56: no new flow),
+   but the card answers the question the button asked -- did Quam.load() +
+   generate_config() succeed in the selected env -- instead of showing the
+   Config Viewer's Regenerate/export controls. Pressing Validate again re-runs.
+   Rendered into #diag-env-deep (a .config-status-host, so a 502 body is
+   swapped, not dropped -- QA diagnostics-r2-03). #}
+{% if error %}
+<div class="diag-env-deep-verdict diag-env-deep-err" role="status">
+  <span aria-hidden="true">&#10007;</span>
+  <strong>Quam.load() / generate_config() failed</strong>
+  {% if env_name %}in <code title="{{ python_path }}">{{ env_name }}</code>{% endif %}
+  {% if checked_at %}&middot; <time datetime="{{ checked_at }}">{{ checked_at_local }}</time>{% endif %}
+</div>
+{% if error_explained %}<p class="config-error-explain">{{ error_explained }}</p>{% endif %}
+<pre class="config-error-pre">{{ error }}</pre>
+{% if traceback %}
+<details class="config-disclosure">
+  <summary>Traceback</summary>
+  <pre class="config-trace">{{ traceback }}</pre>
+</details>
+{% endif %}
+{% else %}
+{% set fallback = meta.loaded_class and meta.chip_class and meta.loaded_class != meta.chip_class %}
+<div class="diag-env-deep-verdict {{ 'diag-env-deep-warn' if fallback else 'diag-env-deep-ok' }}" role="status">
+  <span aria-hidden="true">{% if fallback %}&#9888;{% else %}&#10003;{% endif %}</span>
+  <strong>Quam.load() + generate_config() succeeded</strong>
+  {% if env_name %}in <code title="{{ python_path }}">{{ env_name }}</code>{% endif %}
+  {% for k in ("quam", "quam_builder", "qm") %}{% if meta.versions and meta.versions.get(k) %}
+  &middot; {{ k }}&nbsp;{{ meta.versions[k] }}{% endif %}{% endfor %}
+  {% if meta.qubits %}&middot; {{ meta.qubits | length }}&nbsp;qubits, {{ meta.qubit_pairs | length }}&nbsp;pairs{% endif %}
+  &middot; <time datetime="{{ meta.at }}">{{ checked_at_local }}</time>
+  &middot; <a href="/config" hx-get="/config" hx-target="#table-pane"
+              hx-sync="#table-pane:replace" hx-push-url="true">open in Config Viewer</a>
+</div>
+{% if fallback %}
+<p class="diag-env-deep-note diag-env-deep-warn">
+  Loaded only as the fallback root <code>{{ meta.loaded_class }}</code> &mdash; the
+  chip&rsquo;s own <code>{{ meta.chip_class }}</code> did not load in this environment,
+  so this validated the fallback, not the chip&rsquo;s own class (details in the warnings).
+</p>
+{% endif %}
+{% if meta.warnings %}
+<details class="config-disclosure">
+  <summary>{{ meta.warnings | length }} warning{{ 's' if (meta.warnings | length) != 1 }}</summary>
+  <ul>{% for w in meta.warnings %}<li>{{ w }}</li>{% endfor %}</ul>
+</details>
+{% endif %}
+{% endif %}
+{% if unsaved %}
+<p class="diag-env-deep-note muted">Validated the saved working copy &mdash; your
+  unsaved edits were not included (Review &rsaquo; Save to working state, then validate again).</p>
+{% endif %}

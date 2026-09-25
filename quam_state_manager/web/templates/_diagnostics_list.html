@@ -105,7 +105,9 @@
               {# docs/78: the batch repair moved to the "Types & values" card at
                  the top of this page. Repeating it on every one of up to 100
                  rows made one whole-chip action look like a per-row one. #}
-              {% if f.fix and f.fix.action == 'set_pointer' %}
+              {# QA diagnostics-r2-13: never offered on a read-only archive
+                 (allow_fix unset = hidden, fails closed) #}
+              {% if allow_fix and f.fix and f.fix.action == 'set_pointer' %}
               <button type="button" class="btn-sm diag-fix"
                       data-action="{{ f.fix.action }}"
                       data-dot-path="{{ f.fix.dot_path }}"
@@ -113,7 +115,7 @@
                       {% if f.severity == 'warning' %}data-confirm="1" data-old="{{ f.detail }}"{% endif %}
                       title="Set this field to a JSON pointer: {{ f.fix.pointer }}"
                       onclick="applyDiagFix(this)">{{ f.fix.label or 'Convert to pointer' }}</button>
-              {% elif f.fix and f.fix.action == 'set_value' %}
+              {% elif allow_fix and f.fix and f.fix.action == 'set_value' %}
               {# r9: one-click value sync (Update f_01 → carrier). Always
                  confirmed — it changes a calibration number. #}
               <button type="button" class="btn-sm diag-fix"

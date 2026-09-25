@@ -3585,6 +3585,10 @@ window.doStateSync = function(mode, forced, ackUnseen, expectChip, opts) {
 
             var applied = (data.replay && data.replay.applied) || 0;
             var failed = (data.replay && data.replay.failed) || [];
+            // QA diagnostics-r2-04: the write carried values SM itself flags
+            // as crash-class -- name them in the result line (advisory only).
+            var crash = (data.mode === "apply" && data.crash_values && data.crash_values.sentence)
+                ? " ⚠ " + data.crash_values.sentence : "";
             if (data.mode === "apply") {
                 if (failed.length) {
                     window.showToast(
@@ -3592,13 +3596,13 @@ window.doStateSync = function(mode, forced, ackUnseen, expectChip, opts) {
                         (applied === 1 ? "" : "s") + " to the live chip; " + failed.length +
                         " could not be re-applied and were dropped — the field changed or no " +
                         "longer exists on the new live chip." + _failedPathsSummary(failed) +
-                        " Re-enter them if still needed.",
+                        " Re-enter them if still needed." + crash,
                         "warning");
                 } else {
                     window.showToast(
                         "Pulled the live state, re-applied " + applied + " edit" +
-                        (applied === 1 ? "" : "s") + ", and applied them to the live chip.",
-                        "success");
+                        (applied === 1 ? "" : "s") + ", and applied them to the live chip." + crash,
+                        crash ? "warning" : "success");
                 }
             } else if (data.mode === "reapply") {
                 if (failed.length) {
@@ -3668,6 +3672,10 @@ window.overwriteLiveWithWorking = function () {
             if (d.unsaved) {
                 lines.push("Your " + d.unsaved + " unsaved edit" + (d.unsaved === 1 ? "" : "s")
                     + " are saved and pushed along with it.");
+            }
+            if (d.crash_values && d.crash_values.sentence) {
+                // QA diagnostics-r2-04: one clause in the confirm that exists
+                lines.push("", "⚠ After this, " + d.crash_values.sentence);
             }
             if (d.run_active) {
                 lines.push("", "⚠ A run is in progress"
@@ -4774,7 +4782,9 @@ document.addEventListener("cellsReverted", function(evt) {
         });
         if (!paths.length) return;
         btn.disabled = true;
-        var label = btn.textContent;
+        // QA F-O: keep the MARKUP, not the text -- restoring textContent after
+        // a failure flattened #tfx-count away, and the count went stale.
+        var label = btn.innerHTML;
         btn.textContent = "Converting…";
         fetch("/type-fix/apply", {
             method: "POST", headers: { "Content-Type": "application/json" },
@@ -4784,7 +4794,7 @@ document.addEventListener("cellsReverted", function(evt) {
         }).then(function (res) {
             var d = res.body || {};
             if (!d.ok) {
-                btn.disabled = false; btn.textContent = label;
+                btn.disabled = false; btn.innerHTML = label;
                 if (errBox) {
                     errBox.hidden = false;
                     errBox.textContent = (d.error || "The repair did not run.")
@@ -4793,6 +4803,22 @@ document.addEventListener("cellsReverted", function(evt) {
                 return;
             }
             if (d.tray_html && window._swapPendingTray) window._swapPendingTray(d.tray_html);
+            // QA F-E: an open Explorer tree kept the quoted TEXT after the
+            // repair (nothing re-read it). Patch the converted leaves in place
+            // -- Explorer only: on /bulk, revertPaths would stamp the number
+            // as a clean baseline, and quam:state-changed re-GETs that grid.
+            if (d.changes && d.changes.length && window.LiveSurfacePatch
+                    && document.getElementById("explorer-tree-state")) {
+                try {
+                    window.LiveSurfacePatch.apply(d.changes);
+                    d.changes.forEach(function (c) {
+                        var n = document.querySelector('.tree-node[data-path="'
+                            + ((window.CSS && CSS.escape) ? CSS.escape(c.dot_path) : c.dot_path) + '"]');
+                        var r = n && n.querySelector(":scope > .tree-row");
+                        if (r) r.classList.add("tree-row-pending");
+                    });
+                } catch (e) {}
+            }
             window.closeTypeFixPlan();
             if (window.showToast) {
                 window.showToast(d.count + " value" + (d.count === 1 ? "" : "s")
@@ -4803,7 +4829,7 @@ document.addEventListener("cellsReverted", function(evt) {
             try { window.htmx && window.htmx.trigger(document.body, "diagnostics-changed"); } catch (e) {}
             document.dispatchEvent(new CustomEvent("quam:state-changed"));
         }).catch(function (e) {
-            btn.disabled = false; btn.textContent = label;
+            btn.disabled = false; btn.innerHTML = label;
             if (errBox) { errBox.hidden = false; errBox.textContent = String(e); }
         });
     };
@@ -5078,6 +5104,12 @@ window.TypeAlert = (function () {
     window.envSchemaDismiss = function (btn) {
         var card = btn.closest(".tfx-card");
         if (card) {
+            // QA diagnostics-r2-17: the memo used to change nothing on screen.
+            // On success the types card re-renders (it listens for
+            // diagnostics-changed) and says the set is hidden; a failure says so.
+            var failed = function () {
+                if (window.showToast) window.showToast("Could not hide this set", "error");
+            };
             fetch("/env-schema/dismiss", {
                 method: "POST",
                 headers: { "Content-Type": "application/x-www-form-urlencoded" },
@@ -5086,7 +5118,10 @@ window.TypeAlert = (function () {
                     to_key: card.getAttribute("data-to") || "",
                     sig: card.getAttribute("data-sig") || ""
                 }).toString()
-            }).catch(function () {});
+            }).then(function (r) {
+                if (!r.ok) { failed(); return; }
+                try { window.htmx && window.htmx.trigger(document.body, "diagnostics-changed"); } catch (e) {}
+            }).catch(failed);
         }
         window.closeEnvSchemaChanges();
     };
@@ -17859,12 +17894,14 @@ document.addEventListener('click', function(evt) {
 (function() {
     // Materialize lazy nodes along a dot-path (like _expandTreeToPath, but no
     // scroll/popup) then mark the leaf row with a ⚠ + tooltip.
-    function markTreePath(containerId, dotPath, message) {
+    function markTreePath(containerId, dotPath, message, noExpand) {
         var container = document.getElementById(containerId);
         if (!container) return;
         var segments = dotPath.split('.');
         var currentPath = '';
-        for (var i = 0; i < segments.length; i++) {
+        // noExpand (QA F-E): the re-mark after an edit must never re-open a
+        // branch the user collapsed -- it only marks rows already rendered.
+        for (var i = 0; !noExpand && i < segments.length; i++) {
             currentPath = i === 0 ? segments[i] : currentPath + '.' + segments[i];
             var node = container.querySelector('.tree-node[data-path="' + currentPath + '"]');
             if (!node) break;
@@ -18378,7 +18415,8 @@ document.addEventListener('click', function(evt) {
         }
     };
 
-    window._applyExplorerSpecMarks = function() {
+    window._applyExplorerSpecMarks = function(opts) {
+        var noExpand = !!(opts && opts.noExpand);
         if (!document.getElementById('explorer-tree-state')) return;
         fetch('/diagnostics/findings.json', { cache: 'no-store' })
             .then(function(r) { return r.json(); })
@@ -18392,11 +18430,26 @@ document.addEventListener('click', function(evt) {
                     if (!f.jump_path || f.acknowledged) continue;
                     var cid = f.jump_path.indexOf('wiring.') === 0
                         ? 'explorer-tree-wiring' : 'explorer-tree-state';
-                    markTreePath(cid, f.jump_path, f.message);
+                    markTreePath(cid, f.jump_path, f.message, noExpand);
                 }
             })
             .catch(function() {});
     };
+    // QA F-E: the marks were re-applied only on a #table-pane swap or a full
+    // load, so a repaired value (type fix, tree edit, Ctrl+Z) kept its stale
+    // ⚠ until a reload. Every mutation fires diagnostics-changed -- re-mark
+    // then (debounced; no expansion) and refresh the sidebar dots with it.
+    var _specMarkTimer = null;
+    document.addEventListener('diagnostics-changed', function() {
+        if (_specMarkTimer) clearTimeout(_specMarkTimer);
+        _specMarkTimer = setTimeout(function() {
+            _specMarkTimer = null;
+            if (window._refreshSidebarDiagDots) window._refreshSidebarDiagDots();
+            if (document.getElementById('explorer-tree-state')) {
+                window._applyExplorerSpecMarks({ noExpand: true });
+            }
+        }, 400);
+    });
 
     // Severity-aware sidebar dot: red iff a crash-class ERROR exists on that tab,
     // amber when only warnings/recommendations, none when clean — so a by-design

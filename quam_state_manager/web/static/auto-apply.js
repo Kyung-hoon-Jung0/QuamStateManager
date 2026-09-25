@@ -270,7 +270,18 @@
                          { target: '#live-diverged-slot', swap: 'innerHTML' });
     });
     // htmx fires a plain (detail-less) event for string triggers too
-    document.addEventListener('autoApplyApplied', function () { applyLogState(); });
+    // QA diagnostics-r2-04: a flush that carried crash-class values names them
+    // -- once per distinct set, never once per flush (the session writes on
+    // every edit, and the red banner already stays up meanwhile).
+    var _crashSaid = '';
+    document.addEventListener('autoApplyApplied', function (e) {
+        applyLogState();
+        var c = e && e.detail && e.detail.crash;
+        if (!c || !c.sentence) { _crashSaid = ''; return; }
+        if (c.sig === _crashSaid) return;
+        _crashSaid = c.sig;
+        toast('Auto-Sync applied to the live chip — ⚠ ' + c.sentence, 'warning');
+    });
 
     document.addEventListener('DOMContentLoaded', function () {
         observe();

@@ -133,6 +133,26 @@ function replaceTrayOuterHTML(attrs) {
     check('A13 and reopens', !log.classList.contains('applied-log-collapsed'));
   }
 
+  // 8. QA diagnostics-r2-04: a flush that carried crash-class values names
+  //    them -- once per distinct set, never once per flush
+  const toasts = [];
+  w.showToast = function (m, l) { toasts.push([m, l]); };
+  const fire = function (d) {
+    w.document.dispatchEvent(new w.CustomEvent('autoApplyApplied', { detail: d }));
+  };
+  const A = { sig: 'q1.x180', sentence: '1 value on the live chip would crash a node run: q1.x180.' };
+  fire({ crash: A });
+  fire({ crash: A });
+  check('A15 a crash-carrying flush is named, as a warning',
+        toasts.length >= 1 && toasts[0][1] === 'warning' && /would crash/.test(toasts[0][0]),
+        JSON.stringify(toasts));
+  check('A16 ...and only once for the same set', toasts.length === 1, String(toasts.length));
+  fire({ crash: { sig: 'q2.x180', sentence: 'another set' } });
+  check('A17 a different set is named again', toasts.length === 2, String(toasts.length));
+  fire({ value: null });                     // a clean flush resets the memory
+  fire({ crash: { sig: 'q2.x180', sentence: 'another set' } });
+  check('A18 after a clean flush the set is named again', toasts.length === 3, String(toasts.length));
+
   if (failures) { console.error(failures + ' check(s) failed'); process.exit(1); }
   console.log('all checks passed');
 })().catch(function (e) { console.error(e && e.stack || e); process.exit(1); });

@@ -99,6 +99,20 @@ def ack_env_key(versions: dict | None) -> str:
     return env_key(v)
 
 
+def stable_env_key(versions: dict | None) -> str:
+    """The identity a schema BASELINE is recorded and compared under -- the
+    same commit-free key as :func:`ack_env_key`, for the same reason.
+
+    QA F-L: the manifest a store carries has the builder commit when it came
+    from the schema cache and none when it came from a fresh probe (the probe
+    script's ``library_versions()`` never reports one), so an ``env_key`` over
+    it flipped with whichever path attached it last -- and with it the
+    "previous" baseline, the diff, and its count (25 <-> 11 on one env).
+    Every baseline the probe recorded is already commit-less, so this orphans
+    none of them."""
+    return ack_env_key(versions)
+
+
 def env_label(versions: dict | None) -> str:
     """Human name for an environment — what the popup and the chips show."""
     v = versions or {}
@@ -279,7 +293,7 @@ def record_baseline(instance_path: Any, manifest: dict, *,
     versions = manifest.get("versions") or {}
     if not any(versions.get(k) for k in ("quam", "quam_builder")):
         return None                       # an env we cannot identify
-    key = env_key(versions)
+    key = stable_env_key(versions)        # QA F-L: never the commit-bearing key
     now = datetime.now(timezone.utc).isoformat(timespec="seconds")
     try:
         with _baseline_lock:
@@ -362,9 +376,14 @@ def list_baselines(instance_path: Any) -> list[dict]:
 
 
 def previous_baseline(instance_path: Any, current_key: str) -> dict | None:
-    """The most recently seen baseline that is NOT the current environment."""
+    """The most recently seen baseline that is NOT the current environment.
+
+    QA F-L: "not the current environment" is judged on the stable identity,
+    so a legacy record of the SAME versions keyed with a builder commit is
+    never mistaken for the environment before this one."""
     for entry in list_baselines(instance_path):
-        if entry.get("key") and entry["key"] != current_key:
+        if (entry.get("key") and entry["key"] != current_key
+                and stable_env_key(entry.get("versions")) != current_key):
             body = load_baseline(instance_path, entry["key"])
             if body:
                 return body
@@ -436,6 +455,13 @@ def diff_manifests(old: dict, new: dict, *, cap: int = _DIFF_CAP) -> dict:
 
     rows: list[dict] = []
     abstained: list[str] = []
+    # QA F-L: a class with no counterpart on the other side was simply not
+    # PROBED there -- both sides are chip-subset probes, and a class the chip
+    # still uses but the env lost is recorded (unimportable, abstained), never
+    # absent. Listing it as "class removed/added" reported one chip's class
+    # inventory as a library change; the rule above: never flag what was
+    # never known.
+    unprobed: list[str] = []
     moved: list[dict] = []
     truncated = False
     matched_new: set[str] = set()
@@ -451,8 +477,7 @@ def diff_manifests(old: dict, new: dict, *, cap: int = _DIFF_CAP) -> dict:
     for path, oentry in old_classes.items():
         hit = _match_class(path, oentry, new_classes, new_leaf)
         if hit is None:
-            _add({"kind": "class_removed", "class": path, "field": "",
-                  "old": None, "new": None})
+            unprobed.append(path)
             continue
         npath, nentry = hit
         matched_new.add(npath)
@@ -495,8 +520,7 @@ def diff_manifests(old: dict, new: dict, *, cap: int = _DIFF_CAP) -> dict:
     for path in new_classes:
         if path not in matched_new and _match_class(
                 path, new_classes[path], old_classes, old_leaf) is None:
-            _add({"kind": "class_added", "class": path, "field": "",
-                  "old": None, "new": None})
+            unprobed.append(path)
 
     counts: dict[str, int] = {}
     for r in rows:
@@ -505,6 +529,7 @@ def diff_manifests(old: dict, new: dict, *, cap: int = _DIFF_CAP) -> dict:
         "rows": rows,
         "moved": moved,
         "abstained": sorted(set(abstained)),
+        "unprobed": sorted(set(unprobed)),
         "counts": counts,
         "total": len(rows),
         "truncated": truncated,
@@ -526,6 +551,22 @@ def diff_signature(diff: dict | None) -> str:
     return hashlib.sha1("\n".join(keys).encode("utf-8")).hexdigest()[:16]
 
 
+def _transition_label(versions: dict | None, other: dict | None,
+                      stored: str | None = None) -> str:
+    """QA F-L: ``env_label`` names only quam and quam_builder, so two envs
+    that differ elsewhere (qm 1.3.1 vs 1.4.1) read "changed from quam 0.6.0 ·
+    quam_builder 0.4.0 to quam 0.6.0 · quam_builder 0.4.0". When the plain
+    labels tie, name the versions that actually differ (never the commit)."""
+    base = stored or env_label(versions)
+    if env_label(versions) != env_label(other):
+        return base
+    v, o = versions or {}, other or {}
+    extra = [f"{k} {v[k]}" for k in _VERSION_KEYS
+             if k not in ("quam", "quam_builder", "quam_builder_commit")
+             and v.get(k) and v.get(k) != o.get(k)]
+    return " · ".join([base, *extra])
+
+
 def env_transition(instance_path: Any, manifest: dict | None) -> dict | None:
     """Has the environment's schema moved since the last one SM recorded?
 
@@ -536,7 +577,7 @@ def env_transition(instance_path: Any, manifest: dict | None) -> dict | None:
     if not manifest:
         return None
     versions = manifest.get("versions") or {}
-    key = env_key(versions)
+    key = stable_env_key(versions)        # QA F-L: one key whichever path attached it
     prev = previous_baseline(instance_path, key)
     if prev is None:
         return {"changed": False, "first": True, "to_key": key,
@@ -549,9 +590,10 @@ def env_transition(instance_path: Any, manifest: dict | None) -> dict | None:
         "changed": bool(diff["rows"]),
         "first": False,
         "from_key": prev.get("key"),
-        "from_label": prev.get("label") or env_label(prev.get("versions")),
+        "from_label": _transition_label(prev.get("versions"), versions,
+                                        prev.get("label")),
         "to_key": key,
-        "to_label": env_label(versions),
+        "to_label": _transition_label(versions, prev.get("versions")),
         "distance": version_distance(prev.get("versions"), versions),
         "diff": diff,
         "sig": sig,
@@ -560,12 +602,13 @@ def env_transition(instance_path: Any, manifest: dict | None) -> dict | None:
 
 
 def dismiss_transition(instance_path: Any, from_key: str, to_key: str,
-                       sig: str) -> None:
+                       sig: str) -> bool:
     """Memo an env transition as answered (delta-gated: a NEW schema change
     re-raises). Env-scope fact → stored with the baselines, not in the
-    chip-keyed prompt memo."""
+    chip-keyed prompt memo. Returns whether the memo was written (QA
+    diagnostics-r2-17: the route reports a failure instead of a silent 200)."""
     if not (from_key and to_key and sig):
-        return
+        return False
     try:
         with _baseline_lock:
             index = _load_index(instance_path)
@@ -575,5 +618,7 @@ def dismiss_transition(instance_path: Any, from_key: str, to_key: str,
             }
             baseline_dir(instance_path).mkdir(parents=True, exist_ok=True)
             _write_index(instance_path, index)
+        return True
     except Exception:  # noqa: BLE001
         logger.warning("could not memo the env transition", exc_info=True)
+        return False

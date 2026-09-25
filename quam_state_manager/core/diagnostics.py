@@ -180,7 +180,7 @@ _CHECK_CATALOG: list[tuple[str, list[tuple[str, str, str]]]] = [
         ("error", "Classes importable in the selected env", "Every __class__ the state references imports in the selected python environment (third-party packages included) — an unimportable class makes Quam.load() fail."),
         ("error", "Fields exist on the env's classes", "Every key under a __class__-bearing node is a real field of that class in the selected env — an unknown field raises AttributeError('Unexpected attribute') at Quam.load(). Free-form dicts (extras, operations) are never flagged."),
         ("error", "Required fields present", "Fields the env's class requires (no default) exist in the state."),
-        ("warning", "Value types match annotations", "Scalar values match the env class's type annotations (int widening and pointer values always pass; enum membership is advisory)."),
+        ("error", "Value types match annotations", "Scalar values match the env class's type annotations — a wrong-type value (e.g. a number stored as text in a float field) makes Quam.load() raise TypeError('Wrong object type found during validation'). A bool in a number, a NaN and a fractional int load, so they stay warnings; int widening and pointer values always pass; enum membership is advisory."),
         ("warning", "Package versions match", "The state's __package_versions__ stamp (written by quam ≥0.6) matches the selected env's installed versions."),
     ]),
     ("connectivity", [
@@ -293,9 +293,18 @@ def _lint_state_uncached(store) -> list[Finding]:
 
     findings.extend(_port_findings(root))
     findings.extend(_dangling_pointer_findings(store))
-    findings.extend(_value_findings(root, "qubits"))
-    findings.extend(_value_findings(root, "qubit_pairs"))
-    findings.extend(_strnum_findings(root))
+    # QA F-F: a numeric-looking TEXT value fired BOTH the sibling vote
+    # (value_type, "numeric on N other qubits") and the stored-as-text row
+    # (value_type_strnum) -- one mistyped value, two rows, two badge counts.
+    # The strnum row states it more precisely (and carries the repair), so the
+    # sibling vote keeps only what strnum cannot see: non-numeric text ("oops").
+    strnum = _strnum_findings(root)
+    shown_text = {f.jump_path for f in strnum if f.jump_path}
+    for section in ("qubits", "qubit_pairs"):
+        findings.extend(f for f in _value_findings(root, section)
+                        if not (f.category == "value_type"
+                                and f.location in shown_text))
+    findings.extend(strnum)
     findings.extend(_frequency_consistency_findings(store))
     findings.extend(_downconverter_findings(root))
     findings.extend(_spec_findings(root))
@@ -2492,6 +2501,32 @@ def _downconverter_spacing_findings(root: dict) -> list[Finding]:
 # QM config linter
 # ---------------------------------------------------------------------------
 
+# QA diagnostics-r2-08: quam's own config template. QuamRoot.generate_config()
+# starts from deepcopy(qua_config_template), which always carries this pulse,
+# and nothing in quam ever references it -- so every quam-generated config had
+# a permanent "never referenced" warning no user could fix or acknowledge.
+# Verbatim from quam/core/qua_config_template.py (quam 0.6.0):
+#     "pulses": {
+#         "const_pulse": {
+#             "operation": "control",
+#             "length": 1000,
+#             "waveforms": {"I": "const_wf", "Q": "zero_wf"},
+#         }
+#     },
+# Matched on name AND content: a hand-written config that uses the name for
+# anything else still warns, and a future quam that changes the template
+# fails safe (the warning comes back). Not imported -- SM never imports the
+# QM stack in-process; tests/test_diagnostics.py pins the copy against the
+# installed quam when one is importable.
+_QUAM_TEMPLATE_PULSES = {
+    "const_pulse": {
+        "operation": "control",
+        "length": 1000,
+        "waveforms": {"I": "const_wf", "Q": "zero_wf"},
+    },
+}
+
+
 def lint_config(config: dict) -> list[Finding]:
     """Lint a QM config dict (from ``generate_config()`` or a dropped config.json).
 
@@ -2575,7 +2610,7 @@ def lint_config(config: dict) -> list[Finding]:
     # --- Orphans (warnings) ------------------------------------------------
     ref_pulses = set(config_view._pulse_names_referenced_by(elements, list(elements.keys())))
     for pk in pulses:
-        if pk not in ref_pulses:
+        if pk not in ref_pulses and pulses.get(pk) != _QUAM_TEMPLATE_PULSES.get(pk):
             findings.append(Finding(
                 "warning", "config_orphan_pulse", f"pulses.{pk}",
                 "pulse is defined but never referenced by any element"))

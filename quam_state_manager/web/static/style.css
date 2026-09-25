@@ -5550,6 +5550,13 @@ input.tree-edit-input {
 .diag-env-err { color: var(--color-error-text); }
 .diag-env-progress { width: 8rem; height: 0.5rem; margin: 0; }
 .diag-env-missing { margin: 0.4rem 0 0; font-size: 0.85em; }
+/* QA F-R: the "Validate deeply" verdict line inside the env card. */
+.diag-env-deep-verdict { margin-top: 0.45rem; font-size: 0.9em; }
+.diag-env-deep-verdict code { font-size: 0.95em; }
+.diag-env-deep-ok > span[aria-hidden] { color: var(--color-success-text); }
+.diag-env-deep-err, .diag-env-deep-err > span[aria-hidden] { color: var(--color-error-text); }
+.diag-env-deep-warn, .diag-env-deep-warn > span[aria-hidden] { color: var(--color-warning-text); }
+.diag-env-deep-note { margin: 0.3rem 0 0; font-size: 0.85em; }
 
 /* docs/78 — "Types & values" card (same shell as the env card). */
 .diag-types-row { display: flex; gap: 0.6rem; margin-top: 0.45rem;

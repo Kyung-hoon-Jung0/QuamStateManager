@@ -200,11 +200,37 @@ def alert_summary(plan: dict | None, env_findings: list[dict] | None,
     env_classes = sum(1 for f in env_findings if f.get("kind") in class_kinds)
     env_fields = len(env_findings) - env_classes
     env_places = sum(int(f.get("count") or 1) for f in env_findings)
+    # QA F-F: a text value in a field the env types as a number is ALSO an env
+    # type_mismatch finding about the very same leaf -- summing both counted
+    # one mistyped value twice ("2 values have a type problem" for one field).
+    # A finding restates the text values when every place it stands for is one
+    # of them; exact while all places are listed (count <= the examples cap),
+    # else it is counted once, as before -- over by at most one per field,
+    # never hiding a real non-numeric mismatch.
+    text_paths = set(paths or [])
+
+    def _restates_text(f: dict) -> bool:
+        ex = f.get("example_paths") or []
+        return (f.get("kind") == "type_mismatch"
+                and f.get("code") in (None, "", "type_mismatch")
+                and bool(ex) and int(f.get("count") or 0) <= len(ex)
+                and all(p in text_paths for p in ex))
+
+    env_restated = sum(1 for f in env_findings if _restates_text(f))
+    # QA F-N: what the popup may call "a value with a type problem" -- the text
+    # values plus env findings that ARE a value of the wrong type. An unknown
+    # field, a class the env cannot import or a missing required field is a
+    # disagreement with the environment's schema, not a mistyped value.
+    env_typed = sum(1 for f in env_findings
+                    if f.get("kind") == "type_mismatch" and not _restates_text(f))
     return {
         "strnum": {
             "count": strnum_count,
             "fixable": plan.get("total", len(rows)),
             "skipped": len(plan.get("skipped") or []),
+            # QA F-G: skipped ones the user CAN fix by typing the number
+            "hand_fixable": sum(1 for s in plan.get("skipped") or []
+                                if s.get("hand_fixable")),
             "examples": examples,
         },
         "env": {
@@ -217,8 +243,11 @@ def alert_summary(plan: dict | None, env_findings: list[dict] | None,
             # NOT "items": Jinja resolves ``env.items`` to the dict method, so a
             # template would silently iterate the wrong thing.
             "entries": env_items(env_findings),
+            # how many of ``count`` only restate the stored-as-text values
+            "restated_text": env_restated,
         },
-        "total": strnum_count + len(env_findings),
+        "total": strnum_count + len(env_findings) - env_restated,
+        "type_problems": strnum_count + env_typed,
     }
 
 
@@ -249,7 +278,14 @@ def build_plan(store: Any, *, policy: Any = None, paths: list[str] | None = None
         skipped.append({"path": path,
                         "current_raw": raw if isinstance(raw, str) else "",
                         "current_display": _display(raw),
-                        "reason": reason})
+                        "reason": reason,
+                        # QA F-G: SM will not GUESS at these, but the user can
+                        # type the number in the Json Tree View and it sticks
+                        # (the edit path's own text->number offer). Not so for
+                        # a read-only key or an env-typed-text field. Not in
+                        # plan_signature, so the apply-time check is unchanged.
+                        "hand_fixable": reason in (SkipReason.LEADING_ZERO,
+                                                   SkipReason.SEPARATOR)})
 
     for path in candidates:
         try:

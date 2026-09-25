@@ -178,6 +178,44 @@ window.eval(fs.readFileSync(path.join(STATIC, 'app.js'), 'utf8'));
     ok(/could not be read/.test(lastConfirm),
        'an unknown live count is stated, not faked (got: ' + lastConfirm + ')');
 
+    /* QA diagnostics-r2-04: crash-class values the push carries are named in
+       the SAME confirm (one clause -- never a second dialog, never a block) */
+    lastConfirm = ''; confirmAnswer = false;
+    preflightQueue = [{ ok: true, live_changes: 1, unsaved: 1, reversible: true,
+                        run_active: false, crash_values: { count: 1,
+                        sentence: '1 value on the live chip would crash a node run: q1 readout.' } }];
+    window.overwriteLiveWithWorking();
+    await flush(30);
+    ok(/would crash a node run: q1 readout/.test(lastConfirm),
+       'Keep mine: the confirm names the crash-class values (got: ' + lastConfirm + ')');
+    lastConfirm = '';
+    preflightQueue = [{ ok: true, live_changes: 1, unsaved: 0, reversible: true,
+                        run_active: false, crash_values: null }];
+    window.overwriteLiveWithWorking();
+    await flush(30);
+    ok(lastConfirm && !/crash/.test(lastConfirm), 'a clean chip adds no clause');
+
+    /* ...and the ⚡ pull-and-apply result line names them too */
+    const _toasts = [], _realToast = window.showToast;
+    window.showToast = function (m, l) { _toasts.push([String(m), l]); };
+    syncCalls.length = 0;
+    syncQueue = [{ status: 'ok', mode: 'apply', tray_html: null,
+                   replay: { applied: 1, failed: [] },
+                   crash_values: { count: 1, sentence: '1 value on the live chip would crash a node run: q1 readout.' } }];
+    window.doStateSync('apply');
+    await flush(40);
+    const _last = _toasts[_toasts.length - 1] || ['', ''];
+    ok(/applied them to the live chip/.test(_last[0]) && /would crash a node run/.test(_last[0])
+       && _last[1] === 'warning',
+       'pull-and-apply names the crash-class values, as a warning (got: ' + JSON.stringify(_last) + ')');
+    syncQueue = [{ status: 'ok', mode: 'apply', tray_html: null, replay: { applied: 1, failed: [] } }];
+    window.doStateSync('apply');
+    await flush(40);
+    const _clean = _toasts[_toasts.length - 1] || ['', ''];
+    ok(_clean[1] === 'success' && !/crash/.test(_clean[0]),
+       'a clean pull-and-apply keeps its green line (got: ' + JSON.stringify(_clean) + ')');
+    window.showToast = _realToast;
+
     /* ── 2. stateRestored bridge ──────────────────────────────────────── */
     ajaxCalls.length = 0;
     let inspectorClosed = 0;

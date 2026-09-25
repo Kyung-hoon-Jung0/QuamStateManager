@@ -4737,7 +4737,70 @@ class TestConfigStaleness:
         # The preview was generated from files that lack the edit → honest stale.
         data = loaded_client.get("/qubit/qA1/waveform/const_z").get_json()
         assert data["stale"] is True
-        assert "predates the unsaved edits" in resp.data.decode()
+        # QA diagnostics-r2-09: the edits are STILL unsaved, so "Regenerate to
+        # include them" was a loop -- the note now says to save first.
+        html = resp.data.decode()
+        assert "Save them first" in html
+        assert "Regenerate to include them" not in html
+
+    # --- QA diagnostics-r2-09: the stale note must not loop ----------------
+
+    def test_regenerating_twice_with_unsaved_edits_still_says_save_first(
+        self, loaded_client, monkeypatch,
+    ):
+        self._mock_previewer(monkeypatch)
+        loaded_client.post(
+            "/field/edit", data={"dot_path": "qubits.qA1.f_01", "value": "9.99e9"},
+        )
+        for _ in range(2):
+            html = loaded_client.post("/config/regenerate").data.decode()
+            assert "config-stale-note" in html
+            assert "Save them first" in html
+            # the export hint says the same thing, not "Regenerate for recent edits"
+            assert "Regenerate for recent edits" not in html
+        page = loaded_client.get("/config", headers={"HX-Request": "true"}).data.decode()
+        assert "Save them first" in page
+
+    def test_save_then_regenerate_clears_the_note(self, loaded_client, monkeypatch):
+        self._mock_previewer(monkeypatch)
+        loaded_client.post(
+            "/field/edit", data={"dot_path": "qubits.qA1.f_01", "value": "9.99e9"},
+        )
+        assert loaded_client.post("/save").status_code == 200
+        html = loaded_client.post("/config/regenerate").data.decode()
+        assert "config-stale-note" not in html
+
+    def test_saved_but_not_regenerated_keeps_the_regenerate_wording(
+        self, loaded_client, monkeypatch,
+    ):
+        # once saved, a Regenerate WOULD include them -- the old sentence is
+        # right again
+        self._mock_previewer(monkeypatch)
+        loaded_client.post(
+            "/field/edit", data={"dot_path": "qubits.qA1.f_01", "value": "9.99e9"},
+        )
+        loaded_client.post("/config/regenerate")
+        loaded_client.post("/save")
+        page = loaded_client.get("/config", headers={"HX-Request": "true"}).data.decode()
+        assert "Regenerate to include them" in page
+        assert "Save them first" not in page
+
+    def test_diagnostics_note_says_save_first_only_while_unsaved(
+        self, loaded_client, monkeypatch,
+    ):
+        self._mock_previewer(monkeypatch)
+        loaded_client.post("/config/regenerate")
+        loaded_client.post(
+            "/field/edit", data={"dot_path": "qubits.qA1.f_01", "value": "9.99e9"},
+        )
+        html = loaded_client.get("/diagnostics", headers={"HX-Request": "true"}).data.decode()
+        assert "your unsaved edits" in html
+        assert "Save to working state" in html
+        loaded_client.post("/save")
+        html = loaded_client.get("/diagnostics", headers={"HX-Request": "true"}).data.decode()
+        assert "config-stale-note" in html                 # still stale, but...
+        assert "your unsaved edits" not in html            # ...Regenerate fixes it now
+        assert "for current results" in html
 
     def test_legacy_meta_without_basis_reads_stale(self, loaded_client):
         _seed_config_cache(loaded_client)
@@ -7171,6 +7234,50 @@ class TestBatchUndoAtomic:
         # A lone edit still undoes (group_id None → standalone).
         u = loaded_client.post("/undo")
         assert "cellsReverted" in u.headers.get("HX-Trigger", "")
+
+    # QA diagnostics-r2-15: the grids' Apply all posts one atomic batch PER
+    # ROW; a fill-down leaves one cell per row, so every row used to be its
+    # own ungrouped entry and undoing one Apply all took one Ctrl+Z per qubit.
+    # `group` joins the rows into ONE group (docs/20: one Review bundle, one
+    # Ctrl+Z) -- only while that group is still the top of the log.
+    def test_rows_of_one_apply_all_join_one_group(self, loaded_client):
+        store = _store_of(loaded_client)
+        r1 = loaded_client.post("/field/edit-batch", json={"group": "new", "updates": [
+            {"dot_path": "qubits.qA1.T1", "value": "9001"}]}).get_json()
+        assert r1["ok"] and r1["group_id"]                  # minted for ONE field
+        r2 = loaded_client.post("/field/edit-batch", json={"group": r1["group_id"], "updates": [
+            {"dot_path": "qubits.qA1.T2ramsey", "value": "1.6e-6"}]}).get_json()
+        assert r2["ok"] and r2["group_id"] == r1["group_id"]
+        assert len(store.change_log) == 2
+        loaded_client.post("/undo")
+        assert store.change_log == []                       # ONE undo, both rows
+
+    def test_a_group_no_longer_on_top_is_not_joined(self, loaded_client):
+        store = _store_of(loaded_client)
+        g = loaded_client.post("/field/edit-batch", json={"group": "new", "updates": [
+            {"dot_path": "qubits.qA1.T1", "value": "9001"}]}).get_json()["group_id"]
+        # another window's edit lands in between
+        loaded_client.post("/field/edit-batch", json={"updates": [
+            {"dot_path": "qubits.qA1.chi", "value": "-5.3e6"}]})
+        r = loaded_client.post("/field/edit-batch", json={"group": g, "updates": [
+            {"dot_path": "qubits.qA1.T2ramsey", "value": "1.6e-6"}]}).get_json()
+        assert r["ok"] and r["group_id"] and r["group_id"] != g
+        loaded_client.post("/undo")
+        assert len(store.change_log) == 2                   # only the last row
+
+    def test_a_journal_step_is_never_joined(self, loaded_client):
+        store = _store_of(loaded_client)
+        loaded_client.post("/field/edit-batch", json={"updates": [
+            {"dot_path": "qubits.qA1.T1", "value": "9001"}]})
+        store.change_log[-1].group_id = "jrn:u1"
+        r = loaded_client.post("/field/edit-batch", json={"group": "jrn:u1", "updates": [
+            {"dot_path": "qubits.qA1.T2ramsey", "value": "1.6e-6"}]}).get_json()
+        assert r["ok"] and r["group_id"] and not r["group_id"].startswith("jrn:")
+
+    def test_no_group_keeps_the_old_rule(self, loaded_client):
+        r = loaded_client.post("/field/edit-batch", json={"updates": [
+            {"dot_path": "qubits.qA1.T1", "value": "9001"}]}).get_json()
+        assert r["ok"] and r["group_id"] is None
 
 
 # ---------------------------------------------------------------------------

@@ -69,14 +69,18 @@ def _summary(client):
     return client.get("/diagnostics/summary").get_data(as_text=True)
 
 
-def _banner_status(client):
-    return client.get("/diagnostics/banner").status_code
+def _banner_up(client):
+    # QA F-A: the clean answer is an EMPTY 200 (htmx 2.x never swaps a 204,
+    # which left the old banner on screen), so judge the BODY, not the status.
+    r = client.get("/diagnostics/banner")
+    assert r.status_code == 200
+    return "diag-error-banner" in r.get_data(as_text=True)
 
 
 def test_clean_chip_starts_healthy(tmp_path):
     client = _client(tmp_path)
     assert "healthy" in _summary(client)
-    assert _banner_status(client) == 204
+    assert not _banner_up(client)
 
 
 def test_single_edit_introduces_then_clears_error(tmp_path):
@@ -87,12 +91,12 @@ def test_single_edit_introduces_then_clears_error(tmp_path):
     r = client.post("/field/edit", data={"dot_path": AMP_PATH, "value": "1.5"})
     assert r.get_json()["ok"] is True
     assert "diag-error" in _summary(client)           # badge now red
-    assert _banner_status(client) == 200              # banner pops
+    assert _banner_up(client)                         # banner pops
 
     # revert → the linter must clear the error on the very next fetch
     client.post("/field/edit", data={"dot_path": AMP_PATH, "value": "0.3"})
     assert "healthy" in _summary(client)
-    assert _banner_status(client) == 204
+    assert not _banner_up(client)
 
 
 def test_batch_edit_reflected_in_badge(tmp_path):
@@ -101,7 +105,7 @@ def test_batch_edit_reflected_in_badge(tmp_path):
         {"dot_path": AMP_PATH, "value": 2.0}]})
     assert r.get_json()["ok"] is True
     assert "diag-error" in _summary(client)
-    assert _banner_status(client) == 200
+    assert _banner_up(client)
 
 
 def test_hardware_freq_check_is_fresh_after_edit(tmp_path):
@@ -113,8 +117,8 @@ def test_hardware_freq_check_is_fresh_after_edit(tmp_path):
 
     client.post("/field/edit", data={"dot_path": RF_PATH, "value": "5.9e9"})  # IF=900MHz
     assert "diag-error" in _summary(client)
-    assert _banner_status(client) == 200
+    assert _banner_up(client)
 
     client.post("/field/edit", data={"dot_path": RF_PATH, "value": "5.05e9"})
     assert "healthy" in _summary(client)
-    assert _banner_status(client) == 204
+    assert not _banner_up(client)

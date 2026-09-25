@@ -35,6 +35,7 @@ from __future__ import annotations
 
 import logging
 import math
+import re
 import weakref
 from dataclasses import dataclass
 from typing import Any
@@ -48,15 +49,40 @@ EDIT_BLOCKING = frozenset({
     "type_mismatch", "non_integral_int", "bool_in_numeric", "non_finite",
     "list_shape", "element_mismatch",
 })
+# QA diagnostics-r2-02: the tier is whether Quam.load() RAISES, not a guess.
+# quam (0.6.0 and 0.5.0a3) typeguard-validates every field at load, so a str in
+# a float field, a wrong element in a List[float] and a flat list in a
+# List[List[float]] are "Wrong object type found during validation" -- every
+# node run dies on load, exactly like unknown_field. A bool in a number, a NaN
+# and a fractional int all LOAD (verified against quam 0.6.0), so they stay
+# warnings. enum_miss also raises, but warning-tier enums are an explicit v1
+# design decision (docs/56) -- left as is. See _judge_severity for the one
+# component carve-out.
 VALIDATION_SEVERITY = {
-    "type_mismatch": "warning",
+    "type_mismatch": "error",
     "non_integral_int": "warning",
     "bool_in_numeric": "warning",
     "non_finite": "warning",
-    "list_shape": "warning",
-    "element_mismatch": "warning",
+    "list_shape": "error",
+    "element_mismatch": "error",
     "enum_miss": "warning",          # enum churns across fork generations — v1 never blocks
 }
+
+
+def _judge_severity(code: str, value: Any, ts: dict) -> str:
+    """The retrospective tier of a judge() verdict on *value*.
+
+    One carve-out: the probe collapses ``Union[Component, str]`` (quam's
+    "component or reference" idiom) to ``component`` and keeps the Union only
+    in ``raw``. quam's str arm accepts ANY string there, so a non-pointer
+    string loads -- judge still flags it, but it is not load-breaking. A str
+    in a plain component field raises ("contents must be a dict")."""
+    sev = VALIDATION_SEVERITY.get(code, "warning")
+    if (sev == "error" and code == "type_mismatch" and isinstance(value, str)
+            and (ts or {}).get("base") == "component"
+            and re.search(r"(?<![\w.])str(?!\w)", str((ts or {}).get("raw") or ""))):
+        return "warning"
+    return sev
 
 
 def is_pointer_str(value: Any) -> bool:
@@ -340,8 +366,10 @@ def analyze_state(state: dict, manifest: dict | None) -> dict:
     ``example_paths`` (a wrong-generation env otherwise emits 83× "CZGate has
     no field duration_qubit"). Two tiers: load-breaking ``error``
     (unimportable_class / unknown_class / unknown_field / missing_required
-    with the field ABSENT) vs experiment-risk ``warning`` (judge mismatches,
-    null-in-required-present, version skew).
+    with the field ABSENT, and the judge codes quam's load-time type check
+    raises on -- type_mismatch / element_mismatch / list_shape, see
+    VALIDATION_SEVERITY) vs experiment-risk ``warning`` (the judge codes that
+    load, enum misses, null-in-required-present, version skew).
     """
     findings: dict[tuple, dict] = {}
     types: dict[str, dict] = {}
@@ -360,6 +388,10 @@ def analyze_state(state: dict, manifest: dict | None) -> dict:
                 "code": code or None, "count": 0, "example_paths": [],
                 "detail": detail, "fix_hint": fix_hint,
             }
+        elif severity == "error" and rec["severity"] != "error":
+            # one aggregate, several values: a load-breaking one wins the tier
+            rec["severity"] = "error"
+            rec["detail"] = detail
         rec["count"] += 1
         if len(rec["example_paths"]) < _EXAMPLES_CAP:
             rec["example_paths"].append(path)
@@ -443,9 +475,12 @@ def analyze_state(state: dict, manifest: dict | None) -> dict:
                 continue                       # containers recurse; pointers pass
             ok, code, msg = judge(v, ts)
             if not ok:
-                sev = VALIDATION_SEVERITY.get(code, "warning")
+                sev = _judge_severity(code, v, ts)
                 add("type_mismatch", sev, cls_str, k, kpath,
-                    f"{leaf_cls}.{k}: {msg}",
+                    f"{leaf_cls}.{k}: {msg}"
+                    + (" — Quam.load() raises TypeError('Wrong object type "
+                       "found during validation'), so every node run fails "
+                       "on load" if sev == "error" else ""),
                     "fix the value, or assign an overriding type to this key",
                     code=code)
         # required fields ABSENT from the node entirely

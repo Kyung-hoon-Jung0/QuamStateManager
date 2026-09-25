@@ -334,15 +334,19 @@ class TestReviewTraySync:
         assert 'data-change-count="0"' in u.data.decode()
 
     def test_use_all_then_apply_all_is_one_group(self, env):
-        """Use all fills N cells; the grid's Apply All batches them into ONE
-        edit-batch = ONE gid — a single Ctrl+Z clears them all from Review."""
+        """Use all fills N cells; the grid's Apply All posts one atomic batch
+        PER ROW, joined into ONE gid (QA diagnostics-r2-15: the first row asks
+        for a new group, the rest join it) — a single Ctrl+Z clears them all
+        from Review. The real client is pinned in apply_all_group_selfcheck."""
         c = env["client"]
         r = c.post("/field/edit-batch", json={
-            "updates": [
-                {"dot_path": "qubits.qA1.z.joint_offset", "value": "0.079"},
-                {"dot_path": "qubits.qA2.z.joint_offset", "value": "0.110"},
-            ],
-            "expect_chip": "",
+            "updates": [{"dot_path": "qubits.qA1.z.joint_offset", "value": "0.079"}],
+            "expect_chip": "", "group": "new",
+        })
+        assert r.get_json()["ok"]
+        r = c.post("/field/edit-batch", json={
+            "updates": [{"dot_path": "qubits.qA2.z.joint_offset", "value": "0.110"}],
+            "expect_chip": "", "group": r.get_json()["group_id"],
         })
         assert r.get_json()["ok"]
         u = c.post("/undo")

@@ -37,10 +37,17 @@
         left alone (reason shown){% endif %}{% endif %}
       </span>
       <div class="diag-types-actions">
-        {% if types_card.editable %}
+        {% if types_card.editable and types_card.strnum.fixable %}
         <button type="button" class="btn-sm primary"
                 title="Show what SM would store instead for every value stored as text, then convert the ones you confirm"
                 onclick="window.openTypeFixPlan && window.openTypeFixPlan()">Auto-correct {{ types_card.strnum.fixable }} value{{ 's' if types_card.strnum.fixable != 1 }}&hellip;</button>
+        {% elif types_card.editable %}
+        {# QA F-G: nothing SM will convert -- no primary "Auto-correct 0". #}
+        <span class="muted diag-types-hand">SM won&rsquo;t convert {{ 'these' if types_card.strnum.count != 1 else 'this one' }}
+          automatically{% if types_card.strnum.hand_fixable %} &mdash; to change one, type the number in the Json Tree View{% endif %}.</span>
+        <button type="button" class="btn-sm outline"
+                title="Why SM leaves these alone"
+                onclick="window.openTypeFixPlan && window.openTypeFixPlan()">See why&hellip;</button>
         {% else %}
         <span class="muted">read-only archive — open the live chip to repair</span>
         {% endif %}
@@ -58,8 +65,21 @@
     <div class="diag-types-label">Environment-schema mismatches</div>
     <div class="diag-types-body">
       <p class="diag-types-caption muted">
+        {% if types_card.strnum.count and types_card.env.restated_text == types_card.env.count %}
+        {# QA F-F (review): the same text values as the row above -- the
+           schema expects numbers there, so converting them clears these too;
+           "SM will not change these" was false for a value the Auto-correct
+           button does change. #}
+        {{ 'These restate' if types_card.env.count != 1 else 'This restates' }} the
+        text value{{ 's' if types_card.strnum.count != 1 }} above — the selected
+        environment's schema expects
+        {{ 'numbers' if types_card.strnum.count != 1 else 'a number' }} there, so
+        converting {{ 'them' if types_card.strnum.count != 1 else 'it' }} clears
+        {{ 'these' if types_card.env.count != 1 else 'this' }} too.
+        {% else %}
         SM will not change these — this chip and the selected environment's
         schema disagree. Decide which is right.
+        {% endif %}
         {% if types_card.env.acknowledged %}<span class="muted">{{ types_card.env.acknowledged }} acknowledged &mdash; listed, revocable, under Environment match below.</span>{% endif %}
       </p>
       <ul class="diag-types-envlist">
@@ -92,8 +112,11 @@
   </div>
   {% elif types_card and not types_card.env.warm %}
   <p class="diag-types-caption muted">
-    The environment's schema has not been probed yet, so type mismatches
-    against it are unknown — use "Probe environment" above.
+    {# QA diagnostics-r2-16: also shown while no env is selected or the
+       selected interpreter is gone -- not only before a probe #}
+    The selected environment's schema is not available (not probed yet, or no
+    environment is selected), so type mismatches against it are unknown &mdash;
+    see Environment match above.
   </p>
   {% endif %}
 
@@ -112,6 +135,11 @@
         <strong>{{ types_card.env_change.count }}</strong> schema
         {{ 'items' if types_card.env_change.count != 1 else 'item' }} changed
         since {{ types_card.env_change.from_label }}
+        {# QA diagnostics-r2-17: "Don't show this again" was stored and never
+           read. The fact stays (docs/79: a dismissal never hides it); the
+           card says the set was hidden and stops calling for a review. #}
+        {% if types_card.env_change.dismissed %}<span class="muted diag-env-hidden">
+        &middot; you hid this set; a further change raises it again</span>{% endif %}
         {% else %}
         unchanged since SM last recorded it
         {% endif %}
@@ -120,9 +148,15 @@
       </span>
       <div class="diag-types-actions">
         {% if types_card.env_change and types_card.env_change.changed %}
+        {% if types_card.env_change.dismissed %}
+        <button type="button" class="btn-sm outline"
+                onclick="window.openEnvSchemaChanges && window.openEnvSchemaChanges()"
+                title="You hid this set — open it again to see what the library changed">Review again&hellip;</button>
+        {% else %}
         <button type="button" class="btn-sm"
                 onclick="window.openEnvSchemaChanges && window.openEnvSchemaChanges()"
                 title="See what the library changed, and tell SM which side is right">Review {{ types_card.env_change.count }} schema change{{ 's' if types_card.env_change.count != 1 }}&hellip;</button>
+        {% endif %}
         {% endif %}
         {% if types_card.taught %}
         <button type="button" class="btn-sm outline"
