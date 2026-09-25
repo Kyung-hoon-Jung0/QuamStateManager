@@ -255,6 +255,7 @@ def test_reader_survives_concurrent_os_replace(tmp_path):
     t.start()
 
     reads = 0
+    refused = 0
     corrupt: list = []
     deadline = time.monotonic() + 1.5
     while time.monotonic() < deadline:
@@ -263,6 +264,11 @@ def test_reader_survives_concurrent_os_replace(tmp_path):
             reads += 1
             if not isinstance(s, dict) or "qubits" not in s:
                 corrupt.append(s)
+        except LiveFileError:
+            # The docs/28 refusal ("kept changing ... try again"), not corrupt
+            # data -- same contract as test_reader_survives_concurrent_writes
+            # (7fff85a); this writer never pauses, so a refusal can happen.
+            refused += 1
         except Exception as exc:  # noqa: BLE001
             corrupt.append(repr(exc))
 
@@ -270,7 +276,13 @@ def test_reader_survives_concurrent_os_replace(tmp_path):
     t.join(timeout=5)
 
     assert not corrupt, f"reader saw corrupt/failed data: {corrupt[:3]}"
-    assert reads > 5
+    # Throughput is load-dependent (each refusal walks the retry ladder), so
+    # the floor is "the reader got answers", not a count; correctness is the
+    # zero-corrupt assert above plus the successful read once the writer rests.
+    assert reads + refused >= 1, (reads, refused)
+    # the refusal's promise: once the writer rests, a read succeeds
+    s2, _w2 = read_state_wiring(tmp_path)
+    assert isinstance(s2, dict) and "qubits" in s2
 
 
 def test_read_state_wiring_retries_until_mtimes_settle(tmp_path, monkeypatch):
