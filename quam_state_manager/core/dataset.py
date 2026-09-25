@@ -1744,7 +1744,23 @@ class DatasetStore:
         run = self.runs.get(run_id)
         if not run:
             return out
-        if run.incomplete:
+        # datasets-r2-20 (re-verify): ``incomplete`` is only what the LAST
+        # parse saw. A file rewritten in place afterwards (truncated, a failed
+        # writeback) moves neither its run folder's nor its date dir's mtime,
+        # so the B27 short-circuit never re-parses it and the flag stays False
+        # -- the banner never showed, even across a restart (the persisted
+        # store carries the same flag). Two stats against the fingerprints the
+        # parse recorded tell whether the files are still the ones parsed; a
+        # healthy, unchanged run still pays no read.
+        suspect = bool(run.incomplete)
+        if not suspect:
+            rec = self._folder_fp.get(run.folder_path)
+            if rec is None or rec[0] == _INCOMPLETE_FP:
+                suspect = True
+            else:
+                suspect = (self._stat_fp(run.folder_path / "node.json") != rec[1]
+                           or self._stat_fp(run.folder_path / "data.json") != rec[2])
+        if suspect:
             for fname in ("node.json", "data.json"):
                 p = run.folder_path / fname
                 if p.exists() and safe_io.scan_json(p) is None:
@@ -1756,6 +1772,8 @@ class DatasetStore:
                         if f.is_file() and f.suffix.lower() in (".png", ".jpg", ".jpeg", ".svg"))
                 except OSError:
                     pass
+        if "data.json" in out["unreadable"]:
+            return out      # the figures cannot be resolved, not "missing"
         for name in run.figure_names:
             if self.get_figure_path(run_id, name) is None:
                 out["missing_figures"].append(name)

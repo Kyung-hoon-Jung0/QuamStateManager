@@ -26078,13 +26078,22 @@ def dataset_detail(uid):
         run_qs = Path(run["folder_path"]) / "quam_state"
         chip_token, chip_name = _run_chip_identity(run_qs)
     template = "_dataset_detail.html" if _is_htmx() else "dataset_detail.html"
+    # datasets-r2-20: an unreadable file / a missing figure is SAID
+    file_health = ds.run_file_health(run_id)
+    if "data.json" in file_health.get("unreadable", []):
+        # re-verify: the figures and fit results in `run` are what data.json
+        # held when it was last PARSED -- a file rewritten in place since then
+        # is no longer that file, and showing them (with every figure "missing",
+        # because the /fig route resolves through the unreadable file) states
+        # a run the folder does not contain. The page says the file could not
+        # be read and lists the images that are on disk instead.
+        run = dict(run, figure_names=[], fit_results={})
     return render_template(template, **_ctx(page="dataset_detail"), run=run,
                            fit_targets=resolve_fit_targets(run),
                            uid=uid, folder_key=uid.split(":")[0],
                            run_chip_token=chip_token, run_chip_name=chip_name,
                            folder_label=folder_label, folder_path=str(ds.folder_path),
-                           # datasets-r2-20: an unreadable file / a missing figure is SAID
-                           file_health=ds.run_file_health(run_id))
+                           file_health=file_health)
 
 
 @bp.route("/dataset/<uid>/fig/<name>")

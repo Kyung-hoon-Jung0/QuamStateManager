@@ -62,6 +62,60 @@ class TestStoreHealth:
         assert h["unreadable"] == []
 
 
+def _truncate_in_place(run):
+    """Rewrite data.json in half WITHOUT moving any folder mtime -- what a
+    failed in-place writeback does (and what the re-verifier did). Folder
+    mtimes are put back explicitly so the pin holds on every filesystem."""
+    import os
+    dirs = [run, run.parent]
+    st = {d: os.stat(d) for d in dirs}
+    p = run / "data.json"
+    raw = p.read_bytes()
+    p.write_bytes(raw[: len(raw) // 2])
+    for d in dirs:
+        os.utime(d, ns=(st[d].st_atime_ns, st[d].st_mtime_ns))
+
+
+class TestRewrittenAfterTheScan:
+    """datasets-r2-20 (re-verify): the banner never showed for a data.json
+    truncated AFTER the run was indexed -- ``incomplete`` is what the last
+    parse saw, and an in-place rewrite moves no folder mtime, so no rescan
+    re-parses it (the persisted store carries the same flag across a
+    restart). The health check compares the files' stats with the parse's
+    own fingerprints."""
+
+    def test_the_store_notices_an_in_place_truncation(self, tmp_path):
+        f = tmp_path / "data"
+        run = _seed_run(f, 51, qubits=["q1"])
+        _with_figure(run)
+        ds = DatasetStore(f)
+        assert ds.run_file_health(51)["unreadable"] == []     # indexed healthy
+        _truncate_in_place(run)
+        ds.rescan_if_stale()
+        assert ds.get_run(51)["figure_names"], "setup: the scan kept the old parse"
+        h = ds.run_file_health(51)
+        assert h["unreadable"] == ["data.json"], h
+        assert h["files_on_disk"] == ["figures.amplitude.png"]
+        assert h["missing_figures"] == [], "an unreadable file is not a missing figure"
+
+    def test_the_detail_says_so_instead_of_the_stale_figures(self, tmp_path):
+        f = tmp_path / "data"
+        run = _seed_run(f, 51, qubits=["q1"])
+        _with_figure(run)
+        app, c = _app_with_folders(tmp_path, [f])
+        with app.app_context():
+            key = routes._folder_key(f)
+        url = f"/dataset/{key}:51"
+        assert "/fig/figures.amplitude" in c.get(url, headers={"HX-Request": "true"}).get_data(as_text=True)
+        _truncate_in_place(run)
+        html = c.get(url, headers={"HX-Request": "true"}).get_data(as_text=True)
+        assert "ds-file-health-note" in html
+        assert "data.json could not be read" in html
+        assert "/fig/figures.amplitude" not in html
+        assert "figure file missing" not in html.split("this.onerror")[0]
+        assert "figures.amplitude.png" in html          # what IS in the folder
+
+
 class TestDetailSaysIt:
     def test_unreadable_data_json_is_not_no_figures(self, tmp_path):
         html = _detail(tmp_path, truncate=True)
