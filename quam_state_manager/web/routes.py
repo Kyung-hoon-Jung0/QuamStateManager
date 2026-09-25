@@ -2932,6 +2932,35 @@ def _replay_updates(modifier, updates: dict) -> dict:
                         pass  # already gone on the pulled state — noop success
                 else:
                     target_path = _resolve_edit_path(store, dot_path)
+                    if target_path != dot_path:
+                        # QA correctness-r2-07: a "set" is tagged only when
+                        # NEITHER side of the user's edit was a pointer, and a
+                        # value-mode edit logs its resolved target -- so this
+                        # leaf was a plain value, reached without a pointer,
+                        # when the user edited it. If the pulled chip now
+                        # routes it elsewhere, an outside writer re-linked it
+                        # (or a parent) after the edit, and following that
+                        # link landed the value on ANOTHER qubit's parameter
+                        # while the leaf the user edited kept the pointer.
+                        # Never follow a link the user never saw: when the
+                        # leaf itself is the new pointer, the edit wins AT the
+                        # leaf, exactly like any same-field collision (the
+                        # value the user typed replaces the chip's); when a
+                        # parent moved, there is no leaf of theirs left to
+                        # write -- report it and keep the live chip.
+                        try:
+                            _raw = store.get_value(dot_path)
+                        except (KeyError, TypeError, ValueError, IndexError):
+                            _raw = _REPLAY_UNREADABLE
+                        if not (isinstance(_raw, str) and is_pointer(_raw)):
+                            failed.append({
+                                "dot_path": dot_path,
+                                "error": ("the live chip now reaches this field "
+                                          "through a link it did not have when "
+                                          "you edited it -- kept the live chip"),
+                            })
+                            continue  # skip applied += 1
+                        target_path = dot_path
                     # coerce=False: `value` is entry.new_value — already type-coerced
                     # against the working-copy field the user actually edited. Re-coercing
                     # it against the PULLED live value's type loses the user's edit when
