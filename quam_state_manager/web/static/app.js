@@ -16255,10 +16255,65 @@ window.DatasetTrends = (function () {
         if (!d.series.length) askParams(st);
     }
 
+    /* ---- the y range: a few extreme values must not flatten the rest ----
+       [derived, a display heuristic -- no paper; its thresholds were set
+       against the KH_202608_CZ archive, 508 series: see the pin in
+       tests/trends_view_selfcheck.cjs, section I.]
+       A failed fit can report T1 = 68 ms next to 49 runs at 3-30 us; Plotly's
+       autorange then puts those 49 inside one pixel row and the trend is
+       gone. When a FEW numeric values (at most OFF_FRAC of them, at least
+       one) lie beyond Tukey's far-out fences (Q1 - 3*IQR, Q3 + 3*IQR) AND
+       they stretch the axis more than OFF_GAIN times the span of the rest,
+       the axis is set to the rest and each off-scale value is drawn as a
+       triangle on the edge it lies beyond -- hover gives its real value, a
+       click opens its run, the label counts them, and a double-click on the
+       chart shows the full range. Nothing is dropped. A series whose
+       "outliers" are a large share is a second regime (a qubit parked
+       elsewhere), not a glitch, and keeps its full autorange. */
+    var OFF_K = 3, OFF_GAIN = 20, OFF_FRAC = 0.1, OFF_MIN_N = 8;
+    function quantile(sorted, p) {
+        var i = (sorted.length - 1) * p, lo = Math.floor(i), hi = Math.ceil(i);
+        return sorted[lo] + (sorted[hi] - sorted[lo]) * (i - lo);
+    }
+    function robustRange(ys) {
+        var v = [];
+        for (var i = 0; i < ys.length; i++) {
+            var y = ys[i];
+            if (typeof y === 'boolean') return null;               // a flag axis
+            if (typeof y === 'number' && isFinite(y)) v.push(y);
+        }
+        if (v.length < OFF_MIN_N) return null;
+        var s = v.slice().sort(function (a, b) { return a - b; });
+        var q1 = quantile(s, 0.25), q3 = quantile(s, 0.75), iqr = q3 - q1;
+        if (!(iqr > 0)) return null;
+        var fLo = q1 - OFF_K * iqr, fHi = q3 + OFF_K * iqr;
+        var inMin = Infinity, inMax = -Infinity, above = [], below = [];
+        for (var k = 0; k < ys.length; k++) {
+            var x = ys[k];
+            if (typeof x !== 'number' || !isFinite(x)) continue;
+            if (x > fHi) above.push(k);
+            else if (x < fLo) below.push(k);
+            else { if (x < inMin) inMin = x; if (x > inMax) inMax = x; }
+        }
+        var nOff = above.length + below.length;
+        if (!nOff || nOff > Math.max(1, Math.floor(OFF_FRAC * v.length))) return null;
+        var spanIn = (inMax - inMin) > 0 ? inMax - inMin : iqr;
+        if (s[s.length - 1] - s[0] <= OFF_GAIN * spanIn) return null;
+        var pad = 0.06 * spanIn, edge = 0.1 * spanIn;
+        var r0 = inMin - pad - (below.length ? edge : 0);
+        var r1 = inMax + pad + (above.length ? edge : 0);
+        return { range: [r0, r1], above: above, below: below,
+                 yTop: inMax + pad + 0.5 * edge, yBot: inMin - pad - 0.5 * edge };
+    }
+
     /* ---- one chart ---- */
+    function ysOf(st, idx) {
+        var s = st.data.series[idx];
+        return st.rows.map(function (i) { return s.v[i]; });
+    }
     function tracesFor(st, idx) {
         var s = st.data.series[idx];
-        var ys = st.rows.map(function (i) { return s.v[i]; });
+        var ys = ysOf(st, idx);
         var nFinite = 0;
         for (var i = 0; i < ys.length; i++) if (isPt(ys[i])) nFinite++;
         var colorway = UI_CONFIG.plotly.colorway;
@@ -16294,8 +16349,28 @@ window.DatasetTrends = (function () {
                                       name: s.q + ' / ' + s.m + ' (isolated)', showlegend: false,
                                       marker: { size: 5, color: dataColor }, hovertemplate: hover });
         }
+        var rr = robustRange(ys);
+        if (rr) {
+            [['above', rr.yTop, 'triangle-up'], ['below', rr.yBot, 'triangle-down']].forEach(function (side) {
+                var ks = rr[side[0]];
+                if (!ks.length) return;
+                out.push({
+                    x: ks.map(function (k) { return st.xs[k]; }),
+                    y: ks.map(function () { return side[1]; }),
+                    text: ks.map(function (k) { return st.texts[k] + ' · ' + fmtG(ys[k]) + ' (off-scale ' + side[0] + ')'; }),
+                    customdata: ks.map(function (k) { return st.uids[k]; }),
+                    mode: 'markers', cliponaxis: false, showlegend: false,
+                    name: s.q + ' / ' + s.m + ' (off-scale ' + side[0] + ')',
+                    marker: { size: 9, symbol: side[2], color: dataColor,
+                              line: { width: 1, color: '#ffffff' } },
+                    hovertemplate: '%{text}<extra></extra>'
+                });
+            });
+        }
         return out;
     }
+    /* the same 6 significant digits as the hover's %{y:.6g} */
+    function fmtG(v) { return String(parseFloat(Number(v).toPrecision(6))); }
 
     function layoutFor(st, idx) {
         var s = st.data.series[idx];
@@ -16312,12 +16387,36 @@ window.DatasetTrends = (function () {
         return {
             margin: mini.margin,
             xaxis: xaxis,
-            yaxis: { title: s.m, tickfont: mini.yTickFont },
+            yaxis: yaxisFor(st, idx, { title: s.m, tickfont: mini.yTickFont }),
             height: mini.height,
             colorway: UI_CONFIG.plotly.colorway,
             showlegend: false,
             hovermode: 'x unified'
         };
+    }
+
+    /* a few off-scale values: the axis is the rest's (robustRange) */
+    function yaxisFor(st, idx, yaxis) {
+        var rr = robustRange(ysOf(st, idx));
+        if (rr) { yaxis.range = rr.range; yaxis.autorange = false; }
+        return yaxis;
+    }
+    /* ...and the label says so, with how to see the whole range */
+    function offScaleNote(st, idx, el) {
+        var rr = robustRange(ysOf(st, idx));
+        var label = el.parentNode && el.parentNode.querySelector('.trend-chart-label');
+        if (!label) return;
+        var old = label.querySelector('.trend-offscale-note');
+        if (old) old.remove();
+        if (!rr) return;
+        var n = rr.above.length + rr.below.length;
+        var where = rr.above.length && rr.below.length ? 'above and below (▲ top edge, ▼ bottom edge)'
+            : (rr.above.length ? 'above (▲ on the top edge)' : 'below (▼ on the bottom edge)');
+        var note = document.createElement('span');
+        note.className = 'trend-offscale-note muted';
+        note.textContent = ' · ' + plural(n, 'value') + ' off-scale ' + where
+            + ' — double-click the chart for the full range';
+        label.appendChild(note);
     }
 
     function renderOne(st, idx) {
@@ -16336,7 +16435,7 @@ window.DatasetTrends = (function () {
         }
         return Promise.resolve(window._plotlyRender(el, tracesFor(st, idx), layoutFor(st, idx),
                                                     { responsive: true, displayModeBar: false }))
-            .then(function () { bindRunClicks(el); });
+            .then(function () { offScaleNote(st, idx, el); bindRunClicks(el); });
     }
 
     function enqueue(st, idx) { st.queue.push(idx); if (!st.pumping) pump(st); }
@@ -16355,19 +16454,37 @@ window.DatasetTrends = (function () {
     /* QA F19: a point opens its run in the INSPECTOR (docs/204). With
        'x unified' the click's points include the statistics traces (no uid),
        so the first point that CARRIES a uid wins. */
-    function uidOf(evt) {
+    function uidOf(evt, el) {
         var pts = (evt && evt.points) || [];
+        // Several points can carry a uid at one x (the data trace and an
+        // off-scale edge marker; runs minutes apart on a weeks-wide axis):
+        // the one drawn nearest the pointer's height wins, else the first.
+        var my = null;
+        try {
+            if (el && evt.event && typeof evt.event.clientY === 'number')
+                my = evt.event.clientY - el.getBoundingClientRect().top;
+        } catch (e) { my = null; }
+        var best = null, bestD = Infinity;
         for (var i = 0; i < pts.length; i++) {
-            var cd = pts[i] && pts[i].customdata;
-            if (typeof cd === 'string' && cd) return cd;
+            var pt = pts[i], cd = pt && pt.customdata;
+            if (typeof cd !== 'string' || !cd) continue;
+            if (best === null) best = cd;
+            if (my === null) break;
+            var d = Infinity;
+            try {
+                var ya = pt.yaxis;
+                if (ya && typeof ya.l2p === 'function' && typeof pt.y === 'number')
+                    d = Math.abs(ya.l2p(pt.y) + (ya._offset || 0) - my);
+            } catch (e) { d = Infinity; }
+            if (d < bestD) { bestD = d; best = cd; }
         }
-        return null;
+        return best;
     }
     function bindRunClicks(el) {
         if (!el || typeof el.on !== 'function') return;
         el.on('plotly_click', function (evt) {
             try {
-                var uid = uidOf(evt);
+                var uid = uidOf(evt, el);
                 if (!uid) return;
                 var url = '/dataset/' + uid;
                 if (window.htmx && window.htmx.ajax) {
@@ -16379,7 +16496,7 @@ window.DatasetTrends = (function () {
             } catch (e) { /* a click must never break the chart */ }
         });
         el.on('plotly_hover', function (evt) {
-            try { el.style.cursor = uidOf(evt) ? 'pointer' : ''; } catch (e) {}
+            try { el.style.cursor = uidOf(evt, el) ? 'pointer' : ''; } catch (e) {}
         });
         el.on('plotly_unhover', function () {
             try { el.style.cursor = ''; } catch (e) {}
@@ -16466,7 +16583,8 @@ window.DatasetTrends = (function () {
         body.appendChild(frag);
     }
 
-    return { mount: mount, EAGER: EAGER, LINES_ABOVE: LINES_ABOVE, FIG_PAGE: FIG_PAGE };
+    return { mount: mount, EAGER: EAGER, LINES_ABOVE: LINES_ABOVE, FIG_PAGE: FIG_PAGE,
+             robustRange: robustRange };
 })();
 
 /* ------------------------------------------------------------------ */

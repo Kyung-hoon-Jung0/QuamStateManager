@@ -6514,6 +6514,7 @@ table.h5-vars-table tr.h5-var-selected .btn-sm { background: var(--pico-primary)
 /* Trend chart boxes */
 .trend-chart-box { margin-bottom: 0.75rem; }
 .trend-chart-label { font-size: 0.85em; font-weight: 600; padding: 0.2rem 0; }
+.trend-offscale-note { font-weight: 400; }
 
 /* Figure timeline strip */
 .trend-figure-strip-section { margin-bottom: 0.5rem; }

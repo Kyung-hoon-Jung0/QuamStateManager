@@ -7,7 +7,8 @@ its undated-run count, lines above 200 points (with isolated values kept),
 statistics over the full series, the all-null and bool cases, the counts and
 notes, a DOM with no <img> until the Figure timeline is opened (newest 50
 first, "Show older"), Parameter Differences asked for after the first chart
-with its version checked, and the warming / error / empty answers.
+with its version checked, the warming / error / empty answers, and a y axis
+that a few failed-fit values do not flatten (off-scale triangles on the edge).
 """
 from __future__ import annotations
 
@@ -35,6 +36,11 @@ def test_trends_view_selfcheck():
                  "ok - F: no <img> before any details opens",
                  "ok - F: the newest 50 first",
                  "ok - G: a different version is said",
-                 "ok - H: a warming answer is asked again, then drawn"):
+                 "ok - H: a warming answer is asked again, then drawn",
+                 "ok - I: the range holds every normal value and not the outliers",
+                 "ok - I: its hover gives the real value",
+                 "ok - I: the label counts them and says how to see all",
+                 "ok - I: a click opens the point drawn nearest the pointer",
+                 "ok - I: 6 of 51 (>10%) off -> a regime, autorange"):
         assert line in res.stdout, line
     assert "ALL OK" in res.stdout

@@ -18,6 +18,10 @@
  *      params URL; its version differing from the charts' is said (never
  *      mixed silently), and Reload re-picks.
  *   H. a 202 warming answer is asked again; an error is shown; empty cases.
+ *   I. a few extreme values (failed fits) do not flatten the rest: the y axis
+ *      is the rest's, each off-scale value is a triangle on the edge with its
+ *      real value in the hover, clickable, and the label counts them; a click
+ *      opens the point drawn nearest the pointer.
  * Run: node tests/trends_view_selfcheck.cjs (driven by tests/test_trends_view.py).
  */
 'use strict';
@@ -203,6 +207,81 @@ async function view(body, opts) {
     await H.tick(30);
     ok(/No numeric fit-result metrics found/.test(text(b.root)), 'H: no metrics');
   }
+
+  // I. a few extreme values must not flatten the rest (the y range)
+  {
+    // 49 values in 3k..30k and two failed fits at 68M / 23M (the KH_202608_CZ
+    // 25_T1 q1 shape): the axis is the rest's, the two sit on the top edge.
+    const n = 51, v = [];
+    for (let i = 0; i < n; i++) v.push(3000 + ((i * 7919) % 27000));
+    v[10] = 68534273; v[12] = 23427454;
+    const { W, root } = await view(H.payload(n, [{ q: 'q1', m: 't1', v: v }]));
+    await H.tick(30);
+    const d = W.draws[0], ya = d.layout.yaxis;
+    const normal = v.filter((x, i) => i !== 10 && i !== 12);
+    ok(Array.isArray(ya.range) && ya.autorange === false, 'I: outliers -> an explicit y range (' + JSON.stringify(ya.range) + ')');
+    ok(ya.range && ya.range[0] <= Math.min(...normal) && ya.range[1] >= Math.max(...normal) && ya.range[1] < 1e6,
+       'I: the range holds every normal value and not the outliers');
+    const off = d.data.filter((t) => /off-scale above/.test(t.name));
+    ok(off.length === 1 && off[0].y.length === 2 && off[0].y.every((y) => y > Math.max(...normal) && y < ya.range[1]),
+       'I: each off-scale value is a marker inside the top edge (' + JSON.stringify(off[0] && off[0].y) + ')');
+    ok(off[0] && off[0].marker.symbol === 'triangle-up' && off[0].customdata.join(',') === 'kk:1010,kk:1012',
+       'I: a triangle-up, clickable (its run uid)');
+    ok(off[0] && /#1010 · 68534300 \(off-scale above\)/.test(off[0].text[0]), 'I: its hover gives the real value (' + (off[0] && off[0].text[0]) + ')');
+    ok(dataTraceOf(d).y[10] === 68534273, 'I: the data trace still carries the value (nothing dropped)');
+    ok(/2 values off-scale above \(▲ on the top edge\) — double-click the chart for the full range/.test(text(root.querySelector('.trend-chart-label'))),
+       'I: the label counts them and says how to see all (' + text(root.querySelector('.trend-chart-label')) + ')');
+    // a click near the top edge opens the OFF-SCALE run, not the normal one at the same x
+    const pts = [
+      { customdata: 'kk:1009', y: 5000, yaxis: { l2p: (y) => 100 - y / 200, _offset: 10 } },
+      { customdata: 'kk:1010', y: 30000, yaxis: { l2p: (y) => 100 - y / 200, _offset: 10 } },
+    ];
+    const el = d.el;
+    el.__handlers.plotly_click[0]({ points: pts, event: { clientY: 10 + 100 - 30000 / 200 } });
+    const clicked = W.ajax.filter((a) => /^\/dataset\//.test(a.url)).map((a) => a.url);
+    ok(clicked[clicked.length - 1] === '/dataset/kk:1010', 'I: a click opens the point drawn nearest the pointer (' + clicked.join(',') + ')');
+    el.__handlers.plotly_click[0]({ points: pts, event: { clientY: 10 + 100 - 5000 / 200 } });
+    const c2 = W.ajax.filter((a) => /^\/dataset\//.test(a.url)).map((a) => a.url);
+    ok(c2[c2.length - 1] === '/dataset/kk:1009', 'I: ...and the normal point when the pointer is on it');
+    el.__handlers.plotly_click[0]({ points: pts.slice().reverse() });
+    const c3 = W.ajax.filter((a) => /^\/dataset\//.test(a.url)).map((a) => a.url);
+    ok(c3.length === c2.length + 1 && c3[c3.length - 1] === '/dataset/kk:1010', 'I: no pointer height -> the first uid, as before');
+  }
+  {
+    const n = 40, v = [];
+    for (let i = 0; i < n; i++) v.push(10 + (i % 7));
+    v[5] = -1e7;
+    const { W, root } = await view(H.payload(n, [{ q: 'q1', m: 'm', v: v }]));
+    await H.tick(30);
+    const d = W.draws[0];
+    const off = d.data.filter((t) => /off-scale below/.test(t.name));
+    ok(off.length === 1 && off[0].marker.symbol === 'triangle-down' && off[0].y[0] < 10 && off[0].y[0] > d.layout.yaxis.range[0],
+       'I: an outlier below -> a triangle-down inside the bottom edge');
+    ok(/1 value off-scale below/.test(text(root.querySelector('.trend-chart-label'))), 'I: and the label says below');
+  }
+  const R = (v) => { const W = H.world(); return W.w.DatasetTrends.robustRange(v); };
+  const base = []; for (let i = 0; i < 50; i++) base.push(100 + (i % 10));
+  ok(R(base) === null, 'I: no outlier -> autorange (null)');
+  // gain: the whole span must exceed 20x the rest's span -- 1 point at 20x does not, at 21x+ does
+  ok(R(base.concat([100 + 9 * 19])) === null, 'I: an outlier stretching the axis <= 20x the rest -> autorange');
+  ok(R(base.concat([100 + 9 * 25])) !== null, 'I: ...> 20x -> rescaled');
+  // fences: Q3 + 3*IQR, both sides of it. 0..999 plus 2254, 2255, 1e6: 1003
+  // values, Q1 250.5, Q3 751.5, IQR 501 -> the fence is 2254.5 exactly.
+  {
+    const b = []; for (let i = 0; i < 1000; i++) b.push(i);
+    const r = R(b.concat([2254, 2255, 1e6]));
+    ok(r && r.above.join(',') === '1001,1002', 'I: only the values beyond Q3+3*IQR are off-scale (' + JSON.stringify(r && r.above) + ')');
+  }
+  // share: at most 10% (and at least one) -- a second regime keeps its autorange
+  {
+    const b = []; for (let i = 0; i < 45; i++) b.push(10 + (i % 5));
+    ok(R(b.concat([1e6, 1e6, 1e6, 1e6])) !== null, 'I: 4 of 49 (<=10%) off -> rescaled');
+    ok(R(b.concat([1e6, 1e6, 1e6, 1e6, 1e6, 1e6])) === null, 'I: 6 of 51 (>10%) off -> a regime, autorange');
+  }
+  // too few points to judge, and flags
+  ok(R([1, 2, 3, 4, 5, 6, 1e9]) === null, 'I: under 8 values -> autorange');
+  ok(R([1, 2, 3, 4, 5, 6, 7, 1e9]) !== null, 'I: 8 values -> judged');
+  ok(R(base.map((x, i) => (i === 3 ? true : x)).concat([1e9])) === null, 'I: a flag series -> autorange');
 
   if (fails) { console.error(fails + ' of ' + asserts + ' check(s) failed'); process.exit(1); }
   console.log('ALL OK (' + asserts + ' assertions)');
