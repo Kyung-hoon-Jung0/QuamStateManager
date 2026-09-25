@@ -121,6 +121,8 @@ function makeWorld(opts) {
     return new win.Promise(function () {});
   };
   if (o.draft != null) win.sessionStorage.setItem(DRAFT_KEY, o.draft);
+  // o.local: the localStorage mirror an EARLIER session left (r2-18)
+  Object.keys(o.local || {}).forEach(function (k) { win.localStorage.setItem(k, o.local[k]); });
   new win.Function(GEN_JS).call(win);
   const G = win.QuamGen;
   if (!o.noInit) G.init();
@@ -876,6 +878,91 @@ function toStep4(win, G, n) {
     ok(/scripts/i.test($(w.win, 'gen-build-result').textContent),
       'r2-18: the refusal names the scripts folder (got "' +
       $(w.win, 'gen-build-result').textContent + '")');
+  })();
+
+  // r2-18 re-verify: a scripts folder restored from an EARLIER session (the
+  // localStorage mirror, no draft) stayed latched, and every build into a new
+  // output folder rewrote that earlier chip's recipe
+  (function r18StorageFollows() {
+    const OLD = 'D:\\gen_out\\crawl_safe\\state_gen_scripts';
+    const w = makeWorld({ local: { quam_gen_scripts_path: OLD } });
+    w.G.hydrateFromSpec(srcSpec(), { mode: 'regenerate', sourcePath: 'D:\src\chipA' });
+    w.G.goToStep(7);
+    ok($(w.win, 'gen-scripts-path').value === OLD,
+      'r2-18 re-verify setup: the earlier session\'s folder is shown on arrival');
+    setInput(w.win, $(w.win, 'gen-output-path'), 'D:\\gen_out\\e1_sc');
+    ok($(w.win, 'gen-scripts-path').value === 'D:\\gen_out\\e1_sc\\state_gen_scripts',
+      'r2-18 re-verify: picking an output folder takes the box back to following it (got ' +
+      $(w.win, 'gen-scripts-path').value + ')');
+    setInput(w.win, $(w.win, 'gen-output-path'), 'D:\\gen_out\\e2_novera');
+    ok(w.G.state.scriptsPath === 'D:\\gen_out\\e2_novera\\state_gen_scripts',
+      'r2-18 re-verify: ...and keeps following the next one');
+    // a path typed in THIS session still wins over the output
+    const w2 = makeWorld({ local: { quam_gen_scripts_path: OLD } });
+    w2.G.hydrateFromSpec(srcSpec(), { mode: 'regenerate', sourcePath: 'D:\src\chipA' });
+    w2.G.goToStep(7);
+    typeOnly(w2.win, $(w2.win, 'gen-scripts-path'), 'E:\\mine');
+    setInput(w2.win, $(w2.win, 'gen-output-path'), 'D:\\gen_out\\e3');
+    ok(w2.G.state.scriptsPath === 'E:\\mine',
+      'r2-18 re-verify control: a folder typed in this session is kept');
+  })();
+
+  // r2-18 re-verify: the server's "that recipe belongs to another chip" question
+  await (async function r18OverwriteAsked() {
+    let n = 0;
+    const w = makeWorld({ routes: [
+      { match: '/generate/envs', reply: { envs: [] } },
+      { match: '/generate/select-env', reply: { ok: true } },
+      { match: '/generate/build', reply: function () {
+          n++;
+          return n === 1 ? { ok: false, needs_confirm: true, confirm_kind: 'scripts_overwrite',
+                             scripts_dir: 'E:\\shared', scripts_files: ['02_build_machine.py'],
+                             error: 'The scripts folder E:\\shared already holds a build recipe' }
+                         : { ok: true, result: { qubits: [], qubit_pairs: [] } };
+        } }
+    ] });
+    toStep4(w.win, w.G, 2);
+    w.G.state.env = 'C:/envs/test/python.exe';
+    w.G.goToStep(7);
+    setInput(w.win, $(w.win, 'gen-output-path'), 'D:\\x\\b1');
+    typeOnly(w.win, $(w.win, 'gen-scripts-path'), 'E:\\shared');
+    w.G.goToStep(8);
+    click(w.win, $(w.win, 'gen-next'));
+    await settle();
+    const slot = $(w.win, 'gen-build-result');
+    const btns = Array.from(slot.querySelectorAll('button')).map(b => b.textContent);
+    ok(/already holds a build recipe/.test(slot.textContent) &&
+       slot.textContent.indexOf('02_build_machine.py') >= 0,
+      'r2-18 re-verify: the question names the recipe that would be overwritten');
+    ok(btns.some(t => /next to this chip/.test(t)) && btns.some(t => /Overwrite that recipe/.test(t)),
+      'r2-18 re-verify: it offers this chip\'s folder, or overwriting on purpose (' + btns + ')');
+    const next = Array.from(slot.querySelectorAll('button')).find(b => /next to this chip/.test(b.textContent));
+    click(w.win, next);
+    await settle();
+    const rv = Array.from(w.win.document.querySelectorAll('#gen-review th'))
+      .find(th => th.textContent === 'Python scripts');
+    ok(rv && rv.nextElementSibling.textContent === 'D:\\x\\b1\\state_gen_scripts',
+      'r2-18 re-verify: the Review row names the folder the build now uses (' +
+      (rv && rv.nextElementSibling.textContent) + ')');
+    const b2 = w.log.filter(e => e.url.indexOf('/generate/build') >= 0).pop();
+    ok(b2 && b2.body.scripts_dir === 'D:\\x\\b1\\state_gen_scripts' && !b2.body.scripts_overwrite_ack,
+      'r2-18 re-verify: "next to this chip" rebuilds with the recipe under the output (' +
+      JSON.stringify(b2 && { d: b2.body.scripts_dir, a: b2.body.scripts_overwrite_ack }) + ')');
+    // the explicit overwrite path sends the ack
+    n = 0;
+    click(w.win, $(w.win, 'gen-next'));
+    await settle();
+    typeOnly(w.win, $(w.win, 'gen-scripts-path'), 'E:\\shared');
+    n = 0;
+    click(w.win, $(w.win, 'gen-next'));
+    await settle();
+    const ow = Array.from($(w.win, 'gen-build-result').querySelectorAll('button'))
+      .find(b => /Overwrite that recipe/.test(b.textContent));
+    if (ow) click(w.win, ow);
+    await settle();
+    const b3 = w.log.filter(e => e.url.indexOf('/generate/build') >= 0).pop();
+    ok(!!ow && b3 && b3.body.scripts_overwrite_ack === true && b3.body.scripts_dir === 'E:\\shared',
+      'r2-18 re-verify: "Overwrite that recipe" re-sends with the ack');
   })();
 
   (function r18RecipeLabel() {

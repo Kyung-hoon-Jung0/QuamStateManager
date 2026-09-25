@@ -182,6 +182,96 @@ class TestBuildRouteCarriesTheCheckbox:
         assert got["scripts_enabled"] is True
 
 
+# ── regenerate-r2-18 (re-verify): an earlier chip's recipe is not rewritten
+# silently ─────────────────────────────────────────────────────────────────
+class TestScriptsOverwriteIsAsked:
+    """A scripts folder typed once stayed in the box, and every later build
+    -- each into a different output folder -- rewrote the same recipe with no
+    question. A recipe an earlier build left OUTSIDE this build's output
+    folder is now named, and rewritten only on an explicit ack."""
+
+    @pytest.fixture(autouse=True)
+    def _all_capabilities(self, monkeypatch):
+        from quam_state_manager.core import config_generator
+        from quam_state_manager.generator.probe_capabilities import CATALOG_IDS
+        manifest = {
+            "ok": True, "cached": False, "error": None, "versions": {},
+            "capabilities": {c: {"available": True, "detail": ""} for c in CATALOG_IDS},
+        }
+        monkeypatch.setattr(config_generator, "probe_capabilities",
+                            lambda *a, **k: manifest)
+
+    @staticmethod
+    def _old_recipe(folder: Path) -> Path:
+        folder.mkdir(parents=True, exist_ok=True)
+        (folder / "02_build_machine.py").write_text("# chip A\n", encoding="utf-8")
+        return folder
+
+    def _regen(self, client, tmp_path, monkeypatch):
+        calls = []
+
+        def fake_run(py, src, spec, out, timeout=300, **kw):
+            calls.append(kw)
+            return {"ok": True, "status": "ok", "error": None, "merge": None}
+
+        monkeypatch.setattr(regenerate, "run_regenerate", fake_run)
+        client.post("/generate/select-env", json={"python": sys.executable})
+        src = tmp_path / "src"
+        src.mkdir()
+        return calls, {"spec": _gen_valid_spec(), "source_folder": str(src)}
+
+    def test_regenerate_asks_before_rewriting_another_chips_recipe(
+            self, client, tmp_path, monkeypatch):
+        calls, base = self._regen(client, tmp_path, monkeypatch)
+        shared = self._old_recipe(tmp_path / "chipA" / "state_gen_scripts")
+        body = {**base, "output_path": str(tmp_path / "chipB"),
+                "scripts_dir": str(shared), "scripts_enabled": True}
+        r = client.post("/regenerate/build", json=body).get_json()
+        assert r.get("needs_confirm") is True and r.get("confirm_kind") == "scripts_overwrite", r
+        assert r["scripts_files"] == ["02_build_machine.py"]
+        assert str(shared) in r["error"]
+        assert calls == [], "the build ran before the question was answered"
+        r = client.post("/regenerate/build",
+                        json={**body, "scripts_overwrite_ack": True}).get_json()
+        assert r.get("ok") is True, r
+        assert len(calls) == 1
+
+    def test_no_question_when_nothing_would_be_lost(self, client, tmp_path, monkeypatch):
+        calls, base = self._regen(client, tmp_path, monkeypatch)
+        out = tmp_path / "chipB"
+        cases = [
+            str(tmp_path / "fresh_scripts"),                          # new folder
+            str(self._old_recipe(out / "state_gen_scripts")),         # this chip's own
+        ]
+        for i, sd in enumerate(cases):
+            r = client.post("/regenerate/build", json={
+                **base, "output_path": str(tmp_path / f"chipB{i}") if i == 0 else str(out),
+                "scripts_dir": sd, "scripts_enabled": True, "force": True}).get_json()
+            assert r.get("ok") is True, (sd, r)
+        # an unticked export writes nothing, so it asks nothing
+        shared = self._old_recipe(tmp_path / "chipA" / "state_gen_scripts")
+        r = client.post("/regenerate/build", json={
+            **base, "output_path": str(tmp_path / "chipC"),
+            "scripts_dir": str(shared), "scripts_enabled": False}).get_json()
+        assert r.get("ok") is True, r
+
+    def test_generate_asks_too(self, client, tmp_path, monkeypatch):
+        from quam_state_manager.core import config_generator
+        calls = []
+        monkeypatch.setattr(config_generator, "run_generator",
+                            lambda *a, **k: calls.append(a) or {
+                                "ok": False, "status": "error", "error": "stub"})
+        client.post("/generate/select-env", json={"python": sys.executable})
+        shared = self._old_recipe(tmp_path / "chipA" / "state_gen_scripts")
+        body = {"spec": _gen_valid_spec(), "output_path": str(tmp_path / "chipB"),
+                "scripts_dir": str(shared)}
+        r = client.post("/generate/build", json=body).get_json()
+        assert r.get("confirm_kind") == "scripts_overwrite", r
+        assert calls == []
+        client.post("/generate/build", json={**body, "scripts_overwrite_ack": True})
+        assert len(calls) == 1
+
+
 # ── F8 (generate): one build per output folder at a time ──────────────────
 class TestOneBuildPerFolder:
     """Two builds into one folder both passed the empty-folder guard (check-

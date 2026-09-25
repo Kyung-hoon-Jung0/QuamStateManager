@@ -8509,6 +8509,12 @@
           // tab close) used to silently lose the output folder.
           try { localStorage.setItem("quam_gen_output_path", state.outputPath); }
           catch (e) { /* private mode */ }
+          // QA regenerate-r2-18: a scripts path restored from an earlier
+          // session belongs to that session's chip, not to this output
+          if (state._scriptsFromStorage) {
+            state._scriptsFromStorage = false;
+            state._scriptsPathTouched = false;
+          }
           maybeFollowScriptsPath();     // r16 ⓪-4: live-follow until touched
         });
       });
@@ -8527,6 +8533,7 @@
       ["input", "change"].forEach(function (ev) {
         sp.addEventListener(ev, function () {
           state._scriptsPathTouched = true;   // user owns the box from here on
+          state._scriptsFromStorage = false;  // ...in this session (r2-18)
           state.scriptsPath = unquotePath(sp.value);
           if (ev === "change" && sp.value !== state.scriptsPath) sp.value = state.scriptsPath;
           try { localStorage.setItem("quam_gen_scripts_path", state.scriptsPath); }
@@ -8701,6 +8708,7 @@
 
     state._buildForce = false; state._buildAck = false;   // fresh review → fresh gates
     state._buildAckSource = false;   // QA regenerate-r2-35
+    state._buildAckScripts = false;  // QA regenerate-r2-18
     renderCapabilityReport(document.getElementById("gen-capability-report"));
   }
 
@@ -9191,6 +9199,7 @@
     if (res.ok && res.result) {
       state._buildForce = false; state._buildAck = false;   // consumed — reset gates
       state._buildAckSource = false;   // QA regenerate-r2-35
+      state._buildAckScripts = false;  // QA regenerate-r2-18
       el.className = "gen-build-result gen-build-ok";
       var r = res.result;
       var msg = document.createElement("p");
@@ -9833,6 +9842,49 @@
       return;
     }
 
+    if (res.confirm_kind === "scripts_overwrite") {
+      // QA regenerate-r2-18: the scripts folder already holds a recipe an
+      // earlier build wrote, and it is not inside this build's output. Offer
+      // the folder next to this chip, or overwriting that one on purpose.
+      (res.scripts_files || []).forEach(function (name) {
+        var fl = document.createElement("p");
+        fl.className = "gen-build-warn-line";
+        fl.textContent = "• " + name;
+        el.appendChild(fl);
+      });
+      var here = autoScriptsPath(outPath);
+      var hh = document.createElement("p");
+      hh.className = "muted";
+      hh.textContent = "Next to this chip it goes to " + here + ".";
+      el.appendChild(hh);
+      var nb = document.createElement("button");
+      nb.type = "button";
+      nb.textContent = "Write it next to this chip";
+      nb.addEventListener("click", function () {
+        state.scriptsPath = here;
+        state._scriptsPathTouched = false;
+        state._scriptsFromStorage = false;
+        var spx = document.getElementById("gen-scripts-path");
+        if (spx) spx.value = here;
+        // the Review table above names the folder the build will use
+        Array.prototype.forEach.call(
+          document.querySelectorAll("#gen-review .gen-review-table th"), function (th) {
+            if (th.textContent === "Python scripts" && th.nextElementSibling) {
+              th.nextElementSibling.textContent = here;
+            }
+          });
+        runBuild(false);
+      });
+      el.appendChild(nb);
+      var ow = document.createElement("button");
+      ow.type = "button";
+      ow.className = "outline";
+      ow.textContent = "Overwrite that recipe";
+      ow.addEventListener("click", function () { runBuild(false, false, false, true); });
+      el.appendChild(ow);
+      return;
+    }
+
     (res.conflict_files || []).forEach(function (name) {
       var line = document.createElement("p");
       line.className = "gen-build-warn-line";
@@ -9975,7 +10027,7 @@
     }
   }
 
-  function runBuild(force, ackDegrades, ackSource) {
+  function runBuild(force, ackDegrades, ackSource, ackScripts) {
     // QA F3b: a pre-flight refusal answers in the result slot under Generate
     // and REPLACES whatever it held — the previous build's green "Generated"
     // box used to stay on screen, so a refused press read as a new success
@@ -10029,7 +10081,7 @@
           setBuildBusy(false);
           if (res && res.ok) {
             _envPersisted = true;
-            runBuild(force, ackDegrades, ackSource);
+            runBuild(force, ackDegrades, ackSource, ackScripts);
           } else {
             refuseBuild((res && res.error) ||
               "Could not select the build environment — pick one in step 1.",
@@ -10051,6 +10103,7 @@
     if (force) state._buildForce = true;
     if (ackDegrades) state._buildAck = true;
     if (ackSource) state._buildAckSource = true;   // QA regenerate-r2-35
+    if (ackScripts) state._buildAckScripts = true; // QA regenerate-r2-18
     // Re-derive lines from the current qubits/pairs in case the wiring step
     // was skipped via the step chips — otherwise the build gets no lines.
     czAutoOrient();   // defense-in-depth: never build a CZ pair backwards
@@ -10154,6 +10207,10 @@
         // a null scripts_dir as "the legacy build_scripts/ folder" and wrote
         // a bundle with the export unticked.
         scripts_enabled: !!state.scriptsEnabled,
+        // QA regenerate-r2-18: "overwrite that recipe" -- the server asks
+        // before a build rewrites a recipe an earlier build left in a
+        // scripts folder outside this build's output folder.
+        scripts_overwrite_ack: !!state._buildAckScripts,
         // populate-protect (docs/72): the hydration-time populate snapshot +
         // explicitly-touched cells — the server diffs them against
         // spec.populate so in-wizard edits beat the tier-1 value merge.
@@ -10322,6 +10379,7 @@
         // QA F2: whether the scripts box is the USER's (typed) or still
         // following the output folder — a draft path alone can't tell.
         scriptsPathTouched: !!state._scriptsPathTouched,
+        scriptsFromStorage: !!state._scriptsFromStorage,
         qubitFlux: state.qubitFlux, couplerFlux: state.couplerFlux,
         pairGate: state.pairGate, chipArch: state.chipArch,
         heldChipArch: state.heldChipArch, heldPins: state.heldPins,
@@ -10426,6 +10484,16 @@
     } else {
       state._scriptsPathTouched = !!state.scriptsPath;
     }
+    // QA regenerate-r2-18 (re-verify): a path restored from the localStorage
+    // mirror ALONE (no draft: a new session) was typed for an earlier chip.
+    // It stays in the box, but the first Output folder picked in this session
+    // takes the box back to following (<output>\state_gen_scripts) -- it used
+    // to stay latched, and every later build silently rewrote that earlier
+    // chip's recipe. A draft carries the flag across a reload of the SAME
+    // session; typing in the box clears it.
+    state._scriptsFromStorage = scriptsFromDraft
+      ? !!d.scriptsFromStorage
+      : !!state.scriptsPath;
     maybeFollowScriptsPath();
     // Line-type toggles — default true for backward compat with old drafts.
     state.qubitFlux = d.qubitFlux !== false;
@@ -10534,6 +10602,7 @@
     state.scriptsEnabled = true;      // r16 ⓪-4 default
     state.scriptsPath = "";
     state._scriptsPathTouched = false;
+    state._scriptsFromStorage = false;
     // Starting over inside a regen page leaves regen mode too — a fresh
     // empty spec must never post to /regenerate/build with a stale
     // sourcePath ("Load different…" re-hydrates when regen is wanted).

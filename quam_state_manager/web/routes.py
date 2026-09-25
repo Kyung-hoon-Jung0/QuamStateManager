@@ -27551,6 +27551,47 @@ def _build_output_guard(output_path: str) -> dict | None:
     return payload
 
 
+# QA regenerate-r2-18: the recipe files every scripts export writes (the
+# README is too generic a name to call a folder "a recipe").
+_RECIPE_FILES = ("01_make_wiring.py", "02_build_machine.py", "03_generate_config.py")
+
+
+def _scripts_overwrite_guard(scripts_dir, output_path: str) -> dict | None:
+    """A needs_confirm payload when this build's scripts export would REWRITE
+    a recipe an earlier build left in a folder OUTSIDE this build's output
+    folder, else None.
+
+    QA regenerate-r2-18: a scripts folder typed once stayed in the box, and
+    every later build -- each into a different output folder -- silently
+    rewrote the same recipe, so the first chip's recipe no longer rebuilt that
+    chip. A folder inside (or equal to) the output is this chip's own and is
+    covered by the output guard; an empty or new folder has nothing to lose.
+    Never raises (an unreadable folder asks nothing -- the write itself is
+    best-effort and reports its own error)."""
+    if not scripts_dir:
+        return None
+    try:
+        sd = Path(scripts_dir)
+        o = Path(path_match.fs_key(sd)).parts
+        c = Path(path_match.fs_key(output_path)).parts
+        if len(o) >= len(c) and o[:len(c)] == c:
+            return None
+        if not sd.is_dir():
+            return None
+        found = [n for n in _RECIPE_FILES if (sd / n).is_file()]
+    except (OSError, ValueError):
+        return None
+    if not found:
+        return None
+    return {
+        "ok": False, "needs_confirm": True, "confirm_kind": "scripts_overwrite",
+        "scripts_dir": str(sd), "scripts_files": found,
+        "error": (f"The scripts folder {sd} already holds a build recipe from "
+                  "an earlier build, and it is outside this build's output "
+                  "folder — this build would overwrite it."),
+    }
+
+
 # QA F8 (gen-session): one build per output folder at a time. The empty-folder
 # guard above is check-then-act: two builds into one folder (a double press,
 # or two SM windows) both saw it empty and both wrote it. Non-blocking by
@@ -27676,6 +27717,10 @@ def generate_build():
         # write. Block on any non-state/wiring .json unless the user forces it.
         if not bool(data.get("force")):
             guard = _build_output_guard(output_path)
+            if guard is not None:
+                return jsonify(guard)
+        if not bool(data.get("scripts_overwrite_ack")):
+            guard = _scripts_overwrite_guard(scripts_dir, output_path)
             if guard is not None:
                 return jsonify(guard)
 
@@ -28106,6 +28151,10 @@ def regenerate_build():
         # .json in a folder, so a stray file would corrupt the generated state.
         if not bool(data.get("force")):
             guard = _build_output_guard(output_path)
+            if guard is not None:
+                return jsonify(guard)
+        if scripts_enabled and not bool(data.get("scripts_overwrite_ack")):
+            guard = _scripts_overwrite_guard(scripts_dir, output_path)
             if guard is not None:
                 return jsonify(guard)
 
