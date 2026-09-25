@@ -55,6 +55,7 @@ import calendar
 import gzip
 import hashlib
 import json
+import secrets
 import weakref
 from datetime import datetime
 from typing import Any, Callable, Iterable, Sequence
@@ -257,8 +258,17 @@ def _key(**components: Any) -> tuple:
     return tuple(sorted(components.items()))
 
 
+#: This process's identity in every version string (the series ETag and
+#: the ``v`` the view compares). The tokens under it -- ``instance_seq``,
+#: ``generation`` -- are process-local counters that start again at 1 after
+#: an SM restart, so without this a browser holding an ETag from the previous
+#: process could be told 304 for different data whose counters happen to line
+#: up. The RAM memos need no such token: they die with the process.
+_BOOT = secrets.token_hex(8)
+
+
 def _digest(*parts: Any) -> str:
-    return hashlib.sha1(repr(parts).encode("utf-8")).hexdigest()[:16]
+    return hashlib.sha1(repr((_BOOT,) + parts).encode("utf-8")).hexdigest()[:16]
 
 
 class SeriesBlob:

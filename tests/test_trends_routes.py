@@ -150,6 +150,20 @@ class TestSeries:
         p2 = json.loads(gzip.decompress(r2.data))
         assert p2["n_runs"] == 31 and p2["runs"][-1][0] == 31 and p2["v"] != p["v"]
 
+    def test_an_etag_from_another_process_is_never_confirmed(self, app_client, monkeypatch):
+        """instance_seq and generation are per-process counters that restart
+        at 1: a restarted SM can reach the same numbers for different data.
+        The version carries the process's boot token, so an ETag the browser
+        kept from the previous process is always answered with a fresh 200."""
+        c, _data, key = app_client
+        url = f"/trends/series?experiment={A}&folders={key}"
+        r, _p = _series(c, url)
+        monkeypatch.setattr(ti, "_BOOT", "another-process")
+        for m in (ti.INDEX_MEMO, ti.SERIES_MEMO, ti.PARAMS_MEMO):
+            m.clear()
+        r2 = c.get(url, headers={**GZ, "If-None-Match": r.headers["ETag"]})
+        assert r2.status_code == 200 and r2.headers["ETag"] != r.headers["ETag"]
+
     def test_the_qubit_filter(self, app_client, tmp_path):
         c, data, key = app_client
         _run(data, 40, qubits=("q3",))
