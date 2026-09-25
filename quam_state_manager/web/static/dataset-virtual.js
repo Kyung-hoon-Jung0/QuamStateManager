@@ -927,6 +927,11 @@
             var a = document.activeElement;
             if (a && (a.tagName === 'INPUT' || a.tagName === 'TEXTAREA'
                       || a.isContentEditable)) return;
+            // datasets-r2-15: a key typed INTO a field whose handler removed
+            // it (focus fell to <body>) is still that field's key
+            var tg = ev.target;
+            if (tg && (tg.tagName === 'INPUT' || tg.tagName === 'TEXTAREA'
+                       || tg.tagName === 'SELECT' || tg.isContentEditable)) return;
             if (ev.ctrlKey || ev.metaKey || ev.altKey) return;
             // audit: Enter/Space belong to whatever the user FOCUSED — a
             // button, link, checkbox or summary must keep them even after a

@@ -328,6 +328,35 @@ function tick(ms) { return new Promise(r => setTimeout(r, ms || 30)); }
     btn.blur();
   }
 
+  // ── datasets-r2-15 (re-verify): Enter in a box whose handler swaps the box
+  // out. The Prev State run box reloads its own container synchronously, so
+  // by the time the keydown bubbled to the row nav focus was on <body> and
+  // Enter "opened" the active row: the whole run detail reloaded over the
+  // comparison and its note (real Chrome, #4113 vs 99999).
+  {
+    const w = boot();
+    await tick();
+    const doc = w.document;
+    key(w, 'j');
+    const active = doc.querySelector('#datasets-tbody tr.ds-row-active');
+    let clicked = 0;
+    active.addEventListener('click', () => clicked++);
+    const holder = doc.createElement('div');
+    const box = doc.createElement('input');
+    box.addEventListener('keydown', e => {
+      if (e.key !== 'Enter') return;
+      e.preventDefault();
+      holder.innerHTML = '<p>Loading diff</p>';   // the box is gone, focus -> body
+    });
+    holder.appendChild(box);
+    doc.body.appendChild(holder);
+    box.focus();
+    box.dispatchEvent(new w.KeyboardEvent('keydown', { key: 'Enter', bubbles: true, cancelable: true }));
+    ok(doc.activeElement === doc.body, 'r2-15 setup: the swap left focus on <body>');
+    ok(clicked === 0, 'r2-15: Enter typed into a box that swapped itself out does not open the active run (' + clicked + ')');
+    doc.body.removeChild(holder);
+  }
+
   // ── datasets-r2-24: the cursor follows the run open in the inspector ─────
   // A run opened from the table (or stepped to with the inspector's up/down,
   // [ ], a tree click) swaps a #ds-detail-root into #inspector-pane. Closing
