@@ -473,3 +473,40 @@ class TestAReplaceInFlightIsNotAMissingFile:
         with pytest.raises(FileNotFoundError):
             read_state_wiring(tmp_path)
         assert time.monotonic() - t0 < 0.6
+
+
+class TestAFailedStateReplaceLeavesNoTmp:
+    """QA correctness-r2-02: a Keep-mine push while a QUAlibrate save held
+    state.json open failed honestly ("after 3 attempts: [WinError 32]") -- and
+    left ``wiring.json.<pid>.<tid>.<n>.tmp`` in the customer's chip folder for
+    good. Both pair writers stage the wiring tmp BEFORE the state replace, and
+    only the state tmp was ever cleaned up on that failure."""
+
+    @staticmethod
+    def _fail_on_state(monkeypatch):
+        real = safe_io._replace_into_place
+
+        def replace(tmp, dst):
+            if dst.name == "state.json":
+                tmp.unlink(missing_ok=True)     # what the real one does on give-up
+                raise LiveFileError(f"Could not write {dst} after 3 attempts: [WinError 32]")
+            return real(tmp, dst)
+
+        monkeypatch.setattr(safe_io, "_replace_into_place", replace)
+
+    @pytest.mark.parametrize("writer", ["json", "bytes"])
+    def test_the_staged_wiring_tmp_is_removed_and_the_error_kept(
+            self, tmp_path, monkeypatch, writer):
+        state0, wiring0 = _seed(tmp_path)
+        before = {p.name: p.read_bytes() for p in tmp_path.iterdir()}
+        self._fail_on_state(monkeypatch)
+        with pytest.raises(LiveFileError, match="WinError 32"):
+            if writer == "json":
+                write_state_wiring(tmp_path, {"qubits": {"q1": {"f_01": 7e9}}},
+                                   {"wiring": {"x": 1}})
+            else:
+                safe_io.write_state_wiring_bytes(tmp_path, b'{"qubits": {}}',
+                                                 b'{"wiring": {"x": 1}}')
+        assert list(tmp_path.glob("*.tmp")) == [], "a staged tmp was left behind"
+        # nothing was replaced: the folder is byte-identical to before
+        assert {p.name: p.read_bytes() for p in tmp_path.iterdir()} == before
