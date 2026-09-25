@@ -1,0 +1,298 @@
+"""Z-line distortion (core/zline_filters.py): the filter model, cross-checked.
+
+Every [derived] step of the module is checked here against something that did
+not come from the module itself:
+
+* qualang_tools' own correction taps (QM's filter-design library) -- the
+  independent implementation, single exponential and the QOP<=3.4 cascade;
+* a closed-form continuous-time step response derived by hand (sympy-free);
+* the round trip: the line model H, built by a DIFFERENT construction
+  (partial fractions via scipy.signal.invres), undoes the correction exactly;
+* the documentation quotes in the module, checked verbatim against the QM docs
+  repo when it is on this machine.
+"""
+from __future__ import annotations
+
+import math
+import re
+from pathlib import Path
+
+import numpy as np
+import pytest
+from scipy import signal
+
+from quam_state_manager.core import zline_filters as Z
+
+DOCS = Path(r"D:\work\documentation-website\docs\docs\docs\Guides")
+
+
+def _pf(exp=(), ff=None, **port):
+    p = {"exponential_filter": [list(e) for e in exp] if exp is not None else None,
+         "feedforward_filter": ff, "sampling_rate": 1e9, "upsampling_mode": "pulse"}
+    p.update(port)
+    pf, notes = Z.parse_port_filter(p)
+    return pf, notes
+
+
+def _codes(notes):
+    return [n["code"] for n in notes]
+
+
+# ---------------------------------------------------------------------------
+# independent implementation: qualang_tools
+# ---------------------------------------------------------------------------
+
+class TestAgainstQualangTools:
+    def test_single_exponential_matches_qualang_taps(self):
+        qt = pytest.importorskip("qualang_tools.digital_filters.filters")
+        for a, tau in [(-0.1, 50.0), (0.3, 5.0), (-0.04, 1.6), (0.02, 2e5)]:
+            ff, fb = qt.single_exponential_correction(a, tau, Ts=0.5, qop_version=qt.QOPVersion.NONE)
+            x = np.r_[np.zeros(5), np.ones(4000)]
+            ref = signal.lfilter(ff, [1.0, -fb[0]], x)      # doc: y[n] = sum a_m y[n-m] + ...
+            pf, _ = _pf([(a, tau)])
+            ours = Z.apply_filters(pf, x)
+            assert np.max(np.abs(ours - ref)) < 1e-10, (a, tau)
+
+    def test_cascade_model_matches_qualang_calc_filter_taps(self):
+        qt = pytest.importorskip("qualang_tools.digital_filters.filters")
+        exps = [(-0.1, 50.0), (0.05, 500.0), (-0.02, 8.0)]
+        ff, fb = qt.calc_filter_taps(exponential=exps, Ts=0.5, qop_version=qt.QOPVersion.NONE)
+        den = np.array([1.0])
+        for a_m in fb:                                    # one feedback tap per cascaded stage
+            den = np.polymul(den, [1.0, -a_m])
+        x = np.r_[np.zeros(3), np.ones(20000)]
+        ref = signal.lfilter(ff, den, x)
+        pf, _ = _pf(exps)
+        ours = Z.apply_filters(pf, x, model="cascade")
+        assert np.max(np.abs(ours - ref)) < 1e-9
+
+    def test_sum_and_cascade_differ_for_several_exponentials(self):
+        # the QOP-version note is not decoration: the two models disagree
+        pf, _ = _pf([(-0.1, 50.0), (0.05, 500.0)])
+        x = np.ones(4000)
+        d = np.max(np.abs(Z.apply_filters(pf, x) - Z.apply_filters(pf, x, model="cascade")))
+        assert d > 1e-4
+
+
+# ---------------------------------------------------------------------------
+# closed form + round trip
+# ---------------------------------------------------------------------------
+
+class TestClosedForm:
+    def test_single_exponential_step_matches_continuous_closed_form(self):
+        # C(s) = (s + p) / ((1 + A) s + p)  ->  step: 1 - A/(1+A) * exp(-t p/(1+A))
+        # (hand-derived; bilinear error is O((Ts/tau)^2), tiny for tau = 200 ns)
+        a, tau = -0.2, 200.0
+        pf, _ = _pf([(a, tau)])
+        n = 8000
+        y = Z.apply_filters(pf, np.ones(n))
+        t = np.arange(n) * Z.TS_NS + Z.TS_NS / 2          # bilinear samples sit mid-interval
+        p = 1.0 / tau
+        ref = 1 - a / (1 + a) * np.exp(-t * p / (1 + a))
+        assert np.max(np.abs(y[10:] - ref[10:])) < 2e-4
+
+    def test_dc_limit_is_one_over_adc(self):
+        pf, _ = _pf([(-0.1, 20.0), (0.05, 3.0)], exponential_dc_gain=0.8)
+        y = Z.apply_filters(pf, np.ones(20000))
+        assert abs(y[-1] - 1 / 0.8) < 1e-6
+
+    def test_round_trip_through_independently_built_line_model(self):
+        exps = [(-0.013, 194413.5), (-0.0175, 617.4), (-0.0216, 56.8), (-0.0012, 18.2), (-0.0418, 1.6)]
+        pf, notes = _pf(exps)
+        assert pf is not None, notes
+        # H(s) = (A_dc + sum A) - sum A_i p_i / (s + p_i), p_i = 1/tau_i: applied here
+        # in PARALLEL form (one bilinear first-order section per term, summed) --
+        # a different construction from the module's series zpk. (A single ba
+        # polynomial is too ill-conditioned for taus spanning 1 ns .. 0.2 ms.)
+        x = np.r_[np.zeros(4), np.ones(30000)]
+        corrected = Z.apply_filters(pf, x)
+        back = (1.0 + sum(a for a, _ in exps)) * corrected
+        for a, tau in exps:
+            bd, ad = signal.bilinear([-a / tau], [1.0, 1.0 / tau], fs=1 / Z.TS_NS)
+            back = back + signal.lfilter(bd, ad, corrected)
+        assert np.max(np.abs(back - x)) < 1e-6
+
+    def test_fir_is_taps_at_half_ns(self):
+        pf, _ = _pf(None, ff=[0.5, 0.3, 0.2])
+        y = Z.apply_filters(pf, np.r_[1.0, np.zeros(5)])
+        assert np.allclose(y[:4], [0.5, 0.3, 0.2, 0.0])
+
+    def test_real_chip_numbers(self):
+        # KRS q1's port (the real customer values, copied): the DC limit is
+        # sum(FIR)/A_dc and the full-rate step settles onto it
+        ff = [0.5173869923748633, 0.3791747071886605, 0.14943410284208183, 0.02643336106350454]
+        pf, _ = _pf([(-0.0418, 1.6), (-0.0216, 56.8)], ff=ff)
+        st = Z.step_response(pf)
+        # 8 slowest-taus of horizon: settled to exp(-8) of a 2 % term
+        assert abs(st["final"] - st["dc_limit"]) < 2e-5
+        assert st["dc_limit"] == pytest.approx(sum(ff))
+        assert st["t_ns"][0] == Z.TS_NS and len(st["t_ns"]) == len(st["both"])
+
+
+# ---------------------------------------------------------------------------
+# fault injection: a broken input gives a note, never a curve
+# ---------------------------------------------------------------------------
+
+class TestFaultInjection:
+    @pytest.mark.parametrize("port,code", [
+        ({"exponential_filter": [[-0.1, -50.0]]}, "exp_tau_nonpositive"),
+        ({"exponential_filter": [[-0.1, 0.0]]}, "exp_tau_nonpositive"),
+        ({"exponential_filter": [[-0.1, 5e-8]]}, "exp_tau_units"),          # seconds
+        ({"exponential_filter": [[-0.1, 0.2]]}, "exp_tau_unrepresentable"),
+        ({"exponential_filter": [[-1.5, 50.0]]}, "unstable"),
+        ({"exponential_filter": [[-1.0, 50.0]]}, "improper"),
+        ({"exponential_filter": [[-0.6, 50.0], [-0.6, 5.0]]}, "unstable"),
+        ({"exponential_filter": [[-0.1]]}, "exp_bad_pair"),
+        ({"exponential_filter": [["x", 5]]}, "exp_not_number"),
+        ({"exponential_filter": [[float("nan"), 5]]}, "exp_not_number"),
+        ({"exponential_filter": "oops"}, "exp_not_list"),
+        ({"exponential_filter": [[-0.01, 10.0 * (i + 1)] for i in range(7)]}, "too_many_iir"),
+        ({"feedforward_filter": [0.5, 2.5]}, "ff_out_of_range"),
+        ({"feedforward_filter": [0.0, 0.0]}, "ff_all_zero"),
+        ({"feedforward_filter": [0.02] * 49}, "ff_too_long"),
+        ({"feedforward_filter": [0.5, None]}, "ff_not_number"),
+        ({"feedforward_filter": 0.5}, "ff_not_list"),
+        ({"feedback_filter": [0.5]}, "feedback_unmodeled"),
+        ({"high_pass_filter": 1000.0, "exponential_dc_gain": 0.5}, "hp_with_dc"),
+        ({"high_pass_filter": -5}, "hp_bad"),
+        ({"exponential_dc_gain": "one"}, "dc_not_number"),
+        ({"sampling_rate": 5e8}, "bad_rate"),
+    ])
+    def test_blocks(self, port, code):
+        pf, notes = Z.parse_port_filter(port)
+        assert pf is None
+        blocks = [n for n in notes if n["level"] == "block"]
+        assert code in _codes(blocks), notes
+        assert all(n["text"] for n in notes)
+
+    def test_empty_taps_is_an_honest_identity(self):
+        pf, notes = _pf(None, ff=[])
+        assert pf is not None and not pf.has_fir
+        assert "ff_empty" in _codes(notes)
+        assert np.allclose(Z.apply_filters(pf, np.ones(10)), 1.0)
+
+    def test_missing_filters_say_so(self):
+        pf, notes = Z.parse_port_filter({"sampling_rate": 1e9})
+        assert pf is not None and "no_filters" in _codes(notes)
+        st = Z.step_response(pf)
+        assert st["both"] == st["ideal"]
+
+    def test_outside_doc_range_warns_but_draws(self):
+        pf, notes = _pf([(-0.05, 0.8)])
+        assert pf is not None and "exp_tau_outside_doc" in _codes(notes)
+
+    def test_high_pass_is_an_integrator_not_a_crash(self):
+        pf, notes = Z.parse_port_filter({"high_pass_filter": 1000.0})
+        assert pf is not None and pf.dc_gain == 0.0 and "hp_ideal" in _codes(notes)
+        y = Z.apply_filters(pf, np.ones(4000))
+        assert y[-1] > y[100] > 1.0          # the documented ramp, not a settled step
+        assert Z.step_response(pf)["dc_limit"] is None
+
+    def test_mw_upsampling_is_flagged(self):
+        pf, _ = _pf([(-0.1, 20.0)], upsampling_mode="mw")
+        r = Z.pulse_response(pf, [0.1] * 20)
+        assert "mw_upsampling" in _codes(r["notes"])
+        pf2, _ = _pf([(-0.1, 20.0)])
+        assert "mw_upsampling" not in _codes(Z.pulse_response(pf2, [0.1] * 20)["notes"])
+
+    def test_clipping_is_flagged(self):
+        pf, _ = _pf([(-0.3, 5.0)])                         # 1/(1-0.3) = 1.43x edge
+        r = Z.pulse_response(pf, [0.45] * 40)
+        assert r["peak"] > 0.5 and "clips" in _codes(r["notes"])
+        pf2, _ = _pf([(-0.3, 5.0)], output_mode="amplified")
+        assert "clips" not in _codes(Z.pulse_response(pf2, [0.45] * 40)["notes"])
+
+    def test_pulse_doubling_and_timebase(self):
+        pf, _ = Z.parse_port_filter({"upsampling_mode": "pulse"})
+        r = Z.pulse_response(pf, [0.1, 0.2], pad_before_ns=1.0, pad_after_ns=1.0)
+        assert r["ideal"] == [0, 0, 0.1, 0.1, 0.2, 0.2, 0, 0]
+        assert r["t_ns"][:3] == [-1.0, -0.5, 0.0]
+
+
+# ---------------------------------------------------------------------------
+# pointer chain from the qubit to the port
+# ---------------------------------------------------------------------------
+
+def _merged(opx_output="#/wiring/qubits/q1/z/opx_output", wiring_target="#/ports/analog_outputs/con1/5/1"):
+    return {
+        "qubits": {"q1": {"z": {"opx_output": opx_output, "operations": {}}},
+                   "q2": {"xy": {}}},
+        "qubit_pairs": {"q1-2": {"coupler": {"opx_output": "#/ports/analog_outputs/con1/5/2"}}},
+        "wiring": {"qubits": {"q1": {"z": {"opx_output": wiring_target}}}},
+        "ports": {"analog_outputs": {"con1": {"5": {
+            "1": {"exponential_filter": [[-0.1, 20.0]], "feedforward_filter": [1.0]},
+            "2": {"exponential_filter": None}}}},
+                  "mw_outputs": {"con1": {"3": {"1": {"full_scale_power_dbm": -11}}}}},
+    }
+
+
+class TestResolve:
+    def test_two_hop_chain_reaches_the_port(self):
+        r = Z.resolve_zline(_merged(), "qubits.q1.z")
+        assert r["port_path"] == "ports.analog_outputs.con1.5.1"
+        assert len(r["chain"]) == 2
+
+    def test_dangling(self):
+        r = Z.resolve_zline(_merged(wiring_target="#/ports/analog_outputs/con1/9/9"), "qubits.q1.z")
+        assert r["port"] is None and _codes(r["notes"]) == ["dangling"]
+
+    def test_mw_port_is_not_an_lf_port(self):
+        r = Z.resolve_zline(_merged(wiring_target="#/ports/mw_outputs/con1/3/1"), "qubits.q1.z")
+        assert _codes(r["notes"]) == ["not_lf_port"]
+
+    def test_tuple_port(self):
+        r = Z.resolve_zline(_merged(opx_output=["con1", 5]), "qubits.q1.z")
+        assert _codes(r["notes"]) == ["tuple_port"]
+
+    def test_entities_are_qubit_z_and_pair_couplers(self):
+        ents = Z.zline_entities(_merged())
+        assert [(e["id"], e["kind"]) for e in ents] == [("q1", "qubit"), ("q1-2", "coupler")]
+        rows = [Z.zline_row(_merged(), e) for e in ents]
+        assert rows[0]["ok"] and rows[0]["n_exp"] == 1
+        assert rows[1]["ok"] and "no_filters" in _codes(rows[1]["notes"])
+
+
+# ---------------------------------------------------------------------------
+# the docstring quotes are verbatim
+# ---------------------------------------------------------------------------
+
+def _norm(s: str) -> str:
+    return re.sub(r"\s+", " ", s).strip()
+
+
+def _module_quotes():
+    doc = Z.__doc__
+    # indented quote blocks in the module docstring: lines starting with 4 spaces + "
+    blocks = re.findall(r'\n    "(.+?)"\n', doc, flags=re.S)
+    src = Path(Z.__file__).read_text(encoding="utf-8")
+    src = re.sub(r"\n\s*#: ?", " ", src)                  # join comment continuations
+    inline = re.findall(r'\[paper: [^"\]]*"([^"]+)"', src)
+    inline = [q for q in inline if not q.startswith("`")]  # opx1000_fems range quotes checked below
+    return [_norm(b.replace("\n    ", " ")) for b in blocks], [_norm(q) for q in inline]
+
+
+class TestQuotesVerbatim:
+    @pytest.fixture()
+    def corpus(self):
+        files = [DOCS / "output_filter.md", DOCS / "opx1000_fems.md"]
+        if not all(f.exists() for f in files):
+            pytest.skip("QM docs repo not on this machine")
+        text = " ".join(f.read_text(encoding="utf-8") for f in files)
+        try:
+            import qualang_tools.digital_filters as dfm
+            d = Path(dfm.__file__).parent
+            text += " " + (d / "README_IIR_filters.md").read_text(encoding="utf-8")
+            text += " " + (d / "filters.py").read_text(encoding="utf-8")
+        except Exception:
+            pytest.skip("qualang_tools not importable")
+        return _norm(text)
+
+    def test_every_quote_is_verbatim(self, corpus):
+        blocks, inline = _module_quotes()
+        assert len(blocks) >= 14 and len(inline) >= 4
+        missing = [q for q in blocks + inline if q not in corpus]
+        assert not missing, missing
+
+    def test_the_checker_catches_a_changed_word(self, corpus):
+        blocks, _ = _module_quotes()
+        assert blocks[0].replace("48 taps", "44 taps") not in corpus

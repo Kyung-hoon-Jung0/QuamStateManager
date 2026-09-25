@@ -13976,3 +13976,29 @@ td.cell-live-stale .cell-live-now {
 [data-theme="light"] .sp-live-input, [data-theme="light"] .sp-one-field { color: #0369a1 !important; }
 [data-theme="light"] td.cell-live-stale { box-shadow: inset 3px 0 0 #0284c7; }
 [data-theme="light"] .sp-group-mine .sp-group-head td { color: #b45309; }
+
+/* ── Z-LINE DISTORTION (Live State Edit > Z-line distortion) ─────────── */
+.zline-lede { max-width: 62rem; margin: 0 0 0.75rem; }
+.zline-table .zline-row { cursor: pointer; }
+.zline-table .zline-row-selected td { background: var(--pico-primary-focus, rgba(79, 156, 249, 0.14)); }
+.zline-table .zline-row-selected td:first-child { box-shadow: inset 3px 0 0 var(--pico-primary, #4f9cf9); }
+.zline-row-note { max-width: 32rem; font-size: 0.85em; }
+.zline-warn-text { color: var(--color-warning-text, #856404); }
+.zline-err-text { color: var(--cell-bad-text, #721c24); }
+.zline-table td.zline-row-note { font-family: var(--pico-font-family, inherit); }
+.zline-detail { margin-top: 1rem; }
+.zline-controls { display: flex; flex-wrap: wrap; align-items: end; gap: 0.5rem 1.25rem; }
+.zline-controls .zline-title { flex: 1 1 14rem; margin: 0; font-size: 1.05rem; }
+.zline-controls label { display: flex; flex-direction: column; font-size: 0.8rem; margin: 0; }
+.zline-controls select { margin: 0.15rem 0 0; padding: 0.2rem 1.8rem 0.2rem 0.5rem; font-size: 0.85rem; height: auto; min-width: 12rem; }
+.zline-notes { list-style: none; padding: 0; margin: 0.6rem 0; font-size: 0.85rem; }
+.zline-notes li { list-style: none; margin: 0.15rem 0; padding: 0.2rem 0.5rem; border-left: 3px solid var(--pico-muted-border-color, #888); }
+.zline-notes li strong { text-transform: uppercase; font-size: 0.7rem; letter-spacing: 0.04em; margin-right: 0.35rem; }
+.zline-notes .zline-note-block { border-left-color: var(--color-error-border, #dc3545); }
+.zline-notes .zline-note-warn { border-left-color: var(--color-warning-border, #ffc107); }
+.zline-plots { display: grid; grid-template-columns: repeat(auto-fit, minmax(26rem, 1fr)); gap: 1rem; }
+.zline-fig { margin: 0; min-width: 0; }
+.zline-fig figcaption { font-size: 0.9rem; font-weight: 600; margin-bottom: 0.25rem; }
+.zline-plot { height: 340px; min-width: 0; }
+.zline-stats { font-size: 0.8rem; margin: 0.25rem 0 0; }
+.zline-empty { padding: 3rem 1rem; text-align: center; }

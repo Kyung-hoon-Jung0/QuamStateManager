@@ -1,0 +1,79 @@
+{# Live State Edit > Z-line distortion. Every flux line's port filters
+   (exponential_filter + feedforward_filter) drawn TOGETHER: the ideal step
+   and the line's own flux pulses, ideal vs what leaves the DAC. The physics
+   and every refusal live in core/zline_filters.py; zline.js only draws. #}
+<div id="zline-root" class="zline-root" data-selected="{{ selected }}">
+<div class="table-header-row">
+    <h2>Z-line distortion <small class="muted">({{ rows | length }} flux line{{ '' if rows|length == 1 else 's' }})</small></h2>
+</div>
+<p class="muted zline-lede">
+    What the port's output filters do to a flux pulse: the <strong>exponential</strong> (IIR) and
+    <strong>FIR</strong> filters applied together, at 2&nbsp;GSa/s, before the DC offset.
+    A model of the documented filter, not a replay of the firmware.
+</p>
+
+{% if rows %}
+<table id="zline-table" class="data-table zline-table" role="grid">
+    <thead>
+        <tr>
+            <th>Line</th>
+            <th>Port</th>
+            <th title="exponential_filter entries (A, tau)">Exponentials</th>
+            <th title="feedforward_filter taps (0.5 ns each)">FIR taps</th>
+            <th title="sum of the FIR taps = the FIR's DC gain">FIR sum</th>
+            <th>Notes</th>
+        </tr>
+    </thead>
+    <tbody>
+    {% for r in rows %}
+        <tr class="clickable-row zline-row{% if r.channel_path == selected %} zline-row-selected{% endif %}"
+            data-line="{{ r.channel_path }}" tabindex="0"
+            aria-selected="{{ 'true' if r.channel_path == selected else 'false' }}">
+            <td><strong>{{ r.id }}</strong>{% if r.kind == 'coupler' %} <small class="muted">coupler</small>{% endif %}</td>
+            <td>{% if r.port_path %}<code>{{ r.port_path | replace('ports.analog_outputs.', '') | replace('.', '/') }}</code>{% else %}<span class="muted">&mdash;</span>{% endif %}</td>
+            <td>{{ r.n_exp if r.n_exp is not none else '—' }}</td>
+            <td>{{ r.n_taps if r.n_taps is not none else '—' }}</td>
+            <td>{{ '%.4f' | format(r.ff_sum) if r.ff_sum is not none else '—' }}</td>
+            <td class="zline-row-note">
+                {%- set shown = r.notes | selectattr('level', 'ne', 'info') | list -%}
+                {%- if shown -%}
+                <span class="{{ 'zline-err-text' if r.worst == 'block' else 'zline-warn-text' }}">{{ shown[0].text }}</span>
+                {%- if shown | length > 1 %} <small class="muted">+{{ shown|length - 1 }} more</small>{% endif -%}
+                {%- else -%}<span class="muted">ok</span>{%- endif -%}
+            </td>
+        </tr>
+    {% endfor %}
+    </tbody>
+</table>
+
+<section class="zline-detail" aria-live="polite">
+    <div class="zline-controls">
+        <h3 id="zline-title" class="zline-title">&nbsp;</h3>
+        <label>Flux pulse
+            <select id="zline-op" aria-label="Flux pulse to draw"></select>
+        </label>
+        <label title="QOP 3.5+ corrects the sum of all exponentials at once; QOP 3.4 and earlier cascade one correction per exponential">Model
+            <select id="zline-model" aria-label="Filter model (QOP version)">
+                <option value="sum">QOP &ge; 3.5 (sum)</option>
+                <option value="cascade">QOP &le; 3.4 (cascade)</option>
+            </select>
+        </label>
+    </div>
+    <ul id="zline-notes" class="zline-notes"></ul>
+    <div class="zline-plots">
+        <figure class="zline-fig">
+            <figcaption>Step response <span class="muted">&mdash; unit step, time on a log axis</span></figcaption>
+            <div id="zline-step" class="zline-plot"></div>
+            <p id="zline-step-stats" class="muted zline-stats"></p>
+        </figure>
+        <figure class="zline-fig">
+            <figcaption>Flux pulse <span class="muted" id="zline-pulse-sub">&mdash; ideal vs through both filters</span></figcaption>
+            <div id="zline-pulse" class="zline-plot"></div>
+            <p id="zline-pulse-stats" class="muted zline-stats"></p>
+        </figure>
+    </div>
+</section>
+{% else %}
+<p class="muted" style="text-align:center;padding:2rem">No flux lines in this state file &mdash; no qubit has a <code>z</code> channel and no pair a <code>coupler</code> with an <code>opx_output</code>.</p>
+{% endif %}
+</div>

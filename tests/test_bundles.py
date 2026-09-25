@@ -23,7 +23,7 @@ CORE = {"htmx.min.js", "split.min.js", "search-query.js", "app.js",
 LAZY = {"grid-virt.js", "bulk-edit.js", "pair-edit.js", "all-values.js", "pulses.js", "topo-graph.js", "wiring-grid.js",
         "component-map.js", "chip-status.js", "generate.js", "generate_preview.js", "dataset-virtual.js",
         "ndview.js", "scheduler.js", "autofit.js", "compare-hub.js", "diff-panes.js", "journal.js",
-        "notes.js", "agent-setup.js"}   # notes.js: docs/167's bundle, never added here (red on main since); journal.js / agent-setup.js: docs/173
+        "notes.js", "agent-setup.js", "zline.js"}   # notes.js: docs/167's bundle, never added here (red on main since); journal.js / agent-setup.js: docs/173
 
 
 def _scripts(html: str):
@@ -64,7 +64,8 @@ def test_every_page_ships_the_core_and_only_its_own_bundles(client):
     seen = {}
     for url, want, unwanted in (
         ("/bulk", {"grid-virt.js", "bulk-edit.js", "pair-edit.js", "all-values.js"}, {"chip-status.js", "generate.js", "pulses.js"}),
-        ("/pulses", {"pulses.js"}, {"bulk-edit.js", "chip-status.js", "generate.js"}),
+        ("/pulses", {"pulses.js"}, {"bulk-edit.js", "chip-status.js", "generate.js", "zline.js"}),
+        ("/zline", {"zline.js"}, {"bulk-edit.js", "chip-status.js", "generate.js", "pulses.js"}),
         ("/explorer", set(), LAZY),
         ("/topology", {"chip-status.js", "topo-graph.js", "component-map.js"}, {"bulk-edit.js", "generate.js"}),
         ("/generate", {"generate.js", "generate_preview.js", "wiring-grid.js", "pulses.js", "topo-graph.js"}, {"bulk-edit.js", "chip-status.js"}),
@@ -95,7 +96,7 @@ def test_the_manifest_names_every_lazy_file_once_and_the_page_map_covers_the_rou
         "bulk", "table", "pulses", "generate", "regenerate", "instrument", "topology", "trends", "trend",
         "qubits", "pairs", "resonators", "flux", "couplers", "qdac",
         "datasets", "dataset_detail", "dataset_compare", "collections", "fit-audit",
-        "scheduler", "autofit", "compare_hub", "diff", "journal", "agent_setup",
+        "scheduler", "autofit", "compare_hub", "diff", "journal", "agent_setup", "zline",
     }
     assert man["pages"]["topology"] == ["chipstatus", "components"] and man["pages"]["trends"] == ["chipstatus", "datasets"]
     # the JS path map agrees with the page map on the pages that matter
@@ -103,7 +104,7 @@ def test_the_manifest_names_every_lazy_file_once_and_the_page_map_covers_the_rou
     assert "window.Bundles = (function () {" in app_js
     for token in ('["grid"]', '["pulses"]', '["generate"]', '["wiring"]', '["chipstatus", "components"]',
                   '["components"]', '["datasets"]', '["scheduler"]', '["autofit"]', '["compare"]',
-                  '["journal"]', '["agent_setup"]'):
+                  '["journal"]', '["agent_setup"]', '["zline"]'):
         assert token in app_js, token
     assert 'document.addEventListener("htmx:confirm", function (evt) {' in app_js
     assert "d.issueRequest();" in app_js and "d.issueRequest(true)" not in app_js, "the skip flag would skip hx-confirm"
@@ -114,7 +115,7 @@ def test_the_manifest_names_every_lazy_file_once_and_the_page_map_covers_the_rou
                '/^\\/scheduler(', '/^\\/autofit(', '/^\\/(compare-hub|compare|diff)(',
                # docs/173 partial-reached bundle pages (dry-run review round 1: the Agent home's
                # "Setup" link swapped a shell that stayed on "Loading..." -- no entry, no script)
-               '/^\\/journal(', '/^\\/agent\\/setup('):
+               '/^\\/journal(', '/^\\/agent\\/setup(', '/^\\/zline('):
         assert rx in app_js, rx
 
 

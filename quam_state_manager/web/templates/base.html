@@ -87,6 +87,7 @@
     {% set bundle_files = {
         'grid': ['grid-virt.js', 'bulk-edit.js', 'pair-edit.js', 'all-values.js', 'notes.js'],
         'pulses': ['pulses.js'],
+        'zline': ['zline.js'],
         'topo': ['topo-graph.js'],
         'wiring': ['topo-graph.js', 'wiring-grid.js'],
         'components': ['topo-graph.js', 'component-map.js'],
@@ -104,6 +105,7 @@
     {% set page_bundles = {
         'bulk': ['grid'], 'table': ['grid'],
         'pulses': ['pulses', 'components'],
+        'zline': ['zline'],
         'generate': ['generate'], 'regenerate': ['generate'],
         'instrument': ['wiring'],
         'topology': ['chipstatus', 'components'], 'trends': ['chipstatus', 'datasets'], 'trend': ['chipstatus', 'datasets'],
@@ -595,16 +597,19 @@
                             <a href="/bulk" hx-get="/bulk" hx-target="#table-pane" hx-sync="#table-pane:replace" hx-push-url="true"
                                {% if page == 'bulk' or page == 'table' %}class="active"{% endif %}>Live State Edit</a>
                             <button type="button" class="nav-sub-toggle"
-                                    aria-expanded="{{ 'true' if page in ('explorer', 'pulses') else 'false' }}"
+                                    aria-expanded="{{ 'true' if page in ('explorer', 'pulses', 'zline') else 'false' }}"
                                     aria-controls="live-edit-subnav" aria-label="Toggle editing tools"
                                     onclick="toggleNavSub(this, 'live-edit-subnav', 'quam_liveedit_nav_collapsed')">&#9662;</button>
                         </div>
-                        <ul class="nav-subitems{% if page not in ('explorer', 'pulses') %} nav-subitems-collapsed{% endif %}"
+                        <ul class="nav-subitems{% if page not in ('explorer', 'pulses', 'zline') %} nav-subitems-collapsed{% endif %}"
                             id="live-edit-subnav">
                             <li><a href="/explorer" hx-get="/explorer" hx-target="#table-pane" hx-sync="#table-pane:replace" hx-push-url="true"
                                    {% if page == 'explorer' %}class="active"{% endif %}>Json Tree View</a></li>
                             <li><a href="/pulses" hx-get="/pulses" hx-target="#table-pane" hx-sync="#table-pane:replace" hx-push-url="true"
                                    {% if page == 'pulses' %}class="active"{% endif %}>Pulses</a></li>
+                            <li><a href="/zline" hx-get="/zline" hx-target="#table-pane" hx-sync="#table-pane:replace" hx-push-url="true"
+                                   title="The port's exponential + FIR filters applied together to each flux line's step and pulses"
+                                   {% if page == 'zline' %}class="active"{% endif %}>Z-line distortion</a></li>
                         </ul>
                     </li>
                     {# Execution trio (r15 renames — routes/page tokens unchanged):
@@ -1273,6 +1278,7 @@
                 {"label": "Live State Edit",   "url": "/bulk"},
                 {"label": "Json Tree View",    "url": "/explorer"},
                 {"label": "Pulses",            "url": "/pulses"},
+                {"label": "Z-line distortion", "url": "/zline"},
                 {"label": "State History",     "url": "/state-history"},
                 {"label": "Calibration log",   "url": "/journal"},
                 {"label": "Agent home",         "url": "/agent"},
