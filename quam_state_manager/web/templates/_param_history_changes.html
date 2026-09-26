@@ -38,7 +38,10 @@
     <input type="text" id="ph-changes-prefix" hx-preserve="true" name="prefix" class="tree-search" value="{{ prefix }}"
            placeholder="{{ search_hint() }}" title="{{ search_title() }} Matches the parameter path."
            autocomplete="off" list="ph-param-paths">
-    <datalist id="ph-param-paths"></datalist>
+    {#- the typeahead's datalist is preserved with the input: a swap would
+        otherwise hand the box a fresh, empty list while the script's fetch
+        filled the detached one (measured: 0 options after any swap) #}
+    <datalist id="ph-param-paths" hx-preserve="true"></datalist>
     {% if prefix %}
     <a class="btn-sm outline" role="button" href="/param-history/changes">Clear</a>
     {% endif %}
@@ -136,19 +139,23 @@
     // the datalist is filled from the server as the user types. A failure here
     // is silent — the filter box still works as plain text.
     var input = document.querySelector('#param-history-root input[name=prefix]');
-    var list = document.getElementById('ph-param-paths');
-    if (!input || !list || input._phBound) return;
+    if (!input || !document.getElementById('ph-param-paths') || input._phBound) return;
     input._phBound = true;
-    var timer = null;
+    var timer = null, seq = 0;
+    // the list is looked up when it is written, never held: the input
+    // survives the root's swaps (hx-preserve) and so does this handler
+    function curList() { return document.getElementById('ph-param-paths'); }
     input.addEventListener('input', function () {
         var q = input.value.trim();
         if (timer) clearTimeout(timer);
-        if (q.length < 2) { list.innerHTML = ''; return; }
+        var my = ++seq;
+        if (q.length < 2) { var l0 = curList(); if (l0) l0.innerHTML = ''; return; }
         timer = setTimeout(function () {
             fetch('/param-history/param-search?q=' + encodeURIComponent(q))
                 .then(function (r) { return r.ok ? r.json() : null; })
                 .then(function (d) {
-                    if (!d || !d.results) return;
+                    var list = curList();
+                    if (!d || !d.results || !list || my !== seq) return;   // a newer key won
                     var html = '';
                     for (var i = 0; i < d.results.length; i++) {
                         var h = d.results[i];
