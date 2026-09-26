@@ -14006,3 +14006,13 @@ td.cell-live-stale .cell-live-now {
 [data-theme="light"] .sp-live-input, [data-theme="light"] .sp-one-field { color: #0369a1 !important; }
 [data-theme="light"] td.cell-live-stale { box-shadow: inset 3px 0 0 #0284c7; }
 [data-theme="light"] .sp-group-mine .sp-group-head td { color: #b45309; }
+
+/* 2026-09-27: the one create flow's first step -- what to create */
+.pulse-create-choice { display: flex; flex-wrap: wrap; gap: 0.35rem; margin: 0.35rem 0.5rem 0.6rem; }
+.pulse-create-choice-btn { font-size: 0.85em; padding: 0.25rem 0.7rem; border-radius: 999px;
+    border: 1px solid var(--pico-muted-border-color); background: transparent;
+    color: var(--pico-color); width: auto; margin: 0; }
+.pulse-create-choice-btn:hover { border-color: var(--pico-primary); }
+.pulse-create-choice-btn.is-active { background: var(--pico-primary-background); border-color: var(--pico-primary-background);
+    color: var(--pico-primary-inverse); }
+.pulse-env-refresh { margin-left: 0.5rem; }

@@ -461,9 +461,73 @@ function p15() {
       ok(reloads.length === 0, 'P15: never re-renders over an uncommitted edit');
       ok(/reopen this pulse/.test(dirty.querySelector('[data-schema-stale]').textContent),
          'P15: says to reopen instead');
+      p16();
       if (fails) { console.error(fails + ' failure(s)'); process.exit(1); }
       console.log('ALL OK pulses_create_selfcheck');
       process.exit(0);
     }, 60);
   }, 60);
+}
+
+
+// 2026-09-27 (pulse-create QA, real Chrome on big30x + KRS 5Q):
+// P16 only the slots the SERVER listed are offered -- a coupler slot on a
+//     pair with no coupler is not in the island, so it must not appear;
+// P17 a probe finishing while the user types never rebuilds the form (it
+//     threw away the class, the name and every typed field on big30x) --
+//     the strip offers the refresh instead, and that refresh does rebuild;
+// P18 an IQ-only class is disabled on a single-output (z) channel.
+function p16() {
+  var info = root._pairsInfo;
+  info['q2-q1'].gates = { cz_x: { slots: {
+    flux_pulse_qubit: { state: 'held', 'class': 'a linked pulse',
+                        path: 'qubits.q2.z.operations.cz_x_flux_pulse_q2_q1' } } } };
+  var pairSel = doc.getElementById('pulse-create-pair');
+  var gateSel = doc.getElementById('pulse-create-gate');
+  var slotSel = doc.getElementById('pulse-create-slot');
+  pairSel.value = 'q2-q1';
+  P.createPairSelected(pairSel);
+  gateSel.value = 'cz_x';
+  P.createGateSelected(gateSel);
+  var vals = Array.prototype.map.call(slotSel.options, function (o) { return o.value; });
+  ok(vals.join(',') === 'flux_pulse_qubit', 'P16: only the listed slot is offered (' + vals + ')');
+
+  var reloads = [];
+  win.htmx = { ajax: function (m, url, o) { reloads.push(url); return null; },
+               trigger: function () {} };
+  var strip = doc.createElement('div'); strip.id = 'pulse-env-strip';
+  root.insertBefore(strip, root.firstChild);
+  root._dirty = false;
+  P.reloadCreateForm();
+  ok(reloads.length === 1 && /^\/pulse\/new/.test(reloads[0]), 'P17: an untouched form is rebuilt');
+  reloads = [];
+  var nameIn = doc.createElement('input'); nameIn.name = 'probe'; root.querySelector('form').appendChild(nameIn);
+  var ev = new win.Event('input', { bubbles: true });
+  nameIn.dispatchEvent(ev);           // synthetic: isTrusted=false -> not dirty
+  ok(!root._dirty, 'P17: a script-fired input does not mark the form touched');
+  root._dirty = true;                 // what a real keystroke sets
+  P.reloadCreateForm();
+  ok(reloads.length === 0, 'P17: a touched form is NOT rebuilt behind the user');
+  var btn = strip.querySelector('.pulse-env-refresh');
+  ok(!!btn && /refresh the list/.test(btn.textContent), 'P17: the strip offers the refresh');
+  P.reloadCreateForm();
+  ok(strip.querySelectorAll('.pulse-env-refresh').length === 1, 'P17: offered once, not stacked');
+  btn.click();
+  ok(reloads.length === 1, 'P17: the offered refresh does rebuild');
+
+  var q = doc.querySelector('input[name="target_kind"][value="qubit"]');
+  q.checked = true;
+  P.createTargetKind(q);
+  var ch = doc.createElement('select'); ch.name = 'channel';
+  ch.innerHTML = '<option>xy</option><option>z</option>';
+  root.querySelector('form').appendChild(ch);
+  var typeSel2 = doc.getElementById('pulse-create-type');
+  var drag = typeSel2.querySelector('option[value="DragCosinePulse"]');
+  ch.value = 'xy'; P.createSyncIqClasses();
+  ok(drag.disabled === false, 'P18: DRAG offered on xy');
+  typeSel2.value = 'DragCosinePulse';
+  ch.value = 'z'; P.createSyncIqClasses();
+  ok(drag.disabled === true, 'P18: DRAG disabled on z');
+  ok(typeSel2.value !== 'DragCosinePulse', 'P18: the selection moves off the disabled class');
+  ch.remove();
 }

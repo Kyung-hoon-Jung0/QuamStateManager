@@ -1291,6 +1291,7 @@ window.PulsesPage = (function () {
             if (line) line.hidden = true;
             if (note) note.hidden = true;
         }
+        createSyncIqClasses();
     }
 
     function _applyPairTypeFilter(pairMode) {
@@ -1421,9 +1422,13 @@ window.PulsesPage = (function () {
                 root._pairsInfo[pairSel ? pairSel.value : ''];
             var slots = (info && info.gates && info.gates[gateSel.value] &&
                          info.gates[gateSel.value].slots) || {};
+            // 2026-09-27: only the slots the server listed -- a slot with no
+            // channel to play it (a coupler slot on a pair without a
+            // coupler) is not offered, and a slot LINKED to a channel pulse
+            // is held (the server classifies both; it is the one that knows)
             ['flux_pulse_qubit', 'coupler_flux_pulse', 'flux_pulse_target'].forEach(function (s) {
-                if (s === 'flux_pulse_target' && !slots[s]) return; // only two-flux gates declare it
-                var st = slots[s] || { state: 'empty' };
+                var st = slots[s];
+                if (!st) return;
                 addSlot(s, st.state === 'held', st['class'] || '');
             });
             // land on the first EMPTY slot so the default submit is valid
@@ -1514,10 +1519,42 @@ window.PulsesPage = (function () {
         }
     }
 
+    /* 2026-09-27: an IQ-only class (DRAG) on a single-output channel (z)
+       makes quam's generate_config() fail for the whole chip; the server
+       refuses it, and the list says so before the press. */
+    function createSyncIqClasses() {
+        var root = createRoot();
+        var typeSel = document.getElementById('pulse-create-type');
+        if (!root || !root._catalog || !typeSel) return;
+        var kind = root.querySelector('input[name="target_kind"]:checked');
+        var chan = (root.querySelector('select[name="channel"]') || {}).value;
+        var single = (kind && kind.value === 'pair') ||
+            (kind && kind.value === 'qubit' && chan === 'z');
+        var moved = false;
+        Array.prototype.forEach.call(typeSel.options, function (opt) {
+            var s = root._catalog[opt.value] || {};
+            if (opt.hidden) return;              // pair-mode filter owns it
+            var bad = single && s.iq === 'always';
+            opt.disabled = bad;
+            opt.title = bad ? 'IQ-only: a single-output (z) channel cannot play it' : '';
+            if (bad && opt.selected) moved = true;
+        });
+        if (moved) {
+            for (var i = 0; i < typeSel.options.length; i++) {
+                if (!typeSel.options[i].disabled && !typeSel.options[i].hidden) {
+                    typeSel.selectedIndex = i;
+                    createTypeChanged(typeSel);
+                    break;
+                }
+            }
+        }
+    }
+
     function createValidateName() {
         var root = createRoot();
         if (!root || !root._existing) return;
         createSyncQdacChannel();
+        createSyncIqClasses();
         var nameInput = document.getElementById('pulse-create-name');
         if (!nameInput) return;
         var kindRadio = root.querySelector('input[name="target_kind"]:checked');
@@ -1622,10 +1659,15 @@ window.PulsesPage = (function () {
         }
 
         root.addEventListener('input', function (evt) {
+            if (evt.isTrusted) root._dirty = true;
             if (evt.target.closest && evt.target.closest('#pulse-create-fields')) {
                 schedulCreatePreview(root);
             }
         });
+        root.addEventListener('change', function (evt) {
+            if (evt.isTrusted) root._dirty = true;
+        });
+        createSyncIqClasses();
     }
 
     // Env-strip "Probe now" — rides the diagnostics probe (single-flighted;
@@ -1634,9 +1676,25 @@ window.PulsesPage = (function () {
        classes the form was built without -- rebuild it, keeping the target
        the user had picked (qubit + channel ride the URL like the qubit page's
        "Add pulse" button). */
-    function reloadCreateForm() {
+    function reloadCreateForm(force) {
         var root = createRoot();
         if (!root || !window.htmx) return;
+        // 2026-09-27 (big30x): a probe finishing mid-typing rebuilt the form
+        // and threw away the class, the name and every typed field. A form
+        // the user has touched is never rebuilt behind their back -- the
+        // strip offers the refresh instead.
+        if (root._dirty && force !== true) {
+            var strip = document.getElementById('pulse-env-strip');
+            if (strip && !strip.querySelector('.pulse-env-refresh')) {
+                var b = document.createElement('button');
+                b.type = 'button';
+                b.className = 'btn-sm outline pulse-env-refresh';
+                b.textContent = 'New classes found \u2014 refresh the list (clears this form)';
+                b.addEventListener('click', function () { reloadCreateForm(true); });
+                strip.appendChild(b);
+            }
+            return;
+        }
         var q = root.querySelector('select[name="qubit"]');
         var ch = root.querySelector('select[name="channel"]');
         var url = '/pulse/new';
@@ -1645,6 +1703,68 @@ window.PulsesPage = (function () {
         if (ch && ch.value) qs.push('channel=' + encodeURIComponent(ch.value));
         if (qs.length) url += '?' + qs.join('&');
         window.htmx.ajax('GET', url, { target: '#inspector-pane', swap: 'innerHTML' });
+    }
+
+    /* -- Copy a pulse to another channel (2026-09-27) ------------------ */
+    var _copySources = null;
+    function copyLoadSources(input) {
+        if (_copySources) return;
+        _copySources = [];
+        fetch('/api/pulse/paths').then(function (r) { return r.json(); }).then(function (d) {
+            _copySources = (d && d.options) || [];
+            var dl = document.getElementById('pulse-copy-src-list');
+            if (!dl) return;
+            var frag = document.createDocumentFragment();
+            _copySources.forEach(function (o) {
+                var opt = document.createElement('option');
+                opt.value = o[0];
+                opt.label = o[1];
+                frag.appendChild(opt);
+            });
+            dl.innerHTML = '';
+            dl.appendChild(frag);
+            copySourceChanged(input);
+        }).catch(function () { _copySources = null; });
+    }
+
+    function copySourceChanged(input) {
+        if (!input) return;
+        var v = (input.value || '').trim();
+        var hint = document.getElementById('pulse-copy-src-hint');
+        var name = document.getElementById('pulse-copy-name');
+        var loaded = !!(_copySources && _copySources.length);
+        var hit = (_copySources || []).filter(function (o) { return o[0] === v; })[0];
+        if (hint) hint.textContent = hit ? hit[1]
+            : (v && loaded ? 'not a pulse on this chip \u2014 pick one from the list' : '');
+        input.setCustomValidity(v && loaded && !hit ? 'Pick a pulse from the list' : '');
+        if (hit && name && !name._touched) name.value = v.split('.').pop();
+    }
+
+    function copyTargetKind(radio) {
+        var root = document.getElementById('pulse-copy-root');
+        if (!root) return;
+        root.querySelectorAll('[data-copy-kind]').forEach(function (el) {
+            el.hidden = el.getAttribute('data-copy-kind') !== radio.value;
+        });
+    }
+
+    function initCopy() {
+        var root = document.getElementById('pulse-copy-root');
+        if (!root || root._init) return;
+        root._init = true;
+        _copySources = null;
+        var name = document.getElementById('pulse-copy-name');
+        if (name) name.addEventListener('input', function (e) { if (e.isTrusted) name._touched = true; });
+        var pcPair = root.querySelector('select[name="pc_pair"]');
+        var chans = parseEmbeddedJson('pulse-pair-channels-data') || {};
+        if (pcPair) pcPair.addEventListener('change', function () {
+            var sel = root.querySelector('select[name="pc_channel"]');
+            if (!sel) return;
+            sel.innerHTML = '';
+            (chans[pcPair.value] || []).forEach(function (ch) {
+                var o = document.createElement('option'); o.textContent = ch; sel.appendChild(o);
+            });
+        });
     }
 
     function envStripProbe(btn, force) {
@@ -1764,7 +1884,12 @@ window.PulsesPage = (function () {
         createSyncQdacChannel: createSyncQdacChannel,
         envStripProbe: envStripProbe,
         _pollSchema: pollSchema,   // docs/2xx: exported for the selfcheck
-        reloadCreateForm: reloadCreateForm
+        reloadCreateForm: reloadCreateForm,
+        createSyncIqClasses: createSyncIqClasses,
+        copyLoadSources: copyLoadSources,
+        copySourceChanged: copySourceChanged,
+        copyTargetKind: copyTargetKind,
+        initCopy: initCopy
     };
 })();
 

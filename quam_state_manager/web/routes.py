@@ -14781,7 +14781,16 @@ def _coerce_catalog_fields(spec, form) -> tuple[dict, dict]:
 
 @bp.route("/pulse/new")
 def pulse_create_form():
-    """The create-pulse form (inspector pane)."""
+    """The ONE create flow (inspector pane). ``kind`` picks what to create --
+    ``pulse`` (the class form, default), ``copy`` (an existing pulse onto
+    another channel) or ``gaussian_cz`` (the docs/126 macro builder) -- and
+    every kind renders the same choice strip on top (2026-09-27: one button,
+    not two)."""
+    kind = (request.args.get("kind") or "pulse").strip()
+    if kind in ("gaussian_cz", "gcz"):
+        return pulse_gaussian_cz_form()
+    if kind == "copy":
+        return _pulse_copy_form()
     store = _store()
     engine = _engine()
     if not store or not engine:
@@ -14835,7 +14844,6 @@ def pulse_create_form():
     # edit-instead deep link — the server's 409 stays the backstop), and the
     # arch+roster-gated "+ new gate" variants.
     pairs_info: dict[str, dict[str, Any]] = {}
-    env_gates = _env_gate_types()
     for pair_name, pair in (store.merged.get("qubit_pairs") or {}).items():
         if not isinstance(pair, dict):
             continue
@@ -14897,27 +14905,23 @@ def pulse_create_form():
                     v = m.get(slot)
                     if slot == "flux_pulse_target" and slot not in m:
                         continue  # only a two-flux gate class declares it
-                    if isinstance(v, dict):
-                        leaf = (v.get("__class__") or "").rsplit(".", 1)[-1]
-                        slots[slot] = {
-                            "state": "held",
-                            "class": leaf or "SquarePulse (implicit)",
-                            "path": (f"qubit_pairs.{pair_name}.macros"
-                                     f".{g}.{slot}"),
-                        }
-                    else:
-                        # absent key or present-but-None — both creatable
-                        # (the POST's replace_none_slot path handles None)
+                    held = _slot_holder(store.merged, pair_name, g, slot, v)
+                    if held is not None:
+                        slots[slot] = held
+                    elif _slot_fillable(store.merged, pair_name, pair, slot):
+                        # absent key or present-but-None, AND a channel to
+                        # host the pulse (2026-09-27: the macro's apply()
+                        # plays the slot BY NAME on that channel)
                         slots[slot] = {"state": "empty", "class": None,
                                        "path": None}
                 info["gates"][g] = {"slots": slots}
-        arch = _pair_arch(store, pair)
-        if arch.get("flux"):
-            new_gates = [gid for gid in ("cz_unipolar", "cz_flattop")
-                         ] + sorted(env_gates)
-        else:
-            new_gates = []
-        info["new_gates"] = new_gates
+        # 2026-09-27: "+ new gate" is gone from the create form. The gate it
+        # wrote carried its slot pulse INLINE, on no channel: quam_builder's
+        # CZGate.apply() plays `moving_qubit.z.play(flux_pulse_qubit_label)`,
+        # a name no channel had, and generate_config() never saw the pulse
+        # (measured on the KRS 5Q chip, pulse_lab_check.py). New CZ gates
+        # come from the Gaussian CZ builder, which writes the channel ops.
+        info["new_gates"] = []
         pairs_info[pair_name] = info
 
     gate_defs_json = json.dumps({
@@ -15025,7 +15029,10 @@ def pulse_create_form():
         modules_error=None,
         pairs_info_json=json.dumps(pairs_info),
         gate_defs_json=gate_defs_json,
-        pairs_all=list(pairs_info),
+        pairs_all=[p for p, i in pairs_info.items()
+                   if any(st.get("state") == "empty"
+                          for gi in (i.get("gates") or {}).values()
+                          for st in (gi.get("slots") or {}).values())],
     )
 
 
@@ -15245,7 +15252,37 @@ def pulse_gaussian_cz_form():
     from quam_state_manager.core import gaussian_cz
     with store._lock:
         pairs = gaussian_cz.eligible_pairs(store.merged)
-    return render_template("_pulse_gaussian_cz.html", pairs=pairs)
+    return render_template("_pulse_gaussian_cz.html", pairs=pairs,
+                           create_kind="gaussian_cz")
+
+
+def _pulse_copy_form():
+    """The copy form of the one create flow: pick a pulse, pick a channel."""
+    store = _store()
+    engine = _engine()
+    if not store or not engine:
+        return render_template("_status.html", message="No state loaded",
+                               level="warning")
+    from quam_state_manager.core.pulse_index import PAIR_PULSE_CHANNELS
+    qubit_names = [q.get("id") for q in engine.list_qubits() if q.get("id")]
+    pair_channels_map: dict[str, list[str]] = {}
+    for pair_name, pair in (store.merged.get("qubit_pairs") or {}).items():
+        if not isinstance(pair, dict):
+            continue
+        chans = [ch for ch in PAIR_PULSE_CHANNELS
+                 if isinstance(pair.get(ch), dict)
+                 and isinstance(pair[ch].get("operations"), dict)]
+        if chans:
+            pair_channels_map[pair_name] = chans
+    has_xy_detuned = any(
+        isinstance(q, dict) and isinstance(q.get("xy_detuned"), dict)
+        for q in (store.merged.get("qubits") or {}).values())
+    src = (request.args.get("src") or "").strip()
+    src_name = src.rsplit(".", 1)[-1] if src else ""
+    return render_template(
+        "_pulse_copy.html", create_kind="copy", qubit_names=qubit_names,
+        pair_channels_map=pair_channels_map, has_xy_detuned=has_xy_detuned,
+        src_path=src, src_name=src_name, src_label="")
 
 
 @bp.route("/api/pulse/gaussian-cz", methods=["POST"])
@@ -15341,6 +15378,7 @@ def api_pulse_gaussian_cz():
                 "_status.html", level="error",
                 message=f"Creation failed and was rolled back: {exc}"), code
 
+    _reprobe_if_new_classes(store)
     src = result["sources"]
     msg = render_template(
         "_status.html", level="success",
@@ -15450,6 +15488,7 @@ def api_pulse_create():
         return outcome  # an error response (html, code)
     dot_path = outcome
     _invalidate_engine_cache()
+    _reprobe_if_new_classes(store)
     logger.info("pulse create %s (%s)%s", dot_path, pulse_type,
                 f" env-dropped={env_dropped}" if env_dropped else "")
     msg = f"Created {dot_path.rsplit('.', 1)[-1]}"
@@ -15461,6 +15500,107 @@ def api_pulse_create():
                 + f"{spec.key} model)")
     return _pulse_mutation_response(_render_pulse_detail(
         dot_path, status_msg=msg))
+
+
+def _slot_host(merged: dict, pair_name: str, pair: dict, slot: str):
+    """``(ops dot-path, op name)`` of the CHANNEL a gate slot's pulse lives on,
+    or None when the pair has no such channel.
+
+    quam_builder's CZGate.apply() plays ``moving_qubit.z.play(
+    self.flux_pulse_qubit_label)`` and ``qubit_pair.coupler.play(
+    self.coupler_flux_pulse_label)``: the pulse must be an operation of that
+    channel, and the macro slot references it. That is how the chip lays out
+    its own gates (``cz_unipolar.flux_pulse_qubit =
+    "#/qubits/q1/z/operations/cz_unipolar_flux_pulse_q1_q2"``).
+    """
+    from quam_state_manager.core.gaussian_cz import _qubit_name
+    ctl = _qubit_name(merged, pair_name, "qubit_control")
+    tgt = _qubit_name(merged, pair_name, "qubit_target")
+    if not ctl or not tgt:
+        return None
+    if slot == "flux_pulse_qubit":
+        role = pair.get("moving_qubit") or "control"
+        mq = ctl if role == "control" else (tgt if role == "target" else None)
+        z = ((merged.get("qubits") or {}).get(mq) or {}).get("z") if mq else None
+        if not isinstance(z, dict) or not isinstance(z.get("operations"), dict):
+            return None
+        return f"qubits.{mq}.z.operations", f"{{gate}}_flux_pulse_{ctl}_{tgt}"
+    if slot == "coupler_flux_pulse":
+        cp = pair.get("coupler")
+        if not isinstance(cp, dict) or not isinstance(cp.get("operations"), dict):
+            return None
+        return (f"qubit_pairs.{pair_name}.coupler.operations",
+                f"{{gate}}_coupler_flux_pulse_{ctl}_{tgt}")
+    return None
+
+
+def _slot_holder(merged: dict, pair_name: str, gate: str, slot: str, v):
+    """The slot's occupant for the create form -- inline pulse or a POINTER to
+    one (the chip's own layout) -- or None when it is empty."""
+    path = f"qubit_pairs.{pair_name}.macros.{gate}.{slot}"
+    if isinstance(v, dict):
+        leaf = (v.get("__class__") or "").rsplit(".", 1)[-1]
+        return {"state": "held", "class": leaf or "SquarePulse (implicit)",
+                "path": path}
+    if isinstance(v, str) and v.startswith("#"):
+        from quam_state_manager.core.pointer_path import resolve_field_target
+        try:
+            ft = resolve_field_target(merged, path)
+        except Exception:  # noqa: BLE001
+            ft = {}
+        from quam_state_manager.core.pointer_path import _walk as _seg_walk
+        _f, target = _seg_walk(merged, (ft.get("resolved_path") or "").split("."))
+        leaf = ((target.get("__class__") or "") if isinstance(target, dict)
+                else "").rsplit(".", 1)[-1]
+        return {"state": "held", "class": (leaf or "a linked pulse"),
+                "path": ft.get("resolved_path") or path}
+    return None
+
+
+def _slot_fillable(merged: dict, pair_name: str, pair: dict, slot: str) -> bool:
+    return slot != "flux_pulse_target" and _slot_host(
+        merged, pair_name, pair, slot) is not None
+
+
+_SINGLE_CHANNEL_LEAVES = ("SingleChannel", "InOutSingleChannel", "FluxLine",
+                          "TunableCoupler")
+
+
+def _channel_single(chan) -> bool:
+    """True when *chan* is a single-output (LF) channel -- one that quam
+    refuses an IQ waveform on (``Waveform type 'IQ' not allowed for
+    SingleChannel``, which fails generate_config() for the WHOLE machine)."""
+    if not isinstance(chan, dict):
+        return False
+    leaf = str(chan.get("__class__") or "").rsplit(".", 1)[-1]
+    if not leaf:
+        return False
+    if "MW" in leaf or "IQ" in leaf:
+        return False
+    return leaf in _SINGLE_CHANNEL_LEAVES or "Single" in leaf or "Flux" in leaf         or "Coupler" in leaf
+
+
+def _template_is_iq(spec_iq: str | None, template: dict, key: str = "") -> bool:
+    """Would quam give this pulse an IQ waveform? A class that is always IQ
+    (DRAG), a set ``axis_angle`` (quam's Pulse: IQ iff axis_angle is not
+    None), or a WaveformPulse carrying a Q quadrature."""
+    if spec_iq == "always":
+        return True
+    if template.get("axis_angle") is not None:
+        return True
+    if key == "WaveformPulse" and template.get("waveform_Q") not in (None, [], ""):
+        return True
+    leaf = str(template.get("__class__") or "").rsplit(".", 1)[-1]
+    return leaf.startswith("Drag")
+
+
+def _iq_on_single_refusal(chan_label: str):
+    return render_template(
+        "_status.html", level="error",
+        message=(f"{chan_label} is a single-output (LF) channel: an IQ pulse "
+                 "(a DRAG class, or any pulse with an axis angle set) would "
+                 "make quam's generate_config() fail for the whole chip. "
+                 "Leave the axis angle empty, or pick a flux-type class.")), 400
 
 
 def _pulse_create_locked(store, modifier, spec, fields, target_kind,
@@ -15477,98 +15617,76 @@ def _pulse_create_locked(store, modifier, spec, fields, target_kind,
 
     from quam_state_manager.core.pulse_index import PAIR_PULSE_CHANNELS
 
-    replace_none_slot = False
-    new_gate_template: dict | None = None
-    new_gate_name = ""
+    slot_fill: tuple[str, str, str, bool] | None = None
+    chan_obj = None          # the channel the pulse will live on (D8 check)
+    chan_label = ""
     if target_kind == "pair":
         pair = request.form.get("pair", "").strip()
         gate = request.form.get("gate", "").strip()
         slot = request.form.get("slot", "").strip()
+        if gate.startswith("__new__:"):
+            # 2026-09-27: a new gate's slot pulse was written INLINE, on no
+            # channel -- CZGate.apply() then plays a name no channel has and
+            # generate_config() never sees the pulse. The Gaussian CZ builder
+            # is the gate builder (it writes the channel ops the lab's own
+            # add_gaussian_cz_macros.py writes).
+            return render_template(
+                "_status.html", level="error",
+                message=("Creating a new gate here is no longer offered: the "
+                         "gate it wrote could not play. Use \"Gaussian CZ from "
+                         "cz_flattop\" in + New pulse, or your lab's gate "
+                         "script.")), 410
         if slot not in ("flux_pulse_qubit", "coupler_flux_pulse"):
             return render_template("_status.html", message="Invalid slot",
                                    level="error"), 400
-        macros = ((store.merged.get("qubit_pairs") or {}).get(pair) or {}).get("macros")
-        if gate.startswith("__new__:"):
-            # r15 (docs/71 §3): CZ-first — create the gate macro AND its
-            # selected slot's pulse in ONE create_subtree (one lock hold,
-            # one Review entry, one Ctrl+Z). The macro's other fields take
-            # the gate type's defaults; slot classes are evidence/roster
-            # verified via _slot_qclasses_for (never guessed).
-            gate_type = gate.split(":", 1)[1]
-            new_gate_name = (request.form.get("new_gate_name") or "").strip()
-            all_types = {**_GATE_TYPES, **_ENV_GATE_TYPES}
-            gdef = all_types.get(gate_type)
-            if gdef is None or gdef.get("arch") != "flux":
-                return render_template("_status.html",
-                                       message=f"Unknown gate type {gate_type!r}",
-                                       level="error"), 400
-            if (gate_type in _ENV_GATE_TYPES
-                    and gate_type not in _env_gate_types()):
-                return render_template(
-                    "_status.html",
-                    message=(f"{gate_type} needs pulse classes the selected "
-                             "environment does not verify."),
-                    level="error"), 409
-            if not _GATE_NAME_RE.match(new_gate_name):
-                return render_template(
-                    "_status.html",
-                    message=("Gate name must start with a letter "
-                             "(letters/digits/_, max 64)."),
-                    level="error"), 400
-            pair_obj = (store.merged.get("qubit_pairs") or {}).get(pair)
-            if not isinstance(pair_obj, dict):
-                return render_template("_status.html",
-                                       message=f"Unknown pair: {pair!r}",
-                                       level="error"), 404
-            if new_gate_name in (macros or {}):
-                return render_template(
-                    "_status.html",
-                    message=f"Gate {new_gate_name!r} already exists on {pair}.",
-                    level="error"), 409
-            if not _pair_arch(store, pair_obj).get("flux"):
-                return render_template(
-                    "_status.html",
-                    message=("This pair's architecture has no flux line — "
-                             "a flux-CZ macro would corrupt it."),
-                    level="error"), 409
-            if (slot == "coupler_flux_pulse"
-                    and (_SLOT_LEAVES.get(gate_type) or {}).get("coupler")
-                    is None):
-                return render_template(
-                    "_status.html",
-                    message=(f"{gate_type} carries the whole gate on the "
-                             "qubit line — it has no coupler slot."),
-                    level="error"), 400
-            defaults = {f[0]: f[2] for f in gdef["fields"]}
-            new_gate_template = _build_gate_template(
-                gate_type, defaults,
-                cz_qclass=cr_semantics.gate_class_evidence(store.merged, "CZGate"),
-                slot_qclasses=_slot_qclasses_for(store, gate_type))
-            dot_path = f"qubit_pairs.{pair}.macros.{new_gate_name}"
-        else:
-            macro = macros.get(gate) if isinstance(macros, dict) else None
-            if not isinstance(macro, dict):
-                return render_template("_status.html",
-                                       message=f"Gate {gate!r} not found on {pair!r}",
-                                       level="error"), 404
-            # Never write a flux slot into a CR/Stark macro — the gate's
-            # drive lives on the pair's cross_resonance/zz channel; a
-            # flux_pulse_qubit here corrupts the macro's schema.
-            if cr_semantics.classify_class(macro.get("__class__"))[0] in (
-                    "cr_gate", "stark_cz_gate"):
-                return render_template(
-                    "_status.html",
-                    message=(f"{gate!r} is a CR/Stark gate — it takes no flux "
-                             "pulse. Create the pulse on the pair's "
-                             "cross-resonance / ZZ channel instead."),
-                    level="error"), 409
-            if slot in macro and macro[slot] is not None:
-                return render_template(
-                    "_status.html",
-                    message=f"{pair}.{gate}.{slot} already holds a pulse",
-                    level="error"), 409
-            replace_none_slot = slot in macro  # present-but-None → set
-            dot_path = f"qubit_pairs.{pair}.macros.{gate}.{slot}"
+        pair_obj = (store.merged.get("qubit_pairs") or {}).get(pair)
+        macros = pair_obj.get("macros") if isinstance(pair_obj, dict) else None
+        macro = macros.get(gate) if isinstance(macros, dict) else None
+        if not isinstance(macro, dict):
+            return render_template("_status.html",
+                                   message=f"Gate {gate!r} not found on {pair!r}",
+                                   level="error"), 404
+        # Never write a flux slot into a CR/Stark macro — the gate's
+        # drive lives on the pair's cross_resonance/zz channel; a
+        # flux_pulse_qubit here corrupts the macro's schema.
+        if cr_semantics.classify_class(macro.get("__class__"))[0] in (
+                "cr_gate", "stark_cz_gate"):
+            return render_template(
+                "_status.html",
+                message=(f"{gate!r} is a CR/Stark gate — it takes no flux "
+                         "pulse. Create the pulse on the pair's "
+                         "cross-resonance / ZZ channel instead."),
+                level="error"), 409
+        if macro.get(slot) is not None:
+            return render_template(
+                "_status.html",
+                message=(f"{pair}.{gate}.{slot} already holds a pulse"
+                         + (" (a link to a channel operation — edit that "
+                            "pulse instead)" if isinstance(macro.get(slot), str)
+                            else "")),
+                level="error"), 409
+        host = _slot_host(store.merged, pair, pair_obj, slot)
+        if host is None:
+            return render_template(
+                "_status.html", level="error",
+                message=(f"{pair} has no coupler to play a coupler pulse on"
+                         if slot == "coupler_flux_pulse" else
+                         f"{pair}'s moving qubit has no z operations to host "
+                         "the pulse")), 409
+        ops_path, name_tpl = host
+        op_name = name_tpl.replace("{gate}", gate)
+        ops = store.get_value(ops_path)
+        if isinstance(ops, dict) and op_name in ops:
+            return render_template(
+                "_status.html", level="error",
+                message=(f"{ops_path.rsplit('.', 1)[0]} already has an "
+                         f"operation named {op_name!r}")), 409
+        slot_path = f"qubit_pairs.{pair}.macros.{gate}.{slot}"
+        slot_fill = (slot_path, "#/" + f"{ops_path}.{op_name}".replace(".", "/"),
+                     f"{ops_path}.{op_name}", slot in macro)
+        chan_label = ops_path.rsplit(".", 1)[0]
+        chan_obj = store.get_value(chan_label)
+        dot_path = f"{ops_path}.{op_name}"
     elif target_kind == "pair_channel":
         pair = request.form.get("pc_pair", "").strip()
         channel = request.form.get("pc_channel", "").strip()
@@ -15597,6 +15715,7 @@ def _pulse_create_locked(store, modifier, spec, fields, target_kind,
             return render_template("_status.html",
                                    message=f"Operation {op_name!r} already exists",
                                    level="error"), 409
+        chan_obj, chan_label = chan, f"{pair}.{channel}"
         dot_path = f"qubit_pairs.{pair}.{channel}.operations.{op_name}"
     else:
         qubit = request.form.get("qubit", "").strip()
@@ -15636,6 +15755,7 @@ def _pulse_create_locked(store, modifier, spec, fields, target_kind,
             return render_template("_status.html",
                                    message=f"Operation {op_name!r} already exists",
                                    level="error"), 409
+        chan_obj, chan_label = chan, f"{qubit}.{channel}"
         dot_path = f"qubits.{qubit}.{channel}.operations.{op_name}"
 
     if not qclass:
@@ -15649,26 +15769,27 @@ def _pulse_create_locked(store, modifier, spec, fields, target_kind,
     _dropped = env_field_filter(template, spec.key)
     if env_dropped_out is not None:
         env_dropped_out.extend(_dropped)
+    # 2026-09-27 (measured, KRS 5Q): an IQ waveform on a single (LF) channel
+    # makes quam's generate_config() raise for the WHOLE machine -- every
+    # node would stop compiling. Refuse it here, where it is one pulse.
+    if _channel_single(chan_obj) and _template_is_iq(spec.iq, template, spec.key):
+        return _iq_on_single_refusal(chan_label)
     try:
-        if new_gate_template is not None:
-            # r15 (docs/71 §3): the new gate macro + its configured slot
-            # pulse land as ONE subtree — one lock hold, one Review entry.
-            new_gate_template[request.form.get("slot", "").strip()
-                              or "flux_pulse_qubit"] = template
-            modifier.create_subtree(dot_path, new_gate_template)
-            dot_path = (f"{dot_path}."
-                        f"{request.form.get('slot', '').strip() or 'flux_pulse_qubit'}")
-        elif replace_none_slot:
-            modifier.set_value(dot_path, template, coerce=False)
-            # docs/98: set_value indexes only the slot path itself — a dict
-            # replacing an explicit-null slot leaves its LEAVES unsearchable
-            # (and later edits warn "not found in index"). Mirror
-            # create_subtree's per-leaf indexing for the new subtree.
-            _si = getattr(store, "search_index", None)
-            if _si is not None:
-                for _k, _v in template.items():
-                    if not isinstance(_v, (dict, list)):
-                        _si.add_entry(f"{dot_path}.{_k}", _v)
+        if slot_fill is not None:
+            # the chip's own gate layout: the pulse is an operation of the
+            # channel that plays it, the macro slot links to it -- one undo
+            slot_path, pointer, op_path, slot_present = slot_fill
+            gid = modifier.new_group_id()
+            modifier.create_subtree(op_path, template, group_id=gid)
+            try:
+                if slot_present:
+                    modifier.set_value(slot_path, pointer, coerce=False,
+                                       group_id=gid)
+                else:
+                    modifier.create_subtree(slot_path, pointer, group_id=gid)
+            except Exception:
+                modifier.undo()
+                raise
         else:
             modifier.create_subtree(dot_path, template)
     except (KeyError, ValueError, TypeError, IndexError) as exc:
@@ -15770,6 +15891,107 @@ def api_pulse_duplicate():
     logger.info("pulse duplicate %s -> %s", path, new_path)
     return _pulse_mutation_response(_render_pulse_detail(
         new_path, status_msg=f"Duplicated as {new_name}"))
+
+
+@bp.route("/api/pulse/copy", methods=["POST"])
+def api_pulse_copy():
+    """Copy an existing pulse onto another channel (the one create flow's
+    "Copy a pulse to another channel", 2026-09-27). The copy is laid out the
+    way the chip lays out its own pulses -- ``pulse_index.copy_pulse_to``."""
+    store = _store()
+    modifier = _modifier()
+    if not store or not modifier:
+        return render_template("_status.html", message="No state loaded",
+                               level="warning")
+    from quam_state_manager.core.pulse_index import (PAIR_PULSE_CHANNELS,
+                                                     copy_pulse_to)
+    src = (request.form.get("path") or "").strip()
+    op_name = (request.form.get("op_name") or "").strip()
+    kind = request.form.get("target_kind", "qubit")
+    if not _PULSE_NAME_RE.match(op_name):
+        return render_template(
+            "_status.html", level="error",
+            message="Name must start with a letter (letters/digits/_, max 64)"), 400
+    if kind == "pair_channel":
+        owner = (request.form.get("pc_pair") or "").strip()
+        channel = (request.form.get("pc_channel") or "").strip()
+        if channel not in PAIR_PULSE_CHANNELS:
+            return render_template("_status.html", message="Invalid channel",
+                                   level="error"), 400
+        chan_path = f"qubit_pairs.{owner}.{channel}"
+        chan_label = f"{owner}.{channel}"
+    elif kind == "qubit":
+        owner = (request.form.get("qubit") or "").strip()
+        channel = (request.form.get("channel") or "").strip()
+        if channel not in ("xy", "z", "resonator", "xy_detuned"):
+            return render_template("_status.html", message="Invalid channel",
+                                   level="error"), 400
+        chan_path = f"qubits.{owner}.{channel}"
+        chan_label = f"{owner}.{channel}"
+    else:
+        return render_template("_status.html", level="error",
+                               message=f"Unknown target kind {kind!r}"), 400
+    dst = f"{chan_path}.operations.{op_name}"
+    with store._lock:
+        try:
+            chan = store.get_value(chan_path)
+        except (KeyError, TypeError, ValueError, IndexError):
+            chan = None
+        ops = chan.get("operations") if isinstance(chan, dict) else None
+        if not isinstance(ops, dict):
+            return render_template(
+                "_status.html", level="error",
+                message=(f"{chan_label} has no operations dict -- this channel "
+                         "cannot hold pulses")), 400
+        if op_name in ops:
+            return render_template(
+                "_status.html", level="error",
+                message=f"{chan_label} already has an operation named {op_name!r}"), 409
+        try:
+            body, notes = copy_pulse_to(store.merged, src, dst)
+        except ValueError as exc:
+            return render_template("_status.html", message=str(exc),
+                                   level="error"), 400
+        if _channel_single(chan) and _template_is_iq(None, body):
+            return _iq_on_single_refusal(chan_label)
+        try:
+            modifier.create_subtree(dst, body)
+        except (KeyError, ValueError, TypeError, IndexError) as exc:
+            return render_template("_status.html", message=str(exc),
+                                   level="error"), 400
+    _invalidate_engine_cache()
+    _reprobe_if_new_classes(store)
+    logger.info("pulse copy %s -> %s (materialized: %s)", src, dst, notes)
+    msg = f"Copied {src.rsplit('.', 1)[-1]} to {chan_label} as {op_name}"
+    if notes:
+        msg += (" -- written as values (no matching link on the target): "
+                + ", ".join(notes))
+    return _pulse_mutation_response(_render_pulse_detail(dst, status_msg=msg))
+
+
+def _reprobe_if_new_classes(store) -> bool:
+    """Re-probe the selected env when the chip now declares a class its
+    attached manifest never probed (2026-09-27: creating a pulse of a class
+    new to the chip raised "N errors ... would crash a node run (harvest
+    drift)" on Diagnostics for a class the env imports fine, and nothing
+    re-probed until the chip was reopened). Background, single-flighted."""
+    try:
+        from quam_state_manager.core import state_env_schema, state_env_validate
+        manifest = _live_env_manifest(store)
+        if not manifest:
+            return False
+        with store._lock:
+            classes = state_env_schema.harvest_classes(store.state)
+        if all(state_env_validate._class_entry(manifest, c) is not None
+               for c in classes):
+            return False
+        ctx = _active_ctx()
+        _kick_env_reprobe(store, current_app.instance_path,
+                          (ctx or {}).get("path"))
+        return True
+    except Exception:  # noqa: BLE001 -- a probe is never worth a failed create
+        logger.warning("re-probe after a new class failed to start", exc_info=True)
+        return False
 
 
 @bp.route("/api/pulse/rename", methods=["POST"])

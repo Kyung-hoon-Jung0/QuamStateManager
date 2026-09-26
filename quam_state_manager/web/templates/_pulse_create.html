@@ -5,6 +5,8 @@
 {% set inspector_label = "New pulse" %}
 {% set inspector_sub = "" %}
 {% include '_inspector_header.html' %}
+{% set create_kind = 'pulse' %}
+{% include '_pulse_create_choice.html' %}
 
 {# r15 (docs/71 §2): env-discovery status on top — like the wizard's env
    picker, the user sees WHERE the class list came from before choosing. #}
@@ -19,7 +21,7 @@
                       onchange="PulsesPage.createTargetKind(this)"> Qubit channel</label>
         <label><input type="radio" name="target_kind" value="pair"
                       onchange="PulsesPage.createTargetKind(this)"
-                      {% if not pairs_all %}disabled title="No qubit pairs on this chip"{% endif %}> Pair gate flux</label>
+                      {% if not pairs_all %}disabled title="No gate on this chip has an empty flux slot with a channel to play it (a slot that links to a channel pulse is edited on that pulse)"{% endif %}> Empty gate slot</label>
         <label><input type="radio" name="target_kind" value="pair_channel"
                       onchange="PulsesPage.createTargetKind(this)"
                       {% if not pair_channels_map %}disabled title="No CR/ZZ pair channels on this chip"{% endif %}> Pair CR/ZZ channel</label>

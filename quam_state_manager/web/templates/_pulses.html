@@ -38,13 +38,13 @@
                hx-indicator="#pulses-search-spin">
         <span id="pulses-search-spin" class="htmx-indicator spinner"></span>
     </div>
-    <button class="btn-sm pulse-gcz-btn" hx-get="/pulse/gaussian-cz"
-            hx-target="#inspector-pane" hx-swap="innerHTML"
-            hx-indicator="#inspector-pane"
-            title="Build cz_gaussian_unipolar + cz_gaussian_bipolar for a pair from its calibrated cz_flattop (docs/126)">+ Gaussian CZ&hellip;</button>
+    {# 2026-09-27 (user): one create button, not two. The Gaussian CZ builder
+       and "copy a pulse to another channel" are choices INSIDE this flow
+       (_pulse_create_choice.html); /pulse/gaussian-cz still answers old links. #}
     <button class="btn-sm pulse-new-btn" hx-get="/pulse/new"
             hx-target="#inspector-pane" hx-swap="innerHTML"
-            hx-indicator="#inspector-pane">+ New pulse</button>
+            hx-indicator="#inspector-pane"
+            title="Create a pulse: a new one of any class, a copy of an existing pulse on another channel, or a Gaussian CZ pair from a calibrated cz_flattop">+ New pulse</button>
 </div>
 
 {# docs/166 (customer): "chip component처럼 살짝 축소된 크기로, qubit과 pair를

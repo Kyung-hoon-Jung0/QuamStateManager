@@ -8,6 +8,8 @@
         <button class="inspector-close" onclick="document.getElementById('inspector-pane').innerHTML=''"
                 title="Close" aria-label="Close">&times;</button>
     </div>
+    {% set create_kind = 'gaussian_cz' %}
+    {% include '_pulse_create_choice.html' %}
     {# docs/190 F20: the four fields are 2-digit numbers and this paragraph is
        six lines; together they pushed the only submit button below the fold at
        every viewport. The explanation is one line with the rest on demand. #}

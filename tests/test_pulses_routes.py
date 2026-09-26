@@ -521,17 +521,17 @@ class TestPulseCreate:
         })
         assert resp.status_code == 400
 
-    def test_create_into_none_coupler_slot(self, loaded_client):
+    def test_create_into_none_coupler_slot_needs_a_coupler(self, loaded_client):
+        """2026-09-27: a coupler pulse on a pair with no coupler was written
+        into the macro, whose apply() then calls ``qubit_pair.coupler.play``
+        on None. Refused now, and the slot stays empty."""
         resp = loaded_client.post("/api/pulse/create", data={
             "target_kind": "pair", "pair": "qA1-qA2", "gate": "cz_unipolar",
             "slot": "coupler_flux_pulse", "pulse_type": "SquarePulse",
             "length": "100", "amplitude": "0.1",
         })
-        assert resp.status_code == 200
-        html = loaded_client.get(
-            "/pulse/detail?path=qubit_pairs.qA1-qA2.macros.cz_unipolar.coupler_flux_pulse"
-        ).data.decode()
-        assert "SquarePulse" in html
+        assert resp.status_code == 409
+        assert b"no coupler" in resp.data
 
     def test_create_occupied_slot_409(self, loaded_client):
         resp = loaded_client.post("/api/pulse/create", data={
@@ -1470,21 +1470,22 @@ class TestCzGateFirst:
         assert slots["flux_pulse_qubit"]["class"] == "SquarePulse (implicit)"
         assert slots["flux_pulse_qubit"]["path"] == (
             "qubit_pairs.q1-q2.macros.cz_unipolar.flux_pulse_qubit")
-        assert slots["coupler_flux_pulse"]["state"] == "empty"
-        # a gate-less flux pair still offers "+ new gate" entries
-        assert "cz_unipolar" in info["q2-q1"]["new_gates"]
+        # 2026-09-27: this pair's coupler has no operations dict -- nothing
+        # could play a coupler pulse, so the slot is not offered at all
+        assert "coupler_flux_pulse" not in slots
+        # and "+ new gate" is withdrawn (its gates could not play)
+        assert info["q2-q1"]["new_gates"] == []
 
-    def test_new_gate_variants_are_roster_gated(self, pairs_client,
-                                                modern_roster):
+    def test_no_new_gate_is_offered_with_or_without_a_roster(self, pairs_client,
+                                                             modern_roster):
         from quam_state_manager.core import pulse_catalog as pc
         info = self._island(pairs_client.get("/pulse/new").data.decode())
-        assert info["q1-q2"]["new_gates"] == ["cz_unipolar", "cz_flattop"]
+        assert all(i["new_gates"] == [] for i in info.values())
         pc.apply_env_overlay(modern_roster)
-        info = self._island(pairs_client.get("/pulse/new").data.decode())
-        # the modern roster verifies bipolar + SNZ but NOT erf
-        # (ErfSquarePulse is absent from it)
-        assert set(info["q1-q2"]["new_gates"]) == {
-            "cz_unipolar", "cz_flattop", "cz_bipolar", "cz_snz"}
+        html = pairs_client.get("/pulse/new").data.decode()
+        info = self._island(html)
+        assert all(i["new_gates"] == [] for i in info.values())
+        assert "__new__:" not in html
 
     def test_pair_gate_form_gains_verified_variants(self, pairs_client,
                                                     modern_roster):
@@ -1496,92 +1497,19 @@ class TestCzGateFirst:
         assert 'value="cz_snz"' in html and 'value="cz_bipolar"' in html
         assert 'value="cz_flattop_erf"' not in html
 
-    def test_new_gate_one_shot_create_writes_classes(self, pairs_client,
-                                                     modern_roster):
+    def test_a_new_gate_is_refused_and_nothing_is_written(self, pairs_client,
+                                                          modern_roster):
         from quam_state_manager.core import pulse_catalog as pc
         pc.apply_env_overlay(modern_roster)
+        ctx = next(iter(pairs_client._app.config["contexts"].values()))
         r = pairs_client.post("/api/pulse/create", data={
             "pulse_type": "SNZPulse", "target_kind": "pair",
             "pair": "q2-q1", "gate": "__new__:cz_snz",
             "new_gate_name": "cz_snz", "slot": "flux_pulse_qubit",
             "amplitude": "0.07", "flat_length": "120", "t_phi_eff": "0",
             "padding": "16"})
-        assert r.status_code == 200, r.data[:400]
-        ctx = next(iter(pairs_client._app.config["contexts"].values()))
-        macro = ctx["store"].state["qubit_pairs"]["q2-q1"]["macros"]["cz_snz"]
-        # the configured slot carries the user's pulse with the roster
-        # canonical class; the macro skeleton has the SNZ shape
-        fp = macro["flux_pulse_qubit"]
-        assert fp["__class__"] == modern_roster["SNZPulse"]["canonical"]
-        assert fp["amplitude"] == 0.07 and fp["flat_length"] == 120
-        assert macro["coupler_flux_pulse"] is None
-        assert macro["phase_shift_control"] == 0.0
-        # docs/190 F13: the macro itself is a CZGate, not a bare dict
-        assert macro["__class__"].rsplit(".", 1)[-1] == "CZGate"
-        assert macro["id"] == "#./inferred_id"
-
-    def test_new_gate_macro_class_follows_the_chip_evidence(self, pairs_client,
-                                                            modern_roster):
-        # docs/190 F13: a chip whose CZ macros carry a lab fork's CZGate
-        # gets THAT class on the new macro, verbatim, not the canonical.
-        from quam_state_manager.core import pulse_catalog as pc
-        pc.apply_env_overlay(modern_roster)
-        ctx = next(iter(pairs_client._app.config["contexts"].values()))
-        st = ctx["store"].state
-        fork = "quam_config.two_flux_gate.CZGate"
-        for pair in st["qubit_pairs"].values():
-            for m in (pair.get("macros") or {}).values():
-                if isinstance(m, dict):
-                    m["__class__"] = fork
-        r = pairs_client.post("/api/pulse/create", data={
-            "pulse_type": "SNZPulse", "target_kind": "pair",
-            "pair": "q2-q1", "gate": "__new__:cz_snz",
-            "new_gate_name": "cz_snz_b", "slot": "flux_pulse_qubit",
-            "amplitude": "0.07", "flat_length": "120", "t_phi_eff": "0",
-            "padding": "16"})
-        assert r.status_code == 200, r.data[:400]
-        assert st["qubit_pairs"]["q2-q1"]["macros"]["cz_snz_b"]["__class__"] == fork
-
-    def test_new_flattop_gate_coupler_slot_carries_its_required_fields(
-            self, pairs_client, modern_roster):
-        # docs/190 F14: amplitude alone left a classed _FlatTopGaussianPulse
-        # that quam 0.6.0 refuses to load (flat_length has no default).
-        from quam_state_manager.core import pulse_catalog as pc
-        pc.apply_env_overlay(modern_roster)
-        r = pairs_client.post("/api/pulse/create", data={
-            "pulse_type": "FlatTopGaussianPulse", "target_kind": "pair",
-            "pair": "q2-q1", "gate": "__new__:cz_flattop",
-            "new_gate_name": "cz_ft", "slot": "flux_pulse_qubit",
-            "amplitude": "0.07", "flat_length": "120", "smoothing_length": "16"})
-        assert r.status_code == 200, r.data[:400]
-        ctx = next(iter(pairs_client._app.config["contexts"].values()))
-        macro = ctx["store"].state["qubit_pairs"]["q2-q1"]["macros"]["cz_ft"]
-        cp = macro["coupler_flux_pulse"]
-        assert cp["flat_length"] == "#../flux_pulse_qubit/flat_length"
-        assert cp["smoothing_length"] == "#../flux_pulse_qubit/smoothing_length"
-        assert cp["length"] == "#./inferred_total_length"
-        assert macro["__class__"].rsplit(".", 1)[-1] == "CZGate"
-
-    def test_new_gate_coupler_slot_refused_for_qubit_only_variant(
-            self, pairs_client, modern_roster):
-        from quam_state_manager.core import pulse_catalog as pc
-        pc.apply_env_overlay(modern_roster)
-        r = pairs_client.post("/api/pulse/create", data={
-            "pulse_type": "SNZPulse", "target_kind": "pair",
-            "pair": "q2-q1", "gate": "__new__:cz_snz",
-            "new_gate_name": "cz_snz2", "slot": "coupler_flux_pulse",
-            "amplitude": "0.07", "flat_length": "120", "t_phi_eff": "0",
-            "padding": "16"})
-        assert r.status_code == 400
-        assert b"no coupler slot" in r.data
-
-    def test_new_env_variant_refused_without_roster(self, pairs_client):
-        r = pairs_client.post("/api/pulse/create", data={
-            "pulse_type": "SquarePulse", "target_kind": "pair",
-            "pair": "q2-q1", "gate": "__new__:cz_snz",
-            "new_gate_name": "cz_snz3", "slot": "flux_pulse_qubit",
-            "amplitude": "0.07", "length": "100"})
-        assert r.status_code == 409
+        assert r.status_code == 410, r.data[:400]
+        assert "cz_snz" not in ctx["store"].state["qubit_pairs"]["q2-q1"]["macros"]
 
     def test_held_slot_still_409s(self, pairs_client):
         r = pairs_client.post("/api/pulse/create", data={
@@ -1882,3 +1810,246 @@ class TestTheDetailPutsValuesWhereTheyCanBeRead:
         assert ".gcz-params-row { display: flex;" in css
         assert "#gcz-root button[type=submit].btn-sm { width: auto; }" in css
         assert "#gcz-root .inspector-header-line { display: flex;" in css
+
+
+
+# ---------------------------------------------------------------------------
+# 2026-09-27: a gate slot is filled the way the chip lays out its own gates --
+# the pulse is an operation of the channel that plays it, the slot links to it
+# ---------------------------------------------------------------------------
+
+def _slot_state() -> dict:
+    return {
+        "qubits": {
+            "q1": {"id": "q1", "f_01": 5.2e9,
+                   "z": {"__class__": "quam_builder.architecture.superconducting.components.flux_line.FluxLine",
+                         "operations": {"cz_old_flux_pulse_q1_q2": {"amplitude": 0.1, "length": 40}}},
+                   "xy": {"operations": {}}},
+            "q2": {"id": "q2", "f_01": 4.9e9, "z": {"operations": {}},
+                   "xy": {"operations": {}}},
+        },
+        "qubit_pairs": {
+            "q1-q2": {
+                "qubit_control": "#/qubits/q1",
+                "qubit_target": "#/qubits/q2",
+                "moving_qubit": "control",
+                "coupler": {"operations": {}},
+                "macros": {
+                    "cz_empty": {"flux_pulse_qubit": None, "coupler_flux_pulse": None},
+                    "cz_old": {"flux_pulse_qubit": "#/qubits/q1/z/operations/cz_old_flux_pulse_q1_q2",
+                               "coupler_flux_pulse": None},
+                },
+            },
+        },
+    }
+
+
+@pytest.fixture
+def slot_client(tmp_path):
+    folder = tmp_path / "chip"
+    folder.mkdir()
+    (folder / "state.json").write_text(json.dumps(_slot_state()), encoding="utf-8")
+    (folder / "wiring.json").write_text(json.dumps(_make_wiring()), encoding="utf-8")
+    app = create_app(testing=True, instance_path=str(tmp_path / "inst"))
+    c = app.test_client()
+    assert c.post("/load", data={"folder": str(folder)}).status_code in (200, 302)
+    c._app = app
+    return c
+
+
+def _slot_store(c):
+    return next(iter(c._app.config["contexts"].values()))["store"]
+
+
+class TestGateSlotFillFollowsTheChipLayout:
+    def _island(self, html):
+        return json.loads(html.split('id="pulse-pairs-info-data"'
+                                     ' type="application/json">')[1]
+                          .split("</script>")[0])
+
+    def test_a_linked_slot_is_held_by_the_pulse_it_links_to(self, slot_client):
+        info = self._island(slot_client.get("/pulse/new").data.decode())
+        slots = info["q1-q2"]["gates"]["cz_old"]["slots"]
+        assert slots["flux_pulse_qubit"]["state"] == "held"
+        assert slots["flux_pulse_qubit"]["path"] == \
+            "qubits.q1.z.operations.cz_old_flux_pulse_q1_q2"
+        empty = info["q1-q2"]["gates"]["cz_empty"]["slots"]
+        assert empty["flux_pulse_qubit"]["state"] == "empty"
+        assert empty["coupler_flux_pulse"]["state"] == "empty"
+
+    def test_a_linked_slot_is_refused_as_held(self, slot_client):
+        r = slot_client.post("/api/pulse/create", data={
+            "target_kind": "pair", "pair": "q1-q2", "gate": "cz_old",
+            "slot": "flux_pulse_qubit", "pulse_type": "SquarePulse",
+            "length": "40", "amplitude": "0.1"})
+        assert r.status_code == 409 and b"already holds" in r.data
+
+    def test_the_flux_slot_pulse_lands_on_the_moving_qubit_z(self, slot_client):
+        r = slot_client.post("/api/pulse/create", data={
+            "target_kind": "pair", "pair": "q1-q2", "gate": "cz_empty",
+            "slot": "flux_pulse_qubit", "pulse_type": "SquarePulse",
+            "length": "48", "amplitude": "0.12"})
+        assert r.status_code == 200, r.data[:300]
+        st = _slot_store(slot_client).state
+        op = st["qubits"]["q1"]["z"]["operations"]["cz_empty_flux_pulse_q1_q2"]
+        assert op["amplitude"] == 0.12 and op["length"] == 48
+        assert st["qubit_pairs"]["q1-q2"]["macros"]["cz_empty"]["flux_pulse_qubit"] == \
+            "#/qubits/q1/z/operations/cz_empty_flux_pulse_q1_q2"
+        # one Ctrl+Z takes both back
+        s = _slot_store(slot_client)
+        gids = {e.group_id for e in s.change_log}
+        assert len(gids) == 1
+
+    def test_the_coupler_slot_pulse_lands_on_the_coupler(self, slot_client):
+        r = slot_client.post("/api/pulse/create", data={
+            "target_kind": "pair", "pair": "q1-q2", "gate": "cz_empty",
+            "slot": "coupler_flux_pulse", "pulse_type": "SquarePulse",
+            "length": "48", "amplitude": "0.02"})
+        assert r.status_code == 200, r.data[:300]
+        st = _slot_store(slot_client).state
+        pair = st["qubit_pairs"]["q1-q2"]
+        assert pair["coupler"]["operations"]["cz_empty_coupler_flux_pulse_q1_q2"]["amplitude"] == 0.02
+        assert pair["macros"]["cz_empty"]["coupler_flux_pulse"] == \
+            "#/qubit_pairs/q1-q2/coupler/operations/cz_empty_coupler_flux_pulse_q1_q2"
+
+
+class TestNoIqPulseOnASingleChannel:
+    """2026-09-27 (measured on the KRS 5Q chip): an IQ waveform on a single
+    (LF) channel makes quam's generate_config() raise ``Waveform type 'IQ'
+    not allowed for SingleChannel`` for the WHOLE machine."""
+
+    def test_drag_on_a_flux_line_is_refused(self, slot_client):
+        r = slot_client.post("/api/pulse/create", data={
+            "target_kind": "qubit", "qubit": "q1", "channel": "z",
+            "op_name": "bad_drag", "pulse_type": "DragCosinePulse",
+            "length": "40", "amplitude": "0.1", "alpha": "0", "axis_angle": "0",
+            "anharmonicity": "-2e8"})
+        assert r.status_code == 400 and b"single-output" in r.data
+        assert "bad_drag" not in _slot_store(slot_client).state["qubits"]["q1"]["z"]["operations"]
+
+    def test_an_axis_angle_on_a_flux_line_is_refused(self, slot_client):
+        r = slot_client.post("/api/pulse/create", data={
+            "target_kind": "qubit", "qubit": "q1", "channel": "z",
+            "op_name": "sq_ax", "pulse_type": "SquarePulse",
+            "length": "40", "amplitude": "0.1", "axis_angle": "0.5"})
+        assert r.status_code == 400
+
+    def test_a_plain_square_on_a_flux_line_is_fine(self, slot_client):
+        r = slot_client.post("/api/pulse/create", data={
+            "target_kind": "qubit", "qubit": "q1", "channel": "z",
+            "op_name": "sq", "pulse_type": "SquarePulse",
+            "length": "40", "amplitude": "0.1"})
+        assert r.status_code == 200, r.data[:300]
+
+
+class TestCopyAPulseToAnotherChannel:
+    def test_copy_follows_the_chip_layout(self, slot_client):
+        st = _slot_store(slot_client).state
+        st["qubits"]["q1"]["anharmonicity"] = -2.0e8
+        st["qubits"]["q2"]["anharmonicity"] = -2.1e8
+        st["qubits"]["q1"]["xy"]["operations"].update({
+            "x180_D": {"amplitude": 0.3, "length": 40,
+                       "anharmonicity": "#/qubits/q1/anharmonicity",
+                       "detuning": "#../x90_D/detuning",
+                       "global_ref": "#/qubit_pairs/q1-q2/moving_qubit",
+                       "self_len": "#./length"},
+            "x90_D": {"amplitude": 0.15, "length": 40, "detuning": 1.0e6},
+            "x180": "#./x180_D",
+        })
+        r = slot_client.post("/api/pulse/copy", data={
+            "path": "qubits.q1.xy.operations.x180", "target_kind": "qubit",
+            "qubit": "q2", "channel": "xy", "op_name": "x180_D"})
+        assert r.status_code == 200, r.data[:300]
+        cp = st["qubits"]["q2"]["xy"]["operations"]["x180_D"]
+        assert cp["amplitude"] == 0.3
+        assert cp["anharmonicity"] == "#/qubits/q2/anharmonicity"  # its OWN qubit
+        assert cp["detuning"] == 1.0e6        # q2.xy has no x90_D: the value
+        assert cp["global_ref"] == "#/qubit_pairs/q1-q2/moving_qubit"
+        assert cp["self_len"] == "#./length"
+        src = st["qubits"]["q1"]["xy"]["operations"]           # source untouched
+        assert src["x180"] == "#./x180_D"
+        assert src["x180_D"]["anharmonicity"] == "#/qubits/q1/anharmonicity"
+        assert b"written as values" in r.data and b"detuning" in r.data
+
+    def test_copy_refuses_an_existing_name_and_a_missing_source(self, slot_client):
+        r = slot_client.post("/api/pulse/copy", data={
+            "path": "qubits.q1.z.operations.cz_old_flux_pulse_q1_q2",
+            "target_kind": "qubit", "qubit": "q1", "channel": "z",
+            "op_name": "cz_old_flux_pulse_q1_q2"})
+        assert r.status_code == 409
+        r = slot_client.post("/api/pulse/copy", data={
+            "path": "qubits.q1.z.operations.nope", "target_kind": "qubit",
+            "qubit": "q2", "channel": "z", "op_name": "x"})
+        assert r.status_code == 400
+
+    def test_copy_of_an_iq_pulse_onto_a_flux_line_is_refused(self, slot_client):
+        st = _slot_store(slot_client).state
+        st["qubits"]["q1"]["xy"]["operations"]["d"] = {
+            "__class__": "quam_builder.architecture.superconducting.components.pulses.DragCosinePulse",
+            "amplitude": 0.1, "length": 40, "axis_angle": 0.0}
+        r = slot_client.post("/api/pulse/copy", data={
+            "path": "qubits.q1.xy.operations.d", "target_kind": "qubit",
+            "qubit": "q1", "channel": "z", "op_name": "d"})
+        assert r.status_code == 400 and b"single-output" in r.data
+
+
+class TestOneCreateButton:
+    """2026-09-27 (user): "버튼이 2개였던 것 같다. 2개로 하지 말고 하나로 통일해"."""
+
+    def test_the_toolbar_has_one_create_button(self, slot_client):
+        html = slot_client.get("/pulses", headers={"HX-Request": "true"}).data.decode()
+        assert html.count('hx-get="/pulse/new"') >= 1
+        assert "pulse-gcz-btn" not in html
+        assert "+ Gaussian CZ" not in html
+
+    def test_every_create_kind_carries_the_same_choice(self, slot_client):
+        for url, kind in (("/pulse/new", "pulse"), ("/pulse/new?kind=copy", "copy"),
+                          ("/pulse/new?kind=gaussian_cz", "gaussian_cz"),
+                          ("/pulse/gaussian-cz", "gaussian_cz")):
+            html = slot_client.get(url).data.decode()
+            assert 'id="pulse-create-choice"' in html, url
+            for k in ("pulse", "copy", "gaussian_cz"):
+                assert f'data-create-kind="{k}"' in html, (url, k)
+            lit = html.split('aria-selected="true"')[0].rsplit('data-create-kind="', 1)[1]
+            assert lit.startswith(kind), (url, lit[:20])
+
+
+class TestANewClassReprobesTheEnv:
+    """2026-09-27: a pulse of a class new to the chip raised "N errors ...
+    would crash a node run (harvest drift)" on Diagnostics for a class the
+    env imports fine -- nothing re-probed until the chip was reopened."""
+
+    def _spy(self, monkeypatch, manifest):
+        import quam_state_manager.web.routes as rm
+        kicked = []
+        monkeypatch.setattr(rm, "_live_env_manifest", lambda store: manifest)
+        monkeypatch.setattr(rm, "_kick_env_reprobe",
+                            lambda *a, **k: kicked.append(a))
+        return kicked
+
+    def test_a_class_the_manifest_never_probed_kicks_one_reprobe(
+            self, slot_client, monkeypatch):
+        kicked = self._spy(monkeypatch, {"classes": {}})
+        r = slot_client.post("/api/pulse/create", data={
+            "target_kind": "qubit", "qubit": "q2", "channel": "xy",
+            "op_name": "g1", "pulse_type": "GaussianPulse",
+            "length": "40", "amplitude": "0.1", "sigma": "8"})
+        assert r.status_code == 200, r.data[:300]
+        assert len(kicked) == 1
+
+    def test_a_fully_probed_chip_is_left_alone(self, slot_client, monkeypatch):
+        from quam_state_manager.core import state_env_schema
+        st = _slot_store(slot_client).state
+        kicked = self._spy(monkeypatch, None)
+        slot_client.post("/api/pulse/create", data={
+            "target_kind": "qubit", "qubit": "q2", "channel": "xy",
+            "op_name": "g2", "pulse_type": "GaussianPulse",
+            "length": "40", "amplitude": "0.1", "sigma": "8"})
+        known = {c: {"importable": True}
+                 for c in state_env_schema.harvest_classes(st)}
+        kicked = self._spy(monkeypatch, {"classes": known})
+        slot_client.post("/api/pulse/create", data={
+            "target_kind": "qubit", "qubit": "q2", "channel": "xy",
+            "op_name": "g3", "pulse_type": "GaussianPulse",
+            "length": "40", "amplitude": "0.1", "sigma": "8"})
+        assert kicked == []

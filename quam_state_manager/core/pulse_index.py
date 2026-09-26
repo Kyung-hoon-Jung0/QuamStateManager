@@ -27,6 +27,7 @@ from typing import Any
 from quam_state_manager.core import qdac
 from quam_state_manager.core.loader import _walk
 from quam_state_manager.core.loader import natural_key
+from quam_state_manager.core.pointer_path import _walk as _seg_walk
 from quam_state_manager.core.pointer_path import pointer_to_abs, resolve_field_target
 from quam_state_manager.core.pointer_resolver import is_pointer
 from quam_state_manager.core.pulse_catalog import (
@@ -712,3 +713,93 @@ class PulseIndex:
     def used_by(self, op_path: str) -> list[str]:
         with self.store._lock:
             return used_by(self.store.merged, op_path, self.reverse_index())
+
+
+# ---------------------------------------------------------------------------
+# Copy a pulse onto another channel (2026-09-27, the one create flow)
+# ---------------------------------------------------------------------------
+
+def _owner_segs(segs: list[str]) -> list[str]:
+    """``qubits.qX`` / ``qubit_pairs.pX`` -- the entity a path belongs to."""
+    return list(segs[:2]) if len(segs) >= 2 and segs[0] in (
+        "qubits", "qubit_pairs") else []
+
+
+def copy_pulse_to(merged: dict, src_path: str, dst_path: str) -> tuple[Any, list[str]]:
+    """The subtree to write at *dst_path* so it plays what *src_path* plays,
+    laid out the way the chip lays out its own pulses.
+
+    The chip's own layout is the pattern (surveyed on the KRS 5Q chip: an op
+    points at its OWN qubit's properties -- ``anharmonicity =
+    "#/qubits/q1/anharmonicity"`` -- and at sibling ops of its own channel --
+    ``length = "#../x180_DragCosine/length"``). So a copy:
+
+    * follows an alias (``x180 = "#./x180_DragCosine"``) to the pulse itself;
+    * keeps a pointer INTO the copied pulse, re-expressed at the copy;
+    * maps a pointer into the SOURCE entity (``#/qubits/q1/...``) to the same
+      place in the TARGET entity when that place exists there;
+    * keeps a relative pointer verbatim when it lands on something that
+      exists from the copy's location (the target channel has the sibling);
+    * keeps any other absolute pointer verbatim (a machine-wide value);
+    * otherwise writes the VALUE the pointer resolves to on the source
+      (named in the returned notes), so the copy never dangles.
+
+    Raises ``ValueError`` when the source is not a pulse dict or a pointer
+    that must be materialized does not resolve.
+    """
+    ft = resolve_field_target(merged, src_path)
+    if not ft.get("resolvable"):
+        raise ValueError(f"{src_path} does not resolve to a pulse")
+    real = ft.get("resolved_path") or src_path
+    # resolved_value carries LEAF values only; a pulse is a dict -- walk to it
+    _found, body = _seg_walk(merged, real.split("."))
+    if not isinstance(body, dict):
+        raise ValueError(f"{src_path} is not a pulse (a {type(body).__name__})")
+    src_segs = real.split(".")
+    dst_segs = dst_path.split(".")
+    src_owner, dst_owner = _owner_segs(src_segs), _owner_segs(dst_segs)
+    notes: list[str] = []
+
+    def exists(segs: list[str]) -> bool:
+        found, _ = _seg_walk(merged, segs)
+        return found
+
+    def materialize(target: list[str], rel: list[str]) -> Any:
+        r = resolve_field_target(merged, ".".join(target))
+        if not r.get("resolvable"):
+            raise ValueError(
+                f"{'.'.join(rel)} points at {'.'.join(target)}, which does "
+                "not resolve on the source")
+        notes.append(".".join(rel))
+        _f, val = _seg_walk(merged, (r.get("resolved_path") or "").split("."))
+        return copy.deepcopy(val if _f else r.get("resolved_value"))
+
+    def rewrite(node: Any, rel: list[str]) -> Any:
+        if isinstance(node, dict):
+            return {k: rewrite(v, rel + [k]) for k, v in node.items()}
+        if isinstance(node, list):
+            return [rewrite(v, rel + [str(i)]) for i, v in enumerate(node)]
+        if not is_pointer(node):
+            return node
+        holder_src = src_segs + rel
+        holder_dst = dst_segs + rel
+        target = pointer_to_abs(node, holder_src)
+        if target is None:
+            return node
+        if _is_inside(target, src_segs):
+            return _derive_pointer(_flavor(node), holder_dst,
+                                   dst_segs + target[len(src_segs):])
+        if _flavor(node) != "#/":
+            landing = pointer_to_abs(node, holder_dst)
+            if landing is not None and (_is_inside(landing, dst_segs)
+                                        or exists(landing)):
+                return node
+            return materialize(target, rel)
+        if src_owner and dst_owner and _is_inside(target, src_owner):
+            mapped = dst_owner + target[len(src_owner):]
+            if exists(mapped):
+                return "#/" + "/".join(mapped)
+            return materialize(target, rel)
+        return node
+
+    return rewrite(copy.deepcopy(body), []), notes
