@@ -820,11 +820,21 @@ class PathRank:
     which is the separator; a path that does is kept out of the fast scan by
     falling back to ``search_paths``' own grammar on the row list."""
 
-    __slots__ = ("hay", "low", "offs", "counts", "n", "nbytes")
+    __slots__ = ("hay", "low", "offs", "counts", "n", "nbytes", "nat_order")
 
-    def __init__(self, rows: list) -> None:
+    def __init__(self, rows: list, nat_order: "dict[str, int] | None" = None) -> None:
         rows = list(rows)
-        rows.sort(key=lambda r: (-r[1], natural_key(r[0])))
+        # ``natural_key`` ends in the raw string, so distinct paths never tie
+        # and a path's position in the natural order of ANY superset of the
+        # current paths ranks them exactly as ``natural_key`` does. A capture
+        # moves change COUNTS, almost never the path set, so the previous
+        # rank's order is reused and the sort key is two ints (the natural
+        # key over 180k paths was 2.3 s of a 3.9 s rebuild, measured).
+        if nat_order is None or any(r[0] not in nat_order for r in rows):
+            nat = sorted((r[0] for r in rows), key=natural_key)
+            nat_order = {p: i for i, p in enumerate(nat)}
+        self.nat_order = nat_order
+        rows.sort(key=lambda r: (-r[1], nat_order[r[0]]))
         from array import array
         paths = [r[0] for r in rows]
         self.counts = array("q", [int(r[1]) for r in rows])
@@ -838,16 +848,18 @@ class PathRank:
         offs.append(o)
         self.offs = offs
         self.n = len(paths)
-        self.nbytes = (len(self.hay) * 2 + 16 * (self.n + 1) + 256)
+        self.nbytes = (len(self.hay) * 2 + 16 * (self.n + 1) + 256
+                       + 120 * len(nat_order))
         if any("\n" in p for p in paths):     # never on a real index
             raise ValueError("path with a newline")
 
     @classmethod
-    def from_conn(cls, conn: sqlite3.Connection) -> "PathRank":
+    def from_conn(cls, conn: sqlite3.Connection,
+                  nat_order: "dict[str, int] | None" = None) -> "PathRank":
         return cls(conn.execute(
             "SELECT p.path, COUNT(l.snap_id) AS n "
             "  FROM leaf_paths p LEFT JOIN leaf_cp l ON l.path_id = p.id "
-            " GROUP BY p.id").fetchall())
+            " GROUP BY p.id").fetchall(), nat_order)
 
     def _row(self, i: int) -> dict:
         return {"path": self.hay[self.offs[i]:self.offs[i + 1] - 1],

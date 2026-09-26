@@ -41,6 +41,12 @@ from quam_state_manager.core.scanner import Workspace
 # Phase 4 §1 — XSS-safe JSON for inline <script> bodies.
 # ----------------------------------------------------------------------
 
+#: requests that are not a user waiting on a page (RAM P7 Foreground)
+_FG_EXEMPT_PREFIXES = ("/static/", "/debug/")
+_FG_EXEMPT_PATHS = frozenset({"/datasets/wait", "/datasets/poll",
+                              "/workspace/tree/poll", "/workbench/watch"})
+
+
 class ScriptJson(Markup):
     """A string ``_script_json_filter`` has already made safe. The filter hands
     it back unchanged, so a memoized payload (the Datasets rows JSON, ~1 MB on
@@ -716,6 +722,26 @@ def create_app(*, testing: bool = False, instance_path: str | None = None) -> Fl
     # teardown left, so a leaked scope cannot outlive one request on a
     # reused worker thread.
     app.before_request(dir_sample.begin)
+
+    # RAM P7: the run-ingest precompute yields to the user's requests
+    # (run_ingest.Foreground). Held-open and background polls are not the
+    # user waiting on a page, so they never hold the precompute back.
+    from quam_state_manager.core import run_ingest as _run_ingest
+    from flask import g as _g, request as _request
+
+    def _fg_enter():
+        path = _request.path or ""
+        if path.startswith(_FG_EXEMPT_PREFIXES) or path in _FG_EXEMPT_PATHS:
+            return
+        _run_ingest.FOREGROUND.enter()
+        _g._sm_fg = True
+
+    app.before_request(_fg_enter)
+
+    @app.teardown_request
+    def _fg_exit(exc=None):                 # noqa: ANN001 -- Flask's signature
+        if _g.pop("_sm_fg", False):
+            _run_ingest.FOREGROUND.exit()
 
     @app.teardown_request
     def _close_dir_sample(exc=None):        # noqa: ANN001 — Flask's signature

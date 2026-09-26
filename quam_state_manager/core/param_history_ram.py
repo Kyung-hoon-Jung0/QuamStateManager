@@ -141,6 +141,10 @@ def close_all() -> None:
 # a capture/ingest/prune (any commit to index.sqlite) is a miss and a full
 # rebuild -- never a patched list.
 _PATH_RANK_MEMO: Any = None
+#: per history dir, the natural order of every path the last rank saw -- a
+#: pure function of the path strings, so it can never be stale, only
+#: incomplete (a new path), which PathRank detects and recomputes
+_NAT_ORDER: "dict[str, dict[str, int]]" = {}
 _PATH_RANK_LOCK = threading.Lock()
 
 
@@ -169,9 +173,15 @@ def leaf_search(hm: Any, quam_state_path: Path | str, query: str, *,
     def compute():
         conn = hm._open_index(path)
         try:
-            return leaf_index.PathRank.from_conn(conn)
+            rank = leaf_index.PathRank.from_conn(
+                conn, _NAT_ORDER.get(str(hm._history_dir(path))))
         finally:
             conn.close()
+        with _PATH_RANK_LOCK:
+            _NAT_ORDER[str(hm._history_dir(path))] = rank.nat_order
+            while len(_NAT_ORDER) > 2:
+                _NAT_ORDER.pop(next(iter(_NAT_ORDER)))
+        return rank
 
     try:
         token = hist_token(hm, path)

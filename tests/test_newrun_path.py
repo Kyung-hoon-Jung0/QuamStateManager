@@ -251,3 +251,79 @@ class TestEntryGrandparents:
             assert len(calls) == 2              # only the new run's path
         finally:
             os.path.dirname = real_dn
+
+
+class TestForegroundYield:
+    """RAM P7: the tick's precompute steps wait for the user's requests
+    (measured: the first /datasets after a run went 124 -> 600 ms when the
+    sidebar render and the alignment refresh ran beside it)."""
+
+    def test_wait_idle_blocks_while_a_request_is_in_flight(self):
+        fg = run_ingest.Foreground()
+        fg.enter()
+        done = threading.Event()
+        waited = []
+        t = threading.Thread(target=lambda: (waited.append(fg.wait_idle(quiet_s=0.05, max_s=5.0)),
+                                             done.set()))
+        t.start()
+        assert not done.wait(0.3), "a step started while a request was in flight"
+        fg.exit()
+        assert done.wait(2.0)
+        assert 0.3 <= waited[0] < 2.0
+
+    def test_wait_idle_is_bounded(self):
+        fg = run_ingest.Foreground()
+        fg.enter()                      # a request that never ends
+        t0 = time.monotonic()
+        fg.wait_idle(quiet_s=0.05, max_s=0.2)
+        assert time.monotonic() - t0 < 1.0
+
+    def test_the_app_counts_page_requests_and_not_held_polls(self, tmp_path):
+        app = create_app(testing=True, instance_path=str(tmp_path / "_inst"))
+        seen = {}
+
+        @app.route("/_fg_probe")
+        def _fg_probe():
+            seen["page"] = run_ingest.FOREGROUND.active
+            return "ok"
+
+        @app.route("/_fg_boom")
+        def _fg_boom():
+            raise RuntimeError("boom")
+
+        c = app.test_client()
+        base = run_ingest.FOREGROUND.active
+        assert c.get("/_fg_probe").status_code == 200
+        assert seen["page"] == base + 1
+        assert run_ingest.FOREGROUND.active == base
+        app.config["PROPAGATE_EXCEPTIONS"] = False
+        assert c.get("/_fg_boom").status_code == 500
+        assert run_ingest.FOREGROUND.active == base, "a raising view leaked its count"
+        # a held-open poll is not a user waiting on a page
+        orig = run_ingest.FOREGROUND.enter
+        calls = []
+        run_ingest.FOREGROUND.enter = lambda: calls.append(1) or orig()
+        try:
+            c.get("/datasets/wait?timeout=0")
+            c.get("/static/app.js")
+        finally:
+            run_ingest.FOREGROUND.enter = orig
+        assert calls == []
+
+    def test_a_started_worker_yields_and_run_once_does_not(self):
+        ing = run_ingest.RunIngest(lambda roots: [], refresh=lambda s: None)
+        assert ing.yield_to_foreground is False
+        order = []
+        ing.add_after(lambda roots: order.append(run_ingest.FOREGROUND.active), "probe")
+        run_ingest.FOREGROUND.enter()
+        try:
+            ing.yield_to_foreground = True
+            ing.kick(["x"])
+            t = threading.Thread(target=ing.run_once)
+            t.start()
+            time.sleep(0.3)
+            assert order == [], "the step ran while a request was in flight"
+        finally:
+            run_ingest.FOREGROUND.exit()
+        t.join(5.0)
+        assert order == [0]

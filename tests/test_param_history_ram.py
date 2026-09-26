@@ -516,6 +516,38 @@ def test_path_rank_equals_search_paths_over_random_queries():
             assert rank.search(q, lim) == LI.search_paths(conn, q, limit=lim), (q, lim)
 
 
+def test_path_rank_reusing_an_earlier_natural_order_equals_cold():
+    """A rebuild reuses the previous rank's natural order (a capture moves
+    counts, not paths). Counts moved, a path added (the order must be
+    recomputed, not guessed) and paths removed (a superset order stays
+    exact): every answer still equals the SQL typeahead on the index NOW."""
+    rng = random.Random(9)
+    conn = _rank_db(rng)
+    order0 = LI.PathRank.from_conn(conn).nat_order
+    paths = [r[0] for r in conn.execute("SELECT path FROM leaf_paths")]
+    reused = 0
+    for step in range(12):
+        ev = step % 3
+        if ev == 0:        # counts move
+            pid = rng.randrange(1, len(paths) + 1)
+            conn.execute("INSERT OR IGNORE INTO leaf_cp (path_id, snap_id, value) "
+                         "VALUES (?, ?, 1)", (pid, 100 + step))
+        elif ev == 1:      # a new path, ranked BETWEEN existing ones
+            conn.execute("INSERT INTO leaf_paths (path) VALUES (?)",
+                         (f"q1.x{step}0.amplitude",))
+        else:              # a path removed
+            conn.execute("DELETE FROM leaf_paths WHERE id = ?",
+                         (rng.randrange(1, len(paths) + 1),))
+        rank = LI.PathRank.from_conn(conn, order0)
+        if rank.nat_order is order0:
+            reused += 1
+        order0 = rank.nat_order            # carried forward, as production does
+        for q in ("q1", "x", "amplitude", "q1 | x1", "T1", "a"):
+            for lim in (1, 7, 1000):
+                assert rank.search(q, lim) == LI.search_paths(conn, q, limit=lim), (step, q, lim)
+    assert reused >= 4, "the earlier order was never reused -- the pin proves nothing"
+
+
 def _param_search(env, q):
     r = env["client"].get("/param-history/param-search?q=" + q)
     assert r.status_code == 200

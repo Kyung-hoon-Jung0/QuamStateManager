@@ -26805,8 +26805,15 @@ def _ingest_after_steps(app) -> list:
         ctx = (app.config.get("contexts") or {}).get(name) if name else None
         if ws is None or hm is None or not ctx or ctx.get("type") != "quam" or not ctx.get("path"):
             return
+        from quam_state_manager.core.run_ingest import FOREGROUND as fg
+
+        def yield_between(_done: int, _total: int) -> None:
+            # every 64 runs: a request that arrived mid-scan goes first
+            if fg.active:
+                fg.wait_idle(quiet_s=0.05, max_s=1.0)
+
         with app.app_context():
-            _alignment_jobs().refresh(hm, Path(ctx["path"]), ws)
+            _alignment_jobs().refresh(hm, Path(ctx["path"]), ws, progress=yield_between)
 
     return [workspace_sidebar, datasets_payload, alignment]
 

@@ -98,7 +98,8 @@ class AlignmentJobs:
         t.start()
         return job
 
-    def refresh(self, hm: Any, loaded_path: Path, workspace: Any) -> bool:
+    def refresh(self, hm: Any, loaded_path: Path, workspace: Any, *,
+                progress: Any = None) -> bool:
         """Recompute now, in the caller's thread, when this chip has a cached
         alignment that went stale. Returns whether it computed."""
         if not hm.has_workspace_alignment(loaded_path):
@@ -111,7 +112,7 @@ class AlignmentJobs:
         if job is not None and not job.finished.is_set():
             job.finished.wait(60.0)               # one computation at a time
             return False
-        hm.scan_workspace_alignment(loaded_path, workspace)
+        hm.scan_workspace_alignment(loaded_path, workspace, progress=progress)
         return True
 
     def join(self, timeout: float = 30.0) -> None:
