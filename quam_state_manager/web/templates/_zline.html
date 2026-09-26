@@ -21,6 +21,7 @@
             <th title="exponential_filter entries (A, tau)">Exponentials</th>
             <th title="feedforward_filter taps (0.5 ns each)">FIR taps</th>
             <th title="sum of the FIR taps = the FIR's DC gain">FIR sum</th>
+            <th title="Can the exponential correction be drawn under each QOP model? QOP 3.5+ corrects the sum of all exponentials at once; QOP 3.4 and earlier cascade one correction per exponential, so stability can differ">QOP &ge; 3.5 / &le; 3.4</th>
             <th>Notes</th>
         </tr>
     </thead>
@@ -34,6 +35,14 @@
             <td>{{ r.n_exp if r.n_exp is not none else '—' }}</td>
             <td>{{ r.n_taps if r.n_taps is not none else '—' }}</td>
             <td>{{ '%.4f' | format(r.ff_sum) if r.ff_sum is not none else '—' }}</td>
+            <td class="zline-models">
+                {%- if r.models -%}
+                {%- for m in ('sum', 'cascade') -%}
+                {%- set v = r.models.get(m, 'ok') -%}
+                <span data-model="{{ m }}" class="{{ 'zline-err-text' if v != 'ok' else 'muted' }}">{{ v }}</span>{% if not loop.last %} / {% endif %}
+                {%- endfor -%}
+                {%- else -%}<span class="muted">&mdash;</span>{%- endif -%}
+            </td>
             <td class="zline-row-note">
                 {%- set shown = r.notes | selectattr('level', 'ne', 'info') | list -%}
                 {%- if shown -%}

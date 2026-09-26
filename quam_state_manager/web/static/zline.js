@@ -89,9 +89,9 @@
         ];
         if (s.iir_only && s.fir_only) {
             traces.push({ x: ts, customdata: s.t_ns, y: s.iir_only, name: 'exponential only', mode: 'lines',
-                          line: { color: C.iir, width: 1.25 }, visible: 'legendonly', hovertemplate: hov });
+                          line: { color: C.iir, width: 1.25, dash: 'dot' }, hovertemplate: hov });
             traces.push({ x: ts, customdata: s.t_ns, y: s.fir_only, name: 'FIR only', mode: 'lines',
-                          line: { color: C.fir, width: 1.25 }, visible: 'legendonly', hovertemplate: hov });
+                          line: { color: C.fir, width: 1.25, dash: 'dot' }, hovertemplate: hov });
         }
         var which = s.iir_only && s.fir_only ? 'exponential + FIR' : s.iir_only ? 'exponential' : s.fir_only ? 'FIR' : 'no filter';
         traces.push({ x: ts, customdata: s.t_ns, y: s.both, name: 'output (' + which + ')', mode: 'lines',

@@ -146,8 +146,8 @@ class TestNeverStale:
                 else:
                     store.merged["qubits"]["q1"]["z"]["operations"]["const"]["amplitude"] = round(rng.uniform(-0.4, 0.4), 3)
             _, d = _data(client, "qubits.q1.z")
-            pf, _n = zf.parse_port_filter(json.loads(json.dumps(port)))
-            if pf is None:
+            pf, _n, v = zf.analyze_port(json.loads(json.dumps(port)))
+            if pf is None or zf.model_blocked(v["sum"]):
                 assert d["step"] is None
                 continue
             cold = zf.step_response(pf)
@@ -213,17 +213,110 @@ class TestTableParseMemo:
                 port["exponential_filter"][0][0] = rng.choice([-1.5, -0.05, 0.2, -1.0])
             html = client.get("/zline", headers={"HX-Request": "true"}).get_data(as_text=True)
             row = html.split('data-line="qubits.q1.z"', 1)[1].split("</tr>", 1)[0]
-            pf, notes = zf.parse_port_filter(json.loads(json.dumps(port)))
-            blocked = pf is None
+            pf, notes, v = zf.analyze_port(json.loads(json.dumps(port)))
+            blocked = pf is None or any(zf.model_blocked(x) for x in v.values())
             assert ("zline-err-text" in row) == blocked, (step, port["exponential_filter"])
 
     def test_a_caller_mutating_the_notes_never_reaches_the_memo(self):
         from quam_state_manager.web import routes
         routes._ZLINE_MEMO.clear()
         port = {"exponential_filter": [[1.5, 20.0]]}         # a block note
-        _, n1 = routes._zline_parse("ports.x", port)
+        _, n1, v1 = routes._zline_analyze("ports.x", port)
         want = [dict(n) for n in n1]
+        wantv = {m: [dict(n) for n in v] for m, v in v1.items()}
         n1.append({"level": "info", "code": "junk", "text": "x"})
         n1[0]["text"] = "overwritten"
-        _, n2 = routes._zline_parse("ports.x", port)
-        assert n2 == want
+        for v in v1.values():
+            v.append({"level": "block", "code": "junk", "text": "x"})
+        _, n2, v2 = routes._zline_analyze("ports.x", port)
+        assert n2 == want and v2 == wantv
+
+
+class TestRound3PerModel:
+    """Verifier round 3, reproduced on the route: the memo key missed the
+    high-pass, and stability was judged under the sum model only."""
+
+    def _port(self, client):
+        store = TestNeverStale()._store(client)
+        return store, store.merged["ports"]["analog_outputs"]["con1"]["5"]["1"]
+
+    def test_high_pass_edited_into_its_explicit_form_is_never_stale(self, client):
+        store, port = self._port(client)
+        forms = [
+            {"exponential_filter": [], "high_pass_filter": 1000.0, "exponential_dc_gain": None},
+            {"exponential_filter": [[1.0, 1000.0]], "high_pass_filter": None, "exponential_dc_gain": 0.0},
+        ]
+        # one model per pass: the memo holds one token per slot, so toggling
+        # the model between the two forms would miss anyway and hide the bug
+        for model in ("cascade", "sum"):
+            for f in forms + forms:
+                with store._lock:
+                    port.update(json.loads(json.dumps(f)))
+                _, d = _data(client, "qubits.q1.z", model=model)
+                pf, _n, v = zf.analyze_port(json.loads(json.dumps(port)))
+                cold = zf.step_response(pf, model=model)
+                assert d["step"]["both"] == cold["both"], (f, model)
+                assert d["step"]["dc_limit"] == cold["dc_limit"], (f, model)
+
+    def test_randomized_forms_and_models_match_cold(self, client):
+        store, port = self._port(client)
+        rng = random.Random(3)
+        choices = [
+            {"exponential_filter": [], "high_pass_filter": 1000.0, "exponential_dc_gain": None},
+            {"exponential_filter": [[1.0, 1000.0]], "high_pass_filter": None, "exponential_dc_gain": 0.0},
+            {"exponential_filter": [[-0.6, 10.0], [-0.6, 1000.0]], "high_pass_filter": None, "exponential_dc_gain": None},
+            {"exponential_filter": [[-1.2, 10.0], [0.5, 1000.0]], "high_pass_filter": None, "exponential_dc_gain": None},
+            {"exponential_filter": [[-0.05, 20.0]], "high_pass_filter": None, "exponential_dc_gain": 0.8},
+        ]
+        # mostly one model at a time (a model switch alone already misses the
+        # one-token slot), with occasional switches
+        model = "cascade"
+        for step in range(40):
+            with store._lock:
+                port.update(json.loads(json.dumps(rng.choice(choices))))
+            if rng.random() < 0.15:
+                model = "sum" if model == "cascade" else "cascade"
+            _, d = _data(client, "qubits.q1.z", model=model)
+            pf, _n, v = zf.analyze_port(json.loads(json.dumps(port)))
+            if zf.model_blocked(v[model]):
+                assert d["step"] is None and d["pulse"] is None, step
+                continue
+            assert d["step"]["both"] == zf.step_response(pf, model=model)["both"], (step, model)
+
+    def test_stable_cascade_is_drawn_and_sum_says_so(self, client):
+        store, port = self._port(client)
+        with store._lock:
+            port["exponential_filter"] = [[-0.6, 10.0], [-0.6, 1000.0]]
+        _, c = _data(client, "qubits.q1.z", model="cascade")
+        assert c["step"] is not None and c["pulse"] is not None
+        assert "unstable" not in [n["code"] for n in c["notes"]]
+        _, s = _data(client, "qubits.q1.z", model="sum")
+        codes = [n["code"] for n in s["notes"]]
+        assert s["step"] is None and "unstable" in codes and "other_model_draws" in codes
+        html = client.get("/zline", headers={"HX-Request": "true"}).get_data(as_text=True)
+        row = html.split('data-line="qubits.q1.z"', 1)[1].split("</tr>", 1)[0]
+        assert 'data-model="sum" class="zline-err-text">UNSTABLE' in row
+        assert 'data-model="cascade" class="muted">ok' in row
+
+    def test_unstable_cascade_stage_is_one_named_note(self, client):
+        store, port = self._port(client)
+        with store._lock:
+            port["exponential_filter"] = [[-1.2, 10.0], [0.5, 1000.0]]
+        _, c = _data(client, "qubits.q1.z", model="cascade")
+        blocks = [n for n in c["notes"] if n["level"] == "block"]
+        assert c["step"] is None and c["pulse"] is None
+        assert [n["code"] for n in blocks] == ["unstable"]
+        assert "stage 1 of 2" in blocks[0]["text"] and "A = -1.2" in blocks[0]["text"]
+        _, s = _data(client, "qubits.q1.z", model="sum")
+        assert s["step"] is not None
+
+    def test_a_curve_error_in_step_and_pulse_is_one_note(self, client, monkeypatch):
+        def boom(*a, **k):
+            raise ValueError("boom")
+        monkeypatch.setattr(zf, "step_response", boom)
+        monkeypatch.setattr(zf, "pulse_response", boom)
+        from quam_state_manager.web import routes
+        routes._ZLINE_MEMO.clear()
+        _, d = _data(client, "qubits.q1.z")
+        assert [n["code"] for n in d["notes"]].count("model_error") == 1
+

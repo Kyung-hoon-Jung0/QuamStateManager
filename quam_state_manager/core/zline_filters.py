@@ -101,7 +101,7 @@ What is NOT in the documentation, and what this module does about it
 from __future__ import annotations
 
 import math
-from dataclasses import dataclass, field
+from dataclasses import astuple, dataclass, field
 from typing import Any
 
 import numpy as np
@@ -187,9 +187,14 @@ class PortFilter:
         return bool(self.feedforward)
 
     def key(self) -> tuple:
-        """A content key (hashable) -- what a memo of a response keys on."""
-        return (self.exponential, self.dc_gain, self.feedforward,
-                self.sampling_rate, self.upsampling_mode, self.output_mode)
+        """A content key (hashable) -- what a memo of a response keys on.
+
+        EVERY field, by construction: a hand-picked subset once left out
+        ``high_pass``, so a port with ``high_pass_filter = h`` and one with
+        ``exponential_dc_gain = 0`` + ``[[1, h]]`` (same effective sum-form
+        set, different cascade) shared a key and the memo served one's curve
+        for the other."""
+        return astuple(self)
 
 
 def parse_port_filter(port: Any) -> tuple[PortFilter | None, list[dict]]:
@@ -197,6 +202,8 @@ def parse_port_filter(port: Any) -> tuple[PortFilter | None, list[dict]]:
 
     Returns ``(PortFilter, notes)``; ``PortFilter`` is ``None`` whenever a
     ``block`` note was raised -- the caller then draws no filtered curve.
+    Stability is judged per QOP model by ``model_stability`` (``analyze_port``
+    runs both), never here.
     Never raises: an unexpected failure inside the model is itself a
     ``block`` note, so one bad port can never take a whole page down.
     """
@@ -373,13 +380,61 @@ def _parse_port_filter(port: Any) -> tuple[PortFilter | None, list[dict]]:
     pf = PortFilter(tuple(exps), float(dc_gain), tuple(taps), float(sr), up, om, high_pass)
     if block:
         return None, notes
-    # Stability is a property of the whole exponential set -> checked here too.
-    if pf.has_iir:
-        _, _, _, stab = _correction_analog(pf)
-        notes.extend(stab)
-        if any(n["level"] == "block" for n in stab):
-            return None, notes
+    # Stability is NOT judged here: it depends on the QOP model drawn (a set
+    # can be unstable as one sum-form correction yet stable as a cascade of
+    # single-exponential stages, and the reverse) -> ``model_stability``.
     return pf, notes
+
+
+MODELS = ("sum", "cascade")
+MODEL_LABEL = {"sum": "QOP >= 3.5 sum model", "cascade": "QOP <= 3.4 cascade"}
+
+
+def model_stability(pf: PortFilter, model: str = "sum") -> list[dict]:
+    """``block`` notes when the IIR correction of *model* cannot be drawn
+    (unstable / improper / ill-conditioned), else ``[]``. Every note names the
+    model, and for the cascade the STAGE (index, A, tau) that fails.
+
+    [derived] The sum model corrects H(s) = A_dc + sum A_n s/(s + 1/tau_n) as
+    one filter; the cascade corrects each stage 1 + A s/(s + 1/tau) on its own
+    [paper: output_filter.md "The filters are cascaded sequentially, such that
+    the output of one filter is the input of the next one."], so its stability
+    is the stability of every stage. Never raises.
+    """
+    if not pf.has_iir:
+        return []
+    label = MODEL_LABEL.get(model, model)
+    try:
+        if model == "cascade":
+            stages = _cascade_stage_filters(pf)
+            out = []
+            for i, (one, (a, tau)) in enumerate(zip(stages, pf.exponential)):
+                _, _, _, st = _correction_analog(one)
+                hp = pf.high_pass is not None and i == len(stages) - 1
+                what = (f"high-pass stage (tau_hp = {tau:g} ns)" if hp
+                        else f"stage {i + 1} of {len(stages)} (A = {a:g}, tau = {tau:g} ns)")
+                out.extend(_note(n["level"], n["code"], f"{label}, {what}: {n['text']}") for n in st)
+            return out
+        _, _, _, st = _correction_analog(pf)
+        return [_note(n["level"], n["code"], f"{label}: {n['text']}") for n in st]
+    except Exception as exc:  # noqa: BLE001 -- one bad port is one note
+        return [_note("block", "model_error",
+                      f"{label}: SM could not model this port's filters "
+                      f"({type(exc).__name__}: {exc}). No curve rather than a guessed one.")]
+
+
+def analyze_port(port: Any) -> tuple[PortFilter | None, list[dict], dict]:
+    """``parse_port_filter`` plus the stability verdict of EACH model:
+    ``(pf, notes, {model: block-notes})``; the verdict dict is empty when
+    ``pf`` is None. A model whose list holds a block note draws no curve."""
+    pf, notes = parse_port_filter(port)
+    if pf is None:
+        return None, notes, {}
+    return pf, notes, {m: model_stability(pf, m) for m in MODELS}
+
+
+def model_blocked(verdict: list[dict]) -> bool:
+    return any(n["level"] == "block" for n in verdict)
 
 
 # ---------------------------------------------------------------------------
@@ -857,16 +912,33 @@ def zline_row(merged: dict, ent: dict) -> dict:
     return row_from_resolved(ent, resolve_zline(merged, ent["channel_path"]))
 
 
-def row_from_resolved(ent: dict, r: dict, parse=None) -> dict:
-    """The table row for one line from its ``resolve_zline`` result. *parse*
-    (default ``parse_port_filter``) lets a caller hand in a memoized parse."""
+def row_from_resolved(ent: dict, r: dict, analyze=None) -> dict:
+    """The table row for one line from its ``resolve_zline`` result. *analyze*
+    (default ``analyze_port``) lets a caller hand in a memoized analysis.
+
+    ``models`` is the per-model verdict (``"ok"`` or the failing code in
+    capitals). A model-specific failure is a ``block`` note on the row only
+    when NO model can draw the line; when the other model can, it is a
+    ``warn`` (the line is drawable -- just not under that model)."""
     row = dict(ent)
     row.update({"port_path": r["port_path"], "notes": list(r["notes"]),
-                "n_exp": None, "n_taps": None, "ff_sum": None, "ok": False})
+                "n_exp": None, "n_taps": None, "ff_sum": None, "ok": False,
+                "models": {}})
     if r["port"] is None:
         return row
-    pf, notes = (parse or parse_port_filter)(r["port"])
+    pf, notes, verdicts = (analyze or analyze_port)(r["port"])
     row["notes"].extend(notes)
+    if pf is not None:
+        bad = {m: model_blocked(v) for m, v in verdicts.items()}
+        every = bool(bad) and all(bad.values())
+        for m in MODELS:
+            v = verdicts.get(m, [])
+            code = next((n["code"] for n in v if n["level"] == "block"), "ok")
+            row["models"][m] = code.upper() if bad.get(m) else "ok"
+            row["notes"].extend(dict(n, level="block" if every else "warn") if n["level"] == "block"
+                                else dict(n) for n in v)
+        if every:
+            pf = None
     port = r["port"]
     ex = port.get("exponential_filter")
     ff = port.get("feedforward_filter")

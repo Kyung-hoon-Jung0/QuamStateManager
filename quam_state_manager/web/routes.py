@@ -13600,22 +13600,24 @@ def _zline_snapshot(store, channel_path: str) -> dict:
     return r
 
 
-def _zline_parse(port_path, port):
-    """``parse_port_filter`` memoized on the port's CONTENT (canonical JSON):
-    the stability check (np.roots + Newton polish) runs once per distinct
-    filter set, not once per line per GET. A copy of the notes is returned,
-    so a caller extending them never mutates the cached value."""
+def _zline_analyze(port_path, port):
+    """``zline_filters.analyze_port`` memoized on the port's CONTENT
+    (canonical JSON): the parse and both models' stability checks (np.roots +
+    Newton polish) run once per distinct filter set, not once per line per
+    GET. Copies of every note are returned, so a caller extending or editing
+    them never mutates the cached value."""
     from quam_state_manager.core import zline_filters as zf
     try:
         token = json.dumps(port, sort_keys=True, default=repr)
     except (TypeError, ValueError):
-        return zf.parse_port_filter(port)
+        return zf.analyze_port(port)
     try:
-        pf, notes = _ZLINE_MEMO.get(("parse", port_path), token,
-                                    lambda: zf.parse_port_filter(port), wait_s=5.0)
+        pf, notes, verdicts = _ZLINE_MEMO.get(("analyze", port_path), token,
+                                              lambda: zf.analyze_port(port), wait_s=5.0)
     except _ramcache.Warming:
-        pf, notes = zf.parse_port_filter(port)
-    return pf, [dict(n) for n in notes]
+        pf, notes, verdicts = zf.analyze_port(port)
+    return (pf, [dict(n) for n in notes],
+            {m: [dict(n) for n in v] for m, v in verdicts.items()})
 
 
 def _zline_default_op(ops: list[str]) -> str:
@@ -13644,7 +13646,7 @@ def zline_page():
             r["port"] = copy.deepcopy(r["port"])
             resolved.append((e, r))
     # The parse (the stability check) runs OUTSIDE the store lock, on copies.
-    rows = [zf.row_from_resolved(e, r, parse=lambda port, pp=r["port_path"]: _zline_parse(pp, port))
+    rows = [zf.row_from_resolved(e, r, analyze=lambda port, pp=r["port_path"]: _zline_analyze(pp, port))
             for e, r in resolved]
     for r in rows:
         r["worst"] = ("block" if any(n["level"] == "block" for n in r["notes"])
@@ -13677,9 +13679,20 @@ def zline_data():
            "notes": list(snap["notes"]), "step": None, "pulse": None, "op": None}
     if snap["port"] is None:
         return jsonify(out)
-    pf, notes = _zline_parse(snap["port_path"], snap["port"])
+    pf, notes, verdicts = _zline_analyze(snap["port_path"], snap["port"])
     out["notes"].extend(notes)
     if pf is None:
+        return jsonify(out)
+    # Stability is a property of the MODEL drawn: block only the model that
+    # is actually unstable, and say when the other one can draw this line.
+    out["models"] = {m: not zf.model_blocked(v) for m, v in verdicts.items()}
+    out["notes"].extend(verdicts.get(model, []))
+    if zf.model_blocked(verdicts.get(model, [])):
+        for m, ok in out["models"].items():
+            if ok and m != model:
+                out["notes"].append({"level": "info", "code": "other_model_draws",
+                                     "text": f"The {zf.MODEL_LABEL[m]} is stable for this set: "
+                                             "switch the Model selector to draw it."})
         return jsonify(out)
     out["notes"].extend(zf.model_notes(pf, model))
     out["port"] = {"sampling_rate": pf.sampling_rate, "upsampling_mode": pf.upsampling_mode,
@@ -13694,8 +13707,10 @@ def zline_data():
             except _ramcache.Warming:
                 return fn()
         except Exception as exc:  # noqa: BLE001 -- a bad line is a note, never a 500
-            out["notes"].append({"level": "block", "code": "model_error",
-                                 "text": f"SM could not compute this curve ({type(exc).__name__}: {exc})."})
+            n = {"level": "block", "code": "model_error",
+                 "text": f"SM could not compute this curve ({type(exc).__name__}: {exc})."}
+            if n not in out["notes"]:              # step + pulse failing alike is ONE note
+                out["notes"].append(n)
             return None
 
     out["step"] = memo((line, "step"), (pf.key(), model),

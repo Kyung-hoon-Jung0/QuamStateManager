@@ -139,9 +139,6 @@ class TestFaultInjection:
         ({"exponential_filter": [[-0.1, 0.0]]}, "exp_tau_nonpositive"),
         ({"exponential_filter": [[-0.1, 5e-8]]}, "exp_tau_units"),          # seconds
         ({"exponential_filter": [[-0.1, 0.2]]}, "exp_tau_unrepresentable"),
-        ({"exponential_filter": [[-1.5, 50.0]]}, "unstable"),
-        ({"exponential_filter": [[-1.0, 50.0]]}, "improper"),
-        ({"exponential_filter": [[-0.6, 50.0], [-0.6, 5.0]]}, "unstable"),
         ({"exponential_filter": [[-0.1]]}, "exp_bad_pair"),
         ({"exponential_filter": [["x", 5]]}, "exp_not_number"),
         ({"exponential_filter": [[float("nan"), 5]]}, "exp_not_number"),
@@ -333,12 +330,21 @@ class TestRepeatedTau:
         assert not np.allclose(a, b, atol=1e-6)
 
     def test_parse_never_raises(self, monkeypatch):
-        def boom(_pf):
+        def boom(_port):
             raise ZeroDivisionError("complex division by zero")
-        monkeypatch.setattr(Z, "_correction_analog", boom)
+        monkeypatch.setattr(Z, "_parse_port_filter", boom)
         pf, notes = Z.parse_port_filter({"exponential_filter": [[-0.1, 20.0]]})
         assert pf is None and "model_error" in _codes(notes)
         assert notes[0]["level"] == "block"
+
+    @pytest.mark.parametrize("model", Z.MODELS)
+    def test_stability_never_raises(self, monkeypatch, model):
+        def boom(_pf):
+            raise ZeroDivisionError("complex division by zero")
+        pf, _ = Z.parse_port_filter({"exponential_filter": [[-0.1, 20.0]]})
+        monkeypatch.setattr(Z, "_correction_analog", boom)
+        v = Z.model_stability(pf, model)
+        assert Z.model_blocked(v) and _codes(v) == ["model_error"]
 
 
 class TestModelDrawnIsModelReported:
@@ -381,3 +387,84 @@ class TestModelDrawnIsModelReported:
         st = Z.step_response(pf)
         assert st["truncated"] and st["horizon_ns"] == Z.STEP_MAX_NS
         assert Z._slowest_correction_ns(pf, "sum") == pytest.approx(1e5 / 0.001, rel=1e-6)
+
+
+# ---------------------------------------------------------------------------
+# verifier round 3 (2026-09-26): each class below is one reproduced defect
+# ---------------------------------------------------------------------------
+
+class TestKeyIsTheWholeModel:
+    """The memo key left out ``high_pass``: a high-pass port and the explicit
+    ``dc_gain = 0`` + ``[[1, h]]`` port shared a key but draw different
+    cascades (a leaky 0.5 s stage vs an A_dc = 1 stage)."""
+
+    def test_the_two_high_pass_spellings_have_different_keys(self):
+        hp, _ = Z.parse_port_filter({"exponential_filter": [], "high_pass_filter": 1000.0})
+        ex, _ = Z.parse_port_filter({"exponential_dc_gain": 0.0, "exponential_filter": [[1.0, 1000.0]]})
+        assert hp.exponential == ex.exponential and hp.dc_gain == ex.dc_gain
+        a = Z.step_response(hp, model="cascade")
+        b = Z.step_response(ex, model="cascade")
+        assert a["final"] != pytest.approx(b["final"], rel=1e-3)      # the models really differ
+        assert hp.key() != ex.key()
+
+    def test_every_field_is_in_the_key(self):
+        import dataclasses
+        base = Z.PortFilter(((-0.1, 20.0),), 1.0, (0.9, 0.1), 1e9, "mw", "direct", None)
+        other = {"exponential": ((-0.2, 20.0),), "dc_gain": 0.5, "feedforward": (1.0,),
+                 "sampling_rate": 2e9, "upsampling_mode": "pulse", "output_mode": "amplified",
+                 "high_pass": 20.0}
+        assert set(other) == {f.name for f in dataclasses.fields(Z.PortFilter)}
+        for name, v in other.items():
+            assert dataclasses.replace(base, **{name: v}).key() != base.key(), name
+
+
+class TestStabilityIsPerModel:
+    """Stability was judged with the QOP >= 3.5 sum model only, so a set that
+    is a stable cascade got no curve under either model, and a cascade stage
+    that is unstable surfaced as an anonymous, duplicated ValueError."""
+
+    def test_unstable_sum_stable_cascade_draws_the_cascade(self):
+        pf, notes, v = Z.analyze_port({"exponential_filter": [[-0.6, 10.0], [-0.6, 1000.0]]})
+        assert pf is not None, notes
+        assert Z.model_blocked(v["sum"]) and "unstable" in _codes(v["sum"])
+        assert v["cascade"] == []
+        st = Z.step_response(pf, model="cascade")
+        assert st["final"] == pytest.approx(st["dc_limit"], rel=2e-3)
+
+    def test_stable_sum_unstable_cascade_names_the_stage(self):
+        pf, notes, v = Z.analyze_port({"exponential_filter": [[-1.2, 10.0], [0.5, 1000.0]]})
+        assert pf is not None and v["sum"] == []
+        assert _codes(v["cascade"]) == ["unstable"]
+        t = v["cascade"][0]["text"]
+        assert "stage 1 of 2" in t and "A = -1.2" in t and "QOP <= 3.4" in t
+
+    @pytest.mark.parametrize("exps,sum_code,casc_code", [
+        ([[-1.5, 50.0]], "unstable", "unstable"),
+        ([[-1.0, 50.0]], "improper", "improper"),
+        ([[-0.6, 50.0], [-0.6, 5.0]], "unstable", None),
+        ([[-1.2, 10.0], [0.5, 1000.0]], None, "unstable"),
+    ])
+    def test_verdict_per_model(self, exps, sum_code, casc_code):
+        pf, _, v = Z.analyze_port({"exponential_filter": exps})
+        assert pf is not None
+        for m, code in (("sum", sum_code), ("cascade", casc_code)):
+            assert (code in _codes(v[m])) if code else v[m] == [], (m, v[m])
+            # the verdict agrees with what the model can actually draw
+            if code:
+                with pytest.raises(ValueError):
+                    Z.step_response(pf, model=m)
+            else:
+                assert math.isfinite(Z.step_response(pf, model=m)["final"])
+
+    def test_row_blocks_only_when_no_model_draws(self):
+        ent = {"id": "q", "kind": "qubit", "channel_path": "qubits.q.z"}
+        def row(exps):
+            return Z.row_from_resolved(ent, {"port_path": "p", "notes": [],
+                                             "port": {"exponential_filter": exps}})
+        r = row([[-0.6, 10.0], [-0.6, 1000.0]])
+        assert r["ok"] and r["models"] == {"sum": "UNSTABLE", "cascade": "ok"}
+        assert "block" not in [n["level"] for n in r["notes"]]
+        r = row([[-1.5, 50.0]])
+        assert not r["ok"] and r["models"] == {"sum": "UNSTABLE", "cascade": "UNSTABLE"}
+        assert "block" in [n["level"] for n in r["notes"]]
+

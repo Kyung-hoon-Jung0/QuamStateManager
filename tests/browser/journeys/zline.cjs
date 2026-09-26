@@ -6,7 +6,28 @@
  * Every scenario ends where a person ends: back/reload, page still intact.
  */
 'use strict';
-const { open } = require('./cdp.cjs');
+const cdp = require('./cdp.cjs');
+// The chip may carry unapplied working-copy edits (Z5 makes some), and SM then
+// guards a navigation with a beforeunload prompt: a reload would wait on it
+// forever in headless Chrome. Accept it (the edits stay staged server-side)
+// and count it, so a prompt is seen, never silently hung on.
+const dialogs = [];
+async function open(url) {
+  const p = await cdp.open(url);
+  let seen = 0;
+  const t = setInterval(() => {
+    for (; seen < p.events.length; seen++) {
+      const e = p.events[seen];
+      if (e.method === 'Page.javascriptDialogOpening') {
+        dialogs.push(e.params.type);
+        p.send('Page.handleJavaScriptDialog', { accept: true });
+      }
+    }
+  }, 100);
+  const close = p.close;
+  p.close = async () => { clearInterval(t); return close(); };
+  return p;
+}
 const PORT = process.argv[2] || '5111';
 const SHOTS = process.argv[3] || '.';
 const BASE = `http://127.0.0.1:${PORT}`;
@@ -41,6 +62,10 @@ const plotted = p => p.ev(`(function(){ var s=document.getElementById('zline-ste
     rec('Z1b clicking it renders the first line', !!r0, r0);
     const pl = await plotted(p);
     rec('Z1c both figures drawn, step on a log axis', pl.step >= 2 && pl.pulse === 2 && pl.xlog === 'log', pl);
+    // the four step curves are SHOWN, not parked in the legend (verifier round 3)
+    const vis = JSON.parse(await p.ev(`JSON.stringify((document.getElementById('zline-step').data||[]).map(function(t){return [t.name, t.visible === undefined ? true : t.visible];}))`));
+    rec('Z1c2 a line with both filters shows all four step curves by default',
+      vis.length === 4 && vis.every(v => v[1] === true), vis);
     rec('Z1d the address is /zline', (await p.ev('location.pathname')) === '/zline');
     await p.shot(`${SHOTS}/z1_first_line.png`);
 
@@ -65,12 +90,12 @@ const plotted = p => p.ev(`(function(){ var s=document.getElementById('zline-ste
     await p.shot(`${SHOTS}/z1_q3_other_op_cascade.png`);
 
     // back -> Pulses intact
-    await p.ev('history.back()'); await p.sleep(3000);
+    await p.ev('setTimeout(function(){history.back();},0); 1'); await p.sleep(3000);
     const back = await p.ev(`JSON.stringify({path:location.pathname, pulses:!!document.querySelector('#table-pane table'), zl:!!document.getElementById('zline-root')})`);
     const b = JSON.parse(back);
     rec('Z1i Back returns to Pulses, intact', b.path === '/pulses' && b.pulses && !b.zl, b);
     // forward, then reload onto q3
-    await p.ev(`location.href='${BASE}/zline?line=qubits.q3.z'`); await p.sleep(1500);
+    await p.ev(`setTimeout(function(){location.href='${BASE}/zline?line=qubits.q3.z';},0); 1`); await p.sleep(1500);
     const rr = await waitRendered(p, 'qubits.q3.z');
     rec('Z1j a reload of /zline?line=q3 opens q3', !!rr, rr);
     const pl2 = await plotted(p);
@@ -114,7 +139,7 @@ const plotted = p => p.ev(`(function(){ var s=document.getElementById('zline-ste
       pl.step === 0 && pl.pulse === 0 && pl.stepEmpty && pl.pulseEmpty && !st.rendered && st.ops === 0, pl);
     rec('Z3c the note says to reload', /reload/.test(st.note), st.note);
     await p.shot(`${SHOTS}/z3_failed_line_cleared.png`);
-    await p.ev('location.reload()'); await p.sleep(1500);
+    await p.ev('setTimeout(function(){location.reload();},0); 1'); await p.sleep(1500);
     const rr = await waitRendered(p);
     const pl2 = await plotted(p);
     rec('Z3d reload: the page is intact and draws again', !!rr && pl2.step >= 2, { rr, pl2 });
@@ -135,6 +160,59 @@ const plotted = p => p.ev(`(function(){ var s=document.getElementById('zline-ste
     await p.shot(`${SHOTS}/z4_last_row_revealed.png`);
     await p.close();
   }
+  // ---- Z5: stability is judged PER MODEL (verifier round 3). Edit q3's
+  //      exponentials in the working copy, read the table + both models, restore.
+  {
+    const p = await open(`${BASE}/zline?line=qubits.q3.z`); await waitRendered(p, 'qubits.q3.z');
+    const mark = p.events.length;
+    const d0 = JSON.parse(await p.ev(`fetch('/zline/data?line=qubits.q3.z').then(function(r){return r.text();})`));
+    const pp = d0.port_path;
+    const orig = d0.port ? d0.port.exponential : null;
+    const edit = v => p.ev(`(function(){var f=new FormData(); f.append('dot_path', ${JSON.stringify(pp + '.exponential_filter')}); f.append('value', ${JSON.stringify(JSON.stringify(v))});
+      return fetch('/field/edit',{method:'POST',body:f,headers:{'HX-Request':'true'}}).then(function(r){return r.status;});})()`);
+    const cell = () => p.ev(`(function(){var r=document.querySelector('.zline-row[data-line="qubits.q3.z"] .zline-models'); return r ? r.textContent.replace(/ +/g,' ').trim() : '';})()`);
+    const noteCodes = () => p.ev(`JSON.stringify(Array.from(document.querySelectorAll('#zline-notes li')).map(function(l){return [l.getAttribute('data-code'), l.className, l.textContent];}))`).then(JSON.parse);
+    const setModel = async m => { await p.ev(`(function(){var s=document.getElementById('zline-model'); s.value='${m}'; s.dispatchEvent(new Event('change'));})()`); return waitRendered(p, 'qubits.q3.z|'); };
+    rec('Z5a q3 has a plain exponential set to restore', !!pp && Array.isArray(orig) && d0.port.dc_gain === 1, { pp, orig });
+
+    const s1 = await edit([[-0.6, 10.0], [-0.6, 1000.0]]);
+    await p.ev('setTimeout(function(){location.reload();},0); 1'); await p.sleep(1200); await waitRendered(p, 'qubits.q3.z|');
+    const c1 = await cell();
+    const n1 = await noteCodes(); const pl1 = await plotted(p);
+    rec('Z5b sum-unstable / cascade-stable: the row says UNSTABLE / ok', s1 === 200 && c1 === 'UNSTABLE / ok', { s1, c1 });
+    rec('Z5c the sum model draws nothing and points at the cascade',
+      pl1.stepEmpty && n1.some(n => n[0] === 'unstable') && n1.some(n => n[0] === 'other_model_draws'), { n1, pl1 });
+    await setModel('cascade'); await p.sleep(800);
+    const pl2 = await plotted(p); const n2 = await noteCodes();
+    rec('Z5d the cascade model DRAWS that set', pl2.step >= 2 && !pl2.stepEmpty && !n2.some(n => n[0] === 'unstable'), { pl2, n2 });
+    await p.shot(`${SHOTS}/z5_cascade_draws_sum_unstable.png`);
+
+    const s2 = await edit([[-1.2, 10.0], [0.5, 1000.0]]);
+    await p.ev('setTimeout(function(){location.reload();},0); 1'); await p.sleep(1200); await waitRendered(p, 'qubits.q3.z|');
+    const c2 = await cell();
+    await setModel('cascade'); await p.sleep(800);
+    const n3 = await noteCodes(); const pl3 = await plotted(p);
+    const blocks = n3.filter(n => /zline-note-block/.test(n[1]));
+    rec('Z5e sum-stable / cascade-unstable: the row says ok / UNSTABLE', s2 === 200 && c2 === 'ok / UNSTABLE', { s2, c2 });
+    rec('Z5f the cascade shows ONE block note naming stage 1 (A = -1.2), no model_error',
+      blocks.length === 1 && blocks[0][0] === 'unstable' && blocks[0][2].indexOf('stage 1 of 2') >= 0 && blocks[0][2].indexOf('A = -1.2') >= 0
+      && pl3.stepEmpty && pl3.pulseEmpty, { blocks, pl3 });
+    await p.shot(`${SHOTS}/z5_cascade_stage_unstable.png`);
+
+    const s3 = await edit(orig);
+    await p.ev('setTimeout(function(){location.reload();},0); 1'); await p.sleep(1200);
+    const r3 = await waitRendered(p, 'qubits.q3.z|');
+    const pl4 = await plotted(p);
+    const d4 = JSON.parse(await p.ev(`fetch('/zline/data?line=qubits.q3.z').then(function(r){return r.text();})`));
+    rec('Z5g restored: q3 draws again with its original set', s3 === 200 && !!r3 && pl4.step >= 2
+      && JSON.stringify(d4.port.exponential) === JSON.stringify(orig), { s3, pl4 });
+    // Chrome logs its own refusal of SM's unsaved-edits beforeunload guard
+    // (the edits Z5 staged): the guard working, not a page error
+    const errs = p.errors(mark).filter(m => m.indexOf("Blocked attempt to show a 'beforeunload' confirmation panel") < 0);
+    rec('Z5h no console errors', errs.length === 0, errs);
+    await p.close();
+  }
+  console.log('beforeunload/other dialogs accepted: ' + JSON.stringify(dialogs));
   const bad = res.filter(r => !r.ok);
   console.log(`\n${res.length - bad.length}/${res.length} passed`);
   process.exit(bad.length ? 1 : 0);
