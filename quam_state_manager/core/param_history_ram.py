@@ -33,15 +33,25 @@ from __future__ import annotations
 import logging
 import os
 import sqlite3
+import itertools
 import threading
+from collections import OrderedDict
 from pathlib import Path
 from typing import Any
 
 logger = logging.getLogger(__name__)
 
 _CONN_LOCK = threading.Lock()
-# index path -> (file identity, connection, per-connection lock)
-_CONNS: dict[str, tuple[tuple, sqlite3.Connection, threading.Lock]] = {}
+# index path -> (file identity, connection, per-connection lock), LRU order.
+# Bounded: each entry is an OPEN file handle on a chip's index.sqlite, and on
+# Windows an open handle keeps that file (and its dir) from being removed --
+# only the few chips somebody is looking at hold one.
+_CONNS: "OrderedDict[str, tuple[tuple, sqlite3.Connection, threading.Lock]]" = OrderedDict()
+_CONNS_MAX = 4
+# data_version values are only comparable within ONE connection, so every
+# token carries the connection's generation: a reopened connection (file
+# replaced, or evicted and opened again) can never reproduce an old token.
+_CONN_GEN = itertools.count(1)
 
 
 def _file_identity(p: Path) -> tuple | None:
@@ -53,7 +63,7 @@ def _file_identity(p: Path) -> tuple | None:
 
 
 def data_version(index_path: Path) -> tuple:
-    """``(file identity, PRAGMA data_version)`` of *index_path*, or a
+    """``(file identity, connection generation, PRAGMA data_version)`` of *index_path*, or a
     constant "absent" marker. Opens (or reopens, when the file was replaced)
     the one persistent read-only connection for that path."""
     key = str(index_path)
@@ -74,9 +84,18 @@ def data_version(index_path: Path) -> tuple:
                                        check_same_thread=False, isolation_level=None)
             except sqlite3.Error:
                 return ("unreadable", ident)
-            ent = (ident, conn, threading.Lock())
+            ent = (ident, conn, threading.Lock(), next(_CONN_GEN))
             _CONNS[key] = ent
-    ident0, conn, lk = ent
+            while len(_CONNS) > _CONNS_MAX:
+                _k, (_i, old_conn, old_lk, _g) = _CONNS.popitem(last=False)
+                with old_lk:
+                    try:
+                        old_conn.close()
+                    except sqlite3.Error:
+                        pass
+        else:
+            _CONNS.move_to_end(key)
+    ident0, conn, lk, gen = ent
     with lk:
         try:
             dv = conn.execute("PRAGMA data_version").fetchone()[0]
@@ -89,7 +108,7 @@ def data_version(index_path: Path) -> tuple:
             except sqlite3.Error:
                 pass
             return ("unreadable", ident)
-    return (ident0, dv)
+    return (ident0, gen, dv)
 
 
 def hist_token(hm: Any, quam_state_path: Path | str) -> tuple:
@@ -110,7 +129,7 @@ def close_all() -> None:
     with _CONN_LOCK:
         ents = list(_CONNS.values())
         _CONNS.clear()
-    for _i, conn, _l in ents:
+    for _i, conn, _l, _g in ents:
         try:
             conn.close()
         except sqlite3.Error:

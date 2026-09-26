@@ -398,3 +398,69 @@ def test_changes_filter_input_survives_the_swap(env):
     assert 'id="ph-changes-prefix"' in inp and 'hx-preserve="true"' in inp
     clear = _re.search(r'<[^>]*>Clear</', html).group(0)
     assert "hx-get" not in clear and 'href="/param-history/changes"' in clear
+
+
+def test_chip_histories_rows_equal_cold_over_random_events(tmp_path):
+    """list_chip_histories reuses a chip's row while its index files and
+    the dir's version are unchanged -- never a row a cold read would not
+    give, whichever chip moves and however (capture, foreign commit)."""
+    rng = random.Random(12)
+    hm = H.HistoryManager(tmp_path / "_inst")
+    chips = []
+    for k in range(3):
+        live = tmp_path / f"chip{k}"
+        st = _state()
+        st["extras"] = {"chip_name": f"chip{k}"}
+        _write(live, st)
+        hm.check_and_snapshot(str(live), "manual", force=True)
+        chips.append((live, st))
+
+    def cold():
+        hm._chip_row_memo.clear()
+        with hm._lock:
+            hm._chip_histories_cache = None
+        return hm.list_chip_histories()
+
+    hits = 0
+    for step in range(25):
+        live, st = rng.choice(chips)
+        ev = rng.randrange(3)
+        if ev == 0:
+            st = _state(rng, st)
+            _write(live, st)
+            time.sleep(0.003)
+            hm.check_and_snapshot(str(live), "manual", force=True)
+        elif ev == 1:                                   # another process commits
+            idx = hm._history_dir(live) / "index.sqlite"
+            with sqlite3.connect(str(idx)) as c2:
+                c2.execute("PRAGMA journal_mode=WAL")
+                c2.execute("DELETE FROM param_history WHERE timestamp = "
+                           "(SELECT MAX(timestamp) FROM param_history)")
+            with hm._lock:
+                hm._chip_histories_cache = None        # the global slot is not the subject
+        with hm._lock:
+            hm._global_version += 1                     # what any capture does
+        before = dict(hm._chip_row_memo)
+        warm = hm.list_chip_histories()
+        hits += sum(1 for k, v in hm._chip_row_memo.items() if before.get(k) is v)
+        assert warm == cold(), (step, ev)
+    assert hits >= 10, "the per-chip memo never served a row"
+
+
+def test_persistent_connections_are_bounded_and_never_reuse_a_token(tmp_path):
+    paths = []
+    for k in range(PHR._CONNS_MAX + 3):
+        p = tmp_path / f"i{k}.sqlite"
+        with sqlite3.connect(str(p)) as c:
+            c.execute("PRAGMA journal_mode=WAL")
+            c.execute("CREATE TABLE t (x)")
+        paths.append(p)
+    first = PHR.data_version(paths[0])
+    for p in paths[1:]:
+        PHR.data_version(p)
+    assert len(PHR._CONNS) <= PHR._CONNS_MAX          # evicted, handle closed
+    assert str(paths[0]) not in PHR._CONNS
+    with sqlite3.connect(str(paths[0])) as c:          # changed while nobody watched
+        c.execute("INSERT INTO t VALUES (1)")
+    assert PHR.data_version(paths[0]) != first         # a reopen is never an old token
+    PHR.close_all()

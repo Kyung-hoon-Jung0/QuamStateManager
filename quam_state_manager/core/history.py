@@ -941,6 +941,15 @@ def _recall_flat(hist_dir: Path, snap_dir: Path) -> dict | None:
     return ent[2]
 
 
+def _file_sig(p: Path) -> tuple | None:
+    """(mtime_ns, size, ino) of *p*, or None when it does not exist."""
+    try:
+        st = os.stat(p)
+    except OSError:
+        return None
+    return (st.st_mtime_ns, st.st_size, st.st_ino)
+
+
 def _dir_bytes(root: Path) -> int:
     """Total size of every regular file under *root* (the figure
     ``history_disk_stats`` reports). ``os.scandir`` instead of
@@ -1038,6 +1047,9 @@ class HistoryManager:
         # cache for ``list_chip_histories``. Token bumps when any chip dir
         # gains a snapshot (via ``_bump_chip_version``).
         self._chip_histories_cache: tuple[int, list[dict[str, Any]]] | None = None
+        # RAM P8: per-chip-dir SQL row of list_chip_histories, validated on
+        # read by the index files' stats + the dir's own version
+        self._chip_row_memo: dict[str, tuple] = {}
         # Bumps any time a chip dir is mutated. Used as the
         # ``list_chip_histories`` cache token.
         self._global_version: int = 0
@@ -5018,6 +5030,24 @@ class HistoryManager:
                         "qubits": [],
                     })
                 continue
+            # RAM P8: a capture of ONE chip bumps the global version and
+            # used to re-query EVERY chip's index here (56 ms on a 30-chip
+            # instance, on the first /param-history after each capture). A
+            # chip's row is reused while its index is provably unchanged:
+            # the main file AND its WAL (commits land in -wal until a
+            # checkpoint) have the same (mtime_ns, size, ino), and this
+            # manager's version for the dir has not moved.
+            row_tok = (_file_sig(idx), _file_sig(d / "index.sqlite-wal"),
+                       self._chip_dir_version.get(str(d), 0))
+            memo_row = self._chip_row_memo.get(str(d))
+            if memo_row is not None and memo_row[0] == row_tok:
+                if memo_row[1] is not None:
+                    row = dict(memo_row[1])
+                    row["qubits"] = list(row["qubits"])
+                    # the display name reads the alias registry, not the index
+                    row["display"] = self.display_name_for_dir(d.name)
+                    result.append(row)
+                continue
             try:
                 conn = sqlite3.connect(str(idx))
                 conn.execute("PRAGMA cache_size=-50000")  # ~50 MB per archived chip read
@@ -5026,6 +5056,7 @@ class HistoryManager:
                 ).fetchone()[0]
                 if snap_count == 0:
                     conn.close()
+                    self._chip_row_memo[str(d)] = (row_tok, None)
                     continue
                 # MAX() uses index forward scan — much faster than reverse-
                 # ordered LIMIT 1 on a multi-million-row table.
@@ -5036,7 +5067,7 @@ class HistoryManager:
                     "SELECT DISTINCT qubit FROM param_history ORDER BY qubit"
                 ).fetchall()
                 conn.close()
-                result.append({
+                row = {
                     "key": d.name,
                     "display": self.display_name_for_dir(d.name),
                     "snapshot_count": snap_count,
@@ -5046,7 +5077,9 @@ class HistoryManager:
                     # ids on a public result -- order it the way the product
                     # counts (customer rule 2026-09-09).
                     "qubits": sorted((q[0] for q in qubit_rows), key=natural_key),
-                })
+                }
+                result.append(row)
+                self._chip_row_memo[str(d)] = (row_tok, dict(row))
             except Exception:
                 logger.warning("Could not read chip history %s", d.name, exc_info=True)
         result.sort(key=lambda r: r["latest_timestamp"], reverse=True)
