@@ -228,10 +228,12 @@ def save_pulse_modules(instance_path, modules: list[str]) -> list[str]:
 
 
 def _entry_fresh(entry: dict, modules: list[str]) -> bool:
-    """A cache entry answers for *modules* only when it imported each of them
-    and none of the lab files it read has changed since."""
+    """A cache entry answers for *modules* only when it imported EXACTLY them
+    and none of the lab files it read has changed since. A superset is a miss
+    too: an entry that also imported a module the user has since removed
+    would keep offering that module's classes, which a cold probe would not."""
     have = entry.get("pulse_modules") or {}
-    if not set(modules) <= set(have):
+    if set(modules) != set(have):
         return False
     return sources_fresh(entry.get("sources"))
 

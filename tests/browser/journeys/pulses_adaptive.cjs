@@ -64,6 +64,17 @@ async function openDetail(p, path) {
   // 1. the synthetic class the chip declares: its own code draws it
   const WOB = 'qubits.q1.z.operations.cz_wobble';
   check(!!(await openDetail(p, WOB)), 'cz_wobble detail opened');
+  // cold (no probe of the env for this module set yet): the fields are either
+  // typed already or the detail SAYS it has no schema -- never silently untyped
+  const cold = await p.ev(`(function(){var i=document.querySelector('#pulse-detail-root input[data-param="amplitude"]'); var k=i?i.getAttribute('data-kind'):''; var t=(document.getElementById('pulse-detail-root')||{}).textContent||''; return k==='float' ? 'typed' : (/No schema for this class yet/.test(t) ? 'honest' : 'SILENT kind=' + k);})()`);
+  check(cold === 'typed' || cold === 'honest', `cold detail typed or honestly untyped -> ${cold}`);
+  if (cold === 'honest') {
+    await p.shot(`${DIR}/adaptive_0_cold.png`);
+    // warm the probe through the create form's env strip, then reopen
+    await p.ev(`htmx.ajax('GET','/pulse/new',{target:'#inspector-pane',swap:'innerHTML'})`);
+    await waitFor(p, `document.querySelector('#pulse-env-strip .pulse-env-badge-ok') ? 1 : 0`, 180000);
+    check(!!(await openDetail(p, WOB)), 'cz_wobble detail reopened after the probe');
+  }
   const kind = await p.ev(`(document.querySelector('#pulse-detail-root input[data-param="amplitude"]')||{}).getAttribute ? document.querySelector('#pulse-detail-root input[data-param="amplitude"]').getAttribute('data-kind') : ''`);
   check(kind === 'float', `amplitude typed from the class schema (data-kind=${kind})`);
   let lbl = await waitFor(p, `/class's own code/.test(${LABEL}) && ${PLOT_N} ? ${LABEL} : ''`, 90000);
@@ -124,6 +135,14 @@ async function openDetail(p, path) {
   const clabel = await p.ev(`(document.querySelector('#pulse-create-root .pulse-plot-label')||{}).textContent||''`);
   check(/class's own code/.test(clabel), 'create-form plot labelled as the class\'s own code');
   await p.shot(`${DIR}/adaptive_4_create.png`);
+  // 4b. remove the module again: after the forced re-probe the class is gone
+  // (a cached probe that imported it may not keep offering it) -- and the
+  // rig is back to where it started, so the journey is re-runnable
+  await p.ev(`(function(){var d=document.querySelector('.pulse-env-modules'); if(d) d.open=true; return 1})()`);
+  await clickSel(p, '.pulse-env-module button[hx-post]');
+  const gone = await waitFor(p, `(document.querySelector('#pulse-env-strip .pulse-env-badge-ok') && !document.querySelector('#pulse-create-type option[value="RampCZPulse"]')) ? 1 : 0`, 180000);
+  check(!!gone, 'after removing the module RampCZPulse is no longer offered');
+  await p.shot(`${DIR}/adaptive_4b_removed.png`);
 
   // 5. reload: the page comes back intact
   const pr = p.send('Page.reload');

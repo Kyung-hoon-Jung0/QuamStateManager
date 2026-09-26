@@ -232,9 +232,25 @@ class TestTheCachedManifestIsValidatedOnRead:
         py = str(tmp_path / "python.exe")
         monkeypatch.setattr(state_env_schema, "_env_signature", lambda p: "sig")
         self._seed(inst, py, {}, modules={"lab.a": "ok"})
+        state_env_schema.save_pulse_modules(inst, ["lab.a"])
         assert state_env_schema.manifest_for_store(
             self._store(), py, inst, cached_only=True) is not None
         state_env_schema.save_pulse_modules(inst, ["lab.a", "lab.b"])
+        assert state_env_schema.manifest_for_store(
+            self._store(), py, inst, cached_only=True) is None
+
+    def test_a_removed_module_is_a_miss(self, tmp_path, monkeypatch):
+        # the entry imported lab.a AND lab.b; the user removed lab.b -- a cold
+        # probe would no longer offer lab.b's classes, so neither may the cache
+        inst = tmp_path / "inst"
+        inst.mkdir()
+        py = str(tmp_path / "python.exe")
+        monkeypatch.setattr(state_env_schema, "_env_signature", lambda p: "sig")
+        self._seed(inst, py, {}, modules={"lab.a": "ok", "lab.b": "ok"})
+        state_env_schema.save_pulse_modules(inst, ["lab.a", "lab.b"])
+        assert state_env_schema.manifest_for_store(
+            self._store(), py, inst, cached_only=True) is not None
+        state_env_schema.save_pulse_modules(inst, ["lab.a"])
         assert state_env_schema.manifest_for_store(
             self._store(), py, inst, cached_only=True) is None
 
