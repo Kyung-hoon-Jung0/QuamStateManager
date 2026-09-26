@@ -238,3 +238,16 @@ class TestEntryGrandparents:
         want = {e.folder_path.parent.parent for e in entries if not e.is_standalone}
         assert R._entry_grandparents(entries) == want
         assert len(want) > 5
+        # a repeat (memo warm) answers the same and splits no path again
+        calls = []
+        real_dn = os.path.dirname
+        try:
+            os.path.dirname = lambda x: calls.append(x) or real_dn(x)
+            assert R._entry_grandparents(entries) == want
+            assert calls == []
+            new = SimpleNamespace(folder_path=tmp_path / "KH" / "d9" / "#1_new",
+                                  is_standalone=False)
+            assert R._entry_grandparents(entries + [new]) == want | {tmp_path / "KH"}
+            assert len(calls) == 2              # only the new run's path
+        finally:
+            os.path.dirname = real_dn

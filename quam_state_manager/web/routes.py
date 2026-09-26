@@ -25532,12 +25532,26 @@ def _entry_grandparents(entries) -> set[Path]:
     path (pathlib keeps the normalized string; pinned against the Path form
     in tests/test_newrun_path.py)."""
     dn = os.path.dirname
+    memo = _GRANDPARENT_OF
+    if len(memo) > 200_000:            # bound: a pure function's memo, never stale
+        memo.clear()
     seen: set[str] = set()
     for entry in entries:
         if entry.is_standalone:
             continue
-        seen.add(dn(dn(str(entry.folder_path))))
+        s = str(entry.folder_path)
+        g = memo.get(s)
+        if g is None:
+            g = memo[s] = dn(dn(s))
+        seen.add(g)
     return {Path(g) for g in seen}
+
+
+# path string -> dirname(dirname(path string)): a pure function of its key, so
+# an entry can never be stale; after a new run only that run's path is new
+# (the rest of the ~25-35 ms per first /datasets after a run was re-splitting
+# 4,157 unchanged paths).
+_GRANDPARENT_OF: dict[str, str] = {}
 
 
 def _dataset_candidate_folders(*, fast: bool = False) -> list[Path]:
