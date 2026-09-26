@@ -1947,6 +1947,32 @@ def _may_change(steps: list[dict], cap: int = 60) -> tuple[list[dict], int]:
     return out, total
 
 
+def _approval_view(ap: dict, store) -> dict:
+    """An approval as the card shows it: each write also carries ``now`` --
+    the value SM holds for that leaf NOW (through the pointer alias, the way
+    the approve door itself edits it). ``old`` is the value the PROPOSAL was
+    made from; the card used to print it under "now", so after an outside
+    write it still named a value the chip no longer held, while the plan
+    card's "now" (docs 89285b0) already meant the value held (verifier P3)."""
+    out = dict(ap)
+    if store is None or ap.get("kind") != "writes":
+        return out
+    r = _r()
+    rows = []
+    for w in ap.get("writes") or []:
+        w2 = dict(w)
+        if not (w.get("created") or w.get("deleted")):
+            try:
+                target = r._resolve_edit_path(store, str(w.get("path"))) or str(w.get("path"))
+                w2["now"] = _jsonable(store.get_value(target))
+                w2["now_known"] = True
+            except Exception:  # noqa: BLE001 -- a leaf SM cannot read says "not set", never a guess
+                w2["now_known"] = False
+        rows.append(w2)
+    out["writes"] = rows
+    return out
+
+
 @agent_bp.route("/chat/cards")
 def chat_cards():
     """The panel's feed: chat cards after ``after`` plus the live objects
@@ -1983,7 +2009,7 @@ def chat_cards():
         runs = [_run_view(m) for m in reg.runs.values() if m.get("chip") == key]
         runs.sort(key=lambda x: float(x.get("since") or 0))
         live["runs"] = runs[-20:]
-        live["approvals"] = approvals.pending(inst, key)
+        live["approvals"] = [_approval_view(a, r._store()) for a in approvals.pending(inst, key)]
         file = agent_session.summary(agent_session.load(inst, key))
         mgr = current_app.config.get("agent_chat")
         session = mgr.status(key) if mgr else None

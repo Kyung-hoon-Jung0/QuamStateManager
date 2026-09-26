@@ -13650,6 +13650,7 @@ table.diff-wb-list tbody > tr[hidden] { display: none; }
 .ag-root .ag-cancel, .ag-root .ag-reject { border-color: var(--pico-muted-border-color); color: var(--pico-muted-color); background: transparent; }
 .ag-ap-rows { width: 100%; font-size: .9em; margin: .2rem 0; } .ag-ap-rows td, .ag-ap-rows th { padding: .1rem .35rem; }
 .ag-root .ag-ap-rows input { width: 100%; margin: 0; padding: .05rem .3rem; height: auto; font-size: .95em; }
+.ag-ap-rows .ag-ap-moved .ag-ap-from { display: block; font-size: .85em; color: var(--pico-del-color, #b00020); }
 .ag-ap-note { margin: .2rem 0; font-size: .9em; }
 .ag-because { color: var(--pico-muted-color); font-size: .9em; margin: .2rem 0 0; }
 .ag-writes, .ag-log { font-size: .9em; margin: .2rem 0; } .ag-writes > summary, .ag-log > summary { cursor: pointer; padding: 0; margin: 0; color: var(--pico-muted-color); }

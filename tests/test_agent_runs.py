@@ -562,6 +562,22 @@ class TestRun:
         paths = [e["path"] for u in units for e in u["entries"]]
         assert "qubits.qA1.f_01" not in paths, units
 
+    def test_an_approval_card_says_what_sm_holds_now(self, c, inst, synth_folder):
+        """verifier P3: the card's "now" printed the proposal's own `old`; the
+        feed now carries the value SM holds for each leaf, through the x180
+        alias the way the approve door edits it."""
+        from quam_state_manager.core import approvals as _ap
+        chip = _chip(c)
+        _ap.add(str(inst), chip, kind="writes", node="17_T1", targets=["qA1"],
+                writes=[{"path": "qubits.qA1.T1", "old": 4.2e-5, "new": 3.3e-5},
+                        {"path": "qubits.qA1.nope", "old": 1, "new": 2}],
+                reason="r", why_held="mode ask-writes", actor="by_claude")
+        assert c.post("/field/edit", data={"dot_path": "qubits.qA1.T1", "value": "5.55e-5"}).status_code == 200
+        ws = c.get("/api/agent/chat/cards?after=0").get_json()["live"]["approvals"][0]["writes"]
+        assert ws[0]["old"] == 4.2e-5, "the proposal's anchor is untouched"
+        assert ws[0]["now_known"] is True and ws[0]["now"] == 5.55e-5, ws[0]
+        assert ws[1]["now_known"] is False and "now" not in ws[1], ws[1]
+
     def test_limits_hold_in_auto(self, c, inst, fake_run):
         chip = _chip(c)
         _arm(c)
@@ -761,3 +777,22 @@ class TestRun:
         assert "armed by human:kyunghoon" in _journal(c, inst)
         assert c.post("/api/agent/session/disarm", json={}, headers=HUMAN).get_json()["session"]["armed"] is False
         assert "disarmed by human:kyunghoon" in _journal(c, inst)
+
+
+def test_a_chip_switch_moves_the_agent_clock(app, synth_folder, tmp_path):
+    """verifier P3 (w7/agentsqa): the Agent feed is per chip, and an open Agent
+    home in another window learns of a switch only through `agent_seq`
+    (LiveWake's `sm:agent-changed`). Re-opening the SAME chip is not a switch."""
+    import shutil
+    other = tmp_path / "chip_b"
+    shutil.copytree(synth_folder, other)
+    c = app.test_client()
+    seq = lambda: int(app.config.get("agent_seq") or 0)   # noqa: E731
+    assert c.post("/load", data={"folder": str(synth_folder)}).status_code in (200, 302)
+    s0 = seq()
+    assert c.post("/load", data={"folder": str(synth_folder)}).status_code in (200, 302)
+    assert seq() == s0, "re-opening the chip already open is not news"
+    assert c.post("/load", data={"folder": str(other)}).status_code in (200, 302)
+    assert seq() == s0 + 1, "a switch moves the agent clock"
+    assert c.post("/load", data={"folder": str(synth_folder)}).status_code in (200, 302)
+    assert seq() == s0 + 2, "and so does switching back (the cached path)"

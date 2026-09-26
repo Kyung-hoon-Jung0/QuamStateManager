@@ -1450,6 +1450,21 @@ def _probe_readonly(folder) -> bool:
         return False
 
 
+def _set_active_context(ctx_name: str, ctx: dict) -> None:
+    """Make ``ctx_name`` the active chip. A SWITCH moves the agent clock
+    (``agent_seq``): the Agent feed is per chip, and without the bump an open
+    Agent home in another window kept the old chip's heading and cards --
+    with an enabled "Write to chip" -- until its 30 s idle poll came round
+    (verifier P3, w7/agentsqa). The bump reaches it through LiveWake's
+    ``sm:agent-changed`` within one wait slice. Compared by the chip's PATH:
+    the registry name is the parent folder's name, which two chips share."""
+    current_app.config["active_context"] = ctx_name
+    path = str((ctx or {}).get("path") or "")
+    if current_app.config.get("_agent_active_path") != path:
+        current_app.config["_agent_active_path"] = path
+        current_app.config["agent_seq"] = int(current_app.config.get("agent_seq") or 0) + 1
+
+
 def _activate_quam(folder_path: str | Path, *, origin: str = "live") -> dict:
     """Load a QUAM state folder and register it as the active context.
 
@@ -1581,7 +1596,7 @@ def _activate_quam(folder_path: str | Path, *, origin: str = "live") -> dict:
         _publish_instance_chip(current)         # docs/80
         with _quam_cache_lock:
             current_app.config["contexts"][ctx_name] = current
-            current_app.config["active_context"] = ctx_name
+            _set_active_context(ctx_name, current)
             _prune_context_registry(ctx_name)
         # docs/189 -- the CACHED path returns here, before the slow path's own
         # warm. Re-opening a chip is the commonest way to reach this function,
@@ -1673,7 +1688,7 @@ def _activate_quam(folder_path: str | Path, *, origin: str = "live") -> dict:
                 ctx = _quam_cache[key]
                 _quam_cache.move_to_end(key)   # true LRU — mark most-recently used
             current_app.config["contexts"][ctx_name] = ctx
-            current_app.config["active_context"] = ctx_name
+            _set_active_context(ctx_name, ctx)
             _prune_context_registry(ctx_name)
         # Attach the per-key type policy (stat-cached manifest + sidecar), then
         # background-warm the schema manifest for this chip against the

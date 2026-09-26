@@ -518,7 +518,16 @@ window.AgentPanel = (function () {
     if (!el) return;
     var isRun = a.kind === "run";
     var rows = (a.writes || []).map(function (w, i) {
-      return "<tr><td title=\"" + esc(w.path) + "\">" + esc(w.path) + "</td><td>" + esc(fmtNum(w.old)) + "</td><td>" +
+      /* verifier P3: "now" is the value SM holds now (the server reads it per
+         poll), like the plan card's; the value the proposal was made from is
+         shown beside it only when the two differ, and flagged. */
+      var nowTd;
+      if (w.now_known === undefined) nowTd = "<td>" + esc(fmtNum(w.old)) + "</td>";
+      else if (!w.now_known) nowTd = '<td class="muted">not set</td>';
+      else if (JSON.stringify(w.now) === JSON.stringify(w.old)) nowTd = "<td>" + esc(fmtNum(w.now)) + "</td>";
+      else nowTd = '<td class="ag-ap-moved" title="' + esc("the proposal was made from " + fmtNum(w.old) + "; SM holds " + fmtNum(w.now) + " now") + '">' +
+        esc(fmtNum(w.now)) + ' <span class="ag-ap-from">⚠ proposed from ' + esc(fmtNum(w.old)) + "</span></td>";
+      return "<tr><td title=\"" + esc(w.path) + "\">" + esc(w.path) + "</td>" + nowTd + "<td>" +
         (S.observer ? esc(fmtNum(w.new)) : '<input class="ag-ap-new" data-i="' + i + '" value="' + esc(typeof w.new === "object" ? JSON.stringify(w.new) : w.new) + '">') + "</td></tr>";
     }).join("");
     // review R2-11: a RUN request is allowed, not written
@@ -665,7 +674,34 @@ window.AgentPanel = (function () {
   // ------------------------------------------------------------ polling
   function absorb(d) {
     if (!d || !d.ok) return;
+    /* Verifier P3: another window switched the chip. The feed is per chip, but
+       the heading was set once at mount and the old chip's plan/run cards (and
+       an approval card with a live "Write to chip") stayed until something
+       happened to remove them. A new chip key starts the feed over: heading
+       re-read, every card dropped, cursor back to 0, and this response -- asked
+       with the OLD chip's cursor -- is not absorbed; a fresh poll follows. */
+    var key = d.chip_key || null;
+    if (S.chipKey !== undefined && key !== S.chipKey) {
+      S.chipKey = key;
+      S.plans = {}; S.runs = {}; S.approvals = {}; S.deciding = {};
+      S.seenCards = {}; S.after = 0;
+      S.mounts.forEach(function (m) {
+        var host = cardsHost(m);
+        if (host) { host.innerHTML = ""; host.__agScrolledOnce = false; }
+        var chipEl = m.root.querySelector(".ag-chip");
+        if (chipEl) chipEl.textContent = d.chip || "no chip open";
+        var q = m.root.querySelector(".ag-qubits");
+        if (q) q.textContent = "";
+      });
+      setTimeout(function () { poll(true); }, 0);
+      return;
+    }
+    S.chipKey = key;
     S.chip = d.chip;
+    S.mounts.forEach(function (m) {
+      var chipEl = m.root.querySelector(".ag-chip");
+      if (chipEl && d.chip && chipEl.textContent !== d.chip) chipEl.textContent = d.chip;
+    });
     S.session = { session: d.session, file: d.file };
     S.now = d.now;
     if (typeof d.agent_seq === "number") S.seq = d.agent_seq;
