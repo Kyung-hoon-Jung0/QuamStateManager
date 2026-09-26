@@ -132,6 +132,21 @@ class TestThePage:
         html = c.get(f"/journal/day?day={DAY}").get_data(as_text=True)
         assert "named no chip" not in html
 
+    def test_a_day_with_only_loose_lines_does_not_say_it_has_none(self, world):
+        """QA agents round: a day with no runs but journal lines read "No runs and
+        no journal lines on <day>." directly above "11 journal lines not attached
+        to a run" -- the page contradicting itself."""
+        from datetime import timedelta
+        day2 = (datetime.strptime(DAY, "%Y-%m-%d") + timedelta(days=1)).strftime("%Y-%m-%d")
+        journal.append(world["inst"], "chip", "plan `x` proposed", kind="sm",
+                       when=datetime.strptime(f"{day2} 08:00:00", "%Y-%m-%d %H:%M:%S"))
+        html = world["client"].get(f"/journal/day?day={day2}").get_data(as_text=True)
+        assert "1 journal line not attached to a run" in html
+        assert "no journal lines" not in html
+        assert f"No runs on {day2} — only the journal line below." in html
+        empty = (datetime.strptime(DAY, "%Y-%m-%d") + timedelta(days=2)).strftime("%Y-%m-%d")
+        assert f"No runs and no journal lines on {empty}." in world["client"].get(f"/journal/day?day={empty}").get_data(as_text=True)
+
     def test_a_bad_day_falls_back_to_today(self, world):
         html = world["client"].get("/journal?day=nope").get_data(as_text=True)
         assert datetime.now().strftime("%Y-%m-%d") in html
@@ -366,3 +381,13 @@ class TestTheDayNavigationActuallyNavigates:
         assert full and swap
         assert swap.replace(' hx-swap-oob="true"', "") == full, \
             "the only difference may be the out-of-band marker"
+
+
+def test_the_filter_select_keeps_room_for_its_arrow_and_the_loose_label_is_not_a_grid_cell():
+    """QA agents round, measured in real Chrome (tests/browser/journeys/agent_journal_layout.cjs):
+    the author select's padding-right was 9px so its arrow sat on "everyone" (38px now), and the
+    loose-lines label landed in the run grid's 4.3rem time column ("11 journal..."; clipped:
+    true -> false). The rules are pinned here; the measurement is the journey."""
+    css = (ROOT / "quam_state_manager" / "web" / "static" / "style.css").read_text(encoding="utf-8")
+    assert re.search(r"\.jr-filters select \{ padding-right: 1\.9rem; \}", css)
+    assert re.search(r"\.jr-card\.jr-loose > summary \{ display: flex;", css)

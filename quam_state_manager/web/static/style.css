@@ -11770,6 +11770,9 @@ body.scheduler-active #pending-tray { opacity: .5; pointer-events: none; }
 .jr-folder { font-size: .74rem; max-width: 26rem; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .jr-filters { display: flex; gap: .6rem; align-items: center; flex-wrap: wrap; margin: .2rem 0 .6rem; }
 .jr-filters input, .jr-filters select { margin: 0; padding: .2rem .45rem; font-size: .82rem; height: auto; width: auto; }
+/* the select's own arrow is a background at the right edge: the shorthand above
+   took away the room Pico keeps for it and the arrow sat on "everyone" */
+.jr-filters select { padding-right: 1.9rem; }
 .jr-filters .jr-q { min-width: 16rem; }
 .jr-daynav { display: inline-flex; gap: .25rem; align-items: center; }
 .jr-counts { font-size: .8rem; margin: 0 0 .5rem; }
@@ -11875,6 +11878,9 @@ body.scheduler-active #pending-tray { opacity: .5; pointer-events: none; }
 .jr-card > summary:hover { background: color-mix(in srgb, var(--pico-primary) 6%, transparent); }
 .jr-card[open] > summary { background: color-mix(in srgb, var(--pico-primary) 9%, transparent); }
 .jr-card > summary .jr-family { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-weight: 600; }
+/* the loose-lines card has ONE label, not a run's seven columns: in the run
+   grid it landed in the 4.3rem time column and read "11 journal..." */
+.jr-card.jr-loose > summary { display: flex; justify-content: space-between; }
 .jr-card > summary .jr-targets { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: .78rem; }
 .jr-pills { display: flex; gap: .3rem; align-items: center; white-space: nowrap; }
 .jr-who-cell { display: flex; gap: .3rem; align-items: center; white-space: nowrap; }
