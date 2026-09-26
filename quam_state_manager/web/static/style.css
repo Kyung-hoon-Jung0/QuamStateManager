@@ -13697,6 +13697,14 @@ table.diff-wb-list tbody > tr[hidden] { display: none; }
    the fix is sent with. It sits above the composer now and never takes a click. */
 .ag-toast { pointer-events: none; }
 .ag-toast { position: fixed; bottom: 6.5rem; right: 1rem; background: var(--pico-card-background-color); border: 1px solid var(--pico-muted-border-color); padding: .5rem .8rem; border-radius: .4rem; z-index: 60; }
+/* QA agents round (2): agent.js's toast() goes through the app's global
+   window.showToast (#status-bar) wherever app.js is loaded -- i.e. on /agent and
+   under the floating panel -- so .ag-toast above is only the fallback. The
+   #status-bar toast sat at bottom 1rem and covered the composer's Send label
+   (measured: toast 831-870 px vs Send 857-885 px at 1366x900). While an agent
+   composer is on screen, the toast sink sits above it. */
+body:has(#table-pane > .agent-home) #status-bar,
+body:has(#agent-popover:not(.agent-hidden)) #status-bar { bottom: 6.5rem; }
 .agent-popover { position: fixed; right: 1rem; bottom: 1rem; width: min(34rem, 92vw); max-height: 80vh; min-width: 22rem; min-height: 24rem; overflow: hidden; z-index: 55;
   background: var(--pico-card-background-color); border: 1.5px solid var(--pico-primary); border-radius: 10px; box-shadow: 0 8px 28px rgba(0,0,0,.25); display: flex; flex-direction: column; }
 /* review R2-9: the cards scroll INSIDE the panel; the composer stays pinned at the bottom */

@@ -36,8 +36,11 @@ const [SM, OUT, W] = [process.argv[2], process.argv[3], +process.argv[4] || 1366
   const btn = JSON.parse(await p.ev(`(() => { const b = document.querySelector('[data-card="${big}"] .ag-approve'); b.scrollIntoView({block:'center'}); const r = b.getBoundingClientRect(); return JSON.stringify([r.x + r.width/2, r.y + r.height/2]); })()`));
   const t0 = Date.now();
   await p.click(btn[0], btn[1]);
+  await sleep(800);
+  console.log('in flight', await p.ev(`(() => { const c = document.querySelector('[data-card="${big}"]'); return JSON.stringify({ btn: c.querySelector('.ag-approve').textContent, disabled: c.querySelector('.ag-approve').disabled, reject: c.querySelector('.ag-reject') ? !c.querySelector('.ag-reject').hidden : null }); })()`));
+  await p.shot(`${OUT}/approval_inflight_${W}.png`);
   let toast = null;
-  for (let i = 0; i < 200 && !toast; i++) { await sleep(50); toast = await p.ev(`(() => { const t = document.getElementById('ag-toast'); return t && !t.hidden ? t.textContent : null; })()`); }
+  for (let i = 0; i < 600 && !toast; i++) { await sleep(50); toast = await p.ev(`(() => { const t = document.querySelector('#status-bar .toast') || document.getElementById('ag-toast'); return t && !t.hidden ? t.textContent : null; })()`); }
   console.log('approve ->', JSON.stringify(toast), 'after', Date.now() - t0, 'ms');
   await sleep(2500);
   console.log('approval cards', await p.ev(cards));

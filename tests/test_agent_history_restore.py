@@ -55,3 +55,20 @@ def test_the_toast_never_takes_the_send_buttons_click():
     rule = css[css.index(".ag-toast { position: fixed;"):]
     rule = rule[:rule.index("}")]
     assert "bottom: 1rem" not in rule, "above the composer, not on it"
+
+
+def test_the_app_toast_sits_above_an_agent_composer():
+    """QA agents round (2): agent.js's toast() prefers the app's global
+    window.showToast (#status-bar), so .ag-toast's lift never applied on /agent or
+    under the floating panel -- measured in real Chrome at 1366x900, the
+    #status-bar toast (831-870 px) covered Send (857-885 px). The sink is lifted
+    exactly while an agent composer is on screen, and only then."""
+    import re
+    css = (_ROOT / "quam_state_manager" / "web" / "static" / "style.css").read_text(encoding="utf-8")
+    m = re.search(r"body:has\(#table-pane > \.agent-home\) #status-bar,\s*"
+                  r"body:has\(#agent-popover:not\(\.agent-hidden\)\) #status-bar \{([^}]*)\}", css)
+    assert m, "the lift is scoped to the two agent composers"
+    b = re.search(r"bottom:\s*([\d.]+)rem", m.group(1))
+    assert b and float(b.group(1)) >= 6, "above the composer (Send + the textarea), not on it"
+    base = css[css.index("#status-bar {"):]
+    assert "bottom: 1rem;" in base[:base.index("}")], "every other page keeps its toast where it was"

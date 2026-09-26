@@ -74,6 +74,17 @@ const tick = (ms) => new Promise(r => setTimeout(r, ms || 20));
   ok(/the agent added a reason/.test(card('ap-1').textContent), 'precondition: the card was re-rendered');
   ok(card('ap-1').querySelector('.ag-approve').disabled && card('ap-1').querySelector('.ag-reject').hidden, 'a re-render mid-flight is still busy');
   card('ap-1').querySelector('.ag-ap-new[data-i="0"]').value = '0.123';   // (a re-render rebuilds rows -- pre-existing)
+  // a change that arrives while the person is IN the card waits; it lands on focusout as fresh markup: still busy
+  const held = card('ap-1').querySelector('.ag-ap-new[data-i="1"]');
+  held.focus();
+  const changed2 = ap('ap-1'); changed2.reason = 'a second reason while typing';
+  feed = Object.assign({}, feed, { agent_seq: 4, live: { approvals: [changed2, ap('ap-2')] } });
+  await P.poll(true); await tick();
+  ok(!/a second reason while typing/.test(card('ap-1').textContent), 'precondition: the change waits while the person is in the card');
+  held.blur(); await tick(40);
+  ok(/a second reason while typing/.test(card('ap-1').textContent), 'precondition: it landed on focusout');
+  ok(card('ap-1').querySelector('.ag-approve').disabled && card('ap-1').querySelector('.ag-reject').hidden, 'a caught-up card mid-flight is still busy');
+  card('ap-1').querySelector('.ag-ap-new[data-i="0"]').value = '0.123';
   // the door refuses: the card comes back, with the person's value
   release(); await tick(40);
   const after = card('ap-1');
