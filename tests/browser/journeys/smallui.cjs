@@ -147,11 +147,13 @@ const WATCH = `(function(){ if (window.__ldr) return 'already'; window.__ldr=[];
     rec('#8 a fresh browser (key absent) gets the compact list, compact pressed, key still absent',
         a.compact && a.key === null && a.pressed === 'true' && a.n > 0, a);
     rec('#8 ...and every visible run name is one line', a.n > 0 && a.maxH === a.minH, a);
+    await p.ev(`(function(){document.querySelectorAll('#sidebar-tree details').forEach(function(d){d.open=true;}); var n=document.querySelector('#exp-density-compact')||document.querySelector('#sidebar-tree .entry-name'); if(n) n.scrollIntoView({block:'start'}); return 1;})()`); await p.sleep(300);
     await p.shot(path.join(SHOTS, 'q8_compact_default.png'));
     const full = await center(p, '#exp-density-full');
     await p.click(full.x, full.y); await p.sleep(500);
     const b = await J(p, rows);
     rec('#8 pressing Full names wraps the list and stores 0', !b.compact && b.key === '0' && b.maxH > a.maxH, b);
+    await p.ev(`(function(){document.querySelectorAll('#sidebar-tree details').forEach(function(d){d.open=true;}); var n=document.querySelector('#exp-density-compact')||document.querySelector('#sidebar-tree .entry-name'); if(n) n.scrollIntoView({block:'start'}); return 1;})()`); await p.sleep(300);
     await p.shot(path.join(SHOTS, 'q8_full_names.png'));
     await p.send('Page.reload', {}); await p.sleep(5000);
     const c = await J(p, rows);
