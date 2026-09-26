@@ -31,15 +31,23 @@ const tick = (ms) => new Promise(r => setTimeout(r, ms || 20));
   const handler = box.getAttribute('oninput');
   ok(/AgentPanel\.setActor\(this\.value, this\)/.test(handler), 'the box hands itself to setActor');
   const type = (v) => { box.value = v; window.AgentPanel.setActor(box.value, box); };
+  const note = () => (box.parentNode.querySelector('.ag-actor-note') || {});
+  const form = box.closest('form');
+  ok(form && form.classList.contains('ag-composer'), 'precondition: the box sits inside the composer form');
   type('정경훈');
   ok(localStorage.getItem('quam_actor_name') === '', 'precondition: storage holds nothing for a Hangul name');
-  ok(!box.checkValidity() && /English letters only/.test(box.validationMessage) && /human/.test(box.validationMessage),
-     'the box says it will record a plain human: ' + box.validationMessage);
-  ok(box.classList.contains('ag-actor-bad'), 'and is marked');
+  ok(/English letters only/.test(note().textContent || '') && /human/.test(note().textContent || '') && !note().hidden,
+     'the box says it will record a plain human: ' + note().textContent);
+  ok(box.classList.contains('ag-actor-bad') && box.getAttribute('aria-invalid') === 'true', 'and is marked');
+  // verifier P1: a custom validity on the box made the composer form invalid,
+  // so a CLICK on Send never submitted (Enter did). The warning must not block.
+  ok(box.checkValidity() && form.checkValidity(), 'an unrecordable name does not make the composer form invalid');
+  // (jsdom has no interactive form validation, so the CLICK itself is walked in
+  // real Chrome: tests/browser/journeys/agent_controls.cjs)
   type('Park 정');
-  ok(/“Park”/.test(box.validationMessage), 'a partly-ASCII name says what IS recorded: ' + box.validationMessage);
+  ok(/“Park”/.test(note().textContent || ''), 'a partly-ASCII name says what IS recorded: ' + note().textContent);
   type('Park');
-  ok(box.checkValidity() && !box.classList.contains('ag-actor-bad') && localStorage.getItem('quam_actor_name') === 'Park',
+  ok(!box.classList.contains('ag-actor-bad') && note().hidden && localStorage.getItem('quam_actor_name') === 'Park',
      'a clean name clears the mark');
   console.log(`\n${passes} passed, ${fails} failed`);
   process.exit(fails ? 1 : 0);

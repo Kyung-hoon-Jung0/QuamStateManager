@@ -91,11 +91,23 @@ window.AgentPanel = (function () {
     /* QA agents round: a name in Hangul stayed in the box while SM stored
        nothing and recorded every door as a plain "human" -- the box claimed
        a name the record would never carry. Say so where it is typed. */
-    if (input && input.setCustomValidity) {
+    /* Verifier P1: NOT the constraint-validation API. The box sits inside the
+       composer <form>, and a custom validity made the whole form invalid --
+       a click on Send was silently blocked (AgentPanel.submit never ran)
+       while Enter still sent. The warning is an inline note + a mark. */
+    if (input) {
       var bad = typed !== v;
-      input.setCustomValidity(bad ? "English letters only — SM records " + (v ? "“" + v + "”" : "a plain “human”") : "");
+      var msg = bad ? "English letters only — SM records " + (v ? "“" + v + "”" : "a plain “human”") : "";
       input.classList.toggle("ag-actor-bad", bad);
-      if (bad && input.reportValidity) { try { input.reportValidity(); } catch (e) { /* ignore */ } }
+      input.setAttribute("aria-invalid", bad ? "true" : "false");
+      var note = input.parentNode && input.parentNode.querySelector(".ag-actor-note");
+      if (!note && bad && input.parentNode) {
+        note = document.createElement("span");
+        note.className = "ag-actor-note";
+        note.setAttribute("role", "status");
+        input.parentNode.insertBefore(note, input.nextSibling);
+      }
+      if (note) { note.textContent = msg; note.hidden = !bad; }
     }
     try {
       localStorage.setItem("quam_actor_name", v);
