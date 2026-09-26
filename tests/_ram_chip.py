@@ -36,6 +36,9 @@ def build(n_qubits: int = 6, seed: int = 1) -> tuple[dict, dict]:
         mw_out["con1"][fem][xy_port] = {
             "band": 2, "upconverter_frequency": 5.0e9 + 1e8 * (i % 2),
             "full_scale_power_dbm": -11 + (i % 3), "delay": 0,
+            # identity fields: a node's port LABEL reads them through the
+            # state -> wiring -> ports pointer chain (a cross-entity read)
+            "controller_id": "con1", "fem_id": int(fem), "port_id": int(xy_port),
             "__class__": "quam.components.ports.MWFEMAnalogOutputPort"}
         mw_out["con1"][fem]["1"] = {"band": 3, "upconverter_frequency": 7.2e9,
                                     "full_scale_power_dbm": -14}
@@ -105,6 +108,10 @@ def build(n_qubits: int = 6, seed: int = 1) -> tuple[dict, dict]:
                    "opx_input": f"#/ports/mw_inputs/con1/{fem}/1"},
             "z": {"opx_output": f"#/ports/analog_outputs/con1/{lf}/{1 + (i - 1) % 8}"},
         }
+    # a cross-QUBIT alias (a shared anharmonicity): a value one qubit shows is
+    # read from another qubit's subtree, the read an entity-level model misses
+    if n_qubits >= 2:
+        qubits["q2"]["anharmonicity"] = "#/qubits/q1/anharmonicity"
     pairs: dict = {}
     for i in range(1, n_qubits):
         a, b = f"q{i}", f"q{i + 1}"

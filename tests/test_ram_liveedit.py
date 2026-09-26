@@ -599,3 +599,83 @@ def test_the_spliced_page_is_byte_identical_to_the_rendered_one(tmp_path, monkey
             seen += 1
         assert "bulk-cold-map" in cl
     assert seen == 3 * len(steps)
+
+
+# ---------------------------------------------------------------------------
+# RAM P5: get_topology recomputes only the nodes / edges whose inputs moved
+# ---------------------------------------------------------------------------
+
+@pytest.mark.parametrize("seed", [31, 32])
+def test_the_incremental_topology_equals_a_cold_one_after_every_step(seed):
+    """>= 200 random events (the grid pin's mix: FSP, bands, grid_location,
+    list elements, None flips, pointers, structure, undo, unexplained seq
+    moves): after each, the part-memoized topology equals a cold one, and the
+    parts were actually reused."""
+    from quam_state_manager.core import store_revs as SR
+    from quam_state_manager.core.query import QueryEngine
+    st = _store(7, seed)
+    m = Modifier(st)
+    rng = random.Random(seed)
+    flat = flatten(st.merged)
+    nums = [p for p, v in flat.items() if isinstance(v, (int, float)) and not isinstance(v, bool)]
+    strs = [p for p, v in flat.items() if isinstance(v, str) and not v.startswith("#")
+            and not p.endswith("__class__")]
+    ptrs = [p for p, v in flat.items() if isinstance(v, str) and v.startswith("#")]
+    eng = QueryEngine(st)
+    eng.get_topology()
+    reused = done = 0
+    for step in range(240):
+        try:
+            _grid_step(rng, st, m, nums, strs, ptrs, step)
+        except (KeyError, TypeError, ValueError, IndexError, AttributeError):
+            continue
+        done += 1
+        eng.invalidate_cache()
+        before = {k: v[2] for k, v in SR.revs_of(st).memo.get("topology_parts", {}).items()}
+        inc = eng.get_topology()
+        after = SR.revs_of(st).memo.get("topology_parts", {})
+        reused += sum(1 for k, v in after.items() if before.get(k) is v[2])
+        eng.invalidate_cache()
+        cold = eng.get_topology(_parts=False)
+        eng.invalidate_cache()
+        assert _canon(inc) == _canon(cold), f"topology diverged at step {step}"
+    assert done >= 200
+    assert reused > done, reused       # the memo served parts, not only rebuilt them
+
+
+def test_a_topology_node_follows_a_value_it_reads_through_a_pointer():
+    """q2's anharmonicity IS q1's (a pointer): a write under q1 must reach the
+    kept q2 node, and an unrelated write must not recompute it."""
+    from quam_state_manager.core import store_revs as SR
+    from quam_state_manager.core.query import QueryEngine
+    st = _store(4, 9)
+    m = Modifier(st)
+    eng = QueryEngine(st)
+    q2 = {n["id"]: n for n in eng.get_topology()["nodes"]}["q2"]
+    m.set_value("qubits.q4.T1", 1e-4, coerce=False, enforce=False)
+    eng.invalidate_cache()
+    assert {n["id"]: n for n in eng.get_topology()["nodes"]}["q2"] is q2, "kept"
+    m.set_value("qubits.q1.anharmonicity", -1.5e8, coerce=False, enforce=False)
+    eng.invalidate_cache()
+    now = {n["id"]: n for n in eng.get_topology()["nodes"]}["q2"]
+    assert now["anharmonicity"] == -1.5e8
+    assert SR.revs_of(st).memo["topology_parts"][("n", "q2")][2] is now
+
+
+def test_a_structural_event_above_a_read_recomputes_the_topology_part():
+    """A delete ABOVE a path a part reads through a pointer is caught by the
+    structural-event rule (a path test alone only looks at and above the
+    written path)."""
+    from quam_state_manager.core.query import QueryEngine
+    st = _store(4, 9)
+    m = Modifier(st)
+    m.set_value("qubits.q2.xy.operations.x180_DragCosine.amplitude",
+                "#/qubits/q1/xy/operations/x180_DragCosine/amplitude",
+                coerce=False, enforce=False)
+    eng = QueryEngine(st)
+    eng.get_topology()
+    m.delete_subtree("qubits.q1.xy.operations.x180_DragCosine")
+    eng.invalidate_cache()
+    inc = eng.get_topology()
+    eng.invalidate_cache()
+    assert _canon(inc) == _canon(eng.get_topology(_parts=False))
