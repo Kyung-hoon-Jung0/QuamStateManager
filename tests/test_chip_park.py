@@ -434,3 +434,77 @@ def test_ten_chip_switches_hold_memory_flat_and_debug_ram_adds_up(app, tmp_path)
     # prototype per /debug/ram call measured ~8 KB/switch.
     slope = (growth[-1] - growth[1]) / (len(growth) - 2)
     assert slope <= 2048, (slope, growth)
+
+
+# ------------------------------------------------------ search-index prewarm
+def _wait(pred, timeout=20.0):
+    import time
+    t = time.monotonic()
+    while time.monotonic() - t < timeout:
+        if pred():
+            return True
+        time.sleep(0.01)
+    return False
+
+
+def test_opening_a_chip_prewarms_its_search_index_without_a_search(app, tmp_path):
+    """Lazy alone moved a 2.9 s build (big30x, measured) onto the first
+    keystroke; the open must now leave the index building in the background."""
+    c = app.test_client()
+    ctx = _load(c, _make_chip(tmp_path / "chipA", n=4))
+    idx = ctx["index"]
+    assert isinstance(idx, LazySearchIndex)
+    assert _wait(lambda: idx.built), "the opened chip's index was never prewarmed"
+    assert idx.builds == 1
+
+
+def test_prewarm_builds_only_the_latest_of_a_burst(tmp_path):
+    """One worker, one slot: A is in flight, B then C are submitted; B is
+    overwritten by C and never built (a burst of switches builds one chip)."""
+    from quam_state_manager.core import search_index as si
+    stores = [QuamStore(_make_chip(tmp_path / n, n=2)) for n in ("A", "B", "C")]
+    a, b, cc = (LazySearchIndex(s) for s in stores)
+    a._build_lock.acquire()               # the worker will block inside a.get()
+    try:
+        a.prewarm()
+        assert _wait(lambda: si._PREWARM_SLOT[0] is None), "worker never took A"
+        b.prewarm()
+        cc.prewarm()
+    finally:
+        a._build_lock.release()
+    assert _wait(lambda: cc.built)
+    assert a.built and not b.built
+    assert b.search("q1", limit=5)        # still builds on demand
+    assert b.builds == 1
+
+
+def test_an_edit_racing_the_prewarm_matches_a_cold_build(tmp_path):
+    """The prewarm is get() itself: an edit that lands while it builds (seq
+    moves) must end with an index equal to a cold build of the edited store."""
+    import threading
+    store = QuamStore(_make_chip(tmp_path / "R", n=6))
+    lazy = LazySearchIndex(store)
+    real = SearchIndex.from_leaves
+    entered, go = threading.Event(), threading.Event()
+
+    def slow(leaves, keys):
+        entered.set()
+        go.wait(10)
+        return real(leaves, keys)
+
+    SearchIndex.from_leaves = staticmethod(slow)
+    try:
+        lazy.prewarm()
+        assert entered.wait(10)
+        with store._lock:                  # the edit path: mutate, bump seq, hook
+            store.merged["qubits"]["q3"]["T1"] = "zz_edited_marker"
+            store.mutation_seq += 1
+        lazy.update_entry("qubits.q3.T1", "zz_edited_marker")
+        go.set()
+        assert _wait(lambda: lazy.built)
+    finally:
+        SearchIndex.from_leaves = real
+    cold = SearchIndex.build(store.merged, wiring_keys=set(store.wiring.keys()))
+    for q in ("zz_edited", "q3", "T1", "amplitude"):
+        assert ([e.dot_path for e in lazy.search(q, limit=500)]
+                == [e.dot_path for e in cold.search(q, limit=500)]), q

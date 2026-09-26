@@ -1473,6 +1473,16 @@ def _probe_readonly(folder) -> bool:
         return False
 
 
+def _prewarm_search_index(ctx: dict | None) -> None:
+    """RAM P10: the chip just opened gets its topbar-search index built on a
+    background worker, so neither the open nor the first keystroke pays for
+    it (the worker builds only the most recently opened chip)."""
+    idx = (ctx or {}).get("index")
+    prewarm = getattr(idx, "prewarm", None)
+    if prewarm is not None:
+        prewarm()
+
+
 def _activate_quam(folder_path: str | Path, *, origin: str = "live") -> dict:
     """Load a QUAM state folder and register it as the active context.
 
@@ -1612,6 +1622,7 @@ def _activate_quam(folder_path: str | Path, *, origin: str = "live") -> dict:
         # all (measured: it did not). The call is idempotent -- a fresh config
         # answers "already-fresh" and starts nothing.
         _maybe_warm_generated_config(current, current_app.instance_path)
+        _prewarm_search_index(current)
         return current
 
     # Slow path. Serialise builds for THIS folder so two threads don't
@@ -1712,6 +1723,7 @@ def _activate_quam(folder_path: str | Path, *, origin: str = "live") -> dict:
         # already in RAM by the time anyone clicks that pulse. Gated on the
         # chip actually having one: every other chip pays nothing.
         _maybe_warm_generated_config(ctx, current_app.instance_path)
+        _prewarm_search_index(ctx)
         return ctx
 
 
@@ -2052,6 +2064,7 @@ def _rebuild_after_working_copy_replaced(ctx: dict) -> None:
     index = LazySearchIndex(store)
     store.search_index = index
     ctx["index"] = index
+    index.prewarm()
     ctx["wiring_json"] = json.dumps(store.wiring)
     _invalidate_engine_cache()
     ctx["working_dirty"] = False

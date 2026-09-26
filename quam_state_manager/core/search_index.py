@@ -455,7 +455,7 @@ class LazySearchIndex:
     builds holding the lock.
     """
 
-    __slots__ = ("_store", "_wiring_keys", "_index", "_build_lock", "builds")
+    __slots__ = ("_store", "_wiring_keys", "_index", "_build_lock", "builds", "__weakref__")
 
     _OPTIMISTIC_TRIES = 3
 
@@ -500,6 +500,16 @@ class LazySearchIndex:
                 self._index = built
                 self.builds += 1
                 return built
+
+    def prewarm(self) -> None:
+        """Ask the background worker to build this index soon (the most
+        recently opened chip wins; see :func:`_prewarm_worker`). Laziness kept
+        the open fast but moved a 2.9 s build onto the first keystroke on a
+        30-qubit chip (measured); prewarming moves it off both. The build is
+        :meth:`get` itself, so the mutation-seq token guards it exactly as a
+        foreground build."""
+        if self._index is None:
+            _prewarm_submit(self)
 
     # -- the SearchIndex surface ------------------------------------------
     def search(self, query: str, limit: int = 50, category: str | None = None):
@@ -762,3 +772,45 @@ def _build_inverted_indexes(index: SearchIndex) -> None:
     index.key_index = ki
     index.category_index = ci
     index.parent_index = pi
+
+
+# ---------------------------------------------------------------- prewarm
+# ONE daemon worker, ONE pending slot: a burst of chip switches builds only
+# the chip the user ended on (earlier requests are overwritten, and build
+# lazily on first search if ever needed). The slot holds a weakref, so a
+# chip that left the LRU is never kept alive by a pending prewarm.
+import weakref as _weakref  # noqa: E402
+
+_PREWARM_CV = threading.Condition()
+_PREWARM_SLOT: list = [None]
+_PREWARM_THREAD: list = [None]
+PREWARM_BUILDS = [0]
+
+
+def _prewarm_submit(lazy: "LazySearchIndex") -> None:
+    with _PREWARM_CV:
+        _PREWARM_SLOT[0] = _weakref.ref(lazy)
+        t = _PREWARM_THREAD[0]
+        if t is None or not t.is_alive():
+            t = threading.Thread(target=_prewarm_worker, name="search-index-prewarm",
+                                 daemon=True)
+            _PREWARM_THREAD[0] = t
+            t.start()
+        _PREWARM_CV.notify()
+
+
+def _prewarm_worker() -> None:
+    while True:
+        with _PREWARM_CV:
+            while _PREWARM_SLOT[0] is None:
+                _PREWARM_CV.wait()
+            ref, _PREWARM_SLOT[0] = _PREWARM_SLOT[0], None
+        lazy = ref()
+        if lazy is None or lazy._index is not None:
+            continue
+        try:
+            lazy.get()
+            PREWARM_BUILDS[0] += 1
+        except Exception:  # noqa: BLE001 -- a prewarm never raises; search builds on demand
+            logger.debug("search index prewarm failed", exc_info=True)
+        del lazy
