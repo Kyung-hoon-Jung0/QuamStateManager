@@ -18687,6 +18687,7 @@ def _take_live_backup(ctx, store, pending: dict) -> dict | None:
             safe_io.write_state_wiring(tmp, store.state, store.wiring)
         meta = _history().check_and_snapshot(
             tmp, "manual", force=True, kind="backup",
+            defer_index=not current_app.config.get("TESTING"),
             project=_scope_for(ctx["path"], ctx))
         if meta is not None:
             rec["snapshot"] = meta.timestamp
@@ -18998,7 +18999,10 @@ def state_sync():
 
     # Record a Param History snapshot of the now-current live state.
     try:
+        # w7/livewrite: the Param-History index insert (a walk of the whole
+        # chip) runs off the request, as the apply paths already do
         _history().check_and_snapshot(ctx["path"], "auto", kind="manual",
+                                      defer_index=not current_app.config.get("TESTING"),
                                       project=_scope_for(ctx["path"], ctx))
     except Exception:
         logger.warning("History snapshot after sync failed", exc_info=True)
