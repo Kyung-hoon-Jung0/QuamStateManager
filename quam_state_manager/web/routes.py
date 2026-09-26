@@ -24178,6 +24178,10 @@ def param_history_changes():
     except Exception:             # noqa: BLE001 — the token is an accelerator
         logger.debug("changes memo bypassed", exc_info=True)
         groups, stats = compute()
+    try:
+        _phr.warm_path_rank(hm, path)     # the typeahead on this page
+    except Exception:             # noqa: BLE001
+        logger.debug("path-rank warm not started", exc_info=True)
     has_more = (not at) and len(groups) > _CHANGES_SNAPS
     groups = groups[:1 if at else _CHANGES_SNAPS]
     oldest = groups[-1]["timestamp"] if groups else None
@@ -24197,7 +24201,8 @@ def param_history_param_search():
         return jsonify(ok=False, results=[]), 400
     q = (request.args.get("q") or "").strip()
     try:
-        hits = _history().leaf_search(Path(_active_path()), q, limit=30)
+        from quam_state_manager.core import param_history_ram as _phr
+        hits = _phr.leaf_search(_history(), Path(_active_path()), q, limit=30)
     except Exception:      # noqa: BLE001
         logger.debug("param search failed", exc_info=True)
         hits = []

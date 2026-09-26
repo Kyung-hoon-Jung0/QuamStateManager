@@ -134,3 +134,76 @@ def close_all() -> None:
             conn.close()
         except sqlite3.Error:
             pass
+
+
+# ── the parameter typeahead (/param-history/param-search) ─────────────────
+# One ranked path list per chip history, validated on read by hist_token:
+# a capture/ingest/prune (any commit to index.sqlite) is a miss and a full
+# rebuild -- never a patched list.
+_PATH_RANK_MEMO: Any = None
+_PATH_RANK_LOCK = threading.Lock()
+
+
+def _path_rank_memo() -> Any:
+    global _PATH_RANK_MEMO
+    with _PATH_RANK_LOCK:
+        if _PATH_RANK_MEMO is None:
+            from quam_state_manager.core import ramcache
+            _PATH_RANK_MEMO = ramcache.KeyedMemo(
+                "param_history.path_rank", max_entries=2,
+                max_bytes=96 * 1024 * 1024, sizeof=lambda v: v.nbytes)
+        return _PATH_RANK_MEMO
+
+
+def leaf_search(hm: Any, quam_state_path: Path | str, query: str, *,
+                limit: int = 50) -> list[dict]:
+    """``hm.leaf_search(path, query, limit=limit)`` answered from RAM.
+
+    The token is read BEFORE the rank is built, so a commit landing during
+    the build leaves an entry whose token is already old: the next read
+    misses and rebuilds (a value is never newer-labelled than its data).
+    Any failure of the accelerator answers through the manager's own SQL."""
+    from quam_state_manager.core import leaf_index, ramcache
+    path = Path(quam_state_path)
+
+    def compute():
+        conn = hm._open_index(path)
+        try:
+            return leaf_index.PathRank.from_conn(conn)
+        finally:
+            conn.close()
+
+    try:
+        token = hist_token(hm, path)
+        rank = _path_rank_memo().get(("rank", token[0]), token, compute,
+                                     wait_s=30.0)
+        return rank.search(query, limit=limit)
+    except ramcache.Warming:
+        return hm.leaf_search(path, query, limit=limit)
+    except Exception:             # noqa: BLE001 -- the memo is an accelerator
+        logger.debug("path-rank memo bypassed", exc_info=True)
+        return hm.leaf_search(path, query, limit=limit)
+
+
+_WARMING: set = set()
+
+
+def warm_path_rank(hm: Any, quam_state_path: Path | str) -> None:
+    """Build the typeahead's rank off the request (the Changes page, which
+    carries the typeahead, calls this on render), so the first keystroke
+    after a capture is not the one that pays the ~1 s rebuild on a 30-qubit
+    chip. A current entry makes this a token read and a memo hit."""
+    key = str(Path(quam_state_path))
+    with _PATH_RANK_LOCK:
+        if key in _WARMING:
+            return
+        _WARMING.add(key)
+
+    def run():
+        try:
+            leaf_search(hm, quam_state_path, "", limit=1)   # "" builds, answers []
+        finally:
+            with _PATH_RANK_LOCK:
+                _WARMING.discard(key)
+
+    threading.Thread(target=run, name="path-rank-warm", daemon=True).start()

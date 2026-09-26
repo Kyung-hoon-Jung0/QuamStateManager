@@ -801,6 +801,93 @@ def search_paths(conn: sqlite3.Connection, query: str, *,
     return [{"path": r[0], "changes": r[1]} for r in rows[:int(limit)]]
 
 
+# SQLite's built-in LIKE folds case for the 26 ASCII letters only; the RAM form
+# folds exactly those and nothing else ([derived], pinned against SQLite's own
+# LIKE over non-ASCII paths in tests/test_param_history_ram.py).
+_ASCII_FOLD = {c: c + 32 for c in range(ord("A"), ord("Z") + 1)}
+
+
+class PathRank:
+    """Every indexed path with its change count, in ``search_paths``' order
+    (most-moved first, then the natural key), held as two joined strings
+    (original and ASCII-folded, same offsets) so a keystroke is a C-speed
+    substring scan that stops at the ``limit``-th hit (RAM P8: the typeahead
+    re-ran the join + GROUP BY + a Python natural sort of every matching path
+    per keystroke -- 64k paths, 335 ms for ``qubits.q1`` on a 30-qubit chip).
+
+    ``search(q, n) == search_paths(conn, q, limit=n)`` for the database it was
+    built from (pinned over random queries). Paths never contain a newline,
+    which is the separator; a path that does is kept out of the fast scan by
+    falling back to ``search_paths``' own grammar on the row list."""
+
+    __slots__ = ("hay", "low", "offs", "counts", "n", "nbytes")
+
+    def __init__(self, rows: list) -> None:
+        rows = list(rows)
+        rows.sort(key=lambda r: (-r[1], natural_key(r[0])))
+        from array import array
+        paths = [r[0] for r in rows]
+        self.counts = array("q", [int(r[1]) for r in rows])
+        self.hay = "\n".join(paths) + "\n"
+        self.low = self.hay.translate(_ASCII_FOLD)
+        offs = array("q")
+        o = 0
+        for p in paths:
+            offs.append(o)
+            o += len(p) + 1
+        offs.append(o)
+        self.offs = offs
+        self.n = len(paths)
+        self.nbytes = (len(self.hay) * 2 + 16 * (self.n + 1) + 256)
+        if any("\n" in p for p in paths):     # never on a real index
+            raise ValueError("path with a newline")
+
+    @classmethod
+    def from_conn(cls, conn: sqlite3.Connection) -> "PathRank":
+        return cls(conn.execute(
+            "SELECT p.path, COUNT(l.snap_id) AS n "
+            "  FROM leaf_paths p LEFT JOIN leaf_cp l ON l.path_id = p.id "
+            " GROUP BY p.id").fetchall())
+
+    def _row(self, i: int) -> dict:
+        return {"path": self.hay[self.offs[i]:self.offs[i + 1] - 1],
+                "changes": int(self.counts[i])}
+
+    def search(self, query: str, limit: int = 50) -> list[dict]:
+        from bisect import bisect_right
+        from quam_state_manager.core.search_query import groups as _sq_groups
+
+        grps = _sq_groups(query or "")
+        if not grps:
+            return []
+        limit = int(limit)
+        if limit <= 0:
+            return []
+        # the terms arrive lower-cased by search_query.tokens (as the SQL
+        # form's LIKE patterns do); only the hay side needs the ASCII fold
+        low, offs, out = self.low, self.offs, []
+        if len(grps) == 1 and len(grps[0]) == 1:
+            term = grps[0][0]
+            pos = low.find(term)
+            while pos >= 0 and len(out) < limit:
+                i = bisect_right(offs, pos) - 1
+                out.append(self._row(i))
+                pos = low.find(term, offs[i + 1])   # next row
+            return out
+        # AND over groups of OR over terms: one lookahead per group, anchored
+        # at each line start, scanned in C over the folded list; still stops
+        # at the limit-th row in rank order
+        nl = chr(10)
+        pat = "^" + "".join(
+            "(?=[^" + nl + "]*(?:" + "|".join(re.escape(t) for t in g) + "))"
+            for g in grps)
+        for m in re.finditer(pat, low, re.M):
+            out.append(self._row(bisect_right(offs, m.start()) - 1))
+            if len(out) >= limit:
+                break
+        return out
+
+
 # ──────────────────────────────────────────────────────────────────────────
 # Families — grouped and counted IN SQL
 # ──────────────────────────────────────────────────────────────────────────

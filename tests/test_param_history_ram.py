@@ -464,3 +464,106 @@ def test_persistent_connections_are_bounded_and_never_reuse_a_token(tmp_path):
         c.execute("INSERT INTO t VALUES (1)")
     assert PHR.data_version(paths[0]) != first         # a reopen is never an old token
     PHR.close_all()
+
+
+# ── the parameter typeahead from RAM (PathRank) ─────────────────────────────
+
+_ODD_PATHS = ["qubits.Ärger.T1", "qubits.ärger.T1", "straße.x", "STRASSE.x",
+              "qubits.İd.f", "qubits.id.F", "q_1%x.amp", "q1x.amp", "Q10.T2",
+              "q10.t2", "qubits.q2.xy.operations.x180_Drag.amplitude"]
+
+
+def _rank_db(rng: random.Random) -> sqlite3.Connection:
+    conn = sqlite3.connect(":memory:")
+    LI.ensure_schema(conn)
+    paths = set(_ODD_PATHS)
+    toks = ["qubits", "q1", "q2", "q10", "Q3", "xy", "operations", "x180",
+            "amplitude", "T1", "t2", "f_01", "cz", "phase", "qubit_pairs",
+            "q1-2", "weights", "0", "1", "12", "ß", "Ä", "%", "_"]
+    while len(paths) < 400:
+        paths.add(".".join(rng.choice(toks) for _ in range(rng.randint(1, 5))))
+    for pid, p in enumerate(sorted(paths), 1):
+        conn.execute("INSERT INTO leaf_paths (id, path) VALUES (?, ?)", (pid, p))
+        for sid in rng.sample(range(1, 30), rng.choice([0, 1, 1, 1, 2, 3, 7])):
+            conn.execute("INSERT INTO leaf_cp (path_id, snap_id, value) VALUES (?, ?, 0)",
+                         (pid, sid))
+    return conn
+
+
+def test_path_rank_equals_search_paths_over_random_queries():
+    """PathRank.search is the SQL typeahead's answer, character for character:
+    the LIKE grammar (space AND, | OR), ASCII-only case folding (the Ä/ä,
+    ß/SS, İ/i paths), literal % and _, the (-changes, natural) order and the
+    limit."""
+    rng = random.Random(20260926)
+    conn = _rank_db(rng)
+    rank = LI.PathRank.from_conn(conn)
+    paths = [r[0] for r in conn.execute("SELECT path FROM leaf_paths")]
+    fixed = ["q1", "Q1", "ä", "Ä", "ß", "SS", "i", "İ", "%", "_", "q_1%",
+             "x180 amp", "q1 | q2", "T1|t2 qubits", "zzz", "", "  ", "|", "q |"]
+    qs = list(fixed)
+    for _ in range(300):
+        p = rng.choice(paths)
+        a = rng.randrange(len(p))
+        t = p[a:a + rng.randint(1, 6)]
+        if rng.random() < 0.3:
+            t = t.upper()
+        if rng.random() < 0.3:
+            t = t + rng.choice([" ", " | "]) + rng.choice(paths)[:rng.randint(1, 4)]
+        qs.append(t)
+    for q in qs:
+        for lim in (1, 5, 30, 1000):
+            assert rank.search(q, lim) == LI.search_paths(conn, q, limit=lim), (q, lim)
+
+
+def _param_search(env, q):
+    r = env["client"].get("/param-history/param-search?q=" + q)
+    assert r.status_code == 200
+    return r.get_json()["results"]
+
+
+def test_param_search_memo_equals_cold_over_random_events(env):
+    """Captures and foreign commits (a second process adding a path and a
+    change point) interleaved with typeahead reads: the memo's answer always
+    equals the manager's own SQL on the index as it is NOW."""
+    rng = random.Random(7)
+    base = _state()
+    _snap(env, base)
+    hm, live = env["hm"], env["live"]
+    memo = PHR._path_rank_memo()
+    hits_seen = 0
+    for step in range(40):
+        ev = rng.randrange(4)
+        if ev == 0:
+            base = _state(rng, base)
+            _snap(env, base)
+        elif ev == 1:
+            hm._ensure_leaf_index_fresh(live)
+            idx = hm._history_dir(live) / "index.sqlite"
+            with sqlite3.connect(str(idx)) as c2:
+                c2.execute("INSERT OR IGNORE INTO leaf_paths (path) VALUES (?)",
+                           (f"qubits.q1.foreign_{step}",))
+                c2.execute("INSERT OR IGNORE INTO leaf_cp (path_id, snap_id, value) "
+                           "SELECT id, (SELECT MAX(snap_id) FROM leaf_cp), 1 "
+                           "FROM leaf_paths WHERE path = ?", (f"qubits.q1.foreign_{step}",))
+        q = rng.choice(["q1", "T1", "amplitude", "foreign", "q1 | q2", "zzz", "Q1"])
+        n0 = memo.computes
+        warm = _param_search(env, q)
+        if memo.computes == n0:
+            hits_seen += 1
+        assert warm == hm.leaf_search(live, q, limit=30), (step, ev, q)
+    assert hits_seen >= 5, "the memo never served a hit -- the pin proves nothing"
+
+
+def test_changes_page_warms_the_typeahead_rank(env):
+    _snap(env, _state())
+    memo = PHR._path_rank_memo()
+    memo.clear()
+    _feed(env)
+    for _ in range(200):                      # the warm runs on a daemon thread
+        if memo.slots():
+            break
+        time.sleep(0.01)
+    n = memo.computes
+    _param_search(env, "q1")
+    assert memo.computes == n, "the first keystroke rebuilt the rank"
