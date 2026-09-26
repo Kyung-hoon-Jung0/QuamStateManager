@@ -415,3 +415,130 @@ def test_the_submenu_equals_the_full_listing_and_reads_no_toml(tmp_path, monkeyp
     monkeypatch.setattr(QC, "_load_toml", counted)
     assert c.get("/qualibrate/subnav").status_code == 200
     assert n["k"] == 0
+
+
+# ---------------------------------------------------------------------------
+# RAM P6: the Live-Edit grids patch themselves (routes._grid_memo)
+# ---------------------------------------------------------------------------
+
+def _grid_state(R, st, ctx):
+    """Every grid the /bulk page renders, via the memo (patched) and cold."""
+    mod = R._modified_map_of(st)
+    q = R._bulk_grid_entry(st, set(), mod, ctx)["grid"]
+    p = R._pair_grid_entry(st, mod, ctx)["grid"]
+    e = R._extra_grids_entry(st, mod, "state", ctx)["grid"]
+    cq = R._qubit_bulk_grid(st, set(), mod)
+    cp = R._pair_bulk_grid(st, mod)
+    return (q, p, e), (cq, cp)
+
+
+def _canon(x):
+    return json.dumps(x, sort_keys=True, default=repr)
+
+
+def _cold_extras(R, st, doc):
+    from quam_state_manager.core import entity_grids
+    mod = R._modified_map_of(st)
+    out = []
+    for spec in entity_grids.discover(st.merged, doc):
+        cols, groups, rows = R._entity_bulk_grid(st, spec["root"], spec["ids"], mod,
+                                                 spec["expand_ports"])
+        if cols and rows:
+            out.append({"key": spec["key"], "root": spec["root"], "label": spec["label"],
+                        "columns": cols, "column_groups": groups, "rows": rows})
+    return out
+
+
+def _grid_step(rng, st, m, nums, strs, ptrs, step):
+    """The lint pin's event mix plus the writes the grids read OUTSIDE a
+    cell's own leaf: the FSP an amplitude's dBm reads, LO bands and
+    frequencies (the LO-peer pass), grid_location (the row picker), a list
+    ELEMENT (a list cell reads the whole list), None flips (a column null on
+    every entity is dropped) and a change-log reset without a seq move."""
+    x = rng.random()
+    now = flatten(st.merged)
+    flat = [p for p in nums if p in now]
+    if x < 0.12:
+        fsp = [p for p in flat if p.endswith("full_scale_power_dbm")]
+        if fsp:
+            m.set_value(rng.choice(fsp), rng.choice([-11, -8, 1, -20.5]), coerce=False, enforce=False)
+    elif x < 0.22:
+        lo = [p for p in flat if p.rsplit(".", 1)[-1] in ("band", "upconverter_frequency")]
+        if lo:
+            m.set_value(rng.choice(lo), rng.choice([1, 2, 3, 5.1e9, 6.2e9]), coerce=False, enforce=False)
+    elif x < 0.27:
+        q = rng.choice(sorted(st.merged["qubits"]))
+        m.set_value(f"qubits.{q}.grid_location", rng.choice(["0,0", "2,1", None, "x"]),
+                    coerce=False, enforce=False)
+    elif x < 0.32:
+        cm = [p for p in flat if ".confusion" in p]
+        if cm:
+            m.set_value(rng.choice(cm), rng.random(), coerce=False, enforce=False)
+    elif x < 0.37:
+        # every qubit's copy of one leaf to None, then back: the column drops
+        leaf = rng.choice(["T2echo", "chi", "freq_vs_flux_01_quad_term"])
+        for q in sorted(st.merged["qubits"]):
+            if leaf in st.merged["qubits"][q]:
+                m.set_value(f"qubits.{q}.{leaf}", None if rng.random() < 0.8 else 1.5,
+                            coerce=False, enforce=False)
+    elif x < 0.40 and st.change_log:
+        del st.change_log[rng.randrange(len(st.change_log))]     # a reset: no seq move
+    else:
+        _random_step(rng, st, m, nums, strs, ptrs, step)
+
+
+@pytest.mark.parametrize("seed", [21, 22])
+def test_patched_grids_equal_a_cold_build_after_every_step(seed):
+    """>= 200 random events of every kind: after EACH, the memo's qubit, pair
+    and extra grids equal a cold build -- and plain writes were actually
+    served by the patch (a memo that always rebuilt would pass the equality
+    and fail the counter)."""
+    from quam_state_manager.web import routes as R
+    st = _store(7, seed)
+    m = Modifier(st)
+    rng = random.Random(seed)
+    flat = flatten(st.merged)
+    nums = [p for p, v in flat.items() if isinstance(v, (int, float)) and not isinstance(v, bool)]
+    strs = [p for p, v in flat.items() if isinstance(v, str) and not v.startswith("#")
+            and not p.endswith("__class__")]
+    ptrs = [p for p, v in flat.items() if isinstance(v, str) and v.startswith("#")]
+    ctx: dict = {}
+    _grid_state(R, st, ctx)
+    serials = []
+    done = 0
+    for step in range(240):
+        try:
+            _grid_step(rng, st, m, nums, strs, ptrs, step)
+        except (KeyError, TypeError, ValueError, IndexError, AttributeError):
+            continue
+        done += 1
+        (q, p, e), (cq, cp) = _grid_state(R, st, ctx)
+        # canonical JSON: a NaN (a nan dBm) is equal to itself here, as it is
+        # to the page, which renders both the same
+        assert _canon(q) == _canon(cq), f"qubit grid diverged at step {step}"
+        assert _canon(p) == _canon(cp), f"pair grid diverged at step {step}"
+        assert _canon(e) == _canon(_cold_extras(R, st, "state")),             f"extra grids diverged at step {step}"
+        serials.append(ctx["bulk_grid_cache"]["serial"])
+    assert done >= 200
+    # the patch did the serving: far fewer rebuilds than steps
+    assert len(set(serials)) < done * 0.6, (len(set(serials)), done)
+
+
+def test_an_fsp_write_reannotates_the_amplitude_cells_it_feeds():
+    """The dBm under an amplitude is FSP + 20*log10|amp|: an FSP write must
+    reach the amplitude cell although the cell's own leaf did not move."""
+    from quam_state_manager.web import routes as R
+    st = _store(4, 3)
+    m = Modifier(st)
+    ctx: dict = {}
+    mod = R._modified_map_of(st)
+    ent = R._bulk_grid_entry(st, set(), mod, ctx)
+    serial = ent["serial"]
+    port = st.merged["wiring"]["qubits"]["q1"]["xy"]["opx_output"][2:].replace("/", ".")
+    m.set_value(port + ".full_scale_power_dbm", 4, coerce=False, enforce=False)
+    ent = R._bulk_grid_entry(st, set(), R._modified_map_of(st), ctx)
+    assert ent["serial"] == serial, "served by the patch"
+    cells = {c["dot_path"]: c for r in ent["grid"]["rows"] if r["id"] == "q1" for c in r["cells"]}
+    amp = [c for p, c in cells.items() if p.endswith("x180_DragCosine.amplitude")]
+    assert amp and amp[0]["phys"]["fsp"] == 4.0
+    assert _canon(ent["grid"]) == _canon(R._qubit_bulk_grid(st, set(), R._modified_map_of(st)))

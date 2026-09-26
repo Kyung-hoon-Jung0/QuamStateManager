@@ -31,6 +31,7 @@ import re
 import shutil
 import sys
 import tempfile
+import itertools
 import threading
 import time
 import uuid
@@ -171,8 +172,23 @@ def _is_numeric_string(v: Any) -> bool:
 _LO_FIELDS = ("band", "upconverter_frequency", "downconverter_frequency")
 
 
+def _port_info_add(port_info: dict, p: tuple, owner: str, val: Any) -> None:
+    """ONE port cell's contribution to the LO/band 2nd pass -- the same code
+    for the first build and for the RAM grid patch's replay (docs/2xx P6),
+    so a replayed ``port_info`` is the one a cold build would make."""
+    kind, con, fem, port, field = p
+    info = port_info.setdefault((kind, con, fem, port),
+                                {"qubit": owner, "band": None, "freq": None})
+    info["qubit"] = owner
+    if field == "band":
+        info["band"] = val
+    elif field in ("upconverter_frequency", "downconverter_frequency"):
+        info["freq"] = val
+
+
 def _build_bulk_cell(merged: dict, alias: str, modified: dict,
-                     port_info: dict, owner: str) -> dict[str, Any]:
+                     port_info: dict, owner: str, reads: list | None = None,
+                     lo_log: list | None = None) -> dict[str, Any]:
     """Resolve ONE bulk-grid cell from a dot-path *alias* through the QUAM pointer
     system. Shared verbatim by the qubit grid and the pair grid so both render
     identical cell semantics (value, shared-port linking, modified marker) and
@@ -245,14 +261,9 @@ def _build_bulk_cell(merged: dict, alias: str, modified: dict,
                 ptr_kind = "runtime" if is_self_ref(raw_val) else "dangling"
     p = mw_fem.port_of_resolved(resolved)
     if p:
-        kind, con, fem, port, field = p
-        info = port_info.setdefault((kind, con, fem, port),
-                                    {"qubit": owner, "band": None, "freq": None})
-        info["qubit"] = owner
-        if field == "band":
-            info["band"] = val
-        elif field in ("upconverter_frequency", "downconverter_frequency"):
-            info["freq"] = val
+        _port_info_add(port_info, p, owner, val)
+        if lo_log is not None:
+            lo_log.append((p, owner, val))
     return {
         "dot_path": alias,            # what we POST (edit-batch re-resolves)
         "resolved_path": resolved,    # what the change_log keys on
@@ -288,7 +299,7 @@ def _build_bulk_cell(merged: dict, alias: str, modified: dict,
         # docs/109: what actually leaves the instrument for this amplitude —
         # MW: FSP + 20·log10|amp| in dBm; LF/flux: the value IS volts. None
         # (blank) whenever the chain doesn't fully resolve — never invented.
-        "phys": physical_units.amp_annotation(merged, resolved, val),
+        "phys": physical_units.amp_annotation(merged, resolved, val, reads),
         "_port": p,
     }
 
@@ -514,8 +525,7 @@ def _bulk_col_maxlen(columns: list[dict], grid: dict, ids: list[str]) -> None:
     NATURAL column width is already "value + clock, tight" (the dblclick
     auto-fit resets to this). Cap 26→28 keeps the reserve on long values."""
     for ci, col in enumerate(columns):
-        widest = max((len(grid[i][ci]["display"]) for i in ids), default=4)
-        col["maxlen"] = min(max(widest + 4, len(col["label"]) // 2 + 4, 6), 28)
+        col["maxlen"] = _col_maxlen(col["label"], (grid[i][ci]["display"] for i in ids))
 
 
 # ======================================================================
@@ -6119,7 +6129,48 @@ def qdac_page():
         instrument=qdac_mod.instrument(root), cabling=groups)
 
 
-def _qubit_bulk_grid(store: QuamStore, dyn_hidden: set[str], modified: dict) -> dict[str, Any]:
+def _qubit_cell_for(merged: dict, spec: dict, qid: str, modified: dict,
+                    port_info: dict, lo_log: list | None = None) -> tuple[dict, tuple]:
+    """ONE qubit-grid cell, and every stored path its content was read from
+    (RAM P6: the grid patch re-runs exactly this for a cell whose read set a
+    write reaches, so a patched cell is the cell a cold build makes)."""
+    if spec.get("dyn"):
+        # Derived columns address per ROW: a folded per-neighbour
+        # operation is named `cz_flattop_pulse_q1` but LIVES at
+        # `cz_flattop_pulse_q1_q2`, so formatting the template hits
+        # a key no qubit owns. A qid with no entry does not carry
+        # the leaf at all — blank, not a fillable box (which is
+        # what "declared but null" keeps meaning).
+        path = (spec.get("paths") or {}).get(qid)
+        if path is None:
+            return _empty_pair_cell(), ()
+        kind = (spec.get("modes") or {}).get(
+            qid, spec.get("kind", "edit"))
+    else:
+        path = spec["tmpl"].format(name=qid)
+        kind = spec.get("kind", "edit")
+    if kind == "runtime":
+        c = _runtime_pair_cell(merged, path)
+        return c, (c["resolved_path"],)
+    reads: list = []
+    cell = _build_bulk_cell(merged, path, modified, port_info, qid, reads, lo_log)
+    # The row mode is a FLOOR on the column kind, never a
+    # replacement: a null row inside a list-valued column (a qubit
+    # whose exponential_filter is not set yet) must still get the ✎
+    # JSON editor. Letting the row mode win rendered it as a plain
+    # scalar box that happily stored a bare float where every
+    # sibling holds [[amp, tau], ...] — 192 such cells on 13 real
+    # chips, on exactly the filter/discrimination fields this
+    # change exists to make reachable.
+    if kind == "listedit" or spec.get("kind") == "listedit" \
+            or cell.get("is_list"):
+        c = _list_json_cell(merged, path, modified)
+        return c, (c["resolved_path"], cell["resolved_path"], *reads)
+    return cell, (cell["resolved_path"], *reads)
+
+
+def _qubit_bulk_grid(store: QuamStore, dyn_hidden: set[str], modified: dict,
+                     pst: dict | None = None) -> dict[str, Any]:
     """Build the Live-Edit QUBIT grid: columns (curated + derived, minus the
     client's hidden set and the dead-channel prune), one row of resolved cells
     per qubit, the header groups, the client's column model and the row-picker
@@ -6170,42 +6221,17 @@ def _qubit_bulk_grid(store: QuamStore, dyn_hidden: set[str], modified: dict) -> 
         # Dynamic runtime/list columns get their read-only cell variants; a
         # curated column that (defensively) resolves to a list gets one too.
         grid: dict[str, list[dict[str, Any]]] = {}
-        for qid in qids:
+        for qi, qid in enumerate(qids):
             cells: list[dict[str, Any]] = []
-            for spec in specs:
-                if spec.get("dyn"):
-                    # Derived columns address per ROW: a folded per-neighbour
-                    # operation is named `cz_flattop_pulse_q1` but LIVES at
-                    # `cz_flattop_pulse_q1_q2`, so formatting the template hits
-                    # a key no qubit owns. A qid with no entry does not carry
-                    # the leaf at all — blank, not a fillable box (which is
-                    # what "declared but null" keeps meaning).
-                    path = (spec.get("paths") or {}).get(qid)
-                    if path is None:
-                        cells.append(_empty_pair_cell())
-                        continue
-                    kind = (spec.get("modes") or {}).get(
-                        qid, spec.get("kind", "edit"))
-                else:
-                    path = spec["tmpl"].format(name=qid)
-                    kind = spec.get("kind", "edit")
-                if kind == "runtime":
-                    cells.append(_runtime_pair_cell(merged, path))
+            for si, spec in enumerate(specs):
+                if pst is None:
+                    cells.append(_qubit_cell_for(merged, spec, qid, modified, port_info)[0])
                     continue
-                cell = _build_bulk_cell(merged, path, modified, port_info, qid)
-                # The row mode is a FLOOR on the column kind, never a
-                # replacement: a null row inside a list-valued column (a qubit
-                # whose exponential_filter is not set yet) must still get the ✎
-                # JSON editor. Letting the row mode win rendered it as a plain
-                # scalar box that happily stored a bare float where every
-                # sibling holds [[amp, tau], ...] — 192 such cells on 13 real
-                # chips, on exactly the filter/discrimination fields this
-                # change exists to make reachable.
-                if kind == "listedit" or spec.get("kind") == "listedit" \
-                        or cell.get("is_list"):
-                    cells.append(_list_json_cell(merged, path, modified))
-                else:
-                    cells.append(cell)
+                lo_log: list = []
+                cell, deps = _qubit_cell_for(merged, spec, qid, modified, port_info,
+                                             lo_log)
+                _pst_record(pst, (qi, si), deps, lo_log)
+                cells.append(cell)
             grid[qid] = cells
 
     # Dead-CHANNEL column pruning: drop a column whose channel component (the
@@ -6236,6 +6262,8 @@ def _qubit_bulk_grid(store: QuamStore, dyn_hidden: set[str], modified: dict) -> 
             columns = [columns[i] for i in keep]
             for qid in qids:
                 grid[qid] = [grid[qid][i] for i in keep]
+        if pst is not None:
+            pst["keep"] = keep
 
     # Second pass: attach MW-FEM LO/band metadata to each band / up-or-downconverter-
     # frequency port cell — the LO-coupled peer, its owning qubit + band — so the
@@ -6248,15 +6276,17 @@ def _qubit_bulk_grid(store: QuamStore, dyn_hidden: set[str], modified: dict) -> 
 
     _bulk_col_maxlen(columns, grid, qids)
     column_groups = _bulk_column_groups(columns)
+    if pst is not None:
+        pst.setdefault("keep", list(range(len(specs))))
+        pst["specs"] = specs
+        pst["ids"] = qids
+        pst["port_info"] = port_info
 
     # Slim per-qubit metadata for the ⚏ Qubits row picker (chip-map + grouped
     # list): id + grid_location only — the map's geometry comes from the chip
     # itself (row 0 = bottom; the client flips Y). Non-string/absent grids
     # degrade the picker to its list-only form.
-    qubit_meta = []
-    for qid in qids:
-        g = (merged.get("qubits", {}).get(qid) or {}).get("grid_location")
-        qubit_meta.append({"id": qid, "grid": g if isinstance(g, str) else None})
+    qubit_meta = _qubit_meta_of(merged, qids)
 
     # Client model for the Properties menu + search hint: key/label/section/
     # unit/kind only — never the per-qubit tmpl values (the server re-derives
@@ -6305,63 +6335,316 @@ def _bulk_grid_key(store: QuamStore, dyn_hidden: set[str]) -> tuple:
             tuple(sorted(dyn_hidden)))
 
 
+# ── RAM P6: the Live-Edit grids stay in RAM and PATCH themselves ─────────────
+#
+# A grid used to be rebuilt from scratch after every one-leaf edit (4.3 s for
+# the qubit grid and 4.5 s for the pair grid on a 30-qubit chip). Every built
+# cell now records the stored paths it read (its resolved leaf, plus the FSP an
+# amplitude's dBm annotation reads) and its contribution to the LO/band pass.
+# A later request asks the change feed (core/store_revs) what happened since:
+#
+# * only PLAIN writes (scalar over scalar), and the column model's own token
+#   (structure + None-flips) unmoved  ->  re-run exactly the cells whose read
+#   set a written path reaches (or whose modified-since-load marker moved),
+#   replay the LO pass when a band/LO frequency moved, and re-measure the
+#   widths of the touched columns;
+# * anything else -- a structural write, an unexplained seq move, a log that no
+#   longer reaches back, a pruned column that moved, a cell whose port
+#   contribution changed shape -- is a full rebuild, exactly as before.
+#
+# The patched grid equals a cold build after every step (pinned by a
+# randomized event sequence in tests/test_ram_liveedit.py).
+
+_LO_VALUE_FIELDS = ("band", "upconverter_frequency", "downconverter_frequency")
+_GRID_LOCKS = {"bulk_grid_cache": threading.Lock(), "pair_grid_cache": threading.Lock(),
+               "extra_grid_cache": threading.Lock()}
+_GRID_SERIAL = itertools.count(1)
+
+
+def _pst_new() -> dict:
+    return {"deps": {}, "cell_deps": {}, "lo": [], "lo_pos": {},
+            "keep": [], "specs": [], "ids": [], "port_info": {}, "col_keys": []}
+
+
+def _pst_record(pst: dict, pos: tuple, deps: tuple, lo_log: list) -> None:
+    uniq = tuple(dict.fromkeys(d for d in deps if d))
+    pst["cell_deps"][pos] = uniq
+    idx = pst["deps"]
+    for d in uniq:
+        idx.setdefault(d, set()).add(pos)
+    for p, owner, val in lo_log:
+        pst["lo_pos"].setdefault(pos, []).append(len(pst["lo"]))
+        pst["lo"].append([p, owner, val, pos])
+
+
+def _same_val(a: Any, b: Any) -> bool:
+    """Equal and of the same type (1 vs 1.0 vs True are different displays);
+    a NaN is never 'the same', which only ever costs a re-run cell."""
+    return a is b or (type(a) is type(b) and a == b)
+
+
+def _modified_moved(old: dict, new: dict) -> list[str]:
+    if old is new:
+        return []
+    return [p for p in set(old) | set(new)
+            if (p in old) != (p in new) or not _same_val(old.get(p), new.get(p))]
+
+
+def _col_maxlen(label: str, displays) -> int:
+    """ONE width rule for a cold build and a patched column."""
+    widest = max((len(d) for d in displays), default=4)
+    return min(max(widest + 4, len(label) // 2 + 4, 6), 28)
+
+
+def _grid_patch(pst: dict, rows: list, columns: list, paths: list[str],
+                cell_fn) -> tuple[set, set] | None:
+    """Re-run the cells a set of plain writes / marker moves can reach.
+
+    Returns ``(changed_row_indices, width_moved_column_indices)``, or ``None``
+    when the change is outside what a patch may vouch for (the caller then
+    rebuilds). ``cell_fn(row_index, spec_index, lo_log)`` builds one cell
+    exactly as the cold builder does and returns ``(cell, deps)``."""
+    col_of = {j: c for c, j in enumerate(pst["keep"])}
+    idx = pst["deps"]
+    hit: set = set()
+    for w in paths:
+        q = w
+        while True:
+            got = idx.get(q)
+            if got:
+                hit |= got
+            i = q.rfind(".")
+            if i < 0:
+                break
+            q = q[:i]
+    if not hit:
+        return set(), set()
+    lo_moved = False
+    new_cells: dict = {}
+    for pos in sorted(hit):
+        i, j = pos
+        if j not in col_of:
+            return None                       # a pruned column moved
+        lo_log: list = []
+        cell, deps = cell_fn(i, j, lo_log)
+        uniq = tuple(dict.fromkeys(d for d in deps if d))
+        old = pst["cell_deps"].get(pos, ())
+        if uniq != old:
+            for d in old:
+                sset = idx.get(d)
+                if sset is not None:
+                    sset.discard(pos)
+                    if not sset:
+                        del idx[d]
+            for d in uniq:
+                idx.setdefault(d, set()).add(pos)
+            pst["cell_deps"][pos] = uniq
+        slots = pst["lo_pos"].get(pos, [])
+        if len(slots) != len(lo_log):
+            return None
+        for k, (p, owner, val) in zip(slots, lo_log):
+            e = pst["lo"][k]
+            if e[0] != p or e[1] != owner:
+                return None
+            if not _same_val(e[2], val):
+                e[2] = val
+                if p[4] in _LO_VALUE_FIELDS:
+                    lo_moved = True
+        new_cells[pos] = cell
+    if lo_moved:
+        pi: dict = {}
+        for p, owner, val, _pos in pst["lo"]:
+            _port_info_add(pi, p, owner, val)
+        pst["port_info"] = pi
+    pi = pst["port_info"]
+    changed_rows: set = set()
+    touched: set = set()
+    for (i, j), cell in new_cells.items():
+        _attach_lo_meta(cell, pi)
+        c = col_of[j]
+        rows[i]["cells"][c] = cell
+        changed_rows.add(i)
+        touched.add(c)
+    if lo_moved:
+        for p, _owner, _val, (i, j) in pst["lo"]:
+            if p[4] not in _LO_FIELDS or (i, j) in new_cells or j not in col_of:
+                continue
+            c = col_of[j]
+            cell = dict(rows[i]["cells"][c])
+            cell["_port"] = p
+            _attach_lo_meta(cell, pi)
+            if cell != rows[i]["cells"][c]:
+                rows[i]["cells"][c] = cell
+                changed_rows.add(i)
+    ml_moved: set = set()
+    for c in touched:
+        col = columns[c]
+        ml = _col_maxlen(col["label"], (r["cells"][c]["display"] for r in rows))
+        if ml != col.get("maxlen"):
+            col["maxlen"] = ml
+            ml_moved.add(c)
+    return changed_rows, ml_moved
+
+
+def _grid_memo(slot: str, ctx: dict, store: QuamStore, variant: Any, modified: dict,
+               build, cell_fn, views, after_patch=None) -> dict:
+    """The memo shared by the three Live-Edit grid kinds (see the block note).
+
+    ``build()`` makes a fresh grid and returns ``(grid, {key: pst})``; the
+    entry carries ``grid`` plus render versions -- ``serial`` (new on every
+    rebuild), ``row_ver[key][row]`` and ``col_ver[key]`` (moves when a column
+    width moved) -- which the fragment cache keys on."""
+    from quam_state_manager.core import store_revs as SR
+    with _GRID_LOCKS[slot]:
+        hit = ctx.get(slot)
+        seq = getattr(store, "mutation_seq", None)
+        if hit and hit.get("store") is store and hit.get("variant") == variant \
+                and hit.get("pst") is not None:
+            moved = _modified_moved(hit["mod"], modified)
+            if hit["seq"] == seq and not moved:
+                return hit
+            patched = None
+            events = SR.changes_since(store, hit["seq"])
+            paths = SR.plain_paths(events) if events is not None else None
+            if paths is not None and SR.column_token(store) == hit["coltok"]:
+                with store._lock:
+                    if getattr(store, "mutation_seq", None) == seq:
+                        patched = _grid_patch_all(hit, paths + moved, cell_fn, views, modified)
+                        if patched is not None and after_patch is not None:
+                            after_patch(hit)
+            if patched is not None:
+                for key, (ch_rows, ch_cols) in patched.items():
+                    rv = hit["row_ver"].setdefault(key, {})
+                    for i in ch_rows:
+                        rv[i] = rv.get(i, 0) + 1
+                    if ch_cols:
+                        hit["col_ver"][key] = hit["col_ver"].get(key, 0) + 1
+                hit["seq"] = seq
+                hit["mod"] = dict(modified)
+                return hit
+        with store._lock:
+            seq = getattr(store, "mutation_seq", None)
+            coltok = SR.column_token(store)
+            grid, psts = build()
+        ent = {"store": store, "variant": variant, "seq": seq, "coltok": coltok,
+               "mod": dict(modified), "grid": grid, "pst": psts,
+               "serial": next(_GRID_SERIAL), "row_ver": {}, "col_ver": {}}
+        ctx[slot] = ent
+        return ent
+
+
+def _grid_patch_all(ent: dict, paths: list[str], cell_fn, views, modified: dict):
+    """Patch every sub-grid of one memo entry (the extra-grids memo holds
+    several): ``{key: (changed_rows, width_moved_cols)}`` or ``None`` -- all
+    or nothing, so a half-patched entry is never served. A ``None`` leaves the
+    entry to be replaced by a rebuild (its pst may be half-updated)."""
+    out = {}
+    for key, pst in ent["pst"].items():
+        rows, columns = views(ent["grid"], key)
+        r = _grid_patch(pst, rows, columns, paths,
+                        lambda i, j, lo, _k=key, _p=pst: cell_fn(_p, i, j, lo, modified))
+        if r is None:
+            ent["pst"] = None            # never patch this entry again
+            return None
+        out[key] = r
+    return out
+
+
 def _bulk_grid_cached(store: QuamStore, dyn_hidden: set[str], modified: dict) -> dict[str, Any]:
-    """The qubit grid, memoized per context on ``_bulk_grid_key``: the page
-    render fills it, a hydration request a moment later reads it (the cells
-    are the SAME dicts the page rendered from); any mutation in between
-    changes the key and the grid is rebuilt from the current working copy."""
-    ctx = _active_ctx() or {}
-    key = _bulk_grid_key(store, dyn_hidden)
-    hit = ctx.get("bulk_grid_cache")
-    if hit and hit.get("key") == key and hit.get("store") is store:
-        return hit["grid"]
-    grid = _qubit_bulk_grid(store, dyn_hidden, modified)
-    ctx["bulk_grid_cache"] = {"key": key, "store": store, "grid": grid}
-    return grid
+    """The qubit grid, kept in RAM per context and patched from the change
+    feed (see the block note above): the page render fills it, a hydration
+    request a moment later reads it (the cells are the SAME dicts the page was
+    rendered from), and an edit in between patches the cells it reaches."""
+    return _bulk_grid_entry(store, dyn_hidden, modified)["grid"]
+
+
+def _qubit_meta_of(merged: dict, qids: list[str]) -> list[dict]:
+    """The row picker's ``{id, grid}`` list (grid_location VALUES)."""
+    out = []
+    for qid in qids:
+        g = (merged.get("qubits", {}).get(qid) or {}).get("grid_location")
+        out.append({"id": qid, "grid": g if isinstance(g, str) else None})
+    return out
+
+
+def _bulk_grid_entry(store: QuamStore, dyn_hidden: set[str], modified: dict,
+                     ctx: dict | None = None) -> dict:
+    def build():
+        pst = _pst_new()
+        return _qubit_bulk_grid(store, dyn_hidden, modified, pst), {"q": pst}
+
+    def cell_fn(pst, i, j, lo_log, mod):
+        return _qubit_cell_for(store.merged, pst["specs"][j], pst["ids"][i], mod, {}, lo_log)
+
+    def after_patch(ent):
+        g = ent["grid"]
+        g["qubit_meta"] = _qubit_meta_of(store.merged, g["qids"])
+
+    return _grid_memo("bulk_grid_cache", (_active_ctx() or {}) if ctx is None else ctx, store,
+                      tuple(sorted(dyn_hidden)), modified, build, cell_fn,
+                      lambda grid, _k: (grid["rows"], grid["columns"]), after_patch)
 
 
 def _pair_grid_cached(store: QuamStore, modified: dict) -> tuple:
-    """The PAIR grid, memoized on the same key (docs/141 4ad).
-
-    Same reason as the qubit memo: ``/bulk/cells?grid=pair`` runs a moment
-    after the page render and must fill cells from the very dicts the page was
-    rendered from, or a hydrated cell could disagree with its neighbours. The
-    key ignores ``dynhide`` -- that is the qubit grid's control; the pair grid
+    """The PAIR grid, kept and patched like the qubit grid (docs/141 4ad: the
+    ``/bulk/cells?grid=pair`` hydration a moment after the page render must
+    fill cells from the very dicts the page was rendered from). The key
+    ignores ``dynhide`` -- that is the qubit grid's control; the pair grid
     has its own hidden-column set and it lives in the browser."""
-    ctx = _active_ctx() or {}
-    key = _bulk_grid_key(store, set())
-    hit = ctx.get("pair_grid_cache")
-    if hit and hit.get("key") == key and hit.get("store") is store:
-        return hit["grid"]
-    grid = _pair_bulk_grid(store, modified)
-    ctx["pair_grid_cache"] = {"key": key, "store": store, "grid": grid}
-    return grid
+    return _pair_grid_entry(store, modified)["grid"]
+
+
+def _pair_grid_entry(store: QuamStore, modified: dict, ctx: dict | None = None) -> dict:
+    def build():
+        pst = _pst_new()
+        return _pair_bulk_grid(store, modified, pst), {"p": pst}
+
+    def cell_fn(pst, i, j, lo_log, mod):
+        return _entity_cell_for(store.merged, pst["specs"][i].get(pst["col_keys"][j]),
+                                pst["ids"][i], mod, {}, lo_log)
+
+    return _grid_memo("pair_grid_cache", (_active_ctx() or {}) if ctx is None else ctx, store,
+                      None, modified, build, cell_fn,
+                      lambda grid, _k: (grid[2], grid[0]))
 
 
 def _extra_grids_cached(store: QuamStore, modified: dict, doc: str) -> list[dict]:
-    """One built grid per DISCOVERED collection, memoized like the other two.
+    """One built grid per DISCOVERED collection, kept and patched like the
+    other two (``/bulk/cells?grid=e_twpas`` runs a moment after the page
+    render and has to fill cells from the very dicts the page was rendered
+    from)."""
+    return _extra_grids_entry(store, modified, doc)["grid"]
 
-    The memo matters for the same reason the pair grid's does (docs/141 4ad):
-    ``/bulk/cells?grid=e_twpas`` runs a moment after the page render and has to
-    fill cells from the very dicts the page was rendered from.
-    """
-    from quam_state_manager.core import bulk_virt, entity_grids
-    ctx = _active_ctx() or {}
-    key = (_bulk_grid_key(store, set()), doc)
-    hit = ctx.get("extra_grid_cache")
-    if hit and hit.get("key") == key and hit.get("store") is store:
-        return hit["grids"]
-    out: list[dict] = []
-    for spec in entity_grids.discover(store.merged, doc):
-        cols, groups, rows = _entity_bulk_grid(
-            store, spec["root"], spec["ids"], modified, spec["expand_ports"])
-        if not cols or not rows:
-            continue          # a collection with nothing settable renders nothing
-        out.append({"key": spec["key"], "root": spec["root"],
-                    "label": spec["label"], "columns": cols,
-                    "column_groups": groups, "rows": rows})
-    ctx["extra_grid_cache"] = {"key": key, "store": store, "grids": out}
-    return out
+
+def _extra_grids_entry(store: QuamStore, modified: dict, doc: str,
+                       ctx: dict | None = None) -> dict:
+    from quam_state_manager.core import entity_grids
+
+    def build():
+        out: list[dict] = []
+        psts: dict = {}
+        for spec in entity_grids.discover(store.merged, doc):
+            pst = _pst_new()
+            cols, groups, rows = _entity_bulk_grid(
+                store, spec["root"], spec["ids"], modified, spec["expand_ports"], pst)
+            if not cols or not rows:
+                continue          # a collection with nothing settable renders nothing
+            out.append({"key": spec["key"], "root": spec["root"],
+                        "label": spec["label"], "columns": cols,
+                        "column_groups": groups, "rows": rows})
+            psts[spec["key"]] = pst
+        return out, psts
+
+    def cell_fn(pst, i, j, lo_log, mod):
+        return _entity_cell_for(store.merged, pst["specs"][i].get(pst["col_keys"][j]),
+                                pst["ids"][i], mod, {}, lo_log)
+
+    def views(grid, key):
+        eg = next(e for e in grid if e["key"] == key)
+        return eg["rows"], eg["columns"]
+
+    return _grid_memo("extra_grid_cache", (_active_ctx() or {}) if ctx is None else ctx, store,
+                      doc, modified, build, cell_fn, views)
 
 
 def _bulk_doc(raw: str | None) -> str:
@@ -6844,17 +7127,38 @@ def _search_text(col: dict) -> str:
     return " ".join(p for p in (base, tmpl_words, extra, label_fold) if p)
 
 
-def _pair_bulk_grid(store: QuamStore, modified: dict
+def _pair_bulk_grid(store: QuamStore, modified: dict, pst: dict | None = None
                     ) -> tuple[list[dict], list[dict], list[dict]]:
     """Build the pair grid (columns, column_groups, rows). Columns are derived from
     the chip's real pair leaves via ``pair_columns.derive_pair_columns``; each cell
     resolves through the SAME ``_build_bulk_cell`` pipeline as the qubit grid, so
     edits ride the existing ``/field/edit-batch`` path with no new mutation code."""
-    return _entity_bulk_grid(store, "qubit_pairs", None, modified)
+    return _entity_bulk_grid(store, "qubit_pairs", None, modified, pst=pst)
+
+
+def _entity_cell_for(merged: dict, spec: Any, pid: str, modified: dict,
+                     port_info: dict, lo_log: list | None = None) -> tuple[dict, tuple]:
+    """ONE pair/entity-grid cell and the stored paths it read (RAM P6) -- the
+    builder's loop body, shared with the grid patch."""
+    if not spec or spec[0] is None:
+        return _empty_pair_cell(), ()
+    path, mode = spec
+    if mode == "runtime":
+        c = _runtime_pair_cell(merged, path)
+        return c, (c["resolved_path"],)
+    if mode == "list":
+        c = _list_pair_cell(merged, pid, path)
+        return c, (c["resolved_path"],)
+    reads: list = []
+    cell = _build_bulk_cell(merged, path, modified, port_info, pid, reads, lo_log)
+    cell["editable"] = True
+    cell["kind"] = "scalar"
+    return cell, (cell["resolved_path"], *reads)
 
 
 def _entity_bulk_grid(store: QuamStore, root: str, ids: list[str] | None,
-                      modified: dict, expand_ports: bool = True
+                      modified: dict, expand_ports: bool = True,
+                      pst: dict | None = None
                       ) -> tuple[list[dict], list[dict], list[dict]]:
     """The pair grid's builder, over ANY collection (docs: entity_grids).
 
@@ -6880,24 +7184,18 @@ def _entity_bulk_grid(store: QuamStore, root: str, ids: list[str] | None,
         merged = store.merged
         pair_ids = list(path_map.keys())
         grid: dict[str, list[dict[str, Any]]] = {}
-        for pid in pair_ids:
+        for ri, pid in enumerate(pair_ids):
             pm = path_map.get(pid, {})
             cells = []
-            for col in columns:
+            for ci, col in enumerate(columns):
                 spec = pm.get(col["key"])
-                if not spec or spec[0] is None:
-                    cells.append(_empty_pair_cell())
+                if pst is None:
+                    cells.append(_entity_cell_for(merged, spec, pid, modified, port_info)[0])
                     continue
-                path, mode = spec
-                if mode == "runtime":
-                    cells.append(_runtime_pair_cell(merged, path))
-                elif mode == "list":
-                    cells.append(_list_pair_cell(merged, pid, path))
-                else:
-                    cell = _build_bulk_cell(merged, path, modified, port_info, pid)
-                    cell["editable"] = True
-                    cell["kind"] = "scalar"
-                    cells.append(cell)
+                lo_log: list = []
+                cell, deps = _entity_cell_for(merged, spec, pid, modified, port_info, lo_log)
+                _pst_record(pst, (ri, ci), deps, lo_log)
+                cells.append(cell)
             grid[pid] = cells
 
     rows = []
@@ -6909,6 +7207,12 @@ def _entity_bulk_grid(store: QuamStore, root: str, ids: list[str] | None,
 
     _bulk_col_maxlen(columns, grid, pair_ids)
     groups = _bulk_column_groups(columns)
+    if pst is not None:
+        pst["keep"] = list(range(len(columns)))
+        pst["specs"] = [dict(path_map.get(pid, {})) for pid in pair_ids]
+        pst["ids"] = pair_ids
+        pst["port_info"] = port_info
+        pst["col_keys"] = [c["key"] for c in columns]
     return columns, groups, rows
 
 
@@ -7476,7 +7780,12 @@ def _modified_map() -> dict[str, Any]:
     Uses setdefault so that when a field is edited multiple times,
     only the *first* (original) value is recorded.
     """
-    store = _store()
+    return _modified_map_of(_store())
+
+
+def _modified_map_of(store) -> dict[str, Any]:
+    """``_modified_map`` for an explicit store (the RAM grid pins build one
+    outside a request)."""
     if not store:
         return {}
     m: dict[str, Any] = {}
@@ -24535,11 +24844,28 @@ def _rb_cached_values(folder, pair_id):
         return _RB_DERIVED_VALUES[key]
 
 
+def _copy_topology_rb_rows(topo: dict) -> dict:
+    """A copy of *topo* that shares every node, value and list with it EXCEPT
+    the edge dicts, their ``gate_fidelities`` lists and the row dicts in them
+    -- exactly what ``rb_gate_fidelity.derive_for_edges`` mutates."""
+    out = dict(topo)
+    edges = topo.get("edges")
+    if isinstance(edges, list):
+        new_edges = []
+        for e in edges:
+            if isinstance(e, dict):
+                e = dict(e)
+                gf = e.get("gate_fidelities")
+                if isinstance(gf, list):
+                    e["gate_fidelities"] = [dict(r) if isinstance(r, dict) else r for r in gf]
+            new_edges.append(e)
+        out["edges"] = new_edges
+    return out
+
+
 def _topology_with_derived_rb(engine):
     """`engine.get_topology()`, plus the per-gate fidelity derived from each
     Standard-RB run. The cached topology itself is never mutated."""
-    import copy
-
     from quam_state_manager.core import rb_gate_fidelity
 
     topo = engine.get_topology()
@@ -24548,7 +24874,13 @@ def _topology_with_derived_rb(engine):
                    for e in (topo.get("edges") or [])
                    for r in (e.get("gate_fidelities") or [])):
             return topo                      # nothing to enrich; skip the copy
-        topo = copy.deepcopy(topo)           # get_topology's result is CACHED
+        # get_topology's result is CACHED, so the enrichment works on a copy --
+        # but only of what derive_for_edges WRITES: it adds keys to the row
+        # dicts under edges[*].gate_fidelities and nothing else. A deepcopy of
+        # the whole topology was 0.43 s per /topology on a 30Q chip, on every
+        # request. (The no-Clifford branch above already hands the cached
+        # object itself to every caller, so no caller may mutate it anyway.)
+        topo = _copy_topology_rb_rows(topo)
 
         # docs/207: resolved from memory, not by an archive sweep per render.
         # Run ids are unique only WITHIN a data folder, so the cache key carries

@@ -42,6 +42,7 @@ from collections import deque
 from typing import Any, Iterable
 
 __all__ = ["revs_of", "note", "changes_since", "chunk_token", "struct_token",
+           "column_token",
            "store_serial", "is_plain_value", "LOG_MAX"]
 
 LOG_MAX = 4096                  # events kept; a reader further behind rebuilds
@@ -65,13 +66,18 @@ class StoreRevs:
     is collected with it and can never be confused with another chip's."""
 
     __slots__ = ("serial", "last_seq", "global_rev", "struct_rev", "sub_rev",
-                 "sub_rev3", "top_rev", "events", "memo", "lock", "__weakref__")
+                 "sub_rev3", "top_rev", "null_rev", "events", "memo", "lock",
+                 "__weakref__")
 
     def __init__(self, seq: int):
         self.serial = next(_SERIAL)
         self.last_seq = seq
         self.global_rev = 0
         self.struct_rev = 0
+        # plain writes that flipped a leaf between None and not-None: the one
+        # value property the Live-Edit column models read (a column that is
+        # null on every entity is dropped), see column_token()
+        self.null_rev = 0
         self.sub_rev: dict[tuple[str, str], int] = {}
         self.top_rev: dict[str, int] = {}
         self.sub_rev3: dict[tuple[str, str, str], int] = {}
@@ -150,6 +156,8 @@ def note(store, kind: str, path: str | None, old: Any = None, new: Any = None) -
         plain = (kind == "set" and path is not None
                  and is_plain_value(old) and is_plain_value(new)
                  and path.rsplit(".", 1)[-1] != "__class__")
+        if plain and ((old is None) != (new is None)):
+            r.null_rev += 1
         _record(r, seq, path if kind != "reload" else None, plain)
 
 
@@ -322,6 +330,16 @@ def struct_token(store) -> tuple:
     return (r.serial, r.struct_rev)
 
 
+def column_token(store) -> tuple:
+    """Moves on every non-plain change AND on every plain write that flips a
+    leaf between None and a value -- what the Live-Edit column derivations
+    (``qubit_columns`` / ``pair_columns``) read besides structure: a column
+    null on every entity is dropped, and nothing else about a plain value
+    reaches a column model (list-ness and pointer-ness are structural)."""
+    r = _sync(store)
+    return (r.serial, r.struct_rev, r.null_rev)
+
+
 def seq_token(store) -> tuple:
     """(serial, mutation_seq): the plain "anything changed" token."""
     r = _sync(store)
@@ -374,6 +392,19 @@ def _pointers_under(node: Any, segs: list[str], out: list) -> None:
         out.append((list(segs), node))
 
 
+def _has_ancestor_in(path: str, seen: set) -> bool:
+    """True when a PROPER dot-prefix of ``path`` is in ``seen`` -- the same
+    answer as ``any(path.startswith(q + ".") for q in seen)``, found by walking
+    up ``path``'s own prefixes (O(depth)) instead of scanning ``seen`` (which
+    made a 99-owner closure pass O(n^2): 777k comparisons, 2.4 s on a 30Q chip)."""
+    i = path.rfind(".")
+    while i >= 0:            # every "." position, the leading one included
+        if path[:i] in seen:
+            return True
+        i = path.rfind(".", 0, i)
+    return False
+
+
 def path_closure(store, prefixes: Iterable[str], max_nodes: int = 5000) -> frozenset | None:
     """Every path prefix a result computed from ``prefixes`` can read through
     pointers: the prefixes themselves, plus -- transitively -- the target of
@@ -399,7 +430,7 @@ def path_closure(store, prefixes: Iterable[str], max_nodes: int = 5000) -> froze
         p = todo.pop()
         if p in seen:
             continue
-        if any(p.startswith(q + ".") for q in seen if len(q) < len(p)):
+        if _has_ancestor_in(p, seen):
             seen.add(p)
             continue      # already covered by an ancestor prefix -- its pointers were walked
         seen.add(p)
