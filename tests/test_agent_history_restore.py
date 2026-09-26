@@ -42,3 +42,14 @@ def test_the_wire_help_circle_sits_on_its_row():
     block = css[css.index(".ag-wire-help {"):]
     block = block[:block.index("}")]
     assert "margin: 0;" in block
+
+
+def test_the_toast_never_takes_the_send_buttons_click():
+    """QA agents round, measured in real Chrome at 1366 and 1600: the toast (bottom
+    1rem) sat on the composer's Send button for 5 s and elementFromPoint(Send) was
+    the toast -- a refused line's toast covered the button its fix is sent with."""
+    css = (_ROOT / "quam_state_manager" / "web" / "static" / "style.css").read_text(encoding="utf-8")
+    assert ".ag-toast { pointer-events: none; }" in css
+    rule = css[css.index(".ag-toast { position: fixed;"):]
+    rule = rule[:rule.index("}")]
+    assert "bottom: 1rem" not in rule, "above the composer, not on it"
