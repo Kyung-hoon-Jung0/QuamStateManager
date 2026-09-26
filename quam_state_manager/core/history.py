@@ -247,6 +247,77 @@ def _to_num(value: Any) -> float | None:
     return None
 
 
+# ── distinct values by index skip-scan (RAM P8) ─────────────────────────────
+# ``COUNT(DISTINCT timestamp)`` / ``DISTINCT qubit`` / the per-trigger count
+# SCAN the whole covering index: 16-22 ms each over the 78k rows of a
+# 200-snapshot, 30-qubit history, and /param-history ran five of them after
+# every capture. The same answers are one index SEEK per distinct value when
+# an index leads with the column (a recursive CTE of ``MIN(col) WHERE col >
+# prev``): 200 seeks, well under a millisecond. Without such an index each
+# step would be a full scan, so the old SQL answers instead. [derived; pinned
+# equal to the old SQL, index-less legacy table included, in
+# tests/test_param_history_ram.py]
+
+_SKIP_DISTINCT_SQL = {
+    col: ("WITH RECURSIVE s(v) AS ("
+          f"SELECT MIN({col}) FROM param_history "
+          f"UNION ALL SELECT (SELECT MIN({col}) FROM param_history WHERE {col} > s.v) "
+          "FROM s WHERE s.v IS NOT NULL) SELECT v FROM s WHERE v IS NOT NULL")
+    for col in ("timestamp", "qubit", "trigger")
+}
+_SKIP_TS_FOR_TRIGGER_SQL = (
+    "WITH RECURSIVE s(v) AS ("
+    "SELECT MIN(timestamp) FROM param_history WHERE trigger = ?1 "
+    "UNION ALL SELECT (SELECT MIN(timestamp) FROM param_history "
+    "WHERE trigger = ?1 AND timestamp > s.v) "
+    "FROM s WHERE s.v IS NOT NULL) SELECT COUNT(v) FROM s")
+
+
+def _param_history_index_heads(conn: sqlite3.Connection) -> set:
+    """``(first, second)`` column names of every index on param_history
+    (the PRIMARY KEY's autoindex included); second is None for one column."""
+    heads = set()
+    for row in conn.execute("PRAGMA index_list(param_history)").fetchall():
+        name = row[1]
+        info = conn.execute("SELECT seqno, name FROM pragma_index_info(?) ORDER BY seqno",
+                            (name,)).fetchall()
+        if info:
+            heads.add((info[0][1], info[1][1] if len(info) > 1 else None))
+    return heads
+
+
+def _ph_distinct(conn: sqlite3.Connection, col: str, heads: set | None = None) -> list:
+    """``SELECT DISTINCT col FROM param_history ORDER BY col`` (col in
+    timestamp / qubit / trigger, all NOT NULL, BINARY collation)."""
+    if heads is None:
+        heads = _param_history_index_heads(conn)
+    if any(h[0] == col for h in heads):
+        return [r[0] for r in conn.execute(_SKIP_DISTINCT_SQL[col]).fetchall()]
+    return [r[0] for r in conn.execute(
+        f"SELECT DISTINCT {col} FROM param_history ORDER BY {col}").fetchall()]
+
+
+def _ph_snap_count(conn: sqlite3.Connection, heads: set | None = None) -> int:
+    """``SELECT COUNT(DISTINCT timestamp) FROM param_history``."""
+    if heads is None:
+        heads = _param_history_index_heads(conn)
+    if any(h[0] == "timestamp" for h in heads):
+        return len(conn.execute(_SKIP_DISTINCT_SQL["timestamp"]).fetchall())
+    return conn.execute("SELECT COUNT(DISTINCT timestamp) FROM param_history").fetchone()[0]
+
+
+def _ph_trigger_counts(conn: sqlite3.Connection, heads: set | None = None) -> dict:
+    """``dict(SELECT trigger, COUNT(DISTINCT timestamp) ... GROUP BY trigger)``."""
+    if heads is None:
+        heads = _param_history_index_heads(conn)
+    if ("trigger", "timestamp") in heads:
+        return {t: conn.execute(_SKIP_TS_FOR_TRIGGER_SQL, (t,)).fetchone()[0]
+                for t in _ph_distinct(conn, "trigger", heads)}
+    return dict(conn.execute(
+        "SELECT trigger, COUNT(DISTINCT timestamp) FROM param_history GROUP BY trigger"
+    ).fetchall())
+
+
 def _extract_index_rows_from_state(
     state: dict,
     meta: SnapshotMeta,
@@ -4329,9 +4400,7 @@ class HistoryManager:
 
         conn = self._open_index(quam_state_path)
         try:
-            indexed_count = conn.execute(
-                "SELECT COUNT(DISTINCT timestamp) FROM param_history"
-            ).fetchone()[0]
+            indexed_count = _ph_snap_count(conn)
         finally:
             conn.close()
         if indexed_count < snap_count:
@@ -4764,12 +4833,9 @@ class HistoryManager:
 
         conn = self._open_index(path)
         try:
-            total = conn.execute(
-                "SELECT COUNT(DISTINCT timestamp) FROM param_history"
-            ).fetchone()[0]
-            by_trigger = dict(conn.execute(
-                "SELECT trigger, COUNT(DISTINCT timestamp) FROM param_history GROUP BY trigger"
-            ).fetchall())
+            heads = _param_history_index_heads(conn)
+            total = _ph_snap_count(conn, heads)
+            by_trigger = _ph_trigger_counts(conn, heads)
             # MAX() uses the timestamp side of any index that starts with it.
             # Two queries (max-ts + lookup) is faster than ``ORDER BY DESC
             # LIMIT 1`` on a 2 M-row table because the PK is ASC.
@@ -5051,9 +5117,8 @@ class HistoryManager:
             try:
                 conn = sqlite3.connect(str(idx))
                 conn.execute("PRAGMA cache_size=-50000")  # ~50 MB per archived chip read
-                snap_count = conn.execute(
-                    "SELECT COUNT(DISTINCT timestamp) FROM param_history"
-                ).fetchone()[0]
+                heads = _param_history_index_heads(conn)
+                snap_count = _ph_snap_count(conn, heads)
                 if snap_count == 0:
                     conn.close()
                     self._chip_row_memo[str(d)] = (row_tok, None)
@@ -5063,9 +5128,7 @@ class HistoryManager:
                 max_ts = conn.execute(
                     "SELECT MAX(timestamp) FROM param_history"
                 ).fetchone()
-                qubit_rows = conn.execute(
-                    "SELECT DISTINCT qubit FROM param_history ORDER BY qubit"
-                ).fetchall()
+                qubit_rows = [(q,) for q in _ph_distinct(conn, "qubit", heads)]
                 conn.close()
                 row = {
                     "key": d.name,

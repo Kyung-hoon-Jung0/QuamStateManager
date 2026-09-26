@@ -567,3 +567,55 @@ def test_changes_page_warms_the_typeahead_rank(env):
     n = memo.computes
     _param_search(env, "q1")
     assert memo.computes == n, "the first keystroke rebuilt the rank"
+
+
+# ── distinct counts by index skip-scan ──────────────────────────────────────
+
+def _ph_table(rng: random.Random, indexed: bool) -> sqlite3.Connection:
+    conn = sqlite3.connect(":memory:")
+    pk = ", PRIMARY KEY (timestamp, qubit, property)" if indexed else ""
+    conn.execute("CREATE TABLE param_history (timestamp TEXT NOT NULL, qubit TEXT NOT NULL,"
+                 " property TEXT NOT NULL, value REAL, raw_pointer TEXT,"
+                 " trigger TEXT NOT NULL, run_id INTEGER, experiment TEXT" + pk + ")")
+    if indexed:
+        conn.execute("CREATE INDEX idx_qubit_property_ts ON param_history (qubit, property, timestamp)")
+        conn.execute("CREATE INDEX idx_trigger_ts ON param_history (trigger, timestamp)")
+    qs = ["q1", "q10", "q2", "Q3", "qA-1", "é", "E"]
+    trig = ["manual", "auto", "experiment", "save", "Manual"]
+    seen = set()
+    for _ in range(rng.randint(0, 400)):
+        ts = f"2026{rng.randint(1, 12):02d}{rng.randint(1, 28):02d}_{rng.randint(0, 999999):06d}"
+        q, prop = rng.choice(qs), rng.choice(["T1", "f_01", "amp"])
+        if (ts, q, prop) in seen:
+            continue
+        seen.add((ts, q, prop))
+        conn.execute("INSERT INTO param_history VALUES (?,?,?,?,?,?,?,?)",
+                     (ts, q, prop, 1.0, None, rng.choice(trig), None, None))
+    return conn
+
+
+def test_skip_scan_distincts_equal_the_sql_they_replace():
+    rng = random.Random(4242)
+    used_skip = 0
+    for i in range(60):
+        indexed = i % 3 != 0
+        conn = _ph_table(rng, indexed)
+        heads = H._param_history_index_heads(conn)
+        used_skip += any(h[0] == "timestamp" for h in heads)
+        assert H._ph_snap_count(conn) == conn.execute(
+            "SELECT COUNT(DISTINCT timestamp) FROM param_history").fetchone()[0]
+        assert H._ph_distinct(conn, "qubit") == [r[0] for r in conn.execute(
+            "SELECT DISTINCT qubit FROM param_history ORDER BY qubit")]
+        assert H._ph_trigger_counts(conn) == dict(conn.execute(
+            "SELECT trigger, COUNT(DISTINCT timestamp) FROM param_history GROUP BY trigger"))
+    assert used_skip >= 30, "the skip-scan branch never ran"
+
+
+def test_skip_scan_never_runs_without_a_leading_index():
+    conn = _ph_table(random.Random(1), indexed=False)
+    assert not any(h[0] in ("timestamp", "qubit", "trigger")
+                   for h in H._param_history_index_heads(conn))
+    plans = []
+    conn.set_trace_callback(plans.append)
+    H._ph_snap_count(conn); H._ph_distinct(conn, "qubit"); H._ph_trigger_counts(conn)
+    assert plans and not any("RECURSIVE" in s for s in plans)
