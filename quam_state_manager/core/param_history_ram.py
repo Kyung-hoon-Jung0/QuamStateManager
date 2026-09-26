@@ -22,8 +22,8 @@ connection in the interim." and "The behavior of "PRAGMA data_version" is the
 same for all database connections, including database connections in separate
 processes and shared cache database connections." [doc: sqlite.org/pragma.html
 #pragma_data_version, both quoted verbatim, fetched 2026-09-26]. The
-persistent connection never writes, so every commit is "another
-connection's".
+persistent connection never writes a row (it only checkpoints the WAL, which
+is not a commit), so every commit is "another connection's".
 
 Nothing here keeps a value correct by being told about events: a reader
 computes the token and a mismatch is a miss (design §1.1).
@@ -46,7 +46,7 @@ _CONN_LOCK = threading.Lock()
 # Bounded: each entry is an OPEN file handle on a chip's index.sqlite, and on
 # Windows an open handle keeps that file (and its dir) from being removed --
 # only the few chips somebody is looking at hold one.
-_CONNS: "OrderedDict[str, tuple[tuple, sqlite3.Connection, threading.Lock]]" = OrderedDict()
+_CONNS: "OrderedDict[str, tuple]" = OrderedDict()
 _CONNS_MAX = 4
 # data_version values are only comparable within ONE connection, so every
 # token carries the connection's generation: a reopened connection (file
@@ -60,6 +60,25 @@ def _file_identity(p: Path) -> tuple | None:
     except OSError:
         return None
     return (st.st_ino, st.st_ctime_ns, st.st_dev)
+
+
+def _truncate_wal(conn: sqlite3.Connection) -> None:
+    """Give back the WAL a writer left behind once it has committed.
+
+    A WAL database whose LAST connection closes is checkpointed and its -wal
+    removed; this persistent connection means a writer's close is never the
+    last one, so without this -wal stayed at its high-water size for the life
+    of the process and Param History's 'MB on disk' counted it (verifier D1:
+    a 6,000-row write left 6,204,752 B). ``wal_checkpoint(TRUNCATE)`` backfills
+    and truncates it to 0 B. ``timeout=0`` on the connection: a writer that is
+    busy right now makes this return busy at once, never wait in a request;
+    the next commit it makes moves data_version and brings us back here.
+    A checkpoint is not a commit, so it does not move this connection's
+    data_version (measured). Best effort: every error is swallowed. [derived]"""
+    try:
+        conn.execute("PRAGMA wal_checkpoint(TRUNCATE)").fetchone()
+    except sqlite3.Error:
+        pass
 
 
 def data_version(index_path: Path) -> tuple:
@@ -79,15 +98,25 @@ def data_version(index_path: Path) -> tuple:
                 pass
             ent = None
         if ent is None:
-            try:
-                conn = sqlite3.connect(f"file:{index_path.as_posix()}?mode=ro", uri=True,
-                                       check_same_thread=False, isolation_level=None)
-            except sqlite3.Error:
+            conn = None
+            # mode=rw (never creates) so the connection can CHECKPOINT: a
+            # read-only one cannot backfill the WAL (measured: "disk I/O
+            # error"). It still never writes a row. mode=ro is the fallback
+            # for an index this process may not write.
+            for mode in ("rw", "ro"):
+                try:
+                    conn = sqlite3.connect(f"file:{index_path.as_posix()}?mode={mode}",
+                                           uri=True, check_same_thread=False,
+                                           isolation_level=None, timeout=0)
+                    break
+                except sqlite3.Error:
+                    conn = None
+            if conn is None:
                 return ("unreadable", ident)
-            ent = (ident, conn, threading.Lock(), next(_CONN_GEN))
+            ent = (ident, conn, threading.Lock(), next(_CONN_GEN), [None])
             _CONNS[key] = ent
             while len(_CONNS) > _CONNS_MAX:
-                _k, (_i, old_conn, old_lk, _g) = _CONNS.popitem(last=False)
+                _k, (_i, old_conn, old_lk, _g, _s) = _CONNS.popitem(last=False)
                 with old_lk:
                     try:
                         old_conn.close()
@@ -95,10 +124,13 @@ def data_version(index_path: Path) -> tuple:
                         pass
         else:
             _CONNS.move_to_end(key)
-    ident0, conn, lk, gen = ent
+    ident0, conn, lk, gen, seen = ent
     with lk:
         try:
             dv = conn.execute("PRAGMA data_version").fetchone()[0]
+            if seen[0] != dv:
+                _truncate_wal(conn)
+            seen[0] = dv
         except sqlite3.Error:
             with _CONN_LOCK:
                 if _CONNS.get(key) is ent:
@@ -109,6 +141,17 @@ def data_version(index_path: Path) -> tuple:
                 pass
             return ("unreadable", ident)
     return (ident0, gen, dv)
+
+
+def settle_wal(index_path: Path) -> None:
+    """Before a caller measures the history dir on disk: let the persistent
+    connection (only if one is open -- never opens one) see any commit made
+    since it last looked, which truncates the WAL that commit left
+    (``_truncate_wal``). With no connection open there is no pin to undo."""
+    with _CONN_LOCK:
+        open_ = str(index_path) in _CONNS
+    if open_:
+        data_version(index_path)
 
 
 def hist_token(hm: Any, quam_state_path: Path | str) -> tuple:
@@ -129,7 +172,7 @@ def close_all() -> None:
     with _CONN_LOCK:
         ents = list(_CONNS.values())
         _CONNS.clear()
-    for _i, conn, _l, _g in ents:
+    for _i, conn, _l, _g, _s in ents:
         try:
             conn.close()
         except sqlite3.Error:

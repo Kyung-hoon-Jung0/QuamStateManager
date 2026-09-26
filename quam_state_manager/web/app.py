@@ -42,9 +42,13 @@ from quam_state_manager.core.scanner import Workspace
 # ----------------------------------------------------------------------
 
 #: requests that are not a user waiting on a page (RAM P7 Foreground)
-_FG_EXEMPT_PREFIXES = ("/static/", "/debug/")
+#: /api/agent/run/<key>?wait_s= and POST /api/agent/run-node hold the request
+#: open up to 3,600 s while an agent waits on a node -- exactly when runs
+#: land -- so counting them would stall every tick step for its full max_s.
+_FG_EXEMPT_PREFIXES = ("/static/", "/debug/", "/api/agent/run/")
 _FG_EXEMPT_PATHS = frozenset({"/datasets/wait", "/datasets/poll",
-                              "/workspace/tree/poll", "/workbench/watch"})
+                              "/workspace/tree/poll", "/workbench/watch",
+                              "/api/agent/run-node"})
 
 
 class ScriptJson(Markup):

@@ -306,6 +306,9 @@ class TestForegroundYield:
         try:
             c.get("/datasets/wait?timeout=0")
             c.get("/static/app.js")
+            # an agent's held node wait (verifier note: up to 3,600 s)
+            c.get("/api/agent/run/nokey?wait_s=0")
+            c.post("/api/agent/run-node", json={})
         finally:
             run_ingest.FOREGROUND.enter = orig
         assert calls == []

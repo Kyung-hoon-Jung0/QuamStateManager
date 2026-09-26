@@ -466,6 +466,66 @@ def test_persistent_connections_are_bounded_and_never_reuse_a_token(tmp_path):
     PHR.close_all()
 
 
+def _wal_bytes(db: Path) -> int:
+    w = db.with_name(db.name + "-wal")
+    return w.stat().st_size if w.exists() else 0
+
+
+def _fat_commit(db: Path, n: int = 3000) -> None:
+    """A writer that commits ~3 MB with auto-checkpoint OFF (so the frames
+    are not even backfilled -- the worst case) and closes."""
+    c = sqlite3.connect(str(db))
+    c.execute("PRAGMA wal_autocheckpoint=0")
+    c.execute("CREATE TABLE IF NOT EXISTS fat (x BLOB)")
+    c.executemany("INSERT INTO fat VALUES (?)", [(os.urandom(1000),) for _ in range(n)])
+    c.commit()
+    c.close()
+
+
+def test_the_token_reader_does_not_pin_the_wal(tmp_path):
+    """Verifier D1: with the persistent token connection open, a writer's
+    close is never the last one, so SQLite never removed -wal and it stayed
+    at its high-water size for the life of the process."""
+    db = tmp_path / "index.sqlite"
+    with sqlite3.connect(str(db)) as c:
+        c.execute("PRAGMA journal_mode=WAL")
+        c.execute("CREATE TABLE t (x)")
+    t0 = PHR.data_version(db)
+    _fat_commit(db)
+    assert _wal_bytes(db) > 1_000_000                  # the pin is real
+    t1 = PHR.data_version(db)
+    assert t1 != t0                                    # the token still moves
+    assert _wal_bytes(db) == 0                         # and the WAL is given back
+    assert PHR.data_version(db) == t1                  # a checkpoint is not a commit
+    with sqlite3.connect(str(db)) as c:                # nothing was lost by it
+        assert c.execute("SELECT COUNT(*) FROM fat").fetchone()[0] == 3000
+    PHR.close_all()
+
+
+def test_disk_stats_does_not_count_a_pinned_wal(env):
+    """The number the verifier saw: 'MB on disk' on /param-history."""
+    _snap(env, _state())
+    hm, live = env["hm"], env["live"]
+    db = hm._history_dir(live) / "index.sqlite"
+    PHR.hist_token(hm, live)                           # the Changes page opened it
+    _fat_commit(db)
+    assert _wal_bytes(db) > 1_000_000
+    _snap(env, _state(random.Random(3)))               # a capture: the stats miss
+    stats = hm.history_disk_stats(live)
+    assert _wal_bytes(db) == 0
+    assert stats["bytes"] == H._dir_bytes(hm._history_dir(live))
+
+
+def test_settle_wal_never_opens_a_connection(tmp_path):
+    db = tmp_path / "index.sqlite"
+    with sqlite3.connect(str(db)) as c:
+        c.execute("PRAGMA journal_mode=WAL")
+        c.execute("CREATE TABLE t (x)")
+    PHR.close_all()
+    PHR.settle_wal(db)
+    assert str(db) not in PHR._CONNS
+
+
 # ── the parameter typeahead from RAM (PathRank) ─────────────────────────────
 
 _ODD_PATHS = ["qubits.Ärger.T1", "qubits.ärger.T1", "straße.x", "STRASSE.x",

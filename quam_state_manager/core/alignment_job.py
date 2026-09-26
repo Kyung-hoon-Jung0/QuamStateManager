@@ -15,7 +15,8 @@ chip's fingerprint), so what changes here is only WHO pays for a miss:
   renders a placeholder that fetches itself again. The previous verdict is
   never presented as the current one (design §1.1).
 
-``refresh(...)`` recomputes in the caller's thread; the run-watch worker
+``refresh(...)`` recomputes in the caller's thread, registered as that
+(manager, chip)'s job so a request arriving meanwhile joins it; the run-watch worker
 calls it after a new run for a chip whose alignment somebody has viewed, so
 the next request finds it ready.
 """
@@ -109,10 +110,28 @@ class AlignmentJobs:
         key = self._key(hm, loaded_path)
         with self._lock:
             job = self._jobs.get(key)
-        if job is not None and not job.finished.is_set():
+            running = job is not None and not job.finished.is_set()
+            if not running:
+                # registered BEFORE computing, under the same lock _start
+                # checks: a /param-history/alignment request arriving now
+                # joins this computation instead of starting a second one
+                job = _Job()
+                job.thread = threading.current_thread()
+                self._jobs[key] = job
+        if running:
             job.finished.wait(60.0)               # one computation at a time
             return False
-        hm.scan_workspace_alignment(loaded_path, workspace, progress=progress)
+
+        def _progress(done: int, total: int) -> None:
+            job.done, job.total = done, total
+            if progress is not None:
+                progress(done, total)
+        try:
+            hm.scan_workspace_alignment(loaded_path, workspace, progress=_progress)
+        finally:
+            # no job.error: the raise reaches the caller (the ingest worker);
+            # a joined request then finds no cached result and starts its own
+            job.finished.set()
         return True
 
     def join(self, timeout: float = 30.0) -> None:

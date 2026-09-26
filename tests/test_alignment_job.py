@@ -170,6 +170,28 @@ class TestWorkerRefresh:
         body = _get(c)
         assert 'data-importable-count="5"' in body and jobs.started == n
 
+    def test_a_request_during_the_tick_refresh_joins_it(self, env, monkeypatch):
+        """Verifier note: refresh() ran unregistered, so a request arriving
+        mid-refresh started a second full scan."""
+        app, c, data = env
+        _get(c)
+        time.sleep(_TICK)
+        _run(data, "2026-03-01", 11)
+        calls = _slow_scan(monkeypatch, 0.6)
+        steps = {f.__name__: f for f in R._ingest_after_steps(app)}
+        steps["workspace_sidebar"]([str(data)])
+        jobs = app.config["alignment_jobs"]
+        n = jobs.started
+        t = threading.Thread(target=lambda: steps["alignment"]([str(data)]))
+        t.start()
+        time.sleep(0.2)                             # the refresh is mid-scan
+        app.config["ALIGNMENT_WAIT_S"] = 5.0
+        body = _get(app.test_client())
+        t.join(10)
+        assert calls == [1], "a second scan ran beside the refresh"
+        assert jobs.started == n
+        assert 'data-importable-count="5"' in body
+
     def test_a_chip_nobody_viewed_stays_cold(self, env, monkeypatch):
         app, c, data = env
         calls = _slow_scan(monkeypatch, 0.0)
