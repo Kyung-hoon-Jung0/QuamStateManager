@@ -666,3 +666,113 @@ class TestThePage:
         assert state_env_schema.load_pulse_modules(app.instance_path) == ["my_lab.cz"]
         c.post("/pulse/class-modules", data={"action": "remove", "module": "my_lab.cz"})
         assert state_env_schema.load_pulse_modules(app.instance_path) == []
+
+
+class TestTheAttachedSchemaIsValidatedOnEveryRead:
+    """verifier round (docs/2xx): the manifest the STORE holds -- what the
+    detail and edit forms type fields from -- is checked on every surface
+    that reads it, and a module named mid-probe is never left unread."""
+
+    @pytest.fixture
+    def held(self, page, monkeypatch, tmp_path):
+        app, c, calls = page
+        from quam_state_manager.web import routes
+        src = tmp_path / "lab_src.py"
+        src.write_text("x = 1\n", encoding="utf-8")
+        st = os.stat(src)
+        manifest = {"sources": {str(src): [st.st_mtime_ns, st.st_size]},
+                    "pulse_modules": {}}
+        monkeypatch.setattr(routes, "_live_env_manifest", lambda store: manifest)
+        kicked = []
+        monkeypatch.setattr(routes, "_kick_env_reprobe", lambda *a: kicked.append(a))
+        routes._lab_reprobe_tried.clear()
+        yield app, c, manifest, src, kicked
+        routes._lab_reprobe_tried.clear()
+
+    def test_a_fresh_schema_says_typed(self, held):
+        _, c, _, _, kicked = held
+        html = c.get(f"/pulse/detail?path={PULSE}").data.decode()
+        assert "typed from the class&#39;s own" in html
+        assert "data-schema-stale" not in html and not kicked
+
+    def test_a_lab_edit_makes_the_detail_say_so_and_re_read(self, held):
+        _, c, _, src, kicked = held
+        src.write_text("x = 1\nskew = 0.0\n", encoding="utf-8")   # size moves
+        html = c.get(f"/pulse/detail?path={PULSE}").data.decode()
+        assert 'data-schema-stale="code"' in html
+        assert "typed from the class&#39;s own" not in html      # no stale claim
+        assert len(kicked) == 1                                   # the detail kicked it
+        c.get(f"/pulse/detail?path={PULSE}")
+        assert len(kicked) == 1                                   # once per state
+
+    def test_the_list_page_kicks_the_re_read_too(self, held):
+        _, c, _, src, kicked = held
+        src.write_text("x = 22\n", encoding="utf-8")
+        c.get("/pulses")
+        assert len(kicked) == 1
+
+    def test_a_named_module_the_schema_never_imported_is_stale(self, held):
+        app, c, manifest, _, kicked = held
+        state_env_schema.save_pulse_modules(app.instance_path, ["my_lab.third"])
+        j = c.get("/pulse/schema-status").get_json()
+        assert j["stale"] and j["reason"] == "modules" and kicked
+        manifest["pulse_modules"] = {"my_lab.third": "ok"}
+        j = c.get("/pulse/schema-status").get_json()
+        assert j["stale"] is False
+
+
+def test_a_module_named_while_a_probe_runs_is_read_by_a_rerun(page, monkeypatch):
+    """The verifier's race: the running probe read the module set when it
+    started, so the module named during it must earn a second probe."""
+    import threading
+    from quam_state_manager.web import routes
+    app, c, _ = page
+    inst = app.instance_path
+    store = app.config["contexts"][app.config["active_context"]]["store"]
+    started, release = threading.Event(), threading.Event()
+    reads = []
+
+    def fake_probe(python_path, classes, instance_path=None, **kw):
+        mods = state_env_schema.load_pulse_modules(instance_path)
+        reads.append(mods)
+        started.set()
+        if len(reads) == 1:
+            release.wait(10)
+        return {"ok": True, "pulse_modules": {m: "ok" for m in mods}}
+    monkeypatch.setattr(state_env_schema, "probe_state_schema", fake_probe)
+    attached = []
+    monkeypatch.setattr(routes, "_attach_probe_result",
+                        lambda s, i, f, p, res: attached.append(res["pulse_modules"]))
+    state_env_schema.save_pulse_modules(inst, ["lab.more"])
+    routes._kick_env_reprobe(store, inst, "folder")
+    assert started.wait(10)
+    state_env_schema.save_pulse_modules(inst, ["lab.more", "lab.third"])
+    routes._kick_env_reprobe(store, inst, "folder")      # finds the key in flight
+    release.set()
+    deadline = time.time() + 10
+    while time.time() < deadline and len(attached) < 2:
+        time.sleep(0.05)
+    assert reads == [["lab.more"], ["lab.more", "lab.third"]]
+    assert attached[-1] == {"lab.more": "ok", "lab.third": "ok"}
+    deadline = time.time() + 5
+    while time.time() < deadline and routes._schema_warm_inflight:
+        time.sleep(0.05)
+    assert not routes._schema_rerun_pending
+
+
+class TestTheCreateDrawNeverImportsAClientPath:
+    def test_an_unread_class_is_refused_with_a_reason(self, page):
+        _, c, calls = page
+        for q in ("this.s", "smlab_scratch.third_pulses.TriCZPulse",
+                  "evil_mod.SquarePulse"):          # a leaf-name catalog match too
+            r = c.post("/api/pulse/lab-waveform",
+                       json={"qclass": q, "params": {"amplitude": 0.5}}).get_json()
+            res = r["results"][0]
+            assert res["ok"] is False and res["reason"] == "unknown-class", (q, res)
+        assert not calls                            # nothing was spawned
+
+    def test_a_roster_class_is_still_drawn(self, page):
+        _, c, calls = page
+        r = c.post("/api/pulse/lab-waveform", json={
+            "qclass": LAB_CLASS, "params": {"amplitude": "0.3", "flat_length": "24"}}).get_json()
+        assert r["results"][0]["ok"] and len(calls) == 1

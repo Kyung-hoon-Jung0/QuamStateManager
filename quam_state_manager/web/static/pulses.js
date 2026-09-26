@@ -588,6 +588,36 @@ window.PulsesPage = (function () {
         try { return JSON.parse(el.textContent); } catch (e) { return null; }
     }
 
+    /* docs/2xx: the detail says its class schema predates a lab edit while
+       SM re-reads the class; poll until the fresh schema is installed, then
+       re-render the view -- never over an uncommitted edit (the note then
+       asks for a reopen instead). */
+    function pollSchema(root, n, delay) {
+        if (delay == null) delay = 2000;
+        setTimeout(function () {
+            if (!document.body.contains(root)) return;
+            fetch('/pulse/schema-status', { headers: { 'Accept': 'application/json' } })
+                .then(function (r) { return r.json(); })
+                .then(function (st) {
+                    if (!document.body.contains(root)) return;
+                    var note = root.querySelector('[data-schema-stale]');
+                    if (st && st.stale && !st.failed) {
+                        if (n < 90) pollSchema(root, n + 1, delay);
+                        return;
+                    }
+                    var dirty = sectionsOf(root).some(function (sec) { return collectOverrides(sec).dirty; });
+                    if (st && st.failed) {
+                        if (note) note.textContent = 'Your pulse code changed since SM read this class’s fields, and re-reading it failed — the fields below are from before the change.';
+                    } else if (dirty) {
+                        if (note) note.textContent = 'SM has re-read this class — reopen this pulse after committing to see its current fields.';
+                    } else {
+                        reloadView(root);
+                    }
+                })
+                .catch(function () { if (n < 90) pollSchema(root, n + 1, delay); });
+        }, delay);
+    }
+
     function detailRoot() {
         return document.getElementById('pulse-detail-root');
     }
@@ -714,6 +744,7 @@ window.PulsesPage = (function () {
             evt.preventDefault();
         });
         root._pulsesInit = true;   // only after listeners are bound
+        if (root.querySelector('[data-schema-stale]:not([data-schema-stale="failed"])')) pollSchema(root, 0);
 
         var anyPlot = root._sections.some(function (sec) { return sec.committedPlot && sec.committedPlot.ok; });
         if (anyPlot) {
@@ -1732,6 +1763,7 @@ window.PulsesPage = (function () {
         createValidateGateName: createValidateGateName,
         createSyncQdacChannel: createSyncQdacChannel,
         envStripProbe: envStripProbe,
+        _pollSchema: pollSchema,   // docs/2xx: exported for the selfcheck
         reloadCreateForm: reloadCreateForm
     };
 })();

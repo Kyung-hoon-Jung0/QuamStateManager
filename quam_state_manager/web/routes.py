@@ -1696,6 +1696,22 @@ _schema_warm_lock = threading.Lock()
 # last attempt failed AT A GIVEN STATE (so a fix re-arms it, and a broken env is
 # never retried in a loop). Keyed by the chip's fs key.
 _cfg_warm_inflight: set[str] = set()
+# docs/2xx: a forced re-probe asked for while one with the same key was
+# running -- the running one read its module set at start, so it re-runs
+_schema_rerun_pending: dict = {}
+
+
+def _end_schema_flight(key: str) -> None:
+    """Release a schema single-flight key; honour a re-probe asked for while
+    it was held (``_kick_env_reprobe``)."""
+    with _schema_warm_lock:
+        _schema_warm_inflight.discard(key)
+        again = _schema_rerun_pending.pop(key, None)
+    if again is not None:
+        try:
+            _kick_env_reprobe(*again)
+        except Exception:  # noqa: BLE001
+            logger.warning("queued re-probe failed to start", exc_info=True)
 _cfg_warm_failed: dict[str, str] = {}
 _cfg_warm_lock = threading.Lock()
 
@@ -1934,8 +1950,7 @@ def _warm_state_schema_async(store, inst, live_folder=None) -> None:
         except Exception:  # noqa: BLE001
             logger.warning("state-schema warm probe failed", exc_info=True)
         finally:
-            with _schema_warm_lock:
-                _schema_warm_inflight.discard(key)
+            _end_schema_flight(key)
 
     threading.Thread(target=_run, daemon=True).start()
 
@@ -13569,6 +13584,13 @@ def pulses_page():
     pulse_index = _pulse_index()
     if not store or not pulse_index:
         return _no_chip("pulses", "pulses")
+    # docs/2xx: validate the attached class schema on read here too (a stat
+    # per recorded lab file) -- a stale one starts its re-probe now, not only
+    # when someone happens to open the create form
+    try:
+        _lab_schema_check(store)
+    except Exception:  # noqa: BLE001 -- a check never breaks the list
+        logger.debug("lab schema check failed", exc_info=True)
 
     channel = request.args.get("channel", "")
     query = request.args.get("q", "").strip()
@@ -13908,6 +13930,18 @@ def _pulse_section_ctx(store, pulse_index, path: str):
                 {"name": p.name, "default": p.default}
                 for p in schema_spec.params
                 if p.name not in body and p.name not in ("id", "digital_marker")]
+    # docs/2xx: the schema above comes from the manifest ATTACHED to the
+    # store -- validate it on read here too, or an edit to the lab's class
+    # keeps typing these fields from the old dataclass until someone opens
+    # the create form. Stale kicks the re-probe and the note says so.
+    schema_stale = None
+    if spec is None:
+        try:
+            chk = _lab_schema_check(store)
+            if chk["stale"]:
+                schema_stale = "failed" if chk["failed"] else (chk["reason"] or "code")
+        except Exception:  # noqa: BLE001 -- a check never breaks the detail
+            logger.debug("lab schema check failed", exc_info=True)
     pointer_fields = payload.get("pointer_fields") or {}
     resolved_params = payload.get("resolved_params") or {}
 
@@ -14047,6 +14081,7 @@ def _pulse_section_ctx(store, pulse_index, path: str):
         "synth_unknown_class": unknown_class,
         # docs/2xx: the class's own schema typed the fields above
         "schema_from_env": spec is None and schema_spec is not None,
+        "schema_stale": schema_stale,
         "schema_unset": schema_unset,
         # where the curve on screen came from: "synth" (SM's own mirror of
         # quam's classes) or "config" (the lab's own generate_config output).
@@ -14430,8 +14465,25 @@ def api_pulse_lab_waveform():
             # the create form posts strings: type them by the class's own
             # schema, the same parser the create POST uses
             from quam_state_manager.core.pulse_catalog import (
-                adaptive_spec_for, by_qclass)
-            spec = adaptive_spec_for(qclass) or by_qclass(qclass)
+                adaptive_spec_for, resolve_qclass)
+            spec = adaptive_spec_for(qclass)
+            if spec is None:
+                cat_spec, how = resolve_qclass(qclass)
+                # a name-only ("leaf") match would import the CLIENT's module
+                # path under a catalog class's name -- not a vouched class
+                spec = cat_spec if how in ("exact", "env", "alias") else None
+            if spec is None:
+                # never import a module path the client names: only a class
+                # the probe already offered (the roster -- which read only the
+                # chip's modules and the ones the USER named) or SM's own
+                # catalog is drawn. A lab module may talk to an instrument at
+                # import (the rule the probe keeps, docs/2xx).
+                return jsonify({"ok": True, "results": [{
+                    "qclass": qclass, "ok": False, "reason": "unknown-class",
+                    "error": (f"{qclass} is not a pulse class SM has read from "
+                              "the selected environment -- name its module on "
+                              "the env strip first"),
+                    "plot": {"ok": False}}]})
             if spec is not None:
                 params, errors = _coerce_catalog_fields(spec, params)
                 if errors:
@@ -14967,23 +15019,32 @@ _lab_reprobe_tried: set = set()
 _lab_reprobe_lock = threading.Lock()
 
 
-def _pulse_modules_ctx(store) -> dict:
-    """The named pulse-class modules + their import status, and whether a lab
-    source file changed under the manifest this chip holds (docs/2xx). A
-    change kicks the background re-probe; the strip then shows "probing" and
-    polls until the fresh roster is installed."""
+def _lab_schema_check(store) -> dict:
+    """Validate-on-read for the env manifest ATTACHED to *store* (docs/2xx).
+
+    The probe-cache entry is checked on every read, but the manifest the
+    store holds is what the detail + edit forms type their fields from, so it
+    is checked here, from every surface that reads it (env strip, pulse
+    detail, list page) -- not only from the create form. Stale when a lab
+    source file it read changed, or when the named module set differs from
+    the set it imported (a module added while a probe was already running is
+    otherwise never read). Stale kicks ONE background re-probe per state
+    (stats + module set): a probe that fails (a syntax error mid-edit) must
+    not be re-kicked by every 2 s poll -- the next edit earns a new try.
+    Returns ``{"stale", "reason", "failed", "manifest", "names"}``."""
     from quam_state_manager.core import state_env_schema
     inst = current_app.instance_path
     manifest = _live_env_manifest(store) or {}
     status = manifest.get("pulse_modules") or {}
     names = state_env_schema.load_pulse_modules(inst)
-    code_changed = bool(manifest) and not state_env_schema.sources_fresh(
-        manifest.get("sources"))
-    reprobe_failed = False
-    if code_changed:
-        # ONE re-read per state of the lab's files: a probe that fails (a
-        # syntax error mid-edit) must not be re-kicked by every 2 s poll --
-        # the next edit changes the stats and earns a new try
+    reason = None
+    if manifest:
+        if not state_env_schema.sources_fresh(manifest.get("sources")):
+            reason = "code"
+        elif set(names) != set(status):
+            reason = "modules"
+    failed = False
+    if reason:
         stats = []
         for f in sorted((manifest.get("sources") or {})):
             try:
@@ -14991,7 +15052,7 @@ def _pulse_modules_ctx(store) -> dict:
                 stats.append((f, st.st_mtime_ns, st.st_size))
             except OSError:
                 stats.append((f, None, None))
-        key = (id(store), tuple(stats))
+        key = (id(store), tuple(stats), tuple(sorted(names)))
         with _lab_reprobe_lock:
             first = key not in _lab_reprobe_tried
             _lab_reprobe_tried.add(key)
@@ -15001,20 +15062,32 @@ def _pulse_modules_ctx(store) -> dict:
         if first:
             ctx = _active_ctx()
             try:
-                _warm_state_schema_async(store, inst,
-                                         live_folder=(ctx or {}).get("path"))
+                _kick_env_reprobe(store, inst, (ctx or {}).get("path"))
             except Exception:  # noqa: BLE001
                 pass
         else:
             with _schema_warm_lock:
                 probing = bool(_schema_warm_inflight)
-            reprobe_failed = not probing
+            failed = not probing
+    return {"stale": bool(reason), "reason": reason, "failed": failed,
+            "manifest": manifest, "names": names}
+
+
+def _pulse_modules_ctx(store) -> dict:
+    """The named pulse-class modules + their import status, and whether the
+    manifest this chip holds is stale (``_lab_schema_check``). Stale kicks
+    the background re-probe; the strip then shows "probing" and polls until
+    the fresh roster is installed."""
+    chk = _lab_schema_check(store)
+    status = chk["manifest"].get("pulse_modules") or {}
     lab_count = sum(1 for rec in (env_overlay_active_safe() or {}).values()
                     if isinstance(rec, dict) and rec.get("lab"))
     return {
-        "pulse_modules": [{"name": n, "status": status.get(n)} for n in names],
-        "lab_code_changed": code_changed and not reprobe_failed,
-        "lab_reprobe_failed": reprobe_failed,
+        "pulse_modules": [{"name": n, "status": status.get(n)}
+                          for n in chk["names"]],
+        "lab_code_changed": chk["stale"] and not chk["failed"],
+        "lab_stale_reason": chk["reason"],
+        "lab_reprobe_failed": chk["failed"],
         "lab_class_count": lab_count,
     }
 
@@ -15025,6 +15098,21 @@ def env_overlay_active_safe():
         return env_overlay_active()
     except Exception:  # noqa: BLE001
         return None
+
+
+@bp.route("/pulse/schema-status")
+def pulse_schema_status():
+    """Is the class schema this chip holds current (``_lab_schema_check``)?
+    The pulse detail polls this while it shows a stale-schema note, and
+    re-renders itself once the re-probe has installed the fresh schema."""
+    store = _store()
+    if not store:
+        return jsonify({"ok": False, "stale": False})
+    chk = _lab_schema_check(store)
+    with _schema_warm_lock:
+        probing = bool(_schema_warm_inflight)
+    return jsonify({"ok": True, "stale": chk["stale"], "reason": chk["reason"],
+                    "failed": chk["failed"], "probing": probing})
 
 
 @bp.route("/pulse/class-modules", methods=["POST"])
@@ -15076,6 +15164,9 @@ def _kick_env_reprobe(store, inst, live_folder) -> None:
     key = python_path + "|" + ",".join(sorted(classes))
     with _schema_warm_lock:
         if key in _schema_warm_inflight:
+            # the running probe read its module set when it STARTED: ask it
+            # to go again when it ends, or a module named now is never read
+            _schema_rerun_pending[key] = (store, inst, live_folder)
             return
         _schema_warm_inflight.add(key)
 
@@ -15088,8 +15179,7 @@ def _kick_env_reprobe(store, inst, live_folder) -> None:
         except Exception:  # noqa: BLE001
             logger.warning("pulse-module re-probe failed", exc_info=True)
         finally:
-            with _schema_warm_lock:
-                _schema_warm_inflight.discard(key)
+            _end_schema_flight(key)
 
     threading.Thread(target=_run, daemon=True).start()
 

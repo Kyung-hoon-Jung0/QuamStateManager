@@ -423,7 +423,47 @@ setTimeout(function () {
   ok(drawn && drawn.id === 'pulse-create-plot' && drawn.data.length === 1, 'P14: draws the answer');
   ok(/class's own code/.test(lbl.textContent), 'P14: labelled as the class\'s own code');
   ok(!doc.getElementById('pulse-create-plot').classList.contains('pulse-plot-empty'), 'P14: plot no longer empty');
-  if (fails) { console.error(fails + ' failure(s)'); process.exit(1); }
-  console.log('ALL OK pulses_create_selfcheck');
-  process.exit(0);
+  p15();
 }, 20);
+
+// P15 (docs/2xx verifier round): a detail whose class schema predates a lab
+// edit polls /pulse/schema-status while SM re-reads the class, then
+// re-renders itself -- but never over an uncommitted edit (it says so).
+function p15() {
+  function mkRoot(dirty) {
+    var r = doc.createElement('div'); r.id = 'pulse-detail-root';
+    r.setAttribute('data-pulse-path', 'qubits.q1.z.operations.cz');
+    r.innerHTML = '<span data-schema-stale="code">stale</span>' +
+      '<input data-param="amplitude" data-committed="0.2" value="' + (dirty ? '0.3' : '0.2') + '">';
+    doc.body.appendChild(r);
+    r._sections = [{ el: r, path: 'qubits.q1.z.operations.cz' }];
+    return r;
+  }
+  var answers = [{ ok: true, stale: true, failed: false }, { ok: true, stale: false, failed: false }];
+  var asked = [], reloads = [];
+  win.fetch = function (url) {
+    asked.push(url);
+    var a = answers.length > 1 ? answers.shift() : answers[0];
+    return win.Promise.resolve({ json: function () { return win.Promise.resolve(a); } });
+  };
+  win.htmx = { ajax: function (m, url, o) { reloads.push({ url: url, target: o && o.target }); return null; } };
+  var clean = mkRoot(false);
+  P._pollSchema(clean, 0, 1);
+  setTimeout(function () {
+    ok(asked.length >= 2 && asked[0] === '/pulse/schema-status', 'P15: polls the schema status');
+    ok(reloads.length === 1 && /\/pulse\/detail\?path=qubits\.q1\.z\.operations\.cz/.test(reloads[0].url)
+       && reloads[0].target === '#inspector-pane', 'P15: re-renders the view once fresh');
+    clean.remove();
+    var dirty = mkRoot(true);
+    reloads = [];
+    P._pollSchema(dirty, 0, 1);
+    setTimeout(function () {
+      ok(reloads.length === 0, 'P15: never re-renders over an uncommitted edit');
+      ok(/reopen this pulse/.test(dirty.querySelector('[data-schema-stale]').textContent),
+         'P15: says to reopen instead');
+      if (fails) { console.error(fails + ' failure(s)'); process.exit(1); }
+      console.log('ALL OK pulses_create_selfcheck');
+      process.exit(0);
+    }, 60);
+  }, 60);
+}

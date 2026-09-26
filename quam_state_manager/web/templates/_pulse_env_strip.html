@@ -29,7 +29,9 @@
     {# docs/2xx: an edit to the lab's own package does not move the env's
        signature, so SM re-stats the files the last probe read and re-reads
        the classes when one changed -- say which of the two this is #}
-    <span class="muted">{% if lab_code_changed %}your pulse code changed since
+    <span class="muted">{% if lab_code_changed and lab_stale_reason == 'modules' %}the
+      named modules changed since SM last read them — re-reading their
+      classes{% elif lab_code_changed %}your pulse code changed since
       SM last read it — re-reading its classes{% else %}reading the
       environment's pulse classes{% endif %}</span>
     <progress class="pulse-env-progress"></progress>

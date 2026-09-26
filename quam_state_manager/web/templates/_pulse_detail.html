@@ -38,7 +38,15 @@
     Unrecognized pulse class <code>{{ qclass or '(none)' }}</code> &mdash;
     the synthesized preview is unavailable.
     {% endif %}
-    {% if schema_from_env %}
+    {% if schema_from_env and schema_stale %}
+    <span class="pulse-schema-note pulse-schema-stale" data-schema-stale="{{ schema_stale }}">{% if schema_stale == 'failed' %}Your
+      pulse code changed since SM read this class&#39;s fields, and re-reading
+      it failed &mdash; the fields below are typed from the class as it was
+      before the change.{% else %}Your {{ 'named modules' if schema_stale == 'modules' else 'pulse code' }}
+      changed since SM read this class&#39;s fields &mdash; the fields below
+      may be from before the change. SM is re-reading it now and will refresh
+      this view when it is done.{% endif %}</span>
+    {% elif schema_from_env %}
     <span class="pulse-schema-note">Fields are typed from the class&#39;s own
       dataclass schema, read from the selected environment.</span>
     {% else %}
