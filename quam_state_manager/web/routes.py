@@ -15475,6 +15475,21 @@ def api_pulse_create():
             "_status.html", level="error",
             message=(f"Unknown target kind {target_kind!r} "
                      "(expected qubit, pair or pair_channel)")), 400
+    # 2026-09-27 (measured on the KRS 5Q chip): a LAB class validates its own
+    # values inside its waveform code -- GaussianNZTwoFluxPulse refuses a
+    # flat_length under 12 sigma of its filter -- and generate_config() then
+    # raised for the WHOLE chip, so no node could compile. SM cannot know a
+    # lab's rules; the class can. Run its own code on the typed values once
+    # (the same subprocess the create form's "Draw" button uses) and refuse
+    # what it refuses. When it cannot be run (no env), creation proceeds.
+    lab_refusal = _lab_class_refusal(store, spec, fields, qclass)
+    if lab_refusal:
+        return render_template(
+            "_status.html", level="error",
+            message=(f"Your {spec.key} class refused these values (its own "
+                     f"code, run in the selected environment): {lab_refusal}"
+                     )), 400
+
     # Check-and-create under one lock hold (same pattern as delete/rename) —
     # a concurrent mutator must not occupy the slot/name between the
     # existence check and the write. Modifier methods re-enter the RLock;
@@ -15500,6 +15515,35 @@ def api_pulse_create():
                 + f"{spec.key} model)")
     return _pulse_mutation_response(_render_pulse_detail(
         dot_path, status_msg=msg))
+
+
+def _lab_class_refusal(store, spec, fields: dict, qclass: str | None) -> str | None:
+    """The error a lab class's OWN code raises for *fields*, or None when it
+    draws them (or cannot be run -- no env, the run failed). Only for classes
+    SM does not transcribe (the env's and the chip's own); SM's catalog
+    classes are drawn in-process by the form's preview already."""
+    from quam_state_manager.core.pulse_catalog import (PULSE_CATALOG,
+                                                       chip_qclass)
+    if spec.key in PULSE_CATALOG and PULSE_CATALOG[spec.key].creatable:
+        return None
+    try:
+        python_path = config_generator.get_selected_env(current_app.instance_path)
+    except Exception:  # noqa: BLE001
+        return None
+    if not python_path:
+        return None
+    if not qclass:
+        with store._lock:
+            qclass = chip_qclass(store.merged, spec)[0]
+    try:
+        from quam_state_manager.core import lab_waveform
+        rec = lab_waveform.draw(python_path, [(qclass, dict(fields))])[0]
+    except Exception:  # noqa: BLE001 -- a check that cannot run never blocks
+        logger.warning("lab class check failed to run", exc_info=True)
+        return None
+    if rec.get("ok") or rec.get("reason"):
+        return None          # drawn, or not checkable (no-env / run-failed)
+    return str(rec.get("error") or "it raised")[:400]
 
 
 def _slot_host(merged: dict, pair_name: str, pair: dict, slot: str):

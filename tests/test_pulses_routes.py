@@ -2053,3 +2053,55 @@ class TestANewClassReprobesTheEnv:
             "op_name": "g3", "pulse_type": "GaussianPulse",
             "length": "40", "amplitude": "0.1", "sigma": "8"})
         assert kicked == []
+
+
+class TestALabClassIsCheckedByItsOwnCode:
+    """2026-09-27 (measured on the KRS 5Q chip): GaussianNZTwoFluxPulse's own
+    waveform code refuses a flat_length under 12 sigma of its filter, and a
+    pulse SM wrote with such values made generate_config() raise for the
+    WHOLE chip. The create runs the class's own code first."""
+
+    LAB = "mylab.g.NZPulse"
+
+    @pytest.fixture
+    def lab_env(self, slot_client, monkeypatch):
+        from quam_state_manager.core import config_generator, lab_waveform, pulse_catalog
+        pulse_catalog.apply_env_overlay(None)
+        pulse_catalog.apply_chip_classes({self.LAB: {
+            "importable": True, "canonical": self.LAB,
+            "bases": ["quam.components.pulses.Pulse"],
+            "fields": {"amplitude": {"type": {"base": "float"}, "has_default": False},
+                       "flat_length": {"type": {"base": "int"}, "has_default": False}}}})
+        calls = []
+        answer = {"rec": {"ok": True}}
+        monkeypatch.setattr(config_generator, "get_selected_env", lambda inst: "py.exe")
+
+        def draw(py, items, spawn=True):
+            calls.append(items)
+            return [dict(answer["rec"])]
+        monkeypatch.setattr(lab_waveform, "draw", draw)
+        yield calls, answer
+        pulse_catalog.apply_chip_classes(None)
+
+    def _post(self, c, name):
+        return c.post("/api/pulse/create", data={
+            "target_kind": "qubit", "qubit": "q1", "channel": "z", "op_name": name,
+            "pulse_type": "NZPulse", "amplitude": "0.15", "flat_length": "32"})
+
+    def test_a_value_the_class_refuses_is_not_written(self, slot_client, lab_env):
+        calls, answer = lab_env
+        answer["rec"] = {"ok": False, "error": "ValueError: half the flat length is below 6*sigma"}
+        r = self._post(slot_client, "nz_bad")
+        assert r.status_code == 400 and b"6*sigma" in r.data
+        assert calls and calls[0][0][0] == self.LAB
+        assert calls[0][0][1]["flat_length"] == 32
+        assert "nz_bad" not in _slot_store(slot_client).state["qubits"]["q1"]["z"]["operations"]
+
+    def test_values_it_draws_are_written(self, slot_client, lab_env):
+        r = self._post(slot_client, "nz_ok")
+        assert r.status_code == 200, r.data[:300]
+
+    def test_an_uncheckable_class_is_not_blocked(self, slot_client, lab_env):
+        calls, answer = lab_env
+        answer["rec"] = {"ok": False, "reason": "run-failed", "error": "env gone"}
+        assert self._post(slot_client, "nz_unchecked").status_code == 200
