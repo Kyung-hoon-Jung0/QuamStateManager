@@ -518,15 +518,20 @@ class LazySearchIndex:
                 self.builds += 1
                 return built
 
-    def prewarm(self) -> None:
+    def prewarm(self, pre=None) -> None:
         """Ask the background worker to build this index soon (the most
         recently opened chip wins; see :func:`_prewarm_worker`). Laziness kept
         the open fast but moved a 2.9 s build onto the first keystroke on a
         30-qubit chip (measured); prewarming moves it off both. The build is
         :meth:`get` itself, so the mutation-seq token guards it exactly as a
-        foreground build."""
-        if self._index is None:
-            _prewarm_submit(self)
+        foreground build.
+
+        *pre*: other warm steps for the same chip, run by the same worker
+        BEFORE the index build, each as ``step(store, pace)`` (the chip's
+        pointer cache and lint, for the first Chip Status visit). They run
+        even when the index is already built."""
+        if self._index is None or pre:
+            _prewarm_submit(self, pre)
 
     # -- the SearchIndex surface ------------------------------------------
     def search(self, query: str, limit: int = 50, category: str | None = None):
@@ -803,6 +808,8 @@ from quam_state_manager.core import activity  # noqa: E402
 
 _PREWARM_CV = threading.Condition()
 _PREWARM_SLOT: list = [None]
+_PREWARM_PRE: list = [()]      # the pending submission's pre-build steps
+PREWARM_STEPS = [0]            # pre-build steps completed (tests / debugging)
 _PREWARM_THREAD: list = [None]
 PREWARM_BUILDS = [0]
 
@@ -835,9 +842,10 @@ def _make_pace(lazy: "LazySearchIndex"):
     return pace
 
 
-def _prewarm_submit(lazy: "LazySearchIndex") -> None:
+def _prewarm_submit(lazy: "LazySearchIndex", pre=None) -> None:
     with _PREWARM_CV:
         _PREWARM_SLOT[0] = _weakref.ref(lazy)
+        _PREWARM_PRE[0] = tuple(pre or ())
         t = _PREWARM_THREAD[0]
         if t is None or not t.is_alive():
             t = threading.Thread(target=_prewarm_worker, name="search-index-prewarm",
@@ -853,14 +861,34 @@ def _prewarm_worker() -> None:
             while _PREWARM_SLOT[0] is None:
                 _PREWARM_CV.wait()
             ref, _PREWARM_SLOT[0] = _PREWARM_SLOT[0], None
+            pre, _PREWARM_PRE[0] = _PREWARM_PRE[0], ()
+        superseded = lambda: _PREWARM_SLOT[0] is not None  # noqa: E731
         # Start only on a quiet server (a newer submission replaces this one
         # while we wait), then pause between chunks whenever a foreground
         # request is running -- unless someone is waiting for THIS index.
-        activity.wait_quiet(stop=lambda: _PREWARM_SLOT[0] is not None)
-        if _PREWARM_SLOT[0] is not None:
+        activity.wait_quiet(stop=superseded)
+        if superseded():
             continue            # superseded while waiting: take the newer one
         lazy = ref()
-        if lazy is None or lazy._index is not None:
+        if lazy is None:
+            continue
+        # The pre-build steps (pointer cache, lint) come first: they are what
+        # the first Chip Status visit waits on. Each starts on a quiet server
+        # and a newer submission abandons the rest.
+        pace = _make_pace(lazy)
+        for step in pre:
+            activity.wait_quiet(stop=superseded)
+            if superseded():
+                break
+            try:
+                step(lazy._store, pace)
+                PREWARM_STEPS[0] += 1
+            except Exception:  # noqa: BLE001 -- a warm step never raises; readers compute on demand
+                logger.debug("chip prewarm step failed", exc_info=True)
+        if superseded() or lazy._index is not None:
+            continue
+        activity.wait_quiet(stop=superseded)
+        if superseded():
             continue
         try:
             lazy._get(_make_pace(lazy))

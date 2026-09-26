@@ -1473,14 +1473,48 @@ def _probe_readonly(folder) -> bool:
         return False
 
 
+def _chip_warm_steps() -> tuple:
+    """RAM P10 cold-open follow-up: what the first Chip Status / diagnostics
+    visit waits on, computed by the background prewarm worker BEFORE the
+    search index (see ``LazySearchIndex.prewarm``): the chip's pointer cache
+    (paced, chunked under the store lock), its lint, and the env-schema
+    analysis. Each lands in the SAME seq-keyed memo the request path reads
+    (``diagnostics.lint_state``, ``state_env_validate.analysis_for_store``),
+    so a warmed answer is the answer a cold request would compute; an edit
+    moves the counter and the request path recomputes, as before."""
+    try:
+        app = current_app._get_current_object()
+    except RuntimeError:            # no app context: the lint still warms
+        app = None
+
+    def pointers(store, pace):
+        from quam_state_manager.core.loader import warm_pointer_cache
+        warm_pointer_cache(store, pace)
+
+    def lint(store, pace):
+        diagnostics.lint_state(store)
+
+    def env(store, pace):
+        if app is None:
+            return
+        from quam_state_manager.core import state_env_validate
+        with app.app_context():
+            manifest = _live_env_manifest(store)
+            if manifest is not None:
+                state_env_validate.analysis_for_store(store, manifest)
+
+    return (pointers, lint, env)
+
+
 def _prewarm_search_index(ctx: dict | None) -> None:
     """RAM P10: the chip just opened gets its topbar-search index built on a
     background worker, so neither the open nor the first keystroke pays for
-    it (the worker builds only the most recently opened chip)."""
+    it (the worker builds only the most recently opened chip). The same
+    worker first warms what Chip Status needs (:func:`_chip_warm_steps`)."""
     idx = (ctx or {}).get("index")
     prewarm = getattr(idx, "prewarm", None)
     if prewarm is not None:
-        prewarm()
+        prewarm(pre=_chip_warm_steps())
 
 
 def _activate_quam(folder_path: str | Path, *, origin: str = "live") -> dict:
@@ -2064,7 +2098,7 @@ def _rebuild_after_working_copy_replaced(ctx: dict) -> None:
     index = LazySearchIndex(store)
     store.search_index = index
     ctx["index"] = index
-    index.prewarm()
+    index.prewarm(pre=_chip_warm_steps())
     ctx["wiring_json"] = json.dumps(store.wiring)
     _invalidate_engine_cache()
     ctx["working_dirty"] = False

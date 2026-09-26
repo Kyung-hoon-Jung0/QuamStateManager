@@ -172,6 +172,36 @@ class TestParkAndReopen:
         assert again["store"].state["qubits"]["q2"]["T1"] == 3e-05
 
 
+class TestParkOwnGate:
+    """park() refuses a non-pristine store ON ITS OWN -- not only because
+    unpark re-checks later (verifier P3-1: deleting park's gate kept every
+    other test green)."""
+
+    def test_an_edited_store_is_not_parked(self, app, tmp_path):
+        c = app.test_client()
+        ctx = _load(c, _make_chip(tmp_path / "A"))
+        ctx["modifier"].set_value("qubits.q1.T1", 7.0e-5)
+        assert chip_park.park(ctx) is False
+        assert chip_park.PARKED.slots() == []
+
+    def test_an_undone_edit_is_still_not_pristine(self, app, tmp_path):
+        """Content equal again, counter moved: pristine means 'no mutation
+        since the load', not 'equal content' -- park must refuse."""
+        c = app.test_client()
+        ctx = _load(c, _make_chip(tmp_path / "A"))
+        ctx["modifier"].set_value("qubits.q1.T1", 7.0e-5)
+        ctx["modifier"].undo()
+        assert not ctx["store"].change_log
+        assert chip_park.park(ctx) is False
+        assert chip_park.PARKED.slots() == []
+
+    def test_a_pristine_store_is_parked(self, app, tmp_path):
+        c = app.test_client()
+        ctx = _load(c, _make_chip(tmp_path / "A"))
+        assert chip_park.park(ctx) is True
+        assert len(chip_park.PARKED.slots()) == 1
+
+
 def test_take_never_returns_another_tokens_value():
     m = ramcache.KeyedMemo("t.take")
     try:
@@ -193,7 +223,7 @@ class TestLazySearchIndex:
         # prewarm (tested below) is switched off here so the assertion is
         # about the open alone, not a race with the worker.
         from quam_state_manager.core import search_index as si
-        monkeypatch.setattr(si, "_prewarm_submit", lambda lazy: None)
+        monkeypatch.setattr(si, "_prewarm_submit", lambda lazy, pre=None: None)
         c = app.test_client()
         ctx = _load(c, _make_chip(tmp_path / "A"))
         idx = ctx["index"]

@@ -448,6 +448,49 @@ def is_pristine(store: "QuamStore") -> bool:
             and store.mutation_seq == store.loaded_seq and not store.change_log)
 
 
+#: Pointers resolved per locked chunk by :func:`warm_pointer_cache`.
+WARM_POINTER_CHUNK = 256
+
+
+def warm_pointer_cache(store: "QuamStore", pace=None,
+                       chunk: int = WARM_POINTER_CHUNK) -> bool:
+    """Resolve every pointer of *store* into its own pointer cache, in small
+    chunks, off the request thread (RAM P10 cold-open follow-up).
+
+    The first page that lints the chip (Chip Status, the diagnostics badge)
+    used to resolve ~15k pointers on a 30-qubit chip inline. This fills the
+    SAME cache the foreground resolver reads -- through ``store.resolve_pointer``
+    itself, so a warmed entry is exactly what a cold resolve would store.
+
+    Staleness: each chunk runs under ``store._lock`` and first checks that
+    ``mutation_seq`` has not moved since the pointer list was taken. Every
+    mutation bumps the counter and clears the cache under that same lock, so a
+    chunk can never resolve against content older than the cache it writes
+    into. A moved counter stops the warm (returns False); the next reader
+    resolves on demand, as before. *pace* (optional) is called between chunks
+    with the lock released -- the background worker pauses there while a
+    foreground request runs."""
+    lock = store._lock
+    with lock:
+        seq, merged_id = store.mutation_seq, id(store.merged)
+        if getattr(store, "_ptr_warm_token", None) == (seq, merged_id):
+            return True             # already warm at this content: no re-walk
+        todo = [(v, pt) for _dp, v, pt in _walk(store.merged)
+                if is_pointer(v) and not is_self_ref(v)]
+    for i in range(0, len(todo), chunk):
+        if i and pace is not None:
+            pace()
+        with lock:
+            if store.mutation_seq != seq or id(store.merged) != merged_id:
+                return False
+            for value, path_tuple in todo[i:i + chunk]:
+                store.resolve_pointer(value, path_tuple)
+    with lock:
+        if store.mutation_seq == seq and id(store.merged) == merged_id:
+            store._ptr_warm_token = (seq, merged_id)
+    return True
+
+
 def _walk(
     obj: Any,
     prefix: str = "",
