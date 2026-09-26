@@ -13403,14 +13403,11 @@ def _pulse_rows_touched(store, pulse_index, paths) -> list[str] | None:
     path's own operation plus every operation whose pointer resolves into
     it (an ``#../x90/amplitude`` field follows the target). None when the
     change is too broad to patch row by row (the caller says structural)."""
-    from quam_state_manager.core.pulse_index import used_by
     roots: list[str] = []
     try:
-        known = {r["path"] for r in pulse_index.rows()}
+        known = pulse_index.known_paths()
     except Exception:  # noqa: BLE001
         return None
-    with store._lock:
-        rev = pulse_index.reverse_index()
     for dp in paths or []:
         if not isinstance(dp, str):
             continue
@@ -13426,7 +13423,7 @@ def _pulse_rows_touched(store, pulse_index, paths) -> list[str] | None:
         queue = [root]
         while queue:
             cur = queue.pop(0)
-            for ref in used_by(store.merged, cur, rev):
+            for ref in pulse_index.used_by(cur):
                 r2 = _pulse_root_of(ref, known)
                 if r2 and r2 not in roots:
                     roots.append(r2)
@@ -13549,7 +13546,7 @@ def pulse_row():
     path = (request.args.get("path") or "").strip()
     if not store or not pulse_index or not path:
         return "", 404
-    row = next((r for r in pulse_index.rows() if r["path"] == path), None)
+    row = pulse_index.row(path)
     if row is None:
         return "", 404
     # the page's active filter rides along: a row that no longer matches it
@@ -13614,6 +13611,9 @@ def pulses_page():
     all_rows = _pulse_rows_filter(all_rows, channel, query, owner)
 
     page_rows, total, page, total_pages = _paginate(all_rows, page, per_page)
+    # the index's row dicts are shared across requests (docs/2xx pulses RAM):
+    # the spark keys below go on a copy
+    page_rows = [dict(r) for r in page_rows]
 
     # Sparklines for the visible page only, memoized per (op, mutation_seq) so
     # repeated search keystrokes / pagination over an unchanged chip never
@@ -13648,7 +13648,7 @@ def pulses_page():
     open_pulse = request.args.get("pulse", "").strip()
     open_pulse_missing = ""
     if open_pulse and not rows_only:
-        known = any(r["path"] == open_pulse for r in pulse_index.rows())
+        known = pulse_index.row(open_pulse) is not None
         if not known:
             open_pulse, open_pulse_missing = "", open_pulse
     else:
@@ -13866,7 +13866,7 @@ def _pulse_section_ctx(store, pulse_index, path: str):
                                message=f"Not a pulse path: {path!r}",
                                level="error"), 404
 
-    row = next((r for r in pulse_index.rows() if r["path"] == path), None)
+    row = pulse_index.row(path)
     if row is None:
         return render_template("_status.html",
                                message=f"Pulse not found: {path}",
