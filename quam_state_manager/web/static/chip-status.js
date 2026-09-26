@@ -269,7 +269,12 @@ window.ChipStatus.metaInfo = (function () {
         var run = prov && prov.run != null ? prov.run : (e.run != null ? e.run : null);
         var who = run != null ? ('run #' + run + (prov && prov.short ? ' \u00b7 ' + prov.short : ''))
                 : (prov && prov.why ? prov.why : (e.trigger ? e.trigger : ''));
-        var edited = hasHist && !e.gone && !_same(e.value, ctx.cur);
+        // the server compares EVERY leaf the panel reads (a whole confusion
+        // matrix, a 2Q RB block) with its newest history value; the value
+        // check also compares a single-leaf metric with the number on screen
+        // NOW, which may be newer than the metadata fetch
+        var edited = hasHist && (e.matches_current === false
+            || (!e.gone && !_same(e.value, ctx.cur)));
         if (edited) {
             // the number on screen is not the one history holds: whatever
             // history says is about an EARLIER value, and is labelled so
@@ -288,7 +293,12 @@ window.ChipStatus.metaInfo = (function () {
         } else if (hasHist) {
             // "measured" only when a run wrote it; an edit or a manual
             // snapshot CHANGED it, and the next line says which
-            lines.push((run != null ? 'Last measured: ' : 'Last changed: ') + when(ms) + ' (' + ageLong(ms, now) + ')');
+            // a value that first APPEARED at this snapshot (null or absent
+            // before) was written then: that is its first record, not "since
+            // history began"
+            lines.push((e.appeared ? (run != null ? 'First measured: ' : 'First recorded: ')
+                                   : (run != null ? 'Last measured: ' : 'Last changed: '))
+                + when(ms) + ' (' + ageLong(ms, now) + ')');
             if (who) lines.push('Written by: ' + who);
             tag = whenShort(ms) + (run != null ? ' \u00b7 #' + run : '');
         }
@@ -390,7 +400,13 @@ window.ChipStatus.jumpGuard = (function () {
        pane itself), so without it the pane was yanked back to the jumped
        section when Trends landed. A tab press still works: its pointerdown
        cancels, then its click re-notes. */
-    function cancel() { last = null; }
+    /* Verifier P3 (2026-09-26): the Enter / Space that JUMPS from an Overview
+       tile bubbles on to the pane after the tile's handler has noted the jump,
+       and cancelled it here -- so a keyboard jump lost its re-anchoring and
+       ended 28 px low when the lazy sections above grew (real Chrome: 95 px vs
+       a click's 67). The key that made the jump is not the user taking over;
+       the tile handler marks it. */
+    function cancel(ev) { if (ev && ev._csJumpKey) return; last = null; }
     /* queue item 10: an Overview tile jumps to ONE panel inside a tab's
        section, noted as "sel:<tab view>:<selector>"; everything that asks
        "which tab" (re-anchor eligibility, the scroll-spy's lit item) asks
@@ -1674,6 +1690,7 @@ window.ChipStatus.mount = function (opts) {
             var jt = ev.target && ev.target.matches && ev.target.matches('.topo-card[data-tile-jump]') ? ev.target : null;
             if (!jt) return;
             ev.preventDefault();
+            ev._csJumpKey = true;     // the pane's guard must not read it as a takeover
             _ovJump(jt);
         });
         // docs/151: hovering a tile lists its entities; leaving hides.
@@ -3606,7 +3623,7 @@ window.ChipStatus.mount = function (opts) {
         var d = _metaData || {}, MI = window.ChipStatus.metaInfo;
         var group = /^2q:/.test(key) ? ((d.p || {})[key] || {}) : ((d.q || {})[key] || {});
         var cells = sec.querySelectorAll('.heatmap-cell[data-qubit], .heatmap-cell[data-pair]');
-        var newest = null, oldest = null, changed = 0, first = 0, none = 0, edited = 0, total = 0;
+        var newest = null, oldest = null, changed = 0, recorded = 0, first = 0, none = 0, edited = 0, total = 0;
         Array.prototype.forEach.call(cells, function (c) {
             if (c.classList.contains('heatmap-cell-none')) return;     // not measured: nothing to date
             total++;
@@ -3615,7 +3632,13 @@ window.ChipStatus.mount = function (opts) {
             var desc = _metaFor(key, c);
             if (desc.edited) { edited++; return; }
             if (!e || !e.ts) { none++; return; }
-            if (e.first) first++; else changed++;
+            // "measured" only when a run wrote it (an auto / manual snapshot
+            // RECORDED a value, which is not a measurement)
+            if (e.first) first++;
+            else {
+                var pv0 = (d.snaps || {})[e.ts] || {};
+                if ((pv0.run != null ? pv0.run : e.run) != null) changed++; else recorded++;
+            }
             if (!newest || e.ts > newest.ts) newest = { ts: e.ts, id: id, run: e.run };
             if (!oldest || e.ts < oldest.ts) oldest = { ts: e.ts, id: id };
         });
@@ -3629,6 +3652,7 @@ window.ChipStatus.mount = function (opts) {
         }
         var cnt = [];
         if (changed) cnt.push(changed + ' measured in history');
+        if (recorded) cnt.push(recorded + ' recorded without a run');
         if (first) cnt.push(first + ' unchanged since history began');
         if (none) cnt.push(none + ' not in history');
         if (edited) cnt.push(edited + ' not in history yet');

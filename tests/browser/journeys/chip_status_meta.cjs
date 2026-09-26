@@ -11,6 +11,7 @@ const { open } = require('./cdp.cjs');
 const PORT = process.argv[2] || '5099';
 const SHOTS = process.argv[3] || '.';
 const BASE = `http://127.0.0.1:${PORT}`;
+const LAND = 67;   // px from the pane top a jumped panel lands at (1600x950, measured)
 const res = [];
 function rec(name, ok, detail) { res.push({ name, ok }); console.log((ok ? 'PASS ' : 'FAIL ') + name + (detail !== undefined ? '  ' + JSON.stringify(detail).slice(0, 500) : '')); }
 
@@ -92,7 +93,7 @@ const hover = (p, x, y) => p.send('Input.dispatchMouseEvent', { type: 'mouseMove
       const hint = await p.ev(`(function(){var e=document.getElementById('ov-hover-pop'); return e? e.innerText : document.querySelector('#topo-overview-tiles .topo-card[data-tile-id="${tid}"]').getAttribute('title');})()`);
       await p.click(c.x, c.y); await p.sleep(9000);   // the lazy Trends / 2Q panels land meanwhile
       const pos = JSON.parse(await p.ev(`JSON.stringify((function(){var el=document.querySelector(${JSON.stringify(sel)}); var pr=${pane}.getBoundingClientRect(); if(!el) return null; var r=el.getBoundingClientRect(); return {top:Math.round(r.top-pr.top), tab:(document.querySelector('.topo-subnav-btn.active')||{}).getAttribute ? document.querySelector('.topo-subnav-btn.active').getAttribute('data-view') : null};})())`));
-      rec(`M3c clicking ${tid} lands its panel at the top of the pane (and it stays)`, !!pos && pos.top >= -5 && pos.top < 140, { hint, pos });
+      rec(`M3c clicking ${tid} lands its panel at the top of the pane (and it stays)`, !!pos && Math.abs(pos.top - LAND) <= 10, { hint, pos });
       await p.shot(`${SHOTS}/m3_jump_${tid}.png`);
     }
     // inert tile: a click moves nothing
@@ -104,17 +105,61 @@ const hover = (p, x, y) => p.send('Input.dispatchMouseEvent', { type: 'mouseMove
       const after = await p.ev(`${pane}.scrollTop`);
       rec('M3d an inert tile click moves nothing', before === after, { before, after });
     }
-    // keyboard
+    // keyboard -- on a FRESH page, so the lazy sections still grow under the
+    // jump (the case where the jump key used to cancel its own re-anchoring)
+    await p.send('Page.reload'); await p.sleep(7000);
     await p.ev(`${pane}.scrollTop=0, 1`); await p.sleep(400);
     await p.ev(`document.querySelector('#topo-overview-tiles .topo-card[data-tile-id="t2ramsey"]').focus(), 1`);
     await p.key('Enter', 'Enter', 13); await p.sleep(6000);
     const kpos = await p.ev(`(function(){var el=document.querySelector('.topo-section[data-density-panel="T2ramsey"]'); if(!el) return null; return Math.round(el.getBoundingClientRect().top-${pane}.getBoundingClientRect().top);})()`);
-    rec('M3e Enter on a focused tile jumps too', kpos !== null && kpos >= -5 && kpos < 140, kpos);
+    rec('M3e Enter on a focused tile lands where a click does', kpos !== null && Math.abs(kpos - LAND) <= 10, kpos);
     // round trip: F5 -> page intact
     await p.send('Page.reload'); await p.sleep(7000);
     const intact = await p.ev(`!!document.querySelector('#topo-overview-tiles .topo-card[data-tile-jump]') && !!document.querySelector('.topo-dashboard')`);
     rec('M3f after a reload the page and its jump tiles are intact', intact);
     rec('M3g no JS exceptions', p.errors(0).length === 0, p.errors(0));
+    await p.close();
+  }
+  // ---- M5 (verifier P1 x2): Readout Fidelity with its meta on. Every tile
+  //      equals a cold recompute, an entry is "first" only AT the oldest
+  //      snapshot, and a confusion matrix history never held says so.
+  {
+    const p = await open(`${BASE}/topology?view=readout`); await p.sleep(6000);
+    await p.ev(`localStorage.setItem('quam_chip_meta_panels', JSON.stringify({assignment_fidelity:true})), 1`);
+    await p.send('Page.reload'); await p.sleep(7000);
+    await p.ev(`window.setChipStatusView && window.setChipStatusView('readout')`); await p.sleep(4000);
+    const r = JSON.parse(await p.ev(`(async function(){
+      var d = await (await fetch('/topology/metric-meta', {cache:'no-store'})).json();
+      var MI = window.ChipStatus.metaInfo, cells = [], badFirst = [];
+      ['q','p'].forEach(function(g){ Object.keys(d[g]||{}).forEach(function(k){ Object.keys(d[g][k]).forEach(function(id){
+        var e = d[g][k][id]; if (e.first && e.ts !== d.oldest) badFirst.push([k,id,e.ts]); }); }); });
+      document.querySelectorAll('.topo-section[data-density-panel="assignment_fidelity"] .heatmap-cell[data-qubit]').forEach(function(c){
+        if (c.classList.contains('heatmap-cell-none')) return;
+        var q = c.getAttribute('data-qubit'), e = ((d.q||{}).assignment_fidelity||{})[q];
+        cells.push({q:q, shown:(c.querySelector('.heatmap-cell-meta')||{}).textContent, mc: e ? e.matches_current : null,
+                    first: e ? e.first : null, appeared: e ? !!e.appeared : null});
+      });
+      return JSON.stringify({oldest:d.oldest, badFirst:badFirst, cells:cells}); })()`));
+    rec('M5a no entry is "since history began" unless it sits at the oldest snapshot', !!r.oldest && r.badFirst.length === 0, { oldest: r.oldest, badFirst: r.badFirst.slice(0, 6) });
+    rec('M5b a readout tile whose matrix history never held says "not in history"; none borrows a \u2264 date for it',
+        r.cells.length > 0 && r.cells.every(c => c.mc !== false || c.shown === 'not in history')
+          && r.cells.every(c => !(c.appeared && /^\u2264/.test(c.shown || ''))), r.cells);
+    const c = await center(p, '.topo-section[data-density-panel="assignment_fidelity"] .heatmap-cell[data-qubit="q1"]');
+    if (c) {
+      await p.sleep(300); await hover(p, c.x, c.y); await p.sleep(1500);
+      const card = await p.ev(`(function(){var e=document.getElementById('cs-meta-pop'); return e? e.innerText : null;})()`);
+      const q1 = r.cells.find(x => x.q === 'q1') || {};
+      rec('M5c the q1 hover card agrees with its entry (no "Unchanged since" for an appeared or edited value)',
+          !!card && !((q1.appeared || q1.mc === false) && /Unchanged since/.test(card))
+            && (q1.mc !== false || /Not in this chip/.test(card)), { card, q1 });
+      await p.shot(`${SHOTS}/m5_ro_q1_hover.png`);
+    }
+    await hover(p, 5, 5);
+    await p.send('Page.reload'); await p.sleep(6000);
+    const intact = await p.ev(`!!document.querySelector('.topo-dashboard') && !!document.querySelector('.topo-section[data-density-panel="assignment_fidelity"]')`);
+    rec('M5d after a reload the page is intact', intact);
+    await p.ev(`localStorage.removeItem('quam_chip_meta_panels'), 1`);
+    rec('M5e no JS exceptions', p.errors(0).length === 0, p.errors(0));
     await p.close();
   }
   // ---- M4: an outside program writes q1.T1 while the panel shows its meta ->
@@ -161,6 +206,10 @@ const hover = (p, x, y) => p.send('Input.dispatchMouseEvent', { type: 'mouseMove
       });
       return JSON.stringify(out); })()`));
     rec('M4b every T1 tile shows exactly what a cold recompute says', cmp.length > 0 && cmp.every(x => x.same), cmp);
+    const t1first = JSON.parse(await p.ev(`(async function(){ var d = await (await fetch('/topology/metric-meta', {cache:'no-store'})).json();
+      var t = (d.q||{}).T1 || {}; return JSON.stringify(Object.keys(t).map(function(q){ return {q:q, ts:t[q].ts, first:t[q].first, appeared:!!t[q].appeared, oldest:d.oldest}; })); })()`));
+    rec('M4d after Take live no T1 entry claims "since history began" unless at the oldest snapshot',
+        t1first.every(x => !x.first || x.ts === x.oldest), t1first);
     await center(p, '.topo-section[data-density-panel="T1"]', 'start'); await p.sleep(300);
     await p.shot(`${SHOTS}/m4_after_outside_write.png`);
     execFileSync('python', [process.env.SM_EXT_WRITER, 'set', process.env.SM_CHIP_DIR, 'qubits.q1.T1', String(old), '--mode', 'quam']);

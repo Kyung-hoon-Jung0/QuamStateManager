@@ -70,7 +70,7 @@ function edge(pid, s, t) {
              { gate: 'cz_SNZ', metric: 'InterleavedRB', value: 0.99, level: 'gate' }] };
 }
 const TOPO = {
-  nodes: [node('q1', '0,0', 2.0e-5, 5.0e9), node('q2', '1,0', 3.0e-5, 5.1e9), node('q3', '2,0', 1.5e-5, 5.2e9)],
+  nodes: [node('q1', '0,0', 2.0e-5, 5.0e9), node('q2', '1,0', 3.0e-5, 5.1e9), node('q3', '2,0', 1.4e-5, 5.2e9)],
   edges: [edge('q1-2', 'q1', 'q2'), edge('q2-3', 'q2', 'q3')],
   summary: {},
 };
@@ -133,6 +133,25 @@ const metaFetches = (win) => win._fetches.filter(function (u) { return /metric-m
      'T5: a value on screen that differs from history\u2019s says "not in history" -- ' + JSON.stringify(d));
   d = MI.describe(META.q.T1.q1, { snaps: META.snaps, cur: 2.0e-5 * (1 + 1e-12), now: NOW });
   ok(!d.edited, 'T5b: a float-noise difference is not an edit');
+  // verifier P1 (2026-09-26): a subtree metric (readout fidelity from a
+  // confusion matrix) has no one value; the server's matches_current flag is
+  // what says the matrix on screen is one history never held
+  d = MI.describe({ ts: '20260101_120000_000', run: 31, trigger: 'experiment', first: false, leaves: 4,
+                    matches_current: false }, { snaps: META.snaps, cur: 0.9225, now: NOW });
+  ok(d.edited && d.tag === 'not in history',
+     'T5c: a subtree whose leaves differ from history (matches_current=false) says "not in history" -- ' + JSON.stringify(d));
+  d = MI.describe({ ts: '20260101_120000_000', run: 31, trigger: 'experiment', first: false, leaves: 4,
+                    matches_current: true }, { snaps: META.snaps, cur: 0.9225, now: NOW });
+  ok(!d.edited && /^Last measured: /.test(d.lines[0]), 'T5d: ...and a matching subtree keeps its date');
+  // verifier P1: a value that APPEARED at a later snapshot (null before) is
+  // its first record, never "unchanged since history began"
+  d = MI.describe({ ts: '20260101_120000_000', run: 31, trigger: 'experiment', first: false, leaves: 1,
+                    value: 2.0e-5, appeared: true }, { snaps: META.snaps, cur: 2.0e-5, now: NOW });
+  ok(/^First measured: /.test(d.lines[0]) && d.tag.charAt(0) !== '\u2264' && !/Unchanged/.test(d.lines.join(' ')),
+     'T5e: an appeared value is "First measured", no \u2264 tag -- ' + JSON.stringify(d));
+  d = MI.describe({ ts: '20260101_110000_000', run: null, trigger: 'auto', first: false, leaves: 1,
+                    value: 1.4e-5, appeared: true }, { snaps: META.snaps, cur: 1.4e-5, now: NOW });
+  ok(/^First recorded: /.test(d.lines[0]), 'T5f: ...and "First recorded" when no run wrote it');
   d = MI.describe(null, {});
   ok(d.tag === '\u2014' && /^No change of this value/.test(d.lines[0]), 'T6: no entry -> the honest empty answer');
   d = MI.describe(null, { updating: true });
@@ -166,6 +185,11 @@ const metaFetches = (win) => win._fetches.filter(function (u) { return /metric-m
   const q1tag = (t1.querySelector('.heatmap-cell[data-qubit="q1"] .heatmap-cell-meta') || {}).textContent;
   ok(line && stat && stat.nextElementSibling === line && /newest change/.test(line.textContent) && /#31/.test(q1tag || ''),
      'D5: the summary line sits under the stat line, each tile gets its line -- ' + (line && line.textContent) + ' | ' + q1tag);
+  // verifier follow-up: the panel line says "measured" only for a run-written
+  // value; q3's value came from an auto snapshot, q2's predates history
+  ok(line && /1 measured in history/.test(line.textContent) && /1 recorded without a run/.test(line.textContent)
+       && /1 unchanged since history began/.test(line.textContent),
+     'D5c: the panel line counts a run-less change as recorded, not measured -- ' + (line && line.textContent));
   const f01 = doc.querySelector('.topo-section[data-density-panel="f_01"]');
   ok(f01 && !f01.classList.contains('topo-meta-on'), 'D5b: only THAT panel turned on');
 
@@ -210,6 +234,17 @@ const metaFetches = (win) => win._fetches.filter(function (u) { return /metric-m
   const JG = win.ChipStatus.jumpGuard;
   ok(JG.current() === 'sel:coherence:.topo-section[data-density-panel="T1"]' && JG.baseView(JG.current()) === 'coherence',
      'O3c: the jump is noted for the guard, under its tab -- ' + JG.current());
+  // O3d verifier P3: Enter on a jump tile bubbles on to the pane, whose guard
+  // listens for keydown as "the user took over" -- the jump key must not
+  // cancel the jump it just made (real Chrome: 95 px vs a click's 67)
+  JG.cancel();
+  tile('t1').focus();
+  tile('t1').dispatchEvent(new win.KeyboardEvent('keydown', { key: 'Enter', bubbles: true, cancelable: true }));
+  await tick(80);
+  ok(JG.current() === 'sel:coherence:.topo-section[data-density-panel="T1"]',
+     'O3d: an Enter jump stays live for the guard after its key reaches the pane -- ' + JG.current());
+  doc.getElementById('table-pane').dispatchEvent(new win.KeyboardEvent('keydown', { key: 'ArrowDown', bubbles: true }));
+  ok(JG.current() === null, 'O3e: ...while any other key on the pane still ends the jump');
   win._scrolled.length = 0;
   tile('cal_age').dispatchEvent(new win.MouseEvent('click', { bubbles: true }));
   await tick(80);

@@ -3875,7 +3875,8 @@ class HistoryManager:
 
     def leaf_field_series_many(
             self, quam_state_path: str | Path,
-            dot_paths: list[str], *, hold_to_newest: bool = False) -> dict[str, list[tuple]]:
+            dot_paths: list[str], *, hold_to_newest: bool = False,
+            origin: dict | None = None) -> dict[str, list[tuple]]:
         """:meth:`leaf_field_series` for MANY paths over ONE connection.
 
         The per-path variant opens and closes its own SQLite connection, and
@@ -3893,6 +3894,12 @@ class HistoryManager:
         Same semantics per path: a path this index must decline (a pointer
         somewhere in its history) is simply absent from the result, exactly as
         the singular form returns None.
+
+        With *origin* (a dict), ``origin["oldest"]`` is set to the OLDEST
+        snapshot timestamp the index holds, read on the same connection -- a
+        leaf whose first row is later than that APPEARED at that row; only a
+        first row AT the oldest snapshot means "already there when history
+        began" (Chip Status metric metadata, docs/2xx).
         """
         out: dict[str, list[tuple]] = {}
         if not dot_paths:
@@ -3904,6 +3911,8 @@ class HistoryManager:
             return out
         try:
             newest = conn.execute("SELECT MAX(ts) FROM leaf_snaps").fetchone()[0] if hold_to_newest else None
+            if origin is not None:
+                origin["oldest"] = conn.execute("SELECT MIN(ts) FROM leaf_snaps").fetchone()[0]
             for dp in dot_paths:
                 try:
                     if leaf_index.path_needs_scan(conn, dp):

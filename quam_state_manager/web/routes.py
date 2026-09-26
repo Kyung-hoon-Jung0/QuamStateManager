@@ -12799,7 +12799,7 @@ def topology_trends():
 def topology_metric_meta():
     """Queue item 4: per-cell provenance for every Chip Status metric panel.
 
-    ``{ok, newest, snapshots, updating, q: {panel key: {qubit: entry}},
+    ``{ok, newest, snapshots, oldest, updating, q: {panel key: {qubit: entry}},
     p: {"2q:<rbType>:<gate>": {pair: entry}}, snaps: {ts: provenance}}`` where
     an entry is :func:`metric_meta.newest_change`'s fold of the change points
     of the leaves that panel reads, plus ``load_id`` for a 2Q RB value whose
@@ -12820,6 +12820,7 @@ def topology_metric_meta():
         doc = store.merged
         qpaths = _mm.qubit_paths(doc, list(store.qubit_names))
         ppaths, loads = _mm.pair_rb_paths(doc, list(store.qubit_pair_names))
+        current = _mm.current_values(doc, qpaths, ppaths)
     wanted: list[str] = []
     _seen: set[str] = set()
     for group in (qpaths, ppaths):
@@ -12829,8 +12830,10 @@ def topology_metric_meta():
                     if dp not in _seen:
                         _seen.add(dp)
                         wanted.append(dp)
+    origin: dict = {}
     try:
-        series = hm.leaf_field_series_many(path, wanted) if wanted else {}
+        series = (hm.leaf_field_series_many(path, wanted, origin=origin)
+                  if wanted else {})
     except Exception:  # noqa: BLE001 - metadata must never break the page
         logger.debug("metric meta: leaf series unavailable", exc_info=True)
         series = {}
@@ -12840,7 +12843,8 @@ def topology_metric_meta():
         out: dict = {}
         for key, per in group.items():
             for ent, plist in per.items():
-                e = _mm.newest_change(series, plist)
+                e = _mm.newest_change(series, plist, oldest=origin.get("oldest"),
+                                      current=current)
                 if e:
                     stamps.add(e["ts"])
                     out.setdefault(key, {})[ent] = e
@@ -12859,6 +12863,9 @@ def topology_metric_meta():
         "ok": True,
         "newest": snaps[0].timestamp if snaps else None,
         "snapshots": len(snaps),
+        # the oldest snapshot the change-point index holds: an entry is
+        # ``first`` ("unchanged since history began") only AT this snapshot
+        "oldest": origin.get("oldest"),
         "updating": bool(hm.leaf_index_updating(path)),
         "q": q_out,
         "p": p_out,

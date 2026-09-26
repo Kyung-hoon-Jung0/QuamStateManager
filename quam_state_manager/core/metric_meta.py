@@ -183,16 +183,51 @@ def pair_rb_paths(doc: dict, pairs: Iterable[str]) -> tuple[
     return paths, loads
 
 
-def newest_change(series: dict[str, list[tuple]], paths: list[str]) -> dict | None:
+def current_values(doc: dict, *groups: dict) -> dict[str, Any]:
+    """``{dot path: its value in *doc* now}`` for every path the panel groups
+    name -- what the page shows, compared against history's newest value."""
+    out: dict[str, Any] = {}
+    for group in groups:
+        for per in group.values():
+            for plist in per.values():
+                for dp in plist:
+                    if dp not in out:
+                        out[dp] = _get(doc, tuple(dp.split(".")))
+    return out
+
+
+def _num_eq(a: Any, b: Any) -> bool:
+    if not (_is_num(a) and _is_num(b)):
+        return False
+    return abs(a - b) <= 1e-9 * max(1.0, abs(a), abs(b))
+
+
+def newest_change(series: dict[str, list[tuple]], paths: list[str], *,
+                  oldest: str | None = None,
+                  current: dict[str, Any] | None = None) -> dict | None:
     """Fold the change-point rows of *paths* into one entry, or None.
 
     Rows are ``(ts, value, trigger, run_id, experiment, folder)`` oldest
     first (``leaf_index.series``). The entry is the newest change point over
-    all of them; ``first`` is True only when EVERY path's newest row is also
-    its first row (nothing changed inside the history window); ``value`` is
-    set only for a single-leaf metric (a subtree has no one value)."""
+    all of them.
+
+    ``first`` is True only when EVERY path has a single row AND that row sits
+    at *oldest*, the oldest snapshot the index holds: the value was already
+    there when history began and never changed since. A single row that starts
+    LATER is the write that produced the value (the index records no row for a
+    null or absent leaf, so a leaf that was null in the early snapshots has
+    exactly one row, at its first write) -- that is ``appeared=True``, a real
+    change point, never "unchanged since history began". With *oldest* unknown
+    nothing is called ``first``.
+
+    ``value`` is set only for a single-leaf metric (a subtree has no one
+    value). With *current* (``{dot path: the value the page shows now}``),
+    ``matches_current`` says whether EVERY leaf's value now equals its newest
+    history value -- for a subtree metric (a readout fidelity from its
+    confusion matrix, a 2Q RB block) this is the only way to tell that the
+    number on screen is not one history ever held."""
     best = None
-    all_first = True
+    all_first = oldest is not None
     seen = 0
     for p in paths:
         rows = series.get(p)
@@ -200,7 +235,7 @@ def newest_change(series: dict[str, list[tuple]], paths: list[str]) -> dict | No
             continue
         seen += 1
         last = rows[-1]
-        if len(rows) > 1:
+        if len(rows) > 1 or str(rows[0][0]) != str(oldest):
             all_first = False
         if best is None or str(last[0]) > str(best[0]):
             best = last
@@ -213,8 +248,27 @@ def newest_change(series: dict[str, list[tuple]], paths: list[str]) -> dict | No
         "first": all_first,
         "leaves": seen,
     }
+    if not all_first:
+        # the newest change is some leaf's FIRST row: it appeared then
+        for p in paths:
+            rows = series.get(p)
+            if rows and str(rows[0][0]) == out["ts"] and len(rows) == 1                     and str(rows[0][0]) != str(oldest):
+                out["appeared"] = True
+                break
     if len(paths) == 1 and seen == 1 and _is_num(best[1]):
         out["value"] = best[1]
     if best[1] is None:
         out["gone"] = True
+    if current is not None:
+        ok = True
+        for p in paths:
+            cur = current.get(p)
+            rows = series.get(p)
+            hist = rows[-1][1] if rows else None
+            if cur is None and hist is None:
+                continue
+            if not _num_eq(cur, hist):
+                ok = False
+                break
+        out["matches_current"] = ok
     return out
