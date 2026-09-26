@@ -78,6 +78,7 @@
                 try { _bandScan(t); } catch (e) {}   // a fetched LO cell is judged too
             },
             onState: function (st) { _pvirt = st; },
+            onReveal: function () { try { _updateGroupHeader(); } catch (e) {} },
         });
         return _pgv;
     }
@@ -139,11 +140,21 @@
         var t = table(); if (!t) return;
         var heads = t.querySelectorAll('.bulk-group-head');
         if (!heads.length) return;
+        // ONE pass buckets the heads by section: a selector per group head
+        // scanned the whole table (tbody included) each time, ~14 ms per call
+        // on the 30Q rig (w7 liveedit). Same membership: the attribute VALUE
+        // equals the group's, as the escaped selector matched.
+        var bySec = Object.create(null);
+        Array.prototype.forEach.call(t.querySelectorAll('.bulk-col-head[data-section]'), function (ch) {
+            var s0 = ch.getAttribute('data-section');
+            (bySec[s0] || (bySec[s0] = [])).push(ch);
+        });
         Array.prototype.forEach.call(heads, function (gh) {
-            var sec = (gh.getAttribute('data-group') || '').replace(/"/g, '\\"');
             var n = 0;
-            t.querySelectorAll('.bulk-col-head[data-section="' + sec + '"]').forEach(function (ch) {
-                if (!ch.classList.contains('bulk-col-hidden') && !ch.classList.contains('bulk-search-hidden')) n++;
+            (bySec[gh.getAttribute('data-group') || ''] || []).forEach(function (ch) {
+                // a column GridVirt's tail collapse took out of layout spans nothing
+                if (!ch.classList.contains('bulk-col-hidden') && !ch.classList.contains('bulk-search-hidden')
+                    && !ch.classList.contains('bulk-virt-collapsed')) n++;
             });
             if (n > 0) { gh.colSpan = n; gh.classList.remove('bulk-col-hidden'); }
             else { gh.classList.add('bulk-col-hidden'); }
@@ -413,8 +424,32 @@
         if (th) th.textContent = sortDir > 0 ? ' ▲' : ' ▼';
     }
 
+    /* ONE pass over the table for the header stats (w7 liveedit). The loop
+       below used to run two whole-table attribute scans PER COLUMN -- on the
+       30Q/2,389-column rig that was ~0.95 s of querySelector inside every
+       Enter. The index answers exactly what those selectors did: the first
+       [data-col-stats=k] in document order, and every .bulk-cell with ANY
+       ancestor (up to the table) carrying data-col-key=k. */
+    function _statIndex(t) {
+        var stats = Object.create(null), cells = Object.create(null);
+        Array.prototype.forEach.call(t.querySelectorAll('[data-col-stats]'), function (el) {
+            var k = el.getAttribute('data-col-stats');
+            if (!(k in stats)) stats[k] = el;
+        });
+        Array.prototype.forEach.call(t.querySelectorAll('.bulk-cell'), function (cell) {
+            for (var p = cell.parentElement; p; p = p.parentElement) {
+                var k = p.getAttribute('data-col-key');
+                if (k != null) (cells[k] || (cells[k] = [])).push(cell);
+                if (p === t) break;
+            }
+        });
+        return { stat: function (k) { return stats[k] || null; },
+                 cells: function (k) { return cells[k] ? cells[k].slice() : []; } };
+    }
+
     function _recomputeStats(onlyKeys) {
         var t = table(); if (!t) return;
+        var ix = null;   // built lazily: a keyed pass over cold columns needs none
         var hide = _hiddenSet();
         // docs/141 4ae: a COLD or RETIRED column has no cells to count. Without
         // this guard the loop below finds nothing and writes '' over the
@@ -426,7 +461,7 @@
         };
         COLS.forEach(function (c) {
             if (onlyKeys && !onlyKeys[c.key]) return;   // QA F9: a keyed pass (repaint / Escape)
-            var stat = t.querySelector('[data-col-stats="' + (window.CSS && CSS.escape ? CSS.escape(c.key) : c.key) + '"]');
+            var stat = (ix || (ix = _statIndex(t))).stat(c.key);
             if (!stat) return;
             if (hide.has(c.key)) { stat.textContent = ''; return; }
             // ...and the guard itself. It was defined and never CALLED for a
@@ -434,8 +469,7 @@
             // found in its own fixes -- the mutation sweep reported the anchor
             // missing, which is the only reason anyone noticed (docs/141 4af).
             if (_skipStat(c.key)) return;
-            var cells = Array.prototype.slice.call(
-                t.querySelectorAll('[data-col-key="' + (window.CSS && CSS.escape ? CSS.escape(c.key) : c.key) + '"] .bulk-cell'));
+            var cells = ix.cells(c.key);
             var nums = [];
             cells.forEach(function (cell) { var n = _num(cell.value); if (n !== null) nums.push(n); });
             cells.forEach(function (cell) { cell.classList.remove('cell-best', 'cell-worst'); });
@@ -701,7 +735,7 @@
                 });
             });
             var ks = Object.keys(need);
-            if (ks.length) _pgv.hydrateCols(ks);
+            if (ks.length) _pgv.hydrateCols(ks, { reveal: false });   // values only
         } else if (_pgv) {
             _pgv.hydrateLocal();
         }
@@ -1133,7 +1167,10 @@
         // docs/141 4ad: a cold cell has no input at all, so navigation would
         // step straight over the column. Start its fetch; the cell lands on
         // the next keypress (never a wrong value, just one press late).
-        if (td && td.classList && td.classList.contains('bulk-td-cold')) _pairEnsureTd(td);
+        // ...and a column the tail collapse holds out of layout (even one a
+        // repaint already filled) must be put back before a caret can land
+        if (td && td.classList && (td.classList.contains('bulk-td-cold')
+            || (_pgv && _pgv.isCollapsed && _pgv.isCollapsed(td.getAttribute('data-col-key'))))) _pairEnsureTd(td);
         var c = td && td.querySelector('.bulk-cell');
         return c && !c.classList.contains('bulk-cell-ro') ? c : null;
     }
@@ -1223,7 +1260,7 @@
                     if (_pgv.isCold(k) && !_pgv.isRemote(k) && _due.indexOf(k) < 0) _due.push(k);
                 });
             });
-            if (_due.length) _pgv.hydrateCols(_due);
+            if (_due.length) _pgv.hydrateCols(_due, { reveal: false });   // values only
             entries.forEach(function (e) {
                 if (!e || !e.dot_path) return;
                 if (_pgv.colsOfPath(e.dot_path).some(function (k) { return _pgv.isRemote(k); })) {
