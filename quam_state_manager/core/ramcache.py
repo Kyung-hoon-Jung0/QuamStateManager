@@ -337,6 +337,37 @@ class KeyedMemo:
             _TOTAL[0] -= e.nbytes
             self.evictions += 1
 
+    # ------------------------------------------------------- hand-over mode
+    def put(self, slot: Any, token: Any, value: Any, *, nbytes: int | None = None) -> None:
+        """Store a value produced OUTSIDE :meth:`get` (RAM P10: a chip
+        context leaving the LRU parks its still-valid store here). Same
+        accounting, bounds and global budget as a computed entry."""
+        n = int(nbytes if nbytes is not None else self._sizeof(value))
+        with _LOCK:
+            self._store(slot, token, value, n)
+
+    def take(self, slot: Any, token: Any) -> Any:
+        """Remove and return the value held for ``(slot, token)``, or ``None``.
+
+        Validate on read, like :meth:`get`: a held entry whose token differs
+        is never returned -- it can never become current again (tokens name
+        content), so it is dropped on the spot. Taking transfers ownership: a
+        mutable value (a parked store) must never be handed to two callers."""
+        with _LOCK:
+            e = self._entries.get(slot)
+            if e is None:
+                self.misses += 1
+                return None
+            self._entries.pop(slot)
+            self.bytes -= e.nbytes
+            _TOTAL[0] -= e.nbytes
+            if e.token != token:
+                self.misses += 1
+                self.evictions += 1
+                return None
+            self.hits += 1
+            return e.value
+
     # ----------------------------------------------------------- maintenance
     def drop_where(self, pred: Callable[[Any], bool]) -> int:
         """Free every entry whose slot matches (a memory hook -- e.g. a
@@ -387,6 +418,40 @@ class KeyedMemo:
                 "errors": self.errors,
                 "in_flight": len(self._flights),
             }
+
+
+def process_rss_bytes() -> int | None:
+    """This process's resident set (working set on Windows), or ``None`` when
+    the platform will not say. Stdlib only: psutil is not a dependency."""
+    try:
+        if os.name == "nt":
+            import ctypes
+            from ctypes import wintypes
+
+            class _PMC(ctypes.Structure):
+                _fields_ = [("cb", wintypes.DWORD), ("PageFaultCount", wintypes.DWORD),
+                            ("PeakWorkingSetSize", ctypes.c_size_t),
+                            ("WorkingSetSize", ctypes.c_size_t),
+                            ("QuotaPeakPagedPoolUsage", ctypes.c_size_t),
+                            ("QuotaPagedPoolUsage", ctypes.c_size_t),
+                            ("QuotaPeakNonPagedPoolUsage", ctypes.c_size_t),
+                            ("QuotaNonPagedPoolUsage", ctypes.c_size_t),
+                            ("PagefileUsage", ctypes.c_size_t),
+                            ("PeakPagefileUsage", ctypes.c_size_t)]
+            pmc = _PMC()
+            pmc.cb = ctypes.sizeof(_PMC)
+            k32 = ctypes.WinDLL("kernel32", use_last_error=True)
+            psapi = ctypes.WinDLL("psapi", use_last_error=True)
+            k32.GetCurrentProcess.restype = wintypes.HANDLE
+            psapi.GetProcessMemoryInfo.argtypes = [wintypes.HANDLE, ctypes.POINTER(_PMC),
+                                                   wintypes.DWORD]
+            if psapi.GetProcessMemoryInfo(k32.GetCurrentProcess(), ctypes.byref(pmc), pmc.cb):
+                return int(pmc.WorkingSetSize)
+            return None
+        with open("/proc/self/statm", encoding="ascii") as f:
+            return int(f.read().split()[1]) * os.sysconf("SC_PAGE_SIZE")
+    except Exception:  # noqa: BLE001 -- a diagnostic never raises
+        return None
 
 
 def snapshot() -> dict[str, Any]:

@@ -433,6 +433,30 @@ def _touch_signature(instance_path, python_path: str) -> None:
 # store-facing accessor
 # ---------------------------------------------------------------------------
 
+def _harvest_for_store(store) -> list[str]:
+    """:func:`harvest_classes` of ``store.state``, memoized on the store's
+    own mutation counters (RAM P10). A chip open asks twice (the type policy
+    and the schema warm) and every re-open asks again; each walk visits every
+    dict of the chip (77 ms on a 30-qubit chip). Every in-memory change bumps
+    ``mutation_seq`` or lengthens the change log, so a harvest can never
+    outlive the content it describes -- the key ``_config_state_hash`` uses."""
+    lock = getattr(store, "_lock", None)
+    if lock is None:
+        return harvest_classes(store.state)
+    with lock:
+        key = (getattr(store, "mutation_seq", None), len(getattr(store, "change_log", ()) or ()),
+               id(store.state))
+        memo = getattr(store, "_harvest_memo", None)
+        if memo is not None and memo[0] == key:
+            return list(memo[1])
+        out = harvest_classes(store.state)
+        try:
+            store._harvest_memo = (key, tuple(out))
+        except AttributeError:      # a slotted stand-in: just do not memoize
+            pass
+        return out
+
+
 def manifest_for_store(store, python_path: str | None, instance_path=None, *,
                        cached_only: bool = False, force: bool = False) -> dict | None:
     """The manifest for *store*'s chip against *python_path*, or None.
@@ -446,12 +470,7 @@ def manifest_for_store(store, python_path: str | None, instance_path=None, *,
     if not python_path or instance_path is None:
         return None
     try:
-        lock = getattr(store, "_lock", None)
-        if lock is not None:
-            with lock:
-                requested = harvest_classes(store.state)
-        else:
-            requested = harvest_classes(store.state)
+        requested = _harvest_for_store(store)
     except Exception:  # noqa: BLE001 — a weird state must not break activation
         logger.warning("class harvest failed", exc_info=True)
         return None

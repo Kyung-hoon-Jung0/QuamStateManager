@@ -15,6 +15,7 @@ reads can't hand us a torn snapshot.
 
 from __future__ import annotations
 
+import hashlib
 import logging
 import re
 import threading
@@ -145,7 +146,16 @@ class QuamStore:
         self._pointer_cache: PointerCache = {}
         self._pointer_cache_lock = threading.Lock()
         self._validate = validate
+        # RAM P10: WHICH bytes this store was parsed from, and the mutation
+        # counter right after that parse. ``(file_digest, loaded_seq)`` lets a
+        # cache prove "this in-memory store is exactly those files" -- the
+        # digest names the bytes, and an unchanged counter says nothing has
+        # been edited, undone or reloaded since (every in-memory change bumps
+        # it). ``None`` until a file load (``from_dicts`` never has one).
+        self.file_digest: str | None = None
+        self.loaded_seq: int | None = None
         self._load()
+        self.loaded_seq = self.mutation_seq
 
     @classmethod
     def from_dicts(cls, state: dict, wiring: dict) -> "QuamStore":
@@ -177,6 +187,8 @@ class QuamStore:
         self._pointer_cache = {}
         self._pointer_cache_lock = threading.Lock()
         self._validate = False
+        self.file_digest = None
+        self.loaded_seq = None
         self._merge()
         self._clear_pointer_cache()
         return self
@@ -199,9 +211,11 @@ class QuamStore:
         # between the two reads can't hand us a torn snapshot. A bad-JSON
         # file is surfaced as LiveFileError (an OSError subclass).
         try:
-            self.state, self.wiring = safe_io.read_state_wiring(self.folder_path)
+            self.state, self.wiring, sb, wb = safe_io.read_state_wiring_raw(self.folder_path)
         except safe_io.LiveFileError as exc:
             raise ValueError(str(exc)) from exc
+        self.file_digest = file_digest(sb, wb)
+        self.loaded_seq = None      # set by the caller once the counter settles
 
         self._merge()
 
@@ -321,6 +335,7 @@ class QuamStore:
             # counter so seq-validated caches (PulseIndex) and staleness
             # checks (Verify overlay) can't serve pre-reload conclusions.
             self.mutation_seq += 1
+            self.loaded_seq = self.mutation_seq
 
     # ------------------------------------------------------------------
     # Accessors
@@ -410,6 +425,27 @@ class QuamStore:
 # ------------------------------------------------------------------
 # Utilities
 # ------------------------------------------------------------------
+
+
+def file_digest(state_bytes: bytes, wiring_bytes: bytes) -> str:
+    """Digest of a state.json + wiring.json pair's exact BYTES (RAM P10).
+
+    Bytes, not parsed content: it is what a cache compares against the files
+    on disk before trusting an in-memory model of them, so a same-size rewrite
+    with a restored mtime still reads as different. Each file is hashed on its
+    own and the pair joined, so moving bytes across the boundary cannot
+    collide."""
+    return (hashlib.blake2b(state_bytes, digest_size=16).hexdigest() + ":"
+            + hashlib.blake2b(wiring_bytes, digest_size=16).hexdigest())
+
+
+def is_pristine(store: "QuamStore") -> bool:
+    """True when *store* still holds exactly the bytes it was loaded from:
+    a file load happened, and no edit / undo / reload moved the counter since,
+    and nothing is staged. Read under the store lock by callers that park or
+    reuse the store."""
+    return (store.file_digest is not None and store.loaded_seq is not None
+            and store.mutation_seq == store.loaded_seq and not store.change_log)
 
 
 def _walk(

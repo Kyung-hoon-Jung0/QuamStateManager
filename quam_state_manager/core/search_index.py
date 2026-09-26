@@ -15,10 +15,11 @@ from __future__ import annotations
 
 import bisect
 import logging
+import threading
 from dataclasses import dataclass
 from typing import Any
 
-from quam_state_manager.core.loader import _walk, natural_key
+from quam_state_manager.core.loader import natural_key
 
 logger = logging.getLogger(__name__)
 
@@ -104,34 +105,64 @@ class SearchIndex:
         """
         if wiring_keys is None:
             wiring_keys = {"wiring", "network"}
+        return cls.from_leaves(_walk_leaves(merged), wiring_keys)
 
+    @classmethod
+    def from_leaves(cls, leaves, wiring_keys: set[str]) -> SearchIndex:
+        """:meth:`build` over an already-flattened ``(dot_path, value)``
+        sequence -- :class:`LazySearchIndex` snapshots the leaves under the
+        store lock and builds from the copy with the lock released."""
         index = cls()
-        leaves = _walk(merged)
-
-        for dot_path, value, _path_tuple in leaves:
+        # docs/2xx (RAM P10): one pass, same output as the per-leaf original
+        # (pinned list-equal by tests/test_search_index_build_parity.py).
+        # A 30-qubit chip has 313k leaves but only ~57k distinct value
+        # strings, ~2k leaf keys and ~200 parent ids, so every derived string
+        # is computed once per DISTINCT input and the index holds one copy of
+        # each (the per-leaf copies were most of its ~10x-the-file RAM).
+        entries = index.entries
+        p2i = index.path_to_idx
+        canon: dict[str, str] = {}            # one shared copy per distinct string
+        vmemo: dict[tuple, str] = {}          # (type, value) -> value_str
+        # parent_id reads only the first five dot segments (and the category,
+        # itself a function of the first one), so those segments are its key
+        pmemo: dict[tuple, str] = {}
+        for dot_path, value in leaves:
             category = _categorize(dot_path)
-            parent_id = _extract_parent_id(dot_path, category)
+            head = dot_path.split(".", 5)
+            pkey = tuple(head[:5])
+            parent_id = pmemo.get(pkey)
+            if parent_id is None:
+                parent_id = _extract_parent_id(dot_path, category)
+                parent_id = pmemo[pkey] = canon.setdefault(parent_id, parent_id)
             leaf_key = dot_path.rsplit(".", 1)[-1]
-            top_key = dot_path.split(".", 1)[0]
-            source = "wiring" if top_key in wiring_keys else "state"
-            value_str = str(value).lower() if value is not None else "none"
+            leaf_key = canon.setdefault(leaf_key, leaf_key)
+            source = "wiring" if head[0] in wiring_keys else "state"
+            if value is None:
+                value_str = "none"
+            else:
+                # keyed by TYPE too (1, 1.0 and True are equal keys with
+                # different strings); a float zero is never memoized, since
+                # 0.0 == -0.0 yet they print differently.
+                if value.__class__ is float and value == 0.0:
+                    vkey, value_str = None, None
+                else:
+                    try:
+                        vkey = (value.__class__, value)
+                        value_str = vmemo.get(vkey)
+                    except TypeError:         # unhashable scalar (never from JSON)
+                        vkey, value_str = None, None
+                if value_str is None:
+                    value_str = str(value).lower()
+                    value_str = canon.setdefault(value_str, value_str)
+                    if vkey is not None:
+                        vmemo[vkey] = value_str
+            p2i[dot_path] = len(entries)
+            entries.append(IndexEntry(dot_path, value_str, value, category,
+                                      parent_id, leaf_key, source))
 
-            entry = IndexEntry(
-                dot_path=dot_path,
-                value_str=value_str,
-                raw_value=value,
-                category=category,
-                parent_id=parent_id,
-                leaf_key=leaf_key,
-                source_file=source,
-            )
-            idx = len(index.entries)
-            index.entries.append(entry)
-            index.path_to_idx[dot_path] = idx
-
+        _build_inverted_indexes(index)
         _build_prefix_map(index)
         index._trigram_built = False          # deferred — built on first fuzzy search
-        _build_inverted_indexes(index)
 
         logger.info(
             "Search index built: %d entries, %d prefix keys, %d trigram keys",
@@ -380,6 +411,14 @@ class SearchIndex:
     # Stats
     # ------------------------------------------------------------------
 
+    # Measured (tracemalloc, 2026-09-26): 483 B per entry on a 313k-leaf
+    # chip, 536 B on a 30k-leaf one -- entries, path map, prefix lists and
+    # inverted indexes together. An estimate for RAM accounting, not a bound.
+    RAM_BYTES_PER_ENTRY = 500
+
+    def ram_bytes(self) -> int:
+        return len(self.entries) * self.RAM_BYTES_PER_ENTRY
+
     def stats(self) -> dict[str, int]:
         """Return summary statistics about the index."""
         return {
@@ -395,6 +434,108 @@ class SearchIndex:
         return f"SearchIndex(entries={len(self.entries)})"
 
 
+class LazySearchIndex:
+    """A :class:`SearchIndex` built on first USE rather than at chip open
+    (RAM P10).
+
+    The index serves exactly one surface -- the topbar search -- yet was
+    built on every open, re-open after LRU eviction, sync and restore: 3-6 s
+    and ~150 MB on a 30-qubit chip (313k leaves), paid by users who never
+    typed into the box. This proxy holds nothing until something asks, then
+    builds a fresh index from the store's CURRENT content -- a cold compute,
+    so there is no older answer it could serve.
+
+    The incremental hooks (``update_entry`` / ``add_entry`` / ``remove_entry``)
+    are no-ops until the build: the build reads the already-edited store.
+    The build snapshots the leaves under ``store._lock``, builds from the
+    copy with the lock released (edits never wait seconds), and installs only
+    if ``store.mutation_seq`` did not move meanwhile -- every edit, undo and
+    reload bumps it BEFORE calling a hook, so an edit whose hook ran against
+    the unbuilt proxy always forces a rebuild. After a few losing races it
+    builds holding the lock.
+    """
+
+    __slots__ = ("_store", "_wiring_keys", "_index", "_build_lock", "builds")
+
+    _OPTIMISTIC_TRIES = 3
+
+    def __init__(self, store: Any, wiring_keys: set[str] | None = None):
+        self._store = store
+        self._wiring_keys = wiring_keys
+        self._index: SearchIndex | None = None
+        self._build_lock = threading.Lock()
+        self.builds = 0
+
+    @property
+    def built(self) -> bool:
+        return self._index is not None
+
+    def _keys(self) -> set[str]:
+        if self._wiring_keys is not None:
+            return self._wiring_keys
+        return set(self._store.wiring.keys())
+
+    def get(self) -> SearchIndex:
+        """The built index, building it now if nobody has yet."""
+        idx = self._index
+        if idx is not None:
+            return idx
+        with self._build_lock:
+            if self._index is not None:
+                return self._index
+            store = self._store
+            for _ in range(self._OPTIMISTIC_TRIES):
+                with store._lock:
+                    token = (store.mutation_seq, id(store.merged))
+                    leaves = list(_walk_leaves(store.merged))
+                    keys = self._keys()
+                built = SearchIndex.from_leaves(leaves, keys)
+                with store._lock:
+                    if (store.mutation_seq, id(store.merged)) == token:
+                        self._index = built
+                        self.builds += 1
+                        return built
+            with store._lock:
+                built = SearchIndex.build(store.merged, wiring_keys=self._keys())
+                self._index = built
+                self.builds += 1
+                return built
+
+    # -- the SearchIndex surface ------------------------------------------
+    def search(self, query: str, limit: int = 50, category: str | None = None):
+        return self.get().search(query, limit=limit, category=category)
+
+    def update_entry(self, dot_path: str, new_value: Any) -> None:
+        idx = self._index
+        if idx is not None:
+            idx.update_entry(dot_path, new_value)
+
+    def add_entry(self, dot_path: str, value: Any, *, source_file: str = "state") -> None:
+        idx = self._index
+        if idx is not None:
+            idx.add_entry(dot_path, value, source_file=source_file)
+
+    def remove_entry(self, dot_path: str) -> None:
+        idx = self._index
+        if idx is not None:
+            idx.remove_entry(dot_path)
+
+    def ram_bytes(self) -> int:
+        idx = self._index
+        return idx.ram_bytes() if idx is not None else 0
+
+    def __getattr__(self, name: str):
+        # entries / prefix_map / stats() ...: anything else reads the real
+        # index. Private names never trigger a build (an unset slot during
+        # copy/pickle would otherwise recurse through get()).
+        if name.startswith("_"):
+            raise AttributeError(name)
+        return getattr(self.get(), name)
+
+    def __repr__(self) -> str:
+        return f"LazySearchIndex(built={self.built})"
+
+
 # ======================================================================
 # Category and parent_id extraction
 # ======================================================================
@@ -407,6 +548,23 @@ _CATEGORY_PREFIXES = [
     ("wiring.", "wiring"),
     ("network.", "network"),
 ]
+
+
+def _walk_leaves(obj: Any, prefix: str = ""):
+    """``loader._walk`` without the path tuples: ``(dot_path, value)`` for
+    every leaf, same depth-first order (the index never used the tuples)."""
+    if isinstance(obj, dict):
+        items = obj.items()
+    elif isinstance(obj, list):
+        items = enumerate(obj)
+    else:
+        return
+    for key, value in items:
+        child = f"{prefix}.{key}" if prefix else f"{key}"
+        if isinstance(value, (dict, list)):
+            yield from _walk_leaves(value, child)
+        else:
+            yield child, value
 
 
 def _categorize(dot_path: str) -> str:
@@ -439,15 +597,41 @@ def _prefixes(s: str) -> list[str]:
 
 
 def _build_prefix_map(index: SearchIndex) -> None:
-    pm: dict[str, list[int]] = {}
+    """prefix -> sorted entry indices, one occurrence per (entry, string)
+    that has the prefix -- an entry whose value AND leaf key share a prefix
+    is listed twice, exactly as the incremental add/remove helpers expect.
+
+    Built per DISTINCT string (value_str / leaf key / parent id) and merged:
+    the per-leaf loop did ~7 dict updates for each of 3 strings of every leaf
+    (5.5M appends on a 313k-leaf chip); here each distinct string's prefixes
+    are cut once. Requires the inverted indexes (key_index / parent_index are
+    exactly the leaf-key and parent-id groupings)."""
+    by_value: dict[str, list[int]] = {}
     for idx, entry in enumerate(index.entries):
-        for s in (entry.value_str, entry.leaf_key.lower(), entry.parent_id.lower()):
+        lst = by_value.get(entry.value_str)
+        if lst is None:
+            by_value[entry.value_str] = [idx]
+        else:
+            lst.append(idx)
+    runs: dict[str, list[list[int]]] = {}
+    for groups in (by_value, index.key_index, index.parent_index):
+        for s, idxs in groups.items():
             for prefix in _prefixes(s):
-                if prefix not in pm:
-                    pm[prefix] = []
-                pm[prefix].append(idx)
-    for key in pm:
-        pm[key].sort()
+                r = runs.get(prefix)
+                if r is None:
+                    runs[prefix] = [idxs]
+                else:
+                    r.append(idxs)
+    pm: dict[str, list[int]] = {}
+    for prefix, rs in runs.items():
+        if len(rs) == 1:
+            pm[prefix] = list(rs[0])          # a group is already ascending
+        else:
+            out: list[int] = []
+            for r in rs:
+                out.extend(r)
+            out.sort()                        # timsort merges the ascending runs
+            pm[prefix] = out
     index.prefix_map = pm
 
 
