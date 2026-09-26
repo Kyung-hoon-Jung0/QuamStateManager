@@ -3666,7 +3666,8 @@ def _type_alarm_memo(ctx: dict) -> dict:
     disagrees with the selected environment's schema — the user decides).
     """
     store = ctx["store"]
-    seq = getattr(store, "mutation_seq", None)
+    from quam_state_manager.core import store_revs as _sr
+    seq = _sr.seq_token(store)
     # QA diagnostics-r2-16: the env half follows the SELECTED env -- a probe
     # landing or the env going away changes it without a mutation
     try:
@@ -3681,7 +3682,8 @@ def _type_alarm_memo(ctx: dict) -> dict:
     from quam_state_manager.core import type_fix as _tf
     with store._lock:
         state = store.state
-    paths = _diag.numeric_string_leaves(state)
+        seq = _sr.seq_token(store)
+        paths = _diag.numeric_string_leaves(state, store)
     env_findings: list = []
     try:
         from quam_state_manager.core import state_env_validate as _sev
@@ -5229,6 +5231,63 @@ def _qualibrate_listing() -> dict:
     return listing
 
 
+def _qualibrate_subnav_listing() -> dict:
+    """What the sidebar submenu renders -- and nothing else -- per request.
+
+    docs/2xx (RAM P5): the full :func:`_qualibrate_listing` re-read every
+    project TOML, ran the doctor and resolved every path twice on EVERY page
+    load (72-178 ms, 500 fs ops, for a fragment that shows names). The TOML
+    half now comes from ``qualibrate_config.project_state_paths``, which is
+    stat-keyed on the very config files (a changed file re-parses); only the
+    two things that can change without any config file changing are
+    re-checked per request, each with ONE stat per project:
+
+    * ``state_path.exists`` -- a folder can appear or vanish;
+    * ``loaded_in_sm`` -- ``path_match.same_folder(native, live)``. With the
+      live folder present, that is exactly ``os.path.samestat`` of the two
+      stats: when both exist, ``samefile`` decides; when the project's folder
+      is missing, the fallback string compare of two resolved paths cannot
+      equal a folder that exists. A missing LIVE folder takes the original
+      ``same_folder`` path unchanged.
+    """
+    from quam_state_manager.core import qualibrate_config
+    idx = qualibrate_config.project_state_paths()
+    cfg_dir = qualibrate_config._config_dir()
+    root_path = qualibrate_config.root_config_path(cfg_dir)
+    ctx = _active_ctx()
+    loaded = (ctx or {}).get("live_path")
+    live_st = None
+    if loaded:
+        try:
+            live_st = os.stat(loaded)
+        except (OSError, ValueError):
+            live_st = None
+    raw = idx.get("raw") or {}
+    projects = []
+    for name, native in idx.get("projects", []):
+        st = None
+        if native:
+            try:
+                st = os.stat(native)
+            except (OSError, ValueError):
+                st = None
+        if not loaded or not native:
+            in_sm = False
+        elif live_st is not None:
+            in_sm = st is not None and os.path.samestat(st, live_st)
+        else:
+            in_sm = path_match.same_folder(native, loaded)
+        projects.append({
+            "name": name,
+            "active": name == idx.get("active"),
+            "state_path": {"raw": raw.get(name), "native": native,
+                           "exists": st is not None},
+            "loaded_in_sm": bool(in_sm),
+        })
+    return {"config_exists": root_path.exists(),
+            "config_dir": str(cfg_dir), "projects": projects}
+
+
 def _project_for_path(folder) -> str | None:
     """The qualibrate project whose EFFECTIVE state_path IS *folder* (docs/63).
 
@@ -5398,7 +5457,7 @@ def qualibrate_subnav():
     the base-page render free of the 16 TOML reads. Passes the ctx's project
     scope explicitly (this fragment renders outside _ctx()) so a scope whose
     project vanished from qualibrate gets an honest hint row."""
-    listing = _qualibrate_listing()
+    listing = _qualibrate_subnav_listing()
     scope = (_active_ctx() or {}).get("qualibrate_project")
     # r8 feedback: the template caps the visible rows, so order the list
     # relevance-first — the qualibrate-active project and the loaded SM scope
@@ -6545,63 +6604,30 @@ def bulk_all_values():
     is pinned to the actual (maybe-compressed) byte count so a manual-gzip
     desync can't blank the tab.
     """
-    from quam_state_manager.core.all_values import build_all_values_rows
-
     store = _store()
     if not store:
         return jsonify(rows=[], summary={"total": 0, "editable": 0,
                                          "readonly": 0, "by_kind": {},
                                          "arrays": 0, "empties": 0}), 200
-    with store._lock:
-        rows, summary = build_all_values_rows(store, _modified_map())
-        mseq = store.mutation_seq
-        mver = len(store.change_log)
-        merged = store.merged
-    policy = getattr(store, "type_policy", None)
     ctx = _active_ctx() or {}
-    chip_tag = hashlib.sha1(str(ctx.get("path", "")).encode("utf-8")).hexdigest()[:12]
-    # QA F17: v3 -- summary.editable now counts list elements + resolvable xrefs,
-    # so a browser-cached v2 body must not revalidate (304) into the old count.
-    # v2 salt: payload-shape version + the policy inputs the ty chips derive from
-    # (assignment count + manifest versions), so a type-assign or env manifest
-    # warm can't 304 a client into stale chips.
-    if policy is not None:
-        man_tag = (hashlib.sha1(repr(policy.manifest.get("versions") or {})
-                                .encode("utf-8")).hexdigest()[:8]
-                   if policy.manifest is not None else "0")
-        etag = f'"{chip_tag}-{mseq}-{mver}-v3-{len(policy.assignments)}-{man_tag}"'
-    else:
-        etag = f'"{chip_tag}-{mseq}-{mver}-v3"'
+    # docs/2xx (RAM P5): the ETag is computed FIRST, from cheap tokens only,
+    # so a revalidation is a 304 without building 30k rows; and the gzipped
+    # body lives in RAM keyed on that same ETag. The tag carries a boot token
+    # and the store's process-unique serial because mutation_seq restarts at
+    # 0 in every process -- a browser holding an ETag across an SM restart
+    # must never be answered a stale 304 (the docs/210 3d5d80a lesson) -- and
+    # the TypePolicy serial replaces the old assignment COUNT, which a re-type
+    # of an existing key kept (ram_design F6).
+    etag = _all_values_etag(store, ctx)
     if request.headers.get("If-None-Match") == etag:
         r = make_response("", 304)
         r.headers["ETag"] = etag
         return r
-    # v2 expected-type chips (200 path only — a 304 must not pay for them):
-    # annotate SCALAR rows only (xref/list enforcement fires at the resolved
-    # target — /field/peek covers those on demand). One pass, policy.annotate is
-    # O(depth) per path; outside the lock like field_peek's phases 2–3
-    # (read-only walk of the captured merged ref). Cap: a >20k-row chip skips
-    # the chips entirely rather than stall the tab.
-    if policy is not None and len(rows) <= 20000:
-        for row in rows:
-            if row[2] != "scalar":
-                continue
-            try:
-                cur: Any = merged
-                for seg in row[0].split("."):
-                    cur = cur[int(seg)] if isinstance(cur, list) else cur[seg]
-                ann = policy.annotate(merged, row[0], cur)
-            except Exception:  # noqa: BLE001 — annotation must never break the tab
-                continue
-            if ann:
-                row.append({"ty": {"t": ann["type"], "s": ann["source"]}})
-    body = json.dumps({"rows": rows, "summary": summary},
-                      separators=(",", ":")).encode("utf-8")
+    etag, gz = _ALL_VALUES_BODY.get(
+        ("allvalues", _store_serial(store)), etag,
+        lambda: _all_values_body(store, ctx), wait_s=60.0)
     accepts_gzip = "gzip" in request.headers.get("Accept-Encoding", "")
-    if accepts_gzip:
-        # OUTSIDE store._lock (released above). L6 = default sweet spot (~6.5x on the
-        # shared-prefix paths; L9's ~3.5% gain isn't worth the CPU).
-        body = gzip.compress(body, compresslevel=6)
+    body = gz if accepts_gzip else gzip.decompress(gz)
     resp = make_response(body)
     resp.headers["Content-Type"] = "application/json"
     resp.headers["Content-Length"] = str(len(body))   # pin to ACTUAL bytes — no desync
@@ -6611,6 +6637,63 @@ def bulk_all_values():
     resp.headers["ETag"] = etag
     resp.headers["Cache-Control"] = "no-cache"         # revalidate via ETag; never serve stale across an edit
     return resp
+
+
+_ALL_VALUES_BODY = _ramcache.KeyedMemo("liveedit.all_values", max_entries=4)
+_BOOT_TOKEN = uuid.uuid4().hex[:10]
+
+
+def _store_serial(store) -> int:
+    from quam_state_manager.core import store_revs
+    return store_revs.store_serial(store)
+
+
+def _all_values_etag(store, ctx: dict) -> str:
+    """Everything the /bulk/all-values body is a function of, cheaply: the
+    chip, this process, this store instance, its content + change-log state,
+    the payload version and the type policy instance."""
+    chip_tag = hashlib.sha1(str(ctx.get("path", "")).encode("utf-8")).hexdigest()[:12]
+    with store._lock:
+        mseq = store.mutation_seq
+        mver = len(store.change_log)
+        policy = getattr(store, "type_policy", None)
+    pol = getattr(policy, "serial", 0) if policy is not None else 0
+    return f'"{chip_tag}-{_BOOT_TOKEN}-{_store_serial(store)}-{mseq}-{mver}-v4-{pol}"'
+
+
+def _all_values_body(store, ctx: dict):
+    """(etag, gzipped JSON) built under the store lock, with the ETag re-read
+    in the SAME critical section -- a write that lands between the caller's
+    tag and this build can only label the body with the NEWER tag, never
+    pair new content with an old one."""
+    from quam_state_manager.core.all_values import build_all_values_rows
+    with store._lock:
+        etag = _all_values_etag(store, ctx)
+        rows, summary = build_all_values_rows(store, _modified_map())
+        merged = store.merged
+        policy = getattr(store, "type_policy", None)
+        # v2 expected-type chips: annotate SCALAR rows only (xref/list
+        # enforcement fires at the resolved target -- /field/peek covers
+        # those on demand). Cap: a >20k-row chip skips the chips entirely
+        # rather than stall the tab.
+        if policy is not None and len(rows) <= 20000:
+            for row in rows:
+                if row[2] != "scalar":
+                    continue
+                try:
+                    cur: Any = merged
+                    for seg in row[0].split("."):
+                        cur = cur[int(seg)] if isinstance(cur, list) else cur[seg]
+                    ann = policy.annotate(merged, row[0], cur)
+                except Exception:  # noqa: BLE001 — annotation must never break the tab
+                    continue
+                if ann:
+                    row.append({"ty": {"t": ann["type"], "s": ann["source"]}})
+    body = json.dumps({"rows": rows, "summary": summary},
+                      separators=(",", ":")).encode("utf-8")
+    # L6 = default sweet spot (~6.5x on the shared-prefix paths)
+    gz = gzip.compress(body, compresslevel=6)
+    return _ramcache.Keyed((etag, gz), etag)
 
 
 def _empty_pair_cell() -> dict[str, Any]:
@@ -30932,8 +31015,12 @@ def _scheduler_lock_guard():
     # SIM plan never locks the user's chip (locks_chip — audit R2).
     if request.method != "GET" and request.endpoint in (
             _SCHEDULER_MUTATOR_ENDPOINTS | _AUTOFIT_BLOCKED_SCHEDULER_ENDPOINTS):
-        from quam_state_manager.core.autofit import engine as autofit_engine
-        if autofit_engine.locks_chip(_sched_inst()):
+        # docs/2xx (RAM P5): a plan can only be running if this process has
+        # imported the engine (the registry `get_engine` reads lives in it),
+        # so a never-imported engine is "no plan" -- without paying the
+        # 171-module import (+1.0 s) on the first edit of every session.
+        autofit_engine = sys.modules.get("quam_state_manager.core.autofit.engine")
+        if autofit_engine is not None and autofit_engine.locks_chip(_sched_inst()):
             resp = make_response(jsonify({
                 "error": "autofit_running",
                 "message": "An Auto Calibrate plan is running — this action is "

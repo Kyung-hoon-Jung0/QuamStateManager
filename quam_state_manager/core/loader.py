@@ -321,6 +321,8 @@ class QuamStore:
             # counter so seq-validated caches (PulseIndex) and staleness
             # checks (Verify overlay) can't serve pre-reload conclusions.
             self.mutation_seq += 1
+            from quam_state_manager.core.store_revs import note as _revs_note
+            _revs_note(self, "reload", None)
 
     # ------------------------------------------------------------------
     # Accessors

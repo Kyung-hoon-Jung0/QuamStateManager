@@ -30,6 +30,8 @@ with ``T ∈ {int, number, str, bool}`` — sugar over the nested TypeSpec
 
 from __future__ import annotations
 
+import itertools
+
 import json
 import logging
 import math
@@ -197,6 +199,9 @@ def _infer_spec(value: Any) -> dict | None:
     return None
 
 
+_POLICY_SERIAL = itertools.count(1)
+
+
 class TypePolicy:
     """The per-store type policy: manifest (may be None) + user assignments."""
 
@@ -213,6 +218,11 @@ class TypePolicy:
         self.assignments = dict(assignments or {})
         self.verdicts = dict(verdicts or {})
         self.sidecar_path = sidecar_path
+        # docs/2xx (RAM P5, ram_design F6): every policy change builds a NEW
+        # TypePolicy (``_attach_type_policy``), so one process-unique serial
+        # per instance is the policy revision a cache key needs -- unlike the
+        # assignment COUNT, which a re-type of an existing key keeps.
+        self.serial = next(_POLICY_SERIAL)
 
     # -- resolution ------------------------------------------------------
 

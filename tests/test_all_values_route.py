@@ -260,10 +260,12 @@ class TestTransport:
 
     def test_etag_folds_changelog_and_changes_on_edit(self, client):
         e1 = client.get("/bulk/all-values").headers["ETag"]
-        # v2 salt (policy attached on /load): chip-<mutation_seq>-<len(change_log)>-
-        # v2-<n_assignments>-<manifest_tag> — 6 components
-        assert "-v3-" in e1   # QA F17: payload semantics bumped the salt
-        assert e1.strip('"').count("-") == 5
+        # docs/2xx RAM P5: chip-<boot>-<store serial>-<mutation_seq>-
+        # <len(change_log)>-v4-<policy serial> — 7 components (the boot token
+        # and store serial keep a restart from colliding with an old tag; the
+        # policy serial replaces the assignment count, which a re-type kept)
+        assert "-v4-" in e1
+        assert e1.strip('"').count("-") == 6
         client.post("/field/edit-batch", json={"updates": [
             {"dot_path": "qubits.qA1.resonator.time_of_flight", "value": "284"}]})
         e2 = client.get("/bulk/all-values").headers["ETag"]

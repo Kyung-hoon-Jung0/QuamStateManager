@@ -301,7 +301,8 @@ def _row_for_pulse(merged: dict, path: str, body: Any, *,
     return row
 
 
-def list_pulses(merged: dict, *, with_used_by: bool = True) -> list[dict]:
+def list_pulses(merged: dict, *, with_used_by: bool = True,
+                only: tuple[str, str] | None = None) -> list[dict]:
     """Flat row list of every pulse-shaped node in the chip (see module doc).
 
     ``with_used_by=False`` skips building the reverse-pointer index (the single
@@ -309,6 +310,10 @@ def list_pulses(merged: dict, *, with_used_by: bool = True) -> list[dict]:
     ``used_by`` empty. Callers that don't need the reverse-pointer column — the
     waveform DAC-range diagnostics, which run on every edit — pass False for a
     big speed-up.
+
+    ``only=("qubit", name)`` / ``("pair", name)`` restricts the rows to that
+    one owner, in the order the full list would give them (the diagnostics
+    waveform lint memoizes per owner; docs/2xx RAM P5).
     """
     reverse_index = build_reverse_pointer_index(merged) if with_used_by else None
     op_referrers = build_op_referrers(reverse_index) if reverse_index is not None else None
@@ -316,6 +321,8 @@ def list_pulses(merged: dict, *, with_used_by: bool = True) -> list[dict]:
 
     for qubit_name, qubit in (merged.get("qubits") or {}).items():
         if not isinstance(qubit, dict):
+            continue
+        if only is not None and only != ("qubit", qubit_name):
             continue
         for channel in PULSE_CHANNELS:
             chan = qubit.get(channel)
@@ -356,6 +363,8 @@ def list_pulses(merged: dict, *, with_used_by: bool = True) -> list[dict]:
 
     for pair_name, pair in (merged.get("qubit_pairs") or {}).items():
         if not isinstance(pair, dict):
+            continue
+        if only is not None and only != ("pair", pair_name):
             continue
         macros = pair.get("macros")
         if isinstance(macros, dict):

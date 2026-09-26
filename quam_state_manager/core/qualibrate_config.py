@@ -692,7 +692,7 @@ def project_state_paths(cfg_dir: Path | None = None) -> dict[str, Any]:
         names = sorted(d.name for d in proj_dir.iterdir() if d.is_dir())
     except OSError:
         names = []
-    key_parts: list[Any] = [str(cfg_dir), root_m]
+    key_parts: list[Any] = [str(cfg_dir), str(root_path), root_m]
     for n in names:
         try:
             key_parts.append((n, (proj_dir / n / "config.toml").stat().st_mtime_ns))
@@ -706,12 +706,17 @@ def project_state_paths(cfg_dir: Path | None = None) -> dict[str, Any]:
     root_cfg = _load_toml_retry(root_path)
     active = (root_cfg.get("qualibrate") or {}).get("project")
     projects: list[tuple[str, str | None]] = []
+    raws: dict[str, Any] = {}
     for n in names:
         overlay = _load_toml_retry(proj_dir / n / "config.toml")
         eff = _deep_merge(root_cfg, overlay)
-        native = native_path((eff.get("quam") or {}).get("state_path"))
+        raw = (eff.get("quam") or {}).get("state_path")
+        native = native_path(raw)
         projects.append((n, str(native) if native else None))
-    result = {"active": str(active) if active else None, "projects": projects}
+        raws[n] = raw
+    # ``raw`` (docs/2xx): the configured spelling, for the sidebar's tooltip
+    result = {"active": str(active) if active else None, "projects": projects,
+              "raw": raws}
     _state_index_cache["entry"] = (key, result)
     return result
 
