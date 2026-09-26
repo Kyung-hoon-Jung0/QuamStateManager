@@ -407,7 +407,11 @@ def detect_facts(state: dict, wiring: dict | None = None, node_names: list[str] 
         "bias_modes": modes,
         "flux_tunable_seen": bool(modes.get("opx") or modes.get("bias_tee")),
         "qdac_seen": bool(modes.get("qdac") or modes.get("bias_tee")),
-        "couplers_seen": any(isinstance(p, dict) and "coupler" in p for p in pairs.values()),
+        # a VALUE, not the key: quam_builder's pair class always carries
+        # `coupler: null`, so the key alone "detected" a tunable coupler on
+        # every modern chip (the KRISS 5Q chip has none) -- QA agents round
+        "couplers_seen": any(isinstance(p, dict) and p.get("coupler") not in (None, "", {}, [])
+                             for p in pairs.values()),
         "purcell_mentioned": "purcell" in text,
         "twpa_seen": "twpa" in text,
         "chip_name": ((state.get("extras") or {}).get("chip_name") if isinstance(state.get("extras"), dict) else None),

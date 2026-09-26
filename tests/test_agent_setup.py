@@ -136,6 +136,18 @@ class TestContext:
         assert by["coupler"]["detected"] == "tunable coupler" and by["purcell"]["detected"] == "unknown"
         assert by["data_read"]["detected"] == "no", "direct data reads are opt-in"
 
+    def test_a_null_coupler_field_is_not_a_coupler(self):
+        """QA agents round: quam_builder writes `coupler: null` on every pair, and
+        the KEY alone made the lab-context question say 'tunable coupler
+        (detected)' on the KRISS 5Q chip, which has no coupler."""
+        state = {"qubits": {"q1": {}, "q2": {}},
+                 "qubit_pairs": {"q1-2": {"coupler": None, "qubit_control": "#/qubits/q1"}}}
+        f = st.detect_facts(state, node_names=[])
+        assert f["couplers_seen"] is False
+        assert {q["id"]: q for q in st.questions(f)}["coupler"]["detected"] == "fixed coupling"
+        state["qubit_pairs"]["q1-2"]["coupler"] = "#/couplers/c12"
+        assert st.detect_facts(state, node_names=[])["couplers_seen"] is True, "a pointer to a coupler is one"
+
     def test_block_written_between_markers_idempotent_with_backup(self, tmp_path):
         cal = tmp_path / "cal"
         cal.mkdir()
