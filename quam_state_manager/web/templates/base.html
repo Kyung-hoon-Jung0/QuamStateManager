@@ -61,6 +61,9 @@
        at load time against `window.SyncBadge` -- after app.js, the handler was
        never registered and clicking the chip did nothing but clear it. #}
     <script src="{{ asset_url('sync-badge.js') }}"></script>
+    {# Queue item 6: the Datasets run detail keeps the reader's place across
+       run switches. Core (before app.js): a run detail can open from any page. #}
+    <script src="{{ asset_url('ds-scroll-anchor.js') }}"></script>
     <script src="{{ asset_url('app.js') }}"></script>
     {# The search-box typeahead (customer, 2026-09-10). AFTER app.js: it calls
        window._anchorPopover, which is the one body-level popup placement this

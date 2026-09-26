@@ -1,0 +1,307 @@
+/* Datasets run detail: keep the reader's place EXACTLY across run switches.
+ *
+ * Queue item 6 (customer, 2026-09-25: "조금씩 밀림" -- every run switch moved
+ * the detail a little, so every run needed re-scrolling). Measured in real
+ * Chrome on the KH rig, 32 consecutive switches, three mechanisms:
+ *
+ *  1. The remembered place was RE-DERIVED from wherever the last restore
+ *     landed. One run whose section was too short to honour the offset (a
+ *     run with fewer figures, a run with no figures) clamped the restore, and
+ *     the next beforeSwap captured THAT clamped spot as the new place: the
+ *     reader's position was gone for good (20/32 switches off after one short
+ *     run). The place the reader chose is now an INTENT, captured only when
+ *     the reader actually moved (wheel / touch / key / pointer in the pane, or
+ *     a scroll nobody here caused) and kept verbatim across switches they did
+ *     not touch.
+ *  2. The restore ran 150 ms (+ a rAF, + a 250 ms retry) after the swap, so
+ *     every switch first painted the new run at the old pixel offset and then
+ *     jumped. The restore now runs in the swap itself.
+ *  3. Lazy content (figure <img>s without intrinsic size, JSON trees fetched
+ *     after the swap, ndview / interactive tiles) grows AFTER any fixed-delay
+ *     restore. A pin re-applies the anchor on every resize of the detail until
+ *     the reader moves or the next run swaps in.
+ *
+ * The anchor is not a pixel offset: it is a chain of LANDMARKS from the active
+ * tab's container down to the deepest keyed element under the pane's top edge
+ * (section -> figure card / <details> / JSON-tree path / ndview block), plus
+ * the offset of the top edge inside each. On the next run the deepest
+ * landmark that exists AND is tall enough to hold the offset is put back at
+ * the same offset -- identical, not "roughly". Where the next run cannot hold
+ * it (no such landmark, or it is shorter), the nearest shallower one is used
+ * and the result says `exact:false`; the intent itself is untouched, so the
+ * next run that can hold it lands exactly again.
+ *
+ * Pure DOM: getBoundingClientRect / scrollTop / clientHeight only, so the
+ * jsdom selfcheck can drive it against a fake layout
+ * (tests/ds_scroll_anchor_selfcheck.cjs).
+ */
+(function () {
+    'use strict';
+
+    // Keyed landmark kinds. Order does not matter; nesting does (a landmark's
+    // children are the landmarks with no other landmark between them and it).
+    var KINDS = [
+        { sel: '[data-fvsec]', key: function (el) { return 'sec:' + el.getAttribute('data-fvsec'); } },
+        { sel: '.figure-card', key: function (el) {
+            var c = el.querySelector('.figure-label code');
+            return 'fig:' + (c ? c.textContent.trim() : '');
+        } },
+        { sel: '.ds-interactive-fig[data-fig]', key: function (el) { return 'ifig:' + el.getAttribute('data-fig'); } },
+        { sel: 'details', key: function (el) { return 'det:' + _summaryText(el); } },
+        { sel: '.tree-node[data-path]', key: function (el) { return 'path:' + el.getAttribute('data-path'); } },
+        { sel: '.ndv-files, .ndv-vars, .ndv-controls, .ndv-plot', key: function (el) {
+            var cls = ['ndv-files', 'ndv-vars', 'ndv-controls', 'ndv-plot'];
+            for (var i = 0; i < cls.length; i++) if (el.classList.contains(cls[i])) return 'ndv:' + cls[i];
+            return 'ndv:?';
+        } },
+    ];
+    var SEL = KINDS.map(function (k) { return k.sel; }).join(', ');
+
+    // A <details>' identity is its summary's OWN text: the summary also holds
+    // per-run buttons ("Apply all ->" only where fit targets exist) and run ids
+    // ("Changes from previous run #123"), which must not change the key.
+    function _summaryText(det) {
+        var s = null;
+        for (var i = 0; i < det.children.length; i++) {
+            if (det.children[i].tagName === 'SUMMARY') { s = det.children[i]; break; }
+        }
+        if (!s) return '';
+        var t = '';
+        for (var j = 0; j < s.childNodes.length; j++) {
+            if (s.childNodes[j].nodeType === 3) t += s.childNodes[j].nodeValue;
+        }
+        return t.replace(/\s+/g, ' ').trim();
+    }
+
+    function _keyOf(el) {
+        for (var i = 0; i < KINDS.length; i++) {
+            if (el.matches(KINDS[i].sel)) return KINDS[i].key(el);
+        }
+        return null;
+    }
+
+    function _isLandmark(el) { return !!(el && el.nodeType === 1 && el.matches(SEL)); }
+
+    // Scrollers of their own inside a tab: a landmark behind one of these
+    // moves with ITS scroll, so the pane's chain never descends into it (it is
+    // captured separately, see _captureInner).
+    var INNER_SEL = '.json-tree, .fig-info-col, .ds-inline-tree';
+
+    // Landmarks directly under `parent` (no landmark, no inner scroller, in between).
+    function _children(parent) {
+        var out = [];
+        var all = parent.querySelectorAll(SEL);
+        for (var i = 0; i < all.length; i++) {
+            var up = all[i].parentElement, direct = true;
+            while (up && up !== parent) {
+                if (_isLandmark(up) || up.matches(INNER_SEL)) { direct = false; break; }
+                up = up.parentElement;
+            }
+            if (direct && up === parent) out.push(all[i]);
+        }
+        return out;
+    }
+
+    function _paneTop(pane) {
+        return pane.getBoundingClientRect().top + (pane.clientTop || 0);
+    }
+
+    function _visible(r) { return r.height > 0; }
+
+    /* The reader's place, as a landmark chain. `container` is the active tab's
+     * content element. Above the container (the run header / tab strip) there
+     * is nothing to anchor on, so the raw offset is kept. */
+    function capture(pane, container) {
+        var out = _captureIn(pane, container);
+        out.inner = container ? _captureInner(container) : [];
+        return out;
+    }
+
+    // A scroller INSIDE the tab (every JSON tree is one -- .json-tree has its
+    // own max-height -- and so are the Figures tab's fit/parameter columns).
+    // Keyed by id, else by class + index; captured the same way, relative to
+    // its own top edge, with its raw offset as the fallback.
+    function _innerKey(el, container) {
+        if (el.id) return '#' + el.id;
+        var cls = el.classList && el.classList[0];
+        if (!cls) return null;
+        var same = container.getElementsByClassName(cls);
+        for (var i = 0; i < same.length; i++) if (same[i] === el) return '.' + cls + ':' + i;
+        return null;
+    }
+    function _findInner(container, key) {
+        if (key.charAt(0) === '#') {
+            var id = key.slice(1), all = container.querySelectorAll('[id]');
+            for (var i = 0; i < all.length; i++) if (all[i].id === id) return all[i];
+            return null;
+        }
+        var m = /^\.([^:]+):(\d+)$/.exec(key);
+        return m ? (container.getElementsByClassName(m[1])[+m[2]] || null) : null;
+    }
+    function _captureInner(container) {
+        var out = [], all = container.getElementsByTagName('*');
+        for (var i = 0; i < all.length; i++) {
+            var el = all[i];
+            if (!(el.scrollTop > 0)) continue;
+            var key = _innerKey(el, container);
+            if (!key) continue;
+            var a = _captureIn(el, el);
+            a.key = key;
+            out.push(a);
+        }
+        return out;
+    }
+
+    function _captureIn(pane, container) {
+        var y = _paneTop(pane);
+        var out = { scrollTop: pane.scrollTop, chain: null };
+        if (!container) return out;
+        var cr = container.getBoundingClientRect();
+        if (!_visible(cr) || cr.top > y + 0.5) return out;
+        var chain = [{ key: '@container', n: 0, within: y - cr.top }];
+        var parent = container;
+        for (var depth = 0; depth < 64; depth++) {
+            var kids = _children(parent), hit = null;
+            for (var i = 0; i < kids.length; i++) {
+                var r = kids[i].getBoundingClientRect();
+                if (_visible(r) && r.top <= y + 0.5 && r.bottom > y + 0.5) { hit = kids[i]; break; }
+            }
+            if (!hit) break;
+            var key = _keyOf(hit), n = 0;
+            for (var k = 0; k < kids.length && kids[k] !== hit; k++) if (_keyOf(kids[k]) === key) n++;
+            chain.push({ key: key, n: n, within: y - hit.getBoundingClientRect().top });
+            parent = hit;
+        }
+        out.chain = chain;
+        return out;
+    }
+
+    // Deepest element of `chain` that exists (and is laid out) under `container`.
+    function _resolve(container, chain) {
+        var el = container, depth = 0;
+        for (var i = 1; i < chain.length; i++) {
+            var kids = _children(el), seen = 0, found = null;
+            for (var k = 0; k < kids.length; k++) {
+                if (_keyOf(kids[k]) !== chain[i].key) continue;
+                if (seen === chain[i].n) { found = kids[k]; break; }
+                seen++;
+            }
+            if (!found || !_visible(found.getBoundingClientRect())) break;
+            el = found; depth = i;
+        }
+        return { el: el, depth: depth };
+    }
+
+    function _setTop(pane, top) {
+        top = Math.max(0, top);
+        if (typeof pane.scrollTo === 'function') {
+            try { pane.scrollTo({ top: top, behavior: 'instant' }); } catch (e) { pane.scrollTop = top; }
+        } else {
+            pane.scrollTop = top;
+        }
+        if (Math.abs(pane.scrollTop - top) > 1) pane.scrollTop = top;   // scrollTo unsupported / ignored
+    }
+
+    /* Put `anchor` back. Returns {exact, depth, key, target}: exact means the
+     * deepest captured landmark was found, holds the offset, and the pane
+     * could scroll there (not clamped by its scroll range). */
+    function apply(pane, container, anchor) {
+        var res = _applyIn(pane, container, anchor, false);
+        var inner = (anchor && anchor.inner) || [];
+        res.inner = [];
+        for (var i = 0; i < inner.length && container; i++) {
+            var el = _findInner(container, inner[i].key);
+            if (!el || !_visible(el.getBoundingClientRect())) { res.inner.push({ key: inner[i].key, exact: false, depth: -1 }); continue; }
+            var r = _applyIn(el, el, inner[i], true);
+            r.key = inner[i].key;
+            res.inner.push(r);
+        }
+        return res;
+    }
+
+    function _applyIn(pane, container, anchor, isInner) {
+        if (!anchor) return { exact: false, depth: -1 };
+        if (!anchor.chain || !container || !_visible(container.getBoundingClientRect())) {
+            _setTop(pane, anchor.scrollTop || 0);
+            return { exact: Math.abs(pane.scrollTop - (anchor.scrollTop || 0)) < 1, depth: -1,
+                     target: anchor.scrollTop || 0 };
+        }
+        var chain = anchor.chain;
+        var res = _resolve(container, chain);
+        // Walk up until a level can hold its offset: a landmark shorter than the
+        // offset would put the edge in whatever follows it.
+        var el = res.el, depth = res.depth;
+        while (depth > 0 && chain[depth].within >= el.getBoundingClientRect().height) {
+            depth--;
+            el = depth === 0 ? container : _resolve(container, chain.slice(0, depth + 1)).el;
+        }
+        if (depth === 0 && isInner) {
+            // nothing keyed survived inside this scroller: its own offset
+            _setTop(pane, anchor.scrollTop || 0);
+            return { exact: false, depth: 0, key: '@px', target: anchor.scrollTop || 0 };
+        }
+        var r = el.getBoundingClientRect();
+        var within = Math.min(chain[depth].within, Math.max(0, r.height - 1));
+        var target = pane.scrollTop + (r.top - _paneTop(pane)) + within;
+        _setTop(pane, target);
+        var landed = Math.abs(pane.scrollTop - Math.max(0, target)) < 1;
+        return { exact: landed && depth === chain.length - 1 && within === chain[depth].within,
+                 depth: depth, key: chain[depth].key, target: target };
+    }
+
+    /* Keep `anchor` in place while the new run's lazy content settles. Ends on
+     * stop(), on reader input in the pane, or on a scroll this pin did not
+     * cause (onUser is called for the last two). No timer: until the reader
+     * moves, the place they chose IS the place. */
+    function pin(pane, getContainer, anchor, onUser) {
+        var lastSet = null, stopped = false, ro = null;
+        var prevAnchorCss = pane.style.overflowAnchor;
+        pane.style.overflowAnchor = 'none';   // one mechanism, not two fighting
+        function reapply() {
+            if (stopped) return null;
+            var res = apply(pane, getContainer(), anchor);
+            lastSet = pane.scrollTop;
+            ctl.last = res;
+            return res;
+        }
+        function onScroll() {
+            if (stopped || lastSet === null) return;
+            if (Math.abs(pane.scrollTop - lastSet) > 1) user();
+        }
+        function onLoad() { schedule(); }
+        function schedule() {
+            if (stopped) return;
+            reapply();   // synchronously: a later frame would paint the drift first
+        }
+        function user() {
+            if (stopped) return;
+            stop();
+            if (onUser) onUser();
+        }
+        function stop() {
+            if (stopped) return;
+            stopped = true;
+            if (ro) ro.disconnect();
+            pane.removeEventListener('scroll', onScroll);
+            pane.removeEventListener('load', onLoad, true);
+            pane.style.overflowAnchor = prevAnchorCss;
+        }
+        var ctl = { stop: stop, reapply: reapply, user: user, last: null,
+                    get active() { return !stopped; } };
+        pane.addEventListener('scroll', onScroll);
+        pane.addEventListener('load', onLoad, true);   // <img> load does not bubble
+        if (typeof ResizeObserver === 'function') {
+            ro = new ResizeObserver(schedule);
+            var kids = pane.children;   // the run header + every tab live under these
+            for (var i = 0; i < kids.length; i++) ro.observe(kids[i]);
+            var c = getContainer();
+            if (c) ro.observe(c);
+        }
+        reapply();
+        return ctl;
+    }
+
+    window.DsScrollAnchor = { capture: capture, apply: apply, pin: pin,
+                              _children: _children, _keyOf: _keyOf, _findInner: _findInner,
+                              SEL: SEL, INNER_SEL: INNER_SEL };
+})();
