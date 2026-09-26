@@ -86,6 +86,24 @@ def parsed(raw: bytes, dig: bytes | None = None) -> dict:
     return parse_bytes(raw)
 
 
+def private(raw: bytes, dig: bytes | None = None) -> dict:
+    """A document of *raw* the caller OWNS (may mutate): a ``marshal`` round
+    trip of the shared parse when these bytes were parsed before and that
+    parse is provably untouched -- the round trip reproduces every type, key
+    order and float bit and costs about half a JSON parse -- else a parse."""
+    dig = dig or digest(raw)
+    if PARSED.has(dig):
+        try:
+            doc, mdig, _n = PARSED.get(dig, None, lambda: _parse_entry(raw),
+                                       sizeof=_parsed_sizeof)
+            m = marshal.dumps(doc, _MARSHAL_V)
+            if mdig is not None and hashlib.sha1(m).digest() == mdig:
+                return marshal.loads(m)
+        except (ValueError, TypeError, RecursionError):
+            pass
+    return parse_bytes(raw)
+
+
 def _parse_entry(raw: bytes):
     doc = parse_bytes(raw)
     # a parsed chip measured at ~1.0x its source bytes (tracemalloc, 19 MB
@@ -192,7 +210,7 @@ def _read_json_bytes(path: Path, mode: str) -> tuple[dict | None, bytes, bytes]:
                 raw = f.read()
             dig = digest(raw)
             if mode == "fresh":
-                data = parse_bytes(raw)
+                data = private(raw, dig)
             elif _known_valid(dig) or PARSED.has(dig):
                 data = None          # valid JSON already; parsed on first use
             else:

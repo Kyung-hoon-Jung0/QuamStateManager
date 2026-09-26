@@ -982,13 +982,34 @@ def _baseline_vs_live_entries(base: dict, pair) -> list:
     """The drift diff (baseline -> live), keyed on the baseline's content hash
     and the live bytes' digests."""
     def compute():
-        return Differ().diff((base["state"], base["wiring"]),
+        ents = Differ().diff((base["state"], base["wiring"]),
                              (pair.state, pair.wiring), ignore_keys=set())
+        _share_content_diff(base, pair, ents)
+        return ents
     bh = base.get("state_hash")
     if not bh:
         return compute()
     tok = (bh, base.get("captured_utc"), pair.state_digest, pair.wiring_digest)
     return list(_BL_ENTRIES.get(("bl", bh), tok, compute))
+
+
+def _share_content_diff(base: dict, pair, entries: list) -> None:
+    """Offer a baseline->live diff to diff_cache, so the pre-apply backup
+    snapshot of this same live content (its prior is the baseline's content
+    after every apply) does not diff it again. Only when the live content
+    hash is already known (no canonical dump just for this) and both sides
+    merge alike."""
+    try:
+        from quam_state_manager.core import diff_cache, doc_cache
+        if not (doc_cache.CANON.has(pair.state_digest)
+                and doc_cache.CANON.has(pair.wiring_digest)):
+            return
+        if not (diff_cache.merges_alike(base["state"], base["wiring"])
+                and diff_cache.merges_alike(pair.state, pair.wiring)):
+            return
+        diff_cache.remember(base.get("state_hash"), pair.history_hash(), entries)
+    except Exception:  # noqa: BLE001 -- an optimisation never fails a poll
+        logger.debug("content diff share skipped", exc_info=True)
 
 
 def _store_sync_live(ctx, live_state: dict, live_wiring: dict, *, key=None,
@@ -18184,12 +18205,24 @@ def _reset_baseline_after_apply(ctx) -> None:
         store = ctx["store"]
         with _active_wc_lock(ctx):          # serialise vs reconcile store.reload()
             with store._lock:
-                state = copy.deepcopy(store.state)
-                wiring = copy.deepcopy(store.wiring)
+                state = _json_copy(store.state)
+                wiring = _json_copy(store.wiring)
             _history().set_live_baseline(ctx["path"], state, wiring)
         _clear_drift_cache(ctx)
     except Exception:   # noqa: BLE001
         logger.warning("baseline reset after apply-to-live failed", exc_info=True)
+
+
+def _json_copy(doc):
+    """A deep copy of a JSON document: ``marshal`` round trip (w7/livewrite --
+    ~0.1 s on a 19 MB chip against ~0.3 s for ``copy.deepcopy``; the same
+    types, keys, key order and float bits), ``deepcopy`` for anything marshal
+    refuses."""
+    import marshal
+    try:
+        return marshal.loads(marshal.dumps(doc, 2))
+    except (ValueError, TypeError, RecursionError):
+        return copy.deepcopy(doc)
 
 
 def _auto_pull_sig(ctx: dict | None) -> tuple:

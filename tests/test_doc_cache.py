@@ -103,3 +103,20 @@ def test_known_bytes_are_not_parsed_until_used(tmp_path, monkeypatch):
     assert calls["n"] == 0, "a hash-only use parsed the documents"
     assert pair.state == {"a": {"b": 1.5}} and calls["n"] == 1
     assert h == working_copy.content_hash({"a": {"b": 1.5}}, {"w": [1, 2]})
+
+
+def test_a_fresh_document_is_the_callers_own(tmp_path):
+    """mode="fresh" may be a marshal copy of the shared parse: mutating it
+    must not reach the shared one, and it must equal a cold parse exactly."""
+    safe_io.write_state_wiring(tmp_path, {"a": {"b": 1, "n": [1.0, 2]}}, {"w": 1})
+    shared = doc_cache.read_pair(tmp_path, mode="shared")
+    assert shared.state["a"]["b"] == 1                     # parsed + cached
+    mine = doc_cache.read_pair(tmp_path, mode="fresh")
+    assert mine.state == json.loads((tmp_path / "state.json").read_bytes())
+    assert json.dumps(mine.state) == json.dumps(shared.state)
+    mine.state["a"]["b"] = 2
+    mine.state["a"]["n"].append(3)
+    assert shared.state == {"a": {"b": 1, "n": [1.0, 2]}}, "the fresh doc aliases the shared one"
+    again = doc_cache.read_pair(tmp_path, mode="shared")
+    assert again.state == {"a": {"b": 1, "n": [1.0, 2]}}
+    assert type(again.state["a"]["n"][0]) is float

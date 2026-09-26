@@ -443,7 +443,8 @@ def _snap_fp(d: Path) -> tuple:
     return (st.st_mtime_ns, st.st_size, wi.st_mtime_ns, wi.st_size)
 
 
-def _diff_snapshot_dirs(a: Path, b: Path, *, b_pair=None) -> list[DiffEntry]:
+def _diff_snapshot_dirs(a: Path, b: Path, *, b_pair=None, a_hash: str | None = None,
+                        b_hash: str | None = None) -> list[DiffEntry]:
     """``Differ().diff(a, b)`` for two snapshot folders -- the same merged
     documents a ``QuamStore`` builds -- with the parses served by the content
     cache and the result kept per pair. ``b_pair``: the ``doc_cache.PairRead``
@@ -452,12 +453,25 @@ def _diff_snapshot_dirs(a: Path, b: Path, *, b_pair=None) -> list[DiffEntry]:
     from quam_state_manager.core import doc_cache
 
     def compute():
+        from quam_state_manager.core import diff_cache
+        from quam_state_manager.core.differ import _DEFAULT_IGNORE, _leaf_key
+        # content hashes known (a capture): the drift poll may have taken
+        # exactly this diff already (diff_cache)
+        shared = diff_cache.lookup(a_hash, b_hash, _DEFAULT_IGNORE)
+        if shared is not None:
+            return shared
         pa = doc_cache.read_pair(a, mode="shared")
         pb = b_pair if b_pair is not None else doc_cache.read_pair(b, mode="shared")
         # from_dicts merges exactly as QuamStore(folder) does (deep merge on a
-        # state/wiring key collision) without touching the shared dicts
-        return _differ.diff(QuamStore.from_dicts(pa.state, pa.wiring),
-                            QuamStore.from_dicts(pb.state, pb.wiring))
+        # state/wiring key collision) without touching the shared dicts. The
+        # diff is taken with no ignored key and then filtered the way Differ
+        # filters (leaf by leaf), so the unfiltered one can be shared.
+        ents = _differ.diff(QuamStore.from_dicts(pa.state, pa.wiring),
+                            QuamStore.from_dicts(pb.state, pb.wiring), ignore_keys=set())
+        if (a_hash and b_hash and diff_cache.merges_alike(pa.state, pa.wiring)
+                and diff_cache.merges_alike(pb.state, pb.wiring)):
+            diff_cache.remember(a_hash, b_hash, ents)
+        return [e for e in ents if _leaf_key(e.dot_path) not in _DEFAULT_IGNORE]
     try:
         tok = (_snap_fp(Path(a)), _snap_fp(Path(b)))
     except OSError:
@@ -2026,7 +2040,9 @@ class HistoryManager:
             if prior is not None:
                 try:
                     prior_dir = hist_dir / prior.timestamp
-                    entries = _diff_snapshot_dirs(prior_dir, snap_dir, b_pair=_cap)
+                    entries = _diff_snapshot_dirs(prior_dir, snap_dir, b_pair=_cap,
+                                                  a_hash=prior.state_hash,
+                                                  b_hash=content_hash)
                     diff_summary = Differ.summary(entries)
                 except Exception:
                     logger.warning("Failed to compute diff for snapshot %s", ts, exc_info=True)
