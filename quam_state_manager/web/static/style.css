@@ -13506,6 +13506,7 @@ table.diff-wb-list tbody > tr[hidden] { display: none; }
     color: var(--pico-muted-color); border-radius: 50%;
     width: 1.25em; height: 1.25em; line-height: 1; padding: 0;
     font-size: .95em; cursor: pointer;
+    margin: 0;              /* Pico's button margin-bottom lifted the circle ~10px above its row */
 }
 .ag-wire-help:hover { color: var(--pico-primary); border-color: var(--pico-primary); }
 .ag-wire-setup, .ag-wire-fix { white-space: nowrap; }

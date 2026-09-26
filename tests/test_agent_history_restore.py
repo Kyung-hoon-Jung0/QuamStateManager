@@ -32,3 +32,13 @@ def test_agent_qa_round_selfcheck(name):
         pytest.skip("jsdom not installed")
     assert r.returncode == 0, r.stdout[-3000:] + r.stderr[-2000:]
     assert " 0 failed" in r.stdout
+
+
+def test_the_wire_help_circle_sits_on_its_row():
+    """QA agents round, measured in real Chrome: Pico's button margin-bottom (20px)
+    made the strip's "?" circle sit ~10px above the "setup steps" link beside it
+    and doubled the tail's height (37px -> 21px after). The rule is pinned here."""
+    css = (_ROOT / "quam_state_manager" / "web" / "static" / "style.css").read_text(encoding="utf-8")
+    block = css[css.index(".ag-wire-help {"):]
+    block = block[:block.index("}")]
+    assert "margin: 0;" in block
