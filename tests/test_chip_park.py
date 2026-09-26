@@ -188,7 +188,12 @@ def test_take_never_returns_another_tokens_value():
 
 # -------------------------------------------------------------- lazy index
 class TestLazySearchIndex:
-    def test_open_builds_no_index_and_first_search_does(self, app, tmp_path):
+    def test_open_builds_no_index_and_first_search_does(self, app, tmp_path, monkeypatch):
+        # The OPEN builds nothing on the request thread. The background
+        # prewarm (tested below) is switched off here so the assertion is
+        # about the open alone, not a race with the worker.
+        from quam_state_manager.core import search_index as si
+        monkeypatch.setattr(si, "_prewarm_submit", lambda lazy: None)
         c = app.test_client()
         ctx = _load(c, _make_chip(tmp_path / "A"))
         idx = ctx["index"]
