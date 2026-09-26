@@ -52,7 +52,7 @@ from flask import (
     send_file,
     url_for,
 )
-from markupsafe import escape
+from markupsafe import Markup, escape
 from werkzeug.utils import secure_filename
 
 from quam_state_manager.core import (
@@ -1103,6 +1103,11 @@ def _prune_context_registry(active_name: str | None) -> None:
                 # Still loaded, just not what the user is looking at.
                 ctx.pop("bulk_grid_cache", None)
                 ctx.pop("pair_grid_cache", None)
+                # RAM P6: the extra grids, the compressed page fragments and
+                # the filter-chip memo are the same kind of per-view weight
+                ctx.pop("extra_grid_cache", None)
+                ctx.pop("bulk_frag_cache", None)
+                ctx.pop("bulk_chips_memo", None)
             elif not _quam_ctx_dirty(ctx):
                 continue    # evicted AND clean -> rebuilt from its working folder
         kept[name] = ctx
@@ -6400,7 +6405,8 @@ def _grid_patch(pst: dict, rows: list, columns: list, paths: list[str],
                 cell_fn) -> tuple[set, set] | None:
     """Re-run the cells a set of plain writes / marker moves can reach.
 
-    Returns ``(changed_row_indices, width_moved_column_indices)``, or ``None``
+    Returns ``(rows, columns, changed_row_indices, width_moved_column_indices,
+    touched_column_indices)`` -- NEW lists (copy-on-write) -- or ``None``
     when the change is outside what a patch may vouch for (the caller then
     rebuilds). ``cell_fn(row_index, spec_index, lo_log)`` builds one cell
     exactly as the cold builder does and returns ``(cell, deps)``."""
@@ -6418,7 +6424,7 @@ def _grid_patch(pst: dict, rows: list, columns: list, paths: list[str],
                 break
             q = q[:i]
     if not hit:
-        return set(), set()
+        return rows, columns, set(), set(), set()
     lo_moved = False
     new_cells: dict = {}
     for pos in sorted(hit):
@@ -6459,11 +6465,19 @@ def _grid_patch(pst: dict, rows: list, columns: list, paths: list[str],
     pi = pst["port_info"]
     changed_rows: set = set()
     touched: set = set()
+    # copy-on-write: a render or hydration holding the previous grid keeps a
+    # consistent snapshot; only the rows and columns that move are new objects
+    rows = list(rows)
+
+    def _own(i):
+        if i not in changed_rows:
+            rows[i] = dict(rows[i], cells=list(rows[i]["cells"]))
+            changed_rows.add(i)
+        return rows[i]["cells"]
     for (i, j), cell in new_cells.items():
         _attach_lo_meta(cell, pi)
         c = col_of[j]
-        rows[i]["cells"][c] = cell
-        changed_rows.add(i)
+        _own(i)[c] = cell
         touched.add(c)
     if lo_moved:
         for p, _owner, _val, (i, j) in pst["lo"]:
@@ -6474,20 +6488,21 @@ def _grid_patch(pst: dict, rows: list, columns: list, paths: list[str],
             cell["_port"] = p
             _attach_lo_meta(cell, pi)
             if cell != rows[i]["cells"][c]:
-                rows[i]["cells"][c] = cell
-                changed_rows.add(i)
+                _own(i)[c] = cell
     ml_moved: set = set()
     for c in touched:
         col = columns[c]
         ml = _col_maxlen(col["label"], (r["cells"][c]["display"] for r in rows))
         if ml != col.get("maxlen"):
-            col["maxlen"] = ml
+            if not ml_moved:
+                columns = list(columns)
+            columns[c] = dict(col, maxlen=ml)
             ml_moved.add(c)
-    return changed_rows, ml_moved
+    return rows, columns, changed_rows, ml_moved, touched
 
 
 def _grid_memo(slot: str, ctx: dict, store: QuamStore, variant: Any, modified: dict,
-               build, cell_fn, views, after_patch=None) -> dict:
+               build, cell_fn, views, install, after_patch=None) -> dict:
     """The memo shared by the three Live-Edit grid kinds (see the block note).
 
     ``build()`` makes a fresh grid and returns ``(grid, {key: pst})``; the
@@ -6510,17 +6525,28 @@ def _grid_memo(slot: str, ctx: dict, store: QuamStore, variant: Any, modified: d
                 with store._lock:
                     if getattr(store, "mutation_seq", None) == seq:
                         patched = _grid_patch_all(hit, paths + moved, cell_fn, views, modified)
-                        if patched is not None and after_patch is not None:
-                            after_patch(hit)
             if patched is not None:
-                for key, (ch_rows, ch_cols) in patched.items():
-                    rv = hit["row_ver"].setdefault(key, {})
+                grid = hit["grid"]
+                for key, (nrows, ncols, _r, _c, _t) in patched.items():
+                    grid = install(grid, key, nrows, ncols)
+                hit = dict(hit, grid=grid, row_ver=dict(hit["row_ver"]),
+                           col_ver=dict(hit["col_ver"]), cell_ver=dict(hit["cell_ver"]))
+                if after_patch is not None:
+                    after_patch(hit)
+                for key, (_nr, _nc, ch_rows, ch_cols, touched) in patched.items():
+                    rv = dict(hit["row_ver"].get(key, {}))
                     for i in ch_rows:
                         rv[i] = rv.get(i, 0) + 1
+                    hit["row_ver"][key] = rv
                     if ch_cols:
                         hit["col_ver"][key] = hit["col_ver"].get(key, 0) + 1
+                    cv = dict(hit["cell_ver"].get(key, {}))
+                    for c in touched:
+                        cv[c] = cv.get(c, 0) + 1
+                    hit["cell_ver"][key] = cv
                 hit["seq"] = seq
                 hit["mod"] = dict(modified)
+                ctx[slot] = hit
                 return hit
         with store._lock:
             seq = getattr(store, "mutation_seq", None)
@@ -6528,7 +6554,8 @@ def _grid_memo(slot: str, ctx: dict, store: QuamStore, variant: Any, modified: d
             grid, psts = build()
         ent = {"store": store, "variant": variant, "seq": seq, "coltok": coltok,
                "mod": dict(modified), "grid": grid, "pst": psts,
-               "serial": next(_GRID_SERIAL), "row_ver": {}, "col_ver": {}}
+               "serial": next(_GRID_SERIAL), "row_ver": {}, "col_ver": {},
+               "cell_ver": {}}
         ctx[slot] = ent
         return ent
 
@@ -6582,7 +6609,8 @@ def _bulk_grid_entry(store: QuamStore, dyn_hidden: set[str], modified: dict,
 
     return _grid_memo("bulk_grid_cache", (_active_ctx() or {}) if ctx is None else ctx, store,
                       tuple(sorted(dyn_hidden)), modified, build, cell_fn,
-                      lambda grid, _k: (grid["rows"], grid["columns"]), after_patch)
+                      lambda grid, _k: (grid["rows"], grid["columns"]),
+                      lambda grid, _k, r, c: dict(grid, rows=r, columns=c), after_patch)
 
 
 def _pair_grid_cached(store: QuamStore, modified: dict) -> tuple:
@@ -6605,7 +6633,8 @@ def _pair_grid_entry(store: QuamStore, modified: dict, ctx: dict | None = None) 
 
     return _grid_memo("pair_grid_cache", (_active_ctx() or {}) if ctx is None else ctx, store,
                       None, modified, build, cell_fn,
-                      lambda grid, _k: (grid[2], grid[0]))
+                      lambda grid, _k: (grid[2], grid[0]),
+                      lambda grid, _k, r, c: (c, grid[1], r))
 
 
 def _extra_grids_cached(store: QuamStore, modified: dict, doc: str) -> list[dict]:
@@ -6643,14 +6672,181 @@ def _extra_grids_entry(store: QuamStore, modified: dict, doc: str,
         eg = next(e for e in grid if e["key"] == key)
         return eg["rows"], eg["columns"]
 
+    def install(grid, key, r, c):
+        return [dict(e, rows=r, columns=c) if e["key"] == key else e for e in grid]
+
     return _grid_memo("extra_grid_cache", (_active_ctx() or {}) if ctx is None else ctx, store,
-                      doc, modified, build, cell_fn, views)
+                      doc, modified, build, cell_fn, views, install)
 
 
 def _bulk_doc(raw: str | None) -> str:
     """``state`` unless the page asked for ``wiring`` -- anything else is
     state, so a stale or hand-typed link can never render a blank page."""
     return "wiring" if (raw or "").strip().lower() == "wiring" else "state"
+
+
+# ── RAM P6: /bulk served from cached, compressed fragments ───────────────────
+#
+# The grid markup (tens of MB on a big chip) changes a row at a time, but the
+# page used to re-render and re-gzip ALL of it per request (4-5 s warm on a
+# 30-qubit chip). With gzip accepted, the template now renders only the
+# chrome, with a marker where each heavy piece goes; every piece -- a grid's
+# head, each ROW, the cold-map JSON a block of columns at a time, the mount
+# script's column JSON -- is rendered by the SAME macros/serializers the
+# classic render uses, compressed once (core/gzsplice) and kept until its
+# versions move. The response is one gzip member spliced from the pieces,
+# decompressing to exactly what the classic render produces (pinned).
+
+_FRAG_NONCE = uuid.uuid4().hex[:12]
+_FRAG_RE = re.compile(r"<!--smfrag:" + _FRAG_NONCE + r":([A-Za-z0-9_]+)-->")
+_FRAG_COLD_BLOCK = 48          # cold-map columns per compressed piece
+_FRAG_CHROME_MAX = 16          # chrome pieces kept (by exact text)
+
+
+class _FragMarks(dict):
+    """name -> marker. A name the template asks for that the route did not
+    prepare still gets a marker -- the splice then refuses the page (falls
+    back to the classic render) instead of silently leaving a hole."""
+
+    def __missing__(self, name):
+        return Markup("<!--smfrag:%s:%s-->" % (_FRAG_NONCE, name))
+
+
+def _frag_cache(ctx: dict) -> dict:
+    fc = ctx.get("bulk_frag_cache")
+    if fc is None:
+        fc = ctx["bulk_frag_cache"] = {"chrome": {}}
+    return fc
+
+
+def _frag_piece(fc: dict, key: tuple, ver: tuple, make) -> Any:
+    from quam_state_manager.core import gzsplice
+    hit = fc.get(key)
+    if hit is not None and hit[0] == ver:
+        return hit[1]
+    p = gzsplice.piece(str(make()))
+    fc[key] = (ver, p)
+    return p
+
+
+def _frag_grid(fc: dict, tag: str, ent: dict, sub: str, rows: list, columns: list,
+               cold_keys, notes: dict, head, row, close, extra: tuple = ()) -> list:
+    """head + one piece per row + close, each kept until its versions move."""
+    serial = ent["serial"]
+    cver = ent["col_ver"].get(sub, 0)
+    rver = ent["row_ver"].get(sub, {})
+    # the cold set depends on the client's viewport hint, and a full-page load
+    # (no hint) and an htmx navigation (hint) alternate -- so each cold set
+    # keeps its OWN pieces instead of evicting the other's
+    cv = _frag_cold_variant(fc, tag, cold_keys)
+    out = [_frag_piece(fc, (tag, cv, "head"), (serial, cver, extra), head)]
+    for i, r in enumerate(rows):
+        rid = r["id"]
+        out.append(_frag_piece(fc, (tag, cv, "row", rid),
+                               (serial, rver.get(i, 0), cver, notes.get(rid)),
+                               lambda r=r: row(r)))
+    out.append(_frag_piece(fc, (tag, "close"), (), close))
+    return out
+
+
+_FRAG_VARIANTS = 3             # cold sets kept per grid (viewport hints seen)
+
+
+def _frag_cold_variant(fc: dict, tag: str, cold_keys) -> int:
+    """A small id for this grid's cold set; the least recently used set's
+    pieces are dropped once more than _FRAG_VARIANTS are in play."""
+    reg = fc.setdefault(("variants", tag), {})
+    ck = frozenset(cold_keys or ())
+    vid = reg.pop(ck, None)
+    if vid is None:
+        vid = fc.setdefault("next_variant", [0])
+        vid[0] += 1
+        vid = vid[0]
+        if len(reg) >= _FRAG_VARIANTS:
+            old_ck = next(iter(reg))
+            old = reg.pop(old_ck)
+            for k in [k for k in fc if isinstance(k, tuple) and len(k) > 1
+                      and k[0] == tag and k[1] == old]:
+                del fc[k]
+    reg[ck] = vid                  # re-insert: most recently used last
+    return vid
+
+
+def _frag_json(fc: dict, tag: str, ver: tuple, value) -> list:
+    from quam_state_manager.web.app import _script_json_filter
+    return [_frag_piece(fc, (tag,), ver, lambda: _script_json_filter(
+        json.dumps(value, separators=(",", ":"), ensure_ascii=False)))]
+
+
+def _frag_cold(fc: dict, tag: str, ent: dict, sub: str, rows: list, columns: list,
+               cold_keys) -> list:
+    """The cold-map JSON, assembled a block of columns at a time: exactly the
+    text ``script_json(bulk_virt.cold_map(...))`` makes (json.dumps with these
+    separators is a concatenation of its parts, and the script escape is
+    per-character), with a block re-serialized only when a cell in it moved."""
+    from quam_state_manager.core import bulk_virt
+    from quam_state_manager.web.app import _script_json_filter
+
+    def js(v):
+        return str(_script_json_filter(json.dumps(v, separators=(",", ":"), ensure_ascii=False)))
+
+    serial = ent["serial"]
+    cellv = ent["cell_ver"].get(sub, {})
+    cold_set = set(cold_keys)
+    idx = [i for i, c in enumerate(columns) if c.get("key") in cold_set]
+    ids = [r.get("id") for r in rows]
+    cv = _frag_cold_variant(fc, tag, cold_keys)
+    out = [_frag_piece(fc, (tag, cv, "open"), (serial, tuple(ids)),
+                       lambda: '{"rows":' + js(ids) + ',"cols":{')]
+    for b in range(0, len(idx), _FRAG_COLD_BLOCK):
+        blk = idx[b:b + _FRAG_COLD_BLOCK]
+        ver = (serial, tuple(blk), tuple(cellv.get(i, 0) for i in blk))
+
+        def make(blk=blk, first=(b == 0)):
+            parts = [js(columns[i]["key"]) + ":" + js(bulk_virt.cold_column(rows, i)) for i in blk]
+            return ("" if first else ",") + ",".join(parts)
+        out.append(_frag_piece(fc, (tag, cv, "blk", b), ver, make))
+    out.append(_frag_piece(fc, (tag, "close"), (), lambda: "}}"))
+    return out
+
+
+def _frag_splice(fc: dict, html: str, pieces: dict) -> bytes | None:
+    """Split the chrome at the markers and splice the kept pieces in. None when
+    a marker names a piece that was not prepared, or a prepared piece is not
+    used exactly once (the caller then serves the classic render)."""
+    from quam_state_manager.core import gzsplice
+    parts = _FRAG_RE.split(html)
+    chrome = fc["chrome"]
+    seq: list = []
+    used: dict = {}
+    for k, part in enumerate(parts):
+        if k % 2:
+            if part not in pieces:
+                return None
+            used[part] = used.get(part, 0) + 1
+            seq.extend(pieces[part])
+            continue
+        if not part:
+            continue
+        p = chrome.get(part)
+        if p is None:
+            p = gzsplice.piece(part)
+            if len(chrome) >= _FRAG_CHROME_MAX:
+                chrome.pop(next(iter(chrome)))
+            chrome[part] = p
+        seq.append(p)
+    if any(used.get(n) != 1 for n in pieces):
+        return None
+    return gzsplice.assemble(seq)
+
+
+# The pair grid's partial arguments: ONE dict the template's {% with %} and
+# the fragment cache both read, so the two renders cannot drift apart.
+_PAIR_GRID_ARGS = {
+    "gid": "bulk-pair", "js": "BulkPairEdit", "label": "Qubit Pairs",
+    "sub": "gate macros, flux & coupler pulses (columns derived from this chip)",
+    "rowattr": "data-pair", "rowlabel": "pair", "hist_grid": "pair",
+}
 
 
 @bp.route("/bulk")
@@ -6678,15 +6874,20 @@ def bulk_edit():
     # discovered like every other one, so the switch is which set of grids
     # renders, not a second page.
     doc = _bulk_doc(request.args.get("doc"))
+    q_ent = p_ent = None
     if doc == "wiring":
         columns, rows, column_groups = [], [], []
         dyn_cols, dyn_truncated = [], False
         qubit_meta = []
     else:
-        g = _bulk_grid_cached(store, _dyn_hidden, modified)
+        q_ent = _bulk_grid_entry(store, _dyn_hidden, modified)
+        g = q_ent["grid"]
         columns, rows, column_groups = g["columns"], g["rows"], g["column_groups"]
         dyn_cols, dyn_truncated, qubit_meta = g["dyn_cols"], g["dyn_truncated"], g["qubit_meta"]
     merged = store.merged
+    # RAM P6: with gzip accepted the heavy pieces come from the fragment cache
+    # (see _frag_splice); the cold maps are then never built as one dict here
+    use_frag = "gzip" in request.headers.get("Accept-Encoding", "")
 
     # docs/141 4n: columns past the client's look-ahead window (the same
     # layout-free estimate bulk-edit.js makes, conservative) render as EMPTY
@@ -6694,13 +6895,17 @@ def bulk_edit():
     # The vw hint is screen.availWidth from the htmx configRequest hook; a
     # full-page load has none and gets the wide default (more hot columns).
     cold_keys = bulk_virt.plan(columns, len(rows), request.args.get("vw"))
-    cold_map = bulk_virt.cold_map(columns, rows, cold_keys) if cold_keys else None
+    cold_map = ((True if cold_keys else None) if use_frag else
+                (bulk_virt.cold_map(columns, rows, cold_keys) if cold_keys else None))
 
     # Pair grid (stacked below the qubit table): columns are DERIVED from the chip's
     # real pair leaves — lab-flexible, no hardcoded gate/leaf names. Same cell
     # pipeline + commit path. Empty for chips with no pairs / no editable pair leaves.
-    pair_columns, pair_groups, pair_rows = (
-        ([], [], []) if doc == "wiring" else _pair_grid_cached(store, modified))
+    if doc == "wiring":
+        pair_columns, pair_groups, pair_rows = [], [], []
+    else:
+        p_ent = _pair_grid_entry(store, modified)
+        pair_columns, pair_groups, pair_rows = p_ent["grid"]
     # docs/141 4ad: and it is virtualized the same way. On the PJ 20Q chip this
     # table was 1.49 MB of a 2.81 MB document — 53%, the largest single block
     # left after §4n — while the qubit grid beside it had been slimmed to a
@@ -6708,18 +6913,21 @@ def bulk_edit():
     # change, because it takes columns + rows and the pair grid's rows already
     # had the shape it reads.
     pair_cold_keys = bulk_virt.plan(pair_columns, len(pair_rows), request.args.get("vw"))
-    pair_cold_map = (bulk_virt.cold_map(pair_columns, pair_rows, pair_cold_keys)
-                     if pair_cold_keys else None)
+    pair_cold_map = ((True if pair_cold_keys else None) if use_frag else
+                     (bulk_virt.cold_map(pair_columns, pair_rows, pair_cold_keys)
+                      if pair_cold_keys else None))
 
     # docs: entity_grids -- every collection this chip HAS, not the two this
     # code used to know about. Each is planned for cold columns by the same
     # planner; a small collection trips none of its gates and renders whole.
     extra_grids = []
-    for eg in _extra_grids_cached(store, modified, doc):
+    x_ent = _extra_grids_entry(store, modified, doc)
+    for eg in x_ent["grid"]:
         ck = bulk_virt.plan(eg["columns"], len(eg["rows"]), request.args.get("vw"))
         extra_grids.append(dict(
-            eg, cold_keys=ck,
-            cold_map=(bulk_virt.cold_map(eg["columns"], eg["rows"], ck) if ck else None)))
+            eg, cold_keys=ck, args=_extra_grid_args(eg, doc),
+            cold_map=((True if ck else None) if use_frag else
+                      (bulk_virt.cold_map(eg["columns"], eg["rows"], ck) if ck else None))))
 
     band_meta = {"bands": {str(b): list(r) for b, r in mw_fem.BANDS.items()}}
     # Client model for the Properties menu + search hint: key/label/section/
@@ -6728,8 +6936,17 @@ def bulk_edit():
     # docs/120 item 4 — validated against BOTH grids, because they share the
     # one #bulk-search box, so a chip must not go dead just because its columns
     # live in the pair table.
-    filter_chips = _bulk_filter_chips(
-        columns, pair_columns + [c for eg in extra_grids for c in eg["columns"]])
+    # the chips read column identity only (label/key/section/search), which a
+    # grid patch never moves: kept per grid build (81 ms per request on 30Q)
+    _chips_ver = (q_ent and q_ent["serial"], p_ent and p_ent["serial"], x_ent["serial"], doc)
+    _cc = (_active_ctx() or {}).get("bulk_chips_memo")
+    if _cc and _cc[0] == _chips_ver:
+        filter_chips = _cc[1]
+    else:
+        filter_chips = _bulk_filter_chips(
+            columns, pair_columns + [c for eg in extra_grids for c in eg["columns"]])
+        if _active_ctx() is not None:
+            _active_ctx()["bulk_chips_memo"] = (_chips_ver, filter_chips)
     template = "_bulkedit.html" if _is_htmx() else "bulkedit.html"
     # docs/167: one dict per grid, built once. Row heads are ~20-100 elements
     # and grid-virt.js never selects them (every selector there is
@@ -6737,39 +6954,126 @@ def bulk_edit():
     # pass and no per-cell work.
     _nm = _note_marks()
     note_rows, pair_note_rows = _nm["qubits"], _nm["pairs"]
-    html = render_template(template, **_ctx(page="bulk", columns=columns, rows=rows,
-                                            column_groups=column_groups, band_meta=band_meta,
-                                            dyn_cols=dyn_cols, qubit_meta=qubit_meta,
-                                            pair_columns=pair_columns, pair_groups=pair_groups,
-                                            pair_rows=pair_rows, filter_chips=filter_chips,
-                                            dyn_truncated=dyn_truncated,
-                                            active_chip_key=_bulk_chip_gate_token() or "",
-                                            # QA liveedit-r2-15: the hidden set this
-                                            # render used, for /bulk/cells to repeat
-                                            bulk_dynhide=sorted(_dyn_hidden),
-                                            cold_keys=cold_keys, cold_map=cold_map,
-                                            pair_cold_keys=pair_cold_keys,
-                                            pair_cold_map=pair_cold_map,
-                                            note_rows=note_rows,
-                                            pair_note_rows=pair_note_rows,
-                                            extra_grids=extra_grids, bulk_doc=doc,
-                                            **_notes_state()))
-    # docs/103: this is the app's largest response by an order of magnitude
-    # (measured 10.0 MB / 6.5 MB HTML on real 21Q/10Q chips — docs/85 ships
-    # every cell deliberately). Repetitive table markup gzips ~25x, so
-    # compress when the client advertises it — same stdlib pattern as
-    # /bulk/all-values, Content-Length pinned to the actual bytes.
-    body = html.encode("utf-8")
-    accepts_gzip = "gzip" in request.headers.get("Accept-Encoding", "")
-    if accepts_gzip:
-        body = gzip.compress(body, compresslevel=5)
+    ctxv = _ctx(page="bulk", columns=columns, rows=rows,
+                column_groups=column_groups, band_meta=band_meta,
+                dyn_cols=dyn_cols, qubit_meta=qubit_meta,
+                pair_columns=pair_columns, pair_groups=pair_groups,
+                pair_rows=pair_rows, filter_chips=filter_chips,
+                dyn_truncated=dyn_truncated,
+                active_chip_key=_bulk_chip_gate_token() or "",
+                # QA liveedit-r2-15: the hidden set this
+                # render used, for /bulk/cells to repeat
+                bulk_dynhide=sorted(_dyn_hidden),
+                cold_keys=cold_keys, cold_map=cold_map,
+                pair_cold_keys=pair_cold_keys,
+                pair_cold_map=pair_cold_map,
+                note_rows=note_rows,
+                pair_note_rows=pair_note_rows,
+                extra_grids=extra_grids, bulk_doc=doc,
+                pga=_PAIR_GRID_ARGS, frag=None,
+                **_notes_state())
+    body = _bulk_frag_body(template, ctxv, q_ent, p_ent, x_ent) if use_frag else None
+    if body is None:
+        if use_frag and cold_keys:
+            ctxv["cold_map"] = bulk_virt.cold_map(columns, rows, cold_keys)
+        if use_frag and pair_cold_keys:
+            ctxv["pair_cold_map"] = bulk_virt.cold_map(pair_columns, pair_rows, pair_cold_keys)
+        if use_frag:
+            for eg in extra_grids:
+                if eg["cold_keys"]:
+                    eg["cold_map"] = bulk_virt.cold_map(eg["columns"], eg["rows"], eg["cold_keys"])
+        # docs/103: this is the app's largest response by an order of magnitude
+        # (measured 10.0 MB / 6.5 MB HTML on real 21Q/10Q chips — docs/85 ships
+        # every cell deliberately). Repetitive table markup gzips ~25x, so
+        # compress when the client advertises it — same stdlib pattern as
+        # /bulk/all-values, Content-Length pinned to the actual bytes.
+        body = render_template(template, **ctxv).encode("utf-8")
+        if use_frag:
+            body = gzip.compress(body, compresslevel=5)
     resp = current_app.response_class(body)
     resp.headers["Content-Type"] = "text/html; charset=utf-8"
     resp.headers["Content-Length"] = str(len(body))
-    if accepts_gzip:
+    if use_frag:
         resp.headers["Content-Encoding"] = "gzip"
     resp.headers["Vary"] = "Accept-Encoding"
     return resp
+
+
+def _extra_grid_args(eg: dict, doc: str) -> dict:
+    """An extra grid's partial arguments -- ONE dict the template's {% with %}
+    and the fragment cache both read."""
+    return {"gid": "bulk-" + eg["key"], "js": "EntityGrids['" + eg["key"] + "']",
+            "label": eg["label"],
+            "sub": ("port wiring — the pointer is the value" if doc == "wiring"
+                    else "columns derived from this chip"),
+            "rowattr": "data-entity", "rowlabel": "id", "hist_grid": None}
+
+
+def _bulk_frag_body(template: str, ctxv: dict, q_ent: dict | None,
+                    p_ent: dict | None, x_ent: dict | None = None) -> bytes | None:
+    """The /bulk page as spliced gzip (see the _FRAG_ note), or ``None`` to
+    fall back to the classic render."""
+    ctx = _active_ctx()
+    if ctx is None:
+        return None
+    gm = current_app.jinja_env.get_template("_bulk_grid_macros.html").module
+    fc = _frag_cache(ctx)
+    pieces: dict[str, list] = {}
+    columns, rows = ctxv["columns"], ctxv["rows"]
+    cold_keys, note_rows = ctxv["cold_keys"] or set(), ctxv["note_rows"] or {}
+    with _GRID_LOCKS["bulk_grid_cache"], _GRID_LOCKS["pair_grid_cache"]:
+        if q_ent is not None:
+            qv = (q_ent["serial"], q_ent["col_ver"].get("q", 0))
+            pieces["qcols"] = _frag_json(fc, "qcols", qv, columns)
+            pieces["dyncols"] = _frag_json(fc, "dyncols", qv[:1], ctxv["dyn_cols"] or [])
+            if rows:
+                pieces["qgrid"] = _frag_grid(
+                    fc, "q", q_ent, "q", rows, columns, cold_keys, note_rows,
+                    lambda: gm.qtable_open(columns, ctxv["column_groups"]),
+                    lambda r: gm.qrow(r, columns, cold_keys, note_rows),
+                    gm.qtable_close)
+            if ctxv["cold_map"]:
+                pieces["qcold"] = _frag_cold(fc, "qc", q_ent, "q", rows, columns, cold_keys)
+        else:
+            pieces["qcols"] = _frag_json(fc, "qcols", ("none",), columns)
+            pieces["dyncols"] = _frag_json(fc, "dyncols", ("none",), ctxv["dyn_cols"] or [])
+        prow = ctxv["pair_rows"]
+        if p_ent is not None and prow:
+            pc, pg = ctxv["pair_columns"], ctxv["pair_groups"]
+            pck = ctxv["pair_cold_keys"] or []
+            pnotes = ctxv["pair_note_rows"] or {}
+            a = _PAIR_GRID_ARGS
+            origin = ctxv.get("chip_origin")
+            pieces["pcols"] = _frag_json(fc, "pcols",
+                                         (p_ent["serial"], p_ent["col_ver"].get("p", 0)), pc)
+            pieces["pgrid"] = _frag_grid(
+                fc, "p", p_ent, "p", prow, pc, pck, pnotes,
+                lambda: gm.etable_open(a["gid"], a["js"], a["label"], a["sub"], a["rowlabel"],
+                                       a["hist_grid"], pc, pg, origin),
+                lambda r: gm.erow(r, a["js"], a["rowattr"], pc, pck, pnotes),
+                gm.etable_close, extra=(origin,))
+            if ctxv["pair_cold_map"]:
+                pieces["pcold"] = _frag_cold(fc, "pc", p_ent, "p", prow, pc, pck)
+    if x_ent is not None:
+        with _GRID_LOCKS["extra_grid_cache"]:
+            origin = ctxv.get("chip_origin")
+            for n, eg in enumerate(ctxv["extra_grids"] or []):
+                a, k = eg["args"], eg["key"]
+                ck = eg["cold_keys"] or []
+                tag = "x:" + ctxv["bulk_doc"] + ":" + k
+                pieces["x%d" % n] = _frag_grid(
+                    fc, tag, x_ent, k, eg["rows"], eg["columns"], ck, {},
+                    lambda eg=eg, a=a: gm.etable_open(a["gid"], a["js"], a["label"], a["sub"],
+                                                      a["rowlabel"], a["hist_grid"], eg["columns"],
+                                                      eg["column_groups"], origin),
+                    lambda r, eg=eg, a=a, ck=ck: gm.erow(r, a["js"], a["rowattr"], eg["columns"], ck, {}),
+                    gm.etable_close, extra=(origin, a["label"], a["sub"]))
+                if eg["cold_map"]:
+                    pieces["xc%d" % n] = _frag_cold(fc, "xc:" + tag, x_ent, k, eg["rows"],
+                                                    eg["columns"], ck)
+    marks = _FragMarks({n: Markup("<!--smfrag:%s:%s-->" % (_FRAG_NONCE, n)) for n in pieces})
+    html = render_template(template, **dict(ctxv, frag=marks))
+    return _frag_splice(fc, html, pieces)
 
 
 @bp.route("/bulk/cells")

@@ -542,3 +542,60 @@ def test_an_fsp_write_reannotates_the_amplitude_cells_it_feeds():
     amp = [c for p, c in cells.items() if p.endswith("x180_DragCosine.amplitude")]
     assert amp and amp[0]["phys"]["fsp"] == 4.0
     assert _canon(ent["grid"]) == _canon(R._qubit_bulk_grid(st, set(), R._modified_map_of(st)))
+
+
+# ---------------------------------------------------------------------------
+# RAM P6: /bulk spliced from cached compressed fragments == the classic render
+# ---------------------------------------------------------------------------
+
+def _bulk_pair(c, q=""):
+    import gzip as _gz
+    fr = c.get("/bulk" + q, headers={"Accept-Encoding": "gzip"})
+    assert fr.headers.get("Content-Encoding") == "gzip"
+    cl = c.get("/bulk" + q)
+    assert cl.headers.get("Content-Encoding") is None
+    return _gz.decompress(fr.data).decode("utf-8"), cl.get_data(as_text=True)
+
+
+def test_the_spliced_page_is_byte_identical_to_the_rendered_one(tmp_path, monkeypatch):
+    """Warm, after every kind of edit, with and without a viewport hint (a
+    different cold set), after an undo and a structural write: the gzip page
+    assembled from cached pieces decompresses to EXACTLY the page the
+    template renders in one pass. The grid is wide enough to go cold (the
+    fragment cache's cold-map blocks and per-variant pieces run)."""
+    from quam_state_manager.core import bulk_virt
+    from quam_state_manager.web.app import create_app
+    monkeypatch.setattr(bulk_virt, "MIN_CELLS", 10)
+    monkeypatch.setattr(bulk_virt, "MIN_COLD", 1)
+    s, w = _ram_chip.build(6, 5)
+    chip = tmp_path / "chip"
+    chip.mkdir()
+    (chip / "state.json").write_text(json.dumps(s), encoding="utf-8")
+    (chip / "wiring.json").write_text(json.dumps(w), encoding="utf-8")
+    app = create_app(testing=True, instance_path=str(tmp_path / "inst"))
+    c = app.test_client()
+    assert c.post("/load", data={"folder": str(chip)}).status_code in (200, 302)
+    port = w["wiring"]["qubits"]["q2"]["xy"]["opx_output"][2:].replace("/", ".")
+    steps = [None, ("qubits.q1.chi", "1.5e6"), ("qubits.q3.T1", "3e-5"),
+             (port + ".full_scale_power_dbm", "4"), (port + ".band", "3"),
+             ("qubits.q2.grid_location", "4,4"), ("qubit_pairs.q1-2.detuning", "7e6"),
+             "undo", ("qubits.q1.chi", "123456789012345.6"),     # a column width moves
+             "note", ("qubits.q1.extras.brand_new", "5")]
+    seen = 0
+    for step in steps:
+        if step == "undo":
+            assert c.post("/undo").status_code in (200, 204, 409)
+        elif step == "note":                                    # a row head's note mark
+            r = c.post("/note", data={"subject": "qubits.q3", "text": "check T1"})
+            assert r.status_code == 200, r.get_data(as_text=True)[:200]
+        elif step is not None:
+            data = {"dot_path": step[0], "value": step[1]}
+            if step[0].endswith("brand_new"):
+                data["create"] = "1"
+            c.post("/field/edit", data=data)
+        for q in ("", "?vw=700", ""):
+            fr, cl = _bulk_pair(c, q)
+            assert fr == cl, f"spliced page differs after {step!r} {q}"
+            seen += 1
+        assert "bulk-cold-map" in cl
+    assert seen == 3 * len(steps)
