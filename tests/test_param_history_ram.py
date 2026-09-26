@@ -351,3 +351,44 @@ def test_dir_bytes_equals_the_rglob_sum(tmp_path):
     (tmp_path / "emptydir").mkdir()
     ref = sum(p.stat().st_size for p in tmp_path.rglob("*") if p.is_file())
     assert H._dir_bytes(tmp_path) == ref
+
+
+def test_natural_first_equals_the_full_natural_sort():
+    from quam_state_manager.core.loader import natural_key
+    rng = random.Random(9)
+    segs = ["qubits", "qubit_pairs", "Q", "q", "xy", "z", "operations", "x180", "x90",
+            "amplitude", "T1", "f_01", "weights_imag", "extras", "a", "", "w"]
+    fast = 0
+    for trial in range(60):
+        rows = []
+        seen = set()
+        for _ in range(rng.randrange(1, 900)):
+            parts = []
+            for _d in range(rng.randrange(1, 6)):
+                s = rng.choice(segs)
+                if rng.random() < 0.6:
+                    s = s + str(rng.randrange(0, 1200 if rng.random() < 0.2 else 12))
+                parts.append(s)
+            p = ".".join(parts)
+            if p in seen:
+                continue
+            seen.add(p)
+            rows.append((p, rng.random(), len(rows)))
+        n = rng.choice([1, 2, 5, 25, 25, 2000])
+        want = sorted(rows, key=lambda r: natural_key(r[0]))[:n]
+        assert LI.natural_first(list(rows), n) == want, trial
+        fast += len(rows) > 4 * n
+    assert fast >= 20, "the coarse-key branch was barely exercised"
+
+
+def test_changes_filter_input_survives_the_swap(env):
+    """The debounced keyup swaps the whole root: the box must be preserved
+    by id (focus, caret and in-flight keys; checked in real Chrome by the
+    w7 bench's ds group) and Clear must not rely on overwriting it."""
+    _snap(env, _state())
+    html = _feed(env, "?prefix=qubits")
+    import re as _re
+    inp = _re.search(r'<input[^>]*name="prefix"[^>]*>', html).group(0)
+    assert 'id="ph-changes-prefix"' in inp and 'hx-preserve="true"' in inp
+    clear = _re.search(r'<[^>]*>Clear</', html).group(0)
+    assert "hx-get" not in clear and 'href="/param-history/changes"' in clear

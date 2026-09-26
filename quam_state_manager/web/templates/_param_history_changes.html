@@ -27,14 +27,20 @@
         hx-target="#param-history-root" hx-swap="outerHTML"
         hx-trigger="submit, keyup changed delay:400ms from:find input[name=prefix]">
     <span class="tree-search-icon">&#128269;</span>
-    <input type="text" name="prefix" class="tree-search" value="{{ prefix }}"
+    {#- RAM P8 (typing): the whole root swaps on every debounced keyup. With
+        no id the focused input was replaced -- focus fell to <body> and every
+        key after the first pause went nowhere (measured in real Chrome) --
+        and a key typed while a request was in flight was overwritten by the
+        server's echo of the older value. hx-preserve keeps THIS element (its
+        focus, caret and the value being typed) across those swaps; the one
+        control that changes the filter from outside the box (Clear) is a
+        plain navigation, so nothing ever needs to overwrite it. #}
+    <input type="text" id="ph-changes-prefix" hx-preserve="true" name="prefix" class="tree-search" value="{{ prefix }}"
            placeholder="{{ search_hint() }}" title="{{ search_title() }} Matches the parameter path."
            autocomplete="off" list="ph-param-paths">
     <datalist id="ph-param-paths"></datalist>
     {% if prefix %}
-    <button type="button" class="btn-sm outline"
-            hx-get="/param-history/changes" hx-target="#param-history-root"
-            hx-swap="outerHTML">Clear</button>
+    <a class="btn-sm outline" role="button" href="/param-history/changes">Clear</a>
     {% endif %}
     <span class="muted ph-changes-stat">
       {{ '{:,}'.format(stats.rows) }} recorded changes over

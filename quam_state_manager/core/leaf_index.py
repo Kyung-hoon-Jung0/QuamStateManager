@@ -71,6 +71,7 @@ Not indexed, deliberately: booleans (``True`` is not a parameter) and strings.
 """
 from __future__ import annotations
 
+import heapq
 import logging
 import re
 import sqlite3
@@ -588,6 +589,40 @@ def stats(conn: sqlite3.Connection) -> dict:
                 "truncated": False, "version": None}
 
 
+_FIRST_RUN = re.compile(r"(\d+)")
+
+
+def _coarse_natural_key(path: str) -> tuple:
+    """The first two elements of ``natural_key(path)[0]`` -- the text before
+    the first digit run and that run -- computed the same way (same split,
+    same ``isdigit``/``lower`` per piece). Being a PREFIX of the natural
+    key's parts tuple, it orders paths as a coarsening of natural order."""
+    pieces = _FIRST_RUN.split(path, maxsplit=1)
+    t0 = pieces[0]
+    k0 = int(t0) if t0.isdigit() else t0.lower()
+    if len(pieces) == 1:
+        return (k0,)
+    return (k0, int(pieces[1]))
+
+
+def natural_first(rows: list, n: int) -> list:
+    """``sorted(rows, key=natural_key(row[0]))[:n]`` without computing the
+    full natural key of every row (RAM P8: a regenerate snapshot holds ~29k
+    changed rows on a 5-qubit chip and more on a big one, and every Changes
+    page/keystroke sorted all of them to show 25). Exact: the n smallest
+    coarse keys fix a threshold; a row whose coarse key is ABOVE it compares
+    greater than n rows already, so it cannot be among the first n."""
+    if n <= 0:
+        return []
+    if len(rows) <= 4 * n:
+        return sorted(rows, key=lambda r: natural_key(r[0]))[:n]
+    coarse = [_coarse_natural_key(r[0]) for r in rows]
+    thr = heapq.nsmallest(n, coarse)[-1]
+    cand = [r for r, k in zip(rows, coarse) if k <= thr]
+    cand.sort(key=lambda r: natural_key(r[0]))
+    return cand[:n]
+
+
 def changes_by_snapshot(conn: sqlite3.Connection, *, limit_snaps: int = 20,
                         rows_per_snap: int = 25, prefix: str | None = None,
                         before_ts: str | None = None,
@@ -656,8 +691,7 @@ def changes_by_snapshot(conn: sqlite3.Connection, *, limit_snaps: int = 20,
             + (" AND p.path LIKE ? ESCAPE '\\'" if prefix else ""),
             ([sid] + ([prefix.replace("%", r"\%").replace("_", r"\_") + "%"]
                       if prefix else []))).fetchall()
-        rows.sort(key=lambda r: natural_key(r[0]))
-        rows = rows[:int(rows_per_snap)]
+        rows = natural_first(rows, int(rows_per_snap))
         items = []
         for path, value, pid in rows:
             prev = conn.execute(
