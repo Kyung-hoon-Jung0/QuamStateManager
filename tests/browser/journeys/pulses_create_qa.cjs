@@ -21,11 +21,15 @@ const DIR = process.env.SHOT_DIR || '.';
 const W = +(process.env.W || 1600);
 const BASE = `http://127.0.0.1:${PORT}`;
 fs.mkdirSync(DIR, { recursive: true });
-const out = []; let bad = 0; const defects = [];
+const out = []; let bad = 0; const defects = []; let expectedRefusal = false; let undoRefusedOnce = false;
 function check(c, m) { const l = (c ? 'ok   ' : 'FAIL ') + m; out.push(l); console.log(l); if (!c) bad++; return c; }
 const J = JSON.stringify;
 
+// SLOW=k stretches every wait k-fold (the big30x rig: a field commit there is
+// seconds -- measured and reported, never hidden by a short timeout)
+const SLOW = +(process.env.SLOW || 1);
 async function waitFor(p, expr, ms = 60000) {
+  ms *= SLOW;
   const t0 = Date.now();
   while (Date.now() - t0 < ms) {
     const v = await p.ev(expr);
@@ -38,11 +42,19 @@ async function center(p, sel) {
   return p.ev(`(function(){var e=document.querySelector(${J(sel)}); if(!e||e.offsetParent===null) return null; e.scrollIntoView({block:'center'}); var b=e.getBoundingClientRect(); return [b.left+b.width/2,b.top+b.height/2];})()`);
 }
 async function clickSel(p, sel) {
-  const r = await center(p, sel); if (!r) return false;
-  await sleep(120);
+  // wait for the target to STOP moving (a commit re-renders the inspector,
+  // a plot redraw or the env strip's poll shifts it) -- a user aims at a
+  // still button; the journey must too
+  let r = await center(p, sel); if (!r) return false;
+  for (let i = 0; i < 20; i++) {
+    await sleep(200);
+    const r2 = await center(p, sel); if (!r2) return false;
+    if (Math.abs(r2[0] - r[0]) < 1 && Math.abs(r2[1] - r[1]) < 1) { r = r2; break; }
+    r = r2;
+  }
   // hit-test: the element (or a child) must be what the mouse lands on
-  const hit = await p.ev(`(function(){var e=document.querySelector(${J(sel)}); var h=document.elementFromPoint(${r[0]},${r[1]}); return !!(h&&(h===e||e.contains(h)||h.contains(e)));})()`);
-  if (!hit) console.log('  (hit-test miss for ' + sel + ')');
+  const hit = await p.ev(`(function(){var e=document.querySelector(${J(sel)}); var h=document.elementFromPoint(${r[0]},${r[1]}); return (h&&(h===e||e.contains(h)||h.contains(e))) ? true : ((h? h.tagName+'.'+String(h.className).slice(0,60)+' in #'+((h.closest('[id]')||{}).id||'') : 'nothing') + ' at ' + ${Math.round(r[0])} + ',' + ${Math.round(r[1])});})()`);
+  if (hit !== true) console.log('  (hit-test miss for ' + sel + ': ' + hit + ')');
   await p.click(r[0], r[1]);
   return hit;
 }
@@ -240,6 +252,7 @@ async function submitCreate(p) {
   await clickSel(p, '#pulse-create-root .pulse-create-actions button[type=submit]');
   const toast = await waitFor(p, `(function(){var t=[].slice.call(document.querySelectorAll('.toast')).map(function(x){return x.innerText}).join(' | '); return /single-output/.test(t)? t.replace(/\\s+/g,' ').slice(0,200) : ''})()`, 20000);
   check(!!toast, 'an axis angle on z is refused, visibly: ' + toast);
+  expectedRefusal = true;   // its 400 in the console is the refusal itself
   await p.shot(`${DIR}/22_iq_on_z_refused_${W}.png`);
 
   // ---- copy an existing pulse onto another channel ---------------------------------
@@ -337,7 +350,9 @@ async function submitCreate(p) {
     await p.shot(`${DIR}/40_edited_${W}.png`);
 
     // duplicate -> rename -> delete, then Ctrl+Z the delete
+    await sleep(1500);   // let the last commit's re-render and plot settle
     await clickSel(p, '#pulse-detail-root .pulse-actions button[onclick*=startDuplicate]');
+    check(!!(await waitFor(p, `(document.querySelector('.pulse-duplicate-form')||{}).hidden===false?1:0`, 5000)), 'the Duplicate button opens its form');
     await typeInto(p, '.pulse-duplicate-form input[name=new_name]', tag + '_dup');
     await clickSel(p, '.pulse-duplicate-form button[type=submit]');
     const dupPath = E0.path.replace(/[^.]+$/, tag + '_dup');
@@ -359,7 +374,20 @@ async function submitCreate(p) {
     await p.ev(`(document.activeElement&&document.activeElement.blur&&document.activeElement.blur(), 1)`);
     await p.send('Input.dispatchKeyEvent', { type: 'keyDown', key: 'z', code: 'KeyZ', windowsVirtualKeyCode: 90, modifiers: 2 });
     await p.send('Input.dispatchKeyEvent', { type: 'keyUp', key: 'z', code: 'KeyZ', windowsVirtualKeyCode: 90, modifiers: 2 });
-    const back = await waitFor(p, `document.querySelector('tr[data-pulse-path="${renPath}"]')?1:0`, 30000);
+    let back = await waitFor(p, `document.querySelector('tr[data-pulse-path="${renPath}"]')?1:0`, 15000);
+    if (!back) {
+      // docs/190 F06: a press whose tray was a beat behind is refused ONCE
+      // ("press Ctrl+Z again"); a user presses again -- so does the journey,
+      // and the refusal is recorded, not hidden
+      const t = await p.ev(`[].slice.call(document.querySelectorAll('.toast')).map(function(x){return x.innerText}).join(' | ').replace(/\s+/g,' ').slice(0,200)`);
+      console.log('  first Ctrl+Z refused: ' + t);
+      defects.push({ what: 'first Ctrl+Z after delete refused (docs/190 F06 gate)', got: t });
+      undoRefusedOnce = true;
+      await p.ev(`(document.activeElement&&document.activeElement.blur&&document.activeElement.blur(), 1)`);
+      await p.send('Input.dispatchKeyEvent', { type: 'keyDown', key: 'z', code: 'KeyZ', windowsVirtualKeyCode: 90, modifiers: 2 });
+      await p.send('Input.dispatchKeyEvent', { type: 'keyUp', key: 'z', code: 'KeyZ', windowsVirtualKeyCode: 90, modifiers: 2 });
+      back = await waitFor(p, `document.querySelector('tr[data-pulse-path="${renPath}"]')?1:0`, 30000);
+    }
     const backSrv = await waitFor(p, `fetch('/api/pulse/paths').then(function(r){return r.json()}).then(function(d){return d.options.some(function(o){return o[0]===${J(renPath)}})?1:0})`, 30000);
     check(!!back && !!backSrv, 'Ctrl+Z brings the deleted pulse back, row AND server (' + renPath + ')');
     await p.shot(`${DIR}/42_undo_${W}.png`);
@@ -397,7 +425,8 @@ async function submitCreate(p) {
   console.log('  created rows visible after reload: ' + createdRows);
   await p.shot(`${DIR}/60_reload_${W}.png`);
   clearInterval(dlgTimer);
-  const errs = allErr();
+  const errs = allErr().filter(e => !(expectedRefusal && /status of 400|Error Code 400 from \/api\/pulse\/create/.test(e))
+    && !(undoRefusedOnce && /status of 409|Error Code 409 from \/undo/.test(e)));
   check(errs.length === 0, 'console clean (' + errs.join(' | ').slice(0, 400) + ')');
   fs.writeFileSync(`${DIR}/expect.json`, J({ expect, defects, dialogs, toolbar, out }, null, 1));
   await p.close();
