@@ -169,6 +169,49 @@ class TestDiscovery:
         finally:
             pulse_catalog.apply_chip_classes(None)
 
+    @pytest.mark.parametrize("rec", [
+        {"importable": False, "canonical": None, "bases": [],
+         "error": "ModuleNotFoundError"},
+        {"importable": True, "bases": []},
+        {"importable": False, "bases": [QC + "Pulse"]},
+    ])
+    def test_unknown_bases_never_veto(self, rec):
+        # An unimportable class is probed as bases: [] = UNKNOWN. It must not
+        # decide "not a pulse" (verifier P2: a hand-added pulse of a class that
+        # does not import dropped out of the list after the next edit).
+        m = _state()
+        cls = "labmissing.pulses.HandFluxPulse"
+        m["qubit_pairs"]["q1-2"]["macros"]["cz_custom"]["hand"] = {
+            "__class__": cls, "length": 40, "amplitude": 0.1}
+        path = "qubit_pairs.q1-2.macros.cz_custom.hand"
+        pulse_catalog.apply_chip_classes({cls: rec})
+        try:
+            assert path in {r["path"] for r in pulse_index.list_pulses(m)}
+        finally:
+            pulse_catalog.apply_chip_classes(None)
+
+    def test_probe_landing_refreshes_cached_rows(self):
+        # PulseIndex rows must re-derive when a probe installs new class info,
+        # not only on the next mutation (validate-on-read token).
+        class _S:
+            import threading as _t
+            _lock = _t.RLock()
+            mutation_seq = 7
+        s = _S()
+        s.merged = _state()
+        s.merged["qubits"]["q1"]["helper"] = {
+            "__class__": "lab_pkg.x.FakePulse", "length": 1}
+        idx = pulse_index.PulseIndex(s)
+        assert idx.has_path("qubits.q1.helper")
+        pulse_catalog.apply_chip_classes({"lab_pkg.x.FakePulse": {
+            "importable": True,
+            "bases": ["quam.core.quam_classes.QuamComponent"]}})
+        try:
+            assert not idx.has_path("qubits.q1.helper")
+        finally:
+            pulse_catalog.apply_chip_classes(None)
+        assert idx.has_path("qubits.q1.helper")
+
     def test_row_metadata(self):
         by = {r["path"]: r for r in pulse_index.list_pulses(_state())}
         r = by[f"{XY2}.snz_lab"]

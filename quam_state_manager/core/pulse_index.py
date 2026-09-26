@@ -644,7 +644,7 @@ class PulseIndex:
         self.store = store
         self._rows: list[dict] | None = None
         self._reverse: dict[str, list[str]] | None = None
-        self._seq: int = -1
+        self._seq = None
         # Cache of rendered sparkline SVGs keyed by op path, valid only at one
         # mutation_seq (a mutation can change any pulse's shape). Lets repeated
         # search / pagination over an unchanged chip pay zero re-synth.
@@ -655,7 +655,7 @@ class PulseIndex:
     def invalidate(self) -> None:
         self._rows = None
         self._reverse = None
-        self._seq = -1
+        self._seq = None
 
     def sparkline(self, op_path: str, render):
         """Memoized sparkline SVG for *op_path*. *render* is a 0-arg callable
@@ -669,15 +669,23 @@ class PulseIndex:
             self._spark[op_path] = render()
         return self._spark[op_path]
 
+    def _stamp(self):
+        # mutation_seq AND the installed class knowledge: shape discovery
+        # (pulse_catalog.is_pulse_class) reads the probed chip-class
+        # inventory, so a probe landing must re-derive rows on next read.
+        from quam_state_manager.core import pulse_catalog
+        return (getattr(self.store, "mutation_seq", None),
+                pulse_catalog.class_info_generation())
+
     def _fresh(self) -> bool:
-        return self._seq == getattr(self.store, "mutation_seq", None)
+        return self._seq == self._stamp()
 
     def rows(self) -> list[dict]:
         with self.store._lock:
             if self._rows is None or not self._fresh():
                 self._rows = list_pulses(self.store.merged)
                 self._reverse = None  # rebuilt lazily at the same seq
-                self._seq = self.store.mutation_seq
+                self._seq = self._stamp()
             return self._rows
 
     def row(self, path: str) -> dict | None:
@@ -698,7 +706,7 @@ class PulseIndex:
                 self._reverse = build_reverse_pointer_index(self.store.merged)
                 if not self._fresh():
                     self._rows = None
-                self._seq = self.store.mutation_seq
+                self._seq = self._stamp()
             return self._reverse
 
     def used_by(self, op_path: str) -> list[str]:

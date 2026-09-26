@@ -522,12 +522,25 @@ _LEAF_ALIASES: dict[str, str] = {
 # per call, so a concurrent swap can never produce a torn read.
 
 _ENV_OVERLAY: dict | None = None
+# Bumped whenever the installed class knowledge (env roster or the chip's
+# probed class inventory) is swapped for a different object. Derived caches
+# (PulseIndex rows) fold it into their freshness stamp, so a probe landing
+# re-derives rows on the next read -- validate-on-read, never a timer.
+_CLASS_INFO_GEN: int = 0
+
+
+def class_info_generation() -> int:
+    """Token that changes whenever installed class knowledge changes."""
+    return _CLASS_INFO_GEN
 
 
 def apply_env_overlay(roster: dict | None) -> None:
     """Install the selected env's pulse roster; ``None`` (or empty) clears."""
-    global _ENV_OVERLAY, _ENV_SPECS_MEMO
-    _ENV_OVERLAY = roster if roster else None
+    global _ENV_OVERLAY, _ENV_SPECS_MEMO, _CLASS_INFO_GEN
+    new = roster if roster else None
+    if new is not _ENV_OVERLAY:
+        _CLASS_INFO_GEN += 1
+    _ENV_OVERLAY = new
     # Drop the synthesized-spec memo: it keys on object identity, and a
     # freed dict's id can be reused by a NEW roster after GC.
     _ENV_SPECS_MEMO = None
@@ -669,8 +682,11 @@ _CHIP_SPECS_MEMO: tuple[int, dict] | None = None
 
 def apply_chip_classes(classes: dict | None) -> None:
     """Install the probed class inventory for the OPEN chip (or clear it)."""
-    global _CHIP_CLASSES, _CHIP_SPECS_MEMO
-    _CHIP_CLASSES = classes if classes else None
+    global _CHIP_CLASSES, _CHIP_SPECS_MEMO, _CLASS_INFO_GEN
+    new = classes if classes else None
+    if new is not _CHIP_CLASSES:
+        _CLASS_INFO_GEN += 1
+    _CHIP_CLASSES = new
     _CHIP_SPECS_MEMO = None
 
 
@@ -931,7 +947,9 @@ def is_pulse_class(qclass: Any) -> bool:
 
     1. the chip's probed class inventory records the class's bases -- quam's
        ``Pulse`` among them decides YES, its absence decides NO (structural,
-       so a macro named ``...PulseMacro`` can never pass);
+       so a macro named ``...PulseMacro`` can never pass). Only an importable
+       class with a NON-EMPTY base list decides; an unimportable class's
+       ``bases: []`` is unknown and falls through;
     2. the catalog resolves it (exact / alias / leaf name);
     3. the selected env's pulse roster places this exact class (the roster is
        the env's ``Pulse`` subclass walk, so membership IS the base check);
@@ -943,7 +961,12 @@ def is_pulse_class(qclass: Any) -> bool:
     if not isinstance(qclass, str) or not qclass:
         return False
     crec = (_CHIP_CLASSES or {}).get(qclass)
-    if isinstance(crec, dict) and isinstance(crec.get("bases"), (list, tuple)):
+    # Only a class that IMPORTED and reported a non-empty base list decides.
+    # An unimportable class is recorded with ``bases: []`` -- that means
+    # UNKNOWN, not "not a pulse", so it must fall through to the weaker
+    # evidence below instead of vetoing a hand-added pulse.
+    if (isinstance(crec, dict) and crec.get("importable") is not False
+            and isinstance(crec.get("bases"), (list, tuple)) and crec["bases"]):
         return _PULSE_BASE in crec["bases"]
     if resolve_qclass(qclass)[0] is not None:
         return True
