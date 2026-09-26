@@ -1001,13 +1001,17 @@ def _share_content_diff(base: dict, pair, entries: list) -> None:
     merge alike."""
     try:
         from quam_state_manager.core import diff_cache, doc_cache
-        if not (doc_cache.CANON.has(pair.state_digest)
-                and doc_cache.CANON.has(pair.wiring_digest)):
-            return
         if not (diff_cache.merges_alike(base["state"], base["wiring"])
                 and diff_cache.merges_alike(pair.state, pair.wiring)):
             return
-        diff_cache.remember(base.get("state_hash"), pair.history_hash(), entries)
+        # keyed on the live BYTES (no canonical dump needed): a snapshot
+        # capture of these same bytes looks it up by its PairRead's digests
+        diff_cache.remember(base.get("state_hash"),
+                            diff_cache.raw_key(pair.state_digest, pair.wiring_digest),
+                            entries)
+        if (doc_cache.CANON.has(pair.state_digest)
+                and doc_cache.CANON.has(pair.wiring_digest)):
+            diff_cache.remember(base.get("state_hash"), pair.history_hash(), entries)
     except Exception:  # noqa: BLE001 -- an optimisation never fails a poll
         logger.debug("content diff share skipped", exc_info=True)
 

@@ -58,11 +58,19 @@ def test_a_shared_drift_diff_is_the_snapshot_diff(seed):
     routes._share_content_diff(base, pair, ents)
     shared = diff_cache.lookup(base["state_hash"], _canonical_hash_of(b_s, b_w), _DEFAULT_IGNORE)
     ref = Differ().diff(QuamStore.from_dicts(a_s, a_w), QuamStore.from_dicts(b_s, b_w))
+    # the same diff named by the live side's raw byte digests (what a
+    # snapshot capture of exactly these bytes holds)
+    shared_raw = diff_cache.lookup(
+        base["state_hash"], diff_cache.raw_key(pair.state_digest, pair.wiring_digest),
+        _DEFAULT_IGNORE)
     if collide:
         assert shared is None, "a colliding chip's flat diff was shared"
+        assert shared_raw is None, "a colliding chip's flat diff was shared (raw key)"
     else:
         assert shared is not None
         assert _rows(shared) == _rows(ref), seed
+        assert shared_raw is not None
+        assert _rows(shared_raw) == _rows(ref), seed
 
 
 def _write(folder, state, wiring):
@@ -92,3 +100,46 @@ def test_state_folder_diff_equals_differ_and_follows_a_rewrite(tmp_path, seed):
     st = (b / "state.json").stat()
     os.utime(b / "state.json", ns=(st.st_atime_ns, st.st_mtime_ns + 10_000_000))
     assert _rows(diff_state_folders(a, b)) == _rows(Differ().diff(a, b))
+
+
+def _pair_of(folder):
+    sb = (folder / "state.json").read_bytes()
+    wb = (folder / "wiring.json").read_bytes()
+    return doc_cache.PairRead(None, None, sb, wb, doc_cache.digest(sb), doc_cache.digest(wb))
+
+
+@pytest.mark.parametrize("seed", range(12))
+def test_a_capture_takes_the_polls_diff_by_its_bytes_and_only_for_those_bytes(tmp_path, seed):
+    """Take live: the drift poll offered baseline->live keyed on the live
+    BYTES (the live side's canonical hash was never computed); the snapshot
+    capture of exactly those bytes takes it -- and equals its own diff. A
+    capture of other bytes (here: the same state.json, another wiring.json)
+    must not take it."""
+    from quam_state_manager.core.history import _diff_snapshot_dirs
+    r = random.Random(seed)
+    prior, snap = tmp_path / "prior", tmp_path / "snap"
+    a_s = {"qubits": {"q1": _tree(r, 3)}, "extras": _tree(r, 2)}
+    a_w = {"wiring": _tree(r, 2)}
+    b_s = json.loads(json.dumps(a_s))
+    b_s["qubits"]["k_new"] = _tree(r, 2)
+    b_w = {"wiring": {"moved": seed}} if seed % 2 else json.loads(json.dumps(a_w))
+    _write(prior, a_s, a_w)
+    _write(snap, b_s, b_w)
+    diff_cache.PAIRS.clear()
+    base = {"state": a_s, "wiring": a_w, "state_hash": _canonical_hash_of(a_s, a_w)}
+    pb = _pair_of(snap)
+    ents = Differ().diff((a_s, a_w), (pb.state, pb.wiring), ignore_keys=set())
+    routes._share_content_diff(base, pb, ents)
+    h0 = diff_cache.PAIRS.hits
+    got = _diff_snapshot_dirs(prior, snap, b_pair=pb, a_hash=base["state_hash"])
+    assert diff_cache.PAIRS.hits > h0, "the capture recomputed a diff the poll had taken"
+    assert _rows(got) == _rows(Differ().diff(prior, snap)), seed
+    # other bytes: the wiring moved after the poll -- no share, still right
+    b_w2 = {"wiring": {"moved_again": seed}}
+    snap2 = tmp_path / "snap2"
+    _write(snap2, b_s, b_w2)
+    pb2 = _pair_of(snap2)
+    h1 = diff_cache.PAIRS.hits
+    got2 = _diff_snapshot_dirs(prior, snap2, b_pair=pb2, a_hash=base["state_hash"])
+    assert diff_cache.PAIRS.hits == h1, "a capture of other bytes took the poll's diff"
+    assert _rows(got2) == _rows(Differ().diff(prior, snap2)), seed

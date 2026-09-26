@@ -458,6 +458,10 @@ def _diff_snapshot_dirs(a: Path, b: Path, *, b_pair=None, a_hash: str | None = N
         # content hashes known (a capture): the drift poll may have taken
         # exactly this diff already (diff_cache)
         shared = diff_cache.lookup(a_hash, b_hash, _DEFAULT_IGNORE)
+        if shared is None and b_pair is not None:
+            shared = diff_cache.lookup(
+                a_hash, diff_cache.raw_key(b_pair.state_digest, b_pair.wiring_digest),
+                _DEFAULT_IGNORE)
         if shared is not None:
             return shared
         pa = doc_cache.read_pair(a, mode="shared")

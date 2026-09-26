@@ -34,7 +34,19 @@ def merges_alike(state, wiring) -> bool:
         return False
 
 
-def remember(hash_a: str, hash_b: str, entries: list) -> None:
+def raw_key(state_digest: bytes | None, wiring_digest: bytes | None):
+    """A content key for side *b* from the raw BYTES' digests (doc_cache's
+    sha256 of each file). Equal bytes are equal content, so this names the
+    same diff the canonical hash would -- without the canonical dump, which
+    the drift poll never needs for itself (w7/livewrite: Take live's
+    snapshot diff was recomputed because the live side's canonical hash
+    was not known when the poll offered its diff)."""
+    if not state_digest or not wiring_digest:
+        return None
+    return ("raw", bytes(state_digest), bytes(wiring_digest))
+
+
+def remember(hash_a: str, hash_b, entries: list) -> None:
     """Record ``Differ().diff(a, b, ignore_keys=set())`` for two contents
     whose merges are alike (the caller checked :func:`merges_alike`)."""
     if not hash_a or not hash_b:
@@ -45,7 +57,7 @@ def remember(hash_a: str, hash_b: str, entries: list) -> None:
 _MISS = object()
 
 
-def lookup(hash_a: str, hash_b: str, ignore: set | frozenset = frozenset()) -> list | None:
+def lookup(hash_a: str, hash_b, ignore: set | frozenset = frozenset()) -> list | None:
     """The remembered diff of the two contents with *ignore*'s leaf keys
     left out (``Differ``'s own filter), or None."""
     if not hash_a or not hash_b:
