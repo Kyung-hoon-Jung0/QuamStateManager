@@ -41,6 +41,19 @@ from quam_state_manager.core.scanner import Workspace
 # Phase 4 §1 — XSS-safe JSON for inline <script> bodies.
 # ----------------------------------------------------------------------
 
+class ScriptJson(Markup):
+    """A string ``_script_json_filter`` has already made safe. The filter hands
+    it back unchanged, so a memoized payload (the Datasets rows JSON, ~1 MB on
+    a 4,000-run folder) is escaped once per content version rather than on
+    every render. Only the filter itself creates one."""
+    __slots__ = ()
+
+
+def script_json_once(value) -> "ScriptJson":
+    """``_script_json_filter(value)``, marked as done."""
+    return ScriptJson(_script_json_filter(value))
+
+
 def _script_json_filter(value) -> Markup:
     """Render *value* as JSON safe to embed inside ``<script>...</script>``.
 
@@ -60,6 +73,8 @@ def _script_json_filter(value) -> Markup:
     Accepts either an already-serialised JSON string (legacy callers
     that pre-`json.dumps`'d the value) or a raw object.
     """
+    if isinstance(value, ScriptJson):
+        return value                     # escaped once already, by this filter
     if not isinstance(value, str):
         value = json.dumps(value, separators=(",", ":"), ensure_ascii=False)
     # Six-character "<" / ">" / "&" escapes are valid

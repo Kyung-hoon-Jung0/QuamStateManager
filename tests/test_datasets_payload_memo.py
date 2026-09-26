@@ -203,3 +203,25 @@ def test_the_route_serves_the_memo_on_a_repeat(tmp_path):
     _bump_dir(data / "2026-09-01")
     body = c.get("/datasets").get_data(as_text=True)
     assert '"id":50' in body and R._DATASETS_PAYLOAD.computes == n + 1
+
+
+def test_the_rows_json_is_escaped_once_and_still_script_safe(tmp_path):
+    """The payload memo holds the rows JSON already escaped for the <script>
+    body (web.app.script_json_once), and the filter hands such a value back
+    untouched -- the page carries the same bytes the per-render escape made,
+    and a value that would close the script is still neutralised."""
+    from quam_state_manager.web.app import ScriptJson, _script_json_filter, script_json_once
+    raw = json.dumps({"n": "q</script><!--&]]>"})
+    once = script_json_once(raw)
+    assert isinstance(once, ScriptJson) and once == _script_json_filter(raw)
+    assert _script_json_filter(once) is once
+    assert "<" not in once and ">" not in once and "&" not in once
+    data = tmp_path / "data"
+    _run(data, 1, A, date="2026-09-01",
+         fit={"q</script><script>x()//&": {"amp": 0.1, "ok": True, "success": True}})
+    app = create_app(testing=True, instance_path=str(tmp_path / "_inst"))
+    c = app.test_client()
+    assert c.post("/workspace/add", data={"folder": str(data)}).status_code in (200, 302)
+    body = c.get("/datasets").get_data(as_text=True)
+    assert "q</script><script>x()" not in body
+    assert "q\\u003c/script\\u003e\\u003cscript\\u003ex()//\\u0026" in body

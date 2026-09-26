@@ -25861,6 +25861,11 @@ def collections():
 # added or dropped moves the token and the next request recomputes. The
 # rendered page is NOT cached (it carries the request's own context); only
 # this ~3.5 MB string and its siblings are.
+def _script_json_once(value):
+    from quam_state_manager.web.app import script_json_once
+    return script_json_once(value)
+
+
 _DATASETS_PAYLOAD = _ramcache.KeyedMemo("datasets.payload", max_entries=6,
                                         max_bytes=32 * 1024 * 1024)
 
@@ -25998,7 +26003,8 @@ def _datasets_payload_compute(active: list[dict], is_collections: bool,
     folder_sig = ",".join(sorted(f["key"] for f in folders))
 
     return {
-        "rows_json": json.dumps(rows, separators=(",", ":")),
+        # escaped for the <script> body here, once per payload version
+        "rows_json": _script_json_once(json.dumps(rows, separators=(",", ":"))),
         "folders": folders,
         "folders_json": json.dumps(folders, separators=(",", ":")),
         "folder_sig": folder_sig,
