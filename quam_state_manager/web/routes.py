@@ -21174,6 +21174,35 @@ def workspace_remove():
 # the workspace actually changes.
 _TREE_HTML_MEMO: "weakref.WeakKeyDictionary" = weakref.WeakKeyDictionary()
 
+
+def _unfiltered_tree_html(ws: Any) -> str:
+    """The unfiltered sidebar tree for *ws*, memoized.
+
+    The render reads the workspace (its version) AND the active chip
+    (``_tree_render_ctx`` pre-opens the lazy groups on the active chip's
+    path), so both are the key: a chip switch used to be served the tree drawn
+    for the previous chip. The version is read BEFORE the tree, so the stamp
+    (and the key) can only ever be older than the content it labels -- never
+    newer; the page's first poll compares it with the live version (RAM P7).
+    One function for ``/workspace/tree``, ``/workspace/refresh`` and the
+    run-watch tick's pre-render, so all three agree on the key and the markup.
+    """
+    v0 = ws.version if ws else None
+    try:
+        active = _active_path()
+    except Exception:  # noqa: BLE001 -- no app/ctx: nothing is pre-opened
+        active = None
+    key = (v0, active)
+    memo = _TREE_HTML_MEMO.get(ws) if ws else None
+    if memo and memo[0] == key:
+        return memo[1]
+    html = render_template("_sidebar_tree.html",
+                           **_tree_render_ctx(ws.tree if ws else {}, ws=ws),
+                           tree_ws_version=v0)
+    if ws:
+        _TREE_HTML_MEMO[ws] = (key, html)
+    return html
+
 # docs/142: filtered-tree HTML, small LRU per workspace keyed
 # (ws.version, query) -- see workspace_tree.
 _FILTERED_TREE_MEMO: "weakref.WeakKeyDictionary" = weakref.WeakKeyDictionary()
@@ -21206,21 +21235,9 @@ def workspace_tree():
             fmemo.pop(next(iter(fmemo)))
         return html
 
-    memo = _TREE_HTML_MEMO.get(ws) if ws else None
-    # RAM P7: the version is read BEFORE the tree, so the stamp (and the memo
-    # key) can only ever be older than the content it labels -- never newer.
-    # The page's first poll compares it with the live version: the run-watch
-    # worker now rescans in the background, so that poll no longer does the
-    # rescan itself and could not otherwise tell the page is behind.
-    v0 = ws.version if ws else None
-    if memo and memo[0] == v0:
-        return memo[1]
-    html = render_template("_sidebar_tree.html",
-                           **_tree_render_ctx(ws.tree if ws else {}, ws=ws),
-                           tree_ws_version=v0)
-    if ws:
-        _TREE_HTML_MEMO[ws] = (v0, html)
-    return html
+    # RAM P7: the run-watch worker rescans (and pre-renders) in the
+    # background, so this is normally a memo hit -- see _unfiltered_tree_html.
+    return _unfiltered_tree_html(ws)
 
 
 @bp.route("/workspace/tree/group")
@@ -21487,14 +21504,7 @@ def workspace_refresh():
     # docs/126 r3: a no-change rescan keeps the version, so the memoized
     # unfiltered HTML is still valid — the Refresh round-trip pays only the
     # scan itself, not a 450 KB re-render of an identical tree.
-    memo = _TREE_HTML_MEMO.get(ws) if ws else None
-    if memo and memo[0] == ws.version:
-        return memo[1]
-    html = render_template("_sidebar_tree.html",
-                           **_tree_render_ctx(tree, ws=ws))
-    if ws:
-        _TREE_HTML_MEMO[ws] = (ws.version, html)
-    return html
+    return _unfiltered_tree_html(ws)
 
 
 @bp.route("/workspace/select", methods=["POST"])
@@ -26722,8 +26732,16 @@ def _ingest_after_steps(app) -> list:
         # the sidebar's rescan (the first /workspace/tree or /tree/poll after
         # a run used to pay it: 1.85-5.2 s measured on KH)
         ws = app.config.get("workspace")
-        if ws is not None and ws.rescan_if_stale():
+        if ws is None:
+            return
+        if ws.rescan_if_stale():
             app.config.pop("dataset_store", None)   # the routes' own follow-up
+        # ...and draw it, so that request is a memo hit (the render of a
+        # 4,000-run tree is the ~250 ms the rescan used to hide behind). Same
+        # function and key as the route: a pre-render for a version or chip
+        # that moved on is simply never asked for.
+        with app.test_request_context("/workspace/tree"):
+            _unfiltered_tree_html(ws)
 
     def datasets_payload(roots: list[str]) -> None:
         # re-encode the Datasets payload views somebody has open

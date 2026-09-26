@@ -158,3 +158,45 @@ class TestSingleFlight:
             t.join(10)
         assert len(calls) == 1 and sorted(out) == [False, False, True]
         assert {e.run_id for e in ws.all_entries} == {1, 2}
+
+
+class TestTreePreRender:
+    """RAM P7: the tick also DRAWS the tree, so the first /workspace/tree
+    after a run is a memo hit, and the memo is keyed on everything the
+    render reads (the workspace version AND the active chip)."""
+
+    def test_the_tick_pre_renders_what_a_cold_render_would_draw(self, tmp_path, monkeypatch):
+        data = tmp_path / "data"
+        _mk_run(data, "2026-03-01", 1)
+        app, c = _app(tmp_path, data)
+        c.get("/workspace/tree")
+        time.sleep(_TICK)
+        _mk_run(data, "2026-03-01", 2)
+        _steps(app)["workspace_sidebar"]([str(data)])
+        renders = []
+        real = R._tree_render_ctx
+        monkeypatch.setattr(R, "_tree_render_ctx",
+                            lambda *a, **k: renders.append(1) or real(*a, **k))
+        warm = c.get("/workspace/tree").get_data(as_text=True)
+        assert renders == [], "the request re-rendered what the tick drew"
+        assert "#2_04_power_rabi" in warm
+        R._TREE_HTML_MEMO.clear()
+        cold = c.get("/workspace/tree").get_data(as_text=True)
+        assert renders == [1] and cold == warm
+
+    def test_a_chip_switch_is_a_different_key(self, tmp_path, monkeypatch):
+        data = tmp_path / "data"
+        _mk_run(data, "2026-03-01", 1)
+        app, c = _app(tmp_path, data)
+        c.get("/workspace/tree")
+        active = {"p": "A"}
+        monkeypatch.setattr(R, "_active_path", lambda: active["p"])
+        renders = []
+        real = R._tree_render_ctx
+        monkeypatch.setattr(R, "_tree_render_ctx",
+                            lambda *a, **k: renders.append(active["p"]) or real(*a, **k))
+        c.get("/workspace/tree")
+        c.get("/workspace/tree")
+        active["p"] = "B"
+        c.get("/workspace/tree")
+        assert renders == ["A", "B"]
