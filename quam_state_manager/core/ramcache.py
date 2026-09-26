@@ -358,6 +358,14 @@ class KeyedMemo:
     def clear(self) -> None:
         self.drop_where(lambda _s: True)
 
+    def has(self, slot: Any, token: Any = None) -> bool:
+        """Is a value for exactly ``(slot, token)`` held right now? A hint only
+        (it may be evicted a moment later) -- for a caller that can skip work
+        when it is, and does that work anyway when it is not."""
+        with _LOCK:
+            e = self._entries.get(slot)
+            return e is not None and e.token == token
+
     def peek(self, slot: Any) -> tuple[Any, Any] | None:
         """``(token, value)`` currently held for ``slot`` -- for tests and
         diagnostics only; a request must go through :meth:`get`."""

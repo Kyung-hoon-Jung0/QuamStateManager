@@ -578,3 +578,72 @@ def _build_inverted_indexes(index: SearchIndex) -> None:
     index.key_index = ki
     index.category_index = ci
     index.parent_index = pi
+
+
+class LazySearchIndex:
+    """A :class:`SearchIndex` built on first USE, from the store as it is then.
+
+    w7/livewrite: every wholesale content change (a pull, a restore, a load)
+    used to rebuild the whole index on the request -- ~0.45 s on a 1.6 MB chip,
+    seconds on a 19 MB one -- although most of those requests never search.
+    This wrapper builds it the first time anything reads it. Until then the
+    modifier's incremental calls (``update_entry`` / ``add_entry`` /
+    ``remove_entry``) are no-ops: the modifier has already written the change
+    into ``store.merged``, and the eventual build reads exactly that -- the
+    index is then a fresh build of the current content, which is what the
+    eager build followed by incremental patches approximated.
+
+    The build walks ``store.merged`` under ``store._lock``, the lock every
+    mutation holds, so it never reads a half-applied edit.
+    """
+
+    __slots__ = ("_store", "_wiring_keys", "_real", "_guard")
+
+    def __init__(self, store, wiring_keys: set[str] | None = None) -> None:
+        import threading
+        self._store = store
+        self._wiring_keys = wiring_keys
+        self._real: SearchIndex | None = None
+        self._guard = threading.Lock()
+
+    @property
+    def built(self) -> bool:
+        return self._real is not None
+
+    def _get(self) -> SearchIndex:
+        real = self._real
+        if real is not None:
+            return real
+        with self._store._lock:
+            with self._guard:
+                if self._real is None:
+                    self._real = SearchIndex.build(self._store.merged,
+                                                   wiring_keys=self._wiring_keys)
+                return self._real
+
+    # incremental hooks: nothing to patch before the first build
+    def update_entry(self, dot_path: str, new_value: Any) -> None:
+        if self._real is not None:
+            self._real.update_entry(dot_path, new_value)
+
+    def add_entry(self, dot_path: str, value: Any, *, source_file: str = "state") -> None:
+        if self._real is not None:
+            self._real.add_entry(dot_path, value, source_file=source_file)
+
+    def remove_entry(self, dot_path: str) -> None:
+        if self._real is not None:
+            self._real.remove_entry(dot_path)
+
+    def search(self, query: str, limit: int = 50, category: str | None = None) -> list[SearchResult]:
+        return self._get().search(query, limit=limit, category=category)
+
+    def stats(self) -> dict[str, int]:
+        return self._get().stats()
+
+    def __getattr__(self, name: str):
+        # every other read (entries, prefix_map, ...) is a use: build first
+        return getattr(self._get(), name)
+
+    def __repr__(self) -> str:
+        return (repr(self._real) if self._real is not None
+                else "LazySearchIndex(unbuilt)")

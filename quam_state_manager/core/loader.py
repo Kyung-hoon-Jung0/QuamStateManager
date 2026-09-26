@@ -185,7 +185,7 @@ class QuamStore:
     # Loading
     # ------------------------------------------------------------------
 
-    def _load(self) -> None:
+    def _load(self, docs: tuple[dict, dict] | None = None) -> None:
         state_path = self.folder_path / "state.json"
         wiring_path = self.folder_path / "wiring.json"
 
@@ -198,10 +198,15 @@ class QuamStore:
         # and brackets the pair with mtime checks, so a writer landing
         # between the two reads can't hand us a torn snapshot. A bad-JSON
         # file is surfaced as LiveFileError (an OSError subclass).
-        try:
-            self.state, self.wiring = safe_io.read_state_wiring(self.folder_path)
-        except safe_io.LiveFileError as exc:
-            raise ValueError(str(exc)) from exc
+        if docs is not None:
+            # w7/livewrite: the caller parsed exactly these files a moment ago
+            # (see reload); a second parse of 19 MB would produce equal dicts.
+            self.state, self.wiring = docs
+        else:
+            try:
+                self.state, self.wiring = safe_io.read_state_wiring(self.folder_path)
+            except safe_io.LiveFileError as exc:
+                raise ValueError(str(exc)) from exc
 
         self._merge()
 
@@ -307,10 +312,17 @@ class QuamStore:
     # Reload
     # ------------------------------------------------------------------
 
-    def reload(self) -> None:
-        """Re-read files from disk and rebuild everything. Acquires _lock."""
+    def reload(self, docs: tuple[dict, dict] | None = None) -> None:
+        """Re-read files from disk and rebuild everything. Acquires _lock.
+
+        ``docs`` (w7/livewrite): the ``(state, wiring)`` the caller just wrote
+        into this folder and still holds -- they are what a re-read would
+        parse, so the re-read is skipped. The caller hands them over (the
+        store mutates them from now on) and vouches that the folder was not
+        written since; ``_rebuild_after_working_copy_replaced`` checks that
+        with the pair's (mtime_ns, size) fingerprint before passing them."""
         with self._lock:
-            self._load()
+            self._load(docs)
             # The generated config is KEPT: it is basis-hash-keyed
             # (``generated_config_meta["basis_hash"]`` vs the content hash),
             # so every reader already knows whether it is stale. Nulling it

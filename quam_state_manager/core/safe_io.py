@@ -524,14 +524,18 @@ def _write_tmp_json(path: Path, data, *, compact: bool = False,
         fmt = json_format_of(path)
     if fmt is None:
         # Unchanged path: text mode, platform line endings, indent 4.
+        # w7/livewrite: the same text as json.dump(indent=4), unchanged
+        # subtrees served from RAM (json_pieces, pinned byte-identical)
+        text = _json_pieces().dumps_indent(data, 4) + "\n"
         with open(tmp, "w", encoding="utf-8") as f:
-            json.dump(data, f, indent=4, ensure_ascii=False)
-            f.write("\n")
+            f.write(text)
             f.flush()
             os.fsync(f.fileno())
+        # text mode: the platform's line ending is what reached the disk
+        _seed_written(path, text.replace("\n", os.linesep) if os.linesep != "\n" else text, data)
         return tmp
 
-    text = json.dumps(data, indent=fmt["indent"], ensure_ascii=False)
+    text = _json_pieces().dumps_indent(data, fmt["indent"])
     if fmt["newline"] != "\n":
         text = text.replace("\n", fmt["newline"])
     if fmt.get("trailing", True):
@@ -542,6 +546,7 @@ def _write_tmp_json(path: Path, data, *, compact: bool = False,
         f.write(text)
         f.flush()
         os.fsync(f.fileno())
+    _seed_written(path, text, data)
     return tmp
 
 
@@ -836,3 +841,25 @@ def _pair_fingerprint_settled(folder: Path) -> tuple:
         except FileNotFoundError:
             time.sleep(delay)
     return _pair_fingerprint(folder)       # still absent: genuinely missing
+
+
+def _json_pieces():
+    """json_pieces imports ramcache; imported lazily so safe_io stays the
+    dependency-free bottom layer it is for every other module."""
+    from quam_state_manager.core import json_pieces
+    return json_pieces
+
+
+def _seed_written(path: Path, text: str, data) -> None:
+    """Tell the content cache what the chip file just written canonicalises
+    to, so the read-back right after (apply's verify, the next poll) costs a
+    digest instead of a parse + canonical dump. *text* is exactly what reached
+    the disk; if it ever were not, its digest would match no real file and the
+    entry would simply never be used."""
+    if Path(path).name not in ("state.json", "wiring.json") or not isinstance(data, dict):
+        return
+    try:
+        from quam_state_manager.core import doc_cache
+        doc_cache.seed(text.encode("utf-8"), data)
+    except Exception:  # noqa: BLE001 -- an optimisation never fails a write
+        logger.debug("seed after write skipped", exc_info=True)
