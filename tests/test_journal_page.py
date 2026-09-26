@@ -391,3 +391,18 @@ def test_the_filter_select_keeps_room_for_its_arrow_and_the_loose_label_is_not_a
     css = (ROOT / "quam_state_manager" / "web" / "static" / "style.css").read_text(encoding="utf-8")
     assert re.search(r"\.jr-filters select \{ padding-right: 1\.9rem; \}", css)
     assert re.search(r"\.jr-card\.jr-loose > summary \{ display: flex;", css)
+
+
+def test_the_new_since_last_visit_dot_is_not_a_grid_cell():
+    """QA agents round, seen in real Chrome at 1366: a fresh row's dot is a
+    summary::before, and in the seven-column run grid a ::before is an eighth
+    grid item -- every cell shifted a column right, the chevron wrapped to a second
+    line and the author chip was cut at the pane's edge. The dot must be taken out
+    of the grid's flow by a rule that comes AFTER the grid rule (the browser
+    journey agent_journal_layout.cjs measures the rows themselves)."""
+    css = (Path(__file__).resolve().parents[1] / "quam_state_manager" / "web" / "static" / "style.css").read_text(encoding="utf-8")
+    grid = css.index(".jr-card > summary { display: grid;")
+    dots = [m for m in re.finditer(r"\.jr-card\.jr-new > summary::before \{([^}]*)\}", css)]
+    assert any(m.start() > grid and re.search(r"position:\s*absolute", m.group(1)) for m in dots)
+    rel = [m for m in re.finditer(r"\.jr-card > summary \{([^}]*)\}", css) if m.start() > grid]
+    assert any(re.search(r"position:\s*relative", m.group(1)) for m in rel), "the dot is placed against its own row"

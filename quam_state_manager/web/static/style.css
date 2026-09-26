@@ -11875,6 +11875,13 @@ body.scheduler-active #pending-tray { opacity: .5; pointer-events: none; }
 .jr-card > summary { display: grid; grid-template-columns: 4.3rem minmax(11rem, 1.3fr) minmax(5rem, .9fr) minmax(9.5rem, auto) 3.3rem minmax(5rem, auto) 1.1rem;
     column-gap: .55rem; align-items: center; padding: .26rem 0; font-size: .81rem; }
 .jr-card > summary::after { justify-self: end; }
+/* QA agents round: the "new since your last visit" dot is a ::before, and in
+   this seven-column grid a ::before is an EIGHTH grid item -- every cell moved
+   one column right, the chevron wrapped to a second line and the author chip
+   was cut at the pane's edge (seen in real Chrome on every fresh row). The dot
+   sits in the card's left padding, out of the grid's flow. */
+.jr-card > summary { position: relative; }
+.jr-card.jr-new > summary::before { position: absolute; left: -.5rem; top: 50%; transform: translateY(-50%); line-height: 1; }
 .jr-card > summary:hover { background: color-mix(in srgb, var(--pico-primary) 6%, transparent); }
 .jr-card[open] > summary { background: color-mix(in srgb, var(--pico-primary) 9%, transparent); }
 .jr-card > summary .jr-family { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-weight: 600; }

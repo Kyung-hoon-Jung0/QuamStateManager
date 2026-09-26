@@ -21,6 +21,14 @@ const MEASURE = `(() => {
 (async () => {
   const p = await open(`http://127.0.0.1:${SM}/journal`, W, 900);
   await sleep(2500);
+  // every row "new since your last visit": its dot must not become a grid cell
+  await p.ev(`Object.keys(localStorage).filter(k => k.startsWith('quam_journal_seen:')).forEach(k => localStorage.setItem(k, '1'))`);
+  await p.send('Page.reload'); await sleep(2500);
+  console.log('fresh rows', await p.ev(`(() => { const cs = [...document.querySelectorAll('.jr-card.jr-new:not(.jr-loose) > summary')];
+    return JSON.stringify({ n: cs.length, bad: cs.filter(s => { const kids = [...s.children]; const mids = kids.map(k => { const r = k.getBoundingClientRect(); return r.top + r.height / 2; });
+      const a = s.querySelector('.jr-author'); return Math.max(...mids) - Math.min(...mids) > 4 || (a && a.getBoundingClientRect().right > s.getBoundingClientRect().right + 1) || s.getBoundingClientRect().height > 40; }).length,
+      time: cs[0] && [...cs[0].children][0].className }); })()`));
+  await p.shot(`${OUT}/journal_fresh_${W}.png`);
   console.log('measure', await p.ev(MEASURE));
   await p.shot(`${OUT}/journal_${W}.png`);
   const click = async (sel) => { const r = await p.ev(`(() => { const e = document.querySelector(${JSON.stringify(sel)}); if (!e) return null; e.scrollIntoView({block:'center'}); const b = e.getBoundingClientRect(); return JSON.stringify([b.x + b.width/2, b.y + b.height/2]); })()`); if (!r) return false; const xy = JSON.parse(r); await p.click(xy[0], xy[1]); return true; };
