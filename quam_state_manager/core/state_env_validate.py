@@ -38,6 +38,7 @@ import math
 import re
 import weakref
 from dataclasses import dataclass
+from collections.abc import Mapping
 from typing import Any
 
 logger = logging.getLogger(__name__)
@@ -383,6 +384,11 @@ def analyze_state(state: dict, manifest: dict | None, *, _chunks: Any = None) ->
     # walk makes. ``_chunks`` is None for a plain cold call.
     rec_events: list = [None]
     rec_types: list = [None]
+    # types written outside any chunk go to cur[0]; a chunked walk closes it
+    # into ``parts`` around every chunk, so the parts in order ARE the cold
+    # walk's insertion order (a recorded chunk writes only to its own record)
+    cur: list = [types]
+    parts: list = []
 
     def emit(kind: str, severity: str, cls: str | None, field: str | None,
              path: str, detail: str, fix_hint: str = "", code: str = "") -> None:
@@ -431,7 +437,10 @@ def analyze_state(state: dict, manifest: dict | None, *, _chunks: Any = None) ->
             events, ctypes, checked = hit
             for a in events:
                 add(*a)
-            types.update(ctypes)
+            # a chunk's types are a PART of the result, never merged here:
+            # re-merging ~every leaf's TypeSpec per analysis was most of an
+            # after-edit analysis on the 30Q rig (dict.update, ~60 ms)
+            parts.append(cur[0]); parts.append(ctypes); cur[0] = {}
             checked_nodes[0] += checked
             return
         rec_events[0], rec_types[0] = [], {}
@@ -440,6 +449,7 @@ def analyze_state(state: dict, manifest: dict | None, *, _chunks: Any = None) ->
             walk(v, child_path, child_ctx, 2)
             _chunks.put(k1, k2, (rec_events[0], rec_types[0],
                                  checked_nodes[0] - before))
+            parts.append(cur[0]); parts.append(rec_types[0]); cur[0] = {}
         finally:
             rec_events[0], rec_types[0] = None, None
 
@@ -468,9 +478,7 @@ def analyze_state(state: dict, manifest: dict | None, *, _chunks: Any = None) ->
                 child_path = f"{path}.{k}" if path else str(k)
                 ts, child_ctx = _step(manifest, ctx, str(k), v)
                 if isinstance(ts, dict) and ts.get("base") != "any" and not isinstance(v, (dict, list)):
-                    types[child_path] = ts
-                    if rec_types[0] is not None:
-                        rec_types[0][child_path] = ts
+                    (rec_types[0] if rec_types[0] is not None else cur[0])[child_path] = ts
                 if (_chunks is not None and depth == 1 and rec_events[0] is None):
                     _walk_chunk(v, child_path, child_ctx, path, str(k))
                 else:
@@ -480,9 +488,7 @@ def analyze_state(state: dict, manifest: dict | None, *, _chunks: Any = None) ->
                 child_path = f"{path}.{i}"
                 ts, child_ctx = _step(manifest, ctx, str(i), v)
                 if isinstance(ts, dict) and ts.get("base") != "any" and not isinstance(v, (dict, list)):
-                    types[child_path] = ts
-                    if rec_types[0] is not None:
-                        rec_types[0][child_path] = ts
+                    (rec_types[0] if rec_types[0] is not None else cur[0])[child_path] = ts
                 walk(v, child_path, child_ctx, depth + 1)
 
     def _check_class_node(node: dict, path: str, cls_str: str, fields: dict) -> None:
@@ -560,7 +566,48 @@ def analyze_state(state: dict, manifest: dict | None, *, _chunks: Any = None) ->
         "checked_nodes": checked_nodes[0],
         "truncated": truncated[0],
     }
+    if parts:
+        parts.append(cur[0])
+        types = _TypeParts(parts)
     return {"findings": out, "types": types, "summary": summary}
+
+
+class _TypeParts(Mapping):
+    """``analyze_state``'s types as the ordered chunk parts they were made of,
+    merged into one dict on first read (nothing in SM reads them per request;
+    the memoized chunk dicts are shared and never written to)."""
+
+    __slots__ = ("_parts", "_d")
+
+    def __init__(self, parts: list) -> None:
+        self._parts = parts
+        self._d = None
+
+    def _m(self) -> dict:
+        d = self._d
+        if d is None:
+            d = {}
+            for p in self._parts:
+                d.update(p)
+            self._d = d
+            self._parts = None
+        return d
+
+    def __getitem__(self, k):
+        return self._m()[k]
+
+    def __iter__(self):
+        return iter(self._m())
+
+    def __len__(self) -> int:
+        return len(self._m())
+
+    def __eq__(self, other):
+        if isinstance(other, Mapping):
+            return self._m() == dict(other.items())
+        return NotImplemented
+
+    __hash__ = None
 
 
 # ---------------------------------------------------------------------------

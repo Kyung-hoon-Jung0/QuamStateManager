@@ -230,9 +230,39 @@ def test_randomized_sequence_equals_cold_after_every_step(seed, monkeypatch):
         assert _dump(inc) == _dump(cold), f"lint diverged at step {step}"
         assert D.numeric_string_leaves(st.state, st) == D.numeric_string_leaves(st.state)
         assert D.numeric_string_leaves(st.merged, st) == D.numeric_string_leaves(st.merged)
-        assert V.analysis_for_store(st, man) == V.analyze_state(st.state, man), \
-            f"env analysis diverged at step {step}"
+        a_inc, a_cold = V.analysis_for_store(st, man), V.analyze_state(st.state, man)
+        assert a_inc == a_cold, f"env analysis diverged at step {step}"
+        # the chunked types are kept as parts (merged on first read): same
+        # entries in the SAME order as the cold walk's insertion order
+        assert list(a_inc["types"].items()) == list(a_cold["types"].items()), \
+            f"env types diverged at step {step}"
     assert done >= 200
+
+
+def test_chunked_types_keep_the_cold_order_around_root_scalars(monkeypatch):
+    """A chunked analysis keeps its types as ordered parts: typed leaves the
+    walk writes OUTSIDE any chunk (before the first, after the last) sit
+    exactly where a cold walk puts them, whether a chunk was walked fresh or
+    replayed from its memo."""
+    from quam_state_manager.core.state_env_schema import _decorate
+    monkeypatch.delenv("SM_RAM_VERIFY", raising=False)
+    raw = json.loads(_GOLDEN.read_text(encoding="utf-8"))
+    fspec = {"default": None, "has_default": False, "optional": False, "raw": "<class 'float'>",
+             "type": {"base": "float", "class": None, "enum": None, "item": None,
+                      "optional": False, "raw": "<class 'float'>", "union": None}}
+    raw["classes"]["quam_config.my_quam.Quam"].update(importable=True, fields={"a_head": fspec, "z_tail": fspec})
+    man = _decorate(raw)
+    s, w = _ram_chip.build(6, 1)
+    s = {"__class__": s["__class__"], "a_head": 1.5,
+         **{k: v for k, v in s.items() if k != "__class__"}, "z_tail": 2.5}
+    st = QuamStore.from_dicts(s, w)
+    for step in range(3):                 # fresh chunks, then replayed ones
+        if step:
+            Modifier(st).set_value("qubits.q1.T1", 1e-5 * (step + 1))
+        a_inc, a_cold = V.analysis_for_store(st, man), V.analyze_state(st.state, man)
+        cold = list(a_cold["types"].items())
+        assert cold[0][0] == "a_head" and cold[-1][0] == "z_tail"
+        assert list(a_inc["types"].items()) == cold, f"types order diverged at step {step}"
 
 
 def test_shadow_mode_raises_on_a_stale_chunk(monkeypatch):
