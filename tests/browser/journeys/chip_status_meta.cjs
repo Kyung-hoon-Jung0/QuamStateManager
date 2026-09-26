@@ -155,7 +155,7 @@ const hover = (p, x, y) => p.send('Input.dispatchMouseEvent', { type: 'mouseMove
         var q = c.getAttribute('data-qubit'); if (c.classList.contains('heatmap-cell-none')) return;
         var n = (topo.nodes||[]).filter(function(x){return x.id===q;})[0] || {};
         var rec = (n.metrics||{}).T1 || {};
-        var cold = MI.describe(((d.q||{}).T1||{})[q], {snaps:d.snaps||{}, cur: typeof rec.raw==='number'?rec.raw:null, updating:!!d.updating});
+        var cold = MI.describe(((d.q||{}).T1||{})[q], {snaps:d.snaps||{}, cur: typeof rec.raw==='number'?rec.raw:null, stamp: typeof rec.updated_at==='number'?rec.updated_at:null, updating:!!d.updating});
         var shown = (c.querySelector('.heatmap-cell-meta')||{}).textContent;
         out.push({q:q, shown:shown, cold:cold.tag, same: shown === cold.tag});
       });
