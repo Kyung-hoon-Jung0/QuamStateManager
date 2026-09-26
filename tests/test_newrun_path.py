@@ -165,13 +165,23 @@ class TestTreePreRender:
     after a run is a memo hit, and the memo is keyed on everything the
     render reads (the workspace version AND the active chip)."""
 
+    @staticmethod
+    def _quiet(app):
+        # the app's own run-ingest worker would render on its own schedule
+        # and land in the render counters below: these tests drive the step
+        ing = app.config.get("run_ingest")
+        if ing is not None:
+            ing.stop()
+
     def test_the_tick_pre_renders_what_a_cold_render_would_draw(self, tmp_path, monkeypatch):
         data = tmp_path / "data"
         _mk_run(data, "2026-03-01", 1)
         app, c = _app(tmp_path, data)
+        self._quiet(app)
         c.get("/workspace/tree")
         time.sleep(_TICK)
         _mk_run(data, "2026-03-01", 2)
+        time.sleep(_TICK)                      # no same-tick ambiguity left for the request
         _steps(app)["workspace_sidebar"]([str(data)])
         renders = []
         real = R._tree_render_ctx
@@ -188,7 +198,13 @@ class TestTreePreRender:
         data = tmp_path / "data"
         _mk_run(data, "2026-03-01", 1)
         app, c = _app(tmp_path, data)
+        self._quiet(app)
+        # let the scanner's same-tick ambiguity pass, so no request below
+        # sees a stale root (a rescan would move the version: another key)
+        time.sleep(_TICK)
         c.get("/workspace/tree")
+        c.get("/workspace/tree")
+        v = app.config["workspace"].version
         active = {"p": "A"}
         monkeypatch.setattr(R, "_active_path", lambda: active["p"])
         renders = []
@@ -199,6 +215,7 @@ class TestTreePreRender:
         c.get("/workspace/tree")
         active["p"] = "B"
         c.get("/workspace/tree")
+        assert app.config["workspace"].version == v
         assert renders == ["A", "B"]
 
 
