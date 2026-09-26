@@ -21169,12 +21169,19 @@ def workspace_tree():
         return html
 
     memo = _TREE_HTML_MEMO.get(ws) if ws else None
-    if memo and memo[0] == ws.version:
+    # RAM P7: the version is read BEFORE the tree, so the stamp (and the memo
+    # key) can only ever be older than the content it labels -- never newer.
+    # The page's first poll compares it with the live version: the run-watch
+    # worker now rescans in the background, so that poll no longer does the
+    # rescan itself and could not otherwise tell the page is behind.
+    v0 = ws.version if ws else None
+    if memo and memo[0] == v0:
         return memo[1]
     html = render_template("_sidebar_tree.html",
-                           **_tree_render_ctx(ws.tree if ws else {}, ws=ws))
+                           **_tree_render_ctx(ws.tree if ws else {}, ws=ws),
+                           tree_ws_version=v0)
     if ws:
-        _TREE_HTML_MEMO[ws] = (ws.version, html)
+        _TREE_HTML_MEMO[ws] = (v0, html)
     return html
 
 
@@ -25729,65 +25736,40 @@ def collections():
     return _datasets_view("collections")
 
 
-def _datasets_view(view_mode: str):
-    """Shared renderer for the Datasets and Collections pages (parameterized).
+# RAM P7 (ram_design.md §1.4 "/datasets rows JSON bytes"): the table payload
+# and every aggregate drawn beside it, keyed on what they are computed from --
+# per active folder its key, path, store identity (``instance_seq``, never
+# reused) and both generations (runs list, tag/note/bookmark metadata) -- plus
+# the view and the date tab. Validated on read: a new run, a tag, a folder
+# added or dropped moves the token and the next request recomputes. The
+# rendered page is NOT cached (it carries the request's own context); only
+# this ~3.5 MB string and its siblings are.
+_DATASETS_PAYLOAD = _ramcache.KeyedMemo("datasets.payload", max_entries=6,
+                                        max_bytes=32 * 1024 * 1024)
 
-    ``view_mode`` is 'datasets' (all runs) or 'collections' (only tagged runs +
-    tag-filter chips). Everything else — store lookup, payload, exp chips, date
-    tabs, virtual table, compare bar — is identical and reused.
-    """
+
+def _datasets_payload_token(active: list[dict], is_collections: bool,
+                            date: str | None) -> tuple:
+    return (bool(is_collections), date or "",
+            tuple((f["key"], f["path"], f["store"].instance_seq,
+                   f["store"].generation, f["store"].meta_generation)
+                  for f in active))
+
+
+def _datasets_payload(active: list[dict], is_collections: bool,
+                      date: str | None) -> dict[str, Any]:
+    token = _datasets_payload_token(active, is_collections, date)
+    slot = ("datasets", bool(is_collections), date or "")
+    return _DATASETS_PAYLOAD.get(
+        slot, token, lambda: _datasets_payload_compute(active, is_collections, date),
+        sizeof=lambda v: len(v["rows_json"]) + 4096)
+
+
+def _datasets_payload_compute(active: list[dict], is_collections: bool,
+                              date: str | None) -> dict[str, Any]:
+    """Everything ``_datasets_view`` shows that is a function of the stores
+    alone (see ``_DATASETS_PAYLOAD``)."""
     from quam_state_manager.core.dataset import FAVORITE_TAG
-    from quam_state_manager.core.fit_targets import curated_fit_keys as _curated_fit_keys
-
-    is_collections = view_mode == "collections"
-    page = "collections" if is_collections else "datasets"
-    # Multi-folder: the table merges runs from EVERY active data folder, not the
-    # single "most-runs" winner. Each row is tagged with its folder_key ("f") so
-    # the client can build a uid ("<f>:<id>") and the folder filter badges.
-    # docs/170: BOUNDED. On a fresh process the cold build is truncated at
-    # _COLD_SCAN_BUDGET_S (docs/142 E) and the next rescan_if_stale continued
-    # it unbounded -- on the customer's share that was the user's first click
-    # on Datasets blocking for the remaining walk (31.6 s measured at 1.8 ms
-    # per file operation, 2,655 runs). The panel now shows what is indexed
-    # inside the budget and SAYS so (`scan_partial`); the delta poll already
-    # carries the continuation (docs/105 #4) and fills the rest in.
-    active = _active_dataset_stores(
-        deadline=time.monotonic() + _RENDER_SCAN_BUDGET_S)
-    # A deep link from a qubit/pair inspector: /datasets?q=q7. SM does not
-    # INTERPRET the token — it hands the string to the search box and lets the
-    # grammar dataset-virtual.js already ships do the filtering, which is the
-    # only way a link cannot disagree with typing the same thing by hand.
-    # (The token is the BARE name on purpose: a bare `q1` is matched exactly
-    # against the run's own qubit list, while the `qubit:` scope is a substring
-    # test that would drag q10…q19 in with it.)
-    # (docs/170: `q` stays a GET-only preset on purpose -- a Rescan POST never
-    # carries one, so the swap it answers with clears no filters; only the
-    # date tab rides along, read below through request.values.)
-    search = (request.args.get("q") or "").strip()
-    # QA F9: a Rescan POST carries the box's LIVE text back as `keep_q` (never
-    # as `q`: a preset clears every picker/facet tick, docs/167). It refills
-    # the box's value only -- data-preset stays `search`, so nothing clears.
-    search_value = search or ((request.form.get("keep_q") or "").strip()
-                              if request.method == "POST" else "")
-    if _is_htmx():
-        template = "_datasets.html"
-    else:
-        template = "collections.html" if is_collections else "datasets.html"
-    if not active:
-        return render_template(template, **_ctx(page=page),
-                               rows_json="[]", initial_poll_ts=0, total=0,
-                               active_folder="", folders=[], folders_json="[]",
-                               no_workspace=True, curated_keys_json="[]",
-                               view_mode=view_mode, collection_tags=[],
-                               search=search, search_value=search_value)
-    import time as _t
-    poll_ts = _t.time()
-    date = request.values.get("date")
-    # docs/170: still indexing? (any store whose last walk stopped at its
-    # deadline). Rendered as one muted note beside the count; the client
-    # hides it on the first delta poll that reports a complete scan.
-    scan_partial = any(getattr(f["store"], "scan_truncated", False) for f in active)
-
     rows: list[dict] = []
     folders: list[dict] = []
     experiments_set: set[str] = set()
@@ -25898,6 +25880,86 @@ def _datasets_view(view_mode: str):
     # dataset-virtual.js).
     folder_sig = ",".join(sorted(f["key"] for f in folders))
 
+    return {
+        "rows_json": json.dumps(rows, separators=(",", ":")),
+        "folders": folders,
+        "folders_json": json.dumps(folders, separators=(",", ":")),
+        "folder_sig": folder_sig,
+        "total": total,
+        "experiments": experiments,
+        "exp_categories": exp_categories,
+        "dates": dates,
+        "stats": stats,
+        "all_tags": all_tags,
+        "collection_tags": collection_tags,
+        "digest": digest,
+    }
+
+
+def _datasets_view(view_mode: str):
+    """Shared renderer for the Datasets and Collections pages (parameterized).
+
+    ``view_mode`` is 'datasets' (all runs) or 'collections' (only tagged runs +
+    tag-filter chips). Everything else — store lookup, payload, exp chips, date
+    tabs, virtual table, compare bar — is identical and reused.
+    """
+    from quam_state_manager.core.dataset import FAVORITE_TAG
+    from quam_state_manager.core.fit_targets import curated_fit_keys as _curated_fit_keys
+
+    is_collections = view_mode == "collections"
+    page = "collections" if is_collections else "datasets"
+    # Multi-folder: the table merges runs from EVERY active data folder, not the
+    # single "most-runs" winner. Each row is tagged with its folder_key ("f") so
+    # the client can build a uid ("<f>:<id>") and the folder filter badges.
+    # docs/170: BOUNDED. On a fresh process the cold build is truncated at
+    # _COLD_SCAN_BUDGET_S (docs/142 E) and the next rescan_if_stale continued
+    # it unbounded -- on the customer's share that was the user's first click
+    # on Datasets blocking for the remaining walk (31.6 s measured at 1.8 ms
+    # per file operation, 2,655 runs). The panel now shows what is indexed
+    # inside the budget and SAYS so (`scan_partial`); the delta poll already
+    # carries the continuation (docs/105 #4) and fills the rest in.
+    active = _active_dataset_stores(
+        deadline=time.monotonic() + _RENDER_SCAN_BUDGET_S)
+    # A deep link from a qubit/pair inspector: /datasets?q=q7. SM does not
+    # INTERPRET the token — it hands the string to the search box and lets the
+    # grammar dataset-virtual.js already ships do the filtering, which is the
+    # only way a link cannot disagree with typing the same thing by hand.
+    # (The token is the BARE name on purpose: a bare `q1` is matched exactly
+    # against the run's own qubit list, while the `qubit:` scope is a substring
+    # test that would drag q10…q19 in with it.)
+    # (docs/170: `q` stays a GET-only preset on purpose -- a Rescan POST never
+    # carries one, so the swap it answers with clears no filters; only the
+    # date tab rides along, read below through request.values.)
+    search = (request.args.get("q") or "").strip()
+    # QA F9: a Rescan POST carries the box's LIVE text back as `keep_q` (never
+    # as `q`: a preset clears every picker/facet tick, docs/167). It refills
+    # the box's value only -- data-preset stays `search`, so nothing clears.
+    search_value = search or ((request.form.get("keep_q") or "").strip()
+                              if request.method == "POST" else "")
+    if _is_htmx():
+        template = "_datasets.html"
+    else:
+        template = "collections.html" if is_collections else "datasets.html"
+    if not active:
+        return render_template(template, **_ctx(page=page),
+                               rows_json="[]", initial_poll_ts=0, total=0,
+                               active_folder="", folders=[], folders_json="[]",
+                               no_workspace=True, curated_keys_json="[]",
+                               view_mode=view_mode, collection_tags=[],
+                               search=search, search_value=search_value)
+    import time as _t
+    poll_ts = _t.time()
+    date = request.values.get("date")
+    # docs/170: still indexing? (any store whose last walk stopped at its
+    # deadline). Rendered as one muted note beside the count; the client
+    # hides it on the first delta poll that reports a complete scan.
+    scan_partial = any(getattr(f["store"], "scan_truncated", False) for f in active)
+
+    pl = _datasets_payload(active, is_collections, date)
+    rows_json = pl["rows_json"]
+    folders = pl["folders"]
+    folder_sig = pl["folder_sig"]
+
     # Project lens (docs/63): which of the present folders are recorded for
     # the active context's project scope. Seeds the client's folder filter
     # only — rows, uids and the folder_key contract are untouched, and the
@@ -25912,10 +25974,10 @@ def _datasets_view(view_mode: str):
         scope_keys=scope_keys,
         scope_keys_json=json.dumps(scope_keys, separators=(",", ":")),
         view_mode=view_mode,
-        collection_tags=collection_tags,
+        collection_tags=pl["collection_tags"],
         scan_partial=scan_partial,
-        digest=digest,
-        rows_json=json.dumps(rows, separators=(",", ":")),
+        digest=pl["digest"],
+        rows_json=rows_json,
         # Curated fit-key order (from FIT_TARGET_MAP) for the Sort banner's
         # Fit-metrics group — the client builds the key union + counts from each
         # row's `sm` map (so it stays correct after delta-poll merges) and floats
@@ -25926,13 +25988,13 @@ def _datasets_view(view_mode: str):
         # Active data folders → folder filter badges + per-row folder chip
         # lookups (folder_key → label/full_path) in dataset-virtual.js.
         folders=folders,
-        folders_json=json.dumps(folders, separators=(",", ":")),
-        total=total,
-        experiments=experiments,
-        exp_categories=exp_categories,
-        dates=dates,
-        stats=stats,
-        all_tags=all_tags,
+        folders_json=pl["folders_json"],
+        total=pl["total"],
+        experiments=pl["experiments"],
+        exp_categories=pl["exp_categories"],
+        dates=pl["dates"],
+        stats=pl["stats"],
+        all_tags=pl["all_tags"],
         active_date=date,
         search=search,
         search_value=search_value,
@@ -26557,8 +26619,40 @@ def _run_ingest(app):
 
     ing = run_ingest.RunIngest(resolve)
     app.config["run_ingest"] = ing
+    for step in _ingest_after_steps(app):
+        ing.add_after(step, step.__name__)
     ing.start()
     return ing
+
+
+def _ingest_after_steps(app) -> list:
+    """RAM P7: the precompute that rides the run-watch tick after the stores
+    (``RunIngest.add_after``), in order. Each fills a cache validated on read,
+    so a tick that is late or skipped costs time, never correctness."""
+
+    def workspace_sidebar(roots: list[str]) -> None:
+        # the sidebar's rescan (the first /workspace/tree or /tree/poll after
+        # a run used to pay it: 1.85-5.2 s measured on KH)
+        ws = app.config.get("workspace")
+        if ws is not None and ws.rescan_if_stale():
+            app.config.pop("dataset_store", None)   # the routes' own follow-up
+
+    def datasets_payload(roots: list[str]) -> None:
+        # re-encode the Datasets payload views somebody has open
+        views = [sl for sl in _DATASETS_PAYLOAD.slots()
+                 if isinstance(sl, tuple) and sl and sl[0] == "datasets"]
+        if not views:
+            return
+        with app.app_context():
+            active = [f for f in _active_dataset_stores(fast=True, rescan=False)
+                      if f["store"].run_count > 0]
+            for _tag, coll, date in views:
+                try:
+                    _datasets_payload(active, coll, date or None)
+                except _ramcache.Warming:
+                    pass
+
+    return [workspace_sidebar, datasets_payload]
 
 
 @bp.route("/datasets/wait")

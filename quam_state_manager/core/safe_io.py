@@ -513,8 +513,12 @@ def _write_tmp_json(path: Path, data, *, compact: bool = False,
     """
     tmp = _tmp_for(path)
     if compact:          # docs/171: a 10 MB store cache is not for reading
+        # RAM P7: dumps + ONE write, not json.dump -- dump streams the C
+        # encoder's output through thousands of small writes (a 3.3 MB
+        # listing: 295 ms vs 46 ms measured). The bytes are identical.
+        text = json.dumps(data, separators=(",", ":"), ensure_ascii=False)
         with open(tmp, "w", encoding="utf-8") as f:
-            json.dump(data, f, separators=(",", ":"), ensure_ascii=False)
+            f.write(text)
             f.write("\n")
             f.flush()
             os.fsync(f.fileno())

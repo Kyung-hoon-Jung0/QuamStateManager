@@ -60,6 +60,18 @@ class RunIngest:
         self.passes = 0
         self.errors = 0
         self.last_ms = 0.0
+        # RAM P7: more precompute riding the same tick, each ``fn(roots)``
+        # run after the stores (the workspace sidebar rescan, the alignment
+        # verdicts, the Datasets rows, the drawer's run index). Every one of
+        # them fills a cache that is validated on read, like the stores'.
+        self._after: list[tuple[Callable[[list[str]], None], str]] = []
+        self.after_ms: dict[str, float] = {}
+
+    def add_after(self, fn: Callable[[list[str]], None], name: str | None = None) -> None:
+        """Register one more precompute step (idempotent per function)."""
+        with self._lock:
+            if all(f is not fn for f, _n in self._after):
+                self._after.append((fn, name or getattr(fn, "__name__", "step")))
 
     def kick(self, roots: Iterable[str]) -> None:
         with self._lock:
@@ -91,6 +103,16 @@ class RunIngest:
                 self.errors += 1
                 logger.exception("run ingest failed for %s",
                                  getattr(store, "folder_path", store))
+        with self._lock:
+            after = list(self._after)
+        for fn, name in after:
+            t1 = time.perf_counter()
+            try:
+                fn(roots)
+            except Exception:
+                self.errors += 1
+                logger.exception("run ingest: step %s failed", name)
+            self.after_ms[name] = round((time.perf_counter() - t1) * 1000.0, 3)
         self.passes += 1
         self.last_ms = (time.perf_counter() - t0) * 1000.0
         return n
@@ -129,4 +151,5 @@ class RunIngest:
         with self._lock:
             pending = len(self._pending)
         return {"running": self.running, "passes": self.passes, "errors": self.errors,
-                "last_ms": round(self.last_ms, 3), "pending": pending}
+                "last_ms": round(self.last_ms, 3), "pending": pending,
+                "after_ms": dict(self.after_ms)}

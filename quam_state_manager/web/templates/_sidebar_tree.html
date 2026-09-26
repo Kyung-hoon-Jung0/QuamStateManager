@@ -62,3 +62,5 @@
 {% else %}
 <p class="muted"><small>No workspace roots added yet.</small></p>
 {% endif %}
+{# RAM P7: the workspace version this tree was rendered at (see workspace_tree). #}
+{% if tree_ws_version is defined and tree_ws_version is not none %}<span hidden class="tree-ws-version" data-ws-version="{{ tree_ws_version }}"></span>{% endif %}

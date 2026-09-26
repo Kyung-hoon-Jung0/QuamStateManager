@@ -895,7 +895,14 @@
                                 // r16 ⑦ D-C: the baseline poll's own staleness
                                 // check may have JUST rescanned — render what it
                                 // found instead of silently adopting the bump.
-                                if (d.rescanned && window.htmx) refetchTree(d.v);
+                                // RAM P7: the run-watch worker rescans in the
+                                // background now, so the rendered tree carries
+                                // the version it was drawn at -- a baseline
+                                // that already moved past it re-renders too.
+                                var _st = el.querySelector('[data-ws-version]');
+                                var _shown = _st ? _st.getAttribute('data-ws-version') : null;
+                                if ((d.rescanned || (_shown !== null && _shown !== String(d.v)))
+                                        && window.htmx) refetchTree(d.v);
                                 return;
                             }
                             // r16 ⑦ D-C belt: every 10th tick re-fetches even
