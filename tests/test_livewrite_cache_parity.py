@@ -50,6 +50,14 @@ def _drop_caches():
 
 
 def _outside_write(folder: Path, r: random.Random):
+    if r.random() < 0.3:
+        # a wiring-only outside write: the state bytes do not move, so only
+        # the wiring digest in the cache tokens can notice it
+        w = folder / "wiring.json"
+        wd = json.loads(w.read_bytes())
+        wd.setdefault("wiring", {})["port_hint"] = r.randrange(1000)
+        w.write_text(json.dumps(wd, indent=4), encoding="utf-8")
+        return
     p = folder / "state.json"
     st = json.loads(p.read_bytes())
     q = f"q{r.randrange(4)}"
@@ -95,9 +103,14 @@ def test_warm_answers_equal_cold_ones_across_random_events(chip, seed):
             c.post("/state/sync", data={"mode": "discard", "force": "1"})
         # (else: nothing moved -- the repeat must hit and still be right)
         warm = _answers(c)
+        # the inner entry memos answer on their OWN tokens once the body memo
+        # in front of them is gone
+        routes._LIVE_DIFF_BODY.clear()
+        inner = _answers(c)
         _drop_caches()
         cold = _answers(c)
         assert warm == cold, (seed, step, ev)
+        assert inner == cold, (seed, step, ev)
         assert all(code == 200 for _u, code, _b in warm), warm
 
 
