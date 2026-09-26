@@ -27,7 +27,8 @@ window.AgentPanel = (function () {
   var S = {
     after: 0, seq: -1, chip: null, session: null, now: null, backends: null, defaultBackend: "claude",
     plans: {}, runs: {}, approvals: {}, mounts: [], timer: null, inflight: false, observer: false,
-    seenCards: {}, lastPoll: 0, unreachable: false
+    seenCards: {}, lastPoll: 0, unreachable: false,
+    deciding: {}                                   // approval id -> "approve" | "reject" while its press is in flight
   };
   var PRESETS = [
     ["1Q bringup", "1Q bringup on <targets>: resonator spectroscopy -> qubit spectroscopy -> power rabi -> ramsey. Propose the plan with plan_propose (one step per node and target) and wait for Start."],
@@ -518,6 +519,25 @@ window.AgentPanel = (function () {
         '<div class="ag-tbl"><table class="ag-ap-rows"><thead><tr><th>value</th><th>now</th><th>proposed (editable)</th></tr></thead><tbody>' + rows + "</tbody></table></div>") +
       (a.reason ? '<p class="ag-because">because: ' + esc(a.reason) + "</p>" : "") + '<div class="ag-ap-acts">' + acts + "</div>";
     setHtml(el, row(a.created, html), force);
+    markBusy(el, a);
+  }
+  /* QA agents round: on a 30-qubit chip the door took 5-15 s to answer
+     "Write to chip" (the apply path, measured), and all that time the card
+     still offered Reject and looked idle: a Reject pressed then answered
+     "no pending approval" once the write had landed. While a press is in
+     flight the card says what it is doing and offers nothing else. Done on
+     the live DOM, never by re-rendering: a re-render rebuilds the editable
+     rows from the proposal and would throw away the values the person typed
+     (and a refused write keeps the card, so they must still be there). */
+  function markBusy(el, a) {
+    var busy = S.deciding[a.id];
+    var ap = el.querySelector(".ag-approve"), rj = el.querySelector(".ag-reject");
+    if (ap) {
+      if (ap.__agLabel === undefined) ap.__agLabel = ap.textContent;
+      ap.disabled = !!busy;
+      ap.textContent = busy ? (busy === "reject" ? "rejecting…" : (a.kind === "run" ? "allowing…" : "writing to the chip…")) : ap.__agLabel;
+    }
+    if (rj) rj.hidden = !!busy;
   }
 
   // ---------------------------------------------------------- the "now"
@@ -700,7 +720,12 @@ window.AgentPanel = (function () {
     var card = e && e.target && e.target.closest && e.target.closest(".ag-card");
     if (!card || !card.__agStale) return;
     setTimeout(function () {
-      if (card.__agStale && !(card.contains(document.activeElement) && document.activeElement !== document.body)) setHtml(card, card.__agStale, true);
+      if (card.__agStale && !(card.contains(document.activeElement) && document.activeElement !== document.body)) {
+        setHtml(card, card.__agStale, true);
+        // a caught-up approval card is fresh markup: a press still in flight is re-said
+        var ak = /^approval:(.+)$/.exec(card.getAttribute("data-card") || "");
+        if (ak && S.approvals[ak[1]]) markBusy(card, S.approvals[ak[1]]);
+      }
     }, 0);
   }, true);
 
@@ -865,8 +890,16 @@ window.AgentPanel = (function () {
       poll(true);
     });
   }
+  function repaintApproval(id) {
+    var a = S.approvals[id];
+    if (!a) return;
+    S.mounts.forEach(function (m) {
+      var el = m.root.querySelector('[data-card="approval:' + id + '"]');
+      if (el) markBusy(el, a);
+    });
+  }
   function approve(id, btn) {
-    if (S.observer) return;
+    if (S.observer || S.deciding[id]) return;
     var card = btn && btn.closest(".ag-card");
     var a = S.approvals[id] || {};
     var writes = null;
@@ -878,9 +911,11 @@ window.AgentPanel = (function () {
         return { path: w.path, old: w.old, new: v };
       });
     }
-    if (btn) btn.disabled = true;
+    S.deciding[id] = "approve";
+    repaintApproval(id);
     api("POST", "/api/agent/approvals/" + id + "/approve", writes ? { writes: writes } : {}).then(function (r) {
-      if (btn) btn.disabled = false;
+      delete S.deciding[id];
+      repaintApproval(id);
       // review R2-2: "written" only when the door said applied; a refusal keeps the card and says why
       var applied = r.status === 200 && r.body && r.body.ok !== false;
       if (!applied) toast(errText(r, "not applied"), "error");
@@ -889,9 +924,17 @@ window.AgentPanel = (function () {
     });
   }
   function reject(id) {
-    if (S.observer) return;
-    var note = window.prompt ? (window.prompt("Reject — a note for the journal (optional):") || "") : "";
-    api("POST", "/api/agent/approvals/" + id + "/reject", { note: note }).then(function (r) { if (r.status !== 200) toast(errText(r, "not rejected"), "error"); poll(true); });
+    if (S.observer || S.deciding[id]) return;
+    var note = window.prompt ? window.prompt("Reject — a note for the journal (optional):") : "";
+    if (note === null) return;                   // Cancel on the prompt is "not now", not "reject"
+    S.deciding[id] = "reject";
+    repaintApproval(id);
+    api("POST", "/api/agent/approvals/" + id + "/reject", { note: note || "" }).then(function (r) {
+      delete S.deciding[id];
+      repaintApproval(id);
+      if (r.status !== 200) toast(errText(r, "not rejected"), "error");
+      poll(true);
+    });
   }
   function stop(mode) {
     if (S.observer) return;

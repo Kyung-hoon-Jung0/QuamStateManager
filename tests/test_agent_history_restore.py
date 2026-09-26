@@ -15,7 +15,9 @@ import pytest
 _ROOT = Path(__file__).resolve().parent.parent
 _SELFCHECKS = ["agent_history_restore_selfcheck.cjs",
                # the actor box says what SM records when the name is not ASCII
-               "agent_actor_box_selfcheck.cjs"]
+               "agent_actor_box_selfcheck.cjs",
+               # an approval press in flight: busy card, no Reject, Cancel is not a rejection
+               "agent_approval_busy_selfcheck.cjs"]
 
 
 @pytest.mark.skipif(shutil.which("node") is None, reason="node not available")
