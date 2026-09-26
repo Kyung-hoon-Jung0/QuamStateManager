@@ -173,6 +173,9 @@ function world(opts) {
         const dp = 'qubit_pairs.' + r + '-x.' + k;
         cells[k][r + '-x'] = '<input type="text" class="bulk-cell" value="' + val(r, i) + '" data-orig="' + val(r, i)
           + '" data-dot-path="' + dp + '" data-resolved="' + dp + '" size="10">';
+        const dq = 'qubits.' + r + '.' + k;       // ...and the qubit grid's (section 8)
+        cells[k][r] = '<input type="text" class="bulk-cell" value="' + val(r, i) + '" data-orig="' + val(r, i)
+          + '" data-dot-path="' + dq + '" data-resolved="' + dq + '" size="10">';
       });
     });
     return Promise.resolve({ ok: true, status: 200, json: function () { return Promise.resolve({ ok: true, cells: cells, seq: 1 }); } });
@@ -379,6 +382,51 @@ const statOf = (win, t, k) => win.document.querySelector('#' + t + ' [data-col-s
     // back itself: it is no longer cold, so no fetch path would
     gv.ensureTd(pt.querySelector('tr[data-pair="q2-x"] td.ck-30'));
     ok(!gv.isCollapsed('c30') && gv.isCollapsed('c31'), 'ensureTd on a filled-but-collapsed column reveals through it, and no further');
+  }
+
+  // ── 8. scrolling back left takes the far end out of layout again ───────────
+  for (const G of [{ id: 'bulk-pair-table', pre: 'bulk-pair', attr: 'data-pair', sfx: '-x', o: { coldFrom: NCOL, pairColdFrom: HOT } },
+                   { id: 'bulk-table', pre: 'bulk', attr: 'data-qubit', sfx: '', o: { coldFrom: HOT } }]) {
+    const win = world(Object.assign({ tailMin: 100, land: true }, G.o));
+    await tick(10);
+    const d = win.document, pt = d.getElementById(G.id), pane = d.getElementById('table-pane');
+    // geometry: column N starts at N*200px
+    Object.defineProperty(win.HTMLElement.prototype, 'offsetLeft', { configurable: true,
+      get: function () { const m = /\bck-(\d+)\b/.exec(this.className || ''); return m ? +m[1] * 200 : 0; } });
+    // a jump to the far right: nothing laid out ahead, the whole run comes
+    // back, and only the window around 6000px (c22..c38) is fetched
+    win.__tableW = 0;
+    pane.scrollLeft = 6000;
+    for (let i = 0; i < 3; i++) { pane.dispatchEvent(new win.Event('scroll')); await tick(40); }
+    ok(pt.querySelectorAll('th.bulk-virt-collapsed').length === 0, 'a far jump reveals the whole run');
+    // back at scrollLeft 0: everything past 1200 * (1.5 + 2) = 4200px may leave again
+    pane.scrollLeft = 0;
+    win.__tableW = 1e6;
+    const c30 = pt.querySelector('tr[' + G.attr + '="q2' + G.sfx + '"] td.ck-30 .bulk-cell');
+    ok(!!c30, 'c30 landed (a hydrated column: its cells are inputs)');
+    c30.value = '999';                         // an unapplied edit in c30
+    pane.dispatchEvent(new win.Event('scroll')); await tick(40);
+    ok(pt.querySelector('th.ck-31').classList.contains('bulk-virt-collapsed')
+       && !pt.querySelector('th.ck-30').classList.contains('bulk-virt-collapsed'),
+       G.pre + ': ' + 'the far end leaves layout again, and stops at the column holding an edit');
+    const sty = d.getElementById(G.pre + '-virt-width-style-tail').textContent;
+    ok(sty.indexOf('td.ck-31{display:none') >= 0 && sty.indexOf('td.ck-30{') < 0, 'its rules are back');
+    c30.value = c30.getAttribute('data-orig');  // the edit is undone
+    pane.dispatchEvent(new win.Event('scroll')); await tick(40);
+    ok(pt.querySelector('th.ck-22').classList.contains('bulk-virt-collapsed')
+       && !pt.querySelector('th.ck-21').classList.contains('bulk-virt-collapsed'),
+       G.pre + ': ' + 'clean again, it goes back to two viewports past the window (c22), no further');
+    ok(pt.querySelector('.bulk-group-head[data-group="B"]').colSpan === 2,
+       G.pre + ': ' + 'the group band follows (B spans c20..c21: ' + pt.querySelector('.bulk-group-head[data-group="B"]').colSpan + ')');
+    // the focus pins its column the same way
+    win.__tableW = 0; pane.scrollLeft = 6000;
+    for (let i = 0; i < 3; i++) { pane.dispatchEvent(new win.Event('scroll')); await tick(40); }
+    win.__tableW = 1e6; pane.scrollLeft = 0;
+    pt.querySelector('tr[' + G.attr + '="q1' + G.sfx + '"] td.ck-35 .bulk-cell').focus();
+    pane.dispatchEvent(new win.Event('scroll')); await tick(40);
+    ok(!pt.querySelector('th.ck-35').classList.contains('bulk-virt-collapsed')
+       && pt.querySelector('th.ck-36').classList.contains('bulk-virt-collapsed'),
+       G.pre + ': ' + 'a focused column is never taken out of layout');
   }
 
   console.log(fails ? ('FAILED ' + fails + ' of ' + asserts) : ('all checks passed (' + asserts + ' assertions)'));

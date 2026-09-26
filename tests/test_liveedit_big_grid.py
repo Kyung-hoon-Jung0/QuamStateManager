@@ -30,4 +30,4 @@ def test_liveedit_big_grid_selfcheck_passes():
     assert r.returncode == 0, (r.stdout + r.stderr)
     # the LAST line, not merely a zero exit: a pending await that never
     # settles ends node with exit 0 and half the checks unrun
-    assert r.stdout.strip().splitlines()[-1] == "all checks passed (37 assertions)", r.stdout[-2000:]
+    assert r.stdout.strip().splitlines()[-1] == "all checks passed (51 assertions)", r.stdout[-2000:]

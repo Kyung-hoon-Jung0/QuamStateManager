@@ -162,6 +162,9 @@
         // and the owner's mirror can never rot.
         var onState = opts.onState || function () {};
         var onReveal = opts.onReveal || function () {};
+        // the owner's columns holding an unapplied edit ({key: 1}); a column
+        // with one is never taken back out of layout (see tailRecollapse)
+        var dirtyCols = opts.dirtyCols || function () { return {}; };
         var tailMin = opts.tailMinCells > 0 ? opts.tailMinCells : TAIL_MIN_CELLS;
         var phase = opts.phase || function () {};
 
@@ -226,9 +229,47 @@
             end = Math.min(end, tl.list.length);
             for (var i = tl.from; i < end; i++) tl.list[i].h.classList.remove('bulk-virt-collapsed');
             tl.from = end;
-            if (tl.from >= tl.list.length) { v.tail = null; tailClear(null); }
-            else tailWrite();
+            // fully revealed, the plan is KEPT (empty rules): scrolling back
+            // left can take the far end out of layout again
+            tailWrite();
             try { onReveal(t); } catch (e) {}
+            return true;
+        }
+
+        /* The other direction (w7 liveedit). Once a jump to the far right had
+           revealed the run, every later Enter paid the whole table's layout
+           again (big30x: 0.1 s -> 0.55-1.8 s). When the user is back two
+           viewports left of a revealed column, the columns from there to the
+           run's current start go back out of layout -- only while each one is
+           clean (no unapplied edit, not holding the focus); a hydrated column
+           keeps its cells (display:none never touches a td) and its margin
+           share becomes its MEASURED width. */
+        function tailRecollapse(t, wrap, cw) {
+            var tl = v && v.tail; if (!tl || tl.from <= 0) return false;
+            var limit = (wrap ? wrap.scrollLeft + wrap.clientWidth : 0) + cw * (BUFFER + 2);
+            var act = document.activeElement, actK = null;
+            if (act && act !== document.body && t.contains(act) && act.closest) {
+                var at = act.closest('[data-col-key]');
+                actK = at && at.getAttribute('data-col-key');
+            }
+            var j = tl.from, dirty = null, meas = [];
+            while (j > 0) {
+                var e = tl.list[j - 1];
+                if (!thHidden(e.h)) {
+                    if (e.h.offsetLeft <= limit || e.k === actK) break;
+                    if (!v.cold.has(e.k)) {
+                        if (dirty === null) { try { dirty = dirtyCols() || {}; } catch (x) { dirty = {}; } }
+                        if (dirty[e.k]) break;
+                    }
+                    meas.push([e, e.h.offsetWidth]);
+                }
+                j--;
+            }
+            if (j >= tl.from) return false;
+            meas.forEach(function (m) { if (m[1] > 0) m[0].w = m[1]; });
+            tl.from = j;
+            tailWrite();
+            try { onReveal(t); } catch (e2) {}
             return true;
         }
 
@@ -796,7 +837,7 @@
                         end++;
                     }
                     tailReveal(end);
-                }
+                } else tailRecollapse(t, wrap, cw);
             }
             var due = [];
             t.querySelectorAll('th.bulk-col-head[data-col-key]').forEach(function (h) {

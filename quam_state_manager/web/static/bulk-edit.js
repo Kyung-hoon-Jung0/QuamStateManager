@@ -2297,6 +2297,7 @@
             // the tail collapse put columns back: the group band's spans and
             // the top scrollbar proxy both count them
             onReveal: function () { try { _updateGroupHeader(); } catch (e) {} },
+            dirtyCols: function () { return _dirtyColKeys(); },
         });
         return _gv;
     }

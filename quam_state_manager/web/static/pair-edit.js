@@ -79,6 +79,7 @@
             },
             onState: function (st) { _pvirt = st; },
             onReveal: function () { try { _updateGroupHeader(); } catch (e) {} },
+            dirtyCols: _pairDirtyCols,
         });
         return _pgv;
     }
@@ -98,6 +99,19 @@
     function _cells(scope) { return Array.prototype.slice.call(scope.querySelectorAll('.bulk-cell')); }
     function _rows() { var t = table(); return t ? Array.prototype.slice.call(t.querySelectorAll('tbody tr')) : []; }
     function _isDirty(c) { return c.value !== c.getAttribute('data-orig'); }
+    // the columns holding an unapplied edit -- GridVirt never takes one of
+    // them back out of layout (its tail re-collapse)
+    function _pairDirtyCols() {
+        var t = table(), out = {};
+        if (!t) return out;
+        _cells(t).forEach(function (c) {
+            if (!_isDirty(c)) return;
+            var td = c.closest('td[data-col-key]');
+            var k = td && td.getAttribute('data-col-key');
+            if (k) out[k] = 1;
+        });
+        return out;
+    }
     function _rowOf(c) { return c.closest('tr'); }
     function _grp(v) { return (window._groupDigits ? window._groupDigits(v) : String(v)); }
     // well-formed thousands groups only: a text coordinate "4,0" is not 40 (QA F15)
