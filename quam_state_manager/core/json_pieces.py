@@ -101,21 +101,43 @@ def _enc_key_indent(k) -> str:
     return json.dumps(k, ensure_ascii=False)
 
 
-def _compose_dict_indent(d: dict, indent, level: int, depth_left: int) -> str:
-    """``d`` rendered at nesting ``level`` exactly as the stdlib does."""
+_SCALARS = (str, int, float, bool, type(None))
+
+
+def _compose_dict_indent(d: dict, indent, level: int, depth_left: int,
+                         out: list) -> None:
+    """Append ``d`` rendered at nesting ``level`` -- exactly as the stdlib
+    does -- to *out* as fragments (one final join; no intermediate copies of
+    the composed levels)."""
     if not d:
-        return "{}"
+        out.append("{}")
+        return
     ind = _indent_str(indent)
     inner = "\n" + ind * (level + 1)
-    parts = []
+    sep = "," + inner
+    out.append("{" + inner)
+    first = True
     for k, v in d.items():
-        ek = _enc_key_indent(k)
-        if depth_left > 0 and type(v) is dict and v:
-            vt = _compose_dict_indent(v, indent, level + 1, depth_left - 1)
+        if not first:
+            out.append(sep)
+        first = False
+        out.append(_enc_key_indent(k) + ": ")
+        tv = type(v)
+        if depth_left > 0 and tv is dict and v:
+            _compose_dict_indent(v, indent, level + 1, depth_left - 1, out)
+        elif tv in _SCALARS:
+            # a scalar renders the same at any nesting level; dumping it is
+            # cheaper than fingerprinting it
+            out.append(json.dumps(v, ensure_ascii=False))
         else:
-            vt = _indented_piece(v, indent, level + 1)
-        parts.append(ek + ": " + vt)
-    return "{" + inner + ("," + inner).join(parts) + "\n" + ind * level + "}"
+            out.append(_indented_piece(v, indent, level + 1))
+    out.append("\n" + ind * level + "}")
+
+
+def _compose_indent(doc: dict, indent) -> str:
+    out: list = []
+    _compose_dict_indent(doc, indent, 0, _DEPTH, out)
+    return "".join(out)
 
 
 def dumps_indent(doc: Any, indent=4) -> str:
@@ -123,11 +145,73 @@ def dumps_indent(doc: Any, indent=4) -> str:
     if type(doc) is not dict or indent is None or (isinstance(indent, int) and indent < 0):
         return _plain_indent(doc, indent)
     try:
-        dig = _digest(doc)
-        return DOCS.get(("ind", indent, dig), None,
-                        lambda: _compose_dict_indent(doc, indent, 0, _DEPTH))
+        # No whole-document memo here: a write follows an edit, so the lookup
+        # would almost never hit and its key costs a full marshal pass.
+        return _compose_indent(doc, indent)
     except _Unmodelled:
         return _plain_indent(doc, indent)
+
+
+def _compose_both(d: dict, indent, level: int, depth_left: int) -> tuple[list, list]:
+    """One walk, two renderings of ``d``: its indented text at ``level`` and
+    its canonical text, as fragment lists. Each container piece is
+    fingerprinted ONCE and that digest keys both caches."""
+    if not d:
+        return ["{}"], ["{}"]
+    ind = _indent_str(indent)
+    inner = "\n" + ind * (level + 1)
+    sep = "," + inner
+    ind_out: list = ["{" + inner]
+    can_parts: dict = {}
+    first = True
+    for k, v in d.items():
+        if type(k) is not str:
+            raise _Unmodelled("non-str key")
+        if not first:
+            ind_out.append(sep)
+        first = False
+        ind_out.append(json.dumps(k, ensure_ascii=False) + ": ")
+        tv = type(v)
+        if depth_left > 0 and tv is dict and v:
+            ci, cc = _compose_both(v, indent, level + 1, depth_left - 1)
+            ind_out.extend(ci)
+        elif tv in _SCALARS:
+            ind_out.append(json.dumps(v, ensure_ascii=False))
+            cc = [json.dumps(v)]
+        else:
+            dg = _digest(v)
+
+            def c_ind(v=v):
+                text = _plain_indent(v, indent)
+                return text.replace("\n", "\n" + ind * (level + 1))
+            ind_out.append(PIECES.get(("ind", indent, level + 1, dg), None, c_ind))
+            cc = [PIECES.get(("can", dg), None, lambda v=v: _plain_canon(v))]
+        can_parts[k] = cc
+    ind_out.append("\n" + ind * level + "}")
+    can_out: list = ["{"]
+    firstc = True
+    for k in sorted(can_parts):
+        if not firstc:
+            can_out.append(",")
+        firstc = False
+        can_out.append(json.dumps(k) + ":")
+        can_out.extend(can_parts[k])
+    can_out.append("}")
+    return ind_out, can_out
+
+
+def dumps_indent_and_canonical(doc: Any, indent=4) -> tuple[str, str | None]:
+    """``(dumps_indent(doc, indent), canonical(doc))`` from ONE walk over the
+    pieces -- what a chip-file writer needs to also know the content hash of
+    the bytes it writes. The canonical half is None when *doc* is not a
+    modelled document (the indented half is then the stdlib's)."""
+    if type(doc) is not dict or indent is None or (isinstance(indent, int) and indent < 0):
+        return _plain_indent(doc, indent), None
+    try:
+        ci, cc = _compose_both(doc, indent, 0, _DEPTH)
+        return "".join(ci), "".join(cc)
+    except _Unmodelled:
+        return _plain_indent(doc, indent), None
 
 
 # ---------------------------------------------------------------- canonical
@@ -140,21 +224,35 @@ def _canon_piece(value: Any) -> str:
     return PIECES.get(("can", _digest(value)), None, lambda: _plain_canon(value))
 
 
-def _compose_dict_canon(d: dict, depth_left: int) -> str:
+def _compose_dict_canon(d: dict, depth_left: int, out: list) -> None:
     if not d:
-        return "{}"
+        out.append("{}")
+        return
     for k in d:
         if type(k) is not str:
             raise _Unmodelled("non-str key")
-    parts = []
+    out.append("{")
+    first = True
     for k in sorted(d):
+        if not first:
+            out.append(",")
+        first = False
         v = d[k]
-        if depth_left > 0 and type(v) is dict and v:
-            vt = _compose_dict_canon(v, depth_left - 1)
+        out.append(json.dumps(k) + ":")
+        tv = type(v)
+        if depth_left > 0 and tv is dict and v:
+            _compose_dict_canon(v, depth_left - 1, out)
+        elif tv in _SCALARS:
+            out.append(json.dumps(v))
         else:
-            vt = _canon_piece(v)
-        parts.append(json.dumps(k) + ":" + vt)
-    return "{" + ",".join(parts) + "}"
+            out.append(_canon_piece(v))
+    out.append("}")
+
+
+def _compose_canon(doc: dict) -> str:
+    out: list = []
+    _compose_dict_canon(doc, _DEPTH, out)
+    return "".join(out)
 
 
 def canonical(doc: Any) -> str:
@@ -163,7 +261,7 @@ def canonical(doc: Any) -> str:
         return _plain_canon(doc)
     try:
         dig = _digest(doc)
-        return DOCS.get(("can", dig), None, lambda: _compose_dict_canon(doc, _DEPTH))
+        return DOCS.get(("can", dig), None, lambda: _compose_canon(doc))
     except _Unmodelled:
         return _plain_canon(doc)
 

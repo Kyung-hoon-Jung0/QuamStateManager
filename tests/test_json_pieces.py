@@ -70,6 +70,9 @@ def test_random_documents_render_like_the_stdlib(seed):
     for step in range(6):
         for ind in (4, 2, "\t"):
             assert JP.dumps_indent(doc, ind) == json.dumps(doc, indent=ind, ensure_ascii=False), (seed, step, ind)
+            both = JP.dumps_indent_and_canonical(doc, ind)
+            assert both == (json.dumps(doc, indent=ind, ensure_ascii=False),
+                            json.dumps(doc, sort_keys=True, separators=(",", ":"))), (seed, step, ind)
         assert JP.canonical(doc) == json.dumps(doc, sort_keys=True, separators=(",", ":")), (seed, step)
         w = {"wiring": doc.get("k1a", 1)}
         assert JP.content_hash_pair(doc, w) == hashlib.sha256(
@@ -110,6 +113,9 @@ def test_real_chip_renders_like_the_stdlib(path):
     q = next(iter(doc["qubits"]))
     doc["qubits"][q]["__w7_probe"] = 1.25
     assert JP.dumps_indent(doc, 4) == json.dumps(doc, indent=4, ensure_ascii=False)
+    assert JP.dumps_indent_and_canonical(doc, 4) == (
+        json.dumps(doc, indent=4, ensure_ascii=False),
+        json.dumps(doc, sort_keys=True, separators=(",", ":")))
     assert JP.canonical(doc) == json.dumps(doc, sort_keys=True, separators=(",", ":"))
 
 
@@ -135,3 +141,21 @@ def test_json_diff_leafcount_equals_the_walk(seed):
         assert JP.json_diff_leafcount(doc) == want, seed
         _mutate_leaf(r, doc)
     assert JP.json_diff_leafcount({}) == 0
+
+
+def test_a_written_chip_file_hashes_like_its_parse(tmp_path):
+    """safe_io seeds the content cache with the canonical text it composed
+    while writing: the hash of the bytes on disk must equal the hash of their
+    parse, and a later edit of the written document must not leak into it."""
+    from quam_state_manager.core import doc_cache, safe_io
+    r = random.Random(7)
+    state, wiring = _doc(r), {"wiring": {"q1": {"xy": "#/ports/1"}}, "network": {"h": 1}}
+    safe_io.write_state_wiring(tmp_path, state, wiring)
+    state["k_after_write"] = 99          # the store mutates its doc afterwards
+    sb = (tmp_path / "state.json").read_bytes()
+    wb = (tmp_path / "wiring.json").read_bytes()
+    assert doc_cache.CANON.has(doc_cache.digest(sb)), "the write did not seed the cache"
+    ref = hashlib.sha256(json.dumps([json.loads(sb), json.loads(wb)], sort_keys=True,
+                                    separators=(",", ":")).encode()).hexdigest()
+    assert doc_cache.read_pair(tmp_path, mode="hash").content_hash() == ref
+    assert working_copy.content_hash(json.loads(sb), json.loads(wb)) == ref

@@ -163,3 +163,29 @@ def test_live_patch_selfcheck():
                          capture_output=True, text=True, encoding="utf-8", cwd=str(_ROOT))
     assert res.returncode == 0, res.stdout + "\n" + res.stderr
     assert "ok - non-structural sync patches in place" in res.stdout
+
+
+# w7/livewrite: a chip over json_diff.WALK_CAP leaves (the 30-qubit rig has
+# 313k) used to answer every pull "structural" -- the whole Live-Edit grid
+# re-rendered for one moved value. The same four contracts must hold there,
+# served by leaf_patch.leaf_changes instead of the flatten comparison.
+@pytest.fixture
+def over_cap(monkeypatch):
+    from quam_state_manager.core import json_diff
+    monkeypatch.setattr(json_diff, "WALK_CAP", 3)
+
+
+def test_over_cap_pull_names_every_changed_leaf(live, over_cap):
+    test_pull_names_every_changed_leaf_and_nothing_else(live)
+
+
+def test_over_cap_added_or_removed_key_is_structural(live, over_cap):
+    test_added_or_removed_key_is_structural(live)
+
+
+def test_over_cap_unchanged_live_yields_an_empty_patch(live, over_cap):
+    test_unchanged_live_yields_an_empty_patch(live)
+
+
+def test_over_cap_apply_mode_carries_the_patch_too(live, over_cap):
+    test_apply_mode_carries_the_patch_too(live)

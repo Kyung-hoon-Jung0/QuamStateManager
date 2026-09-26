@@ -443,15 +443,17 @@ def _snap_fp(d: Path) -> tuple:
     return (st.st_mtime_ns, st.st_size, wi.st_mtime_ns, wi.st_size)
 
 
-def _diff_snapshot_dirs(a: Path, b: Path) -> list[DiffEntry]:
+def _diff_snapshot_dirs(a: Path, b: Path, *, b_pair=None) -> list[DiffEntry]:
     """``Differ().diff(a, b)`` for two snapshot folders -- the same merged
     documents a ``QuamStore`` builds -- with the parses served by the content
-    cache and the result kept per pair."""
+    cache and the result kept per pair. ``b_pair``: the ``doc_cache.PairRead``
+    whose bytes were JUST written into *b* (a capture), so *b* is not read
+    back -- the documents are those bytes' own parse."""
     from quam_state_manager.core import doc_cache
 
     def compute():
         pa = doc_cache.read_pair(a, mode="shared")
-        pb = doc_cache.read_pair(b, mode="shared")
+        pb = b_pair if b_pair is not None else doc_cache.read_pair(b, mode="shared")
         # from_dicts merges exactly as QuamStore(folder) does (deep merge on a
         # state/wiring key collision) without touching the shared dicts
         return _differ.diff(QuamStore.from_dicts(pa.state, pa.wiring),
@@ -2024,7 +2026,7 @@ class HistoryManager:
             if prior is not None:
                 try:
                     prior_dir = hist_dir / prior.timestamp
-                    entries = _diff_snapshot_dirs(prior_dir, snap_dir)
+                    entries = _diff_snapshot_dirs(prior_dir, snap_dir, b_pair=_cap)
                     diff_summary = Differ.summary(entries)
                 except Exception:
                     logger.warning("Failed to compute diff for snapshot %s", ts, exc_info=True)
@@ -2091,6 +2093,9 @@ class HistoryManager:
                         )
                 def _run_index_tracked() -> None:
                     try:
+                        # w7/livewrite: never on a live write's critical path
+                        from quam_state_manager.core import bg_gate
+                        bg_gate.wait_quiet()
                         _run_index()
                     finally:
                         with self._deferred_index_lock:

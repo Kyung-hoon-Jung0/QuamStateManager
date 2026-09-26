@@ -33,7 +33,6 @@ import json
 import logging
 import marshal
 import time
-from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
@@ -89,7 +88,9 @@ def parsed(raw: bytes, dig: bytes | None = None) -> dict:
 
 def _parse_entry(raw: bytes):
     doc = parse_bytes(raw)
-    return (doc, _mdig(doc), len(raw) * 6)
+    # a parsed chip measured at ~1.0x its source bytes (tracemalloc, 19 MB
+    # big30x); 2x keeps the estimate on the safe side of the budget
+    return (doc, _mdig(doc), len(raw) * 2)
 
 
 def canonical_raw(raw: bytes, dig: bytes | None = None) -> str:
@@ -97,15 +98,21 @@ def canonical_raw(raw: bytes, dig: bytes | None = None) -> str:
     return CANON.get(dig, None, lambda: json_pieces.canonical(parsed(raw, dig)))
 
 
-def seed(raw: bytes | None, doc: dict, dig: bytes | None = None) -> None:
-    """A writer serialised *doc* into *raw*: record what those bytes
-    canonicalise to. Correct by construction -- ``parse(dumps(doc))`` equals
-    *doc* for JSON data -- and harmless if it is ever not called."""
+def seed(raw: bytes, canon: str, dig: bytes | None = None) -> None:
+    """A writer serialised a document into *raw* and holds its canonical
+    text *canon* (computed in the same walk): record it, so hashing those
+    bytes never needs a parse. Harmless if it is ever not called."""
     try:
         dig = dig or digest(raw)
-        CANON.get(dig, None, lambda: json_pieces.canonical(doc))
+        CANON.get(dig, None, lambda: canon)
     except Exception:  # noqa: BLE001 -- an optimisation must never fail a write
         logger.debug("doc_cache seed skipped", exc_info=True)
+
+
+def _known_valid(dig: bytes) -> bool:
+    """Were these exact bytes parsed before or written by SM from a document?
+    Either way they are a JSON object and need no parse to hash."""
+    return CANON.has(dig)
 
 
 def content_hash_raw(sb: bytes, wb: bytes, ds: bytes | None = None,
@@ -131,14 +138,36 @@ def history_hash_raw(sb: bytes, wb: bytes, ds: bytes | None = None,
     return h.hexdigest()
 
 
-@dataclass
 class PairRead:
-    state: dict
-    wiring: dict
-    state_bytes: bytes
-    wiring_bytes: bytes
-    state_digest: bytes
-    wiring_digest: bytes
+    """One armored read of a state/wiring pair: the exact bytes, their
+    SHA-256 digests, and the two documents. In ``"shared"`` / ``"hash"`` mode
+    a document is parsed (or served from :data:`PARSED`, validated) only
+    when something reads ``.state`` / ``.wiring`` -- a caller that only
+    needs the digests or the content hash (a cache hit, a status poll) pays
+    for the read and the digest, nothing else. Bytes that were never seen
+    are still parsed DURING the read, so a torn or invalid file fails there,
+    inside the retry ladder, exactly as before."""
+
+    __slots__ = ("_state", "_wiring", "state_bytes", "wiring_bytes",
+                 "state_digest", "wiring_digest")
+
+    def __init__(self, state, wiring, state_bytes: bytes, wiring_bytes: bytes,
+                 state_digest: bytes, wiring_digest: bytes) -> None:
+        self._state, self._wiring = state, wiring
+        self.state_bytes, self.wiring_bytes = state_bytes, wiring_bytes
+        self.state_digest, self.wiring_digest = state_digest, wiring_digest
+
+    @property
+    def state(self) -> dict:
+        if self._state is None:
+            self._state = parsed(self.state_bytes, self.state_digest)
+        return self._state
+
+    @property
+    def wiring(self) -> dict:
+        if self._wiring is None:
+            self._wiring = parsed(self.wiring_bytes, self.wiring_digest)
+        return self._wiring
 
     def content_hash(self) -> str:
         return content_hash_raw(self.state_bytes, self.wiring_bytes,
@@ -164,8 +193,8 @@ def _read_json_bytes(path: Path, mode: str) -> tuple[dict | None, bytes, bytes]:
             dig = digest(raw)
             if mode == "fresh":
                 data = parse_bytes(raw)
-            elif mode == "hash" and CANON.has(dig):
-                data = None
+            elif _known_valid(dig) or PARSED.has(dig):
+                data = None          # valid JSON already; parsed on first use
             else:
                 data = parsed(raw, dig)
             return data, raw, dig
