@@ -4777,14 +4777,57 @@ html.topbar-hidden .topo-subnav {
    20 px beside a 26 px title (measured) -- these win by specificity */
 .topo-density-ctl-panel button.density-preset { font-size: 0.68rem; height: 1.25rem; line-height: 1.1; padding: 0 0.3rem; min-width: 1.4rem; }
 .topo-density-ctl-panel input.topo-density-pslider { width: 4rem; min-width: 0; margin: 0 0 0 0.15rem; padding: 0; height: 0.9rem; vertical-align: middle; }
+/* Queue item 4: "Show Meta Info" right of a panel's S / M / L -- same small
+   caption scale as the size control, so it reads as a panel control, not a
+   heading. The metadata it reveals (per-tile line + one summary line) is
+   hidden unless the panel carries .topo-meta-on; hover shows it regardless. */
+.topo-meta-toggle {
+    display: inline-flex; align-items: center; gap: 0.25rem; margin: 0;
+    font-size: 0.68rem; font-weight: 400; color: var(--pico-muted-color);
+    cursor: pointer; white-space: nowrap; user-select: none;
+}
+.topo-meta-toggle input.topo-meta-cb {
+    width: 0.85rem; height: 0.85rem; margin: 0; flex: none; cursor: pointer;
+}
+.topo-section:not(.topo-meta-on) .heatmap-cell-meta,
+.topo-section:not(.topo-meta-on) .topo-metric-panel-meta { display: none; }
+.heatmap-cell-meta {
+    font-size: 0.62rem; line-height: 1.15; opacity: 0.85; margin-top: 0.1rem;
+    font-family: monospace; white-space: normal; overflow-wrap: anywhere;
+}
+.heatmap-cell-meta:empty { display: none; }
+.topo-metric-panel-meta {
+    font-size: var(--topo-panel-stat-size); color: var(--pico-muted-color);
+    margin: -0.3rem 0 0.5rem 0; line-height: 1.35;
+}
+/* the card a tile / panel title shows on hover (pointer-events none, like the
+   Overview's per-entity card: it never blocks a click, never flickers) */
+#cs-meta-pop {
+    position: fixed; z-index: 290; pointer-events: none;
+    max-width: 440px; padding: 0.5rem 0.65rem;
+    background: var(--pico-card-background-color, var(--pico-background-color));
+    color: var(--pico-color);
+    border: 1px solid var(--pico-muted-border-color); border-radius: 8px;
+    box-shadow: 0 6px 24px rgba(0,0,0,0.28); font-size: 0.78em; line-height: 1.45;
+}
+.cs-meta-pop-title { font-weight: 600; margin-bottom: 0.25rem; }
+.cs-meta-pop-line { color: var(--pico-muted-color); }
+/* queue item 10: an Overview tile that jumps to its section says so */
+/* beats .topo-card[draggable=true]'s grab: a click is the jump now (drag still works) */
+.topo-card[draggable="true"][data-tile-jump] { cursor: pointer; }
+.topo-card[data-tile-jump]:hover { box-shadow: 0 2px 10px rgba(0,0,0,0.18); }
+.topo-card[data-tile-jump]:focus-visible { outline: 2px solid var(--pico-primary); outline-offset: 2px; }
 /* a jump from the sticky sub-nav lands the section title BELOW the bar */
 .topo-dashboard .topo-section { scroll-margin-top: 3.2rem; }
 /* QA F-07: Coherence / Frequencies / Calibration land on the group's injected
    <h3 data-group> header, which is not a .topo-section -- it went under the bar */
 .topo-dashboard .topo-section-title[data-group] { scroll-margin-top: 3.2rem; }
+/* queue item 10: an RB Overview tile lands on its Standard / Interleaved sub-heading */
+.topo-dashboard .topo-section-title[data-rb-heading] { scroll-margin-top: 3.2rem; }
 /* QA chipstatus-r2-10: the bar is taller by the floating band when the chrome
    is collapsed, so every jump target clears that too */
 html.topbar-hidden .topo-dashboard .topo-section,
+html.topbar-hidden .topo-dashboard .topo-section-title[data-rb-heading],
 html.topbar-hidden .topo-dashboard .topo-section-title[data-group] { scroll-margin-top: calc(3.2rem + var(--floating-chrome-h)); }
 .topo-density-ctl { display: inline-flex; align-items: center; gap: 0.3rem; font-size: 0.82em; }
 .topo-density-ctl .density-label { color: var(--pico-muted-color); }

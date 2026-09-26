@@ -12795,6 +12795,77 @@ def topology_trends():
                            snapshots=len(hm.list_snapshots(path)))
 
 
+@bp.route("/topology/metric-meta")
+def topology_metric_meta():
+    """Queue item 4: per-cell provenance for every Chip Status metric panel.
+
+    ``{ok, newest, snapshots, updating, q: {panel key: {qubit: entry}},
+    p: {"2q:<rbType>:<gate>": {pair: entry}}, snaps: {ts: provenance}}`` where
+    an entry is :func:`metric_meta.newest_change`'s fold of the change points
+    of the leaves that panel reads, plus ``load_id`` for a 2Q RB value whose
+    lab node recorded one. Fetched lazily by the page (first hover over a
+    panel, or a panel whose "Show meta info" is on) -- never on the Chip
+    Status render. The change-point index read never waits for a rebuild
+    (``_ensure_leaf_index_fresh`` schedules one in the background); while one
+    runs the response says ``updating`` and the page asks again later.
+    """
+    from quam_state_manager.core import metric_meta as _mm
+    ctx = _active_ctx()
+    store = _store()
+    if not ctx or ctx.get("type") != "quam" or not ctx.get("path") or not store:
+        return jsonify({"ok": False, "reason": "no chip"})
+    hm = _history()
+    path = Path(ctx["path"])
+    with store._lock:
+        doc = store.merged
+        qpaths = _mm.qubit_paths(doc, list(store.qubit_names))
+        ppaths, loads = _mm.pair_rb_paths(doc, list(store.qubit_pair_names))
+    wanted: list[str] = []
+    _seen: set[str] = set()
+    for group in (qpaths, ppaths):
+        for per in group.values():
+            for plist in per.values():
+                for dp in plist:
+                    if dp not in _seen:
+                        _seen.add(dp)
+                        wanted.append(dp)
+    try:
+        series = hm.leaf_field_series_many(path, wanted) if wanted else {}
+    except Exception:  # noqa: BLE001 - metadata must never break the page
+        logger.debug("metric meta: leaf series unavailable", exc_info=True)
+        series = {}
+    stamps: set[str] = set()
+
+    def fold(group: dict) -> dict:
+        out: dict = {}
+        for key, per in group.items():
+            for ent, plist in per.items():
+                e = _mm.newest_change(series, plist)
+                if e:
+                    stamps.add(e["ts"])
+                    out.setdefault(key, {})[ent] = e
+        return out
+
+    q_out = fold(qpaths)
+    p_out = fold(ppaths)
+    for key, per in loads.items():
+        for pid, lid in per.items():
+            p_out.setdefault(key, {}).setdefault(pid, {})["load_id"] = lid
+    try:
+        snaps = hm.list_snapshots(path)
+    except Exception:  # noqa: BLE001
+        snaps = []
+    return jsonify({
+        "ok": True,
+        "newest": snaps[0].timestamp if snaps else None,
+        "snapshots": len(snaps),
+        "updating": bool(hm.leaf_index_updating(path)),
+        "q": q_out,
+        "p": p_out,
+        "snaps": _snapshot_provenance_map(hm, path, only=stamps) if stamps else {},
+    })
+
+
 @bp.route("/topology/trends/paths")
 def topology_trends_paths():
     """Typeahead over every numeric leaf the chip has ever recorded — offered
