@@ -455,7 +455,7 @@ class LazySearchIndex:
     builds holding the lock.
     """
 
-    __slots__ = ("_store", "_wiring_keys", "_index", "_build_lock", "builds", "__weakref__")
+    __slots__ = ("_store", "_wiring_keys", "_index", "_build_lock", "builds", "_want", "__weakref__")
 
     _OPTIMISTIC_TRIES = 3
 
@@ -465,6 +465,8 @@ class LazySearchIndex:
         self._index: SearchIndex | None = None
         self._build_lock = threading.Lock()
         self.builds = 0
+        self._want = 0      # foreground callers waiting in get(); a paced
+                            # (background) build never pauses while > 0
 
     @property
     def built(self) -> bool:
@@ -480,6 +482,20 @@ class LazySearchIndex:
         idx = self._index
         if idx is not None:
             return idx
+        with _WANT_LOCK:
+            self._want += 1
+        try:
+            return self._get(None)
+        finally:
+            with _WANT_LOCK:
+                self._want -= 1
+
+    def _get(self, pace) -> SearchIndex:
+        """:meth:`get`'s body. *pace* (background prewarm only) is called
+        between chunks of the snapshot build -- never with the store lock
+        held -- and may sleep there to yield the GIL to foreground requests."""
+        if self._index is not None:
+            return self._index
         with self._build_lock:
             if self._index is not None:
                 return self._index
@@ -489,7 +505,8 @@ class LazySearchIndex:
                     token = (store.mutation_seq, id(store.merged))
                     leaves = list(_walk_leaves(store.merged))
                     keys = self._keys()
-                built = SearchIndex.from_leaves(leaves, keys)
+                built = SearchIndex.from_leaves(
+                    leaves if pace is None else _paced(leaves, pace), keys)
                 with store._lock:
                     if (store.mutation_seq, id(store.merged)) == token:
                         self._index = built
@@ -779,12 +796,43 @@ def _build_inverted_indexes(index: SearchIndex) -> None:
 # the chip the user ended on (earlier requests are overwritten, and build
 # lazily on first search if ever needed). The slot holds a weakref, so a
 # chip that left the LRU is never kept alive by a pending prewarm.
+import time  # noqa: E402
 import weakref as _weakref  # noqa: E402
+
+from quam_state_manager.core import activity  # noqa: E402
 
 _PREWARM_CV = threading.Condition()
 _PREWARM_SLOT: list = [None]
 _PREWARM_THREAD: list = [None]
 PREWARM_BUILDS = [0]
+
+
+_WANT_LOCK = threading.Lock()
+_PACE_CHUNK = 2048
+
+
+def _paced(leaves, pace):
+    """Yield *leaves*, calling ``pace()`` every :data:`_PACE_CHUNK` items."""
+    for i, item in enumerate(leaves):
+        if i and not i % _PACE_CHUNK:
+            pace()
+        yield item
+
+
+def _make_pace(lazy: "LazySearchIndex"):
+    ref = _weakref.ref(lazy)
+
+    def pace() -> None:
+        # Pause while a foreground request runs; resume at once when a
+        # foreground get() is waiting on this very index (it holds no lock we
+        # hold, but it is blocked on our build lock -- pausing would stall it).
+        while activity.busy(quiet_s=0.0):
+            it = ref()
+            if it is None or it._want > 0:
+                return
+            del it
+            time.sleep(0.02)
+    return pace
 
 
 def _prewarm_submit(lazy: "LazySearchIndex") -> None:
@@ -805,11 +853,17 @@ def _prewarm_worker() -> None:
             while _PREWARM_SLOT[0] is None:
                 _PREWARM_CV.wait()
             ref, _PREWARM_SLOT[0] = _PREWARM_SLOT[0], None
+        # Start only on a quiet server (a newer submission replaces this one
+        # while we wait), then pause between chunks whenever a foreground
+        # request is running -- unless someone is waiting for THIS index.
+        activity.wait_quiet(stop=lambda: _PREWARM_SLOT[0] is not None)
+        if _PREWARM_SLOT[0] is not None:
+            continue            # superseded while waiting: take the newer one
         lazy = ref()
         if lazy is None or lazy._index is not None:
             continue
         try:
-            lazy.get()
+            lazy._get(_make_pace(lazy))
             PREWARM_BUILDS[0] += 1
         except Exception:  # noqa: BLE001 -- a prewarm never raises; search builds on demand
             logger.debug("search index prewarm failed", exc_info=True)

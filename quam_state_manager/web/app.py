@@ -701,10 +701,19 @@ def create_app(*, testing: bool = False, instance_path: str | None = None) -> Fl
     # teardown left, so a leaked scope cannot outlive one request on a
     # reused worker thread.
     app.before_request(dir_sample.begin)
+    # RAM P10: foreground-request activity, so the search-index prewarm waits
+    # for a quiet server and pauses while a request renders (core/activity.py).
+    from quam_state_manager.core import activity as _activity
+
+    @app.before_request
+    def _activity_begin():
+        from flask import request as _rq
+        _activity.begin(_rq.path)
 
     @app.teardown_request
     def _close_dir_sample(exc=None):        # noqa: ANN001 — Flask's signature
         dir_sample.end()
+        _activity.end()
 
     # One-time housekeeping: remove ``pytest-*`` / ``Temp`` history dirs leaked
     # by older un-isolated test runs. Cheap and idempotent.
