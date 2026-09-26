@@ -14008,7 +14008,7 @@ td.cell-live-stale .cell-live-now {
 [data-theme="light"] .sp-group-mine .sp-group-head td { color: #b45309; }
 
 /* 2026-09-27: the one create flow's first step -- what to create */
-.pulse-create-choice { display: flex; flex-wrap: wrap; gap: 0.35rem; margin: 0.35rem 0.5rem 0.6rem; }
+.pulse-create-choice { display: flex; flex-wrap: wrap; justify-content: flex-start; gap: 0.35rem; margin: 0.35rem 0.5rem 0.6rem; padding: 0; }
 .pulse-create-choice-btn { font-size: 0.85em; padding: 0.25rem 0.7rem; border-radius: 999px;
     border: 1px solid var(--pico-muted-border-color); background: transparent;
     color: var(--pico-color); width: auto; margin: 0; }
