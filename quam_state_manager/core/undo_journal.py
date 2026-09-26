@@ -244,6 +244,33 @@ def save_cursor(path: str | Path, cursor: int) -> None:
             logger.warning("undo journal cursor write failed: %s", p, exc_info=True)
 
 
+def drop_units(path: str | Path, unit_ids) -> list[dict]:
+    """Remove the named units (load-merge-write under the module lock,
+    atomic write) and return the post-write list.  For a save whose PUSH was
+    refused and taken back out of the working copy: the unit describes an
+    action that is no longer in effect anywhere, and leaving it would make
+    the next Ctrl+Z re-stage it.  The cursor keeps its place relative to the
+    units that remain (each dropped unit below it moves it down by one).
+    Advisory: never raises."""
+    ids = {str(i) for i in (unit_ids or ())}
+    p = Path(path)
+    with _lock:
+        units, cursor = load_state(p)
+        if not ids:
+            return units
+        below = sum(1 for u in units[:cursor] if str(u.get("id")) in ids)
+        kept = [u for u in units if str(u.get("id")) not in ids]
+        if len(kept) == len(units):
+            return units
+        try:
+            safe_io.atomic_write_json(p, {"version": JOURNAL_VERSION, "units": kept,
+                                          "cursor": max(0, min(cursor - below, len(kept)))})
+        except Exception:
+            logger.warning("undo journal drop failed: %s", p, exc_info=True)
+            return units
+        return kept
+
+
 def sidecar_mtime(path: str | Path) -> float | None:
     """The sidecar's mtime, or None -- what :func:`routes._journal_sync`
     compares to notice another window's write (docs/160 C)."""

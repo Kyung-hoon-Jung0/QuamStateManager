@@ -1162,6 +1162,96 @@ def _run_active_view() -> dict | None:
         return None
 
 
+_STATUS_P = re.compile(r"<p>(.*?)</p>", re.S)
+
+
+def _status_text(body) -> str | None:
+    """verifier P2: the door answers a failed LIVE write with the ``_status``
+    HTML fragment, not JSON -- read its message (``Apply to live failed:
+    <WinError 32 ...>``) instead of reporting a bare "HTTP 500"."""
+    try:
+        raw = body.get_data(as_text=True) if hasattr(body, "get_data") else str(body or "")
+    except Exception:  # noqa: BLE001
+        return None
+    m = _STATUS_P.search(raw or "")
+    if not m:
+        return None
+    import html as _html
+    txt = _html.unescape(re.sub(r"<[^>]+>", "", m.group(1))).strip()
+    return " ".join(txt.split())[:400] or None
+
+
+def _pre_door_state(r, ctx) -> dict:
+    """The facts a push refused after its save has to put back: the outgoing
+    log, the working copy's dirty flag + re-apply stash, and which undo
+    journal units existed (read from the sidecar, never the RAM mirror, which
+    may not be loaded yet)."""
+    import copy as _copy
+    from quam_state_manager.core import undo_journal
+    try:
+        ids = {str(u.get("id")) for u in undo_journal.load(
+            undo_journal.sidecar_path(current_app.instance_path, ctx["path"]))}
+    except Exception:  # noqa: BLE001
+        ids = None
+    return {"log": list(ctx["store"].change_log), "dirty": bool(ctx.get("working_dirty")),
+            "reapply": _copy.deepcopy(ctx.get("pending_reapply")),
+            "reapply_orig": _copy.deepcopy(ctx.get("pending_reapply_orig")), "units": ids}
+
+
+def _take_back_saved(r, ctx, staged: list, before: dict) -> str | None:
+    """Undo a group the door SAVED into the working copy but could not push:
+    write each leaf's old value back, save the working copy, drop the journal
+    unit the save recorded, and restore the dirty flag + re-apply stash. None
+    on success, else why it could not (the values then stay, and say so)."""
+    from quam_state_manager.core import undo_journal
+    store, mod, saver = ctx["store"], ctx["modifier"], ctx["saver"]
+    ours = {e.dot_path for e in staged}
+    try:
+        with store._lock:
+            for e in reversed(staged):
+                inv = mod.set_value(e.dot_path, e.old_value, _defer_hooks=True,
+                                    group_id=f"{e.group_id}:takeback")
+                inv.actor = getattr(e, "actor", "human")
+            store._clear_pointer_cache()
+            if store.search_index is not None:
+                for e in staged:
+                    store.search_index.update_entry(e.dot_path, e.old_value)
+        with r._active_wc_lock(ctx):
+            saver.save()                        # clears the inverse entries from the log
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("taking a refused approval back out of the working copy failed", exc_info=True)
+        return f"{type(exc).__name__}: {str(exc)[:160]}"
+    only_ours = all(e.dot_path in ours for e in before["log"])
+    if only_ours:
+        ctx["working_dirty"] = before["dirty"]
+        ctx["pending_reapply"] = before["reapply"]
+        if before["reapply_orig"] is None:
+            ctx.pop("pending_reapply_orig", None)
+        else:
+            ctx["pending_reapply_orig"] = before["reapply_orig"]
+    else:
+        # another agent group rode the same push: its values stay saved-unapplied
+        # (as before); only this group's paths leave the stash
+        for k in ("pending_reapply", "pending_reapply_orig"):
+            if isinstance(ctx.get(k), dict):
+                prev = before.get(k[len("pending_"):]) or {}
+                ctx[k] = {p: v for p, v in ctx[k].items() if p not in ours or p in prev}
+    if before.get("units") is not None:
+        try:
+            path = undo_journal.sidecar_path(current_app.instance_path, ctx["path"])
+            new = [u for u in undo_journal.load(path)
+                   if str(u.get("id")) not in before["units"]
+                   and u.get("entries") and all(en.get("path") in ours for en in u["entries"])]
+            if new:
+                units = undo_journal.drop_units(path, [u["id"] for u in new])
+                ctx["undo_units"] = units
+                ctx["undo_cursor"] = undo_journal.load_state(path)[1]
+                ctx["undo_sidecar_mtime"] = undo_journal.sidecar_mtime(path)
+        except Exception:  # noqa: BLE001 -- the journal is advisory
+            logger.warning("dropping a refused approval's journal unit failed", exc_info=True)
+    return None
+
+
 def _stage_writes(app, live: str, writes: list[dict], gid: str, actor: str, plan_id: str | None,
                   apply: bool, *, presser: str | None = None) -> dict:
     """Stage ``writes`` onto the chip's working copy as ONE group with the
@@ -1233,6 +1323,9 @@ def _stage_writes(app, live: str, writes: list[dict], gid: str, actor: str, plan
     except Exception:  # noqa: BLE001
         logger.debug("live_diverged_now failed", exc_info=True)
     n = len(store.change_log)
+    # verifier P0 (w7/agentsqa): what SM looked like before the door, so a push
+    # refused AFTER the door's save can be taken back to exactly this
+    before = _pre_door_state(r, ctx)
     headers = {"Accept": "application/json"}
     who = presser or actor
     if str(who).startswith("by_"):
@@ -1255,13 +1348,23 @@ def _stage_writes(app, live: str, writes: list[dict], gid: str, actor: str, plan
     if status != 200:
         js = body.get_json(silent=True) if hasattr(body, "get_json") else None
         out["error"] = ((js or {}).get("message") or (js or {}).get("conflict") or (js or {}).get("error")
-                        or f"HTTP {status}")
+                        or _status_text(body) or f"HTTP {status}")
         if store.change_log:
             _take_back()                       # refused BEFORE the save: the group comes back out
         else:
-            # refused AFTER the save: the values sit in SM's working copy as unapplied edits
-            out["saved_in_working_copy"] = True
-            out["error"] += " -- the values are saved in SM's working copy (unapplied); a human decides in the window"
+            # refused AFTER the save (the live write itself failed -- a reader
+            # holding state.json open on Windows). The values used to stay in
+            # the working copy as unapplied edits that no approval owned: a
+            # Reject left them there and the NEXT approval's push carried them
+            # to the chip under its own name. Take them back out, so a refused
+            # press leaves SM exactly where it found it.
+            why = _take_back_saved(r, ctx, staged, before)
+            if why is None:
+                out["error"] += " -- nothing was written; the approval's values were taken back out of SM"
+            else:
+                out["saved_in_working_copy"] = True
+                out["error"] += (" -- the values are saved in SM's working copy (unapplied) and could not be "
+                                 f"taken back ({why}); a human decides in the window")
         return out
     if r._change_count() == 0 and not ctx.get("live_diverged"):
         out["applied"] = True
