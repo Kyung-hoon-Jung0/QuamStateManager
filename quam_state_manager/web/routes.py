@@ -6808,9 +6808,9 @@ def _frag_cold_variant(fc: dict, tag: str, cold_keys) -> int:
         if len(reg) >= _FRAG_VARIANTS:
             old_ck = next(iter(reg))
             old = reg.pop(old_ck)
-            for k in [k for k in fc if isinstance(k, tuple) and len(k) > 1
+            for k in [k for k in list(fc) if isinstance(k, tuple) and len(k) > 1
                       and k[0] == tag and k[1] == old]:
-                del fc[k]
+                fc.pop(k, None)
     reg[ck] = vid                  # re-insert: most recently used last
     return vid
 
@@ -6875,7 +6875,7 @@ def _frag_splice(fc: dict, html: str, pieces: dict) -> bytes | None:
         if p is None:
             p = gzsplice.piece(part)
             if len(chrome) >= _FRAG_CHROME_MAX:
-                chrome.pop(next(iter(chrome)))
+                chrome.pop(next(iter(list(chrome)), None), None)
             chrome[part] = p
         seq.append(p)
     if any(used.get(n) != 1 for n in pieces):
@@ -7059,6 +7059,14 @@ def _bulk_frag_body(template: str, ctxv: dict, q_ent: dict | None,
     ctx = _active_ctx()
     if ctx is None:
         return None
+    with _FRAG_LOCK:
+        return _bulk_frag_body_locked(template, ctxv, q_ent, p_ent, x_ent, ctx)
+
+
+_FRAG_LOCK = threading.Lock()   # one /bulk splice at a time: the piece cache is shared
+
+
+def _bulk_frag_body_locked(template, ctxv, q_ent, p_ent, x_ent, ctx):
     gm = current_app.jinja_env.get_template("_bulk_grid_macros.html").module
     fc = _frag_cache(ctx)
     pieces: dict[str, list] = {}
