@@ -70,6 +70,7 @@ from pathlib import Path
 # run_build.py's defensive sys.path insert before importing _script_common).
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from _script_common import library_versions as _library_versions  # noqa: E402
+from _script_common import out_of_env_sources as _out_of_env_sources  # noqa: E402
 from probe_capabilities import _PULSE_HOMES  # noqa: E402  (single-source triplet)
 
 # Third-party lab packages subclass quam components, so their MRO hits a
@@ -490,7 +491,69 @@ def _dump_pulse_roster() -> dict:
                 roster[leaf] = rec
             if home not in rec["homes"]:
                 rec["homes"].append(home)
+
+    # docs/2xx (adaptive pulses): a pulse class the LAB wrote lives in no quam
+    # home, so the walk above can never see it -- and a class the lab has just
+    # added is not on the chip yet either, so the chip's class inventory does
+    # not name it. Walk the subclass closure of Pulse over what is ALREADY
+    # imported (the chip's own classes were imported by dump_class before
+    # this runs, and so were any modules the user named): never a blind
+    # import of a package we do not know (a lab module may talk to an
+    # instrument at import -- the catalogue's rule, docs/141 4h).
+    seen: set = set()
+    stack = [pulse_base]
+    while stack:
+        cls = stack.pop()
+        try:
+            subs = cls.__subclasses__()
+        except Exception:  # noqa: BLE001
+            continue
+        for sub in subs:
+            if sub in seen:
+                continue
+            seen.add(sub)
+            stack.append(sub)
+            mod = getattr(sub, "__module__", "") or ""
+            name = getattr(sub, "__qualname__", "") or ""
+            if (not mod or not name or "<" in name or "." in name
+                    or mod.split(".")[0] in ("quam", "quam_builder", "qualang_tools")):
+                continue
+            leaf = sub.__name__
+            if leaf in roster:
+                continue          # a quam leaf of the same name keeps its slot
+            rec = {
+                "homes": [mod],
+                "canonical": f"{mod}.{name}",
+                "readout": bool(readout_base and issubclass(sub, readout_base)),
+                "deprecated": leaf.startswith("_"),
+                "inferred_length": bool(
+                    hasattr(sub, "inferred_length")
+                    or hasattr(sub, "inferred_total_length")),
+                "lab": True,
+                "fields": None,
+            }
+            try:
+                rec["fields"] = _dump_fields(sub)
+            except Exception:  # noqa: BLE001
+                rec["fields"] = None
+            roster[leaf] = rec
     return roster
+
+
+def _import_pulse_modules(names) -> dict:
+    """Import the modules the USER named as homes of their own pulse classes.
+    ``{module: "ok" | "error: ..."}`` -- one failure never stops the rest."""
+    status: dict = {}
+    for name in names or []:
+        if not isinstance(name, str) or not name.strip():
+            continue
+        name = name.strip()
+        try:
+            importlib.import_module(name)
+            status[name] = "ok"
+        except BaseException as exc:  # noqa: BLE001 -- SystemExit in a lab module too
+            status[name] = f"error: {type(exc).__name__}: {exc}"
+    return status
 
 
 # --------------------------------------------------------------------------
@@ -634,8 +697,10 @@ def _catalog_category(mod: str, name: str) -> str:
     return "Other components"
 
 
-def dump_schemas(class_paths: list[str], pulse_roster: bool = True) -> dict:
+def dump_schemas(class_paths: list[str], pulse_roster: bool = True,
+                 pulse_modules=None) -> dict:
     """Never raises — a broken env still returns a per-class-annotated manifest."""
+    modules_status = _import_pulse_modules(pulse_modules)
     classes = {}
     for path in class_paths:
         try:
@@ -649,7 +714,10 @@ def dump_schemas(class_paths: list[str], pulse_roster: bool = True) -> dict:
         "versions": _library_versions(),
         "classes": classes,
         "pulse_roster": _dump_pulse_roster() if pulse_roster else {},
+        "pulse_modules": modules_status,
     }
+    # after every import this probe makes: the lab files the answer came from
+    result["sources"] = _out_of_env_sources()
     return result
 
 
@@ -666,7 +734,8 @@ def main() -> int:
     try:
         spec = json.loads(Path(args.classes).read_text(encoding="utf-8"))
         requested = [str(c) for c in spec.get("classes", [])]
-        result.update(dump_schemas(requested, pulse_roster=bool(spec.get("pulse_roster", True))))
+        result.update(dump_schemas(requested, pulse_roster=bool(spec.get("pulse_roster", True)),
+                                   pulse_modules=spec.get("pulse_modules") or []))
         if args.catalog:
             roots_status: dict = {}
             cat = enumerate_catalog(requested, roots_status)

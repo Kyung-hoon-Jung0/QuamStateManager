@@ -10765,6 +10765,16 @@ table.prop-table .pulse-slider-row .pulse-slider-commit {
 .pulse-create-form { padding: 0 0.5rem 0.75rem; }
 .pulse-create-form fieldset { margin-bottom: 0.5rem; padding: 0.4rem 0.6rem; }
 /* r15 (docs/71 §2): env-discovery strip on top of the add-pulse form */
+/* docs/2xx adaptive pulses: the "your classes live in another module?"
+   disclosure -- one compact row, never a full-width Pico form */
+.pulse-env-modules { flex: 1 0 100%; margin: 0.1rem 0 0; }
+.pulse-env-modules > summary { cursor: pointer; font-size: 0.95em; }
+.pulse-env-modules > p { margin: 0.25rem 0; font-size: 0.95em; }
+.pulse-env-module { display: inline-flex; align-items: center; gap: 0.35rem; margin: 0.15rem 0.6rem 0.15rem 0; }
+.pulse-env-module .btn-sm, .pulse-env-module-form .btn-sm { width: auto; margin: 0; padding: 0.1rem 0.5rem; }
+.pulse-env-module-form { display: flex; gap: 0.4rem; align-items: center; margin: 0.25rem 0 0; }
+.pulse-env-module-form input[type="text"] { width: 18rem; max-width: 100%; margin: 0; padding: 0.15rem 0.45rem; height: auto; font-size: 0.95em; }
+.pulse-schema-note, .pulse-schema-unset { display: block; margin-top: 0.25rem; }
 .pulse-env-strip {
     display: flex; align-items: center; flex-wrap: wrap; gap: 0.3rem 0.6rem;
     margin: 0.3rem 0.5rem 0.6rem; padding: 0.3rem 0.6rem;

@@ -1930,16 +1930,7 @@ def _warm_state_schema_async(store, inst, live_folder=None) -> None:
             except Exception:  # noqa: BLE001
                 logger.debug("catalogue warm-up failed", exc_info=True)
             if res.get("ok") and live_folder:
-                from quam_state_manager.core import pulse_catalog, type_policy
-                manifest = {k: res[k] for k in
-                            ("classes", "pulse_roster", "by_leaf",
-                             "missing_classes", "versions")}
-                store.type_policy = type_policy.load_policy(
-                    inst, live_folder, manifest)
-                store._type_manifest_env = python_path
-                if manifest.get("pulse_roster"):
-                    pulse_catalog.apply_env_overlay(manifest["pulse_roster"])
-                pulse_catalog.apply_chip_classes(manifest.get("classes"))
+                _attach_probe_result(store, inst, live_folder, python_path, res)
         except Exception:  # noqa: BLE001
             logger.warning("state-schema warm probe failed", exc_info=True)
         finally:
@@ -13563,9 +13554,8 @@ def pulse_row():
     if row.get("is_alias"):
         row["spark_svg"] = None
     elif not row.get("known"):
-        # The lab's own class: its own code drew this (docs/189).
-        row["spark_svg"], row["spark_at"] = _pulse_truth_spark(store, path)
-        row["spark_from_config"] = bool(row["spark_svg"])
+        # The lab's own class: its own code drew this (docs/189, docs/2xx).
+        _pulse_fallback_spark(store, path, row)
     else:
         row["spark_svg"] = pulse_index.sparkline(
             path, lambda p=path: sparkline_svg(synth_for_operation(store, p)))
@@ -13619,6 +13609,7 @@ def pulses_page():
     # repeated search keystrokes / pagination over an unchanged chip never
     # re-synthesize. Aliases / unknown classes render "→ target" instead.
     from quam_state_manager.core.waveform_synth import sparkline_svg, synth_for_operation
+    unknown_paths: list[str] = []
     for row in page_rows:
         if row["is_alias"]:
             row["spark_svg"] = None
@@ -13628,12 +13619,16 @@ def pulses_page():
             # A class SM has no synthesizer for -- SNZ, GaussianNZ, a lab's own
             # readout weights. Drawn from the lab's generated config, and marked
             # as such in the markup so it never reads as one SM drew.
-            row["spark_svg"], row["spark_at"] = _pulse_truth_spark(store, path)
-            row["spark_from_config"] = bool(row["spark_svg"])
+            _pulse_fallback_spark(store, path, row)
+            unknown_paths.append(path)
             continue
         row["spark_svg"] = pulse_index.sparkline(
             path, lambda p=path: sparkline_svg(synth_for_operation(store, p)))
 
+    if unknown_paths:
+        # docs/2xx: draw the visible lab-class rows with their own code in the
+        # background -- the list never waits on a subprocess
+        _warm_lab_sparks(store, unknown_paths)
     if rows_only:
         template = "_pulse_rows.html"
     elif _is_htmx():
@@ -13825,7 +13820,11 @@ def _render_pulse_detail(path: str, *, status_msg: str | None = None,
         "mode": mode,
         "pulses": [{"path": sec["path"], "actual_path": sec["actual_path"], "label": sec["label"],
                     "role": sec["role"], "color": sec["color"], "index": sec["index"],
-                    "plot": sec["plot"]} for sec in sections],
+                    "plot": sec["plot"], "plot_source": sec.get("plot_source"),
+                    "needs_lab": sec.get("needs_lab", False),
+                    "lab_class": bool(sec.get("synth_unknown_class")),
+                    "config_stale": sec.get("plot_config_stale", False)}
+                   for sec in sections],
     })
     # docs/162: a flux pulse IS an operating point -- show the pair's detuning
     # curve right here, so opening the pulse answers "where does this put us"
@@ -13895,6 +13894,20 @@ def _pulse_section_ctx(store, pulse_index, path: str):
         body, context_slot=actual_path.rsplit(".", 1)[-1])
     unmodeled = (unmodeled_fields(spec, body)
                  if class_match in ("exact", "env", "alias", "leaf") else [])
+    # docs/2xx adaptive pulses: a class SM has no catalog entry for still has
+    # a schema -- the env's own dataclass, probed. Type its fields from that
+    # (kind, required) instead of showing them raw, and say which fields the
+    # class declares that this pulse leaves at their default.
+    schema_spec = spec
+    schema_unset: list = []
+    if spec is None:
+        from quam_state_manager.core.pulse_catalog import adaptive_spec_for
+        schema_spec = adaptive_spec_for(body.get("__class__"))
+        if schema_spec is not None:
+            schema_unset = [
+                {"name": p.name, "default": p.default}
+                for p in schema_spec.params
+                if p.name not in body and p.name not in ("id", "digital_marker")]
     pointer_fields = payload.get("pointer_fields") or {}
     resolved_params = payload.get("resolved_params") or {}
 
@@ -13916,7 +13929,7 @@ def _pulse_section_ctx(store, pulse_index, path: str):
     for fname, fval in body.items():
         if fname == "__class__":
             continue
-        spec_param = spec.param(fname) if spec else None
+        spec_param = schema_spec.param(fname) if schema_spec else None
         ptr_info = pointer_fields.get(fname)
         is_ptr = is_pointer(fval)
         is_runtime = isinstance(fval, str) and fval.startswith(
@@ -13987,7 +14000,23 @@ def _pulse_section_ctx(store, pulse_index, path: str):
     plot = _pulse_plot_traces(payload)
     plot_source = "synth" if payload.get("ok") else None
     truth = {}
+    lab = {}
     if unknown_class:
+        # docs/2xx: the class's own code at the CURRENT field values, when it
+        # is already in RAM (a render never spawns); else the generated
+        # config (docs/189), which may predate the latest edit -- the page
+        # then asks for the lab drawing asynchronously (`needs_lab`).
+        try:
+            lab = lab_drawings_for_paths(store, [path], spawn=False).get(path) or {}
+        except Exception:  # noqa: BLE001 -- never an error page for a preview
+            logger.debug("lab drawing lookup failed for %s", path, exc_info=True)
+            lab = {}
+        if lab.get("ok"):
+            from quam_state_manager.core import lab_waveform
+            plot = _pulse_plot_traces(lab_waveform.payload_for_plot(lab))
+            plot_source = "lab"
+            synth_error = None
+    if unknown_class and plot_source != "lab":
         truth = _pulse_truth_lookup(store, actual_path)
         if truth.get("status") == "ok":
             plot = {"ok": True, "traces": truth["traces"]}
@@ -14016,6 +14045,9 @@ def _pulse_section_ctx(store, pulse_index, path: str):
         "synth_error": synth_error,
         # docs/189 -- the class is the lab's own and SM cannot synthesize it.
         "synth_unknown_class": unknown_class,
+        # docs/2xx: the class's own schema typed the fields above
+        "schema_from_env": spec is None and schema_spec is not None,
+        "schema_unset": schema_unset,
         # where the curve on screen came from: "synth" (SM's own mirror of
         # quam's classes) or "config" (the lab's own generate_config output).
         # The page must never pass one off as the other.
@@ -14023,6 +14055,12 @@ def _pulse_section_ctx(store, pulse_index, path: str):
         "plot_config_at": truth.get("at") if plot_source == "config" else None,
         "plot_config_stale": bool(truth.get("stale")) if plot_source == "config" else False,
         "truth_status": truth.get("status") if unknown_class else None,
+        # docs/2xx: ask the class's own code for this pulse once the page is
+        # up -- unless it already drew these exact field values
+        "needs_lab": bool(unknown_class and plot_source != "lab"
+                          and lab.get("reason") == "not-drawn"),
+        "lab_warnings": (lab.get("warnings") or []) if plot_source == "lab" else [],
+        "lab_canonical": lab.get("canonical") if plot_source == "lab" else None,
         "can_rename": is_qubit_op and not alias_chain,
         "plot": plot,
         "label": f"{row['owner']} · {row['channel']} · {row['op_name']}",
@@ -14280,6 +14318,148 @@ def api_pulse_synth():
         "warnings": payload.get("warnings") or [],
         "plot": _pulse_plot_traces(payload),
     })
+
+
+def _lab_params_for_path(store, path: str, overrides=None):
+    """``(qclass, params, error)`` for drawing *path* with the lab's own class:
+    the pulse's fields with every pointer resolved the way ``synth_for_operation``
+    resolves them for SM's own synthesis (one resolver, never a second one)."""
+    from quam_state_manager.core.waveform_synth import synth_for_operation
+    payload = synth_for_operation(store, path, overrides=overrides or None)
+    qclass = payload.get("qclass")
+    if not qclass:
+        return None, None, payload.get("error") or "this pulse names no class"
+    params = {k: v for k, v in (payload.get("resolved_params") or {}).items()
+              if k != "__class__"}
+    return qclass, params, None
+
+
+def _coerce_lab_overrides(store, path: str, overrides: dict) -> dict:
+    """Uncommitted form values arrive as text; type each by the class's own
+    schema (int / float / bool), leaving pointers and unknown kinds as typed."""
+    from quam_state_manager.core.pulse_catalog import adaptive_spec_for
+    try:
+        body = store.get_value(path)
+    except (KeyError, TypeError, ValueError, IndexError):
+        body = None
+    spec = adaptive_spec_for(body.get("__class__")) if isinstance(body, dict) else None
+    out = {}
+    for k, raw in overrides.items():
+        p = spec.param(k) if spec else None
+        v = raw
+        if p is not None and isinstance(raw, str) and not raw.startswith("#"):
+            txt = raw.strip()
+            try:
+                if p.kind == "int":
+                    v = int(float(txt))
+                elif p.kind == "float":
+                    v = float(txt)
+                elif p.kind == "bool":
+                    v = txt.lower() in ("1", "true", "yes", "on")
+            except ValueError:
+                v = raw          # the class's own validation names it
+        out[k] = v
+    return out
+
+
+def lab_drawings_for_paths(store, paths, *, spawn: bool, overrides=None):
+    """``{path: record}`` -- each pulse drawn by its OWN class's code in the
+    selected env (``core/lab_waveform``). ONE function for the detail view,
+    the edit refresh and the row sparklines, so they cannot draw the same
+    pulse two ways."""
+    from quam_state_manager.core import lab_waveform
+    try:
+        python_path = config_generator.get_selected_env(current_app.instance_path)
+    except Exception:  # noqa: BLE001
+        python_path = None
+    out: dict = {}
+    items, owners = [], []
+    for path in paths:
+        ov = overrides if len(paths) == 1 else None
+        if ov:
+            ov = _coerce_lab_overrides(store, path, ov)
+        qclass, params, err = _lab_params_for_path(store, path, ov)
+        if err:
+            out[path] = {"ok": False, "error": err}
+            continue
+        items.append((qclass, params))
+        owners.append(path)
+    if items:
+        for path, rec in zip(owners, lab_waveform.draw(python_path, items,
+                                                       spawn=spawn)):
+            out[path] = rec
+    return out
+
+
+@bp.route("/api/pulse/lab-waveform", methods=["POST"])
+def api_pulse_lab_waveform():
+    """Draw pulses with the lab's OWN class code (docs/2xx adaptive pulses).
+
+    Body: ``{"paths": [...]}`` (existing pulses; ``params`` overrides the
+    fields of a single path) or ``{"qclass": ..., "params": {...}}`` (the
+    create form -- a pulse that does not exist yet). May spawn ONE subprocess
+    in the selected env (~2-6 s) for the pulses not already in RAM. Always
+    200; every failure is a named reason, never an empty plot."""
+    store = _store()
+    body = request.get_json(silent=True) or {}
+    from quam_state_manager.core import lab_waveform
+    params = body.get("params") or {}
+    if not isinstance(params, dict):
+        return jsonify({"ok": False, "error": "params must be an object"})
+    paths = body.get("paths")
+    results = []
+    try:
+        if isinstance(paths, list) and paths:
+            if not store:
+                return jsonify({"ok": False, "error": "No state loaded"})
+            paths = [p for p in paths if isinstance(p, str) and _is_pulse_path(p)][:8]
+            recs = lab_drawings_for_paths(store, paths, spawn=True,
+                                          overrides=params or None)
+            for p in paths:
+                rec = recs.get(p) or {"ok": False, "error": "not drawn"}
+                results.append({"path": p, **_lab_result(rec)})
+        else:
+            qclass = (body.get("qclass") or "").strip()
+            if not qclass:
+                return jsonify({"ok": False, "error": "need paths or qclass"})
+            try:
+                python_path = config_generator.get_selected_env(
+                    current_app.instance_path)
+            except Exception:  # noqa: BLE001
+                python_path = None
+            # the create form posts strings: type them by the class's own
+            # schema, the same parser the create POST uses
+            from quam_state_manager.core.pulse_catalog import (
+                adaptive_spec_for, by_qclass)
+            spec = adaptive_spec_for(qclass) or by_qclass(qclass)
+            if spec is not None:
+                params, errors = _coerce_catalog_fields(spec, params)
+                if errors:
+                    name, why = next(iter(errors.items()))
+                    return jsonify({"ok": True, "results": [{
+                        "qclass": qclass, "ok": False, "reason": "fields",
+                        "error": f"{name}: {why}", "param_errors": errors,
+                        "plot": {"ok": False}}]})
+            rec = lab_waveform.draw(python_path, [(qclass, params)])[0]
+            results.append({"qclass": qclass, **_lab_result(rec)})
+    except Exception as exc:  # noqa: BLE001 -- never a 500 on a preview route
+        logger.warning("lab waveform failed", exc_info=True)
+        return jsonify({"ok": False, "error": f"drawing failed: {exc}"})
+    return jsonify({"ok": True, "results": results})
+
+
+def _lab_result(rec: dict) -> dict:
+    from quam_state_manager.core import lab_waveform
+    return {
+        "ok": bool(rec.get("ok")),
+        "error": rec.get("error"),
+        "reason": rec.get("reason"),
+        "canonical": rec.get("canonical"),
+        "cached": bool(rec.get("cached")),
+        "dropped": rec.get("dropped") or [],
+        "warnings": rec.get("warnings") or [],
+        "plot": _pulse_plot_traces(lab_waveform.payload_for_plot(rec)),
+    }
 
 
 @bp.route("/api/pulse/compare", methods=["POST"])
@@ -14751,6 +14931,8 @@ def pulse_create_form():
         env_card=_env_card_state(store),
         env_class_count=len(roster or {}),
         env_roster=env_roster_breakdown(roster),
+        **_pulse_modules_ctx(store),
+        modules_error=None,
         pairs_info_json=json.dumps(pairs_info),
         gate_defs_json=gate_defs_json,
         pairs_all=list(pairs_info),
@@ -14758,7 +14940,7 @@ def pulse_create_form():
 
 
 @bp.route("/pulse/new/env-strip")
-def pulse_env_strip():
+def pulse_env_strip(error=None):
     """The add-pulse form's env-discovery strip (r15, docs/71 §2) — states:
     no env / interpreter gone / not probed [Probe now] / probing (self-poll)
     / ✓ N classes from <env>. Reuses the diagnostics env-card state + the
@@ -14774,7 +14956,155 @@ def pulse_env_strip():
         env_card=_env_card_state(store),
         env_class_count=len(roster or {}),
         env_roster=env_roster_breakdown(roster),
+        **_pulse_modules_ctx(store),
+        modules_error=error,
+        reload_form=(request.args.get("after_probe") == "1"
+                     and not _env_card_state(store)["probing"]),
     )
+
+
+_lab_reprobe_tried: set = set()
+_lab_reprobe_lock = threading.Lock()
+
+
+def _pulse_modules_ctx(store) -> dict:
+    """The named pulse-class modules + their import status, and whether a lab
+    source file changed under the manifest this chip holds (docs/2xx). A
+    change kicks the background re-probe; the strip then shows "probing" and
+    polls until the fresh roster is installed."""
+    from quam_state_manager.core import state_env_schema
+    inst = current_app.instance_path
+    manifest = _live_env_manifest(store) or {}
+    status = manifest.get("pulse_modules") or {}
+    names = state_env_schema.load_pulse_modules(inst)
+    code_changed = bool(manifest) and not state_env_schema.sources_fresh(
+        manifest.get("sources"))
+    reprobe_failed = False
+    if code_changed:
+        # ONE re-read per state of the lab's files: a probe that fails (a
+        # syntax error mid-edit) must not be re-kicked by every 2 s poll --
+        # the next edit changes the stats and earns a new try
+        stats = []
+        for f in sorted((manifest.get("sources") or {})):
+            try:
+                st = os.stat(f)
+                stats.append((f, st.st_mtime_ns, st.st_size))
+            except OSError:
+                stats.append((f, None, None))
+        key = (id(store), tuple(stats))
+        with _lab_reprobe_lock:
+            first = key not in _lab_reprobe_tried
+            _lab_reprobe_tried.add(key)
+            if len(_lab_reprobe_tried) > 256:
+                _lab_reprobe_tried.clear()
+                _lab_reprobe_tried.add(key)
+        if first:
+            ctx = _active_ctx()
+            try:
+                _warm_state_schema_async(store, inst,
+                                         live_folder=(ctx or {}).get("path"))
+            except Exception:  # noqa: BLE001
+                pass
+        else:
+            with _schema_warm_lock:
+                probing = bool(_schema_warm_inflight)
+            reprobe_failed = not probing
+    lab_count = sum(1 for rec in (env_overlay_active_safe() or {}).values()
+                    if isinstance(rec, dict) and rec.get("lab"))
+    return {
+        "pulse_modules": [{"name": n, "status": status.get(n)} for n in names],
+        "lab_code_changed": code_changed and not reprobe_failed,
+        "lab_reprobe_failed": reprobe_failed,
+        "lab_class_count": lab_count,
+    }
+
+
+def env_overlay_active_safe():
+    from quam_state_manager.core.pulse_catalog import env_overlay_active
+    try:
+        return env_overlay_active()
+    except Exception:  # noqa: BLE001
+        return None
+
+
+@bp.route("/pulse/class-modules", methods=["POST"])
+def pulse_class_modules():
+    """Name (or clear) the modules SM imports to find the lab's own pulse
+    classes (docs/2xx adaptive pulses). The probe never walks a package blind,
+    so a class in a module the chip does not import yet is reachable only this
+    way. Saving re-probes the selected env in the background (force: the
+    named set changed) and answers with the env strip, which self-polls."""
+    store = _store()
+    if not store:
+        return render_template("_status.html", message="No state loaded",
+                               level="warning"), 400
+    from quam_state_manager.core import state_env_schema
+    inst = current_app.instance_path
+    current = state_env_schema.load_pulse_modules(inst)
+    action = request.form.get("action", "add")
+    name = (request.form.get("module") or "").strip()
+    error = None
+    if action == "remove":
+        mods = [m for m in current if m != name]
+    else:
+        if not state_env_schema.valid_module_name(name):
+            error = (f"{name!r} is not a Python module name "
+                     "(e.g. my_lab.cz_pulses)") if name else "type a module name"
+            mods = current
+        else:
+            mods = [*current, name]
+    if error is None and mods != current:
+        state_env_schema.save_pulse_modules(inst, mods)
+        ctx = _active_ctx()
+        _kick_env_reprobe(store, inst, (ctx or {}).get("path"))
+    return pulse_env_strip(error=error)
+
+
+def _kick_env_reprobe(store, inst, live_folder) -> None:
+    """Re-probe the selected env for this chip in the background, forced (the
+    cache would otherwise answer for a module set it never imported). The
+    same single-flight key as /diagnostics/env-probe."""
+    from quam_state_manager.core import state_env_schema
+    try:
+        python_path = config_generator.get_selected_env(inst)
+    except Exception:  # noqa: BLE001
+        return
+    if not python_path:
+        return
+    with store._lock:
+        classes = state_env_schema.harvest_classes(store.state)
+    key = python_path + "|" + ",".join(sorted(classes))
+    with _schema_warm_lock:
+        if key in _schema_warm_inflight:
+            return
+        _schema_warm_inflight.add(key)
+
+    def _run():
+        try:
+            res = state_env_schema.probe_state_schema(python_path, classes, inst,
+                                                      force=True)
+            if res.get("ok") and live_folder:
+                _attach_probe_result(store, inst, live_folder, python_path, res)
+        except Exception:  # noqa: BLE001
+            logger.warning("pulse-module re-probe failed", exc_info=True)
+        finally:
+            with _schema_warm_lock:
+                _schema_warm_inflight.discard(key)
+
+    threading.Thread(target=_run, daemon=True).start()
+
+
+def _attach_probe_result(store, inst, live_folder, python_path, res) -> None:
+    """Install a fresh probe result on *store* and the pulse catalog."""
+    from quam_state_manager.core import pulse_catalog, type_policy
+    manifest = {k: res.get(k) for k in
+                ("classes", "pulse_roster", "by_leaf", "missing_classes",
+                 "versions", "pulse_modules", "sources")}
+    store.type_policy = type_policy.load_policy(inst, live_folder, manifest)
+    store._type_manifest_env = python_path
+    if manifest.get("pulse_roster"):
+        pulse_catalog.apply_env_overlay(manifest["pulse_roster"])
+    pulse_catalog.apply_chip_classes(manifest.get("classes"))
 
 
 @bp.route("/pulse/gaussian-cz")
@@ -15463,6 +15793,76 @@ def _config_op_for_pulse_path(config: dict, path: str,
         if len(exact) == 1:
             return exact[0]
     return None, None
+
+
+_lab_spark_inflight: set = set()
+_lab_spark_lock = threading.Lock()
+
+
+def _pulse_fallback_spark(store, path, row) -> None:
+    """The row thumbnail for a class SM cannot synthesize (docs/2xx).
+
+    Order: the class's OWN code at the pulse's CURRENT field values (a RAM
+    hit only -- a list render never spawns) > the generated config (docs/189,
+    which may predate the latest edit). The row says which one it is.
+    """
+    from quam_state_manager.core.waveform_synth import sparkline_svg
+    from quam_state_manager.core import lab_waveform
+    row["spark_from_config"] = False
+    row["spark_from_lab"] = False
+    try:
+        rec = lab_drawings_for_paths(store, [path], spawn=False).get(path) or {}
+    except Exception:  # noqa: BLE001 -- a thumbnail is never worth an error page
+        logger.debug("lab sparkline lookup failed for %s", path, exc_info=True)
+        rec = {}
+    if rec.get("ok"):
+        row["spark_svg"] = sparkline_svg(lab_waveform.payload_for_plot(rec))
+        row["spark_from_lab"] = bool(row["spark_svg"])
+        row["spark_at"] = None
+        if row["spark_svg"]:
+            return
+    row["spark_svg"], row["spark_at"] = _pulse_truth_spark(store, path)
+    row["spark_from_config"] = bool(row["spark_svg"])
+
+
+def _warm_lab_sparks(store, paths) -> None:
+    """Draw *paths* with their own class code in ONE background subprocess,
+    so the next render of these rows has a current thumbnail. Single-flight
+    per path set; never on the request path; silent without an env."""
+    try:
+        python_path = config_generator.get_selected_env(current_app.instance_path)
+    except Exception:  # noqa: BLE001
+        return
+    if not python_path or not Path(python_path).is_file():
+        return
+    app = current_app._get_current_object()
+    todo = []
+    for p in paths:
+        try:
+            rec = lab_drawings_for_paths(store, [p], spawn=False).get(p) or {}
+        except Exception:  # noqa: BLE001
+            continue
+        if rec.get("reason") == "not-drawn":
+            todo.append(p)
+    if not todo:
+        return
+    key = (id(store), tuple(todo))
+    with _lab_spark_lock:
+        if key in _lab_spark_inflight:
+            return
+        _lab_spark_inflight.add(key)
+
+    def _run():
+        try:
+            with app.app_context():
+                lab_drawings_for_paths(store, todo, spawn=True)
+        except Exception:  # noqa: BLE001
+            logger.debug("lab sparkline warm failed", exc_info=True)
+        finally:
+            with _lab_spark_lock:
+                _lab_spark_inflight.discard(key)
+
+    threading.Thread(target=_run, daemon=True).start()
 
 
 def _pulse_truth_spark(store, path):
@@ -30178,16 +30578,7 @@ def diagnostics_env_probe():
                 res = state_env_schema.probe_state_schema(
                     python_path, classes, inst, force=force)
                 if res.get("ok") and live_folder:
-                    from quam_state_manager.core import pulse_catalog, type_policy
-                    manifest = {k: res[k] for k in
-                                ("classes", "pulse_roster", "by_leaf",
-                                 "missing_classes", "versions")}
-                    store.type_policy = type_policy.load_policy(
-                        inst, live_folder, manifest)
-                    store._type_manifest_env = python_path
-                    if manifest.get("pulse_roster"):
-                        pulse_catalog.apply_env_overlay(manifest["pulse_roster"])
-                    pulse_catalog.apply_chip_classes(manifest.get("classes"))
+                    _attach_probe_result(store, inst, live_folder, python_path, res)
             except Exception:  # noqa: BLE001
                 logger.warning("env probe failed", exc_info=True)
             finally:

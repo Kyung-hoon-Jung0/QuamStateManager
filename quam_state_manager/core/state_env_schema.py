@@ -28,6 +28,7 @@ class-move portability) and ``missing_classes``.
 from __future__ import annotations
 
 import logging
+import re
 import tempfile
 import threading
 from pathlib import Path
@@ -49,7 +50,13 @@ STATE_SCHEMA_SCRIPT = _script_path("probe_state_schema.py")
 # Bumped when the manifest gains fields the cache could not have (2 = per-field
 # "doc" + class "doc" for the key manual, 2026-08-27): an older entry is a MISS,
 # else the docs would stay silently absent for everyone with a warm cache.
-SCHEMA_FORMAT = 2
+#
+# 3 (docs/2xx adaptive pulses): the pulse roster also carries the LAB's own
+# pulse classes (``lab: true``) and the manifest records the out-of-env
+# ``sources`` it was computed from; a format-2 entry has neither, and serving
+# it would hide a class the lab added for as long as the env's versions hold.
+SCHEMA_FORMAT = 3
+_PULSE_MODULES_FILENAME = "pulse_class_modules.json"
 _SCHEMA_CACHE_FILENAME = "state_schema_cache.json"
 _CATALOG_CACHE_FILENAME = "state_schema_catalog.json"   # the Config Manual's full class catalogue (docs/141 4h)
 _MAX_CACHED_ENVS = 5          # LRU prune bound for per-env cache entries
@@ -155,6 +162,81 @@ def _decorate(manifest: dict, requested=None) -> dict:
 
 
 # ---------------------------------------------------------------------------
+# lab sources + user-named pulse modules (docs/2xx adaptive pulses)
+# ---------------------------------------------------------------------------
+
+def sources_fresh(sources: Any) -> bool:
+    """True when every recorded out-of-env source file still has the
+    ``[mtime_ns, size]`` the probe saw.
+
+    Validate on read: the env signature is site-packages' mtime, which an edit
+    to an editable lab package never moves, so without this a class the lab
+    ADDED (or a field it renamed) would stay invisible for as long as the
+    cached versions matched. An empty ``sources`` is fresh by definition --
+    nothing outside the env was read; the format bump retires older entries.
+    """
+    if not sources:
+        return True
+    if not isinstance(sources, dict):
+        return False
+    import os
+    for f, rec in sources.items():
+        try:
+            st = os.stat(f)
+        except OSError:
+            return False
+        if not isinstance(rec, (list, tuple)) or len(rec) != 2:
+            return False
+        if st.st_mtime_ns != rec[0] or st.st_size != rec[1]:
+            return False
+    return True
+
+
+_MODULE_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*(\.[A-Za-z_][A-Za-z0-9_]*)*$")
+
+
+def valid_module_name(name: Any) -> bool:
+    return bool(isinstance(name, str) and len(name) <= 200 and _MODULE_RE.match(name))
+
+
+def load_pulse_modules(instance_path) -> list[str]:
+    """The modules the USER named as homes of their own pulse classes -- the
+    one way to reach a class in a module the chip does not import yet. The
+    probe never walks a package blind (a lab module may talk to an instrument
+    at import), so SM imports exactly these and nothing else."""
+    if instance_path is None:
+        return []
+    p = Path(instance_path) / _PULSE_MODULES_FILENAME
+    if not p.is_file():
+        return []
+    try:
+        data = safe_io.read_json(p)
+    except Exception:  # noqa: BLE001 -- unreadable: none named
+        return []
+    mods = data.get("modules") if isinstance(data, dict) else None
+    return [m for m in (mods or []) if valid_module_name(m)]
+
+
+def save_pulse_modules(instance_path, modules: list[str]) -> list[str]:
+    """Persist the named modules (deduplicated, validated, at most 20)."""
+    clean = list(dict.fromkeys(
+        m.strip() for m in modules
+        if isinstance(m, str) and valid_module_name(m.strip())))[:20]
+    safe_io.atomic_write_json(Path(instance_path) / _PULSE_MODULES_FILENAME,
+                              {"modules": clean})
+    return clean
+
+
+def _entry_fresh(entry: dict, modules: list[str]) -> bool:
+    """A cache entry answers for *modules* only when it imported each of them
+    and none of the lab files it read has changed since."""
+    have = entry.get("pulse_modules") or {}
+    if not set(modules) <= set(have):
+        return False
+    return sources_fresh(entry.get("sources"))
+
+
+# ---------------------------------------------------------------------------
 # probe
 # ---------------------------------------------------------------------------
 
@@ -181,12 +263,14 @@ def probe_state_schema(python_path: str, class_paths: list[str], instance_path=N
     result["versions"] = versions
     requested = [c for c in dict.fromkeys(class_paths) if isinstance(c, str) and c]
 
+    modules = load_pulse_modules(instance_path)
     cached_classes: dict = {}
     if instance_path is not None and not force:
         with _cache_lock:
             entry = _load_cache(instance_path).get(python_path)
         if (isinstance(entry, dict) and entry.get("versions") == versions
-                and entry.get("format") == SCHEMA_FORMAT):
+                and entry.get("format") == SCHEMA_FORMAT
+                and _entry_fresh(entry, modules)):
             cached_classes = entry.get("classes") or {}
             if set(requested) <= set(cached_classes):
                 manifest = _decorate({"classes": cached_classes,
@@ -195,6 +279,8 @@ def probe_state_schema(python_path: str, class_paths: list[str], instance_path=N
                 result.update(ok=True, cached=True,
                               classes=manifest["classes"],
                               pulse_roster=manifest["pulse_roster"],
+                              pulse_modules=entry.get("pulse_modules") or {},
+                              sources=entry.get("sources") or {},
                               by_leaf=manifest["by_leaf"],
                               missing_classes=manifest["missing_classes"])
                 # keep the stat signature fresh so cached_only reads stay warm
@@ -213,7 +299,8 @@ def probe_state_schema(python_path: str, class_paths: list[str], instance_path=N
     work_dir = Path(tempfile.mkdtemp(prefix="quamschema_work_"))
     try:
         (work_dir / "_classes.json").write_text(
-            json.dumps({"classes": union, "pulse_roster": True}), encoding="utf-8")
+            json.dumps({"classes": union, "pulse_roster": True,
+                        "pulse_modules": modules}), encoding="utf-8")
         _run_script_outcome(
             [python_path, str(STATE_SCHEMA_SCRIPT),
              "--classes", str(work_dir / "_classes.json"),
@@ -234,7 +321,8 @@ def probe_state_schema(python_path: str, class_paths: list[str], instance_path=N
     roster = parsed.get("pulse_roster") or {}
     manifest = _decorate({"classes": classes, "pulse_roster": roster},
                          requested=requested)
-    result.update(ok=True,
+    result.update(ok=True, pulse_modules=parsed.get("pulse_modules") or {},
+                  sources=parsed.get("sources") or {},
                   classes=manifest["classes"], pulse_roster=manifest["pulse_roster"],
                   by_leaf=manifest["by_leaf"], missing_classes=manifest["missing_classes"],
                   versions=parsed.get("versions") or versions)
@@ -249,6 +337,8 @@ def probe_state_schema(python_path: str, class_paths: list[str], instance_path=N
                 "signature": _env_signature(python_path),
                 "classes": classes,
                 "pulse_roster": roster,
+                "pulse_modules": parsed.get("pulse_modules") or {},
+                "sources": parsed.get("sources") or {},
             }
             while len(cache) > _MAX_CACHED_ENVS:        # LRU prune (insertion order)
                 cache.pop(next(iter(cache)))
@@ -469,10 +559,14 @@ def manifest_for_store(store, python_path: str | None, instance_path=None, *,
         classes = entry.get("classes") or {}
         if not set(requested) <= set(classes):
             return None                                  # new chip classes unprobed
+        if not _entry_fresh(entry, load_pulse_modules(instance_path)):
+            return None                                  # a lab file changed / a module was named
         manifest = _decorate({"classes": classes,
                               "pulse_roster": entry.get("pulse_roster") or {}},
                              requested=requested)
         manifest["versions"] = entry.get("versions") or {}
+        manifest["pulse_modules"] = entry.get("pulse_modules") or {}
+        manifest["sources"] = entry.get("sources") or {}
         return manifest
 
     res = probe_state_schema(python_path, requested, instance_path,
@@ -480,5 +574,7 @@ def manifest_for_store(store, python_path: str | None, instance_path=None, *,
     if not res.get("ok"):
         return None
     return {"classes": res["classes"], "pulse_roster": res["pulse_roster"],
+            "pulse_modules": res.get("pulse_modules") or {},
+            "sources": res.get("sources") or {},
             "by_leaf": res["by_leaf"], "missing_classes": res["missing_classes"],
             "versions": res["versions"]}

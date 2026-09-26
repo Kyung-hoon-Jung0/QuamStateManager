@@ -2,8 +2,11 @@
 // in jsdom against a hand-built create-form DOM and pins:
 //  - createTypeChanged fills the HIDDEN qclass input + the visible display
 //    (users never type class paths) and the "env" provenance hint;
-//  - env-only classes suppress the preview and show the no-transcription
-//    note; switching back restores the plot area;
+//  - env-only classes show the no-transcription note and a "draw with the
+//    class's own code" button instead of an automatic preview (docs/2xx
+//    adaptive pulses); the button posts qclass + the typed values to
+//    /api/pulse/lab-waveform and draws the answer; switching back to a
+//    synthesized class removes the button;
 //  - options whose class the selected env can NOT import are marked;
 //  - submitting such a class is PREVENTED until the explicit confirm, after
 //    which the request re-fires with force=1 (never-silent);
@@ -54,8 +57,9 @@ const CATALOG = {
     // the REAL sentence env_creatable_specs puts on these (docs/190 F47) --
     // a stub here made P3 pass against a note the product never renders
     doc: 'Discovered in the selected environment — SM has no waveform ' +
-         'transcription for this class, so there is no live preview. Fields ' +
-         'come from the env’s own dataclass schema.',
+         'transcription for this class, so the preview is drawn by the ' +
+         'class\'s own code in that environment. Fields come from the env’s ' +
+         'own dataclass schema.',
     iq: 'never', length_mode: 'explicit', channels: ['xy', 'z', 'resonator'],
     verify: 'env', env_only: true,
     qclass: 'quam_builder.architecture.superconducting.components.pulses.CosineBipolarPulse',
@@ -175,10 +179,13 @@ ok(erfOpt.classList.contains('pulse-opt-envmissing'), 'P2: missing option class'
 const sqOpt = typeSel.querySelector('option[value="SquarePulse"]');
 ok(!/not in this env/.test(sqOpt.textContent), 'P2: env-ok option unmarked');
 
-// P3: env-only class → preview suppressed + note shown; back → restored
+// P3: env-only class → no automatic preview, a lab-draw button + note; back → gone
 typeSel.value = 'CosineBipolarPulse';
 P.createTypeChanged(typeSel);
-ok(doc.getElementById('pulse-create-plot').hidden === true, 'P3: plot hidden');
+ok(doc.getElementById('pulse-create-plot').hidden === false, 'P3: plot area kept');
+ok(doc.getElementById('pulse-create-plot').classList.contains('pulse-plot-empty'),
+   'P3: plot shown empty until drawn');
+ok(!!doc.getElementById('pulse-create-labdraw'), 'P3: lab-draw button offered');
 const note = doc.getElementById('pulse-create-envnote');
 ok(!!note && /no waveform transcription/.test(note.textContent),
    'P3: no-preview note shown');
@@ -186,6 +193,7 @@ typeSel.value = 'SquarePulse';
 P.createTypeChanged(typeSel);
 ok(doc.getElementById('pulse-create-plot').hidden === false, 'P3: plot restored');
 ok(!doc.getElementById('pulse-create-envnote'), 'P3: note removed');
+ok(!doc.getElementById('pulse-create-labdraw'), 'P3: lab-draw button removed');
 
 // P4: never-silent confirm on a missing-in-env class
 const form = root.querySelector('form.pulse-create-form');
@@ -377,8 +385,8 @@ P.createTypeChanged(typeSel);
 var note2 = doc.getElementById('pulse-create-envnote');
 ok(!!note2 && /Declared by this chip/.test(note2.textContent),
    'P13: a chip class says it came from the chip');
-ok(doc.getElementById('pulse-create-plot').hidden === true,
-   'P13: and still claims no preview');
+ok(!!doc.getElementById('pulse-create-labdraw'),
+   'P13: and offers its own code to draw it');
 
 // a class with no doc of its own keeps the env sentence
 typeSel.value = 'CosineBipolarPulse';
@@ -392,6 +400,30 @@ ok(!!note3 && /Discovered in the selected environment/.test(note3.textContent),
    'P13: an entry with no doc keeps the env wording');
 root._catalog.CosineBipolarPulse.doc = envDoc;
 
-if (fails) { console.error(fails + ' failure(s)'); process.exit(1); }
-console.log('ALL OK pulses_create_selfcheck');
-process.exit(0);
+// P14 (docs/2xx): the button asks the CLASS ITSELF -- qclass + the values in
+// the form, to the lab route -- and draws what comes back, labelled as such.
+typeSel.value = 'LabOwnPulse'; P.createTypeChanged(typeSel);
+var amp = doc.querySelector('#pulse-create-fields input[name="amplitude"]');
+if (amp) amp.value = '0.25';
+var sent = null, drawn = null;
+win.fetch = function (url, opts) {
+  sent = { url: url, body: JSON.parse((opts && opts.body) || '{}') };
+  return win.Promise.resolve({ json: function () { return win.Promise.resolve({
+    ok: true, results: [{ ok: true, warnings: [],
+      plot: { ok: true, traces: [{ name: 'I', x: [0, 1, 2], y: [0, 0.25, 0] }] } }] }); } });
+};
+win._plotlyRender = function (id, data) { drawn = { id: id, data: data }; return null; };
+var bar = root.querySelector('.pulse-plot-bar');
+var lbl = doc.createElement('span'); lbl.className = 'pulse-plot-label'; bar.appendChild(lbl);
+doc.getElementById('pulse-create-labdraw').click();
+setTimeout(function () {
+  ok(sent && sent.url === '/api/pulse/lab-waveform', 'P14: posts to the lab route');
+  ok(sent && sent.body.qclass === 'quam_config.two_flux.LabOwnPulse', 'P14: names the class');
+  ok(sent && sent.body.params && sent.body.params.amplitude === '0.25', 'P14: sends the typed values');
+  ok(drawn && drawn.id === 'pulse-create-plot' && drawn.data.length === 1, 'P14: draws the answer');
+  ok(/class's own code/.test(lbl.textContent), 'P14: labelled as the class\'s own code');
+  ok(!doc.getElementById('pulse-create-plot').classList.contains('pulse-plot-empty'), 'P14: plot no longer empty');
+  if (fails) { console.error(fails + ' failure(s)'); process.exit(1); }
+  console.log('ALL OK pulses_create_selfcheck');
+  process.exit(0);
+}, 20);

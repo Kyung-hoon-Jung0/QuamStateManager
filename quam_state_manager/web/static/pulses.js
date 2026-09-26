@@ -15,6 +15,9 @@ window.PulsesPage = (function () {
     'use strict';
 
     var PREVIEW_DEBOUNCE_MS = 150;
+    // a lab class's preview is a subprocess in the selected env (seconds, not
+    // milliseconds): wait for the typing to settle before asking it
+    var LAB_PREVIEW_DEBOUNCE_MS = 900;
     var _gen = 0;  // fetch-generation counter — stale responses are dropped
 
     /* ── the VIEW: one to four pulses on one plot, one parameter section each
@@ -95,7 +98,14 @@ window.PulsesPage = (function () {
             sec.committedPlot = null;
             sec.synthErr = (data && data.error) || 'preview failed';
             if (data && data.reason === 'unknown_class') {
-                groundTruthInto(root, sec, gen, done);
+                sec.lab = true;
+                // docs/2xx: the class's own code at the committed values
+                // first; the generated config only when that cannot answer
+                labInto(root, [sec], function (failed) {
+                    if (gen !== sec.cpGen) return;
+                    if (failed.length) { groundTruthInto(root, sec, gen, done); return; }
+                    done();
+                });
                 return;
             }
             publishSynthErr(root);
@@ -158,6 +168,81 @@ window.PulsesPage = (function () {
             })
             .catch(function () { if (gen === sec.cpGen) publishSynthErr(root); })
             .then(function () { if (gen === sec.cpGen) done(); });
+    }
+
+    /* docs/2xx adaptive pulses -- the waveform SM has no copy of, drawn by
+       the CLASS ITSELF: the selected env builds the dataclass from the pulse's
+       current fields and calls quam's own Pulse.calculate_waveform(), the
+       method generate_config() calls. Unlike the generated config it is never
+       older than the fields on screen, and it needs no 13 s whole-chip run.
+       One request for every section that needs it; the server answers from
+       RAM when these exact fields were drawn before. `after(failed)` gets the
+       sections the class could NOT draw, so the caller can fall back. */
+    var LAB_LABEL = 'drawn by the class\'s own code (calculate_waveform() in the selected env) at the current field values';
+    function labInto(root, secs, after) {
+        secs = (secs || []).filter(Boolean);
+        if (!secs.length) { if (after) after([]); return; }
+        var gens = {};
+        secs.forEach(function (sec) { gens[sec.path] = sec.labGen = (sec.labGen || 0) + 1; });
+        var main = secs.filter(function (sc) { return sc.index === 0; })[0];
+        if (main && !(main.committedPlot && main.committedPlot.ok)) {
+            setPlotLabel(root, 'asking your class\'s own code to draw it\u2026 (a few seconds the first time)');
+        }
+        root._labPending = (root._labPending || 0) + 1;
+        fetch('/api/pulse/lab-waveform', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ paths: secs.map(function (sc) { return sc.path; }) })
+        }).then(function (r) { return r.json(); }).then(function (data) {
+            root._labPending = Math.max(0, (root._labPending || 1) - 1);
+            if (!document.body.contains(root)) return;
+            var byPath = {};
+            ((data && data.results) || []).forEach(function (r) { byPath[r.path] = r; });
+            var failed = [];
+            secs.forEach(function (sec) {
+                if (sec.labGen !== gens[sec.path]) return;      // superseded
+                var r = byPath[sec.path];
+                if (r && r.ok && r.plot && r.plot.ok) {
+                    r.plot.fromLab = true;
+                    sec.committedPlot = r.plot;
+                    sec.fromLab = true;
+                    sec.synthErr = '';
+                    sec.labErr = '';
+                    if (sec.index === 0) {
+                        root._committedPlot = r.plot;
+                        setPlotLabel(root, LAB_LABEL + ((r.warnings && r.warnings.length)
+                            ? ' \u2014 it said: ' + r.warnings.join('; ') : ''));
+                        var cta = root.querySelector('.pulse-plot-cta');
+                        if (cta) cta.hidden = true;
+                        var err = root.querySelector('.pulse-synth-err');
+                        if (err && /config is older/.test(err.textContent || '')) err.hidden = true;
+                    }
+                    cacheCommitted(sec, r.plot);
+                } else {
+                    sec.labErr = (r && r.error) || (data && data.error) || 'not drawn';
+                    failed.push(sec);
+                }
+            });
+            if (failed.length) {
+                var mainFailed = failed.filter(function (sc) { return sc.index === 0; })[0];
+                if (mainFailed && !(mainFailed.committedPlot && mainFailed.committedPlot.ok)) {
+                    setPlotLabel(root, 'your class\'s own code could not draw it');
+                }
+                failed.forEach(function (sc) {
+                    if (!(sc.committedPlot && sc.committedPlot.ok)) {
+                        sc.synthErr = (secs.length > 1 ? sc.label + ': ' : '') + sc.labErr;
+                    }
+                });
+            }
+            publishSynthErr(root);
+            try { renderPulsePlot('pulse-detail-plot'); } catch (e) { console.error('lab plot render failed', e); }
+            var el = document.getElementById('pulse-detail-plot');
+            if (el) el.classList.remove('pulse-plot-empty');
+            if (after) after(failed);
+        }).catch(function () {
+            root._labPending = Math.max(0, (root._labPending || 1) - 1);
+            if (after) after(secs);
+        });
     }
 
     function setPlotLabel(root, text) {
@@ -475,11 +560,19 @@ window.PulsesPage = (function () {
             cb({ ok: true, plot: hit, param_errors: {} });
             return;
         }
-        fetch('/api/pulse/synth', {
+        // docs/2xx: a lab class has no in-process synthesizer -- its own code
+        // draws the uncommitted values (same answer shape as /api/pulse/synth)
+        var lab = !!(holder && holder.lab && body.path);
+        fetch(lab ? '/api/pulse/lab-waveform' : '/api/pulse/synth', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify(body)
+            body: JSON.stringify(lab ? { paths: [body.path], params: body.params } : body)
         }).then(function (r) { return r.json(); }).then(function (data) {
+            if (lab) {
+                var r0 = (data && data.results && data.results[0]) || {};
+                data = { ok: !!r0.ok, plot: r0.plot, error: r0.error || (data && data.error),
+                         warnings: r0.warnings || [], param_errors: {} };
+            }
             if (data && data.ok && data.plot && data.plot.ok) {
                 _previewCache.set(key, data.plot);
                 while (_previewCache.size > PLOT_CACHE_MAX) _previewCache.delete(_previewCache.keys().next().value);
@@ -562,7 +655,8 @@ window.PulsesPage = (function () {
             if (!anyDirty) showSynthErr(root, '');
             if (root._cpPending > 0) return;        // a committed refresh is due (docs/141 4e); it renders
             if (!pending) renderPulsePlot('pulse-detail-plot');
-        }, PREVIEW_DEBOUNCE_MS);
+        }, sectionsOf(root).some(function (sc) { return sc.lab; })
+            ? LAB_PREVIEW_DEBOUNCE_MS : PREVIEW_DEBOUNCE_MS);
     }
 
     function firstParamError(paramErrors) {
@@ -594,6 +688,16 @@ window.PulsesPage = (function () {
         });
         root._committedPlot = root._sections[0].committedPlot;
         root._cpPending = 0;
+        pulses.forEach(function (pu, idx) {
+            if (root._sections[idx]) {
+                root._sections[idx].lab = !!pu.lab_class;
+                root._sections[idx].fromLab = pu.plot_source === 'lab';
+            }
+        });
+        var needLab = root._sections.filter(function (sec, idx) { return pulses[idx] && pulses[idx].needs_lab; });
+        if (needLab.length) setTimeout(function () {
+            if (document.body.contains(root)) labInto(root, needLab);
+        }, 0);
         root._sections.forEach(function (sec) { cacheCommitted(sec, sec.committedPlot); });   // docs/141 4e: these states are drawn -- remember them
         try { buildViewBar(root); } catch (e) { console.error('view bar failed', e); }
 
@@ -992,6 +1096,39 @@ window.PulsesPage = (function () {
         }, PREVIEW_DEBOUNCE_MS);
     }
 
+    function createLabDraw(root) {
+        var typeSel = document.getElementById('pulse-create-type');
+        var qcInput = document.getElementById('pulse-create-qclass');
+        var btn = document.getElementById('pulse-create-labdraw');
+        if (!typeSel || !qcInput || !qcInput.value) return;
+        var gen = (root._labGen = (root._labGen || 0) + 1);
+        if (btn) btn.disabled = true;
+        setPlotLabel(root, 'running the class\'s own code\u2026');
+        fetch('/api/pulse/lab-waveform', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ qclass: qcInput.value, params: createCollectParams(root) })
+        }).then(function (r) { return r.json(); }).then(function (data) {
+            if (btn) btn.disabled = false;
+            if (gen !== root._labGen || !document.body.contains(root)) return;
+            var r0 = (data && data.results && data.results[0]) || {};
+            var plot = document.getElementById('pulse-create-plot');
+            if (r0.ok && r0.plot && r0.plot.ok) {
+                if (plot) plot.classList.remove('pulse-plot-empty');
+                renderPulsePlot('pulse-create-plot', r0.plot);
+                setPlotLabel(root, LAB_LABEL.replace('the current field values', 'the values above')
+                    + ((r0.warnings && r0.warnings.length) ? ' \u2014 it said: ' + r0.warnings.join('; ') : ''));
+                showSynthErr(root, '');
+            } else {
+                setPlotLabel(root, 'your class\'s own code could not draw it');
+                showSynthErr(root, r0.error || (data && data.error) || 'not drawn');
+            }
+        }).catch(function () {
+            if (btn) btn.disabled = false;
+            showSynthErr(root, 'the request failed');
+        });
+    }
+
     function createTypeChanged(sel) {
         var root = createRoot();
         if (!root || !root._catalog) return;
@@ -999,7 +1136,9 @@ window.PulsesPage = (function () {
         if (!spec) return;
         var hint = document.getElementById('pulse-create-hint');
         if (hint) {
-            hint.textContent = (spec.doc || '') +
+            // an env/lab class carries its sentence in the note below the
+            // fields; saying it twice (hint + note) read as a glitch
+            hint.textContent = (spec.env_only ? '' : (spec.doc || '')) +
                 (spec.iq === 'always' ? ' · IQ' : '') +
                 (spec.length_mode === 'inferred'
                     ? ' · length auto-inferred (' + '#./inferred_length' + ')' : '') +
@@ -1032,8 +1171,31 @@ window.PulsesPage = (function () {
         // say so instead of showing a stale/empty plot.
         var plot = document.getElementById('pulse-create-plot');
         var plotBar = root.querySelector('.pulse-plot-bar');
-        if (plot) plot.hidden = !!spec.env_only;
-        if (plotBar) plotBar.hidden = !!spec.env_only;
+        // docs/2xx: a class SM has no transcription of is drawn by its OWN
+        // code on request (a subprocess, a few seconds) -- the plot stays,
+        // with a button instead of an automatic per-keystroke run
+        if (plot) plot.hidden = false;
+        if (plotBar) plotBar.hidden = false;
+        var labBtn = document.getElementById('pulse-create-labdraw');
+        if (spec.env_only) {
+            if (!labBtn && plotBar) {
+                labBtn = document.createElement('button');
+                labBtn.type = 'button';
+                labBtn.id = 'pulse-create-labdraw';
+                labBtn.className = 'btn-sm outline';
+                labBtn.textContent = 'Draw with the class\'s own code';
+                labBtn.title = 'Runs the class in the selected environment (calculate_waveform) with the values above';
+                labBtn.addEventListener('click', function () { createLabDraw(root); });
+                plotBar.insertBefore(labBtn, plotBar.firstChild);
+            }
+            if (plot && window.Plotly) { try { window.Plotly.purge(plot); } catch (e) {} }
+            if (plot) plot.classList.add('pulse-plot-empty');
+            setPlotLabel(root, 'not drawn yet \u2014 press the button to run the class\'s own code');
+            showSynthErr(root, '');
+        } else {
+            if (labBtn) labBtn.remove();
+            setPlotLabel(root, 'preview (synthesized)');
+        }
         var envNote = document.getElementById('pulse-create-envnote');
         if (spec.env_only) {
             if (!envNote) {
@@ -1052,9 +1214,9 @@ window.PulsesPage = (function () {
             // fallback for a catalog entry that predates the field.
             envNote.textContent = spec.doc ||
                 ('Discovered in the selected environment — ' +
-                 'SM has no waveform transcription for this class, so there ' +
-                 'is no live preview. Fields come from the env’s own ' +
-                 'dataclass schema.');
+                 'SM has no waveform transcription for this class, so the ' +
+                 'preview is drawn by the class’s own code on request. ' +
+                 'Fields come from the env’s own dataclass schema.');
         } else if (envNote) {
             envNote.remove();
         }
@@ -1437,12 +1599,29 @@ window.PulsesPage = (function () {
 
     // Env-strip "Probe now" — rides the diagnostics probe (single-flighted;
     // installs the pulse-roster overlay on success), then re-polls the strip.
-    function envStripProbe(btn) {
+    /* docs/2xx: a probe that finished while the create form was open found
+       classes the form was built without -- rebuild it, keeping the target
+       the user had picked (qubit + channel ride the URL like the qubit page's
+       "Add pulse" button). */
+    function reloadCreateForm() {
+        var root = createRoot();
+        if (!root || !window.htmx) return;
+        var q = root.querySelector('select[name="qubit"]');
+        var ch = root.querySelector('select[name="channel"]');
+        var url = '/pulse/new';
+        var qs = [];
+        if (q && q.value) qs.push('qubit=' + encodeURIComponent(q.value));
+        if (ch && ch.value) qs.push('channel=' + encodeURIComponent(ch.value));
+        if (qs.length) url += '?' + qs.join('&');
+        window.htmx.ajax('GET', url, { target: '#inspector-pane', swap: 'innerHTML' });
+    }
+
+    function envStripProbe(btn, force) {
         btn.disabled = true;
         fetch('/diagnostics/env-probe', {
             method: 'POST',
             headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-            body: 'force=0'
+            body: 'force=' + (force ? '1' : '0')
         }).then(function (r) { return r.json(); }).then(function (d) {
             if (!d.ok) {
                 if (window.showToast) window.showToast(d.error || 'probe failed', 'warning');
@@ -1450,7 +1629,7 @@ window.PulsesPage = (function () {
                 return;
             }
             if (window.htmx) {
-                window.htmx.ajax('GET', '/pulse/new/env-strip',
+                window.htmx.ajax('GET', '/pulse/new/env-strip?after_probe=1',
                     { target: '#pulse-env-strip', swap: 'outerHTML' });
             }
         }).catch(function () { btn.disabled = false; });
@@ -1552,7 +1731,8 @@ window.PulsesPage = (function () {
         createValidateName: createValidateName,
         createValidateGateName: createValidateGateName,
         createSyncQdacChannel: createSyncQdacChannel,
-        envStripProbe: envStripProbe
+        envStripProbe: envStripProbe,
+        reloadCreateForm: reloadCreateForm
     };
 })();
 

@@ -39,6 +39,7 @@ __all__ = [
     "env_roster_breakdown",
     "env_roster_note",
     "apply_chip_classes",
+    "adaptive_spec_for",
     "chip_classes_active",
     "chip_pulse_specs",
     "by_qclass",
@@ -714,8 +715,8 @@ def chip_pulse_specs(classes: dict | None = None) -> dict[str, PulseSpec]:
             readout=bool(_READOUT_BASES.intersection(bases)),
             group="From this chip",
             doc=("Declared by this chip and defined in your own package — SM "
-                 "has no waveform transcription for it, so the preview comes "
-                 "from the generated config once it exists (docs/189)."))
+                 "has no waveform transcription for it, so the preview is "
+                 "drawn by your class's own code in the selected environment."))
     _CHIP_SPECS_MEMO = (id(classes), out)
     return out
 
@@ -763,6 +764,13 @@ def _spec_from_fields(leaf: str, canonical: str, fields: dict, *,
     )
 
 
+LAB_GROUP = "Your lab's own classes"
+LAB_DOC = ("Defined in your own package, not in quam — SM has no transcription "
+           "of its waveform, so the preview is drawn by your class's own "
+           "code in the selected environment. Fields come from the class's "
+           "own dataclass schema.")
+
+
 def env_creatable_specs(roster: dict | None = None) -> dict[str, PulseSpec]:
     """Synthesized creatable specs for roster-ONLY pulse classes (r15, docs/71 §2).
 
@@ -802,6 +810,15 @@ def env_creatable_specs(roster: dict | None = None) -> dict[str, PulseSpec]:
         fields = rec.get("fields")
         canonical = rec.get("canonical")
 
+        if rec.get("lab"):
+            # docs/2xx adaptive pulses: a class the LAB wrote, found by the
+            # probe's subclass closure over what the chip's own classes (and
+            # any module the user named) imported -- it may not be on the chip
+            # yet, which is exactly the "we just added a CZ pulse class" case
+            out[leaf] = _spec_from_fields(
+                leaf, canonical, fields, readout=bool(rec.get("readout")),
+                group=LAB_GROUP, doc=LAB_DOC)
+            continue
         out[leaf] = _spec_from_fields(
             leaf, canonical, fields, readout=bool(rec.get("readout")),
             group="From environment",
@@ -809,12 +826,46 @@ def env_creatable_specs(roster: dict | None = None) -> dict[str, PulseSpec]:
             # carried on the spec now so one rule renders both provenances
             # (docs/190 F47)
             doc=("Discovered in the selected environment — SM has no "
-                 "waveform transcription for this class, so there is no live "
-                 "preview. Fields come from the env’s own dataclass "
-                 "schema."))
+                 "waveform transcription for this class, so the preview is "
+                 "drawn by the class's own code in that environment. Fields "
+                 "come from the env’s own dataclass schema."))
 
     _ENV_SPECS_MEMO = (id(roster), out)
     return out
+
+
+def adaptive_spec_for(qclass: Any) -> PulseSpec | None:
+    """The field schema of a pulse class SM has NO catalog entry for, from the
+    selected env's own dataclass (docs/2xx adaptive pulses) -- or None.
+
+    Two sources, the same two the create form reads: the env's pulse roster
+    (quam homes plus the lab classes the probe's subclass closure found) when
+    it verifiably places this exact class, else the chip's class inventory
+    (every ``__class__`` the chip declares was probed). Never a name guess
+    across homes: a roster leaf at a DIFFERENT module is not this class.
+    """
+    if not isinstance(qclass, str) or "." not in qclass:
+        return None
+    home, leaf = qclass.rsplit(".", 1)
+    roster = _ENV_OVERLAY or {}
+    rec = roster.get(leaf)
+    if isinstance(rec, dict) and (rec.get("canonical") == qclass
+                                  or home in (rec.get("homes") or [])):
+        spec = env_creatable_specs(roster).get(leaf)
+        if spec is not None:
+            return spec
+    crec = (_CHIP_CLASSES or {}).get(qclass)
+    if (isinstance(crec, dict) and crec.get("importable")
+            and isinstance(crec.get("fields"), dict) and crec["fields"]):
+        spec = chip_pulse_specs().get(leaf)
+        if spec is not None and spec.qclass == (crec.get("canonical") or qclass):
+            return spec
+        bases = crec.get("bases") or []
+        return _spec_from_fields(
+            leaf, crec.get("canonical") or qclass, crec["fields"],
+            readout=bool(_READOUT_BASES.intersection(bases)),
+            group="From this chip", doc="")
+    return None
 
 
 # ---------------------------------------------------------------------------
