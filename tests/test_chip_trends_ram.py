@@ -794,3 +794,41 @@ def test_a_commit_between_a_delta_and_its_shadow_check_is_not_a_stale_serve(tmp_
     with pytest.raises(ctr.ramcache.StaleCacheError):
         t3._delta(t2._parts[("matching_m", _PAT)][1])
     w.close()
+
+
+# ── D2: a one-term family table never reads the whole index ─────────────────
+
+_TERMS = ["qubit_pairs", "t1", "q1", "%", "_", "100%", "under_score", "ämp", "Ämp".lower(),
+          "interleavedrb", "zzz", ".", "qubits.q1."]
+
+
+@pytest.mark.parametrize("seed", [1, 2])
+def test_a_term_read_is_the_full_read_filtered(tmp_path, seed):
+    """The filtered read is row for row (order, counts, ids) the full read
+    filtered by the same term, and carries the full read's marks -- so a
+    table built from it derives after an append exactly as before."""
+    conn = _index(tmp_path, random.Random(seed))
+    full, fmarks = ctr._family_rows_marked(conn)
+    for t in _TERMS:
+        t = ctr._alower(t)
+        rows, marks = ctr._family_rows_term_marked(conn, t)
+        assert rows == [r for r in full if t in r[2]], t
+        assert marks == fmarks, t
+
+
+def test_the_badge_rows_first_table_reads_only_its_paths(tmp_path, monkeypatch):
+    """The first Trends request after a restart asks only for the
+    ``qubit_pairs`` table; reading all 180k paths for it made that request
+    slower than the base branch (verifier D2, big30x). The typeahead's
+    full table is still a full read."""
+    conn = _index(tmp_path, random.Random(3))
+    whole = []
+    real = ctr._family_rows_marked
+    monkeypatch.setattr(ctr, "_family_rows_marked", lambda c: whole.append(1) or real(c))
+    t = ctr.ChipTrendsTable(None, "x", Path("x"), [], _OneConn(conn))
+    ft = t.families(("qubit_pairs",), "qubit_pairs")
+    assert whole == [], "a one-term table read the whole index"
+    assert ft.query("qubit_pairs") == li.path_families(conn, "qubit_pairs", roots=("qubit_pairs",))
+    t.families(("qubits", "qubit_pairs"), None)
+    assert whole == [1]
+    conn.close()

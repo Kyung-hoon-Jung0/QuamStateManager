@@ -666,6 +666,36 @@ def _family_rows(conn: sqlite3.Connection) -> list[tuple[str, int, str, int]]:
     return _family_rows_marked(conn)[0]
 
 
+def _family_rows_term_marked(conn: sqlite3.Connection, term: str
+                             ) -> tuple[list[tuple[str, int, str, int]], _Marks]:
+    """``_family_rows_marked`` restricted to the paths containing *term*
+    (ASCII-lowered, no backslash) -- the SAME ``LIKE '%term%'`` filter
+    ``leaf_index.path_families`` applies -- with marks over the WHOLE index,
+    read in one transaction, so a later append derives from it exactly like
+    from a full read.
+
+    D2 (verifier, big30x): the first Trends request after a restart asks
+    only for the badge row's ``qubit_pairs`` table, and building it by
+    reading and splitting all 180k indexed paths (1.9 s alone, several more
+    under the page's concurrent requests) made that request slower than the
+    base branch's filtered SQL. This reads only the matching paths."""
+    pat = "%" + term.replace("%", r"\%").replace("_", r"\_") + "%"
+    with _ReadTxn(conn):
+        snap_max, paths_max = _heads(conn)
+        cp_sig = conn.execute(_CP_SIG, (_NO_ID, snap_max)).fetchone()
+        paths_sig = conn.execute(_PATHS_SIG, (_NO_ID, paths_max)).fetchone()
+        marks = _Marks(snap_max, cp_sig, paths_max, paths_sig)
+        rows = conn.execute(
+            "SELECT p.id, p.path, (SELECT COUNT(*) FROM leaf_cp l WHERE l.path_id = p.id) "
+            "  FROM leaf_paths p WHERE p.path LIKE ? ESCAPE '\\' ORDER BY p.id", (pat,)).fetchall()
+    out = []
+    for pid, path, k in rows:
+        low = _alower(path)
+        if term in low:            # LIKE's ASCII case folding == _alower; belt and braces
+            out.append((path, int(k), low, pid))
+    return out, marks
+
+
 class _Delta:
     __slots__ = ("added", "new_rows", "marks")
 
@@ -730,7 +760,7 @@ class _Base:
 # How each family table / matching list was produced (tests, the bench).
 COUNTS = {"full": 0, "derive": 0, "reuse": 0,
           "full_no_base": 0, "full_prefix_changed": 0, "full_refused": 0,
-          "verify_moved": 0}
+          "verify_moved": 0, "full_term": 0}
 
 
 # A chain of derives is re-anchored on a full read this often (belt and
@@ -1000,6 +1030,17 @@ class ChipTrendsTable:
                             self._check_derived(ft, roots, term)
                         COUNTS["derive"] += 1
                         return ft, d.marks
+            with self._lock:
+                have_full = ("family_rows",) in self._parts
+            if term is not None and "\\" not in term and not have_full:
+                # only the matching paths (D2): never the whole index for one term
+                try:
+                    r, marks = self.ic.run(lambda c: _family_rows_term_marked(c, term))
+                except sqlite3.Error:
+                    logger.debug("term family read failed", exc_info=True)
+                    return None
+                COUNTS["full_term"] += 1
+                return FamilyTable(r, roots, term), marks
             full = self._full()
             if full is None:
                 return None
