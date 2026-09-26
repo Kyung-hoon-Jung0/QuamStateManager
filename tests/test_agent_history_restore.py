@@ -13,17 +13,20 @@ from pathlib import Path
 import pytest
 
 _ROOT = Path(__file__).resolve().parent.parent
-_SELFCHECK = _ROOT / "tests" / "agent_history_restore_selfcheck.cjs"
+_SELFCHECKS = ["agent_history_restore_selfcheck.cjs",
+               # the actor box says what SM records when the name is not ASCII
+               "agent_actor_box_selfcheck.cjs"]
 
 
 @pytest.mark.skipif(shutil.which("node") is None, reason="node not available")
-def test_agent_history_restore_selfcheck():
+@pytest.mark.parametrize("name", _SELFCHECKS)
+def test_agent_qa_round_selfcheck(name):
     node = shutil.which("node")
     try:
         subprocess.run([node, "-e", "require('jsdom')"], check=True, capture_output=True, timeout=30)
     except Exception:
         pytest.skip("jsdom not installed")
-    r = subprocess.run([node, str(_SELFCHECK)], capture_output=True, text=True, encoding="utf-8",
+    r = subprocess.run([node, str(_ROOT / "tests" / name)], capture_output=True, text=True, encoding="utf-8",
                        timeout=180, cwd=str(_ROOT))
     if r.returncode == 2:
         pytest.skip("jsdom not installed")

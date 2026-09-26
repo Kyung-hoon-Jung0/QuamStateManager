@@ -84,8 +84,18 @@ window.AgentPanel = (function () {
   }
   function actorName() { try { return asciiActor(localStorage.getItem("quam_actor_name")); } catch (e) { return ""; } }
   function actorRecents() { try { return JSON.parse(localStorage.getItem("quam_actor_recents") || "[]"); } catch (e) { return []; } }
-  function setActor(v) {
+  function setActor(v, input) {
+    var typed = String(v == null ? "" : v).trim();
     v = asciiActor(v);
+    /* QA agents round: a name in Hangul stayed in the box while SM stored
+       nothing and recorded every door as a plain "human" -- the box claimed
+       a name the record would never carry. Say so where it is typed. */
+    if (input && input.setCustomValidity) {
+      var bad = typed !== v;
+      input.setCustomValidity(bad ? "English letters only — SM records " + (v ? "“" + v + "”" : "a plain “human”") : "");
+      input.classList.toggle("ag-actor-bad", bad);
+      if (bad && input.reportValidity) { try { input.reportValidity(); } catch (e) { /* ignore */ } }
+    }
     try {
       localStorage.setItem("quam_actor_name", v);
       if (v) {
@@ -907,7 +917,7 @@ window.AgentPanel = (function () {
       '<form class="ag-form ag-composer" onsubmit="return AgentPanel.submit(event)">' +
       '<textarea class="ag-input" rows="1" onkeydown="return AgentPanel.key(event)" oninput="AgentPanel.grow(this)" placeholder="Ask, or tell the agent what to do…  (Enter sends · Shift+Enter newline · /run <node> <targets>)"></textarea>' +
       '<div class="ag-form-row"><select class="ag-backend" title="which CLI drives"></select>' +
-      '<label class="ag-actor-wrap" title="who is at the keyboard — the person SM records for Arm / Stop / mode / “I ran it”. English letters only (it travels in a request header); what you SAY to the agent can be any language.">⌨ <input class="ag-actor" list="ag-actor-list" placeholder="your name" autocomplete="off" spellcheck="false" oninput="AgentPanel.setActor(this.value)"><datalist id="ag-actor-list"></datalist></label>' +
+      '<label class="ag-actor-wrap" title="who is at the keyboard — the person SM records for Arm / Stop / mode / “I ran it”. English letters only (it travels in a request header); what you SAY to the agent can be any language.">⌨ <input class="ag-actor" list="ag-actor-list" placeholder="your name" autocomplete="off" spellcheck="false" oninput="AgentPanel.setActor(this.value, this)"><datalist id="ag-actor-list"></datalist></label>' +
       '<span class="ag-presets" title="a preset fills a draft; nothing starts before a plan card\'s Start">' +
       '<button type="button" class="btn-sm ag-presets-toggle" onclick="AgentPanel.togglePresets(this)" aria-expanded="false">presets ▾</button>' +
       PRESETS.map(function (p, i) { return '<button type="button" class="btn-sm ag-preset" onclick="AgentPanel.preset(' + i + ', this.closest(\'.ag-root\'))">' + esc(p[0]) + "</button>"; }).join("") + "</span>" +

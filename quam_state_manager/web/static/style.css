@@ -13652,6 +13652,7 @@ table.diff-wb-list tbody > tr[hidden] { display: none; }
 /* docs/173 S8: the name picker in front of the keyboard */
 .ag-actor-wrap { display: inline-flex; align-items: center; gap: .25rem; font-size: .85em; color: var(--pico-muted-color); }
 .ag-root .ag-actor { width: 7rem; padding: .15rem .4rem; height: auto; font-size: .9em; }
+.ag-root .ag-actor.ag-actor-bad { border-color: var(--pico-del-color, #b00020); box-shadow: 0 0 0 1px var(--pico-del-color, #b00020); }
 .ag-presets { display: inline-flex; flex-wrap: wrap; gap: .3rem; align-items: center; cursor: help; }
 .ag-root .ag-preset { font-size: .78em; padding: .08rem .55rem; border-radius: 999px; background: transparent; color: var(--pico-muted-color); border: 1px solid var(--pico-muted-border-color); cursor: pointer; }
 .ag-root .ag-preset:hover { color: var(--pico-primary); border-color: var(--pico-primary); }
