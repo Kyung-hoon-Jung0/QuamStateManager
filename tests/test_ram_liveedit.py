@@ -740,3 +740,18 @@ def test_the_composed_state_json_equals_json_dumps_after_every_step(seed):
         after = SR.revs_of(st).memo["state_json"]
         reused += sum(1 for k, v in after.items() if before.get(k) is v)
     assert done >= 200 and reused > done * 5, (done, reused)
+
+
+def test_templates_are_compiled_before_the_first_request(tmp_path):
+    """The first cell commit in a process paid ~100 ms compiling the Review
+    tray (measured). create_app starts warm_templates off the request path
+    (same gate as the env warm-up); after it, the tray is already compiled."""
+    import inspect
+    from quam_state_manager.web import app as A
+    app = A.create_app(testing=True, instance_path=str(tmp_path / "inst"))
+    assert not any(k[1] == "_pending_tray.html" for k in app.jinja_env.cache.keys())
+    n = A.warm_templates(app)
+    names = {k[1] for k in app.jinja_env.cache.keys()}
+    assert "_pending_tray.html" in names and "bulkedit.html" in names and n >= 40, (n, len(names))
+    src = inspect.getsource(A.create_app)
+    assert "target=warm_templates" in src and 'name="sm-tpl-warm"' in src

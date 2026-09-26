@@ -378,6 +378,27 @@ def _purge_test_leftovers(instance_path: str) -> None:
                     pass
 
 
+def warm_templates(app: Flask) -> int:
+    """Compile every template the app can render into Jinja's cache; returns
+    how many compiled. Best-effort: a template that fails to compile here
+    fails the same way on its first render, where the error belongs."""
+    n = 0
+    try:
+        names = app.jinja_env.list_templates()
+    except Exception:  # noqa: BLE001 -- a loader that cannot list: nothing to warm
+        return 0
+    for name in names:
+        if not name.endswith(".html"):
+            continue
+        try:
+            app.jinja_env.get_template(name)
+            n += 1
+        except Exception:  # noqa: BLE001
+            import logging
+            logging.getLogger(__name__).debug("template warm-up: %s", name, exc_info=True)
+    return n
+
+
 def create_app(*, testing: bool = False, instance_path: str | None = None) -> Flask:
     """Create and configure the Flask application.
 
@@ -803,6 +824,14 @@ def create_app(*, testing: bool = False, instance_path: str | None = None) -> Fl
 
     from quam_state_manager.web.routes import bp
     app.register_blueprint(bp)
+    # w7 liveedit (RAM P5): compile every template off the request path. A
+    # process compiles each template on its first render -- the first cell
+    # commit paid ~100 ms compiling the Review tray alone, measured -- and
+    # the landing page leaves the process idle long enough to do all of
+    # them. Same gate as the env warm-up (the suite sets the variable).
+    if not testing and os.environ.get("SM_DISABLE_ENV_WARMUP") != "1":
+        threading.Thread(target=warm_templates, args=(app,), name="sm-tpl-warm",
+                         daemon=True).start()
     # docs/172: the JSON door for a terminal agent / the MCP bridge / the hook
     from quam_state_manager.web.agent_api import agent_bp
     app.register_blueprint(agent_bp)
