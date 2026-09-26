@@ -461,10 +461,7 @@ function p15() {
       ok(reloads.length === 0, 'P15: never re-renders over an uncommitted edit');
       ok(/reopen this pulse/.test(dirty.querySelector('[data-schema-stale]').textContent),
          'P15: says to reopen instead');
-      p16();
-      if (fails) { console.error(fails + ' failure(s)'); process.exit(1); }
-      console.log('ALL OK pulses_create_selfcheck');
-      process.exit(0);
+      p16();                          // p19 (async) ends the run
     }, 60);
   }, 60);
 }
@@ -530,4 +527,33 @@ function p16() {
   ok(drag.disabled === true, 'P18: DRAG disabled on z');
   ok(typeSel2.value !== 'DragCosinePulse', 'P18: the selection moves off the disabled class');
   ch.remove();
+  p19();
+}
+
+// P19: a rebuild requested while the form was clean, whose answer lands
+// AFTER the user started typing (big30x: seconds), must not swap either.
+function p19() {
+  var swaps = [], resolveFetch;
+  win.htmx = { ajax: function () { swaps.push('ajax'); }, trigger: function () {},
+               swap: function (t, html) { swaps.push('swap'); } };
+  win.fetch = function () { return new win.Promise(function (res) { resolveFetch = res; }); };
+  root._dirty = false;
+  var strip = doc.getElementById('pulse-env-strip');
+  strip.querySelectorAll('.pulse-env-refresh').forEach(function (b) { b.remove(); });
+  P.reloadCreateForm();
+  root._dirty = true;                          // the user types while it is in flight
+  resolveFetch({ ok: true, text: function () { return win.Promise.resolve('<div id="pulse-create-root"></div>'); } });
+  setTimeout(function () {
+    ok(swaps.length === 0, 'P19: a late rebuild does not replace a form typed into meanwhile (' + swaps + ')');
+    ok(!!strip.querySelector('.pulse-env-refresh'), 'P19: it offers the refresh instead');
+    root._dirty = false;
+    P.reloadCreateForm();
+    resolveFetch({ ok: true, text: function () { return win.Promise.resolve('<div></div>'); } });
+    setTimeout(function () {
+      ok(swaps.join() === 'swap', 'P19: an untouched form IS rebuilt when the answer lands (' + swaps + ')');
+      if (fails) { console.error(fails + ' failure(s)'); process.exit(1); }
+      console.log('ALL OK pulses_create_selfcheck (P16-P19)');
+      process.exit(0);
+    }, 30);
+  }, 30);
 }

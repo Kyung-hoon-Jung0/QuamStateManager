@@ -362,34 +362,43 @@ async function submitCreate(p) {
     await clickSel(p, '.pulse-rename-form button[type=submit]');
     const renPath = E0.path.replace(/[^.]+$/, tag + '_ren');
     check(!!(await waitFor(p, `document.querySelector('#pulse-detail-root[data-pulse-path="${renPath}"]')?1:0`, 60000)), 'rename -> ' + renPath);
+    const rowBefore = await p.ev(`document.querySelector('tr[data-pulse-path="${renPath}"]')?1:0`);
     await clickSel(p, '#pulse-detail-root .pulse-delete-btn');
     await clickSel(p, '.pulse-delete-confirm button[type=submit]');
     // the delete has LANDED when the server's pulse list no longer has it
     const landed = await waitFor(p, `fetch('/api/pulse/paths').then(function(r){return r.json()}).then(function(d){return d.options.some(function(o){return o[0]===${J(renPath)}})?0:1})`, 60000);
     check(!!landed, 'delete landed on the server');
-    const rowGone = await waitFor(p, `document.querySelector('tr[data-pulse-path="${renPath}"]')?0:1`, 15000);
-    check(!!rowGone, 'deleted row gone from the table');
+    // on a big chip the row may be on another page of the table: judge the
+    // table only when the row was on screen, the server always
+    const onPage = !!rowBefore;
+    const rowGone = onPage ? await waitFor(p, `document.querySelector('tr[data-pulse-path="${renPath}"]')?0:1`, 15000) : 1;
+    check(!!rowGone, 'deleted row gone from the table' + (onPage ? '' : ' (not on this page; server-checked)'));
     await p.shot(`${DIR}/41_deleted_${W}.png`);
-    // Ctrl+Z (focus on the page body, as after a click on empty space)
-    await p.ev(`(document.activeElement&&document.activeElement.blur&&document.activeElement.blur(), 1)`);
-    await p.send('Input.dispatchKeyEvent', { type: 'keyDown', key: 'z', code: 'KeyZ', windowsVirtualKeyCode: 90, modifiers: 2 });
-    await p.send('Input.dispatchKeyEvent', { type: 'keyUp', key: 'z', code: 'KeyZ', windowsVirtualKeyCode: 90, modifiers: 2 });
-    let back = await waitFor(p, `document.querySelector('tr[data-pulse-path="${renPath}"]')?1:0`, 15000);
-    if (!back) {
-      // docs/190 F06: a press whose tray was a beat behind is refused ONCE
-      // ("press Ctrl+Z again"); a user presses again -- so does the journey,
-      // and the refusal is recorded, not hidden
-      const t = await p.ev(`[].slice.call(document.querySelectorAll('.toast')).map(function(x){return x.innerText}).join(' | ').replace(/\s+/g,' ').slice(0,200)`);
-      console.log('  first Ctrl+Z refused: ' + t);
-      defects.push({ what: 'first Ctrl+Z after delete refused (docs/190 F06 gate)', got: t });
-      undoRefusedOnce = true;
+    const SRV_HAS = `fetch('/api/pulse/paths').then(function(r){return r.json()}).then(function(d){return d.options.some(function(o){return o[0]===${J(renPath)}})?1:0})`;
+    const pressZ = async () => {
       await p.ev(`(document.activeElement&&document.activeElement.blur&&document.activeElement.blur(), 1)`);
       await p.send('Input.dispatchKeyEvent', { type: 'keyDown', key: 'z', code: 'KeyZ', windowsVirtualKeyCode: 90, modifiers: 2 });
       await p.send('Input.dispatchKeyEvent', { type: 'keyUp', key: 'z', code: 'KeyZ', windowsVirtualKeyCode: 90, modifiers: 2 });
-      back = await waitFor(p, `document.querySelector('tr[data-pulse-path="${renPath}"]')?1:0`, 30000);
+    };
+    const tz = Date.now();
+    await pressZ();
+    let backSrv = await waitFor(p, SRV_HAS, 30000);
+    if (!backSrv) {
+      // docs/190 F06: a press whose tray was a beat behind is refused ONCE
+      // ("Nothing undone ... press Ctrl+Z again"); only then does a user press
+      // again -- so does the journey, and the refusal is recorded
+      const t = await p.ev(`[].slice.call(document.querySelectorAll('.toast')).map(function(x){return x.innerText}).join(' | ').replace(/\\s+/g,' ').slice(0,200)`);
+      if (/Nothing undone/.test(t)) {
+        console.log('  first Ctrl+Z refused: ' + t);
+        defects.push({ what: 'first Ctrl+Z after delete refused (docs/190 F06 gate)', got: t });
+        undoRefusedOnce = true;
+        await pressZ();
+        backSrv = await waitFor(p, SRV_HAS, 30000);
+      }
     }
-    const backSrv = await waitFor(p, `fetch('/api/pulse/paths').then(function(r){return r.json()}).then(function(d){return d.options.some(function(o){return o[0]===${J(renPath)}})?1:0})`, 30000);
-    check(!!back && !!backSrv, 'Ctrl+Z brings the deleted pulse back, row AND server (' + renPath + ')');
+    console.log(`  undo back on the server after ${Date.now() - tz} ms`);
+    const back = onPage ? await waitFor(p, `document.querySelector('tr[data-pulse-path="${renPath}"]')?1:0`, 30000) : 1;
+    check(!!back && !!backSrv, 'Ctrl+Z brings the deleted pulse back (server' + (onPage ? ' and row' : '') + ') ' + renPath);
     await p.shot(`${DIR}/42_undo_${W}.png`);
     expect.push({ path: renPath, cls: E0.cls, fields: Object.assign({}, E0.fields) });
   }

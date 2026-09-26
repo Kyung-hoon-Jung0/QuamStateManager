@@ -1676,6 +1676,18 @@ window.PulsesPage = (function () {
        classes the form was built without -- rebuild it, keeping the target
        the user had picked (qubit + channel ride the URL like the qubit page's
        "Add pulse" button). */
+    function offerCreateRefresh() {
+        var strip = document.getElementById('pulse-env-strip');
+        if (strip && !strip.querySelector('.pulse-env-refresh')) {
+            var b = document.createElement('button');
+            b.type = 'button';
+            b.className = 'btn-sm outline pulse-env-refresh';
+            b.textContent = 'New classes found — refresh the list (clears this form)';
+            b.addEventListener('click', function () { reloadCreateForm(true); });
+            strip.appendChild(b);
+        }
+    }
+
     function reloadCreateForm(force) {
         var root = createRoot();
         if (!root || !window.htmx) return;
@@ -1684,15 +1696,7 @@ window.PulsesPage = (function () {
         // the user has touched is never rebuilt behind their back -- the
         // strip offers the refresh instead.
         if (root._dirty && force !== true) {
-            var strip = document.getElementById('pulse-env-strip');
-            if (strip && !strip.querySelector('.pulse-env-refresh')) {
-                var b = document.createElement('button');
-                b.type = 'button';
-                b.className = 'btn-sm outline pulse-env-refresh';
-                b.textContent = 'New classes found \u2014 refresh the list (clears this form)';
-                b.addEventListener('click', function () { reloadCreateForm(true); });
-                strip.appendChild(b);
-            }
+            offerCreateRefresh();
             return;
         }
         var q = root.querySelector('select[name="qubit"]');
@@ -1702,6 +1706,21 @@ window.PulsesPage = (function () {
         if (q && q.value) qs.push('qubit=' + encodeURIComponent(q.value));
         if (ch && ch.value) qs.push('channel=' + encodeURIComponent(ch.value));
         if (qs.length) url += '?' + qs.join('&');
+        // ... and the same holds for a rebuild ALREADY IN FLIGHT when the user
+        // starts typing (big30x: the response takes seconds): fetch first,
+        // swap only if the form is still untouched when the answer lands.
+        if (force !== true && typeof window.htmx.swap === 'function'
+                && typeof window.fetch === 'function') {
+            window.fetch(url, { headers: { 'HX-Request': 'true' } })
+                .then(function (r) { return r.ok ? r.text() : null; })
+                .then(function (html) {
+                    if (html == null || createRoot() !== root) return;
+                    if (root._dirty) { offerCreateRefresh(); return; }
+                    window.htmx.swap('#inspector-pane', html, { swapStyle: 'innerHTML' });
+                })
+                .catch(function () {});
+            return;
+        }
         window.htmx.ajax('GET', url, { target: '#inspector-pane', swap: 'innerHTML' });
     }
 
