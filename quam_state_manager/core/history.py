@@ -479,6 +479,13 @@ def _diff_snapshot_dirs(a: Path, b: Path, *, b_pair=None, a_hash: str | None = N
     return list(_SNAP_DIFFS.get((str(a), str(b)), tok, compute))
 
 
+def diff_state_folders(a: str | Path, b: str | Path) -> list[DiffEntry]:
+    """``Differ().diff(a, b)`` for two write-once ``quam_state`` folders (a run's
+    saved state, a snapshot): the same entries, served from RAM on a repeat
+    while neither folder's files changed (``(mtime_ns, size)`` of all four)."""
+    return _diff_snapshot_dirs(Path(a), Path(b))
+
+
 def _chip_decisions_file(instance_path: str | Path) -> Path:
     return Path(instance_path) / "chip_decisions.json"
 

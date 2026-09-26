@@ -8,6 +8,7 @@ snapshot gets exactly what its own diff would have returned; when the two
 merges differ (a top-level key in both files) nothing is shared.
 """
 import json
+import os
 import random
 
 import pytest
@@ -62,3 +63,32 @@ def test_a_shared_drift_diff_is_the_snapshot_diff(seed):
     else:
         assert shared is not None
         assert _rows(shared) == _rows(ref), seed
+
+
+def _write(folder, state, wiring):
+    folder.mkdir(parents=True, exist_ok=True)
+    (folder / "state.json").write_text(json.dumps(state, indent=2), encoding="utf-8")
+    (folder / "wiring.json").write_text(json.dumps(wiring), encoding="utf-8")
+
+
+@pytest.mark.parametrize("seed", range(20))
+def test_state_folder_diff_equals_differ_and_follows_a_rewrite(tmp_path, seed):
+    """/prev-state-diff's memo: the same entries as Differ over the folders,
+    and a folder rewritten since (new mtime) is diffed afresh."""
+    from quam_state_manager.core.history import diff_state_folders
+    r = random.Random(seed)
+    a, b = tmp_path / "a" / "quam_state", tmp_path / "b" / "quam_state"
+    a_s = {"qubits": {"q1": _tree(r, 3)}, "extras": _tree(r, 2)}
+    w = {"wiring": _tree(r, 2)} | ({"qubits": _tree(r, 2)} if seed % 4 == 0 else {})
+    b_s = json.loads(json.dumps(a_s))
+    b_s["qubits"]["q2"] = _tree(r, 2)
+    _write(a, a_s, w)
+    _write(b, b_s, w)
+    ref = Differ().diff(a, b)
+    assert _rows(diff_state_folders(a, b)) == _rows(ref)
+    assert _rows(diff_state_folders(a, b)) == _rows(ref)          # the repeat
+    b_s["qubits"]["q1"] = {"changed": seed}
+    _write(b, b_s, w)
+    st = (b / "state.json").stat()
+    os.utime(b / "state.json", ns=(st.st_atime_ns, st.st_mtime_ns + 10_000_000))
+    assert _rows(diff_state_folders(a, b)) == _rows(Differ().diff(a, b))

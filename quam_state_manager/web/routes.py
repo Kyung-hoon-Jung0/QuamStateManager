@@ -27642,7 +27642,10 @@ def dataset_prev_state_diff(uid):
         return render_template("_dataset_prev_diff.html", run_id=run_id, uid=uid,
                                prev_run_id=None, compact=compact)
 
-    entries = Differ().diff(prev_path, cur_path)
+    # w7/livewrite (P4): run folders are write-once -- a repeat (the stepper,
+    # re-opening the tab) is served from RAM, keyed on all four files' stats
+    from quam_state_manager.core.history import diff_state_folders
+    entries = diff_state_folders(prev_path, cur_path)
     summary = Differ.summary(entries)
 
     # Stepper bounds: walk the comparison run older/newer. r16 ④: the old
