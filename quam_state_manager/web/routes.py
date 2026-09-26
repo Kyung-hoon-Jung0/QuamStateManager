@@ -937,7 +937,7 @@ def _store_sync_live(ctx, live_state: dict, live_wiring: dict, *, key=None,
         with store._lock:
             log = list(store.change_log or [])
         verdict = sync_conflict.classify(
-            live_by_path={e.dot_path: e.new_value for e in entries},
+            live_by_path=sync_conflict.live_view(entries),
             change_log=log,
             reapply_paths=tuple((ctx.get("pending_reapply") or {}).keys()),
             working_dirty=bool(ctx.get("working_dirty")),
@@ -1252,7 +1252,7 @@ def _drift_conflicts(ctx: dict, seen: dict) -> list[str]:
         with store._lock:
             log = list(getattr(store, "change_log", None) or [])
         verdict = sync_conflict.classify(
-            live_by_path={e.dot_path: e.new_value for e in entries},
+            live_by_path=sync_conflict.live_view(entries),
             change_log=log,
             reapply_paths=tuple((ctx.get("pending_reapply") or {}).keys()),
             working_dirty=bool(ctx.get("working_dirty")),
@@ -17647,7 +17647,7 @@ def _auto_pull_verdict(ctx: dict, dom_paths) -> "object | None":
     except Exception:            # noqa: BLE001 -- a verdict is never worth a 500
         logger.warning("auto-pull verdict failed", exc_info=True)
         return None
-    live_by_path = {e.dot_path: e.new_value for e in entries}
+    live_by_path = sync_conflict.live_view(entries)
     with store._lock:
         log = list(getattr(store, "change_log", None) or [])
     return sync_conflict.classify(
@@ -18269,7 +18269,7 @@ def _live_diff_attribution(ctx: dict, entries, live_state: dict,
         with store._lock:
             log = list(getattr(store, "change_log", None) or [])
         v = sync_conflict.classify(
-            live_by_path={e.dot_path: e.new_value for e in entries},
+            live_by_path=sync_conflict.live_view(entries),
             change_log=log,
             reapply_paths=tuple((ctx.get("pending_reapply") or {}).keys()),
             working_dirty=bool(ctx.get("working_dirty")),
