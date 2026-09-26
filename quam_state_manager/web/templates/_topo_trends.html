@@ -99,7 +99,9 @@
 
     <div class="topo-trends-grid">
     {% for c in charts %}
-        <div class="topo-trend-box" data-trend-metric="{{ c.metric }}" data-trend-kind="{{ c.kind }}">
+        {# data-trend-sig (RAM P2): a toggle keeps an already-drawn box whose
+           signature is unchanged and draws only the rest (ChipTrends._apply). #}
+        <div class="topo-trend-box" data-trend-metric="{{ c.metric }}" data-trend-kind="{{ c.kind }}"{% if c.series %} data-trend-sig="{{ c.sig }}"{% endif %}>
             <div class="topo-trend-title">{{ c.label or (metric_labels or {}).get(c.metric, c.metric) }}
                 {% if c.n_entities %}<span class="muted">· {{ c.n_entities }} {{ 'pair' if c.kind == 'pair' else 'qubit' }}{{ '' if c.n_entities == 1 else 's' }}</span>{% endif %}
             </div>

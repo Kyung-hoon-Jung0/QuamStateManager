@@ -751,6 +751,8 @@ def create_app(*, testing: bool = False, instance_path: str | None = None) -> Fl
     # and re-parsing everything (a background staleness verify still runs).
     app.config["workspace"].cache_dir = Path(app.instance_path) / "workspace_cache"
     app.config["history_manager"] = HistoryManager(app.instance_path)
+    from quam_state_manager.web.routes import install_trends_prewarm
+    install_trends_prewarm(app)
     app.config["contexts"] = {}
     app.config["active_context"] = None
     # docs/117's applied log reads the undo journal sidecar, which is

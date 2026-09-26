@@ -2943,10 +2943,50 @@ window.ChipStatus.mount = function (opts) {
     // single innerHTML assignment, via the optional computeLayout hook — reading
     // offsetHeight mid-build (the old per-panel innerHTML += pattern) is what
     // re-serialized the growing DOM and froze the page.
+    /* RAM P2 (measured on the 30-qubit chip): every Trends toggle -- one
+       chart drawn or one box removed -- paid Chrome's style + layout of the
+       WHOLE page, and the page carries ~110 drawn panels (2Q RB variants,
+       1Q metrics) at 900-2,200 px each: 300-700 ms per toggle, almost none
+       of it JavaScript. A panel that is drawn and off screen does not need to
+       be laid out, so once its charts are drawn it gets content-visibility:
+       auto, with its OWN measured height as the placeholder: the page's
+       geometry (scroll height, every jump target, the scroll spy's offsets)
+       is exactly what it was, and the "auto" keyword keeps the placeholder
+       following the panel's real size (an S/M/L change) once it has rendered
+       again. Browsers without content-visibility keep today's behaviour. */
+    function _skipWhenOffscreen(specs) {
+        try {
+            if (!window.CSS || !CSS.supports || !CSS.supports('content-visibility', 'auto')) return;
+        } catch (e) { return; }
+        var panels = [];
+        specs.forEach(function (s) {
+            var el = document.getElementById(s.chartId);
+            var panel = el && el.closest && el.closest('.topo-section[data-density-panel]');
+            if (panel && panels.indexOf(panel) < 0 && !panel.classList.contains('topo-cv-auto')) panels.push(panel);
+        });
+        var heights = panels.map(function (p) { return p.offsetHeight; });   // one layout, then writes
+        panels.forEach(function (p, k) {
+            if (!heights[k]) return;                  // hidden (a collapsed group): leave it alone
+            p.style.setProperty('contain-intrinsic-block-size', 'auto ' + heights[k] + 'px');
+            p.classList.add('topo-cv-auto');
+        });
+    }
+
     function _renderChartSpecsProgressively(specs) {
-        var i = 0, BATCH = 3, drawn = [];
+        var i = 0, BATCH = 1, drawn = [];
         function pump() {
+            // RAM P2: Trends goes first. While a Trends open or toggle is in
+            // flight (its request, then its draw) the batches wait: on a
+            // 30-qubit chip this pump draws ~110 charts over 15-20 s, and a
+            // toggle clicked meanwhile queued its one chart behind them
+            // (measured 0.5-1.7 s click-to-chart). ChipTrends.busy() is
+            // capped, so a lost request can only delay the pump, never stop it.
+            if (window.ChipTrends && window.ChipTrends.busy && window.ChipTrends.busy()) {
+                setTimeout(pump, 40);
+                return;
+            }
             var end = Math.min(i + BATCH, specs.length);
+            var batch = [], batchSpecs = specs.slice(i, end);
             for (; i < end; i++) {
                 var s = specs[i];
                 var el = document.getElementById(s.chartId);
@@ -2960,8 +3000,13 @@ window.ChipStatus.mount = function (opts) {
                 if (window.PlotTheme && window.PlotTheme.houseLayout) {
                     layout = window.PlotTheme.houseLayout(layout);
                 }
-                drawn.push(_plotlyRender(el, s.data, layout, s.config));
+                var d = _plotlyRender(el, s.data, layout, s.config);
+                drawn.push(d); batch.push(d);
             }
+            // a batch's panels stop costing layout as soon as they are drawn,
+            // not only when the whole pump is over (the pump itself re-lays
+            // out the page on every Plotly measure)
+            if (batch.length) Promise.all(batch).then(function () { _skipWhenOffscreen(batchSpecs); });
             if (i < specs.length) {
                 /* QA F-02 (review): chained on rAF alone, the batches ran
                    back to back -- Chrome runs the next frame's callbacks ahead
@@ -2985,6 +3030,7 @@ window.ChipStatus.mount = function (opts) {
                 Promise.all(drawn).then(function () {
                     (window.requestAnimationFrame || function(f) { setTimeout(f, 16); })(function () {
                         if (_jump) _jump.reanchor();
+                        _skipWhenOffscreen(specs);
                     });
                 });
             }
@@ -2994,7 +3040,9 @@ window.ChipStatus.mount = function (opts) {
         // is not loaded yet the pump only QUEUED promise chains, and they all
         // ran in one microtask flush once it arrived -- measured: 19 charts in
         // one 7.5 s long task, which outlived the jump guard's 8 s window and
-        // stranded every jump. Load first, then pump 3 per frame as intended.
+        // stranded every jump. Load first, then pump batch by batch (ONE chart per
+        // task since RAM P2: a batch is the longest a Trends click can wait,
+        // and one 2Q RB bar chart is ~150-200 ms on a 30-qubit chip).
         if (!window.Plotly && window.requirePlotly) window.requirePlotly().then(pump, pump);
         else pump();
     }
@@ -5332,38 +5380,141 @@ window.ChipTrends = (function () {
         var mine = ++_reloadSeq;
         var q = _params();
         try { window.localStorage.setItem(_selKey(), q); } catch (e) { /* private window */ }
-        var p = htmx.ajax('GET', '/topology/trends?' + q,
-                          { source: '#topo-trends', target: '#topo-trends',
-                            swap: 'outerHTML' });
-        // A late response swaps into a target that no longer exists (htmx
-        // resolves the target eagerly), and its charts are silently lost. If we
-        // are no longer the newest request, or the section went away, re-render
-        // from whatever the DOM now holds rather than leaving empty boxes.
-        var settle = function () {
-            if (mine !== _reloadSeq) return;
-            var host = document.getElementById('topo-trends');
-            if (!host) return;
-            var data = document.getElementById('topo-trends-data');
-            if (!data) return;
-            // Chain-presence, not class sniffing (docs/124 minor): the
-            // fragment's inline script renders through the ASYNC chain, so at
-            // settle time the class/svg may simply not exist yet — the old
-            // '.js-plotly-plot' sniff double-rendered every toggle (and the
-            // class itself was proven strippable, docs/124 §1.1). The render
-            // entry sets __plotlyRenderChain SYNCHRONOUSLY at call time, so
-            // its presence on any chart host is the deterministic "a render
-            // is already owed" signal; the fallback fires only when the
-            // inline script genuinely never ran (the late-response case this
-            // fallback exists for).
-            var started = false;
-            host.querySelectorAll('.topo-trend-chart').forEach(function (el) {
-                if (el.__plotlyRenderChain || el._fullLayout) started = true;
+        /* RAM P2 -- a toggle is a PATCH, not a re-render. The response is the
+           same fragment as before, but instead of swapping the whole section
+           (which rebuilt EVERY chart: measured 5 Plotly renders, 6,823
+           Intl.DateTimeFormat constructions and ~0.9 s of long tasks per
+           click at 1,600 snapshots) it is merged by _apply: a drawn box
+           whose data-trend-sig is unchanged is kept as it is, and only the
+           new/changed charts are drawn. The handler option keeps htmx as the
+           transport -- its hx-sync/abort bookkeeping on #topo-trends, the
+           loader's path rule, the harness seams -- while this code decides
+           the swap. #topo-trends itself is never replaced, so a later
+           htmx:abort still reaches the request it issued. */
+        var release = hold();
+        var req = htmx.ajax('GET', '/topology/trends?' + q,
+                         { source: '#topo-trends', target: '#topo-trends',
+                           handler: function (elt, info) {
+                               release();                         // render() holds its own draws
+                               if (mine !== _reloadSeq) return;   // a newer press owns the section
+                               var xhr = info && info.xhr;
+                               if (!xhr || xhr.status < 200 || xhr.status >= 300) {
+                                   _failed(xhr ? xhr.status : 0);
+                                   return;
+                               }
+                               _apply(xhr.responseText);
+                           } });
+        // an aborted/failed request never reaches the handler
+        if (req && typeof req.then === 'function') req.then(release, release);
+        return req;
+    }
+    /* A failed patch must not leave "loading..." up forever (the old outerHTML
+       swap did exactly that on a 5xx: htmx does not swap an error). */
+    function _failed(status) {
+        var host = document.getElementById('topo-trends');
+        if (!host) return;
+        var l = host.querySelector('.topo-trends-loading');
+        if (l) l.textContent = 'Trends could not be loaded' + (status ? ' (HTTP ' + status + ')' : '')
+                             + ' — press the chip again to retry.';
+    }
+    function _boxKey(b) {
+        return (b.getAttribute('data-trend-metric') || '') + '\u0000' + (b.getAttribute('data-trend-kind') || '');
+    }
+    /* The zone a drawn chart's x values were computed in: a chart drawn in
+       another zone is never kept, whatever its signature says. */
+    function _tzKey() {
+        try { return window.SnapTime ? String(window.SnapTime.zone() || '') : ''; }
+        catch (e) { return ''; }
+    }
+    /* Merge a /topology/trends fragment into the live section (RAM P2).
+       Everything the server renders -- the chips, the badges, notes, empty
+       slots -- comes from the response; a chart box is taken from the OLD
+       DOM only when its (metric, kind) AND its server-computed signature are
+       equal and it was drawn in the current zone, so a kept chart is by
+       construction the chart the response describes. */
+    function _apply(html) {
+        var host = document.getElementById('topo-trends');
+        if (!host) return;
+        var tpl = document.createElement('template');
+        tpl.innerHTML = html;
+        var root = tpl.content.querySelector('#topo-trends');
+        if (!root) return;
+        // hx-swap-oob elements (the History (N) count) go where htmx would put them
+        Array.prototype.slice.call(root.querySelectorAll('[hx-swap-oob]')).forEach(function (el) {
+            var cur = el.id && document.getElementById(el.id);
+            el.removeAttribute('hx-swap-oob');
+            if (cur && !host.contains(cur)) cur.replaceWith(el);
+            else el.remove();
+        });
+        // the inline render script: this function renders, never a second time
+        Array.prototype.slice.call(root.querySelectorAll('script:not([type])')).forEach(function (el) {
+            el.remove();
+        });
+        var tz = _tzKey();
+        var old = {};
+        Array.prototype.forEach.call(host.querySelectorAll('.topo-trend-box[data-trend-sig]'), function (b) {
+            var c = b.querySelector('.topo-trend-chart');
+            if (c && c._fullLayout && b.getAttribute('data-trend-tz') === tz) old[_boxKey(b)] = b;
+        });
+        var kept = {};
+        var oldGrid = host.querySelector('.topo-trends-grid');
+        var newGrid = root.querySelector('.topo-trends-grid');
+        // A kept box is never DETACHED (RAM P2, measured on the 30-qubit chip):
+        // moving a drawn Plotly box out of the document and back re-styles and
+        // re-lays-out its whole SVG, which made even a toggle OFF -- one purge,
+        // nothing drawn -- a ~250-300 ms long task. So the grid is reconciled
+        // in place: new boxes are inserted around the kept ones, the rest of
+        // the section (chips, notes, badges) is replaced wholesale.
+        var desired = [];
+        if (newGrid) {
+            Array.prototype.forEach.call(newGrid.children, function (nb) {
+                var ob = nb.hasAttribute('data-trend-sig') ? old[_boxKey(nb)] : null;
+                if (ob && ob.getAttribute('data-trend-sig') === nb.getAttribute('data-trend-sig')
+                        && oldGrid && ob.parentNode === oldGrid) {
+                    kept[_boxKey(nb)] = true;
+                    delete old[_boxKey(nb)];
+                    desired.push(ob);
+                } else {
+                    desired.push(nb);
+                }
             });
-            if (!started) {
-                try { render(JSON.parse(data.textContent)); } catch (e) {}
-            }
-        };
-        if (p && typeof p.then === 'function') p.then(settle, settle);
+        }
+        // Charts that are going away: free Plotly's listeners/GL contexts.
+        Object.keys(old).forEach(function (k) {
+            var c = old[k].querySelector('.topo-trend-chart');
+            try { if (c && window.Plotly && window.Plotly.purge) window.Plotly.purge(c); } catch (e) {}
+        });
+        if (oldGrid && newGrid) {
+            // everything around the grid comes from the response, in its order
+            var before = true;
+            Array.prototype.slice.call(host.childNodes).forEach(function (n) { if (n !== oldGrid) host.removeChild(n); });
+            Array.prototype.slice.call(root.childNodes).forEach(function (n) {
+                if (n === newGrid) { before = false; return; }
+                if (before) host.insertBefore(n, oldGrid); else host.appendChild(n);
+            });
+            // the grid element keeps its identity; its attributes follow the response
+            Array.prototype.slice.call(oldGrid.attributes).forEach(function (a) { oldGrid.removeAttribute(a.name); });
+            Array.prototype.forEach.call(newGrid.attributes, function (a) { oldGrid.setAttribute(a.name, a.value); });
+            var want = new Set(desired);
+            Array.prototype.slice.call(oldGrid.childNodes).forEach(function (n) { if (!want.has(n)) oldGrid.removeChild(n); });
+            var cur = oldGrid.firstChild;
+            desired.forEach(function (d) {
+                if (d === cur) { cur = cur.nextSibling; return; }
+                oldGrid.insertBefore(d, cur);     // a kept box moves only if the ORDER changed
+            });
+        } else {
+            while (host.firstChild) host.removeChild(host.firstChild);
+            while (root.firstChild) host.appendChild(root.firstChild);
+        }
+        // Positional host ids, renumbered: a kept box carries its OLD index.
+        Array.prototype.forEach.call(host.querySelectorAll('.topo-trend-chart'), function (c, i) {
+            c.id = 'topo-trend-' + i;
+        });
+        host.className = root.className;
+        var data = document.getElementById('topo-trends-data');
+        var charts = null;
+        try { charts = data ? JSON.parse(data.textContent) : null; } catch (e) { charts = null; }
+        render(charts, { keep: kept });
     }
     function toggle(metric) {
         var b = document.querySelector('.topo-trend-chip[data-trend-metric="' + metric + '"]');
@@ -5762,7 +5913,27 @@ window.ChipTrends = (function () {
             _reload();
         }, 3000);
     }
-    function render(charts) {
+    /* RAM P2: Trends goes first (see _renderChartSpecsProgressively). A hold
+       spans a Trends request and then its draws; busy() is capped so a hold
+       that is never released (an aborted request) cannot starve the page. */
+    var _holds = 0, _heldAt = 0, _HOLD_CAP_MS = 4000;
+    function hold() {
+        _holds++; _heldAt = Date.now();
+        var done = false;
+        return function release() { if (!done) { done = true; _holds = Math.max(0, _holds - 1); } };
+    }
+    function busy() { return _holds > 0 && (Date.now() - _heldAt) < _HOLD_CAP_MS; }
+    function render(charts, opts) {
+        var release = hold();
+        var draws = [];
+        try { return _render(charts, opts, draws); }
+        finally {
+            if (draws.length) Promise.all(draws).then(release, release);
+            else release();
+        }
+    }
+    function _render(charts, opts, draws) {
+        var keep = (opts && opts.keep) || null;
         _followIndexUpdate();
         // FIRST, and outside every early return: the section is lazily fetched
         // and re-fetched on every metric toggle, so the grid element is BRAND
@@ -5772,8 +5943,15 @@ window.ChipTrends = (function () {
         if (!window._plotlyRender || !charts) return;
         // One map for the whole page (see _snaps): provenance is per snapshot.
         var snaps = _snaps();
-        // One budget per render pass, spent by the first genuinely dense chart.
+        // One budget per render pass, spent by the first genuinely dense chart
+        // -- minus any GL chart a patch KEPT on the page (RAM P2).
         _glBudget = 1;
+        if (keep) {
+            Array.prototype.forEach.call(document.querySelectorAll('#topo-trends .topo-trend-chart'), function (el) {
+                if (el.data && el.data.some && el.data.some(function (t) { return t && t.type === 'scattergl'; })) _glBudget--;
+            });
+        }
+        var _tzNow = _tzKey();
         charts.forEach(function (c, idx) {
             // docs/122 item 4: the host id is POSITIONAL, so a response from an
             // older generation would draw into whatever now sits at that index.
@@ -5791,6 +5969,9 @@ window.ChipTrends = (function () {
             var host = (box && box.querySelector('.topo-trend-chart'))
                     || document.getElementById('topo-trend-' + idx);
             if (!host || !c.series || !c.series.length) return;
+            // RAM P2: a box _apply kept is already this exact chart.
+            if (keep && box && keep[_boxKey(box)]) return;
+            if (box) box.setAttribute('data-trend-tz', _tzNow);
             // WebGL is EARNED BY NODE COUNT, and only while contexts remain.
             //
             // The first cut gated on `series.length > 8` — the qubit count —
@@ -5940,6 +6121,7 @@ window.ChipTrends = (function () {
                 layout = window.PlotTheme.houseLayout(layout);
             }
             var drawn = window._plotlyRender(host, traces, layout, cfg);
+            if (drawn && typeof drawn.then === 'function') draws.push(drawn);
             // Plotly writes the WebGL message asynchronously, after the promise
             // its renderer returns; check on the far side of it, and once more
             // on the next frame for the case where it lands later still.
@@ -5971,5 +6153,5 @@ window.ChipTrends = (function () {
     }
     return { toggle: toggle, togglePath: togglePath, setPath: setPath, enter: enter,
              suggest: suggest, render: render, setCols: setCols, reload: _reload,
-             storedQuery: storedQuery };
+             storedQuery: storedQuery, hold: hold, busy: busy };
 })();

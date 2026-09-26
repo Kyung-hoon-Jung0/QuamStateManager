@@ -859,6 +859,35 @@ _KEEP_NOTE: Any = object()
 _SNAPSHOT_META_FIELDS: frozenset = frozenset(f.name for f in fields(SnapshotMeta))
 
 
+
+def leaf_series_on(conn: sqlite3.Connection, dot_paths, *,
+                   hold_to_newest: bool = False) -> dict[str, list[tuple]]:
+    """The body of :meth:`HistoryManager.leaf_field_series_many` over a
+    connection the CALLER owns (no freshness gate, no open/close).
+
+    Shared with ``core.chip_trends_ram``, which reads through one persistent
+    connection and runs the freshness gate once per history token instead of
+    once per request -- ONE implementation, so the cached series and the cold
+    one cannot drift apart.
+    """
+    out: dict[str, list[tuple]] = {}
+    newest = (conn.execute("SELECT MAX(ts) FROM leaf_snaps").fetchone()[0]
+              if hold_to_newest else None)
+    for dp in dot_paths:
+        try:
+            if leaf_index.path_needs_scan(conn, dp):
+                continue
+            rows = leaf_index.series(conn, dp)
+            if (rows and newest and newest > rows[-1][0]
+                    and isinstance(rows[-1][1], (int, float))):
+                rows.append((newest, rows[-1][1], None, None, None, None,
+                             rows[-1][0]))
+            if rows:
+                out[dp] = rows
+        except sqlite3.Error:
+            continue          # one bad path must not lose the rest
+    return out
+
 class HistoryManager:
     """Manage state-file snapshots stored under ``<instance_path>/history/``.
 
@@ -890,6 +919,12 @@ class HistoryManager:
         self._deferred_index_threads: list[threading.Thread] = []
         self._deferred_index_lock = threading.Lock()
         self._leaf_rebuild_lock = threading.Lock()
+        # RAM P1a: callbacks told (off the request path) that a chip's index
+        # just committed -- core/chip_trends_ram re-derives the Trends table
+        # there, so the first request after a capture finds it warm.
+        self._indexed_listeners: list = []
+        self._indexed_lock = threading.Lock()
+        self._indexed_pending: dict[str, bool] = {}
         self._leaf_rebuild_threads: dict[str, threading.Thread] = {}
         # index path -> monotonic time before which a FAILED background
         # repair is not retried (see _ensure_leaf_index_fresh).
@@ -910,6 +945,8 @@ class HistoryManager:
         self._hist_seq_names: dict[str, tuple[int, int]] = {}
         # history_seq_for's TTL memo of resolved chip dirs (see its docstring)
         self._hist_seq_dir_memo: dict[str, tuple[Path, float]] = {}
+        # snapshots_cached(): raw path -> (resolved list-cache key, when)
+        self._resolved_key_memo: dict[str, tuple[str, float]] = {}
         # docs/155 10h — the background sidecar verifier: last sweep start and
         # the live thread, per chip history dir. Bookkeeping only; nothing
         # waits on either outside the tests.
@@ -959,8 +996,11 @@ class HistoryManager:
         # snapshot (which bumps the version via ``_bump_chip_version``)
         # invalidates it automatically.
         self._extract_history_cache: OrderedDict[
-            tuple[Any, ...], tuple[int, list[dict[str, Any]]]
+            tuple[Any, ...], tuple[int, list[dict[str, Any]], bool]
         ] = OrderedDict()
+        # How many downsampled change-point reads were derived from a cached
+        # un-downsampled one (RAM P1a; a test/bench counter, never a gate).
+        self.extract_derived_count = 0
         # Phase 3 §3.2 — per-entry alignment cache. When the outer
         # ``_alignment_cache`` misses (e.g. workspace root mtime moved
         # because the user just dropped one new experiment), the entry-
@@ -2041,6 +2081,7 @@ class HistoryManager:
                         # Summary caches must recompute with the new rows
                         # (_bump_chip_version takes the manager lock itself).
                         self._bump_chip_version(index_dir)
+                        self._fire_indexed(quam_state_path)
                     except Exception:
                         logger.warning(
                             "Deferred index of snapshot %s failed; "
@@ -2082,6 +2123,8 @@ class HistoryManager:
             # Update tracking state
             self._last_mtime[key] = current_mt
             self._snapshot_list_cache.pop(str(path.resolve()), None)
+            if not defer_index:
+                self._fire_indexed(quam_state_path)
             # Invalidate param-history caches that depend on this chip dir.
             self._bump_chip_version(hist_dir)
 
@@ -3741,6 +3784,7 @@ class HistoryManager:
             try:
                 self._repair_leaf_index_if_needed(path)
                 healthy = self._leaf_repair_gate(path) is None
+                self._fire_indexed(path)
             except Exception:  # noqa: BLE001 - a daemon thread must not die loud
                 logger.warning("Background leaf rebuild failed", exc_info=True)
             finally:
@@ -3903,20 +3947,7 @@ class HistoryManager:
         except sqlite3.Error:
             return out
         try:
-            newest = conn.execute("SELECT MAX(ts) FROM leaf_snaps").fetchone()[0] if hold_to_newest else None
-            for dp in dot_paths:
-                try:
-                    if leaf_index.path_needs_scan(conn, dp):
-                        continue
-                    rows = leaf_index.series(conn, dp)
-                    if (rows and newest and newest > rows[-1][0]
-                            and isinstance(rows[-1][1], (int, float))):
-                        rows.append((newest, rows[-1][1], None, None, None, None,
-                                     rows[-1][0]))
-                    if rows:
-                        out[dp] = rows
-                except sqlite3.Error:
-                    continue          # one bad path must not lose the rest
+            out = leaf_series_on(conn, dot_paths, hold_to_newest=hold_to_newest)
         finally:
             conn.close()
         return out
@@ -3972,19 +4003,31 @@ class HistoryManager:
             return [out[k] for k in sorted(out)]
         try:
             try:
-                # DISTINCT can still yield several rows for one timestamp (one
-                # per differing trigger/run pairing). Ordering run-bearing rows
-                # first makes the first-wins pick deterministic AND the most
-                # informative one, rather than whichever the planner emitted.
-                rows = conn.execute(
-                    "SELECT DISTINCT timestamp, trigger, run_id, experiment "
-                    "  FROM param_history "
-                    " ORDER BY timestamp, (run_id IS NULL), run_id")
-                for ts, trig, rid, exp in rows:
-                    if str(ts) in out:
-                        continue
-                    out[str(ts)] = {"ts": str(ts), "trigger": trig, "run_id": rid,
-                                    "experiment": exp, "folder": None}
+                # Only a timestamp NO meta knows needs its curated row (RAM
+                # P1a): the distinct timestamps come off the table's covering
+                # index (28 ms against 104 ms for the full DISTINCT at 96k
+                # rows), and the detail rows are read for the missing ones
+                # only -- usually none.
+                missing = [t for (t,) in conn.execute(
+                    "SELECT DISTINCT timestamp FROM param_history")
+                    if str(t) not in out]
+                for i in range(0, len(missing), 500):
+                    chunk = missing[i:i + 500]
+                    # DISTINCT can still yield several rows for one timestamp
+                    # (one per differing trigger/run pairing). Ordering
+                    # run-bearing rows first makes the first-wins pick
+                    # deterministic AND the most informative one, rather than
+                    # whichever the planner emitted.
+                    rows = conn.execute(
+                        "SELECT DISTINCT timestamp, trigger, run_id, experiment "
+                        "  FROM param_history WHERE timestamp IN ("
+                        + ",".join("?" * len(chunk)) + ") "
+                        " ORDER BY timestamp, (run_id IS NULL), run_id", chunk)
+                    for ts, trig, rid, exp in rows:
+                        if str(ts) in out:
+                            continue
+                        out[str(ts)] = {"ts": str(ts), "trigger": trig, "run_id": rid,
+                                        "experiment": exp, "folder": None}
             except sqlite3.Error:
                 logger.debug("curated snapshot provenance unavailable", exc_info=True)
         finally:
@@ -4414,6 +4457,42 @@ class HistoryManager:
             if cached is not None and cached[0] == current_version:
                 self._extract_history_cache.move_to_end(cache_key)   # LRU touch
                 return cached[1]
+            # RAM P1a (w7/trends): a DOWNSAMPLED change-point read is the
+            # un-downsampled one with the per-bucket LTTB applied -- on the
+            # change-point fast path the rows grouped below do not depend on
+            # ``downsample`` at all (no SQL pre-thin), so when that read is
+            # already cached at this version, from that path, the answer is
+            # derived instead of re-reading and re-compressing every row
+            # (Chip Status reads both on every new history token: 27-35 ms
+            # of the first request after a capture at 1,600 snapshots). A
+            # base that came from the windowed SQL fallback is never used:
+            # there the downsampled read pre-thins in SQL and is a different
+            # answer.
+            base = None
+            if (downsample and compress == "changes" and not since and not until
+                    and not triggers):
+                base = self._extract_history_cache.get(cache_key[:6] + (None, compress))
+                if not (base is not None and base[0] == current_version
+                        and len(base) > 2 and base[2]):
+                    base = None
+        if base is not None:
+            self.extract_derived_count += 1
+            results = []
+            for b in base[1]:
+                if len(b["values"]) > downsample:
+                    pairs = [(p["timestamp"], p["value"]) for p in b["values"]]
+                    kept_ts = {ts for ts, _ in self._lttb_downsample(pairs, downsample)}
+                    nb = dict(b)
+                    nb["values"] = [p for p in b["values"] if p["timestamp"] in kept_ts]
+                    results.append(nb)
+                else:
+                    results.append(b)
+            with self._lock:
+                self._extract_history_cache[cache_key] = (current_version, results, True)
+                self._extract_history_cache.move_to_end(cache_key)
+                while len(self._extract_history_cache) > _EXTRACT_CACHE_CAP:
+                    self._extract_history_cache.popitem(last=False)
+            return results
 
         clauses = ["property IN (" + ",".join("?" * len(properties)) + ")"]
         params: list[Any] = list(properties)
@@ -4558,7 +4637,10 @@ class HistoryManager:
                                     natural_key(b["property"])))
 
         with self._lock:
-            self._extract_history_cache[cache_key] = (current_version, results)
+            # the third field: whether the rows came off the change-point
+            # fast path (the only base a downsampled read may derive from)
+            self._extract_history_cache[cache_key] = (current_version, results,
+                                                      cp_rows is not None)
             self._extract_history_cache.move_to_end(cache_key)
             while len(self._extract_history_cache) > _EXTRACT_CACHE_CAP:
                 self._extract_history_cache.popitem(last=False)   # evict LRU
@@ -4982,6 +5064,89 @@ class HistoryManager:
                             continue
                     self._bump_chip_version(hist_dir)
         return seq
+
+    def history_dir_cached(self, quam_state_path: str | Path) -> Path | None:
+        """The chip's history dir through the SAME ``_HIST_SEQ_RESOLVE_TTL_S``
+        memo :meth:`history_seq_for` keeps -- no identity-ladder walk (stats,
+        a possible live-file read) on a warm request. None when unresolvable.
+        """
+        key_src = str(quam_state_path)
+        memo = self._hist_seq_dir_memo.get(key_src)
+        if memo is not None and time.time() - memo[1] < _HIST_SEQ_RESOLVE_TTL_S:
+            return memo[0]
+        try:
+            hist_dir = self._history_dir(Path(quam_state_path))
+        except OSError:
+            return None
+        self._hist_seq_dir_memo[key_src] = (hist_dir, time.time())
+        return hist_dir
+
+    def snapshots_cached(self, quam_state_path: str | Path) -> list[SnapshotMeta]:
+        """:meth:`list_snapshots` without its per-call ``Path.resolve()``.
+
+        The resolved cache key is memoized per raw path for
+        ``_HIST_SEQ_RESOLVE_TTL_S`` (the precedent ``history_seq_for`` set: a
+        path's resolution changing under an open chip is a junction being
+        re-pointed, and a <=10 s-stale answer heals on the next tick). The
+        returned list IS the cache's object, so its identity changes exactly
+        when the cache entry is dropped and rebuilt -- which is what
+        ``core.chip_trends_ram`` keys on.
+        """
+        key_src = str(quam_state_path)
+        memo = self._resolved_key_memo.get(key_src)
+        now_t = time.time()
+        if memo is None or now_t - memo[1] >= _HIST_SEQ_RESOLVE_TTL_S:
+            try:
+                memo = (str(Path(quam_state_path).resolve()), now_t)
+            except OSError:
+                return self.list_snapshots(quam_state_path)
+            self._resolved_key_memo[key_src] = memo
+        with self._lock:
+            hit = self._snapshot_list_cache.get(memo[0])
+        return hit if hit is not None else self.list_snapshots(quam_state_path)
+
+    def add_indexed_listener(self, fn) -> None:
+        """Register ``fn(quam_state_path)``, called on a background thread
+        after a chip's index committed (a capture's rows, a leaf repair)."""
+        self._indexed_listeners.append(fn)
+
+    def _fire_indexed(self, quam_state_path: str | Path) -> None:
+        """Run the indexed listeners for this chip on ONE daemon thread per
+        chip; a commit that lands while they run makes them run once more.
+        Never raises, never blocks the caller."""
+        if not self._indexed_listeners:
+            return
+        key = str(quam_state_path)
+        with self._indexed_lock:
+            if key in self._indexed_pending:
+                self._indexed_pending[key] = True
+                return
+            self._indexed_pending[key] = False
+
+        def run() -> None:
+            while True:
+                for fn in list(self._indexed_listeners):
+                    try:
+                        fn(key)
+                    except Exception:  # noqa: BLE001 - a listener must not kill the loop
+                        logger.debug("index listener failed", exc_info=True)
+                with self._indexed_lock:
+                    if self._indexed_pending.get(key):
+                        self._indexed_pending[key] = False
+                        continue
+                    self._indexed_pending.pop(key, None)
+                    return
+        try:
+            threading.Thread(target=run, daemon=True, name="index-listeners").start()
+        except Exception:  # noqa: BLE001
+            with self._indexed_lock:
+                self._indexed_pending.pop(key, None)
+
+    def leaf_index_updating_dir(self, hist_dir: Path) -> bool:
+        """:meth:`leaf_index_updating` for an already-resolved chip dir."""
+        key = str(Path(hist_dir) / "index.sqlite")
+        with self._leaf_rebuild_lock:
+            return key in self._leaf_rebuild_threads
 
     def _enrich_run_fields(
         self, target_dir: Path, content_hash: str, entry: Any,
@@ -6088,9 +6253,15 @@ def _ensure_cp_fresh(conn) -> bool:
                     "SELECT " + _CP_COLS + " FROM param_history "
                     "ORDER BY qubit, property, timestamp").fetchall()
             else:
-                delta = conn.execute(
-                    "SELECT " + _CP_COLS + " FROM param_history WHERE rowid > ? "
-                    "ORDER BY qubit, property, timestamp", (seen,)).fetchall()
+                # The rowid range, sorted HERE: with the ORDER BY the planner
+                # walked the whole (qubit, property, timestamp) index to filter
+                # it (17-94 ms per capture on a 75k-row index, measured), for
+                # the few hundred rows one capture adds. (qubit, property,
+                # timestamp) is the primary key, so the order is total and
+                # Python's str order is SQLite's BINARY order.
+                delta = sorted(conn.execute(
+                    "SELECT " + _CP_COLS + " FROM param_history WHERE rowid > ?",
+                    (seen,)).fetchall(), key=lambda r: (r[0], r[1], r[2]))
             # split: in-order rows apply incrementally; disordered partitions rebuild
             rebuild: set = set()
             apply_rows: list = []

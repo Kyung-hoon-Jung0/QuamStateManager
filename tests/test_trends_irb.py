@@ -171,6 +171,8 @@ def test_default_irb_pressed_and_explicit_off_sticks(irb_client):
 def test_stale_route_reports_progress_and_retries(irb_client, monkeypatch):
     hm = irb_client.application.config["history_manager"]
     monkeypatch.setattr(hm, "leaf_index_updating", lambda p: True)
+    # RAM P1a: the route asks by the already-resolved chip dir
+    monkeypatch.setattr(hm, "leaf_index_updating_dir", lambda d: True)
     monkeypatch.setattr(hm, "_ensure_leaf_index_fresh", lambda p: None)
     body = irb_client.get("/topology/trends?metrics=").get_data(as_text=True)
     assert "History index updating (" in body

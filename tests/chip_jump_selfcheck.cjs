@@ -690,6 +690,50 @@ function world(topo, opts) {
        + seen.map((x) => (x ? 'raf' : 'task')).join(',') + ')');
   }
 
+  // ── RAM P2: Trends goes first -- the chart pump waits while it is busy ───
+  {
+    const T = world(CHAIN);
+    const release = T.win.ChipTrends.hold();          // a Trends request in flight
+    T.win.setChipStatusView('fidelity1q', null, false);
+    await sleep(250);
+    ok(T.renders.length === 0,
+       'RAM P2 no Chip Status chart is drawn while a Trends open/toggle holds the thread (' + T.renders.length + ')');
+    release();
+    await sleep(250);
+    ok(T.renders.length > 0, 'RAM P2 ...and the pump resumes the moment Trends lets go (' + T.renders.length + ')');
+  }
+  {
+    const T = world(CHAIN);
+    T.win.ChipTrends.hold();                          // never released (an aborted request)
+    const real = T.win.Date.now;
+    T.win.Date.now = function () { return real() + 5000; };
+    T.win.setChipStatusView('fidelity1q', null, false);
+    await sleep(250);
+    ok(T.renders.length > 0, 'RAM P2 a hold that is never released cannot starve the page (capped) (' + T.renders.length + ')');
+  }
+  // ── RAM P2: a drawn panel skips layout off screen, at its own height ─────
+  {
+    const T = world(CHAIN, { beforeMount: function (T) {
+      T.win.CSS = { supports: function (p, v) { return p === 'content-visibility' && v === 'auto'; } };
+      Object.defineProperty(T.win.HTMLElement.prototype, 'offsetHeight', { configurable: true, get: function () { return 1234; } });
+      T.sizes = [];
+      const sp = T.win.CSSStyleDeclaration.prototype.setProperty;
+      T.win.CSSStyleDeclaration.prototype.setProperty = function (k, v) { if (k === 'contain-intrinsic-block-size') T.sizes.push(v); return sp.apply(this, arguments); };
+    } });
+    T.win.setChipStatusView('fidelity1q', null, false);
+    await sleep(250);
+    const panels = T.doc.querySelectorAll('.topo-section[data-density-panel]');
+    ok(panels.length > 0 && T.doc.querySelectorAll('.topo-cv-auto').length === 0,
+       'RAM P2 a panel whose chart is not drawn yet keeps normal layout (' + panels.length + ' panels)');
+    T.renders.forEach((r) => r.resolve(null));
+    await sleep(120);
+    const cv = T.doc.querySelectorAll('.topo-cv-auto');
+    ok(cv.length > 0 && Array.prototype.every.call(cv, (p) => p.hasAttribute('data-density-panel')),
+       'RAM P2 a drawn panel gets content-visibility:auto (' + cv.length + ')');
+    ok(T.sizes.length === cv.length && T.sizes.every((v) => v === 'auto 1234px'),
+       'RAM P2 ...with its OWN measured height as the placeholder (' + T.sizes.slice(0, 3) + ')');
+  }
+
   console.log(fails ? ('FAILED ' + fails) : 'chip_jump_selfcheck: all ok');
   process.exit(fails ? 1 : 0);
 })().catch(function (e) { console.error('FAIL: threw ' + (e && e.stack || e)); process.exit(1); });

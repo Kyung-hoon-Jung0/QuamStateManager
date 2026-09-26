@@ -80,6 +80,7 @@ from quam_state_manager.core import compare as compare_engine
 from quam_state_manager.core import qdac as qdac_mod
 from quam_state_manager.core import ramcache as _ramcache
 from quam_state_manager.core import trend_index as _trend_index
+from quam_state_manager.core import chip_trends_ram
 from quam_state_manager.core.dataset import DatasetStore
 from quam_state_manager.core.differ import Differ
 from quam_state_manager.core.experiment_data import ExperimentContext, load_experiment_context
@@ -11603,8 +11604,13 @@ _SNAPSHOT_WHY: dict[str, str] = {
 }
 
 
+_UID_DEFERRED = object()
+
+
 def _snapshot_run_uid(folder: Any, run_id: Any,
-                   roots: list[tuple[Path, str]]) -> str | None:
+                   roots: list[tuple[Path, str]],
+                   memo: dict | None = None,
+                   fallback: bool = True) -> Any:
     """A dataset uid for a run folder, or None when the click would not open.
 
     A run's DatasetStore is keyed on the run folder's GRANDPARENT (the same
@@ -11630,8 +11636,17 @@ def _snapshot_run_uid(folder: Any, run_id: Any,
         return None
     try:
         rp = Path(folder)
-        gp = rp.parent.parent.resolve()
         rid = int(run_id)
+        # *memo* (RAM P1a): the grandparent resolves ONCE per distinct folder
+        # root instead of once per snapshot -- 525 resolves landed on 1-2
+        # distinct directories at 1,588 snapshots.
+        gkey = str(rp.parent.parent)
+        if memo is not None and gkey in memo:
+            gp = memo[gkey]
+        else:
+            gp = rp.parent.parent.resolve()
+            if memo is not None:
+                memo[gkey] = gp
     except (OSError, ValueError, TypeError):
         return None
     for root, key in roots:
@@ -11640,6 +11655,11 @@ def _snapshot_run_uid(folder: Any, run_id: Any,
     date_dir, run_dir = rp.parent.name, rp.name
     if not date_dir or not run_dir:
         return None
+    if not fallback:
+        # RAM P1a: the look-under-every-root answer below reads the FILE
+        # SYSTEM (a run copied into a registered root later), which no
+        # history token covers -- a cached map defers it to serve time.
+        return _UID_DEFERRED
     hits = []
     for root, key in roots:
         try:
@@ -11651,7 +11671,8 @@ def _snapshot_run_uid(folder: Any, run_id: Any,
 
 
 def _snapshot_provenance_map(hm, path: Path,
-                             only: set[str] | None = None) -> dict[str, dict]:
+                             only: set[str] | None = None,
+                             tbl=None, volatile: list | None = None) -> dict[str, dict]:
     """``{snapshot id: {run, node, short, why, uid}}`` — ONE map per response.
 
     Provenance is a property of the SNAPSHOT, and every series on the Trends
@@ -11677,17 +11698,57 @@ def _snapshot_provenance_map(hm, path: Path,
     Honest by construction: a snapshot with no run carries ``run``/``uid`` null
     and a ``why`` sentence naming what SM actually knows; a run whose folder is
     not a live dataset root keeps its run number and loses only the uid.
+
+    *tbl* (RAM P1a, core/chip_trends_ram): the FULL map is built once per
+    (history token, registered dataset roots) and only the *only* filter runs
+    per request -- the build was 160-500 ms on every open and every toggle.
     """
+    if tbl is not None:
+        try:
+            roots_sig = tuple(str(c) for c in _dataset_candidate_folders(fast=True))
+        except Exception:  # noqa: BLE001
+            roots_sig = None
+        full, pending, roots, memo = tbl.part(
+            ("provmap", roots_sig),
+            lambda: _snapshot_provenance_build(hm, path),
+            cold=lambda: _snapshot_provenance_build(hm, path))
+        keys = full.keys() if only is None else [k for k in only if k in full]
+        out = {k: dict(full[k]) for k in keys}
+        # A row whose recorded run folder is under no registered root is
+        # answered by is_dir probes, i.e. by the file system as it is NOW --
+        # recomputed on every serve (only for such rows), never cached.
+        for k in keys:
+            if k in pending:
+                folder, rid = pending[k]
+                out[k]["uid"] = _snapshot_run_uid(folder, rid, roots, dict(memo))
+                if volatile is not None:
+                    volatile.append(k)
+        return out
+    return _snapshot_provenance_build(hm, path, only=only, deferred=False)[0]
+
+
+def _snapshot_provenance_build(hm, path: Path, only: set[str] | None = None,
+                               deferred: bool = True):
+    """``(map, pending, roots, uid memo)`` -- the body of
+    :func:`_snapshot_provenance_map`. With *deferred*, a row whose uid needs
+    the file-system fallback of :func:`_snapshot_run_uid` keeps ``uid: None``
+    and is listed in *pending* as ``{ts: (folder, run_id)}``."""
     try:
         rows = hm.snapshot_provenance(path)
     except Exception:  # noqa: BLE001
         logger.debug("snapshot provenance unavailable", exc_info=True)
-        return {}
+        return {}, {}, [], {}
     try:
         roots = _uid_roots()
     except Exception:  # noqa: BLE001
         roots = []
+    uid_memo: dict = {}
     out: dict[str, dict] = {}
+    pending: dict[str, tuple] = {}
+    # node_label is a pure function of the node name, and a chip's snapshots
+    # name a handful of nodes: one label per NAME, not per snapshot (1,600
+    # calls were ~20 ms of every rebuild after a capture, RAM P1a).
+    labels: dict[str, str] = {}
     for r in rows:
         ts = str(r.get("ts") or "")
         if not ts:
@@ -11704,16 +11765,21 @@ def _snapshot_provenance_map(hm, path: Path,
         entry: dict[str, Any] = {
             "run": run,
             "node": node,
-            "short": node_label(node),
+            "short": labels[node] if node in labels else labels.setdefault(node, node_label(node)),
             "why": None,
             "uid": None,
         }
         if entry["run"] is None:
             entry["why"] = _SNAPSHOT_WHY.get(trig, trig)
         else:
-            entry["uid"] = _snapshot_run_uid(r.get("folder"), rid, roots)
+            uid = _snapshot_run_uid(r.get("folder"), rid, roots, uid_memo,
+                                    fallback=not deferred)
+            if uid is _UID_DEFERRED:
+                pending[ts] = (r.get("folder"), rid)
+                uid = None
+            entry["uid"] = uid
         out[ts] = entry
-    return out
+    return out, pending, roots, uid_memo
 
 
 def _trend_unit(metric: str) -> str:
@@ -11731,14 +11797,26 @@ def _trend_unit(metric: str) -> str:
     return ""
 
 
-def _trend_series_curated(hm, path: Path, props: list[str]) -> list[dict]:
-    """The SQLite property index — one call returns EVERY qubit for a metric."""
+def _trend_series_curated(hm, path: Path, props: list[str], tbl=None) -> list[dict]:
+    """The SQLite property index — one call returns EVERY qubit for a metric.
+
+    With *tbl* (RAM P1a) the call is made ONCE per history token for every
+    curated property and filtered here: each bucket is one (qubit, property)
+    and is compressed/downsampled on its own, so the filtered list is the
+    call for *props* row for row (pinned in tests/test_chip_trends_ram.py).
+    """
+    want = set(props)
     try:
         # docs/142: change points only -- an unchanged value across 400
         # runs used to plot 400 identical markers; end-to-end unchanged is
         # now exactly first+last.
-        rows = hm.extract_property_history(path, props, downsample=400,
-                                           compress="changes")
+        if tbl is not None:
+            rows = [r for r in (tbl.curated(tuple(DEFAULT_TRACKED_PROPERTIES), 400,
+                                            "changes") or [])
+                    if r.get("property") in want]
+        else:
+            rows = hm.extract_property_history(path, props, downsample=400,
+                                               compress="changes")
     except Exception:  # noqa: BLE001
         return []
     out = []
@@ -11749,7 +11827,7 @@ def _trend_series_curated(hm, path: Path, props: list[str]) -> list[dict]:
     return out
 
 
-def _trend_metrics_with_data(hm, path: Path, curated: list[str]) -> set[str]:
+def _trend_metrics_with_data(hm, path: Path, curated: list[str], tbl=None) -> set[str]:
     """Which curated metrics this chip has actually recorded.
 
     ONE indexed call for all of them — ``extract_property_history`` takes a
@@ -11758,13 +11836,18 @@ def _trend_metrics_with_data(hm, path: Path, curated: list[str]) -> set[str]:
     empty boxes.
     """
     try:
-        # A small-but-SAFE downsample. This asks only "does this metric have any
-        # numeric point at all", so the cheapest honest answer wins — but it
-        # must not be so small that the LTTB bucket maths degenerates (asking
-        # for 2 used to raise ZeroDivisionError, which this function's own
-        # except swallowed, so the answer was always "nothing" and the caller
-        # silently fell back).
-        rows = hm.extract_property_history(path, list(curated), downsample=8)
+        # RAM P1a: the CHANGE-POINT read (compress="changes", no downsample)
+        # answers "any numeric point at all" exactly -- every value run keeps
+        # both of its edges, so a numeric value can never be thinned away --
+        # in O(changes) from param_history_cp. The windowed probe it replaces
+        # (downsample=8) scanned the whole param_history table: 1.0-1.4 s on
+        # the first open after every capture at 1,588 snapshots, and its
+        # sampling could step over a numeric stretch between nulls.
+        if tbl is not None:
+            rows = tbl.curated(tuple(curated), None, "changes") or []
+        else:
+            rows = hm.extract_property_history(path, list(curated),
+                                               downsample=None, compress="changes")
     except Exception:  # noqa: BLE001
         logger.debug("trend metric probe failed", exc_info=True)
         return set()
@@ -11809,7 +11892,7 @@ def _trend_is_num(v) -> bool:
 
 
 def _trend_series_leaf(hm, path: Path, dot_path: str, qubits: list[str],
-                       pairs: list[str] | None = None) -> list[dict]:
+                       pairs: list[str] | None = None, tbl=None) -> list[dict]:
     """Any numeric leaf, via the docs/83 change-point index.
 
     A path names ONE entity (``qubits.q3.xy.operations.x180.amplitude``, or
@@ -11838,7 +11921,8 @@ def _trend_series_leaf(hm, path: Path, dot_path: str, qubits: list[str],
             _segs = dot_path.split(".")
             _wild = [i for i, seg in enumerate(_segs) if seg == "*" and i > 1]
             by_e = {}
-            for dp in hm.leaf_matching_paths(path, dot_path):
+            for dp in (tbl.leaf_matching_paths(dot_path) if tbl is not None
+                       else hm.leaf_matching_paths(path, dot_path)):
                 _parts = dp.split(".")
                 if _parts[1] in entities:
                     by_e[dp] = _parts[1] + " · " + ".".join(
@@ -11846,7 +11930,9 @@ def _trend_series_leaf(hm, path: Path, dot_path: str, qubits: list[str],
         # hold_to_newest: a value set once and never changed still has a
         # duration — it is carried to the newest snapshot as a HELD point the
         # chart draws hollow ("unchanged since …"), never as a new measurement.
-        got = hm.leaf_field_series_many(path, list(by_e), hold_to_newest=True)
+        got = (tbl.leaf_series_many(list(by_e), hold_to_newest=True)
+               if tbl is not None else
+               hm.leaf_field_series_many(path, list(by_e), hold_to_newest=True))
         for dp, e in by_e.items():
             rows = got.get(dp) or []
             # A non-numeric row (the leaf disappeared, or held text) is a GAP,
@@ -11863,7 +11949,8 @@ def _trend_series_leaf(hm, path: Path, dot_path: str, qubits: list[str],
         return out
     # Not entity-scoped (a port, a top-level key) — one line, and the path
     # itself is the legend, because there is nothing to fan out over.
-    rows = hm.leaf_field_series(path, dot_path)
+    rows = (tbl.leaf_series(dot_path) if tbl is not None
+            else hm.leaf_field_series(path, dot_path))
     pts = [(r[0], r[1]) for r in (rows or [])
            if isinstance(r[1], (int, float))]
     if pts:
@@ -11917,6 +12004,7 @@ def _names_fidelity(seg: str) -> bool:
     return s == "fidelity" or s.endswith("_fidelity")
 
 
+@functools.lru_cache(maxsize=16384)   # RAM P1a: a pure function of the tail
 def _trend_leaf_kind(tail: str) -> str:
     """What the LEAF of a family tail carries: ``fidelity`` / ``decay`` /
     ``error`` / ``load_id`` / ``measured`` / ``""``.
@@ -11997,6 +12085,7 @@ def _trend_rb_segment(tail: str) -> tuple[int, str] | None:
     return None
 
 
+@functools.lru_cache(maxsize=16384)   # RAM P1a: a pure function of the tail
 def _is_2q_measurement(tail: str) -> bool:
     """A 2Q number the Overview REPORTS — a fidelity in any spelling, a Bell
     state, XEB, a Clifford/RB figure (including the RB decay base and the RB
@@ -12037,6 +12126,7 @@ def _is_2q_knob(tail: str) -> bool:
     return False
 
 
+@functools.lru_cache(maxsize=16384)   # RAM P1a: a pure function of the tail
 def _is_2q_vocabulary(tail: str) -> bool:
     """The Overview's 2Q vocabulary: what it reports, plus the knobs behind it."""
     return _is_2q_measurement(tail) or _is_2q_knob(tail)
@@ -12113,6 +12203,7 @@ _TREND_2Q_MAX_CHIPS = _TRENDS_MAX_FAMILIES - 1
 _TREND_2Q_KNOB_SLOTS = 3
 
 
+@functools.lru_cache(maxsize=16384)   # RAM P1a: a pure function of the tail
 def _trend_is_gate_fidelity(tail: str) -> bool:
     """Is this family THE 2Q gate fidelity, or a Clifford / state / decay number?
 
@@ -12129,6 +12220,7 @@ def _trend_is_gate_fidelity(tail: str) -> bool:
     return rb[1] == "gate" if rb else True
 
 
+@functools.lru_cache(maxsize=16384)   # RAM P1a: a pure function of the tail
 def _trend_knob_group(tail: str) -> str:
     """Which KNOB a 2Q knob family is, ignoring which CZ variant carries it.
 
@@ -12156,6 +12248,7 @@ _TREND_KNOB_FAMILY_ORDER = ("mutual_flux_bias", "phase_shift",
                             "coupler_offset", "")
 
 
+@functools.lru_cache(maxsize=16384)   # RAM P1a: a pure function of the tail
 def _trend_knob_family(tail: str) -> str:
     """Which of the ask's three named knob families this is (or ``""``)."""
     segs = [s.lower() for s in str(tail or "").split(".")]
@@ -12177,6 +12270,7 @@ def _trend_rb_short(seg: str) -> str:
     return _TREND_2Q_RB_SHORT.get(s.lower(), s)
 
 
+@functools.lru_cache(maxsize=16384)   # RAM P1a: a pure function of the tail
 def _trend_pair_label(tail: str) -> str:
     """What a PAIR family chip/chart is called.
 
@@ -12308,7 +12402,25 @@ def _trend_family_display(dot_path: str,
     return _trend_pair_label(fam[1])
 
 
-def _trend_pair_chips(hm, path: Path, active: list[str]) -> tuple[list[dict], int]:
+def _trend_pair_chips(hm, path: Path, active: list[str], tbl=None) -> tuple[list[dict], int]:
+    """See :func:`_trend_pair_chips_uncached`. With *tbl* (RAM P1a) the row is
+    derived ONCE per history token -- classifying ~500-2,000 families cost
+    ~200 ms per request -- and only the per-request ``active`` flags are set
+    on copies here."""
+    if tbl is None:
+        return _trend_pair_chips_uncached(hm, path, active)
+    shown, dropped = tbl.part(("pair_chips",),
+                              lambda: _trend_pair_chips_uncached(hm, path, [], tbl),
+                              cold=lambda: _trend_pair_chips_uncached(hm, path, [], None))
+    out = []
+    for c in shown:
+        c = dict(c)
+        c["active"] = c["path"] in active
+        out.append(c)
+    return out, dropped
+
+
+def _trend_pair_chips_uncached(hm, path: Path, active: list[str], tbl=None) -> tuple[list[dict], int]:
     """The 2Q / pair badge group, built from what this chip itself has.
 
     ONE scan of the same index the typeahead uses, folded into families, kept
@@ -12325,7 +12437,9 @@ def _trend_pair_chips(hm, path: Path, active: list[str]) -> tuple[list[dict], in
         # Grouped and counted IN SQL: "· N pairs" is exact, whatever any
         # display limit is. Folding a LIMITed row list under-counted every
         # family on a chip with more indexed paths than the pull.
-        rows = hm.leaf_families(path, "qubit_pairs", roots=("qubit_pairs",))
+        rows = (tbl.leaf_families("qubit_pairs", roots=("qubit_pairs",))
+                if tbl is not None else
+                hm.leaf_families(path, "qubit_pairs", roots=("qubit_pairs",)))
     except Exception:  # noqa: BLE001
         logger.debug("pair-family scan failed", exc_info=True)
         rows = []
@@ -12333,7 +12447,8 @@ def _trend_pair_chips(hm, path: Path, active: list[str]) -> tuple[list[dict], in
            and f["path"].endswith(".fidelity.InterleavedRB")
            and f["path"].split(".")[2] == "macros"]
     if irb:
-        concrete = hm.leaf_matching_paths(path, _TREND_IRB)
+        concrete = (tbl.leaf_matching_paths(_TREND_IRB) if tbl is not None
+                    else hm.leaf_matching_paths(path, _TREND_IRB))
         rows = [f for f in rows if f not in irb] + [{
             "path": _TREND_IRB, "label": "macros.*.fidelity.InterleavedRB",
             "scope": "qubit_pairs", "n": len({p.split(".")[1] for p in concrete}),
@@ -12520,7 +12635,7 @@ def _trend_state_has_leaf(store, dot_path: str) -> bool:
 
 
 def _trend_typed_names_a_leaf(hm, path: Path, store, dot_path: str,
-                              qubits: list[str], pairs: list[str]) -> bool:
+                              qubits: list[str], pairs: list[str], tbl=None) -> bool:
     """A typed Trends entry names a real parameter: some entity's state holds
     that leaf (a ``*`` / one-entity path is the whole family), or the change
     index knows it (a parameter the current state no longer carries)."""
@@ -12535,7 +12650,8 @@ def _trend_typed_names_a_leaf(hm, path: Path, store, dot_path: str,
         if _trend_state_has_leaf(store, dot_path):
             return True
         want, q = dot_path, dot_path
-    return any(r.get("path") == want for r in hm.leaf_families(path, q))
+    fams = tbl.leaf_families(q) if tbl is not None else hm.leaf_families(path, q)
+    return any(r.get("path") == want for r in fams)
 
 
 @bp.route("/topology/trends")
@@ -12555,7 +12671,36 @@ def topology_trends():
     store = _store()
     qubits = list(store.qubit_names) if store else []
     pairs = list(store.qubit_pair_names) if store else []
+    # RAM P1a: every derived read below comes from ONE table validated
+    # against the chip's history token (core/chip_trends_ram).
+    tbl = chip_trends_ram.table(hm, path)
+    # ...and the finished fragment is kept IN that table, keyed on
+    # everything else it reads: the request's own arguments, the chip's
+    # entity names, the registered dataset roots (a point's click target)
+    # and whether a background repair is running (the "updating" note). A
+    # TYPED path also reads the chip's STATE (does it name a leaf?), so it is
+    # never served from the memo. A new history token is a new table, so no
+    # fragment outlives the history it was built from.
+    if not (request.args.get("path") or "").strip():
+        try:
+            roots_sig = tuple(str(c) for c in _dataset_candidate_folders(fast=True))
+        except Exception:  # noqa: BLE001
+            roots_sig = None
+        key = (request.query_string, tuple(qubits), tuple(pairs), roots_sig,
+               tbl.index_updating())
+        def _render():
+            vol: list = []
+            html = _topology_trends_html(hm, path, store, qubits, pairs, tbl, vol)
+            # a fragment that read the file system (see
+            # _snapshot_provenance_map) is served but never kept
+            return html, not vol
+        return tbl.fragment(key, _render)
+    return _topology_trends_html(hm, path, store, qubits, pairs, tbl)
 
+
+def _topology_trends_html(hm, path: Path, store, qubits: list[str],
+                          pairs: list[str], tbl, volatile: list | None = None) -> str:
+    """The body of :func:`topology_trends` (the section fragment)."""
     curated = list(DEFAULT_TRACKED_PROPERTIES)
     # ONE ?path= could never carry a badge AND something typed at the same
     # time, so the 2Q badges below (which are template paths, tier 2, needing
@@ -12586,7 +12731,7 @@ def topology_trends():
     # fidelity chip is always there, empty slot included. Built HERE, before
     # the charts, so both can be named out of ONE label map below.
     pair_chips, pair_chips_more = (
-        _trend_pair_chips(hm, path, extras) if pairs else ([], 0))
+        _trend_pair_chips(hm, path, extras, tbl) if pairs else ([], 0))
     # ``?path=`` is ALSO what the search box shows: the badges ride ``?paths=``,
     # so a badge press can never evict what the user typed (and vice versa).
     extra = (request.args.get("path") or "").strip()
@@ -12606,7 +12751,7 @@ def topology_trends():
         # slots are what explain that).
         preferred = ["T1", "T2echo", "gate_fidelity_avg", "f_01",
                      "x180_amplitude", "readout_amplitude"]
-        have = _trend_metrics_with_data(hm, path, curated)
+        have = _trend_metrics_with_data(hm, path, curated, tbl)
         sel = [m for m in preferred if m in have][:3] or preferred[:3]
         if any(c["path"] == _TREND_IRB for c in pair_chips):
             extras.append(_TREND_IRB)
@@ -12614,12 +12759,12 @@ def topology_trends():
                 c["active"] = c["path"] in extras
     sel = [m for m in sel if m in curated][:8]
 
-    series = _trend_series_curated(hm, path, sel) if sel else []
+    series = _trend_series_curated(hm, path, sel, tbl) if sel else []
     for _s in series:
         _s.setdefault("kind", "qubit")
     extra_series_by_path: dict[str, list[dict]] = {}
     for _p in extras:
-        _es = _trend_series_leaf(hm, path, _p, qubits, pairs)
+        _es = _trend_series_leaf(hm, path, _p, qubits, pairs, tbl)
         extra_series_by_path[_p] = _es
         series += _es
 
@@ -12692,9 +12837,9 @@ def topology_trends():
         _fam = _trend_family_of(_p)
         _kind = _TREND_ENTITY_ROOTS[_fam[0]] if _fam else ""
         if _p in _typed and not _trend_typed_names_a_leaf(
-                hm, path, store, _p, qubits, pairs):
+                hm, path, store, _p, qubits, pairs, tbl):
             _c = _chart(_p, "", [], typed=_p)
-            _m = hm.leaf_families(path, _p.replace("*", " "))
+            _m = tbl.leaf_families(_p.replace("*", " "))
             _c.update(unmatched=True, matches=_m[:6], n_matches=len(_m))
             charts.append(_c)
             continue
@@ -12784,15 +12929,70 @@ def topology_trends():
     # TestTheReadStaysOffTheIndexWriteLock); while it runs, the section says
     # so and re-fetches itself (the note's own hx-trigger), and stops the
     # moment the repair is over.
-    updating = hm.leaf_index_updating(path)
+    updating = tbl.index_updating()
     charted = {str(p[0]) for c in charts for s in c["series"] for p in s["points"]}
+    snaps = _snapshot_provenance_map(hm, path, only=charted, tbl=tbl, volatile=volatile)
+    for c in charts:
+        c["sig"] = _trend_chart_sig(c, snaps)
     return render_template("_topo_trends.html", charts=charts, curated=curated,
                            selected=sel, extra=extra, no_chip=False,
                            metric_labels=metric_labels, pair_chips=pair_chips,
                            pair_chips_more=pair_chips_more,
                            trim_note=trim_note, index_updating=updating,
-                           snaps=_snapshot_provenance_map(hm, path, only=charted),
-                           snapshots=len(hm.list_snapshots(path)))
+                           snaps=snaps,
+                           snapshots=tbl.snapshot_count())
+
+
+def _trend_chart_sig(chart: dict, snaps: dict) -> str:
+    """What a drawn chart depends on, as one short digest (RAM P2).
+
+    A toggle re-renders only the charts whose signature changed: the client
+    keeps a drawn box whose ``data-trend-sig`` equals the new response's and
+    draws the rest. So the signature must cover EVERYTHING the drawing reads --
+    the chart dict itself (series, held points, label, unit, entity count) and
+    the provenance of every snapshot it draws (the hover text and the click
+    target are baked into the traces at render time). Anything left out would
+    let a kept chart show an old answer.
+    """
+    ids = sorted({str(p[0]) for s in chart.get("series") or []
+                  for p in s.get("points") or []})
+    body = {k: v for k, v in chart.items() if k != "sig"}
+    blob = json.dumps([body, [[i, snaps.get(i)] for i in ids]],
+                      sort_keys=True, default=str, separators=(",", ":"))
+    return hashlib.sha1(blob.encode("utf-8")).hexdigest()[:16]
+
+
+def install_trends_prewarm(app) -> None:
+    """RAM P1a: after a chip's index commits (a capture, a leaf repair), derive
+    that chip's Trends parts on a background thread -- the ones every default
+    open reads -- so the first request after a new snapshot renders from a
+    warm table instead of paying the rebuild (0.4-2.2 s measured at 1,600
+    snapshots). Only for a chip whose Trends was opened in this process. Every
+    part is computed through the SAME table and token a request uses, so a
+    pre-warmed part is exactly what the request would have computed; a commit
+    racing the pre-warm only moves the token (a redundant build, never a stale
+    serve)."""
+    hm = app.config["history_manager"]
+
+    def prewarm(quam_state_path: str) -> None:
+        if not chip_trends_ram.is_open(hm, quam_state_path):
+            return
+        path = Path(quam_state_path)
+        with app.app_context():
+            tbl = chip_trends_ram.table(hm, path)
+            if tbl.token is None:
+                return
+            curated = list(DEFAULT_TRACKED_PROPERTIES)
+            _trend_metrics_with_data(hm, path, curated, tbl)
+            _trend_series_curated(hm, path, curated, tbl)
+            _snapshot_provenance_map(hm, path, only=set(), tbl=tbl)
+            _trend_pair_chips(hm, path, [], tbl)
+            irb = tbl.leaf_matching_paths(_TREND_IRB)
+            if irb:
+                tbl.leaf_series_many(list(irb), hold_to_newest=True)
+            tbl.families(("qubits", "qubit_pairs"), None)
+
+    hm.add_indexed_listener(prewarm)
 
 
 @bp.route("/topology/trends/paths")
@@ -12816,8 +13016,8 @@ def topology_trends_paths():
     # fresh=True (QA F-10): an explicit leaf-tier query, like the chart query,
     # so it pays the freshness gate -- a stale index answered [] for the
     # placeholder's own example.
-    return jsonify(_history().leaf_families(Path(ctx["path"]), q, limit=25,
-                                            fresh=True))
+    return jsonify(chip_trends_ram.table(_history(), Path(ctx["path"])).leaf_families(
+        q, limit=25, fresh=True))
 
 
 # ── docs/120 item 10 — the working-state version, from the top bar ────────
