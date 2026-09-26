@@ -533,9 +533,12 @@ function p16() {
 // P19: a rebuild requested while the form was clean, whose answer lands
 // AFTER the user started typing (big30x: seconds), must not swap either.
 function p19() {
-  var swaps = [], resolveFetch;
+  var swaps = [], resolveFetch, swapInfo = null;
+  if (!doc.getElementById('inspector-pane')) { var ip = doc.createElement('div'); ip.id = 'inspector-pane'; doc.body.appendChild(ip); }
   win.htmx = { ajax: function () { swaps.push('ajax'); }, trigger: function () {},
-               swap: function (t, html) { swaps.push('swap'); } };
+               swap: function (t, html, spec, opts) {
+                 swaps.push('swap');
+                 swapInfo = opts && opts.eventInfo; } };
   win.fetch = function () { return new win.Promise(function (res) { resolveFetch = res; }); };
   root._dirty = false;
   var strip = doc.getElementById('pulse-env-strip');
@@ -551,6 +554,8 @@ function p19() {
     resolveFetch({ ok: true, text: function () { return win.Promise.resolve('<div></div>'); } });
     setTimeout(function () {
       ok(swaps.join() === 'swap', 'P19: an untouched form IS rebuilt when the answer lands (' + swaps + ')');
+      ok(swapInfo && swapInfo.target && swapInfo.target.id === 'inspector-pane',
+         'P19: the swap names its target (afterSwap listeners read evt.detail.target.id)');
       if (fails) { console.error(fails + ' failure(s)'); process.exit(1); }
       console.log('ALL OK pulses_create_selfcheck (P16-P19)');
       process.exit(0);

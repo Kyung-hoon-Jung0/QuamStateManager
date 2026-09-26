@@ -382,19 +382,20 @@ async function submitCreate(p) {
     };
     const tz = Date.now();
     await pressZ();
-    let backSrv = await waitFor(p, SRV_HAS, 30000);
-    if (!backSrv) {
-      // docs/190 F06: a press whose tray was a beat behind is refused ONCE
-      // ("Nothing undone ... press Ctrl+Z again"); only then does a user press
-      // again -- so does the journey, and the refusal is recorded
-      const t = await p.ev(`[].slice.call(document.querySelectorAll('.toast')).map(function(x){return x.innerText}).join(' | ').replace(/\\s+/g,' ').slice(0,200)`);
-      if (/Nothing undone/.test(t)) {
-        console.log('  first Ctrl+Z refused: ' + t);
-        defects.push({ what: 'first Ctrl+Z after delete refused (docs/190 F06 gate)', got: t });
-        undoRefusedOnce = true;
-        await pressZ();
-        backSrv = await waitFor(p, SRV_HAS, 30000);
-      }
+    // whichever comes first: the pulse is back, or the press was refused
+    const TOAST = `[].slice.call(document.querySelectorAll('.toast')).map(function(x){return x.innerText}).join(' | ').replace(/\s+/g,' ').slice(0,240)`;
+    const first = await waitFor(p, `(function(){var t=${TOAST}; if(/Nothing undone/.test(t)) return 'refused: '+t; return ${SRV_HAS}.then(function(v){return v?'back':0})})()`, 30000);
+    let backSrv = first === 'back';
+    if (first && first.startsWith('refused')) {
+      // docs/190 F06: the tray this window showed was a beat behind the log
+      // (on big30x the delete's answer takes seconds); the press is refused
+      // ONCE with "press Ctrl+Z again" -- a user presses again, so do we
+      console.log('  first Ctrl+Z ' + first);
+      defects.push({ what: 'Ctrl+Z pressed before the delete answer landed is refused once (docs/190 F06 gate)', got: first });
+      undoRefusedOnce = true;
+      await sleep(1500);
+      await pressZ();
+      backSrv = !!(await waitFor(p, SRV_HAS, 30000));
     }
     console.log(`  undo back on the server after ${Date.now() - tz} ms`);
     const back = onPage ? await waitFor(p, `document.querySelector('tr[data-pulse-path="${renPath}"]')?1:0`, 30000) : 1;

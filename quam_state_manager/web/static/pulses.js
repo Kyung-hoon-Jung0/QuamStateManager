@@ -1716,7 +1716,14 @@ window.PulsesPage = (function () {
                 .then(function (html) {
                     if (html == null || createRoot() !== root) return;
                     if (root._dirty) { offerCreateRefresh(); return; }
-                    window.htmx.swap('#inspector-pane', html, { swapStyle: 'innerHTML' });
+                    // eventInfo: htmx.swap() fires htmx:afterSwap with ONLY
+                    // what it is given -- without a target the app's
+                    // afterSwap listeners throw (measured: base.html reads
+                    // evt.detail.target.id)
+                    var pane = document.getElementById('inspector-pane');
+                    if (!pane) return;
+                    window.htmx.swap(pane, html, { swapStyle: 'innerHTML' },
+                                     { eventInfo: { target: pane, elt: pane } });
                 })
                 .catch(function () {});
             return;
