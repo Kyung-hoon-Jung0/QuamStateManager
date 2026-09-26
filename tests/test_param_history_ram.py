@@ -624,7 +624,7 @@ def test_skip_scan_never_runs_without_a_leading_index():
 def test_changes_typeahead_survives_the_filter_swap(env, tmp_path):
     """The typeahead's datalist across the filter's htmx swaps, under the real
     bundled htmx in jsdom, on the route's real output
-    (tests/ph_typeahead_swap_selfcheck.cjs)."""
+    (tests/ph_typeahead_swap_fragcheck.cjs)."""
     import shutil
     import subprocess
     if shutil.which("node") is None:
@@ -634,7 +634,7 @@ def test_changes_typeahead_survives_the_filter_swap(env, tmp_path):
     a.write_text(_feed(env), encoding="utf-8")
     b.write_text(_feed(env, "?prefix=qu"), encoding="utf-8")
     root = Path(__file__).resolve().parents[1]
-    proc = subprocess.run(["node", str(root / "tests" / "ph_typeahead_swap_selfcheck.cjs"),
+    proc = subprocess.run(["node", str(root / "tests" / "ph_typeahead_swap_fragcheck.cjs"),
                            str(a), str(b)], capture_output=True, text=True,
                           cwd=str(root), timeout=120)
     if proc.returncode == 2 and "jsdom not installed" in (proc.stdout or ""):

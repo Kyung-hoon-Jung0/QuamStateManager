@@ -13,7 +13,7 @@
  *   T2 the list survives a later swap with its options (hx-preserve)
  *   T3 an older query answering after a newer one never overwrites it
  *
- *   node tests/ph_typeahead_swap_selfcheck.cjs FRAG_A.html FRAG_B.html
+ *   node tests/ph_typeahead_swap_fragcheck.cjs FRAG_A.html FRAG_B.html
  * (the two fragments are the route's real output, rendered by the pytest
  * driver in tests/test_param_history_ram.py)
  */
