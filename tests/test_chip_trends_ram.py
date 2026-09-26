@@ -691,3 +691,106 @@ def test_parts_compute_concurrently_and_once(tmp_path):
     with pytest.raises(RuntimeError):
         t.part(("c",), boom)
     assert t.part(("c",), lambda: "C") == "C"
+
+
+# ── D1: the shadow check compares at the token, never across a commit ───────
+
+def _wal_index(tmp_path):
+    db = tmp_path / "index.sqlite"
+    conn = sqlite3.connect(str(db), isolation_level=None)
+    assert conn.execute("PRAGMA journal_mode=WAL").fetchone()[0] == "wal"
+    li.ensure_schema(conn)
+    conn.execute("INSERT INTO leaf_snaps (id, ts) VALUES (0, 'a')")
+    for pid in range(4):
+        conn.execute("INSERT INTO leaf_paths (id, path) VALUES (?, ?)",
+                     (pid, f"qubit_pairs.q{pid}-q9.macros.cz.fidelity.InterleavedRB"))
+        conn.execute("INSERT INTO leaf_cp (path_id, snap_id, value, kind) VALUES (?,0,0,0)", (pid,))
+    return db, conn
+
+
+def _append(conn, sid, pid):
+    conn.execute("INSERT INTO leaf_snaps (id, ts) VALUES (?, ?)", (sid, f"s{sid}"))
+    conn.execute("INSERT INTO leaf_cp (path_id, snap_id, value, kind) VALUES (?,?,1,0)", (pid, sid))
+
+
+class _ColdHm:
+    """The cold path the shadow check compares with: a fresh connection."""
+
+    def __init__(self, db):
+        self.db = db
+
+    def leaf_matching_paths(self, _path, pattern):
+        c = sqlite3.connect(str(self.db))
+        try:
+            return li.matching_paths(c, pattern)
+        finally:
+            c.close()
+
+
+def _tabled(db, prev):
+    """A table stored under the index's CURRENT data_version, deriving from
+    *prev* -- what ``ctr.table`` builds for a new token."""
+    ic = ctr._conn_for(db.parent)
+    t = ctr.ChipTrendsTable(_ColdHm(db), "x", db.parent, [], ic)
+    t.token = (str(db.parent), 1, 0, None, None, ic.data_version())
+    if prev is not None:
+        t._base = prev.export_base()
+        t._depth = (t._base.depth + 1) if t._base is not None else 0
+    return t
+
+
+_PAT = "qubit_pairs.*.macros.*.fidelity.InterleavedRB"
+
+
+def test_a_commit_between_a_delta_and_its_shadow_check_is_not_a_stale_serve(tmp_path, monkeypatch):
+    """D1 (verifier, krs5h rig, SM_RAM_VERIFY=1): ``part ('delta', marks)
+    differs from a cold recompute`` on leaf_matching_paths right after a
+    capture. Reproduced deterministically: the background indexer commits
+    between the delta read and its shadow recompute. The SERVED delta is the
+    exact append as of the table's token (never older); only the check was
+    comparing it with a LATER index. After the fix the check skips a
+    comparison the index moved under, and still catches a wrong value when
+    the index sits at the token (the poison half)."""
+    monkeypatch.setenv("SM_RAM_VERIFY", "1")
+    db, w = _wal_index(tmp_path)
+    t0 = _tabled(db, None)
+    assert t0.leaf_matching_paths(_PAT) == li.matching_paths(w, _PAT)
+    t0.families(("qubit_pairs",), None)
+    _append(w, 1, 2)                                  # the capture
+    at_token = li.matching_paths(w, _PAT)
+    fam_at_token = li.path_families(w, "", roots=("qubit_pairs",))
+    t1 = _tabled(db, t0)
+    real = ctr._delta_read
+    fired = []
+
+    def racing(conn, base):
+        got = real(conn, base)
+        if not fired:                                 # the indexer's next commit lands NOW
+            fired.append(1)
+            _append(w, 2, 3)
+            w.execute("INSERT INTO leaf_paths (id, path) VALUES (9, ?)",
+                      ("qubit_pairs.q7-q9.macros.cz.fidelity.InterleavedRB",))
+        return got
+    monkeypatch.setattr(ctr, "_delta_read", racing)
+    # the badge row's family table computes the delta, the indexer commits,
+    # then the IRB default's matching paths HIT that memoized delta: the
+    # verifier's exact call path (leaf_matching_paths -> _delta)
+    assert t1.families(("qubit_pairs",), None).query("") == fam_at_token
+    assert fired, "the race was not staged"
+    served = t1.leaf_matching_paths(_PAT)
+    assert served == at_token, "the served answer is not the one AT the table's token"
+    d = t1._parts[("delta", t0._parts[("matching_m", _PAT)][1])]
+    assert d.marks.snap_max == 1, "the memoized delta is not the token's append"
+    # the next token sees the racing commit, derived from this table
+    monkeypatch.setattr(ctr, "_delta_read", real)
+    t2 = _tabled(db, t1)
+    assert t2.leaf_matching_paths(_PAT) == li.matching_paths(w, _PAT)
+    assert len(t2.leaf_matching_paths(_PAT)) == 5
+    # poison: the index AT the token, a memoized part that is wrong -> caught
+    t3 = _tabled(db, t2)
+    key = ("delta", t2._parts[("matching_m", _PAT)][1])
+    t3._parts[key] = ctr._Delta({}, [("qubit_pairs.bogus", 1, "qubit_pairs.bogus", 99)],
+                                t2._parts[("matching_m", _PAT)][1])
+    with pytest.raises(ctr.ramcache.StaleCacheError):
+        t3._delta(t2._parts[("matching_m", _PAT)][1])
+    w.close()

@@ -2948,7 +2948,8 @@ window.ChipStatus.mount = function (opts) {
        WHOLE page, and the page carries ~110 drawn panels (2Q RB variants,
        1Q metrics) at 900-2,200 px each: 300-700 ms per toggle, almost none
        of it JavaScript. A panel that is drawn and off screen does not need to
-       be laid out, so once its charts are drawn it gets content-visibility:
+       be laid out, so once ALL the pump's charts are drawn (one pass, one
+       layout -- never per batch, see the pump below) each panel gets content-visibility:
        auto, with its OWN measured height as the placeholder: the page's
        geometry (scroll height, every jump target, the scroll spy's offsets)
        is exactly what it was, and the "auto" keyword keeps the placeholder
@@ -2973,7 +2974,7 @@ window.ChipStatus.mount = function (opts) {
     }
 
     function _renderChartSpecsProgressively(specs) {
-        var i = 0, BATCH = 1, drawn = [];
+        var i = 0, BATCH = 3, drawn = [];
         function pump() {
             // RAM P2: Trends goes first. While a Trends open or toggle is in
             // flight (its request, then its draw) the batches wait: on a
@@ -2986,7 +2987,6 @@ window.ChipStatus.mount = function (opts) {
                 return;
             }
             var end = Math.min(i + BATCH, specs.length);
-            var batch = [], batchSpecs = specs.slice(i, end);
             for (; i < end; i++) {
                 var s = specs[i];
                 var el = document.getElementById(s.chartId);
@@ -3000,13 +3000,8 @@ window.ChipStatus.mount = function (opts) {
                 if (window.PlotTheme && window.PlotTheme.houseLayout) {
                     layout = window.PlotTheme.houseLayout(layout);
                 }
-                var d = _plotlyRender(el, s.data, layout, s.config);
-                drawn.push(d); batch.push(d);
+                drawn.push(_plotlyRender(el, s.data, layout, s.config));
             }
-            // a batch's panels stop costing layout as soon as they are drawn,
-            // not only when the whole pump is over (the pump itself re-lays
-            // out the page on every Plotly measure)
-            if (batch.length) Promise.all(batch).then(function () { _skipWhenOffscreen(batchSpecs); });
             if (i < specs.length) {
                 /* QA F-02 (review): chained on rAF alone, the batches ran
                    back to back -- Chrome runs the next frame's callbacks ahead
@@ -3040,9 +3035,11 @@ window.ChipStatus.mount = function (opts) {
         // is not loaded yet the pump only QUEUED promise chains, and they all
         // ran in one microtask flush once it arrived -- measured: 19 charts in
         // one 7.5 s long task, which outlived the jump guard's 8 s window and
-        // stranded every jump. Load first, then pump batch by batch (ONE chart per
-        // task since RAM P2: a batch is the longest a Trends click can wait,
-        // and one 2Q RB bar chart is ~150-200 ms on a 30-qubit chip).
+        // stranded every jump. Load first, then pump 3 per task as intended.
+        // (RAM P2 tried ONE chart per task, with content-visibility applied
+        // after every batch: on the 30-qubit chip that cost +3.4 s of long
+        // tasks -- every batch forced a whole-page layout -- and the rest of
+        // Chip Status finished ~3.4 s later; interleaved A/B, verifier D2.)
         if (!window.Plotly && window.requirePlotly) window.requirePlotly().then(pump, pump);
         else pump();
     }

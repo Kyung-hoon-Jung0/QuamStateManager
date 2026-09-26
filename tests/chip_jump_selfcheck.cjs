@@ -734,6 +734,37 @@ function world(topo, opts) {
        'RAM P2 ...with its OWN measured height as the placeholder (' + T.sizes.slice(0, 3) + ')');
   }
 
+  // ── D2 (verifier, big30x): content-visibility once, when the LAST chart is
+  //    drawn -- never per batch. Per batch, every chart forced a whole-page
+  //    layout (offsetHeight) on a 110-panel page: +3.4 s of long tasks and the
+  //    rest of Chip Status finished ~3.4 s later than before RAM P2
+  //    (interleaved A/B on one rig: charts_done 19.6 -> 23.0 s). ─────────────
+  {
+    let reads = 0;
+    const T = world(CHAIN, { beforeMount: function (T) {
+      T.win.CSS = { supports: function (p, v) { return p === 'content-visibility' && v === 'auto'; } };
+      Object.defineProperty(T.win.HTMLElement.prototype, 'offsetHeight', { configurable: true, get: function () { reads++; return 900; } });
+    } });
+    T.win.setChipStatusView('fidelity1q', null, false);
+    const first = T.renders.length;          // the first batch runs synchronously
+    ok(first === 3, 'D2 the pump draws 3 charts per task again, not 1 (' + first + ')');
+    T.renders.slice(0, first).forEach((r) => r.resolve(null));
+    await sleep(120);
+    ok(T.renders.length > first, 'D2 (the pump went on to the next batches: ' + T.renders.length + ')');
+    ok(T.doc.querySelectorAll('.topo-cv-auto').length === 0,
+       'D2 a drawn batch does NOT get content-visibility while the pump still runs ('
+       + T.doc.querySelectorAll('.topo-cv-auto').length + ')');
+    const before = reads;
+    for (let k = 0; k < 20 && T.renders.some((r) => !r.done); k++) {
+      T.renders.forEach((r) => { if (!r.done) { r.done = true; r.resolve(null); } });
+      await sleep(80);
+    }
+    await sleep(120);
+    const cv = T.doc.querySelectorAll('.topo-cv-auto').length;
+    ok(cv > 0, 'D2 ...it gets it once the last chart is drawn (' + cv + ')');
+    ok(reads - before <= cv, 'D2 ...with ONE height read per panel, in one pass (' + (reads - before) + ' reads, ' + cv + ' panels)');
+  }
+
   console.log(fails ? ('FAILED ' + fails) : 'chip_jump_selfcheck: all ok');
   process.exit(fails ? 1 : 0);
 })().catch(function (e) { console.error('FAIL: threw ' + (e && e.stack || e)); process.exit(1); });

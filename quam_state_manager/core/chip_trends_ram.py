@@ -33,7 +33,13 @@ serve.
 
 ``SM_RAM_VERIFY=1`` (tests): every part served from a table is ALSO recomputed
 cold through the uncached path and compared; a difference raises
-``StaleCacheError``.
+``StaleCacheError``. The comparison is made only while the index still sits
+AT the table's token (``data_version`` unchanged before and after the cold
+recompute): a part computed a moment after a commit, or a cold read made
+after one, describes a DIFFERENT index than the one the table is valid for,
+and comparing the two raised on a correct serve (D1, the verifier's krs5h
+rig: the background indexer committing between a memoized delta and its
+shadow read). A skipped comparison is counted in ``COUNTS["verify_moved"]``.
 
 The one implementation rule: a cached part is produced by the SAME function
 the cold path calls (``HistoryManager.snapshot_provenance``,
@@ -723,7 +729,8 @@ class _Base:
 
 # How each family table / matching list was produced (tests, the bench).
 COUNTS = {"full": 0, "derive": 0, "reuse": 0,
-          "full_no_base": 0, "full_prefix_changed": 0, "full_refused": 0}
+          "full_no_base": 0, "full_prefix_changed": 0, "full_refused": 0,
+          "verify_moved": 0}
 
 
 # A chain of derives is re-anchored on a full read this often (belt and
@@ -812,11 +819,39 @@ class ChipTrendsTable:
                 ev.set()
             return val
         if _verify_on():
-            chk = (cold or compute)()
-            if chk != val:
-                raise ramcache.StaleCacheError(
-                    f"chip_trends: part {key!r} differs from a cold recompute")
+            self._shadow(val, cold or compute, f"part {key!r} differs from a cold recompute")
         return val
+
+    # -- the shadow check (SM_RAM_VERIFY) ------------------------------------
+    def _at_token(self) -> bool:
+        """Whether the index is still exactly the one this table's token
+        read. ``PRAGMA data_version`` on the token's own connection changes
+        on every commit by any other connection, so an equal value means no
+        commit landed in between. A table with no token or no connection
+        (the uncached one) has nothing to move: always True."""
+        if self.token is None or self.ic is None:
+            return True
+        try:
+            return self.ic.data_version() == self.token[5]
+        except sqlite3.Error:
+            return False
+
+    def _shadow(self, served: Any, cold: Callable[[], Any], what: str) -> None:
+        """Compare *served* with *cold()* -- but only at the token. If a
+        commit lands before or during the cold read, the two describe
+        different indexes and the comparison proves nothing either way (the
+        next request reads a new token and a new table). The check is still
+        complete where it can be: at the token, a served part that is not
+        the cold answer raises."""
+        if not self._at_token():
+            COUNTS["verify_moved"] += 1
+            return
+        chk = cold()
+        if not self._at_token():
+            COUNTS["verify_moved"] += 1
+            return
+        if chk != served:
+            raise ramcache.StaleCacheError(f"chip_trends: {what}")
 
     _MAX_FRAGMENTS = 8
 
@@ -833,9 +868,9 @@ class ChipTrendsTable:
             if hit is not None:
                 self._frags.move_to_end(key)
         if hit is not None:
-            if _verify_on() and _unpack(render())[0] != hit:
-                raise ramcache.StaleCacheError(
-                    "chip_trends: a memoized Trends fragment differs from a fresh render")
+            if _verify_on():
+                self._shadow(hit, lambda: _unpack(render())[0],
+                             "a memoized Trends fragment differs from a fresh render")
             return hit
         out, keep = _unpack(render())
         if not keep:
@@ -976,12 +1011,12 @@ class ChipTrendsTable:
         return self.part(("families_m", tuple(roots), term), go)
 
     def _check_derived(self, ft: "FamilyTable", roots, term) -> None:
-        r, _m = self.ic.run(_family_rows_marked)
-        if term is not None:
-            r = [x for x in r if term in x[2]]
-        if FamilyTable(r, roots, term) != ft:
-            raise ramcache.StaleCacheError("chip_trends: a derived family table differs "
-                                           "from a full build")
+        def full():
+            r, _m = self.ic.run(_family_rows_marked)
+            if term is not None:
+                r = [x for x in r if term in x[2]]
+            return FamilyTable(r, roots, term)
+        self._shadow(ft, full, "a derived family table differs from a full build")
 
     def families(self, roots: tuple[str, ...], term: str | None = None) -> FamilyTable | None:
         """The family table over every indexed path -- or, with *term*, over
@@ -1021,10 +1056,9 @@ class ChipTrendsTable:
                                          limit=limit, fresh=False)
         out = ft.query(query, limit=limit)
         if _verify_on():
-            cold = self.hm.leaf_families(self.path, query, roots=roots,
-                                         limit=limit, fresh=False)
-            if cold != out:
-                raise ramcache.StaleCacheError("chip_trends: families differ from SQL")
+            self._shadow(out, lambda: self.hm.leaf_families(
+                self.path, query, roots=roots, limit=limit, fresh=False),
+                "families differ from SQL")
         return out
 
     def leaf_matching_paths(self, pattern: str) -> list[str]:
@@ -1065,8 +1099,9 @@ class ChipTrendsTable:
         out = unmarked()
         if out is None:
             return self.hm.leaf_matching_paths(self.path, pattern)
-        if _verify_on() and out != self.hm.leaf_matching_paths(self.path, pattern):
-            raise ramcache.StaleCacheError("chip_trends: matching paths differ from SQL")
+        if _verify_on():
+            self._shadow(out, lambda: self.hm.leaf_matching_paths(self.path, pattern),
+                         "matching paths differ from SQL")
         return list(out)
 
     def leaf_series_many(self, dot_paths: list[str], *,
@@ -1097,10 +1132,9 @@ class ChipTrendsTable:
                    for dp in dot_paths
                    if self._series.get((dp, hold_to_newest))}
         if _verify_on():
-            cold = self.hm.leaf_field_series_many(self.path, dot_paths,
-                                                  hold_to_newest=hold_to_newest)
-            if cold != out:
-                raise ramcache.StaleCacheError("chip_trends: leaf series differ from cold")
+            self._shadow(out, lambda: self.hm.leaf_field_series_many(
+                self.path, dot_paths, hold_to_newest=hold_to_newest),
+                "leaf series differ from cold")
         return out
 
     def leaf_series(self, dot_path: str) -> list[tuple] | None:
