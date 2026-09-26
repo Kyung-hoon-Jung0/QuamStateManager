@@ -216,7 +216,11 @@ window.__j = {
     if (SHOTS) await p.shot(path.join(SHOTS, `end_${tab}.png`));
     fails += t.miss + t.flash;
     report.tabs[tab] = { switches: t.switches, pass: t.pass, miss: t.miss, flash: t.flash, unholdable: t.unholdable, unreachable: t.unreachable, notab: t.notab, innerPass: t.innerPass, moves: t.moves };
-    if (t.pass < Math.ceil(t.switches / 2)) { console.log(`[${tab}] too few judged switches (${t.pass}) -- the journey proves nothing here`); fails++; }
+    // a run WITHOUT this tab (no HDF5 -> no Interactive) lands on Full View by
+    // design and has nothing to measure; coverage is judged over the rest
+    // (a run whose tab is too short to scroll to the place is SKIP-range: the
+    // pane is at its end, the only honest landing -- not a pass, not a miss)
+    if (t.pass < Math.max(10, Math.ceil((t.switches - t.notab) / 3))) { console.log(`[${tab}] too few judged switches (${t.pass}) -- the journey proves nothing here`); fails++; }
     console.log(`[${tab}] ${JSON.stringify(report.tabs[tab])}`);
   }
 
