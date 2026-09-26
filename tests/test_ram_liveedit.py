@@ -367,3 +367,51 @@ def test_the_first_edit_does_not_import_the_autofit_engine(client, monkeypatch):
         {"dot_path": "qubits.q1.T1", "value": "4e-5"}]})
     assert r.status_code == 200
     assert "quam_state_manager.core.autofit.engine" not in sys.modules
+
+
+# ---------------------------------------------------------------------------
+# the sidebar project submenu
+# ---------------------------------------------------------------------------
+
+def _subnav_views(app):
+    from quam_state_manager.web import routes as R
+    with app.test_request_context("/qualibrate/subnav"):
+        full = R._qualibrate_listing()
+        lite = R._qualibrate_subnav_listing()
+
+    def v(listing):
+        return {p["name"]: (p["active"], p["state_path"]["raw"], p["state_path"]["native"],
+                            p["state_path"]["exists"], p["loaded_in_sm"])
+                for p in listing["projects"]}
+    return v(full), v(lite), full.get("config_exists"), lite.get("config_exists")
+
+
+def test_the_submenu_equals_the_full_listing_and_reads_no_toml(tmp_path, monkeypatch):
+    from tests.test_qualibrate_routes import _tree
+    from quam_state_manager.core import qualibrate_config as QC
+    from quam_state_manager.web.app import create_app
+    paths = _tree(tmp_path)
+    monkeypatch.setenv("QUALIBRATE_CONFIG_FILE", str(paths["cfg"]))
+    monkeypatch.delenv("QUALIBRATE_CONFIG_DIR", raising=False)
+    app = create_app(testing=True, instance_path=str(tmp_path / "_inst"))
+    c = app.test_client()
+    full, lite, ce1, ce2 = _subnav_views(app)
+    assert full == lite and ce1 == ce2 is True
+    # a chip opened in SM: the [SM] marker agrees
+    assert c.post("/qualibrate/open", data={"project": "beta"}).status_code == 302
+    full, lite, _, _ = _subnav_views(app)
+    assert full == lite and lite["beta"][4] is True
+    # a folder appearing with NO config change flips `exists` at once
+    (tmp_path / "chips" / "missing").mkdir()
+    full, lite, _, _ = _subnav_views(app)
+    assert full == lite and lite["alpha"][3] is True
+    # steady state reads no TOML at all
+    n = {"k": 0}
+    real = QC._load_toml
+
+    def counted(p):
+        n["k"] += 1
+        return real(p)
+    monkeypatch.setattr(QC, "_load_toml", counted)
+    assert c.get("/qualibrate/subnav").status_code == 200
+    assert n["k"] == 0
