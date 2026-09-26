@@ -679,3 +679,34 @@ def test_a_structural_event_above_a_read_recomputes_the_topology_part():
     inc = eng.get_topology()
     eng.invalidate_cache()
     assert _canon(inc) == _canon(eng.get_topology(_parts=False))
+
+
+# ---------------------------------------------------------------------------
+# RAM P6: the Json Tree's state text is composed from kept chunk texts
+# ---------------------------------------------------------------------------
+
+@pytest.mark.parametrize("seed", [41, 42])
+def test_the_composed_state_json_equals_json_dumps_after_every_step(seed):
+    from quam_state_manager.core import store_revs as SR
+    from quam_state_manager.web import routes as R
+    st = _store(6, seed)
+    m = Modifier(st)
+    rng = random.Random(seed)
+    flat = flatten(st.merged)
+    nums = [p for p, v in flat.items() if isinstance(v, (int, float)) and not isinstance(v, bool)]
+    strs = [p for p, v in flat.items() if isinstance(v, str) and not v.startswith("#")
+            and not p.endswith("__class__")]
+    ptrs = [p for p, v in flat.items() if isinstance(v, str) and v.startswith("#")]
+    assert R._state_json_text(st) == json.dumps(st.state)
+    done = reused = 0
+    for step in range(240):
+        try:
+            _grid_step(rng, st, m, nums, strs, ptrs, step)
+        except (KeyError, TypeError, ValueError, IndexError, AttributeError):
+            continue
+        done += 1
+        before = dict(SR.revs_of(st).memo.get("state_json", {}))
+        assert R._state_json_text(st) == json.dumps(st.state), f"diverged at step {step}"
+        after = SR.revs_of(st).memo["state_json"]
+        reused += sum(1 for k, v in after.items() if before.get(k) is v)
+    assert done >= 200 and reused > done * 5, (done, reused)

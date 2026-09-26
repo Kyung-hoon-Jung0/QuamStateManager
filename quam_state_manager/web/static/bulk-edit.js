@@ -2046,10 +2046,31 @@
         var t = table(); if (!t) return;
         var byResolved = {};
         (results || []).forEach(function (res) { if (res.resolved_path) byResolved[res.resolved_path] = res; });
-        if (!Object.keys(byResolved).length) return;
-        _virtHydrateLocal();         // docs/105 #1 - path-addressed repaint must see every input
-                                     // (a server-cold column arrives fresh from the working copy)
-        _cells(t).forEach(function (c) {
+        var paths = Object.keys(byResolved);
+        if (!paths.length) return;
+        // docs/105 #1 - a path-addressed repaint must see every input that
+        // holds the written node (a server-cold column arrives fresh from the
+        // working copy). RAM P6: hydrate only the locally-detached columns
+        // that CLAIM a written path (grid-virt's byPathAll indexes every
+        // detached cell by both its paths) and visit only the inputs that
+        // carry it -- hydrating every cold column and walking every input
+        // cost ~1 s per Enter on a 30-qubit chip (36k detached cells).
+        if (_gv && _virt && _virt.cold && _virt.byPathAll) {
+            var need = {};
+            paths.forEach(function (p) {
+                (_virt.byPathAll[p] || []).forEach(function (k) {
+                    if (_virt.cold.has(k) && !_virt.remote.has(k)) need[k] = 1;
+                });
+            });
+            var ks = Object.keys(need);
+            if (ks.length) _virtHydrateCols(ks);
+        }
+        var hits = [];
+        paths.forEach(function (p) {
+            var q = '.bulk-cell[data-resolved="' + String(p).replace(/(["\\])/g, '\\$1') + '"]';
+            Array.prototype.forEach.call(t.querySelectorAll(q), function (c) { hits.push(c); });
+        });
+        hits.forEach(function (c) {
             if (c.getAttribute('data-linkable') !== '1') return;   // only linked siblings cross-sync
             var res = byResolved[c.getAttribute('data-resolved')];
             if (!res || res.applied === false) return;

@@ -62,7 +62,7 @@ def test_cellbtn_follows_a_commit_echo_selfcheck():
         [_node(), str(_ROOT / "tests" / "cellbtn_commit_selfcheck.cjs")],
         capture_output=True, text=True, encoding="utf-8", timeout=120)
     assert res.returncode == 0, f"cellbtn commit selfcheck failed:\n{res.stdout}\n{res.stderr}"
-    assert "all checks passed (15 assertions)" in res.stdout, res.stdout
+    assert "all checks passed (17 assertions)" in res.stdout, res.stdout
 
 
 @pytest.mark.skipif(_node() is None, reason="node not available")

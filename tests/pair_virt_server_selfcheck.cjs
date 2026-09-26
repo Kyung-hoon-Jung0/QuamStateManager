@@ -633,6 +633,16 @@ async function main() {
     await tick(60);
     const hid = 'p' + I_HIDDEN;
     w._log.fetches.length = 0;
+    // RAM P6: an echo for a path the detached column does NOT claim leaves it
+    // detached (the broad form hydrated every detached column per Enter)
+    const hidTd = () => d.querySelector(
+      '#bulk-pair-table tr[data-pair="' + PAIRS[1] + '"] td[data-col-key="' + hid + '"]');
+    ok(!!hidTd() && !hidTd().querySelector('.bulk-cell'), 'fixture: the hidden column starts detached');
+    w.BulkPairEdit._syncApplied([{ dot_path: 'qubit_pairs.' + PAIRS[1] + '.f0',
+                                   resolved_path: 'qubit_pairs.' + PAIRS[1] + '.f0',
+                                   applied: true, display: 'HOT0' }]);
+    await tick(20);
+    ok(!hidTd().querySelector('.bulk-cell'), 'an echo for an unclaimed path leaves the detached column detached');
     // the echo is addressed by RESOLVED path; a detached twin keeps the
     // pre-apply value AND `data-orig`, so revealing it later shows a stale
     // number that looks clean.

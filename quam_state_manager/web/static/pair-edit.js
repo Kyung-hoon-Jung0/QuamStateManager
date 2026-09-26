@@ -681,17 +681,36 @@
         var t = table(); if (!t) return;
         var byResolved = {};
         (results || []).forEach(function (res) { if (res.resolved_path) byResolved[res.resolved_path] = res; });
-        if (!Object.keys(byResolved).length) return;
+        var paths = Object.keys(byResolved);
+        if (!paths.length) return;
         // docs/141 4ae C9: a linked twin in a client-detached column keeps the
         // pre-apply value AND `data-orig`, so revealing it later shows a stale
         // number that looks clean. The qubit grid hydrates first for exactly
-        // this ("a path-addressed repaint must see every input"). Deliberately
-        // the BROAD form and not a per-path one: `byPath` is single-valued and
-        // last-writer-wins, and 264 real pair paths are claimed by more than
-        // one column, so a narrow fix would skip the detached twin precisely
-        // when the twins are what must agree. Local only — no round trip.
-        if (_pgv) _pgv.hydrateLocal();
-        _cells(t).forEach(function (c) {
+        // this ("a path-addressed repaint must see every input"). 4ae chose
+        // the BROAD form because `byPath` is single-valued (last writer wins)
+        // and 264 real pair paths are claimed by more than one column. RAM P6:
+        // `colsOfPath` (byPathAll, QA F4) is MULTI-valued -- every column that
+        // claims a path -- so hydrating exactly those columns reaches every
+        // detached twin without hydrating the grid (the broad form cost
+        // seconds per Enter on a 69-pair chip). Local only -- no round trip.
+        if (_pgv && _pgv.colsOfPath) {
+            var need = {};
+            paths.forEach(function (p) {
+                _pgv.colsOfPath(p).forEach(function (k) {
+                    if (_pgv.isCold(k) && !_pgv.isRemote(k)) need[k] = 1;
+                });
+            });
+            var ks = Object.keys(need);
+            if (ks.length) _pgv.hydrateCols(ks);
+        } else if (_pgv) {
+            _pgv.hydrateLocal();
+        }
+        var hits = [];
+        paths.forEach(function (p) {
+            var q = '.bulk-cell[data-resolved="' + String(p).replace(/(["\\])/g, '\\$1') + '"]';
+            Array.prototype.forEach.call(t.querySelectorAll(q), function (c) { hits.push(c); });
+        });
+        hits.forEach(function (c) {
             if (c.getAttribute('data-linkable') !== '1') return;
             var res = byResolved[c.getAttribute('data-resolved')];
             if (!res || res.applied === false) return;

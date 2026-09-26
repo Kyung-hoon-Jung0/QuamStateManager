@@ -5949,13 +5949,55 @@ def _port_owner_map(wiring_root: dict | None) -> dict[str, str]:
     return {k: " + ".join(v) for k, v in out.items()}
 
 
+def _state_json_text(store) -> str:
+    """``json.dumps(store.state)``, kept in RAM a depth-2 chunk at a time (RAM
+    P6).
+
+    json.dumps of a dict with the default separators IS the concatenation
+    ``{`` + ``, ``.join(key ``: `` value) + ``}``, so the document is composed
+    from per-chunk texts, each kept under ``store_revs.chunk_token`` (moves on
+    any event under that chunk and on every global / depth<=2 / unexplained
+    event); a top-level value that is not a dict is kept under
+    ``top_token``. After a one-leaf edit only that qubit's text is
+    re-serialized -- the whole 19 MB state took ~250 ms per /explorer on a
+    30-qubit chip. Pinned equal to ``json.dumps(store.state)`` over a
+    randomized event sequence."""
+    from quam_state_manager.core import store_revs as SR
+    state = store.state
+    if not isinstance(state, dict) or not all(isinstance(k, str) for k in state):
+        return json.dumps(state)
+    memo = SR.revs_of(store).memo.setdefault("state_json", {})
+    dumps = json.dumps
+    parts = []
+    for k1, v1 in state.items():
+        if isinstance(v1, dict) and all(isinstance(k, str) for k in v1):
+            inner = []
+            for k2, v2 in v1.items():
+                tok = SR.chunk_token(store, k1, k2)
+                hit = memo.get((k1, k2))
+                if hit is None or hit[0] != tok:
+                    hit = (tok, dumps(k2) + ": " + dumps(v2))
+                    memo[(k1, k2)] = hit
+                inner.append(hit[1])
+            parts.append(dumps(k1) + ": {" + ", ".join(inner) + "}")
+        else:
+            tok = SR.top_token(store, k1)
+            hit = memo.get((k1,))
+            if hit is None or hit[0] != tok:
+                hit = (tok, dumps(k1) + ": " + dumps(v1))
+                memo[(k1,)] = hit
+            parts.append(hit[1])
+    return "{" + ", ".join(parts) + "}"
+
+
 @bp.route("/explorer")
 def explorer():
     store = _store()
     if not store:
         return _no_chip("the state explorer", "explorer")
     from quam_state_manager.core.leaf_classify import readonly_policy
-    state_json = json.dumps(store.state)
+    with store._lock:
+        state_json = _state_json_text(store)
     wiring_json = _wiring_json()
     template = "_explorer.html" if _is_htmx() else "explorer.html"
     return render_template(
@@ -5984,8 +6026,9 @@ def explorer_model():
     if not store:
         return jsonify(ok=False, error=_NO_CHIP_MSG), 400
     with store._lock:
-        body = json.dumps({"ok": True, "state": store.state,
-                           "wiring": store.wiring})
+        # the same text json.dumps of the whole dict makes (default separators)
+        body = ('{"ok": true, "state": ' + _state_json_text(store)
+                + ', "wiring": ' + json.dumps(store.wiring) + '}')
     return current_app.response_class(body, mimetype="application/json",
                                       headers={"Cache-Control": "no-store"})
 

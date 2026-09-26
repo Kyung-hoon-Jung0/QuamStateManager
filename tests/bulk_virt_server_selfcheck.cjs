@@ -528,6 +528,24 @@ async function main() {
     ok(win._log.fetches.length === 0, 'and still no round trip');
   }
 
+  /* ── RAM P6: an apply echo hydrates ONLY the detached columns that claim
+     its path (it used to hydrate every one -- ~1 s per Enter on 30Q) ── */
+  W = world({ alias: true, availWidth: 100 }); doc = W.doc; win = W.win; await tick(40);
+  {
+    const c2td = () => doc.querySelector('tr[data-qubit="q1"] td[data-col-key="c2"]');
+    ok(!!c2td() && !c2td().querySelector('.bulk-cell'), 'fixture: c2 starts client-detached');
+    win._log.fetches.length = 0;
+    win.BulkEdit._syncApplied([{ dot_path: 'qubits.q1.f1', resolved_path: 'qubits.q1.f1', applied: true, display: '11' }]);
+    await tick(20);
+    ok(!c2td().querySelector('.bulk-cell'), 'an echo for a path no detached column claims leaves c2 detached');
+    win.BulkEdit._syncApplied([{ dot_path: 'qubits.q1.f5', resolved_path: 'qubits.q1.f5', applied: true, display: '5151' }]);
+    await tick(20);
+    const c = c2td().querySelector('.bulk-cell');
+    ok(!!c && c.value === '5151' && c.getAttribute('data-orig') === '5151',
+       'an echo for a path c2 claims hydrates it and lands the value (' + (c && c.value) + ')');
+    ok(win._log.fetches.length === 0, 'with no round trip');
+  }
+
   /* ── an apply's cross-table sync never fetches a server-cold column ── */
   W = world(); doc = W.doc; win = W.win; await tick(40);
   win._log.fetches.length = 0;
