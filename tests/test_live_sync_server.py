@@ -730,3 +730,15 @@ class TestACreatedOrDeletedPulseAppliesInOnePress:
         _write_chip(env["live"], st, future=True)
         d = _apply(env).get_json()
         assert d.get("status") == "collision", d
+
+
+    def test_a_created_pulse_then_edited(self, env):
+        self._create(env, "qa_ed")
+        r = env["client"].post("/pulse/edit", data={
+            "path": "qubits.qA1.xy.operations.qa_ed",
+            "dot_path": "qubits.qA1.xy.operations.qa_ed.amplitude",
+            "mode": "value", "value": "0.33"})
+        assert r.status_code == 200, r.data[:300]
+        d = _apply(env).get_json()
+        assert d.get("status") != "collision", d
+        assert _live(env)["qubits"]["qA1"]["xy"]["operations"]["qa_ed"]["amplitude"] == 0.33

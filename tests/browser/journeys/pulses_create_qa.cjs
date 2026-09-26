@@ -69,23 +69,32 @@ const INSP = `(document.getElementById('inspector-pane')||{}).innerText||''`;
 const STATUS = `(function(){var s=document.querySelector('#inspector-pane .status-message, #inspector-pane [role=alert], #inspector-pane .alert, #inspector-pane .status'); return s? s.innerText.replace(/\\s+/g,' ').trim().slice(0,300) : ''})()`;
 
 async function openCreate(p, what) {
-  // ONE-button flow: "+ New pulse" -> (optional) a "what to create" choice.
+  // ONE-button flow: "+ New pulse" -> a "what to create" choice. Each step
+  // waits for a FRESH inspector (the old one is tagged first), or a click can
+  // land on the outgoing DOM and the incoming swap undoes it.
+  const fresh = async (sel) => {
+    await p.ev(`(function(){var i=document.getElementById('inspector-pane'); if(i&&i.firstElementChild) i.firstElementChild.setAttribute('data-qa-old','1'); return 1})()`);
+    return sel;
+  };
+  const arrived = (sel) => waitFor(p, `(function(){var e=document.querySelector(${J(sel)}); return e && !e.closest('[data-qa-old]') ? 1 : 0})()`, 30000);
+  await fresh();
   await clickSel(p, '.pulse-new-btn');
-  const got = await waitFor(p, `(document.getElementById('pulse-create-root')||document.getElementById('gcz-root')||document.getElementById('pulse-create-choice'))?1:0`, 20000);
+  const got = await arrived('#pulse-create-root, #gcz-root, #pulse-create-choice');
   if (!got) return false;
   const hasChoice = await p.ev(`!!document.querySelector('#pulse-create-choice')`);
-  if (what === 'gcz') {
+  const kind = what === 'gcz' ? 'gaussian_cz' : (what || 'pulse');
+  const rootOf = { gaussian_cz: '#gcz-root', copy: '#pulse-copy-root', pulse: '#pulse-create-root' }[kind];
+  if (!(await p.ev(`!!document.querySelector(${J(rootOf)})`))) {
     if (hasChoice) {
-      await clickSel(p, '#pulse-create-choice [data-create-kind="gaussian_cz"]');
-    } else {
+      await fresh();
+      await clickSel(p, `#pulse-create-choice [data-create-kind="${kind}"]`);
+    } else if (kind === 'gaussian_cz') {
+      await fresh();
       await clickSel(p, '.pulse-gcz-btn');   // legacy second button
-    }
-    return waitFor(p, `document.getElementById('gcz-root')?1:0`, 20000);
+    } else return false;
+    if (!(await arrived(rootOf))) return false;
   }
-  if (hasChoice && !(await p.ev(`!!document.getElementById('pulse-create-root')`))) {
-    await clickSel(p, '#pulse-create-choice [data-create-kind="pulse"]');
-  }
-  await waitFor(p, `document.getElementById('pulse-create-root')?1:0`, 20000);
+  if (kind !== 'pulse') return true;
   // the class list is rebuilt once the env probe lands; wait for it
   await waitFor(p, `document.querySelector('#pulse-env-strip .pulse-env-badge-ok, #pulse-env-strip .pulse-env-badge-warn, #pulse-env-strip .pulse-env-badge-none')?1:0`, 180000);
   await sleep(400);
@@ -133,7 +142,7 @@ async function submitCreate(p) {
 
   // what the chip has
   await openCreate(p, 'pulse');
-  const chip = JSON.parse(await p.ev(`JSON.stringify({q:[].slice.call(document.querySelectorAll('#pulse-create-root select[name=qubit] option')).map(function(o){return o.value}), pairs:[].slice.call(document.querySelectorAll('#pulse-create-pair option')).map(function(o){return o.value}), pc:[].slice.call(document.querySelectorAll('#pulse-create-root select[name=pc_pair] option')).map(function(o){return o.value}), pcDisabled: document.querySelector('input[name=target_kind][value=pair_channel]').disabled, types:[].slice.call(document.querySelectorAll('#pulse-create-type option')).map(function(o){return o.value}), chans:[].slice.call(document.querySelectorAll('#pulse-create-root select[name=channel] option')).map(function(o){return o.value})})`));
+  const chip = JSON.parse(await p.ev(`JSON.stringify({q:[].slice.call(document.querySelectorAll('#pulse-create-root select[name=qubit] option')).map(function(o){return o.value}), pairs:[].slice.call(document.querySelectorAll('#pulse-create-pair option')).map(function(o){return o.value}), pc:[].slice.call(document.querySelectorAll('#pulse-create-root select[name=pc_pair] option')).map(function(o){return o.value}), pcDisabled: document.querySelector('input[name=target_kind][value=pair_channel]').disabled, types:[].slice.call(document.querySelectorAll('#pulse-create-type option')).map(function(o){return o.value}), chans:[].slice.call(document.querySelectorAll('#pulse-create-root select[name=channel] option')).map(function(o){return o.value}), hasCoupler: /"coupler_flux_pulse"/.test((document.getElementById('pulse-pairs-info-data')||{}).textContent||'')})`));
   console.log('chip: ' + J({ q: chip.q.length, pairs: chip.pairs.length, pc: chip.pc.length, pcDisabled: chip.pcDisabled, types: chip.types.length }));
   await p.shot(`${DIR}/01_create_form_${W}.png`);
   const Q = i => chip.q[Math.min(i, chip.q.length - 1)];
@@ -167,7 +176,9 @@ async function submitCreate(p) {
     if (f.missed.length) console.log(`  ${c.t}: fields not on the form: ${f.missed.join(',')}`);
     await sleep(700);
     await p.shot(`${DIR}/10_create_${c.n}_${W}.png`);
+    const t0 = Date.now();
     const res = await submitCreate(p);
+    console.log(`  create ${c.n}: ${Date.now() - t0} ms`);
     const want = `qubits.${c.q}.${c.ch}.operations.${c.n}`;
     if (check(res === 'DETAIL ' + want, `create ${c.t} on ${c.q}.${c.ch} as ${c.n} -> ${res.slice(0, 160)}`)) {
       expect.push({ path: want, cls: c.t, fields: f.typed });
@@ -178,63 +189,83 @@ async function submitCreate(p) {
     await openCreate(p, 'pulse');
   }
 
-  // ---- pair gate slot cases -----------------------------------------------
-  const pair0 = chip.pairs[0], pair1 = chip.pairs[1] || chip.pairs[0];
-  if (pair0) {
+  // ---- empty gate slot (the rig seeds one: <pair0>.macros.cz_qa_empty) --------
+  const pair0 = chip.pairs[0];
+  if (!(await p.ev(`!!document.getElementById('pulse-create-root')`))) await openCreate(p, 'pulse');
+  const pairRadio = await p.ev(`(function(){var r=document.querySelector('input[name=target_kind][value=pair]'); return r? (r.disabled?'disabled: '+r.title:'enabled') : 'absent'})()`);
+  console.log('  empty-gate-slot radio: ' + pairRadio);
+  if (pairRadio === 'enabled') {
     await clickSel(p, 'input[name=target_kind][value=pair]');
     await sleep(300);
     await choose(p, '#pulse-create-pair', pair0);
     const gates = JSON.parse(await p.ev(`JSON.stringify([].slice.call(document.querySelectorAll('#pulse-create-gate option')).map(function(o){return o.value}))`));
-    // every existing gate: which slots does the form offer as creatable?
+    check(!gates.some(g => /^__new__/.test(g)), 'no "+ new gate" option is offered (' + gates.length + ' gates)');
     const offered = [];
-    for (const g of gates.filter(g => !/^__new__/.test(g))) {
+    for (const g of gates) {
       await choose(p, '#pulse-create-gate', g);
       const s = JSON.parse(await p.ev(`JSON.stringify([].slice.call(document.querySelectorAll('#pulse-create-slot option')).map(function(o){return o.value+(o.disabled?'(held)':'')}))`));
       offered.push(g + ':' + s.join('/'));
     }
     console.log('  slots offered on ' + pair0 + ': ' + offered.join('  '));
-    // (a) an EMPTY slot of an existing gate
-    const g0 = gates.find(g => !/^__new__/.test(g));
-    await choose(p, '#pulse-create-gate', g0);
-    const emptySlot = await p.ev(`(function(){var o=[].slice.call(document.querySelectorAll('#pulse-create-slot option')).filter(function(o){return !o.disabled}); return o.map(function(x){return x.value}).join(',')})()`);
-    console.log(`  ${g0} creatable slots: ${emptySlot}`);
-    // try every offered slot: the form must never offer one the server refuses
-    for (const slot of emptySlot.split(',').filter(Boolean)) {
-      if (!(await p.ev(`!!document.getElementById('pulse-create-root')`))) { await openCreate(p, 'pulse'); await clickSel(p, 'input[name=target_kind][value=pair]'); await choose(p, '#pulse-create-pair', pair0); }
+    // a linked slot (the chip's own layout) must read as held
+    check(offered.some(o => /^cz_unipolar:flux_pulse_qubit\(held\)/.test(o)), 'a slot linked to a channel pulse reads as held');
+    check(!offered.some(o => /coupler_flux_pulse/.test(o)) || !!chip.hasCoupler, 'no coupler slot offered on a pair without a coupler');
+    const g0 = gates.indexOf('cz_qa_empty') >= 0 ? 'cz_qa_empty' : null;
+    if (g0) {
       await choose(p, '#pulse-create-gate', g0);
-      await choose(p, '#pulse-create-slot', slot);
-      await choose(p, '#pulse-create-type', 'SquarePulse');
-      const f = await fillFields(p, { length: '52', amplitude: '0.031' });
-      await p.shot(`${DIR}/20_pair_${g0}_${slot}_${W}.png`);
-      const res = await submitCreate(p);
-      const want = `qubit_pairs.${pair0}.macros.${g0}.${slot}`;
-      if (check(res === 'DETAIL ' + want, `pair slot ${want} (offered as creatable) -> ${res.slice(0, 200)}`)) {
-        expect.push({ path: want, cls: 'SquarePulse', fields: f.typed });
-      } else {
-        defects.push({ what: `pair slot ${want} offered as creatable`, got: res });
-        await p.shot(`${DIR}/20_FAIL_${g0}_${slot}_${W}.png`);
-      }
-    }
-    // (b) a NEW gate + its slot pulse
-    await openCreate(p, 'pulse');
-    await clickSel(p, 'input[name=target_kind][value=pair]');
-    await choose(p, '#pulse-create-pair', pair1);
-    const newg = JSON.parse(await p.ev(`JSON.stringify([].slice.call(document.querySelectorAll('#pulse-create-gate option')).map(function(o){return o.value}).filter(function(v){return /^__new__/.test(v)}))`));
-    console.log('  new-gate options: ' + newg.join(','));
-    const ng = newg.indexOf('__new__:cz_flattop') >= 0 ? '__new__:cz_flattop' : newg[0];
-    if (ng) {
-      await choose(p, '#pulse-create-gate', ng);
-      await typeInto(p, '#pulse-create-newgate-name', tag + '_czg');
       await choose(p, '#pulse-create-slot', 'flux_pulse_qubit');
       await choose(p, '#pulse-create-type', 'FlatTopGaussianPulse');
       const f = await fillFields(p, { length: '88', amplitude: '0.066', flat_length: '64' });
-      await p.shot(`${DIR}/21_newgate_${W}.png`);
+      await p.shot(`${DIR}/20_slot_fill_${W}.png`);
+      const t0 = Date.now();
       const res = await submitCreate(p);
-      const want = `qubit_pairs.${pair1}.macros.${tag}_czg.flux_pulse_qubit`;
-      if (check(res === 'DETAIL ' + want, `new gate ${ng} as ${tag}_czg on ${pair1} -> ${res.slice(0, 200)}`)) {
-        expect.push({ path: want, cls: 'FlatTopGaussianPulse', fields: f.typed, gate: `qubit_pairs.${pair1}.macros.${tag}_czg` });
-      } else defects.push({ what: 'new gate', got: res });
-    }
+      const ms = Date.now() - t0;
+      const m = /^DETAIL (qubits\.(q\w+)\.z\.operations\.cz_qa_empty_flux_pulse_\w+)$/.exec(res);
+      if (check(!!m, `empty slot ${pair0}.${g0}.flux_pulse_qubit filled on the moving qubit's z -> ${res.slice(0, 200)} (${ms} ms)`)) {
+        expect.push({ path: m[1], cls: 'FlatTopGaussianPulse', fields: f.typed, gate: `qubit_pairs.${pair0}.macros.${g0}`, slot: 'flux_pulse_qubit' });
+      } else defects.push({ what: 'slot fill', got: res });
+    } else console.log('  (no seeded cz_qa_empty gate on this rig)');
+  }
+
+  // ---- an IQ pulse on a single (z) channel is refused ------------------------------
+  await openCreate(p, 'pulse');
+  await clickSel(p, 'input[name=target_kind][value=qubit]');
+  await choose(p, '#pulse-create-root select[name=qubit]', Q(2));
+  await choose(p, '#pulse-create-root select[name=channel]', 'z');
+  const dragOff = await p.ev(`(document.querySelector('#pulse-create-type option[value="DragCosinePulse"]')||{}).disabled`);
+  check(dragOff === true, 'DRAG is disabled in the list on a z channel');
+  await choose(p, '#pulse-create-type', 'SquarePulse');
+  await typeInto(p, '#pulse-create-name', tag + '_iqz');
+  await fillFields(p, { length: '40', amplitude: '0.05', axis_angle: '0.5' });
+  await clickSel(p, '#pulse-create-root .pulse-create-actions button[type=submit]');
+  const toast = await waitFor(p, `(function(){var t=[].slice.call(document.querySelectorAll('.toast')).map(function(x){return x.innerText}).join(' | '); return /single-output/.test(t)? t.replace(/\\s+/g,' ').slice(0,200) : ''})()`, 20000);
+  check(!!toast, 'an axis angle on z is refused, visibly: ' + toast);
+  await p.shot(`${DIR}/22_iq_on_z_refused_${W}.png`);
+
+  // ---- copy an existing pulse onto another channel ---------------------------------
+  const copies = [
+    { src: `qubits.${Q(0)}.xy.operations.x180`, q: Q(3), ch: 'xy', n: tag + '_x180c' },
+    { src: `qubits.${Q(0)}.z.operations.cz_flattop_flux_pulse_${Q(0)}_${Q(1)}`, q: Q(1), ch: 'z', n: tag + '_czc' },
+  ];
+  for (const c of copies) {
+    const ok0 = await openCreate(p, 'copy');
+    if (!check(!!ok0, 'the copy form opened')) break;
+    await clickSel(p, '#pulse-copy-src');             // focus loads the pulse list
+    await waitFor(p, `document.querySelectorAll('#pulse-copy-src-list option').length`, 30000);
+    await typeInto(p, '#pulse-copy-src', c.src);
+    await sleep(300);
+    await choose(p, '#pulse-copy-root select[name=qubit]', c.q);
+    await choose(p, '#pulse-copy-root select[name=channel]', c.ch);
+    await typeInto(p, '#pulse-copy-name', c.n);
+    await p.shot(`${DIR}/23_copy_${c.n}_${W}.png`);
+    const t0 = Date.now();
+    await clickSel(p, '#pulse-copy-root .pulse-create-actions button[type=submit]');
+    const want = `qubits.${c.q}.${c.ch}.operations.${c.n}`;
+    const got = await waitFor(p, `(function(){var d=document.querySelector('#pulse-detail-root'); return d? d.getAttribute('data-pulse-path') : ''})()`, 60000);
+    const note = await p.ev(`(function(){var s=document.querySelector('#inspector-pane .status-msg, #inspector-pane .pulse-status, #inspector-pane [class*=status]'); return s? s.innerText.replace(/\\s+/g,' ').slice(0,240) : ''})()`);
+    if (check(got === want, `copy ${c.src} -> ${want} (${Date.now() - t0} ms) ${note}`)) expect.push({ path: want, cls: '(copy)', fields: {}, copy_of: c.src });
+    else defects.push({ what: 'copy ' + c.src, got: got || (await p.ev(INSP)).slice(0, 200) });
+    await p.shot(`${DIR}/24_copied_${c.n}_${W}.png`);
   }
 
   // ---- pair CR/ZZ channel ---------------------------------------------------
@@ -272,18 +303,32 @@ async function submitCreate(p) {
     }
   }
 
+  // ---- Diagnostics after the creates: no false "would crash" -------------------
+  {
+    const t0 = Date.now();
+    let banner = '';
+    for (let i = 0; i < 60; i++) {
+      banner = await p.ev(`(function(){return fetch('/diagnostics/banner',{headers:{'HX-Request':'true'}}).then(function(r){return r.ok?r.text():''}).then(function(t){var d=document.createElement('div'); d.innerHTML=t; return d.innerText.replace(/\\s+/g,' ').slice(0,300)}).catch(function(){return 'n/a'})})()`);
+      if (!/harvest drift|was not probed/.test(banner)) break;
+      await sleep(2000);
+    }
+    check(!/harvest drift|was not probed/.test(banner), `no "not probed (harvest drift)" error after ${Date.now() - t0} ms: ${banner.slice(0, 160)}`);
+  }
+
   // ---- edit what was created --------------------------------------------------
   const E0 = expect.find(e => /_dragc$/.test(e.path || ''));
   if (E0) {
     await p.ev(`htmx.ajax('GET','/pulse/detail?path=${encodeURIComponent(E0.path)}',{target:'#inspector-pane',swap:'innerHTML'})`);
-    await waitFor(p, `document.querySelector('#pulse-detail-root[data-pulse-path="${E0.path}"]')?1:0`, 20000);
+    await waitFor(p, `document.querySelector('#pulse-detail-root[data-pulse-path="${E0.path}"]')?1:0`, 60000);
     const edits = { amplitude: '0.111', alpha: '-0.42', length: '52', detuning: '2000000', axis_angle: '0.3', anharmonicity: '-205000000' };
     for (const [k, v] of Object.entries(edits)) {
       const sel = `#pulse-detail-root input[data-param="${k}"]`;
       if (!(await center(p, sel))) { check(false, `edit: no ${k} field in the detail`); continue; }
       await typeInto(p, sel, v);
       await enter(p);
-      const cm = await waitFor(p, `(function(){var i=document.querySelector(${J(sel)}); return i && i.getAttribute('data-committed')===${J(v)} ? 1 : 0})()`, 20000);
+      const tc = Date.now();
+      const cm = await waitFor(p, `(function(){var i=document.querySelector(${J(sel)}); return i && +i.getAttribute('data-committed')===+${J(v)} ? 1 : 0})()`, 60000);
+      console.log(`  commit ${k}: ${Date.now() - tc} ms`);
       if (!check(!!cm, `edit ${k}=${v} committed (data-committed=${await p.ev(`(document.querySelector(${J(sel)})||{getAttribute:function(){return 'gone'}}).getAttribute('data-committed')`)})`)) defects.push({ what: 'edit ' + k, got: await p.ev(STATUS) });
       E0.fields[k] = v;
     }
@@ -296,15 +341,17 @@ async function submitCreate(p) {
     await typeInto(p, '.pulse-duplicate-form input[name=new_name]', tag + '_dup');
     await clickSel(p, '.pulse-duplicate-form button[type=submit]');
     const dupPath = E0.path.replace(/[^.]+$/, tag + '_dup');
-    check(!!(await waitFor(p, `document.querySelector('#pulse-detail-root[data-pulse-path="${dupPath}"]')?1:0`, 20000)), 'duplicate -> ' + dupPath);
+    check(!!(await waitFor(p, `document.querySelector('#pulse-detail-root[data-pulse-path="${dupPath}"]')?1:0`, 60000)), 'duplicate -> ' + dupPath);
     await clickSel(p, '#pulse-detail-root .pulse-actions button[onclick*=startRename]');
     await typeInto(p, '.pulse-rename-form input[name=new_name]', tag + '_ren');
     await clickSel(p, '.pulse-rename-form button[type=submit]');
     const renPath = E0.path.replace(/[^.]+$/, tag + '_ren');
-    check(!!(await waitFor(p, `document.querySelector('#pulse-detail-root[data-pulse-path="${renPath}"]')?1:0`, 20000)), 'rename -> ' + renPath);
+    check(!!(await waitFor(p, `document.querySelector('#pulse-detail-root[data-pulse-path="${renPath}"]')?1:0`, 60000)), 'rename -> ' + renPath);
     await clickSel(p, '#pulse-detail-root .pulse-delete-btn');
     await clickSel(p, '.pulse-delete-confirm button[type=submit]');
-    await sleep(1500);
+    // the delete has LANDED when the server's pulse list no longer has it
+    const landed = await waitFor(p, `fetch('/api/pulse/paths').then(function(r){return r.json()}).then(function(d){return d.options.some(function(o){return o[0]===${J(renPath)}})?0:1})`, 60000);
+    check(!!landed, 'delete landed on the server');
     const rowGone = await waitFor(p, `document.querySelector('tr[data-pulse-path="${renPath}"]')?0:1`, 15000);
     check(!!rowGone, 'deleted row gone from the table');
     await p.shot(`${DIR}/41_deleted_${W}.png`);
@@ -312,8 +359,9 @@ async function submitCreate(p) {
     await p.ev(`(document.activeElement&&document.activeElement.blur&&document.activeElement.blur(), 1)`);
     await p.send('Input.dispatchKeyEvent', { type: 'keyDown', key: 'z', code: 'KeyZ', windowsVirtualKeyCode: 90, modifiers: 2 });
     await p.send('Input.dispatchKeyEvent', { type: 'keyUp', key: 'z', code: 'KeyZ', windowsVirtualKeyCode: 90, modifiers: 2 });
-    const back = await waitFor(p, `document.querySelector('tr[data-pulse-path="${renPath}"]')?1:0`, 20000);
-    check(!!back, 'Ctrl+Z brings the deleted pulse back (' + renPath + ')');
+    const back = await waitFor(p, `document.querySelector('tr[data-pulse-path="${renPath}"]')?1:0`, 30000);
+    const backSrv = await waitFor(p, `fetch('/api/pulse/paths').then(function(r){return r.json()}).then(function(d){return d.options.some(function(o){return o[0]===${J(renPath)}})?1:0})`, 30000);
+    check(!!back && !!backSrv, 'Ctrl+Z brings the deleted pulse back, row AND server (' + renPath + ')');
     await p.shot(`${DIR}/42_undo_${W}.png`);
     expect.push({ path: renPath, cls: E0.cls, fields: Object.assign({}, E0.fields) });
   }

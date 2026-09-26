@@ -234,6 +234,13 @@ def classify(
             if _subtree_collides(path, subtrees[path], orig, live_by_path):
                 conflicts.add(path)
             continue
+        if (path in live_by_path and live_by_path[path] is ABSENT
+                and any(how == "created" and covers(sp, path)
+                        for sp, how in subtrees.items())):
+            # an edit inside a subtree the user CREATED: the live chip has
+            # never had it (the subtree's own check above covers anyone
+            # else writing there)
+            continue
         if path in live_by_path and live_by_path[path] != orig:
             # The live chip moved away from what this edit started at, so the
             # other writer touched this same field. (Equal means only the user

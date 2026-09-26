@@ -273,3 +273,25 @@ class TestTheUsersOwnSubtreeIsNotACollision:
                         DiffEntry("a.c", 1, None, "modified"),
                         DiffEntry("a.d", None, 5, "added")])
         assert lv == {"a.b": ABSENT, "a.c": None, "a.d": 5}
+
+
+    def test_an_edit_inside_a_created_subtree_is_still_the_users_own(self):
+        # 2026-09-27 journey: create a pulse, then type a new amplitude into
+        # it -- the leaf edit's "original" is the value the create wrote,
+        # and the live chip has no such key at all
+        from quam_state_manager.core.sync_conflict import ABSENT
+        root = "qubits.q2.xy.operations.new"
+        v = classify(
+            live_by_path={root: ABSENT, root + ".amplitude": ABSENT},
+            change_log=[_Entry(root, None, created=True),
+                        _Entry(root + ".amplitude", 0.123)],
+        )
+        assert v.conflicts == ()
+
+    def test_a_leaf_the_live_chip_dropped_outside_any_creation_collides(self):
+        from quam_state_manager.core.sync_conflict import ABSENT
+        v = classify(
+            live_by_path={"qubits.q1.T1": ABSENT},
+            change_log=[_Entry("qubits.q1.T1", 2e-5)],
+        )
+        assert v.conflicts == ("qubits.q1.T1",)
