@@ -12,6 +12,11 @@
 <div class="pulse-status-toast pulse-status-{{ status_level }}">{{ status_msg }}</div>
 {% endif %}
 
+{% if found_at %}
+<div class="pulse-found-at muted">Found at <code>{{ found_at }}</code> &mdash;
+    not one of the places SM lists by name; recognised by its shape.</div>
+{% endif %}
+
 {% if alias_chain %}
 <div class="pulse-alias-banner">
     Opened via alias <code>{{ op_name }}</code> &rarr;

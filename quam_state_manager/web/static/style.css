@@ -10595,6 +10595,10 @@ tr.bulk-row-pinned > th, tr.bulk-row-pinned > td { background: color-mix(in srgb
 }
 .pulse-flag-iq { border-color: #9b59b6; }
 .pulse-flag-readout { border-color: #e67e22; }
+/* docs/2xx pulse locations: where a shape-discovered pulse lives */
+.pulse-found-at { font-size: 0.75em; overflow-wrap: anywhere; }
+.pulse-found-at code { font-size: inherit; padding: 0 2px; }
+div.pulse-found-at { margin: 0.2rem 0 0.4rem; }
 
 .pulse-usedby {
     display: inline-block; min-width: 1.4em; text-align: center;

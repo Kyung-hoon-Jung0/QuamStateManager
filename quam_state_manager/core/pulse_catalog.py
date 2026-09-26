@@ -922,6 +922,41 @@ def resolve_qclass(qclass: Any) -> tuple[PulseSpec | None, str | None]:
     return None, None
 
 
+def is_pulse_class(qclass: Any) -> bool:
+    """Is a ``__class__`` string a PULSE class? Used by the Pulses page's
+    shape discovery (``pulse_index._discover``) for dicts that sit OUTSIDE an
+    ``operations`` dict, where the key name promises nothing.
+
+    Evidence, strongest first:
+
+    1. the chip's probed class inventory records the class's bases -- quam's
+       ``Pulse`` among them decides YES, its absence decides NO (structural,
+       so a macro named ``...PulseMacro`` can never pass);
+    2. the catalog resolves it (exact / alias / leaf name);
+    3. the selected env's pulse roster places this exact class (the roster is
+       the env's ``Pulse`` subclass walk, so membership IS the base check);
+    4. with none of the above installed, the class leaf ends in ``Pulse`` --
+       the quam naming convention. Measured 2026-09-26 over 49 real chip
+       states: 60 distinct classes, every pulse class ends in ``Pulse`` and no
+       non-pulse class does (ports, channels, macros, transmons, roots).
+    """
+    if not isinstance(qclass, str) or not qclass:
+        return False
+    crec = (_CHIP_CLASSES or {}).get(qclass)
+    if isinstance(crec, dict) and isinstance(crec.get("bases"), (list, tuple)):
+        return _PULSE_BASE in crec["bases"]
+    if resolve_qclass(qclass)[0] is not None:
+        return True
+    leaf = qclass.rsplit(".", 1)[-1]
+    roster = _ENV_OVERLAY or {}
+    rec = roster.get(leaf)
+    if isinstance(rec, dict) and "." in qclass and (
+            rec.get("canonical") == qclass
+            or qclass.rsplit(".", 1)[0] in (rec.get("homes") or [])):
+        return True
+    return leaf.endswith("Pulse") and leaf != "Pulse"
+
+
 def by_qclass(qclass: str) -> PulseSpec | None:
     """Resolve a ``__class__`` string (or bare key) to its spec, or None."""
     return resolve_qclass(qclass)[0]

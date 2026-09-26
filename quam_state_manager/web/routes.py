@@ -13336,7 +13336,34 @@ _PULSE_PLOT_MAX_POINTS = 2000
 
 
 def _is_pulse_path(path: str) -> bool:
-    return isinstance(path, str) and any(rx.match(path) for rx in _PULSE_PATH_RES)
+    """A path the pulse endpoints may act on: one of the whitelisted shapes,
+    or a pulse the open chip's index DISCOVERED by shape (docs/2xx pulse
+    locations -- ``qubit_pairs.<p>.coupler.operations.*``, a TWPA pump, a
+    lab's new macro slot). Still never an arbitrary dot path: a discovered
+    path is one ``pulse_index.list_pulses`` made a row for."""
+    if not isinstance(path, str):
+        return False
+    if any(rx.match(path) for rx in _PULSE_PATH_RES):
+        return True
+    try:
+        idx = _pulse_index()
+    except Exception:  # noqa: BLE001 -- outside a request: whitelist only
+        return False
+    return bool(idx is not None and idx.has_path(path))
+
+
+def _pulse_is_renamable(path: str) -> bool:
+    """Rename / duplicate: a NAMED op of an ``operations`` dict. The two
+    whitelisted channel shapes, or a discovered row the index marks renamable
+    (a slot such as ``flux_pulse_control`` is its macro's schema field)."""
+    if _PULSE_PATH_RES[0].match(path) or _PULSE_PATH_RES[2].match(path):
+        return True
+    try:
+        idx = _pulse_index()
+        row = idx.row(path) if idx is not None else None
+    except Exception:  # noqa: BLE001
+        return False
+    return bool(row and row.get("found") and row.get("renamable"))
 
 
 _PAIR_MACRO_PULSE_RE = re.compile(
@@ -13525,6 +13552,9 @@ def _pulse_rows_filter(rows: list, channel: str, query: str,
         rows = [r for r in rows if r["owner_kind"] == "pair" and r["channel"] in PAIR_PULSE_CHANNELS]
     elif channel in ("xy", "z", "resonator", "xy_detuned"):
         rows = [r for r in rows if r["owner_kind"] == "qubit" and r["channel"] == channel]
+    elif channel == "found":
+        # docs/2xx: pulses discovered by shape, outside the whitelisted places
+        rows = [r for r in rows if r.get("found")]
     # SERVER-side search across the WHOLE library (not just the current page --
     # the old client filter only saw the 50 rendered rows, so qubits on later
     # pages were unfindable). Shared grammar (docs/96): space = AND, standalone
@@ -13541,6 +13571,7 @@ def _pulse_rows_filter(rows: list, channel: str, query: str,
             return " ".join(str(x) for x in (
                 r.get("owner"), r.get("op_name"), r.get("class_short"),
                 r.get("channel"), r.get("alias_target"), r.get("summary"),
+                r.get("location"),
             ) if x).lower()
         rows = [r for r in rows if _sq_match(_hay(r), grps)]
     return rows
@@ -13623,6 +13654,7 @@ def pulses_page():
     has_pair_drive = any(r["owner_kind"] == "pair"
                          and r["channel"] in PAIR_PULSE_CHANNELS
                          for r in all_rows)
+    has_found = any(r.get("found") for r in all_rows)
     all_rows = _pulse_rows_filter(all_rows, channel, query, owner)
 
     page_rows, total, page, total_pages = _paginate(all_rows, page, per_page)
@@ -13699,6 +13731,7 @@ def pulses_page():
             per_page=per_page,
             has_pair_flux=has_pair_flux,
             has_pair_drive=has_pair_drive,
+            has_found=has_found,
         ),
     )
 
@@ -14013,7 +14046,10 @@ def _pulse_section_ctx(store, pulse_index, path: str):
                           else prev_links.get(f"{actual_path}.{fname}")),
         })
 
-    is_qubit_op = bool(_PULSE_PATH_RES[0].match(path))
+    # docs/2xx: a discovered op in an `operations` dict renames like a qubit
+    # op; the whitelisted rows keep exactly the button set they always had
+    is_qubit_op = bool(_PULSE_PATH_RES[0].match(path)
+                       or (row.get("found") and row.get("renamable")))
     used_by_target = pulse_index.used_by(actual_path)
     delete_used_by = (pulse_index.used_by(path) if alias_chain
                       else used_by_target)
@@ -14097,6 +14133,8 @@ def _pulse_section_ctx(store, pulse_index, path: str):
         "lab_warnings": (lab.get("warnings") or []) if plot_source == "lab" else [],
         "lab_canonical": lab.get("canonical") if plot_source == "lab" else None,
         "can_rename": is_qubit_op and not alias_chain,
+        # docs/2xx pulse locations: where a shape-discovered pulse lives
+        "found_at": row.get("location") if row.get("found") else None,
         "plot": plot,
         "label": f"{row['owner']} · {row['channel']} · {row['op_name']}",
     }
@@ -15697,7 +15735,7 @@ def api_pulse_duplicate():
     # Channel operations only (qubit channels + pair CR/ZZ drive channels) —
     # a gate FLUX SLOT (flux_pulse_qubit) is schema, not a named op: renaming
     # or duplicating it would corrupt the macro shape.
-    if not (_PULSE_PATH_RES[0].match(path) or _PULSE_PATH_RES[2].match(path)):
+    if not _pulse_is_renamable(path):
         return render_template(
             "_status.html",
             message="Duplicate applies to channel operations only",
@@ -15751,7 +15789,7 @@ def api_pulse_rename():
     # Channel operations only — see api_pulse_duplicate. Retarget-on-rename is
     # what keeps the target-xy cancellation stubs' pointers into a renamed CR
     # drive op from silently dangling.
-    if not (_PULSE_PATH_RES[0].match(path) or _PULSE_PATH_RES[2].match(path)):
+    if not _pulse_is_renamable(path):
         return render_template(
             "_status.html",
             message="Rename applies to channel operations only",
@@ -15845,7 +15883,7 @@ def _config_op_for_pulse_path(config: dict, path: str,
 
     m = _PULSE_PATH_RES[1].match(path)
     if not m:
-        return None, None
+        return _config_op_for_found_path(config, path, state)
     parts = path.split(".")
     pair_name, gate, slot = parts[1], parts[3], parts[4]
     # r16 0-1: derive members from the pair's REFS (cr_semantics doctrine —
@@ -15882,6 +15920,32 @@ def _config_op_for_pulse_path(config: dict, path: str,
         exact = [c for c in candidates if pair_name in c[1]]
         if len(exact) == 1:
             return exact[0]
+    return None, None
+
+
+def _config_op_for_found_path(config: dict, path: str,
+                              state: dict | None) -> tuple[str | None, str | None]:
+    """docs/2xx pulse locations: a shape-discovered op ``<component>.operations.<op>``
+    maps to the config element the component became -- its ``id`` when it has
+    one, else quam's ``<parent>.<attr>`` name (``q1.xy2``, ``twpaA.pump``) --
+    and ONLY when the generated config actually has that element. A slot
+    outside an ``operations`` dict has no name of its own in the config, so it
+    is never guessed (None, None)."""
+    parts = path.split(".")
+    if len(parts) < 4 or parts[-2] != "operations":
+        return None, None
+    elements = (config or {}).get("elements") or {}
+    comp = state or {}
+    for seg in parts[:-2]:
+        comp = comp.get(seg) if isinstance(comp, dict) else None
+    cands = []
+    cid = comp.get("id") if isinstance(comp, dict) else None
+    if isinstance(cid, str) and cid:
+        cands.append(cid)
+    cands.append(f"{parts[-4]}.{parts[-3]}")
+    for elem in cands:
+        if elem in elements:
+            return elem, parts[-1]
     return None, None
 
 
@@ -16008,7 +16072,10 @@ def _pulse_truth_lookup(store, path):
         # docs/190 F49: only the pair-GATE branch guesses. The qubit and
         # pair-drive branches read the op name straight off the path, so a miss
         # there really does mean the config has never heard of this pulse.
-        return {"status": "not-matched" if _PULSE_PATH_RES[1].match(path)
+        # A discovered slot outside an `operations` dict (docs/2xx) is never
+        # guessed either: SM could not match it, which is not "absent".
+        return {"status": "not-matched" if (_PULSE_PATH_RES[1].match(path)
+                                             or path.split(".")[-2:-1] != ["operations"])
                 else "not-found"}
 
     # The qubit-op matcher returns op_name straight from the path without

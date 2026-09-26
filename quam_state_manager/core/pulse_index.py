@@ -135,15 +135,32 @@ def _op_path_of(target: str) -> str | None:
     return None
 
 
-def build_op_referrers(reverse_index: dict[str, list[str]]) -> dict[str, list[str]]:
+def _found_op_of(target: str, found: frozenset | set | None) -> str | None:
+    """The DISCOVERED pulse path a pointer *target* is, or lies inside (the
+    longest match). O(depth) per target; None when *found* is empty."""
+    if not found:
+        return None
+    segs = target.split(".")
+    for n in range(len(segs), 1, -1):
+        cand = ".".join(segs[:n])
+        if cand in found:
+            return cand
+    return None
+
+
+def build_op_referrers(reverse_index: dict[str, list[str]],
+                       found: frozenset | set | None = None) -> dict[str, list[str]]:
     """Forward ``{op_path → [external referrers]}`` over the whole chip in ONE
     pass, so :func:`list_pulses` is O(rows + targets) instead of calling
     :func:`used_by` (O(targets)) per row. Internal self-refs are excluded.
     ``_op_path_of`` maps both a field target and the op node itself (an alias
-    target) to the same 5-segment op path."""
+    target) to the same 5-segment op path; *found* (the shape-discovered
+    pulse paths, docs/2xx) is consulted only when that static map misses."""
     out: dict[str, set] = {}
     for target, holders in reverse_index.items():
         op = _op_path_of(target)
+        if op is None:
+            op = _found_op_of(target, found)
         if op is None:
             continue
         prefix = op + "."
@@ -207,6 +224,12 @@ def _row_for_pulse(merged: dict, path: str, body: Any, *,
         "used_by": (op_referrers.get(path, []) if op_referrers is not None
                     else (used_by(merged, path, reverse_index)
                           if reverse_index is not None else [])),
+        # docs/2xx pulse locations: a NAMED op in an ``operations`` dict can be
+        # renamed / duplicated beside itself; a slot (``flux_pulse_qubit``) is
+        # a schema field of its macro and cannot.
+        "renamable": _in_operations(path),
+        "found": False,      # True = discovered by shape, outside the whitelist
+        "location": None,    # the parent path, shown as "found at <path>"
     }
 
     if is_pointer(body):
@@ -301,7 +324,130 @@ def _row_for_pulse(merged: dict, path: str, body: Any, *,
     return row
 
 
-def list_pulses(merged: dict, *, with_used_by: bool = True) -> list[dict]:
+def _in_operations(path: str) -> bool:
+    """True when *path* is a named entry of an ``operations`` dict."""
+    segs = path.split(".")
+    return len(segs) >= 2 and segs[-2] == "operations"
+
+
+# Top-level subtrees that hold no pulses by construction: the instrument side
+# (``ports``/``wiring``/``network``), and ``extras``, which SM treats as
+# free-form text everywhere (docs/81) -- a pasted note must never become a row.
+_DISCOVERY_SKIP_TOP = frozenset({"ports", "wiring", "network", "extras"})
+
+
+def _owner_of(merged: dict, segs: list[str]) -> tuple[str, str, int]:
+    """``(owner_kind, owner, n_owner_segs)`` for a discovered pulse path.
+
+    ``qubits.<q>``/``qubit_pairs.<p>`` keep the kinds the page already speaks.
+    Any other top-level key is a component: a classed one (``coupler_bus`` with
+    a ``__class__``) is its own owner; an unclassed collection (``twpas``) is
+    owned by its member (``twpaA``)."""
+    top = segs[0]
+    if top == "qubits" and len(segs) > 2:
+        return "qubit", segs[1], 2
+    if top == "qubit_pairs" and len(segs) > 2:
+        return "pair", segs[1], 2
+    node = merged.get(top)
+    if isinstance(node, dict) and "__class__" not in node and len(segs) > 2:
+        return "component", segs[1], 2
+    return "component", top, 1
+
+
+def _discover(merged: dict, known: set[str]) -> list[tuple[str, Any, dict]]:
+    """Pulses found by SHAPE, not by name (docs/2xx pulse locations).
+
+    A lab hand-adds pulses where SM's whitelist never looked (a second drive
+    channel ``xy2``, a coupler's own ``operations``, a TWPA pump, a new macro
+    slot). The rule, measured on 49 real chip states (every one of the 565
+    rows it adds outside the whitelist IS a pulse, and no
+    non-pulse class passes it):
+
+    R1  every entry of an ``operations`` dict that is a dict carrying a
+        ``__class__`` (quam's contract: ``Channel.operations`` is
+        ``Dict[str, Pulse]``), or a ``#`` pointer string (an op alias -- the
+        same alias row the whitelisted channels already show);
+    R2  outside an ``operations`` dict: a dict whose ``__class__`` passes
+        :func:`pulse_catalog.is_pulse_class` (probed bases > catalog > env
+        roster > the ``...Pulse`` name convention).
+
+    Never rows: a dict with no ``__class__`` outside the whitelist (no evidence
+    it is a pulse), a pointer string outside ``operations`` (a gate-level alias
+    such as ``"cz": "#./cz_unipolar"`` -- still in used_by), anything under
+    :data:`_DISCOVERY_SKIP_TOP`, anything inside a list, and anything inside a
+    pulse (a pulse's own sub-dicts are its fields). Paths already enumerated by
+    the whitelist are skipped, so no row moves or duplicates.
+    """
+    from quam_state_manager.core.pulse_catalog import is_pulse_class
+
+    out: list[tuple[str, Any, dict]] = []
+    cls_memo: dict[str, bool] = {}
+
+    def pulse_cls(c: Any) -> bool:
+        if not isinstance(c, str):
+            return False
+        hit = cls_memo.get(c)
+        if hit is None:
+            hit = cls_memo[c] = is_pulse_class(c)
+        return hit
+
+    def add(path: str, body: Any, segs: list[str], in_ops: bool) -> None:
+        kind, owner, n = _owner_of(merged, segs)
+        rel = segs[n:]
+        gate = None
+        if in_ops:
+            channel = ".".join(rel[:-2]) or segs[-3]
+            op_name = segs[-1]
+        elif kind == "pair" and len(rel) >= 3 and rel[0] == "macros":
+            # a new macro slot: named like the whitelisted gate slots are
+            gate = rel[1]
+            channel = ".".join(rel[2:])
+            op_name = f"{gate}.{channel}"
+        else:
+            channel = ".".join(rel[:-1]) or segs[-1]
+            op_name = segs[-1]
+        out.append((path, body, dict(
+            owner_kind=kind, owner=owner, channel=channel, op_name=op_name,
+            gate=gate, location=".".join(segs[:-1]))))
+
+    def walk(node: dict, segs: list[str]) -> None:
+        for key, val in node.items():
+            if not isinstance(val, dict):
+                continue
+            kseg = segs + [key]
+            if key == "operations":
+                for op, body in val.items():
+                    if not isinstance(op, str):
+                        continue
+                    osegs = kseg + [op]
+                    p = ".".join(osegs)
+                    if p in known:
+                        continue
+                    if isinstance(body, dict) and isinstance(body.get("__class__"), str):
+                        add(p, body, osegs, True)
+                    elif is_pointer(body):
+                        add(p, body, osegs, True)
+                    elif isinstance(body, dict):
+                        walk(body, osegs)  # an unclassed dict: not a pulse, look inside
+                continue
+            if pulse_cls(val.get("__class__")):
+                p = ".".join(kseg)
+                if p not in known:
+                    add(p, val, kseg, False)
+                continue  # a pulse's sub-dicts are its fields, never pulses
+            walk(val, kseg)
+
+    for top, node in merged.items():
+        if top in _DISCOVERY_SKIP_TOP or not isinstance(node, dict):
+            continue
+        if pulse_cls(node.get("__class__")):
+            continue  # a top-level pulse has no owner to name; not a quam shape
+        walk({top: node}, [])
+    return out
+
+
+def list_pulses(merged: dict, *, with_used_by: bool = True,
+                discover: bool = True) -> list[dict]:
     """Flat row list of every pulse-shaped node in the chip (see module doc).
 
     ``with_used_by=False`` skips building the reverse-pointer index (the single
@@ -311,8 +457,10 @@ def list_pulses(merged: dict, *, with_used_by: bool = True) -> list[dict]:
     big speed-up.
     """
     reverse_index = build_reverse_pointer_index(merged) if with_used_by else None
-    op_referrers = build_op_referrers(reverse_index) if reverse_index is not None else None
-    rows: list[dict] = []
+    # (path, body, kwargs) first; rows are built once the discovered paths are
+    # known, because the used_by map needs them (a pointer INTO a discovered
+    # pulse maps to that pulse's row).
+    pending: list[tuple[str, Any, dict]] = []
 
     for qubit_name, qubit in (merged.get("qubits") or {}).items():
         if not isinstance(qubit, dict):
@@ -326,10 +474,8 @@ def list_pulses(merged: dict, *, with_used_by: bool = True) -> list[dict]:
                 continue
             for op_name, body in operations.items():
                 path = f"qubits.{qubit_name}.{channel}.operations.{op_name}"
-                rows.append(_row_for_pulse(
-                    merged, path, body, owner_kind="qubit", owner=qubit_name,
-                    channel=channel, op_name=op_name, gate=None,
-                    reverse_index=reverse_index, op_referrers=op_referrers))
+                pending.append((path, body, dict(owner_kind="qubit", owner=qubit_name,
+                    channel=channel, op_name=op_name, gate=None)))
 
         # docs/136 — the QDAC trigger marker. It is a real pulse on a real OPX
         # digital output, but it lives one level deeper than any other qubit
@@ -348,11 +494,9 @@ def list_pulses(merged: dict, *, with_used_by: bool = True) -> list[dict]:
                 for op_name, body in trig_ops.items():
                     path = (f"qubits.{qubit_name}.{bias_field}"
                             f".opx_trigger_out.operations.{op_name}")
-                    rows.append(_row_for_pulse(
-                        merged, path, body, owner_kind="qubit", owner=qubit_name,
+                    pending.append((path, body, dict(owner_kind="qubit", owner=qubit_name,
                         channel=f"{bias_field}.opx_trigger_out", op_name=op_name,
-                        gate=None, reverse_index=reverse_index,
-                        op_referrers=op_referrers))
+                        gate=None)))
 
     for pair_name, pair in (merged.get("qubit_pairs") or {}).items():
         if not isinstance(pair, dict):
@@ -370,10 +514,8 @@ def list_pulses(merged: dict, *, with_used_by: bool = True) -> list[dict]:
                     if body is None:
                         continue  # declared-but-empty coupler slot
                     path = f"qubit_pairs.{pair_name}.macros.{gate_name}.{slot}"
-                    rows.append(_row_for_pulse(
-                        merged, path, body, owner_kind="pair", owner=pair_name,
-                        channel=slot, op_name=f"{gate_name}.{slot}", gate=gate_name,
-                        reverse_index=reverse_index, op_referrers=op_referrers))
+                    pending.append((path, body, dict(owner_kind="pair", owner=pair_name,
+                        channel=slot, op_name=f"{gate_name}.{slot}", gate=gate_name)))
         # Pair drive channels (CR/ZZ): every op is a real pulse row — sparkline,
         # detail, synth, used_by (the target-xy cancel stubs point in here).
         for channel in PAIR_PULSE_CHANNELS:
@@ -385,11 +527,26 @@ def list_pulses(merged: dict, *, with_used_by: bool = True) -> list[dict]:
                 continue
             for op_name, body in operations.items():
                 path = f"qubit_pairs.{pair_name}.{channel}.operations.{op_name}"
-                rows.append(_row_for_pulse(
-                    merged, path, body, owner_kind="pair", owner=pair_name,
-                    channel=channel, op_name=op_name, gate=None,
-                    reverse_index=reverse_index, op_referrers=op_referrers))
+                pending.append((path, body, dict(owner_kind="pair", owner=pair_name,
+                    channel=channel, op_name=op_name, gate=None)))
 
+    known = {p for p, _b, _k in pending}
+    # docs/2xx: ``discover=False`` is the whitelist alone -- the pin that the
+    # shape discovery never moves, alters or duplicates an existing row
+    found = _discover(merged, known) if discover else []
+    op_referrers = (build_op_referrers(
+        reverse_index, frozenset(p for p, _b, _k in found) or None)
+        if reverse_index is not None else None)
+    rows = [_row_for_pulse(merged, p, b, reverse_index=reverse_index,
+                           op_referrers=op_referrers, **kw)
+            for p, b, kw in pending]
+    for p, b, kw in found:
+        loc = kw.pop("location")
+        row = _row_for_pulse(merged, p, b, reverse_index=reverse_index,
+                             op_referrers=op_referrers, **kw)
+        row["found"] = True
+        row["location"] = loc
+        rows.append(row)
     return rows
 
 
@@ -493,6 +650,7 @@ class PulseIndex:
         # search / pagination over an unchanged chip pay zero re-synth.
         self._spark: dict[str, str | None] = {}
         self._spark_seq: int = -1
+        self._by_path: tuple[list, dict] | None = None
 
     def invalidate(self) -> None:
         self._rows = None
@@ -521,6 +679,18 @@ class PulseIndex:
                 self._reverse = None  # rebuilt lazily at the same seq
                 self._seq = self.store.mutation_seq
             return self._rows
+
+    def row(self, path: str) -> dict | None:
+        """The row at *path* (O(1), built once per rows() list)."""
+        with self.store._lock:
+            rows = self.rows()
+            by = self._by_path
+            if by is None or by[0] is not rows:
+                by = self._by_path = (rows, {r["path"]: r for r in rows})
+            return by[1].get(path)
+
+    def has_path(self, path: str) -> bool:
+        return self.row(path) is not None
 
     def reverse_index(self) -> dict[str, list[str]]:
         with self.store._lock:

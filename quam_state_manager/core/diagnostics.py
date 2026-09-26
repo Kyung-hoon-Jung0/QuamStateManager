@@ -1292,6 +1292,18 @@ def _starting_output_ref(merged: dict, row: dict) -> str | None:
     kind, owner, channel = row.get("owner_kind"), row.get("owner"), row.get("channel")
 
     comp_path: str | None = None
+    path = row.get("path") or ""
+    if row.get("found"):
+        # docs/2xx pulse locations: a shape-discovered op plays through the
+        # component that holds its `operations` dict (a coupler, a TWPA pump,
+        # a second drive line). A discovered macro slot has no channel of its
+        # own to name, so it is never guessed -- no port, no range finding.
+        segs = path.split(".")
+        if len(segs) >= 3 and segs[-2] == "operations":
+            comp = _get_by_dotpath(merged, ".".join(segs[:-2]))
+            if isinstance(comp, dict) and isinstance(comp.get("opx_output"), str):
+                return comp["opx_output"]
+        return None
     if kind == "qubit":
         comp_path = f"qubits.{owner}.{channel}"
     elif kind == "pair" and channel == "coupler_flux_pulse":
