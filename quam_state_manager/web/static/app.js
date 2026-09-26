@@ -15597,6 +15597,76 @@ function _closePlotPopupIfDone() {
 // every keystroke/apply. The full lint (waveform DAC synthesis) is ~130 ms on a
 // 21-qubit chip, so firing it per edit made rapid editing crawl; the badge/banner
 // don't need to be instant (they reflect the latest state when they do run).
+/* The crash banner arrives LATE (lazy fetch, ~1 s after load, or after any
+   edit re-lints). Dropped into the flow above the layout it pushed the whole
+   page down ~87 px, and a click aimed at a Pulses row just then opened the
+   pulse two rows away (verifier P3, w7/adaptive). Never move content under
+   the pointer:
+     - a banner the slot had RESERVED space for (base.html's inline script puts
+       a same-size placeholder there when this tab last saw a banner) renders
+       in the flow -- the placeholder and the banner trade places, no shift;
+     - an UNRESERVED banner floats as a bottom-left overlay (slot class
+       diag-banner-overlay, zero layout height) and DOCKS into the flow at the
+       first moment a shift cannot move anything under the pointer: the main
+       pane is being replaced anyway (#table-pane swap), the pointer is over
+       the head block the slot closes (nothing there moves), or the tab is
+       hidden. Docking remembers the size, so the next load reserves it.
+   The remembered size lives in sessionStorage (per tab, a layout hint only;
+   absent or unreadable => overlay, never a shift). */
+var DIAG_BANNER_H_KEY = 'quam_diag_banner_h';
+function _diagBannerSlotSwapped(slot) {
+    var b = slot.querySelector('.diag-error-banner');
+    var dismissed = false;
+    // the banner's own inline script hides a dismissed banner, but htmx may run
+    // it after this hook -- read the same dismissal signature here
+    try {
+        dismissed = !!b && sessionStorage.getItem('quam_diag_banner_dismissed') === (b.getAttribute('data-diag-sig') || '');
+    } catch (e) {}
+    var shown = !!(b && !b.hidden && !dismissed);
+    var reserved = slot.getAttribute('data-reserved') === '1';
+    slot.removeAttribute('data-reserved');
+    if (!shown) {
+        slot.classList.remove('diag-banner-overlay');
+        slot.removeAttribute('data-mode');
+        try { sessionStorage.removeItem(DIAG_BANNER_H_KEY); } catch (e) {}
+        return;
+    }
+    var mode = (reserved || slot.getAttribute('data-mode') === 'flow') ? 'flow' : 'overlay';
+    slot.setAttribute('data-mode', mode);
+    slot.classList.toggle('diag-banner-overlay', mode === 'overlay');
+    // only an in-flow banner's height is what a reservation must hold (the
+    // floating one wraps at its own narrower width)
+    var h = mode === 'flow' ? b.offsetHeight : 0;
+    if (h > 0) {
+        try { sessionStorage.setItem(DIAG_BANNER_H_KEY, String(h)); } catch (e) {}
+    }
+}
+function _diagBannerDock() {
+    var slot = document.getElementById('diagnostics-banner-slot');
+    if (!slot || slot.getAttribute('data-mode') !== 'overlay') return;
+    slot.classList.remove('diag-banner-overlay');
+    slot.setAttribute('data-mode', 'flow');
+    var b = slot.querySelector('.diag-error-banner');
+    var h = b ? b.offsetHeight : 0;
+    if (h > 0) {
+        try { sessionStorage.setItem(DIAG_BANNER_H_KEY, String(h)); } catch (e) {}
+    }
+}
+window._diagBannerSlotSwapped = _diagBannerSlotSwapped;
+window._diagBannerDock = _diagBannerDock;
+document.addEventListener('htmx:afterSwap', function (evt) {
+    var t = evt.detail && evt.detail.target;
+    if (t && t.id === 'diagnostics-banner-slot') _diagBannerSlotSwapped(t);
+    else if (t && t.id === 'table-pane') _diagBannerDock();
+});
+document.addEventListener('pointerover', function (evt) {
+    var t = evt.target;
+    if (t && t.closest && t.closest('.shell-head')
+            && !t.closest('#diagnostics-banner-slot')) _diagBannerDock();
+});
+document.addEventListener('visibilitychange', function () {
+    if (document.visibilityState === 'hidden') _diagBannerDock();
+});
 var _diagChangedTimer = null;
 window._diagChanged = function () {
     if (!window.htmx) return;
@@ -21685,8 +21755,19 @@ function _pulsesSyncUrl(push) {
     var info = document.querySelector("#pulses-rows-wrap [data-current-page]");
     var cur = info ? (info.getAttribute("data-current-page") || "") : "";
     if (cur && cur !== "1") parts.push("page=" + cur);
-    var pp = document.querySelector("select[name='per_page']");
-    if (pp && pp.value && pp.value !== "50") parts.push("per_page=" + pp.value);
+    // The page-size <select> in _pagination.html carries NO name attribute, so
+    // the old select[name='per_page'] lookup never matched and every rows /
+    // inspector swap dropped per_page from the URL ("All" -> open a pulse ->
+    // reload came back at 50 rows). Read the picker itself; with no picker
+    // rendered, fall back to the per_page the rows wrap itself refetches with.
+    var ppSel = document.querySelector("#pulses-rows-wrap .page-size-picker select");
+    var ppVal = ppSel ? ppSel.value : "";
+    if (!ppVal) {
+        var wrap = document.getElementById("pulses-rows-wrap");
+        var wm = wrap ? (wrap.getAttribute("hx-get") || "").match(/[?&]per_page=(\d+)/) : null;
+        if (wm) ppVal = wm[1];
+    }
+    if (ppVal && ppVal !== "50") parts.push("per_page=" + ppVal);
     // docs/190 F34/F39: the open pulse IS what the reader is looking at, and it
     // was the one thing the URL did not carry -- a reload, a Back, or a link
     // sent to a colleague came back to an empty inspector beside the right

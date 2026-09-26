@@ -5220,6 +5220,22 @@ a.topo-health-tile:hover { background: var(--pico-card-sectioning-background-col
    an ancestor-position :has() is what froze Trends (QA F6, test_topbar_twerk).
    Merged at integration (fix/qa2-dg-nav x fix/qa2-ds-table). */
 html.diag-page-live #diagnostics-banner-slot { display: none; }
+/* The late banner never moves the page under the pointer (app.js
+   _diagBannerSlotSwapped). Reserved: an invisible same-size placeholder holds
+   the space until the banner replaces it. Unreserved: the banner floats at
+   the bottom-left (the slot takes no height; the toast sink is bottom-right)
+   until app.js docks it into the flow at a moment nothing can move under the
+   pointer. */
+.diag-banner-placeholder {
+    visibility: hidden; animation: none; box-sizing: border-box;
+    padding-top: 0; padding-bottom: 0;
+}
+#diagnostics-banner-slot.diag-banner-overlay { height: 0; }
+#diagnostics-banner-slot.diag-banner-overlay > .diag-error-banner {
+    position: fixed; left: 1rem; bottom: 1rem; margin: 0;
+    max-width: min(760px, calc(100vw - 2rem)); z-index: 60;
+    box-shadow: 0 6px 20px rgba(0, 0, 0, 0.28);
+}
 
 /* Live-drift banner — the accumulating "N params changed on the live chip"
    notice. Info (cyan) accent to set it apart from the amber out-of-band

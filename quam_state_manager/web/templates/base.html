@@ -332,6 +332,23 @@
          hx-get="/diagnostics/banner"
          hx-trigger="load, diagnostics-changed from:body delay:500ms"
          hx-swap="innerHTML"></div>
+    {# The banner arrives ~1 s late; reserve the space this tab last saw it take
+       so its arrival moves nothing (app.js _diagBannerSlotSwapped: an
+       unreserved banner overlays instead of pushing the page under the pointer). #}
+    <script>
+    (function () {
+        var slot = document.getElementById('diagnostics-banner-slot');
+        var h = 0;
+        try { h = parseInt(sessionStorage.getItem('quam_diag_banner_h') || '0', 10) || 0; } catch (e) {}
+        if (!slot || h <= 0) return;
+        var ph = document.createElement('div');
+        ph.className = 'topo-change-banner diag-error-banner diag-banner-placeholder';
+        ph.setAttribute('aria-hidden', 'true');
+        ph.style.height = h + 'px';
+        slot.appendChild(ph);
+        slot.setAttribute('data-reserved', '1');
+    })();
+    </script>
     </div>{# /.shell-head #}
     <div class="app-layout">
         <aside id="sidebar">
