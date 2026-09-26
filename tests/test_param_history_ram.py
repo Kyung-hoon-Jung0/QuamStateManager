@@ -312,6 +312,12 @@ def test_differ_diff_order_and_content_unchanged(monkeypatch):
             b[f"q{rng.randrange(12)}.p{rng.randrange(12)}.{rng.choice(['__class__', 'v'])}"] = rng.random()
         for k in rng.sample(sorted(b), 10):
             b[k] = rng.random()
+        # equal by == but not by type: _values_equal says DIFFERENT
+        a["t.int_float"], b["t.int_float"] = 1, 1.0
+        a["t.bool_int"], b["t.bool_int"] = True, 1
+        a["t.nan"], b["t.nan"] = float("nan"), float("nan")
+        a["t.tol"], b["t.tol"] = 1.0, 1.0 + 1e-15          # within tolerance: equal
+        a["q3.__class__"], b["q3.__class__"] = "A", "B"   # ignored even though it differs
         old = []
         for key in sorted(b.keys() - a.keys(), key=natural_key):
             if _leaf_key(key) not in _DEFAULT_IGNORE:

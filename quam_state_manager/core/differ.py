@@ -432,22 +432,42 @@ class Differ:
 # ======================================================================
 
 
+_MISSING = object()
+
+
 def _classify(flat_a: dict[str, Any], flat_b: dict[str, Any],
               float_tolerance: float, ignore: set[str]):
     """Yield ``(dot_path, change_type)`` for every difference between two
-    flat sides, unordered -- the one classification :meth:`Differ.diff` and
-    :meth:`Differ.summary_between` share."""
-    for key in flat_b.keys() - flat_a.keys():
-        if _leaf_key(key) not in ignore:
-            yield key, "added"
-    for key in flat_a.keys() - flat_b.keys():
-        if _leaf_key(key) not in ignore:
-            yield key, "removed"
-    for key in flat_a.keys() & flat_b.keys():
+    flat sides -- the one classification :meth:`Differ.diff` and
+    :meth:`Differ.summary_between` share.
+
+    UNORDERED (``diff`` sorts by the natural key, which is unique per path).
+    One pass over *flat_b* with a lookup into *flat_a* instead of three set
+    operations over ~300k keys (RAM P8); the removed side is only computed
+    when *flat_a* has keys *flat_b* lacks."""
+    get = flat_a.get
+    common = 0
+    for key, vb in flat_b.items():
+        va = get(key, _MISSING)
+        if va is _MISSING:
+            if _leaf_key(key) not in ignore:
+                yield key, "added"
+            continue
+        common += 1
+        # same type and == is exactly the case _values_equal answers True
+        # for (every branch of it); checked first because it is nearly every
+        # key, and the ignore test only matters for a key that differs
+        if type(va) is type(vb) and va == vb:
+            continue
+        if _values_equal(va, vb, float_tolerance):
+            continue
         if _leaf_key(key) in ignore:
             continue
-        if not _values_equal(flat_a[key], flat_b[key], float_tolerance):
-            yield key, "modified"
+        yield key, "modified"
+    if common < len(flat_a):
+        for key in flat_a.keys() - flat_b.keys():
+            if _leaf_key(key) not in ignore:
+                yield key, "removed"
 
 
 def _leaf_key(dot_path: str) -> str:
