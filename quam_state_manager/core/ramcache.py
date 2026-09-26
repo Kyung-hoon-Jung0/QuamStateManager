@@ -420,32 +420,49 @@ class KeyedMemo:
             }
 
 
+_WIN_RSS_API: list = []
+
+
+def _win_rss_api():
+    """(struct class, GetCurrentProcess, GetProcessMemoryInfo), built ONCE.
+    Built per call it leaked: ``ctypes.POINTER(<a fresh class>)`` is cached
+    in ``ctypes._pointer_type_cache`` for the life of the process, so every
+    ``GET /debug/ram`` grew the heap by ~8 KB (measured, tracemalloc)."""
+    if not _WIN_RSS_API:
+        import ctypes
+        from ctypes import wintypes
+
+        class _PMC(ctypes.Structure):
+            _fields_ = [("cb", wintypes.DWORD), ("PageFaultCount", wintypes.DWORD),
+                        ("PeakWorkingSetSize", ctypes.c_size_t),
+                        ("WorkingSetSize", ctypes.c_size_t),
+                        ("QuotaPeakPagedPoolUsage", ctypes.c_size_t),
+                        ("QuotaPagedPoolUsage", ctypes.c_size_t),
+                        ("QuotaPeakNonPagedPoolUsage", ctypes.c_size_t),
+                        ("QuotaNonPagedPoolUsage", ctypes.c_size_t),
+                        ("PagefileUsage", ctypes.c_size_t),
+                        ("PeakPagefileUsage", ctypes.c_size_t)]
+        k32 = ctypes.WinDLL("kernel32", use_last_error=True)
+        psapi = ctypes.WinDLL("psapi", use_last_error=True)
+        gcp = k32.GetCurrentProcess
+        gcp.restype = wintypes.HANDLE
+        gpmi = psapi.GetProcessMemoryInfo
+        gpmi.argtypes = [wintypes.HANDLE, ctypes.POINTER(_PMC), wintypes.DWORD]
+        _WIN_RSS_API.append((_PMC, gcp, gpmi))
+    return _WIN_RSS_API[0]
+
+
 def process_rss_bytes() -> int | None:
     """This process's resident set (working set on Windows), or ``None`` when
     the platform will not say. Stdlib only: psutil is not a dependency."""
     try:
         if os.name == "nt":
             import ctypes
-            from ctypes import wintypes
 
-            class _PMC(ctypes.Structure):
-                _fields_ = [("cb", wintypes.DWORD), ("PageFaultCount", wintypes.DWORD),
-                            ("PeakWorkingSetSize", ctypes.c_size_t),
-                            ("WorkingSetSize", ctypes.c_size_t),
-                            ("QuotaPeakPagedPoolUsage", ctypes.c_size_t),
-                            ("QuotaPagedPoolUsage", ctypes.c_size_t),
-                            ("QuotaPeakNonPagedPoolUsage", ctypes.c_size_t),
-                            ("QuotaNonPagedPoolUsage", ctypes.c_size_t),
-                            ("PagefileUsage", ctypes.c_size_t),
-                            ("PeakPagefileUsage", ctypes.c_size_t)]
-            pmc = _PMC()
-            pmc.cb = ctypes.sizeof(_PMC)
-            k32 = ctypes.WinDLL("kernel32", use_last_error=True)
-            psapi = ctypes.WinDLL("psapi", use_last_error=True)
-            k32.GetCurrentProcess.restype = wintypes.HANDLE
-            psapi.GetProcessMemoryInfo.argtypes = [wintypes.HANDLE, ctypes.POINTER(_PMC),
-                                                   wintypes.DWORD]
-            if psapi.GetProcessMemoryInfo(k32.GetCurrentProcess(), ctypes.byref(pmc), pmc.cb):
+            api = _win_rss_api()
+            pmc = api[0]()
+            pmc.cb = ctypes.sizeof(api[0])
+            if api[2](api[1](), ctypes.byref(pmc), pmc.cb):
                 return int(pmc.WorkingSetSize)
             return None
         with open("/proc/self/statm", encoding="ascii") as f:

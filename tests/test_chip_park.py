@@ -364,3 +364,73 @@ def test_randomized_event_sequence_matches_a_cold_build(app, tmp_path):
           f"dirty={sum(routes._quam_ctx_dirty(x) for x in routes._quam_cache.values())}")
     assert checked >= 25, checked
     assert hits >= 3, "the sequence barely took a parked chip back"
+
+
+# ------------------------------------------------------------- memory pin
+def _make_sized_chip(folder: Path, n: int, pad: int) -> Path:
+    """A chip whose qubits each carry *pad* calibration floats, so three
+    chips differ in size the way big30x / big20 / krs5 do (30 / 20 / 5)."""
+    _make_chip(folder, n=n)
+    st = json.loads((folder / "state.json").read_text())
+    for i, q in enumerate(st["qubits"].values()):
+        q["extras"] = {"cal": [1.0e-6 * (i + 1) + k * 1e-9 for k in range(pad)]}
+    (folder / "state.json").write_text(json.dumps(st, indent=4))
+    return folder
+
+
+def test_ten_chip_switches_hold_memory_flat_and_debug_ram_adds_up(app, tmp_path):
+    """RAM P10 memory pin. Three chips of 30 / 20 / 5 qubits, a context LRU
+    of 2, so every switch evicts (parks) one chip and takes another back.
+
+    Budget (stated): after the first round has opened all three (and built
+    each one's search index -- a one-time cost, ~27x the file bytes on this
+    padded fixture, measured), ten more
+    switches may grow Python's traced heap by at most HALF the largest
+    chip's file bytes, and by at most 2 KB per switch past the second.
+    A switch that leaked one store would grow it by about
+    one chip's bytes per switch (a parsed store is ~1.0x its bytes, see
+    ParkedChip), i.e. ~10x the budget by the end. And at every step
+    /debug/ram's total must equal the sum of its entries' sizes, and the
+    parked memo must hold exactly what its ParkedChip entries say."""
+    import gc
+    import tracemalloc
+
+    c = app.test_client()
+    chips = [_make_sized_chip(tmp_path / "big30x", 30, 600),
+             _make_sized_chip(tmp_path / "big20", 20, 600),
+             _make_sized_chip(tmp_path / "krs5", 5, 600)]
+    biggest = max((p / "state.json").stat().st_size + (p / "wiring.json").stat().st_size
+                  for p in chips)
+    budget = biggest // 2
+    tracemalloc.start()
+    try:
+        for ch in chips:                         # round 1: everything built once,
+            _load(c, ch)["index"].search("f_01", limit=5)   # search index included
+        gc.collect()
+        base = tracemalloc.get_traced_memory()[0]
+        growth = []
+        hits0 = chip_park.PARKED.hits
+        for k in range(10):
+            ctx = _load(c, chips[k % 3])
+            ctx["index"].search("f_01", limit=5)  # use it: builds the lazy index
+            gc.collect()
+            growth.append(tracemalloc.get_traced_memory()[0] - base)
+            snap = c.get("/debug/ram").get_json()
+            assert snap["total_bytes"] == snap["entry_bytes_sum"], k
+            parked = next(m for m in snap["memos"] if m["name"] == "quam_parked")
+            assert parked["bytes"] == parked["entry_bytes_sum"], k
+            assert parked["bytes"] == sum(
+                e.value.ram_bytes() for e in chip_park.PARKED._entries.values()), k
+            assert parked["entries"] <= len(chips), k
+            assert len(routes._quam_cache) <= 2, k
+    finally:
+        tracemalloc.stop()
+    print(f"biggest={biggest} budget={budget} growth={growth}")
+    assert chip_park.PARKED.hits - hits0 >= 8, "switches did not take parked chips back"
+    assert max(growth) <= budget, (growth, budget)
+    # Slope after the one-time second-switch step: a steady per-switch leak
+    # shows here long before it reaches the absolute budget. Measured after
+    # the fix: ~0.5 KB/switch (stdlib allocator residue); a fresh ctypes
+    # prototype per /debug/ram call measured ~8 KB/switch.
+    slope = (growth[-1] - growth[1]) / (len(growth) - 2)
+    assert slope <= 2048, (slope, growth)
