@@ -63,6 +63,15 @@
             .then(function (d) {
                 clearTimeout(abortTimer); inFlight = false; failures = 0;
                 if (!d || typeof d.tick !== 'number') throw new Error('bad payload');
+                if (d.saturated) {
+                    // w7/agentsqa: a refused wait is not a reading. Its tick
+                    // and agent_seq are the server's CURRENT values with no
+                    // change reported, so adopting them as cursors swallowed
+                    // whatever moved meanwhile (a chip switch never reached an
+                    // open Agent home). Keep the cursors; ask again later.
+                    schedule(SATURATED_MS);
+                    return;
+                }
                 var handshake = (tick < 0);
                 var changed = !!d.changed && !handshake;
                 var agentChanged = !!d.agent_changed && !handshake;

@@ -56,6 +56,19 @@ const [SM, OUT, W] = [process.argv[2], process.argv[3], +process.argv[4] || 1600
   await p.send('Input.dispatchKeyEvent', { type: 'keyUp', key: 'a', code: 'KeyA', windowsVirtualKeyCode: 65, modifiers: 2 });
   await p.send('Input.insertText', { text: '정경훈' }); await sleep(300);
   console.log('actor hangul', JSON.stringify(await p.ev(`[document.querySelector('#agent-home .ag-actor').value, localStorage.getItem('quam_actor_name')]`)));
+  // verifier P1: with that name in the box, a MOUSE click on Send must still
+  // submit (a custom validity on the box used to invalidate the composer form).
+  // The real submit is stubbed: this journey must not start a chat.
+  await p.ev(`window.__sub = 0; window.__inv = 0; window.__realSubmit = AgentPanel.submit; AgentPanel.submit = function (e) { window.__sub++; if (e && e.preventDefault) e.preventDefault(); return false; };
+    document.querySelector('#agent-home .ag-actor').addEventListener('invalid', function () { window.__inv++; }); 1`);
+  await press('#agent-home .ag-input');
+  await p.send('Input.insertText', { text: 'hello' }); await sleep(300);
+  console.log('  note', JSON.stringify(await p.ev(`(document.querySelector('#agent-home .ag-actor-note') || {}).textContent || null`)));
+  await p.shot(`${OUT}/ctl_actor_note_${W}.png`);
+  await press('#agent-home .ag-send'); await sleep(600);
+  console.log('SEND CLICK', JSON.stringify(await p.ev(`JSON.stringify({ submits: window.__sub, invalid: window.__inv, formValid: document.querySelector('#agent-home .ag-composer').checkValidity() })`)));
+  await p.ev(`AgentPanel.submit = window.__realSubmit; document.querySelector('#agent-home .ag-input').value = ''; localStorage.setItem('quam_actor_name', 'qa-tester'); 1`);
+  await p.send('Page.reload'); await sleep(3500); await log('actor +reload');
 
   // 4. backend select: what it offers
   console.log('backends', await p.ev(`[...document.querySelectorAll('#agent-home .ag-backend option')].map(o => o.textContent + (o.disabled ? '(dis)' : '')).join(',')`));

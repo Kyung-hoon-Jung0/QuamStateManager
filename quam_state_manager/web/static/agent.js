@@ -860,7 +860,11 @@ window.AgentPanel = (function () {
     if (isRun) {
       api("POST", "/api/agent/plans", { run_line: text }).then(function (r) {
         var ok = r.status === 200;
-        if (!ok) toast(errText(r, "could not make the plan"), "error"); else toast("plan card ready — press Start when you mean it");
+        /* verifier P4: no success toast. The new card lands at the bottom of
+           the feed, right above the composer -- exactly where the lifted toast
+           sits -- so "plan card ready" covered the card's own Start button.
+           The card appearing IS the answer, and its Start names what it does. */
+        if (!ok) toast(errText(r, "could not make the plan"), "error");
         done(ok);
       });
       return false;

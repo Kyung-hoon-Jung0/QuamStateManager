@@ -262,8 +262,10 @@ async function main() {
   // the real one, twice in a row
   const nPlansBefore = (await feed()).json.live.plans.length;
   res = await runLine('/run 11_power_rabi q1');
-  ok('a valid /run clears the box and says a card is ready',
-     res.val === '' && res.toasts.some(t => /plan card ready/i.test(t.msg)), res);
+  // verifier P4 (w7/agentsqa): no "plan card ready" toast -- it covered the new
+  // card's Start button; the card itself is the answer (checked just below)
+  ok('a valid /run clears the box and raises no error',
+     res.val === '' && !res.toasts.some(t => /could not|error/i.test(t.msg || '')), res);
   res = await runLine('/run 11_power_rabi q1');
   await sleep(1500);
   f1 = await feed();
