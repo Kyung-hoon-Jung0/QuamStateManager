@@ -102,6 +102,28 @@ def test_state_folder_diff_equals_differ_and_follows_a_rewrite(tmp_path, seed):
     assert _rows(diff_state_folders(a, b)) == _rows(Differ().diff(a, b))
 
 
+@pytest.mark.parametrize("which", ["state", "wiring"])
+def test_state_folder_diff_follows_a_same_size_mtime_restored_rewrite(tmp_path, which):
+    """Verifier D2: a stat key -- (mtime_ns, size) -- served the old diff after
+    a same-size rewrite with the mtime put back. The memo is content-keyed, so
+    warm must equal cold after any byte change, whatever the stat says."""
+    from quam_state_manager.core.history import diff_state_folders
+    a, b = tmp_path / "a", tmp_path / "b"
+    s = {"qubits": {"q1": {"chi": -350000.0, "T1": 1e-05}}}
+    w = {"wiring": {"q1": {"xy": "#/ports/1"}}}
+    _write(a, s, w)
+    _write(b, s, w)
+    assert diff_state_folders(a, b) == []
+    p = b / f"{which}.json"
+    raw, st = p.read_bytes(), p.stat()
+    new = raw.replace(b"-350000.0", b"-350001.0") if which == "state" else raw.replace(b"ports/1", b"ports/2")
+    assert new != raw and len(new) == len(raw)
+    p.write_bytes(new)
+    os.utime(p, ns=(st.st_atime_ns, st.st_mtime_ns))
+    assert p.stat().st_mtime_ns == st.st_mtime_ns and p.stat().st_size == st.st_size
+    assert _rows(diff_state_folders(a, b)) == _rows(Differ().diff(a, b)) != []
+
+
 def _pair_of(folder):
     sb = (folder / "state.json").read_bytes()
     wb = (folder / "wiring.json").read_bytes()

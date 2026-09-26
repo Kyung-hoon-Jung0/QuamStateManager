@@ -18907,11 +18907,20 @@ def state_sync():
     # write keeps every gate: apply_to_live re-checks the live chip (mtime +
     # content) under the build lock and turns a write that raced in into the
     # usual conflict.
+    #
+    # "Not moved" is BOTH halves of the sync point apply_to_live checks: the
+    # content hash AND the (state, wiring) mtimes. A content-identical re-save
+    # (a node's machine.save(), a touch, a reformat) keeps the hash but moves
+    # the mtimes; apply_to_live then sees live_changed, cannot adopt (the
+    # working copy holds the edit, so working != live) and refuses. The pull
+    # path re-anchors the mtimes first, so that case keeps taking it (verifier
+    # D1: the fast path refused an Apply integ/w7 writes).
     if (mode == "apply" and not picks and not ctx.get("pending_reapply")
             and not ctx.get("working_dirty") and not ctx.get("staged_base")
             and wc.synced_live_hash):
         try:
-            _live_now = working_copy.live_content_hash(wc)
+            _live_now = (None if working_copy.live_changed(wc)
+                         else working_copy.live_content_hash(wc))
         except (OSError, ValueError):
             _live_now = None
         if _live_now == wc.synced_live_hash:

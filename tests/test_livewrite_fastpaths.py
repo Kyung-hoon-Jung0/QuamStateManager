@@ -107,3 +107,42 @@ def test_a_moved_live_still_pulls(tmp_path, monkeypatch):
     assert d["status"] == "ok" and pulls["n"] == 1 and d["pulled_other_changes"] is True
     live = json.loads((folder / "state.json").read_text(encoding="utf-8"))
     assert live["qubits"]["qA2"]["f_01"] == 5.3e9 and live["qubits"]["qA1"]["f_01"] == 4.85e9
+
+
+def _resave(folder: Path, how: str) -> None:
+    """A content-identical rewrite of live from outside SM: the content hash
+    stays the sync point's, the mtimes move (a node's machine.save(), a touch)."""
+    import os
+    import time
+    for name in ("state.json", "wiring.json"):
+        p = folder / name
+        if how == "reformat":
+            p.write_text(json.dumps(json.loads(p.read_text(encoding="utf-8")), indent=4),
+                         encoding="utf-8")
+        t = time.time() + 5
+        os.utime(p, (t, t))
+
+
+@pytest.mark.parametrize("how", ["touch", "reformat"])
+def test_a_content_identical_resave_of_live_then_edit_then_apply_writes(tmp_path, monkeypatch, how):
+    """Verifier D1: the fast path was gated on the content hash alone, so after
+    a same-content re-save it skipped the pull that re-anchors the sync point's
+    mtimes and apply_to_live refused (status 'conflict', live unwritten). The
+    press must write, byte-identical to the pull path (integ/w7's only path)."""
+    fast_c, fast_live, fast_ws = _client(tmp_path / "fast")
+    slow_c, slow_live, slow_ws = _client(tmp_path / "slow")
+    # one applied round first, so the sync point is SM's own write
+    assert _press(fast_c)["status"] == "ok" and _press(slow_c, slow=True)["status"] == "ok"
+    _resave(fast_live, how)
+    _resave(slow_live, how)
+    for c, path in ((fast_c, fast_live), (slow_c, slow_live)):
+        r = c.post("/field/edit", data={"dot_path": "qubits.qA1.T1", "value": "1.5e-5"})
+        assert r.status_code == 200, r.data[:200]
+    d_fast = fast_c.post("/state/sync", data={"mode": "apply", "check_collisions": "1"}).get_json()
+    d_slow = slow_c.post("/state/sync", data={"mode": "apply", "check_collisions": "1",
+                                              "picks": json.dumps({"zz.not_a_field": "mine"})}).get_json()
+    assert d_fast["status"] == "ok", d_fast
+    for k in ("status", "mode", "replay", "pulled_other_changes"):
+        assert d_fast.get(k) == d_slow.get(k), (k, d_fast.get(k), d_slow.get(k))
+    assert _files(fast_live, fast_ws) == _files(slow_live, slow_ws)
+    assert json.loads((fast_live / "state.json").read_text(encoding="utf-8"))["qubits"]["qA1"]["T1"] == 1.5e-5

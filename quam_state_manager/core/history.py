@@ -429,18 +429,16 @@ def _canonical_hash_of(state: dict, wiring: dict) -> str:
     return json_pieces.history_hash_pair(state, wiring)
 
 
-# w7/livewrite (P4): a snapshot folder is written once and never rewritten, so
-# the diff of two of them is keyed on the two folders plus the four files'
-# (mtime_ns, size) -- a restamp/replace that did rewrite one is a miss.
+# w7/livewrite (P4): the diff of two snapshot / run-state folders is kept per
+# folder pair and validated on every read against the SHA-256 digests of the
+# four files' bytes (the armored pair read doc_cache does anyway). Folders are
+# documented write-once, but a stat key -- (mtime_ns, size) -- was fooled by a
+# same-size rewrite with the mtime put back (verifier D2), so the key is the
+# content, like doc_cache and the live-diff caches.
 from quam_state_manager.core import ramcache as _ramcache  # noqa: E402
 
 _SNAP_DIFFS = _ramcache.KeyedMemo("history.snapshot_pair_diff", max_entries=64,
                                   max_bytes=16 * 1024 * 1024)
-
-
-def _snap_fp(d: Path) -> tuple:
-    st, wi = (d / "state.json").stat(), (d / "wiring.json").stat()
-    return (st.st_mtime_ns, st.st_size, wi.st_mtime_ns, wi.st_size)
 
 
 def _diff_snapshot_dirs(a: Path, b: Path, *, b_pair=None, a_hash: str | None = None,
@@ -464,8 +462,6 @@ def _diff_snapshot_dirs(a: Path, b: Path, *, b_pair=None, a_hash: str | None = N
                 _DEFAULT_IGNORE)
         if shared is not None:
             return shared
-        pa = doc_cache.read_pair(a, mode="shared")
-        pb = b_pair if b_pair is not None else doc_cache.read_pair(b, mode="shared")
         # from_dicts merges exactly as QuamStore(folder) does (deep merge on a
         # state/wiring key collision) without touching the shared dicts. The
         # diff is taken with no ignored key and then filtered the way Differ
@@ -477,16 +473,21 @@ def _diff_snapshot_dirs(a: Path, b: Path, *, b_pair=None, a_hash: str | None = N
             diff_cache.remember(a_hash, b_hash, ents)
         return [e for e in ents if _leaf_key(e.dot_path) not in _DEFAULT_IGNORE]
     try:
-        tok = (_snap_fp(Path(a)), _snap_fp(Path(b)))
-    except OSError:
+        # one armored read of each pair: the digests are the token, and the
+        # same bytes are what compute() parses (lazily, from doc_cache.PARSED)
+        pa = doc_cache.read_pair(a, mode="hash")
+        pb = b_pair if b_pair is not None else doc_cache.read_pair(b, mode="hash")
+    except (OSError, ValueError):
         return _differ.diff(a, b)
+    tok = (pa.state_digest, pa.wiring_digest, pb.state_digest, pb.wiring_digest)
     return list(_SNAP_DIFFS.get((str(a), str(b)), tok, compute))
 
 
 def diff_state_folders(a: str | Path, b: str | Path) -> list[DiffEntry]:
     """``Differ().diff(a, b)`` for two write-once ``quam_state`` folders (a run's
     saved state, a snapshot): the same entries, served from RAM on a repeat
-    while neither folder's files changed (``(mtime_ns, size)`` of all four)."""
+    while neither folder's bytes changed (SHA-256 of all four files, checked
+    on every call)."""
     return _diff_snapshot_dirs(Path(a), Path(b))
 
 
