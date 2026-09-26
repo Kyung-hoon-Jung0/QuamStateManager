@@ -155,3 +155,75 @@ class TestNeverStale:
             amp = store.merged["qubits"]["q1"]["z"]["operations"]["const"]["amplitude"]
             assert max(d["pulse"]["ideal"], key=abs) == pytest.approx(amp), step
             assert d["pulse"]["both"] == zf.pulse_response(pf, [amp] * 40)["both"], step
+
+
+class TestOneBadPortNeverTakesThePageDown:
+    """Verifier round 2: a model exception on one port was a 500 on /zline for
+    EVERY line. Now it is that line's block note."""
+
+    def test_model_exception_is_a_note_not_a_500(self, client, monkeypatch):
+        def boom(_port):
+            raise ZeroDivisionError("complex division by zero")
+        monkeypatch.setattr(zf, "_parse_port_filter", boom)
+        from quam_state_manager.web import routes
+        routes._ZLINE_MEMO.clear()
+        r = client.get("/zline", headers={"HX-Request": "true"})
+        assert r.status_code == 200
+        assert "could not model" in r.get_data(as_text=True)
+        st, d = _data(client, "qubits.q1.z")
+        assert st == 200 and "model_error" in [n["code"] for n in d["notes"]]
+        assert d["step"] is None
+
+    def test_curve_exception_is_a_note_not_a_500(self, client, monkeypatch):
+        def boom(*a, **k):
+            raise ValueError("boom")
+        monkeypatch.setattr(zf, "step_response", boom)
+        from quam_state_manager.web import routes
+        routes._ZLINE_MEMO.clear()
+        st, d = _data(client, "qubits.q1.z")
+        assert st == 200 and "model_error" in [n["code"] for n in d["notes"]]
+
+    def test_cascade_note_reaches_the_page(self, client):
+        store = TestNeverStale()._store(client)
+        with store._lock:
+            store.merged["ports"]["analog_outputs"]["con1"]["5"]["1"]["exponential_dc_gain"] = 0.8
+        _, d = _data(client, "qubits.q1.z", model="cascade")
+        assert "dc_gain_not_in_cascade" in [n["code"] for n in d["notes"]]
+        assert d["step"]["dc_limit"] == pytest.approx(1.0)       # the cascade drawn has A_dc = 1
+        _, d = _data(client, "qubits.q1.z", model="sum")
+        assert "dc_gain_not_in_cascade" not in [n["code"] for n in d["notes"]]
+
+
+class TestTableParseMemo:
+    """GET /zline parses each port once per distinct content (memo), and an
+    edit to a port changes the row exactly as a cold parse does."""
+
+    def test_warm_get_does_not_reparse_and_edits_are_seen(self, client):
+        from quam_state_manager.web import routes
+        routes._ZLINE_MEMO.clear()
+        client.get("/zline", headers={"HX-Request": "true"})
+        c0 = routes._ZLINE_MEMO.computes
+        client.get("/zline", headers={"HX-Request": "true"})
+        assert routes._ZLINE_MEMO.computes == c0                 # warm: no parse ran
+        store = TestNeverStale()._store(client)
+        rng = random.Random(7)
+        port = store.merged["ports"]["analog_outputs"]["con1"]["5"]["1"]
+        for step in range(10):
+            with store._lock:
+                port["exponential_filter"][0][0] = rng.choice([-1.5, -0.05, 0.2, -1.0])
+            html = client.get("/zline", headers={"HX-Request": "true"}).get_data(as_text=True)
+            row = html.split('data-line="qubits.q1.z"', 1)[1].split("</tr>", 1)[0]
+            pf, notes = zf.parse_port_filter(json.loads(json.dumps(port)))
+            blocked = pf is None
+            assert ("zline-err-text" in row) == blocked, (step, port["exponential_filter"])
+
+    def test_a_caller_mutating_the_notes_never_reaches_the_memo(self):
+        from quam_state_manager.web import routes
+        routes._ZLINE_MEMO.clear()
+        port = {"exponential_filter": [[1.5, 20.0]]}         # a block note
+        _, n1 = routes._zline_parse("ports.x", port)
+        want = [dict(n) for n in n1]
+        n1.append({"level": "info", "code": "junk", "text": "x"})
+        n1[0]["text"] = "overwritten"
+        _, n2 = routes._zline_parse("ports.x", port)
+        assert n2 == want

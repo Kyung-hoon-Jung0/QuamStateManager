@@ -171,11 +171,47 @@
         sel.disabled = !(d.ops && d.ops.length);
     }
 
+    function shortLine(line) {
+        return String(line || '').replace(/^qubits\./, '').replace(/^qubit_pairs\./, '');
+    }
+
+    /* A failed request must not leave the PREVIOUS line's picture under the
+       new selection: title names the line asked for, both figures + stats +
+       operations are cleared, and data-rendered is dropped. */
+    function clearFor(root, line, text) {
+        var title = root.querySelector('#zline-title');
+        if (title) title.textContent = shortLine(line);
+        ['#zline-step', '#zline-pulse'].forEach(function (sel) {
+            var el = root.querySelector(sel);
+            if (el) empty(el, 'Not drawn: see the note above.');
+        });
+        ['#zline-step-stats', '#zline-pulse-stats', '#zline-pulse-sub'].forEach(function (sel) {
+            var el = root.querySelector(sel);
+            if (el) el.textContent = '';
+        });
+        fillOps(root, { ops: [], op: '' });
+        root.removeAttribute('data-rendered');
+        root.setAttribute('data-failed', line);
+        renderNotes(root, [{ level: 'block', code: 'error', text: text }]);
+    }
+
+    /* The figures sit below the table; on a big chip a lower row's figures
+       are off-screen. Bring the title into view only when it is not visible. */
+    function revealFigures(root) {
+        var t = root.querySelector('#zline-title');
+        if (!t || !t.getBoundingClientRect) return;
+        var r = t.getBoundingClientRect(), h = window.innerHeight || document.documentElement.clientHeight;
+        if (r.top < 0 || r.top > h * 0.5) {
+            try { t.scrollIntoView({ block: 'start' }); } catch (e) { t.scrollIntoView(true); }
+        }
+    }
+
     function load(root, line, op) {
         var my = ++seq;
         var model = (root.querySelector('#zline-model') || {}).value || 'sum';
         root.setAttribute('data-selected', line);
         root.setAttribute('data-loading', '1');
+        root.removeAttribute('data-failed');
         Array.prototype.forEach.call(root.querySelectorAll('.zline-row'), function (tr) {
             var on = tr.getAttribute('data-line') === line;
             tr.classList.toggle('zline-row-selected', on);
@@ -188,8 +224,12 @@
             .then(function (d) {
                 if (my !== seq || !document.body.contains(root)) return;   // a newer click won
                 root.removeAttribute('data-loading');
-                if (!d.ok) { renderNotes(root, [{ level: 'block', code: 'error', text: d.error || 'failed' }]); return; }
-                if (title) title.textContent = line.replace(/^qubits\./, '').replace(/^qubit_pairs\./, '') + (d.port_path ? '  ·  ' + d.port_path.replace('ports.analog_outputs.', '').split('.').join('/') : '');
+                if (!d.ok) {
+                    clearFor(root, line, (d.error || 'failed')
+                        + ' -- the chip may have changed since this table was drawn; reload the page to refresh it.');
+                    return;
+                }
+                if (title) title.textContent = shortLine(line) + (d.port_path ? '  ·  ' + d.port_path.replace('ports.analog_outputs.', '').split('.').join('/') : '');
                 var notes = (d.notes || []).concat(d.pulse ? (d.pulse.notes || []) : []);
                 renderNotes(root, notes);
                 fillOps(root, d);
@@ -202,7 +242,7 @@
             .catch(function (e) {
                 if (my !== seq) return;
                 root.removeAttribute('data-loading');
-                renderNotes(root, [{ level: 'block', code: 'error', text: 'Could not load: ' + (e && e.message || e) }]);
+                clearFor(root, line, 'Could not load: ' + (e && e.message || e));
             });
         try {
             var u = new URL(window.location.href);
@@ -221,12 +261,12 @@
         if (host && window.PlotHost) window.PlotHost.observe(host);
         root.addEventListener('click', function (ev) {
             var tr = ev.target.closest && ev.target.closest('.zline-row');
-            if (tr && root.contains(tr)) load(root, tr.getAttribute('data-line'));
+            if (tr && root.contains(tr)) { load(root, tr.getAttribute('data-line')); revealFigures(root); }
         });
         root.addEventListener('keydown', function (ev) {
             var tr = ev.target.closest && ev.target.closest('.zline-row');
             if (!tr) return;
-            if (ev.key === 'Enter' || ev.key === ' ') { ev.preventDefault(); load(root, tr.getAttribute('data-line')); }
+            if (ev.key === 'Enter' || ev.key === ' ') { ev.preventDefault(); load(root, tr.getAttribute('data-line')); revealFigures(root); }
         });
         var opSel = root.querySelector('#zline-op');
         if (opSel) opSel.addEventListener('change', function () { load(root, root.getAttribute('data-selected'), opSel.value); });
@@ -238,7 +278,7 @@
         if (first) load(root, first);
     }
 
-    window.ZLine = { mount: mount, _esc: esc };
+    window.ZLine = { mount: mount, _esc: esc, _clearFor: clearFor, _reveal: revealFigures };
     document.addEventListener('DOMContentLoaded', mount);
     document.addEventListener('htmx:afterSwap', mount);
     if (document.readyState !== 'loading') mount();

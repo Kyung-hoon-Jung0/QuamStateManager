@@ -13600,6 +13600,24 @@ def _zline_snapshot(store, channel_path: str) -> dict:
     return r
 
 
+def _zline_parse(port_path, port):
+    """``parse_port_filter`` memoized on the port's CONTENT (canonical JSON):
+    the stability check (np.roots + Newton polish) runs once per distinct
+    filter set, not once per line per GET. A copy of the notes is returned,
+    so a caller extending them never mutates the cached value."""
+    from quam_state_manager.core import zline_filters as zf
+    try:
+        token = json.dumps(port, sort_keys=True, default=repr)
+    except (TypeError, ValueError):
+        return zf.parse_port_filter(port)
+    try:
+        pf, notes = _ZLINE_MEMO.get(("parse", port_path), token,
+                                    lambda: zf.parse_port_filter(port), wait_s=5.0)
+    except _ramcache.Warming:
+        pf, notes = zf.parse_port_filter(port)
+    return pf, [dict(n) for n in notes]
+
+
 def _zline_default_op(ops: list[str]) -> str:
     for want in ("const",):
         if want in ops:
@@ -13620,7 +13638,14 @@ def zline_page():
     from quam_state_manager.core import zline_filters as zf
     with store._lock:
         ents = zf.zline_entities(store.merged)
-        rows = [zf.zline_row(store.merged, e) for e in ents]
+        resolved = []
+        for e in ents:
+            r = zf.resolve_zline(store.merged, e["channel_path"])
+            r["port"] = copy.deepcopy(r["port"])
+            resolved.append((e, r))
+    # The parse (the stability check) runs OUTSIDE the store lock, on copies.
+    rows = [zf.row_from_resolved(e, r, parse=lambda port, pp=r["port_path"]: _zline_parse(pp, port))
+            for e, r in resolved]
     for r in rows:
         r["worst"] = ("block" if any(n["level"] == "block" for n in r["notes"])
                       else "warn" if any(n["level"] == "warn" for n in r["notes"]) else "")
@@ -13652,10 +13677,11 @@ def zline_data():
            "notes": list(snap["notes"]), "step": None, "pulse": None, "op": None}
     if snap["port"] is None:
         return jsonify(out)
-    pf, notes = zf.parse_port_filter(snap["port"])
+    pf, notes = _zline_parse(snap["port_path"], snap["port"])
     out["notes"].extend(notes)
     if pf is None:
         return jsonify(out)
+    out["notes"].extend(zf.model_notes(pf, model))
     out["port"] = {"sampling_rate": pf.sampling_rate, "upsampling_mode": pf.upsampling_mode,
                    "output_mode": pf.output_mode, "dc_gain": pf.dc_gain,
                    "exponential": [list(e) for e in pf.exponential],
@@ -13663,9 +13689,14 @@ def zline_data():
 
     def memo(slot, token, fn):
         try:
-            return _ZLINE_MEMO.get(slot, token, fn, wait_s=5.0)
-        except _ramcache.Warming:
-            return fn()
+            try:
+                return _ZLINE_MEMO.get(slot, token, fn, wait_s=5.0)
+            except _ramcache.Warming:
+                return fn()
+        except Exception as exc:  # noqa: BLE001 -- a bad line is a note, never a 500
+            out["notes"].append({"level": "block", "code": "model_error",
+                                 "text": f"SM could not compute this curve ({type(exc).__name__}: {exc})."})
+            return None
 
     out["step"] = memo((line, "step"), (pf.key(), model),
                        lambda: zf.step_response(pf, model=model))

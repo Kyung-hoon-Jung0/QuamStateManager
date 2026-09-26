@@ -91,6 +91,50 @@ const plotted = p => p.ev(`(function(){ var s=document.getElementById('zline-ste
     rec('Z2 rapid clicks through every line end on the last one', !!r && now.indexOf(last) === 0, { last, now });
     await p.close();
   }
+  // ---- Z3: a failed request (a line the chip no longer has) must not leave
+  //      the PREVIOUS line's picture under the new selection
+  {
+    const p = await open(`${BASE}/zline`); const r0 = await waitRendered(p);
+    const prev = (r0 || '').split('|')[0];
+    const target = await p.ev(`(function(){ var rows=document.querySelectorAll('.zline-row'); var r=rows[rows.length-1];
+      if (r.getAttribute('data-line')===${JSON.stringify(prev)}) r=rows[0]; r.setAttribute('data-line','qubits.q999.z'); return 'ok'; })()`);
+    const c = await center(p, '.zline-row[data-line="qubits.q999.z"]');
+    if (c) await p.click(c.x, c.y);
+    let st = null;
+    for (let t = 0; t < 8000; t += 250) {
+      st = JSON.parse(await p.ev(`(function(){var z=document.getElementById('zline-root'); return JSON.stringify({failed:z.getAttribute('data-failed'),
+        rendered:z.getAttribute('data-rendered'), title:document.getElementById('zline-title').textContent,
+        note:(document.querySelector('#zline-notes li')||{}).textContent||'', ops:document.querySelectorAll('#zline-op option').length});})()`));
+      if (st.failed) break; await p.sleep(250);
+    }
+    const pl = await plotted(p);
+    rec('Z3a a 404 line names itself in the title, not the previous line',
+      !!st && st.failed === 'qubits.q999.z' && /q999/.test(st.title) && (!prev || st.title.indexOf(prev.replace(/^qubits\./, '').replace(/^qubit_pairs\./, '')) < 0), st);
+    rec('Z3b both figures cleared, data-rendered dropped, no stale operations',
+      pl.step === 0 && pl.pulse === 0 && pl.stepEmpty && pl.pulseEmpty && !st.rendered && st.ops === 0, pl);
+    rec('Z3c the note says to reload', /reload/.test(st.note), st.note);
+    await p.shot(`${SHOTS}/z3_failed_line_cleared.png`);
+    await p.ev('location.reload()'); await p.sleep(1500);
+    const rr = await waitRendered(p);
+    const pl2 = await plotted(p);
+    rec('Z3d reload: the page is intact and draws again', !!rr && pl2.step >= 2, { rr, pl2 });
+    await p.close();
+  }
+  // ---- Z4: on a long table, clicking a lower row brings its figures into view
+  {
+    const p = await open(`${BASE}/zline`); await waitRendered(p);
+    const n = await p.ev(`document.querySelectorAll('.zline-row').length`);
+    const last = await p.ev(`(function(){var r=document.querySelectorAll('.zline-row'); return r[r.length-1].getAttribute('data-line');})()`);
+    const c = await center(p, `.zline-row[data-line="${last}"]`);
+    if (c) await p.click(c.x, c.y);
+    const r = await waitRendered(p, last + '|');
+    const pos = JSON.parse(await p.ev(`(function(){var t=document.getElementById('zline-title').getBoundingClientRect(), s=document.getElementById('zline-step').getBoundingClientRect();
+      return JSON.stringify({title:Math.round(t.top), step:Math.round(s.top), h:window.innerHeight});})()`));
+    rec('Z4 clicking the last row (' + n + ' rows) brings its figures into view',
+      !!r && pos.title >= 0 && pos.title <= pos.h * 0.5 && pos.step < pos.h * 0.8, pos);
+    await p.shot(`${SHOTS}/z4_last_row_revealed.png`);
+    await p.close();
+  }
   const bad = res.filter(r => !r.ok);
   console.log(`\n${res.length - bad.length}/${res.length} passed`);
   process.exit(bad.length ? 1 : 0);

@@ -110,9 +110,9 @@ from scipy import signal
 __all__ = [
     "TS_NS", "FS_HZ", "MAX_FIR_TAPS", "MAX_IIR", "FF_TAP_LIMIT",
     "PortFilter", "parse_port_filter", "correction_zpk", "correction_sos",
-    "apply_filters", "step_response", "upsample_to_2gs", "pulse_response",
+    "apply_filters", "step_response", "model_dc_gain", "model_notes", "upsample_to_2gs", "pulse_response",
     "MAX_PULSE_SAMPLES",
-    "resolve_zline", "zline_entities", "zline_row",
+    "resolve_zline", "zline_entities", "zline_row", "row_from_resolved",
 ]
 
 #: [paper: output_filter.md "The filters always operate at 2 GSa/s, and each
@@ -145,6 +145,11 @@ STEP_DENSE_NS = 100.0
 STEP_LOG_POINTS = 700
 #: longest pulse drawn (1 GSa/s samples) -- 20 us [derived: page budget]
 MAX_PULSE_SAMPLES = 20_000
+
+#: The decay QOP <= 3.4 adds to the high-pass, in ns [paper: output_filter.md
+#: "Note that a decay of 0.5 seconds is automatically added to the high-pass
+#: filter."].
+HP_AUTO_DECAY_NS = 5e8
 
 
 def _note(level: str, code: str, text: str) -> dict:
@@ -192,8 +197,18 @@ def parse_port_filter(port: Any) -> tuple[PortFilter | None, list[dict]]:
 
     Returns ``(PortFilter, notes)``; ``PortFilter`` is ``None`` whenever a
     ``block`` note was raised -- the caller then draws no filtered curve.
-    Never raises.
+    Never raises: an unexpected failure inside the model is itself a
+    ``block`` note, so one bad port can never take a whole page down.
     """
+    try:
+        return _parse_port_filter(port)
+    except Exception as exc:  # noqa: BLE001 -- the documented contract
+        return None, [_note("block", "model_error",
+                            f"SM could not model this port's filters ({type(exc).__name__}: {exc}). "
+                            "No curve rather than a guessed one.")]
+
+
+def _parse_port_filter(port: Any) -> tuple[PortFilter | None, list[dict]]:
     notes: list[dict] = []
     if not isinstance(port, dict):
         return None, [_note("block", "no_port", "The z line's output port is not a port entry in this state.")]
@@ -291,9 +306,10 @@ def parse_port_filter(port: Any) -> tuple[PortFilter | None, list[dict]]:
             dc_gain = 0.0
             exps.append((1.0, h))
             notes.append(_note("warn", "hp_ideal",
-                               f"high_pass_filter = {h:g} ns: the ideal high-pass compensation integrates "
-                               "(A_dc = 0) -- a step output keeps rising and a pulse that is not net-zero "
-                               "leaves a residual."))
+                               f"high_pass_filter = {h:g} ns: on QOP >= 3.5 the ideal high-pass "
+                               "compensation integrates (A_dc = 0) -- a step output keeps rising and a "
+                               "pulse that is not net-zero leaves a residual. (QOP <= 3.4 adds a 0.5 s "
+                               "decay; the cascade model draws that.)"))
 
     if len(exps) > MAX_IIR:
         notes.append(_note("block", "too_many_iir",
@@ -394,8 +410,40 @@ def _distortion_rational(exps, dc_gain):
     return num, den
 
 
+def _merge_equal_taus(exps):
+    """Sum the amplitudes of exponentials that share a tau; drop a sum of 0.
+
+    [derived] ``A1*s/(s+1/tau) + A2*s/(s+1/tau) == (A1+A2)*s/(s+1/tau)``, so a
+    repeated tau is one term. Built unmerged, the line model's numerator and
+    denominator share the factor ``(s + 1/tau)`` and one of its "zeros" sits
+    exactly on a pole, where the rational H cannot be evaluated. After the
+    merge every tau is distinct with a non-zero A, and then no zero of H can
+    coincide with a pole: the numerator at ``s = -1/tau_i`` is
+    ``A_i * (-1/tau_i) * prod_{j != i} (1/tau_j - 1/tau_i) != 0``.
+    Only the QOP >= 3.5 sum form merges; the QOP <= 3.4 cascade keeps every
+    stage (two cascaded stages with one tau are NOT one stage).
+    """
+    out: list[list[float]] = []
+    for a, tau in exps:
+        for m in out:
+            if math.isclose(m[1], tau, rel_tol=1e-12, abs_tol=0.0):
+                m[0] += a
+                break
+        else:
+            out.append([a, tau])
+    return tuple((a, tau) for a, tau in out if a != 0.0)
+
+
 def _h_eval(exps, dc_gain, s):
     return dc_gain + sum(a * s / (s + 1.0 / tau) for a, tau in exps)
+
+
+def _h_resid(exps, dc_gain, s):
+    """|H(s)|, or inf when *s* sits exactly on a pole of H."""
+    try:
+        return abs(_h_eval(exps, dc_gain, s))
+    except ZeroDivisionError:
+        return math.inf
 
 
 def _hprime_eval(exps, s):
@@ -415,7 +463,7 @@ def _correction_analog(pf: PortFilter):
     (D:\\work\\study\\2026-09-01_iir-filter-and-flux-waveform, section 3.2).
     """
     notes: list[dict] = []
-    exps = pf.exponential
+    exps = _merge_equal_taus(pf.exponential)
     lead = pf.dc_gain + sum(a for a, _ in exps)
     if abs(lead) < 1e-12:
         notes.append(_note("block", "improper",
@@ -429,11 +477,14 @@ def _correction_analog(pf: PortFilter):
     for r in raw:
         s = complex(r)
         for _ in range(30):
-            h = _h_eval(exps, pf.dc_gain, s)
-            d = _hprime_eval(exps, s)
-            if d == 0:
+            try:
+                h = _h_eval(exps, pf.dc_gain, s)
+                d = _hprime_eval(exps, s)
+                if d == 0:
+                    break
+                step = h / d
+            except ZeroDivisionError:     # s landed exactly on a pole of H
                 break
-            step = h / d
             s -= step
             if abs(step) <= 1e-15 * max(abs(s), 1e-12):
                 break
@@ -442,7 +493,7 @@ def _correction_analog(pf: PortFilter):
     k = 1.0 / lead
     scale = max([1.0 / tau for _, tau in exps] or [1.0])
     for p in poles:
-        resid = abs(_h_eval(exps, pf.dc_gain, p)) if abs(p) > 0 else abs(pf.dc_gain)
+        resid = _h_resid(exps, pf.dc_gain, p) if abs(p) > 0 else abs(pf.dc_gain)
         if resid > 1e-6 * max(1.0, abs(lead)):
             notes.append(_note("block", "ill_conditioned",
                                "The exponential set is numerically ill-conditioned (a root of the line "
@@ -470,21 +521,85 @@ def correction_zpk(pf: PortFilter, model: str = "sum"):
     Returns ``None`` when the set is unusable (parse_port_filter says why).
     """
     fs_per_ns = 1.0 / TS_NS
+    stages = _analog_stages(pf, model)
+    if stages is None:
+        return None
+    zs, ps, k = [], [], 1.0
+    for z, p, kk in stages:
+        zd, pd, kd = signal.bilinear_zpk(z, p, kk, fs_per_ns)
+        zs.extend(zd); ps.extend(pd); k *= kd
+    return np.array(zs), np.array(ps), k
+
+
+def _cascade_stage_filters(pf: PortFilter) -> list[PortFilter]:
+    """The QOP <= 3.4 cascade, one single-exponential PortFilter per stage.
+
+    Every plain stage has A_dc = 1: the QOP 3.4-and-earlier section of the
+    docs configures the IIR stage with two fields only [paper:
+    output_filter.md "To configure the IIR filters, set the filter parameters
+    in the `exponential` and `high-pass` fields."] -- no
+    ``exponential_dc_gain`` -- so a stored dc gain is not applied here
+    (``model_notes`` says so on the page).
+
+    The high-pass stage (appended LAST by ``parse_port_filter``) is leaky on
+    that QOP [paper: output_filter.md "Note that a decay of 0.5 seconds is
+    automatically added to the high-pass filter."], built in the docs' own
+    leaky form, A_dc small and A_1 = 1 - A_dc [paper: output_filter.md
+    "In most cases, it is better to set"] with A_dc = tau_hp / 0.5 s [paper:
+    output_filter.md "the decay time will be 0.5 seconds."].
+    """
+    exps = list(pf.exponential)
+    out = []
+    for i, (a, tau) in enumerate(exps):
+        if pf.high_pass is not None and i == len(exps) - 1:
+            adc = pf.high_pass / HP_AUTO_DECAY_NS
+            out.append(PortFilter(((1.0 - adc, tau),), adc))
+        else:
+            out.append(PortFilter(((a, tau),), 1.0))
+    return out
+
+
+def _analog_stages(pf: PortFilter, model: str):
+    """Analog (z, p, k) of each IIR correction stage, or None if unusable."""
     if model == "cascade":
-        zs, ps, k = [], [], 1.0
-        for a, tau in pf.exponential:
-            is_hp = pf.high_pass is not None and (a, tau) == (1.0, pf.high_pass)
-            one = PortFilter(((a, tau),), 0.0 if is_hp else 1.0)
+        out = []
+        for one in _cascade_stage_filters(pf):
             z, p, kk, _ = _correction_analog(one)
             if z is None:
                 return None
-            zd, pd, kd = signal.bilinear_zpk(z, p, kk, fs_per_ns)
-            zs.extend(zd); ps.extend(pd); k *= kd
-        return np.array(zs), np.array(ps), k
+            out.append((z, p, kk))
+        return out
     z, p, k, _ = _correction_analog(pf)
     if z is None:
         return None
-    return signal.bilinear_zpk(z, p, k, fs_per_ns)
+    return [(z, p, k)]
+
+
+def model_dc_gain(pf: PortFilter, model: str = "sum") -> float:
+    """The line model's DC value A_dc as the given model draws it (the
+    correction's DC gain is its inverse). Cascade: the product of the stages'
+    A_dc (1 for every plain stage)."""
+    if model == "cascade":
+        g = 1.0
+        for one in _cascade_stage_filters(pf):
+            g *= one.dc_gain
+        return g
+    return pf.dc_gain
+
+
+def model_notes(pf: PortFilter, model: str = "sum") -> list[dict]:
+    """Notes that depend on which QOP model is drawn."""
+    notes: list[dict] = []
+    if model == "cascade":
+        if pf.high_pass is None and pf.dc_gain != 1.0:
+            notes.append(_note("warn", "dc_gain_not_in_cascade",
+                               f"exponential_dc_gain = {pf.dc_gain:g} is a QOP >= 3.5 field; QOP <= 3.4 "
+                               "has no such field, so the cascade curve is drawn with A_dc = 1."))
+        if pf.high_pass is not None:
+            notes.append(_note("info", "hp_cascade_decay",
+                               "QOP <= 3.4 adds a 0.5 s decay to the high-pass: drawn as A_dc = "
+                               f"tau_hp / 0.5 s = {pf.high_pass / HP_AUTO_DECAY_NS:.3g}."))
+    return notes
 
 
 def correction_sos(pf: PortFilter, model: str = "sum"):
@@ -523,8 +638,31 @@ def apply_filters(pf: PortFilter, x, *, iir: bool = True, fir: bool = True,
 # Responses shipped to the page
 # ---------------------------------------------------------------------------
 
-def _step_horizon_ns(pf: PortFilter) -> tuple[float, bool]:
-    slow = max([tau for _, tau in pf.exponential] or [0.0])
+def _slowest_correction_ns(pf: PortFilter, model: str) -> float:
+    """[derived] The slowest time constant of the CORRECTION's step response.
+
+    C's step response is a sum of C's own modes exp(p t) over C's poles p
+    (H's zeros). The line model's taus are C's ZEROS: they do not set how
+    long the output takes to settle. A leaky high-pass settles with
+    tau_hp / A_dc, far beyond tau_hp [paper: output_filter.md "which would
+    lead to a long decay with a time constant of"]. A pole at 0 (the ideal
+    integrator) never settles: inf.
+    """
+    if not pf.has_iir:
+        return 0.0
+    stages = _analog_stages(pf, model)
+    if stages is None:
+        return max([tau for _, tau in pf.exponential] or [0.0])
+    slow = 0.0
+    for _z, p, _k in stages:
+        for pole in p:
+            re = abs(complex(pole).real)
+            slow = max(slow, math.inf if re == 0.0 else 1.0 / re)
+    return slow
+
+
+def _step_horizon_ns(pf: PortFilter, model: str = "sum") -> tuple[float, bool]:
+    slow = _slowest_correction_ns(pf, model)
     want = max(STEP_MIN_NS, STEP_TAU_MULT * slow, TS_NS * (len(pf.feedforward) + 50))
     return min(want, STEP_MAX_NS), want > STEP_MAX_NS
 
@@ -546,7 +684,7 @@ def step_response(pf: PortFilter, *, model: str = "sum") -> dict:
     can show it. Shipped decimated (dense first 100 ns, log-spaced after);
     ``peak``/``first``/``final`` are computed on the FULL-rate output.
     """
-    horizon, truncated = _step_horizon_ns(pf)
+    horizon, truncated = _step_horizon_ns(pf, model)
     n = int(round(horizon / TS_NS))
     x = np.ones(n)
     both = apply_filters(pf, x, model=model)
@@ -559,6 +697,7 @@ def step_response(pf: PortFilter, *, model: str = "sum") -> dict:
         return None if a is None else [float(v) for v in a[idx]]
 
     ipk = int(np.argmax(np.abs(both)))
+    adc = model_dc_gain(pf, model)
     return {
         "t_ns": [float(v) for v in t],
         "ideal": [1.0] * len(idx),
@@ -571,9 +710,10 @@ def step_response(pf: PortFilter, *, model: str = "sum") -> dict:
         "peak": float(both[ipk]),
         "peak_t_ns": float((ipk + 1) * TS_NS),
         "final": float(both[-1]),
-        # [derived] the DC limit: C(0) * sum(FIR) = sum(FIR) / A_dc
-        "dc_limit": (sum(pf.feedforward) if pf.has_fir else 1.0) / pf.dc_gain
-        if pf.dc_gain != 0 else None,
+        # [derived] the DC limit of the model DRAWN: C(0) * sum(FIR) =
+        # sum(FIR) / A_dc(model) -- the cascade's A_dc is not the stored one.
+        "dc_limit": (sum(pf.feedforward) if pf.has_fir else 1.0) / adc
+        if adc != 0 else None,
     }
 
 
@@ -714,13 +854,18 @@ def zline_entities(merged: dict) -> list[dict]:
 
 def zline_row(merged: dict, ent: dict) -> dict:
     """Cheap per-line summary for the table (no filtering run)."""
-    r = resolve_zline(merged, ent["channel_path"])
+    return row_from_resolved(ent, resolve_zline(merged, ent["channel_path"]))
+
+
+def row_from_resolved(ent: dict, r: dict, parse=None) -> dict:
+    """The table row for one line from its ``resolve_zline`` result. *parse*
+    (default ``parse_port_filter``) lets a caller hand in a memoized parse."""
     row = dict(ent)
     row.update({"port_path": r["port_path"], "notes": list(r["notes"]),
                 "n_exp": None, "n_taps": None, "ff_sum": None, "ok": False})
     if r["port"] is None:
         return row
-    pf, notes = parse_port_filter(r["port"])
+    pf, notes = (parse or parse_port_filter)(r["port"])
     row["notes"].extend(notes)
     port = r["port"]
     ex = port.get("exponential_filter")

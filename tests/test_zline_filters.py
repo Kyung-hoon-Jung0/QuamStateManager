@@ -296,3 +296,88 @@ class TestQuotesVerbatim:
     def test_the_checker_catches_a_changed_word(self, corpus):
         blocks, _ = _module_quotes()
         assert blocks[0].replace("48 taps", "44 taps") not in corpus
+
+
+# ---------------------------------------------------------------------------
+# verifier round 2 (2026-09-26): each class below is one reproduced defect
+# ---------------------------------------------------------------------------
+
+class TestRepeatedTau:
+    """A repeated tau shares the factor (s + 1/tau) between H's numerator and
+    denominator; built unmerged, a root of H sat exactly on a pole and the
+    Newton polish divided by zero (a 500 on the whole page)."""
+
+    @pytest.mark.parametrize("port", [
+        {"high_pass_filter": 100.0, "exponential_filter": [[1.0, 100.0]], "exponential_dc_gain": None},
+        {"exponential_filter": [[0.5, 50.0], [0.5, 50.0]], "exponential_dc_gain": 0.0},
+        {"exponential_filter": [[0.3, 50.0], [0.2, 50.0], [-0.1, 7.0]], "exponential_dc_gain": 0.0},
+    ])
+    def test_duplicated_tau_with_dc_gain_zero_draws(self, port):
+        pf, notes = Z.parse_port_filter(port)
+        assert pf is not None, notes
+        assert Z.step_response(pf)["dc_limit"] is None      # A_dc = 0: an integrator
+
+    def test_repeated_tau_is_the_merged_set(self):
+        pf2, n2 = _pf([(-0.05, 50.0), (-0.05, 50.0)])
+        pf1, _ = _pf([(-0.1, 50.0)])
+        assert pf2 is not None, n2
+        assert "ill_conditioned" not in _codes(n2)
+        assert np.allclose(Z.step_response(pf2)["both"], Z.step_response(pf1)["both"], atol=1e-12)
+
+    def test_cascade_keeps_both_stages(self):
+        # two cascaded stages with one tau are NOT one stage (QOP <= 3.4)
+        pf2, _ = _pf([(-0.05, 50.0), (-0.05, 50.0)])
+        pf1, _ = _pf([(-0.1, 50.0)])
+        a = Z.step_response(pf2, model="cascade")["both"]
+        b = Z.step_response(pf1, model="cascade")["both"]
+        assert not np.allclose(a, b, atol=1e-6)
+
+    def test_parse_never_raises(self, monkeypatch):
+        def boom(_pf):
+            raise ZeroDivisionError("complex division by zero")
+        monkeypatch.setattr(Z, "_correction_analog", boom)
+        pf, notes = Z.parse_port_filter({"exponential_filter": [[-0.1, 20.0]]})
+        assert pf is None and "model_error" in _codes(notes)
+        assert notes[0]["level"] == "block"
+
+
+class TestModelDrawnIsModelReported:
+    """dc_limit, the horizon and the notes describe the curve actually drawn."""
+
+    PORTS = [
+        {"exponential_filter": [[-0.05, 20.0], [0.03, 3000.0]]},
+        {"exponential_filter": [[0.1, 40.0]], "exponential_dc_gain": 0.8},
+        {"exponential_dc_gain": 0.8},
+        {"exponential_filter": [[-0.2, 5.0]], "feedforward_filter": [0.7, 0.2, 0.05]},
+        {"exponential_filter": [[-0.02, 12000.0]], "exponential_dc_gain": 1.1},
+    ]
+
+    @pytest.mark.parametrize("model", ["sum", "cascade"])
+    @pytest.mark.parametrize("i", range(len(PORTS)))
+    def test_final_reaches_the_reported_dc_limit(self, i, model):
+        pf, notes = Z.parse_port_filter(self.PORTS[i])
+        assert pf is not None, notes
+        st = Z.step_response(pf, model=model)
+        assert not st["truncated"]
+        assert st["final"] == pytest.approx(st["dc_limit"], rel=2e-3), (i, model)
+
+    def test_cascade_says_it_ignores_dc_gain(self):
+        pf, _ = Z.parse_port_filter({"exponential_dc_gain": 0.8})
+        assert "dc_gain_not_in_cascade" in _codes(Z.model_notes(pf, "cascade"))
+        assert Z.model_notes(pf, "sum") == []
+
+    def test_cascade_high_pass_has_the_documented_half_second_decay(self):
+        pf, _ = Z.parse_port_filter({"high_pass_filter": 1e5})
+        (z, p, k), = Z._analog_stages(pf, "cascade")
+        assert len(p) == 1 and p[0].real == pytest.approx(-1.0 / 5e8, rel=1e-9)
+        assert Z.step_response(pf, model="cascade")["dc_limit"] == pytest.approx(5e8 / 1e5)
+        assert "hp_cascade_decay" in _codes(Z.model_notes(pf, "cascade"))
+        # QOP >= 3.5: the ideal integrator, no DC limit
+        assert Z.step_response(pf, model="sum")["dc_limit"] is None
+
+    def test_horizon_follows_the_correction_not_the_taus(self):
+        # QM's recommended leaky high-pass: settles with tau_hp / A_dc = 100 ms
+        pf, _ = Z.parse_port_filter({"exponential_filter": [[0.999, 1e5]], "exponential_dc_gain": 0.001})
+        st = Z.step_response(pf)
+        assert st["truncated"] and st["horizon_ns"] == Z.STEP_MAX_NS
+        assert Z._slowest_correction_ns(pf, "sum") == pytest.approx(1e5 / 0.001, rel=1e-6)
