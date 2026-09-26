@@ -2105,3 +2105,13 @@ class TestALabClassIsCheckedByItsOwnCode:
         calls, answer = lab_env
         answer["rec"] = {"ok": False, "reason": "run-failed", "error": "env gone"}
         assert self._post(slot_client, "nz_unchecked").status_code == 200
+
+
+def test_the_create_press_says_it_is_waiting(slot_client):
+    """2026-09-27: a lab class's own-code check takes 9-30 s on the KRS chips;
+    the press disables its button and says why it waits."""
+    html = slot_client.get("/pulse/new").data.decode()
+    form = html.split('class="pulse-create-form"')[1].split(">")[0]
+    assert 'hx-disabled-elt="find button[type=submit]"' in form
+    assert 'hx-indicator="#pulse-create-busy"' in form
+    assert 'id="pulse-create-busy"' in html and "its own code" in html

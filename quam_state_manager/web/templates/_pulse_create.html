@@ -13,7 +13,8 @@
 {% include '_pulse_env_strip.html' %}
 
 <form class="pulse-create-form" hx-post="/api/pulse/create"
-      hx-target="#inspector-pane" hx-swap="innerHTML">
+      hx-target="#inspector-pane" hx-swap="innerHTML"
+      hx-indicator="#pulse-create-busy" hx-disabled-elt="find button[type=submit]">
 
     <fieldset class="pulse-target-row">
         <legend>Target</legend>
@@ -126,6 +127,11 @@
 
     <div class="pulse-create-actions">
         <button type="submit" class="btn-sm">Create pulse</button>
+        {# 2026-09-27: a lab class is first run through its own code in the
+           selected env (measured 9-30 s on the KRS chips) -- say so while
+           the press waits, instead of a button that looks dead #}
+        <span id="pulse-create-busy" class="htmx-indicator muted pulse-create-busy">Creating&hellip; a class of your lab's is first
+            run through its own code in the selected environment, which takes a few seconds.</span>
         <button type="button" class="btn-sm outline" onclick="closeInspector()">Cancel</button>
     </div>
 </form>
