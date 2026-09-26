@@ -23988,6 +23988,19 @@ def param_history():
     )
 
 
+def _alignment_jobs():
+    """The app's one ``AlignmentJobs`` (RAM P7)."""
+    from quam_state_manager.core.alignment_job import AlignmentJobs
+    app = current_app._get_current_object()
+    jobs = app.config.get("alignment_jobs")
+    if jobs is None:
+        with _exp_state_init_lock:
+            jobs = app.config.get("alignment_jobs")
+            if jobs is None:
+                jobs = app.config["alignment_jobs"] = AlignmentJobs()
+    return jobs
+
+
 @bp.route("/param-history/alignment")
 def param_history_alignment():
     """docs/142: the deferred half of /param-history -- the O(N) workspace
@@ -24005,7 +24018,22 @@ def param_history_alignment():
     summary_total = request.args.get("summary_total", type=int) or 0
     alignment = None
     try:
-        alignment = hm.scan_workspace_alignment(loaded_path, ws) if ws else None
+        if ws:
+            # RAM P7: the O(N) scan runs on a background job (single-flight
+            # per chip); this request waits a moment for it, then answers a
+            # self-refetching placeholder that says how far it got. The
+            # previous verdict is never shown as the current one.
+            # (the test client, whose tiny workspaces finish in ms, waits
+            # longer so route tests stay deterministic on a loaded machine)
+            wait_s = current_app.config.get(
+                "ALIGNMENT_WAIT_S", 5.0 if current_app.testing else 0.12)
+            st = _alignment_jobs().request(hm, loaded_path, ws, wait_s=wait_s)
+            if st["state"] != "ready":
+                return render_template("_param_history_alignment_pending.html",
+                                       done=st.get("done") or 0,
+                                       total=st.get("total") or 0,
+                                       summary_total=summary_total)
+            alignment = st["result"]
     except Exception:
         logger.warning("Alignment scan failed", exc_info=True)
     importable_count = 0
@@ -26652,7 +26680,18 @@ def _ingest_after_steps(app) -> list:
                 except _ramcache.Warming:
                     pass
 
-    return [workspace_sidebar, datasets_payload]
+    def alignment(roots: list[str]) -> None:
+        # the active chip's workspace alignment, when somebody has viewed it
+        ws = app.config.get("workspace")
+        hm = app.config.get("history_manager")
+        name = app.config.get("active_context")
+        ctx = (app.config.get("contexts") or {}).get(name) if name else None
+        if ws is None or hm is None or not ctx or ctx.get("type") != "quam" or not ctx.get("path"):
+            return
+        with app.app_context():
+            _alignment_jobs().refresh(hm, Path(ctx["path"]), ws)
+
+    return [workspace_sidebar, datasets_payload, alignment]
 
 
 @bp.route("/datasets/wait")

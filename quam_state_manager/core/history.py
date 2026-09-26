@@ -4709,10 +4709,34 @@ class HistoryManager:
     # Hardware-aware alignment scan + chip discovery
     # ------------------------------------------------------------------
 
+    def _alignment_token(self, loaded_path: Path, workspace: Workspace) -> tuple:
+        """The key ``scan_workspace_alignment``'s result is valid for."""
+        loaded_fp = self._cached_fingerprint(loaded_path)
+        return (self._workspace_token(workspace, self._root), loaded_fp)
+
+    def cached_workspace_alignment(self, quam_state_path: str | Path,
+                                   workspace: Workspace) -> dict[str, Any] | None:
+        """RAM P7: the alignment result when it is valid for the CURRENT
+        token, else ``None`` -- never a verdict computed for an older one."""
+        loaded_path = Path(quam_state_path)
+        token = self._alignment_token(loaded_path, workspace)
+        with self._lock:
+            cached = self._alignment_cache.get(str(loaded_path.resolve()))
+        if cached is not None and cached[0] == token:
+            return cached[1]
+        return None
+
+    def has_workspace_alignment(self, quam_state_path: str | Path) -> bool:
+        """Whether an alignment was ever computed for this chip (any token)."""
+        with self._lock:
+            return str(Path(quam_state_path).resolve()) in self._alignment_cache
+
     def scan_workspace_alignment(
         self,
         quam_state_path: str | Path,
         workspace: Workspace,
+        *,
+        progress: "Callable[[int, int], None] | None" = None,
     ) -> dict[str, Any]:
         """Group every workspace experiment by alignment with the loaded chip.
 
@@ -4756,15 +4780,20 @@ class HistoryManager:
         # A workspace gaining one new experiment used to invalidate the
         # outer cache and force a 10⁴-entry rescan; with this, only the
         # changed entry re-aligns.
-        for entry in workspace.get_flat_list():
+        flat = workspace.get_flat_list()
+        total_n = len(flat)
+        for i, entry in enumerate(flat):
+            if progress is not None and not (i & 63):
+                progress(i, total_n)
             qs = Path(getattr(entry, "quam_state_path", ""))
             state_path = qs / "state.json"
-            if not qs or not state_path.exists():
-                unknown.append(entry)
-                continue
+            # RAM P7: ONE stat answers both "is it there" and "its mtime"
+            # (the separate exists() was a second stat per workspace run)
             try:
-                entry_mtime = state_path.stat().st_mtime
+                entry_mtime = state_path.stat().st_mtime if qs else None
             except OSError:
+                entry_mtime = None
+            if entry_mtime is None:
                 unknown.append(entry)
                 continue
 
@@ -4812,6 +4841,8 @@ class HistoryManager:
         }
         with self._lock:
             self._alignment_cache[cache_key] = (cache_token, result)
+        if progress is not None:
+            progress(total_n, total_n)
         self._flush_fingerprint_sidecar()
         return result
 

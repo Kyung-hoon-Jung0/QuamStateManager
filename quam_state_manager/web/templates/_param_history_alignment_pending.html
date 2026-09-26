@@ -1,0 +1,12 @@
+{# RAM P7: the workspace alignment is still being computed on its background
+   job. This slot re-fetches itself; it stamps NO counts on
+   #param-history-root, so the auto-backfill gate never fires on a verdict
+   that does not exist yet. #}
+<div id="ph-alignment-slot" class="ph-alignment-slot ph-alignment-pending"
+     hx-get="/param-history/alignment?summary_total={{ summary_total }}"
+     hx-trigger="load delay:700ms" hx-swap="outerHTML">
+  <p class="muted ph-alignment-progress" role="status">
+    Checking which workspace runs belong to this chip…
+    {% if total %}{{ '{:,}'.format(done) }} of {{ '{:,}'.format(total) }}{% endif %}
+  </p>
+</div>
