@@ -74,51 +74,43 @@ class Differ:
 
         ignore = ignore_keys if ignore_keys is not None else _DEFAULT_IGNORE
 
-        keys_a = set(flat_a.keys())
-        keys_b = set(flat_b.keys())
-
         entries: list[DiffEntry] = []
-
-        for key in sorted(keys_b - keys_a, key=natural_key):
-            if _leaf_key(key) in ignore:
-                continue
+        for key, change_type in _classify(flat_a, flat_b, float_tolerance, ignore):
             entries.append(DiffEntry(
                 dot_path=key,
-                old_value=None,
-                new_value=flat_b[key],
-                change_type="added",
-            ))
-
-        for key in sorted(keys_a - keys_b, key=natural_key):
-            if _leaf_key(key) in ignore:
-                continue
-            entries.append(DiffEntry(
-                dot_path=key,
-                old_value=flat_a[key],
-                new_value=None,
-                change_type="removed",
-            ))
-
-        for key in sorted(keys_a & keys_b, key=natural_key):
-            if _leaf_key(key) in ignore:
-                continue
-            val_a = flat_a[key]
-            val_b = flat_b[key]
-            if _values_equal(val_a, val_b, float_tolerance):
-                continue
-            entries.append(DiffEntry(
-                dot_path=key,
-                old_value=val_a,
-                new_value=val_b,
-                change_type="modified",
+                old_value=None if change_type == "added" else flat_a[key],
+                new_value=None if change_type == "removed" else flat_b[key],
+                change_type=change_type,
             ))
 
         # customer report 2026-09-09: a list index is a NUMBER, so the rows
         # read 1009 · 101 · 1011 under a plain string sort. Every ordered
         # display of paths in SM goes through natural_key (q10 after q2,
         # weights_imag.101 before .1009).
+        # Dot paths are unique across added/removed/modified, so this one
+        # sort fixes the order completely (RAM P8 dropped three per-set
+        # pre-sorts it overrode -- 313k natural_key calls each on a big chip).
         entries.sort(key=lambda e: natural_key(e.dot_path))
         return entries
+
+    @staticmethod
+    def summary_between(
+        flat_a: dict[str, Any],
+        flat_b: dict[str, Any],
+        *,
+        float_tolerance: float = 1e-12,
+        ignore_keys: set[str] | None = None,
+    ) -> dict[str, int]:
+        """``Differ.summary(diff(a, b))`` from two already-flattened sides,
+        without building or sorting the entries (RAM P8: the snapshot
+        capture's diff_summary is these four counts). Same classification
+        as :meth:`diff` -- both go through ``_classify``."""
+        ignore = ignore_keys if ignore_keys is not None else _DEFAULT_IGNORE
+        counts = {"added": 0, "removed": 0, "modified": 0, "total": 0}
+        for _key, change_type in _classify(flat_a, flat_b, float_tolerance, ignore):
+            counts[change_type] += 1
+            counts["total"] += 1
+        return counts
 
     @staticmethod
     def _flatten_side(
@@ -438,6 +430,24 @@ class Differ:
 # ======================================================================
 # Internal helpers
 # ======================================================================
+
+
+def _classify(flat_a: dict[str, Any], flat_b: dict[str, Any],
+              float_tolerance: float, ignore: set[str]):
+    """Yield ``(dot_path, change_type)`` for every difference between two
+    flat sides, unordered -- the one classification :meth:`Differ.diff` and
+    :meth:`Differ.summary_between` share."""
+    for key in flat_b.keys() - flat_a.keys():
+        if _leaf_key(key) not in ignore:
+            yield key, "added"
+    for key in flat_a.keys() - flat_b.keys():
+        if _leaf_key(key) not in ignore:
+            yield key, "removed"
+    for key in flat_a.keys() & flat_b.keys():
+        if _leaf_key(key) in ignore:
+            continue
+        if not _values_equal(flat_a[key], flat_b[key], float_tolerance):
+            yield key, "modified"
 
 
 def _leaf_key(dot_path: str) -> str:

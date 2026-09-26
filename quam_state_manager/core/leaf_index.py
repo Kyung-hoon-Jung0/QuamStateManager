@@ -601,28 +601,44 @@ def changes_by_snapshot(conn: sqlite3.Connection, *, limit_snaps: int = 20,
     true count and the first ``rows_per_snap`` of its rows. ``at_ts`` opens one
     snapshot in full.
     """
-    where = [f"l.kind IN ({KIND_NUM}, {KIND_PTR_NUM})"]
-    params: list[Any] = []
+    # RAM P8: walk the snapshots newest-first and count each one's rows
+    # through ``idx_leaf_cp_snap``, stopping at ``limit_snaps`` snapshots that
+    # have any. The old form joined and GROUPed the WHOLE change-point table
+    # to keep the newest 21 groups -- 124 ms of every page on the big30x
+    # history (180,599 rows). Same rows, same order: a snapshot with no
+    # matching row is skipped exactly as GROUP BY never produced it, and the
+    # count is the same COUNT over the same join and conditions.
+    kind_cond = f"l.kind IN ({KIND_NUM}, {KIND_PTR_NUM})"
+    sub_params: list[Any] = []
+    sub = ("SELECT COUNT(*) FROM leaf_cp l "
+           + ("JOIN leaf_paths p ON p.id = l.path_id " if prefix else "")
+           + f"WHERE l.snap_id = s.id AND {kind_cond}")
     if prefix:
-        where.append("p.path LIKE ? ESCAPE '\\'")
-        params.append(prefix.replace("%", r"\%").replace("_", r"\_") + "%")
+        sub += " AND p.path LIKE ? ESCAPE '\\'"
+        sub_params.append(prefix.replace("%", r"\%").replace("_", r"\_") + "%")
+    outer: list[str] = []
+    outer_params: list[Any] = []
     if at_ts:
-        where.append("s.ts = ?")
-        params.append(at_ts)
+        outer.append("s.ts = ?")
+        outer_params.append(at_ts)
     elif before_ts:
-        where.append("s.ts < ?")
-        params.append(before_ts)
-    cond = " AND ".join(where)
-
-    snaps = conn.execute(
-        "SELECT s.id, s.ts, s.trigger, s.run_id, s.experiment, s.folder, "
-        "       COUNT(*) AS n "
-        "  FROM leaf_cp l "
-        "  JOIN leaf_paths p ON p.id = l.path_id "
-        "  JOIN leaf_snaps s ON s.id = l.snap_id "
-        f" WHERE {cond} "
-        " GROUP BY s.id ORDER BY s.id DESC LIMIT ?",
-        params + [int(limit_snaps)]).fetchall()
+        outer.append("s.ts < ?")
+        outer_params.append(before_ts)
+    cur = conn.execute(
+        f"SELECT s.id, s.ts, s.trigger, s.run_id, s.experiment, s.folder, ({sub}) AS n "
+        "  FROM leaf_snaps s "
+        + (f" WHERE {' AND '.join(outer)} " if outer else "")
+        + " ORDER BY s.id DESC",
+        sub_params + outer_params)
+    snaps = []
+    want = int(limit_snaps)
+    while len(snaps) < want:
+        row = cur.fetchone()
+        if row is None:
+            break
+        if row[6]:
+            snaps.append(row)
+    cur.close()
 
     out: list[dict] = []
     for sid, ts, trigger, run_id, experiment, folder, n in snaps:

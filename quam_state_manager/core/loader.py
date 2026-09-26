@@ -86,6 +86,29 @@ class PointerWarning:
 _SENTINEL = object()
 
 
+def merge_state_wiring(state: dict, wiring: dict) -> dict:
+    """The merged root of a state + wiring pair -- THE rule
+    :meth:`QuamStore._merge` applies (see its docstring): a plain union, a
+    colliding dict+dict key deep-merged, any other collision shadowed by
+    wiring. Neither input is mutated. One function so a caller holding the two
+    dicts in memory (the snapshot capture, RAM P8) builds exactly the root a
+    ``QuamStore`` loaded from the same files would."""
+    merged = {**state}
+    for key, value in wiring.items():
+        existing = merged.get(key, _SENTINEL)
+        if existing is _SENTINEL:
+            merged[key] = value
+        elif isinstance(existing, dict) and isinstance(value, dict):
+            merged[key] = _deep_merge(existing, value)
+        else:
+            logger.warning(
+                "Key %r exists in both state.json and wiring.json; wiring "
+                "value will shadow state value", key,
+            )
+            merged[key] = value
+    return merged
+
+
 def _deep_merge(a: dict, b: dict) -> dict:
     """Recursively merge *b* into a shallow copy of *a*.
 
@@ -234,19 +257,7 @@ class QuamStore:
         state component instead of destroying it. (No effect on the common case:
         with no key collision, nothing is deep-merged.)
         """
-        self.merged = {**self.state}
-        for key, value in self.wiring.items():
-            existing = self.merged.get(key, _SENTINEL)
-            if existing is _SENTINEL:
-                self.merged[key] = value
-            elif isinstance(existing, dict) and isinstance(value, dict):
-                self.merged[key] = _deep_merge(existing, value)
-            else:
-                logger.warning(
-                    "Key %r exists in both state.json and wiring.json; wiring "
-                    "value will shadow state value", key,
-                )
-                self.merged[key] = value
+        self.merged = merge_state_wiring(self.state, self.wiring)
 
     def _validate_pointers(self) -> None:
         """Walk the merged dict and attempt to resolve every pointer.

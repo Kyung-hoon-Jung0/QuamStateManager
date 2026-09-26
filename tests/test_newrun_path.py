@@ -104,8 +104,9 @@ class TestWorkerSteps:
         _mk_run(data, "2026-03-01", 1)
         app, c = _app(tmp_path, data)
         steps = _steps(app)
+        n0 = R._DATASETS_PAYLOAD.computes                 # module memo: other tests count too
         steps["datasets_payload"]([str(data)])
-        assert R._DATASETS_PAYLOAD.computes == 0          # nobody has the page open
+        assert R._DATASETS_PAYLOAD.computes == n0         # nobody has the page open
         assert c.get("/datasets").status_code == 200
         n = R._DATASETS_PAYLOAD.computes
         time.sleep(_TICK)

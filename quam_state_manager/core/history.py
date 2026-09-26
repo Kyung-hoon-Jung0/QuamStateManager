@@ -17,6 +17,7 @@ import os
 import re
 import shutil
 import sqlite3
+import copy
 import threading
 import time
 import zlib
@@ -29,7 +30,7 @@ from typing import TYPE_CHECKING, Any
 
 from quam_state_manager.core import dir_sample, leaf_index, safe_io
 from quam_state_manager.core.differ import DiffEntry, Differ
-from quam_state_manager.core.loader import QuamStore, natural_key
+from quam_state_manager.core.loader import QuamStore, flatten, merge_state_wiring, natural_key
 from quam_state_manager.core.query import (
     QueryEngine, _assignment_fidelity, _assignment_fidelity_n,
 )
@@ -857,6 +858,115 @@ _KEEP_NOTE: Any = object()
 # of raising TypeError and making the whole snapshot (incl. a pinned bookmark) DISAPPEAR
 # from State History (audit P2).
 _SNAPSHOT_META_FIELDS: frozenset = frozenset(f.name for f in fields(SnapshotMeta))
+
+
+
+# RAM P8: the snapshot scan tier's per-snapshot memo (see _scan_field_series).
+_SCAN_SERIES: "OrderedDict[tuple[str, str], dict[str, tuple]]" = OrderedDict()
+_SCAN_SERIES_LOCK = threading.Lock()
+_SCAN_SERIES_MAX = 256
+
+
+def _snap_files_sig(snap_dir: Path) -> tuple | None:
+    """(mtime_ns, size) of a snapshot's two files; None when state.json is
+    unreadable (the scan skips such a snapshot)."""
+    try:
+        st = os.stat(snap_dir / "state.json")
+    except OSError:
+        return None
+    try:
+        wt = os.stat(snap_dir / "wiring.json")
+        w = (wt.st_mtime_ns, wt.st_size)
+    except OSError:
+        w = None
+    return (st.st_mtime_ns, st.st_size, w)
+
+
+def _scan_one_snapshot(snap_dir: Path, segs: list[str], is_pointer, is_self_ref,
+                       resolve_pointer) -> tuple[bool, Any]:
+    """``(usable, value)`` of one dot path in one snapshot -- the body of the
+    scan tier's loop, unchanged: ``usable`` False is a snapshot the loop
+    skipped (unreadable / not an object)."""
+    try:
+        root = safe_io.read_json(snap_dir / "state.json")
+    except (OSError, ValueError):
+        return False, None
+    if not isinstance(root, dict):
+        return False, None
+    if segs and segs[0] not in root:
+        try:
+            wiring = safe_io.read_json(snap_dir / "wiring.json")
+        except (OSError, ValueError):
+            wiring = None
+        if isinstance(wiring, dict):
+            merged = dict(root)
+            merged.update(wiring)
+            root = merged
+    found, value = _walk_any_path(root, segs)
+    if not found:
+        value = None
+    elif is_pointer(value) and not is_self_ref(value):
+        value = resolve_pointer(root, value, tuple(segs))
+    return True, value
+
+
+# RAM P8: the newest capture's flat {dot_path: leaf} map per chip dir, so the
+# next capture's diff_summary does not re-load + re-flatten the prior snapshot
+# (a 19 MB parse on a 30-qubit chip). Validated on read by the prior
+# snapshot's files (mtime_ns, size) -- a snapshot rewritten or replaced on disk
+# is a miss and is loaded from disk. One entry per chip, two chips at most.
+_LAST_FLAT: "OrderedDict[str, tuple[str, tuple, dict]]" = OrderedDict()
+_LAST_FLAT_LOCK = threading.Lock()
+_LAST_FLAT_MAX = 2
+
+
+def _remember_flat(hist_dir: Path, snap_dir: Path, flat: dict) -> None:
+    sig = _snap_files_sig(snap_dir)
+    if sig is None:
+        return
+    with _LAST_FLAT_LOCK:
+        _LAST_FLAT.pop(str(hist_dir), None)
+        _LAST_FLAT[str(hist_dir)] = (snap_dir.name, sig, flat)
+        while len(_LAST_FLAT) > _LAST_FLAT_MAX:
+            _LAST_FLAT.popitem(last=False)
+
+
+def _recall_flat(hist_dir: Path, snap_dir: Path) -> dict | None:
+    with _LAST_FLAT_LOCK:
+        ent = _LAST_FLAT.get(str(hist_dir))
+    if ent is None or ent[0] != snap_dir.name:
+        return None
+    if _snap_files_sig(snap_dir) != ent[1]:
+        return None
+    return ent[2]
+
+
+def _dir_bytes(root: Path) -> int:
+    """Total size of every regular file under *root* (the figure
+    ``history_disk_stats`` reports). ``os.scandir`` instead of
+    ``rglob`` + ``is_file`` + ``stat``: on Windows a DirEntry carries the
+    size from the directory listing itself, so 800 snapshot files cost one
+    listing per folder, not two syscalls each (RAM P8, F8: 120 ms after every
+    capture on a 200-snapshot chip). A vanished entry (mid-prune) is skipped,
+    as before."""
+    total = 0
+    stack = [str(root)]
+    while stack:
+        d = stack.pop()
+        try:
+            it = os.scandir(d)
+        except OSError:
+            continue
+        with it:
+            for e in it:
+                try:
+                    if e.is_dir(follow_symlinks=False):
+                        stack.append(e.path)
+                    elif e.is_file():
+                        total += e.stat().st_size
+                except OSError:
+                    continue
+    return total
 
 
 class HistoryManager:
@@ -1979,13 +2089,31 @@ class HistoryManager:
                     prior = s
                     break
 
+            # RAM P8: the summary is four counts, so it is counted from the
+            # two flat sides without building or sorting 300k entries; the
+            # new side is flattened from the dicts just captured (the same
+            # bytes the snapshot files hold, merged by QuamStore's own rule),
+            # and the prior side is the previous capture's flat map when that
+            # snapshot's files are provably unchanged -- else it is loaded
+            # from disk exactly as before.
+            flat_new = None
+            try:
+                flat_new = flatten(merge_state_wiring(snap_state, snap_wiring))
+            except Exception:
+                logger.debug("capture flatten failed", exc_info=True)
             if prior is not None:
                 try:
                     prior_dir = hist_dir / prior.timestamp
-                    entries = _differ.diff(prior_dir, snap_dir)
-                    diff_summary = Differ.summary(entries)
+                    flat_prior = _recall_flat(hist_dir, prior_dir)
+                    if flat_prior is None:
+                        flat_prior = Differ._flatten_side(prior_dir)
+                    if flat_new is None:
+                        flat_new = Differ._flatten_side(snap_dir)
+                    diff_summary = Differ.summary_between(flat_prior, flat_new)
                 except Exception:
                     logger.warning("Failed to compute diff for snapshot %s", ts, exc_info=True)
+            if flat_new is not None:
+                _remember_flat(hist_dir, snap_dir, flat_new)
 
             meta = SnapshotMeta(
                 timestamp=ts,
@@ -3042,28 +3170,33 @@ class HistoryManager:
         truncated = len(snapshots) > len(take)
         segs = dot_path.split(".")
         series: list[tuple] = []
+        # RAM P8 (ram_design.md §1.4 "Field scan-series cache"): one parsed
+        # value per (chip dir, dot path, snapshot), validated on read by that
+        # snapshot's state.json + wiring.json (mtime_ns, size) -- a re-open of
+        # the same leaf parses nothing, a new snapshot parses only itself
+        # (19 MB x 150 snapshots was 45 s per open on a 30-qubit chip). A
+        # pruned or restamped snapshot simply stops being asked for.
+        with _SCAN_SERIES_LOCK:
+            per_ts = _SCAN_SERIES.pop((str(hist_dir), dot_path), None) or {}
+            _SCAN_SERIES[(str(hist_dir), dot_path)] = per_ts      # LRU touch
+            while len(_SCAN_SERIES) > _SCAN_SERIES_MAX:
+                _SCAN_SERIES.popitem(last=False)
         for meta in reversed(take):                    # oldest-first
             snap_dir = hist_dir / meta.timestamp
-            try:
-                root = safe_io.read_json(snap_dir / "state.json")
-            except (OSError, ValueError):
+            sig = _snap_files_sig(snap_dir)
+            if sig is None:
+                continue                               # unreadable: skipped, as before
+            hit = per_ts.get(meta.timestamp)
+            if hit is not None and hit[0] == sig:
+                ok, value = hit[1]
+            else:
+                ok, value = _scan_one_snapshot(snap_dir, segs, is_pointer,
+                                               is_self_ref, resolve_pointer)
+                per_ts[meta.timestamp] = (sig, (ok, value))
+            if not ok:
                 continue
-            if not isinstance(root, dict):
-                continue
-            if segs and segs[0] not in root:
-                try:
-                    wiring = safe_io.read_json(snap_dir / "wiring.json")
-                except (OSError, ValueError):
-                    wiring = None
-                if isinstance(wiring, dict):
-                    merged = dict(root)
-                    merged.update(wiring)
-                    root = merged
-            found, value = _walk_any_path(root, segs)
-            if not found:
-                value = None
-            elif is_pointer(value) and not is_self_ref(value):
-                value = resolve_pointer(root, value, tuple(segs))
+            if isinstance(value, (dict, list)):
+                value = copy.deepcopy(value)       # the memo's copy stays pristine
             series.append((meta.timestamp, value, meta.trigger,
                            meta.run_id, meta.experiment_name,
                            meta.experiment_folder_path))
@@ -4683,14 +4816,7 @@ class HistoryManager:
             cached = self._disk_stats_cache.get(key)
             if cached is not None and cached[0] == ver:
                 return cached[1]
-        total_bytes = 0
-        if hist_dir.is_dir():
-            for p in hist_dir.rglob("*"):
-                try:
-                    if p.is_file():
-                        total_bytes += p.stat().st_size
-                except OSError:
-                    continue                 # a mid-prune file is not an error
+        total_bytes = _dir_bytes(hist_dir) if hist_dir.is_dir() else 0
         result = {
             "snapshots": len(snapshots),
             "bytes": total_bytes,

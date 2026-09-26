@@ -8382,6 +8382,43 @@ def _run_ts_stamp(run: Any) -> str:
     return f"{stamp}_{rid % 1000:03d}"
 
 
+# RAM P8 (ram_design.md §1.4 "Runs-tier candidate index"): every workspace
+# run's snapshot-format stamp, sorted newest-first, per dataset store -- the
+# drawer and Column History used to re-derive it (one strptime + two
+# timezone conversions per run, 4,162 runs) on EVERY open. Keyed on the
+# store's identity + runs generation, read atomically under its scan lock
+# (which also closes F5: ``st.runs.values()`` raced a concurrent rescan).
+# Chip-relative verdicts are NOT cached here; they are re-derived per call.
+_RUN_CANDIDATES_MEMO = _ramcache.KeyedMemo(
+    "drawer.run_candidates", max_entries=16,
+    sizeof=lambda v: 64 + 120 * len(v))
+
+
+def _store_run_candidates(st: DatasetStore) -> list[tuple[str, Any]]:
+    with st._scan_lock:
+        gen = st.generation
+        runs = list(st.runs.values())
+
+    def compute():
+        out = [(_run_ts_stamp(run), run) for run in runs]
+        out.sort(key=lambda t: t[0], reverse=True)
+        return _ramcache.Keyed(out, gen)
+    return _RUN_CANDIDATES_MEMO.get(("store", st.instance_seq), gen, compute,
+                                    wait_s=30.0)
+
+
+def _runs_candidates(roots: list[Path]) -> list[tuple[str, Any, Path]]:
+    """``(ts, run, root)`` newest-first over *roots* (see the memo above)."""
+    merged: list[tuple[str, Any, Path]] = []
+    for root in roots:
+        st = _get_or_create_store(root, rescan=True)
+        if st is None:
+            continue
+        merged.extend((ts, run, root) for ts, run in _store_run_candidates(st))
+    merged.sort(key=lambda t: t[0], reverse=True)
+    return merged
+
+
 def _runs_field_series(ctx: dict, dot_path: str, *,
                        max_runs: int = 60) -> tuple[list[tuple], int]:
     """Direct-scan tier over the workspace runs' own quam_state copies.
@@ -8423,14 +8460,7 @@ def _runs_field_series(ctx: dict, dot_path: str, *,
             seen_roots.add(k)
             roots.append(Path(cand))
 
-    candidates: list[tuple[str, Any]] = []      # (ts, run)
-    for root in roots:
-        st = _get_or_create_store(root, rescan=True)
-        if st is None:
-            continue
-        for run in st.runs.values():
-            candidates.append((_run_ts_stamp(run), run))
-    candidates.sort(key=lambda t: t[0], reverse=True)
+    candidates = [(ts, run) for ts, run, _root in _runs_candidates(roots)]
 
     series: list[tuple] = []
     examined = 0
@@ -8564,14 +8594,9 @@ def _runs_column_series(ctx: dict, path_map: dict[str, str], *,
             seen_roots.add(k)
             roots.append((Path(cand), _folder_key(cand)))
 
-    candidates: list[tuple[str, Any, str]] = []      # (ts, run, root_key)
-    for root, rkey in roots:
-        st = _get_or_create_store(root, rescan=True)
-        if st is None:
-            continue
-        for run in st.runs.values():
-            candidates.append((_run_ts_stamp(run), run, rkey))
-    candidates.sort(key=lambda t: t[0], reverse=True)
+    rkeys = {str(root): rkey for root, rkey in roots}
+    candidates = [(ts, run, rkeys[str(root)])
+                  for ts, run, root in _runs_candidates([r for r, _k in roots])]
 
     segs_by_row = {row: dp.split(".") for row, dp in path_map.items()}
     out: list[dict] = []
@@ -8886,22 +8911,35 @@ def field_history():
     # Runs tier (docs/20 v2): the workspace runs' own quam_state copies keep
     # the timeline fresh independent of Param History ingestion — today's
     # runs appear with a guaranteed Data link.
-    try:
-        runs_series, _examined = _runs_field_series(ctx, dot_path)
-    except Exception:  # noqa: BLE001 — the popover must survive a bad root
-        logger.debug("field-history runs tier failed", exc_info=True)
-        runs_series = []
-    hist = _history().field_history(ctx["path"], dot_path,
-                                    extra_series=runs_series)
-
     from quam_state_manager.core.pointer_path import resolve_field_target
     current = None
+    hist_path = dot_path
     try:
         ft = resolve_field_target(store.merged, dot_path)
         if ft.get("resolvable"):
             current = ft.get("resolved_value")
+            # RAM P8 / F3: an ALIAS path (``xy.operations.x180.amplitude``
+            # where ``x180 == "#./x180_DragCosine"``) was walked literally by
+            # both history tiers: the leaf index never holds it, so the
+            # drawer fell to the snapshot SCAN -- 150 full state.json parses,
+            # 45 s on a 19 MB chip -- and still found nothing. Read history
+            # at the leaf the alias names NOW (mid-path pointers followed,
+            # the leaf itself untouched), the rule Column History already
+            # applies (QA F5).
+            leaf = (ft.get("candidates") or [{}])[0].get("path")
+            if leaf and ft.get("chain"):
+                hist_path = leaf
     except Exception:  # noqa: BLE001
         pass
+    try:
+        runs_series, _examined = _runs_field_series(ctx, hist_path)
+    except Exception:  # noqa: BLE001 — the popover must survive a bad root
+        logger.debug("field-history runs tier failed", exc_info=True)
+        runs_series = []
+    hist = _history().field_history(ctx["path"], hist_path,
+                                    extra_series=runs_series)
+    hist["dot_path"] = dot_path
+    hist["history_path"] = hist_path
 
     roots = _uid_roots()
     for pt in hist["points"]:
@@ -24064,6 +24102,11 @@ def param_history_alignment():
     )
 
 
+# RAM P8: (groups, stats) of one feed page, see param_history_changes
+_PH_CHANGES_MEMO = _ramcache.KeyedMemo("param_history.changes", max_entries=16,
+                                       max_bytes=16 * 1024 * 1024,
+                                       sizeof=lambda v: 2048 + 400 * sum(
+                                           len(g.get("rows") or ()) for g in v[0]))
 _CHANGES_SNAPS = 20        # snapshots per page — the feed's unit is the EVENT
 _CHANGES_ROWS = 25         # rows shown per snapshot before "and N more"
 _CHANGES_ROWS_AT = 2000    # one snapshot opened in full
@@ -24090,26 +24133,43 @@ def param_history_changes():
     prefix = (request.args.get("prefix") or "").strip()
     before = (request.args.get("before") or "").strip() or None
     at = (request.args.get("at") or "").strip() or None
+    roots = _uid_roots()
+
+    def compute():
+        try:
+            groups = hm.leaf_change_groups(
+                path, limit_snaps=1 if at else _CHANGES_SNAPS + 1,
+                rows_per_snap=_CHANGES_ROWS_AT if at else _CHANGES_ROWS,
+                prefix=prefix or None, before_ts=before, at_ts=at)
+        except Exception as exc:      # noqa: BLE001 — never 500 the menu
+            logger.warning("param-history changes failed: %s", exc, exc_info=True)
+            groups = []
+        for g in groups:
+            ts = g.get("timestamp") or ""
+            g["when"] = (f"{ts[0:4]}-{ts[4:6]}-{ts[6:8]} {ts[9:11]}:{ts[11:13]}"
+                         if len(ts) >= 13 else ts)
+            g["uid"] = _uid_for_run_ref(g.get("experiment_folder_path"),
+                                        g.get("run_id"), roots)
+        return groups, hm.leaf_stats(path)
+
+    # RAM P8: the feed page is a function of the chip's history store and
+    # the dataset roots its Data links resolve against -- validated on read
+    # (``param_history_ram.hist_token``: in-process version, the index's
+    # PRAGMA data_version, the snapshot list). The freshness gate runs first,
+    # exactly as leaf_change_groups ran it, so a behind index is still seen.
+    from quam_state_manager.core import param_history_ram as _phr
     try:
-        groups = hm.leaf_change_groups(
-            path, limit_snaps=1 if at else _CHANGES_SNAPS + 1,
-            rows_per_snap=_CHANGES_ROWS_AT if at else _CHANGES_ROWS,
-            prefix=prefix or None, before_ts=before, at_ts=at)
-    except Exception as exc:      # noqa: BLE001 — never 500 the menu
-        logger.warning("param-history changes failed: %s", exc, exc_info=True)
-        groups = []
+        hm._ensure_leaf_index_fresh(path)
+        token = (_phr.hist_token(hm, path), tuple((str(r), k) for r, k in roots))
+        slot = ("changes", token[0][0], prefix, before, at)
+        groups, stats = _PH_CHANGES_MEMO.get(slot, token, compute, wait_s=30.0)
+    except _ramcache.Warming:
+        groups, stats = compute()
+    except Exception:             # noqa: BLE001 — the token is an accelerator
+        logger.debug("changes memo bypassed", exc_info=True)
+        groups, stats = compute()
     has_more = (not at) and len(groups) > _CHANGES_SNAPS
     groups = groups[:1 if at else _CHANGES_SNAPS]
-
-    roots = _uid_roots()
-    for g in groups:
-        ts = g.get("timestamp") or ""
-        g["when"] = (f"{ts[0:4]}-{ts[4:6]}-{ts[6:8]} {ts[9:11]}:{ts[11:13]}"
-                     if len(ts) >= 13 else ts)
-        g["uid"] = _uid_for_run_ref(g.get("experiment_folder_path"),
-                                    g.get("run_id"), roots)
-
-    stats = hm.leaf_stats(path)
     oldest = groups[-1]["timestamp"] if groups else None
     template = ("_param_history_changes.html" if _is_htmx()
                 else "param_history_changes.html")
