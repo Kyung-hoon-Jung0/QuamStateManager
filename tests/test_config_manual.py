@@ -42,8 +42,15 @@ def test_per_key_help_affordances_exist():
     # twpas, the wiring collections) in the shared partial they all render
     # through since 2026-09-10.
     entity = (_TPL / "_bulk_entity_grid.html").read_text(encoding="utf-8")
-    assert bulk.count('class="key-help-btn"') >= 1, "qubit column headers"
-    assert entity.count('class="key-help-btn"') >= 1, "every entity grid's headers"
+    # ...whose head markup lives in `_bulk_grid_macros.html` since RAM P6 (w7
+    # liveedit: /bulk is spliced from cached fragments, and a head renders
+    # identically spliced or whole): the qubit head macro and the entity one.
+    macros = (_TPL / "_bulk_grid_macros.html").read_text(encoding="utf-8")
+    qhead = macros[macros.index("macro qtable_open"):macros.index("macro qrow")]
+    ehead = macros[macros.index("macro etable_open"):macros.index("macro erow")]
+    assert "gm.qtable_open(" in bulk and "gm.etable_open(" in entity, "both render their heads through the macros"
+    assert qhead.count('class="key-help-btn"') >= 1, "qubit column headers"
+    assert ehead.count('class="key-help-btn"') >= 1, "every entity grid's headers"
     q = (_TPL / "_qubit_detail.html").read_text(encoding="utf-8")
     assert 'class="key-help-btn"' in q and 'data-help-path="{{ p.dot_path }}"' in q,         "a data attribute, never an inline onclick string (a key with a quote would end the script)"
     assert "openConfigManual({path: '" not in q and "openConfigManual({q: '" not in bulk
