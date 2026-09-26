@@ -25516,6 +25516,25 @@ _dataset_candidates_lock = threading.Lock()
 _dataset_candidates_cache: dict[Any, tuple[Any, int, list[Path]]] = {}
 
 
+def _entry_grandparents(entries) -> set[Path]:
+    """``{entry.folder_path.parent.parent}`` over the non-standalone entries.
+
+    RAM P7: this ran on the first /datasets after EVERY new run (a run bumps
+    ``ws.version``), and two ``Path.parent`` per entry over 4,175 entries was
+    ~60 ms of it. The dirname is taken on the path STRING, deduped, and only
+    the distinct results become ``Path`` objects -- ``ntpath``/``posixpath``
+    ``dirname`` is the string form of ``PurePath.parent`` for a normalized
+    path (pathlib keeps the normalized string; pinned against the Path form
+    in tests/test_newrun_path.py)."""
+    dn = os.path.dirname
+    seen: set[str] = set()
+    for entry in entries:
+        if entry.is_standalone:
+            continue
+        seen.add(dn(dn(str(entry.folder_path))))
+    return {Path(g) for g in seen}
+
+
 def _dataset_candidate_folders(*, fast: bool = False) -> list[Path]:
     """Sorted, deduped, existing data-root folders for the current workspace.
 
@@ -25585,12 +25604,7 @@ def _dataset_candidate_folders(*, fast: bool = False) -> list[Path]:
     # 9.7 s of SMB round-trips per /datasets render. The set below is exactly
     # what that loop built anyway, so nothing about the result changes; a
     # grandparent that is already a known root skips the stat entirely.
-    grandparents: set[Path] = set()
-    for entry in ws.all_entries:
-        if entry.is_standalone:
-            continue
-        grandparents.add(entry.folder_path.parent.parent)
-    for cand in grandparents:
+    for cand in _entry_grandparents(ws.all_entries):
         if cand in candidates:
             continue
         if cand.is_dir():

@@ -200,3 +200,24 @@ class TestTreePreRender:
         active["p"] = "B"
         c.get("/workspace/tree")
         assert renders == ["A", "B"]
+
+
+class TestEntryGrandparents:
+    def test_equals_the_path_parent_parent_it_replaced(self, tmp_path):
+        import random
+        from types import SimpleNamespace
+        rng = random.Random(7)
+        bases = [tmp_path, tmp_path / "KH", Path(tmp_path.anchor), Path("rel") / "x",
+                 Path(r"\server\share\data")]
+        entries = []
+        for _ in range(400):
+            b = rng.choice(bases)
+            depth = rng.randrange(0, 4)
+            p = b
+            for d in range(depth):
+                p = p / f"d{rng.randrange(3)}"
+            entries.append(SimpleNamespace(folder_path=p / f"#{rng.randrange(99)}_run",
+                                           is_standalone=rng.random() < 0.2))
+        want = {e.folder_path.parent.parent for e in entries if not e.is_standalone}
+        assert R._entry_grandparents(entries) == want
+        assert len(want) > 5
