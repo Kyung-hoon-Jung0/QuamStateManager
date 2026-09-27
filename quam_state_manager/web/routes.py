@@ -7857,6 +7857,40 @@ def chip_active_token():
 _NO_CHIP_MSG = "No chip open (SM restarted?) — reopen the chip: Projects → Resume."
 
 
+@bp.route("/field/lab-watch", methods=["GET", "POST"])
+def field_lab_watch():
+    """``{"lab": bool}`` -- would an edit at any of these paths be asked of
+    a LAB pulse class's own code (``_lab_write_refusal``)? The client fires it
+    beside a /field/edit(-batch) so the cell can say "checking with your
+    class's own code..." while the (subprocess-backed) answer is on its way.
+    Read-only; never spawns; cheap (a cached structure map + prefix lookups)."""
+    store = _store()
+    if store is None:
+        return jsonify(lab=False)
+    body = request.get_json(silent=True) if request.method == "POST" else None
+    paths = (body or {}).get("paths") if isinstance(body, dict) else None
+    if not isinstance(paths, list):
+        paths = request.args.getlist("path")
+    from quam_state_manager.core import lab_watch
+    try:
+        watch = lab_watch.watch_for(store)
+    except Exception:  # noqa: BLE001
+        return jsonify(lab=False)
+    if not watch:
+        return jsonify(lab=False)
+    for raw in paths[:4000]:
+        if not isinstance(raw, str) or not raw.strip():
+            continue
+        dp = _normalize_dot_path(raw.strip())
+        try:
+            tgt = _resolve_edit_path(store, dp)
+        except Exception:  # noqa: BLE001
+            tgt = dp
+        if watch.affected(tgt) or watch.affected(dp):
+            return jsonify(lab=True)
+    return jsonify(lab=False)
+
+
 @bp.route("/field/edit", methods=["POST"])
 def field_edit():
     """Generic field editor — works for any dot-path in state or wiring."""
@@ -7965,6 +7999,13 @@ def field_edit():
             # makes the two answers agree.
             raw_value = json.dumps(raw_value)
         parsed = _parse_for_target(modifier.store, target_path, raw_value)
+        # A value landing in a LAB-class pulse (directly or through any number
+        # of pointer hops) is asked of the class's own code first; refused =
+        # nothing written, no tray entry (same door as /pulse/edit).
+        _lab = _lab_write_refusal(modifier.store, [(target_path, parsed)])
+        if _lab:
+            return jsonify(ok=False, lab_refused=True,
+                           error=_lab_refusal_text(_lab[0])), 400
         _entry = modifier.set_value(target_path, parsed)
         if hasattr(_entry, "actor"):
             _entry.actor = _request_actor()   # docs/172-173: who staged it
@@ -9684,6 +9725,46 @@ def field_edit_batch():
                 continue
         _attach_type_policy(ctx)
 
+    # A value landing in a LAB-class pulse is asked of the class's own code
+    # BEFORE the lock (it may take a subprocess). Refused: an atomic batch
+    # writes nothing at all (400, every row named); an independent batch
+    # skips just the refused rows.
+    _lab_skip: set = set()
+    _lab_writes, _lab_idx = [], []
+    from quam_state_manager.core import lab_watch as _lw
+    try:
+        _watch = _lw.watch_for(modifier.store)
+    except Exception:  # noqa: BLE001 -- a check that cannot run never blocks
+        logger.warning("lab-class watch map failed", exc_info=True)
+        _watch = None
+    for _n, (_dp, _rv, _c) in enumerate(pairs if _watch else ()):
+        if _rv is _BATCH_DELETE:
+            continue
+        try:
+            _tgt = _resolve_edit_path(modifier.store, _dp)
+            if not _watch.affected(_tgt):
+                continue
+            _pv = (_parse_for_target(modifier.store, _tgt, _rv)
+                   if isinstance(_rv, str) else _rv)
+        except Exception:  # noqa: BLE001 -- the row loop reports it
+            continue
+        _lab_writes.append((_tgt, _pv))
+        _lab_idx.append(_n)
+    _lab = _lab_write_refusal(modifier.store, _lab_writes) if _lab_writes else None
+    if _lab:
+        _lab_msg = _lab_refusal_text(_lab[0])
+        _lab_skip = {_lab_idx[k] for k in _lab[1]}
+        if not independent:
+            return jsonify(
+                ok=False, lab_refused=True, error=_lab_msg,
+                tray_html=_tray_html(),
+                results=[{"dot_path": dp, "applied": False,
+                          "lab_refused": n in _lab_skip,
+                          "error": (_lab_msg if n in _lab_skip else
+                                    "not written: a value in this batch was "
+                                    "refused by its pulse class")}
+                         for n, (dp, _v, _c) in enumerate(pairs)]), 400
+
     results: list[dict[str, Any]] = []
     applied_entries: list[Any] = []
 
@@ -9708,7 +9789,12 @@ def field_edit_batch():
             elif _batch_gid is None:
                 _batch_gid = modifier.new_group_id()
         ok_overall = True
-        for dot_path, raw_value, allow_create in pairs:
+        for _row_n, (dot_path, raw_value, allow_create) in enumerate(pairs):
+            if _row_n in _lab_skip:      # independent mode only (see above)
+                results.append({"dot_path": dot_path, "applied": False,
+                                "lab_refused": True, "error": _lab_msg})
+                ok_overall = False
+                continue
             try:
                 if raw_value is _BATCH_DELETE:
                     # the /field/delete guards, in this batch's one Ctrl+Z group
@@ -14446,11 +14532,14 @@ def _coerce_lab_overrides(store, path: str, overrides: dict) -> dict:
     return out
 
 
-def lab_drawings_for_paths(store, paths, *, spawn: bool, overrides=None):
+def lab_drawings_for_paths(store, paths, *, spawn: bool, overrides=None,
+                           overrides_by_path=None):
     """``{path: record}`` -- each pulse drawn by its OWN class's code in the
     selected env (``core/lab_waveform``). ONE function for the detail view,
     the edit refresh and the row sparklines, so they cannot draw the same
-    pulse two ways."""
+    pulse two ways. ``overrides`` substitutes fields of a single path;
+    ``overrides_by_path`` does it per path (the edit check of a batch that
+    reaches several pulses -- all drawn by ONE subprocess)."""
     from quam_state_manager.core import lab_waveform
     try:
         python_path = config_generator.get_selected_env(current_app.instance_path)
@@ -14460,6 +14549,8 @@ def lab_drawings_for_paths(store, paths, *, spawn: bool, overrides=None):
     items, owners = [], []
     for path in paths:
         ov = overrides if len(paths) == 1 else None
+        if overrides_by_path and overrides_by_path.get(path):
+            ov = overrides_by_path[path]
         if ov:
             ov = _coerce_lab_overrides(store, path, ov)
         qclass, params, err = _lab_params_for_path(store, path, ov)
@@ -15557,75 +15648,131 @@ def _lab_class_refusal(store, spec, fields: dict, qclass: str | None) -> str | N
     return str(rec.get("error") or "it raised")[:400]
 
 
-def _row_op_of(pulse_index, path: str) -> str | None:
-    """The pulse row *path* is (or lies inside) -- the longest row prefix."""
-    segs = path.split(".")
-    for n in range(len(segs), 1, -1):
-        cand = ".".join(segs[:n])
-        if pulse_index.has_path(cand):
-            return cand
-    return None
-
-
 def _lab_edit_refusal(store, dot_path: str, write_path: str, value) -> str | None:
-    """The error a LAB class's own code raises for an edit, or None.
+    """The error a LAB class's own code raises for a /pulse/edit, or None.
 
     2026-09-27 (verifier, KRS 5Q): the create path ran the class's own check,
     the edit path did not -- ``flat_length=4`` typed into an existing
     ``GaussianNZTwoFluxPulse`` committed, and after Apply generate_config()
-    raised for the WHOLE chip. Every lab-class pulse whose field values this
-    write changes is drawn once by its own class with the new value
-    (``lab_drawings_for_paths`` -- the same drawing the detail view shows, so
-    the re-render after the commit is a RAM hit):
+    raised for the WHOLE chip. One door with /field/edit(-batch): see
+    :func:`_lab_write_refusal`."""
+    got = _lab_write_refusal(store, [(write_path, value)],
+                             edited_op=(dot_path.rsplit(".", 1)[0]
+                                        if "." in dot_path else None))
+    return got[0] if got else None
 
-    * the pulse the field was edited on (``dot_path``);
-    * the pulse that owns the leaf actually written (a followed pointer);
-    * every pulse with a field pointing straight at that leaf (one hop).
 
-    SM's own catalog classes never spawn (their preview is in-process), and a
-    check that cannot run (no env, run failed) never blocks -- the same rule
-    as create. Returns the first refusal, naming the pulse when it is not the
-    one being edited."""
-    from quam_state_manager.core.waveform_synth import synth_for_operation
-    pulse_index = _pulse_index()
-    if pulse_index is None:
-        return None
-    checks: list[tuple[str, str]] = []   # (op path, field)
-    for p in (dot_path, write_path):
-        op = _row_op_of(pulse_index, p.rsplit(".", 1)[0]) if "." in p else None
-        if op and p.rsplit(".", 1)[0] == op:
-            checks.append((op, p.rsplit(".", 1)[1]))
+def _lab_write_refusal(store, writes, *, edited_op: str | None = None):
+    """``(message, refused_write_indices)`` when a LAB class's own code
+    rejects what *writes* (``[(write_path, value)]``, the paths the values
+    actually land at) would make of any of its pulses; else None.
+
+    Every lab-class pulse whose field a write changes is drawn ONCE by its own
+    class with all the batch's new values for it (``lab_drawings_for_paths``,
+    one subprocess for all of them -- the same drawing the Pulses detail view
+    shows, so its re-render after the commit is a RAM hit). "Changes" is
+    :mod:`core.lab_watch`: a write inside the pulse dict, or anywhere on one
+    of its fields' pointer chains, any number of hops.
+
+    SM's own catalog classes never spawn (their preview is in-process), a
+    write that reaches no lab-class pulse costs a stamp compare and a few dict
+    lookups, and a check that cannot run (no env, run failed, a value that
+    cannot be resolved) never blocks -- the same rule as create."""
+    from quam_state_manager.core import lab_watch
     try:
-        holders = pulse_index.reverse_index().get(write_path) or []
-    except Exception:  # noqa: BLE001
-        holders = []
-    for h in holders:
-        op = _row_op_of(pulse_index, h.rsplit(".", 1)[0]) if "." in h else None
-        if op and h.rsplit(".", 1)[0] == op:
-            checks.append((op, h.rsplit(".", 1)[1]))
-    seen: set = set()
-    for op, field in checks:
-        if (op, field) in seen:
+        watch = lab_watch.watch_for(store)
+    except Exception:  # noqa: BLE001 -- a check that cannot run never blocks
+        logger.warning("lab-class watch map failed", exc_info=True)
+        return None
+    if not watch:
+        return None
+    per_op: dict[str, dict] = {}
+    rows_of: dict[str, set] = {}
+    direct: set = set()
+    for idx, (wp, val) in enumerate(writes):
+        if not isinstance(wp, str):
             continue
-        seen.add((op, field))
+        aff = watch.affected(wp)
+        if not aff:
+            continue
         try:
-            probe = synth_for_operation(store, op)
-        except Exception:  # noqa: BLE001
-            continue
-        if probe.get("reason") != "unknown_class":
-            continue  # SM's own class: drawn in-process by the preview
-        try:
-            rec = lab_drawings_for_paths(store, [op], spawn=True,
-                                         overrides={field: value}).get(op) or {}
-        except Exception:  # noqa: BLE001 -- a check that cannot run never blocks
-            logger.warning("lab class edit check failed to run", exc_info=True)
-            continue
-        if rec.get("ok") or rec.get("reason"):
-            continue
+            cur = store.get_value(wp)
+        except (KeyError, TypeError, ValueError, IndexError):
+            cur = _MISSING
+        if cur is not _MISSING and type(cur) is type(val) and cur == val:
+            continue          # rewriting what is there changes nothing
+        v = val
+        if isinstance(val, str) and is_pointer(val.strip()):
+            from quam_state_manager.core.pointer_resolver import resolve_pointer
+            try:
+                v = resolve_pointer(store.merged, val.strip(), tuple(wp.split(".")))
+            except Exception:  # noqa: BLE001 -- dangling: nothing to draw
+                v = None
+            if v is None or isinstance(v, (dict, list)) or is_pointer(v):
+                continue
+        segs = wp.split(".")
+        for op, field, rel in aff:
+            fv = v
+            if rel:
+                base = (per_op.get(op) or {}).get(field)
+                if not isinstance(base, (dict, list)):
+                    try:
+                        base = copy.deepcopy(store.get_value(
+                            ".".join(segs[:len(segs) - len(rel)])))
+                    except (KeyError, TypeError, ValueError, IndexError):
+                        continue
+                if not _set_nested(base, rel, v):
+                    continue
+                fv = base
+            per_op.setdefault(op, {})[field] = fv
+            rows_of.setdefault(op, set()).add(idx)
+            if wp.startswith(op + "."):
+                direct.add(op)       # the value is written IN this pulse
+    if not per_op:
+        return None
+    ops = sorted(per_op, key=lambda o: (o != edited_op, o))
+    try:
+        recs = lab_drawings_for_paths(store, ops, spawn=True,
+                                      overrides_by_path=per_op)
+    except Exception:  # noqa: BLE001 -- a check that cannot run never blocks
+        logger.warning("lab class edit check failed to run", exc_info=True)
+        return None
+    for op in ops:
+        rec = recs.get(op)
+        if not rec or rec.get("ok") or rec.get("reason"):
+            continue      # no record / not run: a check that cannot run never blocks
         err = str(rec.get("error") or "it raised")[:400]
-        who = "" if op == dot_path.rsplit(".", 1)[0] else f" ({op} reads this value)"
-        return f"{err}{who}"
+        who = ("" if op == edited_op or op in direct
+               else f" ({op} reads this value)")
+        return f"{err}{who}", sorted(rows_of.get(op) or ())
     return None
+
+
+_MISSING = object()
+
+
+def _set_nested(container, rel, value) -> bool:
+    """Put *value* at *rel* inside *container* (dict keys / list indices)."""
+    cur = container
+    for n, seg in enumerate(rel):
+        last = n == len(rel) - 1
+        if isinstance(cur, dict):
+            if last:
+                cur[seg] = value
+                return True
+            cur = cur.get(seg)
+        elif isinstance(cur, list):
+            try:
+                k = int(seg)
+                if last:
+                    cur[k] = value
+                    return True
+                cur = cur[k]
+            except (ValueError, IndexError):
+                return False
+        else:
+            return False
+    return False
 
 
 def _pulse_edit_write_path(store, dot_path: str, raw_current, target_path: str) -> str:
@@ -15637,12 +15784,15 @@ def _pulse_edit_write_path(store, dot_path: str, raw_current, target_path: str) 
     return target_path
 
 
+def _lab_refusal_text(message: str) -> str:
+    return ("Your pulse class refused this value (its own code, run in "
+            f"the selected environment) -- nothing was written: {message}")
+
+
 def _lab_edit_refused(message: str):
     return render_template(
         "_status.html", level="error",
-        message=("Your pulse class refused this value (its own code, run in "
-                 f"the selected environment) -- nothing was written: {message}"
-                 )), 400
+        message=_lab_refusal_text(message)), 400
 
 
 def _slot_host(merged: dict, pair_name: str, pair: dict, slot: str):

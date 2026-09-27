@@ -132,6 +132,10 @@ class QuamStore:
         # lets surfaces like the Config Viewer / pulse Verify overlay tell
         # whether a cached artifact predates the latest edit.
         self.mutation_seq: int = 0
+        # Bumped only by writes that can move STRUCTURE (a pointer, a class,
+        # a container, a created/deleted key -- never a plain number): caches
+        # of "what points where" (core/lab_watch) survive ordinary edits.
+        self.structure_seq: int = 0
         # Per-key expected-type policy (core.type_policy.TypePolicy) —
         # attached by the web layer at activation; None = feature dormant,
         # every edit behaves exactly as before.
@@ -172,6 +176,7 @@ class QuamStore:
         self.generated_config = None
         self.generated_config_meta = None
         self.mutation_seq = 0
+        self.structure_seq = 0
         self.type_policy = None
         self._lock = threading.RLock()
         self._pointer_cache = {}
@@ -321,6 +326,7 @@ class QuamStore:
             # counter so seq-validated caches (PulseIndex) and staleness
             # checks (Verify overlay) can't serve pre-reload conclusions.
             self.mutation_seq += 1
+            self.structure_seq = getattr(self, "structure_seq", 0) + 1
 
     # ------------------------------------------------------------------
     # Accessors

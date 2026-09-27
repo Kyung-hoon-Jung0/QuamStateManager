@@ -14018,3 +14018,23 @@ td.cell-live-stale .cell-live-now {
 .pulse-create-choice-btn.is-active { background: var(--pico-primary-background); border-color: var(--pico-primary-background);
     color: var(--pico-primary-inverse); }
 .pulse-env-refresh { margin-left: 0.5rem; }
+
+/* lab-check.js (2026-09-27): a /field/edit(-batch) into a LAB-class pulse is
+   asked of the class's own code first -- the cell says so while it waits, and
+   a refusal is named where the edit was made. */
+.lab-check-badge {
+    position: fixed; z-index: 10050; max-width: 380px;
+    padding: 2px 8px; border-radius: 4px;
+    font-family: var(--font-ui); font-size: 0.8rem; font-style: italic;
+    background: var(--color-info-bg);
+    color: var(--color-info-text);
+    border: 1px solid var(--color-info-border);
+    box-shadow: 0 2px 6px rgba(0, 0, 0, 0.18);
+    pointer-events: auto; white-space: normal;
+}
+.lab-check-badge.lab-check-refused {
+    font-style: normal; cursor: pointer;
+    background: var(--color-error-bg);
+    color: var(--color-error-text);
+    border-color: var(--color-error-border);
+}

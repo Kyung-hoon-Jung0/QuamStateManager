@@ -62,6 +62,10 @@
        never registered and clicking the chip did nothing but clear it. #}
     <script src="{{ asset_url('sync-badge.js') }}"></script>
     <script src="{{ asset_url('app.js') }}"></script>
+    {# 2026-09-27: "checking with your class's own code..." beside any
+       /field/edit(-batch) that a LAB pulse class is asked about (one fetch
+       seam for every editing surface). #}
+    <script src="{{ asset_url('lab-check.js') }}"></script>
     {# The search-box typeahead (customer, 2026-09-10). AFTER app.js: it calls
        window._anchorPopover, which is the one body-level popup placement this
        app has — `position:absolute` is clipped by #sidebar's overflow-y:auto,

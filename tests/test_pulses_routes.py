@@ -2339,6 +2339,138 @@ class TestALabClassEditIsCheckedByItsOwnCode:
         assert r.status_code == 200, r.data[:300]
         assert calls == []
 
+    # -- the same check on every other editing door (/field/edit, -batch) ----
+
+    def _fe(self, c, path, value):
+        return c.post("/field/edit", data={"dot_path": path, "value": value})
+
+    def _fb(self, c, updates, **kw):
+        return c.post("/field/edit-batch", json={
+            "updates": [{"dot_path": p, "value": v} for p, v in updates], **kw})
+
+    def _ops(self, c):
+        return _slot_store(c).state["qubits"]["q1"]["z"]["operations"]
+
+    def test_a_grid_or_tree_edit_the_class_refuses_is_not_written(self, slot_client, lab):
+        calls, refuse = lab
+        refuse["when"] = lambda p: p.get("flat_length") == 4
+        s = _slot_store(slot_client)
+        n = len(s.change_log)
+        r = self._fe(slot_client, f"{self.OP}.flat_length", "4")
+        assert r.status_code == 400, r.data[:300]
+        j = r.get_json()
+        assert j["lab_refused"] is True and "6*sigma" in j["error"]
+        assert "nothing was written" in j["error"]
+        assert self._ops(slot_client)["nz"]["flat_length"] == 32
+        assert len(s.change_log) == n            # no tray entry
+        # the pulse the value is written IN is not "a reader" of it
+        assert "reads this value" not in j["error"]
+
+    def test_a_grid_edit_it_draws_is_written(self, slot_client, lab):
+        calls, refuse = lab
+        refuse["when"] = lambda p: p.get("flat_length") == 4
+        r = self._fe(slot_client, f"{self.OP}.flat_length", "48")
+        assert r.status_code == 200, r.data[:300]
+        assert self._ops(slot_client)["nz"]["flat_length"] == 48
+        assert calls, "the class was asked"
+
+    def test_a_batch_with_one_refused_value_writes_nothing(self, slot_client, lab):
+        calls, refuse = lab
+        refuse["when"] = lambda p: p.get("flat_length") == 4
+        s = _slot_store(slot_client)
+        n = len(s.change_log)
+        r = self._fb(slot_client, [("qubits.q1.f_01", 5.3e9),
+                                   (f"{self.OP}.flat_length", "4")])
+        assert r.status_code == 400, r.data[:300]
+        j = r.get_json()
+        assert j["lab_refused"] is True
+        assert [x["lab_refused"] for x in j["results"]] == [False, True]
+        assert not any(x["applied"] for x in j["results"])
+        assert s.state["qubits"]["q1"]["f_01"] == 5.2e9
+        assert self._ops(slot_client)["nz"]["flat_length"] == 32
+        assert len(s.change_log) == n
+
+    def test_an_independent_batch_skips_only_the_refused_row(self, slot_client, lab):
+        calls, refuse = lab
+        refuse["when"] = lambda p: p.get("flat_length") == 4
+        r = self._fb(slot_client, [("qubits.q1.f_01", 5.3e9),
+                                   (f"{self.OP}.flat_length", "4")], independent=True)
+        j = r.get_json()
+        assert [x["applied"] for x in j["results"]] == [True, False]
+        assert j["results"][1]["lab_refused"] is True
+        assert _slot_store(slot_client).state["qubits"]["q1"]["f_01"] == 5.3e9
+        assert self._ops(slot_client)["nz"]["flat_length"] == 32
+
+    def test_two_fields_of_one_pulse_are_drawn_together(self, slot_client, lab):
+        calls, refuse = lab
+        # each value alone is fine; the PAIR is what the class refuses
+        refuse["when"] = lambda p: p.get("flat_length") == 8 and p.get("amplitude") == 0.5
+        r = self._fb(slot_client, [(f"{self.OP}.flat_length", "8"),
+                                   (f"{self.OP}.amplitude", "0.5")])
+        assert r.status_code == 400, r.data[:300]
+        assert self._ops(slot_client)["nz"]["amplitude"] == 0.15
+
+    def test_a_pulse_three_hops_away_is_checked(self, slot_client, lab):
+        calls, refuse = lab
+        # nz3 -> nz2 -> nz: a write at nz.flat_length changes nz3 too
+        self._ops(slot_client)["nz3"] = {"__class__": self.LAB, "amplitude": 0.77,
+                                         "flat_length": "#../nz2/flat_length"}
+        _slot_store(slot_client).structure_seq += 1   # the test wrote around the modifier
+        refuse["when"] = lambda p: p.get("amplitude") == 0.77 and p.get("flat_length") == 4
+        r = self._fe(slot_client, f"{self.OP}.flat_length", "4")
+        assert r.status_code == 400, r.data[:300]
+        assert "operations.nz3 reads this value" in r.get_json()["error"]
+        assert self._ops(slot_client)["nz"]["flat_length"] == 32
+        # the Pulses page's own door sees the same chain
+        r = self._edit(slot_client, self.OP, "flat_length", "4")
+        assert r.status_code == 400 and b"nz3" in r.data
+
+    def test_a_relink_is_seen_by_the_next_edit(self, slot_client, lab):
+        """The watch map is cached across numeric edits, but a written POINTER
+        moves structure: the next edit must see the new chain."""
+        calls, refuse = lab
+        ops = self._ops(slot_client)
+        ops["store"] = {"flat_length": 32}                   # not a pulse
+        _slot_store(slot_client).structure_seq += 1
+        assert self._fe(slot_client, "qubits.q1.z.operations.store.flat_length",
+                        "4").status_code == 200              # nothing reads it yet
+        r = self._fb(slot_client, [(f"{self.OP2}.flat_length",
+                                    "#/qubits/q1/z/operations/store/flat_length")])
+        assert r.status_code == 200, r.data[:300]
+        refuse["when"] = lambda p: p.get("amplitude") == 0.99 and p.get("flat_length") == 5
+        r = self._fe(slot_client, "qubits.q1.z.operations.store.flat_length", "5")
+        assert r.status_code == 400, r.data[:300]
+        assert ops["store"]["flat_length"] == 4
+
+    def test_a_non_pulse_or_catalog_edit_never_asks_and_keeps_the_map(self, slot_client, lab):
+        calls, _ = lab
+        from quam_state_manager.core import lab_watch
+        s = _slot_store(slot_client)
+        w1 = lab_watch.watch_for(s)
+        assert w1, "the fixture's lab pulses are in the map"
+        assert self._fe(slot_client, "qubits.q1.f_01", "5.25e9").status_code == 200
+        assert self._fe(slot_client, "qubits.q1.z.operations.sq.amplitude",
+                        "0.3").status_code == 200
+        assert self._fb(slot_client, [("qubits.q2.f_01", 4.95e9)]).status_code == 200
+        assert calls == []
+        assert lab_watch.watch_for(s) is w1      # a number never rebuilds the map
+
+    def test_an_uncheckable_class_never_blocks_a_grid_edit(self, slot_client, lab, monkeypatch):
+        from quam_state_manager.core import lab_waveform
+        monkeypatch.setattr(lab_waveform, "draw", lambda py, items, spawn=True: [
+            {"ok": False, "reason": "run-failed", "error": "env gone"} for _ in items])
+        assert self._fe(slot_client, f"{self.OP}.flat_length", "4").status_code == 200
+
+    def test_the_client_can_ask_whether_a_cell_is_checked(self, slot_client, lab):
+        def ask(*paths):
+            return slot_client.post("/field/lab-watch",
+                                    json={"paths": list(paths)}).get_json()["lab"]
+        assert ask(f"{self.OP}.flat_length") is True
+        assert ask(f"{self.OP2}.flat_length") is True
+        assert ask("qubits.q1.f_01") is False
+        assert ask("qubits.q1.z.operations.sq.amplitude") is False
+        assert ask("qubits.q1.f_01", f"{self.OP}.amplitude") is True
+
     def test_the_lab_edit_form_says_it_is_checking(self, slot_client, lab):
         html = slot_client.get("/pulse/detail?path=" + self.OP).data.decode()
         assert 'hx-indicator="next .pulse-lab-checking"' in html

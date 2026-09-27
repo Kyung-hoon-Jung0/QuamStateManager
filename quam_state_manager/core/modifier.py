@@ -92,6 +92,8 @@ class Modifier:
             )
             self.store.change_log.append(entry)
             self.store.mutation_seq += 1
+            if _moves_structure(dot_path, old_value, coerced):
+                _bump_structure(self.store)
 
             if not _defer_hooks:
                 self.store._clear_pointer_cache()
@@ -198,6 +200,7 @@ class Modifier:
             )
             self.store.change_log.append(entry)
             self.store.mutation_seq += 1
+            _bump_structure(self.store)
 
             self.store._clear_pointer_cache()
             if self.store.search_index is not None:
@@ -240,6 +243,7 @@ class Modifier:
             )
             self.store.change_log.append(entry)
             self.store.mutation_seq += 1
+            _bump_structure(self.store)
 
             self.store._clear_pointer_cache()
             if self.store.search_index is not None:
@@ -630,6 +634,9 @@ class Modifier:
                 self.store.search_index.update_entry(entry.dot_path, entry.old_value)
 
         self.store.mutation_seq += 1
+        if (entry.created or entry.deleted
+                or _moves_structure(entry.dot_path, entry.new_value, entry.old_value)):
+            _bump_structure(self.store)
         if not _skip_cache_clear:
             self.store._clear_pointer_cache()
 
@@ -637,6 +644,19 @@ class Modifier:
 # ======================================================================
 # Internal helpers
 # ======================================================================
+
+
+def _moves_structure(dot_path: str, old: Any, new: Any) -> bool:
+    """Can this write move STRUCTURE (what points where, which class a dict
+    is)? A plain number/bool/None over a plain number/bool/None cannot; any
+    string (a pointer is a string), container or ``__class__`` key can."""
+    if dot_path.rsplit(".", 1)[-1] == "__class__":
+        return True
+    return isinstance(old, (str, dict, list)) or isinstance(new, (str, dict, list))
+
+
+def _bump_structure(store) -> None:
+    store.structure_seq = getattr(store, "structure_seq", 0) + 1
 
 
 _INDEX_RE = re.compile(r"\d+")
