@@ -3633,18 +3633,20 @@ window.ChipStatus.mount = function (opts) {
     // ══════════════════════════════════════════════════════════════════
     var _META_TTL = 15000;
     var _metaData = null, _metaAt = 0, _metaPending = null, _metaRetries = 0;
+    var _metaAsked = 0, _metaDataN = 0;   // requests started; which one _metaData answers
     var _metaDash = document.querySelector('.topo-dashboard');
     function _metaAlive() { return !!(_metaDash && document.body.contains(_metaDash)); }
     function _metaLoad(force) {
         if (_metaPending) return _metaPending;
         if (_metaData && !force && Date.now() - _metaAt < _META_TTL) return Promise.resolve(_metaData);
         if (typeof fetch !== 'function') return Promise.resolve(_metaData);
+        var n = ++_metaAsked;
         _metaPending = fetch('/topology/metric-meta', { cache: 'no-store' })
             .then(function (r) { return r.ok ? r.json() : null; })
             .then(function (d) {
                 _metaPending = null;
                 if (!_metaAlive() || !d || !d.ok) return _metaData;
-                _metaData = d; _metaAt = Date.now();
+                _metaData = d; _metaAt = Date.now(); _metaDataN = n;
                 _metaDecorate(document);
                 // the index was being repaired: what came back is the last
                 // committed index, so ask again a little later (bounded)
@@ -3778,45 +3780,71 @@ window.ChipStatus.mount = function (opts) {
         _metaLoad();
     });
 
+    // w7 final-QA P3: a capture (Take Snapshot, a run's, another window's --
+    // stateHistoryChanged) or the working copy moving (sm:wc-moved, where
+    // wc-moved.js ships) changes what the meta lines say ("history: N
+    // snapshots", a value's newest change), but the page is not re-rendered.
+    // Re-ask when this mount has the metadata in use -- data held, a fetch
+    // out, or a panel with Show Meta Info on -- and _metaDecorate repaints.
+    // Lazy stays lazy: a mount that never asked does not start now.
+    var _metaRefreshT = null, _metaMovedN = 0;
+    function _metaRefresh() {
+        _metaMovedN = _metaAsked;   // requests that left before this move
+        clearTimeout(_metaRefreshT);
+        _metaRefreshT = setTimeout(function () {
+            _metaRefreshT = null;
+            if (!_metaAlive()) return;
+            if (!_metaData && !_metaPending && !document.querySelector('.topo-section.topo-meta-on')) return;
+            // a fetch already out may have left before the move: ask after it --
+            // unless the answer in hand was asked for AFTER it (a fresh mount's
+            // own fetch): on a big chip one answer is ~300 KB and ~0.5 s
+            var movedN = _metaMovedN;
+            (_metaPending || Promise.resolve())
+                .then(function () {
+                    if (!_metaAlive() || (_metaData && _metaDataN > movedN)) return null;
+                    return _metaLoad(true);
+                })
+                .then(function () {   // a card up right now says the new answer too
+                    if (_metaHoverEl && _metaHoverEl.isConnected) _metaShow(_metaHoverEl);
+                });
+        }, 400);
+    }
+    document.addEventListener('sm:wc-moved', _metaRefresh);
+    window.ChipStatus._onLeave(_metaDash, function _metaRefreshTeardown() {
+        clearTimeout(_metaRefreshT);
+        document.removeEventListener('sm:wc-moved', _metaRefresh);
+    });
+
     // The hover card: the tile's own tooltip text + the metadata lines. The
     // native title is parked while the card is up (two tooltips at once read
     // as noise) and put back on leave, so nothing else that reads it changes.
-    var _metaHoverEl = null;
+    // w7 final-QA P3: on a panel TITLE the native tooltip is not the h4's but
+    // its label span's (queue #5 put the direction words there), so every
+    // [title] under the hovered element is parked -- not the S / M / L and
+    // Show Meta Info controls', which keep their own tips -- and the card
+    // carries the label's text, direction words included, instead.
+    var _metaHoverEl = null, _metaParked = [];
+    function _metaPark(el) {
+        [el].concat(Array.prototype.slice.call(el.querySelectorAll('[title]'))).forEach(function (n) {
+            if (!n.hasAttribute('title')) return;
+            if (n !== el && n.closest('.topo-meta-toggle, .topo-density-ctl')) return;
+            n.setAttribute('data-meta-title', n.getAttribute('title'));
+            n.removeAttribute('title');
+            _metaParked.push(n);
+        });
+    }
     function _metaHide() {
         var p = document.getElementById('cs-meta-pop');
         if (p) p.remove();
-        if (_metaHoverEl && _metaHoverEl.hasAttribute('data-meta-title')) {
-            _metaHoverEl.setAttribute('title', _metaHoverEl.getAttribute('data-meta-title'));
-            _metaHoverEl.removeAttribute('data-meta-title');
-        }
+        _metaParked.forEach(function (n) {
+            if (!n.hasAttribute('data-meta-title')) return;
+            n.setAttribute('title', n.getAttribute('data-meta-title'));
+            n.removeAttribute('data-meta-title');
+        });
+        _metaParked = [];
         _metaHoverEl = null;
     }
-    function _metaShow(el) {
-        var sec = el.closest('.topo-section[data-density-panel]');
-        if (!sec || !_metaAlive()) return;
-        var key = sec.getAttribute('data-density-panel');
-        var isCell = el.classList.contains('heatmap-cell');
-        if (el.hasAttribute('title')) {
-            el.setAttribute('data-meta-title', el.getAttribute('title'));
-            el.removeAttribute('title');
-        }
-        var head = el.getAttribute('data-meta-title') || '';
-        head = head.replace(/\s*\u00b7\s*click to inspect/, '');
-        var lines;
-        if (!_metaData) lines = ['Loading when this was measured\u2026'];
-        else if (isCell) lines = _metaFor(key, el).lines;
-        else lines = _metaPanelSummary(sec);
-        var title = head;
-        if (!isCell) {
-            var h4 = sec.querySelector('.topo-metric-panel-title');
-            var lab = h4 && h4.querySelector('.metric-label');
-            title = (lab ? lab.textContent : (h4 && h4.firstChild ? h4.firstChild.textContent : '') || '')
-                .replace(/[\u2191\u2193]/g, '').trim();
-        }
-        var pop = document.getElementById('cs-meta-pop');
-        if (!pop) { pop = document.createElement('div'); pop.id = 'cs-meta-pop'; document.body.appendChild(pop); }
-        pop.innerHTML = (title ? '<div class="cs-meta-pop-title">' + _esc(title) + '</div>' : '')
-            + lines.map(function (l) { return '<div class="cs-meta-pop-line">' + _esc(l) + '</div>'; }).join('');
+    function _metaPlace(el, pop) {
         var r = el.getBoundingClientRect();
         var vh = window.innerHeight || 800, vw = window.innerWidth || 1200;
         var h = pop.offsetHeight || 120, w = pop.offsetWidth || 320;
@@ -3824,6 +3852,57 @@ window.ChipStatus.mount = function (opts) {
         if (top + h > vh - 8) top = Math.max(8, r.top - h - 6);
         pop.style.top = top + 'px';
         pop.style.left = Math.max(8, Math.min(r.left, vw - w - 8)) + 'px';
+    }
+    function _metaShow(el) {
+        var sec = el.closest('.topo-section[data-density-panel]');
+        if (!sec || !_metaAlive()) return;
+        var key = sec.getAttribute('data-density-panel');
+        var isCell = el.classList.contains('heatmap-cell');
+        _metaPark(el);
+        var head = el.getAttribute('data-meta-title') || '';
+        head = head.replace(/\s*\u00b7\s*click to inspect/, '');
+        var lines;
+        if (!_metaData) lines = ['Loading when this was measured\u2026'];
+        else if (isCell) lines = _metaFor(key, el).lines;
+        else lines = _metaPanelSummary(sec);
+        var title = head, blurb = '';
+        if (!isCell) {
+            var h4 = sec.querySelector('.topo-metric-panel-title');
+            var lab = h4 && h4.querySelector('.metric-label');
+            title = (lab ? lab.textContent : (h4 && h4.firstChild ? h4.firstChild.textContent : '') || '')
+                .replace(/[\u2191\u2193]/g, '').trim();
+            // the tooltip just parked off the label: what it measures + which
+            // way is better (reachable here, one tooltip at a time)
+            if (el === h4 && lab) blurb = lab.getAttribute('data-meta-title') || lab.getAttribute('title') || '';
+        }
+        var pop = document.getElementById('cs-meta-pop');
+        if (!pop) { pop = document.createElement('div'); pop.id = 'cs-meta-pop'; document.body.appendChild(pop); }
+        pop.innerHTML = (title ? '<div class="cs-meta-pop-title">' + _esc(title) + '</div>' : '')
+            + (blurb ? '<div class="cs-meta-pop-blurb">' + _esc(blurb) + '</div>' : '')
+            + lines.map(function (l) { return '<div class="cs-meta-pop-line">' + _esc(l) + '</div>'; }).join('');
+        _metaPlace(el, pop);
+    }
+    // w7 final-QA P3 (big chip): for ~20 s after open the lazy sections grow
+    // and the pane scrolls under a still mouse (the jump guard re-landing,
+    // scroll anchoring); every such scroll hid the card and a still mouse
+    // fires no new mouseover, so no card. A scroll now hides it only when the
+    // hovered element is no longer under the pointer -- the reader scrolled
+    // it away -- and otherwise the card follows its element.
+    var _metaPtr = null;
+    function _metaUnderPtr(el) {
+        if (!_metaPtr || !el.isConnected) return false;
+        var r = el.getBoundingClientRect(), x = _metaPtr.x, y = _metaPtr.y;
+        if (x < r.left || x > r.right || y < r.top || y > r.bottom) return false;
+        if (typeof document.elementFromPoint !== 'function') return true;
+        var hit = document.elementFromPoint(x, y);      // covered (the sticky bar) is not under it
+        return !!hit && el.contains(hit);
+    }
+    function _metaOnScroll() {
+        var el = _metaHoverEl;
+        if (!el) return;
+        var pop = document.getElementById('cs-meta-pop');
+        if (pop && _metaUnderPtr(el)) _metaPlace(el, pop);
+        else _metaHide();
     }
     if (_metaDash && !_metaDash._metaHoverBound) {
         _metaDash._metaHoverBound = true;
@@ -3837,7 +3916,10 @@ window.ChipStatus.mount = function (opts) {
                 || t.closest('.topo-section[data-density-panel] .topo-metric-panel-stat')
                 || t.closest('.topo-section[data-density-panel] .topo-metric-panel-title');
         };
+        var _metaTrack = function (ev) { _metaPtr = { x: ev.clientX, y: ev.clientY }; };
+        _metaDash.addEventListener('mousemove', _metaTrack, { passive: true });
         _metaDash.addEventListener('mouseover', function (ev) {
+            _metaTrack(ev);
             var el = _metaTarget(ev);
             if (el === _metaHoverEl) return;
             _metaHide();
@@ -3848,9 +3930,9 @@ window.ChipStatus.mount = function (opts) {
             if (stale) _metaLoad().then(function () { if (_metaHoverEl === el) _metaShow(el); });
         });
         _metaDash.addEventListener('mouseleave', _metaHide);
-        window.addEventListener('scroll', _metaHide, true);
+        window.addEventListener('scroll', _metaOnScroll, true);
         window.ChipStatus._onLeave(_metaDash, function _metaTeardown() {
-            window.removeEventListener('scroll', _metaHide, true);
+            window.removeEventListener('scroll', _metaOnScroll, true);
             _metaHide();
         });
     }
@@ -4374,6 +4456,7 @@ window.ChipStatus.mount = function (opts) {
     // twice (the response header, then the next drift poll).
     var _histTimer = null;
     function _onHistoryChanged() {
+        _metaRefresh();     // w7 final-QA P3: the Show Meta Info lines count snapshots too
         clearTimeout(_histTimer);
         _histTimer = setTimeout(function () {
             if (!document.getElementById('topo-health-tiles')) return;   // not mounted
@@ -4455,6 +4538,12 @@ window.ChipStatus.mount = function (opts) {
         var spec = TAB_SPEC[view];
         if (!spec) return false;
         var jv = sel ? ('sel:' + view + ':' + sel) : view;
+        // w7 final-QA P3: QA F-19's rule for the sub-nav holds for a tile
+        // jump too -- the URL names the tab it went to, so F5 or a copied
+        // link comes back there. Without it F5 rode on the debounced scroll
+        // record alone, which a big chip's load kept re-arming (never ran).
+        try { history.replaceState(history.state, '', '/topology?view=' + view); } catch (e) {}
+        if (window.syncSidebarNavActive) window.syncSidebarNavActive();
         _jump.note(jv);
         _setActiveTab(view);
         _suppressSpyUntil = Date.now() + 800;

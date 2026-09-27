@@ -4761,6 +4761,8 @@ html.topbar-hidden .topo-subnav {
 }
 .cs-meta-pop-title { font-weight: 600; margin-bottom: 0.25rem; }
 .cs-meta-pop-line { color: var(--pico-muted-color); }
+/* w7 final-QA P3: a panel title's own tooltip (what it measures, which way is better), folded into the card */
+.cs-meta-pop-blurb { margin-bottom: 0.25rem; }
 /* queue item 10: an Overview tile that jumps to its section says so */
 /* beats .topo-card[draggable=true]'s grab: a click is the jump now (drag still works) */
 .topo-card[draggable="true"][data-tile-jump] { cursor: pointer; }
