@@ -75,20 +75,20 @@
 
 <nav class="dataset-tabs">
     <ul role="tablist">
-        <li><a class="active" role="tab" tabindex="0" onclick="switchDatasetTab('full', this)">Full View</a></li>
-        <li><a role="tab" tabindex="0" onclick="switchDatasetTab('overview', this)">Overview</a></li>
-        <li><a role="tab" tabindex="0" onclick="switchDatasetTab('results', this)">Results</a></li>
-        <li><a role="tab" tabindex="0" onclick="switchDatasetTab('figures', this)">Figures{% if run.figure_names %} <small class="muted">({{ run.figure_names | length }})</small>{% endif %}</a></li>
+        <li><a class="active" role="tab" tabindex="0" data-ds-tab="full" onclick="switchDatasetTab('full', this)">Full View</a></li>
+        <li><a role="tab" tabindex="0" data-ds-tab="overview" onclick="switchDatasetTab('overview', this)">Overview</a></li>
+        <li><a role="tab" tabindex="0" data-ds-tab="results" onclick="switchDatasetTab('results', this)">Results</a></li>
+        <li><a role="tab" tabindex="0" data-ds-tab="figures" onclick="switchDatasetTab('figures', this)">Figures{% if run.figure_names %} <small class="muted">({{ run.figure_names | length }})</small>{% endif %}</a></li>
         {% if run.has_quam_state and run.prev_run_id %}
-        <li><a role="tab" tabindex="0" onclick="switchDatasetTab('prev', this)" title="Diff this run's state against the previous run">Prev State</a></li>
+        <li><a role="tab" tabindex="0" data-ds-tab="prev" onclick="switchDatasetTab('prev', this)" title="Diff this run's state against the previous run">Prev State</a></li>
         {% endif %}
         {% if run.has_ds_raw or run.has_ds_fit %}
-        <li><a role="tab" tabindex="0" onclick="switchDatasetTab('interactive', this)">Interactive</a></li>
+        <li><a role="tab" tabindex="0" data-ds-tab="interactive" onclick="switchDatasetTab('interactive', this)">Interactive</a></li>
         {% endif %}
-        <li><a role="tab" tabindex="0" onclick="switchDatasetTab('data', this)">Raw Data</a></li>
+        <li><a role="tab" tabindex="0" data-ds-tab="data" onclick="switchDatasetTab('data', this)">Raw Data</a></li>
         <li>
             {% if run.has_quam_state %}
-            <a role="tab" tabindex="0" onclick="switchDatasetTab('state', this)">State</a>
+            <a role="tab" tabindex="0" data-ds-tab="state" onclick="switchDatasetTab('state', this)">State</a>
             {% else %}
             <a class="disabled" role="tab" aria-disabled="true" title="No quam_state in this run">State <small class="muted">(N/A)</small></a>
             {% endif %}
@@ -224,8 +224,13 @@
             {# datasets-r2-20: data.json names it, the file is gone -- text, not a broken image #}
             <p class="muted figure-missing">figure file missing: <code>{{ fig_name }}</code></p>
             {% else %}
+            {# queue item 6: the PNG header's size reserves the box before the
+               image loads, so a run switch holds the reader's place on its
+               FIRST painted frame (an unsized img is 0 px until it arrives) #}
+            {% set _wh = (_fh.figure_sizes or {}).get(fig_name) %}
             <img src="/dataset/{{ uid }}/fig/{{ fig_name }}"
                  alt="{{ fig_name }}"
+                 {% if _wh %}width="{{ _wh[0] }}" height="{{ _wh[1] }}"{% endif %}
                  loading="lazy"
                  onclick="toggleFigureZoom(this)"
                  onerror="this.onerror=null; var p=document.createElement('p'); p.className='muted figure-missing'; p.textContent='figure file missing: ' + this.alt; this.replaceWith(p);"

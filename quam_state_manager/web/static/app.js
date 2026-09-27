@@ -13321,6 +13321,11 @@ window.switchDatasetTab = function(tabName, linkEl) {
         var hc = panel.querySelector('[id$="h5-summary-container"]');
         if (hc && hc.getAttribute('data-loaded') !== '1' && window.htmx) {
             hc.setAttribute('data-loaded', '1');
+            // Queue item 6: the tab is now restored INSIDE htmx:afterSwap, before
+            // htmx has bound the new markup's hx-trigger -- the event was lost
+            // and Raw Data sat on "Loading data files..." forever (seen in real
+            // Chrome). process() is idempotent on an already-bound element.
+            if (typeof htmx.process === 'function') htmx.process(hc);
             htmx.trigger(hc, 'ds-h5-open');
         }
     }
@@ -17531,6 +17536,62 @@ var _dsSticky = {
     stateTreePaths: {},    // { 'node': [...paths], 'data': [...paths], ... }
 };
 
+// Queue item 6: the reader's place across run switches (ds-scroll-anchor.js).
+//   intent    -- {tab, anchor} captured at beforeSwap, ONLY when the reader
+//                moved since the last restore (or nothing is known yet)
+//   userMoved -- a real scroll change in the pane (or an inner scroller)
+//                that no restore of this module caused
+//   pin       -- the live DsScrollAnchor.pin keeping the intent in place while
+//                the new run's lazy content settles
+var _dsScroll = { intent: null, userMoved: true, pin: null, recaptured: false,
+                  landedTab: undefined };   // the tab the last restore showed
+
+// The tab a dataset detail is SHOWING (its active link), and that tab's
+// content element. Read from the DOM, not window._dsActiveTab, which a fresh
+// render (always Full View) does not reset.
+function _dsShownTab(pane) {
+    var root = pane && pane.querySelector('#ds-detail-root');
+    if (!root) return { tab: null, container: null };
+    var a = root.querySelector('.dataset-tabs a.active[data-ds-tab]');
+    var tab = a ? a.getAttribute('data-ds-tab') : 'full';
+    var container = _DS_COMBINED_TABS.indexOf(tab) !== -1
+        ? root.querySelector('#ds-tab-combined')
+        : root.querySelector('#ds-tab-' + tab);
+    return { tab: tab, container: container };
+}
+
+// The reader chose a new place ONLY when a scroll position really changed:
+// the pane's, or an inner scroller's (a JSON tree), by anything but this
+// module's own restore. Input alone is not a move -- a click on a blank spot
+// of a clamped run (the pane sits at its end, short of the intent) used to
+// mark the run as "moved", and the next switch re-captured the intent from
+// that clamped landing: -2626 px on the verifier's KH repro (#4110 -> #4111
+// -> click -> #4110). Input still ENDS the pin: the reader is acting here,
+// so nothing should scroll under them.
+(function() {
+    function _dsPaneOf(t) {
+        var pane = document.getElementById('inspector-pane');
+        if (!pane || !t || t.nodeType !== 1 || !(t === pane || pane.contains(t))) return null;
+        return pane.querySelector('#ds-detail-root') ? pane : null;
+    }
+    function stopPin(e) {
+        if (!_dsPaneOf(e.target)) return;
+        if (_dsScroll.pin) { _dsScroll.pin.stop(); _dsScroll.pin = null; }
+    }
+    ['wheel', 'touchstart', 'mousedown', 'keydown'].forEach(function(t) {
+        document.addEventListener(t, stopPin, { capture: true, passive: true });
+    });
+    // Wheel, keys, scrollbar drag, find-in-page, scrollIntoView -- all end in
+    // a scroll event (it does not bubble; the capture phase sees them all).
+    // A pin's own write lands on the value it recorded: not a move, even when
+    // the event fires after that pin has stopped.
+    document.addEventListener('scroll', function(e) {
+        if (!_dsPaneOf(e.target)) return;
+        if (window.DsScrollAnchor && window.DsScrollAnchor.isOwnScroll(e.target)) return;
+        _dsScroll.userMoved = true;
+    }, true);
+})();
+
 // After a #table-pane swap, restore the experiment chip selection state.
 // The server always renders the chip grid with "All" active; if the user had
 // selected specific experiments before clicking a date tab, re-apply them.
@@ -17567,6 +17628,43 @@ document.addEventListener('htmx:afterSwap', function(evt) {
     if (_selectedTags.size > 0) _applyDatasetFilters();
 });
 
+// Queue item 6: the reader's PLACE is captured in the CAPTURE phase, before
+// every bubble-phase beforeSwap listener. _plotSwapTeardown (registered
+// earlier, bubble phase) purges the outgoing run's Plotly graphs, which
+// shrinks the pane and makes the browser clamp scrollTop BEFORE a bubble
+// listener here could read it -- measured in real Chrome on the Raw Data tab:
+// 44 px at the start of beforeSwap, 0 by the time the old capture ran, so
+// every later run landed at the top.
+// The intent is re-captured only when the reader actually moved in this run
+// -- re-deriving it from where a restore landed is how one short run used to
+// overwrite the place for good (see ds-scroll-anchor.js).
+document.addEventListener('htmx:beforeSwap', function(evt) {
+    _dsScroll.recaptured = false;
+    if (!evt.detail || !evt.detail.target) return;
+    if (evt.detail.target.id !== 'inspector-pane') return;
+    if (window._pinnedRunId) return;
+    var pane = document.getElementById('inspector-pane');
+    if (!pane) return;
+    if (_dsScroll.pin) { _dsScroll.pin.stop(); _dsScroll.pin = null; }
+    var dsRoot = pane.querySelector('#ds-detail-root');
+    // A tab the reader picked since the restore is a new place even where
+    // the scroll position did not change (the new tab was tall enough).
+    var tabChanged = dsRoot && _dsScroll.landedTab !== undefined &&
+        _dsShownTab(pane).tab !== _dsScroll.landedTab;
+    if (dsRoot && (_dsScroll.userMoved || tabChanged || !_dsScroll.intent)) {
+        // The place: the active tab + a landmark chain under the pane's top edge.
+        var shown = _dsShownTab(pane);
+        _dsScroll.intent = {
+            tab: shown.tab,
+            anchor: window.DsScrollAnchor
+                ? window.DsScrollAnchor.capture(pane, shown.container)
+                : { scrollTop: pane.scrollTop, chain: null },
+        };
+        _dsScroll.userMoved = false;
+        _dsScroll.recaptured = true;
+    }
+}, true);
+
 // Capture inspector state just before swap (inspector DOM still has old content)
 document.addEventListener('htmx:beforeSwap', function(evt) {
     if (!evt.detail || !evt.detail.target) return;
@@ -17586,9 +17684,13 @@ document.addEventListener('htmx:beforeSwap', function(evt) {
         else if (header.classList.contains('inspector-header-pair')) type = 'pair';
         else if (header.classList.contains('inspector-header-dataset')) type = 'dataset';
         if (type) {
+            // Datasets: a section this run lacks keeps the reader's open/closed
+            // choice for the next run that has it (merge, never forget).
+            var keepSec = (type === 'dataset' && _inspectorSticky.type === 'dataset')
+                ? _inspectorSticky.sections : {};
             _inspectorSticky.type = type;
             _inspectorSticky.scrollTop = pane.scrollTop;
-            _inspectorSticky.sections = {};
+            _inspectorSticky.sections = Object.assign({}, keepSec);
             pane.querySelectorAll('details.detail-section').forEach(function(d) {
                 var summary = d.querySelector('summary');
                 if (summary) _inspectorSticky.sections[summary.textContent.trim()] = d.open;
@@ -17611,47 +17713,27 @@ document.addEventListener('htmx:beforeSwap', function(evt) {
         return expanded;
     }
 
-    // Parameters tree (Overview tab)
-    _dsSticky.expandedPaths = _collectExpanded(document.getElementById('ds-params-tree'));
+    // Queue item 6: the open trees are part of the reader's INTENT too --
+    // re-captured only on the switch whose place was re-captured (by the
+    // capture-phase listener above, which also stopped the previous pin).
+    var dsRoot = pane.querySelector('#ds-detail-root');
+    if (dsRoot && _dsScroll.recaptured) {
+        // Parameters tree (Overview tab)
+        _dsSticky.expandedPaths = _collectExpanded(document.getElementById('ds-params-tree'));
 
-    // State tab sub-tabs (node.json, data.json, state.json, wiring.json)
-    _dsSticky.stateTab = null;
-    _dsSticky.stateTreePaths = {};
-    var stateTabActive = pane.querySelector('#ds-state-file-tabs .tree-file-tab.active');
-    if (stateTabActive) {
-        _dsSticky.stateTab = stateTabActive.textContent.trim().replace('.json', '');
-    }
-    ['state', 'wiring', 'node', 'data'].forEach(function(name) {
-        var tree = document.getElementById('ds-state-tree-' + name);
-        if (tree && tree.querySelector('.tree-node')) {
-            _dsSticky.stateTreePaths[name] = _collectExpanded(tree);
+        // State tab sub-tabs (node.json, data.json, state.json, wiring.json)
+        _dsSticky.stateTab = null;
+        _dsSticky.stateTreePaths = {};
+        var stateTabActive = pane.querySelector('#ds-state-file-tabs .tree-file-tab.active');
+        if (stateTabActive) {
+            _dsSticky.stateTab = stateTabActive.textContent.trim().replace('.json', '');
         }
-    });
-
-    // ── Capture the section anchor for the combined (Full/Overview/Results/
-    //    Figures) view: which section sits at the top of the viewport + the
-    //    offset within it. On the next run we scroll to the SAME section, so the
-    //    user keeps their place even though runs differ in content height. ──
-    _dsSticky.sectionAnchor = null;
-    var combined = document.getElementById('ds-tab-combined');
-    if (combined && !combined.classList.contains('hidden')) {
-        var top = pane.scrollTop;
-        var anchorSec = null;
-        combined.querySelectorAll('[data-fvsec]').forEach(function(sec) {
-            if (sec.classList.contains('hidden')) return;
-            if (sec.offsetTop <= top + 4) anchorSec = sec; // topmost section at/above the fold
+        ['state', 'wiring', 'node', 'data'].forEach(function(name) {
+            var tree = document.getElementById('ds-state-tree-' + name);
+            if (tree && tree.querySelector('.tree-node')) {
+                _dsSticky.stateTreePaths[name] = _collectExpanded(tree);
+            }
         });
-        if (!anchorSec) {
-            anchorSec = Array.prototype.filter.call(
-                combined.querySelectorAll('[data-fvsec]'),
-                function(s) { return !s.classList.contains('hidden'); })[0] || null;
-        }
-        if (anchorSec) {
-            _dsSticky.sectionAnchor = {
-                key: anchorSec.getAttribute('data-fvsec'),
-                within: Math.max(0, top - anchorSec.offsetTop),
-            };
-        }
     }
 
     // ── Capture scroll position and plot state ──
@@ -17808,16 +17890,51 @@ document.addEventListener('htmx:afterSwap', function(evt) {
         // New-run popup open: Full View is the template default; land at the
         // TOP and restore nothing (params trees / section anchors / State
         // sub-tabs belong to the previous run's viewing session).
+        window._dsActiveTab = 'full';
         pane.scrollTop = 0;
+        _dsScroll.userMoved = true;   // the next switch keeps THIS view
         return;
     }
 
-    if (!hadPrevious) return; // First dataset ever opened — Full View is the default
+    if (!hadPrevious) {   // First dataset ever opened — Full View is the default
+        window._dsActiveTab = 'full';
+        _dsScroll.userMoved = true;
+        return;
+    }
+
+    // Queue item 6: put the reader back on the SAME tab at the SAME place, in
+    // this swap (a delayed restore painted the new run at the old pixel offset
+    // first and then jumped), and keep it there while lazy content settles.
+    // Full View stays the landing tab for a fresh open (above) and for a run
+    // that has no such tab (State N/A, no HDF5 → no Interactive).
+    window._dsActiveTab = 'full';
+    var it = _dsScroll.intent;
+    if (it) {
+        var sameTab = !it.tab || it.tab === 'full';
+        if (!sameTab) {
+            var link = root.querySelector('.dataset-tabs a[data-ds-tab="' + it.tab + '"]:not(.disabled)');
+            if (link) { switchDatasetTab(it.tab, link); sameTab = true; }
+        }
+        if (sameTab && it.tab === 'state' && _dsSticky.stateTab &&
+                typeof switchDatasetStateTab === 'function') {
+            switchDatasetStateTab(_dsSticky.stateTab);
+        }
+        var anchor = sameTab ? it.anchor : { scrollTop: 0, chain: null };
+        if (window.DsScrollAnchor) {
+            _dsScroll.pin = window.DsScrollAnchor.pin(pane, function() {
+                return _dsShownTab(pane).container;
+            }, anchor, function() { _dsScroll.userMoved = true; _dsScroll.pin = null; });
+        } else {
+            pane.scrollTop = anchor.scrollTop || 0;
+        }
+    }
+    _dsScroll.userMoved = false;
+    _dsScroll.landedTab = _dsShownTab(pane).tab;
 
     setTimeout(function() {
-        // 1. Per user request: every dataset opens in FULL VIEW by default (the
-        // template default). We intentionally NO LONGER restore the last manually-
-        // chosen tab across runs — Full View is always the landing tab.
+        // 1. The tab + place were restored in the swap itself (queue item 6,
+        // above). Full View is still where a FRESH open lands; run-to-run
+        // navigation keeps the tab the reader is on.
 
         // 1b. Restore JSON tree expanded paths in Parameters section
         if (_dsSticky.expandedPaths.length > 0) {
@@ -17846,37 +17963,18 @@ document.addEventListener('htmx:afterSwap', function(evt) {
             });
         }
 
-        // 1d. Restore scroll for the combined tabs (Full / Overview / Results /
-        //     Figures) to the SAME section the user was viewing — runs differ in
-        //     height, so anchor on the section, not a raw pixel offset. Figures
-        //     reflow as their lazy <img>s load, so re-apply after a short delay.
-        if (_DS_COMBINED_TABS.indexOf(_dsSticky.tab) !== -1) {
-            var _restoreSectionScroll = function() {
-                var p = document.getElementById('inspector-pane');
-                if (!p) return;
-                var anchor = _dsSticky.sectionAnchor;
-                var combined = document.getElementById('ds-tab-combined');
-                var sec = (anchor && combined)
-                    ? combined.querySelector('[data-fvsec="' + anchor.key + '"]') : null;
-                if (sec && !sec.classList.contains('hidden')) {
-                    var targetTop = sec.offsetTop + (anchor.within || 0);
-                    p.scrollTop = Math.min(targetTop, p.scrollHeight - p.clientHeight);
-                } else if (_dsSticky.scrollTop) {
-                    p.scrollTop = _dsSticky.scrollTop; // fallback
-                }
-            };
-            requestAnimationFrame(_restoreSectionScroll);
-            setTimeout(_restoreSectionScroll, 250);
-        }
-
         // 1e. Restore State tab sub-tab and tree paths
-        if (_dsSticky.tab === 'state' && _dsSticky.stateTab) {
-            // Switch to the active sub-tab (node, data, state, wiring)
-            if (typeof switchDatasetStateTab === 'function') {
-                switchDatasetStateTab(_dsSticky.stateTab);
-            }
-            // Wait for lazy-loaded trees to render, then restore paths
-            setTimeout(function() {
+        //     (the sub-tab itself was switched in the swap, above). The trees
+        //     are FETCHED after the swap -- expanding at a fixed 500 ms lost
+        //     every path whenever the fetch was slower; wait for the nodes.
+        if (_dsShownTab(pane).tab === 'state' && _dsSticky.stateTab) {
+            var _treesTries = 0;
+            (function _whenTrees() {
+                var want = Object.keys(_dsSticky.stateTreePaths).filter(function(name) {
+                    var t = document.getElementById('ds-state-tree-' + name);
+                    return t && t.style.display !== 'none' && !t.querySelector('.tree-node');
+                });
+                if (want.length && ++_treesTries < 50) { setTimeout(_whenTrees, 100); return; }
                 Object.keys(_dsSticky.stateTreePaths).forEach(function(name) {
                     var paths = _dsSticky.stateTreePaths[name];
                     if (!paths || !paths.length) return;
@@ -17892,14 +17990,12 @@ document.addEventListener('htmx:afterSwap', function(evt) {
                         }
                     });
                 });
-                // Restore scroll
-                var p = document.getElementById('inspector-pane');
-                if (p && _dsSticky.scrollTop) p.scrollTop = _dsSticky.scrollTop;
-            }, 500);
+                if (_dsScroll.pin) _dsScroll.pin.reapply();
+            })();
         }
 
-        // 2. Replay HDF5 multi-plot selections (figure scroll is now handled by
-        //    the section-anchor restore above).
+        // 2. Replay HDF5 multi-plot selections (the place is held by the
+        //    _dsScroll pin set up in the swap).
         if (_dsSticky.tab === 'data' && _dsSticky.plot &&
                  _dsSticky.plot.selections && _dsSticky.plot.selections.length) {
             // newRunId is the composite uid string ("<hex>:<int>"); parseInt() of it
@@ -18010,13 +18106,7 @@ document.addEventListener('htmx:afterSwap', function(evt) {
                         });
                         _renderAllSelections(panel, runId);
 
-                        // Restore scroll after Plotly renders
-                        requestAnimationFrame(function() {
-                            setTimeout(function() {
-                                var p = document.getElementById('inspector-pane');
-                                if (p && _dsSticky.scrollTop) p.scrollTop = _dsSticky.scrollTop;
-                            }, 600);
-                        });
+                        // (the place is held by _dsScroll.pin -- no pixel restore here)
                     }, 50);
                 });
                 obs.observe(summaryEl, { childList: true, subtree: true });
