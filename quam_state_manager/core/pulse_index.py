@@ -318,11 +318,13 @@ def list_pulses(merged: dict, *, with_used_by: bool = True,
     """
     reverse_index = build_reverse_pointer_index(merged) if with_used_by else None
     op_referrers = build_op_referrers(reverse_index) if reverse_index is not None else None
-    return _list_pulses_with(merged, reverse_index, op_referrers)
+    return _list_pulses_with(merged, reverse_index, op_referrers, only=only)
 
 
-def _list_pulses_with(merged: dict, reverse_index, op_referrers) -> list[dict]:
-    """:func:`list_pulses` over indexes the caller already built."""
+def _list_pulses_with(merged: dict, reverse_index, op_referrers, *,
+                      only: tuple[str, str] | None = None) -> list[dict]:
+    """:func:`list_pulses` over indexes the caller already built (w7/pulses);
+    ``only`` as in :func:`list_pulses` (w7/liveedit)."""
     rows: list[dict] = []
 
     for qubit_name, qubit in (merged.get("qubits") or {}).items():
