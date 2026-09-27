@@ -603,6 +603,25 @@ def _has_difference(values: list[dict[str, Any]],
     return False
 
 
+def drop_nan_agreements(entries: list) -> list:
+    """*entries* without the "modified" rows whose two values are both NaN.
+
+    :meth:`Differ.diff` keeps IEEE (NaN != NaN) so that it stays the flat
+    reference the tree diff is parity-pinned against; the working-vs-live
+    surfaces (the drift verdict, /state/live-diff, the sync status) apply
+    the docs/118 rule on top -- :func:`compare_equal`'s "two failures are not
+    a change" -- because there a NaN leaf on both sides read as a phantom
+    "live changed" entry beside every real one (verifier sync2, P3)."""
+    out = []
+    for e in entries:
+        if (e.change_type == "modified" and isinstance(e.old_value, float)
+                and isinstance(e.new_value, float)
+                and math.isnan(e.old_value) and math.isnan(e.new_value)):
+            continue
+        out.append(e)
+    return out
+
+
 def _values_equal(a: Any, b: Any, float_tolerance: float) -> bool:
     """Compare two values, applying float tolerance for numeric types."""
     if type(a) is not type(b):

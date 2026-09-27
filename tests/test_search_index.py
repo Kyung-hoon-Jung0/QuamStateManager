@@ -623,3 +623,64 @@ class TestNaturalOrderTieBreak:
             "qubits.q2.resonator.operations.readout.amplitude",
             "qubits.q10.resonator.operations.readout.amplitude",
         ]
+
+
+class TestUpdateKeepsTheEntrysOwnTokens:
+    """verifier sync2 P2: removing the OLD value's prefixes/trigrams must never
+    remove a token the entry still owns through its leaf key, its parent id or
+    the new value (the maps hold one occurrence per entry per token)."""
+
+    def _merged(self):
+        return {"qubits": {
+            "q1": {"z": {"flux_point": "joint", "joint_offset": 0.0},
+                   "extras": {"readout_flux": {"cal_with_pulse": False}}},
+            "q2": {"z": {"flux_point": "joint"},
+                   "extras": {"readout_flux": {"cal_with_pulse": False}}},
+            "q3": {"z": {"flux_point": "joint"}},
+        }}
+
+    def _paths(self, index, q):
+        return {r.dot_path for r in index.search(q, limit=200)}
+
+    def test_a_bool_flip_keeps_the_leaf_findable_by_its_key(self):
+        index = SearchIndex.build(self._merged())
+        p = "qubits.q2.extras.readout_flux.cal_with_pulse"
+        assert p in self._paths(index, "cal_with_pulse")
+        index.update_entry(p, True)                        # "false" and the key share "lse"
+        assert p in self._paths(index, "cal_with_pulse")
+        assert p in self._paths(index, "true") and p not in self._paths(index, "false")
+
+    def test_a_string_change_keeps_every_sibling_findable(self):
+        index = SearchIndex.build(self._merged())
+        p = "qubits.q1.z.flux_point"
+        before = self._paths(index, "flux_point")
+        assert p in before and len(before) == 3
+        index.update_entry(p, "independent")               # "joint" and the key share "oin"
+        assert self._paths(index, "flux_point") == before
+        assert p in self._paths(index, "independent") and p not in self._paths(index, "joint")
+
+    @pytest.mark.parametrize("seed", range(12))
+    def test_many_updates_leave_the_index_equal_to_a_fresh_build(self, seed):
+        import random
+        r = random.Random(seed)
+        merged = self._merged()
+        index = SearchIndex.build(merged)
+        index.search("q1")                                  # builds the trigram index too
+        pool = ["joint", "independent", "false", "true", "flux", "cal", "q1", "q2",
+                "pulse", "readout", "poin", "with", 0.0, 1, -3.5, None, "flux_point"]
+        leaves = ["qubits.q1.z.flux_point", "qubits.q2.z.flux_point", "qubits.q3.z.flux_point",
+                  "qubits.q1.extras.readout_flux.cal_with_pulse",
+                  "qubits.q2.extras.readout_flux.cal_with_pulse", "qubits.q1.z.joint_offset"]
+        for _ in range(60):
+            p, v = r.choice(leaves), r.choice(pool)
+            node = merged
+            segs = p.split(".")
+            for k in segs[:-1]:
+                node = node[k]
+            node[segs[-1]] = v
+            index.update_entry(p, v)
+        fresh = SearchIndex.build(merged)
+        for q in ("flux_point", "cal_with_pulse", "joint", "independent", "true", "false",
+                  "q1", "q2", "readout", "poin", "with", "oin", "lse", "flux"):
+            assert self._paths(index, q) == self._paths(fresh, q), (seed, q)
+

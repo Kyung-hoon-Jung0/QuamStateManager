@@ -155,3 +155,44 @@ class TestAutoPullSurfaced:
         body = client.get("/state/drift").get_json()
         assert "auto_pulled" not in body
         assert body["ok"] is True
+
+
+class TestANaNLeafIsNotALiveChange:
+    """verifier sync2 P3 (nanphantom.py): a NaN in the live chip, taken live,
+    then an outside write to ONE other leaf -- the sync control must say one
+    live change, not two, and /state/live-diff must list one entry."""
+
+    def test_the_drift_and_live_diff_count_one(self, tmp_path):
+        import json
+        import math
+        import time
+        from quam_state_manager.web.app import create_app
+        from tests.test_web import _make_state, _make_wiring
+        live = tmp_path / "chip"
+        live.mkdir()
+        st = _make_state()
+        q = next(iter(st["qubits"]))
+        st["qubits"][q]["T2ramsey"] = float("nan")
+        (live / "state.json").write_text(json.dumps(st), encoding="utf-8")
+        (live / "wiring.json").write_text(json.dumps(_make_wiring()), encoding="utf-8")
+        app = create_app(testing=True, instance_path=str(tmp_path / "_inst"))
+        c = app.test_client()
+        H = {"Origin": "http://localhost", "HX-Request": "true"}
+        assert c.post("/load", data={"folder": str(live)}, headers=H).status_code in (200, 302)
+        assert c.post("/state/sync", data={"mode": "discard"}, headers=H).status_code == 200
+        # an outside write moves ONE other leaf; the NaN is rewritten as a NaN
+        time.sleep(0.05)
+        st2 = json.loads((live / "state.json").read_text(encoding="utf-8"))
+        assert math.isnan(st2["qubits"][q]["T2ramsey"])
+        st2["qubits"][q]["chi"] = -123456.5
+        (live / "state.json").write_text(json.dumps(st2), encoding="utf-8")
+        time.sleep(0.05)
+        drift = c.get("/state/drift", headers=H).get_json()
+        sync = drift.get("sync") or {}
+        assert sync.get("live_n") == 1, sync
+        assert set((sync.get("stale") or {}).keys()) == {f"qubits.{q}.chi"}, sync
+        ld = c.get("/state/live-diff", headers=H).get_json()
+        assert ld.get("total") == 1, ld
+        paths = [(e.get("path") or e.get("dot_path")) for e in (ld.get("entries") or [])]
+        assert paths == [f"qubits.{q}.chi"], paths
+

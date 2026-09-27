@@ -668,3 +668,22 @@ class TestRealMultiCompare:
         entries = differ.diff(folders[0], folders[1])
         s = Differ.summary(entries)
         assert s["total"] >= 0
+
+
+class TestNanAgreementsOnTheLiveSeams:
+    """verifier sync2 P3: Differ.diff keeps IEEE (the flat reference the tree
+    diff is parity-pinned against), and the working-vs-live surfaces drop the
+    rows where both sides are NaN -- two failures are not a live change."""
+
+    def test_diff_reports_nan_pairs_and_the_seam_filter_drops_them(self):
+        from quam_state_manager.core import differ as D
+        a = {"q": {"T1": float("nan"), "chi": 1.0}}
+        b = {"q": {"T1": float("nan"), "chi": 2.0}}
+        ents = Differ().diff((a, {}), (b, {}), ignore_keys=set())
+        assert sorted(e.dot_path for e in ents) == ["q.T1", "q.chi"]   # IEEE: NaN != NaN listed
+        kept = D.drop_nan_agreements(ents)
+        assert [e.dot_path for e in kept] == ["q.chi"]
+        # a NaN against a number IS a change, as is a NaN that appeared
+        c = {"q": {"T1": 3.0, "chi": 1.0}}
+        assert [e.dot_path for e in D.drop_nan_agreements(Differ().diff((a, {}), (c, {})))] == ["q.T1"]
+

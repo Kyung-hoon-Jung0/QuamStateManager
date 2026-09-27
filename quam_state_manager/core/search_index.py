@@ -321,12 +321,32 @@ class SearchIndex:
         new_value_str = str(new_value).lower() if new_value is not None else "none"
         entry.raw_value = new_value
         entry.value_str = new_value_str
+        if new_value_str == old_value_str:
+            return
 
-        _remove_from_prefix_map(self.prefix_map, old_value_str, idx)
+        # The prefix map and the trigram index list an entry ONCE per token,
+        # whatever number of its three strings (value, leaf key, parent id)
+        # carry that token. Removing every token of the old value therefore
+        # also removed the tokens the entry still owns through its key or
+        # parent id whenever the old value shared them ("false" and
+        # "cal_with_pulse" share "lse"; "joint" and "flux_point" share "oin"):
+        # the leaf vanished from search by its OWN name until the next full
+        # rebuild (verifier sync2, P2; pre-existing for edits, reached by
+        # every in-place pull since fq-sync). Remove only what the old value
+        # alone contributed: its tokens minus those the kept strings and the
+        # new value still carry.
+        kept = (entry.leaf_key.lower(), entry.parent_id.lower(), new_value_str)
+        keep_prefixes = {p for k in kept for p in _prefixes(k)}
+        for prefix in _prefixes(old_value_str):
+            if prefix not in keep_prefixes:
+                _remove_one_prefix(self.prefix_map, prefix, idx)
         _add_to_prefix_map(self.prefix_map, new_value_str, idx)
 
         if self._trigram_built:   # else: the lazy build will read the updated entry
-            _remove_from_trigram_index(self.trigram_index, old_value_str, idx)
+            keep_tris = {t for k in kept for t in _trigrams(k)}
+            for tri in _trigrams(old_value_str):
+                if tri not in keep_tris:
+                    _remove_one_trigram(self.trigram_index, tri, idx)
             _add_to_trigram_index(self.trigram_index, new_value_str, idx)
 
     # ------------------------------------------------------------------
@@ -698,11 +718,15 @@ def _add_to_prefix_map(pm: dict[str, list[int]], value_str: str, idx: int) -> No
 
 def _remove_from_prefix_map(pm: dict[str, list[int]], value_str: str, idx: int) -> None:
     for prefix in _prefixes(value_str):
-        lst = pm.get(prefix)
-        if lst is not None:
-            pos = bisect.bisect_left(lst, idx)
-            if pos < len(lst) and lst[pos] == idx:
-                lst.pop(pos)
+        _remove_one_prefix(pm, prefix, idx)
+
+
+def _remove_one_prefix(pm: dict[str, list[int]], prefix: str, idx: int) -> None:
+    lst = pm.get(prefix)
+    if lst is not None:
+        pos = bisect.bisect_left(lst, idx)
+        if pos < len(lst) and lst[pos] == idx:
+            lst.pop(pos)
 
 
 # ======================================================================
@@ -786,11 +810,15 @@ def _add_to_trigram_index(ti: dict[str, list[int]], value_str: str, idx: int) ->
 
 def _remove_from_trigram_index(ti: dict[str, list[int]], value_str: str, idx: int) -> None:
     for tri in _trigrams(value_str):
-        lst = ti.get(tri)
-        if lst is not None:
-            pos = bisect.bisect_left(lst, idx)
-            if pos < len(lst) and lst[pos] == idx:
-                lst.pop(pos)
+        _remove_one_trigram(ti, tri, idx)
+
+
+def _remove_one_trigram(ti: dict[str, list[int]], tri: str, idx: int) -> None:
+    lst = ti.get(tri)
+    if lst is not None:
+        pos = bisect.bisect_left(lst, idx)
+        if pos < len(lst) and lst[pos] == idx:
+            lst.pop(pos)
 
 
 # ======================================================================

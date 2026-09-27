@@ -87,6 +87,7 @@ from quam_state_manager.core import trend_index as _trend_index
 from quam_state_manager.core import chip_trends_ram
 from quam_state_manager.core.dataset import DatasetStore
 from quam_state_manager.core.differ import Differ
+from quam_state_manager.core import differ as _differ_mod
 from quam_state_manager.core.experiment_data import ExperimentContext, load_experiment_context
 from quam_state_manager.core.history import (
     DEFAULT_TRACKED_PROPERTIES,
@@ -976,7 +977,8 @@ def _working_vs_live_entries(ctx, live_state: dict, live_wiring: dict, pair=None
     ``doc_cache.PairRead`` the live dicts came from (no pair -> no cache)."""
     store = ctx["store"]
     if pair is None:
-        return Differ().diff(store, (live_state, live_wiring), ignore_keys=set())
+        return _differ_mod.drop_nan_agreements(
+            Differ().diff(store, (live_state, live_wiring), ignore_keys=set()))
 
     def compute():
         # the documents are touched only on a miss (a lazy PairRead parses
@@ -985,7 +987,9 @@ def _working_vs_live_entries(ctx, live_state: dict, live_wiring: dict, pair=None
         lw = live_wiring if live_wiring is not None else pair.wiring
         with store._lock:
             tok = _store_token(store)
-            ents = Differ().diff(store, (ls, lw), ignore_keys=set())
+            # a NaN on both sides is not a live change (docs/118; sync2 P3)
+            ents = _differ_mod.drop_nan_agreements(
+                Differ().diff(store, (ls, lw), ignore_keys=set()))
         return _ramcache.Keyed(ents, (tok, pair.state_digest, pair.wiring_digest))
     tok = (_store_token(store), pair.state_digest, pair.wiring_digest)
     return list(_WL_ENTRIES.get(("wl", _store_uid(store)), tok, compute))
@@ -997,8 +1001,8 @@ def _baseline_vs_live_entries(base: dict, pair) -> list:
     def compute():
         ents = Differ().diff((base["state"], base["wiring"]),
                              (pair.state, pair.wiring), ignore_keys=set())
-        _share_content_diff(base, pair, ents)
-        return ents
+        _share_content_diff(base, pair, ents)           # the full diff is what is shared
+        return _differ_mod.drop_nan_agreements(ents)    # a NaN on both sides is not drift
     bh = base.get("state_hash")
     if not bh:
         return compute()
@@ -1376,7 +1380,7 @@ def _drift_count(seen: dict) -> int | None:
     if not live or not work:
         return None
     try:
-        return len(Differ().diff(work, live, ignore_keys=set()))
+        return len(_differ_mod.drop_nan_agreements(Differ().diff(work, live, ignore_keys=set())))
     except Exception:       # noqa: BLE001 — a count is never worth an error page
         logger.debug("drift count failed", exc_info=True)
         return None
@@ -1396,7 +1400,7 @@ def _drift_conflicts(ctx: dict, seen: dict) -> list[str]:
         return []
     try:
         from quam_state_manager.core import sync_conflict
-        entries = Differ().diff(work, live, ignore_keys=set())
+        entries = _differ_mod.drop_nan_agreements(Differ().diff(work, live, ignore_keys=set()))
         with store._lock:
             log = list(getattr(store, "change_log", None) or [])
         verdict = sync_conflict.classify(
