@@ -78,6 +78,36 @@ def _make_metric_record(key, resolved_value, *, updated_at=None, provenance=None
                                    source_rejected=source_rejected)
 
 
+_TOPO_SECTIONS = ("qubits", "qubit_pairs")
+
+
+def _topo_part_valid(store, parts: dict, key: tuple, seq: int):
+    """A kept topology node/edge, or None when anything it could have read
+    moved since it was made (see ``QueryEngine.get_topology``). A reused part
+    is re-stamped at ``seq`` so the next check scans only newer events."""
+    from quam_state_manager.core import store_revs as SR
+    ent = parts.get(key)
+    if ent is None:
+        return None
+    made, deps, value = ent
+    if made == seq:
+        return value
+    if deps is None:
+        return None
+    events = SR.changes_since(store, made)
+    if events is None:
+        return None
+    for _s, path, plain, _t2 in events:
+        if not plain or path is None:
+            return None
+        if path.split(".", 1)[0] not in _TOPO_SECTIONS:
+            return None                   # a section some part may read by name
+        if SR.path_affected(deps, path):
+            return None
+    ent[0] = seq
+    return value
+
+
 class QueryEngine:
     """High-level query interface over a loaded QuamStore."""
 
@@ -618,7 +648,7 @@ class QueryEngine:
     # Topology graph
     # ------------------------------------------------------------------
 
-    def get_topology(self) -> dict[str, Any]:
+    def get_topology(self, _parts: bool = True) -> dict[str, Any]:
         """Return nodes and edges for rendering a connectivity graph.
 
         Returns ``{"nodes": [...], "edges": [...]}``. Cached: the result is a
@@ -626,13 +656,35 @@ class QueryEngine:
         ``invalidate_cache`` after any mutation. /topology is hit on every Chip
         Status navigation (incl. sub-view links), so this avoids recomputing
         ~50 qubit nodes + pair edges on each visit.
+
+        RAM P5 (docs/2xx): after a mutation only the nodes / edges whose
+        inputs moved are recomputed. Each part is kept with the PATH-level
+        pointer closure of its entity (``store_revs.path_closure``: the
+        entity's subtree plus, transitively, every path its pointers name --
+        entity-level reach is useless here, since qubits point into pairs and
+        pairs into qubits, so every entity reaches the whole chip) and is
+        reused only when every event since it was made is a plain write
+        under ``qubits``/``qubit_pairs`` that lands outside that closure.
+        Anything else -- a structural event, an unexplained seq move, a write
+        to any other section (read by name), a closure too large to name --
+        recomputes. ``_parts=False`` is the cold path the randomized pin
+        compares against.
         """
         if self._topology_cache is not None:
             return self._topology_cache
         seq = self.store.mutation_seq   # see get_qubit: guard the fill against races
         root = self.store.merged
+        parts = None
+        if _parts:
+            from quam_state_manager.core import store_revs as SR
+            parts = SR.revs_of(self.store).memo.setdefault("topology_parts", {})
         nodes = []
         for name in self.store.qubit_names:
+            if parts is not None:
+                hit = _topo_part_valid(self.store, parts, ("n", name), seq)
+                if hit is not None:
+                    nodes.append(hit)
+                    continue
             q = root.get("qubits", {}).get(name, {})
             loc = q.get("grid_location", "")
             chain = ""
@@ -718,9 +770,16 @@ class QueryEngine:
                 for k in _NODE_METRIC_KEYS
             }
             nodes.append(node)
+            if parts is not None:
+                parts[("n", name)] = [seq, SR.path_closure(self.store, ["qubits." + str(name)]), node]
 
         edges = []
         for pair_name in self.store.qubit_pair_names:
+            if parts is not None:
+                hit = _topo_part_valid(self.store, parts, ("e", pair_name), seq)
+                if hit is not None:
+                    edges.append(hit)
+                    continue
             p = self.store.merged.get("qubit_pairs", {}).get(pair_name, {})
 
             qc_raw = p.get("qubit_control", "")
@@ -888,6 +947,9 @@ class QueryEngine:
                 for k in _EDGE_METRIC_KEYS
             }
             edges.append(edge)
+            if parts is not None:
+                parts[("e", pair_name)] = [seq, SR.path_closure(
+                    self.store, ["qubit_pairs." + str(pair_name)]), edge]
 
         # Chip-wide aggregates, PHYSICAL-GATED over the MetricRecords (Phase 0):
         # unphysical/unresolved values never feed min/max/avg/median (so a -473µs

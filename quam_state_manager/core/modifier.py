@@ -19,7 +19,8 @@ from collections.abc import Iterator
 from datetime import datetime, timezone
 from typing import Any
 
-from quam_state_manager.core.loader import ChangeEntry, QuamStore, is_value_only_write
+from quam_state_manager.core.loader import ChangeEntry, QuamStore
+from quam_state_manager.core.store_revs import note as _revs_note
 
 logger = logging.getLogger(__name__)
 
@@ -92,8 +93,7 @@ class Modifier:
             )
             self.store.change_log.append(entry)
             self.store.mutation_seq += 1
-            self.store.journal_mutation(
-                dot_path, is_value_only_write(dot_path, old_value, coerced))
+            _revs_note(self.store, "set", dot_path, old_value, coerced)
 
             if not _defer_hooks:
                 self.store._clear_pointer_cache()
@@ -200,7 +200,7 @@ class Modifier:
             )
             self.store.change_log.append(entry)
             self.store.mutation_seq += 1
-            self.store.journal_mutation(dot_path, False)
+            _revs_note(self.store, "create", dot_path)
 
             self.store._clear_pointer_cache()
             if self.store.search_index is not None:
@@ -243,7 +243,7 @@ class Modifier:
             )
             self.store.change_log.append(entry)
             self.store.mutation_seq += 1
-            self.store.journal_mutation(dot_path, False)
+            _revs_note(self.store, "delete", dot_path)
 
             self.store._clear_pointer_cache()
             if self.store.search_index is not None:
@@ -576,7 +576,6 @@ class Modifier:
         since the delete — e.g. delete X → create X → discard the delete).
         Mutations: restore ``old_value`` in both dicts and update the index.
         """
-        _value_only = False
         if entry.created:
             try:
                 removed = self._remove_at(entry.dot_path, entry.source_file)
@@ -627,8 +626,7 @@ class Modifier:
         else:
             parent_merged, leaf_key = _navigate_to_parent(self.store.merged, entry.dot_path)
             _lk = _key_for(parent_merged, leaf_key, entry.dot_path)
-            _value_only = is_value_only_write(
-                entry.dot_path, parent_merged[_lk], entry.old_value)
+            _was = parent_merged[_lk]
             parent_merged[_lk] = entry.old_value
 
             source_dict = self.store.wiring if entry.source_file == "wiring" else self.store.state
@@ -638,7 +636,11 @@ class Modifier:
                 self.store.search_index.update_entry(entry.dot_path, entry.old_value)
 
         self.store.mutation_seq += 1
-        self.store.journal_mutation(entry.dot_path, _value_only)
+        if entry.created or entry.deleted:
+            _revs_note(self.store, "create" if entry.created else "delete",
+                       entry.dot_path)
+        else:
+            _revs_note(self.store, "set", entry.dot_path, _was, entry.old_value)
         if not _skip_cache_clear:
             self.store._clear_pointer_cache()
 

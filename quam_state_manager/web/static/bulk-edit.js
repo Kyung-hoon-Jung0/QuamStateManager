@@ -156,10 +156,34 @@
         var hide = _hiddenSet();
         var forced = _dirtyColKeys();
         var idx = null;
-        t.querySelectorAll('[data-col-key]').forEach(function (el) {
+        // The heads first: a column whose head already carries the wanted
+        // state has cells that carry it too -- the template renders th and td
+        // with one condition and this function is the only writer of the class
+        // on a keyed element -- so only the columns that CHANGED are walked.
+        // The whole-table walk (~38k tds on the 30Q rig) ran on every Enter
+        // that emptied the dirty set (w7 liveedit). Past a handful of changes
+        // one full walk is cheaper than a selector per column.
+        var heads = t.querySelectorAll('th[data-col-key]'), changed = [];
+        Array.prototype.forEach.call(heads, function (h) {
+            var k = h.getAttribute('data-col-key');
+            if (k === '__id__') return;
+            if (h.classList.contains('bulk-col-hidden') !== (hide.has(k) && !forced[k])) changed.push(k);
+        });
+        var walk = function (el) {
             var k = el.getAttribute('data-col-key');
             if (k === '__id__') return;
             el.classList.toggle('bulk-col-hidden', hide.has(k) && !forced[k]);
+        };
+        // The FIRST pass over a table element walks everything: markup carries
+        // keyed elements the template renders without the class (the resize
+        // handle) -- after one full walk every keyed element of a column moves
+        // in lockstep with its head, which is what the diff relies on.
+        if (changed.length > 24 || !heads.length || !t._colVisWalked) {
+            t.querySelectorAll('[data-col-key]').forEach(walk);
+            t._colVisWalked = true;
+        }
+        else changed.forEach(function (k) {
+            t.querySelectorAll('[data-col-key="' + _cssEsc(k) + '"]').forEach(walk);
         });
         // A forced column must not be left hidden by a STALE search verdict:
         // while it was checkbox-hidden the search skipped it entirely, so
@@ -658,11 +682,16 @@
             var inner = document.getElementById('bulk-scroll-top-inner');
             var grow = t && t.querySelector('.bulk-group-row');
             // READ both, then WRITE both — never interleave.
-            var w = (t && inner) ? t.scrollWidth : null;
+            // + the tail-collapse margin (GridVirt): scrollWidth stops at the
+            // border box, and the proxy must scroll as far as the pane does
+            var w = (t && inner) ? t.scrollWidth + _marginRight(t) : null;
             var h = grow ? grow.offsetHeight : null;
             if (w !== null) inner.style.width = w + 'px';
             if (h !== null) t.style.setProperty('--bulk-grouphead-h', h + 'px');
         });
+    }
+    function _marginRight(t) {
+        try { return parseFloat(getComputedStyle(t).marginRight) || 0; } catch (e) { return 0; }
     }
     function _updateTopScroll() { _syncTableGeometry(); }
     function _setupTopScroll() {
@@ -684,11 +713,21 @@
         var t = table(); if (!t) return;
         var heads = t.querySelectorAll('.bulk-group-head');
         if (!heads.length) return;
+        // ONE pass buckets the heads by section: a selector per group head
+        // scanned the whole table (tbody included) each time, ~14 ms per call
+        // on the 30Q rig (w7 liveedit). Same membership: the attribute VALUE
+        // equals the group's, as the escaped selector matched.
+        var bySec = Object.create(null);
+        Array.prototype.forEach.call(t.querySelectorAll('.bulk-col-head[data-section]'), function (ch) {
+            var s0 = ch.getAttribute('data-section');
+            (bySec[s0] || (bySec[s0] = [])).push(ch);
+        });
         Array.prototype.forEach.call(heads, function (gh) {
-            var sec = (gh.getAttribute('data-group') || '').replace(/"/g, '\\"');
             var n = 0;
-            t.querySelectorAll('.bulk-col-head[data-section="' + sec + '"]').forEach(function (ch) {
-                if (!ch.classList.contains('bulk-col-hidden') && !ch.classList.contains('bulk-search-hidden')) n++;
+            (bySec[gh.getAttribute('data-group') || ''] || []).forEach(function (ch) {
+                // a column GridVirt's tail collapse took out of layout spans nothing
+                if (!ch.classList.contains('bulk-col-hidden') && !ch.classList.contains('bulk-search-hidden')
+                    && !ch.classList.contains('bulk-virt-collapsed')) n++;
             });
             if (n > 0) { gh.colSpan = n; gh.classList.remove('bulk-col-hidden'); }
             else { gh.classList.add('bulk-col-hidden'); }
@@ -1180,8 +1219,13 @@
         // exactly as in the old AND loops, where it was skipped. Inside an OR
         // group a neutral member makes the group pass for that axis, so
         // `q1 | q2` restricts rows and leaves every column visible.
+        // the FIRST column carrying a key, as COLS.filter(...)[0] answered --
+        // looked up per column that was O(columns^2): 1.6M compares per pass
+        // on the 30Q rig's 1,264 qubit columns (w7 liveedit)
+        var _colByKey = Object.create(null);
+        COLS.forEach(function (x) { if (!(x.key in _colByKey)) _colByKey[x.key] = x; });
         function colVisible(key, colCells) {
-            var c = COLS.filter(function (x) { return x.key === key; })[0];
+            var c = _colByKey[key];
             for (var g = 0; g < tokGroups.length; g++) {
                 var any = false;
                 for (var i = 0; i < tokGroups[g].length && !any; i++) {
@@ -1236,7 +1280,13 @@
             _hayCache = { key: hayKey, rowMap: new WeakMap(), colHay: null };
         }
         var colHay = _hayCache.colHay;
-        if (!colHay) {
+        // No token, no reader: colVisible/rowVisible only consult a haystack
+        // inside a token group, so an EMPTY query decides every row and column
+        // without one. Building it anyway (every cell's text + every cold
+        // cell's value, ~37k on the 30Q rig) was most of an Enter's JS, since
+        // each commit clears the cache and re-runs this pass (w7 liveedit).
+        if (!colHay && !tokGroups.length) colHay = {};
+        else if (!colHay) {
             colHay = {};
             visCols.forEach(function (c) { colHay[c.key] = []; });
             rows.forEach(function (r) {
@@ -1268,7 +1318,9 @@
             });
             _hayCache.colHay = colHay;
         }
-        var rowHay = rows.map(function (r) { return _hayCache.rowMap.get(r) || []; });
+        var rowHay = tokGroups.length
+            ? rows.map(function (r) { return _hayCache.rowMap.get(r) || []; })
+            : rows.map(function () { return []; });
 
         // decide column visibility (search layer, on top of checkbox layer)
         var colSearchHide = {};
@@ -1484,8 +1536,32 @@
         if (th) th.textContent = sortDir > 0 ? ' ▲' : ' ▼';
     }
 
+    /* ONE pass over the table for the header stats (w7 liveedit). The loop
+       below used to run two whole-table attribute scans PER COLUMN -- on the
+       30Q/2,389-column rig that was ~0.95 s of querySelector inside every
+       Enter. The index answers exactly what those selectors did: the first
+       [data-col-stats=k] in document order, and every .bulk-cell with ANY
+       ancestor (up to the table) carrying data-col-key=k. */
+    function _statIndex(t) {
+        var stats = Object.create(null), cells = Object.create(null);
+        Array.prototype.forEach.call(t.querySelectorAll('[data-col-stats]'), function (el) {
+            var k = el.getAttribute('data-col-stats');
+            if (!(k in stats)) stats[k] = el;
+        });
+        Array.prototype.forEach.call(t.querySelectorAll('.bulk-cell'), function (cell) {
+            for (var p = cell.parentElement; p; p = p.parentElement) {
+                var k = p.getAttribute('data-col-key');
+                if (k != null) (cells[k] || (cells[k] = [])).push(cell);
+                if (p === t) break;
+            }
+        });
+        return { stat: function (k) { return stats[k] || null; },
+                 cells: function (k) { return cells[k] ? cells[k].slice() : []; } };
+    }
+
     function _recomputeStats(onlyKeys) {
         var t = table(); if (!t) return;
+        var ix = null;   // built lazily: a keyed pass over cold columns needs none
         var hide = _effectiveHidden();   // a forced column is on screen and counts
         COLS.forEach(function (c) {
             if (onlyKeys && !onlyKeys[c.key]) return;
@@ -1496,11 +1572,10 @@
             // the server's numbers are wiped and never come back.
             if (_virt && ((_virt.cold && _virt.cold.has(c.key))
                           || (_virt.dead && _virt.dead.has(c.key)))) return;
-            var stat = t.querySelector('[data-col-stats="' + (window.CSS && CSS.escape ? CSS.escape(c.key) : c.key) + '"]');
+            var stat = (ix || (ix = _statIndex(t))).stat(c.key);
             if (!stat) return;
             if (hide.has(c.key)) { stat.textContent = ''; return; }
-            var allCells = Array.prototype.slice.call(
-                t.querySelectorAll('[data-col-key="' + (window.CSS && CSS.escape ? CSS.escape(c.key) : c.key) + '"] .bulk-cell'));
+            var allCells = ix.cells(c.key);
             allCells.forEach(function (cell) { cell.classList.remove('cell-best', 'cell-worst'); });
             // Stats + extreme colouring cover the VISIBLE scope only — with a ⚏
             // Qubits selection active, chip-wide extremes on hidden rows would
@@ -2046,10 +2121,31 @@
         var t = table(); if (!t) return;
         var byResolved = {};
         (results || []).forEach(function (res) { if (res.resolved_path) byResolved[res.resolved_path] = res; });
-        if (!Object.keys(byResolved).length) return;
-        _virtHydrateLocal();         // docs/105 #1 - path-addressed repaint must see every input
-                                     // (a server-cold column arrives fresh from the working copy)
-        _cells(t).forEach(function (c) {
+        var paths = Object.keys(byResolved);
+        if (!paths.length) return;
+        // docs/105 #1 - a path-addressed repaint must see every input that
+        // holds the written node (a server-cold column arrives fresh from the
+        // working copy). RAM P6: hydrate only the locally-detached columns
+        // that CLAIM a written path (grid-virt's byPathAll indexes every
+        // detached cell by both its paths) and visit only the inputs that
+        // carry it -- hydrating every cold column and walking every input
+        // cost ~1 s per Enter on a 30-qubit chip (36k detached cells).
+        if (_gv && _virt && _virt.cold && _virt.byPathAll) {
+            var need = {};
+            paths.forEach(function (p) {
+                (_virt.byPathAll[p] || []).forEach(function (k) {
+                    if (_virt.cold.has(k) && !_virt.remote.has(k)) need[k] = 1;
+                });
+            });
+            var ks = Object.keys(need);
+            if (ks.length) _virtHydrateCols(ks, { reveal: false });   // values only
+        }
+        var hits = [];
+        paths.forEach(function (p) {
+            var q = '.bulk-cell[data-resolved="' + String(p).replace(/(["\\])/g, '\\$1') + '"]';
+            Array.prototype.forEach.call(t.querySelectorAll(q), function (c) { hits.push(c); });
+        });
+        hits.forEach(function (c) {
             if (c.getAttribute('data-linkable') !== '1') return;   // only linked siblings cross-sync
             var res = byResolved[c.getAttribute('data-resolved')];
             if (!res || res.applied === false) return;
@@ -2198,6 +2294,10 @@
             },
             phase: _ph,
             onState: function (st) { _virt = st; },
+            // the tail collapse put columns back: the group band's spans and
+            // the top scrollbar proxy both count them
+            onReveal: function () { try { _updateGroupHeader(); } catch (e) {} },
+            dirtyCols: function () { return _dirtyColKeys(); },
         });
         return _gv;
     }
@@ -2228,9 +2328,9 @@
         if (hit) _virtPatchColdValue.flushHay = true;
         return hit;
     }
-    function _virtHydrateCols(keys) {
+    function _virtHydrateCols(keys, hopts) {
         if (!_gv) return _resolved;
-        var r = _gv.hydrateCols(keys);
+        var r = _gv.hydrateCols(keys, hopts);
         _virtSync();
         return r && r.then ? r.then(function () { _virtSync(); }) : (_virtSync(), _resolved);
     }
@@ -4142,7 +4242,7 @@
                 if (remoteHit) _virtPatchColdValue(e.dot_path,
                     e.old_value_disp != null ? e.old_value_disp : e.old_value_str);
             });
-            if (dueKeys.length) _virtHydrateCols(dueKeys);
+            if (dueKeys.length) _virtHydrateCols(dueKeys, { reveal: false });   // values only
         }
         var patched = 0, missing = 0, rows = [], covered = [], uncovered = [];
         var statKeys = {};   // QA F9: the columns whose header min/max must follow

@@ -93,19 +93,26 @@ def cold_map(columns: list[dict], rows: list[dict], cold: Iterable[str]) -> dict
     cell). ``resolved`` is ``0`` when it equals ``dot_path``."""
     cold_set = set(cold)
     idx = [i for i, c in enumerate(columns) if c.get("key") in cold_set]
-    out: dict[str, list] = {columns[i]["key"]: [] for i in idx}
+    out: dict[str, list] = {columns[i]["key"]: cold_column(rows, i) for i in idx}
+    return {"rows": [r.get("id") for r in rows], "cols": out}
+
+
+def cold_column(rows: list[dict], i: int) -> list[list]:
+    """One cold column's entries, in row order -- the ONE rule ``cold_map``
+    and the RAM fragment cache (which serializes the map a block of columns
+    at a time) share."""
+    out = []
     for row in rows:
         cells = row.get("cells") or []
-        for i in idx:
-            cell = cells[i] if i < len(cells) else {}
-            dp = cell.get("dot_path") or ""
-            rp = cell.get("resolved_path") or ""
-            out[columns[i]["key"]].append([
-                str(cell.get("display") if cell.get("display") is not None else ""),
-                dp,
-                0 if (not rp or rp == dp) else rp,
-            ])
-    return {"rows": [r.get("id") for r in rows], "cols": out}
+        cell = cells[i] if i < len(cells) else {}
+        dp = cell.get("dot_path") or ""
+        rp = cell.get("resolved_path") or ""
+        out.append([
+            str(cell.get("display") if cell.get("display") is not None else ""),
+            dp,
+            0 if (not rp or rp == dp) else rp,
+        ])
+    return out
 
 
 def parse_cols(raw: Any, known: Iterable[str], limit: int = 400) -> tuple[list[str], list[str]]:

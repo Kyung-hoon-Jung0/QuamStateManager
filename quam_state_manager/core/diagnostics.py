@@ -265,7 +265,8 @@ def lint_state(store) -> list[Finding]:
     callers sort the result in place (``routes._active_chip_findings`` does
     ``findings.sort(...)`` when there's no generated config), so handing back the
     cached object would corrupt it for the next caller."""
-    seq = getattr(store, "mutation_seq", None)
+    from quam_state_manager.core import store_revs
+    seq = store_revs.seq_token(store)
     hit = _lint_state_cache.get(store)
     if hit is not None and hit[0] == seq:
         return list(hit[1])
@@ -279,11 +280,17 @@ def lint_state(store) -> list[Finding]:
             # RAM P10: re-check under the lock. The background chip prewarm
             # lints while holding it; a request that arrived meanwhile waited
             # here and must take THAT result, not lint the chip a second time.
-            seq = getattr(store, "mutation_seq", None)
+            seq = store_revs.seq_token(store)
             hit = _lint_state_cache.get(store)
             if hit is not None and hit[0] == seq:
                 return list(hit[1])
             out = _lint_state_uncached(store)
+            if _ram_verify():
+                cold = _lint_state_uncached(store, incremental=False)
+                if [f.as_dict() for f in cold] != [f.as_dict() for f in out]:
+                    from quam_state_manager.core.ramcache import StaleCacheError
+                    raise StaleCacheError("lint_state: incremental result "
+                                          "differs from a cold lint")
     else:
         out = _lint_state_uncached(store)
     try:
@@ -293,45 +300,61 @@ def lint_state(store) -> list[Finding]:
     return list(out)
 
 
-def _lint_state_uncached(store) -> list[Finding]:
-    """The actual lint pass — run once per store mutation by :func:`lint_state`."""
+def _ram_verify() -> bool:
+    import os
+    return os.environ.get("SM_RAM_VERIFY", "") not in ("", "0")
+
+
+def _lint_state_uncached(store, incremental: bool = True) -> list[Finding]:
+    """The actual lint pass — run once per store mutation by :func:`lint_state`.
+
+    docs/2xx (RAM P5): with ``incremental`` the whole-chip walks that cost
+    seconds on a 30-qubit chip reuse per-entity memos validated on their
+    store_revs tokens (dangling pointers: structure; stored-as-text, sibling
+    types, value specs: each entity's own chunk; waveforms: each owner's
+    pointer-reach closure). ``incremental=False`` is the cold reference the
+    shadow check (SM_RAM_VERIFY) and the tests compare against."""
     findings: list[Finding] = []
     root = store.merged if isinstance(store.merged, dict) else {}
+    inc_store = (store if incremental and root is getattr(store, "merged", None)
+                 else None)
 
     findings.extend(_port_findings(root))
-    findings.extend(_dangling_pointer_findings(store))
+    findings.extend(_dangling_pointer_findings(store) if inc_store is not None
+                    else _dangling_pointer_findings_cold(store))
     # QA F-F: a numeric-looking TEXT value fired BOTH the sibling vote
     # (value_type, "numeric on N other qubits") and the stored-as-text row
     # (value_type_strnum) -- one mistyped value, two rows, two badge counts.
     # The strnum row states it more precisely (and carries the repair), so the
     # sibling vote keeps only what strnum cannot see: non-numeric text ("oops").
-    strnum = _strnum_findings(root)
+    strnum = _strnum_findings(root, inc_store)
     shown_text = {f.jump_path for f in strnum if f.jump_path}
     for section in ("qubits", "qubit_pairs"):
-        findings.extend(f for f in _value_findings(root, section)
+        findings.extend(f for f in _value_findings(root, section, inc_store)
                         if not (f.category == "value_type"
                                 and f.location in shown_text))
     findings.extend(strnum)
     findings.extend(_frequency_consistency_findings(store))
     findings.extend(_downconverter_findings(root))
-    findings.extend(_spec_findings(root))
+    findings.extend(_spec_findings(root, inc_store))
     findings.extend(_coupling_findings(root))
     findings.extend(_band_edge_findings(root))
     findings.extend(_mw_carrier_findings(root))
     findings.extend(_pair_drive_carrier_findings(store))
     findings.extend(_f01_range_findings(root))
-    findings.extend(_unphysical_findings(root))
+    findings.extend(_unphysical_findings(root, inc_store))
     findings.extend(_relational_findings(root))
     findings.extend(_lffem_output_bw_findings(root))
     findings.extend(_qdac_findings(root))
     findings.extend(_resonator_if_floor_findings(root))
     findings.extend(_downconverter_spacing_findings(root))
-    findings.extend(_waveform_findings_cached(store))
+    findings.extend(_waveform_findings_cached(store) if inc_store is not None
+                    else _waveform_findings(store))
 
     return _ordered(findings)
 
 
-def _spec_findings(root: dict) -> list[Finding]:
+def _spec_findings(root: dict, store=None) -> list[Finding]:
     """Hardware value-spec violations (type/range/step) → Explorer-jumpable warnings.
 
     Delegates the actual catalogue + numeric checks to :mod:`core.spec_constraints`
@@ -340,7 +363,11 @@ def _spec_findings(root: dict) -> list[Finding]:
     ``port_key``. ``category`` is prefixed ``value_spec_*``.
     """
     findings: list[Finding] = []
-    for d in spec_constraints.spec_findings(root):
+    chunks = None
+    if store is not None and root is getattr(store, "merged", None):
+        from quam_state_manager.core.state_env_validate import _ChunkMemo
+        chunks = _ChunkMemo(store, "spec", None)
+    for d in spec_constraints.spec_findings(root, chunks):
         findings.append(Finding(
             d["severity"], d["category"], d["location"], d["message"],
             detail=d.get("detail", ""), jump_path=d.get("jump_path", ""),
@@ -785,7 +812,11 @@ def _validate_pointers_cached(store) -> list:
     Returns the SAME cached list (callers here only iterate/filter it, never
     mutate it). ``validate_pointers`` itself already hands back a fresh
     ``list(self.pointer_warnings)``."""
-    seq = getattr(store, "mutation_seq", None)
+    # docs/2xx (RAM P5): pointer resolvability depends on the chip's
+    # STRUCTURE only (which keys exist, what every pointer string says) -- a
+    # plain scalar write moves neither, so the key is the structure token.
+    from quam_state_manager.core import store_revs
+    seq = store_revs.struct_token(store)
     hit = _pointer_warnings_cache.get(store)
     if hit is not None and hit[0] == seq:
         return hit[1]
@@ -797,7 +828,13 @@ def _validate_pointers_cached(store) -> list:
     return out
 
 
-def _dangling_pointer_findings(store) -> list[Finding]:
+def _dangling_pointer_findings_cold(store) -> list[Finding]:
+    """:func:`_dangling_pointer_findings` over a fresh validation (the cold
+    reference for the RAM shadow check)."""
+    return _dangling_pointer_findings(store, _warnings=store.validate_pointers())
+
+
+def _dangling_pointer_findings(store, _warnings=None) -> list[Finding]:
     """Unresolvable JSON pointers, reusing the store's pointer validator.
 
     ``#/ports/...`` pointers are skipped here — a dangling one is the same
@@ -806,7 +843,8 @@ def _dangling_pointer_findings(store) -> list[Finding]:
     """
     findings: list[Finding] = []
     try:
-        warnings = _validate_pointers_cached(store)
+        warnings = (_warnings if _warnings is not None
+                    else _validate_pointers_cached(store))
     except Exception:  # pragma: no cover - defensive; never let a lint crash a view
         return findings
     for w in warnings:
@@ -846,7 +884,7 @@ def _dangling_pointer_findings(store) -> list[Finding]:
 _STRNUM_CAP = 100
 
 
-def numeric_string_leaves(root: dict) -> list[str]:
+def numeric_string_leaves(root: dict, store=None) -> list[str]:
     """Dot-paths of every STATE leaf whose value is a string that parses as a
     number — the '"0.13" stored as text' anomaly (r14 ⑨/⑩). External state
     regeneration is the usual culprit; on a field no schema or assignment
@@ -883,22 +921,46 @@ def numeric_string_leaves(root: dict) -> list[str]:
                 return
             out.append(path)
 
+    kind = None
+    if store is not None and root is not None:
+        kind = ("state" if root is getattr(store, "state", None)
+                else "merged" if root is getattr(store, "merged", None) else None)
+    chunks = None
+    if kind is not None:
+        # docs/2xx (RAM P5): one depth-2 subtree at a time, each memoized on
+        # its own store_revs chunk token -- an edit re-scans the one qubit it
+        # touched. The chunk boundary is exactly where the cold loop below
+        # would recurse, so the concatenation is the cold order.
+        from quam_state_manager.core.state_env_validate import _ChunkMemo
+        chunks = _ChunkMemo(store, "nsl:" + kind, None)
     for key, sub in (root or {}).items():
         if key in ("extras", "__class__", "__package_versions__", "wiring",
                    "network"):
+            continue
+        if chunks is not None and isinstance(sub, dict):
+            for k2, v2 in sub.items():
+                if k2 == "extras":
+                    continue
+                hit = chunks.get(str(key), str(k2))
+                if hit is None:
+                    start = len(out)
+                    _scan(v2, f"{key}.{k2}")
+                    chunks.put(str(key), str(k2), out[start:])
+                else:
+                    out.extend(hit)
             continue
         _scan(sub, str(key))
     return out
 
 
-def _strnum_findings(root: dict) -> list[Finding]:
+def _strnum_findings(root: dict, store=None) -> list[Finding]:
     """r14: schema-free stored-as-text warnings for the whole state. The
     sibling-based ``value_type`` check misses the bulk case (an external regen
     string-ifies EVERY sibling at once — zero numeric peers left to vote), so
     this flags each numeric-looking string leaf directly. Category prefix
     ``value_type`` puts them on the Explorer row marks + the values domain."""
     findings: list[Finding] = []
-    paths = numeric_string_leaves(root)
+    paths = numeric_string_leaves(root, store)
     for dp in paths[:_STRNUM_CAP]:
         findings.append(Finding(
             "warning", "value_type_strnum", dp,
@@ -922,13 +984,59 @@ def _strnum_findings(root: dict) -> list[Finding]:
     return findings
 
 
-def _value_findings(root: dict, section: str) -> list[Finding]:
-    """Non-finite numbers + conservative cross-sibling type-mismatch hints."""
-    findings: list[Finding] = []
+def _value_findings(root: dict, section: str, store=None) -> list[Finding]:
+    """Non-finite numbers + conservative cross-sibling type-mismatch hints.
+
+    docs/2xx (RAM P5): with ``store`` (and ``root`` being its merged dict) the
+    grouping is kept per store and patched from the change feed -- a plain
+    write to ``<section>.<name>.<rel>`` moves one value of one field, so only
+    that field's findings are recomputed. Anything else rebuilds."""
     sec = root.get(section)
     if not isinstance(sec, dict):
-        return findings
+        return []
+    if store is None or root is not getattr(store, "merged", None):
+        return _value_findings_build(sec, section)[3]
+    from quam_state_manager.core import store_revs
+    r = store_revs.revs_of(store)
+    slot = "vf:" + section
+    now = store_revs.seq_token(store)
+    prev = r.memo.get(slot)
+    st = None
+    if prev is not None and prev[0][0] == now[0] and prev[1][0] is sec:
+        ev = store_revs.changes_since(store, prev[0][1])
+        paths = store_revs.plain_paths(ev) if ev is not None else None
+        if paths is not None:
+            st = prev[1]
+            pre = section + "."
+            touched: list[str] = []
+            for pth in paths:
+                if not pth.startswith(pre):
+                    continue
+                rest = pth[len(pre):]
+                name, _, rel = rest.partition(".")
+                idx = st[2].get(rel, {}).get(name) if rel else None
+                if idx is None:
+                    st = None          # a leaf the grouping never saw: rebuild
+                    break
+                ok, val = store_revs._get(sec, [name] + rel.split("."))
+                if not ok:
+                    st = None
+                    break
+                st[1][rel][idx] = (name, val)
+                touched.append(rel)
+            if st is not None:
+                for rel in touched:
+                    st[4][rel] = _value_findings_rel(section, rel, st[1][rel])
+                st = (st[0], st[1], st[2], [f for rel in st[5] for f in st[4][rel]],
+                      st[4], st[5])
+    if st is None:
+        st = _value_findings_build(sec, section)
+    r.memo[slot] = (now, st)
+    return list(st[3])
 
+
+def _value_findings_build(sec: dict, section: str) -> tuple:
+    """(sec, items per rel, positions per rel, findings, findings per rel, rel order)."""
     # Group leaf values by their path *within* an entry, across all entries.
     by_sub: dict[str, list[tuple[str, Any]]] = {}
     for name, sub in sec.items():
@@ -936,38 +1044,43 @@ def _value_findings(root: dict, section: str) -> list[Finding]:
             continue
         for rel, value, _ in _walk(sub):
             by_sub.setdefault(rel, []).append((name, value))
+    pos = {rel: {n: i for i, (n, _v) in enumerate(items)} for rel, items in by_sub.items()}
+    per = {rel: _value_findings_rel(section, rel, items) for rel, items in by_sub.items()}
+    order = list(by_sub)
+    return (sec, by_sub, pos, [f for rel in order for f in per[rel]], per, order)
 
+
+def _value_findings_rel(section: str, rel: str, items: list) -> list[Finding]:
+    findings: list[Finding] = []
     singular = section[:-1] if section.endswith("s") else section
-    for rel, items in by_sub.items():
-        # Non-finite numbers (NaN / Inf) are always broken.
-        for name, value in items:
-            if isinstance(value, float) and not math.isfinite(value):
-                dp = f"{section}.{name}.{rel}"
-                findings.append(Finding(
-                    "error", "value_nan", dp,
-                    "value is a non-finite number (NaN or Infinity)",
-                    detail=repr(value), jump_path=dp,
-                ))
+    # Non-finite numbers (NaN / Inf) are always broken.
+    for name, value in items:
+        if isinstance(value, float) and not math.isfinite(value):
+            dp = f"{section}.{name}.{rel}"
+            findings.append(Finding(
+                "error", "value_nan", dp,
+                "value is a non-finite number (NaN or Infinity)",
+                detail=repr(value), jump_path=dp,
+            ))
 
-        # Type mismatch: a non-pointer text value where the same field is
-        # numeric on a clear majority of siblings.
-        considered = [
-            (n, v) for n, v in items
-            if v is not None and not (isinstance(v, str) and v.startswith("#"))
-        ]
-        numeric = [(n, v) for n, v in considered
-                   if isinstance(v, (int, float)) and not isinstance(v, bool)]
-        strings = [(n, v) for n, v in considered if isinstance(v, str)]
-        if len(numeric) >= 2 and len(numeric) > len(strings) and strings:
-            for n, v in strings:
-                dp = f"{section}.{n}.{rel}"
-                findings.append(Finding(
-                    "warning", "value_type", dp,
-                    f"value is text but the same field is numeric on "
-                    f"{len(numeric)} other {singular}(s)",
-                    detail=repr(v), jump_path=dp,
-                ))
-
+    # Type mismatch: a non-pointer text value where the same field is
+    # numeric on a clear majority of siblings.
+    considered = [
+        (n, v) for n, v in items
+        if v is not None and not (isinstance(v, str) and v.startswith("#"))
+    ]
+    numeric = [(n, v) for n, v in considered
+               if isinstance(v, (int, float)) and not isinstance(v, bool)]
+    strings = [(n, v) for n, v in considered if isinstance(v, str)]
+    if len(numeric) >= 2 and len(numeric) > len(strings) and strings:
+        for n, v in strings:
+            dp = f"{section}.{n}.{rel}"
+            findings.append(Finding(
+                "warning", "value_type", dp,
+                f"value is text but the same field is numeric on "
+                f"{len(numeric)} other {singular}(s)",
+                detail=repr(v), jump_path=dp,
+            ))
     return findings
 
 
@@ -1458,18 +1571,27 @@ def _pulse_peak(store, row: dict) -> tuple[float | None, str | None]:
     return None, payload.get("error")
 
 
-def _waveform_findings(store) -> list[Finding]:
+def _waveform_findings(store, only: tuple[str, str] | None = None) -> list[Finding]:
     """Out-of-DAC-range (and invalid-parameter) waveform samples — see the
-    section comment above. Pure + in-process (numpy/scipy synth, no QM stack)."""
+    section comment above. Pure + in-process (numpy/scipy synth, no QM stack).
+    ``only`` restricts it to one owner's pulses (the per-owner memo)."""
+    return _waveform_findings_ex(store, only)[1]
+
+
+def _waveform_findings_ex(store, only: tuple[str, str] | None = None
+                          ) -> tuple[bool, list[Finding]]:
+    """``(enumerated, findings)``. ``enumerated`` is False when
+    ``list_pulses`` itself raised -- for the whole chip that yields no
+    waveform findings at all, so a per-owner memo must know it too."""
     root = store.merged if isinstance(getattr(store, "merged", None), dict) else {}
     if not root:
-        return []
+        return True, []
     try:
         # used_by (the reverse-pointer index) isn't needed for the DAC-range check
         # — skip it; this lint runs on every edit, so the saving compounds.
-        rows = pulse_index.list_pulses(root, with_used_by=False)
+        rows = pulse_index.list_pulses(root, with_used_by=False, only=only)
     except Exception:  # pragma: no cover - never let enumeration crash a lint
-        return []
+        return False, []
 
     findings: list[Finding] = []
     for row in rows:
@@ -1511,20 +1633,91 @@ def _waveform_findings(store) -> list[Finding]:
                 jump_path=f"{path}.amplitude",
                 port_key=_port_key(parsed) if parsed else None,
             ))
-    return findings
+    return True, findings
+
+
+def _wf_owner_prefixes(root: dict, kind: str, name: str) -> list[str]:
+    """Where one owner's waveform findings read from, before pointers: the
+    pulse-carrying channels (their ``operations`` and ``opx_output``), the
+    gate macros, the flux line of a pair's control qubit, and the owner's
+    wiring entry (``_starting_output_ref``'s by-name fallback). Everything else
+    is reached through a pointer string under these, which
+    :func:`store_revs.path_closure` follows. Which children exist, and which
+    one is a QDAC bias line, are structure -- a plain write cannot move them."""
+    from quam_state_manager.core import qdac as _qdac
+    if kind == "qubit":
+        q = (root.get("qubits") or {}).get(name)
+        out = [f"qubits.{name}.{ch}" for ch in pulse_index.PULSE_CHANNELS]
+        found = _qdac.bias_line_of(q) if isinstance(q, dict) else None
+        if found:
+            out.append(f"qubits.{name}.{found[0]}")
+        out.append(f"wiring.qubits.{name}")
+        return out
+    p = (root.get("qubit_pairs") or {}).get(name)
+    out = [f"qubit_pairs.{name}.macros", f"qubit_pairs.{name}.coupler"]
+    out += [f"qubit_pairs.{name}.{ch}" for ch in pulse_index.PAIR_PULSE_CHANNELS]
+    ctrl = _qubit_name_from_ref(_dget(p, "qubit_control"))
+    if ctrl:
+        out.append(f"qubits.{ctrl}.z")
+    out.append(f"wiring.qubit_pairs.{name}")
+    return out
 
 
 def _waveform_findings_cached(store) -> list[Finding]:
-    """:func:`_waveform_findings` memoized per store at its ``mutation_seq``."""
-    seq = getattr(store, "mutation_seq", None)
-    hit = _wf_findings_cache.get(store)
-    if hit is not None and hit[0] == seq:
-        return hit[1]
-    out = _waveform_findings(store)
-    try:
-        _wf_findings_cache[store] = (seq, out)
-    except TypeError:  # pragma: no cover - store not weak-referenceable
-        pass
+    """:func:`_waveform_findings`, maintained PER OWNER from the change feed
+    (docs/2xx RAM P5).
+
+    ``list_pulses`` emits each qubit's rows, then each pair's -- every owner's
+    rows contiguous -- so the whole list is the per-owner lists concatenated
+    in that order. Between two reads, ``store_revs.changes_since`` names every
+    write. When all of them are plain (scalar over scalar, no pointer, no
+    container), an owner's findings can only move if a written path lies
+    inside that owner's dependency closure -- its own subtree plus every path
+    its pointers reach. Only those owners are recomputed; anything else (a
+    structural write, an unexplained seq, a log that no longer reaches back)
+    recomputes every owner."""
+    from quam_state_manager.core import store_revs
+    root = store.merged if isinstance(getattr(store, "merged", None), dict) else {}
+    if not root:
+        return []
+    r = store_revs.revs_of(store)
+    owners: list[tuple[str, str]] = []
+    for name, q in (root.get("qubits") or {}).items():
+        if isinstance(q, dict):
+            owners.append(("qubit", name))
+    for name, p in (root.get("qubit_pairs") or {}).items():
+        if isinstance(p, dict):
+            owners.append(("pair", name))
+    seq_now = store_revs.seq_token(store)
+    prev = r.memo.get("wf")
+    if prev is not None and prev[0] == seq_now:
+        return prev[2]                  # the same object: nothing moved
+    per: dict = {}
+    dirty: set | None = None          # None = everything
+    if prev is not None and prev[0][0] == seq_now[0]:
+        ev = store_revs.changes_since(store, prev[0][1])
+        paths = store_revs.plain_paths(ev) if ev is not None else None
+        if paths is not None:
+            dirty = set()
+            for o in owners:
+                deps = store_revs.path_closure(store, _wf_owner_prefixes(root, *o))
+                if deps is None or o not in prev[1] or any(
+                        store_revs.path_affected(deps, pth) for pth in paths):
+                    dirty.add(o)
+    out: list[Finding] = []
+    enumerated = True
+    for o in owners:
+        if dirty is None or o in dirty:
+            per[o] = _waveform_findings_ex(store, only=o)
+        else:
+            per[o] = prev[1][o]
+        enumerated = enumerated and per[o][0]
+        out.extend(per[o][1])
+    if not enumerated:
+        # the whole-chip enumeration would have raised: no findings at all
+        # (the cold behaviour, kept exactly)
+        out = []
+    r.memo["wf"] = (seq_now, per, out)
     return out
 
 
@@ -1790,7 +1983,7 @@ def _pair_drive_carrier_findings(store) -> list[Finding]:
     return findings
 
 
-def _unphysical_findings(root: dict) -> list[Finding]:
+def _unphysical_findings(root: dict, store=None) -> list[Finding]:
     """Stored numbers that cannot be what their field names (docs/162).
 
     The Chip Status surfaces now DROP these from every average, range and
@@ -1811,69 +2004,100 @@ def _unphysical_findings(root: dict) -> list[Finding]:
     from quam_state_manager.core import query as _q
 
     findings: list[Finding] = []
+    # docs/2xx (RAM P5): both halves read one entity's own dict and nothing
+    # else, so each entity's findings are memoized on its chunk token.
+    chunks = None
+    if store is not None and root is getattr(store, "merged", None):
+        from quam_state_manager.core.state_env_validate import _ChunkMemo
+        chunks = _ChunkMemo(store, "unphys", None)
+
+    def _per(k1: str, name: str, fn) -> None:
+        if chunks is None:
+            findings.extend(fn())
+            return
+        hit = chunks.get(k1, str(name))
+        if hit is None:
+            hit = fn()
+            chunks.put(k1, str(name), hit)
+        findings.extend(hit)
 
     # ── readout confusion matrices: each row is a probability vector ─────
     qubits = root.get("qubits") if isinstance(root.get("qubits"), dict) else {}
     for qn, q in sorted(qubits.items(), key=lambda kv: natural_key(kv[0])):
-        res = q.get("resonator") if isinstance(q, dict) else None
-        if not isinstance(res, dict):
-            continue
-        for key in ("confusion_matrix", "gef_confusion_matrix"):
-            cm = res.get(key)
-            if not isinstance(cm, list) or not cm:
-                continue
-            if _q._valid_confusion_matrix(cm):
-                continue
-            try:
-                sums = ", ".join(f"{sum(r):.3f}" for r in cm
-                                 if isinstance(r, list))
-            except TypeError:
-                sums = "unreadable"
-            findings.append(Finding(
-                "warning", "value_unphysical", f"qubits.{qn}.resonator.{key}",
-                f"{qn}: {key} is not row-stochastic (row sums {sums})",
-                detail="Each row of a readout confusion matrix is a probability "
-                       "vector, so it must be square, non-negative and sum to 1. "
-                       "An unnormalised, counts-valued or transposed matrix would "
-                       "yield a confident but wrong readout fidelity, so SM "
-                       "derives none from it — which is why the readout-fidelity "
-                       "metrics read as missing for this qubit."))
+        _per("qubits", qn, lambda qn=qn, q=q: _unphysical_qubit(qn, q))
 
     # ── 2Q gate fidelity rows: a fidelity lives in (0, 1] ────────────────
     pairs = root.get("qubit_pairs") if isinstance(root.get("qubit_pairs"), dict) else {}
     for pn, pair in sorted(pairs.items(), key=lambda kv: natural_key(kv[0])):
-        macros = pair.get("macros") if isinstance(pair, dict) else None
-        if not isinstance(macros, dict):
+        _per("qubit_pairs", pn, lambda pn=pn, pair=pair: _unphysical_pair(pn, pair))
+    return findings
+
+
+def _unphysical_qubit(qn: str, q: Any) -> list[Finding]:
+    from quam_state_manager.core import query as _q
+    findings: list[Finding] = []
+    res = q.get("resonator") if isinstance(q, dict) else None
+    if not isinstance(res, dict):
+        return findings
+    for key in ("confusion_matrix", "gef_confusion_matrix"):
+        cm = res.get(key)
+        if not isinstance(cm, list) or not cm:
             continue
-        for gn, gate in sorted(macros.items()):
-            fid = gate.get("fidelity") if isinstance(gate, dict) else None
-            if not isinstance(fid, dict):
+        if _q._valid_confusion_matrix(cm):
+            continue
+        try:
+            sums = ", ".join(f"{sum(r):.3f}" for r in cm
+                             if isinstance(r, list))
+        except TypeError:
+            sums = "unreadable"
+        findings.append(Finding(
+            "warning", "value_unphysical", f"qubits.{qn}.resonator.{key}",
+            f"{qn}: {key} is not row-stochastic (row sums {sums})",
+            detail="Each row of a readout confusion matrix is a probability "
+                   "vector, so it must be square, non-negative and sum to 1. "
+                   "An unnormalised, counts-valued or transposed matrix would "
+                   "yield a confident but wrong readout fidelity, so SM "
+                   "derives none from it — which is why the readout-fidelity "
+                   "metrics read as missing for this qubit."))
+    return findings
+
+
+def _unphysical_pair(pn: str, pair: Any) -> list[Finding]:
+    from quam_state_manager.core import chip_health as _ch
+    from quam_state_manager.core import query as _q
+    findings: list[Finding] = []
+    macros = pair.get("macros") if isinstance(pair, dict) else None
+    if not isinstance(macros, dict):
+        return findings
+    for gn, gate in sorted(macros.items()):
+        fid = gate.get("fidelity") if isinstance(gate, dict) else None
+        if not isinstance(fid, dict):
+            continue
+        for mn, mv in sorted(fid.items()):
+            if not isinstance(mn, str) or mn.endswith("_load_id"):
                 continue
-            for mn, mv in sorted(fid.items()):
-                if not isinstance(mn, str) or mn.endswith("_load_id"):
+            if _q._rb_level(mn) not in ("gate", "clifford", "state", "decay"):
+                continue
+            for field, val in (((None, mv),) if isinstance(mv, (int, float))
+                               else sorted((mv or {}).items())
+                               if isinstance(mv, dict) else ()):
+                if field is not None and field not in _q._FIDELITY_FIELDS:
                     continue
-                if _q._rb_level(mn) not in ("gate", "clifford", "state", "decay"):
+                if isinstance(val, bool) or not isinstance(val, (int, float)):
                     continue
-                for field, val in (((None, mv),) if isinstance(mv, (int, float))
-                                   else sorted((mv or {}).items())
-                                   if isinstance(mv, dict) else ()):
-                    if field is not None and field not in _q._FIDELITY_FIELDS:
-                        continue
-                    if isinstance(val, bool) or not isinstance(val, (int, float)):
-                        continue
-                    if _ch.physical_fidelity(val):
-                        continue
-                    dp = (f"qubit_pairs.{pn}.macros.{gn}.fidelity.{mn}"
-                          + (f".{field}" if field else ""))
-                    findings.append(Finding(
-                        "warning", "value_unphysical", dp,
-                        f"{pn}/{gn}: {mn} = {val:g} is outside (0, 1]",
-                        detail="A fidelity (and an RB decay base) has to lie in "
-                               "(0, 1]; zero is excluded because a fit that "
-                               "returns exactly zero has not converged. This "
-                               "value is excluded from every average, range and "
-                               "colour on Chip Status — the number itself is "
-                               "left exactly as the node wrote it."))
+                if _ch.physical_fidelity(val):
+                    continue
+                dp = (f"qubit_pairs.{pn}.macros.{gn}.fidelity.{mn}"
+                      + (f".{field}" if field else ""))
+                findings.append(Finding(
+                    "warning", "value_unphysical", dp,
+                    f"{pn}/{gn}: {mn} = {val:g} is outside (0, 1]",
+                    detail="A fidelity (and an RB decay base) has to lie in "
+                           "(0, 1]; zero is excluded because a fit that "
+                           "returns exactly zero has not converged. This "
+                           "value is excluded from every average, range and "
+                           "colour on Chip Status — the number itself is "
+                           "left exactly as the node wrote it."))
     return findings
 
 

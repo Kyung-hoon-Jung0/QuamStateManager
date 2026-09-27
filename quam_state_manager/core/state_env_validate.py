@@ -38,6 +38,7 @@ import math
 import re
 import weakref
 from dataclasses import dataclass
+from collections.abc import Mapping
 from typing import Any
 
 logger = logging.getLogger(__name__)
@@ -358,7 +359,7 @@ _FINDINGS_CAP = 300
 _EXAMPLES_CAP = 5
 
 
-def analyze_state(state: dict, manifest: dict | None) -> dict:
+def analyze_state(state: dict, manifest: dict | None, *, _chunks: Any = None) -> dict:
     """One walk → ``{"findings": [...], "types": {path: TypeSpec},
     "summary": {...}}``.
 
@@ -374,6 +375,27 @@ def analyze_state(state: dict, manifest: dict | None) -> dict:
     findings: dict[tuple, dict] = {}
     types: dict[str, dict] = {}
     truncated = [False]
+    # docs/2xx (RAM P5): a depth-2 subtree (one qubit, one pair, one port
+    # group) can be served from a per-chunk memo. While a chunk is walked
+    # fresh, every add() it makes, every types entry and its checked-node
+    # count are RECORDED; a memoized chunk REPLAYS exactly those, in the same
+    # position of the walk -- so the aggregation below (first example paths,
+    # first detail, the 300-key cap) sees the identical call sequence a cold
+    # walk makes. ``_chunks`` is None for a plain cold call.
+    rec_events: list = [None]
+    rec_types: list = [None]
+    # types written outside any chunk go to cur[0]; a chunked walk closes it
+    # into ``parts`` around every chunk, so the parts in order ARE the cold
+    # walk's insertion order (a recorded chunk writes only to its own record)
+    cur: list = [types]
+    parts: list = []
+
+    def emit(kind: str, severity: str, cls: str | None, field: str | None,
+             path: str, detail: str, fix_hint: str = "", code: str = "") -> None:
+        a = (kind, severity, cls, field, path, detail, fix_hint, code)
+        if rec_events[0] is not None:
+            rec_events[0].append(a)
+        add(*a)
 
     def add(kind: str, severity: str, cls: str | None, field: str | None,
             path: str, detail: str, fix_hint: str = "", code: str = "") -> None:
@@ -408,17 +430,40 @@ def analyze_state(state: dict, manifest: dict | None) -> dict:
         return (f"pip install {top} into the selected env, or select the env "
                 f"this chip was written by")
 
-    def walk(node: Any, path: str, ctx) -> None:
+    def _walk_chunk(v: Any, child_path: str, child_ctx, k1: str, k2: str) -> None:
+        """A depth-2 subtree: replay its memo, or walk it while recording."""
+        hit = _chunks.get(k1, k2)
+        if hit is not None:
+            events, ctypes, checked = hit
+            for a in events:
+                add(*a)
+            # a chunk's types are a PART of the result, never merged here:
+            # re-merging ~every leaf's TypeSpec per analysis was most of an
+            # after-edit analysis on the 30Q rig (dict.update, ~60 ms)
+            parts.append(cur[0]); parts.append(ctypes); cur[0] = {}
+            checked_nodes[0] += checked
+            return
+        rec_events[0], rec_types[0] = [], {}
+        before = checked_nodes[0]
+        try:
+            walk(v, child_path, child_ctx, 2)
+            _chunks.put(k1, k2, (rec_events[0], rec_types[0],
+                                 checked_nodes[0] - before))
+            parts.append(cur[0]); parts.append(rec_types[0]); cur[0] = {}
+        finally:
+            rec_events[0], rec_types[0] = None, None
+
+    def walk(node: Any, path: str, ctx, depth: int = 0) -> None:
         if isinstance(node, dict):
             cls_str = node.get("__class__")
             if isinstance(cls_str, str) and cls_str:
                 entry = _class_entry(manifest, cls_str)
                 if entry is None:
-                    add("unknown_class", "error", cls_str, None, path,
+                    emit("unknown_class", "error", cls_str, None, path,
                         f"{cls_str} was not probed in the selected env (harvest drift)",
                         "re-probe the environment")
                 elif not entry.get("importable"):
-                    add("unimportable_class", "error", cls_str, None, path,
+                    emit("unimportable_class", "error", cls_str, None, path,
                         f"{cls_str} cannot be imported in the selected env: "
                         f"{(entry.get('error') or '')[:120]}",
                         pip_hint(cls_str))
@@ -433,15 +478,18 @@ def analyze_state(state: dict, manifest: dict | None) -> dict:
                 child_path = f"{path}.{k}" if path else str(k)
                 ts, child_ctx = _step(manifest, ctx, str(k), v)
                 if isinstance(ts, dict) and ts.get("base") != "any" and not isinstance(v, (dict, list)):
-                    types[child_path] = ts
-                walk(v, child_path, child_ctx)
+                    (rec_types[0] if rec_types[0] is not None else cur[0])[child_path] = ts
+                if (_chunks is not None and depth == 1 and rec_events[0] is None):
+                    _walk_chunk(v, child_path, child_ctx, path, str(k))
+                else:
+                    walk(v, child_path, child_ctx, depth + 1)
         elif isinstance(node, list):
             for i, v in enumerate(node):
                 child_path = f"{path}.{i}"
                 ts, child_ctx = _step(manifest, ctx, str(i), v)
                 if isinstance(ts, dict) and ts.get("base") != "any" and not isinstance(v, (dict, list)):
-                    types[child_path] = ts
-                walk(v, child_path, child_ctx)
+                    (rec_types[0] if rec_types[0] is not None else cur[0])[child_path] = ts
+                walk(v, child_path, child_ctx, depth + 1)
 
     def _check_class_node(node: dict, path: str, cls_str: str, fields: dict) -> None:
         leaf_cls = cls_str.rsplit(".", 1)[-1]
@@ -453,7 +501,7 @@ def analyze_state(state: dict, manifest: dict | None) -> dict:
             f = fields.get(k)
             kpath = f"{path}.{k}" if path else k
             if f is None:
-                add("unknown_field", "error", cls_str, k, kpath,
+                emit("unknown_field", "error", cls_str, k, kpath,
                     f"'{k}' is not a field of the selected env's {leaf_cls} — "
                     f"Quam.load() fails with AttributeError('Unexpected attribute')",
                     "this chip was written by a different stack generation; "
@@ -465,7 +513,7 @@ def analyze_state(state: dict, manifest: dict | None) -> dict:
                 if not (f.get("optional") or (f.get("has_default")
                                               and f.get("default") is None
                                               and not f.get("default_repr"))):
-                    add("null_required", "warning", cls_str, k, kpath,
+                    emit("null_required", "warning", cls_str, k, kpath,
                         f"{leaf_cls}.{k} is null but the env schema has a "
                         f"non-null default ({f.get('default')!r})",
                         "set a value or leave as-is (quam instantiates fine; "
@@ -476,7 +524,7 @@ def analyze_state(state: dict, manifest: dict | None) -> dict:
             ok, code, msg = judge(v, ts)
             if not ok:
                 sev = _judge_severity(code, v, ts)
-                add("type_mismatch", sev, cls_str, k, kpath,
+                emit("type_mismatch", sev, cls_str, k, kpath,
                     f"{leaf_cls}.{k}: {msg}"
                     + (" — Quam.load() raises TypeError('Wrong object type "
                        "found during validation'), so every node run fails "
@@ -488,7 +536,7 @@ def analyze_state(state: dict, manifest: dict | None) -> dict:
             if fname in node:
                 continue
             if not f.get("has_default") and not f.get("optional"):
-                add("missing_required", "error", cls_str, fname,
+                emit("missing_required", "error", cls_str, fname,
                     f"{path}.{fname}" if path else fname,
                     f"required field {leaf_cls}.{fname} is absent",
                     "the state predates this field — migrate or select the "
@@ -505,7 +553,7 @@ def analyze_state(state: dict, manifest: dict | None) -> dict:
         for pkg, want in stamp.items():
             have = versions.get(pkg)
             if have and want and str(have) != str(want):
-                add("version_skew", "warning", None, pkg, "__package_versions__",
+                emit("version_skew", "warning", None, pkg, "__package_versions__",
                     f"state written by {pkg} {want}; selected env has {have}",
                     "differences may be benign — run the deep validation "
                     "(Quam.load) to be sure")
@@ -518,7 +566,48 @@ def analyze_state(state: dict, manifest: dict | None) -> dict:
         "checked_nodes": checked_nodes[0],
         "truncated": truncated[0],
     }
+    if parts:
+        parts.append(cur[0])
+        types = _TypeParts(parts)
     return {"findings": out, "types": types, "summary": summary}
+
+
+class _TypeParts(Mapping):
+    """``analyze_state``'s types as the ordered chunk parts they were made of,
+    merged into one dict on first read (nothing in SM reads them per request;
+    the memoized chunk dicts are shared and never written to)."""
+
+    __slots__ = ("_parts", "_d")
+
+    def __init__(self, parts: list) -> None:
+        self._parts = parts
+        self._d = None
+
+    def _m(self) -> dict:
+        d = self._d
+        if d is None:
+            d = {}
+            for p in self._parts:
+                d.update(p)
+            self._d = d
+            self._parts = None
+        return d
+
+    def __getitem__(self, k):
+        return self._m()[k]
+
+    def __iter__(self):
+        return iter(self._m())
+
+    def __len__(self) -> int:
+        return len(self._m())
+
+    def __eq__(self, other):
+        if isinstance(other, Mapping):
+            return self._m() == dict(other.items())
+        return NotImplemented
+
+    __hash__ = None
 
 
 # ---------------------------------------------------------------------------
@@ -548,7 +637,9 @@ def analysis_for_store(store, manifest: dict | None) -> dict:
     """Memoized ``analyze_state`` keyed ``(mutation_seq, manifest versions)`` —
     one O(leaves) walk per mutation, the diagnostics badge/banner/page all read
     the same result."""
-    key = (getattr(store, "mutation_seq", 0), _manifest_key(manifest))
+    from quam_state_manager.core import store_revs
+    mkey = _manifest_key(manifest)
+    key = (store_revs.seq_token(store), mkey)
     hit = _analysis_memo.get(store)
     if hit is not None and hit[0] == key:
         return hit[1]
@@ -557,15 +648,59 @@ def analysis_for_store(store, manifest: dict | None) -> dict:
         with lock:
             # RAM P10: re-check under the lock (the background chip prewarm
             # may have finished this very analysis while we waited for it).
-            key = (getattr(store, "mutation_seq", 0), _manifest_key(manifest))
+            key = (store_revs.seq_token(store), mkey)
             hit = _analysis_memo.get(store)
             if hit is not None and hit[0] == key:
                 return hit[1]
-            res = analyze_state(store.state, manifest)
+            res = analyze_state(store.state, manifest,
+                                _chunks=_ChunkMemo(store, "env", mkey))
     else:
         res = analyze_state(store.state, manifest)
+    if _verify_on() and manifest:
+        cold = analyze_state(store.state, manifest)
+        if cold != res:
+            from quam_state_manager.core.ramcache import StaleCacheError
+            raise StaleCacheError("analysis_for_store: chunked result differs "
+                                  "from a cold analyze_state")
     _analysis_memo[store] = (key, res)
     return res
+
+
+def _verify_on() -> bool:
+    import os
+    return os.environ.get("SM_RAM_VERIFY", "") not in ("", "0")
+
+
+class _ChunkMemo:
+    """Per-store memo of depth-2 walk chunks, validated on read against the
+    chunk's own token (``store_revs.chunk_token``) and a caller key (the
+    manifest key here). A chunk whose token moved is simply walked again."""
+
+    def __init__(self, store, name: str, extra: Any):
+        from quam_state_manager.core import store_revs
+        self._store = store
+        self._tok = store_revs.chunk_token
+        r = store_revs.revs_of(store)
+        slot = r.memo.get(name)
+        if slot is None or slot[0] != extra:
+            slot = (extra, {})
+            r.memo[name] = slot
+        self._d = slot[1]
+
+    def get(self, k1: str, k2: str):
+        # the token is read BEFORE the walk and stored with its result, so a
+        # write racing the walk can only make the entry look older than it is
+        tok = self._tok(self._store, k1, k2)
+        self._pending = ((k1, k2), tok)
+        e = self._d.get((k1, k2))
+        if e is not None and e[0] == tok:
+            return e[1]
+        return None
+
+    def put(self, k1: str, k2: str, value) -> None:
+        key, tok = self._pending
+        if key == (k1, k2):
+            self._d[key] = (tok, value)
 
 
 def _ack_key(rec: dict) -> str:

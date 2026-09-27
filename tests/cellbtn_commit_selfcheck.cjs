@@ -142,6 +142,22 @@ async function commitCase(label, sel) {
 (async function () {
   await commitCase('qubit grid', '#bulk-table input.bulk-cell');
   await commitCase('pair grid', '#bulk-pair-table input.bulk-cell');
+  // RAM P6: a re-measure asked for inside a commit handler runs on the next
+  // frame, coalesced -- a synchronous one forced a whole-grid layout in the
+  // middle of the handler's own DOM writes (a second layout per Enter)
+  {
+    const c = d.querySelector('#bulk-table input.bulk-cell');
+    c.focus();
+    await tick(10);
+    let gcs = 0;
+    const realGcs = window.getComputedStyle;
+    window.getComputedStyle = function () { gcs++; return realGcs.apply(this, arguments); };
+    realInv(); realInv();
+    ok(gcs === 0, 'RAM P6: invalidating reads no layout synchronously (got ' + gcs + ')');
+    await tick(20);
+    ok(gcs === 1, 'RAM P6: two invalidations in one frame measure once, on the frame (got ' + gcs + ')');
+    window.getComputedStyle = realGcs;
+  }
   if (fails) { console.error(fails + ' check(s) failed'); process.exit(1); }
   console.log('cellbtn commit selfcheck: all checks passed (' + asserts + ' assertions)');
   process.exit(0);   // app.js leaves pollers armed

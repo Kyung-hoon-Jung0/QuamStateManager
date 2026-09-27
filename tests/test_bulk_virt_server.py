@@ -997,9 +997,9 @@ class TestPairGridVirt:
         calls = []
         real = R._pair_bulk_grid
 
-        def counted(store, modified):
+        def counted(store, modified, pst=None):
             calls.append(1)
-            return real(store, modified)
+            return real(store, modified, pst)
 
         R._pair_bulk_grid = counted
         try:
@@ -1015,8 +1015,12 @@ class TestPairGridVirt:
             ed = c.post("/field/edit", data={"dot_path": path, "value": "0.5"},
                         headers={"HX-Request": "true"})
             assert ed.status_code in (200, 204), (ed.status_code, ed.get_data(as_text=True)[:200])
-            c.get(f"/bulk/cells?grid=pair&cols={quote(key)}")
-            assert len(calls) > before, "an edit must invalidate the memo"
+            d = c.get(f"/bulk/cells?grid=pair&cols={quote(key)}").get_json()
+            # RAM P6: an edit no longer throws the memo away -- the grid patches
+            # the cells the write reaches. What must hold is what the user sees:
+            # the hydrated cell carries the edit and its modified marker.
+            cell = " ".join(d["cells"][key].values())
+            assert 'value="0.5"' in cell and "bulk-cell-modified" in cell, cell[:300]
         finally:
             R._pair_bulk_grid = real
 

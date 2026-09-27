@@ -1,4 +1,5 @@
 {%- import '_bulk_cell_macros.html' as cells -%}
+{%- import '_bulk_grid_macros.html' as gm -%}
 {%- set cold_keys = cold_keys or [] -%}
 {%- set pair_cold_keys = pair_cold_keys or [] -%}
 {%- set note_rows = note_rows or {} -%}
@@ -181,61 +182,7 @@
     <p class="muted bulk-dyn-truncated" style="margin:.15rem 0 .3rem;font-size:.78em">&#9888; {{ dyn_truncated }}</p>
     {% endif %}
     {% if rows %}
-    <div class="bulk-table-wrap">
-        <table class="bulk-table" id="bulk-table">
-            <thead>
-                <tr class="bulk-group-row">
-                    <th class="bulk-corner" rowspan="2" scope="col" data-col-key="__id__"
-                        title="Click to sort by qubit name">qubit
-                        <span class="bulk-sort-caret" aria-hidden="true"></span></th>
-                    {% for g in column_groups %}
-                    <th class="bulk-group-head{% if g.group_start %} bulk-col-group-start{% endif %}{% if g.visible == 0 %} bulk-col-hidden{% endif %}"
-                        data-group="{{ g.section }}" colspan="{{ g.visible if g.visible else 1 }}"
-                        scope="colgroup">{{ g.label }}</th>
-                    {% endfor %}
-                    <th class="bulk-apply-col" rowspan="2" scope="col"></th>
-                </tr>
-                <tr class="bulk-head-row">
-                    {% for c in columns %}
-                    <th scope="col" class="bulk-col-head ck-{{ loop.index0 }}{% if not c.default_on %} bulk-col-hidden{% endif %}{% if c.group_start %} bulk-col-group-start{% endif %}"
-                        data-col-key="{{ c.key }}" data-section="{{ c.section }}" data-maxlen="{{ c.maxlen }}"
-                        title="{{ c.section }} · click to sort · drag the right edge to resize">
-                        <span class="bulk-col-label">{{ c.label }}</span>{% if c.unit %} <span class="bulk-col-unit unit">({{ c.unit }})</span>{% endif %}{% if c.multi %}<span class="bulk-col-multi" title="Some qubits carry up to {{ c.multi }} operations under this name — one per neighbour. Each cell shows and edits that qubit's first; hover a cell to see which one.">&#8314;</span>{% endif %}<span class="bulk-sort-caret" aria-hidden="true"></span>
-                        <span class="bulk-col-stats muted" data-col-stats="{{ c.key }}"></span>
-                        <button type="button" class="bulk-col-hist" data-grid="qubit"
-                                data-label="{{ c.label }}" data-unit="{{ c.unit or '' }}"
-                                onclick="ColumnHistory.open(this)"
-                                title="Column history — this parameter across every qubit over the recent runs">&#128344;</button>
-                        <button type="button" class="key-help-btn" tabindex="-1"
-                                data-help-q="{{ c.key.rsplit('.', 1)[-1] }}"
-                                title="Config Manual — what this key means, what values it takes">?</button>
-                        <span class="bulk-resize-handle" data-col-key="{{ c.key }}" title="Drag to resize · double-click to auto-fit" aria-hidden="true"></span>
-                    </th>
-                    {% endfor %}
-                </tr>
-            </thead>
-            <tbody>
-                {% for row in rows %}
-                <tr data-qubit="{{ row.id }}">
-                    <th class="bulk-rowhead{% if row.id in note_rows %} bulk-rowhead-note{% endif %}" scope="row" data-col-key="__id__"{% if row.id in note_rows %} title="{{ note_rows[row.id] }}"{% endif %}>{{ row.id }}{% if row.id in note_rows %}<span class="bulk-note-mark" aria-label="has a note">&#128221;</span>{% endif %}</th>
-                    {%- for cell in row.cells -%}
-                    {%- set col = columns[loop.index0] -%}
-                    <td class="bulk-td ck-{{ loop.index0 }}{% if not col.default_on %} bulk-col-hidden{% endif %}{% if col.group_start %} bulk-col-group-start{% endif %}{% if cell.is_pointer %} bulk-td-pointer{% endif %}{% if cell.lo and cell.lo.peer_qubit %} bulk-td-lo{% endif %}{% if cell.kind in ('listedit', 'runtime', 'missing') %} bulk-td-ro{% endif %}{% if col.key in cold_keys %} bulk-td-cold{% endif %}" data-col-key="{{ col.key }}">
-                        {#- docs/141 4n: a server-cold column ships an EMPTY td (its value
-                            rides the #bulk-cold-map script below); the client fills it
-                            from GET /bulk/cells, which renders the same macro. -#}
-                        {%- if col.key not in cold_keys %}{{ cells.qubit_cell(cell, col) }}{% endif -%}
-                    </td>
-                    {%- endfor %}
-                    <td class="bulk-apply-col">
-                        <button type="button" class="btn-xs bulk-row-apply" onclick="BulkEdit.applyRow(this)" disabled>Apply</button>
-                        <span class="bulk-row-error" hidden></span>
-                    </td>
-                </tr>
-                {% endfor %}
-            </tbody>
-        </table>
-    </div>
+    {%- if frag %}{{ frag.qgrid }}{% else %}{{ gm.qtable_open(columns, column_groups) }}{% for row in rows %}{{ gm.qrow(row, columns, cold_keys, note_rows) }}{% endfor %}{{ gm.qtable_close() }}{% endif %}
 
     {# ── Qubit Pairs grid (stacked below the qubit table) ──────────────────────
        Columns are SERVER-DERIVED from the chip's real pair leaves (gate macros,
@@ -245,13 +192,10 @@
        confusion badges (↗ to inspector), and blanks for columns a pair lacks. #}
     {% endif %}
     {% if pair_rows %}
-    {% with gid='bulk-pair', js='BulkPairEdit', label='Qubit Pairs',
-            sub='gate macros, flux & coupler pulses (columns derived from this chip)',
-            rowattr='data-pair', rowlabel='pair', hist_grid='pair',
+    {%- if frag %}{{ frag.pgrid }}{% else %}{% with gid=pga.gid, js=pga.js, label=pga.label, sub=pga.sub,
+            rowattr=pga.rowattr, rowlabel=pga.rowlabel, hist_grid=pga.hist_grid,
             columns=pair_columns, groups=pair_groups, rows=pair_rows,
-            cold_keys=pair_cold_keys, notes=pair_note_rows %}
-        {% include '_bulk_entity_grid.html' %}
-    {% endwith %}
+            cold_keys=pair_cold_keys, notes=pair_note_rows %}{% include '_bulk_entity_grid.html' %}{% endwith %}{% endif %}
     {% endif %}
 
     {# Every OTHER collection this chip carries — twpas today, qdac tomorrow,
@@ -259,15 +203,11 @@
        (core/entity_grids.py); on the wiring document these are its own
        collections instead. #}
     {% for eg in (extra_grids or []) %}
-    {% with gid='bulk-' ~ eg.key, js="EntityGrids['" ~ eg.key ~ "']", label=eg.label,
-            sub=('port wiring — the pointer is the value' if bulk_doc == 'wiring'
-                 else 'columns derived from this chip'),
-            rowattr='data-entity', rowlabel='id', hist_grid=None,
+    {% if frag %}{{ frag['x' ~ loop.index0] }}{% else %}{% with gid=eg.args.gid, js=eg.args.js, label=eg.args.label, sub=eg.args.sub,
+            rowattr=eg.args.rowattr, rowlabel=eg.args.rowlabel, hist_grid=eg.args.hist_grid,
             columns=eg.columns, groups=eg.column_groups, rows=eg.rows,
-            cold_keys=eg.cold_keys, notes=None %}
-        {% include '_bulk_entity_grid.html' %}
-    {% endwith %}
-    <script type="application/json" id="bulk-{{ eg.key }}-cold-map">{{ eg.cold_map | script_json }}</script>
+            cold_keys=eg.cold_keys, notes=None %}{% include '_bulk_entity_grid.html' %}{% endwith %}{% endif %}
+    <script type="application/json" id="bulk-{{ eg.key }}-cold-map">{% if frag and eg.cold_map %}{{ frag['xc' ~ loop.index0] }}{% else %}{{ eg.cold_map | script_json }}{% endif %}</script>
     {% endfor %}
     </div>{# /pane: grid #}
 
@@ -378,17 +318,17 @@
 {# docs/141 4ad: the pair grid's cold map -- its own element, because the two
    grids are two GridVirt instances and one shared id would let each read the
    other's values. #}
-<script type="application/json" id="bulk-pair-cold-map">{{ pair_cold_map | script_json }}</script>
+<script type="application/json" id="bulk-pair-cold-map">{{ frag.pcold if frag else (pair_cold_map | script_json) }}</script>
 {%- endif %}
 {%- if cold_map %}
 {# docs/141 4n: what the client keeps for every server-cold cell (display for
    whole-chip search, the paths for path-addressed repaints) — read by
    _virtInit BEFORE the mount below runs. #}
-<script type="application/json" id="bulk-cold-map">{{ cold_map | script_json }}</script>
+<script type="application/json" id="bulk-cold-map">{{ frag.qcold if frag else (cold_map | script_json) }}</script>
 {%- endif %}
 <script>
     window.__bulkChipKey = {{ ((active_chip_key if active_chip_key is defined else '') or '') | tojson }};
-    if (window.BulkEdit && BulkEdit.mount) BulkEdit.mount({{ columns | script_json }}, {{ band_meta | script_json }}, {{ (dyn_cols or []) | script_json }}, {{ {'chip': active_name or '', 'chipKey': (active_chip_key if active_chip_key is defined else '') or '', 'qubits': qubit_meta or [], 'dynhide': (bulk_dynhide if bulk_dynhide is defined else [])} | script_json }});
+    if (window.BulkEdit && BulkEdit.mount) BulkEdit.mount({{ frag.qcols if frag else (columns | script_json) }}, {{ band_meta | script_json }}, {{ frag.dyncols if frag else ((dyn_cols or []) | script_json) }}, {{ {'chip': active_name or '', 'chipKey': (active_chip_key if active_chip_key is defined else '') or '', 'qubits': qubit_meta or [], 'dynhide': (bulk_dynhide if bulk_dynhide is defined else [])} | script_json }});
     {% for eg in (extra_grids or []) %}
     if (window.makeEntityGrid) {
         var _g{{ loop.index0 }} = window.makeEntityGrid({{ eg.key | tojson }}, {{ eg.label | tojson }});
@@ -396,7 +336,7 @@
     }
     {% endfor %}
     {% if pair_rows %}
-    if (window.BulkPairEdit && BulkPairEdit.mount) BulkPairEdit.mount({{ pair_columns | script_json }});
+    if (window.BulkPairEdit && BulkPairEdit.mount) BulkPairEdit.mount({{ frag.pcols if frag else (pair_columns | script_json) }});
     {% endif %}
     if (window.AllValues && AllValues.setup) AllValues.setup();
 </script>

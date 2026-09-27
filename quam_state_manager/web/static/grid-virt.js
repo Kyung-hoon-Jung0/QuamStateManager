@@ -48,6 +48,20 @@
     var BUFFER = 1.5;                   // hydrate up to 1.5 viewports ahead
     var EST_PX_PER_CHAR = 8;            // the 16px-root fallback (see pxPerChar)
     var EST_PAD = 28;
+    /* TAIL COLLAPSE (w7 liveedit). A cold column is an EMPTY td, but an empty
+       td is still a laid-out, painted, hit-tested box: on the 30Q rig (2,389
+       pair columns x 69 pairs + 1,264 qubit columns) the ~200k cold tds made
+       every Enter cost ~0.6-1.2 s of Style/Layout/PrePaint/Paint/HitTest in
+       real Chrome, with the JS itself at ~50 ms. So the maximal run of cold
+       columns at the RIGHT end of the grid is taken out of layout with one
+       stylesheet (display:none by its ck-N class -- never a write to a td),
+       the table keeps its scroll range through a margin of their estimated
+       width, and the run is put back from its left end as the scroll nears
+       it, or the moment anything asks for one of its columns (hydrateCols /
+       ensureTd reveal through that column: the conservative default). Gated
+       on the number of cells it would take out, so every grid under it --
+       every real chip measured so far -- is untouched. */
+    var TAIL_MIN_CELLS = 20000;
 
     var _resolved = {
         then: function (f) { try { f(); } catch (e) {} return _resolved; },
@@ -147,6 +161,11 @@
         // listener, a fetch landing -- so every assignment announces itself
         // and the owner's mirror can never rot.
         var onState = opts.onState || function () {};
+        var onReveal = opts.onReveal || function () {};
+        // the owner's columns holding an unapplied edit ({key: 1}); a column
+        // with one is never taken back out of layout (see tailRecollapse)
+        var dirtyCols = opts.dirtyCols || function () { return {}; };
+        var tailMin = opts.tailMinCells > 0 ? opts.tailMinCells : TAIL_MIN_CELLS;
         var phase = opts.phase || function () {};
 
         var v = null;                 // { html, vals, cold, remote, inflight, wrap, byPath, pathTd, failed }
@@ -162,6 +181,115 @@
         // out of `cold` (never asked for again) but their tds are still on the
         // page, still empty -- so the instance must stay alive to keep their
         // values in the whole-chip search, and the note must keep saying so.
+        function tailEl(create) {
+            var id = styleId + '-tail';
+            var el = document.getElementById(id);
+            if (!el && create) { el = document.createElement('style'); el.id = id; document.head.appendChild(el); }
+            return el;
+        }
+
+        /* Drop every trace of a collapse: the rules, and the marker class on
+           the heads it covered (the group band counts that class as hidden). */
+        function tailClear(t) {
+            var el = tailEl(false);
+            if (el) el.textContent = '';
+            if (t) {
+                Array.prototype.forEach.call(t.querySelectorAll('th.bulk-virt-collapsed'), function (h) {
+                    h.classList.remove('bulk-virt-collapsed');
+                });
+            }
+        }
+
+        /* Write the rules for tail.list[tail.from..]. The margin is the sum of
+           the estimates of the collapsed columns that would SHOW (a hidden
+           one takes no width), read from the head's classes at write time. */
+        function tailWrite() {
+            var tl = v && v.tail; if (!tl) return;
+            var sels = [], w = 0;
+            for (var i = tl.from; i < tl.list.length; i++) {
+                var e = tl.list[i];
+                // one RULE per column: a single rule with ~2,700 selectors stopped
+                // applying past ~1,366 columns in real Chrome (measured on the
+                // 30Q rig: ck-1377 onward stayed laid out)
+                sels.push(tableSel + ' th.' + e.ck + ',' + tableSel + ' td.' + e.ck + '{display:none!important}');
+                if (!thHidden(e.h)) w += e.w;
+                e.h.classList.add('bulk-virt-collapsed');
+            }
+            tailEl(true).textContent = sels.length
+                ? sels.join('\n') + '\n'
+                  + tableSel + '{margin-right:' + Math.round(w) + 'px}'
+                : '';
+        }
+
+        /* Put columns back from the left end of the run up to (not
+           including) index `end`. Returns true when anything came back. */
+        function tailReveal(end) {
+            var tl = v && v.tail; if (!tl || end <= tl.from) return false;
+            var t = table();
+            end = Math.min(end, tl.list.length);
+            for (var i = tl.from; i < end; i++) tl.list[i].h.classList.remove('bulk-virt-collapsed');
+            tl.from = end;
+            // fully revealed, the plan is KEPT (empty rules): scrolling back
+            // left can take the far end out of layout again
+            tailWrite();
+            try { onReveal(t); } catch (e) {}
+            return true;
+        }
+
+        /* The other direction (w7 liveedit). Once a jump to the far right had
+           revealed the run, every later Enter paid the whole table's layout
+           again (big30x: 0.1 s -> 0.55-1.8 s). When the user is back two
+           viewports left of a revealed column, the columns from there to the
+           run's current start go back out of layout -- only while each one is
+           clean (no unapplied edit, not holding the focus); a hydrated column
+           keeps its cells (display:none never touches a td) and its margin
+           share becomes its MEASURED width. */
+        function tailRecollapse(t, wrap, cw) {
+            var tl = v && v.tail; if (!tl || tl.from <= 0) return false;
+            var limit = (wrap ? wrap.scrollLeft + wrap.clientWidth : 0) + cw * (BUFFER + 2);
+            var act = document.activeElement, actK = null;
+            if (act && act !== document.body && t.contains(act) && act.closest) {
+                var at = act.closest('[data-col-key]');
+                actK = at && at.getAttribute('data-col-key');
+            }
+            var j = tl.from, dirty = null, meas = [];
+            while (j > 0) {
+                var e = tl.list[j - 1];
+                if (!thHidden(e.h)) {
+                    if (e.h.offsetLeft <= limit || e.k === actK) break;
+                    if (!v.cold.has(e.k)) {
+                        if (dirty === null) { try { dirty = dirtyCols() || {}; } catch (x) { dirty = {}; } }
+                        if (dirty[e.k]) break;
+                    }
+                    meas.push([e, e.h.offsetWidth]);
+                }
+                j--;
+            }
+            if (j >= tl.from) return false;
+            meas.forEach(function (m) { if (m[1] > 0) m[0].w = m[1]; });
+            tl.from = j;
+            tailWrite();
+            try { onReveal(t); } catch (e2) {}
+            return true;
+        }
+
+        function tailRevealKeys(keys) {
+            var tl = v && v.tail; if (!tl || !keys) return false;
+            var end = -1;
+            keys.forEach(function (k) {
+                var p = tl.pos[k];
+                if (p != null && p >= tl.from && p + 1 > end) end = p + 1;
+            });
+            return end > 0 ? tailReveal(end) : false;
+        }
+
+        function isCollapsed(k) {
+            var tl = v && v.tail;
+            if (!tl) return false;
+            var p = tl.pos[k];
+            return p != null && p >= tl.from;
+        }
+
         function deadNote(mine) {
             var n = mine && mine.dead ? mine.dead.size : 0;
             if (!n) return '';
@@ -287,11 +415,28 @@
             return { keys: keys, map: map, rowIndex: rowIndex };
         }
 
+        /* The maximal suffix of the header order whose columns are all cold
+           and carry a ck class (the rules address ck-N, never an attribute
+           selector); null under the cell gate. */
+        function tailPlan(order, nRows) {
+            var i = order.length;
+            while (i > 0 && v.cold.has(order[i - 1].k) && order[i - 1].ck) i--;
+            var list = order.slice(i);
+            var shown = 0;
+            list.forEach(function (e) { if (!thHidden(e.h)) shown++; });
+            if (!list.length || shown * nRows < tailMin) return null;
+            var pos = {};
+            list.forEach(function (e, j) { pos[e.k] = j; });
+            return { list: list, pos: pos, from: 0 };
+        }
+
         function init() {
             v = null;
             onState(v);
             styleEl().textContent = '';
-            var t = table(); if (!t) return null;
+            var t = table();
+            tailClear(t);
+            if (!t) return null;
             var tds = t.querySelectorAll('tbody td[data-col-key]');
             // server-cold columns are ALREADY empty: they must be adopted
             // whatever the client's own gates say (the server applied the same
@@ -327,6 +472,7 @@
                 });
             }
             var widths = [];
+            var order = [];                 // header order, for the tail plan
             t.querySelectorAll('th.bulk-col-head[data-col-key]').forEach(function (h) {
                 var k = h.getAttribute('data-col-key');
                 // docs/141 4n: the server's value-fit width (data-maxlen) is
@@ -346,6 +492,7 @@
                 var freeze = function () {
                     if (ck) widths.push(tableSel + ' th.' + ck[1] + '{min-width:' + Math.round(Math.max(w, lw)) + 'px}');
                 };
+                order.push({ k: k, h: h, w: Math.max(w, lw), ck: ck ? ck[1] : null });
                 if (thHidden(h)) { cold.add(k); freeze(); return; }
                 // a server-cold column is cold whatever the client's estimate
                 // says (its cells are not here); it still takes its width
@@ -421,6 +568,12 @@
                 v.html.set(td, frag);
                 td.classList.add('bulk-td-cold');
             });
+            v.tail = tailPlan(order, rowsOf().length);
+            if (v.tail) {
+                tailWrite();
+                try { onReveal(t); } catch (e) {}   // the group band spans only what shows
+                phase('virt: tail ' + v.tail.list.length + ' columns out of layout');
+            }
             phase('virt: detach ' + v.html.size + ' cells'
                   + (v.remote.size ? ', ' + v.remote.size + ' server-cold columns' : ''));
             // docs/141 4af B-1: both a11y surfaces, at mount -- the live region
@@ -456,8 +609,11 @@
         // local ones (stashed fragments) synchronously, before it is even
         // returned; the server-cold ones after GET /bulk/cells lands. A caller
         // that only needs what can be had NOW ignores the promise.
-        function hydrateCols(keys) {
+        function hydrateCols(keys, hopts) {
             if (!v || !keys || !keys.length) return _resolved;
+            // a caller asking for a column may be about to look at it: bring
+            // the tail back through it first -- unless it only repaints values
+            if (!(hopts && hopts.reveal === false)) tailRevealKeys(keys);
             var due = keys.filter(function (k) { return v.cold.has(k); });
             if (!due.length) return _resolved;
             var t = table(); if (!t) { v = null; onState(v); return _resolved; }
@@ -494,6 +650,7 @@
             // would take that value out of the whole-chip search and leave the
             // cell unexplained.
             if (v && !v.cold.size && !(v.dead && v.dead.size)) {
+                if (v.tail) { v.tail = null; tailClear(t); try { onReveal(t); } catch (e) {} }
                 v = null; styleEl().textContent = '';
             }
             onState(v);
@@ -626,6 +783,7 @@
         function ensureTd(td) {
             if (v && td) {
                 var k = td.getAttribute('data-col-key');
+                if (k && isCollapsed(k)) tailRevealKeys([k]);   // focus needs a box
                 // a local column is here before this returns; a server-cold
                 // one starts its fetch and is here on the next keypress / pass
                 if (k && v.cold.has(k)) hydrateCol(k);
@@ -666,12 +824,27 @@
             // scrolling back runs this pass again, and keyboard navigation
             // hydrates through ensureTd regardless.
             var left = (wrap ? wrap.scrollLeft : 0) - cw * BUFFER;
+            var tl = v.tail;
+            if (tl) {
+                // the laid-out table ends at offsetWidth (the margin is outside
+                // it): when the look-ahead edge passes it, bring back enough of
+                // the run to cover the gap plus one more viewport
+                var gap = edge - t.offsetWidth;
+                if (gap > 0) {
+                    var acc = 0, end = tl.from;
+                    while (end < tl.list.length && acc < gap + cw) {
+                        if (!thHidden(tl.list[end].h)) acc += tl.list[end].w;
+                        end++;
+                    }
+                    tailReveal(end);
+                } else tailRecollapse(t, wrap, cw);
+            }
             var due = [];
             t.querySelectorAll('th.bulk-col-head[data-col-key]').forEach(function (h) {
                 var k = h.getAttribute('data-col-key');
                 // a hidden column (search or checkbox) reports offsetLeft 0 --
-                // it is not on screen, do not hydrate it
-                if (!v || !v.cold.has(k) || thHidden(h)) return;
+                // it is not on screen, do not hydrate it; nor is a collapsed one
+                if (!v || !v.cold.has(k) || thHidden(h) || isCollapsed(k)) return;
                 var x = h.offsetLeft;
                 if (x < edge && x + (h.offsetWidth || 0) > left) due.push(k);
             });
@@ -681,7 +854,9 @@
         return {
             init: init,
             state: function () { return v; },
-            drop: function () { v = null; styleEl().textContent = ''; onState(v); },
+            drop: function () { tailClear(table()); v = null; styleEl().textContent = ''; onState(v); },
+            isCollapsed: isCollapsed,
+            revealAll: function () { var tl = v && v.tail; return tl ? tailReveal(tl.list.length) : false; },
             hydrateCols: hydrateCols,
             hydrateCol: hydrateCol,
             hydrateAll: hydrateAll,
@@ -715,5 +890,6 @@
         BUFFER: BUFFER,
         EST_PX_PER_CHAR: EST_PX_PER_CHAR,
         EST_PAD: EST_PAD,
+        TAIL_MIN_CELLS: TAIL_MIN_CELLS,
     };
 })();

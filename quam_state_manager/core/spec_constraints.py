@@ -417,7 +417,7 @@ def _visit_octaves(octaves: dict) -> list[dict]:
 
 # --- Public entry ------------------------------------------------------------
 
-def spec_findings(root: dict) -> list[dict]:
+def spec_findings(root: dict, chunks: Any = None) -> list[dict]:
     """Validate field values against the hardware catalogue.
 
     Returns plain dicts ``{severity, category, location, message, detail,
@@ -428,11 +428,24 @@ def spec_findings(root: dict) -> list[dict]:
     if not isinstance(root, dict):
         return out
 
+    # ``chunks`` (docs/2xx RAM P5): a per-store memo of one qubit's / one
+    # pair's findings, validated on its store_revs chunk token -- both
+    # visitors read nothing but that one entity's own raw dict.
+    def _chunked(k1: str, k2: str, fn):
+        if chunks is None:
+            return fn()
+        hit = chunks.get(k1, k2)
+        if hit is None:
+            hit = fn()
+            chunks.put(k1, k2, hit)
+        return [dict(x) for x in hit]
+
     qubits = root.get("qubits")
     if isinstance(qubits, dict):
         for qname, q in qubits.items():
             if isinstance(q, dict):
-                out.extend(_visit_qubit(qname, q))
+                out.extend(_chunked("qubits", str(qname),
+                                    lambda: _visit_qubit(qname, q)))
 
     # qubit_pairs carry cz pulse operations too; check their pulse lengths
     # (most are pointer strings → skipped; only literal bad lengths flag).
@@ -440,7 +453,9 @@ def spec_findings(root: dict) -> list[dict]:
     if isinstance(pairs, dict):
         for pname, p in pairs.items():
             if isinstance(p, dict):
-                out.extend(_operations_length_findings(f"qubit_pairs.{pname}", p))
+                out.extend(_chunked(
+                    "qubit_pairs", str(pname),
+                    lambda: _operations_length_findings(f"qubit_pairs.{pname}", p)))
 
     ports = root.get("ports")
     if isinstance(ports, dict):

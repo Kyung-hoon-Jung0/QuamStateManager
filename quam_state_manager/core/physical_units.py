@@ -50,7 +50,8 @@ def channel_of(merged: dict, amp_path: str) -> str | None:
     return None
 
 
-def amp_annotation(merged: dict, amp_path: str, amp_value: Any) -> dict | None:
+def amp_annotation(merged: dict, amp_path: str, amp_value: Any,
+                   reads: list | None = None) -> dict | None:
     """Physical annotation for one amplitude leaf, or ``None`` (stay blank).
 
     Returns ``{"kind": "mw", "fsp": float, "dbm": float, "text": str}`` or
@@ -68,6 +69,10 @@ def amp_annotation(merged: dict, amp_path: str, amp_value: Any) -> dict | None:
     except Exception:
         ft = {}
     fsp = ft.get("resolved_value") if ft.get("resolvable") else None
+    if reads is not None and ft.get("resolvable") and ft.get("resolved_path"):
+        # the one VALUE this annotation reads besides the amplitude itself
+        # (RAM P6: the Live-Edit grid re-annotates a cell when it moves)
+        reads.append(ft["resolved_path"])
     if isinstance(fsp, (int, float)) and not isinstance(fsp, bool):
         if amp_value == 0:
             return None            # no output — a fabricated "-inf dBm" helps no one

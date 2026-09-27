@@ -53,10 +53,19 @@ def test_the_trail_ships_and_the_grid_hides_columns_by_class():
     # collections got grids (2026-09-10), so "twice in _bulkedit.html" stopped
     # being a proxy for "on both". This form holds for a third grid too.
     _tpl = _ROOT / "quam_state_manager" / "web" / "templates"
+    # The grids' rows moved into `_bulk_grid_macros.html` (RAM P6, w7
+    # liveedit: /bulk is spliced from cached per-row fragments, and a row must
+    # render identically whether it is spliced or rendered whole), so both
+    # templates render through its macros -- the ck class is counted there.
     bulk = (_tpl / "_bulkedit.html").read_text(encoding="utf-8")
     entity = (_tpl / "_bulk_entity_grid.html").read_text(encoding="utf-8")
-    assert bulk.count("ck-{{ loop.index0 }}") == 2, "the qubit grid's th + td"
-    assert entity.count("ck-{{ loop.index0 }}") == 2, "every entity grid's th + td"
+    macros = (_tpl / "_bulk_grid_macros.html").read_text(encoding="utf-8")
+    assert "gm.qrow(row, columns, cold_keys, note_rows)" in bulk, "the qubit grid renders through the macros"
+    assert "gm.erow(row, js, rowattr, columns, cold_keys, notes)" in entity, "every entity grid does too"
+    qt = macros[macros.index("macro qtable_open"):macros.index("macro etable_open")]
+    et = macros[macros.index("macro etable_open"):]
+    assert qt.count("ck-{{ loop.index0 }}") == 2, "the qubit grid's th + td"
+    assert et.count("ck-{{ loop.index0 }}") == 2, "every entity grid's th + td"
     js = (_STATIC / "bulk-edit.js").read_text(encoding="utf-8")
     # docs/141 4d: the class rules are static (one per column index, written
     # once) and a keystroke toggles only `sh-N` on the table for the delta

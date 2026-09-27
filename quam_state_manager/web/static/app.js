@@ -22538,13 +22538,25 @@ window.FieldHistory = (function () {
     /* Drop the focused cell's cached metrics WITHOUT hiding the button — the
        one thing that can change them mid-focus is a UI-scale change, which
        rescales every cell while the user is still typing in one. */
+    /* RAM P6: the re-measure runs on the next frame, coalesced. Called from
+       a commit handler it used to force a synchronous layout of the whole
+       grid in the MIDDLE of that handler's DOM writes (the tray swap and the
+       cell classes came after it), so the frame laid the table out twice --
+       ~100 ms each on a 30-qubit chip. The cached geometry is dropped at
+       once, so any positioning before the frame measures afresh. */
+    var _cellBtnPending = false;
     window.__cellBtnInvalidate = function () {
         if (!cellBtn) return;
         cellBtn._geom = null;
-        if (cellBtn._input && cellBtn.style.display !== "none") {
-            _cellBtnMeasure();
-            _positionCellBtn();
-        }
+        if (_cellBtnPending) return;
+        _cellBtnPending = true;
+        (window.requestAnimationFrame || function (f) { return setTimeout(f, 0); })(function () {
+            _cellBtnPending = false;
+            if (cellBtn._input && cellBtn.style.display !== "none") {
+                if (!cellBtn._geom) _cellBtnMeasure();
+                _positionCellBtn();
+            }
+        });
     };
     document.addEventListener("focusin", function (e) {
         var t = e.target;
