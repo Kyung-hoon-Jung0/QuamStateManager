@@ -149,11 +149,13 @@ function resp(status, body) {
     const p = W.w.fetch('/field/edit', { method: 'POST', body: 'dot_path=' + encodeURIComponent(LAB) + '&value=80' });
     await until(() => W.w.document.querySelector('.lab-check-badge'));
     W.pending[0](resp(400, { ok: false, lab_refused: true,
-      error: 'Your pulse class refused this value -- nothing was written: your gate cz refused it in its own apply(): control/target flat_length differ (80 vs 74)',
+      error: 'Your gate refused this value -- nothing was written: your gate cz refused it in its own apply(): control/target flat_length differ (80 vs 74)',
       lab_follow: [{ dot_path: LAB, value: 80 }, { dot_path: T, value: 80 }] }));
     await p;
     await until(() => W.w.document.querySelector('.lab-check-follow'));
     const btn = W.w.document.querySelector('.lab-check-follow');
+    const gb = W.w.document.querySelector('.lab-check-badge.lab-check-refused');
+    ok(gb && /refused by your gate/.test(gb.textContent), 'a gate refusal says the GATE refused (' + (gb && gb.textContent.slice(0, 40)) + ')');
     ok(btn && /flux_target\.flat_length too/.test(btn.textContent) && /2 fields, one batch/.test(btn.textContent),
        'a coupled gate refusal offers to set the other field too (' + (btn && btn.textContent) + ')');
     btn.click();
@@ -163,12 +165,14 @@ function resp(status, body) {
     ok(body && body.group === 'new' && body.updates.length === 2 && body.updates[1].dot_path === T && body.updates[1].value === 80,
        'the press posts ONE batch with both updates');
     const bi = W.log.indexOf(post);
-    W.pending[W.pending.length - 1](Object.assign(resp(200, { ok: true, results: [
+    W.pending[W.pending.length - 1](Object.assign(resp(200, { ok: true,
+      modified: [{ resolved_path: LAB, old_display: '74' }, { resolved_path: T, old_display: '74' }], results: [
       { dot_path: LAB, resolved_path: LAB, applied: true, display: '80' },
       { dot_path: T, resolved_path: T, applied: true, display: '80' }] }), { ok: true }));
     await until(() => events.length);
-    ok(events.length && events[0].entries.length === 2 && events[0].entries.every((e) => e.still_pending && e.old_value_disp === '80'),
-       'both written cells are repainted, still pending');
+    ok(events.length && events[0].entries.length === 2 && events[0].entries.every((e) => e.pending === true && e.old_value_disp === '80')
+       && events[0].entries[1].pending_old_disp === '74',
+       'both written cells are repainted, marked pending with their baseline');
     ok(bi > 0, 'the batch went through the wrapped fetch (it gets the badge too)');
   }
 

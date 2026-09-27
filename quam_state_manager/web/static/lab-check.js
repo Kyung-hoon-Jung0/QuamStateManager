@@ -122,7 +122,7 @@
             var why = full.replace(/^.*?nothing was written:\s*/, '');
             if (why.length > 110) why = why.slice(0, 107) + '\u2026';
             badge.classList.add('lab-check-refused');
-            badge.textContent = '\u2717 refused by your pulse class \u2014 nothing written: ' + why;
+            badge.textContent = '\u2717 refused by your ' + (/^Your gate /.test(full) ? 'gate' : 'pulse class') + ' \u2014 nothing written: ' + why;
             badge.title = full + '\n(click to dismiss)';
             badge.onclick = done;
             // A coupled pair (a lab GATE's two pulses must share a field):
@@ -174,13 +174,30 @@
                 if (window.showToast) window.showToast(String(j.error || 'not written'), 'error');
                 return;
             }
-            // repaint every written cell / input by path; it stays pending
+            // repaint every written cell / input by path; it stays PENDING
+            // (PendingMarkers.followPending: the red box + its baseline)
+            var was = {};
+            (j.modified || []).forEach(function (m) {
+                if (m && m.resolved_path) was[m.resolved_path] = m.old_display;
+            });
             var entries = (j.results || []).filter(function (x) { return x && x.applied; })
                 .map(function (x) {
-                    return { dot_path: x.resolved_path || x.dot_path,
+                    var dp = x.resolved_path || x.dot_path;
+                    return { dot_path: dp,
                              old_value_disp: String(x.display != null ? x.display : x.new_value),
-                             old_kind: 'num', still_pending: true };
+                             old_kind: 'num', still_pending: true, pending: true,
+                             pending_old_disp: was[dp] != null ? was[dp] : null };
                 });
+            // the refusal the grid row still shows is answered now
+            entries.forEach(function (e) {
+                var sel = '[data-dot-path="' + _cssEsc(e.dot_path) + '"]';
+                [].forEach.call(document.querySelectorAll(sel), function (c) {
+                    var row = c.closest && c.closest('tr');
+                    var er = row && row.querySelector('.bulk-row-error');
+                    if (er) { er.textContent = ''; er.hidden = true; }
+                    if (c.classList) c.classList.remove('bulk-cell-bad');
+                });
+            });
             try {
                 document.dispatchEvent(new CustomEvent('cellsReverted', { detail: {
                     entries: entries,

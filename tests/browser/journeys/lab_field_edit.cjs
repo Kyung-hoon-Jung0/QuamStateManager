@@ -1,7 +1,11 @@
-/* A lab-class pulse edited from the Live Edit pair grid and the Json Tree
- * (2026-09-27): the class's own code is asked before /field/edit(-batch)
- * writes, the cell says "checking with your class's own code...", a refusal
- * writes nothing (no tray entry), a valid value lands.
+/* A lab-class pulse edited from the Live Edit pair grid, the Json Tree and
+ * the pair inspector (2026-09-27): the class's own code is asked before
+ * /field/edit(-batch) writes, the cell says "checking with your class's own
+ * code...", a refusal writes nothing (no tray entry). fix3: the lab's GATE
+ * (CZGateTwoFlux.apply -> assert_lines_compatible) is asked too, so ONE half
+ * of the control/target pair is refused naming the other, and the badge's
+ * "Set ... too" press writes both halves in one batch -- the chip is left
+ * with the pair consistent (the old journey left 82 vs 74).
  *
  *   SM_CDP_PORT=9481 node lab_field_edit.cjs http://127.0.0.1:5181 OUT_DIR
  *
@@ -18,9 +22,12 @@ const res = { steps: [], errors: [] };
 let bad = 0;
 function note(name, ok, extra) { res.steps.push({ name, ok, ...(extra || {}) }); if (!ok) bad++; console.log((ok ? 'ok   ' : 'FAIL ') + name + (extra ? ' ' + JSON.stringify(extra).slice(0, 300) : '')); }
 
-const MACRO = 'qubit_pairs.q2-3.macros.cz_GNZ.flux_pulse_qubit.flat_length';
-const TARGET = 'qubit_pairs.q2-3.macros.cz_GNZ.flux_pulse_target.flat_length';
-const ZPTR = 'qubits.q2.z.operations.cz_GNZ_flux_pulse_q2_q3.flat_length';
+// LFE_PAIR: a pair carrying the lab's cz_GNZ gate (5Q: q2-3, big30x: q1-6)
+const PAIR = process.env.LFE_PAIR || 'q2-3';
+const QC = 'q' + PAIR.split('-')[0].replace(/^q/, ''), QT = 'q' + PAIR.split('-')[1].replace(/^q/, '');
+const MACRO = `qubit_pairs.${PAIR}.macros.cz_GNZ.flux_pulse_qubit.flat_length`;
+const TARGET = `qubit_pairs.${PAIR}.macros.cz_GNZ.flux_pulse_target.flat_length`;
+const ZPTR = `qubits.${QC}.z.operations.cz_GNZ_flux_pulse_${QC}_${QT}.flat_length`;
 // refused values: pass fresh ones per run (a repeated value is a RAM answer
 // and never shows the checking state)
 const BAD = (process.env.LFE_BAD || '4,4,4').split(',');
@@ -76,19 +83,48 @@ function coldStart() {
   const tray1 = await changes(P);
   note('grid: nothing written, no tray entry', after === before && tray1 === tray0, { before, after, tray0, tray1 });
 
+  // an even value the PULSE class draws, on ONE half: the GATE refuses it
+  const VALID = process.env.LFE_VALID || '80';
+  await P.ev(`document.querySelectorAll('.lab-check-badge').forEach(function(b){b.remove();})`);
   const t1 = Date.now();
-  await typeInto(process.env.LFE_VALID || '80');
-  let applied = false;
-  for (let i = 0; i < 400; i++) {
-    const s = await P.ev(`(function(){var c=document.querySelector('${sel}'); return c.classList.contains('bulk-cell-modified') && !c.classList.contains('bulk-cell-bad') ? c.value : '';})()`);
-    if (s) { applied = s; break; }
+  await typeInto(VALID);
+  let offer = null;
+  for (let i = 0; i < 600 && !offer; i++) {
+    offer = await P.ev(`(function(){var b=document.querySelector('.lab-check-badge.lab-check-refused .lab-check-follow'); if(!b) return null; var r=b.getBoundingClientRect(); return JSON.stringify({x:r.left+r.width/2,y:r.top+r.height/2,t:b.textContent,badge:b.parentNode.textContent,title:b.parentNode.title});})()`);
+    if (!offer) await sleep(100);
+  }
+  offer = offer ? JSON.parse(offer) : null;
+  await sleep(200);
+  await P.shot(path.join(OUT, '3_grid_gate_refused_offer.png'));
+  note('grid: one half refused by the GATE, naming the other half, with a set-both offer',
+       !!offer && /apply\(\)/.test(offer.title) && /flat_length differ/.test(offer.title) && offer.title.includes(TARGET) && /flux_pulse_target\.flat_length too/.test(offer.t),
+       { ms: Date.now() - t1, offer: offer && offer.t, why: offer && offer.title.slice(0, 260) });
+  note('grid: the refused half was not written', (await peek(MACRO, P)) === before && (await changes(P)) === tray0);
+  const t1b = Date.now();
+  // the badge re-anchors a frame after it turns into a refusal: read the
+  // button's place again right before pressing it
+  const pressOffer = async () => {
+    await sleep(400);
+    const xy = await P.ev(`(function(){var b=document.querySelector('.lab-check-badge.lab-check-refused .lab-check-follow'); if(!b) return null; b.scrollIntoView({block:'nearest'}); var r=b.getBoundingClientRect(); var hit=document.elementFromPoint(r.left+r.width/2,r.top+r.height/2); return JSON.stringify({x:r.left+r.width/2,y:r.top+r.height/2,hit:hit===b});})()`);
+    if (!xy) return false;
+    const o = JSON.parse(xy);
+    await P.click(o.x, o.y);
+    return o.hit;
+  };
+  const hit1 = offer ? await pressOffer() : false;
+  note('grid: the offer button is the element under the pointer when pressed', hit1);
+  let both = '';
+  for (let i = 0; i < 600; i++) {
+    const a = await peek(MACRO, P), b = await peek(TARGET, P);
+    if (a.includes(':' + VALID) && b.includes(':' + VALID)) { both = a + ' ' + b; break; }
     await sleep(100);
   }
-  await sleep(300);
-  await P.shot(path.join(OUT, '3_grid_valid_written.png'));
-  const after2 = await peek(MACRO, P);
+  await sleep(600);
+  await P.shot(path.join(OUT, '3b_grid_both_written.png'));
+  const cellNow = await P.ev(`(function(){var c=document.querySelector('${sel}'); return c ? c.value + (c.classList.contains('bulk-cell-modified') ? ' modified' : '') : null;})()`);
   const tray2 = await changes(P);
-  note('grid: a valid value is written, one tray entry', applied && after2.includes(':' + (process.env.LFE_VALID || '80')) && tray2 > tray0, { cell: applied, peek: after2, ms: Date.now() - t1, tray: tray2 });
+  note('grid: "Set both" writes both halves in one batch (cell repainted, tray +2)', !!both && tray2 >= tray0 + 2 && String(cellNow).indexOf(VALID) === 0,
+       { both, cell: cellNow, ms: Date.now() - t1b, tray: tray2 });
   res.errors.push(...P.errors());
   await P.close();
 
@@ -171,19 +207,61 @@ function coldStart() {
   note('pointer chain: refused through the link, nothing written', !!w.err && /refused this value/.test(w.err)
        && (await peek(MACRO, P)) === zb && (await changes(P)) === tr2, { err: (w.err || '').slice(0, 200), ms: w.ms });
   await P.ev(`document.querySelectorAll('.tree-edit-err').forEach(function(e){e.remove();})`);
+  await P.ev(`document.querySelectorAll('.lab-check-badge').forEach(function(b){b.remove();})`);
   const tv = Date.now();
   await treeEdit(V2);
-  w = { err: null, ms: 0 };
+  let offer2 = null;
+  for (let i = 0; i < 600 && !offer2; i++) {
+    offer2 = await P.ev(`(function(){var b=document.querySelector('.lab-check-badge.lab-check-refused .lab-check-follow'); if(!b) return null; var r=b.getBoundingClientRect(); return JSON.stringify({x:r.left+r.width/2,y:r.top+r.height/2,t:b.textContent});})()`);
+    if (!offer2) await sleep(100);
+  }
+  offer2 = offer2 ? JSON.parse(offer2) : null;
+  await sleep(300); await P.shot(path.join(OUT, '8_ptr_gate_refused_offer.png'));
+  note('pointer chain: one half through the link is refused by the gate, with the set-both offer', !!offer2, { offer: offer2 && offer2.t, ms: Date.now() - tv });
+  if (offer2) await pressOffer();
+  let zAfter = '', tAfter = '';
   for (let i = 0; i < 600; i++) {
-    if ((await peek(MACRO, P)).includes(':' + V2)) break;
-    const e = await P.ev(`(function(){var e=window.__lfeRow.querySelector('.tree-edit-err'); return e?e.textContent:null;})()`);
-    if (e) { w.err = e; break; }
+    zAfter = await peek(MACRO, P); tAfter = await peek(TARGET, P);
+    if (zAfter.includes(':' + V2) && tAfter.includes(':' + V2)) break;
     await sleep(100);
   }
-  w.ms = Date.now() - tv;
-  await sleep(500); await P.shot(path.join(OUT, '8_ptr_valid.png'));
-  const zAfter = await peek(MACRO, P);
-  note('pointer chain: a valid value lands at the macro leaf', !w.err && zAfter.includes(':' + V2), { zAfter, err: w.err, ms: w.ms });
+  await sleep(500); await P.shot(path.join(OUT, '8b_ptr_both_written.png'));
+  note('pointer chain: "Set both" lands the value on both halves', zAfter.includes(':' + V2) && tAfter.includes(':' + V2), { zAfter, tAfter, ms: Date.now() - tv });
+
+  res.errors.push(...P.errors());
+  await P.close();
+
+  // ---------------- 2b. the pair inspector (fix3, verifier: an open door) ----------------
+  P = await open(BASE + '/pairs', 1600, 950);
+  await sleep(2500);
+  await P.ev(`htmx.ajax('GET','/pair/${PAIR}',{target:'#inspector-pane',swap:'innerHTML'})`);
+  let ibox = null;
+  for (let i = 0; i < 100 && !ibox; i++) {
+    ibox = await P.ev(`(function(){ var f=[].slice.call(document.querySelectorAll('form.inline-edit')).find(function(f){var d=f.querySelector('input[name=dot_path]'); return d && d.value==='${MACRO}';}); if(!f) return null; var i=f.querySelector('input[name=value]'); i.scrollIntoView({block:'center'}); var r=i.getBoundingClientRect(); return JSON.stringify({x:r.x+r.width/2,y:r.y+r.height/2,v:i.value}); })()`);
+    if (!ibox) await sleep(200);
+  }
+  note('pair inspector shows cz_GNZ flux_pulse_qubit.flat_length as an input', !!ibox, { ibox });
+  if (ibox) {
+    const bx = JSON.parse(ibox);
+    const pv0 = await peek(MACRO, P), pt0 = await changes(P);
+    await P.click(bx.x, bx.y);
+    await P.send('Input.dispatchKeyEvent', { type: 'keyDown', key: 'a', code: 'KeyA', modifiers: 2, windowsVirtualKeyCode: 65 });
+    await P.send('Input.dispatchKeyEvent', { type: 'keyUp', key: 'a', code: 'KeyA', modifiers: 2, windowsVirtualKeyCode: 65 });
+    await P.send('Input.insertText', { text: '9' });
+    // a native form: Enter submits only with its text (keypress) -- the
+    // bare key() the grids use would leave it to the focusout commit later
+    await P.send('Input.dispatchKeyEvent', { type: 'keyDown', key: 'Enter', code: 'Enter', windowsVirtualKeyCode: 13, text: String.fromCharCode(13) });
+    await P.send('Input.dispatchKeyEvent', { type: 'keyUp', key: 'Enter', code: 'Enter', windowsVirtualKeyCode: 13 });
+    let toast = '';
+    for (let i = 0; i < 300 && !toast; i++) {
+      toast = await P.ev(`[].slice.call(document.querySelectorAll('.toast')).map(function(x){return x.innerText}).join(' | ').replace(/\\s+/g,' ')`);
+      if (!/refused/.test(toast)) { toast = ''; await sleep(100); }
+    }
+    await sleep(300); await P.shot(path.join(OUT, '8c_pair_inspector_refused.png'));
+    note('pair inspector: an odd flat_length is refused by the class, nothing written',
+         /refused this value/.test(toast) && /even/.test(toast) && (await peek(MACRO, P)) === pv0 && (await changes(P)) === pt0,
+         { toast: toast.slice(0, 220) });
+  }
 
   // ---------------- 3. Apply to live ----------------
   // the real button (the sync control may sit behind the pill: open it first)
@@ -207,7 +285,7 @@ function coldStart() {
   res.errors.push(...P.errors());
   await P.close();
   // a refusal IS an HTTP 400 (every edit refusal in the app is): Chrome logs it
-  const unexpected = res.errors.filter((e) => !/status of 400/.test(e));
+  const unexpected = res.errors.filter((e) => !/status of 400|Status Error Code 400 from \/pair\//.test(e));
   note('console clean (the expected refusal 400s aside)', unexpected.length === 0, { errors: unexpected.slice(0, 5), refusals_400: res.errors.length - unexpected.length });
   fs.writeFileSync(path.join(OUT, 'lab_field_edit.json'), JSON.stringify(res, null, 1));
   process.exit(bad ? 1 : 0);

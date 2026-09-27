@@ -16328,7 +16328,8 @@ def _lab_follow_payload(path, value, info) -> list[dict] | None:
 
 
 def _lab_refusal_text(message: str) -> str:
-    return ("Your pulse class refused this value (its own code, run in "
+    who = "gate" if message.startswith("your gate ") else "pulse class"
+    return (f"Your {who} refused this value (its own code, run in "
             f"the selected environment) -- nothing was written: {message}")
 
 

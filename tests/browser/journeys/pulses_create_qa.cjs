@@ -334,14 +334,40 @@ async function submitCreate(p) {
       await sleep(1500);
       const after = await p.ev(`(document.querySelector(${J(sel)})||{getAttribute:function(){return null}}).getAttribute('data-committed')`);
       check(after === before, `the refused value was not written (flat_length ${before} -> ${after})`);
-      // a value the class draws commits, with its latency measured
-      const good = String((+before || 20) + 8);
-      await typeInto(p, sel, good);
+      // fix3 (verifier 2026-09-27): an EVEN flat_length the pulse class draws
+      // is still ONE half of the CZGateTwoFlux pair -- the gate's own apply()
+      // (assert_lines_compatible) refuses control != target, and the message
+      // names the field that must follow. This journey used to COMMIT it and
+      // left 82 vs 74 on the chip: every CZ node on that pair then failed.
+      const half = String((+before || 20) + 8);
+      await p.ev(`(function(){window.__qaLab={shown:false,status:0,text:''};
+        document.addEventListener('htmx:afterRequest', function h(e){ var c=(e.detail&&e.detail.requestConfig)||{}; if(String(c.path||'').indexOf('/pulse/edit')!==0) return; document.removeEventListener('htmx:afterRequest', h); var x=e.detail.xhr; window.__qaLab.status=x.status; var m=(x.responseText||'').match(/<p[^>]*>([\\s\\S]*?)<\\/p>/); window.__qaLab.text=(m?m[1]:'').replace(/<[^>]+>/g,'').replace(/\\s+/g,' ').slice(0,1200); });
+        return 1})()`);
+      await typeInto(p, sel, half);
+      const th = Date.now();
+      await enter(p);
+      const tgate = await waitFor(p, `(function(){var r=window.__qaLab; return r && r.status ? r.status+' '+r.text : ''})()`, 90000);
+      console.log(`  lab gate refusal (flat_length=${half} on one half): ${Date.now() - th} ms`);
+      check(!!tgate && /^400 /.test(tgate) && /apply\(\)/.test(tgate) && /flat_length differ/.test(tgate)
+            && /flux_pulse_(target|qubit)\.flat_length/.test(tgate),
+            `flat_length=${half} on one half of ${gnz}'s gate is refused by the GATE's own apply(), naming the other half: ${tgate}`);
+      await p.shot(`${DIR}/47_lab_gate_refused_${W}.png`);
+      await p.send('Input.dispatchKeyEvent', { type: 'keyDown', key: 'Escape', code: 'Escape', windowsVirtualKeyCode: 27 });
+      await p.send('Input.dispatchKeyEvent', { type: 'keyUp', key: 'Escape', code: 'Escape', windowsVirtualKeyCode: 27 });
+      await p.ev(`htmx.ajax('GET','/pulse/detail?path=${encodeURIComponent(gnz)}',{target:'#inspector-pane',swap:'innerHTML'})`);
+      await sleep(1500);
+      const after2 = await p.ev(`(document.querySelector(${J(sel)})||{getAttribute:function(){return null}}).getAttribute('data-committed')`);
+      check(after2 === before, `the gate-refused value was not written (flat_length ${before} -> ${after2})`);
+      // a value BOTH the class and the gate accept commits, with its latency
+      const asel = `#pulse-detail-root input[data-param="amplitude"]`;
+      const a0 = await p.ev(`(document.querySelector(${J(asel)})||{getAttribute:function(){return null}}).getAttribute('data-committed')`);
+      const good = String(Math.round(((+a0 || 0.2) * 0.98) * 1e6) / 1e6);
+      await typeInto(p, asel, good);
       const tg = Date.now();
       await enter(p);
-      const cm = await waitFor(p, `(function(){var i=document.querySelector(${J(sel)}); return i && i.getAttribute('data-committed')===${J(good)} ? 1 : 0})()`, 90000);
-      console.log(`  lab edit commit (flat_length=${good}): ${Date.now() - tg} ms`);
-      check(!!cm, `flat_length=${good} on ${gnz} commits after the class draws it`);
+      const cm = await waitFor(p, `(function(){var i=document.querySelector(${J(asel)}); return i && +i.getAttribute('data-committed')===${+good} ? 1 : 0})()`, 90000);
+      console.log(`  lab edit commit (amplitude=${good}): ${Date.now() - tg} ms`);
+      check(!!cm, `amplitude=${good} on ${gnz} commits after the class and the gate check it`);
       expectedRefusal = true;
     } else console.log('  lab-class edit: no cz_GNZ pulse on this chip -- skipped');
   }

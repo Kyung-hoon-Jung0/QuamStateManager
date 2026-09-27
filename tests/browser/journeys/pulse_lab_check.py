@@ -19,7 +19,13 @@ pulses_create_qa.cjs) it answers, executably:
               thing a QUA program actually plays).
   macro    -- for a gate macro: the pulse label its apply() plays exists on
               the moving qubit's z channel (quam_builder CZGate.apply plays
-              ``moving_qubit.z.play(self.flux_pulse_qubit_label)``).
+              ``moving_qubit.z.play(self.flux_pulse_qubit_label)``), AND the
+              gate's own ``apply()`` runs inside a QUA ``program()`` -- a lab
+              gate checks its pulses there (CZGateTwoFlux.apply ->
+              assert_lines_compatible: control/target flat_length must match).
+  gates    -- chip-wide: EVERY macro of every qubit pair has its own apply()
+              run in a program(); ``gates_bad`` lists the ones that raise. A
+              label lookup alone hid 82-vs-74 once (verifier, 2026-09-27).
 
 Nothing here writes the folder it is given; the round trip saves to a temp dir.
 """
@@ -66,6 +72,17 @@ def _walk(obj, dot):
             except Exception:  # noqa: BLE001
                 obj = getattr(obj, seg)
     return obj
+
+
+def _apply(gate) -> str:
+    """The gate's OWN apply() inside a QUA program(), as every node runs it."""
+    from qm.qua import program
+    try:
+        with program():
+            gate.apply()
+        return "ok"
+    except Exception as ex:  # noqa: BLE001
+        return f"FAIL apply(): {type(ex).__name__}: {ex}"[:300]
 
 
 def main(folder: str, expect_path: str, out_path: str | None):
@@ -167,6 +184,8 @@ def main(folder: str, expect_path: str, out_path: str | None):
                     lab = gate.flux_pulse_qubit_label
                     it["macro"] = ("ok" if lab in mq.z.operations else
                                    f"FAIL apply() plays {mq.name}.z {lab!r}, which is not in its operations")
+                if it["macro"] == "ok":
+                    it["macro"] = _apply(gate)
             except Exception as ex:  # noqa: BLE001
                 it["macro"] = f"FAIL {type(ex).__name__}: {ex}"[:240]
         res["items"].append(it)
@@ -187,6 +206,19 @@ def main(folder: str, expect_path: str, out_path: str | None):
             except Exception as ex:  # noqa: BLE001
                 it["err"] = f"{type(ex).__name__}: {ex}"[:240]
             res["items"].append(it)
+    # every gate's own apply(), chip-wide
+    ok_n, bad = 0, []
+    for pn, pair in machine.qubit_pairs.items():
+        for mn, gate in (getattr(pair, "macros", None) or {}).items():
+            if not hasattr(gate, "apply"):
+                continue
+            got = _apply(gate)
+            if got == "ok":
+                ok_n += 1
+            else:
+                bad.append(f"{pn}.{mn}: {got}"[:300])
+    res["gates_ok"] = ok_n
+    res["gates_bad"] = bad
     txt = json.dumps(res, indent=1, default=str)
     print(txt)
     if out_path:
