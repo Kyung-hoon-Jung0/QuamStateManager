@@ -7519,6 +7519,27 @@ class TestSidebarIAr15:
         assert '"/instrument-wiring"' not in appjs
         assert '"/instrument"' in appjs
 
+    def test_no_template_still_names_the_page_by_its_old_name(self):
+        """Queue #2: the page is "Live edit - Json Tree view" (the user's
+        exact wording) everywhere a user can read it -- the sidebar and the
+        palette were renamed first (167c3bd) while 12+ buttons, tooltips and
+        the landing page still said "Json Tree View". Jinja/HTML comments are
+        not user-visible and are skipped. The new name is removed BEFORE the
+        search (not exempted per line): one line can carry both, e.g. a
+        button's title and its label."""
+        import re as _re
+        tdir = self._ROOT / "quam_state_manager" / "web" / "templates"
+        hits = []
+        for f in sorted(tdir.glob("*.html")):
+            txt = f.read_text(encoding="utf-8")
+            txt = _re.sub(r"\{#.*?#\}", "", txt, flags=_re.S)
+            txt = _re.sub(r"<!--.*?-->", "", txt, flags=_re.S)
+            txt = txt.replace("Live edit - Json Tree view", "")
+            for line in txt.splitlines():
+                if _re.search(r"json\s*tree\s*view", line, _re.I):
+                    hits.append(f"{f.name}: {line.strip()[:120]}")
+        assert not hits, hits
+
     def test_palette_covers_every_nav_page(self):
         base = self._base()
         for label in ("Re-generate config", "Diagnostics", "Resonators",

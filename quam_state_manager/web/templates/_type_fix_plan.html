@@ -96,7 +96,7 @@
           <td>{% if it.example_path %}
             <button type="button" class="btn-xs" data-path="{{ it.example_path }}"
                     onclick="window._navigateToExplorerPath && window._navigateToExplorerPath(this.getAttribute('data-path'))"
-                    title="Open the Json Tree View at this field">Go to field</button>
+                    title="Open Live edit - Json Tree view at this field">Go to field</button>
             {% endif %}</td>
         </tr>
         {% endfor %}
@@ -158,7 +158,7 @@
   {% else %}
   <p class="tfx-lead">SM found values stored as text, but none of them can be
      converted safely. They are listed below with the reason.{% if plan.skipped | selectattr('hand_fixable') | list %}
-     To change one yourself, open it in the Json Tree View and type the number
+     To change one yourself, open it in Live edit - Json Tree view and type the number
      &mdash; that edit stores a real number.{% endif %}</p>
   {% endif %}
 
@@ -177,7 +177,7 @@
           <td>{% if s.hand_fixable %}
             <button type="button" class="btn-xs" data-goto="{{ s.path }}"
                     onclick="window.TypeAlert && window.TypeAlert.manual(this.getAttribute('data-goto'))"
-                    title="Close this and open the Json Tree View at this field — type the number there">Go to field</button>
+                    title="Close this and open Live edit - Json Tree view at this field — type the number there">Go to field</button>
             {% endif %}</td>
         </tr>
         {% endfor %}
@@ -199,7 +199,7 @@
     {# The alternative the user asked for: fix them by hand instead. #}
     <button type="button" class="btn-sync" data-path="{{ alert.first or (alert.env.entries and alert.env.entries[0].example_path) }}"
             onclick="window.TypeAlert && window.TypeAlert.manual(this.getAttribute('data-path'))"
-            title="Close this and open the Json Tree View at the first field">I&rsquo;ll fix them myself</button>
+            title="Close this and open Live edit - Json Tree view at the first field">I&rsquo;ll fix them myself</button>
     {% if alert.env.count %}
     <button type="button" class="btn-sync"
             onclick="window.TypeAlert && window.TypeAlert.diagnostics()"

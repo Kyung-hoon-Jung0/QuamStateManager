@@ -44,7 +44,7 @@
         {% elif types_card.editable %}
         {# QA F-G: nothing SM will convert -- no primary "Auto-correct 0". #}
         <span class="muted diag-types-hand">SM won&rsquo;t convert {{ 'these' if types_card.strnum.count != 1 else 'this one' }}
-          automatically{% if types_card.strnum.hand_fixable %} &mdash; to change one, type the number in the Json Tree View{% endif %}.</span>
+          automatically{% if types_card.strnum.hand_fixable %} &mdash; to change one, type the number in Live edit - Json Tree view{% endif %}.</span>
         <button type="button" class="btn-sm outline"
                 title="Why SM leaves these alone"
                 onclick="window.openTypeFixPlan && window.openTypeFixPlan()">See why&hellip;</button>
@@ -53,7 +53,7 @@
         {% endif %}
         {% if types_card.strnum.first %}
         <button type="button" class="btn-sm outline" data-path="{{ types_card.strnum.first }}"
-                onclick="window._navigateToExplorerPath && window._navigateToExplorerPath(this.getAttribute('data-path'))">Show in Json Tree View</button>
+                onclick="window._navigateToExplorerPath && window._navigateToExplorerPath(this.getAttribute('data-path'))">Show in Live edit - Json Tree view</button>
         {% endif %}
       </div>
     </div>
