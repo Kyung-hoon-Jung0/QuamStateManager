@@ -12795,6 +12795,11 @@ def topology_trends():
                            snapshots=len(hm.list_snapshots(path)))
 
 
+# snapshot dir -> {dot path: value}: the few snapshots a truncated index's
+# check reads (a snapshot is immutable, so a hit is always right)
+_METRIC_META_SNAP_CACHE: dict[str, dict] = {}
+
+
 @bp.route("/topology/metric-meta")
 def topology_metric_meta():
     """Queue item 4: per-cell provenance for every Chip Status metric panel.
@@ -12837,6 +12842,32 @@ def topology_metric_meta():
     except Exception:  # noqa: BLE001 - metadata must never break the page
         logger.debug("metric meta: leaf series unavailable", exc_info=True)
         series = {}
+    truncated = bool(origin.get("truncated"))
+    confirmed: set[str] = set()
+    if truncated and series:
+        # verifier D2 (2026-09-27): an incomplete index's lone late rows are
+        # checked against the snapshot before them (bounded, cached -- a
+        # snapshot never changes); what cannot be checked is reported as
+        # incomplete, never dated
+        def _snap_values(ts: str, paths: list[str]) -> dict:
+            sdir = hm.snapshot_dir(path, ts)
+            ck = str(sdir)
+            have = _METRIC_META_SNAP_CACHE.get(ck)
+            if have is None or any(p not in have for p in paths):
+                st = safe_io.read_json(sdir / "state.json")
+                wp = sdir / "wiring.json"
+                wr = safe_io.read_json(wp) if wp.exists() else None
+                have = _mm.snapshot_values(st, wr, paths)
+                _METRIC_META_SNAP_CACHE[ck] = have
+                while len(_METRIC_META_SNAP_CACHE) > 8:
+                    _METRIC_META_SNAP_CACHE.pop(next(iter(_METRIC_META_SNAP_CACHE)))
+            return have
+        try:
+            series, confirmed = _mm.verify_truncated(
+                series, oldest=origin.get("oldest"),
+                ts_list=origin.get("ts_list") or [], load_values=_snap_values)
+        except Exception:  # noqa: BLE001 - unverified stays incomplete
+            logger.debug("metric meta: truncated-index check failed", exc_info=True)
     stamps: set[str] = set()
 
     def fold(group: dict) -> dict:
@@ -12844,9 +12875,11 @@ def topology_metric_meta():
         for key, per in group.items():
             for ent, plist in per.items():
                 e = _mm.newest_change(series, plist, oldest=origin.get("oldest"),
-                                      current=current)
+                                      current=current, truncated=truncated,
+                                      confirmed=confirmed)
                 if e:
-                    stamps.add(e["ts"])
+                    if e.get("ts"):
+                        stamps.add(e["ts"])
                     out.setdefault(key, {})[ent] = e
         return out
 
@@ -12867,6 +12900,9 @@ def topology_metric_meta():
         # ``first`` ("unchanged since history began") only AT this snapshot
         "oldest": origin.get("oldest"),
         "updating": bool(hm.leaf_index_updating(path)),
+        # the change-point index hit its caps on this chip: undated entries
+        # carry ``incomplete`` and the page says the index is incomplete
+        "incomplete_index": truncated,
         "q": q_out,
         "p": p_out,
         "snaps": _snapshot_provenance_map(hm, path, only=stamps) if stamps else {},

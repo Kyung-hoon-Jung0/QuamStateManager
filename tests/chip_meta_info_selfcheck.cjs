@@ -133,6 +133,12 @@ const metaFetches = (win) => win._fetches.filter(function (u) { return /metric-m
      'T5: a value on screen that differs from history\u2019s says "not in history" -- ' + JSON.stringify(d));
   d = MI.describe(META.q.T1.q1, { snaps: META.snaps, cur: 2.0e-5 * (1 + 1e-12), now: NOW });
   ok(!d.edited, 'T5b: a float-noise difference is not an edit');
+  // verifier D2 (2026-09-27): an entry the incomplete index cannot vouch for
+  // is "not dated" -- never "No change on record", never a date or a run
+  d = MI.describe({ incomplete: true, leaves: 0 }, { snaps: META.snaps, cur: 2.0e-5, now: NOW });
+  ok(d.tag === 'not indexed' && /^Not dated: /.test(d.lines[0]) && d.lines.length === 1 && !d.edited
+       && !/No change of this value/.test(d.lines.join(' ')),
+     'T5i: an incomplete-index entry says "not dated", nothing else -- ' + JSON.stringify(d));
   // verifier P1 (2026-09-26): a subtree metric (readout fidelity from a
   // confusion matrix) has no one value; the server's matches_current flag is
   // what says the matrix on screen is one history never held
@@ -203,6 +209,37 @@ const metaFetches = (win) => win._fetches.filter(function (u) { return /metric-m
   doc.querySelector('.topo-dashboard').dispatchEvent(new win.MouseEvent('mouseleave', { bubbles: false }));
   ok(!doc.getElementById('cs-meta-pop') && cell.getAttribute('title') === title0,
      'D7b: leaving hides the card and puts the tooltip back unchanged');
+
+  // D9 verifier D1 (2026-09-27): "on" must be VISIBLE, not merely filled in.
+  // The shipped style.css goes into this document and the checks read the
+  // computed display -- a textContent check passed while a hide rule keyed on
+  // the RB panel's WRAPPER section hid every tag of a panel switched on.
+  const st = doc.createElement('style');
+  st.textContent = read('style.css');
+  doc.head.appendChild(st);
+  const shown = function (el) { return !!el && win.getComputedStyle(el).display !== 'none'; };
+  const rbKey = '2q:StandardRB:cz_SNZ';
+  const rb = doc.querySelector('.topo-section[data-density-panel="' + rbKey + '"]');
+  const rbCb = rb && rb.querySelector('.topo-meta-cb');
+  ok(rb && rb.parentElement.closest('.topo-section'), 'D9a: the fixture’s RB panel sits inside a wrapper .topo-section');
+  rbCb.checked = true;
+  rbCb.dispatchEvent(new win.Event('change', { bubbles: true }));
+  await tick(120);
+  const rbTag = rb.querySelector('.heatmap-cell[data-pair="q1-2"] .heatmap-cell-meta');
+  const rbLine = rb.querySelector('.topo-metric-panel-meta');
+  ok(rb.classList.contains('topo-meta-on') && rbTag && rbTag.textContent && shown(rbTag) && shown(rbLine),
+     'D9b: a NESTED panel switched on shows its tile line and its summary line (computed display) -- tag='
+       + (rbTag && rbTag.textContent) + ' ' + (rbTag && win.getComputedStyle(rbTag).display)
+       + ' line=' + (rbLine && win.getComputedStyle(rbLine).display));
+  ok(shown(t1.querySelector('.heatmap-cell[data-qubit="q1"] .heatmap-cell-meta')) && shown(line),
+     'D9c: a top-level panel switched on shows them too');
+  const f01Tag = f01.querySelector('.heatmap-cell[data-qubit="q1"] .heatmap-cell-meta');
+  ok(f01Tag && f01Tag.textContent && !shown(f01Tag) && !shown(f01.querySelector('.topo-metric-panel-meta')),
+     'D9d: a panel left off keeps its filled-in lines hidden -- ' + (f01Tag && f01Tag.textContent));
+  rbCb.checked = false;
+  rbCb.dispatchEvent(new win.Event('change', { bubbles: true }));
+  ok(!shown(rbTag) && !shown(rbLine), 'D9e: the nested panel switched back off hides them again');
+  st.remove();
 
   // D8 off
   cb.checked = false;

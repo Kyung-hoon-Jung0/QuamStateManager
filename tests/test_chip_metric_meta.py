@@ -127,6 +127,98 @@ class TestFold:
                                 current={"m.0": 0.754, "m.9": 0.5})["matches_current"] is False
         assert "matches_current" not in mm.newest_change(s, ["m.0"], oldest=self.O)
 
+    def test_a_near_miss_value_is_not_history(self):
+        """Verifier D4a (2026-09-27): a 1 % tolerance passed every pin. A
+        relative difference of 1e-4 (a 5 GHz frequency moved by 500 kHz, a
+        fidelity's 4th digit) is a different value, never "matches history";
+        1e-12 is float noise."""
+        s = {"f": [(self.O, 5.0e9, "m", None, "", "")],
+             "r": [(self.O, 0.9912, "m", None, "", "")]}
+        for dp, v in (("f", 5.0e9), ("r", 0.9912)):
+            for rel in (1e-4, -1e-4, 1e-6, 5e-3):
+                e = mm.newest_change(s, [dp], oldest=self.O, current={dp: v * (1 + rel)})
+                assert e["matches_current"] is False, (dp, rel)
+            e = mm.newest_change(s, [dp], oldest=self.O, current={dp: v * (1 + 1e-12)})
+            assert e["matches_current"] is True, dp
+
+    def test_appeared_only_when_the_lone_row_is_the_newest_change(self):
+        """Verifier D4b: a subtree whose leaf A appeared late (one row) but
+        whose leaf B changed AFTER that: the newest change is B's second row,
+        a change of a value that already existed -- not an appearance."""
+        s = {"a": [("20260103_000000", 0.1, "m", None, "", "")],
+             "b": [(self.O, 0.9, "m", None, "", ""),
+                   ("20260105_000000", 0.8, "experiment", 9, "x", "f")]}
+        e = mm.newest_change(s, ["a", "b"], oldest=self.O)
+        assert e["ts"] == "20260105_000000" and e["first"] is False
+        assert "appeared" not in e, e
+        # ...and the same subtree with A's lone row the newest does appear
+        s["a"] = [("20260106_000000", 0.1, "m", None, "", "")]
+        assert mm.newest_change(s, ["a", "b"], oldest=self.O).get("appeared") is True
+
+
+class TestTruncated:
+    """Verifier D2 (2026-09-27): on a chip larger than the change-point index
+    covers (``leaf_meta truncated=1``), a leaf's lone row later than the
+    oldest snapshot may be a cap artifact and a leaf with no row may simply
+    never have been walked. Neither is a fact to date a value from."""
+    O, T2, T3 = "20260101_000000", "20260102_000000", "20260103_000000"
+
+    def test_missing_or_unverified_leaves_are_incomplete_not_dated(self):
+        s = {"a": [(self.T2, 1.0, "experiment", 5, "x", "f")],
+             "b": [(self.O, 2.0, "m", None, "", ""), (self.T3, 3.0, "m", None, "", "")]}
+        assert mm.newest_change(s, ["zzz"], oldest=self.O, truncated=True) ==             {"incomplete": True, "leaves": 0}
+        assert mm.newest_change(s, ["a"], oldest=self.O, truncated=True)["incomplete"] is True
+        assert mm.newest_change(s, ["a", "b"], oldest=self.O, truncated=True)["incomplete"] is True
+        # a multi-row leaf is dated as before; a confirmed lone row too
+        assert mm.newest_change(s, ["b"], oldest=self.O, truncated=True)["ts"] == self.T3
+        e = mm.newest_change(s, ["a"], oldest=self.O, truncated=True, confirmed={"a"})
+        assert e["ts"] == self.T2 and e.get("appeared") is True
+        # the same inputs on a complete index are dated (no regression)
+        assert mm.newest_change(s, ["a"], oldest=self.O)["ts"] == self.T2
+
+    def test_the_snapshot_before_a_lone_row_decides_what_it_was(self):
+        s = {"same_at_oldest": [(self.T2, 1.0, "m", None, "", "")],
+             "absent_before": [(self.T2, 2.0, "experiment", 7, "x", "f")],
+             "changed": [(self.T2, 3.0, "experiment", 7, "x", "f")],
+             "same_later": [(self.T3, 4.0, "m", None, "", "")],
+             "multi": [(self.O, 5.0, "experiment", 1000, "boot", "f0"), (self.T3, 6.0, "m", None, "", "")]}
+        files = {self.O: {"same_at_oldest": 1.0, "changed": 2.5},
+                 self.T2: {"same_later": 4.0}}
+        reads = []
+
+        def load(ts, paths):
+            reads.append((ts, sorted(paths)))
+            return {p: files[ts].get(p) for p in paths}
+
+        out, conf = mm.verify_truncated(s, oldest=self.O, ts_list=[self.O, self.T2, self.T3],
+                                        load_values=load)
+        assert conf == {"same_at_oldest", "absent_before", "changed"}
+        e = mm.newest_change(out, ["same_at_oldest"], oldest=self.O, truncated=True, confirmed=conf)
+        assert e["first"] is True and e["ts"] == self.O
+        # the oldest snapshot's own provenance rides along (read off another
+        # leaf's row at it), never an invented "no run"
+        assert e["run"] == 1000 and e["trigger"] == "experiment"
+        e = mm.newest_change(out, ["absent_before"], oldest=self.O, truncated=True, confirmed=conf)
+        assert e["ts"] == self.T2 and e["appeared"] is True and e["run"] == 7
+        e = mm.newest_change(out, ["changed"], oldest=self.O, truncated=True, confirmed=conf)
+        assert e["ts"] == self.T2 and "appeared" not in e and e["first"] is False
+        assert mm.newest_change(out, ["same_later"], oldest=self.O, truncated=True,
+                                confirmed=conf)["incomplete"] is True
+        assert out["multi"] is s["multi"]           # never re-read
+        # bounded: one read per predecessor snapshot, the budget honoured
+        assert len(reads) == 2
+        reads.clear()
+        out1, conf1 = mm.verify_truncated(s, oldest=self.O, ts_list=[self.O, self.T2, self.T3],
+                                          load_values=load, max_snaps=1)
+        assert len(reads) == 1 and reads[0][0] == self.O       # the busiest first
+        assert "same_later" not in conf1
+        # an unreadable snapshot leaves its leaves unconfirmed
+        def boom(ts, paths):
+            raise OSError("gone")
+        _o, c2 = mm.verify_truncated(s, oldest=self.O, ts_list=[self.O, self.T2, self.T3],
+                                     load_values=boom)
+        assert c2 == set()
+
 
 # ── the route, against real snapshots ───────────────────────────────────────
 
@@ -340,6 +432,65 @@ def test_a_random_event_sequence_never_serves_a_stale_answer(env):
         assert d["snaps"].get(e["ts"], {}).get("run") == e["run"] or e["run"] is None
     # the sequence exercised both labels (a vacuous pass would see neither)
     assert firsts and appeared, (firsts, appeared)
+
+
+def test_a_truncated_index_never_dates_what_it_cannot_vouch_for(env, monkeypatch):
+    """Verifier D2 repro, pinned small: the big30x index hit both caps (walk
+    and rows per snapshot) and the route published the artifacts as facts
+    (125/330 wrong: "First measured ... run #1001" for a value unchanged since
+    the oldest snapshot, "No change on record" for leaves never walked). Here
+    the same two caps are forced on a tiny chip. Every entry the route DATES
+    must equal the oracle computed from the raw snapshot files; everything
+    else must say ``incomplete``; and the check against the snapshot before a
+    lone row must turn at least one cap artifact back into the truth."""
+    from quam_state_manager.core import leaf_index as li
+    real = li.numeric_leaves
+
+    def walk_capped(state, wiring=None, **kw):
+        kw.setdefault("cap", 14)
+        return real(state, wiring, **kw)
+
+    monkeypatch.setattr(li, "numeric_leaves", walk_capped)
+    monkeypatch.setattr(li, "SNAP_ROW_CAP", 4)
+    cm = [[0.9, 0.1], [0.2, 0.8]]
+    _snap(env, _state(2e-5, 5e9, cm, 1))
+    _snap(env, _state(2e-5, 5e9, cm, 2))
+    _snap(env, _state(2.2e-5, 5e9, cm, 3, t2e=3e-5), trigger="experiment",
+          experiment_name="25_T1", run_id=77)
+    _snap(env, _state(2.2e-5, 5.001e9, [[0.91, 0.09], [0.2, 0.8]], 4, t2e=3e-5))
+    _take_live(env)
+    d = _meta(env)
+    assert d["incomplete_index"] is True
+    states = _history_states(env)
+    assert d["oldest"] == states[0][0]
+    dots = {
+        ("q", "T1", "q1"): ["qubits.q1.T1"], ("q", "T1", "q2"): ["qubits.q2.T1"],
+        ("q", "f_01", "q1"): ["qubits.q1.f_01"], ("q", "f_01", "q2"): ["qubits.q2.f_01"],
+        ("q", "T2echo", "q1"): ["qubits.q1.T2echo"],
+        ("q", "assignment_fidelity", "q1"):
+            [f"qubits.q1.resonator.confusion_matrix.{i}.{j}" for i in (0, 1) for j in (0, 1)],
+        ("p", "2q:StandardRB:cz_SNZ", "q1-2"):
+            ["qubit_pairs.q1-2.macros.cz_SNZ.fidelity.StandardRB.average_gate_fidelity"],
+    }
+    raw = env["hm"].leaf_field_series_many(str(env["live"]), [x for v in dots.values() for x in v])
+    dated = incomplete = firsts = rescued = 0
+    for (g, key, ent), dl in dots.items():
+        got = d[g][key][ent]
+        if got.get("incomplete"):
+            incomplete += 1
+            assert "ts" not in got and "first" not in got and "run" not in got, got
+            continue
+        dated += 1
+        exps = [_oracle(states, dt) for dt in dl]
+        assert got["ts"] == max(x[0] for x in exps), (key, ent, got, exps)
+        assert got["first"] is all(x[1] for x in exps), (key, ent, got, exps)
+        firsts += got["first"]
+        # dated although the index alone could not vouch for it: a leaf with
+        # a lone row later than the oldest snapshot, settled by the file
+        rescued += any(len(raw.get(dt) or []) == 1 and raw[dt][0][0] != d["oldest"] for dt in dl)
+    # both outcomes happened (a vacuous pass would see only one), and the
+    # snapshot check dated something the index alone could not
+    assert dated and incomplete and firsts and rescued, (dated, incomplete, firsts, rescued)
 
 
 # ── the shipped JS ──────────────────────────────────────────────────────────

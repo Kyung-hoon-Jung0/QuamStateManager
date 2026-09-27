@@ -3913,6 +3913,12 @@ class HistoryManager:
             newest = conn.execute("SELECT MAX(ts) FROM leaf_snaps").fetchone()[0] if hold_to_newest else None
             if origin is not None:
                 origin["oldest"] = conn.execute("SELECT MIN(ts) FROM leaf_snaps").fetchone()[0]
+                # an incomplete index (leaf / row caps hit) must say so: its
+                # first rows and its missing paths are not facts
+                origin["truncated"] = leaf_index.get_meta(conn, "truncated") == "1"
+                if origin["truncated"]:
+                    origin["ts_list"] = [r[0] for r in conn.execute(
+                        "SELECT ts FROM leaf_snaps ORDER BY ts")]
             for dp in dot_paths:
                 try:
                     if leaf_index.path_needs_scan(conn, dp):

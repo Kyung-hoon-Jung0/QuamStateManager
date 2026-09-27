@@ -202,9 +202,90 @@ def _num_eq(a: Any, b: Any) -> bool:
     return abs(a - b) <= 1e-9 * max(1.0, abs(a), abs(b))
 
 
+# A truncated index (``leaf_meta truncated=1``: the chip has more leaves than
+# ``leaf_index.WALK_CAP`` or a snapshot more rows than ``SNAP_ROW_CAP``) can
+# drop a leaf's row at one snapshot and record it at the next, and never
+# record a leaf the walk did not reach. A lone row later than the oldest
+# snapshot is then either a real first write or that artifact; the snapshot
+# just before it tells which. At most this many distinct snapshots are read
+# per request (each one is a full state.json parse -- measured 0.23 s for a
+# 19 MB big30x snapshot, so a full scan of its 200 would be ~47 s).
+TRUNCATED_VERIFY_SNAPS = 2
+
+
+def verify_truncated(series: dict[str, list[tuple]], *, oldest: str | None,
+                     ts_list: list[str], load_values,
+                     max_snaps: int = TRUNCATED_VERIFY_SNAPS
+                     ) -> tuple[dict[str, list[tuple]], set[str]]:
+    """``(series', confirmed)`` for a TRUNCATED index.
+
+    For every path whose only row sits later than *oldest*, read the value at
+    the snapshot right before that row (``load_values(ts, paths) -> {path:
+    value}``, the file's truth, pointers followed):
+
+    * absent there -> the row really is the leaf's first write (confirmed);
+    * a different number there -> a real change at the row; the earlier value
+      is prepended so the fold sees two rows (confirmed, not "appeared");
+    * the same number there and that snapshot is the oldest -> the row was a
+      cap artifact: the value was already there when history began, so the
+      series becomes one row AT the oldest snapshot (confirmed ``first``);
+    * the same number at a later snapshot, or a snapshot beyond the
+      *max_snaps* budget -> unknown: left unconfirmed, and the fold reports
+      the entry as ``incomplete`` rather than guessing.
+    """
+    out = dict(series)
+    confirmed: set[str] = set()
+    # a snapshot's provenance (trigger, run, experiment, folder) as any
+    # leaf's row at it records it -- carried onto a row this check adds
+    prov: dict[str, tuple] = {}
+    for rows in series.values():
+        for r in rows:
+            prov.setdefault(str(r[0]), tuple(r[2:6]))
+    order = sorted(ts_list)
+    idx = {t: i for i, t in enumerate(order)}
+    by_pred: dict[str, list[str]] = {}
+    for p, rows in series.items():
+        if len(rows) != 1 or str(rows[0][0]) == str(oldest):
+            continue
+        i = idx.get(str(rows[0][0]))
+        if not i:
+            continue
+        by_pred.setdefault(order[i - 1], []).append(p)
+    # the busiest predecessors first: one parse settles the most leaves
+    for pred in sorted(by_pred, key=lambda t: (-len(by_pred[t]), t))[:max_snaps]:
+        paths = by_pred[pred]
+        try:
+            vals = load_values(pred, paths) or {}
+        except Exception:  # noqa: BLE001 - an unreadable snapshot stays unknown
+            continue
+        for p in paths:
+            row = series[p][0]
+            hv = vals.get(p)
+            hv = hv if _is_num(hv) else None
+            if hv is None:
+                confirmed.add(p)
+            elif not _num_eq(hv, row[1]):
+                out[p] = [(pred, hv) + prov.get(pred, (None,) * 4), row]
+                confirmed.add(p)
+            elif pred == str(oldest):
+                out[p] = [(pred, row[1]) + prov.get(pred, (None,) * 4)]
+                confirmed.add(p)
+    return out, confirmed
+
+
+def snapshot_values(state: Any, wiring: Any, paths: Iterable[str]) -> dict[str, Any]:
+    """``{dot path: value}`` in one snapshot's files, pointers followed --
+    the loader :func:`verify_truncated` is handed."""
+    from quam_state_manager.core.leaf_index import merged_doc
+    doc = merged_doc(state, wiring)
+    return {p: _follow(doc, tuple(p.split(".")))[1] for p in paths}
+
+
 def newest_change(series: dict[str, list[tuple]], paths: list[str], *,
                   oldest: str | None = None,
-                  current: dict[str, Any] | None = None) -> dict | None:
+                  current: dict[str, Any] | None = None,
+                  truncated: bool = False,
+                  confirmed: set[str] | frozenset = frozenset()) -> dict | None:
     """Fold the change-point rows of *paths* into one entry, or None.
 
     Rows are ``(ts, value, trigger, run_id, experiment, folder)`` oldest
@@ -225,7 +306,20 @@ def newest_change(series: dict[str, list[tuple]], paths: list[str], *,
     ``matches_current`` says whether EVERY leaf's value now equals its newest
     history value -- for a subtree metric (a readout fidelity from its
     confusion matrix, a 2Q RB block) this is the only way to tell that the
-    number on screen is not one history ever held."""
+    number on screen is not one history ever held.
+
+    With *truncated* (the index is incomplete, see :func:`verify_truncated`)
+    an entry is dated only when every leaf is accounted for: a leaf with no
+    row, or whose lone row later than *oldest* is not in *confirmed*, makes
+    the entry ``{"incomplete": True}`` -- no time, no run, no "first", no
+    "no change on record"."""
+    if truncated:
+        for p in paths:
+            rows = series.get(p)
+            if not rows or (len(rows) == 1 and str(rows[0][0]) != str(oldest)
+                            and p not in confirmed):
+                return {"incomplete": True,
+                        "leaves": sum(1 for q in paths if series.get(q))}
     best = None
     all_first = oldest is not None
     seen = 0

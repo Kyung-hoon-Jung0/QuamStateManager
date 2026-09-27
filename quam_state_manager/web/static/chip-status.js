@@ -311,6 +311,13 @@ window.ChipStatus.metaInfo = (function () {
             lines.push('Run recorded by the lab\u2019s node: #' + e.load_id);
             if (!tag) tag = '#' + e.load_id;
         }
+        if (e.incomplete && !hasHist) {
+            // verifier D2: the chip is larger than the change-point index
+            // covers; its rows for this value are not facts, so no date,
+            // no run and no "no change on record" is read from them
+            lines.push('Not dated: this chip’s change-point index is incomplete (the chip is larger than it covers), so when this value last changed is not known.');
+            if (!tag) tag = 'not indexed';
+        }
         if (!lines.length) {
             lines.push(ctx.updating ? 'History index is updating \u2014 ask again in a moment.'
                                     : 'No change of this value is on record in this chip\u2019s history.');
@@ -3623,7 +3630,7 @@ window.ChipStatus.mount = function (opts) {
         var d = _metaData || {}, MI = window.ChipStatus.metaInfo;
         var group = /^2q:/.test(key) ? ((d.p || {})[key] || {}) : ((d.q || {})[key] || {});
         var cells = sec.querySelectorAll('.heatmap-cell[data-qubit], .heatmap-cell[data-pair]');
-        var newest = null, oldest = null, changed = 0, recorded = 0, first = 0, none = 0, edited = 0, total = 0;
+        var newest = null, oldest = null, changed = 0, recorded = 0, first = 0, none = 0, edited = 0, unk = 0, total = 0;
         Array.prototype.forEach.call(cells, function (c) {
             if (c.classList.contains('heatmap-cell-none')) return;     // not measured: nothing to date
             total++;
@@ -3631,6 +3638,7 @@ window.ChipStatus.mount = function (opts) {
             var e = group[id];
             var desc = _metaFor(key, c);
             if (desc.edited) { edited++; return; }
+            if (e && e.incomplete) { unk++; return; }
             if (!e || !e.ts) { none++; return; }
             // "measured" only when a run wrote it (an auto / manual snapshot
             // RECORDED a value, which is not a measurement)
@@ -3656,11 +3664,13 @@ window.ChipStatus.mount = function (opts) {
         if (first) cnt.push(first + ' unchanged since history began');
         if (none) cnt.push(none + ' not in history');
         if (edited) cnt.push(edited + ' not in history yet');
+        if (unk) cnt.push(unk + ' not dated (index incomplete)');
         if (cnt.length) parts.push(cnt.join(', ') + ' (of ' + total + ')');
         if (d.snapshots) parts.push('history: ' + d.snapshots + ' snapshot' + (d.snapshots === 1 ? '' : 's')
             + (d.newest ? ', newest ' + MI.when(MI.snapMs(d.newest)) : ''));
         else parts.push('no history snapshots for this chip yet');
         if (d.updating) parts.push('index updating');
+        if (d.incomplete_index) parts.push('this chip’s change-point index is incomplete: values it cannot vouch for are not dated');
         return parts;
     }
     function _metaDecorateSection(sec) {

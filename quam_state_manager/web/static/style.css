@@ -4789,8 +4789,13 @@ html.topbar-hidden .topo-subnav {
 .topo-meta-toggle input.topo-meta-cb {
     width: 0.85rem; height: 0.85rem; margin: 0; flex: none; cursor: pointer;
 }
-.topo-section:not(.topo-meta-on) .heatmap-cell-meta,
-.topo-section:not(.topo-meta-on) .topo-metric-panel-meta { display: none; }
+/* keyed on the PANEL (the one element that carries data-density-panel and
+   gets .topo-meta-on), never on any .topo-section: the RB / 1Q / readout
+   panels sit inside a wrapper section (#sec-fidelity, #sec-fidelity-1q,
+   #sec-readout) that never carries the class, and a bare .topo-section:not()
+   matched that wrapper and hid the tags of a panel that was switched on */
+.topo-section[data-density-panel]:not(.topo-meta-on) .heatmap-cell-meta,
+.topo-section[data-density-panel]:not(.topo-meta-on) .topo-metric-panel-meta { display: none; }
 .heatmap-cell-meta {
     font-size: 0.62rem; line-height: 1.15; opacity: 0.85; margin-top: 0.1rem;
     font-family: monospace; white-space: normal; overflow-wrap: anywhere;
