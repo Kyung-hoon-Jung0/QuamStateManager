@@ -245,6 +245,38 @@ await settle();
        'M-11: and the queue drains');
 }
 
+// ── 1e. 2026-09-27: a press waits for THIS window's own write in flight ────
+// Ctrl+Z pressed while the window's own pulse delete was still answering
+// declared the tray's pre-delete signature and was refused as "made in
+// another window". The press is held until the write has answered (its tray
+// OOB carries the new signature); a GET or an /undo in flight holds nothing.
+{
+    const fire = (type, detail) => window.document.body.dispatchEvent(
+        new window.CustomEvent(type, { detail: detail, bubbles: true }));
+    const xhr = {};
+    fire('htmx:beforeRequest', { xhr: xhr, requestConfig: { verb: 'post', path: '/api/pulse/delete' } });
+    const n = calls.length;
+    pressCtrlZ();
+    await settle();
+    ok(calls.length === n, '1e: no /undo while this window\'s own delete is in flight');
+    ok(window.UndoQueue.depth() === 1, '1e: the press is HELD, not dropped');
+    fire('htmx:afterRequest', { xhr: xhr });
+    await new Promise((r) => setTimeout(r, 350));
+    ok(calls.length === n + 1 && calls[calls.length - 1].url === '/undo',
+       '1e: the held press issues once the delete has answered');
+    const g = {};
+    fire('htmx:beforeRequest', { xhr: g, requestConfig: { verb: 'get', path: '/pulses/table' } });
+    const u = {};
+    fire('htmx:beforeRequest', { xhr: u, requestConfig: { verb: 'post', path: '/undo' } });
+    const n2 = calls.length;
+    pressCtrlZ();
+    await settle();
+    ok(calls.length === n2 + 1, '1e: a GET or an /undo in flight holds nothing');
+    fire('htmx:afterRequest', { xhr: g });
+    fire('htmx:afterRequest', { xhr: u });
+    for (let i = 0; i < 8; i++) await settle();
+}
+
 // ── 2. focus inside an input → native undo untouched ───────────────────────
 const inp = window.document.createElement('input');
 window.document.body.appendChild(inp);

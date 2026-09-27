@@ -7702,13 +7702,38 @@ window.UndoQueue = (function () {
         }
         return s;
     }
+    /* 2026-09-27 (pulse create verifier): Ctrl+Z pressed while THIS window's
+       own delete was still in flight declared the tray's pre-delete change
+       signature, and the docs/190 F06 gate refused it as "made in another
+       window". A press means what the presser could see -- and the presser's
+       own write that has not answered yet is about to be seen. Hold the press
+       until this window's mutating htmx requests have answered (their tray
+       OOB carries the new signature), like an apply in flight. A request
+       older than 20 s is not waited on (a cancelled one never answers). */
+    var _mut = [];
+    document.addEventListener("htmx:beforeRequest", function (e) {
+        var d = e.detail || {}, cfg = d.requestConfig || {};
+        var verb = String(cfg.verb || "").toLowerCase();
+        var path = String(cfg.path || (d.pathInfo && d.pathInfo.requestPath) || "");
+        if (!verb || verb === "get" || /^\/(undo|redo)(?![A-Za-z0-9_])/.test(path)) return;
+        _mut.push({ xhr: d.xhr, t: Date.now() });
+    });
+    document.addEventListener("htmx:afterRequest", function (e) {
+        var x = e.detail && e.detail.xhr;
+        _mut = _mut.filter(function (m) { return m.xhr !== x; });
+    });
+    function mutationsInFlight() {
+        var now = Date.now();
+        _mut = _mut.filter(function (m) { return now - m.t < 20000; });
+        return _mut.length > 0;
+    }
     function pump() {
         if (busy || !q.length || !window.htmx) return;
         /* An apply (manual ⚡ or an auto-apply flush) is mid-write: HOLD the
            press, never race it and never drop it. Ordered execution is also
            the docs/107 model — an undo pressed during an apply lands after
            it, walking the journal the apply just wrote. */
-        if (window._applyInFlight) {
+        if (window._applyInFlight || mutationsInFlight()) {
             if (!waiting) {
                 waiting = true;
                 setTimeout(function () { waiting = false; pump(); }, 120);
