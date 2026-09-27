@@ -125,6 +125,211 @@ window.ChipStatus.density = (function () {
     return { init: init, set: set, get: get, applyAll: applyAll, controlHtml: controlHtml, presets: PRESETS };
 })();
 
+/* MetaInfo -- queue item 4 (user, 2026-09-25): every per-metric panel says,
+   on hover, when each value was last measured and which run wrote it; a
+   "Show Meta Info" toggle right of the panel's S / M / L makes that part of
+   the panel itself. Persisted per panel key, like the size. This module owns
+   only the preference, the toggle markup and the pure text rules; the mount
+   owns the data (GET /topology/metric-meta) and the decoration, handed in via
+   setHook. */
+window.ChipStatus.metaInfo = (function () {
+    var KEY = 'quam_chip_meta_panels';
+    var _store = null, _hook = null;
+    function _readStored() {
+        try {
+            var o = JSON.parse(localStorage.getItem(KEY) || '{}');
+            if (o && typeof o === 'object' && !Array.isArray(o)) return o;
+        } catch (e) {}
+        return null;
+    }
+    function load() { if (!_store) _store = _readStored() || {}; return _store; }
+    function isOn(key) { return load()[String(key)] === true; }
+    function _cssKey(key) { return String(key).replace(/["\\]/g, ''); }
+    function applyPanel(key, el) {
+        el = el || document.querySelector('.topo-section[data-density-panel="' + _cssKey(key) + '"]');
+        if (!el) return;
+        var on = isOn(key);
+        el.classList.toggle('topo-meta-on', on);
+        var cb = el.querySelector('.topo-meta-cb[data-meta-panel]');
+        if (cb) cb.checked = on;
+        if (_hook) { try { _hook(el, on); } catch (e) {} }
+    }
+    function set(key, on) {
+        // read-modify-write, as the size store does (a second tab's stale copy
+        // must not overwrite this choice); the default (off) is not stored
+        var fresh = _readStored();
+        if (fresh) _store = fresh; else load();
+        if (on) _store[String(key)] = true; else delete _store[String(key)];
+        try {
+            if (Object.keys(_store).length) localStorage.setItem(KEY, JSON.stringify(_store));
+            else localStorage.removeItem(KEY);
+        } catch (e) {}
+        applyPanel(String(key));
+    }
+    try {
+        window.addEventListener('storage', function (ev) {
+            if (ev.key !== KEY && ev.key !== null) return;
+            var old = _store || {};
+            _store = null;
+            var now = load(), keys = {};
+            Object.keys(old).concat(Object.keys(now)).forEach(function (k) { keys[k] = 1; });
+            Object.keys(keys).forEach(function (k) { if (!!old[k] !== !!now[k]) applyPanel(k); });
+        });
+    } catch (e) {}
+    function applyAll(root) {
+        (root || document).querySelectorAll('.topo-section[data-density-panel]').forEach(function (el) {
+            applyPanel(el.getAttribute('data-density-panel'), el);
+        });
+    }
+    // the toggle a builder puts right of the panel's S / M / L
+    function toggleHtml(key) {
+        var k = _cssKey(key);
+        return '<label class="topo-meta-toggle" title="Show, inside this panel, when each value was last'
+            + ' measured and which run wrote it (hover any tile for the same)">'
+            + '<input type="checkbox" class="topo-meta-cb" data-meta-panel="' + k + '"'
+            + (isOn(k) ? ' checked' : '') + '>Show Meta Info</label>';
+    }
+    function init() {
+        var d = document.querySelector('.topo-dashboard');
+        if (d && !d._metaBound) {
+            d._metaBound = true;             // ONE delegated listener: panels are built lazily
+            d.addEventListener('change', function (e) {
+                var cb = e.target;
+                if (!cb || !cb.classList || !cb.classList.contains('topo-meta-cb')) return;
+                set(cb.getAttribute('data-meta-panel'), !!cb.checked);
+            });
+        }
+    }
+
+    /* ---- pure text rules (pinned by chip_meta_info_selfcheck.cjs) ---- */
+    // A snapshot id is its capture time in UTC: YYYYMMDD_HHMMSS[_mmm]
+    // (core/history._ts_stamp; a run ingest converts local -> UTC). Read and
+    // shown through app.js SnapTime -- the one place a stamp becomes a time on
+    // screen, in the zone the viewer chose in Settings. Without it (a harness
+    // that loads no app.js), the same UTC rule and the browser's own zone.
+    function snapMs(ts) {
+        if (window.SnapTime && window.SnapTime.parse) {
+            var sd = window.SnapTime.parse(ts);
+            return sd ? sd.getTime() : null;
+        }
+        var m = /^(\d{4})(\d{2})(\d{2})_(\d{2})(\d{2})(\d{2})/.exec(String(ts || ''));
+        if (!m) return null;
+        var d = new Date(Date.UTC(+m[1], +m[2] - 1, +m[3], +m[4], +m[5], +m[6]));
+        return isNaN(d.getTime()) ? null : d.getTime();
+    }
+    function _p2(n) { return (n < 10 ? '0' : '') + n; }
+    function when(ms) {
+        if (typeof ms !== 'number' || !isFinite(ms)) return '\u2014';
+        var d = new Date(ms);
+        if (window.SnapTime && window.SnapTime.format) {
+            var st = d.getUTCFullYear() + _p2(d.getUTCMonth() + 1) + _p2(d.getUTCDate()) + '_'
+                + _p2(d.getUTCHours()) + _p2(d.getUTCMinutes()) + _p2(d.getUTCSeconds());
+            return window.SnapTime.format(st).slice(0, 16);
+        }
+        return d.getFullYear() + '-' + _p2(d.getMonth() + 1) + '-' + _p2(d.getDate())
+            + ' ' + _p2(d.getHours()) + ':' + _p2(d.getMinutes());
+    }
+    // The in-tile date is ABSOLUTE ('MM-DD HH:MM'), never an age: an age
+    // printed into the panel goes stale while the page sits open (measured:
+    // tiles said 2m while a fresh read said 4m). The hover card computes its
+    // ages at hover time.
+    function whenShort(ms) { var w = when(ms); return w.length > 5 ? w.slice(5) : w; }
+    // compact age: 40m / 5h / 12d / 3mo
+    function ageShort(ms, now) {
+        if (typeof ms !== 'number' || !isFinite(ms)) return '';
+        var s = Math.max(0, ((now || Date.now()) - ms) / 1000);
+        if (s < 3600) return Math.max(1, Math.round(s / 60)) + 'm';
+        if (s < 86400) return Math.round(s / 3600) + 'h';
+        if (s < 86400 * 60) return Math.round(s / 86400) + 'd';
+        return Math.round(s / (86400 * 30)) + 'mo';
+    }
+    function ageLong(ms, now) {
+        var a = ageShort(ms, now);
+        if (!a) return '';
+        var n = parseInt(a, 10), u = a.replace(/^\d+/, '');
+        var word = { m: 'minute', h: 'hour', d: 'day', mo: 'month' }[u];
+        return n + ' ' + word + (n === 1 ? '' : 's') + ' ago';
+    }
+    function _same(a, b) {
+        if (typeof a !== 'number' || typeof b !== 'number') return true;   // nothing to compare
+        return Math.abs(a - b) <= 1e-9 * Math.max(1, Math.abs(a), Math.abs(b));
+    }
+    /* entry = the server's fold (ts, run, first, value, gone, load_id);
+       ctx = {snaps, cur (the value on screen), stamp (a state updated_at ms),
+       updating, now}. Returns {tag, lines, edited}: `tag` is the in-tile
+       line, `lines` the hover text. Never a fabricated run number: a run is
+       named only when the snapshot or the lab's node recorded one. */
+    function describe(entry, ctx) {
+        ctx = ctx || {};
+        var lines = [], tag = '', now = ctx.now;
+        var e = entry || {};
+        var hasHist = !!e.ts;
+        var ms = hasHist ? snapMs(e.ts) : null;
+        var prov = (hasHist && ctx.snaps && ctx.snaps[e.ts]) || null;
+        var run = prov && prov.run != null ? prov.run : (e.run != null ? e.run : null);
+        var who = run != null ? ('run #' + run + (prov && prov.short ? ' \u00b7 ' + prov.short : ''))
+                : (prov && prov.why ? prov.why : (e.trigger ? e.trigger : ''));
+        // the server compares EVERY leaf the panel reads (a whole confusion
+        // matrix, a 2Q RB block) with its newest history value; the value
+        // check also compares a single-leaf metric with the number on screen
+        // NOW, which may be newer than the metadata fetch
+        var edited = hasHist && (e.matches_current === false
+            || (!e.gone && !_same(e.value, ctx.cur)));
+        if (edited) {
+            // the number on screen is not the one history holds: whatever
+            // history says is about an EARLIER value, and is labelled so
+            lines.push('Not in this chip’s history yet — edited, or written after the newest snapshot.');
+            lines.push('History’s newest change of it: ' + when(ms) + ' (' + ageLong(ms, now) + ')'
+                + (who ? ' — ' + who : ''));
+            tag = 'not in history';
+        } else if (hasHist && e.gone) {
+            lines.push('Removed at ' + when(ms) + ' (' + ageLong(ms, now) + ')' + (who ? ' \u2014 ' + who : ''));
+            tag = 'removed';
+        } else if (hasHist && e.first) {
+            lines.push('Unchanged since this chip\u2019s history began: ' + when(ms) + ' (' + ageLong(ms, now) + ')');
+            if (who) lines.push('First recorded by: ' + who);
+            lines.push('No newer measurement on record \u2014 the value itself may be older.');
+            tag = '\u2264' + whenShort(ms) + (run != null ? ' \u00b7 #' + run : '');
+        } else if (hasHist) {
+            // "measured" only when a run wrote it; an edit or a manual
+            // snapshot CHANGED it, and the next line says which
+            // a value that first APPEARED at this snapshot (null or absent
+            // before) was written then: that is its first record, not "since
+            // history began"
+            lines.push((e.appeared ? (run != null ? 'First measured: ' : 'First recorded: ')
+                                   : (run != null ? 'Last measured: ' : 'Last changed: '))
+                + when(ms) + ' (' + ageLong(ms, now) + ')');
+            if (who) lines.push('Written by: ' + who);
+            tag = whenShort(ms) + (run != null ? ' \u00b7 #' + run : '');
+        }
+        if (hasHist) lines.push('Snapshot: ' + e.ts);
+        if (typeof ctx.stamp === 'number' && isFinite(ctx.stamp)) {
+            lines.push('Measured (the lab\u2019s own stamp): ' + when(ctx.stamp) + ' (' + ageLong(ctx.stamp, now) + ')');
+            if (!tag) tag = whenShort(ctx.stamp);
+        }
+        if (e.load_id != null) {
+            lines.push('Run recorded by the lab\u2019s node: #' + e.load_id);
+            if (!tag) tag = '#' + e.load_id;
+        }
+        if (e.incomplete && !hasHist) {
+            // verifier D2: the chip is larger than the change-point index
+            // covers; its rows for this value are not facts, so no date,
+            // no run and no "no change on record" is read from them
+            lines.push('Not dated: this chip’s change-point index is incomplete (the chip is larger than it covers), so when this value last changed is not known.');
+            if (!tag) tag = 'not indexed';
+        }
+        if (!lines.length) {
+            lines.push(ctx.updating ? 'History index is updating \u2014 ask again in a moment.'
+                                    : 'No change of this value is on record in this chip\u2019s history.');
+            tag = '\u2014';
+        }
+        return { tag: tag, lines: lines, edited: edited };
+    }
+    return { init: init, set: set, isOn: isOn, applyAll: applyAll, applyPanel: applyPanel,
+             toggleHtml: toggleHtml, setHook: function (fn) { _hook = fn; },
+             snapMs: snapMs, when: when, whenShort: whenShort, ageShort: ageShort, ageLong: ageLong, describe: describe };
+})();
+
 /* JumpGuard (docs/141 4o) — Trends sits above Fidelity / Coherence / … and is
    fetched lazily, so a jump to a section below it (a sidebar sub-link, ?view=)
    landed on the charts that arrived a moment later and pushed everything down.
@@ -202,7 +407,21 @@ window.ChipStatus.jumpGuard = (function () {
        pane itself), so without it the pane was yanked back to the jumped
        section when Trends landed. A tab press still works: its pointerdown
        cancels, then its click re-notes. */
-    function cancel() { last = null; }
+    /* Verifier P3 (2026-09-26): the Enter / Space that JUMPS from an Overview
+       tile bubbles on to the pane after the tile's handler has noted the jump,
+       and cancelled it here -- so a keyboard jump lost its re-anchoring and
+       ended 28 px low when the lazy sections above grew (real Chrome: 95 px vs
+       a click's 67). The key that made the jump is not the user taking over;
+       the tile handler marks it. */
+    function cancel(ev) { if (ev && ev._csJumpKey) return; last = null; }
+    /* queue item 10: an Overview tile jumps to ONE panel inside a tab's
+       section, noted as "sel:<tab view>:<selector>"; everything that asks
+       "which tab" (re-anchor eligibility, the scroll-spy's lit item) asks
+       about the tab. */
+    function baseView(v) {
+        var m = /^sel:([^:]+):/.exec(String(v || ''));
+        return m ? m[1] : v;
+    }
     function arm(pane) {
         if (!pane || armedPane === pane) return;
         armedPane = pane;
@@ -221,6 +440,7 @@ window.ChipStatus.jumpGuard = (function () {
         },
         below: BELOW,
         cancel: cancel,
+        baseView: baseView,
         // the selector of every section, any order (the mount's TAB_SPEC)
         sections: function (sels) { SECTIONS = (sels || []).slice(); },
         // QA F-07: the view of a jump that is still live (fresh, not cancelled
@@ -240,7 +460,7 @@ window.ChipStatus.jumpGuard = (function () {
             if (!live()) return false;
             // a restore (an offset) is re-anchored in ANY section: above Trends
             // it is not displaced, but it can be clamped by the unbuilt page
-            if (REANCHOR.indexOf(last.view) < 0 && last.off === null) return false;
+            if (REANCHOR.indexOf(baseView(last.view)) < 0 && last.off === null) return false;
             var sel = selOf ? selOf(last.view) : null;
             var el = sel && document.querySelector(sel);
             if (!el || !el.scrollIntoView) return false;
@@ -562,6 +782,7 @@ window.ChipStatus.mount = function (opts) {
 
     window._rawWiring = rawWiring;
     window.ChipStatus.density.init();   // tile-size control (Phase 1)
+    window.ChipStatus.metaInfo.init();  // queue item 4: per-panel Show Meta Info
     window.ChipStatus.layout.init();    // full/narrow two-rendering breakpoint (Phase 1)
     window.ChipStatus.liveDiff.refresh(); // mark qubits/pairs changed vs live (Phase 4)
     window.ChipStatus.liveDiff.bind();    // ...and again after every apply / pull (QA chipstatus-r2-02)
@@ -1346,7 +1567,15 @@ window.ChipStatus.mount = function (opts) {
         var html = '';
         tiles.forEach(function(c) {
             var border = c.muted ? 'var(--pico-muted-border-color)' : (c.color || 'var(--pico-muted-border-color)');
-            var titleHtml = c.metricKey ? labelHtml(c.metricKey, false, c.title, true) : _esc(c.title);   // queue #5: no bare arrow on a tile title
+            // queue item 10: a tile whose number has a section below jumps there
+            var jt = _ovJumpFor(c);
+            var jAttr = jt ? ' data-tile-jump="' + _esc(jt.view + '|' + (jt.sel || '')) + '" role="link" tabindex="0"'
+                + ' aria-label="' + _esc(c.title + ' \u2014 jump to ' + jt.label) + '"'
+                // a tile with no per-entity hover card says it with a tooltip;
+                // the others say it on their card (_ovShowHover)
+                + ' data-jump-label="' + _esc(jt.label) + '"'
+                + (_ovHasCard(c.id) ? '' : ' title="Jump to ' + _esc(jt.label) + '"') : '';
+            var titleHtml = c.metricKey ? labelHtml(c.metricKey, false, c.title, true) : _esc(c.title);   // queue #5: no bare arrow on a tile title (csmeta's hover card strips it from the title text too)
             // docs/150b: EVERY aggregate big number states which one it is
             // ('med' included) -- an untagged number was ambiguous.
             var statTag = c.stat
@@ -1354,6 +1583,7 @@ window.ChipStatus.mount = function (opts) {
             html += '<div class="topo-card' + (c.muted ? ' topo-card-empty' : '') + '"'
                   + (c.id ? ' data-tile-id="' + _esc(c.id) + '" draggable="true"' : '')
                   + (c.composite ? ' data-tile-composite="1"' : '')
+                  + jAttr
                   + ' style="border-top-color:' + border + '">'
                   + (c.id ? '<button type="button" class="ov-tile-menu" data-tile-id="' + _esc(c.id) + '" title="Customize this panel" aria-label="Customize this panel">\u22ee</button>' : '')
                   + '<div class="topo-card-title">' + titleHtml + '</div>'
@@ -1366,6 +1596,60 @@ window.ChipStatus.mount = function (opts) {
         _ovHideHover();
         _ovRefreshNote(ovPrefs);
         _ovWire(container);
+    }
+
+    // ── queue item 10: which section an Overview tile jumps to ─────────────
+    // [tab view, panel selector or null (the tab's section), what the tooltip
+    // names]. Absent = inert (2Q Gate Length and Calibration Age have no panel
+    // of their own on this page).
+    var OV_JUMP = {
+        gate1q:    ['fidelity1q', '.topo-section[data-density-panel="gate_fidelity_avg"]', 'the 1Q Gate Fidelity panel'],
+        ro_ge:     ['readout', '.topo-section[data-density-panel="assignment_fidelity"]', 'the Readout Fidelity (GE) panel'],
+        ro_gef:    ['readout', '.topo-section[data-density-panel="assignment_fidelity_gef"]', 'the Readout Fidelity (GEF) panel'],
+        t1:        ['coherence', '.topo-section[data-density-panel="T1"]', 'the T1 panel'],
+        t2ramsey:  ['coherence', '.topo-section[data-density-panel="T2ramsey"]', 'the T2 Ramsey panel'],
+        srb:       ['fidelity2q', '[data-rb-heading="StandardRB"]', 'the Standard RB panels'],
+        srb_gate:  ['fidelity2q', '[data-rb-heading="StandardRB"]', 'the Standard RB panels'],
+        irb:       ['fidelity2q', '[data-rb-heading="InterleavedRB"]', 'the Interleaved RB panels'],
+        irb_cliff: ['fidelity2q', '[data-rb-heading="InterleavedRB"]', 'the Interleaved RB panels'],
+        gate2q:    ['fidelity2q', null, '2Q Gate Fidelity'],
+        rb_cov:    ['fidelity2q', null, '2Q Gate Fidelity'],
+        in_spec:   ['health', null, 'Health'],
+        chip_size: ['topology', null, 'Topology']
+    };
+    // a user-added tile: the panel of its metric, when this page draws one
+    var OV_KEY_TAB = [
+        [/^gate_fidelity_/, 'fidelity1q'], [/^(assignment_fidelity|ro_fidelity_)/, 'readout'],
+        [/^(T1|T2ramsey|T2echo)$/, 'coherence'], [/^(f_01|readout_frequency|anharmonicity)$/, 'frequencies'],
+        [/^(x180_amplitude|x90_amplitude|readout_amplitude)$/, 'calibration']
+    ];
+    function _ovJumpFor(tile) {
+        if (!tile || !tile.id) return null;
+        var j = OV_JUMP[tile.id];
+        if (j) return { view: j[0], sel: j[1], label: j[2] };
+        if (tile.custom && tile.metricKey) {
+            if (tile.metricKey === 'cz_fidelity') return { view: 'fidelity2q', sel: null, label: '2Q Gate Fidelity' };
+            for (var i = 0; i < OV_KEY_TAB.length; i++) {
+                if (OV_KEY_TAB[i][0].test(tile.metricKey)) {
+                    return { view: OV_KEY_TAB[i][1],
+                             sel: '.topo-section[data-density-panel="' + tile.metricKey + '"]',
+                             label: 'the ' + metricLabel(tile.metricKey) + ' panel' };
+                }
+            }
+        }
+        return null;
+    }
+    // the same test _ovShowHover makes before it draws a card
+    function _ovHasCard(id) {
+        var d = _ovEntries[id];
+        return !!(d && d.entries && d.entries.some(function(x) { return typeof x.v === 'number'; }));
+    }
+    function _ovJump(tile) {
+        var raw = tile && tile.getAttribute('data-tile-jump');
+        if (!raw) return false;
+        var i = raw.indexOf('|');
+        _ovHideHover();
+        return _jumpToTarget(raw.slice(0, i), raw.slice(i + 1) || null);
     }
 
     // ── docs/150: Overview customization plumbing (storage + popover) ──────
@@ -1419,7 +1703,17 @@ window.ChipStatus.mount = function (opts) {
             var btn = ev.target.closest ? ev.target.closest('.ov-tile-menu') : null;
             if (btn) { ev.stopPropagation(); _ovOpenPopover(btn, btn.getAttribute('data-tile-id')); return; }
             var add = ev.target.closest ? ev.target.closest('#ov-add-tile') : null;
-            if (add) { ev.stopPropagation(); _ovOpenPopover(add, null); }
+            if (add) { ev.stopPropagation(); _ovOpenPopover(add, null); return; }
+            var jt = ev.target.closest ? ev.target.closest('.topo-card[data-tile-jump]') : null;
+            if (jt) _ovJump(jt);
+        });
+        container.addEventListener('keydown', function(ev) {
+            if (ev.key !== 'Enter' && ev.key !== ' ') return;
+            var jt = ev.target && ev.target.matches && ev.target.matches('.topo-card[data-tile-jump]') ? ev.target : null;
+            if (!jt) return;
+            ev.preventDefault();
+            ev._csJumpKey = true;     // the pane's guard must not read it as a takeover
+            _ovJump(jt);
         });
         // docs/151: hovering a tile lists its entities; leaving hides.
         container.addEventListener('mouseover', function(ev) {
@@ -1531,7 +1825,10 @@ window.ChipStatus.mount = function (opts) {
         if (list.length > 10) pop.className = 'ov-hover-wide';
         pop.innerHTML = '<div class="ov-hover-title">' + _esc(title) + ' \u00b7 per ' + d.kind + '</div>'
             + '<div class="ov-hover-grid' + (hasGate ? ' ov-hover-grid-gate' : '') + '">' + rows + '</div>'
-            + (more ? '<div class="ov-hover-more">\u2026and ' + more + ' more</div>' : '');
+            + (more ? '<div class="ov-hover-more">\u2026and ' + more + ' more</div>' : '')
+            + (tileEl.getAttribute('data-tile-jump')
+               ? '<div class="ov-hover-more ov-hover-jump">Click to jump to '
+                 + _esc(tileEl.getAttribute('data-jump-label') || 'its section') + '</div>' : '');
         document.body.appendChild(pop);
         var r = tileEl.getBoundingClientRect ? tileEl.getBoundingClientRect() : { top: 0, bottom: 0, left: 0 };
         var vh = window.innerHeight || 800, vw = window.innerWidth || 1200;
@@ -3158,7 +3455,7 @@ window.ChipStatus.mount = function (opts) {
             // Standard RB number read as a GATE fidelity, but it is 1 - EPC
             // per CLIFFORD (docs/138). Say which, in the popup's own words.
             var rbKind = rbType === 'StandardRB' ? 'per Clifford' : 'per gate';
-            html.push('<h5 class="topo-section-title" style="margin-top:0.8rem;font-size:1em">' + rbLabel
+            html.push('<h5 class="topo-section-title" data-rb-heading="' + rbType + '" style="margin-top:0.8rem;font-size:1em">' + rbLabel
                 + ' <span class="topo-popup-kind topo-rb-kind">' + rbKind
                 + (rbType === 'StandardRB' ? ' (1 \u2212 EPC)' : ' (1 \u2212 EPG)') + '</span></h5>');
 
@@ -3199,7 +3496,8 @@ window.ChipStatus.mount = function (opts) {
                 // Stat line is its OWN block below the title (not inside the <h4>) so
                 // at narrow width it wraps cleanly instead of lapping onto the grid.
                 sectionHtml += '<h4 class="topo-metric-panel-title">' + gateLabel
-                    + window.ChipStatus.density.controlHtml(dKey) + '</h4>';
+                    + window.ChipStatus.density.controlHtml(dKey)
+                    + window.ChipStatus.metaInfo.toggleHtml(dKey) + '</h4>';
                 sectionHtml += '<div class="topo-metric-panel-stat">'
                     + 'avg ' + (agg.avg * 100).toFixed(2) + '% <span>med ' + (agg.median * 100).toFixed(2)
                     + '%</span> <span>min ' + (agg.min * 100).toFixed(2) + '%</span> <span>max ' + (agg.max * 100).toFixed(2)
@@ -3309,6 +3607,7 @@ window.ChipStatus.mount = function (opts) {
         // Single DOM write, then re-query click handlers, then render charts.
         container.innerHTML = html.join('');
         window.ChipStatus.density.applyAll(container);
+        _metaAfterBuild([container]);
 
         container.querySelectorAll('.heatmap-cell[data-pair]').forEach(function(cell) {
             cell.addEventListener('click', function() {
@@ -3320,6 +3619,240 @@ window.ChipStatus.mount = function (opts) {
         _renderChartSpecsProgressively(specs);
         if (window._recolorTopology) window._recolorTopology();   // repaint the new cells with the active palette
         if (window.ChipStatus && window.ChipStatus.liveDiff) window.ChipStatus.liveDiff.decorate();
+    }
+
+    // ══════════════════════════════════════════════════════════════════
+    // Queue item 4: per-panel metadata -- when each value was last measured,
+    // which run wrote it, which snapshot. Data: GET /topology/metric-meta
+    // (the docs/83 change-point index), fetched LAZILY -- on the first hover
+    // over a panel, or when a panel whose "Show Meta Info" is on is built --
+    // never on the Chip Status render. Held per mount: an edit / apply / new
+    // run re-renders /topology and so starts from nothing, and a hover more
+    // than _META_TTL after the last answer asks again (a run can land while
+    // the page sits open). Never shown: a value from another mount.
+    // ══════════════════════════════════════════════════════════════════
+    var _META_TTL = 15000;
+    var _metaData = null, _metaAt = 0, _metaPending = null, _metaRetries = 0;
+    var _metaDash = document.querySelector('.topo-dashboard');
+    function _metaAlive() { return !!(_metaDash && document.body.contains(_metaDash)); }
+    function _metaLoad(force) {
+        if (_metaPending) return _metaPending;
+        if (_metaData && !force && Date.now() - _metaAt < _META_TTL) return Promise.resolve(_metaData);
+        if (typeof fetch !== 'function') return Promise.resolve(_metaData);
+        _metaPending = fetch('/topology/metric-meta', { cache: 'no-store' })
+            .then(function (r) { return r.ok ? r.json() : null; })
+            .then(function (d) {
+                _metaPending = null;
+                if (!_metaAlive() || !d || !d.ok) return _metaData;
+                _metaData = d; _metaAt = Date.now();
+                _metaDecorate(document);
+                // the index was being repaired: what came back is the last
+                // committed index, so ask again a little later (bounded)
+                if (d.updating && _metaRetries < 5) {
+                    _metaRetries++;
+                    setTimeout(function () { if (_metaAlive()) _metaLoad(true); }, 3000);
+                } else if (!d.updating) {
+                    _metaRetries = 0;
+                }
+                return d;
+            })
+            .catch(function () { _metaPending = null; return _metaData; });
+        return _metaPending;
+    }
+    // (panel key, cell) -> {entry, cur, stamp}; the panel key IS the page's
+    // density key, so a 2Q cell reads d.p and a qubit cell d.q
+    function _metaFor(key, cell) {
+        var d = _metaData || {};
+        var qid = cell.getAttribute('data-qubit'), pid = cell.getAttribute('data-pair');
+        var cur = null, stamp = null, entry = null;
+        if (pid && /^2q:/.test(key)) {
+            entry = ((d.p || {})[key] || {})[pid] || null;
+            var hv = parseFloat(cell.getAttribute('data-heat-v'));
+            cur = isNaN(hv) ? null : hv;
+        } else if (qid) {
+            entry = ((d.q || {})[key] || {})[qid] || null;
+            var n = null;
+            for (var i = 0; i < topo.nodes.length; i++) if (topo.nodes[i].id === qid) { n = topo.nodes[i]; break; }
+            var rec = n && n.metrics && n.metrics[key];
+            if (rec) {
+                cur = typeof rec.raw === 'number' ? rec.raw : null;
+                if (typeof rec.updated_at === 'number') stamp = rec.updated_at;
+            }
+        }
+        // a value with a SUBTREE source (a matrix, a nested RB block) has no
+        // one history value to compare with: the server sends none
+        return window.ChipStatus.metaInfo.describe(entry, {
+            snaps: d.snaps || {}, cur: cur, stamp: stamp, updating: !!d.updating });
+    }
+    // one panel's summary: newest / oldest change, how many values have one
+    function _metaPanelSummary(sec) {
+        var key = sec.getAttribute('data-density-panel');
+        var d = _metaData || {}, MI = window.ChipStatus.metaInfo;
+        var group = /^2q:/.test(key) ? ((d.p || {})[key] || {}) : ((d.q || {})[key] || {});
+        var cells = sec.querySelectorAll('.heatmap-cell[data-qubit], .heatmap-cell[data-pair]');
+        var newest = null, oldest = null, changed = 0, recorded = 0, first = 0, none = 0, edited = 0, unk = 0, total = 0;
+        Array.prototype.forEach.call(cells, function (c) {
+            if (c.classList.contains('heatmap-cell-none')) return;     // not measured: nothing to date
+            total++;
+            var id = c.getAttribute('data-qubit') || c.getAttribute('data-pair');
+            var e = group[id];
+            var desc = _metaFor(key, c);
+            if (desc.edited) { edited++; return; }
+            if (e && e.incomplete) { unk++; return; }
+            if (!e || !e.ts) { none++; return; }
+            // "measured" only when a run wrote it (an auto / manual snapshot
+            // RECORDED a value, which is not a measurement)
+            if (e.first) first++;
+            else {
+                var pv0 = (d.snaps || {})[e.ts] || {};
+                if ((pv0.run != null ? pv0.run : e.run) != null) changed++; else recorded++;
+            }
+            if (!newest || e.ts > newest.ts) newest = { ts: e.ts, id: id, run: e.run };
+            if (!oldest || e.ts < oldest.ts) oldest = { ts: e.ts, id: id };
+        });
+        var parts = [];
+        if (newest) {
+            var pv = (d.snaps || {})[newest.ts] || {};
+            var run = pv.run != null ? pv.run : newest.run;
+            parts.push('newest change ' + MI.when(MI.snapMs(newest.ts)) + ' (' + newest.id
+                + (run != null ? ', run #' + run + (pv.short ? ' ' + pv.short : '') : '') + ')');
+            if (oldest && oldest.ts !== newest.ts) parts.push('oldest ' + MI.when(MI.snapMs(oldest.ts)) + ' (' + oldest.id + ')');
+        }
+        var cnt = [];
+        if (changed) cnt.push(changed + ' measured in history');
+        if (recorded) cnt.push(recorded + ' recorded without a run');
+        if (first) cnt.push(first + ' unchanged since history began');
+        if (none) cnt.push(none + ' not in history');
+        if (edited) cnt.push(edited + ' not in history yet');
+        if (unk) cnt.push(unk + ' not dated (index incomplete)');
+        if (cnt.length) parts.push(cnt.join(', ') + ' (of ' + total + ')');
+        if (d.snapshots) parts.push('history: ' + d.snapshots + ' snapshot' + (d.snapshots === 1 ? '' : 's')
+            + (d.newest ? ', newest ' + MI.when(MI.snapMs(d.newest)) : ''));
+        else parts.push('no history snapshots for this chip yet');
+        if (d.updating) parts.push('index updating');
+        if (d.incomplete_index) parts.push('this chip’s change-point index is incomplete: values it cannot vouch for are not dated');
+        return parts;
+    }
+    function _metaDecorateSection(sec) {
+        if (!_metaData) return;
+        var key = sec.getAttribute('data-density-panel');
+        if (!key) return;
+        sec.querySelectorAll('.heatmap-cell[data-qubit], .heatmap-cell[data-pair]').forEach(function (c) {
+            var desc = _metaFor(key, c);
+            var m = c.querySelector('.heatmap-cell-meta');
+            if (!m) { m = document.createElement('div'); m.className = 'heatmap-cell-meta'; c.appendChild(m); }
+            m.textContent = c.classList.contains('heatmap-cell-none') ? '' : desc.tag;
+            c.classList.toggle('heatmap-cell-edited', !!desc.edited);
+        });
+        var line = sec.querySelector('.topo-metric-panel-meta');
+        if (!line) {
+            line = document.createElement('div');
+            line.className = 'topo-metric-panel-meta';
+            var stat = sec.querySelector('.topo-metric-panel-stat');
+            if (stat && stat.parentNode) stat.parentNode.insertBefore(line, stat.nextSibling);
+            else sec.insertBefore(line, sec.firstChild ? sec.firstChild.nextSibling : null);
+        }
+        line.textContent = _metaPanelSummary(sec).join('  \u00b7  ');
+    }
+    function _metaDecorate(root) {
+        (root || document).querySelectorAll('.topo-section[data-density-panel]').forEach(_metaDecorateSection);
+    }
+    // after a panel host is (re)built: sizes + toggles, then the metadata the
+    // mount already has, or a fetch when a panel there wants it on screen
+    function _metaAfterBuild(hosts) {
+        var MI = window.ChipStatus.metaInfo, want = false;
+        hosts.forEach(function (h) {
+            if (!h) return;
+            MI.applyAll(h);
+            h.querySelectorAll('.topo-section[data-density-panel]').forEach(function (s) {
+                if (MI.isOn(s.getAttribute('data-density-panel'))) want = true;
+            });
+            if (_metaData) _metaDecorate(h);
+        });
+        if (want && !_metaData) _metaLoad();
+    }
+    // a toggle switched ON wants the data (the class alone shows it)
+    window.ChipStatus.metaInfo.setHook(function (sec, on) {
+        if (!on) return;
+        if (_metaData) _metaDecorateSection(sec);
+        _metaLoad();
+    });
+
+    // The hover card: the tile's own tooltip text + the metadata lines. The
+    // native title is parked while the card is up (two tooltips at once read
+    // as noise) and put back on leave, so nothing else that reads it changes.
+    var _metaHoverEl = null;
+    function _metaHide() {
+        var p = document.getElementById('cs-meta-pop');
+        if (p) p.remove();
+        if (_metaHoverEl && _metaHoverEl.hasAttribute('data-meta-title')) {
+            _metaHoverEl.setAttribute('title', _metaHoverEl.getAttribute('data-meta-title'));
+            _metaHoverEl.removeAttribute('data-meta-title');
+        }
+        _metaHoverEl = null;
+    }
+    function _metaShow(el) {
+        var sec = el.closest('.topo-section[data-density-panel]');
+        if (!sec || !_metaAlive()) return;
+        var key = sec.getAttribute('data-density-panel');
+        var isCell = el.classList.contains('heatmap-cell');
+        if (el.hasAttribute('title')) {
+            el.setAttribute('data-meta-title', el.getAttribute('title'));
+            el.removeAttribute('title');
+        }
+        var head = el.getAttribute('data-meta-title') || '';
+        head = head.replace(/\s*\u00b7\s*click to inspect/, '');
+        var lines;
+        if (!_metaData) lines = ['Loading when this was measured\u2026'];
+        else if (isCell) lines = _metaFor(key, el).lines;
+        else lines = _metaPanelSummary(sec);
+        var title = head;
+        if (!isCell) {
+            var h4 = sec.querySelector('.topo-metric-panel-title');
+            var lab = h4 && h4.querySelector('.metric-label');
+            title = (lab ? lab.textContent : (h4 && h4.firstChild ? h4.firstChild.textContent : '') || '')
+                .replace(/[\u2191\u2193]/g, '').trim();
+        }
+        var pop = document.getElementById('cs-meta-pop');
+        if (!pop) { pop = document.createElement('div'); pop.id = 'cs-meta-pop'; document.body.appendChild(pop); }
+        pop.innerHTML = (title ? '<div class="cs-meta-pop-title">' + _esc(title) + '</div>' : '')
+            + lines.map(function (l) { return '<div class="cs-meta-pop-line">' + _esc(l) + '</div>'; }).join('');
+        var r = el.getBoundingClientRect();
+        var vh = window.innerHeight || 800, vw = window.innerWidth || 1200;
+        var h = pop.offsetHeight || 120, w = pop.offsetWidth || 320;
+        var top = r.bottom + 6;
+        if (top + h > vh - 8) top = Math.max(8, r.top - h - 6);
+        pop.style.top = top + 'px';
+        pop.style.left = Math.max(8, Math.min(r.left, vw - w - 8)) + 'px';
+    }
+    if (_metaDash && !_metaDash._metaHoverBound) {
+        _metaDash._metaHoverBound = true;
+        var _metaTarget = function (ev) {
+            var t = ev.target && ev.target.closest ? ev.target : null;
+            if (!t) return null;
+            if (t.closest('.topo-meta-toggle, .topo-density-ctl')) return null;   // the controls keep their own tips
+            var c = t.closest('.topo-section[data-density-panel] .heatmap-cell');
+            if (c) return c;
+            return t.closest('.topo-section[data-density-panel] .topo-metric-panel-meta')
+                || t.closest('.topo-section[data-density-panel] .topo-metric-panel-stat')
+                || t.closest('.topo-section[data-density-panel] .topo-metric-panel-title');
+        };
+        _metaDash.addEventListener('mouseover', function (ev) {
+            var el = _metaTarget(ev);
+            if (el === _metaHoverEl) return;
+            _metaHide();
+            if (!el) return;
+            _metaHoverEl = el;
+            _metaShow(el);
+            var stale = !_metaData || Date.now() - _metaAt >= _META_TTL;
+            if (stale) _metaLoad().then(function () { if (_metaHoverEl === el) _metaShow(el); });
+        });
+        _metaDash.addEventListener('mouseleave', _metaHide);
+        window.addEventListener('scroll', _metaHide, true);
+        window.ChipStatus._onLeave(_metaDash, function _metaTeardown() {
+            window.removeEventListener('scroll', _metaHide, true);
+            _metaHide();
+        });
     }
 
     // ══════════════════════════════════════════════════════════════════
@@ -3454,7 +3987,8 @@ window.ChipStatus.mount = function (opts) {
             // and blurb have one source, even though the display string stays bespoke.
             // docs/141 4o: the panel's own S / M / L sits right of its title.
             sectionHtml += '<h4 class="topo-metric-panel-title">' + labelHtml(def.key, false, def.title, true)   // queue #5: no bare arrow on a panel title
-                + window.ChipStatus.density.controlHtml(def.key) + '</h4>';
+                + window.ChipStatus.density.controlHtml(def.key)
+                + window.ChipStatus.metaInfo.toggleHtml(def.key) + '</h4>';
             sectionHtml += '<div class="topo-metric-panel-stat">'
                 + 'avg ' + prop.fmtFn(agg.avg) + ' <span>med ' + prop.fmtFn(agg.median)
                 + '</span> <span>min ' + prop.fmtFn(agg.min) + '</span> <span>max ' + prop.fmtFn(agg.max)
@@ -3590,6 +4124,7 @@ window.ChipStatus.mount = function (opts) {
         if (fid1qHost) window.ChipStatus.density.applyAll(fid1qHost);
         if (fidRoHost) window.ChipStatus.density.applyAll(fidRoHost);
         var hosts = [container].concat(fid1qHost ? [fid1qHost] : []).concat(fidRoHost ? [fidRoHost] : []);
+        _metaAfterBuild(hosts);
         var eachCell = function (sel, fn) { hosts.forEach(function (h) { h.querySelectorAll(sel).forEach(fn); }); };
 
         eachCell('.heatmap-cell[data-qubit]', function(cell) {
@@ -3746,10 +4281,15 @@ window.ChipStatus.mount = function (opts) {
     // landed on Trends once its charts arrived and pushed everything down
     // (real Chrome, PJ chip). Remember the last jump; when Trends lands, put
     // that section back at the top of the pane.
+    function _jumpSelOf(v) {
+        var m = /^sel:([^:]+):(.+)$/.exec(String(v || ''));
+        if (m) return document.querySelector(m[2]) ? m[2] : (TAB_SPEC[m[1]] && TAB_SPEC[m[1]].sel);
+        return TAB_SPEC[v] && TAB_SPEC[v].sel;
+    }
     var _jump = {
         note: function (view) { window.ChipStatus.jumpGuard.note(view, _scrollPane()); },
         reanchor: function () {
-            var did = window.ChipStatus.jumpGuard.reanchor(function (v) { return TAB_SPEC[v] && TAB_SPEC[v].sel; });
+            var did = window.ChipStatus.jumpGuard.reanchor(_jumpSelOf);
             if (did) _suppressSpyUntil = Date.now() + 800;
             return did;
         }
@@ -3906,6 +4446,29 @@ window.ChipStatus.mount = function (opts) {
         });
     };
 
+    // Queue item 10: an Overview tile jumps to ITS panel (T1 -> the T1 panel,
+    // not the top of Coherence). The sub-nav's own path -- note the jump,
+    // light the tab, build the lazy sections first (a metrics panel sits
+    // below the 2Q RB host) -- and the jump guard re-lands it when Trends /
+    // the 2Q panels above it grow. `sel` null: the tab's section.
+    function _jumpToTarget(view, sel) {
+        var spec = TAB_SPEC[view];
+        if (!spec) return false;
+        var jv = sel ? ('sel:' + view + ':' + sel) : view;
+        _jump.note(jv);
+        _setActiveTab(view);
+        _suppressSpyUntil = Date.now() + 800;
+        _ensureSectionBuilt(spec.build);
+        if (spec.build === 'metrics') _ensureSectionBuilt('2qrb');
+        requestAnimationFrame(function () {
+            var el = document.querySelector(_jumpSelOf(jv));
+            _jumpBaseH = _dashH();
+            if (el) el.scrollIntoView({ behavior: 'smooth', block: 'start' });
+        });
+        return true;
+    }
+    window.ChipStatus.jumpToTarget = _jumpToTarget;
+
     // Lazy build: materialise a heavy section as it approaches the viewport.
     function _setupLazyBuild() {
         if (!window.IntersectionObserver) {       // fallback: build everything now
@@ -3948,7 +4511,7 @@ window.ChipStatus.mount = function (opts) {
             var paneTop = pane ? pane.getBoundingClientRect().top : 0;
             var paneH = pane ? pane.clientHeight : 0;
             var best = null, bestTop = -Infinity, lastVis = null, lastVisTop = -Infinity, jumped = null;
-            var live = window.ChipStatus.jumpGuard.current();
+            var live = window.ChipStatus.jumpGuard.baseView(window.ChipStatus.jumpGuard.current());
             Object.keys(TAB_SPEC).forEach(function(v) {
                 var el = document.querySelector(TAB_SPEC[v].sel);
                 if (!el) return;

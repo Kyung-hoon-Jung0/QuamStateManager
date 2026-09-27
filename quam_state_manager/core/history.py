@@ -4168,7 +4168,8 @@ class HistoryManager:
 
     def leaf_field_series_many(
             self, quam_state_path: str | Path,
-            dot_paths: list[str], *, hold_to_newest: bool = False) -> dict[str, list[tuple]]:
+            dot_paths: list[str], *, hold_to_newest: bool = False,
+            origin: dict | None = None) -> dict[str, list[tuple]]:
         """:meth:`leaf_field_series` for MANY paths over ONE connection.
 
         The per-path variant opens and closes its own SQLite connection, and
@@ -4186,6 +4187,12 @@ class HistoryManager:
         Same semantics per path: a path this index must decline (a pointer
         somewhere in its history) is simply absent from the result, exactly as
         the singular form returns None.
+
+        With *origin* (a dict), ``origin["oldest"]`` is set to the OLDEST
+        snapshot timestamp the index holds, read on the same connection -- a
+        leaf whose first row is later than that APPEARED at that row; only a
+        first row AT the oldest snapshot means "already there when history
+        began" (Chip Status metric metadata, docs/2xx).
         """
         out: dict[str, list[tuple]] = {}
         if not dot_paths:
@@ -4196,6 +4203,17 @@ class HistoryManager:
         except sqlite3.Error:
             return out
         try:
+            if origin is not None:
+                # csmeta: where the series come from. An incomplete index
+                # (leaf / row caps hit) must say so: its first rows and its
+                # missing paths are not facts.
+                origin["oldest"] = conn.execute("SELECT MIN(ts) FROM leaf_snaps").fetchone()[0]
+                origin["truncated"] = leaf_index.get_meta(conn, "truncated") == "1"
+                if origin["truncated"]:
+                    origin["ts_list"] = [r[0] for r in conn.execute(
+                        "SELECT ts FROM leaf_snaps ORDER BY ts")]
+            # trends: ONE implementation of the series read, shared with the
+            # RAM table (chip_trends_ram) so cached and cold cannot drift
             out = leaf_series_on(conn, dot_paths, hold_to_newest=hold_to_newest)
         finally:
             conn.close()
