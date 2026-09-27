@@ -27,6 +27,7 @@ from dataclasses import dataclass
 from typing import Any
 
 from quam_state_manager.core import (
+    activity,
     config_view,
     pulse_index,
     spec_constraints,
@@ -276,7 +277,10 @@ def lint_state(store) -> list[Finding]:
     # RLock is reentrant so nested resolver calls that re-take it are fine.
     lock = getattr(store, "_lock", None)
     if lock is not None:
-        with lock:
+        # w7 final-QA P3b: the background lint hands the lock to foreground
+        # requests at checkpoints -- but not to one that wants THIS result
+        # (``activity.wanting``): it finishes, and the re-check below takes it.
+        with activity.wanting(store), lock:
             # RAM P10: re-check under the lock. The background chip prewarm
             # lints while holding it; a request that arrived meanwhile waited
             # here and must take THAT result, not lint the chip a second time.
@@ -300,6 +304,14 @@ def lint_state(store) -> list[Finding]:
     return list(out)
 
 
+def lint_is_current(store) -> bool:
+    """Is the memoized lint of *store* the lint of its current content?
+    (The background prewarm stops its own lint once a request has linted.)"""
+    from quam_state_manager.core import store_revs
+    hit = _lint_state_cache.get(store)
+    return hit is not None and hit[0] == store_revs.seq_token(store)
+
+
 def _ram_verify() -> bool:
     import os
     return os.environ.get("SM_RAM_VERIFY", "") not in ("", "0")
@@ -319,9 +331,16 @@ def _lint_state_uncached(store, incremental: bool = True) -> list[Finding]:
     inc_store = (store if incremental and root is getattr(store, "merged", None)
                  else None)
 
+    # ``activity.checkpoint()``: w7 final-QA P3b -- where a background lint may
+    # hand the store lock to a foreground request (a no-op anywhere else).
+    # Only between whole findings and at per-entity loop tops, never with a
+    # half-built memo in flight.
+    _cp = activity.checkpoint
     findings.extend(_port_findings(root))
+    _cp()
     findings.extend(_dangling_pointer_findings(store) if inc_store is not None
                     else _dangling_pointer_findings_cold(store))
+    _cp()
     # QA F-F: a numeric-looking TEXT value fired BOTH the sibling vote
     # (value_type, "numeric on N other qubits") and the stored-as-text row
     # (value_type_strnum) -- one mistyped value, two rows, two badge counts.
@@ -330,13 +349,16 @@ def _lint_state_uncached(store, incremental: bool = True) -> list[Finding]:
     strnum = _strnum_findings(root, inc_store)
     shown_text = {f.jump_path for f in strnum if f.jump_path}
     for section in ("qubits", "qubit_pairs"):
+        _cp()
         findings.extend(f for f in _value_findings(root, section, inc_store)
                         if not (f.category == "value_type"
                                 and f.location in shown_text))
     findings.extend(strnum)
+    _cp()
     findings.extend(_frequency_consistency_findings(store))
     findings.extend(_downconverter_findings(root))
     findings.extend(_spec_findings(root, inc_store))
+    _cp()
     findings.extend(_coupling_findings(root))
     findings.extend(_band_edge_findings(root))
     findings.extend(_mw_carrier_findings(root))
@@ -348,6 +370,7 @@ def _lint_state_uncached(store, incremental: bool = True) -> list[Finding]:
     findings.extend(_qdac_findings(root))
     findings.extend(_resonator_if_floor_findings(root))
     findings.extend(_downconverter_spacing_findings(root))
+    _cp()
     findings.extend(_waveform_findings_cached(store) if inc_store is not None
                     else _waveform_findings(store))
 
@@ -1040,12 +1063,17 @@ def _value_findings_build(sec: dict, section: str) -> tuple:
     # Group leaf values by their path *within* an entry, across all entries.
     by_sub: dict[str, list[tuple[str, Any]]] = {}
     for name, sub in sec.items():
+        activity.checkpoint()          # w7 final-QA P3b: one entity at a time
         if not isinstance(sub, dict):
             continue
         for rel, value, _ in _walk(sub):
             by_sub.setdefault(rel, []).append((name, value))
     pos = {rel: {n: i for i, (n, _v) in enumerate(items)} for rel, items in by_sub.items()}
-    per = {rel: _value_findings_rel(section, rel, items) for rel, items in by_sub.items()}
+    per = {}
+    for j, (rel, items) in enumerate(by_sub.items()):
+        if not j % 64:
+            activity.checkpoint()      # (the per-field half: 0.25 s on big30x)
+        per[rel] = _value_findings_rel(section, rel, items)
     order = list(by_sub)
     return (sec, by_sub, pos, [f for rel in order for f in per[rel]], per, order)
 
@@ -1708,6 +1736,7 @@ def _waveform_findings_cached(store) -> list[Finding]:
     enumerated = True
     for o in owners:
         if dirty is None or o in dirty:
+            activity.checkpoint()      # w7 final-QA P3b: one owner at a time
             per[o] = _waveform_findings_ex(store, only=o)
         else:
             per[o] = prev[1][o]

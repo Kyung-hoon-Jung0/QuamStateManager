@@ -1599,7 +1599,7 @@ def _probe_readonly(folder) -> bool:
 
 def _chip_warm_steps() -> tuple:
     """RAM P10 cold-open follow-up: what the first Chip Status / diagnostics
-    visit waits on, computed by the background prewarm worker BEFORE the
+    visit waits on, computed by the background prewarm worker AFTER the
     search index (see ``LazySearchIndex.prewarm``): the chip's pointer cache
     (paced, chunked under the store lock), its lint, and the env-schema
     analysis. Each lands in the SAME seq-keyed memo the request path reads
@@ -1615,8 +1615,15 @@ def _chip_warm_steps() -> tuple:
         from quam_state_manager.core.loader import warm_pointer_cache
         warm_pointer_cache(store, pace)
 
+    # w7 final-QA P3b: both hold the store lock for their whole walk (lint
+    # 5.0 s, env 0.5 s on big30x); under ``activity.yielding`` they hand it
+    # to a foreground request at every chunk / entity checkpoint, and stop
+    # when the chip moved or a request already computed the same result.
+    from quam_state_manager.core import activity as _act
+
     def lint(store, pace):
-        diagnostics.lint_state(store)
+        with _act.yielding(store, done=lambda: diagnostics.lint_is_current(store)):
+            diagnostics.lint_state(store)
 
     def env(store, pace):
         if app is None:
@@ -1625,7 +1632,9 @@ def _chip_warm_steps() -> tuple:
         with app.app_context():
             manifest = _live_env_manifest(store)
             if manifest is not None:
-                state_env_validate.analysis_for_store(store, manifest)
+                with _act.yielding(store, done=lambda: state_env_validate.analysis_is_current(
+                        store, manifest)):
+                    state_env_validate.analysis_for_store(store, manifest)
 
     return (pointers, lint, env)
 
