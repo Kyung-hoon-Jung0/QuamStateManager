@@ -2079,6 +2079,18 @@ details.tree-branch-active > summary {
 .sidebar-tree-toolbar .toolbar-label {
     font-size: var(--tree-entry-time-font); color: var(--pico-muted-color);
 }
+/* w8 chipplace: the toolbar is a [role=group], and Pico rings a whole group
+   while any button in it has :focus -- which a mouse click gives the button in
+   Chrome -- so pressing "Full names" left a ring around the entire "rows"
+   toolbar until the next click elsewhere or a reload. The ring stays for the
+   keyboard (:focus-visible), not for the mouse. The :has(button:focus)
+   argument is what outranks Pico's own :has() rule (0,3,1 > 0,3,0). */
+.sidebar-tree-toolbar[role=group]:has(button:focus) {
+    --pico-group-box-shadow: 0 0 0 transparent;
+}
+.sidebar-tree-toolbar[role=group]:has(button:focus-visible) {
+    --pico-group-box-shadow: var(--pico-group-box-shadow-focus-with-button);
+}
 .tree-density-btn {
     background: none; border: 1px solid var(--pico-muted-border-color);
     color: var(--pico-muted-color); cursor: pointer; line-height: 1;

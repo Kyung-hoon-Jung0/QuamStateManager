@@ -23,6 +23,12 @@
  *  P7  a place captured for a refresh whose answer was NOT Chip Status (an
  *      empty state) is dropped, so a later ?view= deep link is not hijacked.
  *
+ * Time is VIRTUAL (tests/jsdom_vclock.cjs, w8 chipplace): the page's timers,
+ * frames and Date only move when the test advances them. The wall-clock
+ * version (`await sleep(450)` for a 250 ms debounce + fetch + a 20 ms swap +
+ * frames) failed P3 1 run in 11 on an idle machine and 4 in 12 under load --
+ * the resumed offset read before the frame that puts it back had run.
+ *
  * Run: node tests/chip_status_resume_selfcheck.cjs
  *      (driven by tests/test_chip_status.py)
  */
@@ -38,6 +44,8 @@ try {
   console.error('jsdom not installed');
   process.exit(2);
 }
+
+const { installClock } = require('./jsdom_vclock.cjs');
 
 const STATIC = path.join(__dirname, '..', 'quam_state_manager', 'web', 'static');
 const read = (f) => fs.readFileSync(path.join(STATIC, f), 'utf8');
@@ -68,6 +76,7 @@ const dom = new JSDOM('<!DOCTYPE html><html><body><nav id="sidebar"><a id="nav-c
   { runScripts: 'outside-only', pretendToBeVisual: true, url: 'http://localhost/topology' });
 const win = dom.window;
 const doc = win.document;
+const clock = installClock(win);      // before the page scripts: every timer they reach is virtual
 win.UI_CONFIG = { topoLivePollInterval: 3 };
 // An observer that never reports: nothing is built by intersection, so a
 // section that is built after the refresh was built by the resume.
@@ -156,7 +165,7 @@ win.htmx = {
     }
     if (String(url).split('?')[0] === '/topology' && spec && spec.target === '#table-pane') {
       return new Promise(function (resolve) {
-        setTimeout(function () { swapPane(url, swapElt || doc.body); swapElt = null; resolve(); }, 20);
+        win.setTimeout(function () { swapPane(url, swapElt || doc.body); swapElt = null; resolve(); }, 20);
       });
     }
     return Promise.resolve();
@@ -186,7 +195,7 @@ win._plotlyRender = function () { return Promise.resolve(); };   // no Plotly he
 win.ChipStatus.mount(opts(T0, ''));
 win.ChipStatus.liveDetection();
 
-const sleep = (ms) => new Promise(function (r) { setTimeout(r, ms); });
+const sleep = (ms) => clock.advance(ms);   // virtual: nothing waits on the wall clock
 const pane = () => doc.getElementById('table-pane');
 function tab() { const a = doc.querySelector('.topo-subnav-btn.active'); return a ? a.getAttribute('data-view') : null; }
 function cohOffset() {
@@ -259,6 +268,8 @@ function mutate(to) {
   win.htmx.ajax('GET', '/topology?view=overview', { target: '#table-pane', swap: 'innerHTML' });
   await sleep(120);
   ok(tab() === 'overview', 'P7: the deep link lands on its own view, not a stale resumed one — ' + tab());
+
+  ok(clock.errors().length === 0, 'no page timer threw — ' + clock.errors().join(' | ').slice(0, 300));
 
   console.log(fails ? ('FAILED (' + fails + ')')
     : ('chip_status_resume_selfcheck ok (' + asserts + ' assertions)'));

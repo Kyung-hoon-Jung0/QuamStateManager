@@ -53,3 +53,28 @@ def test_exp_list_compact_client_selfcheck():
         pytest.skip("jsdom not installed")
     assert proc.returncode == 0, f"stdout:\n{proc.stdout}\nstderr:\n{proc.stderr}"
     assert proc.stdout.count("ok - ") >= 10, proc.stdout
+
+
+def test_a_mouse_press_leaves_no_ring_around_the_rows_toolbar(tmp_path):
+    """w8 chipplace: the "rows" toolbar is a [role=group], and Pico rings a
+    whole group while any button in it has :focus. A mouse click focuses the
+    button in Chrome, so pressing "Full names" left a ring around the entire
+    toolbar until a reload. The override must (1) exist, (2) outrank Pico's
+    `[role=group]:has(button:focus,...)` (specificity 0,3,0 -- the :has()
+    takes its most specific argument, `[type=submit]:focus`), and (3) keep the
+    ring for keyboard focus (:focus-visible), declared after the reset. The
+    real-Chrome proof is tests/browser/journeys/chip_place.cjs `ring`."""
+    css = (_ROOT / "quam_state_manager" / "web" / "static" / "style.css").read_text(encoding="utf-8")
+    pico = (_ROOT / "quam_state_manager" / "web" / "static" / "pico.min.css").read_text(encoding="utf-8")
+    # the Pico rule this overrides is still the one it was written against
+    assert "[role=group]:has(button:focus,[type=submit]:focus,[type=button]:focus,[role=button]:focus)" in pico
+    off = re.search(r"\.sidebar-tree-toolbar\[role=group\]:has\(button:focus\)\s*\{([^}]*)\}", css)
+    on = re.search(r"\.sidebar-tree-toolbar\[role=group\]:has\(button:focus-visible\)\s*\{([^}]*)\}", css)
+    assert off and "--pico-group-box-shadow: 0 0 0 transparent" in off.group(1), "mouse focus must not ring the group"
+    assert on and "var(--pico-group-box-shadow-focus-with-button)" in on.group(1), "keyboard focus keeps the ring"
+    assert off.start() < on.start(), "the :focus-visible rule must come after the reset (same specificity)"
+    # the toolbar is still the [role=group] these rules select, on a real render
+    app = create_app(testing=True, instance_path=str(tmp_path / "_inst"))
+    html = app.test_client().get("/").get_data(as_text=True)
+    tb = re.search(r'<div class="sidebar-tree-toolbar"[^>]*>', html)
+    assert tb and 'role="group"' in tb.group(0), tb

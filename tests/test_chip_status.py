@@ -304,7 +304,7 @@ class TestNoDataIsNotInSpec:
         assert "success" not in rule
 
 
-def _run_selfcheck(name):
+def _run_selfcheck(name, timeout=120):
     """Run one tests/<name> jsdom selfcheck over the shipped JS; skip without
     node or jsdom, fail on a non-zero exit."""
     import shutil
@@ -318,7 +318,7 @@ def _run_selfcheck(name):
     r = subprocess.run(
         ["node", str(root / "tests" / name)],
         capture_output=True, text=True, encoding="utf-8", errors="replace",
-        cwd=str(root), timeout=120,
+        cwd=str(root), timeout=timeout,
     )
     if r.returncode == 2 and "jsdom not installed" in (r.stderr or ""):
         pytest.skip("jsdom not installed")
@@ -340,6 +340,18 @@ def test_a_refresh_keeps_the_readers_place():
     section at the pane top back at its offset (again when Trends lands, unless
     the reader moved); the sidebar link still lands on Topology."""
     _run_selfcheck("chip_status_resume_selfcheck.cjs")
+
+
+def test_a_reload_keeps_the_readers_place():
+    """w8 chipplace: F5 right after an Overview tile jump came back on the
+    exact panel only 8 times in 10 on big30x -- the F-20 scroll record was
+    written by a debounced scroll handler the big chip's growth kept
+    re-arming, and it named the tab's section plus a pixel offset. A jump now
+    writes its record in the same call as its URL, pagehide / visibilitychange
+    write the place at once, and a place names the PANEL at the pane top (+
+    offset). The matrix mouse / Enter / Space / tab press x F5 after 0, 0.3,
+    2 and 12 s, on a growing and a settled page, runs in virtual time."""
+    _run_selfcheck("chip_status_place_selfcheck.cjs", timeout=600)
 
 
 def test_every_2q_overview_number_names_its_pulse():
