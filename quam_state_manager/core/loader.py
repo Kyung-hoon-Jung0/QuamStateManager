@@ -722,10 +722,18 @@ def _leaf_same(a: Any, b: Any) -> bool:
 def _subtree_same(a: Any, b: Any) -> bool:
     """A cheap sufficient test for "leaf-for-leaf :func:`_leaf_same`, same
     keys in the same order": ``==`` and equal marshal bytes. False only
-    means "look inside"."""
+    means "look inside".
+
+    Marshal format 2, like ``json_pieces``: from format 3 on, an object
+    referenced more than once is written as a back-reference, so the bytes
+    depend on how many OTHER references each value has -- a store's
+    documents (whose leaves the search index and caches also hold) never
+    marshalled equal to a fresh parse, and every subtree was walked (0.6 s
+    on big30x instead of ~50 ms). Format 2 writes types, float bits and key
+    order, and nothing about sharing."""
     import marshal
     try:
-        return a == b and marshal.dumps(a) == marshal.dumps(b)
+        return a == b and marshal.dumps(a, 2) == marshal.dumps(b, 2)
     except (ValueError, TypeError, RecursionError):
         return False
 

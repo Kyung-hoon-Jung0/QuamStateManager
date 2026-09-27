@@ -269,6 +269,32 @@ def test_shadow_mode_checks_the_patch_against_the_files(chip, monkeypatch):
     assert store.reload() is True                  # no StaleCacheError
 
 
+def test_the_patch_looks_only_where_the_files_differ_even_when_leaves_are_shared(chip, monkeypatch):
+    """A store's leaves are also held by its search index and caches. Marshal
+    format >= 3 writes a multiply-referenced object as a back-reference, so a
+    subtree of the store never marshalled equal to the same subtree of a
+    fresh parse and the patch walked the whole chip (0.6 s on big30x). The
+    fact pinned: with every leaf shared, a one-value change compares only the
+    containers on its own path and their siblings."""
+    from quam_state_manager.core.search_index import LazySearchIndex
+    store = QuamStore(chip)
+    idx = LazySearchIndex(store)
+    store.search_index = idx
+    idx.get()                                   # every leaf now referenced twice
+    keep = [store.merged]                       # (and the documents stay alive)
+    s, w = _files(chip)
+    s["qubits"]["q2"]["T1"] = 5.5e-5
+    _write(chip, s, w)
+    seen = []
+    real = loader._subtree_same
+    monkeypatch.setattr(loader, "_subtree_same", lambda a, b: (seen.append(1), real(a, b))[1])
+    assert store.reload() is True
+    # root, its 3 containers, the 4 qubits, q2's 2 containers = 10; the whole
+    # state (every container) is ~30
+    assert len(seen) <= 12, len(seen)
+    assert keep
+
+
 def test_the_search_index_follows_an_in_place_reload(chip):
     from quam_state_manager.core.search_index import LazySearchIndex
     store = QuamStore(chip)
