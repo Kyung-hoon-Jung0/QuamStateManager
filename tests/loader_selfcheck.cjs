@@ -267,6 +267,15 @@ function fireCancelable(name, path) {
     ok(/prefers-reduced-motion[^}]*\{\s*\n?\s*\.quam-loader-spinner \{ animation: none; \}/.test(css)
        || /\.quam-loader-spinner \{ animation: none; \}/.test(css),
        'reduced-motion users get a static ring');
+    // queue #7 (2026-09-26): a slim strip under the top bar, not a centred card
+    const rule = (css.match(/\n\.quam-loader \{[^}]*\}/) || [''])[0];
+    ok(/top: calc\(var\(--topbar-height[^)]*\) \+ \d+px\)/.test(rule) && !/top: 50%/.test(rule)
+       && !/translate\(-50%, -50%\)/.test(rule),
+       'q#7 the loader is pinned just below the MEASURED top bar, not centred (' + rule.replace(/\s+/g, ' ').slice(0, 90) + ')');
+    ok(/white-space: nowrap/.test(rule) && /pointer-events: none/.test(rule) && /font-size: 0\.\d+rem/.test(rule),
+       'q#7 one small line that never takes a click');
+    ok(base.indexOf('quam-loader-text') === -1 && base.indexOf('>Q</span><span>U</span>') === -1,
+       'q#7 the big letter-by-letter title is gone');
 
     // docs/163: computed, never a literal. Both branches added assertions to
     // this file; a hardcoded count would have been wrong the moment they met,

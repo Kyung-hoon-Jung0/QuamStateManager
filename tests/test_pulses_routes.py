@@ -162,7 +162,7 @@ class TestPulsesLibrary:
         # Pulses + Json Tree View are the group's children.
         i = base.index('id="live-edit-subnav"')
         seg = base[i:base.index("</ul>", i)]
-        assert ">Json Tree View</a>" in seg and ">Pulses</a>" in seg
+        assert ">Live edit - Json Tree view</a>" in seg and ">Pulses</a>" in seg
 
     def test_sparkline_rendered_for_known_pulse(self, loaded_client):
         html = loaded_client.get("/pulses").data.decode()

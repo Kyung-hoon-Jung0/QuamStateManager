@@ -80,7 +80,7 @@ const TOPO = {
   summary: {},
 };
 const RAW = { wiring: { qubits: { q1: { xy: { opx_output: '#/ports/a' } }, q2: { xy: { opx_output: '#/ports/b' } } } } };
-const META = { T1: { label: 'T1', abbr: 'T1', direction: 'higher' },
+const META = { T1: { label: 'T1', abbr: 'T1', direction: 'higher', blurb: 'Energy relaxation time. Higher is better.' },
                gate_fidelity_avg: { label: '1Q gate fidelity', abbr: 'Gate F', direction: 'higher' } };
 
 /* opts: url, chipView, storage (object preset), histState, chipToken */
@@ -366,6 +366,36 @@ const esc = (T) => T.doc.activeElement.dispatchEvent(
     stone('q2').dispatchEvent(new win.MouseEvent('mouseleave'));
     await sleep(320);
     ok(!d.querySelector('.topo-card-popup'), 'r2-22 leaving closes it as before');
+  }
+
+  // ── queue #5 (2026-09-26): no bare, unexplained arrow beside a title ────
+  // The ↑ was the metric's good direction, drawn as a lone glyph beside every
+  // panel title and Overview tile title -- it read as a dead button. The big
+  // titles no longer draw it; the direction is in the title's hover text in
+  // words; any arrow that remains (compact cards) says what it means.
+  {
+    const T = world({ chipView: 'coherence', url: 'http://localhost/topology?view=coherence' });
+    await sleep(50);
+    const d = T.doc;
+    const titles = Array.from(d.querySelectorAll('.topo-metric-panel-title'));
+    const t1 = titles.find((h) => h.querySelector('.metric-label[data-metric="T1"]'));
+    ok(titles.length > 0 && t1, 'q#5 setup: the metric panels rendered, T1 among them (' + titles.length + ')');
+    ok(titles.every((h) => !h.querySelector('.metric-dir') && !/[↑↓]/.test(h.textContent)),
+       'q#5 no panel title carries a bare direction arrow ('
+       + titles.map((h) => h.textContent.trim().slice(0, 20)).join(' | ') + ')');
+    const lab = t1 && t1.querySelector('.metric-label');
+    ok(lab && /higher is better/i.test(lab.getAttribute('title') || ''),
+       'q#5 the direction moved into the title hover text in words (' + (lab && lab.getAttribute('title')) + ')');
+    const tips = Array.from(d.querySelectorAll('.metric-label[title]')).map((e) => e.getAttribute('title'));
+    ok(tips.length > 0 && tips.every((t) => (t.match(/is better/gi) || []).length <= 1),
+       'q#5 a blurb that already says which way is better is not told twice ('
+       + tips.filter((t) => (t.match(/is better/gi) || []).length > 1).slice(0, 1) + ')');
+    const tiles = Array.from(d.querySelectorAll('#topo-overview-tiles .topo-card'));
+    ok(tiles.length > 0 && tiles.every((c) => !c.querySelector('.metric-dir')),
+       'q#5 no Overview tile title carries the bare arrow either (' + tiles.length + ' tiles)');
+    const left = Array.from(d.querySelectorAll('.metric-dir'));
+    ok(left.every((s) => /is better/i.test(s.getAttribute('title') || '')),
+       'q#5 every arrow still drawn says what it means on hover (' + left.length + ')');
   }
 
   console.log(fails ? ('FAILED ' + fails) : ('chip_status_qa4_selfcheck: all ok (' + asserts + ' assertions)'));
