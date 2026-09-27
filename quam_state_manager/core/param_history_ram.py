@@ -62,8 +62,10 @@ def _file_identity(p: Path) -> tuple | None:
     return (st.st_ino, st.st_ctime_ns, st.st_dev)
 
 
-def _truncate_wal(conn: sqlite3.Connection) -> None:
-    """Give back the WAL a writer left behind once it has committed.
+def _truncate_wal(conn: sqlite3.Connection, index_path: Path) -> bool:
+    """Give back the WAL a writer left behind once it has committed. True
+    when there is nothing left to give back; False when the checkpoint came
+    back busy (or failed) and must be tried again later.
 
     A WAL database whose LAST connection closes is checkpointed and its -wal
     removed; this persistent connection means a writer's close is never the
@@ -71,14 +73,84 @@ def _truncate_wal(conn: sqlite3.Connection) -> None:
     of the process and Param History's 'MB on disk' counted it (verifier D1:
     a 6,000-row write left 6,204,752 B). ``wal_checkpoint(TRUNCATE)`` backfills
     and truncates it to 0 B. ``timeout=0`` on the connection: a writer that is
-    busy right now makes this return busy at once, never wait in a request;
-    the next commit it makes moves data_version and brings us back here.
-    A checkpoint is not a commit, so it does not move this connection's
+    busy right now makes this return busy at once, never wait in a request.
+
+    SQLite's own contract for the result row: "The first column is usually
+    0 but will be 1 if a RESTART or FULL or TRUNCATE checkpoint was blocked
+    from completing, for example because another thread or process was
+    actively using the database." [doc: sqlite.org/pragma.html
+    #pragma_wal_checkpoint, quoted verbatim, fetched 2026-09-27]. A blocked one used to be
+    recorded as done, so the WAL stayed at its peak until the NEXT commit
+    (final QA, fix 3): the caller now keeps the old ``seen`` value and
+    re-arms a retry (``_retry_later``).
+
+    An EMPTY -wal is not checkpointed at all: every TRUNCATE restarts the
+    log, and a restart moves every OTHER connection's ``data_version``
+    (measured on this machine, even with nothing to backfill) -- so a
+    truncate of nothing would still invalidate every token read on another
+    connection, and two SM processes watching one chip would each see the
+    other's no-op as a commit and answer it with one of their own, forever.
+    A checkpoint is not a commit, so it does not move THIS connection's
     data_version (measured). Best effort: every error is swallowed. [derived]"""
     try:
-        conn.execute("PRAGMA wal_checkpoint(TRUNCATE)").fetchone()
+        if os.stat(str(index_path) + "-wal").st_size == 0:
+            return True
+    except OSError:
+        return True                      # no -wal: nothing is pinned
+    try:
+        row = conn.execute("PRAGMA wal_checkpoint(TRUNCATE)").fetchone()
     except sqlite3.Error:
-        pass
+        return False
+    return not row or row[0] == 0
+
+
+# ── retry-later for a checkpoint that came back busy ──────────────────────
+# One pending timer per index path at most. The retry runs on the SAME pooled
+# connection as every token read (``data_version``), so it can never move a
+# token it did not also account for; it never opens a connection (a path
+# whose connection was closed or evicted meanwhile is dropped -- its close
+# gave the WAL back, or the next open re-arms). Backoff doubles from
+# ``_RETRY_FIRST_S`` to ``_RETRY_MAX_S``; after ``_RETRY_MAX_N`` attempts it
+# stops until the next read, which re-arms it (``seen`` still differs).
+_RETRY_LOCK = threading.Lock()
+_RETRY_TIMERS: "dict[str, threading.Timer]" = {}
+_RETRY_N: "dict[str, int]" = {}
+_RETRY_FIRST_S = 0.25
+_RETRY_MAX_S = 5.0
+_RETRY_MAX_N = 60
+
+
+def _retry_later(key: str) -> None:
+    with _RETRY_LOCK:
+        if key in _RETRY_TIMERS:
+            return
+        n = _RETRY_N.get(key, 0)
+        if n >= _RETRY_MAX_N:
+            return
+        _RETRY_N[key] = n + 1
+        t = threading.Timer(min(_RETRY_FIRST_S * (2 ** n), _RETRY_MAX_S), _retry, (key,))
+        t.daemon = True
+        t.name = "phr-wal-retry"
+        _RETRY_TIMERS[key] = t
+    t.start()
+
+
+def _retry(key: str) -> None:
+    with _RETRY_LOCK:
+        _RETRY_TIMERS.pop(key, None)
+    with _CONN_LOCK:
+        present = key in _CONNS
+    if not present:
+        return
+    try:
+        data_version(Path(key))          # re-arms itself while still busy
+    except Exception:  # noqa: BLE001 - a background give-back never raises
+        logger.debug("wal retry failed", exc_info=True)
+
+
+def _retry_done(key: str) -> None:
+    with _RETRY_LOCK:
+        _RETRY_N.pop(key, None)
 
 
 def data_version(index_path: Path) -> tuple:
@@ -128,9 +200,11 @@ def data_version(index_path: Path) -> tuple:
     with lk:
         try:
             dv = conn.execute("PRAGMA data_version").fetchone()[0]
+            given_back = True
             if seen[0] != dv:
-                _truncate_wal(conn)
-            seen[0] = dv
+                given_back = _truncate_wal(conn, index_path)
+                if given_back:
+                    seen[0] = dv         # busy: keep the old value -- the next read retries
         except sqlite3.Error:
             with _CONN_LOCK:
                 if _CONNS.get(key) is ent:
@@ -140,6 +214,10 @@ def data_version(index_path: Path) -> tuple:
             except sqlite3.Error:
                 pass
             return ("unreadable", ident)
+    if given_back:
+        _retry_done(key)
+    else:
+        _retry_later(key)                # and so does a timer, if no read comes
     return (ident0, gen, dv)
 
 
@@ -180,6 +258,12 @@ def hist_token(hm: Any, quam_state_path: Path | str) -> tuple:
 
 def close_all() -> None:
     """Tests and shutdown: drop every persistent connection."""
+    with _RETRY_LOCK:
+        timers = list(_RETRY_TIMERS.values())
+        _RETRY_TIMERS.clear()
+        _RETRY_N.clear()
+    for t in timers:
+        t.cancel()
     with _CONN_LOCK:
         ents = list(_CONNS.values())
         _CONNS.clear()

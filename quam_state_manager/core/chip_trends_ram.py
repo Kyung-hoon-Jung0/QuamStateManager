@@ -16,9 +16,13 @@ This module keeps all of that in one object per HISTORY TOKEN:
              _chip_dir_version      -- every in-process capture/ingest/prune bump,
              the snapshot-list object -- its identity changes exactly when the
                                        per-process list cache is dropped,
-             the persistent read connection + its PRAGMA data_version
-                                     -- any commit to index.sqlite by ANY other
-                                        connection, in this process or another)
+             the persistent read connection,
+             param_history_ram.data_version -- (file identity, connection
+                                        generation, PRAGMA data_version) of the
+                                        ONE version connection per index both
+                                        RAM modules share: any commit to
+                                        index.sqlite by ANY other connection,
+                                        in this process or another)
 
 Validate on read (§1.1): every request computes the token first and a table is
 served only for an equal token. A table is filled lazily and each part is
@@ -98,8 +102,10 @@ class _IndexConn:
     connection ("the integer values returned by two invocations of PRAGMA
     data_version from the same connection will be different if changes were
     committed to the database by any other connection in the interim" --
-    sqlite.org/pragma.html#pragma_data_version), which is why the connection
-    itself is part of the token: a reopened connection restarts the counter.
+    sqlite.org/pragma.html#pragma_data_version), which is why the version is
+    read on one persistent connection (``data_version`` below) whose
+    generation is part of the token: a reopened connection restarts the
+    counter.
 
     Opened ``mode=rw`` (never creating the file -- a missing index is the cold
     path's business) with ``query_only``; every statement is run to
@@ -113,19 +119,27 @@ class _IndexConn:
                                     isolation_level=None, timeout=10.0)
         self.conn.execute("PRAGMA query_only=1")
         self.lock = threading.Lock()
-        # The token's PRAGMA data_version gets its OWN connection: every
-        # request reads it first, and on the shared read connection it queued
-        # behind whatever long read held the lock (a first family-table read
-        # took the next request from 0.3 s to 1.2 s). Neither connection ever
-        # writes, so "committed by any other connection" is every writer.
-        self.vconn = sqlite3.connect(uri, uri=True, check_same_thread=False,
-                                     isolation_level=None, timeout=10.0)
-        self.vconn.execute("PRAGMA query_only=1")
-        self.vlock = threading.Lock()
 
-    def data_version(self) -> int:
-        with self.vlock:
-            return int(self.vconn.execute("PRAGMA data_version").fetchone()[0])
+    def data_version(self) -> tuple:
+        """The token's version: ``param_history_ram.data_version`` -- ONE
+        persistent connection per index, shared with Param History's
+        ``hist_token``, and never the read connection above (on that one the
+        token read queued behind whatever long read held its lock: a first
+        family-table read took the next request from 0.3 s to 1.2 s).
+
+        Final QA fix 3: this used to be a connection of its own that only
+        ever READ, so it pinned the WAL with no give-back, and the WAL a fat
+        commit left stayed at its high-water size for as long as Trends was
+        open. The shared connection gives it back (``_truncate_wal``) the
+        moment it sees the commit -- here that is BEFORE the version is
+        returned, so the truncate is already inside the token. It must be
+        the SAME connection for both: a TRUNCATE restarts the log, which
+        moves every OTHER connection's data_version (measured), so a
+        separate version connection saw every give-back as a new commit and
+        rebuilt the whole table (and bumped the chip version) once more.
+        [derived]"""
+        from quam_state_manager.core import param_history_ram as _phr
+        return _phr.data_version(Path(self.path))
 
     def run(self, fn: Callable[[sqlite3.Connection], Any]) -> Any:
         with self.lock:
@@ -143,12 +157,11 @@ class _IndexConn:
             c.close()
 
     def close(self) -> None:
-        for lk, c in ((self.lock, self.conn), (self.vlock, self.vconn)):
-            with lk:
-                try:
-                    c.close()
-                except sqlite3.Error:
-                    pass
+        with self.lock:
+            try:
+                self.conn.close()
+            except sqlite3.Error:
+                pass
 
 
 _CONN_LOCK = threading.Lock()
