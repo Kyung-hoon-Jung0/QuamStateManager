@@ -6,13 +6,16 @@
  * after run (real clicks, different experiment types) and, after EACH switch,
  * measure where the reader's landmark sits:
  *
- *   ref   = the landmark chain under the pane's top edge after the reader's
+ *   ref   = the landmark chain under the READING LINE after the reader's
  *           own wheel (section -> figure / <details> / tree path / ndview
- *           block, and the top edge's offset inside each)
+ *           block, and the line's offset inside each). The line is the
+ *           bottom edge of the sticky run header (final QA 2026-09-27: the
+ *           pane's top edge is hidden under it); a line in the margin
+ *           between two blocks is held by the block below it.
  *   hold  = the deepest level of ref this run CAN hold (the landmark exists
  *           and is taller than the offset) -- computed here, independently
  *           of the page's own restore result
- *   PASS  = that landmark's top is exactly `within` above the pane's top
+ *   PASS  = that landmark's top is exactly `within` above the reading line
  *           (|delta| <= 0.5 px: landmark rects are sub-pixel while Chrome
  *           snaps scrollTop to whole pixels at DPR 1 -- measured: 100.3 reads
  *           back 100 -- so 0.5 is the "== 0" of integer scroll) AND the page is on
@@ -54,9 +57,11 @@ window.__j = {
   // the reader's place, as the page itself would capture it
   ref: function(){ var p=this.pane(); var a=DsScrollAnchor.capture(p, this.container()); a.tab=this.tab(); return a; },
   // independent check: walk a chain down THIS run, pick the deepest holdable
-  // level, and measure where it sits against the scroller's top edge
+  // level, and measure where it sits against the scroller's reading line
+  // (the pane: its sticky header's bottom edge on THIS run; an inner
+  // scroller: its own top edge)
   one: function(sc, c, a, inner){
-    var y=sc.getBoundingClientRect().top + sc.clientTop; var o={};
+    var y=inner ? sc.getBoundingClientRect().top + sc.clientTop : DsScrollAnchor._lineOf(sc); var o={};
     if (!a.chain) { o.level='px'; o.delta=sc.scrollTop - a.scrollTop; o.holdable=true; o.reachable = a.scrollTop <= sc.scrollHeight - sc.clientHeight; return o; }
     var els=[c], el=c;
     for (var i=1;i<a.chain.length;i++){
@@ -208,9 +213,21 @@ window.__j = {
       if (verdict === 'MISS' && SHOTS) await p.shot(path.join(SHOTS, `miss_${tab}_${s}.png`));
       if (verdict === 'PASS' && t.pass === 1 && SHOTS) await p.shot(path.join(SHOTS, `pass_${tab}.png`));   // look at a kept place, not only the end
       if (MOVE_EVERY && s % MOVE_EVERY === MOVE_EVERY - 1 && fin.tab === tab) {   // (only on this tab)   // the reader moves: a new place to keep
+        // A move is a scroll that CHANGED something (the page's own contract,
+        // verifier P1): a wheel on a run clamped at its end, or at the top
+        // wheeling up, scrolls nothing, and the page rightly keeps the old
+        // place. Re-taking ref there judged the next tall runs against the
+        // clamped landing (final QA 2026-09-27: 4 figures + 9 data "misses",
+        // identical on the pre-fix build). Try the other way; if neither
+        // scrolls, the reader has not moved.
+        const before = await J(`__j.range(${JSON.stringify(mode)})`);
         await wheel(s % 2 ? -150 : 150, mode); await sleep(300);
-        ref = await J('__j.ref()'); t.moves++;
-        console.log(`   reader moved -> ${ref.chain ? ref.chain.map(c => c.key + '+' + Math.round(c.within)).join(' > ') : 'px ' + ref.scrollTop}`);
+        let after = await J(`__j.range(${JSON.stringify(mode)})`);
+        if (after.st === before.st) { await wheel(s % 2 ? 150 : -150, mode); await sleep(300); after = await J(`__j.range(${JSON.stringify(mode)})`); }
+        if (after.st !== before.st) {
+          ref = await J('__j.ref()'); t.moves++;
+          console.log(`   reader moved -> ${ref.chain ? ref.chain.map(c => c.key + '+' + Math.round(c.within)).join(' > ') : 'px ' + ref.scrollTop}`);
+        } else console.log('   reader could not scroll on this (clamped) run -- no move, the place is kept');
       }
     }
     if (SHOTS) await p.shot(path.join(SHOTS, `end_${tab}.png`));
