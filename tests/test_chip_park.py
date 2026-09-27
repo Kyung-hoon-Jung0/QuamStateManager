@@ -274,12 +274,20 @@ class TestWarmPathMemos:
             return real_rows(self)
 
         monkeypatch.setattr(routes.PulseIndex, "rows", counting)
-        routes._chip_needs_generated_config(store)
+        assert routes._chip_needs_generated_config(store) is True   # class-less x180s
         routes._chip_needs_generated_config(store)
         assert n["rows"] == 1
         from quam_state_manager.core.modifier import Modifier
+        # w7 fq-sync: a VALUE edit cannot change a pulse's class, slot or
+        # pointer-ness -- the verdict's inputs -- so it does not walk again
+        # (every pull is now such a patch, and the walk holds the store lock)
         Modifier(store).set_value("qubits.q1.T1", 2e-05)
         routes._chip_needs_generated_config(store)
+        assert n["rows"] == 1
+        # ...a STRUCTURAL one does, and the verdict follows it
+        for i in (1, 2, 3):
+            Modifier(store).delete_subtree(f"qubits.q{i}.xy.operations.x180")
+        assert routes._chip_needs_generated_config(store) is False
         assert n["rows"] == 2
 
     def test_class_harvest_is_memoized_on_the_store(self, tmp_path, monkeypatch):
@@ -296,8 +304,15 @@ class TestWarmPathMemos:
         assert ses._harvest_for_store(store) == ses._harvest_for_store(store)
         assert n["walks"] == 1
         from quam_state_manager.core.modifier import Modifier
+        # w7 fq-sync: a VALUE edit cannot change which classes the chip names
+        # (every pull is now such a patch), so it does not walk again...
         Modifier(store).set_value("qubits.q1.T1", 2e-05)
-        ses._harvest_for_store(store)
+        assert ses._harvest_for_store(store) == []
+        assert n["walks"] == 1
+        # ...a class written is structural: walked again, and it is found
+        Modifier(store).create_subtree("qubits.q1.xy.operations.x180.__class__",
+                                       "quam.components.pulses.SquarePulse")
+        assert ses._harvest_for_store(store) == ["quam.components.pulses.SquarePulse"]
         assert n["walks"] == 2
 
     def test_reopening_the_first_recent_writes_no_session_file(self, app, tmp_path, monkeypatch):

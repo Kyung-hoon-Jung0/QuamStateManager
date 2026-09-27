@@ -113,14 +113,19 @@ class Superseded(BaseException):
 
 
 class _Yield:
-    __slots__ = ("store", "done", "keep", "suspended", "stopped", "__weakref__")
+    __slots__ = ("store", "done", "keep", "suspended", "stopped", "fg", "deadline",
+                 "expired", "last", "__weakref__")
 
-    def __init__(self, store, done, keep):
+    def __init__(self, store, done, keep, fg=False, deadline=None):
         self.store = store
         self.done = done
         self.keep = keep
         self.suspended = False
         self.stopped = False
+        self.fg = fg                 # w7 fq-sync: a request computing a result
+        self.deadline = deadline     # monotonic time the caller stops waiting
+        self.expired = False
+        self.last = time.monotonic()
 
 
 _TL = threading.local()
@@ -130,6 +135,12 @@ _WANT: "weakref.WeakKeyDictionary" = None        # store -> foreground callers w
 YIELDS = [0]
 _SUSPEND_POLL_S = 0.005
 _WANT_WAIT_S = 2.0
+#: w7 fq-sync: a lock holder that must keep going (a request computing a
+#: whole-chip result, or a background step a request waits on) still hands
+#: the store lock over this often while another request is in flight ...
+HANDOVER_EVERY_S = 0.08
+#: ... for this long: a request blocked on the lock takes it in that window.
+_HANDOVER_S = 0.002
 
 
 def _init_maps() -> None:
@@ -167,17 +178,18 @@ class yielding:
     the lock is then kept, exactly like :func:`wanting`.
     A ``Superseded`` raised inside is absorbed here; ``.stopped`` says so."""
 
-    def __init__(self, store, done=None, keep=None):
-        self._y = _Yield(store, done, keep)
+    def __init__(self, store, done=None, keep=None, *, foreground=False, deadline=None):
+        self._y = _Yield(store, done, keep, foreground, deadline)
         self._prev = None
 
     def __enter__(self):
         self._prev = getattr(_TL, "y", None)
         _TL.y = self._y
-        try:
-            _ACTIVE[self._y.store] = self._y
-        except TypeError:              # pragma: no cover - not weak-referenceable
-            pass
+        if not self._y.fg:             # a foreground step never parks: nobody waits for it to resume
+            try:
+                _ACTIVE[self._y.store] = self._y
+            except TypeError:          # pragma: no cover - not weak-referenceable
+                pass
         return self._y
 
     def __exit__(self, et, ev, tb):
@@ -235,6 +247,49 @@ class wanting:
         return False
 
 
+def _others_inflight(store) -> int:
+    """Foreground requests in flight other than the calling thread's own and
+    other than the ones waiting for a result on *store* (``wanting``): the
+    requests that may be blocked on the store lock."""
+    with _LOCK:
+        n = _STATE["inflight"] - (1 if getattr(_LOCAL, "open", False) else 0)
+        return n - _WANT.get(store, 0)
+
+
+def _handover(y) -> None:
+    """Let go of the store lock for a moment (every recursion level), take it
+    back, verify the chip did not move -- the time-sliced yield of a holder
+    that must keep going (w7 fq-sync). At most every
+    :data:`HANDOVER_EVERY_S`, and only while another request is in flight:
+    the longest hold anyone waits behind is one slice plus one chunk."""
+    now = time.monotonic()
+    if now - y.last < HANDOVER_EVERY_S:
+        return
+    y.last = now
+    if _others_inflight(y.store) <= 0:
+        return
+    lock = getattr(y.store, "_lock", None)
+    release = getattr(lock, "_release_save", None)
+    restore = getattr(lock, "_acquire_restore", None)
+    owned = getattr(lock, "_is_owned", None)
+    if release is None or restore is None or owned is None or not owned():
+        return
+    before = _token(y.store)
+    try:
+        saved = release()
+    except Exception:                    # pragma: no cover - owned() was checked
+        return
+    YIELDS[0] += 1
+    try:
+        time.sleep(_HANDOVER_S)
+    finally:
+        restore(saved)
+        y.last = time.monotonic()
+    if _token(y.store) != before or (y.done is not None and y.done()):
+        y.stopped = True
+        raise Superseded()
+
+
 def checkpoint() -> None:
     """A point where the calling thread's current work may let go of the
     store lock. Free (one thread-local read) outside :class:`yielding`.
@@ -242,14 +297,31 @@ def checkpoint() -> None:
     Callers place it where nothing half-built is in flight: before a chunk's
     token is read, at the top of a per-entity loop, between whole sections.
     Iterating the chip's own dicts across it is safe exactly because the
-    content token is re-verified before the walk continues."""
+    content token is re-verified before the walk continues.
+
+    w7 fq-sync: a FOREGROUND step (``yielding(foreground=True)`` -- a request
+    computing a whole-chip result it needs) and a background step some
+    request waits on (``wanting``) must keep going, so they do not park:
+    they hand the lock over for a moment every :data:`HANDOVER_EVERY_S`
+    while another request is in flight. A ``deadline`` that passed stops
+    the step (``expired``), with everything finished so far kept in its
+    per-chunk memos."""
     y = getattr(_TL, "y", None)
     if y is None:
         return
     if y.stopped:
         raise Superseded()
+    if y.deadline is not None and time.monotonic() > y.deadline:
+        y.stopped = y.expired = True
+        raise Superseded()
     store = y.store
-    if not busy(quiet_s=0.0) or _held(y):
+    if y.fg:
+        _handover(y)
+        return
+    if not busy(quiet_s=0.0):
+        return
+    if _held(y):
+        _handover(y)
         return
     lock = getattr(store, "_lock", None)
     release = getattr(lock, "_release_save", None)
@@ -276,3 +348,122 @@ def checkpoint() -> None:
     if _token(store) != before or (y.done is not None and y.done()):
         y.stopped = True
         raise Superseded()
+
+
+# ------------------------------------------------------ one computation per result
+# w7 fq-sync. A whole-chip result (the lint, the env analysis) was computed by
+# whichever caller took the store lock first, holding it for the whole walk
+# (5 s of lint on big30x) -- a page load's /diagnostics/summary and
+# /diagnostics/banner held every other request that long. Now ONE caller
+# computes (the leader) and the others wait for its result without touching
+# the lock (followers). A leader that is a request computes under
+# ``yielding(foreground=True)``: it hands the lock over every
+# HANDOVER_EVERY_S while other requests are in flight, restarts when the chip
+# moved meanwhile (per-chunk memos keep what was already done), and gives up
+# at its caller's deadline. A background leader (the chip prewarm) keeps its
+# own yielding rules; a request waiting on it registers ``wanting``.
+
+_FLIGHTS: "weakref.WeakKeyDictionary" = None   # store -> {name: threading.Event}
+_FLIGHT_LOCK = threading.Lock()
+#: a follower gives up on a leader after this long and computes itself
+_FOLLOW_MAX_S = 120.0
+#: a request leader restarts at most this many times on a moving chip, then
+#: computes holding the lock (it must finish)
+_LEAD_TRIES = 3
+MISS = object()
+
+
+def _init_flights() -> None:
+    global _FLIGHTS
+    import weakref
+    _FLIGHTS = weakref.WeakKeyDictionary()
+
+
+_init_flights()
+
+
+def _join(store, name: str):
+    """``(event, leader)``: the flight in progress on *store* for *name*, or a
+    new one this caller leads."""
+    with _FLIGHT_LOCK:
+        per = _FLIGHTS.get(store)
+        if per is None:
+            per = {}
+            try:
+                _FLIGHTS[store] = per
+            except TypeError:              # pragma: no cover - not weak-referenceable
+                return threading.Event(), True
+        ev = per.get(name)
+        if ev is not None:
+            return ev, False
+        ev = per[name] = threading.Event()
+        return ev, True
+
+
+def _leave(store, name: str, ev) -> None:
+    with _FLIGHT_LOCK:
+        per = _FLIGHTS.get(store)
+        if per is not None and per.get(name) is ev:
+            del per[name]
+    ev.set()
+
+
+def in_flight(store, name: str) -> bool:
+    """Is a computation of *name* on *store* running now? (tests, debugging)"""
+    with _FLIGHT_LOCK:
+        return name in (_FLIGHTS.get(store) or {})
+
+
+def single_flight(store, name: str, lookup, compute, *, budget_s: float | None = None):
+    """The result of *compute* for *store*, computed once however many callers
+    ask at the same time.
+
+    *lookup()* returns the memoized result for the store's CURRENT content,
+    or :data:`MISS`. *compute()* is called holding ``store._lock``, must
+    re-check the memo, compute, store the memo and return the result.
+    *budget_s*: how long this caller waits at most -- ``None`` is returned
+    past it (a leader stops at its next checkpoint; what it finished stays in
+    its per-chunk memos, and the next caller continues from there)."""
+    deadline = None if budget_s is None else time.monotonic() + budget_s
+    lock = getattr(store, "_lock", None)
+    tries = 0
+    own = getattr(lock, "_is_owned", None)
+    if lock is not None and own is not None and own():
+        # this thread is already inside the lock: no leader can make progress
+        # while it waits, so it computes itself (compute() re-checks the memo)
+        return compute()
+    while True:
+        r = lookup()
+        if r is not MISS:
+            return r
+        if deadline is not None and time.monotonic() >= deadline:
+            return None
+        ev, leader = _join(store, name)
+        if not leader:
+            with wanting(store):
+                left = _FOLLOW_MAX_S if deadline is None else max(0.0, deadline - time.monotonic())
+                ev.wait(left)
+            continue
+        try:
+            y = getattr(_TL, "y", None)
+            if lock is None:
+                return compute()
+            if y is not None:
+                # a background step: its own yielding rules apply, and its
+                # Superseded propagates to it
+                with lock:
+                    return compute()
+            if tries >= _LEAD_TRIES:
+                if deadline is not None:
+                    return None
+                with lock:                  # a chip that keeps moving: finish
+                    return compute()
+            tries += 1
+            with yielding(store, foreground=True, deadline=deadline) as yy:
+                with lock:
+                    return compute()
+            if yy.expired:
+                return None
+            # the chip moved while the lock was handed over: go again
+        finally:
+            _leave(store, name, ev)

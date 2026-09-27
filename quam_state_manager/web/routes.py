@@ -1486,8 +1486,12 @@ def _reconcile_cached_quam_ctx(key: str, ctx: dict, *,
                     return
                 _held_fp = _chip_fp(ctx)   # jsontree-r2-04 review
                 try:
-                    store.reload()
-                    index = LazySearchIndex(store)
+                    _in_place = store.reload()
+                    # w7 fq-sync: an in-place reload fed the index it has
+                    index = store.search_index if _in_place is True else None
+                    if (not isinstance(index, LazySearchIndex)
+                            or getattr(index, "_store", None) is not store):
+                        index = LazySearchIndex(store)
                 except (OSError, ValueError):
                     # The on-disk sync point is already advanced; serving
                     # the cached OLD content behind a now-clean wc would be
@@ -1952,10 +1956,18 @@ def _chip_needs_generated_config(store) -> bool:
     # _config_state_hash -- every re-open of a chip used to walk its whole
     # pulse index again on a daemon thread (~0.3-0.7 s of GIL on a 30-qubit
     # chip, competing with the page the user just asked for).
+    # w7 fq-sync: keyed on the STRUCTURE token (and the catalog overlay the
+    # classes were resolved against). ``known`` is a function of each pulse's
+    # ``__class__`` string, its slot and whether its body is a pointer -- none
+    # of which a plain value write can change -- and the cold PulseIndex walk
+    # holds the store lock for 0.5-0.7 s on big30x, which every pull (now an
+    # in-place value patch) used to pay again right after the write.
+    from quam_state_manager.core import pulse_index as _pi, store_revs as _sr
     with store._lock:
-        key = (store.mutation_seq, len(store.change_log))
+        key = _sr.struct_token(store)
+    overlay = _pi._catalog_overlay()
     cached = getattr(store, "_needs_cfg_memo", None)
-    if cached is not None and cached[0] == key:
+    if cached is not None and cached[0] == key and cached[2] is overlay:
         return cached[1]
     try:
         # An alias row (x180 -> "#./x180_DragCosine") has no class of its own
@@ -1967,7 +1979,7 @@ def _chip_needs_generated_config(store) -> bool:
     except Exception:  # noqa: BLE001 -- a probe never breaks an activation
         logger.debug("pulse-class probe failed", exc_info=True)
         return False
-    store._needs_cfg_memo = (key, verdict)
+    store._needs_cfg_memo = (key, verdict, overlay)
     return verdict
 
 
@@ -2265,9 +2277,13 @@ def _rebuild_after_working_copy_replaced(ctx: dict) -> None:
                 _docs = _pulled[0]
         except OSError:
             _docs = None
-    store.reload(docs=_docs)
-    # w7/livewrite: built on first search, from the content as it is then
-    index = LazySearchIndex(store)
+    in_place = store.reload(docs=_docs)
+    # w7/livewrite: built on first search, from the content as it is then.
+    # w7 fq-sync: a reload that patched values in place fed each one to the
+    # index it already has (update_entry, like an edit) -- keep that one.
+    index = store.search_index if in_place is True else None
+    if not isinstance(index, LazySearchIndex) or getattr(index, "_store", None) is not store:
+        index = LazySearchIndex(store)
     store.search_index = index
     ctx["index"] = index
     index.prewarm(pre=_chip_warm_steps())
@@ -4603,6 +4619,13 @@ def _ctx(**extra: Any) -> dict[str, Any]:
         # exactly where pull is wanted).
         "auto_pull_armable": _auto_pull_armable(),
         "applied_log": _applied_log_rows(),
+        # w7 fq-sync P3c: THE SAME TRAP, once more -- the newest live undo
+        # (QA F1 windows). A fresh window's first tray is this full-page one,
+        # and app.js seeds "what I have seen" from it; stamped only by
+        # _render_tray, the seed was "" and the first OOB tray swap (any
+        # apply) toasted "Another window undid a change" for an undo made
+        # minutes before the window existed.
+        "last_live_undo": (_active_ctx() or {}).get("last_live_undo"),
         # The fields the live chip moved that the user had ALSO edited.
         # Auto-Sync adopts everything else without asking, so when the
         # banner does appear it can say which fields it is about rather
@@ -8394,12 +8417,18 @@ def _leaf_snapshot(ctx, *, lazy: bool = False):
     :func:`_sync_patch` re-checks that it was not touched (its marshal
     digest) before using it, and first asks the cheap question -- is either
     side over ``json_diff``'s cap? -- that decides a 19 MB chip without any
-    walk at all."""
+    walk at all.
+
+    w7 fq-sync: a reload whose files differ only in plain values now patches
+    that same document IN PLACE (``QuamStore.reload``). The snapshot also
+    keeps the store's mutation counter, so :func:`_sync_patch` reads what
+    moved since from the store's own write record instead."""
     try:
         store = ctx.get("store")
         if lazy:
-            doc = store.merged
-            return _LazyLeaves(doc, _json_pieces.mdigest(doc))
+            with store._lock:
+                doc, seq0 = store.merged, store.mutation_seq
+            return _LazyLeaves(doc, _json_pieces.mdigest(doc), seq0)
         leaves, truncated = json_diff.flatten(store.merged)
         return None if truncated else leaves
     except Exception:  # noqa: BLE001 — a missing snapshot only costs a refresh
@@ -8408,10 +8437,10 @@ def _leaf_snapshot(ctx, *, lazy: bool = False):
 
 class _LazyLeaves:
     """A deferred :func:`_leaf_snapshot` (see ``lazy``)."""
-    __slots__ = ("doc", "mdig")
+    __slots__ = ("doc", "mdig", "seq0")
 
-    def __init__(self, doc, mdig):
-        self.doc, self.mdig = doc, mdig
+    def __init__(self, doc, mdig, seq0=None):
+        self.doc, self.mdig, self.seq0 = doc, mdig, seq0
 
     def leaves(self) -> dict | None:
         """The eager snapshot's value, or None (untouched-check failed, or
@@ -8435,9 +8464,12 @@ def _sync_patch(ctx, before: dict | None) -> dict:
     patch can only rewrite leaves the page already shows."""
     if isinstance(before, _LazyLeaves):
         try:
+            _after_doc = ctx.get("store").merged
+            if before.doc is _after_doc and before.seq0 is not None:
+                # w7 fq-sync: the reload patched this very document in place
+                return _sync_patch_in_place(ctx.get("store"), before)
             # w7/livewrite: the cap test first, from per-subtree counts --
             # either side over the cap is "structural" whatever the leaves are
-            _after_doc = ctx.get("store").merged
             if _json_pieces.json_diff_leafcount(_after_doc) > json_diff.WALK_CAP:
                 return _sync_patch_over_cap(before, _after_doc)
             before = before.leaves()
@@ -8462,6 +8494,96 @@ def _sync_patch(ctx, before: dict | None) -> dict:
             if len(changes) > _SYNC_PATCH_CAP:
                 return {"changes": [], "structural": True}
     return {"changes": changes, "structural": structural}
+
+
+def _sync_patch_in_place(store, before: "_LazyLeaves") -> dict:
+    """``_sync_patch`` when the snapshot's document is the store's CURRENT one
+    (w7 fq-sync: the pull's reload patched it in place, or nothing replaced
+    it). Every write since the snapshot is on record with its old value
+    (``store_revs.plain_olds_since``), so the snapshot's leaves are the
+    current ones with those old values put back -- the answer the flatten
+    comparison (or, over the cap, ``leaf_patch.leaf_changes``) gives on two
+    separate documents: the same changed paths, in the same order (the
+    flatten's order under the cap, document order over it), with the same
+    values. A write that is not plain (a key created or deleted, a pointer
+    moved) cannot be put back from the record: then "structural", which only
+    costs the page one re-render."""
+    from quam_state_manager.core import store_revs
+    over_cap = _leaf_count_over_cap(store)
+    if over_cap is None:
+        return {"changes": [], "structural": True}
+    with store._lock:
+        olds = store_revs.plain_olds_since(store, before.seq0)
+        if olds is None:
+            return {"changes": [], "structural": True}
+        first: dict = {}
+        for p, o in olds:
+            first.setdefault(p, o)
+        doc = store.merged
+        keyed = []
+        for p, o in first.items():
+            segs = p.split(".")
+            ok, cur = store_revs._get(doc, segs)
+            if not ok or isinstance(cur, (dict, list)):
+                return {"changes": [], "structural": True}
+            if o != cur:
+                pos = _doc_position(doc, segs)
+                # json_diff.flatten pops a stack: every level's siblings come
+                # out LAST first -- document order with each level reversed
+                keyed.append((pos if over_cap else tuple(-x for x in pos), p, cur))
+    if len(keyed) > _SYNC_PATCH_CAP:
+        return {"changes": [], "structural": True}
+    keyed.sort(key=lambda t: t[0])
+    changes = []
+    for _pos, p, v in keyed:
+        entry = _revert_entry_payload(p, v)
+        entry["value"] = v
+        changes.append(entry)
+    return {"changes": changes, "structural": False}
+
+
+def _leaf_count_over_cap(store) -> bool | None:
+    """Is the store's document over ``json_diff.WALK_CAP`` leaves? The count
+    only moves with the STRUCTURE, so it is kept per ``struct_token`` and a
+    pull that moved values never recounts. None when the chip moved under the
+    (unlocked) count."""
+    from quam_state_manager.core import store_revs
+    r = store_revs.revs_of(store)
+    tok = store_revs.struct_token(store)
+    slot = r.memo.get("__leafcount__")
+    if slot is None or slot[0] != tok:
+        doc = store.merged
+        try:
+            n = _json_pieces._plain_leafcount(doc) if doc else 0
+        except RuntimeError:          # a structural edit resized a dict mid-walk
+            return None
+        if store_revs.struct_token(store) != tok:
+            return None
+        slot = (tok, n)
+        r.memo["__leafcount__"] = slot
+    return slot[1] > json_diff.WALK_CAP
+
+
+def _doc_position(doc, segs: list) -> tuple:
+    """Where the leaf at *segs* sits in document order (dict key order, list
+    index), as a sort key."""
+    pos = []
+    node = doc
+    for s in segs:
+        if isinstance(node, dict):
+            i = 0
+            for k in node:
+                if k == s:
+                    break
+                i += 1
+            pos.append(i)
+            node = node.get(s)
+        elif isinstance(node, list):
+            pos.append(int(s))
+            node = node[int(s)]
+        else:
+            break
+    return tuple(pos)
 
 
 def _sync_patch_over_cap(before: "_LazyLeaves", after_doc: dict) -> dict:
@@ -14519,7 +14641,8 @@ def _state_version_now(ctx: dict | None) -> dict:
         return out
     hm = _history()
     try:
-        out["count"] = len(hm.list_snapshots(Path(ctx["path"])))
+        snaps = hm.list_snapshots(Path(ctx["path"]))
+        out["count"] = len(snaps)
     except Exception:  # noqa: BLE001
         return out
     # STAT-GATED. Resolving `ts` reads BOTH live files whole, re-serializes them
@@ -14531,6 +14654,12 @@ def _state_version_now(ctx: dict | None) -> dict:
     # same gate `working_copy.live_diverged_now` already trusts — so recompute
     # only when they actually moved. Keyed by path so switching chips can never
     # serve the other one's answer.
+    # w7 fq-sync P3a: ...and by the snapshot LIST the answer was looked up in
+    # (list_snapshots hands back a new list object exactly when a capture,
+    # prune or annotation touched the chip's history). Keyed on the files alone,
+    # a GET landing between a live write and its post-write capture memoized
+    # "no snapshot holds this" and the chip read "unrecorded" until the live
+    # files moved again, although the capture had landed a moment later.
     stamp = None
     try:
         p = Path(ctx["path"])
@@ -14540,7 +14669,8 @@ def _state_version_now(ctx: dict | None) -> dict:
     except OSError:
         stamp = None
     memo = ctx.get("_version_memo")
-    if stamp is not None and memo and memo[0] == str(p) and memo[1] == stamp:
+    if (stamp is not None and memo and memo[0] == str(p) and memo[1] == stamp
+            and len(memo) > 3 and memo[3] is snaps):
         out["ts"] = memo[2]
     else:
         try:
@@ -14548,7 +14678,7 @@ def _state_version_now(ctx: dict | None) -> dict:
         except Exception:  # noqa: BLE001
             out["ts"] = None
         if stamp is not None:
-            ctx["_version_memo"] = (str(p), stamp, out["ts"])
+            ctx["_version_memo"] = (str(p), stamp, out["ts"], snaps)
     # "No snapshot holds exactly this content" is the ORDINARY mid-edit state,
     # not a fault — say so plainly rather than inventing a nearest match.
     out["unmatched"] = out["ts"] is None and out["count"] > 0
@@ -14621,12 +14751,24 @@ def state_versions_panel():
     # "unchanged copy" was the docs/132 review's finding; snaps is
     # newest-first, so the first-ever snapshot is the LAST element.
     first_ts = snaps[-1].timestamp if snaps else None
-    for m in snaps:
+    for i, m in enumerate(snaps):
         knd, knd_legacy = kind_for(m)
+        # w7 fq-sync P3b: a zero is only "unchanged" when it can be. A row
+        # captured with no prior records zeros too, and once a run ingest
+        # lands OLDER rows beneath it (the first Apply on a chip with a data
+        # folder), it is no longer the first -- hiding it made the quick-diff
+        # compare the Apply's own snapshot with a weeks-old run ("29049
+        # values differ" after one edit). When both hashes are known, a row
+        # whose content differs from the one right below it is not a copy of
+        # anything shown, whatever its zeros say.
+        below = snaps[i + 1] if i + 1 < len(snaps) else None
+        unlike_below = bool(below is not None and m.state_hash and below.state_hash
+                            and m.state_hash != below.state_hash)
         if changes_only and knd != "exp" and not m.pinned \
                 and not m.label and not m.note \
                 and m.timestamp != ver["ts"] \
                 and m.timestamp != first_ts \
+                and not unlike_below \
                 and isinstance(m.diff_summary, dict) \
                 and m.diff_summary.get("total") == 0:
             hidden_unchanged += 1
@@ -22779,7 +22921,16 @@ def state_sync():
     })
 
 
-def _crash_values_on_chip(store) -> dict | None:
+#: w7 fq-sync: how long a live-write door waits for the chip's lint before it
+#: answers without the crash-value advisory and hands it to a follow-up
+#: (``/state/crash-values``). An incremental lint -- the usual case after an
+#: edit, or after a pull that moved values (the store now patches those in
+#: place) -- takes 0.2-0.4 s on big30x; a whole-chip one takes 3-5 s and is
+#: never waited for here.
+_CRASH_BUDGET_S = 0.6
+
+
+def _crash_values_on_chip(store, budget_s: float | None = None) -> dict | None:
     """QA diagnostics-r2-04: the crash-class values a live write carries.
 
     Every live-write door pushes the WHOLE working copy, so after it the live
@@ -22789,9 +22940,19 @@ def _crash_values_on_chip(store) -> dict | None:
     line / confirm the door already has; it never blocks or asks (docs/104 #1,
     the researcher-trust rule). ``None`` when there are none, and on any
     failure -- an advisory must never break a write that succeeded. Reads only
-    the memoized lint (no live read)."""
+    the memoized lint (no live read).
+
+    *budget_s* (w7 fq-sync): past it, ``{"pending": <content token>}`` -- the
+    lint of THIS content was not ready in time; the page fetches the advisory
+    from ``/state/crash-values`` instead of the write waiting for it. Never a
+    stale answer: the findings are always those of the store's current
+    content (``lint_state``'s memo is keyed on it)."""
+    tok = _crash_token(store)
     try:
-        errs = [f for f in _active_chip_findings(store)
+        findings = _active_chip_findings(store, budget_s=budget_s)
+        if findings is None:
+            return {"pending": tok}
+        errs = [f for f in findings
                 if f.severity == "error" and not getattr(f, "advisory", False)
                 and not getattr(f, "acknowledged", None)]
     except Exception:  # noqa: BLE001
@@ -22811,6 +22972,18 @@ def _crash_values_on_chip(store) -> dict | None:
                      f"crash a node run: {shown}. Fix before running an "
                      "experiment (Diagnostics lists them)."),
     }
+
+
+def _crash_no_pending(c):
+    return None if c and "pending" in c else c
+
+
+def _crash_token(store) -> str:
+    """Which content a pending advisory is about: this store instance (its
+    process-unique serial) at this mutation counter."""
+    from quam_state_manager.core import store_revs
+    serial, seq = store_revs.seq_token(store)
+    return f"{serial}:{seq}"
 
 
 def _sync_pull_apply_to_live(ctx, replay, *, pulled_other_changes=False,
@@ -22986,7 +23159,12 @@ def _sync_pull_apply_to_live(ctx, replay, *, pulled_other_changes=False,
                 ctx["walk_last_snap"] = time.time()
         except Exception:
             logger.warning("History snapshot after pull-apply failed", exc_info=True)
-    _crash = _crash_values_on_chip(store)      # QA diagnostics-r2-04 (advisory)
+    # QA diagnostics-r2-04 (advisory). w7 fq-sync: never waits on a whole-chip
+    # lint -- past the budget the page fetches it (``crash_pending``).
+    _crash = _crash_values_on_chip(store, budget_s=_CRASH_BUDGET_S)
+    _crash_pending = _crash.get("pending") if _crash and "pending" in _crash else None
+    if _crash_pending is not None:
+        _crash = None
     return jsonify({
         "status": "ok",
         "mode": "apply",
@@ -22995,6 +23173,7 @@ def _sync_pull_apply_to_live(ctx, replay, *, pulled_other_changes=False,
         "pulled_other_changes": pulled_other_changes,
         **((patch() if callable(patch) else patch) or {}),
         **({"crash_values": _crash} if _crash else {}),
+        **({"crash_pending": _crash_pending} if _crash_pending is not None else {}),
     })
 
 
@@ -23413,8 +23592,13 @@ def state_apply_to_live():
         except Exception:
             logger.warning("History snapshot after apply failed", exc_info=True)
     # QA diagnostics-r2-04: name the crash-class values the write carried
-    # (advisory -- the result line only; a clean chip's response is unchanged)
-    _crash = _crash_values_on_chip(store)
+    # (advisory -- the result line only; a clean chip's response is unchanged).
+    # w7 fq-sync: never waits on a whole-chip lint -- past the budget the page
+    # fetches it from /state/crash-values (``crashPending``).
+    _crash = _crash_values_on_chip(store, budget_s=_CRASH_BUDGET_S)
+    _crash_pending = _crash.get("pending") if _crash and "pending" in _crash else None
+    if _crash_pending is not None:
+        _crash = None
     if _auto is not None:
         # The applied log IS the feedback; one success toast per edit would be
         # noise the user cannot dismiss fast enough.
@@ -23424,10 +23608,11 @@ def state_apply_to_live():
         # place (the OOB slot renders empty once live_diverged is cleared)
         resp = make_response(_tray_html() + "\n" + _diverged_oob())
         resp.headers["HX-Trigger"] = ("liveDriftChanged, stateHistoryChanged, "
-                                      "autoApplyApplied") if not _crash else json.dumps({
+                                      "autoApplyApplied") if not (_crash or _crash_pending is not None) else json.dumps({
             "liveDriftChanged": None, "stateHistoryChanged": None,
             # auto-apply.js toasts this once per distinct set, not per flush
-            "autoApplyApplied": {"crash": _crash}})
+            "autoApplyApplied": ({"crash": _crash} if _crash
+                                 else {"crash_pending": _crash_pending})})
         if _post_snap is not None:
             resp.call_on_close(lambda: _spawn_post_apply_snapshot(*_post_snap))
         return resp
@@ -23447,8 +23632,31 @@ def state_apply_to_live():
     # dedicated timeline-refresh signal), NOT stateRestored — the latter also closes any
     # open qubit/pair inspector (app.js:1423) and a routine edit→apply must not blank it
     # (audit P1). stateRestored stays reserved for real stage/restore.
-    resp.headers["HX-Trigger"] = "liveDriftChanged, stateHistoryChanged"
+    resp.headers["HX-Trigger"] = ("liveDriftChanged, stateHistoryChanged"
+                                  if _crash_pending is None else json.dumps({
+                                      "liveDriftChanged": None, "stateHistoryChanged": None,
+                                      # w7 fq-sync: app.js fetches the advisory
+                                      "crashPending": {"seq": _crash_pending}}))
     return resp
+
+
+@bp.route("/state/crash-values")
+def state_crash_values():
+    """w7 fq-sync: the crash-value advisory of a live write that answered
+    before the chip's lint was ready (``crash_pending`` / ``crashPending``
+    carried :func:`_crash_token`). Computed here, for THAT content: once the
+    store moved on (an edit, a pull, another chip) it is no longer the content
+    the write carried, and ``{"stale": true}`` says so instead of naming
+    another content's values -- the next write names its own."""
+    ctx = _active_ctx()
+    store = (ctx or {}).get("store")
+    want = request.args.get("seq", "")
+    if store is None or ctx.get("type") != "quam" or _crash_token(store) != want:
+        return jsonify({"stale": True})
+    crash = _crash_values_on_chip(store)
+    if _crash_token(store) != want:
+        return jsonify({"stale": True})
+    return jsonify({"stale": False, "crash_values": crash})
 
 
 @bp.route("/state/revert-last-apply/preflight")
@@ -23603,8 +23811,10 @@ def state_overwrite_live_preflight():
         "replaced": replaced,
         "unsaved": unsaved,
         "hand_tuned": marked,
-        # QA diagnostics-r2-04: one more clause for the SAME confirm
-        "crash_values": _crash_values_on_chip(store),
+        # QA diagnostics-r2-04: one more clause for the SAME confirm. w7
+        # fq-sync: only when the lint is ready within the budget -- else the
+        # confirm goes without it, and the write's own result names them.
+        "crash_values": _crash_no_pending(_crash_values_on_chip(store, budget_s=_CRASH_BUDGET_S)),
         # The push snapshots the pre-apply live first, which is what powers the
         # tray's "Revert last apply" — so this is a reversible action and the
         # confirm should say so. QA correctness-r2-01: only when the live read
@@ -34229,13 +34439,14 @@ def _env_rows_unacked(ctx: dict | None, memo: dict) -> tuple[list, int]:
         return rows, 0
 
 
-def _env_schema_findings(store: QuamStore) -> list:
+def _env_schema_findings(store: QuamStore, *, budget_s: float | None = None) -> list | None:
     """Env-match findings for the active chip against the SELECTED env.
 
     Request-path safe: reads only the warm (stat-keyed) schema-manifest cache
     — ``cached_only=True`` NEVER spawns a subprocess — and the per-store
     memoized analysis (one walk per mutation). Cold cache / no env → []
     (the /diagnostics env card renders its "Probe now" affordance instead).
+    ``None`` only past a *budget_s* (see :func:`_active_chip_findings`).
     """
     from quam_state_manager.core import state_env_validate
     try:
@@ -34243,7 +34454,9 @@ def _env_schema_findings(store: QuamStore) -> list:
         if fc is None:
             return []
         manifest, label, probing = fc
-        analysis = state_env_validate.analysis_for_store(store, manifest)
+        analysis = state_env_validate.analysis_for_store(store, manifest, budget_s=budget_s)
+        if analysis is None:
+            return None
         return state_env_validate.to_diag_findings(
             analysis, env_label=label, probing=probing,
             acknowledged=_env_acks_now(store))
@@ -34333,13 +34546,25 @@ def env_ack_revoke():
     return jsonify(ok=True, revoked=gone)
 
 
-def _active_chip_findings(store: QuamStore) -> list:
+def _active_chip_findings(store: QuamStore, *, budget_s: float | None = None) -> list | None:
     """Lint the active chip's state (+ cached generated config + env match),
-    errors first."""
-    findings = diagnostics.lint_state(store)
+    errors first.
+
+    *budget_s* (w7 fq-sync, the crash-value advisory only): ``None`` when the
+    lint or the env analysis is not ready within it -- never a partial list,
+    which would read as "these are all the findings"."""
+    t0 = time.monotonic()
+    findings = diagnostics.lint_state(store, budget_s=budget_s)
+    if findings is None:
+        return None
     if store.generated_config:
         findings = findings + diagnostics.lint_config(store.generated_config)
-    findings = findings + _env_schema_findings(store)
+    env = _env_schema_findings(
+        store, budget_s=(None if budget_s is None
+                         else max(0.0, budget_s - (time.monotonic() - t0))))
+    if env is None:
+        return None
+    findings = findings + env
     findings.sort(key=lambda f: _DIAG_RANK.get(f.severity, 3))
     return findings
 

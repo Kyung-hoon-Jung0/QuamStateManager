@@ -3285,6 +3285,36 @@ window.showToast = function(message, level) {
 };
 
 /**
+ * w7 fq-sync: a live write never waits on a whole-chip lint. When the chip's
+ * lint was not ready in time, the write answers without its crash-value
+ * advisory (QA diagnostics-r2-04) and carries a content token instead
+ * (`crash_pending` in a JSON answer, the `crashPending` HX-Trigger on an htmx
+ * one); this fetches the advisory for THAT content and hands it to `cb` --
+ * never another content's: once the chip moved on the server answers
+ * `stale` and nothing is shown (the next write names its own).
+ */
+window.CrashAdvisory = {
+    follow: function (token, cb) {
+        if (token === null || token === undefined || token === "" || !window.fetch) return;
+        fetch("/state/crash-values?seq=" + encodeURIComponent(token),
+              { headers: { "HX-Request": "true" } })
+            .then(function (r) { return r.ok ? r.json() : null; })
+            .then(function (d) {
+                if (d && !d.stale) cb(d.crash_values || null);
+            })
+            .catch(function () {});
+    }
+};
+document.addEventListener("crashPending", function (e) {
+    var tok = e && e.detail && e.detail.seq;
+    window.CrashAdvisory.follow(tok, function (c) {
+        if (c && c.sentence && window.showToast) {
+            window.showToast("Applied to the live chip — ⚠ " + c.sentence, "warning");
+        }
+    });
+});
+
+/**
  * Copy text to the clipboard with a uniform highlight + toast. `el` (optional)
  * gets the same transient `.tree-copied` highlight the JSON-tree key-copy uses;
  * `message` (optional) overrides the default "Copied: …" toast. Shared by the
@@ -4109,6 +4139,15 @@ window.doStateSync = function(mode, forced, ackUnseen, expectChip, opts) {
             // as crash-class -- name them in the result line (advisory only).
             var crash = (data.mode === "apply" && data.crash_values && data.crash_values.sentence)
                 ? " ⚠ " + data.crash_values.sentence : "";
+            // w7 fq-sync: the lint was not ready when the write answered --
+            // the advisory follows for the content this write carried
+            if (data.mode === "apply" && data.crash_pending !== undefined && window.CrashAdvisory) {
+                window.CrashAdvisory.follow(data.crash_pending, function (c) {
+                    if (c && c.sentence) {
+                        window.showToast("Written to the live chip — ⚠ " + c.sentence, "warning");
+                    }
+                });
+            }
             if (data.mode === "apply") {
                 if (failed.length) {
                     window.showToast(

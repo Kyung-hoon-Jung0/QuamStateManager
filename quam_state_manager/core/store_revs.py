@@ -80,7 +80,7 @@ class StoreRevs:
     is collected with it and can never be confused with another chip's."""
 
     __slots__ = ("serial", "last_seq", "global_rev", "struct_rev", "sub_rev",
-                 "sub_rev3", "top_rev", "null_rev", "events", "memo", "lock",
+                 "sub_rev3", "top_rev", "null_rev", "events", "olds", "memo", "lock",
                  "__weakref__")
 
     def __init__(self, seq: int):
@@ -97,6 +97,9 @@ class StoreRevs:
         self.sub_rev3: dict[tuple[str, str, str], int] = {}
         # (seq, path | None, plain, top2 | None)
         self.events: deque = deque(maxlen=LOG_MAX)
+        # (seq, value before) of every PLAIN write, for :func:`plain_olds_since`
+        # (w7 fq-sync: what a pull changed, once the reload patches in place)
+        self.olds: deque = deque(maxlen=LOG_MAX)
         # free slots for per-store derived models (name -> anything); they die
         # with the store
         self.memo: dict[str, Any] = {}
@@ -155,7 +158,15 @@ def note(store, kind: str, path: str | None, old: Any = None, new: Any = None) -
 
     Called under ``store._lock`` right after the increment. ``kind`` is
     ``set`` (``old``/``new`` are the values before/after), ``create``,
-    ``delete`` or ``reload``.
+    ``delete``, ``reload`` or ``touch``.
+
+    ``touch`` (w7 fq-sync): the counter moved but NO content did -- a reload
+    that found the files equal to what the store already holds, value for
+    value (``QuamStore.reload``'s in-place patch). It is recorded as the event
+    ``(seq, None, True, None)``: no chunk, structure or column token moves
+    (nothing any of them covers changed), :func:`plain_paths` skips it (no
+    path was written), and a reader that inspects events itself and does not
+    know it sees a ``None`` path -- the "rebuild" answer, never a stale one.
     """
     # created by the very first write: its baseline is the seq BEFORE it
     r = revs_of(store, getattr(store, "mutation_seq", 0) - 1)
@@ -168,12 +179,21 @@ def note(store, kind: str, path: str | None, old: Any = None, new: Any = None) -
             _bump_structure(store)          # unexplained: structure may have moved
         if seq == r.last_seq:
             return                          # already accounted (defensive)
+        if kind == "touch":
+            r.events.append((seq, None, True, None))
+            r.last_seq = seq
+            jm = getattr(store, "journal_mutation", None)
+            if jm is not None:
+                jm(None, False)             # the pulse journal: recompute (cheap, rare)
+            return
         plain = (kind == "set" and path is not None
                  and is_plain_value(old) and is_plain_value(new)
                  and path.rsplit(".", 1)[-1] != "__class__")
         if plain and ((old is None) != (new is None)):
             r.null_rev += 1
         _record(r, seq, path if kind != "reload" else None, plain)
+        if plain:
+            r.olds.append((seq, old))
         # w7 integration: this is the ONE recorder. The PulseIndex's
         # incremental path (w7/pulses) reads QuamStore.mutations_since, whose
         # journal is fed from here with its own, stricter flag: a None<->value
@@ -385,12 +405,42 @@ def seq_token(store) -> tuple:
 
 
 def plain_paths(events: Iterable) -> list[str] | None:
-    """The written paths when EVERY event is plain, else ``None``."""
+    """The written paths when EVERY event is plain, else ``None``. A ``touch``
+    (plain, no path: nothing was written) contributes nothing."""
     out: list[str] = []
     for _seq, path, plain, _t2 in events:
-        if not plain or path is None:
+        if not plain:
             return None
+        if path is None:
+            continue                # a touch: the counter moved, no content did
         out.append(path)
+    return out
+
+
+def plain_olds_since(store, seq: int) -> list[tuple[str, Any]] | None:
+    """``[(path, value before)]`` for every write after ``seq``, oldest first
+    -- or ``None`` unless EVERY event since is a plain write (or a touch) whose
+    old value is still on record. A path written twice appears twice; the
+    FIRST entry holds the value it had at ``seq``.
+
+    w7 fq-sync: a pull now patches the store IN PLACE (``QuamStore.reload``),
+    so the document a caller kept from before it is the same object, updated.
+    What the pull changed is then read here instead of from that document."""
+    ev = changes_since(store, seq)
+    if ev is None:
+        return None
+    r = revs_of(store)
+    with r.lock:
+        olds = {s: v for s, v in r.olds if s > seq}
+    out: list[tuple[str, Any]] = []
+    for s, path, plain, _t2 in ev:
+        if not plain:
+            return None
+        if path is None:
+            continue                # touch
+        if s not in olds:
+            return None             # aged out of the bound: cannot vouch
+        out.append((path, olds[s]))
     return out
 
 

@@ -529,15 +529,22 @@ def _harvest_for_store(store) -> list[str]:
     """:func:`harvest_classes` of ``store.state``, memoized on the store's
     own mutation counters (RAM P10). A chip open asks twice (the type policy
     and the schema warm) and every re-open asks again; each walk visits every
-    dict of the chip (77 ms on a 30-qubit chip). Every in-memory change bumps
-    ``mutation_seq`` or lengthens the change log, so a harvest can never
-    outlive the content it describes -- the key ``_config_state_hash`` uses."""
+    dict of the chip (77 ms on a 30-qubit chip).
+
+    w7 fq-sync: keyed on the store's STRUCTURE token (``store_revs``), not
+    its mutation counter. The harvest reads ``__class__`` strings and which
+    containers exist; a plain value write can change neither (a write to a
+    ``__class__`` key, a container or a pointer is structural and moves the
+    token, and so does anything store_revs was not told about). Every pull
+    is now such a value patch, and the crash-value advisory on the write
+    walked the chip twice more for classes that could not have moved (0.3 s
+    each under load on big30x)."""
     lock = getattr(store, "_lock", None)
     if lock is None:
         return harvest_classes(store.state)
+    from quam_state_manager.core import store_revs
     with lock:
-        key = (getattr(store, "mutation_seq", None), len(getattr(store, "change_log", ()) or ()),
-               id(store.state))
+        key = (store_revs.struct_token(store), id(store.state))
         memo = getattr(store, "_harvest_memo", None)
         if memo is not None and memo[0] == key:
             return list(memo[1])

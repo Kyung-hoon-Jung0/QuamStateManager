@@ -258,50 +258,71 @@ def check_catalog() -> list[dict]:
 _lint_state_cache: "weakref.WeakKeyDictionary" = weakref.WeakKeyDictionary()
 
 
-def lint_state(store) -> list[Finding]:
+def lint_state(store, *, budget_s: float | None = None) -> list[Finding] | None:
     """Lint a :class:`QuamStore` (live or ``from_dicts``) for structural breakage.
 
     Memoized per store at its ``mutation_seq`` (every edit increments it, so the
     cache self-invalidates on mutation). Always returns a FRESH list — some
     callers sort the result in place (``routes._active_chip_findings`` does
     ``findings.sort(...)`` when there's no generated config), so handing back the
-    cached object would corrupt it for the next caller."""
+    cached object would corrupt it for the next caller.
+
+    w7 fq-sync: computed ONCE however many callers ask together
+    (``activity.single_flight``); a request that computes it hands the store
+    lock over every ``activity.HANDOVER_EVERY_S`` while other requests are in
+    flight, instead of holding it for the whole walk. *budget_s*: return
+    ``None`` rather than wait longer than this (only the crash-value advisory
+    passes one; everything the stopped walk finished stays in its per-chunk
+    memos)."""
     from quam_state_manager.core import store_revs
-    seq = store_revs.seq_token(store)
-    hit = _lint_state_cache.get(store)
-    if hit is not None and hit[0] == seq:
-        return list(hit[1])
+
+    def lookup():
+        hit = _lint_state_cache.get(store)
+        if hit is not None and hit[0] == store_revs.seq_token(store):
+            return list(hit[1])
+        return activity.MISS
+
+    hit = lookup()
+    if hit is not activity.MISS:
+        return hit
     # Hold the store lock across the walk: _lint_state_uncached iterates
     # store.merged, and a concurrent /field/edit inserting/deleting a key would
-    # raise 'dict changed size during iteration'. Read-only + ms-fast; the store's
-    # RLock is reentrant so nested resolver calls that re-take it are fine.
+    # raise 'dict changed size during iteration'. The store's RLock is
+    # reentrant so nested resolver calls that re-take it are fine; a
+    # checkpoint that lets it go re-verifies the content before walking on.
     lock = getattr(store, "_lock", None)
-    if lock is not None:
-        # w7 final-QA P3b: the background lint hands the lock to foreground
-        # requests at checkpoints -- but not to one that wants THIS result
-        # (``activity.wanting``): it finishes, and the re-check below takes it.
-        with activity.wanting(store), lock:
-            # RAM P10: re-check under the lock. The background chip prewarm
-            # lints while holding it; a request that arrived meanwhile waited
-            # here and must take THAT result, not lint the chip a second time.
-            seq = store_revs.seq_token(store)
-            hit = _lint_state_cache.get(store)
-            if hit is not None and hit[0] == seq:
-                return list(hit[1])
-            out = _lint_state_uncached(store)
-            if _ram_verify():
-                cold = _lint_state_uncached(store, incremental=False)
-                if [f.as_dict() for f in cold] != [f.as_dict() for f in out]:
-                    from quam_state_manager.core.ramcache import StaleCacheError
-                    raise StaleCacheError("lint_state: incremental result "
-                                          "differs from a cold lint")
-    else:
+    if lock is None:
         out = _lint_state_uncached(store)
-    try:
-        _lint_state_cache[store] = (seq, out)
-    except TypeError:  # pragma: no cover - store not weak-referenceable
-        pass
-    return list(out)
+        try:
+            _lint_state_cache[store] = (store_revs.seq_token(store), out)
+        except TypeError:  # pragma: no cover - store not weak-referenceable
+            pass
+        return list(out)
+
+    def compute():
+        # RAM P10: re-check under the lock. The background chip prewarm lints
+        # while holding it; a caller that arrived meanwhile must take THAT
+        # result, not lint the chip a second time.
+        seq = store_revs.seq_token(store)
+        hit = _lint_state_cache.get(store)
+        if hit is not None and hit[0] == seq:
+            return list(hit[1])
+        out = _lint_state_uncached(store)
+        if _ram_verify():
+            cold = _lint_state_uncached(store, incremental=False)
+            if [f.as_dict() for f in cold] != [f.as_dict() for f in out]:
+                from quam_state_manager.core.ramcache import StaleCacheError
+                raise StaleCacheError("lint_state: incremental result "
+                                      "differs from a cold lint")
+        # stored under the lock at the token the walk started from: every
+        # checkpoint re-verified that token, so the result is of that content
+        try:
+            _lint_state_cache[store] = (seq, out)
+        except TypeError:  # pragma: no cover - store not weak-referenceable
+            pass
+        return list(out)
+
+    return activity.single_flight(store, "lint", lookup, compute, budget_s=budget_s)
 
 
 def lint_is_current(store) -> bool:

@@ -153,6 +153,28 @@ function replaceTrayOuterHTML(attrs) {
   fire({ crash: { sig: 'q2.x180', sentence: 'another set' } });
   check('A18 after a clean flush the set is named again', toasts.length === 3, String(toasts.length));
 
+  // 9. w7 fq-sync: a flush that answered before the lint was ready carries a
+  //    content token; the advisory follows (window.CrashAdvisory, app.js) and
+  //    is named by the SAME once-per-set rule
+  const followed = [];
+  let answer = null;
+  w.CrashAdvisory = { follow: function (tok, cb) { followed.push(tok); cb(answer); } };
+  answer = { sig: 'q2.x180', sentence: 'another set' };
+  fire({ crash_pending: '3:17' });
+  check('A19 a pending flush follows its own token', followed.length === 1 && followed[0] === '3:17',
+        JSON.stringify(followed));
+  check('A20 ...and a set already named is not named again', toasts.length === 3, String(toasts.length));
+  answer = { sig: 'q3.x180', sentence: 'a third set' };
+  fire({ crash_pending: '3:18' });
+  check('A21 a new set that arrives by the follow-up is named', toasts.length === 4
+        && /a third set/.test(toasts[3][0]), JSON.stringify(toasts[3]));
+  answer = null;                             // stale / clean: nothing named...
+  fire({ crash_pending: '3:19' });
+  answer = { sig: 'q3.x180', sentence: 'a third set' };
+  fire({ crash_pending: '3:20' });
+  check('A22 ...and a clean answer resets the memory like a clean flush', toasts.length === 5,
+        String(toasts.length));
+
   if (failures) { console.error(failures + ' check(s) failed'); process.exit(1); }
   console.log('all checks passed');
 })().catch(function (e) { console.error(e && e.stack || e); process.exit(1); });

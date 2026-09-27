@@ -635,39 +635,53 @@ def _manifest_key(manifest: dict | None) -> tuple:
             + (tuple(sorted(manifest.get("classes") or ())),))
 
 
-def analysis_for_store(store, manifest: dict | None) -> dict:
+def analysis_for_store(store, manifest: dict | None, *,
+                       budget_s: float | None = None) -> dict | None:
     """Memoized ``analyze_state`` keyed ``(mutation_seq, manifest versions)`` —
     one O(leaves) walk per mutation, the diagnostics badge/banner/page all read
-    the same result."""
+    the same result. ``None`` only past a *budget_s* (w7 fq-sync, as
+    ``diagnostics.lint_state``)."""
     from quam_state_manager.core import store_revs
     mkey = _manifest_key(manifest)
-    key = (store_revs.seq_token(store), mkey)
-    hit = _analysis_memo.get(store)
-    if hit is not None and hit[0] == key:
-        return hit[1]
+
+    def lookup():
+        hit = _analysis_memo.get(store)
+        if hit is not None and hit[0] == (store_revs.seq_token(store), mkey):
+            return hit[1]
+        return _activity.MISS
+
+    hit = lookup()
+    if hit is not _activity.MISS:
+        return hit
     lock = getattr(store, "_lock", None)
-    if lock is not None:
-        # w7 final-QA P3b: a caller that wants THIS result is not handed the
-        # lock by a yielding background analysis -- it waits and takes it
-        with _activity.wanting(store), lock:
-            # RAM P10: re-check under the lock (the background chip prewarm
-            # may have finished this very analysis while we waited for it).
-            key = (store_revs.seq_token(store), mkey)
-            hit = _analysis_memo.get(store)
-            if hit is not None and hit[0] == key:
-                return hit[1]
-            res = analyze_state(store.state, manifest,
-                                _chunks=_ChunkMemo(store, "env", mkey))
-    else:
+    if lock is None:
         res = analyze_state(store.state, manifest)
-    if _verify_on() and manifest:
-        cold = analyze_state(store.state, manifest)
-        if cold != res:
-            from quam_state_manager.core.ramcache import StaleCacheError
-            raise StaleCacheError("analysis_for_store: chunked result differs "
-                                  "from a cold analyze_state")
-    _analysis_memo[store] = (key, res)
-    return res
+        _analysis_memo[store] = ((store_revs.seq_token(store), mkey), res)
+        return res
+
+    def compute():
+        # RAM P10: re-check under the lock (the background chip prewarm may
+        # have finished this very analysis while we waited for it).
+        key = (store_revs.seq_token(store), mkey)
+        hit = _analysis_memo.get(store)
+        if hit is not None and hit[0] == key:
+            return hit[1]
+        res = analyze_state(store.state, manifest,
+                            _chunks=_ChunkMemo(store, "env", mkey))
+        if _verify_on() and manifest:
+            cold = analyze_state(store.state, manifest)
+            if cold != res:
+                from quam_state_manager.core.ramcache import StaleCacheError
+                raise StaleCacheError("analysis_for_store: chunked result differs "
+                                      "from a cold analyze_state")
+        _analysis_memo[store] = (key, res)
+        return res
+
+    # w7 fq-sync: computed once however many callers ask together; a request
+    # computing it hands the lock over while others are in flight
+    # (``activity.single_flight``, the lint's rule).
+    return _activity.single_flight(store, "env:" + repr(mkey), lookup, compute,
+                                   budget_s=budget_s)
 
 
 def analysis_is_current(store, manifest: dict | None) -> bool:

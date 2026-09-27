@@ -397,6 +397,27 @@ class KeyedMemo:
             e = self._entries.get(slot)
             return e is not None and e.token == token
 
+    def get_held(self, slot: Any, token: Any = None, default: Any = None) -> Any:
+        """The value held for exactly ``(slot, token)``, or *default* -- a hit
+        (LRU order and counters as :meth:`get`) that never computes.
+
+        For a CONTENT-ADDRESSED memo read by lookup only (w7 fq-sync P3d,
+        ``diff_cache.lookup``): its slot names the inputs the value was
+        computed from, and the reader has nothing to recompute it with.
+        Reading it through :meth:`get` with a "missing" compute made shadow
+        mode (``SM_RAM_VERIFY``) compare every hit with that sentinel and
+        raise :class:`StaleCacheError` on a correct value; the value is
+        verified where it is COMPUTED (the writer's own :meth:`get`)."""
+        with _LOCK:
+            e = self._entries.get(slot)
+            if e is None or e.token != token:
+                self.misses += 1
+                return default
+            e.used = next(_CLOCK)
+            self._entries.move_to_end(slot)
+            self.hits += 1
+            return e.value
+
     def peek(self, slot: Any) -> tuple[Any, Any] | None:
         """``(token, value)`` currently held for ``slot`` -- for tests and
         diagnostics only; a request must go through :meth:`get`."""

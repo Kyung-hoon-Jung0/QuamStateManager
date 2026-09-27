@@ -104,6 +104,7 @@ class PointerWarning:
 
 
 _SENTINEL = object()
+_UNSET = object()      # reload(): "the caller's docs, digest the files' bytes"
 
 
 def merge_state_wiring(state: dict, wiring: dict) -> dict:
@@ -253,14 +254,17 @@ class QuamStore:
     # Loading
     # ------------------------------------------------------------------
 
-    def _load(self, docs: tuple[dict, dict] | None = None) -> None:
-        state_path = self.folder_path / "state.json"
-        wiring_path = self.folder_path / "wiring.json"
-
-        if not state_path.exists():
+    def _check_files(self) -> None:
+        if not (self.folder_path / "state.json").exists():
             raise FileNotFoundError(f"state.json not found in {self.folder_path}")
-        if not wiring_path.exists():
+        if not (self.folder_path / "wiring.json").exists():
             raise FileNotFoundError(f"wiring.json not found in {self.folder_path}")
+
+    def _load(self, docs: tuple[dict, dict] | None = None, *, digest: Any = None) -> None:
+        # ``digest`` (w7 fq-sync): the file digest of the bytes *docs* were
+        # parsed from, when the caller read them itself (``reload``);
+        # ``_UNSET`` / None keep the historical behaviour below.
+        self._check_files()
 
         # safe_io.read_state_wiring opens both files share-delete on Windows
         # and brackets the pair with mtime checks, so a writer landing
@@ -276,7 +280,8 @@ class QuamStore:
             # which only means "this store cannot be parked until a file
             # load" -- never a wrong claim.
             self.state, self.wiring = docs
-            self.file_digest = _pair_bytes_digest(self.folder_path)
+            self.file_digest = (_pair_bytes_digest(self.folder_path)
+                                if digest is None or digest is _UNSET else digest)
         else:
             try:
                 self.state, self.wiring, sb, wb = safe_io.read_state_wiring_raw(self.folder_path)
@@ -385,7 +390,7 @@ class QuamStore:
     # Reload
     # ------------------------------------------------------------------
 
-    def reload(self, docs: tuple[dict, dict] | None = None) -> None:
+    def reload(self, docs: tuple[dict, dict] | None = None) -> bool:
         """Re-read files from disk and rebuild everything. Acquires _lock.
 
         ``docs`` (w7/livewrite): the ``(state, wiring)`` the caller just wrote
@@ -393,9 +398,29 @@ class QuamStore:
         parse, so the re-read is skipped. The caller hands them over (the
         store mutates them from now on) and vouches that the folder was not
         written since; ``_rebuild_after_working_copy_replaced`` checks that
-        with the pair's (mtime_ns, size) fingerprint before passing them."""
+        with the pair's (mtime_ns, size) fingerprint before passing them.
+
+        w7 fq-sync: when the files differ from what the store holds only in
+        plain scalar values (:func:`plain_value_patch`), those values are
+        written into the store's OWN documents instead -- one plain ``set``
+        event each, like ``Modifier.set_value`` -- so every incremental cache
+        follows the handful of values a pull moved instead of recomputing the
+        chip. The documents are then JSON-identical to the files (the patch's
+        contract), so nothing a later save writes can differ. Returns True
+        when it patched in place, False after a full rebuild."""
         with self._lock:
-            self._load(docs)
+            if docs is None:
+                self._check_files()
+                try:
+                    st, wi, sb, wb = safe_io.read_state_wiring_raw(self.folder_path)
+                except safe_io.LiveFileError as exc:
+                    raise ValueError(str(exc)) from exc
+                docs, digest = (st, wi), file_digest(sb, wb)
+            else:
+                digest = _UNSET
+            if self._patch_in_place(docs, digest):
+                return True
+            self._load(docs, digest=digest)
             # The generated config is KEPT: it is basis-hash-keyed
             # (``generated_config_meta["basis_hash"]`` vs the content hash),
             # so every reader already knows whether it is stale. Nulling it
@@ -409,6 +434,93 @@ class QuamStore:
             from quam_state_manager.core.store_revs import note as _revs_note
             _revs_note(self, "reload", None)
             self.loaded_seq = self.mutation_seq
+            return False
+
+    def _patch_in_place(self, docs: tuple[dict, dict], digest: Any) -> bool:
+        """``reload``'s in-place road (see there and :func:`plain_value_patch`).
+        Caller holds ``_lock``. Decides everything BEFORE the first write: a
+        False return leaves the store exactly as it was."""
+        new_state, new_wiring = docs
+        state, wiring, merged = self.state, self.wiring, self.merged
+        if not (isinstance(state, dict) and isinstance(wiring, dict)
+                and isinstance(merged, dict)):
+            return False
+        # The merged root must be the plain top-level union of the two
+        # documents (no colliding key, so no deep-merged copy that a write into
+        # the source would miss): every merged value IS the source's object.
+        if set(state) & set(wiring) or len(merged) != len(state) + len(wiring):
+            return False
+        for src in (state, wiring):
+            for k, v in src.items():
+                if merged.get(k, _SENTINEL) is not v:
+                    return False
+        # A pending STRUCTURAL edit (created / deleted subtree) leaves no plain
+        # event to replace its change-log entry with -- rebuild.
+        log = list(self.change_log)
+        if any(getattr(e, "created", False) or getattr(e, "deleted", False) for e in log):
+            return False
+        ps = plain_value_patch(state, new_state)
+        if ps is None:
+            return False
+        pw = plain_value_patch(wiring, new_wiring, RELOAD_PATCH_MAX - len(ps))
+        if pw is None:
+            return False
+        from quam_state_manager.core import store_revs as _sr
+        changed = {p for _c, _k, p, _o, _n in ps + pw}
+        # the change log's other paths must resolve (they are re-announced
+        # below, so a cache marking them "modified" re-renders them)
+        relog: list[str] = []
+        for e in log:
+            p = e.dot_path
+            if p in changed:
+                continue
+            ok, _v = _sr._get(merged, p.split("."))
+            if not ok:
+                return False
+            changed.add(p)
+            relog.append(p)
+
+        idx = self.search_index
+        for container, key, path, old, new in ps + pw:
+            container[key] = new
+            if "." not in path:
+                merged[key] = new           # a top-level scalar: merged is its own dict
+            self.mutation_seq += 1
+            _sr.note(self, "set", path, old, new)
+            if idx is not None:
+                idx.update_entry(path, new)
+        # An unapplied edit whose value the files ALSO hold leaves no value
+        # change, but its entry leaves the change log: announce the path so
+        # whatever marks it as edited re-reads it.
+        for p in relog:
+            _ok, cur = _sr._get(merged, p.split("."))
+            self.mutation_seq += 1
+            _sr.note(self, "set", p, cur, cur)
+        if not ps and not pw and not relog:
+            # nothing moved -- but a reload still advances the counter (the
+            # redo stack, the tray's PaneState and ETags key on it)
+            self.mutation_seq += 1
+            _sr.note(self, "touch", None)
+        self.change_log.clear()
+        self._clear_pointer_cache()
+        self.file_digest = (_pair_bytes_digest(self.folder_path)
+                            if digest is None or digest is _UNSET else digest)
+        if self._validate:
+            self._validate_pointers()
+        self.loaded_seq = self.mutation_seq
+        if _ram_verify():
+            import json as _json
+            if (_json.dumps(self.state) != _json.dumps(new_state)
+                    or _json.dumps(self.wiring) != _json.dumps(new_wiring)
+                    or _json.dumps(self.merged) != _json.dumps(
+                        merge_state_wiring(new_state, new_wiring))):
+                from quam_state_manager.core.ramcache import StaleCacheError
+                raise StaleCacheError("reload: the in-place patch does not "
+                                      "reproduce the files")
+        logger.info("Reloaded quam_state in place from %s (%d value%s)",
+                    self.folder_path, len(ps) + len(pw),
+                    "" if len(ps) + len(pw) == 1 else "s")
+        return True
 
     # ------------------------------------------------------------------
     # Mutation journal
@@ -563,6 +675,142 @@ def _pair_bytes_digest(folder: Path) -> str | None:
     if sb is None or wb is None or before != after:
         return None
     return file_digest(sb, wb)
+
+# ---------------------------------------------------------------------------
+# w7 fq-sync: a reload that moved only VALUES is patched in place
+# ---------------------------------------------------------------------------
+#
+# A pull (Take live, Pull & apply, the post-node reconcile) used to rebuild the
+# store from the new files, and a rebuild is structural for every token in
+# store_revs: the lint, the env analysis, the Live-Edit grids, the pulse index
+# ... all recomputed the WHOLE chip afterwards (3-5 s of lint alone on the
+# 30-qubit rig, paid by the request that wrote the live chip). But what a pull
+# usually brings is a handful of values a node wrote. When the new files hold
+# exactly the documents the store already holds -- same keys in the same order,
+# same list lengths, same pointer strings, same classes -- except for scalar
+# leaves, applying those leaves to the store's own documents IS the reload,
+# and it is exactly what N ``Modifier.set_value`` writes do, which every cache
+# in the app already follows incrementally.
+#
+# "Exactly" is the whole contract, because every later save serializes these
+# documents: a leaf counts as unchanged only when a JSON dump could not tell
+# the two apart (same type -- 1 vs 1.0 vs True; same float bits for 0.0/-0.0;
+# NaN equals NaN), and a subtree is skipped only when it is ``==`` AND
+# marshals to the same bytes (marshal encodes types, float bits and key order).
+# Anything else -- a key added, dropped or reordered, a list resized, a
+# container or pointer or ``__class__`` value changed, a key the dotted-path
+# grammar cannot name -- falls back to the full rebuild, as before.
+
+#: More changed leaves than this and the full rebuild is the cheaper road.
+RELOAD_PATCH_MAX = 2048
+
+
+class _NotPlain(Exception):
+    pass
+
+
+def _ram_verify() -> bool:
+    import os
+    return os.environ.get("SM_RAM_VERIFY", "") not in ("", "0")
+
+
+def _leaf_same(a: Any, b: Any) -> bool:
+    """Would ``json.dumps`` write *a* and *b* identically?"""
+    if type(a) is not type(b):
+        return False
+    if a == b:
+        if type(a) is float and a == 0.0:
+            return str(a) == str(b)            # 0.0 vs -0.0
+        return True
+    return type(a) is float and a != a and b != b    # NaN, NaN
+
+
+def _subtree_same(a: Any, b: Any) -> bool:
+    """A cheap sufficient test for "leaf-for-leaf :func:`_leaf_same`, same
+    keys in the same order": ``==`` and equal marshal bytes. False only
+    means "look inside".
+
+    Marshal format 2, like ``json_pieces``: from format 3 on, an object
+    referenced more than once is written as a back-reference, so the bytes
+    depend on how many OTHER references each value has -- a store's
+    documents (whose leaves the search index and caches also hold) never
+    marshalled equal to a fresh parse, and every subtree was walked (0.6 s
+    on big30x instead of ~50 ms). Format 2 writes types, float bits and key
+    order, and nothing about sharing."""
+    import marshal
+    try:
+        return a == b and marshal.dumps(a, 2) == marshal.dumps(b, 2)
+    except (ValueError, TypeError, RecursionError):
+        return False
+
+
+def _path_key_ok(k: Any) -> bool:
+    return type(k) is str and k != "" and "." not in k
+
+
+def plain_value_patch(old: dict, new: dict, cap: int = RELOAD_PATCH_MAX) -> list | None:
+    """The leaf writes that turn *old* into *new* when they differ only in
+    plain scalar values: ``[(container, key, dot_path, old_value, new_value)]``
+    with *container* the dict/list INSIDE *old* to write into, in document
+    order -- or None whenever *new* is not reachable by such writes alone (see
+    the section comment). Pure: neither document is touched."""
+    out: list = []
+
+    def walk(a: Any, b: Any, segs: list) -> None:
+        if a is b:
+            return
+        ta = type(a)
+        if ta is dict or ta is list:
+            if type(b) is not ta or len(a) != len(b):
+                raise _NotPlain
+            if _subtree_same(a, b):
+                return
+            if ta is dict:
+                if list(a) != list(b):
+                    raise _NotPlain
+                for k, va in a.items():
+                    vb = b[k]
+                    if va is vb:
+                        continue
+                    if type(va) in (dict, list):
+                        walk(va, vb, segs + [k])
+                    elif not _leaf_same(va, vb):
+                        leaf(a, k, segs + [k], va, vb)
+            else:
+                for i, va in enumerate(a):
+                    vb = b[i]
+                    if va is vb:
+                        continue
+                    if type(va) in (dict, list):
+                        walk(va, vb, segs + [i])
+                    elif not _leaf_same(va, vb):
+                        leaf(a, i, segs + [i], va, vb)
+            return
+        raise _NotPlain                          # a leaf reached as a subtree
+
+    def leaf(container, key, segs, va, vb) -> None:
+        if type(vb) in (dict, list):
+            raise _NotPlain
+        for v in (va, vb):
+            if isinstance(v, str) and v.startswith("#"):
+                raise _NotPlain                  # a pointer moves structure
+        if segs[-1] == "__class__":
+            raise _NotPlain
+        for s in segs:
+            if type(s) is not int and not _path_key_ok(s):
+                raise _NotPlain
+        out.append((container, key, ".".join(str(s) for s in segs), va, vb))
+        if len(out) > cap:
+            raise _NotPlain
+
+    try:
+        if type(old) is not dict or type(new) is not dict:
+            return None
+        walk(old, new, [])
+    except (_NotPlain, RecursionError):
+        return None
+    return out
+
 
 def is_pristine(store: "QuamStore") -> bool:
     """True when *store* still holds exactly the bytes it was loaded from:
