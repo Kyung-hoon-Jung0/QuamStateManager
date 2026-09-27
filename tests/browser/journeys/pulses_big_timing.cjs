@@ -1,4 +1,4 @@
-/* Pulses page speed on a big chip (docs/2xx pulse locations: the shape
+/* Pulses page speed on a big chip (docs/217 pulse locations: the shape
  * discovery walk must not make the page slower in a way the user feels).
  * Measures, in real Chrome: first open (cold index build), reload (warm),
  * a search keystroke, the "All" tab after a field commit (the index is

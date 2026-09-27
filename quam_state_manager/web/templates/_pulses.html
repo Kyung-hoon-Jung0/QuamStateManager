@@ -104,7 +104,7 @@
                onclick="pulseTabActive(this)"
                class="{% if active_channel == 'pair_drive' %}active{% endif %}">Pair CR/ZZ</a></li>
         {% endif %}
-        {# docs/2xx: pulses found by shape outside the named places (a
+        {# docs/217: pulses found by shape outside the named places (a
            coupler's own operations, a TWPA pump, a lab's new macro slot) #}
         {% if has_found %}
         <li><a href="/pulses?channel=found{{ _q }}" hx-get="/pulses?rows=1&channel=found&per_page={{ per_page }}"

@@ -1,4 +1,4 @@
-"""docs/2xx -- Pulses adapt to a pulse class SM has never seen, with no SM change.
+"""docs/218 -- Pulses adapt to a pulse class SM has never seen, with no SM change.
 
 User queue item 1 (2026-09-25): when a lab adds a CZ pulse whose waveform class
 SM does not know, SM itself had to be modified. The pins here hold the four
@@ -751,7 +751,7 @@ class TestThePage:
 
 
 class TestTheAttachedSchemaIsValidatedOnEveryRead:
-    """verifier round (docs/2xx): the manifest the STORE holds -- what the
+    """verifier round (docs/218): the manifest the STORE holds -- what the
     detail and edit forms type fields from -- is checked on every surface
     that reads it, and a module named mid-probe is never left unread."""
 

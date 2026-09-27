@@ -1,4 +1,4 @@
-/* docs/2xx adaptive pulses, verifier round -- the class schema must never be
+/* docs/218 adaptive pulses, verifier round -- the class schema must never be
  * older than what a cold probe would read, on any surface, in real Chrome.
  *
  * Rig as pulses_adaptive.cjs, plus smlab_scratch.third_pulses (TriCZPulse)

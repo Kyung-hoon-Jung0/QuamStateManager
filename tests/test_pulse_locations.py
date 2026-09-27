@@ -1,4 +1,4 @@
-"""Pulses found by SHAPE, not by name (docs/2xx pulse locations).
+"""Pulses found by SHAPE, not by name (docs/217 pulse locations).
 
 A lab hand-adds pulses where SM's whitelist never looked -- a second drive
 channel, a coupler's own ``operations``, a TWPA pump, a new macro slot. These

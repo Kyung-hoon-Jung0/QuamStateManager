@@ -827,7 +827,7 @@ def env_creatable_specs(roster: dict | None = None) -> dict[str, PulseSpec]:
         canonical = rec.get("canonical")
 
         if rec.get("lab"):
-            # docs/2xx adaptive pulses: a class the LAB wrote, found by the
+            # docs/218 adaptive pulses: a class the LAB wrote, found by the
             # probe's subclass closure over what the chip's own classes (and
             # any module the user named) imported -- it may not be on the chip
             # yet, which is exactly the "we just added a CZ pulse class" case
@@ -852,7 +852,7 @@ def env_creatable_specs(roster: dict | None = None) -> dict[str, PulseSpec]:
 
 def adaptive_spec_for(qclass: Any) -> PulseSpec | None:
     """The field schema of a pulse class SM has NO catalog entry for, from the
-    selected env's own dataclass (docs/2xx adaptive pulses) -- or None.
+    selected env's own dataclass (docs/218 adaptive pulses) -- or None.
 
     Two sources, the same two the create form reads: the env's pulse roster
     (quam homes plus the lab classes the probe's subclass closure found) when

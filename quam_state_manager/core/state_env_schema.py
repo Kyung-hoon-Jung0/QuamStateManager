@@ -51,7 +51,7 @@ STATE_SCHEMA_SCRIPT = _script_path("probe_state_schema.py")
 # "doc" + class "doc" for the key manual, 2026-08-27): an older entry is a MISS,
 # else the docs would stay silently absent for everyone with a warm cache.
 #
-# 3 (docs/2xx adaptive pulses): the pulse roster also carries the LAB's own
+# 3 (docs/218 adaptive pulses): the pulse roster also carries the LAB's own
 # pulse classes (``lab: true``) and the manifest records the out-of-env
 # ``sources`` it was computed from; a format-2 entry has neither, and serving
 # it would hide a class the lab added for as long as the env's versions hold.
@@ -162,7 +162,7 @@ def _decorate(manifest: dict, requested=None) -> dict:
 
 
 # ---------------------------------------------------------------------------
-# lab sources + user-named pulse modules (docs/2xx adaptive pulses)
+# lab sources + user-named pulse modules (docs/218 adaptive pulses)
 # ---------------------------------------------------------------------------
 
 def sources_fresh(sources: Any) -> bool:

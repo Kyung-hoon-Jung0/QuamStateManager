@@ -9,7 +9,7 @@
   "is_alias",
   "used_by"
  ],
- "note": "whitelist enumeration identity BEFORE shape discovery (docs/2xx pulse locations), computed with the pre-change pulse_index.py",
+ "note": "whitelist enumeration identity BEFORE shape discovery (docs/217 pulse locations), computed with the pre-change pulse_index.py",
  "chips": {
   "D:/work/sm_qa_rigs/_shared/bigstate/big20": {
    "n": 1032,

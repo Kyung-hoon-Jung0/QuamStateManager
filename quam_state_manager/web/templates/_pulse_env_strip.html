@@ -26,7 +26,7 @@
          hx-sync="#table-pane:replace" hx-push-url="true">Generate Config</a>.</span>
   {% elif _busy %}
     <span class="pulse-env-badge">probing…</span>
-    {# docs/2xx: an edit to the lab's own package does not move the env's
+    {# docs/218: an edit to the lab's own package does not move the env's
        signature, so SM re-stats the files the last probe read and re-reads
        the classes when one changed -- say which of the two this is #}
     <span class="muted">{% if lab_code_changed and lab_stale_reason == 'modules' %}the
@@ -77,7 +77,7 @@
             onclick="PulsesPage.envStripProbe(this)">Probe now</button>
   {% endif %}
   {% if env_card.selected and env_card.selected_exists %}
-  {# docs/2xx adaptive pulses: SM finds your own pulse classes in the modules
+  {# docs/218 adaptive pulses: SM finds your own pulse classes in the modules
      the chip already imports. A class in a module the chip does not use yet is
      reachable only by NAMING the module -- the probe never walks a package
      blind (a lab module may talk to an instrument at import). #}

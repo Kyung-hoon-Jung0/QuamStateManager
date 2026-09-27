@@ -3,7 +3,7 @@
 //  - createTypeChanged fills the HIDDEN qclass input + the visible display
 //    (users never type class paths) and the "env" provenance hint;
 //  - env-only classes show the no-transcription note and a "draw with the
-//    class's own code" button instead of an automatic preview (docs/2xx
+//    class's own code" button instead of an automatic preview (docs/218
 //    adaptive pulses); the button posts qclass + the typed values to
 //    /api/pulse/lab-waveform and draws the answer; switching back to a
 //    synthesized class removes the button;
@@ -400,7 +400,7 @@ ok(!!note3 && /Discovered in the selected environment/.test(note3.textContent),
    'P13: an entry with no doc keeps the env wording');
 root._catalog.CosineBipolarPulse.doc = envDoc;
 
-// P14 (docs/2xx): the button asks the CLASS ITSELF -- qclass + the values in
+// P14 (docs/218): the button asks the CLASS ITSELF -- qclass + the values in
 // the form, to the lab route -- and draws what comes back, labelled as such.
 typeSel.value = 'LabOwnPulse'; P.createTypeChanged(typeSel);
 var amp = doc.querySelector('#pulse-create-fields input[name="amplitude"]');
@@ -426,7 +426,7 @@ setTimeout(function () {
   p15();
 }, 20);
 
-// P15 (docs/2xx verifier round): a detail whose class schema predates a lab
+// P15 (docs/218 verifier round): a detail whose class schema predates a lab
 // edit polls /pulse/schema-status while SM re-reads the class, then
 // re-renders itself -- but never over an uncommitted edit (it says so).
 function p15() {

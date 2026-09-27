@@ -156,7 +156,7 @@ def build_op_referrers(reverse_index: dict[str, list[str]],
     :func:`used_by` (O(targets)) per row. Internal self-refs are excluded.
     ``_op_path_of`` maps both a field target and the op node itself (an alias
     target) to the same 5-segment op path; *found* (the shape-discovered
-    pulse paths, docs/2xx) is consulted only when that static map misses."""
+    pulse paths, docs/217) is consulted only when that static map misses."""
     out: dict[str, set] = {}
     for target, holders in reverse_index.items():
         op = _op_path_of(target)
@@ -225,7 +225,7 @@ def _row_for_pulse(merged: dict, path: str, body: Any, *,
         "used_by": (op_referrers.get(path, []) if op_referrers is not None
                     else (used_by(merged, path, reverse_index)
                           if reverse_index is not None else [])),
-        # docs/2xx pulse locations: a NAMED op in an ``operations`` dict can be
+        # docs/217 pulse locations: a NAMED op in an ``operations`` dict can be
         # renamed / duplicated beside itself; a slot (``flux_pulse_qubit``) is
         # a schema field of its macro and cannot.
         "renamable": _in_operations(path),
@@ -356,7 +356,7 @@ def _owner_of(merged: dict, segs: list[str]) -> tuple[str, str, int]:
 
 
 def _discover(merged: dict, known: set[str]) -> list[tuple[str, Any, dict]]:
-    """Pulses found by SHAPE, not by name (docs/2xx pulse locations).
+    """Pulses found by SHAPE, not by name (docs/217 pulse locations).
 
     A lab hand-adds pulses where SM's whitelist never looked (a second drive
     channel ``xy2``, a coupler's own ``operations``, a TWPA pump, a new macro
@@ -532,7 +532,7 @@ def list_pulses(merged: dict, *, with_used_by: bool = True,
                     channel=channel, op_name=op_name, gate=None)))
 
     known = {p for p, _b, _k in pending}
-    # docs/2xx: ``discover=False`` is the whitelist alone -- the pin that the
+    # docs/217: ``discover=False`` is the whitelist alone -- the pin that the
     # shape discovery never moves, alters or duplicates an existing row
     found = _discover(merged, known) if discover else []
     op_referrers = (build_op_referrers(

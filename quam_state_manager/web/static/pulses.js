@@ -99,7 +99,7 @@ window.PulsesPage = (function () {
             sec.synthErr = (data && data.error) || 'preview failed';
             if (data && data.reason === 'unknown_class') {
                 sec.lab = true;
-                // docs/2xx: the class's own code at the committed values
+                // docs/218: the class's own code at the committed values
                 // first; the generated config only when that cannot answer
                 labInto(root, [sec], function (failed) {
                     if (gen !== sec.cpGen) return;
@@ -170,7 +170,7 @@ window.PulsesPage = (function () {
             .then(function () { if (gen === sec.cpGen) done(); });
     }
 
-    /* docs/2xx adaptive pulses -- the waveform SM has no copy of, drawn by
+    /* docs/218 adaptive pulses -- the waveform SM has no copy of, drawn by
        the CLASS ITSELF: the selected env builds the dataclass from the pulse's
        current fields and calls quam's own Pulse.calculate_waveform(), the
        method generate_config() calls. Unlike the generated config it is never
@@ -560,7 +560,7 @@ window.PulsesPage = (function () {
             cb({ ok: true, plot: hit, param_errors: {} });
             return;
         }
-        // docs/2xx: a lab class has no in-process synthesizer -- its own code
+        // docs/218: a lab class has no in-process synthesizer -- its own code
         // draws the uncommitted values (same answer shape as /api/pulse/synth)
         var lab = !!(holder && holder.lab && body.path);
         fetch(lab ? '/api/pulse/lab-waveform' : '/api/pulse/synth', {
@@ -588,7 +588,7 @@ window.PulsesPage = (function () {
         try { return JSON.parse(el.textContent); } catch (e) { return null; }
     }
 
-    /* docs/2xx: the detail says its class schema predates a lab edit while
+    /* docs/218: the detail says its class schema predates a lab edit while
        SM re-reads the class; poll until the fresh schema is installed, then
        re-render the view -- never over an uncommitted edit (the note then
        asks for a reopen instead). */
@@ -1202,7 +1202,7 @@ window.PulsesPage = (function () {
         // say so instead of showing a stale/empty plot.
         var plot = document.getElementById('pulse-create-plot');
         var plotBar = root.querySelector('.pulse-plot-bar');
-        // docs/2xx: a class SM has no transcription of is drawn by its OWN
+        // docs/218: a class SM has no transcription of is drawn by its OWN
         // code on request (a subprocess, a few seconds) -- the plot stays,
         // with a button instead of an automatic per-keystroke run
         if (plot) plot.hidden = false;
@@ -1672,7 +1672,7 @@ window.PulsesPage = (function () {
 
     // Env-strip "Probe now" — rides the diagnostics probe (single-flighted;
     // installs the pulse-roster overlay on success), then re-polls the strip.
-    /* docs/2xx: a probe that finished while the create form was open found
+    /* docs/218: a probe that finished while the create form was open found
        classes the form was built without -- rebuild it, keeping the target
        the user had picked (qubit + channel ride the URL like the qubit page's
        "Add pulse" button). */
@@ -1909,7 +1909,7 @@ window.PulsesPage = (function () {
         createValidateGateName: createValidateGateName,
         createSyncQdacChannel: createSyncQdacChannel,
         envStripProbe: envStripProbe,
-        _pollSchema: pollSchema,   // docs/2xx: exported for the selfcheck
+        _pollSchema: pollSchema,   // docs/218: exported for the selfcheck
         reloadCreateForm: reloadCreateForm,
         createSyncIqClasses: createSyncIqClasses,
         copyLoadSources: copyLoadSources,

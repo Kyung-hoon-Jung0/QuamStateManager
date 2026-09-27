@@ -1,4 +1,4 @@
-/* docs/2xx adaptive pulses -- a pulse class SM has never seen, in real Chrome.
+/* docs/218 adaptive pulses -- a pulse class SM has never seen, in real Chrome.
  *
  * Rig: an SM serving a COPY of a customer chip whose selected env imports the
  * lab's own quam_config (SNZTwoFluxPulse & co.), plus a scratch package on

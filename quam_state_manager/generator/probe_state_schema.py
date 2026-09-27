@@ -492,7 +492,7 @@ def _dump_pulse_roster() -> dict:
             if home not in rec["homes"]:
                 rec["homes"].append(home)
 
-    # docs/2xx (adaptive pulses): a pulse class the LAB wrote lives in no quam
+    # docs/218 (adaptive pulses): a pulse class the LAB wrote lives in no quam
     # home, so the walk above can never see it -- and a class the lab has just
     # added is not on the chip yet either, so the chip's class inventory does
     # not name it. Walk the subclass closure of Pulse over what is ALREADY

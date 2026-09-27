@@ -1,4 +1,4 @@
-/* docs/2xx pulse locations -- pulses a user hand-added where SM never looked.
+/* docs/217 pulse locations -- pulses a user hand-added where SM never looked.
  *
  * Rig: an SM serving a COPY of 260907_KRS_5Q whose LIVE state.json had three
  * pulses hand-added AFTER the chip was loaded (scratch handadd.py):

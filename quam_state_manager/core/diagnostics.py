@@ -1294,7 +1294,7 @@ def _starting_output_ref(merged: dict, row: dict) -> str | None:
     comp_path: str | None = None
     path = row.get("path") or ""
     if row.get("found"):
-        # docs/2xx pulse locations: a shape-discovered op plays through the
+        # docs/217 pulse locations: a shape-discovered op plays through the
         # component that holds its `operations` dict (a coupler, a TWPA pump,
         # a second drive line). A discovered macro slot has no channel of its
         # own to name, so it is never guessed -- no port, no range finding.

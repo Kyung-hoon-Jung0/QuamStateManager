@@ -51,7 +51,7 @@ def library_versions() -> dict:
 
 def out_of_env_sources() -> dict:
     """``{file: [mtime_ns, size]}`` for every loaded module that lives OUTSIDE
-    the interpreter's own install (docs/2xx adaptive pulses).
+    the interpreter's own install (docs/218 adaptive pulses).
 
     Those are the files a lab edits in place -- an editable ``quam_config``,
     a package on ``PYTHONPATH`` -- and editing one does NOT move the

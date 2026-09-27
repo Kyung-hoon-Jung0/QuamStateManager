@@ -32,7 +32,7 @@
                 {%- if r.is_alias -%}
                 <span class="muted pulse-alias-target">&rarr; {{ r.alias_target.rsplit('.', 1)[-1] if r.alias_target else '?' }}</span>
                 {%- elif r.spark_svg and r.spark_from_lab -%}
-                {#- docs/2xx: drawn by the class's OWN code at the pulse's
+                {#- docs/218: drawn by the class's OWN code at the pulse's
                     current values -- never older than the fields, unlike a
                     generated config. Same dashed lab styling, its own title. -#}
                 <span class="pulse-spark-lab"
