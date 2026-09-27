@@ -601,9 +601,13 @@ class TestThePage:
         html = c.get(f"/pulse/detail?path={PULSE}").data.decode()
         data = json.loads(html.split('id="pulse-detail-data" type="application/json">')[1]
                           .split("</script>")[0])
-        # the 0.2 drawing is NOT served for the 0.35 pulse
-        assert data["pulses"][0]["plot_source"] != "lab"
-        assert data["pulses"][0]["needs_lab"] is True
+        # the 0.2 drawing is NOT served for the 0.35 pulse. Since 2026-09-27
+        # the edit itself runs the class's own code on 0.35 before writing
+        # (a lab class checks its own values), so the re-render is that
+        # drawing -- the NEW curve, a RAM hit, never the old one
+        sec = data["pulses"][0]
+        assert sec["plot_source"] == "lab" and sec["needs_lab"] is False
+        assert sec["plot"]["traces"][0]["y"][0] == 0.35
         j = c.post("/api/pulse/lab-waveform", json={"paths": [PULSE]}).get_json()
         assert j["results"][0]["plot"]["traces"][0]["y"][0] == 0.35
 

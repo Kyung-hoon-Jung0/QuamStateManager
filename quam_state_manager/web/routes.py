@@ -14245,6 +14245,10 @@ def pulse_edit():
                     message=("That pointer resolves to a container, not a value "
                              "-- point at a leaf (e.g. .../amplitude)"),
                     level="error"), 400
+            if probe is not None:
+                _lab_no = _lab_edit_refusal(store, dot_path, dot_path, probe)
+                if _lab_no:
+                    return _lab_edit_refused(_lab_no)
             modifier.set_value(dot_path, value)
         elif mode == "literal":
             # Break-link: type the literal after the RESOLVED value, write
@@ -14267,6 +14271,9 @@ def pulse_edit():
                 # written over a str field uncoerced and generate_config gets the
                 # wrong type.
                 parsed = str(parsed)
+            _lab_no = _lab_edit_refusal(store, dot_path, dot_path, parsed)
+            if _lab_no:
+                return _lab_edit_refused(_lab_no)
             # enforce=False: literal mode IS the explicit, audited type-CHANGE
             # surface — forcing a type-assign ceremony here was rejected.
             modifier.set_value(dot_path, parsed, coerce=False, enforce=False)
@@ -14296,6 +14303,10 @@ def pulse_edit():
                 # tabbing through a pulse to READ it left a trail of edits
                 # (stress round 2026-09-16, docs/190).
                 _noop_edit = True
+            elif _lab_no := _lab_edit_refusal(
+                    store, dot_path, _pulse_edit_write_path(
+                        store, dot_path, raw_current, target_path), parsed):
+                return _lab_edit_refused(_lab_no)
             elif is_pointer(raw_current):
                 target = resolve_field_target(store.merged, dot_path)
                 if target.get("resolvable"):
@@ -15546,6 +15557,94 @@ def _lab_class_refusal(store, spec, fields: dict, qclass: str | None) -> str | N
     return str(rec.get("error") or "it raised")[:400]
 
 
+def _row_op_of(pulse_index, path: str) -> str | None:
+    """The pulse row *path* is (or lies inside) -- the longest row prefix."""
+    segs = path.split(".")
+    for n in range(len(segs), 1, -1):
+        cand = ".".join(segs[:n])
+        if pulse_index.has_path(cand):
+            return cand
+    return None
+
+
+def _lab_edit_refusal(store, dot_path: str, write_path: str, value) -> str | None:
+    """The error a LAB class's own code raises for an edit, or None.
+
+    2026-09-27 (verifier, KRS 5Q): the create path ran the class's own check,
+    the edit path did not -- ``flat_length=4`` typed into an existing
+    ``GaussianNZTwoFluxPulse`` committed, and after Apply generate_config()
+    raised for the WHOLE chip. Every lab-class pulse whose field values this
+    write changes is drawn once by its own class with the new value
+    (``lab_drawings_for_paths`` -- the same drawing the detail view shows, so
+    the re-render after the commit is a RAM hit):
+
+    * the pulse the field was edited on (``dot_path``);
+    * the pulse that owns the leaf actually written (a followed pointer);
+    * every pulse with a field pointing straight at that leaf (one hop).
+
+    SM's own catalog classes never spawn (their preview is in-process), and a
+    check that cannot run (no env, run failed) never blocks -- the same rule
+    as create. Returns the first refusal, naming the pulse when it is not the
+    one being edited."""
+    from quam_state_manager.core.waveform_synth import synth_for_operation
+    pulse_index = _pulse_index()
+    if pulse_index is None:
+        return None
+    checks: list[tuple[str, str]] = []   # (op path, field)
+    for p in (dot_path, write_path):
+        op = _row_op_of(pulse_index, p.rsplit(".", 1)[0]) if "." in p else None
+        if op and p.rsplit(".", 1)[0] == op:
+            checks.append((op, p.rsplit(".", 1)[1]))
+    try:
+        holders = pulse_index.reverse_index().get(write_path) or []
+    except Exception:  # noqa: BLE001
+        holders = []
+    for h in holders:
+        op = _row_op_of(pulse_index, h.rsplit(".", 1)[0]) if "." in h else None
+        if op and h.rsplit(".", 1)[0] == op:
+            checks.append((op, h.rsplit(".", 1)[1]))
+    seen: set = set()
+    for op, field in checks:
+        if (op, field) in seen:
+            continue
+        seen.add((op, field))
+        try:
+            probe = synth_for_operation(store, op)
+        except Exception:  # noqa: BLE001
+            continue
+        if probe.get("reason") != "unknown_class":
+            continue  # SM's own class: drawn in-process by the preview
+        try:
+            rec = lab_drawings_for_paths(store, [op], spawn=True,
+                                         overrides={field: value}).get(op) or {}
+        except Exception:  # noqa: BLE001 -- a check that cannot run never blocks
+            logger.warning("lab class edit check failed to run", exc_info=True)
+            continue
+        if rec.get("ok") or rec.get("reason"):
+            continue
+        err = str(rec.get("error") or "it raised")[:400]
+        who = "" if op == dot_path.rsplit(".", 1)[0] else f" ({op} reads this value)"
+        return f"{err}{who}"
+    return None
+
+
+def _pulse_edit_write_path(store, dot_path: str, raw_current, target_path: str) -> str:
+    """Where a value-mode /pulse/edit write lands (mirrors its branches)."""
+    if is_pointer(raw_current):
+        from quam_state_manager.core.pointer_path import resolve_field_target
+        t = resolve_field_target(store.merged, dot_path)
+        return t["resolved_path"] if t.get("resolvable") else dot_path
+    return target_path
+
+
+def _lab_edit_refused(message: str):
+    return render_template(
+        "_status.html", level="error",
+        message=("Your pulse class refused this value (its own code, run in "
+                 f"the selected environment) -- nothing was written: {message}"
+                 )), 400
+
+
 def _slot_host(merged: dict, pair_name: str, pair: dict, slot: str):
     """``(ops dot-path, op name)`` of the CHANNEL a gate slot's pulse lives on,
     or None when the pair has no such channel.
@@ -15976,6 +16075,28 @@ def api_pulse_copy():
         return render_template("_status.html", level="error",
                                message=f"Unknown target kind {kind!r}"), 400
     dst = f"{chan_path}.operations.{op_name}"
+    # 2026-09-27 verifier: a qubit / channel / gate macro typed into "Pulse to
+    # copy" (the form's own check only runs once its list has loaded) was
+    # written into <channel>.operations, and after Apply Quam.load() failed
+    # for the WHOLE chip. The source must be a pulse row the index knows;
+    # copy_pulse_to then checks the class it resolves to. Nothing is written.
+    pulse_index = _pulse_index()
+    real_src = src
+    if pulse_index is not None and pulse_index.has_path(src):
+        from quam_state_manager.core.pointer_path import resolve_field_target
+        with store._lock:
+            ft = resolve_field_target(store.merged, src)
+        # an alias row is followed: what it names must be a pulse row too
+        real_src = (ft.get("resolved_path") or src) if ft.get("resolvable") else src
+    if (pulse_index is None or not pulse_index.has_path(src)
+            or not pulse_index.has_path(real_src)):
+        return render_template(
+            "_status.html", level="error",
+            message=(f"{src or '(empty)'} is not a pulse on this chip -- pick "
+                     "one from the list (an operation of a channel, or a gate "
+                     "slot holding a pulse)")), 400
+    kept: list[str] = []
+    dropped: list[str] = []
     with store._lock:
         try:
             chan = store.get_value(chan_path)
@@ -15992,7 +16113,8 @@ def api_pulse_copy():
                 "_status.html", level="error",
                 message=f"{chan_label} already has an operation named {op_name!r}"), 409
         try:
-            body, notes = copy_pulse_to(store.merged, src, dst)
+            body, notes = copy_pulse_to(store.merged, src, dst,
+                                        kept_out=kept, dropped_out=dropped)
         except ValueError as exc:
             return render_template("_status.html", message=str(exc),
                                    level="error"), 400
@@ -16010,6 +16132,13 @@ def api_pulse_copy():
     if notes:
         msg += (" -- written as values (no matching link on the target): "
                 + ", ".join(notes))
+    if kept:
+        msg += (" -- still LINKED to another entity (editing these on the copy "
+                "changes the source there too; unlink them to make the copy "
+                "independent): " + ", ".join(kept))
+    if dropped:
+        msg += (" -- dropped " + ", ".join(dropped)
+                + " (it named the source; the copy is named by its key)")
     return _pulse_mutation_response(_render_pulse_detail(dst, status_msg=msg))
 
 

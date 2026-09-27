@@ -57,8 +57,10 @@
     <p class="muted pulse-env-note">The copy is laid out like this chip's own
         pulses: a link to the source qubit's own value (its anharmonicity, say)
         becomes a link to the target qubit's, a link to a sibling pulse stays
-        when the target channel has that sibling, and anything else is written
-        as its value. The new pulse opens next, to check and edit.</p>
+        when the target channel has that sibling, a link it cannot re-express
+        is written as its value, and a link into another qubit or pair is kept
+        and named after the copy (editing it there edits that source too).
+        The new pulse opens next, to check and edit.</p>
 
     <div class="pulse-create-actions">
         <button type="submit" class="btn-sm">Copy pulse</button>

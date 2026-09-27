@@ -725,7 +725,9 @@ def _owner_segs(segs: list[str]) -> list[str]:
         "qubits", "qubit_pairs") else []
 
 
-def copy_pulse_to(merged: dict, src_path: str, dst_path: str) -> tuple[Any, list[str]]:
+def copy_pulse_to(merged: dict, src_path: str, dst_path: str, *,
+                  kept_out: list[str] | None = None,
+                  dropped_out: list[str] | None = None) -> tuple[Any, list[str]]:
     """The subtree to write at *dst_path* so it plays what *src_path* plays,
     laid out the way the chip lays out its own pulses.
 
@@ -744,9 +746,27 @@ def copy_pulse_to(merged: dict, src_path: str, dst_path: str) -> tuple[Any, list
     * otherwise writes the VALUE the pointer resolves to on the source
       (named in the returned notes), so the copy never dangles.
 
-    Raises ``ValueError`` when the source is not a pulse dict or a pointer
-    that must be materialized does not resolve.
+    Two more rules (2026-09-27 verifier):
+
+    * the source must BE a pulse -- a dict whose declared ``__class__`` is a
+      pulse class (:func:`pulse_catalog.is_pulse_class`; the caller checks the
+      path is a pulse row, which covers the class-less implicit pulse). A qubit, a channel or a
+      gate macro copied into ``operations`` made ``Quam.load()`` fail for the
+      whole chip ("Required type Pulse, Actual type XYDriveMW");
+    * an explicit ``id`` that is not the copy's own name is dropped (quam's
+      ``Pulse.name`` answers the id first, so a copy on q3 named by the q1-2
+      gate's op would play under the SOURCE's label); it is appended to
+      *dropped_out* as ``"id <old value>"``.
+
+    An absolute link kept verbatim that points into ANOTHER qubit or pair
+    (not the target's own entity) is appended to *kept_out* as
+    ``"<field> -> <pointer>"``: editing the copy's field then retunes that
+    other entity, which the caller must say.
+
+    Raises ``ValueError`` when the source is not a pulse or a pointer that
+    must be materialized does not resolve.
     """
+    from quam_state_manager.core.pulse_catalog import is_pulse_class
     ft = resolve_field_target(merged, src_path)
     if not ft.get("resolvable"):
         raise ValueError(f"{src_path} does not resolve to a pulse")
@@ -755,6 +775,15 @@ def copy_pulse_to(merged: dict, src_path: str, dst_path: str) -> tuple[Any, list
     _found, body = _seg_walk(merged, real.split("."))
     if not isinstance(body, dict):
         raise ValueError(f"{src_path} is not a pulse (a {type(body).__name__})")
+    cls = body.get("__class__")
+    # no __class__: the chip's own implicit pulse (an op / gate slot whose
+    # class quam takes from the annotation) -- the caller vouches it is a
+    # pulse row; a declared class must be a pulse class
+    if cls is not None and not is_pulse_class(cls):
+        what = str(cls).rsplit(".", 1)[-1] or repr(cls)
+        raise ValueError(
+            f"{src_path} is not a pulse (it is {what}) -- only a pulse can be "
+            "copied into a channel's operations")
     src_segs = real.split(".")
     dst_segs = dst_path.split(".")
     src_owner, dst_owner = _owner_segs(src_segs), _owner_segs(dst_segs)
@@ -800,6 +829,17 @@ def copy_pulse_to(merged: dict, src_path: str, dst_path: str) -> tuple[Any, list
             if exists(mapped):
                 return "#/" + "/".join(mapped)
             return materialize(target, rel)
+        t_owner = _owner_segs(target)
+        if (kept_out is not None and t_owner
+                and not (dst_owner and _is_inside(target, dst_owner))):
+            kept_out.append(f"{'.'.join(rel)} -> {node}")
         return node
 
-    return rewrite(copy.deepcopy(body), []), notes
+    out = rewrite(copy.deepcopy(body), [])
+    own_name = dst_segs[-1] if len(dst_segs) >= 2 and dst_segs[-2] == "operations" else None
+    pid = out.get("id")
+    if own_name and pid is not None and pid != own_name:
+        del out["id"]
+        if dropped_out is not None:
+            dropped_out.append(f"id {pid!r}")
+    return out, notes
