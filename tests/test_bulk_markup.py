@@ -120,10 +120,16 @@ class TestCellMarkup:
     def test_every_attribute_the_grids_read_is_still_there(self, html):
         """The slimming reordered nothing the JS reads: every editable cell
         still carries dot-path, resolved path, orig, size and a title."""
-        for m in re.finditer(r'<input type="text" class="bulk-cell[^"]*"[^>]*>', html):
+        # w7 fq-le: the tag now opens `<input type="text" autocomplete="off"`
+        # (Back's form restore) -- the old prefix matched NOTHING and this
+        # loop passed vacuously. Count what it checks.
+        n = 0
+        for m in re.finditer(r'<input type="text" autocomplete="off" class="bulk-cell[^"]*"[^>]*>', html):
             tag = m.group(0)
+            n += 1
             for attr in ("data-dot-path=", "data-resolved=", "data-orig=", 'size="', "title="):
                 assert attr in tag, tag[:200]
+        assert n > 20, f"fixture: only {n} editable cells matched"
 
 
 @pytest.mark.skipif(shutil.which("node") is None, reason="node not available")
