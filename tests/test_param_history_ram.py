@@ -517,6 +517,135 @@ def test_disk_stats_does_not_count_a_pinned_wal(env):
     assert stats["bytes"] == H._dir_bytes(hm._history_dir(live))
 
 
+def _wal_db(tmp_path) -> Path:
+    db = tmp_path / "index.sqlite"
+    with sqlite3.connect(str(db)) as c:
+        c.execute("PRAGMA journal_mode=WAL")
+        c.execute("CREATE TABLE t (x)")
+    return db
+
+
+def _dv(conn: sqlite3.Connection) -> int:
+    return conn.execute("PRAGMA data_version").fetchone()[0]
+
+
+def test_trends_requests_give_the_wal_back_with_trends_readers_open(env):
+    """Final QA fix 3: with Chip Status Trends' persistent readers open, a fat
+    commit's WAL stayed at its peak through any number of Trends requests --
+    only the Changes route gave it back. Both Trends routes now do."""
+    from quam_state_manager.core import chip_trends_ram as CTR
+    CTR.close_all()
+    try:
+        _snap(env, _state())
+        _snap(env, _state(random.Random(5)))
+        hm, live, c = env["hm"], env["live"], env["client"]
+        db = hm._history_dir(live) / "index.sqlite"
+        urls = ("/param-history", "/topology/trends", "/topology/trends/paths?q=T1")
+        for url in urls:                                       # the Trends readers, and every
+            assert c.get(url).status_code == 200               # per-page cache (disk stats) warm
+        assert CTR.has_conn(db)
+        for url in urls * 2:
+            _fat_commit(db)
+            assert _wal_bytes(db) > 1_000_000, url             # the pin is real
+            assert c.get(url).status_code == 200
+            assert _wal_bytes(db) == 0, url                    # and a Trends request gives it back
+        with sqlite3.connect(str(db)) as c2:                   # nothing was lost by it
+            assert c2.execute("SELECT COUNT(*) FROM fat").fetchone()[0] == 18000
+    finally:
+        CTR.close_all()
+
+
+def test_a_give_back_inside_the_trends_token_never_moves_it_again(env):
+    """The truncate moves every OTHER connection's data_version (measured), so
+    a Trends token read on a connection of its own saw a later give-back (the
+    Changes page's) as a new commit: a whole-table rebuild plus a chip-version
+    bump for no change at all. The token now reads the ONE connection that
+    gives the WAL back."""
+    from quam_state_manager.core import chip_trends_ram as CTR
+    CTR.close_all()
+    try:
+        _snap(env, _state())
+        hm, live = env["hm"], env["live"]
+        db = hm._history_dir(live) / "index.sqlite"
+        t1 = CTR.token(hm, live)
+        _fat_commit(db)
+        t2 = CTR.token(hm, live)
+        assert t2 != t1                                        # the commit is seen
+        assert _wal_bytes(db) == 0                             # and given back inside the token
+        PHR.hist_token(hm, live)                               # the Changes page reads its token
+        assert CTR.token(hm, live) == t2                       # no phantom commit
+    finally:
+        CTR.close_all()
+
+
+def _busy_give_back(db: Path):
+    """A commit the persistent connection has not seen yet, and a reader
+    holding a snapshot inside the WAL: its TRUNCATE comes back busy."""
+    PHR.data_version(db)
+    _fat_commit(db, 500)
+    r = sqlite3.connect(str(db), isolation_level=None)
+    r.execute("BEGIN")
+    r.execute("SELECT COUNT(*) FROM fat").fetchone()           # holds a read snapshot
+    _fat_commit(db, 1500)
+    t0 = time.perf_counter()
+    tok = PHR.data_version(db)
+    assert time.perf_counter() - t0 < 0.5                       # busy returns at once
+    assert _wal_bytes(db) > 1_000_000                          # it WAS busy
+    r.execute("COMMIT")
+    r.close()
+    return tok
+
+
+def test_a_busy_give_back_is_retried_by_the_next_read(tmp_path, monkeypatch):
+    """A checkpoint that came back busy used to be recorded as done, so the
+    WAL stayed at its peak until the NEXT commit. The next read retries it."""
+    monkeypatch.setattr(PHR, "_retry_later", lambda key: None)  # the read alone
+    db = _wal_db(tmp_path)
+    try:
+        tok = _busy_give_back(db)
+        assert PHR.data_version(db) == tok                     # no commit: the same token
+        assert _wal_bytes(db) == 0
+    finally:
+        PHR.close_all()
+
+
+def test_a_busy_give_back_is_retried_by_a_timer_when_no_read_comes(tmp_path, monkeypatch):
+    monkeypatch.setattr(PHR, "_RETRY_FIRST_S", 0.05)
+    db = _wal_db(tmp_path)
+    try:
+        tok = _busy_give_back(db)
+        deadline = time.time() + 5
+        while _wal_bytes(db) and time.time() < deadline:
+            time.sleep(0.02)
+        assert _wal_bytes(db) == 0
+        assert PHR.data_version(db) == tok                     # the retry moved no token
+        assert not PHR._RETRY_TIMERS and not PHR._RETRY_N      # and stopped
+    finally:
+        PHR.close_all()
+
+
+def test_an_empty_wal_is_never_truncated(tmp_path):
+    """A TRUNCATE of an EMPTY WAL still restarts the log and moves every other
+    connection's data_version (measured). Two SM processes on one chip would
+    answer each other's no-op give-back with one of their own on every read
+    -- every token moving, forever. An empty WAL is left alone."""
+    db = _wal_db(tmp_path)
+    try:
+        other = sqlite3.connect(f"file:{db.as_posix()}?mode=rw", uri=True,
+                                isolation_level=None, timeout=0)   # a second process's pool
+        PHR.data_version(db)
+        _fat_commit(db)
+        PHR.data_version(db)
+        assert _wal_bytes(db) == 0
+        other.execute("PRAGMA wal_checkpoint(TRUNCATE)").fetchone()   # its give-back of nothing
+        before = _dv(other)
+        PHR.data_version(db)                                   # sees a "commit"
+        assert _dv(other) == before                            # and does not answer it
+        other.close()
+    finally:
+        PHR.close_all()
+
+
 def test_settle_wal_never_opens_a_connection(tmp_path):
     db = tmp_path / "index.sqlite"
     with sqlite3.connect(str(db)) as c:

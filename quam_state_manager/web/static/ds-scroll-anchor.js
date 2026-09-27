@@ -24,14 +24,32 @@
  *     the reader moves or the next run swaps in.
  *
  * The anchor is not a pixel offset: it is a chain of LANDMARKS from the active
- * tab's container down to the deepest keyed element under the pane's top edge
+ * tab's container down to the deepest keyed element under the READING LINE
  * (section -> figure card / <details> / JSON-tree path / ndview block), plus
- * the offset of the top edge inside each. On the next run the deepest
+ * the offset of the line inside each. On the next run the deepest
  * landmark that exists AND is tall enough to hold the offset is put back at
  * the same offset -- identical, not "roughly". Where the next run cannot hold
  * it (no such landmark, or it is shorter), the nearest shallower one is used
  * and the result says `exact:false`; the intent itself is untouched, so the
  * next run that can hold it lands exactly again.
+ *
+ * The reading line (final QA, 2026-09-27) is the bottom edge of the pane's
+ * sticky .inspector-header, not the pane's top edge: the top 61 px of the
+ * pane are UNDER that header, so the old line measured a place nobody can
+ * see. Where it fell in the margin between two per-qubit blocks while the
+ * visible line was already inside the next one, the chain stopped at the
+ * section, and a neighbour run whose first block was taller put the reader's
+ * block 102 px off (6 of 6 visits on the KH rig). The line is measured on
+ * each run's own header, so a header that wraps to another height moves it.
+ *
+ * A line that falls in a GAP -- between two sibling landmarks with nothing
+ * rendered between them (a CSS margin) -- is held by the block BELOW it, at a
+ * negative offset: the reader is looking at where that block starts, and a
+ * taller block above it on the next run must not move it. Deterministic: the
+ * gap is only a gap when a landmark ends at/above the line and the next one
+ * (its sibling, only empty elements between) starts below it; anything else
+ * (the line in non-landmark content, above the first landmark, after the
+ * last) stays with the parent, as before.
  *
  * Pure DOM: getBoundingClientRect / scrollTop / clientHeight only, so the
  * jsdom selfcheck can drive it against a fake layout
@@ -110,11 +128,53 @@
 
     function _visible(r) { return r.height > 0; }
 
+    // The sticky header that covers the top of the pane (the dataset run
+    // header). Its bottom edge is the reading line; a header that is not
+    // covering the top edge (scrolled away, or none) leaves the pane top.
+    var HEADER_SEL = '.inspector-header';
+
+    function _lineOf(pane) {
+        var y = _paneTop(pane);
+        var hs = pane.querySelectorAll(HEADER_SEL);
+        for (var i = 0; i < hs.length; i++) {
+            var r = hs[i].getBoundingClientRect();
+            if (_visible(r) && r.top <= y + 0.5 && r.bottom > y + 0.5) y = r.bottom;
+        }
+        return y;
+    }
+
+    // Nothing rendered between two siblings: the space between them is a
+    // margin, not content of its own.
+    function _emptyBetween(a, b) {
+        if (a.parentElement !== b.parentElement) return false;
+        for (var e = a.nextElementSibling; e && e !== b; e = e.nextElementSibling) {
+            if (e.getBoundingClientRect().height > 0) return false;
+        }
+        return e === b;
+    }
+
+    // The landmark just BELOW `y` when `y` sits in a gap between two of
+    // `kids` (see the header comment), else null. Called only when no kid
+    // contains `y`, so the visible kid before the first one that starts
+    // below `y` has already ended at or above it.
+    function _gapBelow(kids, y) {
+        for (var i = 0; i < kids.length; i++) {
+            var r = kids[i].getBoundingClientRect();
+            if (!_visible(r) || r.top <= y + 0.5) continue;
+            for (var j = i - 1; j >= 0; j--) {
+                if (!_visible(kids[j].getBoundingClientRect())) continue;
+                return _emptyBetween(kids[j], kids[i]) ? kids[i] : null;
+            }
+            return null;   // nothing above it: the line is in the parent's own lead
+        }
+        return null;
+    }
+
     /* The reader's place, as a landmark chain. `container` is the active tab's
      * content element. Above the container (the run header / tab strip) there
      * is nothing to anchor on, so the raw offset is kept. */
     function capture(pane, container) {
-        var out = _captureIn(pane, container);
+        var out = _captureIn(pane, container, _lineOf(pane));
         out.inner = container ? _captureInner(container) : [];
         return out;
     }
@@ -147,15 +207,14 @@
             if (!(el.scrollTop > 0)) continue;
             var key = _innerKey(el, container);
             if (!key) continue;
-            var a = _captureIn(el, el);
+            var a = _captureIn(el, el, _paneTop(el));   // its own top edge: no header inside
             a.key = key;
             out.push(a);
         }
         return out;
     }
 
-    function _captureIn(pane, container) {
-        var y = _paneTop(pane);
+    function _captureIn(pane, container, y) {
         var out = { scrollTop: pane.scrollTop, chain: null };
         if (!container) return out;
         var cr = container.getBoundingClientRect();
@@ -168,7 +227,15 @@
                 var r = kids[i].getBoundingClientRect();
                 if (_visible(r) && r.top <= y + 0.5 && r.bottom > y + 0.5) { hit = kids[i]; break; }
             }
-            if (!hit) break;
+            if (!hit) {
+                var below = _gapBelow(kids, y);
+                if (below) {   // held by the block below, at a negative offset
+                    var bk = _keyOf(below), bn = 0;
+                    for (var b = 0; b < kids.length && kids[b] !== below; b++) if (_keyOf(kids[b]) === bk) bn++;
+                    chain.push({ key: bk, n: bn, within: y - below.getBoundingClientRect().top, gap: true });
+                }
+                break;
+            }
             var key = _keyOf(hit), n = 0;
             for (var k = 0; k < kids.length && kids[k] !== hit; k++) if (_keyOf(kids[k]) === key) n++;
             chain.push({ key: key, n: n, within: y - hit.getBoundingClientRect().top });
@@ -256,7 +323,8 @@
         }
         var r = el.getBoundingClientRect();
         var within = Math.min(chain[depth].within, Math.max(0, r.height - 1));
-        var target = pane.scrollTop + (r.top - _paneTop(pane)) + within;
+        // the same line the capture measured from, on THIS run's header
+        var target = pane.scrollTop + (r.top - (isInner ? _paneTop(pane) : _lineOf(pane))) + within;
         _setTop(pane, target);
         var landed = Math.abs(pane.scrollTop - Math.max(0, target)) < 1;
         return { exact: landed && depth === chain.length - 1 && within === chain[depth].within,
@@ -317,5 +385,6 @@
 
     window.DsScrollAnchor = { capture: capture, apply: apply, pin: pin, isOwnScroll: isOwnScroll,
                               _children: _children, _keyOf: _keyOf, _findInner: _findInner,
-                              SEL: SEL, INNER_SEL: INNER_SEL };
+                              _lineOf: _lineOf,
+                              SEL: SEL, INNER_SEL: INNER_SEL, HEADER_SEL: HEADER_SEL };
 })();

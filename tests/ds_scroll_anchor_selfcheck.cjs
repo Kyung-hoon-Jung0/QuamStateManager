@@ -29,6 +29,18 @@
  *      the reader picked do re-capture.
  *   C2/B2. the pin re-applies on a capturing <img> load alone (no resize);
  *      a landmark exactly as tall as the offset walks up (>=, not >).
+ *   I. final QA (2026-09-27): the READING LINE is the sticky header's bottom
+ *      edge, not the pane top hidden under it -- the verifier's repro (pane
+ *      top in the margin between q1 and q2, the visible line 53 px into q2,
+ *      a neighbour whose q1 is 102 px taller) lands exact.
+ *   J. a line IN the gap between two blocks is held by the block below at a
+ *      negative offset (the gap is deterministic: a landmark ends above, its
+ *      sibling starts below, nothing rendered between); non-landmark content
+ *      at the line, or something rendered in between, stays with the parent.
+ *   E2. E again with a sticky header of a different height on every run and
+ *      margins between every block, judged by an INDEPENDENT reading of the
+ *      reader's view (the probe's rule: every landmark under the line, plus
+ *      the next block below when no content sits at the line).
  *
  * Run: node tests/ds_scroll_anchor_selfcheck.cjs
  */
@@ -63,9 +75,12 @@ function hidden(el) {
 // An element with data-maxh is an INNER scroller (a .json-tree): its box is
 // min(content, maxh) and its descendants move with its own scrollTop.
 const innerTop = new Map();
+function margin(el) {   // data-mb: a CSS margin-bottom (a gap no element covers)
+    return hidden(el) ? 0 : (+el.getAttribute('data-mb') || 0);
+}
 function contentHeight(el) {
     let h = 0;
-    for (const c of el.children) h += height(c);
+    for (const c of el.children) h += height(c) + margin(c);
     return h;
 }
 function height(el) {
@@ -77,13 +92,13 @@ function height(el) {
 function contentTop(el) {   // offset of el from the top of the pane's content
     let top = 0;
     for (let e = el; e && e !== pane; e = e.parentElement) {
-        for (let s = e.previousElementSibling; s; s = s.previousElementSibling) top += height(s);
+        for (let s = e.previousElementSibling; s; s = s.previousElementSibling) top += height(s) + margin(s);
         const par = e.parentElement;
         if (par && par !== pane && par.hasAttribute('data-maxh')) top -= (innerTop.get(par) || 0);
     }
     return top;
 }
-function scrollHeight() { let h = 0; for (const c of pane.children) h += height(c); return h; }
+function scrollHeight() { let h = 0; for (const c of pane.children) h += height(c) + margin(c); return h; }
 function maxTop() { return Math.max(0, scrollHeight() - PANE_H); }
 Object.defineProperty(pane, 'scrollTop', {
     get() { return scrollTop; },
@@ -120,7 +135,9 @@ function flushScroll() {     // browsers dispatch scroll events a frame later
 window.Element.prototype.getBoundingClientRect = function () {
     if (this === pane) return { top: PANE_TOP, bottom: PANE_TOP + PANE_H, height: PANE_H, left: 0, right: 800, width: 800 };
     const h = height(this);
-    const top = PANE_TOP + contentTop(this) - scrollTop;
+    let top = PANE_TOP + contentTop(this) - scrollTop;
+    // position:sticky; top:0 -- the dataset run header pins to the pane top
+    if (this.classList.contains('inspector-header')) top = Math.max(top, PANE_TOP);
     return { top, bottom: top + h, height: h, left: 0, right: 800, width: 800 };
 };
 
@@ -145,17 +162,20 @@ ok(A && typeof A.capture === 'function' && typeof A.pin === 'function', 'module 
 // ── run fixtures ─────────────────────────────────────────────────────────
 // A run: header (varies), tab strip, combined container with sections.
 function runHTML(o) {
+    const mb = o.mb ? ` data-mb="${o.mb}"` : '';
     const figs = (o.figs || []).map(f =>
-        `<div class="figure-card"><div class="figure-label" data-h="20"><code>${f.name}</code></div><div class="img" data-h="${f.h}"></div></div>`).join('');
+        `<div class="figure-card"${mb}><div class="figure-label" data-h="20"><code>${f.name}</code></div><div class="img" data-h="${f.h}"></div></div>`).join('');
     const dets = (list) => list.map(d =>
-        `<details open class="detail-section"><summary data-h="24">${d.name}<button data-h="0">Copy</button></summary><div data-h="${d.h}"></div></details>`).join('');
+        (d.between ? `<p data-h="${d.between}"${mb}></p>` : '') +
+        `<details open class="detail-section"${mb}><summary data-h="24">${d.name}<button data-h="0">Copy</button></summary><div data-h="${d.h}"></div></details>`).join('');
     return `<div id="ds-detail-root" data-uid="${o.uid}">
+      ${o.sticky ? `<div class="inspector-header" data-h="${o.sticky}"></div>` : ''}
       <div class="hdr" data-h="${o.header || 80}"></div>
       <nav class="dataset-tabs" data-h="40"><a class="active" data-ds-tab="full" data-h="0"></a></nav>
       <div class="dataset-tab-content" id="ds-tab-combined">
-        <section data-fvsec="figures"><div class="figure-grid">${figs}</div>${(o.figs || []).length ? '' : '<p data-h="30"></p>'}</section>
-        <section data-fvsec="overview">${dets(o.overview || [])}</section>
-        <section data-fvsec="results">${dets(o.results || [])}</section>
+        <section data-fvsec="figures"${mb}><div class="figure-grid">${figs}</div>${(o.figs || []).length ? '' : '<p data-h="30"></p>'}</section>
+        <section data-fvsec="overview"${mb}>${dets(o.overview || [])}</section>
+        <section data-fvsec="results"${mb}>${o.lead ? `<div class="autofit-diag-bar" data-h="${o.lead}"></div>` : ''}${dets(o.results || [])}</section>
       </div></div>`;
 }
 function load(o) { pane.innerHTML = runHTML(o); if (scrollTop > maxTop()) pane.scrollTop = maxTop(); }
@@ -321,6 +341,170 @@ console.log(`  E: ${exactN}/${holdN} holdable switches exact over 400 random swi
 ok(misses === 0, `E: ${exactN}/${holdN} holdable switches exact, ${misses} misses`);
 ok(holdN > 150, 'E: (fixture) enough holdable switches to mean something: ' + holdN);
 ok(overwrites === 0, 'E: an untouched intent never drifted from the reader\'s own capture: ' + overwrites);
+
+// ── I: the reading line is the sticky header's bottom edge ──────────────
+// The verifier's KH repro, 1600x950, Results tab: the pane top (hidden under
+// the 61 px header) sat in the margin between q1 and q2 while the visible
+// line was already inside q2; the neighbour run's q1 was 102 px taller.
+function lineY() {
+    const h = pane.querySelector('.inspector-header');
+    return h ? Math.max(PANE_TOP, h.getBoundingClientRect().bottom) : PANE_TOP;
+}
+function below(key) { return lineY() - el(key).getBoundingClientRect().top; }   // + = line inside it
+const QRUN = (uid, q1, extra) => Object.assign({ uid, sticky: 61, header: 80, mb: 16,
+    figs: [{ name: 'raw', h: 400 }], overview: [{ name: 'Experiment Info', h: 300 }],
+    results: [{ name: 'q1', h: q1 }, { name: 'q2', h: 300 }, { name: 'q3', h: 300 }] }, extra || {});
+{
+    load(QRUN('i1', 300));
+    pane.scrollTop = contentTop(el('det:q2')) - 8;                 // pane top 8 px into the 16 px gap
+    ok(PANE_TOP > el('det:q1').getBoundingClientRect().bottom && PANE_TOP < el('det:q2').getBoundingClientRect().top,
+       'I: (fixture) the pane top is in the gap between q1 and q2');
+    ok(below('det:q2') === 53, 'I: (fixture) the visible line is 53 px into q2, got ' + below('det:q2'));
+    ok(A._lineOf(pane) === lineY(), 'I: the module reads the line at the header bottom: ' + A._lineOf(pane));
+    cap = A.capture(pane, container());
+    const last = cap.chain[cap.chain.length - 1];
+    ok(last.key === 'det:q2' && last.within === 53 && !last.gap,
+       'I: the chain reaches the block under the VISIBLE line: ' + JSON.stringify(cap.chain));
+    load(QRUN('i2', 402, { sticky: 83 }));                          // q1 102 px taller; the header wrapped
+    res = A.apply(pane, container(), cap);
+    ok(res.exact === true && below('det:q2') === 53,
+       'I: on the neighbour run q2 is exactly where it was under the line, got ' + below('det:q2') + ' (' + JSON.stringify(res) + ')');
+    load(QRUN('i3', 300));
+    res = A.apply(pane, container(), cap);
+    ok(res.exact === true && pane.scrollTop === contentTop(el('det:q2')) - 8, 'I: and home again is the same scrollTop');
+}
+
+// ── J: a reading line IN the gap between two blocks ──────────────────────
+{
+    load(QRUN('j1', 300));
+    pane.scrollTop = contentTop(el('det:q2')) - 61 - 6;            // the line 6 px above q2, in the gap
+    ok(below('det:q2') === -6 && below('det:q1') >= el('det:q1').getBoundingClientRect().height,
+       'J: (fixture) the line is in the gap, 6 px above q2');
+    cap = A.capture(pane, container());
+    let last = cap.chain[cap.chain.length - 1];
+    ok(last.key === 'det:q2' && last.within === -6 && last.gap === true && cap.chain[cap.chain.length - 2].key === 'sec:results',
+       'J: held by the block BELOW, at a negative offset: ' + JSON.stringify(cap.chain));
+    load(QRUN('j2', 402));
+    res = A.apply(pane, container(), cap);
+    ok(res.exact === true && below('det:q2') === -6, 'J: a taller q1 on the next run does not move q2 (got ' + below('det:q2') + ')');
+    load(QRUN('j3', 150, { sticky: 83 }));
+    res = A.apply(pane, container(), cap);
+    ok(res.exact === true && below('det:q2') === -6, 'J: nor a shorter one under a taller header (got ' + below('det:q2') + ')');
+    const again = A.capture(pane, container()).chain, a1 = again[again.length - 1];
+    ok(a1.key === 'det:q2' && a1.within === -6 && a1.gap === true, 'J: deterministic: a capture of the landing is the same place: ' + JSON.stringify(a1));
+    load(QRUN('j4', 300, { results: [{ name: 'q1', h: 300 }, { name: 'q3', h: 300 }] }));   // no q2 here
+    res = A.apply(pane, container(), cap);
+    ok(res.exact === false && res.key === 'sec:results', 'J: a run without that block falls back to the section, not exact: ' + res.key);
+    // between two SECTIONS: held by the next section
+    load(QRUN('j5', 300));
+    pane.scrollTop = contentTop(el('sec:overview')) - 61 - 10;
+    cap = A.capture(pane, container());
+    last = cap.chain[cap.chain.length - 1];
+    ok(cap.chain.length === 2 && last.key === 'sec:overview' && last.within === -10 && last.gap,
+       'J: the gap between two sections is held by the next section: ' + JSON.stringify(cap.chain));
+    load(QRUN('j6', 300, { figs: [{ name: 'raw', h: 777 }] }));
+    res = A.apply(pane, container(), cap);
+    ok(res.exact === true && below('sec:overview') === -10, 'J: and stays there when the figures above change height');
+    // not a gap: non-landmark content at the line stays with the parent
+    load(QRUN('j7', 300, { lead: 40 }));
+    pane.scrollTop = contentTop(el('sec:results')) - 61 + 15;      // the line 15 px into a lead bar
+    cap = A.capture(pane, container());
+    last = cap.chain[cap.chain.length - 1];
+    ok(last.key === 'sec:results' && last.within === 15, 'J: content at the line (a lead bar) is not a gap: ' + JSON.stringify(last));
+    // not a gap: something rendered between the two blocks
+    load(QRUN('j8', 300, { results: [{ name: 'q1', h: 300 }, { name: 'q2', h: 300, between: 20 }, { name: 'q3', h: 900 }] }));
+    pane.scrollTop = contentTop(el('det:q1')) + 324 + 4 - 61;       // 4 px into the margin after q1, a <p> follows
+    ok(below('det:q1') === 328, 'J: (fixture) the line is in q1\'s trailing margin');
+    cap = A.capture(pane, container());
+    last = cap.chain[cap.chain.length - 1];
+    ok(last.key === 'sec:results' && !last.gap, 'J: a rendered element between the blocks is not a gap: ' + JSON.stringify(last));
+}
+
+// ── E2: randomized, sticky header + margins, an INDEPENDENT oracle ───────
+{
+    const R2 = rnd(20260927);
+    const run2 = (i) => {
+        const r = randomRun(i);
+        r.sticky = 50 + Math.floor(R2() * 40);
+        r.mb = [0, 8, 16][Math.floor(R2() * 3)];
+        return r;
+    };
+    const LM = '[data-fvsec], .figure-card, details';
+    const lkey = (e) => e.hasAttribute('data-fvsec') ? 'sec:' + e.getAttribute('data-fvsec')
+        : e.classList.contains('figure-card') ? 'fig:' + e.querySelector('code').textContent
+        : 'det:' + e.firstElementChild.firstChild.nodeValue;
+    // the reader's view, read the way the real-Chrome probe reads it
+    function view() {
+        const L = lineY(), c = container();
+        const all = [...c.querySelectorAll(LM)].map(e => ({ e, k: lkey(e), r: e.getBoundingClientRect() }))
+            .filter(x => x.r.height > 0);
+        const v = all.filter(x => x.r.top <= L && x.r.bottom > L).map(x => ({ k: x.k, off: L - x.r.top }));
+        const contentAt = [...c.querySelectorAll('[data-h]')].some(e => {
+            const r = e.getBoundingClientRect(); return r.height > 0 && r.top <= L && r.bottom > L; });
+        const cr = c.getBoundingClientRect();
+        if (!contentAt && cr.top <= L && cr.bottom > L) {
+            const inside = v.length ? all.find(x => x.k === v[v.length - 1].k).e : c;
+            const nxt = all.find(x => inside.contains(x.e) && x.e !== inside && x.r.top > L);
+            if (nxt) v.push({ k: nxt.k, off: L - nxt.r.top, gap: true });
+        }
+        return { v, st: pane.scrollTop, top: cr.top > L };
+    }
+    function judge(ref) {
+        const L = lineY(), c = container();
+        const map = {};
+        [...c.querySelectorAll(LM)].forEach(e => { if (e.getBoundingClientRect().height > 0) map[lkey(e)] = e; });
+        for (let d = ref.v.length - 1; d >= 0; d--) {
+            const lv = ref.v[d], e = map[lv.k];
+            if (!e) continue;
+            const r = e.getBoundingClientRect();
+            if (lv.off >= r.height) continue;
+            const need = pane.scrollTop + (r.top - L) + lv.off;
+            if (need < 0 || need > maxTop()) return 'unreach';
+            return (L - r.top) === lv.off ? 'exact' : 'miss ' + lv.k + ' ' + (L - r.top) + ' vs ' + lv.off;
+        }
+        return 'none';
+    }
+    let intent2 = null, moved2 = true, pin2 = null, ref = null, gaps = 0, n2 = 0, ex2 = 0, miss2 = [];
+    load(run2(0));
+    pane.scrollTop = Math.floor(R2() * maxTop());
+    for (let i = 1; i <= 400; i++) {
+        if (pin2) { pin2.stop(); pin2 = null; }
+        if (moved2 || !intent2) {
+            intent2 = A.capture(pane, container()); ref = view(); moved2 = false;
+            if (ref.v.length && ref.v[ref.v.length - 1].gap) gaps++;
+        }
+        const run = run2(i);
+        const lazy = run.figs.length && R2() < 0.5;
+        const realH = lazy ? run.figs.map(f => f.h) : null;
+        if (lazy) run.figs.forEach(f => { f.h = 0; });
+        load(run);
+        pin2 = A.pin(pane, container, intent2, () => { moved2 = true; pin2 = null; });
+        flushScroll();
+        if (lazy) {
+            pane.querySelectorAll('.figure-card .img').forEach((im, k) => { im.setAttribute('data-h', String(realH[k])); fireResize(); });
+            flushScroll();
+        }
+        if (!ref.top) {
+            const j = judge(ref);
+            if (j === 'exact') { n2++; ex2++; } else if (j.indexOf('miss') === 0) { n2++; miss2.push(i + ': ' + j); }
+        }
+        if (R2() < 0.3) {   // the reader moves; a third of the moves land the line in a gap on purpose
+            const gapsNow = [...container().querySelectorAll(LM)].filter(e => e.hasAttribute('data-mb') && +e.getAttribute('data-mb') > 2);
+            if (gapsNow.length && R2() < 0.35) {
+                const g = gapsNow[Math.floor(R2() * gapsNow.length)];
+                const r = g.getBoundingClientRect();
+                pane.scrollTop = Math.max(0, Math.min(maxTop(), pane.scrollTop + (r.bottom + 1 + Math.floor(R2() * (+g.getAttribute('data-mb') - 1))) - lineY()));
+            } else {
+                pane.scrollTop = Math.floor(R2() * (maxTop() + 1));
+            }
+            flushScroll();
+            moved2 = true;
+        }
+    }
+    console.log(`  E2: ${ex2}/${n2} holdable switches exact over 400 random switches (${gaps} reader places in a gap)`);
+    ok(miss2.length === 0, 'E2: every holdable switch exact by the independent reading, misses: ' + miss2.slice(0, 5).join(' | '));
+    ok(n2 > 150 && gaps >= 10, 'E2: (fixture) enough holdable switches and gap places to mean something: ' + n2 + ', ' + gaps);
+}
 
 // ── G: a scroller inside the tab (the State tab's .json-tree) ──────────
 function treeHTML(uid, nodes, lead) {
