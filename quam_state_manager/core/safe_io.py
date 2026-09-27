@@ -535,24 +535,35 @@ def _write_tmp_json(path: Path, data, *, compact: bool = False,
         fmt = json_format_of(path)
     if fmt is None:
         # Unchanged path: text mode, platform line endings, indent 4.
-        with open(tmp, "w", encoding="utf-8") as f:
-            json.dump(data, f, indent=4, ensure_ascii=False)
-            f.write("\n")
+        # w7/livewrite: the same text as json.dump(indent=4), unchanged
+        # subtrees served from RAM (json_pieces, pinned byte-identical)
+        text, canon = _dump_for(path, data, 4)
+        text += "\n"
+        # The bytes text mode would put on disk (newline=None translates "\n"
+        # to the platform's line ending; JSON text holds no other newline --
+        # the encoder escapes them inside strings), encoded ONCE and written
+        # raw, so the digest below is of exactly what reached the disk.
+        raw = (text.replace("\n", os.linesep) if os.linesep != "\n" else text).encode("utf-8")
+        with open(tmp, "wb") as f:
+            f.write(raw)
             f.flush()
             os.fsync(f.fileno())
+        _seed_written(path, raw, canon)
         return tmp
 
-    text = json.dumps(data, indent=fmt["indent"], ensure_ascii=False)
+    text, canon = _dump_for(path, data, fmt["indent"])
     if fmt["newline"] != "\n":
         text = text.replace("\n", fmt["newline"])
     if fmt.get("trailing", True):
         text += fmt["newline"]
     # newline="" so nothing is translated underneath us -- the endings above
     # are the file's own, not the platform's.
-    with open(tmp, "w", encoding="utf-8", newline="") as f:
-        f.write(text)
+    raw = text.encode("utf-8")
+    with open(tmp, "wb") as f:
+        f.write(raw)
         f.flush()
         os.fsync(f.fileno())
+    _seed_written(path, raw, canon)
     return tmp
 
 
@@ -847,3 +858,42 @@ def _pair_fingerprint_settled(folder: Path) -> tuple:
         except FileNotFoundError:
             time.sleep(delay)
     return _pair_fingerprint(folder)       # still absent: genuinely missing
+
+
+def _json_pieces():
+    """json_pieces imports ramcache; imported lazily so safe_io stays the
+    dependency-free bottom layer it is for every other module."""
+    from quam_state_manager.core import json_pieces
+    return json_pieces
+
+
+def _is_chip_file(path: Path) -> bool:
+    return Path(path).name in ("state.json", "wiring.json")
+
+
+def _dump_for(path: Path, data, indent) -> tuple[str, str | None]:
+    """The indented text for *path* (== ``json.dumps(data, indent=indent,
+    ensure_ascii=False)``), plus -- for a chip file -- its canonical text,
+    both from one walk over RAM-cached pieces (json_pieces, pinned
+    byte-identical)."""
+    jp = _json_pieces()
+    if _is_chip_file(path) and isinstance(data, dict):
+        return jp.dumps_indent_and_canonical(data, indent)
+    return jp.dumps_indent(data, indent), None
+
+
+def _seed_written(path: Path, raw: bytes, canon: str | None) -> None:
+    """Tell the content cache what the chip file just written canonicalises
+    to, so the read-back right after (apply's verify, the next poll, the
+    content hash) costs a digest instead of a parse + canonical dump. *raw*
+    is exactly what reached the disk and *canon* is the canonical text of the
+    document serialised into it (``parse(dumps(doc))`` equals *doc* for JSON
+    data); if either were ever wrong for the other, the digest would match no
+    real file or the pin in tests/test_json_pieces.py would fail."""
+    if canon is None or not _is_chip_file(path):
+        return
+    try:
+        from quam_state_manager.core import doc_cache
+        doc_cache.seed(raw, canon)
+    except Exception:  # noqa: BLE001 -- an optimisation never fails a write
+        logger.debug("seed after write skipped", exc_info=True)

@@ -224,7 +224,7 @@ class QuamStore:
     # Loading
     # ------------------------------------------------------------------
 
-    def _load(self) -> None:
+    def _load(self, docs: tuple[dict, dict] | None = None) -> None:
         state_path = self.folder_path / "state.json"
         wiring_path = self.folder_path / "wiring.json"
 
@@ -237,11 +237,23 @@ class QuamStore:
         # and brackets the pair with mtime checks, so a writer landing
         # between the two reads can't hand us a torn snapshot. A bad-JSON
         # file is surfaced as LiveFileError (an OSError subclass).
-        try:
-            self.state, self.wiring, sb, wb = safe_io.read_state_wiring_raw(self.folder_path)
-        except safe_io.LiveFileError as exc:
-            raise ValueError(str(exc)) from exc
-        self.file_digest = file_digest(sb, wb)
+        if docs is not None:
+            # w7/livewrite: the caller parsed exactly these files a moment ago
+            # (see reload); a second parse of 19 MB would produce equal dicts.
+            # RAM P10 (w7/coldopen) still wants the digest of the BYTES the
+            # store now stands for, so a park/unpark can prove the files are
+            # unchanged: read the bytes only (no parse), bracketed by the
+            # pair fingerprint; a drift or read failure leaves no digest,
+            # which only means "this store cannot be parked until a file
+            # load" -- never a wrong claim.
+            self.state, self.wiring = docs
+            self.file_digest = _pair_bytes_digest(self.folder_path)
+        else:
+            try:
+                self.state, self.wiring, sb, wb = safe_io.read_state_wiring_raw(self.folder_path)
+            except safe_io.LiveFileError as exc:
+                raise ValueError(str(exc)) from exc
+            self.file_digest = file_digest(sb, wb)
         self.loaded_seq = None      # set by the caller once the counter settles
 
         self._merge()
@@ -348,10 +360,17 @@ class QuamStore:
     # Reload
     # ------------------------------------------------------------------
 
-    def reload(self) -> None:
-        """Re-read files from disk and rebuild everything. Acquires _lock."""
+    def reload(self, docs: tuple[dict, dict] | None = None) -> None:
+        """Re-read files from disk and rebuild everything. Acquires _lock.
+
+        ``docs`` (w7/livewrite): the ``(state, wiring)`` the caller just wrote
+        into this folder and still holds -- they are what a re-read would
+        parse, so the re-read is skipped. The caller hands them over (the
+        store mutates them from now on) and vouches that the folder was not
+        written since; ``_rebuild_after_working_copy_replaced`` checks that
+        with the pair's (mtime_ns, size) fingerprint before passing them."""
         with self._lock:
-            self._load()
+            self._load(docs)
             # The generated config is KEPT: it is basis-hash-keyed
             # (``generated_config_meta["basis_hash"]`` vs the content hash),
             # so every reader already knows whether it is stale. Nulling it
@@ -500,6 +519,24 @@ def file_digest(state_bytes: bytes, wiring_bytes: bytes) -> str:
     return (hashlib.blake2b(state_bytes, digest_size=16).hexdigest() + ":"
             + hashlib.blake2b(wiring_bytes, digest_size=16).hexdigest())
 
+
+
+def _pair_bytes_digest(folder: Path) -> str | None:
+    """:func:`file_digest` of the pair in *folder* read as BYTES only (no
+    parse), or None when the pair moved during the read or could not be read.
+    Used by the w7/livewrite ``docs`` load path, whose caller already holds
+    the parsed documents: the bytes are still what a parked store is later
+    checked against (chip_park), so they are hashed, not re-parsed."""
+    try:
+        before = safe_io._pair_fingerprint_settled(folder)
+        sb = safe_io.scan_bytes(folder / "state.json")
+        wb = safe_io.scan_bytes(folder / "wiring.json")
+        after = safe_io._pair_fingerprint_settled(folder)
+    except OSError:
+        return None
+    if sb is None or wb is None or before != after:
+        return None
+    return file_digest(sb, wb)
 
 def is_pristine(store: "QuamStore") -> bool:
     """True when *store* still holds exactly the bytes it was loaded from:

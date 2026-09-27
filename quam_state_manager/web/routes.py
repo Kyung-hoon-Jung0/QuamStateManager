@@ -23,6 +23,7 @@ import functools
 import hashlib
 import io
 import contextlib
+import itertools
 import json
 import logging
 import math
@@ -79,6 +80,8 @@ from quam_state_manager.core import (
 from quam_state_manager.core import compare as compare_engine
 from quam_state_manager.core import qdac as qdac_mod
 from quam_state_manager.core import ramcache as _ramcache
+from quam_state_manager.core import bg_gate as _bg_gate
+from quam_state_manager.core import json_pieces as _json_pieces
 from quam_state_manager.core import trend_index as _trend_index
 from quam_state_manager.core.dataset import DatasetStore
 from quam_state_manager.core.differ import Differ
@@ -896,7 +899,7 @@ def _sync_live_refresh(ctx) -> None:
         return          # a sync/apply is mid-flight; the next poll judges
     try:
         try:
-            live_state, live_wiring = working_copy.read_live(wc)
+            _lp = working_copy.read_live_shared(wc)
         except FileNotFoundError:
             _note_live_unreadable(ctx, key, "the live folder has no state.json / wiring.json")
             return
@@ -904,15 +907,119 @@ def _sync_live_refresh(ctx) -> None:
             _note_live_unreadable(ctx, key, str(exc))
             return
         ctx.pop("_live_bad", None)
-        _store_sync_live(ctx, live_state, live_wiring, key=key, sig=sig)
+        _store_sync_live(ctx, None, None, key=key, sig=sig, pair=_lp)
     except Exception:   # noqa: BLE001 -- a status probe must never break a poll
         logger.debug("sync status refresh failed", exc_info=True)
     finally:
         lock.release()
 
 
+# ----------------------------------------------------------------------
+# w7/livewrite (P4): diff caches. A diff is keyed on what it was computed
+# FROM -- the store's identity + mutation counter + change-log length, and the
+# SHA-256 of the live bytes read -- so a hit is a diff of exactly the content
+# in hand (validate on read), and any edit, reload or outside write is a miss.
+# ----------------------------------------------------------------------
+_W7_STORE_UIDS = itertools.count(1)
+_WL_ENTRIES = _ramcache.KeyedMemo("sync.working_vs_live", max_entries=8,
+                                  max_bytes=64 * 1024 * 1024)
+_BL_ENTRIES = _ramcache.KeyedMemo("sync.baseline_vs_live", max_entries=8,
+                                  max_bytes=64 * 1024 * 1024)
+_LIVE_DIFF_BODY = _ramcache.KeyedMemo("sync.live_diff_body", max_entries=8,
+                                      max_bytes=96 * 1024 * 1024)
+
+
+def _live_write_critical(view):
+    """w7/livewrite: the view writes the chip -- background helper threads
+    (bg_gate.wait_quiet) hold their CPU work until it has returned."""
+    @functools.wraps(view)
+    def wrapped(*a, **k):
+        with _bg_gate.critical():
+            return view(*a, **k)
+    return wrapped
+
+
+def _store_uid(store) -> int:
+    """A process-unique id for one QuamStore object (``id()`` can be reused
+    by a later store after this one is collected; this never is)."""
+    uid = getattr(store, "_w7_uid", None)
+    if uid is None:
+        with store._lock:
+            uid = getattr(store, "_w7_uid", None)
+            if uid is None:
+                uid = next(_W7_STORE_UIDS)
+                store._w7_uid = uid
+    return uid
+
+
+def _store_token(store) -> tuple:
+    """What the working side of a diff was computed from. Every content
+    change bumps ``mutation_seq`` (edits, undo, reload); a save that clears
+    the change log changes its length."""
+    return (_store_uid(store), store.mutation_seq, len(store.change_log))
+
+
+def _working_vs_live_entries(ctx, live_state: dict, live_wiring: dict, pair=None) -> list:
+    """``Differ().diff(store, (live_state, live_wiring), ignore_keys=set())``,
+    served from RAM when neither side moved. *pair* is the
+    ``doc_cache.PairRead`` the live dicts came from (no pair -> no cache)."""
+    store = ctx["store"]
+    if pair is None:
+        return Differ().diff(store, (live_state, live_wiring), ignore_keys=set())
+
+    def compute():
+        # the documents are touched only on a miss (a lazy PairRead parses
+        # -- or serves from RAM -- on first use)
+        ls = live_state if live_state is not None else pair.state
+        lw = live_wiring if live_wiring is not None else pair.wiring
+        with store._lock:
+            tok = _store_token(store)
+            ents = Differ().diff(store, (ls, lw), ignore_keys=set())
+        return _ramcache.Keyed(ents, (tok, pair.state_digest, pair.wiring_digest))
+    tok = (_store_token(store), pair.state_digest, pair.wiring_digest)
+    return list(_WL_ENTRIES.get(("wl", _store_uid(store)), tok, compute))
+
+
+def _baseline_vs_live_entries(base: dict, pair) -> list:
+    """The drift diff (baseline -> live), keyed on the baseline's content hash
+    and the live bytes' digests."""
+    def compute():
+        ents = Differ().diff((base["state"], base["wiring"]),
+                             (pair.state, pair.wiring), ignore_keys=set())
+        _share_content_diff(base, pair, ents)
+        return ents
+    bh = base.get("state_hash")
+    if not bh:
+        return compute()
+    tok = (bh, base.get("captured_utc"), pair.state_digest, pair.wiring_digest)
+    return list(_BL_ENTRIES.get(("bl", bh), tok, compute))
+
+
+def _share_content_diff(base: dict, pair, entries: list) -> None:
+    """Offer a baseline->live diff to diff_cache, so the pre-apply backup
+    snapshot of this same live content (its prior is the baseline's content
+    after every apply) does not diff it again. Only when the live content
+    hash is already known (no canonical dump just for this) and both sides
+    merge alike."""
+    try:
+        from quam_state_manager.core import diff_cache, doc_cache
+        if not (diff_cache.merges_alike(base["state"], base["wiring"])
+                and diff_cache.merges_alike(pair.state, pair.wiring)):
+            return
+        # keyed on the live BYTES (no canonical dump needed): a snapshot
+        # capture of these same bytes looks it up by its PairRead's digests
+        diff_cache.remember(base.get("state_hash"),
+                            diff_cache.raw_key(pair.state_digest, pair.wiring_digest),
+                            entries)
+        if (doc_cache.CANON.has(pair.state_digest)
+                and doc_cache.CANON.has(pair.wiring_digest)):
+            diff_cache.remember(base.get("state_hash"), pair.history_hash(), entries)
+    except Exception:  # noqa: BLE001 -- an optimisation never fails a poll
+        logger.debug("content diff share skipped", exc_info=True)
+
+
 def _store_sync_live(ctx, live_state: dict, live_wiring: dict, *, key=None,
-                     sig=None) -> tuple:
+                     sig=None, pair=None) -> tuple:
     """Judge one live read against the working copy and cache the verdict as
     ``ctx["sync_live"]``. Shared by the poll and the sync panel, so the control
     and the panel the user opens from it can never disagree about the same read.
@@ -930,10 +1037,11 @@ def _store_sync_live(ctx, live_state: dict, live_wiring: dict, *, key=None,
             sig = _change_log_sig(store)
     synced = getattr(wc, "synced_live_hash", None)
     moved = (None if synced is None
-             else working_copy.content_hash(live_state, live_wiring) != synced)
+             else (pair.content_hash() if pair is not None
+                   else working_copy.content_hash(live_state, live_wiring)) != synced)
     if moved is None:
         moved = bool(ctx.get("live_diverged"))
-    entries = Differ().diff(store, (live_state, live_wiring), ignore_keys=set())
+    entries = _working_vs_live_entries(ctx, live_state, live_wiring, pair)
     verdict = None
     if moved:
         with store._lock:
@@ -1899,6 +2007,7 @@ def _maybe_warm_generated_config(ctx, inst) -> None:
 
     def _decide():
         try:
+            _bg_gate.wait_quiet()   # w7/livewrite: a full pulse-index build
             if _chip_needs_generated_config(store):
                 _warm_generated_config_async(ctx, inst)
         except Exception:  # noqa: BLE001
@@ -2094,7 +2203,19 @@ def _rebuild_after_working_copy_replaced(ctx: dict) -> None:
     """
     store = ctx["store"]
     _held_fp = _chip_fp(ctx)   # jsontree-r2-04 review: what was held
-    store.reload()
+    # w7/livewrite: a pull that just parsed the live pair and wrote it into
+    # the working folder hands those dicts over -- used only when the working
+    # pair is still exactly the files that write produced (validate on read).
+    _pulled = ctx.pop("_pulled_docs", None)
+    _docs = None
+    if _pulled is not None:
+        try:
+            if safe_io._pair_fingerprint(Path(store.folder_path)) == _pulled[1]:
+                _docs = _pulled[0]
+        except OSError:
+            _docs = None
+    store.reload(docs=_docs)
+    # w7/livewrite: built on first search, from the content as it is then
     index = LazySearchIndex(store)
     store.search_index = index
     ctx["index"] = index
@@ -2843,7 +2964,11 @@ def _live_merged_tree(wc) -> dict | None:
     edits included, so Ctrl+Z wrote values the chip never held."""
     from quam_state_manager.core.loader import _deep_merge
     try:
-        state, wiring = safe_io.read_state_wiring(wc.live_folder)
+        # w7/livewrite: the shared (READ-ONLY) parse -- the merge below is
+        # copy-based (_deep_merge) and _wholesale_unit deep-copies every value
+        # it records, so nothing here writes into the shared documents.
+        _lp = working_copy.read_live_shared(wc)
+        state, wiring = _lp.state, _lp.wiring
     except Exception:  # noqa: BLE001 — unreadable live ⇒ nothing honest to record
         return None
     merged = {**state}
@@ -5337,8 +5462,45 @@ def _project_for_path(folder) -> str | None:
     Never raises; never breaks a load."""
     try:
         idx = qualibrate_config.project_state_paths()
+        # w7/livewrite: every snapshot of every live write asked this, and
+        # each project's same_folder() stats and resolves its state_path --
+        # 67 calls / 2.9 s on this machine's ~/.qualibrate (a path on an
+        # unreachable drive stats slowly). The answer depends on the project
+        # index (itself keyed on every config file's mtime) and on WHICH
+        # physical folder *folder* is, so both are the key. Not seen: a
+        # junction created under an unchanged state_path string -- the next
+        # config edit or restart picks that up.
+        try:
+            _st = os.stat(folder)
+            _fid = (os.path.normcase(os.path.abspath(str(folder))), _st.st_dev, _st.st_ino)
+        except (OSError, ValueError):
+            _fid = None
+        if _fid is not None:
+            _hit = _PROJECT_FOR_PATH_MEMO.get(_fid)
+            if _hit is not None and _hit[0] is idx:
+                return _hit[1]
         matches = [name for name, native in idx.get("projects", [])
                    if native and path_match.same_folder(native, folder)]
+        _ans = _project_match_verdict(idx, matches)
+        if _fid is not None:
+            if len(_PROJECT_FOR_PATH_MEMO) > 64:
+                _PROJECT_FOR_PATH_MEMO.clear()
+            _PROJECT_FOR_PATH_MEMO[_fid] = (idx, _ans)
+        return _ans
+    except Exception:  # noqa: BLE001 — the lens must never break a load
+        logger.debug("project reverse-match failed", exc_info=True)
+        return None
+
+
+# w7/livewrite: folder identity -> (the project index object it was judged
+# against, verdict). ``project_state_paths`` hands back the SAME dict object
+# until a config file's mtime moves, so ``is`` is the validity check.
+_PROJECT_FOR_PATH_MEMO: dict = {}
+
+
+def _project_match_verdict(idx: dict, matches: list) -> str | None:
+    """The ambiguity rule of :func:`_project_for_path`, on its matches."""
+    try:
         if not matches:
             return None
         active = idx.get("active")
@@ -6949,6 +7111,7 @@ def _defer_auto_snapshot() -> bool:
 def _spawn_post_apply_snapshot(hm, path, project) -> None:
     def _run():
         try:
+            _bg_gate.wait_quiet()   # w7/livewrite: off the next write's path
             hm.check_and_snapshot(path, "save", kind="manual",
                                   defer_index=False, project=project)
         except Exception:  # noqa: BLE001 -- a capture, never the user's write
@@ -7440,17 +7603,47 @@ def _state_restored_trigger(ctx, pre_leaves, extra: dict | None = None) -> str:
     return json.dumps(trig)
 
 
-def _leaf_snapshot(ctx) -> dict | None:
+def _leaf_snapshot(ctx, *, lazy: bool = False):
     """Every leaf of the working state BEFORE a pull, so the pull can report
     exactly which values it changed (customer 2026-08-27: the page must stay
     put and only the values move). None when it cannot be taken — the
-    client then refreshes wholesale, as before."""
+    client then refreshes wholesale, as before.
+
+    ``lazy`` (w7/livewrite, for a caller that REPLACES the store's documents
+    -- ``store.reload`` -- before :func:`_sync_patch`): keep a reference to
+    the current merged document instead of flattening it now. The reload
+    leaves that object alone, so flattening it later gives the same leaves;
+    :func:`_sync_patch` re-checks that it was not touched (its marshal
+    digest) before using it, and first asks the cheap question -- is either
+    side over ``json_diff``'s cap? -- that decides a 19 MB chip without any
+    walk at all."""
     try:
         store = ctx.get("store")
+        if lazy:
+            doc = store.merged
+            return _LazyLeaves(doc, _json_pieces.mdigest(doc))
         leaves, truncated = json_diff.flatten(store.merged)
         return None if truncated else leaves
     except Exception:  # noqa: BLE001 — a missing snapshot only costs a refresh
         return None
+
+
+class _LazyLeaves:
+    """A deferred :func:`_leaf_snapshot` (see ``lazy``)."""
+    __slots__ = ("doc", "mdig")
+
+    def __init__(self, doc, mdig):
+        self.doc, self.mdig = doc, mdig
+
+    def leaves(self) -> dict | None:
+        """The eager snapshot's value, or None (untouched-check failed, or
+        over the cap -- exactly when the eager one returned None)."""
+        if self.mdig is None or _json_pieces.mdigest(self.doc) != self.mdig:
+            return None
+        if _json_pieces.json_diff_leafcount(self.doc) > json_diff.WALK_CAP:
+            return None
+        leaves, truncated = json_diff.flatten(self.doc)
+        return None if truncated else leaves
 
 
 def _sync_patch(ctx, before: dict | None) -> dict:
@@ -7462,6 +7655,16 @@ def _sync_patch(ctx, before: dict | None) -> dict:
     added or removed, the snapshot was unavailable, or the diff exceeds the
     cap: the client then re-renders the page instead of patching, because a
     patch can only rewrite leaves the page already shows."""
+    if isinstance(before, _LazyLeaves):
+        try:
+            # w7/livewrite: the cap test first, from per-subtree counts --
+            # either side over the cap is "structural" whatever the leaves are
+            _after_doc = ctx.get("store").merged
+            if _json_pieces.json_diff_leafcount(_after_doc) > json_diff.WALK_CAP:
+                return _sync_patch_over_cap(before, _after_doc)
+            before = before.leaves()
+        except Exception:  # noqa: BLE001
+            before = None
     if before is None:
         return {"changes": [], "structural": True}
     try:
@@ -7480,6 +7683,36 @@ def _sync_patch(ctx, before: dict | None) -> dict:
             changes.append(entry)
             if len(changes) > _SYNC_PATCH_CAP:
                 return {"changes": [], "structural": True}
+    return {"changes": changes, "structural": structural}
+
+
+def _sync_patch_over_cap(before: "_LazyLeaves", after_doc: dict) -> dict:
+    """``_sync_patch`` for a chip over ``json_diff.WALK_CAP`` leaves (w7/livewrite).
+
+    The flatten comparison cannot run there, so this used to answer
+    "structural" and the page re-rendered the whole Live-Edit grid after a
+    pull that moved one value. ``leaf_patch.leaf_changes`` gives the uncapped
+    comparison's answer at the cost of the difference; anything it cannot
+    vouch for (the old document touched, an ambiguous path) keeps the old
+    answer."""
+    from quam_state_manager.core import leaf_patch
+    try:
+        if before.mdig is None or _json_pieces.mdigest(before.doc) != before.mdig:
+            return {"changes": [], "structural": True}
+        res = leaf_patch.leaf_changes(before.doc, after_doc,
+                                      max_changes=_SYNC_PATCH_CAP)
+    except Exception:  # noqa: BLE001
+        return {"changes": [], "structural": True}
+    if res is None:
+        return {"changes": [], "structural": True}
+    found, structural = res
+    if len(found) > _SYNC_PATCH_CAP:
+        return {"changes": [], "structural": True}
+    changes = []
+    for p, v in found:
+        entry = _revert_entry_payload(p, v)
+        entry["value"] = v
+        changes.append(entry)
     return {"changes": changes, "structural": structural}
 
 
@@ -17346,8 +17579,8 @@ def _auto_pull_verdict(ctx: dict, dom_paths) -> "object | None":
     if wc is None or store is None:
         return None
     try:
-        live_state, live_wiring = working_copy.read_live(wc)
-        entries = Differ().diff(store, (live_state, live_wiring), ignore_keys=set())
+        _lp = working_copy.read_live_shared(wc)
+        entries = _working_vs_live_entries(ctx, None, None, _lp)
     except (FileNotFoundError, OSError, ValueError, safe_io.LiveFileError):
         logger.info("auto-pull verdict: live unreadable -- asking instead")
         return None
@@ -17867,8 +18100,9 @@ def state_review():
     archive = (ctx.get("origin") or "live") == "dataset_archive"
     read_error = None
     entries, verdict, facts = [], None, None
+    _lp = None
     try:
-        live_state, live_wiring = working_copy.read_live(wc)
+        _lp = working_copy.read_live_shared(wc)
     except FileNotFoundError:
         read_error = "The live state folder has no state.json / wiring.json — it may have been moved or deleted."
     except (OSError, ValueError, safe_io.LiveFileError) as exc:
@@ -17876,9 +18110,9 @@ def state_review():
     else:
         ctx.pop("_live_bad", None)
         if archive:
-            entries = Differ().diff(store, (live_state, live_wiring), ignore_keys=set())
+            entries = _working_vs_live_entries(ctx, None, None, _lp)
         else:
-            facts, entries, verdict = _store_sync_live(ctx, live_state, live_wiring)
+            facts, entries, verdict = _store_sync_live(ctx, None, None, pair=_lp)
     sv = _sync_view(ctx)
     if read_error and sv is not None and sv["state"] not in ("archive",):
         sv = dict(sv, state="unreadable", unreadable=read_error)
@@ -17958,7 +18192,7 @@ def state_review():
 
 
 def _live_diff_attribution(ctx: dict, entries, live_state: dict,
-                           live_wiring: dict) -> dict:
+                           live_wiring: dict, *, live_hash: str | None = None) -> dict:
     """Who moved each differing path (QA JT-03).
 
     diff(working, live) only says the two sides disagree, so the Explorer bar
@@ -17983,7 +18217,7 @@ def _live_diff_attribution(ctx: dict, entries, live_state: dict,
         )
         synced = getattr(wc, "synced_live_hash", None)
         moved = (None if synced is None
-                 else working_copy.content_hash(live_state, live_wiring) != synced)
+                 else (live_hash or working_copy.content_hash(live_state, live_wiring)) != synced)
         return {"mine": list(v.mine), "conflicts": list(v.conflicts),
                 "external": [] if moved is False else list(v.external),
                 "unaccounted": v.unaccounted, "live_moved": moved}
@@ -18014,38 +18248,52 @@ def state_live_diff():
     # extra patience usually lets os.replace settle. A torn-pair / lock is reported
     # as TRANSIENT (503) so the client retries; it is never a dead error.
     try:
-        live_state, live_wiring = working_copy.read_live(wc, attempts=8)
+        _lp = working_copy.read_live_shared(wc, attempts=8)
     except FileNotFoundError:
         return jsonify(ok=False, transient=False, error="Live state folder not found"), 404
     except (safe_io.LiveFileError, OSError):
         logger.info("live-diff read deferred (live being written) — client will retry")
         return jsonify(ok=False, transient=True,
                        error="Live chip is being written — retrying shortly"), 503
-    # Build + serialize INSIDE a guard so an odd-data Differ/serialization error can
-    # never escape as a Werkzeug HTML 500 (which the client's r.json() would mis-parse
-    # as a "network error"). Any failure here is reported as structured JSON.
+    # w7/livewrite (P4): the whole JSON body is keyed on everything it is
+    # computed from -- the store token, the live bytes' digests, the sync point
+    # and the attribution inputs -- so an unchanged repeat is a dictionary hit.
+    _with_live = request.args.get("with_live") == "1"
+    with store._lock:
+        _tok = (_store_token(store), _lp.state_digest, _lp.wiring_digest,
+                getattr(wc, "synced_live_hash", None),
+                tuple(sorted((ctx.get("pending_reapply") or {}).keys())),
+                bool(ctx.get("working_dirty")), _with_live)
     try:
-        entries = Differ().diff(store, (live_state, live_wiring),
-                                ignore_keys=set())
-        payload = {
-            "ok": True,
-            "total": len(entries),
-            "summary": Differ.summary(entries),
-            "entries": [
-                {"dot_path": e.dot_path, "old": e.old_value, "new": e.new_value,
-                 "change_type": e.change_type}
-                for e in entries[:500]
-            ],
-        }
-        payload.update(_live_diff_attribution(ctx, entries, live_state, live_wiring))
-        if request.args.get("with_live") == "1":
-            payload["live_state"] = live_state
-            payload["live_wiring"] = live_wiring
-        return jsonify(payload)
+        body = _LIVE_DIFF_BODY.get(("ld", _store_uid(store), _with_live), _tok,
+                                   lambda: _live_diff_body(ctx, _lp, _with_live))
     except Exception as exc:  # noqa: BLE001 — never emit a non-JSON 500 to the live-diff client
         logger.warning("live-diff build failed", exc_info=True)
         return jsonify(ok=False, transient=False,
                        error=f"Could not build the live diff: {exc}"), 500
+    return current_app.response_class(body, mimetype="application/json")
+
+
+def _live_diff_body(ctx, _lp, with_live: bool) -> bytes:
+    """The /state/live-diff JSON body (bytes) for one live read."""
+    entries = _working_vs_live_entries(ctx, None, None, _lp)
+    payload = {
+        "ok": True,
+        "total": len(entries),
+        "summary": Differ.summary(entries),
+        "entries": [
+            {"dot_path": e.dot_path, "old": e.old_value, "new": e.new_value,
+             "change_type": e.change_type}
+            for e in entries[:500]
+        ],
+    }
+    payload.update(_live_diff_attribution(ctx, entries, None, None,
+                                          live_hash=_lp.content_hash()))
+    if with_live:
+        payload["live_state"] = _lp.state
+        payload["live_wiring"] = _lp.wiring
+    # the bytes jsonify would send (same provider, same settings)
+    return jsonify(payload).get_data()
 
 
 # ======================================================================
@@ -18187,15 +18435,14 @@ def _compute_drift(ctx, *, full: bool = False) -> dict | None:
                 ctx["_drift_defer_count"] = 0  # cap reached → force the read below
 
     try:
-        live_state, live_wiring = working_copy.read_live(wc)
+        _lp = working_copy.read_live_shared(wc)
     except (OSError, ValueError):
         with _drift_lock:
             c = ctx.get("_drift")
             if c is not None and not full:
                 return {"count": c["count"], "baseline_utc": c["baseline_utc"]}
         return None
-    entries = Differ().diff((base["state"], base["wiring"]),
-                            (live_state, live_wiring), ignore_keys=set())
+    entries = _baseline_vs_live_entries(base, _lp)
     summary = Differ.summary(entries)
     with _drift_lock:
         ctx["_drift"] = {"state_mtime": sm, "wiring_mtime": wm,
@@ -18226,12 +18473,24 @@ def _reset_baseline_after_apply(ctx) -> None:
         store = ctx["store"]
         with _active_wc_lock(ctx):          # serialise vs reconcile store.reload()
             with store._lock:
-                state = copy.deepcopy(store.state)
-                wiring = copy.deepcopy(store.wiring)
+                state = _json_copy(store.state)
+                wiring = _json_copy(store.wiring)
             _history().set_live_baseline(ctx["path"], state, wiring)
         _clear_drift_cache(ctx)
     except Exception:   # noqa: BLE001
         logger.warning("baseline reset after apply-to-live failed", exc_info=True)
+
+
+def _json_copy(doc):
+    """A deep copy of a JSON document: ``marshal`` round trip (w7/livewrite --
+    ~0.1 s on a 19 MB chip against ~0.3 s for ``copy.deepcopy``; the same
+    types, keys, key order and float bits), ``deepcopy`` for anything marshal
+    refuses."""
+    import marshal
+    try:
+        return marshal.loads(marshal.dumps(doc, 2))
+    except (ValueError, TypeError, RecursionError):
+        return copy.deepcopy(doc)
 
 
 def _auto_pull_sig(ctx: dict | None) -> tuple:
@@ -18639,9 +18898,9 @@ def _live_pair_torn(ctx) -> dict[str, str]:
     a pull the user or an armed Auto-Sync asked for (docs/28)."""
     try:
         store = ctx["store"]
-        live_state, live_wiring = working_copy.read_live(ctx["working_copy"])
+        _lp = working_copy.read_live_shared(ctx["working_copy"])
         return working_copy.new_dangling_port_refs(
-            store.state, store.wiring, live_state, live_wiring)
+            store.state, store.wiring, _lp.state, _lp.wiring)
     except Exception:  # noqa: BLE001 — an advisory gate, never a failure
         return {}
 
@@ -18696,6 +18955,7 @@ def _take_live_backup(ctx, store, pending: dict) -> dict | None:
             safe_io.write_state_wiring(tmp, store.state, store.wiring)
         meta = _history().check_and_snapshot(
             tmp, "manual", force=True, kind="backup",
+            defer_index=not current_app.config.get("TESTING"),
             project=_scope_for(ctx["path"], ctx))
         if meta is not None:
             rec["snapshot"] = meta.timestamp
@@ -18743,6 +19003,7 @@ def state_take_live_restore():
 
 
 @bp.route("/state/sync", methods=["POST"])
+@_live_write_critical
 def state_sync():
     """Pull the live state files into the working copy (manual sync).
 
@@ -18899,6 +19160,39 @@ def state_sync():
         pending = {k: v for k, v in pending.items()
                    if not any(k == p or k.startswith(p + ".") for p in _use_live)}
 
+    # w7/livewrite: Apply over a live chip that has NOT moved since the last
+    # sync. The pull would copy the working copy's own base back over itself,
+    # rebuild the store from it and re-apply every pending edit to reach the
+    # content the store already holds -- a full parse, a 19 MB rewrite and a
+    # store rebuild on the big rig, before the write. Skipped only when that is
+    # provably a no-op on content: the live hash equals the sync point, the
+    # working folder is that sync point (nothing saved-but-unapplied, nothing
+    # staged, no re-apply stash) and no per-field picks reshape the edits. The
+    # write keeps every gate: apply_to_live re-checks the live chip (mtime +
+    # content) under the build lock and turns a write that raced in into the
+    # usual conflict.
+    #
+    # "Not moved" is BOTH halves of the sync point apply_to_live checks: the
+    # content hash AND the (state, wiring) mtimes. A content-identical re-save
+    # (a node's machine.save(), a touch, a reformat) keeps the hash but moves
+    # the mtimes; apply_to_live then sees live_changed, cannot adopt (the
+    # working copy holds the edit, so working != live) and refuses. The pull
+    # path re-anchors the mtimes first, so that case keeps taking it (verifier
+    # D1: the fast path refused an Apply integ/w7 writes).
+    if (mode == "apply" and not picks and not ctx.get("pending_reapply")
+            and not ctx.get("working_dirty") and not ctx.get("staged_base")
+            and wc.synced_live_hash):
+        try:
+            _live_now = (None if working_copy.live_changed(wc)
+                         else working_copy.live_content_hash(wc))
+        except (OSError, ValueError):
+            _live_now = None
+        if _live_now == wc.synced_live_hash:
+            return _sync_pull_apply_to_live(
+                ctx, ({"applied": len(pending), "failed": []} if pending else None),
+                patch={"changes": [], "structural": False},
+                pulled_other_changes=False)
+
     # Build lock: sync_from_live rewrites the working folder and advances the
     # (mtime, mtime, hash) sync point on the SAME WorkingCopy a concurrent
     # _activate_quam reconcile may be auto-syncing — unserialised, the two
@@ -18939,7 +19233,7 @@ def state_sync():
                 _unseen = _unseen_edit_refusal(ctx)
                 if _unseen is not None and not _unseen.get("nothing_pending"):
                     return jsonify(_discard_unseen_body(_unseen)), 409
-            _pre_leaves = _leaf_snapshot(ctx)
+            _pre_leaves = _leaf_snapshot(ctx, lazy=True)   # the reload below replaces the docs
             # sync-ux 2026-09-25 (user decision 4): ↓ Take live used to drop the pending
             # edits for good. It keeps a backup first -- a labelled History
             # version of the working copy AS SHOWN (edits included) plus the
@@ -18948,7 +19242,12 @@ def state_sync():
             backup = None
             if mode == "discard" and (pending or ctx.get("working_dirty")):
                 backup = _take_live_backup(ctx, store, pending)
-            working_copy.sync_from_live(wc)
+            _pulled = working_copy.sync_from_live(wc)
+            try:
+                ctx["_pulled_docs"] = (_pulled, safe_io._pair_fingerprint(
+                    Path(wc.working_folder)))
+            except OSError:
+                ctx.pop("_pulled_docs", None)
             pulled_other_changes = (_pre_sync_hash is not None
                                     and wc.synced_live_hash != _pre_sync_hash)
             # Rebuild the store + derived objects from the freshly-synced copy.
@@ -18966,7 +19265,9 @@ def state_sync():
     # "apply" goes one step further: save the re-applied edits and push them to
     # the live chip now, instead of leaving them pending for a second click.
     if mode == "apply":
-        return _sync_pull_apply_to_live(ctx, replay, patch=_sync_patch(ctx, _pre_leaves),
+        # w7/livewrite: the patch (a response detail) is computed after the
+        # live write, not before it -- nothing in between touches the store
+        return _sync_pull_apply_to_live(ctx, replay, patch=lambda: _sync_patch(ctx, _pre_leaves),
                                         pulled_other_changes=pulled_other_changes)
 
     # reapply / discard: the pull consumed the stash; edits (if any) are now
@@ -18975,7 +19276,10 @@ def state_sync():
 
     # Record a Param History snapshot of the now-current live state.
     try:
+        # w7/livewrite: the Param-History index insert (a walk of the whole
+        # chip) runs off the request, as the apply paths already do
         _history().check_and_snapshot(ctx["path"], "auto", kind="manual",
+                                      defer_index=not current_app.config.get("TESTING"),
                                       project=_scope_for(ctx["path"], ctx))
     except Exception:
         logger.warning("History snapshot after sync failed", exc_info=True)
@@ -19205,7 +19509,7 @@ def _sync_pull_apply_to_live(ctx, replay, *, pulled_other_changes=False,
         "tray_html": _tray_html(),
         "replay": replay,
         "pulled_other_changes": pulled_other_changes,
-        **(patch or {}),
+        **((patch() if callable(patch) else patch) or {}),
         **({"crash_values": _crash} if _crash else {}),
     })
 
@@ -19249,6 +19553,7 @@ def _keep_mine_reask(ctx, store):
 
 
 @bp.route("/state/apply-to-live", methods=["POST"])
+@_live_write_critical
 def state_apply_to_live():
     """Push the working copy's state + wiring to the live chip.
 
@@ -19344,7 +19649,7 @@ def state_apply_to_live():
         # new count (keepMineReask). Checked before the backup, so a refused
         # push records no version.
         try:
-            _now = working_copy.content_hash(*working_copy.read_live(wc))
+            _now = working_copy.live_content_hash(wc)
         except (OSError, ValueError):
             _now = None
         if _now != expect_live_hash:
@@ -19751,17 +20056,17 @@ def state_overwrite_live_preflight():
     live_paths: list = []
     replaced = None
     try:
-        live_state, live_wiring = working_copy.read_live(ctx["working_copy"])
+        _lp = working_copy.read_live_shared(ctx["working_copy"])
         # SE-07: count what the LIVE chip changed (someone else wrote it), not
         # every difference -- the user's own pending edits differ from live
         # too, and were being announced as values "an experiment program"
         # wrote. Same judgment as the status control (_store_sync_live).
-        _facts, _entries, _v = _store_sync_live(ctx, live_state, live_wiring)
+        _facts, _entries, _v = _store_sync_live(ctx, None, None, pair=_lp)
         _moved_paths = list(_facts.get("conflicts") or []) + list(_facts.get("external") or [])
         live_changes = len(_moved_paths) if _facts.get("moved") else 0
         live_paths = _moved_paths[:8] if _facts.get("moved") else []
         replaced = len(_entries)
-        live_hash = working_copy.content_hash(live_state, live_wiring)
+        live_hash = _lp.content_hash()
     except (FileNotFoundError, OSError, ValueError, safe_io.LiveFileError):
         logger.info("overwrite-live preflight could not read the live files",
                     exc_info=True)
@@ -26479,6 +26784,8 @@ def _drain_exp_ingest_once(app=None) -> None:
                 logger.warning("exp-ingest divergence scan failed",
                                exc_info=True)
         while True:
+            if threading.current_thread().name == "exp-ingest":
+                _bg_gate.wait_quiet()   # w7/livewrite: between candidates too
             with st["lock"]:
                 if not st["pending"]:
                     break
@@ -26509,6 +26816,9 @@ def _exp_ingest_worker(app) -> None:
             has_work = bool(st["pending"]) or st["scan_requested"]
         if not has_work:
             continue
+        # w7/livewrite: the worker wakes ON a live write; its scan must not
+        # take the GIL from that write's request while it is still running
+        _bg_gate.wait_quiet()
         try:
             with app.app_context():
                 _drain_exp_ingest_once(app)
@@ -27618,7 +27928,10 @@ def dataset_prev_state_diff(uid):
         return render_template("_dataset_prev_diff.html", run_id=run_id, uid=uid,
                                prev_run_id=None, compact=compact)
 
-    entries = Differ().diff(prev_path, cur_path)
+    # w7/livewrite (P4): run folders are write-once -- a repeat (the stepper,
+    # re-opening the tab) is served from RAM, keyed on all four files' stats
+    from quam_state_manager.core.history import diff_state_folders
+    entries = diff_state_folders(prev_path, cur_path)
     summary = Differ.summary(entries)
 
     # Stepper bounds: walk the comparison run older/newer. r16 ④: the old

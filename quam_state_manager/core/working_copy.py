@@ -27,7 +27,7 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
 
-from quam_state_manager.core import path_match, safe_io
+from quam_state_manager.core import doc_cache, json_pieces, path_match, safe_io
 from quam_state_manager.core.history import chip_name_for
 
 logger = logging.getLogger(__name__)
@@ -56,8 +56,11 @@ def content_hash(state: dict, wiring: dict) -> str:
     can be compared against the working copy regardless of which writer
     serialized each.
     """
-    payload = json.dumps([state, wiring], sort_keys=True, separators=(",", ":"))
-    return hashlib.sha256(payload.encode("utf-8")).hexdigest()
+    # w7/livewrite: the same bytes as ``json.dumps([state, wiring],
+    # sort_keys=True, separators=(",", ":"))``, composed from content-keyed
+    # per-subtree pieces so an unchanged qubit is never re-serialised
+    # (json_pieces; pinned byte-identical in tests/test_json_pieces.py).
+    return json_pieces.content_hash_pair(state, wiring)
 
 
 def _sanitize(name: str) -> str:
@@ -344,6 +347,15 @@ def read_live(wc: WorkingCopy, *, attempts: int | None = None) -> tuple[dict, di
     return safe_io.read_state_wiring(wc.live_folder, attempts=attempts)
 
 
+def read_live_shared(wc: WorkingCopy, *, attempts: int | None = None) -> "doc_cache.PairRead":
+    """:func:`read_live` (same armored pair read, same errors) for a READ-ONLY
+    caller: the documents come from RAM when these exact bytes were parsed
+    before, and the pair carries its bytes' digests and content hash
+    (w7/livewrite). Never mutate ``.state`` / ``.wiring`` -- they are shared
+    (a mutation is detected on the next read and re-parsed, never served)."""
+    return doc_cache.read_pair(wc.live_folder, attempts=attempts, mode="shared")
+
+
 def dangling_port_refs(state: dict, wiring: dict) -> dict[str, str]:
     """``{wiring dot-path: "#/ports/..." pointer}`` for every port reference in
     *wiring* that resolves in NEITHER file's ``ports`` tree. Pure.
@@ -420,10 +432,22 @@ def live_diverged_now(wc: WorkingCopy) -> bool | None:
     if wc.synced_live_hash is None:
         return None
     try:
-        live_hash = content_hash(*safe_io.read_state_wiring(wc.live_folder))
+        live_hash = live_content_hash(wc)
     except (OSError, ValueError):
         return None
     return live_hash != wc.synced_live_hash
+
+
+def live_content_hash(wc: WorkingCopy, *, attempts: int | None = None) -> str:
+    """``content_hash(*read_live(wc))`` -- the same armored pair read and the
+    same value -- keyed on the bytes read, so content SM has already seen
+    (it wrote it, or read it before) is never parsed again (w7/livewrite)."""
+    return doc_cache.read_pair(wc.live_folder, attempts=attempts, mode="hash").content_hash()
+
+
+def working_content_hash(wc: WorkingCopy) -> str:
+    """The content hash of the working files on disk (see :func:`live_content_hash`)."""
+    return doc_cache.read_pair(wc.working_folder, mode="hash").content_hash()
 
 
 # Reconcile outcomes -- see :func:`reconcile_with_live`.
@@ -654,12 +678,16 @@ def sync_from_live(wc: WorkingCopy) -> tuple[dict, dict]:
     session's staleness tracking will be wrong.
     """
     state_mt, wiring_mt = safe_io.state_wiring_mtimes(wc.live_folder)
-    state, wiring = safe_io.read_state_wiring(wc.live_folder)
+    pair = doc_cache.read_pair(wc.live_folder, mode="fresh")
+    state, wiring = pair.state, pair.wiring
+    # the hash BEFORE the write hands the dicts on: same value as
+    # content_hash(state, wiring), from the bytes that were parsed
+    live_hash = pair.content_hash()
     safe_io.write_state_wiring(wc.working_folder, state, wiring,
                                like=wc.live_folder)
     wc.synced_state_mtime = state_mt
     wc.synced_wiring_mtime = wiring_mt
-    wc.synced_live_hash = content_hash(state, wiring)
+    wc.synced_live_hash = live_hash
     try:
         wc._write_meta()
     except OSError:
@@ -707,8 +735,7 @@ def apply_to_live(wc: WorkingCopy, *, force: bool = False,
             # background poll / cache-hit pre-check stays mtime-only (cheap, and
             # must never block an experiment's atomic save).
             try:
-                l_state, l_wiring = safe_io.read_state_wiring(wc.live_folder)
-                stale = content_hash(l_state, l_wiring) != wc.synced_live_hash
+                stale = live_content_hash(wc) != wc.synced_live_hash
             except OSError:
                 stale = False   # unreadable live → let the write path surface it
         if stale:
@@ -729,10 +756,8 @@ def apply_to_live(wc: WorkingCopy, *, force: bool = False,
             # since docs/28; `apply_to_live` never grew its twin.
             adopted = False
             try:
-                l_state, l_wiring = safe_io.read_state_wiring(wc.live_folder)
-                live_hash = content_hash(l_state, l_wiring)
-                w_state, w_wiring = safe_io.read_state_wiring(wc.working_folder)
-                if content_hash(w_state, w_wiring) == live_hash:
+                live_hash = live_content_hash(wc)
+                if working_content_hash(wc) == live_hash:
                     st_mt, wi_mt = safe_io.state_wiring_mtimes(wc.live_folder)
                     # Advance the sync point to what live ALREADY holds. Meta
                     # first, exactly like the write path below: a failed meta
@@ -754,7 +779,10 @@ def apply_to_live(wc: WorkingCopy, *, force: bool = False,
     # Raw bytes travel with the parse (2026-08-27): the live files become
     # byte-identical copies of the working files the saver just wrote, and
     # the apply no longer re-serialises the content it just parsed.
-    state, wiring, state_b, wiring_b = safe_io.read_state_wiring_raw(wc.working_folder)
+    # w7/livewrite: the bytes, and their content hash from RAM when the saver
+    # just wrote them (it seeds what they canonicalise to) -- no parse.
+    _wpair = doc_cache.read_pair(wc.working_folder, mode="hash")
+    state_b, wiring_b = _wpair.state_bytes, _wpair.wiring_bytes
 
     # Tightest possible TOCTOU recheck: re-stat *right* before the write so
     # the window between "is the live still in-sync" and "we are about to
@@ -775,7 +803,7 @@ def apply_to_live(wc: WorkingCopy, *, force: bool = False,
 
     if expect_live_hash is not None:
         try:
-            now_hash = content_hash(*safe_io.read_state_wiring(wc.live_folder))
+            now_hash = live_content_hash(wc)
         except (OSError, ValueError):
             now_hash = None
         if now_hash != expect_live_hash:
@@ -798,7 +826,7 @@ def apply_to_live(wc: WorkingCopy, *, force: bool = False,
             f"({exc}); working copy's synced state was not advanced."
         ) from exc
 
-    applied_hash = content_hash(state, wiring)
+    applied_hash = _wpair.content_hash()
 
     # r16 ⑥ (docs/65 amendment): VERIFY the apply landed. "Applied" used to
     # be believed, never observed — the hash below was computed from the
@@ -808,8 +836,7 @@ def apply_to_live(wc: WorkingCopy, *, force: bool = False,
     # this destructive, user-initiated path is cheap; a mismatch raises with
     # an honest message instead of advancing the synced state.
     try:
-        v_state, v_wiring = safe_io.read_state_wiring(wc.live_folder)
-        verified = content_hash(v_state, v_wiring) == applied_hash
+        verified = live_content_hash(wc) == applied_hash
     except (OSError, ValueError) as exc:
         raise safe_io.LiveFileError(
             f"Wrote to {wc.live_folder} but could not read it back to verify "

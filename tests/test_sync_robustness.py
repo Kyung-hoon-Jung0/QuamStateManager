@@ -52,7 +52,7 @@ class TestLiveDiffRobustness:
         # client must see a retryable 503 JSON, never a fatal/HTML error.
         def boom(wc, **k):
             raise safe_io.LiveFileError("writer mid-save")
-        monkeypatch.setattr(routes.working_copy, "read_live", boom)
+        monkeypatch.setattr(routes.working_copy, "read_live_shared", boom)
         r = client.get("/state/live-diff?with_live=1")
         assert r.status_code == 503
         assert r.is_json
@@ -74,7 +74,7 @@ class TestLiveDiffRobustness:
     def test_missing_live_is_404_json(self, client, monkeypatch):
         def boom(wc, **k):
             raise FileNotFoundError()
-        monkeypatch.setattr(routes.working_copy, "read_live", boom)
+        monkeypatch.setattr(routes.working_copy, "read_live_shared", boom)
         r = client.get("/state/live-diff")
         assert r.status_code == 404 and r.is_json
         assert r.get_json()["ok"] is False
@@ -83,12 +83,12 @@ class TestLiveDiffRobustness:
         # the explicit user-click read passes a larger attempts budget than the
         # background poll (the "increase the period to compensate" realization).
         seen = {}
-        real = safe_io.read_state_wiring
+        real = routes.working_copy.doc_cache.read_pair
 
-        def spy(folder, *, attempts=None):
+        def spy(folder, *, attempts=None, mode="shared"):
             seen["attempts"] = attempts
-            return real(folder, attempts=attempts)
-        monkeypatch.setattr(routes.working_copy.safe_io, "read_state_wiring", spy)
+            return real(folder, attempts=attempts, mode=mode)
+        monkeypatch.setattr(routes.working_copy.doc_cache, "read_pair", spy)
         client.get("/state/live-diff")
         assert seen.get("attempts") == 8
 
@@ -119,8 +119,13 @@ class TestSettleMaxDefer:
             # the live now differs from the baseline...
             changed_state = json.loads(json.dumps(base["state"]))
             changed_state["qubits"]["qA1"]["f_01"] = 7.0e9
-            monkeypatch.setattr(routes.working_copy, "read_live",
-                                lambda wc, **k: (changed_state, base["wiring"]))
+            from quam_state_manager.core import doc_cache
+            _sb = json.dumps(changed_state).encode()
+            _wb = json.dumps(base["wiring"]).encode()
+            _pair = doc_cache.PairRead(changed_state, base["wiring"], _sb, _wb,
+                                       doc_cache.digest(_sb), doc_cache.digest(_wb))
+            monkeypatch.setattr(routes.working_copy, "read_live_shared",
+                                lambda wc, **k: _pair)
             # ...and the mtimes ADVANCE on every poll so the settle-gate would defer
             # forever without the cap.
             seq = {"n": 0}

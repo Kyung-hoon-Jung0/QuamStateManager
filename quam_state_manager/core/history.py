@@ -402,19 +402,15 @@ def _canonical_content_hash(state_path: Path, wiring_path: Path) -> str | None:
     but the safe-io path keeps it that way as the codebase evolves
     (red-team Phase 2 finding §1.2).
     """
+    # w7/livewrite: the same value, keyed on the bytes read -- content SM has
+    # seen before (it wrote it, or read it) is neither parsed nor re-dumped.
+    from quam_state_manager.core import doc_cache
     try:
-        state = safe_io.read_json(state_path)
-        wiring = safe_io.read_json(wiring_path)
+        _s, sb, ds = doc_cache._read_json_bytes(Path(state_path), "hash")
+        _w, wb, dw = doc_cache._read_json_bytes(Path(wiring_path), "hash")
+        return doc_cache.history_hash_raw(sb, wb, ds, dw)
     except (OSError, ValueError):
         return None
-    s_canon = json.dumps(state, sort_keys=True, separators=(",", ":"))
-    w_canon = json.dumps(wiring, sort_keys=True, separators=(",", ":"))
-    h = hashlib.sha256()
-    h.update(b"STATE:")
-    h.update(s_canon.encode("utf-8"))
-    h.update(b"\nWIRING:")
-    h.update(w_canon.encode("utf-8"))
-    return h.hexdigest()
 
 
 def _canonical_hash_of(state: dict, wiring: dict) -> str:
@@ -427,14 +423,72 @@ def _canonical_hash_of(state: dict, wiring: dict) -> str:
     lock-step with that function or the cosmetic snapshot-marker would never
     match.
     """
-    s_canon = json.dumps(state, sort_keys=True, separators=(",", ":"))
-    w_canon = json.dumps(wiring, sort_keys=True, separators=(",", ":"))
-    h = hashlib.sha256()
-    h.update(b"STATE:")
-    h.update(s_canon.encode("utf-8"))
-    h.update(b"\nWIRING:")
-    h.update(w_canon.encode("utf-8"))
-    return h.hexdigest()
+    # w7/livewrite: the same bytes hashed, composed from content-keyed pieces
+    # (json_pieces.canonical == json.dumps(sort_keys=True, separators=(",", ":")))
+    from quam_state_manager.core import json_pieces
+    return json_pieces.history_hash_pair(state, wiring)
+
+
+# w7/livewrite (P4): the diff of two snapshot / run-state folders is kept per
+# folder pair and validated on every read against the SHA-256 digests of the
+# four files' bytes (the armored pair read doc_cache does anyway). Folders are
+# documented write-once, but a stat key -- (mtime_ns, size) -- was fooled by a
+# same-size rewrite with the mtime put back (verifier D2), so the key is the
+# content, like doc_cache and the live-diff caches.
+from quam_state_manager.core import ramcache as _ramcache  # noqa: E402
+
+_SNAP_DIFFS = _ramcache.KeyedMemo("history.snapshot_pair_diff", max_entries=64,
+                                  max_bytes=16 * 1024 * 1024)
+
+
+def _diff_snapshot_dirs(a: Path, b: Path, *, b_pair=None, a_hash: str | None = None,
+                        b_hash: str | None = None) -> list[DiffEntry]:
+    """``Differ().diff(a, b)`` for two snapshot folders -- the same merged
+    documents a ``QuamStore`` builds -- with the parses served by the content
+    cache and the result kept per pair. ``b_pair``: the ``doc_cache.PairRead``
+    whose bytes were JUST written into *b* (a capture), so *b* is not read
+    back -- the documents are those bytes' own parse."""
+    from quam_state_manager.core import doc_cache
+
+    def compute():
+        from quam_state_manager.core import diff_cache
+        from quam_state_manager.core.differ import _DEFAULT_IGNORE, _leaf_key
+        # content hashes known (a capture): the drift poll may have taken
+        # exactly this diff already (diff_cache)
+        shared = diff_cache.lookup(a_hash, b_hash, _DEFAULT_IGNORE)
+        if shared is None and b_pair is not None:
+            shared = diff_cache.lookup(
+                a_hash, diff_cache.raw_key(b_pair.state_digest, b_pair.wiring_digest),
+                _DEFAULT_IGNORE)
+        if shared is not None:
+            return shared
+        # from_dicts merges exactly as QuamStore(folder) does (deep merge on a
+        # state/wiring key collision) without touching the shared dicts. The
+        # diff is taken with no ignored key and then filtered the way Differ
+        # filters (leaf by leaf), so the unfiltered one can be shared.
+        ents = _differ.diff(QuamStore.from_dicts(pa.state, pa.wiring),
+                            QuamStore.from_dicts(pb.state, pb.wiring), ignore_keys=set())
+        if (a_hash and b_hash and diff_cache.merges_alike(pa.state, pa.wiring)
+                and diff_cache.merges_alike(pb.state, pb.wiring)):
+            diff_cache.remember(a_hash, b_hash, ents)
+        return [e for e in ents if _leaf_key(e.dot_path) not in _DEFAULT_IGNORE]
+    try:
+        # one armored read of each pair: the digests are the token, and the
+        # same bytes are what compute() parses (lazily, from doc_cache.PARSED)
+        pa = doc_cache.read_pair(a, mode="hash")
+        pb = b_pair if b_pair is not None else doc_cache.read_pair(b, mode="hash")
+    except (OSError, ValueError):
+        return _differ.diff(a, b)
+    tok = (pa.state_digest, pa.wiring_digest, pb.state_digest, pb.wiring_digest)
+    return list(_SNAP_DIFFS.get((str(a), str(b)), tok, compute))
+
+
+def diff_state_folders(a: str | Path, b: str | Path) -> list[DiffEntry]:
+    """``Differ().diff(a, b)`` for two write-once ``quam_state`` folders (a run's
+    saved state, a snapshot): the same entries, served from RAM on a repeat
+    while neither folder's bytes changed (SHA-256 of all four files, checked
+    on every call)."""
+    return _diff_snapshot_dirs(Path(a), Path(b))
 
 
 def _chip_decisions_file(instance_path: str | Path) -> Path:
@@ -1919,8 +1973,13 @@ class HistoryManager:
                 # byte-identical copies of what was hashed, and nothing is
                 # re-serialised (2026-08-27: two dumps per snapshot, two
                 # snapshots per apply).
-                snap_state, snap_wiring, snap_state_b, snap_wiring_b = (
-                    safe_io.read_state_wiring_raw(path))
+                # w7/livewrite: the same bracketed pair read; the parse and
+                # the canonical hash come from RAM when SM has seen these
+                # bytes (it usually wrote them). The dicts are READ-ONLY.
+                from quam_state_manager.core import doc_cache
+                _cap = doc_cache.read_pair(path, mode="shared")
+                snap_state, snap_wiring = _cap.state, _cap.wiring
+                snap_state_b, snap_wiring_b = _cap.state_bytes, _cap.wiring_bytes
             except (OSError, ValueError) as exc:
                 logger.warning("Snapshot capture failed for %s: %s", ts, exc)
                 return None
@@ -1932,6 +1991,18 @@ class HistoryManager:
             hist_dir, _key, _source, swap_info = self.resolve_chip_dir_for_content(
                 path, snap_state, snap_wiring)
             snap_dir = hist_dir / ts
+            # w7/livewrite: the dedup verdict needs only the captured bytes'
+            # hash, so it is decided BEFORE the copy -- a duplicate used to
+            # write both files (fsync'd; 19 MB on a big chip) only to rmtree
+            # them again. Same outcome (no folder, None), minus the I/O.
+            content_hash = _cap.history_hash()      # == _canonical_hash_of(snap_state, snap_wiring)
+            if content_hash is not None and not force:
+                if content_hash in self._known_hashes_for_chip(hist_dir):
+                    logger.debug(
+                        "Skipping snapshot %s — duplicate content hash %s",
+                        ts, content_hash[:8],
+                    )
+                    return None
             snap_dir.mkdir(parents=True, exist_ok=True)
             try:
                 safe_io.write_state_wiring_bytes(snap_dir, snap_state_b, snap_wiring_b)
@@ -1952,7 +2023,6 @@ class HistoryManager:
             # The dicts just written ARE the snapshot (byte copy), so hash them
             # in memory instead of re-reading + re-parsing the two files
             # (review of 264a4e3; _canonical_hash_of is the same canonical form).
-            content_hash = _canonical_hash_of(snap_state, snap_wiring)
             if content_hash is not None and not force:
                 known = self._known_hashes_for_chip(hist_dir)
                 if content_hash in known:
@@ -1982,7 +2052,9 @@ class HistoryManager:
             if prior is not None:
                 try:
                     prior_dir = hist_dir / prior.timestamp
-                    entries = _differ.diff(prior_dir, snap_dir)
+                    entries = _diff_snapshot_dirs(prior_dir, snap_dir, b_pair=_cap,
+                                                  a_hash=prior.state_hash,
+                                                  b_hash=content_hash)
                     diff_summary = Differ.summary(entries)
                 except Exception:
                     logger.warning("Failed to compute diff for snapshot %s", ts, exc_info=True)
@@ -2049,6 +2121,9 @@ class HistoryManager:
                         )
                 def _run_index_tracked() -> None:
                     try:
+                        # w7/livewrite: never on a live write's critical path
+                        from quam_state_manager.core import bg_gate
+                        bg_gate.wait_quiet()
                         _run_index()
                     finally:
                         with self._deferred_index_lock:
@@ -2603,7 +2678,7 @@ class HistoryManager:
         """Diff two historical snapshots."""
         path = Path(quam_state_path)
         hist_dir = self._history_dir(path)
-        return _differ.diff(hist_dir / ts_a, hist_dir / ts_b)
+        return _diff_snapshot_dirs(hist_dir / ts_a, hist_dir / ts_b)
 
     def diff_current(
         self,

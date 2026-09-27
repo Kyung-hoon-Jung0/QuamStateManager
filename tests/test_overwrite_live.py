@@ -368,7 +368,9 @@ class TestKeepMineHoldsToWhatTheConfirmNamed:
         c = env["client"]
         _rewrite_live_out_of_band(env, off=0.5)
         h0 = c.get("/state/overwrite-live/preflight").get_json()["live_hash"]
-        real = working_copy.read_live
+        # w7/livewrite: both checks hash the live pair through
+        # live_content_hash (the route's, then apply_to_live's tight one)
+        real = working_copy.live_content_hash
         calls = {"n": 0}
 
         def read_live_then_write(wc, **kw):
@@ -377,7 +379,7 @@ class TestKeepMineHoldsToWhatTheConfirmNamed:
             if calls["n"] == 1:           # right after the route's own check
                 _rewrite_live_out_of_band(env, off=0.5, f01=6.2e9)
             return out
-        monkeypatch.setattr(working_copy, "read_live", read_live_then_write)
+        monkeypatch.setattr(working_copy, "live_content_hash", read_live_then_write)
         r = c.post(f"/state/apply-to-live?force=1&expect_live_hash={h0}")
         assert _live(env)["qubits"]["qA1"]["f_01"] == 6.2e9
         assert "keepMineReask" in (r.headers.get("HX-Trigger") or "")

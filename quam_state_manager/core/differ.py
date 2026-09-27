@@ -69,17 +69,36 @@ class Differ:
         Returns:
             Sorted list of DiffEntry (by dot_path).
         """
-        flat_a = self._flatten_side(a)
-        flat_b = self._flatten_side(b)
-
         ignore = ignore_keys if ignore_keys is not None else _DEFAULT_IGNORE
+        doc_a = self._merged_side(a)
+        doc_b = self._merged_side(b)
+        try:
+            entries = _tree_diff(doc_a, doc_b, ignore, float_tolerance)
+        except _UnsafePaths:
+            # A key that makes two different subtrees flatten to the same
+            # dot-path (a dotted/empty/non-str key) -- only the flat
+            # comparison below knows how the old flatten resolved those.
+            entries = None
+        if entries is not None:
+            entries.sort(key=lambda e: natural_key(e.dot_path))
+            return entries
+        return self._diff_flat(flatten(doc_a), flatten(doc_b), ignore, float_tolerance)
 
+    @staticmethod
+    def _diff_flat(flat_a: dict, flat_b: dict, ignore, float_tolerance: float) -> list[DiffEntry]:
+        """The reference algorithm: flatten both sides, compare every leaf.
+
+        ``_tree_diff`` returns exactly this list (pinned by a randomized
+        parity test against this function); it only skips subtrees that
+        are provably identical instead of flattening them."""
         keys_a = set(flat_a.keys())
         keys_b = set(flat_b.keys())
 
         entries: list[DiffEntry] = []
 
-        for key in sorted(keys_b - keys_a, key=natural_key):
+        # F7: no per-bucket natural sort -- the final sort below is a total
+        # order (natural_key ends in the raw string), so it alone decides.
+        for key in keys_b - keys_a:
             if _leaf_key(key) in ignore:
                 continue
             entries.append(DiffEntry(
@@ -89,7 +108,7 @@ class Differ:
                 change_type="added",
             ))
 
-        for key in sorted(keys_a - keys_b, key=natural_key):
+        for key in keys_a - keys_b:
             if _leaf_key(key) in ignore:
                 continue
             entries.append(DiffEntry(
@@ -99,7 +118,7 @@ class Differ:
                 change_type="removed",
             ))
 
-        for key in sorted(keys_a & keys_b, key=natural_key):
+        for key in keys_a & keys_b:
             if _leaf_key(key) in ignore:
                 continue
             val_a = flat_a[key]
@@ -119,6 +138,20 @@ class Differ:
         # weights_imag.101 before .1009).
         entries.sort(key=lambda e: natural_key(e.dot_path))
         return entries
+
+    @staticmethod
+    def _merged_side(side: Path | str | QuamStore | tuple[dict, dict]) -> dict:
+        """The merged document :meth:`_flatten_side` flattens (unflattened)."""
+        if isinstance(side, QuamStore):
+            return side.merged
+        if isinstance(side, tuple) and len(side) == 2:
+            state, wiring = side
+            if not isinstance(state, dict) or not isinstance(wiring, dict):
+                raise TypeError("diff side tuple must be (state_dict, wiring_dict)")
+            merged: dict = {**state}
+            merged.update(wiring)
+            return merged
+        return QuamStore(side, validate=False).merged
 
     @staticmethod
     def _flatten_side(
@@ -552,3 +585,155 @@ def _values_equal(a: Any, b: Any, float_tolerance: float) -> bool:
         return abs(a - b) / denom < float_tolerance
 
     return a == b
+
+
+# ----------------------------------------------------------------------
+# The tree diff (w7/livewrite): Differ.diff without flattening what is equal
+# ----------------------------------------------------------------------
+#
+# The reference algorithm flattens BOTH documents (~0.4 s each on a 19 MB
+# chip) and natural-sorts every key (~1.4 s) to report the handful of leaves
+# that differ. This walks the two documents together instead and skips any
+# subtree pair that is provably identical, so the cost follows the size of the
+# DIFFERENCE, not of the chip.
+#
+# "Provably identical" must be stricter than Python's ``==``, which says
+# ``1 == 1.0 == True`` and short-circuits on identity (the json decoder hands
+# every parsed ``NaN`` out as ONE shared float object, so two NaN leaves compare
+# equal inside a container while the leaf rule, ``_values_equal``, reports them
+# as modified). So a pair is skipped only when ``==`` holds AND their marshal
+# (format 2: no refcount-dependent back-references) bytes agree -- which pins
+# every leaf's type and bits and every key's order -- AND those bytes hold no
+# float whose exponent is all ones (NaN; +-inf is caught too and merely
+# recursed into). Anything else is recursed into and compared leaf by leaf
+# with the reference rule, so a false "not identical" costs time, never
+# correctness.
+#
+# Path identity: the reference keys every leaf by its dotted path, so a key
+# that contains a dot, is empty, or is not a string can make two different
+# subtrees produce the SAME path. Whenever a visited level holds such a key the
+# tree walk gives up (``_UnsafePaths``) and the caller runs the reference
+# algorithm. (A subtree that is skipped is identical on both sides, so its own
+# keys cannot change the outcome -- only a sibling at a visited level could
+# reach into its paths.)
+
+import marshal as _marshal
+import re as _re
+
+_MARSHAL_V = 2
+# TYPE_BINARY_FLOAT ('g', 0x67; 0xe7 with FLAG_REF, unused at format 2) then an
+# IEEE-754 little-endian double whose exponent bits are all ones.
+_NONFINITE_RE = _re.compile(rb"[\x67\xe7][\x00-\xff]{6}[\xf0-\xff][\x7f\xff]", _re.DOTALL)
+# TYPE_BINARY_COMPLEX ('y') never occurs in JSON content; if it ever does the
+# pattern above simply does not match it and the ``==`` + bytes test still holds.
+
+
+class _UnsafePaths(Exception):
+    """A visited level has a key that can collide in dotted-path space."""
+
+
+def _strictly_identical(x: Any, y: Any) -> bool:
+    """True only when no leaf under *x*/*y* can differ by ``_values_equal``."""
+    try:
+        if x != y:
+            return False
+        mx = _marshal.dumps(x, _MARSHAL_V)
+        if mx != _marshal.dumps(y, _MARSHAL_V):
+            return False
+    except (ValueError, TypeError, RecursionError):
+        return False
+    return _NONFINITE_RE.search(mx) is None
+
+
+def _check_keys(d: dict) -> None:
+    for k in d:
+        if type(k) is not str or not k or "." in k:
+            raise _UnsafePaths(k)
+
+
+def _join(prefix: str, key: str) -> str:
+    return f"{prefix}.{key}" if prefix else key
+
+
+def _flat_under(obj: Any, prefix: str) -> dict:
+    """The reference ``flatten`` restricted to one subtree at *prefix*
+    (a leaf yields itself; an empty container yields nothing)."""
+    if isinstance(obj, (dict, list)):
+        from quam_state_manager.core.loader import _walk
+        return {p: v for p, v, _t in _walk(obj, prefix)}
+    return {prefix: obj}
+
+
+def _tree_diff(doc_a: dict, doc_b: dict, ignore, tol: float) -> list[DiffEntry]:
+    out: list[DiffEntry] = []
+
+    def leaf_pair(path: str, va: Any, vb: Any) -> None:
+        if _leaf_key(path) in ignore:
+            return
+        if not _values_equal(va, vb, tol):
+            out.append(DiffEntry(path, va, vb, "modified"))
+
+    def removed(obj: Any, path: str) -> None:
+        for p, v in _flat_under(obj, path).items():
+            if _leaf_key(p) not in ignore:
+                out.append(DiffEntry(p, v, None, "removed"))
+
+    def added(obj: Any, path: str) -> None:
+        for p, v in _flat_under(obj, path).items():
+            if _leaf_key(p) not in ignore:
+                out.append(DiffEntry(p, None, v, "added"))
+
+    def mismatch(va: Any, vb: Any, path: str) -> None:
+        # container vs leaf, dict vs list: the reference rule on this node only
+        fa, fb = _flat_under(va, path), _flat_under(vb, path)
+        for p, v in fb.items():
+            if p not in fa and _leaf_key(p) not in ignore:
+                out.append(DiffEntry(p, None, v, "added"))
+        for p, v in fa.items():
+            if p not in fb and _leaf_key(p) not in ignore:
+                out.append(DiffEntry(p, v, None, "removed"))
+        for p, v in fa.items():
+            if p in fb:
+                leaf_pair(p, v, fb[p])
+
+    def node(va: Any, vb: Any, path: str) -> None:
+        da, la = isinstance(va, dict), isinstance(va, list)
+        db, lb = isinstance(vb, dict), isinstance(vb, list)
+        if not (da or la) and not (db or lb):
+            leaf_pair(path, va, vb)
+            return
+        if (da and db) or (la and lb):
+            if _strictly_identical(va, vb):
+                return
+            if da:
+                walk_dict(va, vb, path)
+            else:
+                walk_list(va, vb, path)
+            return
+        mismatch(va, vb, path)
+
+    def walk_dict(a: dict, b: dict, prefix: str) -> None:
+        _check_keys(a)
+        _check_keys(b)
+        for k, va in a.items():
+            p = _join(prefix, k)
+            if k in b:
+                node(va, b[k], p)
+            else:
+                removed(va, p)
+        for k, vb in b.items():
+            if k not in a:
+                added(vb, _join(prefix, k))
+
+    def walk_list(a: list, b: list, prefix: str) -> None:
+        n = min(len(a), len(b))
+        for i in range(n):
+            node(a[i], b[i], _join(prefix, str(i)))
+        for i in range(n, len(a)):
+            removed(a[i], _join(prefix, str(i)))
+        for i in range(n, len(b)):
+            added(b[i], _join(prefix, str(i)))
+
+    if not _strictly_identical(doc_a, doc_b):
+        walk_dict(doc_a, doc_b, "")
+    return out
