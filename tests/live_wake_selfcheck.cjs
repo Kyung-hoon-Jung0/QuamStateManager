@@ -194,6 +194,29 @@ async function main() {
     ok(w3._log.agentEvents.length === 2, 'a run-only answer leaves the agent channel silent');
   }
 
+  /* w7/agentsqa: a `saturated` answer carries the server's CURRENT tick and
+     agent_seq but never reports a change. Adopting them as cursors swallowed
+     whatever happened while the wait was refused -- measured in real Chrome: a
+     chip switch from another window (it moves agent_seq) never reached an open
+     Agent home for 20 s. A refused wait is not a reading; the cursors stay. */
+  {
+    const w4 = world();
+    await tick(10);
+    answer(w4, { tick: 3, changed: false, agent_seq: 5, agent_changed: false });   // handshake
+    await tick(20);
+    answer(w4, { tick: 4, changed: false, agent_seq: 6, agent_changed: false, saturated: true });
+    await tick(20);
+    ok(w4.LiveWake.state().aseq === 5 && w4.LiveWake.state().tick === 3,
+       'a saturated answer moves neither cursor (' + JSON.stringify(w4.LiveWake.state()) + ')');
+    await tick(5200);                                   // the saturated back-off
+    const last = w4._log.urls[w4._log.urls.length - 1];
+    ok(/since=3&aseq=5&/.test(last), 'the retry asks from the cursors it had (' + last + ')');
+    answer(w4, { tick: 4, changed: true, agent_seq: 6, agent_changed: true });
+    await tick(20);
+    ok(w4._log.agentEvents.length === 1 && w4._log.events.length === 1,
+       'so the change that happened meanwhile is reported, on both channels');
+  }
+
   console.log(fails ? ('FAILED ' + fails) : 'live_wake_selfcheck: all ok');
   process.exit(fails ? 1 : 0);
 }

@@ -505,6 +505,79 @@ class TestRun:
         assert "rejected writes from `05_power_rabi`: not today" in _journal(c, inst)
         assert c.post(f"/api/agent/approvals/{aid}/reject", json={}, headers=HUMAN).status_code == 404
 
+    def test_a_failed_approve_leaves_nothing_behind_for_a_reject_to_miss(
+            self, c, inst, synth_folder, monkeypatch):
+        """verifier P0 (w7/agentsqa): the approve door SAVES the approval's
+        values into the working copy before it writes the chip. When that live
+        write failed (a reader holding state.json open on Windows), the values
+        stayed there as unapplied edits; a Reject then left them in, and the
+        NEXT approval's apply pushed the rejected values to the chip under its
+        own name. A refused press must leave SM exactly where it found it."""
+        from quam_state_manager.core import approvals as _ap, working_copy as _wc
+        chip = _chip(c)
+        before = json.loads((synth_folder / "state.json").read_text(encoding="utf-8"))
+        old_f = before["qubits"]["qA1"]["f_01"]
+        old_t1 = before["qubits"]["qA1"]["T1"]
+        a = _ap.add(str(inst), chip, kind="writes", node="05_power_rabi", targets=["qA1"],
+                    writes=[{"path": "qubits.qA1.f_01", "old": old_f, "new": old_f + 3e6}],
+                    reason="r", why_held="mode ask-writes", actor="by_claude", run_id=9001)
+        b = _ap.add(str(inst), chip, kind="writes", node="17_T1", targets=["qA1"],
+                    writes=[{"path": "qubits.qA1.T1", "old": old_t1, "new": 3.3e-5}],
+                    reason="r", why_held="mode ask-writes", actor="by_claude", run_id=9002)
+        sv0 = c.get("/state/drift").get_json()["sync"]
+        real = _wc.apply_to_live
+        calls = {"n": 0}
+
+        def locked(*args, **kw):
+            calls["n"] += 1
+            raise PermissionError(13, "The process cannot access the file because it is being used "
+                                      "by another process", "state.json")
+        monkeypatch.setattr(_wc, "apply_to_live", locked)
+        d = c.post(f"/api/agent/approvals/{a['id']}/approve", json={}, headers=HUMAN)
+        assert calls["n"] == 1, "the door reached the live write"
+        assert d.status_code == 409, d.get_json()
+        err = d.get_json()["error"]
+        # verifier P2: the real reason, not "HTTP 500"
+        assert "being used by another process" in err and "HTTP 500" not in err, err
+        # nothing of the refused press is left in SM
+        sv = c.get("/state/drift").get_json()["sync"]
+        assert sv["unapplied"] == 0, sv
+        assert sv["state"] == sv0["state"], (sv0, sv)
+        with c.application.app_context():
+            from quam_state_manager.web import routes as _r
+            assert not _r._active_ctx().get("working_dirty"), "the working copy is back at the sync point"
+        assert c.get("/api/agent/chip").get_json()["pending"] == 0
+        monkeypatch.setattr(_wc, "apply_to_live", real)
+        assert c.post(f"/api/agent/approvals/{a['id']}/reject", json={}, headers=HUMAN).get_json()["ok"]
+        assert c.get("/state/drift").get_json()["sync"]["unapplied"] == 0
+        d = c.post(f"/api/agent/approvals/{b['id']}/approve", json={}, headers=HUMAN).get_json()
+        assert d["ok"] and d["stage"]["applied"] is True, d
+        live = json.loads((synth_folder / "state.json").read_text(encoding="utf-8"))
+        assert live["qubits"]["qA1"]["T1"] == 3.3e-5
+        assert live["qubits"]["qA1"]["f_01"] == old_f, "the REJECTED value must never reach the chip"
+        # Ctrl+Z after the good approve walks back THAT approve, not the refused one
+        from quam_state_manager.core import undo_journal as _uj
+        with c.application.app_context():
+            units = _uj.load(_uj.sidecar_path(str(inst), str(synth_folder)))
+        paths = [e["path"] for u in units for e in u["entries"]]
+        assert "qubits.qA1.f_01" not in paths, units
+
+    def test_an_approval_card_says_what_sm_holds_now(self, c, inst, synth_folder):
+        """verifier P3: the card's "now" printed the proposal's own `old`; the
+        feed now carries the value SM holds for each leaf, through the x180
+        alias the way the approve door edits it."""
+        from quam_state_manager.core import approvals as _ap
+        chip = _chip(c)
+        _ap.add(str(inst), chip, kind="writes", node="17_T1", targets=["qA1"],
+                writes=[{"path": "qubits.qA1.T1", "old": 4.2e-5, "new": 3.3e-5},
+                        {"path": "qubits.qA1.nope", "old": 1, "new": 2}],
+                reason="r", why_held="mode ask-writes", actor="by_claude")
+        assert c.post("/field/edit", data={"dot_path": "qubits.qA1.T1", "value": "5.55e-5"}).status_code == 200
+        ws = c.get("/api/agent/chat/cards?after=0").get_json()["live"]["approvals"][0]["writes"]
+        assert ws[0]["old"] == 4.2e-5, "the proposal's anchor is untouched"
+        assert ws[0]["now_known"] is True and ws[0]["now"] == 5.55e-5, ws[0]
+        assert ws[1]["now_known"] is False and "now" not in ws[1], ws[1]
+
     def test_limits_hold_in_auto(self, c, inst, fake_run):
         chip = _chip(c)
         _arm(c)
@@ -683,6 +756,8 @@ class TestRun:
     def test_live_diff_and_stale_since(self, c, inst, synth_folder):
         d = c.get("/api/agent/live-diff").get_json()
         assert d["ok"] and d["count"] == 0
+        # QA agents round: an in-sync chip has no stale_since (it had one: the live files' mtime)
+        assert d["live_diverged"] is False and d["stale_since"] is None
         st = json.loads((synth_folder / "state.json").read_text(encoding="utf-8"))
         st["qubits"]["qA1"]["T1"] = 12345
         time.sleep(0.05)
@@ -702,3 +777,22 @@ class TestRun:
         assert "armed by human:kyunghoon" in _journal(c, inst)
         assert c.post("/api/agent/session/disarm", json={}, headers=HUMAN).get_json()["session"]["armed"] is False
         assert "disarmed by human:kyunghoon" in _journal(c, inst)
+
+
+def test_a_chip_switch_moves_the_agent_clock(app, synth_folder, tmp_path):
+    """verifier P3 (w7/agentsqa): the Agent feed is per chip, and an open Agent
+    home in another window learns of a switch only through `agent_seq`
+    (LiveWake's `sm:agent-changed`). Re-opening the SAME chip is not a switch."""
+    import shutil
+    other = tmp_path / "chip_b"
+    shutil.copytree(synth_folder, other)
+    c = app.test_client()
+    seq = lambda: int(app.config.get("agent_seq") or 0)   # noqa: E731
+    assert c.post("/load", data={"folder": str(synth_folder)}).status_code in (200, 302)
+    s0 = seq()
+    assert c.post("/load", data={"folder": str(synth_folder)}).status_code in (200, 302)
+    assert seq() == s0, "re-opening the chip already open is not news"
+    assert c.post("/load", data={"folder": str(other)}).status_code in (200, 302)
+    assert seq() == s0 + 1, "a switch moves the agent clock"
+    assert c.post("/load", data={"folder": str(synth_folder)}).status_code in (200, 302)
+    assert seq() == s0 + 2, "and so does switching back (the cached path)"

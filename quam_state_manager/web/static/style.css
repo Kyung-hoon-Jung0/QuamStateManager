@@ -11762,6 +11762,9 @@ body.scheduler-active #pending-tray { opacity: .5; pointer-events: none; }
 .jr-folder { font-size: .74rem; max-width: 26rem; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .jr-filters { display: flex; gap: .6rem; align-items: center; flex-wrap: wrap; margin: .2rem 0 .6rem; }
 .jr-filters input, .jr-filters select { margin: 0; padding: .2rem .45rem; font-size: .82rem; height: auto; width: auto; }
+/* the select's own arrow is a background at the right edge: the shorthand above
+   took away the room Pico keeps for it and the arrow sat on "everyone" */
+.jr-filters select { padding-right: 1.9rem; }
 .jr-filters .jr-q { min-width: 16rem; }
 .jr-daynav { display: inline-flex; gap: .25rem; align-items: center; }
 .jr-counts { font-size: .8rem; margin: 0 0 .5rem; }
@@ -11864,9 +11867,19 @@ body.scheduler-active #pending-tray { opacity: .5; pointer-events: none; }
 .jr-card > summary { display: grid; grid-template-columns: 4.3rem minmax(11rem, 1.3fr) minmax(5rem, .9fr) minmax(9.5rem, auto) 3.3rem minmax(5rem, auto) 1.1rem;
     column-gap: .55rem; align-items: center; padding: .26rem 0; font-size: .81rem; }
 .jr-card > summary::after { justify-self: end; }
+/* QA agents round: the "new since your last visit" dot is a ::before, and in
+   this seven-column grid a ::before is an EIGHTH grid item -- every cell moved
+   one column right, the chevron wrapped to a second line and the author chip
+   was cut at the pane's edge (seen in real Chrome on every fresh row). The dot
+   sits in the card's left padding, out of the grid's flow. */
+.jr-card > summary { position: relative; }
+.jr-card.jr-new > summary::before { position: absolute; left: -.5rem; top: 50%; transform: translateY(-50%); line-height: 1; }
 .jr-card > summary:hover { background: color-mix(in srgb, var(--pico-primary) 6%, transparent); }
 .jr-card[open] > summary { background: color-mix(in srgb, var(--pico-primary) 9%, transparent); }
 .jr-card > summary .jr-family { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-weight: 600; }
+/* the loose-lines card has ONE label, not a run's seven columns: in the run
+   grid it landed in the 4.3rem time column and read "11 journal..." */
+.jr-card.jr-loose > summary { display: flex; justify-content: space-between; }
 .jr-card > summary .jr-targets { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: .78rem; }
 .jr-pills { display: flex; gap: .3rem; align-items: center; white-space: nowrap; }
 .jr-who-cell { display: flex; gap: .3rem; align-items: center; white-space: nowrap; }
@@ -13495,6 +13508,7 @@ table.diff-wb-list tbody > tr[hidden] { display: none; }
     color: var(--pico-muted-color); border-radius: 50%;
     width: 1.25em; height: 1.25em; line-height: 1; padding: 0;
     font-size: .95em; cursor: pointer;
+    margin: 0;              /* Pico's button margin-bottom lifted the circle ~10px above its row */
 }
 .ag-wire-help:hover { color: var(--pico-primary); border-color: var(--pico-primary); }
 .ag-wire-setup, .ag-wire-fix { white-space: nowrap; }
@@ -13631,6 +13645,7 @@ table.diff-wb-list tbody > tr[hidden] { display: none; }
 .ag-root .ag-cancel, .ag-root .ag-reject { border-color: var(--pico-muted-border-color); color: var(--pico-muted-color); background: transparent; }
 .ag-ap-rows { width: 100%; font-size: .9em; margin: .2rem 0; } .ag-ap-rows td, .ag-ap-rows th { padding: .1rem .35rem; }
 .ag-root .ag-ap-rows input { width: 100%; margin: 0; padding: .05rem .3rem; height: auto; font-size: .95em; }
+.ag-ap-rows .ag-ap-moved .ag-ap-from { display: block; font-size: .85em; color: var(--pico-del-color, #b00020); }
 .ag-ap-note { margin: .2rem 0; font-size: .9em; }
 .ag-because { color: var(--pico-muted-color); font-size: .9em; margin: .2rem 0 0; }
 .ag-writes, .ag-log { font-size: .9em; margin: .2rem 0; } .ag-writes > summary, .ag-log > summary { cursor: pointer; padding: 0; margin: 0; color: var(--pico-muted-color); }
@@ -13647,6 +13662,8 @@ table.diff-wb-list tbody > tr[hidden] { display: none; }
 /* docs/173 S8: the name picker in front of the keyboard */
 .ag-actor-wrap { display: inline-flex; align-items: center; gap: .25rem; font-size: .85em; color: var(--pico-muted-color); }
 .ag-root .ag-actor { width: 7rem; padding: .15rem .4rem; height: auto; font-size: .9em; }
+.ag-root .ag-actor.ag-actor-bad { border-color: var(--pico-del-color, #b00020); box-shadow: 0 0 0 1px var(--pico-del-color, #b00020); }
+.ag-root .ag-actor-note { color: var(--pico-del-color, #b00020); font-size: .85em; white-space: nowrap; }
 .ag-presets { display: inline-flex; flex-wrap: wrap; gap: .3rem; align-items: center; cursor: help; }
 .ag-root .ag-preset { font-size: .78em; padding: .08rem .55rem; border-radius: 999px; background: transparent; color: var(--pico-muted-color); border: 1px solid var(--pico-muted-border-color); cursor: pointer; }
 .ag-root .ag-preset:hover { color: var(--pico-primary); border-color: var(--pico-primary); }
@@ -13678,7 +13695,23 @@ table.diff-wb-list tbody > tr[hidden] { display: none; }
 .as-answer { font-size: .9em; white-space: pre-wrap; }
 .as-ctx-local, .as-jroot { font-size: .9em; }
 .as-jroot input { display: inline-block; width: min(28rem, 100%); margin: 0; }
-.ag-toast { position: fixed; bottom: 1rem; right: 1rem; background: var(--pico-card-background-color); border: 1px solid var(--pico-muted-border-color); padding: .5rem .8rem; border-radius: .4rem; z-index: 60; }
+/* QA agents round: at bottom 1rem the toast sat ON the composer's Send button
+   for its 5 s and took the click (measured: elementFromPoint(Send) = the toast
+   at 1366 and 1600) -- the refusal toast of a bad line covered the very button
+   the fix is sent with. It sits above the composer now and never takes a click. */
+.ag-toast { pointer-events: none; }
+.ag-toast { position: fixed; bottom: 6.5rem; right: 1rem; background: var(--pico-card-background-color); border: 1px solid var(--pico-muted-border-color); padding: .5rem .8rem; border-radius: .4rem; z-index: 60; }
+/* QA agents round (2): agent.js's toast() goes through the app's global
+   window.showToast (#status-bar) wherever app.js is loaded -- i.e. on /agent and
+   under the floating panel -- so .ag-toast above is only the fallback. The
+   #status-bar toast sat at bottom 1rem and covered the composer's Send label
+   (measured: toast 831-870 px vs Send 857-885 px at 1366x900). While an agent
+   composer is on screen, the toast sink sits above it.
+   QA agents round (3): NOT `body:has(...)` -- an ancestor-position :has()
+   re-matches the whole page on every DOM mutation (/bulk big30x: 118-166 ms
+   per insert+layout, per-key typing 150 -> 278 ms). agent.js sets
+   body.ag-composer-on (syncComposerClass) while a composer is on screen. */
+body.ag-composer-on #status-bar { bottom: 6.5rem; }
 .agent-popover { position: fixed; right: 1rem; bottom: 1rem; width: min(34rem, 92vw); max-height: 80vh; min-width: 22rem; min-height: 24rem; overflow: hidden; z-index: 55;
   background: var(--pico-card-background-color); border: 1.5px solid var(--pico-primary); border-radius: 10px; box-shadow: 0 8px 28px rgba(0,0,0,.25); display: flex; flex-direction: column; }
 /* review R2-9: the cards scroll INSIDE the panel; the composer stays pinned at the bottom */

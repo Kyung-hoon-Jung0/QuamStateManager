@@ -136,6 +136,18 @@ class TestContext:
         assert by["coupler"]["detected"] == "tunable coupler" and by["purcell"]["detected"] == "unknown"
         assert by["data_read"]["detected"] == "no", "direct data reads are opt-in"
 
+    def test_a_null_coupler_field_is_not_a_coupler(self):
+        """QA agents round: quam_builder writes `coupler: null` on every pair, and
+        the KEY alone made the lab-context question say 'tunable coupler
+        (detected)' on the KRISS 5Q chip, which has no coupler."""
+        state = {"qubits": {"q1": {}, "q2": {}},
+                 "qubit_pairs": {"q1-2": {"coupler": None, "qubit_control": "#/qubits/q1"}}}
+        f = st.detect_facts(state, node_names=[])
+        assert f["couplers_seen"] is False
+        assert {q["id"]: q for q in st.questions(f)}["coupler"]["detected"] == "fixed coupling"
+        state["qubit_pairs"]["q1-2"]["coupler"] = "#/couplers/c12"
+        assert st.detect_facts(state, node_names=[])["couplers_seen"] is True, "a pointer to a coupler is one"
+
     def test_block_written_between_markers_idempotent_with_backup(self, tmp_path):
         cal = tmp_path / "cal"
         cal.mkdir()
@@ -223,6 +235,43 @@ class TestRoutes:
         d = c.post("/api/agent/setup/connect", json={"backend": "codex", "apply": True}).get_json()
         assert d["writes"]["mcp"]["file"].endswith("config.toml") and (home / ".codex" / "config.toml").exists()
         assert c.post("/api/agent/setup/connect", json={"backend": "nope"}).status_code == 400
+
+    @pytest.mark.parametrize("bad", ['{"projects": {"x": 1},', "[1, 2]", '{"a": 1} trailing'])
+    def test_an_unreadable_settings_file_is_refused_never_replaced(self, c, home, bad):
+        """QA round (agents): the write paths read with ``_read_json``, which
+        answers ``{}`` for a file it cannot parse, so Connect replaced a
+        half-written or hand-broken ``~/.claude.json`` with SM's one key and
+        every other key the file held was gone. Refused by name now, before
+        the FIRST write, and every file is left byte-identical."""
+        cj = home / ".claude.json"
+        cj.write_text(bad, encoding="utf-8")
+        before = sorted(p.name for p in home.rglob("*"))
+        r = c.post("/api/agent/setup/connect", json={"backend": "claude", "apply": True})
+        assert r.status_code == 409, r.get_json()
+        assert str(cj) in r.get_json()["error"] and "will not overwrite" in r.get_json()["error"]
+        assert cj.read_text(encoding="utf-8") == bad, "the file SM could not read is untouched"
+        assert not (home / ".claude" / "settings.json").exists(), "nothing half-applied: the hooks file was not written either"
+        assert sorted(p.name for p in home.rglob("*")) == before, "no backup litter, no other file"
+        assert c.post("/api/agent/setup/connect", json={"backend": "claude"}).status_code == 409, "the preview says so too"
+        assert c.post("/api/agent/setup/disconnect", json={"backend": "claude"}).status_code == 409
+        assert cj.read_text(encoding="utf-8") == bad
+        cj.write_text("", encoding="utf-8")            # an EMPTY file holds nothing to lose
+        assert c.post("/api/agent/setup/connect", json={"backend": "claude", "apply": True}).status_code == 200
+
+    def test_the_write_functions_refuse_on_their_own(self, home):
+        """The functions are the last line, not only the route's preflight."""
+        cj = home / ".claude.json"
+        cj.write_text('{"keep": 1', encoding="utf-8")
+        for fn in (lambda: st.write_claude_mcp({"type": "stdio"}, home), lambda: st.remove_claude_mcp(home)):
+            with pytest.raises(st.UnreadableConfig):
+                fn()
+        assert cj.read_text(encoding="utf-8") == '{"keep": 1'
+        sj = home / ".claude" / "settings.json"
+        sj.write_text("not json", encoding="utf-8")
+        for fn in (lambda: st.write_claude_hooks("x -m quam_state_manager.hook", home), lambda: st.remove_claude_hooks(home)):
+            with pytest.raises(st.UnreadableConfig):
+                fn()
+        assert sj.read_text(encoding="utf-8") == "not json"
 
     def test_journal_root_is_mandatory_and_set(self, c, tmp_path):
         assert c.post("/api/agent/setup/journal", json={}).status_code == 400

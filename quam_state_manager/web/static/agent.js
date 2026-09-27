@@ -27,7 +27,8 @@ window.AgentPanel = (function () {
   var S = {
     after: 0, seq: -1, chip: null, session: null, now: null, backends: null, defaultBackend: "claude",
     plans: {}, runs: {}, approvals: {}, mounts: [], timer: null, inflight: false, observer: false,
-    seenCards: {}, lastPoll: 0, unreachable: false
+    seenCards: {}, lastPoll: 0, unreachable: false,
+    deciding: {}                                   // approval id -> "approve" | "reject" while its press is in flight
   };
   var PRESETS = [
     ["1Q bringup", "1Q bringup on <targets>: resonator spectroscopy -> qubit spectroscopy -> power rabi -> ramsey. Propose the plan with plan_propose (one step per node and target) and wait for Start."],
@@ -84,8 +85,30 @@ window.AgentPanel = (function () {
   }
   function actorName() { try { return asciiActor(localStorage.getItem("quam_actor_name")); } catch (e) { return ""; } }
   function actorRecents() { try { return JSON.parse(localStorage.getItem("quam_actor_recents") || "[]"); } catch (e) { return []; } }
-  function setActor(v) {
+  function setActor(v, input) {
+    var typed = String(v == null ? "" : v).trim();
     v = asciiActor(v);
+    /* QA agents round: a name in Hangul stayed in the box while SM stored
+       nothing and recorded every door as a plain "human" -- the box claimed
+       a name the record would never carry. Say so where it is typed. */
+    /* Verifier P1: NOT the constraint-validation API. The box sits inside the
+       composer <form>, and a custom validity made the whole form invalid --
+       a click on Send was silently blocked (AgentPanel.submit never ran)
+       while Enter still sent. The warning is an inline note + a mark. */
+    if (input) {
+      var bad = typed !== v;
+      var msg = bad ? "English letters only — SM records " + (v ? "“" + v + "”" : "a plain “human”") : "";
+      input.classList.toggle("ag-actor-bad", bad);
+      input.setAttribute("aria-invalid", bad ? "true" : "false");
+      var note = input.parentNode && input.parentNode.querySelector(".ag-actor-note");
+      if (!note && bad && input.parentNode) {
+        note = document.createElement("span");
+        note.className = "ag-actor-note";
+        note.setAttribute("role", "status");
+        input.parentNode.insertBefore(note, input.nextSibling);
+      }
+      if (note) { note.textContent = msg; note.hidden = !bad; }
+    }
     try {
       localStorage.setItem("quam_actor_name", v);
       if (v) {
@@ -413,6 +436,9 @@ window.AgentPanel = (function () {
     if (!el) return;
     var c = p.counts || {};
     var may = p.may_change || [];
+    // the server lists at most 60 rows; the COUNT is its total (a 40-qubit /run is 80, not 60)
+    var mayN = typeof p.may_change_total === "number" && p.may_change_total > may.length ? p.may_change_total : may.length;
+    var mayCount = mayN > may.length ? mayN + ", first " + may.length + " shown" : String(mayN);
     // compact step rows: glyph · node · targets · run · writes · why (a div, not a table)
     var rows = (p.steps || []).map(function (s) {
       return '<div class="ag-step">' + stepBadge(s) + " <code>" + esc(s.node) + "</code>" + simBadge(s.simulated) +
@@ -446,7 +472,7 @@ window.AgentPanel = (function () {
     var acts = "";
     if (!S.observer) {
       if (p.status === "draft") {
-        acts = '<button type="button" class="btn-sm ag-start" onclick="AgentPanel.startPlan(\'' + esc(p.id) + '\')">Start — ' + (may.length ? may.length + " value(s) may change" : "values may change") + "</button> " +
+        acts = '<button type="button" class="btn-sm ag-start" onclick="AgentPanel.startPlan(\'' + esc(p.id) + '\')">Start — ' + (mayN ? mayN + " value(s) may change" : "values may change") + "</button> " +
           '<button type="button" class="btn-sm ag-cancel" onclick="AgentPanel.cancelPlan(\'' + esc(p.id) + '\')">Cancel</button>';
       } else if (p.status === "running") {
         acts = '<button type="button" class="btn-sm ag-stop" onclick="AgentPanel.stop(\'after_run\')">Stop after this run</button> ' +
@@ -459,7 +485,7 @@ window.AgentPanel = (function () {
       acts += ' <a class="btn-sm ag-revert" href="/state-history" hx-get="/state-history" hx-target="#table-pane" hx-push-url="true" title="the chip as it was right before this plan started (State History → restore)">state before this plan</a>';
     }
     var html = head + '<div class="ag-steps">' + rows + "</div>" +
-      '<details class="ag-may-wrap"' + (p.status === "draft" ? " open" : "") + "><summary>values that may change" + (may.length ? " (" + may.length + ")" : "") + "</summary>" + mayHtml + "</details>" +
+      '<details class="ag-may-wrap"' + (p.status === "draft" ? " open" : "") + "><summary>values that may change" + (mayN ? " (" + mayCount + ")" : "") + "</summary>" + mayHtml + "</details>" +
       prog + '<div class="ag-plan-acts">' + modeSel + " " + acts + "</div>";
     setHtml(el, row(p.created, html), force);
   }
@@ -492,7 +518,16 @@ window.AgentPanel = (function () {
     if (!el) return;
     var isRun = a.kind === "run";
     var rows = (a.writes || []).map(function (w, i) {
-      return "<tr><td title=\"" + esc(w.path) + "\">" + esc(w.path) + "</td><td>" + esc(fmtNum(w.old)) + "</td><td>" +
+      /* verifier P3: "now" is the value SM holds now (the server reads it per
+         poll), like the plan card's; the value the proposal was made from is
+         shown beside it only when the two differ, and flagged. */
+      var nowTd;
+      if (w.now_known === undefined) nowTd = "<td>" + esc(fmtNum(w.old)) + "</td>";
+      else if (!w.now_known) nowTd = '<td class="muted">not set</td>';
+      else if (JSON.stringify(w.now) === JSON.stringify(w.old)) nowTd = "<td>" + esc(fmtNum(w.now)) + "</td>";
+      else nowTd = '<td class="ag-ap-moved" title="' + esc("the proposal was made from " + fmtNum(w.old) + "; SM holds " + fmtNum(w.now) + " now") + '">' +
+        esc(fmtNum(w.now)) + ' <span class="ag-ap-from">⚠ proposed from ' + esc(fmtNum(w.old)) + "</span></td>";
+      return "<tr><td title=\"" + esc(w.path) + "\">" + esc(w.path) + "</td>" + nowTd + "<td>" +
         (S.observer ? esc(fmtNum(w.new)) : '<input class="ag-ap-new" data-i="' + i + '" value="' + esc(typeof w.new === "object" ? JSON.stringify(w.new) : w.new) + '">') + "</td></tr>";
     }).join("");
     // review R2-11: a RUN request is allowed, not written
@@ -505,6 +540,25 @@ window.AgentPanel = (function () {
         '<div class="ag-tbl"><table class="ag-ap-rows"><thead><tr><th>value</th><th>now</th><th>proposed (editable)</th></tr></thead><tbody>' + rows + "</tbody></table></div>") +
       (a.reason ? '<p class="ag-because">because: ' + esc(a.reason) + "</p>" : "") + '<div class="ag-ap-acts">' + acts + "</div>";
     setHtml(el, row(a.created, html), force);
+    markBusy(el, a);
+  }
+  /* QA agents round: on a 30-qubit chip the door took 5-15 s to answer
+     "Write to chip" (the apply path, measured), and all that time the card
+     still offered Reject and looked idle: a Reject pressed then answered
+     "no pending approval" once the write had landed. While a press is in
+     flight the card says what it is doing and offers nothing else. Done on
+     the live DOM, never by re-rendering: a re-render rebuilds the editable
+     rows from the proposal and would throw away the values the person typed
+     (and a refused write keeps the card, so they must still be there). */
+  function markBusy(el, a) {
+    var busy = S.deciding[a.id];
+    var ap = el.querySelector(".ag-approve"), rj = el.querySelector(".ag-reject");
+    if (ap) {
+      if (ap.__agLabel === undefined) ap.__agLabel = ap.textContent;
+      ap.disabled = !!busy;
+      ap.textContent = busy ? (busy === "reject" ? "rejecting…" : (a.kind === "run" ? "allowing…" : "writing to the chip…")) : ap.__agLabel;
+    }
+    if (rj) rj.hidden = !!busy;
   }
 
   // ---------------------------------------------------------- the "now"
@@ -620,7 +674,34 @@ window.AgentPanel = (function () {
   // ------------------------------------------------------------ polling
   function absorb(d) {
     if (!d || !d.ok) return;
+    /* Verifier P3: another window switched the chip. The feed is per chip, but
+       the heading was set once at mount and the old chip's plan/run cards (and
+       an approval card with a live "Write to chip") stayed until something
+       happened to remove them. A new chip key starts the feed over: heading
+       re-read, every card dropped, cursor back to 0, and this response -- asked
+       with the OLD chip's cursor -- is not absorbed; a fresh poll follows. */
+    var key = d.chip_key || null;
+    if (S.chipKey !== undefined && key !== S.chipKey) {
+      S.chipKey = key;
+      S.plans = {}; S.runs = {}; S.approvals = {}; S.deciding = {};
+      S.seenCards = {}; S.after = 0;
+      S.mounts.forEach(function (m) {
+        var host = cardsHost(m);
+        if (host) { host.innerHTML = ""; host.__agScrolledOnce = false; }
+        var chipEl = m.root.querySelector(".ag-chip");
+        if (chipEl) chipEl.textContent = d.chip || "no chip open";
+        var q = m.root.querySelector(".ag-qubits");
+        if (q) q.textContent = "";
+      });
+      setTimeout(function () { poll(true); }, 0);
+      return;
+    }
+    S.chipKey = key;
     S.chip = d.chip;
+    S.mounts.forEach(function (m) {
+      var chipEl = m.root.querySelector(".ag-chip");
+      if (chipEl && d.chip && chipEl.textContent !== d.chip) chipEl.textContent = d.chip;
+    });
     S.session = { session: d.session, file: d.file };
     S.now = d.now;
     if (typeof d.agent_seq === "number") S.seq = d.agent_seq;
@@ -687,7 +768,12 @@ window.AgentPanel = (function () {
     var card = e && e.target && e.target.closest && e.target.closest(".ag-card");
     if (!card || !card.__agStale) return;
     setTimeout(function () {
-      if (card.__agStale && !(card.contains(document.activeElement) && document.activeElement !== document.body)) setHtml(card, card.__agStale, true);
+      if (card.__agStale && !(card.contains(document.activeElement) && document.activeElement !== document.body)) {
+        setHtml(card, card.__agStale, true);
+        // a caught-up approval card is fresh markup: a press still in flight is re-said
+        var ak = /^approval:(.+)$/.exec(card.getAttribute("data-card") || "");
+        if (ak && S.approvals[ak[1]]) markBusy(card, S.approvals[ak[1]]);
+      }
     }, 0);
   }, true);
 
@@ -774,7 +860,11 @@ window.AgentPanel = (function () {
     if (isRun) {
       api("POST", "/api/agent/plans", { run_line: text }).then(function (r) {
         var ok = r.status === 200;
-        if (!ok) toast(errText(r, "could not make the plan"), "error"); else toast("plan card ready — press Start when you mean it");
+        /* verifier P4: no success toast. The new card lands at the bottom of
+           the feed, right above the composer -- exactly where the lifted toast
+           sits -- so "plan card ready" covered the card's own Start button.
+           The card appearing IS the answer, and its Start names what it does. */
+        if (!ok) toast(errText(r, "could not make the plan"), "error");
         done(ok);
       });
       return false;
@@ -852,8 +942,16 @@ window.AgentPanel = (function () {
       poll(true);
     });
   }
+  function repaintApproval(id) {
+    var a = S.approvals[id];
+    if (!a) return;
+    S.mounts.forEach(function (m) {
+      var el = m.root.querySelector('[data-card="approval:' + id + '"]');
+      if (el) markBusy(el, a);
+    });
+  }
   function approve(id, btn) {
-    if (S.observer) return;
+    if (S.observer || S.deciding[id]) return;
     var card = btn && btn.closest(".ag-card");
     var a = S.approvals[id] || {};
     var writes = null;
@@ -865,9 +963,11 @@ window.AgentPanel = (function () {
         return { path: w.path, old: w.old, new: v };
       });
     }
-    if (btn) btn.disabled = true;
+    S.deciding[id] = "approve";
+    repaintApproval(id);
     api("POST", "/api/agent/approvals/" + id + "/approve", writes ? { writes: writes } : {}).then(function (r) {
-      if (btn) btn.disabled = false;
+      delete S.deciding[id];
+      repaintApproval(id);
       // review R2-2: "written" only when the door said applied; a refusal keeps the card and says why
       var applied = r.status === 200 && r.body && r.body.ok !== false;
       if (!applied) toast(errText(r, "not applied"), "error");
@@ -876,9 +976,17 @@ window.AgentPanel = (function () {
     });
   }
   function reject(id) {
-    if (S.observer) return;
-    var note = window.prompt ? (window.prompt("Reject — a note for the journal (optional):") || "") : "";
-    api("POST", "/api/agent/approvals/" + id + "/reject", { note: note }).then(function (r) { if (r.status !== 200) toast(errText(r, "not rejected"), "error"); poll(true); });
+    if (S.observer || S.deciding[id]) return;
+    var note = window.prompt ? window.prompt("Reject — a note for the journal (optional):") : "";
+    if (note === null) return;                   // Cancel on the prompt is "not now", not "reject"
+    S.deciding[id] = "reject";
+    repaintApproval(id);
+    api("POST", "/api/agent/approvals/" + id + "/reject", { note: note || "" }).then(function (r) {
+      delete S.deciding[id];
+      repaintApproval(id);
+      if (r.status !== 200) toast(errText(r, "not rejected"), "error");
+      poll(true);
+    });
   }
   function stop(mode) {
     if (S.observer) return;
@@ -904,7 +1012,7 @@ window.AgentPanel = (function () {
       '<form class="ag-form ag-composer" onsubmit="return AgentPanel.submit(event)">' +
       '<textarea class="ag-input" rows="1" onkeydown="return AgentPanel.key(event)" oninput="AgentPanel.grow(this)" placeholder="Ask, or tell the agent what to do…  (Enter sends · Shift+Enter newline · /run <node> <targets>)"></textarea>' +
       '<div class="ag-form-row"><select class="ag-backend" title="which CLI drives"></select>' +
-      '<label class="ag-actor-wrap" title="who is at the keyboard — the person SM records for Arm / Stop / mode / “I ran it”. English letters only (it travels in a request header); what you SAY to the agent can be any language.">⌨ <input class="ag-actor" list="ag-actor-list" placeholder="your name" autocomplete="off" spellcheck="false" oninput="AgentPanel.setActor(this.value)"><datalist id="ag-actor-list"></datalist></label>' +
+      '<label class="ag-actor-wrap" title="who is at the keyboard — the person SM records for Arm / Stop / mode / “I ran it”. English letters only (it travels in a request header); what you SAY to the agent can be any language.">⌨ <input class="ag-actor" list="ag-actor-list" placeholder="your name" autocomplete="off" spellcheck="false" oninput="AgentPanel.setActor(this.value, this)"><datalist id="ag-actor-list"></datalist></label>' +
       '<span class="ag-presets" title="a preset fills a draft; nothing starts before a plan card\'s Start">' +
       '<button type="button" class="btn-sm ag-presets-toggle" onclick="AgentPanel.togglePresets(this)" aria-expanded="false">presets ▾</button>' +
       PRESETS.map(function (p, i) { return '<button type="button" class="btn-sm ag-preset" onclick="AgentPanel.preset(' + i + ', this.closest(\'.ag-root\'))">' + esc(p[0]) + "</button>"; }).join("") + "</span>" +
@@ -1119,9 +1227,17 @@ window.AgentPanel = (function () {
     document.addEventListener("pointerdown", off, true);
   }
 
+  /* A root is LIVE when a mount in S.mounts renders into it. The
+     `data-ag-mounted` attribute cannot answer that: it is part of the DOM, so
+     htmx's history snapshot carries it, and a browser Back restored a home
+     that said "mounted" while nothing polled or rendered into it -- a line
+     sent from it made no card until a reload (measured in real Chrome). */
+  function isLive(root) {
+    return !!root && S.mounts.some(function (m) { return m.root && root.contains(m.root) && document.body.contains(m.root); });
+  }
   function mount(root, opts) {
     opts = opts || {};
-    if (!root || root.getAttribute("data-ag-mounted")) return;
+    if (!root || isLive(root)) return;
     root.setAttribute("data-ag-mounted", "1");
     root.innerHTML = skeleton(!!opts.compact);
     var m = { id: opts.id || ("m" + S.mounts.length), root: root.querySelector(".ag-root"), compact: !!opts.compact, autoscroll: true };
@@ -1179,7 +1295,35 @@ window.AgentPanel = (function () {
   function unmountMissing() {
     S.mounts = S.mounts.filter(function (m) { return document.body.contains(m.root); });
   }
+  /* QA agents round (3): the toast sink (#status-bar) sits above the composer
+     while one is on screen. That used to be a `body:has(...)` rule, and an
+     ancestor-position :has() makes EVERY DOM mutation anywhere re-match the
+     whole page (measured on /bulk big30x: one insert+layout 118-166 ms instead
+     of 0.1 ms; Live-Edit per-key typing 150 -> 278 ms). So the state is a body
+     class set here, at every place the composer can appear or go: home mount /
+     navigation away (init on afterSwap + historyRestore, re-checked a frame
+     later for a PaneState restore), float show/hide (toggleFloat + an
+     attribute-only observer on the popover's class). */
+  var COMPOSER_CLASS = "ag-composer-on";
+  function syncComposerClass() {
+    var b = document.body;
+    if (!b) return;
+    var pop = document.getElementById("agent-popover");
+    var on = !!document.querySelector("#table-pane > .agent-home")
+          || !!(pop && !pop.classList.contains("agent-hidden"));
+    if (b.classList.contains(COMPOSER_CLASS) !== on) b.classList.toggle(COMPOSER_CLASS, on);
+  }
+  var _popObserved = null;
+  function observePopover() {
+    var pop = document.getElementById("agent-popover");
+    if (!pop || pop === _popObserved || typeof MutationObserver === "undefined") return;
+    _popObserved = pop;
+    new MutationObserver(syncComposerClass).observe(pop, { attributes: true, attributeFilter: ["class"] });
+  }
   function toggleFloat(trigger) {
+    try { return toggleFloatInner(trigger); } finally { syncComposerClass(); }
+  }
+  function toggleFloatInner(trigger) {
     var pop = document.getElementById("agent-popover");
     if (!pop) return;
     var home = document.getElementById("agent-home");
@@ -1192,7 +1336,7 @@ window.AgentPanel = (function () {
     if (open) { pop.classList.add("agent-hidden"); return; }
     pop.classList.remove("agent-hidden");
     var body = pop.querySelector(".agent-body");
-    if (body && !body.getAttribute("data-ag-mounted")) {
+    if (body && !isLive(body)) {
       mount(body, { compact: true, id: "float" });
       var head = pop.querySelector(".agent-header");
       if (head && window.FloatPanel) {
@@ -1218,12 +1362,25 @@ window.AgentPanel = (function () {
     // twice, one over the other, with two composers and two Arm / Stop now
     // strips on one screen. The float exists to carry the feed onto a page that
     // is not this one, so this page is where it stands down.
+    var pop = document.getElementById("agent-popover");
     if (home) {
-      var pop = document.getElementById("agent-popover");
       if (pop && !pop.classList.contains("agent-hidden")) pop.classList.add("agent-hidden");
+    } else if (pop && !pop.classList.contains("agent-hidden")) {
+      // a float restored OPEN by a history snapshot is a picture of the old
+      // feed; hide it and let the person reopen a live one (toggleFloat mounts)
+      var fb = pop.querySelector(".agent-body");
+      if (fb && !isLive(fb)) pop.classList.add("agent-hidden");
     }
+    observePopover();
+    syncComposerClass();
   }
-  document.addEventListener("htmx:afterSwap", function () { init(); wirePaint(); });
+  function lateSync() {
+    if (typeof requestAnimationFrame === "function") requestAnimationFrame(syncComposerClass);
+    else setTimeout(syncComposerClass, 0);
+  }
+  document.addEventListener("htmx:afterSwap", function () { init(); wirePaint(); lateSync(); });
+  // htmx restores Back/Forward from a BODY snapshot outside every swap hook
+  document.addEventListener("htmx:historyRestore", function () { init(); wirePaint(); lateSync(); });
   if (document.readyState === "loading") document.addEventListener("DOMContentLoaded", init); else init();
 
   return { mount: mount, poll: poll, submit: submit, key: key, preset: preset, startPlan: startPlan, cancelPlan: cancelPlan,
@@ -1231,6 +1388,6 @@ window.AgentPanel = (function () {
            shortVersion: shortVersion,
            setPlanMode: setPlanMode, approve: approve, reject: reject, stop: stop, arm: arm, disarm: disarm,
            endSession: endSession, setObserver: setObserver, setActor: setActor, actorName: actorName,
-           toggleFloat: toggleFloat, init: init, absorb: absorb, _state: S, fmtNum: fmtNum, fmtClock: fmtClock,
+           toggleFloat: toggleFloat, init: init, syncComposerClass: syncComposerClass, absorb: absorb, _state: S, fmtNum: fmtNum, fmtClock: fmtClock,
            grow: grow, toggleMore: toggleMore, toggleGroup: toggleGroup, togglePresets: togglePresets };
 })();

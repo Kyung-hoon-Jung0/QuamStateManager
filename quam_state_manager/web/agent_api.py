@@ -919,6 +919,23 @@ def _now_state() -> dict:
             open_tools.clear()
             last_stop = e
     alive = _alive(es, now) or agent_session.alive(sess)
+    # A session a person STOPPED is not "thinking". The event window above is
+    # a guess for sessions SM cannot see into; for its own session SM KNOWS:
+    # the stop is on record and the process is gone. Measured before this: the
+    # pill and the strip said "thinking · by_claude" for the window's whole
+    # 15 min after Stop now had killed the agent (QA agents round). A sign of
+    # life after the stop (a resumed session) still counts.
+    # The same holds for SM's own chat-window session whose recorded process
+    # is gone: Arm clears the stop, and the strip went back to "thinking" (with
+    # Stop buttons for nothing) over a process that no longer exists.
+    stop = (sess or {}).get("agent_stop") or {}
+    own = bool(sess) and str(sess.get("session_id") or "") == str(sid) and not agent_session.alive(sess)
+    if alive and own and stop.get("at"):
+        stop_at = float(stop["at"])
+        if not any(float(e.get("ts") or 0) > stop_at and e.get("hook_event_name") != "Stop" for e in es):
+            alive = False
+    elif alive and own and sess.get("window") == "chat" and (sess.get("pid") or sess.get("worker_pid")):
+        alive = False
     running = None
     if open_tools and alive:
         e = sorted(open_tools.values(), key=lambda x: float(x.get("ts") or 0))[-1]
@@ -1145,6 +1162,96 @@ def _run_active_view() -> dict | None:
         return None
 
 
+_STATUS_P = re.compile(r"<p>(.*?)</p>", re.S)
+
+
+def _status_text(body) -> str | None:
+    """verifier P2: the door answers a failed LIVE write with the ``_status``
+    HTML fragment, not JSON -- read its message (``Apply to live failed:
+    <WinError 32 ...>``) instead of reporting a bare "HTTP 500"."""
+    try:
+        raw = body.get_data(as_text=True) if hasattr(body, "get_data") else str(body or "")
+    except Exception:  # noqa: BLE001
+        return None
+    m = _STATUS_P.search(raw or "")
+    if not m:
+        return None
+    import html as _html
+    txt = _html.unescape(re.sub(r"<[^>]+>", "", m.group(1))).strip()
+    return " ".join(txt.split())[:400] or None
+
+
+def _pre_door_state(r, ctx) -> dict:
+    """The facts a push refused after its save has to put back: the outgoing
+    log, the working copy's dirty flag + re-apply stash, and which undo
+    journal units existed (read from the sidecar, never the RAM mirror, which
+    may not be loaded yet)."""
+    import copy as _copy
+    from quam_state_manager.core import undo_journal
+    try:
+        ids = {str(u.get("id")) for u in undo_journal.load(
+            undo_journal.sidecar_path(current_app.instance_path, ctx["path"]))}
+    except Exception:  # noqa: BLE001
+        ids = None
+    return {"log": list(ctx["store"].change_log), "dirty": bool(ctx.get("working_dirty")),
+            "reapply": _copy.deepcopy(ctx.get("pending_reapply")),
+            "reapply_orig": _copy.deepcopy(ctx.get("pending_reapply_orig")), "units": ids}
+
+
+def _take_back_saved(r, ctx, staged: list, before: dict) -> str | None:
+    """Undo a group the door SAVED into the working copy but could not push:
+    write each leaf's old value back, save the working copy, drop the journal
+    unit the save recorded, and restore the dirty flag + re-apply stash. None
+    on success, else why it could not (the values then stay, and say so)."""
+    from quam_state_manager.core import undo_journal
+    store, mod, saver = ctx["store"], ctx["modifier"], ctx["saver"]
+    ours = {e.dot_path for e in staged}
+    try:
+        with store._lock:
+            for e in reversed(staged):
+                inv = mod.set_value(e.dot_path, e.old_value, _defer_hooks=True,
+                                    group_id=f"{e.group_id}:takeback")
+                inv.actor = getattr(e, "actor", "human")
+            store._clear_pointer_cache()
+            if store.search_index is not None:
+                for e in staged:
+                    store.search_index.update_entry(e.dot_path, e.old_value)
+        with r._active_wc_lock(ctx):
+            saver.save()                        # clears the inverse entries from the log
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("taking a refused approval back out of the working copy failed", exc_info=True)
+        return f"{type(exc).__name__}: {str(exc)[:160]}"
+    only_ours = all(e.dot_path in ours for e in before["log"])
+    if only_ours:
+        ctx["working_dirty"] = before["dirty"]
+        ctx["pending_reapply"] = before["reapply"]
+        if before["reapply_orig"] is None:
+            ctx.pop("pending_reapply_orig", None)
+        else:
+            ctx["pending_reapply_orig"] = before["reapply_orig"]
+    else:
+        # another agent group rode the same push: its values stay saved-unapplied
+        # (as before); only this group's paths leave the stash
+        for k in ("pending_reapply", "pending_reapply_orig"):
+            if isinstance(ctx.get(k), dict):
+                prev = before.get(k[len("pending_"):]) or {}
+                ctx[k] = {p: v for p, v in ctx[k].items() if p not in ours or p in prev}
+    if before.get("units") is not None:
+        try:
+            path = undo_journal.sidecar_path(current_app.instance_path, ctx["path"])
+            new = [u for u in undo_journal.load(path)
+                   if str(u.get("id")) not in before["units"]
+                   and u.get("entries") and all(en.get("path") in ours for en in u["entries"])]
+            if new:
+                units = undo_journal.drop_units(path, [u["id"] for u in new])
+                ctx["undo_units"] = units
+                ctx["undo_cursor"] = undo_journal.load_state(path)[1]
+                ctx["undo_sidecar_mtime"] = undo_journal.sidecar_mtime(path)
+        except Exception:  # noqa: BLE001 -- the journal is advisory
+            logger.warning("dropping a refused approval's journal unit failed", exc_info=True)
+    return None
+
+
 def _stage_writes(app, live: str, writes: list[dict], gid: str, actor: str, plan_id: str | None,
                   apply: bool, *, presser: str | None = None) -> dict:
     """Stage ``writes`` onto the chip's working copy as ONE group with the
@@ -1216,6 +1323,9 @@ def _stage_writes(app, live: str, writes: list[dict], gid: str, actor: str, plan
     except Exception:  # noqa: BLE001
         logger.debug("live_diverged_now failed", exc_info=True)
     n = len(store.change_log)
+    # verifier P0 (w7/agentsqa): what SM looked like before the door, so a push
+    # refused AFTER the door's save can be taken back to exactly this
+    before = _pre_door_state(r, ctx)
     headers = {"Accept": "application/json"}
     who = presser or actor
     if str(who).startswith("by_"):
@@ -1238,13 +1348,23 @@ def _stage_writes(app, live: str, writes: list[dict], gid: str, actor: str, plan
     if status != 200:
         js = body.get_json(silent=True) if hasattr(body, "get_json") else None
         out["error"] = ((js or {}).get("message") or (js or {}).get("conflict") or (js or {}).get("error")
-                        or f"HTTP {status}")
+                        or _status_text(body) or f"HTTP {status}")
         if store.change_log:
             _take_back()                       # refused BEFORE the save: the group comes back out
         else:
-            # refused AFTER the save: the values sit in SM's working copy as unapplied edits
-            out["saved_in_working_copy"] = True
-            out["error"] += " -- the values are saved in SM's working copy (unapplied); a human decides in the window"
+            # refused AFTER the save (the live write itself failed -- a reader
+            # holding state.json open on Windows). The values used to stay in
+            # the working copy as unapplied edits that no approval owned: a
+            # Reject left them there and the NEXT approval's push carried them
+            # to the chip under its own name. Take them back out, so a refused
+            # press leaves SM exactly where it found it.
+            why = _take_back_saved(r, ctx, staged, before)
+            if why is None:
+                out["error"] += " -- nothing was written; the approval's values were taken back out of SM"
+            else:
+                out["saved_in_working_copy"] = True
+                out["error"] += (" -- the values are saved in SM's working copy (unapplied) and could not be "
+                                 f"taken back ({why}); a human decides in the window")
         return out
     if r._change_count() == 0 and not ctx.get("live_diverged"):
         out["applied"] = True
@@ -1691,8 +1811,11 @@ def live_diff():
         if len(changed) >= 300:
             break
     overlap = [c["path"] for c in changed if c["path"] in tray]
+    # stale_since answers only beside live_diverged, like /chip and /state: a
+    # bare mtime on an in-sync chip read as "stale since <time>" to the agent
+    diverged = _live_flag()
     return jsonify(ok=True, count=len(changed), changed=changed, overlap=overlap,
-                   live_diverged=_live_flag(), stale_since=_stale_since())
+                   live_diverged=diverged, stale_since=_stale_since() if diverged else None)
 
 
 # ================================================================ S6: the card feed + plans
@@ -1747,22 +1870,33 @@ def _plan_view(rec: dict, *, with_may_change: bool = False) -> dict:
     out["counts"] = agent_plans.counts(rec)
     if with_may_change:
         try:
-            out["may_change"] = _may_change(rec.get("steps") or [])
+            out["may_change"], out["may_change_total"] = _may_change(rec.get("steps") or [])
         except Exception:  # noqa: BLE001
             logger.debug("may_change failed", exc_info=True)
-            out["may_change"] = []
+            out["may_change"], out["may_change_total"] = [], 0
     return out
 
 
-def _may_change(steps: list[dict], cap: int = 60) -> list[dict]:
+def _may_change(steps: list[dict], cap: int = 60) -> tuple[list[dict], int]:
     """The values a plan may write, from the families' own update targets
     (run-derived, docs/78 D-14) filled in per target, with the value the chip
-    holds NOW. Unknown family => nothing claimed."""
+    holds NOW. Unknown family => nothing claimed.
+
+    Returns ``(rows, total)``: at most ``cap`` rows, and how many there are.
+    The card used to print ``len(rows)`` as the count, so a 40-qubit /run said
+    "60 value(s) may change" when 80 would (QA agents round).
+
+    The path is followed through QUAM aliases with the SAME function the
+    autofit writer uses (``families.resolve_alias_path``): real chips carry
+    ``operations.x180 = "#./x180_DragCosine"``, so the raw
+    ``...x180.amplitude`` does not exist and every row read "now: not set" on
+    a chip that holds the value (measured on the KRISS 5Q chip)."""
     from quam_state_manager.core.autofit import families
     r = _r()
     store = r._store()
     seen: set = set()
     out: list[dict] = []
+    total = 0
     for s in steps:
         fam = families.family_for(s.get("node") or "")
         if not fam:
@@ -1784,20 +1918,58 @@ def _may_change(steps: list[dict], cap: int = 60) -> list[dict]:
                     path = path.replace("{operation}", str(op))
                 if "{" in path:
                     path = path.split("{")[0].rstrip(".") + " …"
+                via = None
+                if store is not None and "…" not in path:
+                    try:
+                        rp = families.resolve_alias_path(path, store.get_value)
+                    except Exception:  # noqa: BLE001
+                        rp = None
+                    if rp and rp != path:
+                        via, path = path, rp
                 key = (t, path)
                 if key in seen:
                     continue
                 seen.add(key)
+                total += 1
+                if len(out) >= cap:
+                    continue                      # counted, not listed
                 now = None
                 if store is not None and "…" not in path:
                     try:
-                        now = _jsonable(store.get_value(path))
+                        now = _jsonable(store.resolve_value(path))
                     except Exception:  # noqa: BLE001
                         now = None
-                out.append({"target": t, "path": path, "now": now, "family": getattr(fam, "label", None),
-                            "label": getattr(u, "label", None) or None, "note": assumed})
-                if len(out) >= cap:
-                    return out
+                row = {"target": t, "path": path, "now": now, "family": getattr(fam, "label", None),
+                       "label": getattr(u, "label", None) or None, "note": assumed}
+                if via:
+                    row["via"] = via
+                out.append(row)
+    return out, total
+
+
+def _approval_view(ap: dict, store) -> dict:
+    """An approval as the card shows it: each write also carries ``now`` --
+    the value SM holds for that leaf NOW (through the pointer alias, the way
+    the approve door itself edits it). ``old`` is the value the PROPOSAL was
+    made from; the card used to print it under "now", so after an outside
+    write it still named a value the chip no longer held, while the plan
+    card's "now" (docs 89285b0) already meant the value held (verifier P3)."""
+    out = dict(ap)
+    if store is None or ap.get("kind") != "writes":
+        return out
+    r = _r()
+    rows = []
+    for w in ap.get("writes") or []:
+        w2 = dict(w)
+        if not (w.get("created") or w.get("deleted")):
+            try:
+                target = r._resolve_edit_path(store, str(w.get("path"))) or str(w.get("path"))
+                w2["now"] = _jsonable(store.get_value(target))
+                w2["now_known"] = True
+            except Exception:  # noqa: BLE001 -- a leaf SM cannot read says "not set", never a guess
+                w2["now_known"] = False
+        rows.append(w2)
+    out["writes"] = rows
     return out
 
 
@@ -1837,7 +2009,7 @@ def chat_cards():
         runs = [_run_view(m) for m in reg.runs.values() if m.get("chip") == key]
         runs.sort(key=lambda x: float(x.get("since") or 0))
         live["runs"] = runs[-20:]
-        live["approvals"] = approvals.pending(inst, key)
+        live["approvals"] = [_approval_view(a, r._store()) for a in approvals.pending(inst, key)]
         file = agent_session.summary(agent_session.load(inst, key))
         mgr = current_app.config.get("agent_chat")
         session = mgr.status(key) if mgr else None

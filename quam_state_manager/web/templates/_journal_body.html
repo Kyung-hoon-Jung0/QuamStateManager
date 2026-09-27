@@ -56,7 +56,7 @@
 {% endif %}
 
 {% if not s.cards_shown %}
-<p class="muted jr-empty">{% if s.cards %}Nothing matches the filter.{% else %}No runs and no journal lines on {{ s.day }}.{% endif %}</p>
+<p class="muted jr-empty">{% if s.cards %}Nothing matches the filter.{% elif s.loose %}No runs on {{ s.day }} — only the journal line{{ 's' if s.loose|length != 1 }} below.{% else %}No runs and no journal lines on {{ s.day }}.{% endif %}</p>
 {% endif %}
 
 {% if s.cards_shown %}
