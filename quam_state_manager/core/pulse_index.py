@@ -20,6 +20,7 @@ small cache wrapper):
 
 from __future__ import annotations
 
+import bisect
 import copy
 import logging
 from typing import Any
@@ -312,6 +313,11 @@ def list_pulses(merged: dict, *, with_used_by: bool = True) -> list[dict]:
     """
     reverse_index = build_reverse_pointer_index(merged) if with_used_by else None
     op_referrers = build_op_referrers(reverse_index) if reverse_index is not None else None
+    return _list_pulses_with(merged, reverse_index, op_referrers)
+
+
+def _list_pulses_with(merged: dict, reverse_index, op_referrers) -> list[dict]:
+    """:func:`list_pulses` over indexes the caller already built."""
     rows: list[dict] = []
 
     for qubit_name, qubit in (merged.get("qubits") or {}).items():
@@ -473,64 +479,271 @@ def rewrite_referrer_pointer(pointer: str, holder_path: str,
 # ---------------------------------------------------------------------------
 
 class PulseIndex:
-    """Lazy cache of rows + reverse index for one store.
+    """RAM cache of rows + reverse index + sparklines for one store.
 
-    Self-validating: every cache read compares its stamp against
-    ``store.mutation_seq`` (incremented under ``store._lock`` by every
-    mutation AND by ``reload()``), so a stale entry can never be served —
-    even from code paths that forget to call :meth:`invalidate` (which
-    remains as an optimization hook). Reads rebuild under the store lock,
-    making destructive used_by checks linearizable with mutations.
+    Validate on read (design ram_design.md 1.1). Every read compares the
+    stamp the rows were built at -- ``(store.mutation_seq, the pulse catalog's
+    env overlay object)`` -- with the store's current one, so a stale entry is
+    never served, even to code paths that forget :meth:`invalidate`.
+
+    What changed since the stamp decides HOW the rows catch up
+    (docs/2xx pulses RAM):
+
+    * nothing -> served as-is;
+    * only scalar->scalar value writes (``QuamStore.mutations_since`` vouches
+      for every step, none structural) -> INCREMENTAL: a value write cannot
+      move a pointer, so the reverse index and ``used_by`` stay exactly as
+      they are, and only the rows that can SEE a written path are recomputed:
+      the row whose operation holds it, plus every row reaching it through a
+      pointer chain (transitively: a pointer AT it or at an ancestor of it,
+      and a pointer THROUGH it);
+    * anything else (create / delete / pointer move / ``__class__`` / reload /
+      an unjournaled bump / an env overlay swap) -> recomputed cold.
+
+    ``SM_RAM_VERIFY=1`` (shadow mode, tests) recomputes every incremental
+    update and every sparkline hit cold and raises
+    :class:`~quam_state_manager.core.ramcache.StaleCacheError` on a difference.
+
+    A recomputed row is a NEW dict; an untouched row keeps its identity. The
+    sparkline cache keys on that identity, so a field commit re-synthesizes
+    only the pulses whose waveform inputs it could have changed.
     """
 
     def __init__(self, store) -> None:
         self.store = store
         self._rows: list[dict] | None = None
+        self._pos: dict[str, int] = {}
         self._reverse: dict[str, list[str]] | None = None
+        self._targets: list[str] | None = None     # sorted reverse-index keys
+        self._op_referrers: dict[str, list[str]] | None = None
         self._seq: int = -1
-        # Cache of rendered sparkline SVGs keyed by op path, valid only at one
-        # mutation_seq (a mutation can change any pulse's shape). Lets repeated
-        # search / pagination over an unchanged chip pay zero re-synth.
-        self._spark: dict[str, str | None] = {}
-        self._spark_seq: int = -1
+        self._overlay: Any = _NO_OVERLAY
+        self._drop_hint = False
+        # op path -> (row object the SVG was drawn for, svg)
+        self._spark: dict[str, tuple[dict, str | None]] = {}
+        # counters, for tests and debug surfaces
+        self.stats = {"cold": 0, "incremental": 0, "rows_recomputed": 0,
+                      "spark_hit": 0, "spark_miss": 0}
+
+    # -- validation ----------------------------------------------------
 
     def invalidate(self) -> None:
+        """Hint that the store's content changed. Kept for the callers that
+        run after every edit, but correctness never depends on it: reads
+        validate against ``mutation_seq`` and the mutation journal. When the
+        seq has NOT moved since the rows were built, the hint drops them --
+        the one case a read could not detect by itself."""
+        self._drop_hint = True
+
+    def _drop(self) -> None:
         self._rows = None
+        self._pos = {}
         self._reverse = None
+        self._targets = None
+        self._op_referrers = None
         self._seq = -1
+        self._spark = {}
 
-    def sparkline(self, op_path: str, render):
-        """Memoized sparkline SVG for *op_path*. *render* is a 0-arg callable
-        that produces the SVG (or None) on a cache miss. Cleared whenever the
-        chip mutates (keyed on ``store.mutation_seq``)."""
-        seq = getattr(self.store, "mutation_seq", 0)
-        if seq != self._spark_seq:
-            self._spark = {}
-            self._spark_seq = seq
-        if op_path not in self._spark:
-            self._spark[op_path] = render()
-        return self._spark[op_path]
+    def _rebuild_cold(self, seq: int, overlay: Any) -> None:
+        merged = self.store.merged
+        reverse = build_reverse_pointer_index(merged)
+        op_ref = build_op_referrers(reverse)
+        self._rows = _list_pulses_with(merged, reverse, op_ref)
+        self._pos = {r["path"]: i for i, r in enumerate(self._rows)}
+        self._reverse = reverse
+        self._targets = sorted(reverse)
+        self._op_referrers = op_ref
+        self._seq = seq
+        self._overlay = overlay
+        self.stats["cold"] += 1
 
-    def _fresh(self) -> bool:
-        return self._seq == getattr(self.store, "mutation_seq", None)
+    def _sync(self) -> None:
+        """Bring the rows up to the store's current stamp. Under store._lock."""
+        seq = self.store.mutation_seq
+        overlay = _catalog_overlay()
+        hint, self._drop_hint = self._drop_hint, False
+        if self._rows is not None and self._overlay is overlay:
+            if self._seq == seq:
+                if not hint:
+                    return
+            else:
+                mut_since = getattr(self.store, "mutations_since", None)
+                steps = mut_since(self._seq) if mut_since is not None else None
+                if steps and all(vo and isinstance(p, str) for _, p, vo in steps):
+                    if self._apply_value_steps([p for _, p, _ in steps], seq):
+                        return
+        self._drop()
+        self._rebuild_cold(seq, overlay)
+
+    def _holders_touching(self, path: str) -> list[str]:
+        """Pointer holders whose target is *path*, an ancestor of it, or a
+        descendant of it (a pointer THROUGH an alias that *path* is)."""
+        rev = self._reverse or {}
+        out: list[str] = []
+        segs = path.split(".")
+        for n in range(len(segs), 0, -1):
+            out.extend(rev.get(".".join(segs[:n]), ()))
+        targets = self._targets or []
+        prefix = path + "."
+        i = bisect.bisect_left(targets, prefix)
+        while i < len(targets) and targets[i].startswith(prefix):
+            out.extend(rev[targets[i]])
+            i += 1
+        return out
+
+    def _rows_seeing(self, paths: list[str]) -> set[str]:
+        """Op paths of every row that can see a write at any of *paths*. A
+        value written AT an op path (an "(invalid)" scalar-bodied row) is that
+        row's body: it is found as its own root and recomputed like any other."""
+        seen: set[str] = set()
+        frontier = list(paths)
+        while frontier:
+            x = frontier.pop()
+            if x in seen:
+                continue
+            seen.add(x)
+            frontier.extend(self._holders_touching(x))
+        roots: set[str] = set()
+        for x in seen:
+            segs = x.split(".")
+            for n in range(len(segs), 0, -1):
+                cand = ".".join(segs[:n])
+                if cand in self._pos:
+                    roots.add(cand)
+                    break
+        return roots
+
+    def _apply_value_steps(self, paths: list[str], seq: int) -> bool:
+        roots = self._rows_seeing(paths)
+        merged = self.store.merged
+        new_rows = list(self._rows)
+        for op in roots:
+            i = self._pos[op]
+            old = new_rows[i]
+            body = _get_path(merged, op)
+            if body is _MISSING:
+                return False
+            new_rows[i] = _row_for_pulse(
+                merged, op, body, owner_kind=old["owner_kind"], owner=old["owner"],
+                channel=old["channel"], op_name=old["op_name"], gate=old["gate"],
+                op_referrers=self._op_referrers)
+        if _verify_on():
+            cold = list_pulses(merged)
+            if cold != new_rows:
+                from quam_state_manager.core.ramcache import StaleCacheError
+                bad = next((c["path"] for c, n in zip(cold, new_rows) if c != n),
+                           "(row count)")
+                raise StaleCacheError(
+                    f"PulseIndex incremental rows differ from cold at {bad} "
+                    f"(writes: {paths[:5]})")
+        self._rows = new_rows
+        self._seq = seq
+        self.stats["incremental"] += 1
+        self.stats["rows_recomputed"] += len(roots)
+        return True
+
+    # -- reads ---------------------------------------------------------
 
     def rows(self) -> list[dict]:
+        """Every pulse row at the store's current content. The list and its
+        dicts are shared: a caller copies a row before adding keys to it."""
         with self.store._lock:
-            if self._rows is None or not self._fresh():
-                self._rows = list_pulses(self.store.merged)
-                self._reverse = None  # rebuilt lazily at the same seq
-                self._seq = self.store.mutation_seq
+            self._sync()
             return self._rows
+
+    def row(self, op_path: str) -> dict | None:
+        """The row of *op_path*, or None -- O(1)."""
+        with self.store._lock:
+            self._sync()
+            i = self._pos.get(op_path)
+            return self._rows[i] if i is not None else None
+
+    def known_paths(self):
+        """Every pulse op path, as an O(1) membership container."""
+        with self.store._lock:
+            self._sync()
+            return self._pos
 
     def reverse_index(self) -> dict[str, list[str]]:
         with self.store._lock:
-            if self._reverse is None or not self._fresh():
-                self._reverse = build_reverse_pointer_index(self.store.merged)
-                if not self._fresh():
-                    self._rows = None
-                self._seq = self.store.mutation_seq
+            self._sync()
             return self._reverse
 
     def used_by(self, op_path: str) -> list[str]:
+        """Same answer as :func:`used_by` over the whole reverse index, but
+        only the targets at or under *op_path* are visited (bisect)."""
         with self.store._lock:
-            return used_by(self.store.merged, op_path, self.reverse_index())
+            self._sync()
+            rev = self._reverse
+            targets = self._targets
+            prefix = op_path + "."
+            referrers: list[str] = []
+            keys = [op_path] if op_path in rev else []
+            i = bisect.bisect_left(targets, prefix)
+            while i < len(targets) and targets[i].startswith(prefix):
+                keys.append(targets[i])
+                i += 1
+            for k in keys:
+                for h in rev[k]:
+                    if not (h == op_path or h.startswith(prefix)):
+                        referrers.append(h)
+            return sorted(set(referrers), key=natural_key)
+
+    def sparkline(self, op_path: str, render):
+        """Memoized sparkline SVG for *op_path*. *render* is a 0-arg callable
+        that produces the SVG (or None) on a miss. Valid while the op's ROW
+        object is the one it was drawn for: a row survives a mutation only
+        when that mutation could not reach its waveform inputs."""
+        with self.store._lock:
+            self._sync()
+            i = self._pos.get(op_path)
+            row = self._rows[i] if i is not None else None
+            hit = self._spark.get(op_path)
+        if row is not None and hit is not None and hit[0] is row:
+            self.stats["spark_hit"] += 1
+            if _verify_on():
+                fresh = render()
+                if fresh != hit[1]:
+                    from quam_state_manager.core.ramcache import StaleCacheError
+                    raise StaleCacheError(f"sparkline for {op_path} is stale")
+            return hit[1]
+        self.stats["spark_miss"] += 1
+        svg = render()
+        if row is not None:
+            with self.store._lock:
+                # store only if the row is still the current one (a write may
+                # have landed while we rendered)
+                self._sync()
+                j = self._pos.get(op_path)
+                if j is not None and self._rows[j] is row:
+                    self._spark[op_path] = (row, svg)
+        return svg
+
+
+_NO_OVERLAY = object()
+_MISSING = object()
+
+
+def _catalog_overlay() -> Any:
+    """The pulse catalog's env overlay OBJECT (overlay swaps are whole-object,
+    and holding the reference keeps its identity from being reused)."""
+    try:
+        from quam_state_manager.core import pulse_catalog as _pc
+        return _pc.env_overlay_active()
+    except Exception:  # noqa: BLE001
+        return None
+
+
+def _verify_on() -> bool:
+    from quam_state_manager.core.ramcache import _verify_on as _v
+    return _v()
+
+
+def _get_path(merged: dict, dot_path: str) -> Any:
+    node: Any = merged
+    for seg in dot_path.split("."):
+        if isinstance(node, dict) and seg in node:
+            node = node[seg]
+        else:
+            return _MISSING
+    return node

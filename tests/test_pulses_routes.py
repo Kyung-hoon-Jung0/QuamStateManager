@@ -1028,9 +1028,11 @@ class TestPulsesServerSearch:
         name = list(app.config["contexts"].keys())[0]
         pi = app.config["contexts"][name].get("pulse_index")
         assert pi is not None and pi._spark   # populated
-        seq_before = pi._spark_seq
+        misses = pi.stats["spark_miss"]
         loaded_client.get("/pulses?rows=1")
-        assert pi._spark_seq == seq_before    # same mutation_seq, cache kept
+        # docs/2xx pulses RAM: the cache is keyed per row object, not per seq
+        assert pi.stats["spark_miss"] == misses   # every sparkline a hit
+        assert pi.stats["spark_hit"] > 0
 
 
 class TestUnlinkPrevLink:

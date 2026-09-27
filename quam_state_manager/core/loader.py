@@ -18,6 +18,7 @@ from __future__ import annotations
 import logging
 import re
 import threading
+from collections import deque
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -31,6 +32,24 @@ from quam_state_manager.core.pointer_resolver import (
 )
 
 logger = logging.getLogger(__name__)
+
+# Bound of QuamStore's mutation journal: a cache more than this many steps
+# behind the store recomputes cold instead of replaying the journal.
+MUT_JOURNAL_MAX = 1024
+
+
+def is_value_only_write(dot_path: str, old: Any, new: Any) -> bool:
+    """True when writing *new* over *old* at *dot_path* is a pure VALUE change:
+    both scalars (never None, never a container), neither a pointer-shaped
+    string, and not a ``__class__`` key. Such a write cannot move a pointer,
+    re-shape a subtree, create or drop a key, or change a class -- the only
+    things that re-shape pointer indexes and pulse enumeration."""
+    for v in (old, new):
+        if v is None or isinstance(v, (dict, list, tuple)):
+            return False
+        if isinstance(v, str) and v.startswith("#"):
+            return False
+    return str(dot_path).rsplit(".", 1)[-1] != "__class__"
 
 _NAT_SPLIT = re.compile(r"(\d+)")
 
@@ -132,6 +151,13 @@ class QuamStore:
         # lets surfaces like the Config Viewer / pulse Verify overlay tell
         # whether a cached artifact predates the latest edit.
         self.mutation_seq: int = 0
+        # What each mutation_seq step touched (docs/2xx pulses RAM): a
+        # bounded journal of ``(seq_after, dot_path, value_only)``. Lets a
+        # seq-keyed cache update INCREMENTALLY when every step since its own
+        # seq is a scalar->scalar value write it can localize; any gap (an
+        # unjournaled bump, entries aged out of the bound) or a structural
+        # step means "recompute cold". See :meth:`mutations_since`.
+        self._mut_journal: deque = deque(maxlen=MUT_JOURNAL_MAX)
         # Per-key expected-type policy (core.type_policy.TypePolicy) —
         # attached by the web layer at activation; None = feature dormant,
         # every edit behaves exactly as before.
@@ -172,6 +198,7 @@ class QuamStore:
         self.generated_config = None
         self.generated_config_meta = None
         self.mutation_seq = 0
+        self._mut_journal = deque(maxlen=MUT_JOURNAL_MAX)
         self.type_policy = None
         self._lock = threading.RLock()
         self._pointer_cache = {}
@@ -321,6 +348,41 @@ class QuamStore:
             # counter so seq-validated caches (PulseIndex) and staleness
             # checks (Verify overlay) can't serve pre-reload conclusions.
             self.mutation_seq += 1
+            self.journal_mutation(None, False)
+
+    # ------------------------------------------------------------------
+    # Mutation journal
+    # ------------------------------------------------------------------
+
+    def journal_mutation(self, dot_path: str | None, value_only: bool) -> None:
+        """Record what the mutation that JUST bumped ``mutation_seq`` touched.
+
+        Call right after the bump, under ``_lock``. *value_only* is True only
+        for a scalar->scalar write that moved no pointer and no ``__class__``
+        (:func:`is_value_only_write`); anything else is structural."""
+        journal = getattr(self, "_mut_journal", None)
+        if journal is not None:
+            journal.append((self.mutation_seq, dot_path, bool(value_only)))
+
+    def mutations_since(self, seq: int) -> list[tuple[int, str | None, bool]] | None:
+        """Every journaled step after *seq* up to the current ``mutation_seq``,
+        oldest first -- or None when the journal cannot vouch for that range
+        (a bump nobody journaled, entries aged out of the bound, *seq* ahead
+        of the store). A None always means: recompute cold."""
+        with self._lock:
+            cur = self.mutation_seq
+            if seq == cur:
+                return []
+            if seq > cur:
+                return None
+            journal = getattr(self, "_mut_journal", None)
+            if not journal:
+                return None
+            out = [e for e in journal if e[0] > seq]
+            # contiguous and complete: exactly one entry per step seq+1..cur
+            if [e[0] for e in out] != list(range(seq + 1, cur + 1)):
+                return None
+            return out
 
     # ------------------------------------------------------------------
     # Accessors

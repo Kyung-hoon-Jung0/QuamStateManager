@@ -19,7 +19,7 @@ from collections.abc import Iterator
 from datetime import datetime, timezone
 from typing import Any
 
-from quam_state_manager.core.loader import ChangeEntry, QuamStore
+from quam_state_manager.core.loader import ChangeEntry, QuamStore, is_value_only_write
 
 logger = logging.getLogger(__name__)
 
@@ -92,6 +92,8 @@ class Modifier:
             )
             self.store.change_log.append(entry)
             self.store.mutation_seq += 1
+            self.store.journal_mutation(
+                dot_path, is_value_only_write(dot_path, old_value, coerced))
 
             if not _defer_hooks:
                 self.store._clear_pointer_cache()
@@ -198,6 +200,7 @@ class Modifier:
             )
             self.store.change_log.append(entry)
             self.store.mutation_seq += 1
+            self.store.journal_mutation(dot_path, False)
 
             self.store._clear_pointer_cache()
             if self.store.search_index is not None:
@@ -240,6 +243,7 @@ class Modifier:
             )
             self.store.change_log.append(entry)
             self.store.mutation_seq += 1
+            self.store.journal_mutation(dot_path, False)
 
             self.store._clear_pointer_cache()
             if self.store.search_index is not None:
@@ -572,6 +576,7 @@ class Modifier:
         since the delete — e.g. delete X → create X → discard the delete).
         Mutations: restore ``old_value`` in both dicts and update the index.
         """
+        _value_only = False
         if entry.created:
             try:
                 removed = self._remove_at(entry.dot_path, entry.source_file)
@@ -621,7 +626,10 @@ class Modifier:
                         leaf_path, leaf_value, source_file=entry.source_file)
         else:
             parent_merged, leaf_key = _navigate_to_parent(self.store.merged, entry.dot_path)
-            parent_merged[_key_for(parent_merged, leaf_key, entry.dot_path)] = entry.old_value
+            _lk = _key_for(parent_merged, leaf_key, entry.dot_path)
+            _value_only = is_value_only_write(
+                entry.dot_path, parent_merged[_lk], entry.old_value)
+            parent_merged[_lk] = entry.old_value
 
             source_dict = self.store.wiring if entry.source_file == "wiring" else self.store.state
             _write_to_nested(source_dict, entry.dot_path, entry.old_value)
@@ -630,6 +638,7 @@ class Modifier:
                 self.store.search_index.update_entry(entry.dot_path, entry.old_value)
 
         self.store.mutation_seq += 1
+        self.store.journal_mutation(entry.dot_path, _value_only)
         if not _skip_cache_clear:
             self.store._clear_pointer_cache()
 
