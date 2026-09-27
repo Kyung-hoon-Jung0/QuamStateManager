@@ -115,7 +115,9 @@ from quam_state_manager.core.query import QueryEngine
 from quam_state_manager.core import query as _query_mod
 from quam_state_manager.core.saver import Saver
 from quam_state_manager.core.scanner import Workspace
-from quam_state_manager.core.search_index import SearchIndex
+from quam_state_manager.core.search_index import LazySearchIndex, SearchIndex  # noqa: F401
+from quam_state_manager.core import chip_park as _chip_park
+from quam_state_manager.core.loader import is_pristine as _loader_is_pristine
 from quam_state_manager.core.story import node_label
 from quam_state_manager.core.units import group_digits, pair_field_key
 
@@ -1036,7 +1038,13 @@ def _evict_oldest_quam() -> None:
     """
     for k in list(_quam_cache.keys()):          # oldest → newest
         if not _quam_ctx_dirty(_quam_cache[k]):
-            _quam_cache.pop(k, None)
+            victim = _quam_cache.pop(k, None)
+            # RAM P10: a pristine store survives its slot (chip_park) --
+            # re-opening it re-validates against the files' bytes.
+            try:
+                _chip_park.park(victim)
+            except Exception:  # noqa: BLE001 -- parking is an accelerator only
+                logger.debug("chip park failed", exc_info=True)
             return
     logger.warning(
         "_quam_cache over soft cap (%d entries, all dirty) — none evicted; "
@@ -1194,9 +1202,20 @@ def _build_quam_context(folder: Path):
             wc, sync_if_clean=False, out=seen)
         live_diverged = result == working_copy.RECONCILE_STALE
         drift_count = _drift_count(seen)
-    store = QuamStore(wc.working_folder)
-    index = SearchIndex.build(store.merged, wiring_keys=set(store.wiring.keys()))
-    store.search_index = index
+    # RAM P10: a chip that left the context LRU clean and pristine parked its
+    # models; they are taken back only if the working files' bytes still
+    # digest to what that store was parsed from (chip_park.unpark).
+    parked, _digest = _chip_park.unpark(wc.working_folder)
+    if parked is not None:
+        store = parked.store
+        index = store.search_index
+        if index is None:
+            index = store.search_index = LazySearchIndex(store)
+    else:
+        store = QuamStore(wc.working_folder)
+        # Built on first search, not here (LazySearchIndex): 3-6 s and ~150 MB
+        # on a 30-qubit chip for a box most opens never touch.
+        index = store.search_index = LazySearchIndex(store)
     # Recover the "working copy holds edits not yet on live" state across a
     # restart / LRU re-load: the change-log + in-memory working_dirty flag
     # are process-local, but the working FILES persist. If they no longer
@@ -1208,12 +1227,17 @@ def _build_quam_context(folder: Path):
     working_dirty = False
     if wc.synced_live_hash is not None:
         try:
-            working_dirty = (
-                working_copy.content_hash(store.state, store.wiring)
-                != wc.synced_live_hash)
+            h = _chip_park.content_hash_for(store)
+            working_dirty = h != wc.synced_live_hash
+            # the SAME canonical hash _config_state_hash memoizes on the store
+            # (docs/189): hand it over instead of serialising the chip twice
+            with store._lock:
+                if _loader_is_pristine(store):
+                    store._config_hash_memo = (
+                        (store.mutation_seq, len(store.change_log)), h)
         except Exception:
             working_dirty = False
-    return wc, store, index, live_diverged, working_dirty, drift_count
+    return wc, store, index, live_diverged, working_dirty, drift_count, parked
 
 
 def _drift_count(seen: dict) -> int | None:
@@ -1339,8 +1363,7 @@ def _reconcile_cached_quam_ctx(key: str, ctx: dict, *,
                 _held_fp = _chip_fp(ctx)   # jsontree-r2-04 review
                 try:
                     store.reload()
-                    index = SearchIndex.build(
-                        store.merged, wiring_keys=set(store.wiring.keys()))
+                    index = LazySearchIndex(store)
                 except (OSError, ValueError):
                     # The on-disk sync point is already advanced; serving
                     # the cached OLD content behind a now-clean wc would be
@@ -1448,6 +1471,50 @@ def _probe_readonly(folder) -> bool:
         return getattr(exc, "errno", None) in (13, 30)
     except Exception:  # noqa: BLE001 — a hint must never break activation
         return False
+
+
+def _chip_warm_steps() -> tuple:
+    """RAM P10 cold-open follow-up: what the first Chip Status / diagnostics
+    visit waits on, computed by the background prewarm worker BEFORE the
+    search index (see ``LazySearchIndex.prewarm``): the chip's pointer cache
+    (paced, chunked under the store lock), its lint, and the env-schema
+    analysis. Each lands in the SAME seq-keyed memo the request path reads
+    (``diagnostics.lint_state``, ``state_env_validate.analysis_for_store``),
+    so a warmed answer is the answer a cold request would compute; an edit
+    moves the counter and the request path recomputes, as before."""
+    try:
+        app = current_app._get_current_object()
+    except RuntimeError:            # no app context: the lint still warms
+        app = None
+
+    def pointers(store, pace):
+        from quam_state_manager.core.loader import warm_pointer_cache
+        warm_pointer_cache(store, pace)
+
+    def lint(store, pace):
+        diagnostics.lint_state(store)
+
+    def env(store, pace):
+        if app is None:
+            return
+        from quam_state_manager.core import state_env_validate
+        with app.app_context():
+            manifest = _live_env_manifest(store)
+            if manifest is not None:
+                state_env_validate.analysis_for_store(store, manifest)
+
+    return (pointers, lint, env)
+
+
+def _prewarm_search_index(ctx: dict | None) -> None:
+    """RAM P10: the chip just opened gets its topbar-search index built on a
+    background worker, so neither the open nor the first keystroke pays for
+    it (the worker builds only the most recently opened chip). The same
+    worker first warms what Chip Status needs (:func:`_chip_warm_steps`)."""
+    idx = (ctx or {}).get("index")
+    prewarm = getattr(idx, "prewarm", None)
+    if prewarm is not None:
+        prewarm(pre=_chip_warm_steps())
 
 
 def _activate_quam(folder_path: str | Path, *, origin: str = "live") -> dict:
@@ -1589,6 +1656,7 @@ def _activate_quam(folder_path: str | Path, *, origin: str = "live") -> dict:
         # all (measured: it did not). The call is idempotent -- a fresh config
         # answers "already-fresh" and starts nothing.
         _maybe_warm_generated_config(current, current_app.instance_path)
+        _prewarm_search_index(current)
         return current
 
     # Slow path. Serialise builds for THIS folder so two threads don't
@@ -1603,7 +1671,7 @@ def _activate_quam(folder_path: str | Path, *, origin: str = "live") -> dict:
         if cached is not None:
             ctx = cached
         else:
-            wc, store, index, live_diverged, working_dirty, drift_count = \
+            wc, store, index, live_diverged, working_dirty, drift_count, parked = \
                 _build_quam_context(folder)
             ctx = {
                 "type": "quam",
@@ -1619,7 +1687,8 @@ def _activate_quam(folder_path: str | Path, *, origin: str = "live") -> dict:
                 "live_diverged": live_diverged,  # live replaced out-of-band — ask, never adopt
                 "live_drift_count": drift_count,  # how many values differ (docs/87; may be None)
                 "store": store,             # store reads/saves the working copy
-                "engine": QueryEngine(store),
+                "engine": (parked.engine if parked is not None and parked.engine is not None
+                           else QueryEngine(store)),
                 "index": index,
                 "modifier": Modifier(store),
                 "saver": Saver(store),
@@ -1630,6 +1699,8 @@ def _activate_quam(folder_path: str | Path, *, origin: str = "live") -> dict:
             # discovered at apply time after 20 minutes of edits.
             # (see _probe_readonly — a real create+delete, because
             # os.access is attribute-only for directories on Windows)
+            if parked is not None and parked.pulse_index is not None:
+                ctx["pulse_index"] = parked.pulse_index
             ctx["live_readonly_hint"] = _probe_readonly(folder)
             # (docs/87) The "✓ Live chip updated — N params pulled" one-shot that
             # used to be stashed here is gone with the silent pull it announced.
@@ -1686,6 +1757,7 @@ def _activate_quam(folder_path: str | Path, *, origin: str = "live") -> dict:
         # already in RAM by the time anyone clicks that pulse. Gated on the
         # chip actually having one: every other chip pays nothing.
         _maybe_warm_generated_config(ctx, current_app.instance_path)
+        _prewarm_search_index(ctx)
         return ctx
 
 
@@ -1712,11 +1784,22 @@ def _chip_needs_generated_config(store) -> bool:
     pulses: this is the same fact (`_pulse_detail.html` gates its
     unrecognized-class banner on it) at no cost.
     """
+    # RAM P10: memoized on the store's own mutation counters, like
+    # _config_state_hash -- every re-open of a chip used to walk its whole
+    # pulse index again on a daemon thread (~0.3-0.7 s of GIL on a 30-qubit
+    # chip, competing with the page the user just asked for).
+    with store._lock:
+        key = (store.mutation_seq, len(store.change_log))
+    cached = getattr(store, "_needs_cfg_memo", None)
+    if cached is not None and cached[0] == key:
+        return cached[1]
     try:
-        return any(not row.get("known") for row in PulseIndex(store).rows())
+        verdict = any(not row.get("known") for row in PulseIndex(store).rows())
     except Exception:  # noqa: BLE001 -- a probe never breaks an activation
         logger.debug("pulse-class probe failed", exc_info=True)
         return False
+    store._needs_cfg_memo = (key, verdict)
+    return verdict
 
 
 def _warm_generated_config_async(ctx, inst) -> str:
@@ -1742,10 +1825,22 @@ def _warm_generated_config_async(ctx, inst) -> str:
         return "no-env"          # honest: the user picks the env, never SM
 
     key = str(folder).lower()
+    # RAM P10: ONE generation subprocess at a time, machine-wide. Browsing ten
+    # run snapshots of a lab-class chip used to start ten ~13 s conda
+    # subprocesses at once (each snapshot is its own chip), which is what made
+    # the chip switch right after take seconds. A chip that finds another
+    # warming is simply not warmed now; its next activation asks again.
+    with _cfg_warm_lock:
+        if key in _cfg_warm_inflight:
+            return "running"
+        if _cfg_warm_inflight:
+            return "busy"
     state_hash = _config_state_hash(store)
     with _cfg_warm_lock:
         if key in _cfg_warm_inflight:
             return "running"
+        if _cfg_warm_inflight:
+            return "busy"
         if _cfg_warm_failed.get(key) == state_hash:
             return "failed-before"   # same chip content; a retry buys nothing
         _cfg_warm_inflight.add(key)
@@ -2000,9 +2095,10 @@ def _rebuild_after_working_copy_replaced(ctx: dict) -> None:
     store = ctx["store"]
     _held_fp = _chip_fp(ctx)   # jsontree-r2-04 review: what was held
     store.reload()
-    index = SearchIndex.build(store.merged, wiring_keys=set(store.wiring.keys()))
+    index = LazySearchIndex(store)
     store.search_index = index
     ctx["index"] = index
+    index.prewarm(pre=_chip_warm_steps())
     ctx["wiring_json"] = json.dumps(store.wiring)
     _invalidate_engine_cache()
     ctx["working_dirty"] = False
@@ -25143,13 +25239,22 @@ def _save_session_raising(data: dict[str, Any]) -> None:
 
 
 def _remember_load_path(path: str | Path) -> None:
-    """Update last_session.json after a successful /load."""
+    """Update last_session.json after a successful /load.
+
+    A re-open of the chip that is already first in the recents changes
+    nothing, and is not written (RAM P10: every warm /load paid an atomic
+    replace here -- and on this machine ~1 replace in 8 hits a transient
+    ERROR_UNABLE_TO_REMOVE_REPLACED)."""
     abs_path = str(Path(path).resolve())
     data = _load_session()
     recents = [p for p in data.get("recent_quam_state_paths", []) if p != abs_path]
     recents.insert(0, abs_path)
+    recents = recents[:_RECENTS_CAP]
+    if (data.get("last_quam_state_path") == abs_path
+            and data.get("recent_quam_state_paths") == recents):
+        return
     data["last_quam_state_path"] = abs_path
-    data["recent_quam_state_paths"] = recents[:_RECENTS_CAP]
+    data["recent_quam_state_paths"] = recents
     _save_session(data)
 
 
@@ -28258,6 +28363,20 @@ def debug_ram():
     snap = _ramcache.snapshot()
     ing = current_app.config.get("run_ingest")
     snap["run_ingest"] = ing.stats() if ing is not None else None
+    # RAM P10: the process as the OS sees it, and the chip contexts the LRU
+    # holds (their stores are NOT KeyedMemo entries -- the memo totals above
+    # never include them).
+    snap["process_rss_bytes"] = _ramcache.process_rss_bytes()
+    with _quam_cache_lock:
+        ctxs = list(_quam_cache.items())
+    snap["quam_contexts"] = {
+        "max": _QUAM_CACHE_MAX,
+        "open": [{"key": k, "origin": c.get("origin"),
+                  "search_index_built": bool(getattr(
+                      (c.get("store") or object()), "search_index", None) is not None
+                      and getattr(c["store"].search_index, "built", True))}
+                 for k, c in ctxs],
+    }
     return jsonify(snap)
 
 

@@ -458,15 +458,18 @@ class TestLoaderUsesSafeIO:
         (tmp_path / "state.json").write_text('{"qubits": {}}', encoding="utf-8")
         (tmp_path / "wiring.json").write_text('{"wiring": {}}', encoding="utf-8")
 
+        # read_state_wiring_raw owns the armored pair read (read_state_wiring
+        # is a thin wrapper over it); the loader takes the _raw form since
+        # RAM P10 because it also digests the exact bytes it parsed.
         calls = []
-        real_fn = safe_io.read_state_wiring
+        real_fn = safe_io.read_state_wiring_raw
 
-        def spy(folder):
+        def spy(folder, **kw):
             calls.append(Path(folder))
-            return real_fn(folder)
+            return real_fn(folder, **kw)
 
         monkeypatch.setattr(
-            "quam_state_manager.core.loader.safe_io.read_state_wiring", spy,
+            "quam_state_manager.core.loader.safe_io.read_state_wiring_raw", spy,
         )
 
         QuamStore(tmp_path)

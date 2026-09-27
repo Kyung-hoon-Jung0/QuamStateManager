@@ -15,6 +15,7 @@ reads can't hand us a torn snapshot.
 
 from __future__ import annotations
 
+import hashlib
 import logging
 import re
 import threading
@@ -171,7 +172,16 @@ class QuamStore:
         self._pointer_cache: PointerCache = {}
         self._pointer_cache_lock = threading.Lock()
         self._validate = validate
+        # RAM P10: WHICH bytes this store was parsed from, and the mutation
+        # counter right after that parse. ``(file_digest, loaded_seq)`` lets a
+        # cache prove "this in-memory store is exactly those files" -- the
+        # digest names the bytes, and an unchanged counter says nothing has
+        # been edited, undone or reloaded since (every in-memory change bumps
+        # it). ``None`` until a file load (``from_dicts`` never has one).
+        self.file_digest: str | None = None
+        self.loaded_seq: int | None = None
         self._load()
+        self.loaded_seq = self.mutation_seq
 
     @classmethod
     def from_dicts(cls, state: dict, wiring: dict) -> "QuamStore":
@@ -204,6 +214,8 @@ class QuamStore:
         self._pointer_cache = {}
         self._pointer_cache_lock = threading.Lock()
         self._validate = False
+        self.file_digest = None
+        self.loaded_seq = None
         self._merge()
         self._clear_pointer_cache()
         return self
@@ -226,9 +238,11 @@ class QuamStore:
         # between the two reads can't hand us a torn snapshot. A bad-JSON
         # file is surfaced as LiveFileError (an OSError subclass).
         try:
-            self.state, self.wiring = safe_io.read_state_wiring(self.folder_path)
+            self.state, self.wiring, sb, wb = safe_io.read_state_wiring_raw(self.folder_path)
         except safe_io.LiveFileError as exc:
             raise ValueError(str(exc)) from exc
+        self.file_digest = file_digest(sb, wb)
+        self.loaded_seq = None      # set by the caller once the counter settles
 
         self._merge()
 
@@ -349,6 +363,7 @@ class QuamStore:
             # checks (Verify overlay) can't serve pre-reload conclusions.
             self.mutation_seq += 1
             self.journal_mutation(None, False)
+            self.loaded_seq = self.mutation_seq
 
     # ------------------------------------------------------------------
     # Mutation journal
@@ -472,6 +487,70 @@ class QuamStore:
 # ------------------------------------------------------------------
 # Utilities
 # ------------------------------------------------------------------
+
+
+def file_digest(state_bytes: bytes, wiring_bytes: bytes) -> str:
+    """Digest of a state.json + wiring.json pair's exact BYTES (RAM P10).
+
+    Bytes, not parsed content: it is what a cache compares against the files
+    on disk before trusting an in-memory model of them, so a same-size rewrite
+    with a restored mtime still reads as different. Each file is hashed on its
+    own and the pair joined, so moving bytes across the boundary cannot
+    collide."""
+    return (hashlib.blake2b(state_bytes, digest_size=16).hexdigest() + ":"
+            + hashlib.blake2b(wiring_bytes, digest_size=16).hexdigest())
+
+
+def is_pristine(store: "QuamStore") -> bool:
+    """True when *store* still holds exactly the bytes it was loaded from:
+    a file load happened, and no edit / undo / reload moved the counter since,
+    and nothing is staged. Read under the store lock by callers that park or
+    reuse the store."""
+    return (store.file_digest is not None and store.loaded_seq is not None
+            and store.mutation_seq == store.loaded_seq and not store.change_log)
+
+
+#: Pointers resolved per locked chunk by :func:`warm_pointer_cache`.
+WARM_POINTER_CHUNK = 256
+
+
+def warm_pointer_cache(store: "QuamStore", pace=None,
+                       chunk: int = WARM_POINTER_CHUNK) -> bool:
+    """Resolve every pointer of *store* into its own pointer cache, in small
+    chunks, off the request thread (RAM P10 cold-open follow-up).
+
+    The first page that lints the chip (Chip Status, the diagnostics badge)
+    used to resolve ~15k pointers on a 30-qubit chip inline. This fills the
+    SAME cache the foreground resolver reads -- through ``store.resolve_pointer``
+    itself, so a warmed entry is exactly what a cold resolve would store.
+
+    Staleness: each chunk runs under ``store._lock`` and first checks that
+    ``mutation_seq`` has not moved since the pointer list was taken. Every
+    mutation bumps the counter and clears the cache under that same lock, so a
+    chunk can never resolve against content older than the cache it writes
+    into. A moved counter stops the warm (returns False); the next reader
+    resolves on demand, as before. *pace* (optional) is called between chunks
+    with the lock released -- the background worker pauses there while a
+    foreground request runs."""
+    lock = store._lock
+    with lock:
+        seq, merged_id = store.mutation_seq, id(store.merged)
+        if getattr(store, "_ptr_warm_token", None) == (seq, merged_id):
+            return True             # already warm at this content: no re-walk
+        todo = [(v, pt) for _dp, v, pt in _walk(store.merged)
+                if is_pointer(v) and not is_self_ref(v)]
+    for i in range(0, len(todo), chunk):
+        if i and pace is not None:
+            pace()
+        with lock:
+            if store.mutation_seq != seq or id(store.merged) != merged_id:
+                return False
+            for value, path_tuple in todo[i:i + chunk]:
+                store.resolve_pointer(value, path_tuple)
+    with lock:
+        if store.mutation_seq == seq and id(store.merged) == merged_id:
+            store._ptr_warm_token = (seq, merged_id)
+    return True
 
 
 def _walk(

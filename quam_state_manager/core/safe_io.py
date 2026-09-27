@@ -53,7 +53,17 @@ _READ_ATTEMPTS = 4
 _READ_BACKOFF_S = 0.15
 
 # Write retry: a replace can hit a transient lock (AV, indexer).
-_WRITE_ATTEMPTS = 3
+# RAM P10: the sleeps before each retry are ``_WRITE_BACKOFF_S`` times these
+# steps -- 10, 30 and 100 ms first, then the old 0.5 s and 1 s. On this
+# project's Windows machine ~1 ReplaceFileW in 8 fails with WinError 1175
+# (ERROR_UNABLE_TO_REMOVE_REPLACED) on a file nobody else holds, and the
+# condition clears within ~10 ms (measured 8.0-10.1 ms over 60 replaces,
+# 2026-09-26); the flat 0.5 s first step turned each of those into a half-
+# second stall of whatever request was writing (a chip open writes twice).
+# The worst case before giving up is 1.64 s over six attempts (was 1.5 s
+# over three), so a genuinely held file is waited out as long as before.
+_WRITE_BACKOFF_STEPS = (0.02, 0.06, 0.2, 1.0, 2.0)
+_WRITE_ATTEMPTS = len(_WRITE_BACKOFF_STEPS) + 1
 _WRITE_BACKOFF_S = 0.5
 
 # State + wiring are a logical pair. When stat'd before/after a read, the
@@ -398,7 +408,8 @@ def _replace_into_place(tmp: Path, dst: Path) -> None:
                     f"Could not write {dst}: the temporary file {tmp.name} disappeared "
                     f"before it could be moved into place ({exc})") from exc
             if attempt + 1 < _WRITE_ATTEMPTS:
-                time.sleep(_WRITE_BACKOFF_S * (attempt + 1))
+                time.sleep(_WRITE_BACKOFF_S * _WRITE_BACKOFF_STEPS[
+                    min(attempt, len(_WRITE_BACKOFF_STEPS) - 1)])
 
     try:
         tmp.unlink(missing_ok=True)

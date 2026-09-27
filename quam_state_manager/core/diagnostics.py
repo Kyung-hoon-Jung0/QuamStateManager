@@ -276,6 +276,13 @@ def lint_state(store) -> list[Finding]:
     lock = getattr(store, "_lock", None)
     if lock is not None:
         with lock:
+            # RAM P10: re-check under the lock. The background chip prewarm
+            # lints while holding it; a request that arrived meanwhile waited
+            # here and must take THAT result, not lint the chip a second time.
+            seq = getattr(store, "mutation_seq", None)
+            hit = _lint_state_cache.get(store)
+            if hit is not None and hit[0] == seq:
+                return list(hit[1])
             out = _lint_state_uncached(store)
     else:
         out = _lint_state_uncached(store)

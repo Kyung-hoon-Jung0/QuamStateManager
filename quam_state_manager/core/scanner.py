@@ -432,10 +432,18 @@ class Workspace:
             entries = []
             for row in raw["entries"]:
                 fp = Path(row["folder"])
-                entries.append(ExperimentEntry(
+                e = ExperimentEntry(
                     folder_path=fp,
                     quam_state_path=Path(row["qs"]),
-                    **{f: row[f] for f in self._ENTRY_FIELDS}))
+                    **{f: row[f] for f in self._ENTRY_FIELDS})
+                # RAM P10: the resolved path the previous session computed
+                # (optional -- a cache written before it simply lacks "qsr"
+                # and resolves as before). Re-checked by the background
+                # verify, like every other fact in this cache.
+                qsr = row.get("qsr")
+                if isinstance(qsr, str) and qsr:
+                    e.qs_resolved = Path(qsr)
+                entries.append(e)
             spine = [str(d) for d in raw["spine"]]
             probe = {str(k): float(v) for k, v in raw["probe"].items()}
             if raw.get("truncated"):
@@ -467,6 +475,8 @@ class Workspace:
                     "probe": self._scan_probes.get(root_key, {}),
                     "entries": [dict(
                         folder=str(e.folder_path), qs=str(e.quam_state_path),
+                        qsr=(str(e.qs_resolved) if e.qs_resolved is not None
+                             else None),
                         **{f: getattr(e, f) for f in self._ENTRY_FIELDS})
                         for e in entries],
                 }
@@ -485,8 +495,33 @@ class Workspace:
             if self._is_root_stale(root):
                 self.rescan_root(root)
                 self._save_listing_cache(str(root))
+            elif self._reresolve_cached(root):
+                self._save_listing_cache(str(root))
         except Exception:
             logger.warning("cached-root verify of %s failed", root, exc_info=True)
+
+    def _reresolve_cached(self, root: Path) -> int:
+        """RAM P10: the listing cache now carries each run's RESOLVED path, so
+        a cache-served ``add_root`` does no per-run link probing on the request
+        thread. That fact is re-derived here, off it: every entry is resolved
+        again and any that moved (a folder replaced by a link or junction
+        since the cache was written) is re-keyed. Returns how many moved."""
+        key = str(root)
+        memo: dict = {}
+        entries = [e for g in self.tree.get(key, []) for e in g.entries]
+        fixed = [(e, _fast_resolve(e.quam_state_path, memo)) for e in entries]
+        moved = 0
+        with self._lock:
+            for e, r in fixed:
+                if e.qs_resolved != r:
+                    if self._entries_by_path.get(e.qs_resolved) is e:
+                        self._entries_by_path.pop(e.qs_resolved, None)
+                    e.qs_resolved = r
+                    self._entries_by_path[r] = e
+                    moved += 1
+            if moved:
+                self._version += 1
+        return moved
 
     def _hydrate_root(self, root: Path, stubs: list[ExperimentEntry]) -> None:
         """docs/142: background half of a listing-first ``add_root``.

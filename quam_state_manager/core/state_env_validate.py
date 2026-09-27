@@ -555,6 +555,12 @@ def analysis_for_store(store, manifest: dict | None) -> dict:
     lock = getattr(store, "_lock", None)
     if lock is not None:
         with lock:
+            # RAM P10: re-check under the lock (the background chip prewarm
+            # may have finished this very analysis while we waited for it).
+            key = (getattr(store, "mutation_seq", 0), _manifest_key(manifest))
+            hit = _analysis_memo.get(store)
+            if hit is not None and hit[0] == key:
+                return hit[1]
             res = analyze_state(store.state, manifest)
     else:
         res = analyze_state(store.state, manifest)
