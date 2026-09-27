@@ -1933,7 +1933,12 @@ def _chip_needs_generated_config(store) -> bool:
     if cached is not None and cached[0] == key:
         return cached[1]
     try:
-        verdict = any(not row.get("known") for row in PulseIndex(store).rows())
+        # An alias row (x180 -> "#./x180_DragCosine") has no class of its own
+        # -- its `known` is False by construction, and every real chip has
+        # them. Its TARGET is a row of its own and is judged there; counting
+        # the alias made every chip spawn the ~13 s subprocess on open.
+        verdict = any(not row.get("known") and not row.get("is_alias")
+                      for row in PulseIndex(store).rows())
     except Exception:  # noqa: BLE001 -- a probe never breaks an activation
         logger.debug("pulse-class probe failed", exc_info=True)
         return False
