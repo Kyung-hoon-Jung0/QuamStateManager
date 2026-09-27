@@ -26,12 +26,16 @@ let fails = 0, asserts = 0;
 function ok(c, m) { asserts++; if (c) console.log('ok - ' + m); else { console.error('FAIL: ' + m); fails++; } }
 
 const bodyTag = (BASE.match(/<body\b[^>]*>/) || [''])[0].replace(/\{\{[^}]*\}\}/g, '');
+// queue #8 follow-up: the inline script that sits FIRST in the body and drops the
+// class for a user who chose Full names, before anything paints (reverse flash)
+const INLINE = ((BASE.split(/<body\b[^>]*>/)[1] || '').match(/^\s*(?:\{#[\s\S]*?#\}\s*)?<script>([\s\S]*?)<\/script>/) || [])[1] || '';
+ok(INLINE && /quam_exp_list_compact/.test(INLINE), 'setup: base.html body starts with the inline compact-class read');
 const btn = (id) => (BASE.match(new RegExp('<button[^>]*id="' + id + '"[^>]*>')) || [''])[0];
 ok(bodyTag && btn('exp-density-full') && btn('exp-density-compact'),
    'setup: base.html body tag + both density buttons found');
 
 /* storage: undefined = key absent; 'throw' = a private window that throws on access */
-function world(storage) {
+function world(storage, opts) {
   const html = '<!doctype html><html><head></head>' + bodyTag
     + '<div class="sidebar-tree-toolbar">' + btn('exp-density-full') + '</button>'
     + btn('exp-density-compact') + '</button></div><div id="sidebar-tree"></div></body></html>';
@@ -46,6 +50,10 @@ function world(storage) {
              config: {}, find: function () { return null; } };
   w.Element.prototype.scrollIntoView = function () {};
   w.fetch = function () { return new w.Promise(function () {}); };
+  // the body's inline script runs first, exactly as the browser runs it (a
+  // throw here is a throw on every page load for a private window)
+  try { new w.Function(INLINE).call(w); } catch (e) { console.error('inline body script threw: ' + e.stack); fails++; }
+  if (opts && opts.inlineOnly) { return { w: w, compact: () => w.document.body.classList.contains('exp-list-compact') }; }
   try { new w.Function(APP_JS).call(w); } catch (e) { console.error('app.js threw: ' + e.stack); fails++; }
   const d = w.document;
   return {
@@ -74,6 +82,14 @@ const tick = (ms) => new Promise((r) => setTimeout(r, ms || 30));
   T.w.setExpListCompact(true);
   ok(T.compact() && T.pressed() === 'false/true' && T.stored() === '1',
      'Compact puts it back and stores 1 (' + T.pressed() + ', ' + T.stored() + ')');
+}
+// 2b. the reverse flash: a stored '0' is off BEFORE app.js runs (the inline
+//     body script alone), an absent key and a private window keep the default
+{
+  ok(!world('0', { inlineOnly: true }).compact(), "stored '0' -> the inline body script already dropped the class (no reverse flash)");
+  ok(world(undefined, { inlineOnly: true }).compact(), 'absent key -> the inline body script leaves compact on');
+  ok(world('1', { inlineOnly: true }).compact(), "stored '1' -> the inline body script leaves compact on");
+  ok(world('throw', { inlineOnly: true }).compact(), 'private window -> the inline body script leaves compact on and does not throw');
 }
 // 3. an explicit '0' (the user chose full names earlier) is honoured on load
 {

@@ -30,6 +30,15 @@ def test_the_rendered_page_starts_compact(tmp_path):
     html = app.test_client().get("/").get_data(as_text=True)
     body = re.search(r"<body\b[^>]*>", html).group(0)
     assert "exp-list-compact" in body.split('class="', 1)[1].split('"', 1)[0], body
+    # queue #8 follow-up: the FIRST thing inside the body is the inline read
+    # of the user's choice, so a stored '0' never paints compact (the reverse
+    # flash); anything rendered before it would flash for Full-names users.
+    after_body = html[re.search(r"<body\b[^>]*>", html).end():]
+    m = re.match(r"\s*<script>(.*?)</script>", after_body, re.S)
+    assert m, "the compact-class read must be the first element after <body>"
+    inline = m.group(1)
+    assert "quam_exp_list_compact" in inline and "'0'" in inline and "exp-list-compact" in inline, inline
+    assert re.search(r"try\s*\{.*\}\s*catch\s*\(", inline, re.S), "a private window throws on storage access"
     comp = re.search(r'<button[^>]*id="exp-density-compact"[^>]*>', html).group(0)
     full = re.search(r'<button[^>]*id="exp-density-full"[^>]*>', html).group(0)
     assert 'aria-pressed="true"' in comp and 'aria-pressed="false"' in full, (comp, full)

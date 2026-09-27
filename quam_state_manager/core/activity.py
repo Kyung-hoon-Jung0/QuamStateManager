@@ -25,7 +25,10 @@ import time
 #: ONE rule for every yield-to-foreground mechanism (the search-index prewarm
 #: here, ``run_ingest.FOREGROUND`` for the run-watch tick): ``is_foreground``.
 LONG_POLL_PATHS = frozenset({"/datasets/wait", "/datasets/poll", "/workspace/tree/poll",
-                             "/workbench/watch", "/api/agent/run-node"})
+                             "/workbench/watch", "/api/agent/run-node",
+                             # w7/agentsqa: Agent setup's "Test" holds the request
+                             # while it polls the agent process (default 90 s)
+                             "/api/agent/setup/test"})
 #: Requests that are not a user waiting on a page.
 EXEMPT_PREFIXES = ("/static/", "/debug/", "/api/agent/run/")
 

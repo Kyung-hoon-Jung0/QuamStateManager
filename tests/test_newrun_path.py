@@ -313,20 +313,71 @@ class TestForegroundYield:
             run_ingest.FOREGROUND.enter = orig
         assert calls == []
 
-    def test_a_started_worker_yields_and_run_once_does_not(self):
+    def test_the_held_routes_are_one_list(self):
+        """Every held-open request the app knows is exempt through ONE rule
+        (activity.is_foreground) -- the agent's node waits AND its setup Test
+        (w7/agentsqa), so neither counter can be stalled by them."""
+        from quam_state_manager.core import activity
+        for held in ("/datasets/wait", "/api/agent/run-node", "/api/agent/run/k",
+                     "/api/agent/setup/test", "/static/app.js", "/debug/ram"):
+            assert not activity.is_foreground(held), held
+        for page in ("/datasets", "/bulk", "/api/agent/chip", "/api/agent/setup"):
+            assert activity.is_foreground(page), page
+
+    def test_a_started_worker_yields_and_run_once_does_not(self, monkeypatch):
+        """Deterministic (w7 integration): the old form slept 0.3 s and relied
+        on wait_idle's 3 s bound never expiring -- under a full suite the
+        probe thread was starved past it and the step ran beside the request.
+        Now the gate itself reports when the worker reaches it; the worker
+        cannot get past it before exit() (the bound is lifted for the test),
+        so "held while in flight" is a fact, not a timing."""
+        fg = run_ingest.FOREGROUND
+        entered = threading.Event()
+        real_wait = fg.wait_idle
+
+        def wait_idle(quiet_s=0.25, max_s=3.0):
+            entered.set()
+            return real_wait(quiet_s=quiet_s, max_s=120.0)
+
+        monkeypatch.setattr(fg, "wait_idle", wait_idle)
+
+        # (a) a started worker (yield_to_foreground=True, what start() sets)
+        #     holds its steps while a request is in flight, runs them after
         ing = run_ingest.RunIngest(lambda roots: [], refresh=lambda s: None)
         assert ing.yield_to_foreground is False
-        order = []
-        ing.add_after(lambda roots: order.append(run_ingest.FOREGROUND.active), "probe")
-        run_ingest.FOREGROUND.enter()
+        order: list = []
+        ran = threading.Event()
+        ing.add_after(lambda roots: (order.append(fg.active), ran.set()), "probe")
+        fg.enter()
         try:
             ing.yield_to_foreground = True
             ing.kick(["x"])
             t = threading.Thread(target=ing.run_once)
             t.start()
-            time.sleep(0.3)
+            assert entered.wait(30.0), "the worker never asked the foreground gate"
+            # the probe runs only after wait_idle returns, and wait_idle cannot
+            # return while the request is in flight: nothing has run yet
             assert order == [], "the step ran while a request was in flight"
         finally:
-            run_ingest.FOREGROUND.exit()
-        t.join(5.0)
+            fg.exit()
+        assert ran.wait(30.0), "the step never ran after the request ended"
+        t.join(30.0)
         assert order == [0]
+
+        # (b) run_once() as tests call it (flag left False) does NOT yield:
+        #     the step runs at once, beside the in-flight request, gate unasked
+        entered.clear()
+        ing2 = run_ingest.RunIngest(lambda roots: [], refresh=lambda s: None)
+        order2: list = []
+        ran2 = threading.Event()
+        ing2.add_after(lambda roots: (order2.append(fg.active), ran2.set()), "probe")
+        fg.enter()
+        try:
+            ing2.kick(["x"])
+            t2 = threading.Thread(target=ing2.run_once)
+            t2.start()
+            assert ran2.wait(30.0), "run_once yielded although yield_to_foreground is False"
+            assert order2 == [1] and not entered.is_set()
+        finally:
+            fg.exit()
+        t2.join(30.0)
