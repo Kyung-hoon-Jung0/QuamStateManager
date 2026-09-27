@@ -868,11 +868,23 @@ def _human_ran_recently(now: float, agent_runs: dict, ev: list[dict]) -> dict | 
     return None
 
 
+def _clock_now() -> float:
+    """The wall clock the live strip judges by. A seam: the stalled-pre pin
+    freezes it (the real clock made that pin red for the first two hours after
+    midnight, when "two hours ago" fell on yesterday)."""
+    return time.time()
+
+
+def _clock_today() -> datetime:
+    """Local calendar time for the same judgement (``events_today``)."""
+    return datetime.now()
+
+
 def _now_state() -> dict:
     """The pill's one state, in the precedence order of docs/173 §3.1:
     waiting > limited > stalled > failed > running > between > human-ran > idle."""
     from quam_state_manager.core import agent_session, story
-    now = time.time()
+    now = _clock_now()
     with _events_lock:
         ev = list(_events())
     seq = int(current_app.config.get("agent_seq") or 0)
@@ -885,7 +897,7 @@ def _now_state() -> dict:
     for e in ev:
         by_session[str(e.get("session_id"))].append(e)
     sessions = {sid: es for sid, es in by_session.items() if _relevant(es)}
-    day_start = datetime.now().replace(hour=0, minute=0, second=0, microsecond=0).timestamp()
+    day_start = _clock_today().replace(hour=0, minute=0, second=0, microsecond=0).timestamp()
     failures = sum(1 for es in sessions.values() for e in es
                    if e.get("failed") and float(e.get("ts") or 0) >= day_start)
     base["failures_today"] = failures

@@ -201,15 +201,25 @@ class TestTheLiveStrip:
         _ev(client, hook_event_name="Stop", summary="done")
         assert client.get("/api/agent/now").get_json()["running"] is None
 
-    def test_an_old_unmatched_pre_is_stalled_not_running(self, tmp_path):
+    def test_an_old_unmatched_pre_is_stalled_not_running(self, tmp_path, monkeypatch):
+        from quam_state_manager.web import agent_api
         from quam_state_manager.web.app import create_app
+        # The strip judges by agent_api's clock seam, frozen here at today's
+        # noon: the unmatched PreToolUse two hours before it is still TODAY and
+        # long past _LIVE_WINDOW_S whatever the real time is. (On the real
+        # clock this pin was red for the first two hours after midnight, when
+        # "two hours ago" fell on yesterday and events_today read 0.) The
+        # journal file keeps today's real date, which is the frozen date too,
+        # so the replay on start-up still finds it.
+        frozen = datetime.now().replace(hour=12, minute=0, second=0, microsecond=0)
+        monkeypatch.setattr(agent_api, "_clock_now", lambda: frozen.timestamp())
+        monkeypatch.setattr(agent_api, "_clock_today", lambda: frozen)
         inst = tmp_path / "_inst"
         (inst / "agent_events").mkdir(parents=True)
-        f = inst / "agent_events" / (datetime.now().strftime("%Y-%m-%d") + ".jsonl")
-        import time as _t
-        f.write_text(json.dumps({"ts": _t.time() - 2 * 3600, "hook_event_name": "PreToolUse", "tool_name": "Bash",
-                                 "session_id": "s", "tool_use_id": "old", "summary": "python x.py"}) + "\n",
-                     encoding="utf-8")
+        f = inst / "agent_events" / (frozen.strftime("%Y-%m-%d") + ".jsonl")
+        f.write_text(json.dumps({"ts": frozen.timestamp() - 2 * 3600, "hook_event_name": "PreToolUse",
+                                 "tool_name": "Bash", "session_id": "s", "tool_use_id": "old",
+                                 "summary": "python x.py"}) + "\n", encoding="utf-8")
         c = create_app(testing=True, instance_path=str(inst)).test_client()
         now = c.get("/api/agent/now").get_json()
         assert now["events_today"] == 1 and now["last"]["summary"] == "python x.py"
