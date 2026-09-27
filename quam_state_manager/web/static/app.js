@@ -7159,6 +7159,7 @@ window.Bundles = (function () {
     var PATHS = [
         [/^\/bulk(\/|$|\?)/, ["grid"]], [/^\/table(\/|$|\?)/, ["grid"]],
         [/^\/pulses?(\/|$|\?)/, ["pulses"]],
+        [/^\/zline(\/|$|\?)/, ["zline"]],
         [/^\/(generate|regenerate)(\/|$|\?)/, ["generate"]],
         [/^\/instrument(\/|$|\?)/, ["wiring"]],
         [/^\/topology(\/|$|\?)/, ["chipstatus", "components"]], [/^\/chip-status(\/|$|\?)/, ["chipstatus", "components"]],

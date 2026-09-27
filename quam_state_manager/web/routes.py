@@ -13572,6 +13572,174 @@ def pulse_row():
     return render_template("_pulse_row.html", r=row)
 
 
+# ---------------------------------------------------------------------------
+# Z-line distortion (Live State Edit > Z-line distortion)
+# ---------------------------------------------------------------------------
+
+#: Content-keyed memo of one line's computed responses. The TOKEN is the full
+#: content the answer is computed from (the parsed filter + the pulse samples +
+#: the model), so a hit can never be a stale answer: a changed tap is a
+#: different token, validated on read (ramcache doctrine).
+_ZLINE_MEMO = _ramcache.KeyedMemo("zline.responses", max_bytes=16 * 1024 * 1024,
+                                  max_entries=128)
+
+
+def _zline_snapshot(store, channel_path: str) -> dict:
+    """Everything the page needs from the store, copied under its lock: the
+    resolved port (deep copy), the channel's operation names."""
+    from quam_state_manager.core import zline_filters as zf
+    with store._lock:
+        r = zf.resolve_zline(store.merged, channel_path)
+        r["port"] = copy.deepcopy(r["port"])
+        ch: Any = store.merged
+        for seg in channel_path.split("."):
+            ch = ch.get(seg) if isinstance(ch, dict) else None
+        ops = (ch.get("operations") if isinstance(ch, dict) else None) or {}
+        ops = sorted(ops, key=natural_key) if isinstance(ops, dict) else []
+    r["ops"] = ops
+    return r
+
+
+def _zline_analyze(port_path, port):
+    """``zline_filters.analyze_port`` memoized on the port's CONTENT
+    (canonical JSON): the parse and both models' stability checks (np.roots +
+    Newton polish) run once per distinct filter set, not once per line per
+    GET. Copies of every note are returned, so a caller extending or editing
+    them never mutates the cached value."""
+    from quam_state_manager.core import zline_filters as zf
+    try:
+        token = json.dumps(port, sort_keys=True, default=repr)
+    except (TypeError, ValueError):
+        return zf.analyze_port(port)
+    try:
+        pf, notes, verdicts = _ZLINE_MEMO.get(("analyze", port_path), token,
+                                              lambda: zf.analyze_port(port), wait_s=5.0)
+    except _ramcache.Warming:
+        pf, notes, verdicts = zf.analyze_port(port)
+    return (pf, [dict(n) for n in notes],
+            {m: [dict(n) for n in v] for m, v in verdicts.items()})
+
+
+def _zline_default_op(ops: list[str]) -> str:
+    for want in ("const",):
+        if want in ops:
+            return want
+    for o in ops:
+        if "flux" in o or "cz" in o:
+            return o
+    return ops[0] if ops else ""
+
+
+@bp.route("/zline")
+def zline_page():
+    """Every flux line's output filters, drawn: the ideal step and the lab's
+    own flux pulses through the port's exponential + FIR filters together."""
+    store = _store()
+    if not store:
+        return _no_chip("z-line distortion", "zline")
+    from quam_state_manager.core import zline_filters as zf
+    with store._lock:
+        ents = zf.zline_entities(store.merged)
+        resolved = []
+        for e in ents:
+            r = zf.resolve_zline(store.merged, e["channel_path"])
+            r["port"] = copy.deepcopy(r["port"])
+            resolved.append((e, r))
+    # The parse (the stability check) runs OUTSIDE the store lock, on copies.
+    rows = [zf.row_from_resolved(e, r, analyze=lambda port, pp=r["port_path"]: _zline_analyze(pp, port))
+            for e, r in resolved]
+    for r in rows:
+        r["worst"] = ("block" if any(n["level"] == "block" for n in r["notes"])
+                      else "warn" if any(n["level"] == "warn" for n in r["notes"]) else "")
+    want = request.args.get("line", "").strip()
+    paths = [r["channel_path"] for r in rows]
+    selected = want if want in paths else next(
+        (r["channel_path"] for r in rows if r["ok"]), paths[0] if paths else "")
+    template = "_zline.html" if _is_htmx() else "zline.html"
+    return render_template(template, **_ctx(page="zline", rows=rows, selected=selected))
+
+
+@bp.route("/zline/data")
+def zline_data():
+    """JSON for one line: notes, step response, one flux pulse's response."""
+    store = _store()
+    if not store:
+        return jsonify(ok=False, error="no chip loaded"), 409
+    from quam_state_manager.core import zline_filters as zf
+    from quam_state_manager.core.waveform_synth import synth_for_operation
+    line = request.args.get("line", "").strip()
+    model = "cascade" if request.args.get("model") == "cascade" else "sum"
+    with store._lock:
+        known = {e["channel_path"] for e in zf.zline_entities(store.merged)}
+    if line not in known:
+        return jsonify(ok=False, error=f"not a flux line on this chip: {line!r}"), 404
+    snap = _zline_snapshot(store, line)
+    out = {"ok": True, "line": line, "port_path": snap["port_path"],
+           "chain": snap["chain"], "ops": snap["ops"], "model": model,
+           "notes": list(snap["notes"]), "step": None, "pulse": None, "op": None}
+    if snap["port"] is None:
+        return jsonify(out)
+    pf, notes, verdicts = _zline_analyze(snap["port_path"], snap["port"])
+    out["notes"].extend(notes)
+    if pf is None:
+        return jsonify(out)
+    # Stability is a property of the MODEL drawn: block only the model that
+    # is actually unstable, and say when the other one can draw this line.
+    out["models"] = {m: not zf.model_blocked(v) for m, v in verdicts.items()}
+    out["notes"].extend(verdicts.get(model, []))
+    if zf.model_blocked(verdicts.get(model, [])):
+        for m, ok in out["models"].items():
+            if ok and m != model:
+                out["notes"].append({"level": "info", "code": "other_model_draws",
+                                     "text": f"The {zf.MODEL_LABEL[m]} is stable for this set: "
+                                             "switch the Model selector to draw it."})
+        return jsonify(out)
+    out["notes"].extend(zf.model_notes(pf, model))
+    out["port"] = {"sampling_rate": pf.sampling_rate, "upsampling_mode": pf.upsampling_mode,
+                   "output_mode": pf.output_mode, "dc_gain": pf.dc_gain,
+                   "exponential": [list(e) for e in pf.exponential],
+                   "n_taps": len(pf.feedforward), "fir_sum": sum(pf.feedforward) if pf.has_fir else None}
+
+    def memo(slot, token, fn):
+        try:
+            try:
+                return _ZLINE_MEMO.get(slot, token, fn, wait_s=5.0)
+            except _ramcache.Warming:
+                return fn()
+        except Exception as exc:  # noqa: BLE001 -- a bad line is a note, never a 500
+            n = {"level": "block", "code": "model_error",
+                 "text": f"SM could not compute this curve ({type(exc).__name__}: {exc})."}
+            if n not in out["notes"]:              # step + pulse failing alike is ONE note
+                out["notes"].append(n)
+            return None
+
+    out["step"] = memo((line, "step", model), (pf.key(), model),
+                       lambda: zf.step_response(pf, model=model))
+
+    op = request.args.get("op", "").strip()
+    if op not in snap["ops"]:
+        op = _zline_default_op(snap["ops"])
+    out["op"] = op
+    if op:
+        payload = synth_for_operation(store, f"{line}.operations.{op}")
+        samples = payload.get("i") if payload.get("ok") else None
+        if payload.get("ok") and payload.get("iq"):
+            out["pulse_note"] = f"{op} is an IQ pulse; a flux line plays one channel -- not drawn."
+        elif not payload.get("ok") or not samples:
+            out["pulse_note"] = (f"SM cannot draw {op}: "
+                                 f"{payload.get('error') or 'no samples'}.")
+        elif len(samples) > zf.MAX_PULSE_SAMPLES:
+            out["pulse_note"] = (f"{op} is {len(samples)} samples long; pulses over "
+                                 f"{zf.MAX_PULSE_SAMPLES} samples are not drawn.")
+        elif any(v is None for v in samples):
+            out["pulse_note"] = f"{op} has non-finite samples -- not drawn."
+        else:
+            tok = (pf.key(), model, tuple(float(v) for v in samples))
+            out["pulse"] = memo((line, "pulse", op), tok,
+                                lambda: zf.pulse_response(pf, samples, model=model))
+    return jsonify(out)
+
+
 @bp.route("/pulses")
 def pulses_page():
     """The Pulses library: every pulse on the chip in one flat table."""
