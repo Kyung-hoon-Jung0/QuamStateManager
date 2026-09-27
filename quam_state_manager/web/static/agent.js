@@ -1295,7 +1295,35 @@ window.AgentPanel = (function () {
   function unmountMissing() {
     S.mounts = S.mounts.filter(function (m) { return document.body.contains(m.root); });
   }
+  /* QA agents round (3): the toast sink (#status-bar) sits above the composer
+     while one is on screen. That used to be a `body:has(...)` rule, and an
+     ancestor-position :has() makes EVERY DOM mutation anywhere re-match the
+     whole page (measured on /bulk big30x: one insert+layout 118-166 ms instead
+     of 0.1 ms; Live-Edit per-key typing 150 -> 278 ms). So the state is a body
+     class set here, at every place the composer can appear or go: home mount /
+     navigation away (init on afterSwap + historyRestore, re-checked a frame
+     later for a PaneState restore), float show/hide (toggleFloat + an
+     attribute-only observer on the popover's class). */
+  var COMPOSER_CLASS = "ag-composer-on";
+  function syncComposerClass() {
+    var b = document.body;
+    if (!b) return;
+    var pop = document.getElementById("agent-popover");
+    var on = !!document.querySelector("#table-pane > .agent-home")
+          || !!(pop && !pop.classList.contains("agent-hidden"));
+    if (b.classList.contains(COMPOSER_CLASS) !== on) b.classList.toggle(COMPOSER_CLASS, on);
+  }
+  var _popObserved = null;
+  function observePopover() {
+    var pop = document.getElementById("agent-popover");
+    if (!pop || pop === _popObserved || typeof MutationObserver === "undefined") return;
+    _popObserved = pop;
+    new MutationObserver(syncComposerClass).observe(pop, { attributes: true, attributeFilter: ["class"] });
+  }
   function toggleFloat(trigger) {
+    try { return toggleFloatInner(trigger); } finally { syncComposerClass(); }
+  }
+  function toggleFloatInner(trigger) {
     var pop = document.getElementById("agent-popover");
     if (!pop) return;
     var home = document.getElementById("agent-home");
@@ -1343,10 +1371,16 @@ window.AgentPanel = (function () {
       var fb = pop.querySelector(".agent-body");
       if (fb && !isLive(fb)) pop.classList.add("agent-hidden");
     }
+    observePopover();
+    syncComposerClass();
   }
-  document.addEventListener("htmx:afterSwap", function () { init(); wirePaint(); });
+  function lateSync() {
+    if (typeof requestAnimationFrame === "function") requestAnimationFrame(syncComposerClass);
+    else setTimeout(syncComposerClass, 0);
+  }
+  document.addEventListener("htmx:afterSwap", function () { init(); wirePaint(); lateSync(); });
   // htmx restores Back/Forward from a BODY snapshot outside every swap hook
-  document.addEventListener("htmx:historyRestore", function () { init(); wirePaint(); });
+  document.addEventListener("htmx:historyRestore", function () { init(); wirePaint(); lateSync(); });
   if (document.readyState === "loading") document.addEventListener("DOMContentLoaded", init); else init();
 
   return { mount: mount, poll: poll, submit: submit, key: key, preset: preset, startPlan: startPlan, cancelPlan: cancelPlan,
@@ -1354,6 +1388,6 @@ window.AgentPanel = (function () {
            shortVersion: shortVersion,
            setPlanMode: setPlanMode, approve: approve, reject: reject, stop: stop, arm: arm, disarm: disarm,
            endSession: endSession, setObserver: setObserver, setActor: setActor, actorName: actorName,
-           toggleFloat: toggleFloat, init: init, absorb: absorb, _state: S, fmtNum: fmtNum, fmtClock: fmtClock,
+           toggleFloat: toggleFloat, init: init, syncComposerClass: syncComposerClass, absorb: absorb, _state: S, fmtNum: fmtNum, fmtClock: fmtClock,
            grow: grow, toggleMore: toggleMore, toggleGroup: toggleGroup, togglePresets: togglePresets };
 })();

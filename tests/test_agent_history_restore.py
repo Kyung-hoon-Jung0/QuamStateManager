@@ -62,12 +62,14 @@ def test_the_app_toast_sits_above_an_agent_composer():
     window.showToast (#status-bar), so .ag-toast's lift never applied on /agent or
     under the floating panel -- measured in real Chrome at 1366x900, the
     #status-bar toast (831-870 px) covered Send (857-885 px). The sink is lifted
-    exactly while an agent composer is on screen, and only then."""
+    exactly while an agent composer is on screen, and only then.
+    QA agents round (3): scoped by body.ag-composer-on (agent.js), not a body:has()
+    rule -- that re-matched the whole page on every mutation. Which states turn the
+    class on is pinned in agent_composer_class_selfcheck.cjs."""
     import re
     css = (_ROOT / "quam_state_manager" / "web" / "static" / "style.css").read_text(encoding="utf-8")
-    m = re.search(r"body:has\(#table-pane > \.agent-home\) #status-bar,\s*"
-                  r"body:has\(#agent-popover:not\(\.agent-hidden\)\) #status-bar \{([^}]*)\}", css)
-    assert m, "the lift is scoped to the two agent composers"
+    m = re.search(r"body\.ag-composer-on #status-bar \{([^}]*)\}", css)
+    assert m, "the lift is scoped to the agent composers"
     b = re.search(r"bottom:\s*([\d.]+)rem", m.group(1))
     assert b and float(b.group(1)) >= 6, "above the composer (Send + the textarea), not on it"
     base = css[css.index("#status-bar {"):]
