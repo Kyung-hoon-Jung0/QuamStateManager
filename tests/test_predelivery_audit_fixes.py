@@ -853,10 +853,24 @@ class TestEveryRenderIsCheap:
     """
 
     def test_a_missing_prompt_memo_does_not_sleep(self, app, monkeypatch):
+        import threading
         from quam_state_manager.core import safe_io
         from quam_state_manager.web import routes as R
         slept = []
-        monkeypatch.setattr(safe_io.time, "sleep", lambda s: slept.append(s))
+        # `safe_io.time` IS the time module: the patch reaches every thread.
+        # Only THIS thread's sleeps are the render's; a background worker
+        # (the chip prewarm polling for a quiet server, w7 RAM P10) may sleep
+        # in the same window and must neither count nor be starved of its
+        # real sleep (a no-op sleep would turn its poll into a hot spin).
+        me, real_sleep = threading.current_thread(), safe_io.time.sleep
+
+        def sleep(s):
+            if threading.current_thread() is me:
+                slept.append(s)
+            else:
+                real_sleep(s)
+
+        monkeypatch.setattr(safe_io.time, "sleep", sleep)
         with app.test_request_context("/"):
             assert R._load_chip_prompt_memo() == {}
         assert slept == [], f"read of a missing optional sidecar slept {slept}"

@@ -15,7 +15,7 @@
         <label for="pulse-copy-src">Pulse to copy</label>
         <input type="text" name="path" id="pulse-copy-src" list="pulse-copy-src-list"
                required autocomplete="off" value="{{ src_path }}"
-               placeholder="type to search, e.g. q1 x180"
+               placeholder="e.g. q1 x180 (start typing for suggestions)"
                onfocus="PulsesPage.copyLoadSources(this)"
                oninput="PulsesPage.copySourceChanged(this)">
         <datalist id="pulse-copy-src-list"></datalist>
