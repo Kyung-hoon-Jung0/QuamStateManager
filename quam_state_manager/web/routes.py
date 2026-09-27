@@ -1940,17 +1940,25 @@ def _chip_needs_generated_config(store) -> bool:
     # _config_state_hash -- every re-open of a chip used to walk its whole
     # pulse index again on a daemon thread (~0.3-0.7 s of GIL on a 30-qubit
     # chip, competing with the page the user just asked for).
+    # w7 fq-sync: keyed on the STRUCTURE token (and the catalog overlay the
+    # classes were resolved against). ``known`` is a function of each pulse's
+    # ``__class__`` string, its slot and whether its body is a pointer -- none
+    # of which a plain value write can change -- and the cold PulseIndex walk
+    # holds the store lock for 0.5-0.7 s on big30x, which every pull (now an
+    # in-place value patch) used to pay again right after the write.
+    from quam_state_manager.core import pulse_index as _pi, store_revs as _sr
     with store._lock:
-        key = (store.mutation_seq, len(store.change_log))
+        key = _sr.struct_token(store)
+    overlay = _pi._catalog_overlay()
     cached = getattr(store, "_needs_cfg_memo", None)
-    if cached is not None and cached[0] == key:
+    if cached is not None and cached[0] == key and cached[2] is overlay:
         return cached[1]
     try:
         verdict = any(not row.get("known") for row in PulseIndex(store).rows())
     except Exception:  # noqa: BLE001 -- a probe never breaks an activation
         logger.debug("pulse-class probe failed", exc_info=True)
         return False
-    store._needs_cfg_memo = (key, verdict)
+    store._needs_cfg_memo = (key, verdict, overlay)
     return verdict
 
 

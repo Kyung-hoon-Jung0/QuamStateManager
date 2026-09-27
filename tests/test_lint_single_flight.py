@@ -353,3 +353,22 @@ def test_the_page_follows_the_token_everywhere():
     # a stale answer shows nothing
     i = app_js.index("window.CrashAdvisory")
     assert "!d.stale" in app_js[i:i + 1500]
+
+
+def test_the_follow_up_runs_under_jsdom():
+    """tests/crash_advisory_follow_selfcheck.cjs drives the REAL
+    window.CrashAdvisory and crashPending listener in app.js."""
+    import shutil
+    import subprocess
+    node = shutil.which("node")
+    if node is None:
+        pytest.skip("node not available")
+    try:
+        subprocess.run([node, "-e", "require('jsdom')"], check=True, capture_output=True, timeout=30)
+    except (subprocess.CalledProcessError, subprocess.TimeoutExpired):
+        pytest.skip("jsdom not installed for node")
+    check = Path(__file__).resolve().parent / "crash_advisory_follow_selfcheck.cjs"
+    res = subprocess.run([node, str(check)], capture_output=True, text=True,
+                         encoding="utf-8", timeout=120)
+    assert res.returncode == 0, f"{res.stdout}\n{res.stderr}"
+    assert res.stdout.count("ok - ") >= 5, res.stdout

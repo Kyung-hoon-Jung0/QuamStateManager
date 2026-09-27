@@ -274,12 +274,20 @@ class TestWarmPathMemos:
             return real_rows(self)
 
         monkeypatch.setattr(routes.PulseIndex, "rows", counting)
-        routes._chip_needs_generated_config(store)
+        assert routes._chip_needs_generated_config(store) is True   # class-less x180s
         routes._chip_needs_generated_config(store)
         assert n["rows"] == 1
         from quam_state_manager.core.modifier import Modifier
+        # w7 fq-sync: a VALUE edit cannot change a pulse's class, slot or
+        # pointer-ness -- the verdict's inputs -- so it does not walk again
+        # (every pull is now such a patch, and the walk holds the store lock)
         Modifier(store).set_value("qubits.q1.T1", 2e-05)
         routes._chip_needs_generated_config(store)
+        assert n["rows"] == 1
+        # ...a STRUCTURAL one does, and the verdict follows it
+        for i in (1, 2, 3):
+            Modifier(store).delete_subtree(f"qubits.q{i}.xy.operations.x180")
+        assert routes._chip_needs_generated_config(store) is False
         assert n["rows"] == 2
 
     def test_class_harvest_is_memoized_on_the_store(self, tmp_path, monkeypatch):
