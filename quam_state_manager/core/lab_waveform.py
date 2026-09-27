@@ -119,8 +119,189 @@ def cached(python_path: str, qclass: str, params: dict) -> dict | None:
         return None
 
 
+#: the warm worker (2026-09-27): one long-lived subprocess per selected env,
+#: reused while it is provably drawing with the code on disk. Off => every miss
+#: is a cold subprocess, exactly as before.
+WARM = True
+WARM_IDLE_S = 600
+_WARM_MARK = "@@SM-LABWF@@"
+_WORKERS: dict[str, "_Worker"] = {}
+_WORKERS_LOCK = threading.Lock()
+
+
+class _Worker:
+    """``run_pulse_waveform.py --serve`` kept alive between edits.
+
+    Safe to reuse only while it would answer exactly what a cold run answers
+    now, so :meth:`fresh` is checked before EVERY request:
+
+    * the process is alive, the env signature it was started under still
+      holds (a ``pip install`` moves it) and so does the process environment
+      it inherited (``PYTHONPATH`` decides which lab module is imported);
+    * every out-of-env file it imported (the lab's editable module) still has
+      the stat it had WHEN IMPORTED -- the worker reports first-seen stats, not
+      re-stats, so an edit after the import is caught here and the worker is
+      killed, never asked.
+
+    Anything unexpected (a timeout, a dead pipe, a garbled line) kills it and
+    the caller falls back to one cold run. It is killed after ``WARM_IDLE_S``
+    idle, when another env is selected, and at interpreter exit."""
+
+    def __init__(self, python_path: str):
+        import queue
+        import subprocess
+        from quam_state_manager.core.config_generator import _script_path
+        kwargs = {}
+        if os.name == "nt":
+            kwargs["creationflags"] = getattr(subprocess, "CREATE_NO_WINDOW", 0)
+        env = dict(os.environ, PYTHONUTF8="1", PYTHONIOENCODING="utf-8")
+        self.python_path = python_path
+        self.env_sig = _env_sig(python_path)
+        # a cold run inherits the environment AT ITS SPAWN (PYTHONPATH decides
+        # which lab module is imported): the warm one must still match it
+        self.environ = dict(os.environ)
+        self.sources: dict[str, Any] = {}
+        self.proc = subprocess.Popen(
+            [python_path, "-B", str(_script_path("run_pulse_waveform.py")), "--serve"],
+            stdin=subprocess.PIPE, stdout=subprocess.PIPE,
+            stderr=subprocess.DEVNULL, text=True, encoding="utf-8",
+            bufsize=1, env=env, cwd=tempfile.gettempdir(), **kwargs)
+        self._q: "queue.Queue[str | None]" = queue.Queue()
+        threading.Thread(target=self._pump, daemon=True,
+                         name="lab-waveform-warm").start()
+        self._idle: threading.Timer | None = None
+        self.requests = 0
+
+    def _pump(self) -> None:
+        try:
+            for line in self.proc.stdout:          # type: ignore[union-attr]
+                if line.startswith(_WARM_MARK):
+                    self._q.put(line[len(_WARM_MARK):])
+        except Exception:  # noqa: BLE001
+            pass
+        self._q.put(None)
+
+    def fresh(self) -> bool:
+        if self.proc.poll() is not None:
+            return False
+        if _env_sig(self.python_path) != self.env_sig:
+            return False
+        if dict(os.environ) != self.environ:
+            return False
+        for f, rec in self.sources.items():
+            now = _stat(f)
+            if now is None or list(now) != list(rec or []):
+                return False
+        return True
+
+    def ask(self, items: list[dict], timeout: float) -> dict | None:
+        import queue
+        try:
+            self.proc.stdin.write(json.dumps({"items": items}, default=repr) + "\n")  # type: ignore[union-attr]
+            self.proc.stdin.flush()                                                   # type: ignore[union-attr]
+            line = self._q.get(timeout=timeout)
+        except (OSError, ValueError, queue.Empty):
+            return None
+        if line is None:
+            return None
+        try:
+            parsed = json.loads(line)
+        except ValueError:
+            return None
+        if parsed.get("status") != "ok":
+            return None
+        for f, rec in (parsed.get("sources") or {}).items():
+            self.sources.setdefault(f, rec)
+        self.requests += 1
+        self._arm_idle()
+        return parsed
+
+    def _arm_idle(self) -> None:
+        if self._idle is not None:
+            self._idle.cancel()
+        self._idle = threading.Timer(WARM_IDLE_S, _retire, args=(self.python_path, self))
+        self._idle.daemon = True
+        self._idle.start()
+
+    def kill(self) -> None:
+        if self._idle is not None:
+            self._idle.cancel()
+        try:
+            self.proc.stdin.close()                 # type: ignore[union-attr]
+        except Exception:  # noqa: BLE001
+            pass
+        try:
+            self.proc.kill()
+            self.proc.wait(timeout=5)
+        except Exception:  # noqa: BLE001
+            pass
+
+
+def _retire(python_path: str, worker: "_Worker | None" = None) -> None:
+    with _WORKERS_LOCK:
+        w = _WORKERS.get(python_path)
+        if w is None or (worker is not None and w is not worker):
+            return
+        del _WORKERS[python_path]
+    w.kill()
+
+
+def shutdown_workers() -> None:
+    """Kill every warm worker (interpreter exit, tests)."""
+    with _WORKERS_LOCK:
+        ws = list(_WORKERS.values())
+        _WORKERS.clear()
+    for w in ws:
+        w.kill()
+
+
+import atexit  # noqa: E402
+
+atexit.register(shutdown_workers)
+
+
+def _run_warm(python_path: str, items: list[dict]) -> dict | None:
+    """``_run``'s answer from the warm worker, or None (caller runs cold).
+    Called under ``_env_lock(python_path)``: one request at a time per env."""
+    stale = []
+    with _WORKERS_LOCK:
+        for key in list(_WORKERS):
+            if key != python_path:          # another env selected: retire it
+                stale.append(_WORKERS.pop(key))
+        w = _WORKERS.get(python_path)
+        if w is not None and not w.fresh():
+            stale.append(_WORKERS.pop(python_path))
+            w = None
+    for s in stale:
+        s.kill()
+    if w is None:
+        try:
+            w = _Worker(python_path)
+        except Exception:  # noqa: BLE001 -- cannot start: run cold
+            logger.debug("warm lab-waveform worker failed to start", exc_info=True)
+            return None
+        with _WORKERS_LOCK:
+            _WORKERS[python_path] = w
+    parsed = w.ask(items, TIMEOUT_S)
+    if parsed is None:
+        _retire(python_path, w)
+        return None
+    return {"ok": True, "error": None, "items": parsed.get("items") or [],
+            "sources": parsed.get("sources") or {}}
+
+
 def _run(python_path: str, items: list[dict]) -> dict:
-    """One subprocess for *items*; ``{"ok", "error", "items", "sources"}``."""
+    """One subprocess for *items*; ``{"ok", "error", "items", "sources"}``.
+    The warm worker answers when it can; otherwise one cold run."""
+    if WARM and python_path and Path(python_path).is_file():
+        warm = _run_warm(python_path, items)
+        if warm is not None:
+            return warm
+    return _run_cold(python_path, items)
+
+
+def _run_cold(python_path: str, items: list[dict]) -> dict:
+    """One cold subprocess for *items*."""
     from quam_state_manager.core.config_generator import (
         _blank_outcome, _cleanup_work_dir, _run_script_outcome, _script_path)
     script = _script_path("run_pulse_waveform.py")

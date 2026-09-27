@@ -182,7 +182,53 @@ def draw(items: list, max_samples: int = _MAX_SAMPLES) -> dict:
             "sources": out_of_env_sources()}
 
 
+#: a response line in --serve mode starts with this, so a print() from the
+#: lab's own module (which lands on the same pipe only if it writes to fd 1
+#: directly) can never be mistaken for an answer
+SERVE_MARK = "@@SM-LABWF@@"
+
+
+def serve() -> int:
+    """``--serve``: the WARM worker (core/lab_waveform._Worker). One request
+    per stdin line (the ``--in`` JSON), one ``SERVE_MARK``-prefixed JSON line
+    per answer on stdout; EOF ends it.
+
+    Staleness is the parent's job and needs ONE thing from here: ``sources``
+    carries each file's stat as FIRST SEEN by this process -- i.e. the code it
+    actually imported -- never a re-stat. An edit to the lab's module after the
+    import therefore disagrees with the recorded stat, and the parent kills
+    this worker instead of serving the old class."""
+    out = sys.stdout
+    try:
+        out.reconfigure(encoding="utf-8")
+    except Exception:  # noqa: BLE001
+        pass
+    sys.stdout = sys.stderr          # the lab's prints never reach the pipe
+    seen: dict = {}
+    for line in sys.stdin:
+        line = line.strip()
+        if not line:
+            continue
+        result = {"status": "error", "python": "", "items": [], "sources": {},
+                  "error": None}
+        try:
+            spec = json.loads(line)
+            result.update(draw(spec.get("items") or [],
+                               int(spec.get("max_samples") or _MAX_SAMPLES)))
+            for f, st in (result.get("sources") or {}).items():
+                seen.setdefault(f, st)
+            result["sources"] = {f: seen[f] for f in (result.get("sources") or {})}
+            result["status"] = "ok"
+        except BaseException as exc:  # noqa: BLE001
+            result["error"] = f"{type(exc).__name__}: {exc}"
+        out.write(SERVE_MARK + json.dumps(result) + "\n")
+        out.flush()
+    return 0
+
+
 def main() -> int:
+    if "--serve" in sys.argv[1:]:
+        return serve()
     ap = argparse.ArgumentParser()
     ap.add_argument("--in", dest="inp", required=True)
     ap.add_argument("--out", required=True)

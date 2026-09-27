@@ -364,6 +364,84 @@ class TestTheClassDrawsItsOwnWaveform:
         assert recs[2]["kind"] == "constant" and len(recs[2]["i"]) == 12
 
 
+@needs_quam
+class TestTheWarmWorker:
+    """2026-09-27: one long-lived subprocess per env instead of one per miss --
+    reused only while it provably draws with the code on disk."""
+
+    @pytest.fixture(autouse=True)
+    def _clean(self, labpkg):
+        lab_waveform.shutdown_workers()
+        yield
+        lab_waveform.shutdown_workers()
+
+    def _w(self):
+        return lab_waveform._WORKERS.get(sys.executable)
+
+    def test_a_second_miss_reuses_the_same_process(self, labpkg):
+        a = lab_waveform.draw(sys.executable, [(LAB_CLASS, {"amplitude": 0.1, "flat_length": 20})])[0]
+        w = self._w()
+        assert a["ok"] and w is not None and w.requests == 1
+        t0 = time.perf_counter()
+        b = lab_waveform.draw(sys.executable, [(LAB_CLASS, {"amplitude": 0.2, "flat_length": 20})])[0]
+        warm_s = time.perf_counter() - t0
+        assert b["ok"] and b["cached"] is False
+        assert self._w() is w and w.requests == 2 and w.proc.poll() is None
+        assert max(abs(x - y) for x, y in zip(b["i"], _wobble(0.2, 20))) < 1e-12
+        assert warm_s < 5, warm_s
+
+    def test_an_edited_lab_module_retires_the_worker(self, labpkg):
+        p = {"amplitude": 0.1, "flat_length": 20}
+        lab_waveform.draw(sys.executable, [(LAB_CLASS, p)])
+        w1 = self._w()
+        src = (labpkg / "cz_pulses.py").read_text(encoding="utf-8")
+        (labpkg / "cz_pulses.py").write_text(
+            src.replace("ripple: float = 0.1", "ripple: float = 0.2"), encoding="utf-8")
+        q = {"amplitude": 0.3, "flat_length": 20}     # a MISS, so it is asked
+        b = lab_waveform.draw(sys.executable, [(LAB_CLASS, q)])[0]
+        assert max(abs(x - y) for x, y in zip(b["i"], _wobble(0.3, 20, ripple=0.2))) < 1e-12
+        assert self._w() is not w1 and w1.proc.poll() is not None
+
+    def test_a_changed_environment_retires_the_worker(self, labpkg, monkeypatch):
+        lab_waveform.draw(sys.executable, [(LAB_CLASS, {"amplitude": 0.1, "flat_length": 8})])
+        w1 = self._w()
+        monkeypatch.setenv("SM_WARM_TEST_MARK", "1")
+        lab_waveform.draw(sys.executable, [(LAB_CLASS, {"amplitude": 0.4, "flat_length": 8})])
+        assert self._w() is not w1 and w1.proc.poll() is not None
+
+    def test_another_env_retires_this_one(self, labpkg):
+        lab_waveform.draw(sys.executable, [(LAB_CLASS, {"amplitude": 0.1, "flat_length": 8})])
+        killed = []
+
+        class Fake:
+            def kill(self):
+                killed.append(1)
+        with lab_waveform._WORKERS_LOCK:
+            lab_waveform._WORKERS["C:/other/env/python.exe"] = Fake()
+        lab_waveform.draw(sys.executable, [(LAB_CLASS, {"amplitude": 0.5, "flat_length": 8})])
+        assert killed == [1]
+        assert "C:/other/env/python.exe" not in lab_waveform._WORKERS
+
+    def test_a_dead_worker_falls_back_to_a_cold_run(self, labpkg):
+        lab_waveform.draw(sys.executable, [(LAB_CLASS, {"amplitude": 0.1, "flat_length": 8})])
+        w1 = self._w()
+        w1.proc.kill()
+        w1.proc.wait(timeout=10)
+        b = lab_waveform.draw(sys.executable, [(LAB_CLASS, {"amplitude": 0.6, "flat_length": 8})])[0]
+        assert b["ok"]
+        assert self._w() is not w1
+
+    def test_off_means_cold_every_time(self, labpkg, monkeypatch):
+        monkeypatch.setattr(lab_waveform, "WARM", False)
+        b = lab_waveform.draw(sys.executable, [(LAB_CLASS, {"amplitude": 0.7, "flat_length": 8})])[0]
+        assert b["ok"] and self._w() is None
+
+    def test_a_refusal_through_the_worker_is_the_classes_own(self, labpkg):
+        rec = lab_waveform.draw(sys.executable, [(LAB_CLASS, {"flat_length": 20})])[0]
+        assert rec["ok"] is False and "missing required field: amplitude" in rec["error"]
+        assert self._w() is not None and self._w().proc.poll() is None
+
+
 class TestTheWaveformCacheContract:
     """Without a subprocess: the memo is keyed on CONTENT and validated on read."""
 
