@@ -310,14 +310,23 @@ async function submitCreate(p) {
       const sel = `#pulse-detail-root input[data-param="flat_length"]`;
       const before = await p.ev(`(document.querySelector(${J(sel)})||{getAttribute:function(){return null}}).getAttribute('data-committed')`);
       await typeInto(p, sel, '4');
+      // record in the page itself (a busy big-chip main thread can stall our
+      // polls past a fast -- cached -- answer and a toast's lifetime): did the
+      // field's indicator show while the request ran, and what came back
+      await p.ev(`(function(){window.__qaLab={shown:false,status:0,text:''};
+        var sp=document.querySelector(${J(sel)}).closest('td').querySelector('.pulse-lab-checking');
+        if(sp){new MutationObserver(function(){ if(sp.classList.contains('htmx-request') && getComputedStyle(sp).display!=='none' && /own code/.test(sp.textContent)) window.__qaLab.shown=true; }).observe(sp,{attributes:true});}
+        document.addEventListener('htmx:afterRequest', function h(e){ var c=(e.detail&&e.detail.requestConfig)||{}; if(String(c.path||'').indexOf('/pulse/edit')!==0) return; document.removeEventListener('htmx:afterRequest', h); var x=e.detail.xhr; window.__qaLab.status=x.status; var m=(x.responseText||'').match(/<p[^>]*>([\\s\\S]*?)<\\/p>/); window.__qaLab.text=(m?m[1]:'').replace(/<[^>]+>/g,'').replace(/\\s+/g,' ').slice(0,260); });
+        return 1})()`);
       const tc = Date.now();
       await enter(p);
-      const ind = await waitFor(p, `(function(){var s=document.querySelector('#pulse-detail-root .pulse-lab-checking.htmx-request'); return s && getComputedStyle(s).display!=='none' && getComputedStyle(s).opacity>0.5 && /own code/.test(s.innerText) ? 1 : 0})()`, 5000);
-      check(!!ind, 'the lab-class edit says "checking with your class\'s own code" while it waits');
+      await sleep(250);
       await p.shot(`${DIR}/45_lab_edit_checking_${W}.png`);
-      const t = await waitFor(p, `(function(){var t=[].slice.call(document.querySelectorAll('.toast')).map(function(x){return x.innerText}).join(' | '); return /nothing was written/.test(t)? t.replace(/\\s+/g,' ').slice(0,260) : ''})()`, 60000);
+      const t = await waitFor(p, `(function(){var r=window.__qaLab; return r && r.status ? r.status+' '+r.text : ''})()`, 60000);
+      const ind = await p.ev(`window.__qaLab && window.__qaLab.shown ? 1 : 0`);
+      check(!!ind, 'the lab-class edit showed "checking with your class\'s own code" while it waited');
       console.log(`  lab edit refusal: ${Date.now() - tc} ms`);
-      check(!!t, `flat_length=4 on ${gnz} is refused by the class's own code: ${t}`);
+      check(!!t && /^400 /.test(t) && /nothing was written/.test(t), `flat_length=4 on ${gnz} is refused by the class's own code: ${t}`);
       await p.shot(`${DIR}/46_lab_edit_refused_${W}.png`);
       await p.send('Input.dispatchKeyEvent', { type: 'keyDown', key: 'Escape', code: 'Escape', windowsVirtualKeyCode: 27 });
       await p.send('Input.dispatchKeyEvent', { type: 'keyUp', key: 'Escape', code: 'Escape', windowsVirtualKeyCode: 27 });
