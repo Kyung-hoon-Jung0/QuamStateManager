@@ -6895,6 +6895,25 @@ window.PaneState = (function () {
     });
     window.addEventListener('popstate', _historyReset);
     document.addEventListener('htmx:historyRestore', _historyReset);
+    // w7 final QA (P2): a FULL-page Back (typed URL, a reload elsewhere, any
+    // non-htmx link, then Back) is not an htmx restore -- neither funnel
+    // above runs. The server marks full pages no-store, so the browser
+    // refetches them and this probe finds the seq equal; a page restored
+    // from the bfcache (persisted) or still served from a cache
+    // (navigation type back_forward) shows the chip as it was when the user
+    // left, so it asks the same beacon popstate asks. One /state/tray GET.
+    function _navWasBackForward() {
+        try {
+            var nav = window.performance && performance.getEntriesByType
+                ? performance.getEntriesByType('navigation')[0] : null;
+            if (nav) return nav.type === 'back_forward';
+            return !!(window.performance && performance.navigation
+                      && performance.navigation.type === 2);
+        } catch (e) { return false; }
+    }
+    window.addEventListener('pageshow', function (e) {
+        if ((e && e.persisted) || _navWasBackForward()) _historyFreshness(false);
+    });
 
     return {
         // docs/122 item 4: the global purge-on-swap must not kill plots that are
@@ -10225,6 +10244,7 @@ window.clearDetailPanelSearch = function(btnEl) {
 
         var input = document.createElement("input");
         input.type = "text";
+        input.autocomplete = "off";     // never a target of Back's form restore
         input.className = "tree-edit-input";
         input.value = shownVal;
         input.size = Math.max(10, shownVal.length + 2);

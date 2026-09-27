@@ -6019,15 +6019,29 @@ class TestPhase5StartupLock:
 class TestPhase5CacheControl:
     """Phase 5 §3.1 — HTMX partial responses must carry
     ``Cache-Control: no-store`` so a Back-after-edit doesn't serve a
-    stale cached partial. Non-HTMX requests are left untouched."""
+    stale cached partial. w7 final QA (P2) extended it to FULL pages: a
+    full navigation away and Back served /bulk from Chrome's HTTP cache
+    (transferSize 0) with the pre-edit value, for good. Static assets and
+    responses that chose their own caching are still left untouched."""
 
     def test_htmx_response_has_no_store(self, loaded_client):
         resp = loaded_client.get("/qubits", headers={"HX-Request": "true"})
         assert resp.headers.get("Cache-Control") == "no-store"
 
-    def test_non_htmx_response_has_no_no_store(self, loaded_client):
-        resp = loaded_client.get("/")
+    @pytest.mark.parametrize("url", ["/", "/qubits", "/bulk", "/explorer"])
+    def test_a_full_page_is_no_store_too(self, loaded_client, url):
+        resp = loaded_client.get(url)
+        assert resp.status_code == 200 and resp.mimetype == "text/html", url
+        assert resp.headers.get("Cache-Control") == "no-store", url
+
+    def test_static_assets_are_left_alone(self, loaded_client):
+        resp = loaded_client.get("/static/app.js")
+        assert resp.status_code == 200
         assert resp.headers.get("Cache-Control") != "no-store"
+
+    def test_a_route_that_chose_its_own_caching_keeps_it(self, loaded_client):
+        resp = loaded_client.get("/bulk/all-values")
+        assert resp.headers.get("Cache-Control") == "no-cache"
 
 
 class TestPhase5DatasetLruLock:

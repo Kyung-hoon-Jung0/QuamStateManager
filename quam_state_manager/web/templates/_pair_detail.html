@@ -46,7 +46,7 @@
                                  (app.js, `data-inject="chip-freq"`). #}
                               data-inject="chip-freq">
                             <input type="hidden" name="dot_path" value="{{ p.dot_path }}">
-                            <input type="text" name="value" class="edit-input{% if is_modified %} edit-input-modified{% endif %}"
+                            <input type="text" name="value" autocomplete="off" class="edit-input{% if is_modified %} edit-input-modified{% endif %}"
                                    value="{% if p.value is none %}{% elif p.value is float and (p.value|abs >= 1e6 or (0 < p.value|abs < 1e-3)) %}{{ '%.6e' | format(p.value) }}{% else %}{{ p.value }}{% endif %}"
                                    placeholder="{% if p.value is none %}not set{% endif %}"
                                    title="{% if is_modified %}Modified — was: {{ modified_map[p.dot_path] }}{% set _d = modified_map[p.dot_path] | value_delta(p.value) %}{% if _d %} (difference {{ _d.text }}{% if _d.pct_text %}, {{ _d.pct_text }}{% endif %}){% endif %}{% else %}Press Enter to stage this edit (then Save to working state / Apply to live). Current: {{ p.value }}{% if _stored %} (raw {{ _stored }}){% endif %}{% endif %}">
