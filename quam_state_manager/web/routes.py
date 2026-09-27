@@ -4600,6 +4600,13 @@ def _ctx(**extra: Any) -> dict[str, Any]:
         # exactly where pull is wanted).
         "auto_pull_armable": _auto_pull_armable(),
         "applied_log": _applied_log_rows(),
+        # w7 fq-sync P3c: THE SAME TRAP, once more -- the newest live undo
+        # (QA F1 windows). A fresh window's first tray is this full-page one,
+        # and app.js seeds "what I have seen" from it; stamped only by
+        # _render_tray, the seed was "" and the first OOB tray swap (any
+        # apply) toasted "Another window undid a change" for an undo made
+        # minutes before the window existed.
+        "last_live_undo": (_active_ctx() or {}).get("last_live_undo"),
         # The fields the live chip moved that the user had ALSO edited.
         # Auto-Sync adopts everything else without asking, so when the
         # banner does appear it can say which fields it is about rather
@@ -14419,7 +14426,8 @@ def _state_version_now(ctx: dict | None) -> dict:
         return out
     hm = _history()
     try:
-        out["count"] = len(hm.list_snapshots(Path(ctx["path"])))
+        snaps = hm.list_snapshots(Path(ctx["path"]))
+        out["count"] = len(snaps)
     except Exception:  # noqa: BLE001
         return out
     # STAT-GATED. Resolving `ts` reads BOTH live files whole, re-serializes them
@@ -14431,6 +14439,12 @@ def _state_version_now(ctx: dict | None) -> dict:
     # same gate `working_copy.live_diverged_now` already trusts — so recompute
     # only when they actually moved. Keyed by path so switching chips can never
     # serve the other one's answer.
+    # w7 fq-sync P3a: ...and by the snapshot LIST the answer was looked up in
+    # (list_snapshots hands back a new list object exactly when a capture,
+    # prune or annotation touched the chip's history). Keyed on the files alone,
+    # a GET landing between a live write and its post-write capture memoized
+    # "no snapshot holds this" and the chip read "unrecorded" until the live
+    # files moved again, although the capture had landed a moment later.
     stamp = None
     try:
         p = Path(ctx["path"])
@@ -14440,7 +14454,8 @@ def _state_version_now(ctx: dict | None) -> dict:
     except OSError:
         stamp = None
     memo = ctx.get("_version_memo")
-    if stamp is not None and memo and memo[0] == str(p) and memo[1] == stamp:
+    if (stamp is not None and memo and memo[0] == str(p) and memo[1] == stamp
+            and len(memo) > 3 and memo[3] is snaps):
         out["ts"] = memo[2]
     else:
         try:
@@ -14448,7 +14463,7 @@ def _state_version_now(ctx: dict | None) -> dict:
         except Exception:  # noqa: BLE001
             out["ts"] = None
         if stamp is not None:
-            ctx["_version_memo"] = (str(p), stamp, out["ts"])
+            ctx["_version_memo"] = (str(p), stamp, out["ts"], snaps)
     # "No snapshot holds exactly this content" is the ORDINARY mid-edit state,
     # not a fault — say so plainly rather than inventing a nearest match.
     out["unmatched"] = out["ts"] is None and out["count"] > 0
@@ -14521,12 +14536,24 @@ def state_versions_panel():
     # "unchanged copy" was the docs/132 review's finding; snaps is
     # newest-first, so the first-ever snapshot is the LAST element.
     first_ts = snaps[-1].timestamp if snaps else None
-    for m in snaps:
+    for i, m in enumerate(snaps):
         knd, knd_legacy = kind_for(m)
+        # w7 fq-sync P3b: a zero is only "unchanged" when it can be. A row
+        # captured with no prior records zeros too, and once a run ingest
+        # lands OLDER rows beneath it (the first Apply on a chip with a data
+        # folder), it is no longer the first -- hiding it made the quick-diff
+        # compare the Apply's own snapshot with a weeks-old run ("29049
+        # values differ" after one edit). When both hashes are known, a row
+        # whose content differs from the one right below it is not a copy of
+        # anything shown, whatever its zeros say.
+        below = snaps[i + 1] if i + 1 < len(snaps) else None
+        unlike_below = bool(below is not None and m.state_hash and below.state_hash
+                            and m.state_hash != below.state_hash)
         if changes_only and knd != "exp" and not m.pinned \
                 and not m.label and not m.note \
                 and m.timestamp != ver["ts"] \
                 and m.timestamp != first_ts \
+                and not unlike_below \
                 and isinstance(m.diff_summary, dict) \
                 and m.diff_summary.get("total") == 0:
             hidden_unchanged += 1

@@ -63,11 +63,14 @@ def lookup(hash_a: str, hash_b, ignore: set | frozenset = frozenset()) -> list |
     if not hash_a or not hash_b:
         return None
     key = (hash_a, hash_b)
-    if not PAIRS.has(key):
-        return None
-    entries = PAIRS.get(key, None, lambda: _MISS)
-    if entries is _MISS:                      # evicted in between
-        PAIRS.drop_where(lambda s: s == key)
+    # w7 fq-sync P3d: a lookup, never a compute. Through ``get`` with a
+    # "missing" compute, shadow mode (SM_RAM_VERIFY) compared every hit with
+    # that sentinel and raised on a correct diff -- and the snapshot capture
+    # that asked recorded a zero diff_summary. The entry is content-addressed
+    # (the key IS the two contents); shadow mode checks it where it is written
+    # (``remember``'s own get compares a re-remembered diff with the held one).
+    entries = PAIRS.get_held(key, None, _MISS)
+    if entries is _MISS:
         return None
     if not ignore:
         return list(entries)
