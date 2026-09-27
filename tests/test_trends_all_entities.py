@@ -304,10 +304,14 @@ class TestTheTypeaheadReadsAFreshIndex:
         monkeypatch.setattr(hm, "_ensure_leaf_index_fresh",
                             lambda p: (calls.append(str(p)), real(p))[1])
         fam = []
-        real_fam = hm.leaf_families
-        monkeypatch.setattr(hm, "leaf_families",
-                            lambda *a, **k: (fam.append(k.get("fresh", False)),
-                                             real_fam(*a, **k))[1])
+        # RAM P1a: the route reads families through the per-token table
+        # (core/chip_trends_ram), whose ``leaf_families`` is the drop-in twin
+        # of HistoryManager's -- same ``fresh`` contract.
+        from quam_state_manager.core import chip_trends_ram as _ctr
+        real_fam = _ctr.ChipTrendsTable.leaf_families
+        monkeypatch.setattr(_ctr.ChipTrendsTable, "leaf_families",
+                            lambda self, *a, **k: (fam.append(k.get("fresh", False)),
+                                                   real_fam(self, *a, **k))[1])
         assert client.get("/topology/trends?metrics=f_01").status_code == 200
         assert fam and not any(fam), f"setup: the render reached leaf_families: {fam}"
         assert calls == [], f"the page render rebuilt the leaf index: {calls}"
@@ -1607,8 +1611,10 @@ class TestTypedTextThatNamesNoParameter:
             {"path": "extras.lone_leaf", "label": "", "scope": "", "n": 1},
             {"path": "qubit_pairs.*.two", "label": "two", "scope": "qubit_pairs", "n": 2},
         ]
-        hm = client.application.config["history_manager"]
-        monkeypatch.setattr(hm, "leaf_families", lambda *a, **k: [dict(r) for r in rows])
+        # RAM P1a: both halves read families through the per-token table.
+        from quam_state_manager.core import chip_trends_ram as _ctr
+        monkeypatch.setattr(_ctr.ChipTrendsTable, "leaf_families",
+                            lambda self, *a, **k: [dict(r) for r in rows])
         slot = self._slot(client.get("/topology/trends?metrics=&path=zzq").get_data(as_text=True))
         assert "is not one parameter" in slot, slot
         served = client.get("/topology/trends/paths?q=zzq").get_json()

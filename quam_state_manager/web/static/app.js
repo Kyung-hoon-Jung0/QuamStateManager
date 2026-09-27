@@ -778,21 +778,34 @@ document.addEventListener('htmx:afterSwap', function (e) {
     /* The wall-clock PARTS in the chosen zone. Intl handles DST and every IANA
      * name; a zone the browser rejects falls back to the browser's own rather
      * than throwing on every point of a 400-point series. */
-    function parts(d) {
+    /* ONE formatter per zone (RAM P2). Constructing an Intl.DateTimeFormat
+     * is the expensive part -- measured 6,823 constructions and 150-210 ms
+     * per Trends toggle, one per plotted point -- and a formatter's output
+     * depends only on its options, so it is built once per zone spelling
+     * and reused. A zone the browser rejects keeps its fallback formatter
+     * (the browser's own zone) under the same key, exactly the old per-call
+     * catch. */
+    var _fmtCache = {};
+    function _formatter(z) {
+        var f = _fmtCache[z];
+        if (f) return f;
         var opt = { year: 'numeric', month: '2-digit', day: '2-digit',
                     hour: '2-digit', minute: '2-digit', second: '2-digit',
                     hour12: false };
-        var z = zone();
         if (z) opt.timeZone = z;
-        var out = {};
         try {
-            new Intl.DateTimeFormat('en-CA', opt).formatToParts(d)
-                .forEach(function (p) { out[p.type] = p.value; });
+            f = new Intl.DateTimeFormat('en-CA', opt);
         } catch (e) {
             delete opt.timeZone;
-            new Intl.DateTimeFormat('en-CA', opt).formatToParts(d)
-                .forEach(function (p) { out[p.type] = p.value; });
+            f = new Intl.DateTimeFormat('en-CA', opt);
         }
+        _fmtCache[z] = f;
+        return f;
+    }
+    function parts(d) {
+        var out = {};
+        _formatter(zone()).formatToParts(d)
+            .forEach(function (p) { out[p.type] = p.value; });
         if (out.hour === '24') out.hour = '00';      /* en-CA hour12:false quirk */
         return out;
     }
@@ -23867,14 +23880,27 @@ window.TopbarHeight = (function () {
         // and `document.body` is null there — the existing
         // `test_app_js_no_top_level_document_body` pin caught exactly that.
         // htmx events bubble to document, so nothing is lost.
-        document.addEventListener('htmx:afterSwap', function () { publish(); });
+        // RAM P2 (w7/trends): ONE measure per frame, not one per swap. The
+        // measure forces a synchronous layout, and a page that swaps many
+        // fragments while charts draw (Chip Status: 413 ms of forced layout
+        // in this one function over three Trends opens, measured by a CPU
+        // profile) paid it per swap. A rAF callback runs before the frame
+        // that first paints the swapped content, so the published height is
+        // still in place for that paint.
+        document.addEventListener('htmx:afterSwap', publishSoon);
+    }
+    var _soon = 0;
+    function publishSoon() {
+        if (_soon) return;
+        var raf = window.requestAnimationFrame || function (f) { return setTimeout(f, 16); };
+        _soon = raf(function () { _soon = 0; publish(); }) || 1;
     }
     if (document.readyState === 'loading') {
         document.addEventListener('DOMContentLoaded', start);
     } else {
         start();
     }
-    return { publish: publish, measure: measure };
+    return { publish: publish, publishSoon: publishSoon, measure: measure };
 })();
 
 /* ── the top bar does not bounce on an edit (docs/203) ────────────────────

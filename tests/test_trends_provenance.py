@@ -485,6 +485,28 @@ class TestTheUidIsOnlyOfferedWhenItOpens:
         got = _snaps(c.get("/topology/trends?metrics=f_01").get_data(as_text=True))[meta.timestamp]
         assert got["run"] == 31 and got["uid"] is None, got
 
+    def test_a_run_copied_in_after_the_map_was_served_opens_next_request(self, env):
+        """RAM P1a: the provenance map is kept per history token, but the
+        F-09 answer (is that run folder under a registered root?) reads the
+        FILE SYSTEM, which no token covers. A run copied into a registered
+        root after the section was served must open on the very next
+        request, with no new snapshot in between -- a cold recompute says so."""
+        c, data_root = env["client"], env["tmp"] / "data"
+        _seed_run(data_root, 32)                       # the root exists, run 31 not yet
+        c.post("/workspace/add", data={"folder": str(data_root)})
+        gone = env["tmp"] / "old_share" / "2026-09-01" / "#31_03_resonator_spectroscopy_single_010000"
+        _snap(env, _state(f01=6.0e9))
+        meta = _snap(env, _state(f01=6.1e9), trigger="experiment",
+                     experiment_name="03_resonator_spectroscopy_single",
+                     run_id=31, experiment_folder_path=str(gone))
+        url = "/topology/trends?metrics=f_01"
+        for _ in range(2):                             # served, then served warm
+            got = _snaps(c.get(url).get_data(as_text=True))[meta.timestamp]
+            assert got["uid"] is None, got
+        _seed_run(data_root, 31)                       # the copy lands
+        got = _snaps(c.get(url).get_data(as_text=True))[meta.timestamp]
+        assert got["uid"] == f"{routes_mod._folder_key(data_root)}:31", got
+
     def test_the_helper_itself_swallows_a_bad_path(self, env):
         with env["app"].test_request_context():
             roots = routes_mod._uid_roots()

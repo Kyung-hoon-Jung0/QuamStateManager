@@ -145,11 +145,22 @@ def data_version(index_path: Path) -> tuple:
 
 def settle_wal(index_path: Path) -> None:
     """Before a caller measures the history dir on disk: let the persistent
-    connection (only if one is open -- never opens one) see any commit made
-    since it last looked, which truncates the WAL that commit left
-    (``_truncate_wal``). With no connection open there is no pin to undo."""
+    connection (only if one is open in this pool or in ``chip_trends_ram``'s
+    -- with no reader open anywhere there is no pin to undo) see any commit
+    made since it last looked, which truncates the WAL that commit left
+    (``_truncate_wal``)."""
     with _CONN_LOCK:
         open_ = str(index_path) in _CONNS
+    if not open_:
+        # w7 integration: chip_trends_ram keeps its own persistent readers on
+        # the same file (Chip Status Trends), and an open reader from EITHER
+        # pool is a pin. Its readers never checkpoint, so the give-back is
+        # done here, through this pool's connection (opened for it, bounded).
+        try:
+            from quam_state_manager.core import chip_trends_ram
+            open_ = chip_trends_ram.has_conn(index_path)
+        except Exception:  # noqa: BLE001 - a measurement helper never raises
+            open_ = False
     if open_:
         data_version(index_path)
 

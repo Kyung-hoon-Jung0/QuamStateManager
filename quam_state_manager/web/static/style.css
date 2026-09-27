@@ -13080,6 +13080,9 @@ td.vc-cell-takeable:focus-within .vc-take,
     font-family: var(--font-mono); }
 .topo-trend-title .muted { font-family: var(--font-sans, inherit); font-weight: 400; }
 .topo-trend-chart { min-height: 300px; }
+/* RAM P2: a drawn Chip Status panel off screen skips layout/paint; its
+   measured height is its placeholder (chip-status.js _skipWhenOffscreen). */
+.topo-cv-auto { content-visibility: auto; }
 .topo-trend-empty { font-size: .76rem; margin: .6rem 0 .9rem; line-height: 1.4; }
 /* QA chipstatus-r2-17: the families a typed fragment matches, in its slot --
    the typeahead's rows (.topo-trend-sug), framed like its dropdown. */
