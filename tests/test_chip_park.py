@@ -304,8 +304,15 @@ class TestWarmPathMemos:
         assert ses._harvest_for_store(store) == ses._harvest_for_store(store)
         assert n["walks"] == 1
         from quam_state_manager.core.modifier import Modifier
+        # w7 fq-sync: a VALUE edit cannot change which classes the chip names
+        # (every pull is now such a patch), so it does not walk again...
         Modifier(store).set_value("qubits.q1.T1", 2e-05)
-        ses._harvest_for_store(store)
+        assert ses._harvest_for_store(store) == []
+        assert n["walks"] == 1
+        # ...a class written is structural: walked again, and it is found
+        Modifier(store).create_subtree("qubits.q1.xy.operations.x180.__class__",
+                                       "quam.components.pulses.SquarePulse")
+        assert ses._harvest_for_store(store) == ["quam.components.pulses.SquarePulse"]
         assert n["walks"] == 2
 
     def test_reopening_the_first_recent_writes_no_session_file(self, app, tmp_path, monkeypatch):
