@@ -10,9 +10,11 @@
  *     the next beforeSwap captured THAT clamped spot as the new place: the
  *     reader's position was gone for good (20/32 switches off after one short
  *     run). The place the reader chose is now an INTENT, captured only when
- *     the reader actually moved (wheel / touch / key / pointer in the pane, or
- *     a scroll nobody here caused) and kept verbatim across switches they did
- *     not touch.
+ *     the reader actually moved -- a scroll position (the pane's or an inner
+ *     scroller's) that changed and is not where this module last set it, or
+ *     a tab the reader picked -- and kept verbatim across switches they did
+ *     not move in. A click alone is not a move (it used to be: one click on a
+ *     clamped run re-captured the clamped landing, -2626 px).
  *  2. The restore ran 150 ms (+ a rAF, + a 250 ms retry) after the swap, so
  *     every switch first painted the new run at the old pixel offset and then
  *     jumped. The restore now runs in the swap itself.
@@ -192,6 +194,17 @@
         return { el: el, depth: depth };
     }
 
+    // The scrollTop each scroller was last SET to by this module. A scroll
+    // event whose target still sits there is this module's own write (fired
+    // a frame later, possibly after the pin that wrote it has stopped), not
+    // the reader moving -- see isOwnScroll.
+    var _written = typeof WeakMap === 'function' ? new WeakMap() : null;
+
+    function isOwnScroll(el) {
+        if (!_written || !el || !_written.has(el)) return false;
+        return Math.abs(el.scrollTop - _written.get(el)) <= 1;
+    }
+
     function _setTop(pane, top) {
         top = Math.max(0, top);
         if (typeof pane.scrollTo === 'function') {
@@ -200,6 +213,7 @@
             pane.scrollTop = top;
         }
         if (Math.abs(pane.scrollTop - top) > 1) pane.scrollTop = top;   // scrollTo unsupported / ignored
+        if (_written) _written.set(pane, pane.scrollTop);   // where it LANDED (a clamp included)
     }
 
     /* Put `anchor` back. Returns {exact, depth, key, target}: exact means the
@@ -301,7 +315,7 @@
         return ctl;
     }
 
-    window.DsScrollAnchor = { capture: capture, apply: apply, pin: pin,
+    window.DsScrollAnchor = { capture: capture, apply: apply, pin: pin, isOwnScroll: isOwnScroll,
                               _children: _children, _keyOf: _keyOf, _findInner: _findInner,
                               SEL: SEL, INNER_SEL: INNER_SEL };
 })();

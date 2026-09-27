@@ -22,6 +22,13 @@
  *   F. app.js wiring: the intent is re-captured only when the reader moved,
  *      the restore runs in the swap (no setTimeout pixel restore left), and
  *      the tab the reader is on is restored.
+ *   H. app.js's OWN listeners, executed (verifier P1/P3, 2026-09-27): a click
+ *      with no scroll on a clamped run does not re-capture the intent; a
+ *      pin's own write is not a reader move even when its scroll event fires
+ *      after the pin stopped; a real scroll (pane or inner tree) and a tab
+ *      the reader picked do re-capture.
+ *   C2/B2. the pin re-applies on a capturing <img> load alone (no resize);
+ *      a landmark exactly as tall as the offset walks up (>=, not >).
  *
  * Run: node tests/ds_scroll_anchor_selfcheck.cjs
  */
@@ -199,6 +206,17 @@ if (res.key === 'sec:figures') {
     ok(offsetIn('sec:figures') === cap.chain[1].within, 'B: section-level offset kept');
 }
 
+// ── B2: a landmark EXACTLY as tall as the offset cannot hold it (>=) ─────
+// Its top edge would sit on the landmark's bottom -- in whatever follows.
+load(RUN1);
+pane.scrollTop = contentTop(el('det:Outcomes')) + 40;
+cap = A.capture(pane, container());
+ok(cap.chain[cap.chain.length - 1].key === 'det:Outcomes' && cap.chain[cap.chain.length - 1].within === 40, 'B2: anchored 40 px into Outcomes');
+load(Object.assign({}, RUN2, { overview: [{ name: 'Experiment Info', h: 380 }, { name: 'Outcomes', h: 16 }, { name: 'Parameters', h: 900 }] }));   // 24 + 16 = 40 tall
+res = A.apply(pane, container(), cap);
+ok(res.key === 'sec:overview' && res.exact === false, 'B2: walked up to the section: ' + res.key);
+ok(offsetIn('sec:overview') === cap.chain[1].within, 'B2: the section-level offset is used, got ' + offsetIn('sec:overview'));
+
 // ── C: the pin re-applies when content above grows late ─────────────────
 load(RUN1);
 pane.scrollTop = contentTop(el('det:Outcomes')) + 40;
@@ -214,6 +232,19 @@ fireResize();
 flushScroll();
 ok(offsetIn('det:Outcomes') === 40, 'C: pin restored the place after the late load, got ' + offsetIn('det:Outcomes'));
 ok(userCalls === 0 && ctl.active, 'C: its own re-apply is not mistaken for the reader');
+
+// ── C2: an <img> load alone re-applies (capturing listener, no resize) ──
+// Chrome delivers the ResizeObserver callback a frame late; the capturing
+// load listener is what re-applies in the load task itself.
+{
+    const img = pane.querySelector('.figure-card .img');
+    img.setAttribute('data-h', '700');
+    ok(offsetIn('det:Outcomes') !== 40, 'C2: (fixture) the load really moved the content');
+    img.dispatchEvent(new window.Event('load'));   // does not bubble; the pin listens in capture
+    ok(offsetIn('det:Outcomes') === 40, 'C2: the img load event alone restored the place, got ' + offsetIn('det:Outcomes'));
+    flushScroll();
+    ok(userCalls === 0 && ctl.active, 'C2: that re-apply is not mistaken for the reader');
+}
 
 // ── D: a scroll the pin did not cause = the reader ───────────────────────
 pane.scrollTop = pane.scrollTop + 200;
@@ -283,7 +314,7 @@ for (let i = 1; i <= 400; i++) {
         pane.scrollTop = Math.floor(R() * (maxTop() + 1));
         flushScroll();
         if (pinCtl) ok(false, 'E: reader scroll must end the pin (switch ' + i + ')');
-        moved = true;   // app.js also marks on wheel/key/pointer input
+        moved = true;   // app.js marks a move on a real scroll change (section H)
     }
 }
 console.log(`  E: ${exactN}/${holdN} holdable switches exact over 400 random switches`);
@@ -335,8 +366,8 @@ const _endOf = (s, from) => { const a = s.indexOf('\n});', from), b = s.indexOf(
 const bs = app.slice(capStart, _endOf(app, capStart));
 ok(capStart > 0 && /^document\.addEventListener\('htmx:beforeSwap', function\(evt\) \{/m.test(bs) && /\}, true\);$/.test(bs),
    'F: the place is captured by a CAPTURE-phase beforeSwap listener');
-ok(/if \(dsRoot && \(_dsScroll\.userMoved \|\| !_dsScroll\.intent\)\)/.test(bs),
-   'F: beforeSwap re-captures the intent only when the reader moved');
+ok(/if \(dsRoot && \(_dsScroll\.userMoved \|\| tabChanged \|\| !_dsScroll\.intent\)\)/.test(bs),
+   'F: beforeSwap re-captures the intent only when the reader moved (scroll or tab)');
 ok(bs.indexOf('DsScrollAnchor.capture(pane, shown.container)') > 0, 'F: the capture is the landmark chain');
 const bsTrees = app.slice(app.indexOf('// Capture inspector state just before swap'), app.indexOf('// Restore qubit/pair inspector state after HTMX swap'));
 ok(/if \(dsRoot && _dsScroll\.recaptured\)/.test(bsTrees) && bsTrees.indexOf('DsScrollAnchor.capture') < 0,
@@ -347,7 +378,9 @@ ok(as.indexOf('window.DsScrollAnchor.pin(pane') > 0 && as.indexOf('window.DsScro
 ok(!/p\.scrollTop = _dsSticky\.scrollTop/.test(as) && !/_restoreSectionScroll/.test(as),
    'F: no delayed pixel restore is left to fight the pin');
 ok(/switchDatasetTab\(it\.tab, link\)/.test(as), 'F: the tab the reader is on is restored');
-ok(/'wheel', 'touchstart', 'mousedown', 'keydown'/.test(app), 'F: reader input marks a move');
+ok(/'wheel', 'touchstart', 'mousedown', 'keydown'/.test(app), 'F: reader input ends the pin');
+ok(as.indexOf('_dsScroll.landedTab = _dsShownTab(pane).tab;') > as.indexOf('window.DsScrollAnchor.pin(pane'),
+   'F: the restore records the tab it landed on (after the pin, so a run without the tab records Full View)');
 const base = fs.readFileSync(path.join(__dirname, '..', 'quam_state_manager', 'web', 'templates', 'base.html'), 'utf8');
 ok(base.indexOf("asset_url('ds-scroll-anchor.js')") > 0 &&
    base.indexOf("asset_url('ds-scroll-anchor.js')") < base.indexOf("asset_url('app.js')"),
@@ -355,6 +388,107 @@ ok(base.indexOf("asset_url('ds-scroll-anchor.js')") > 0 &&
 const tpl = fs.readFileSync(path.join(__dirname, '..', 'quam_state_manager', 'web', 'templates', '_dataset_detail.html'), 'utf8');
 ['full', 'overview', 'results', 'figures', 'prev', 'interactive', 'data', 'state'].forEach(t =>
     ok(tpl.indexOf(`data-ds-tab="${t}" onclick="switchDatasetTab('${t}', this)"`) > 0, 'F: tab link carries data-ds-tab=' + t));
+
+// ── H: app.js's own listeners, executed (verifier P1 + P3) ───────────────
+// The slices are the shipped code, run in this realm with the fake layout.
+{
+    const app2 = app.replace(/\r/g, '');
+    const sl = (a, b) => { const s = app2.indexOf(a); const e = app2.indexOf(b, s);
+        if (s < 0 || e < 0) throw new Error('H: slice not found: ' + a); return app2.slice(s, e + b.length); };
+    const src = [
+        "var _DS_COMBINED_TABS = ['full', 'overview', 'results', 'figures'];",
+        sl('var _dsScroll = {', '};'),
+        sl('function _dsShownTab(pane) {', '\n}'),
+        sl('(function() {\n    function _dsPaneOf', '\n})();'),
+        bs.slice(bs.indexOf('document.addEventListener')).replace(/\r/g, ''),
+        'return { get s() { return _dsScroll; } };',
+    ].join('\n');
+    let W;
+    try {
+        W = new Function('window', 'document', src)(window, document);
+    } catch (e) { ok(false, 'H: the app.js slices run: ' + e.message); }
+    if (W) {
+        const beforeSwap = () => pane.dispatchEvent(new window.CustomEvent('htmx:beforeSwap', { bubbles: true, detail: { target: pane } }));
+        const S = () => W.s;
+        const restore = () => {   // what afterSwap does: pin the intent, record the landing
+            const s = S();
+            s.pin = A.pin(pane, container, s.intent.anchor, () => { s.userMoved = true; s.pin = null; });
+            s.userMoved = false;
+            s.landedTab = 'full';
+        };
+        const click = () => pane.querySelector('.hdr').dispatchEvent(new window.MouseEvent('mousedown', { bubbles: true }));
+        // the reader, deep inside RUN1 (Parameters), by a real scroll
+        load(RUN1);
+        pane.scrollTop = 0;
+        pendingScroll = false;
+        pane.scrollTop = contentTop(el('det:Parameters')) + 333;
+        flushScroll();
+        ok(S().userMoved === true, 'H: a real scroll marks a move');
+        beforeSwap();
+        ok(S().recaptured === true, 'H: that move re-captures the intent');
+        const readerIntent = JSON.stringify(S().intent);
+        // P1: a short run clamps the restore; one click on a blank spot, no scroll
+        load(SHORT);
+        restore();
+        ok(S().pin && S().pin.last && S().pin.last.exact === false, 'H: (fixture) the short run clamps the restore');
+        flushScroll();                            // the clamp + the pin's own write
+        ok(S().userMoved === false, "H/P3: the pin's own (clamped) write is not a reader move");
+        click();
+        ok(S().pin === null, 'H: reader input ends the pin');
+        ok(S().userMoved === false, 'H/P1: a click with no scroll is not a move');
+        beforeSwap();
+        ok(S().recaptured === false && JSON.stringify(S().intent) === readerIntent,
+           "H/P1: the next switch keeps the reader's intent (not the clamped landing)");
+        load(RUN2);
+        restore();
+        flushScroll();
+        ok(offsetIn('det:Parameters') === 333, 'H/P1: back on a tall run the place is exact, got ' + offsetIn('det:Parameters'));
+        // P3: the pin writes, the reader's click stops it BEFORE that write's
+        // scroll event fires (Chrome dispatches it a frame later)
+        pane.querySelector('.figure-card .img').setAttribute('data-h', '900');
+        fireResize();                             // the pin re-applies -> a pending scroll event
+        ok(pendingScroll === true, 'H: (fixture) the re-apply really scrolled');
+        click();
+        flushScroll();                            // fires after the pin has stopped
+        ok(S().userMoved === false, "H/P3: a stopped pin's last write is still not a reader move");
+        beforeSwap();
+        ok(S().recaptured === false && JSON.stringify(S().intent) === readerIntent, 'H/P3: intent kept');
+        // a real scroll after a restore DOES re-capture
+        load(RUN1);
+        restore();
+        flushScroll();
+        pane.scrollTop = pane.scrollTop - 150;
+        flushScroll();
+        ok(S().userMoved === true, 'H: a reader scroll after a restore marks a move');
+        beforeSwap();
+        ok(S().recaptured === true && JSON.stringify(S().intent) !== readerIntent, 'H: and re-captures');
+        // an inner scroller (a JSON tree) scrolled by the reader is a move too
+        load(RUN1);
+        restore();
+        flushScroll();
+        ok(S().userMoved === false, 'H: (fixture) clean after the restore');
+        const tr = document.createElement('div');
+        tr.className = 'json-tree'; tr.setAttribute('data-maxh', '100');
+        tr.innerHTML = '<div data-h="500"></div>';
+        container().appendChild(tr);
+        tr.scrollTop = 60;
+        tr.dispatchEvent(new window.Event('scroll'));
+        ok(S().userMoved === true, 'H: an inner scroller moved by the reader is a move');
+        // a tab the reader picked, with no scroll change, is a move
+        beforeSwap();
+        load(RUN1);
+        restore();
+        flushScroll();
+        S().landedTab = 'figures';                 // landed on Figures; the reader is now on Full View
+        beforeSwap();
+        ok(S().recaptured === true, 'H: a tab the reader picked re-captures the intent');
+        load(RUN1);
+        restore();
+        flushScroll();
+        beforeSwap();
+        ok(S().recaptured === false, 'H: same tab, no scroll: the intent is kept');
+    }
+}
 
 console.log(`ds_scroll_anchor_selfcheck: ${asserts - fails}/${asserts} ok (${asserts} assertions)`);
 process.exit(fails ? 1 : 0);

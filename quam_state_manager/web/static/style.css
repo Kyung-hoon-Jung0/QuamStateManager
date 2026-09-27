@@ -6190,7 +6190,7 @@ html.tree-copy-active .json-tree { padding-bottom: 5rem; }
 .figure-grid { display: grid; grid-template-columns: repeat(2, 1fr); gap: .75rem; padding: .5rem; }
 .figure-card { border: 1px solid var(--pico-muted-border-color); border-radius: 4px; overflow: hidden; }
 .figure-label { padding: .3rem .5rem; background: var(--pico-card-background-color); font-size: .8rem; border-bottom: 1px solid var(--pico-muted-border-color); }
-.figure-card img { width: 100%; cursor: pointer; transition: max-height .2s; }
+.figure-card img { width: 100%; height: auto; cursor: pointer; transition: max-height .2s; }  /* height:auto + the img's width/height attrs = a reserved box before load (queue item 6) */
 /* Figure lightbox (r13) — a real viewer replacing the old .figure-zoomed
    class-toggle (which pinned the img over the page with no way to zoom).
    Dark backdrop works in both themes; the img transform is JS-managed. */

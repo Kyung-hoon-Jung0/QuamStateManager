@@ -380,6 +380,36 @@ def _extract_figure_names(data: dict) -> list[str]:
     return names
 
 
+_PNG_SIG = b"\x89PNG\r\n\x1a\n"
+
+
+def png_size(path: Path) -> tuple[int, int] | None:
+    """(width, height) of a PNG from its IHDR chunk -- 24 bytes, no decode.
+
+    Queue item 6 (Figures tab): an ``<img>`` with no intrinsic size is 0 px
+    tall until it loads, so a run switch cannot put the reader back inside
+    the figure grid on the first painted frame -- it clamps, paints, and
+    jumps once the images arrive. The detail template writes these as the
+    img's width/height attributes, which Chrome turns into the box's aspect
+    ratio before a single byte of the image is fetched. Anything that is not
+    a well-formed PNG (JPEG, SVG, truncated) returns None and keeps the old
+    unsized img. [PNG spec: signature 8 bytes, then the IHDR chunk whose data
+    starts with 4-byte big-endian width and height.]
+    """
+    try:
+        with safe_io.open_shared(path) as f:
+            head = f.read(24)
+    except OSError:
+        return None
+    if len(head) < 24 or head[:8] != _PNG_SIG or head[12:16] != b"IHDR":
+        return None
+    w = int.from_bytes(head[16:20], "big")
+    h = int.from_bytes(head[20:24], "big")
+    if w <= 0 or h <= 0:
+        return None
+    return (w, h)
+
+
 def _resolve_figure_path(run_folder: Path, data: dict, figure_name: str) -> Path | None:
     """Resolve a figure name to its file path on disk."""
     parts = figure_name.split(".", 1)
@@ -1881,7 +1911,10 @@ class DatasetStore:
         - ``files_on_disk``: with data.json unreadable, the image files that
           ARE in the run folder (the rule ``_diff_run_figures`` uses);
         - ``missing_figures``: declared figures whose file is gone (one stat
-          each, the same resolution the /fig route serves).
+          each, the same resolution the /fig route serves);
+        - ``figure_sizes``: ``{name: (w, h)}`` read from each present PNG's
+          header (24 bytes), so the template can size the <img> box before
+          it loads (queue item 6).
         """
         out: dict = {"unreadable": [], "files_on_disk": [], "missing_figures": []}
         run = self.runs.get(run_id)
@@ -1917,9 +1950,16 @@ class DatasetStore:
                     pass
         if "data.json" in out["unreadable"]:
             return out      # the figures cannot be resolved, not "missing"
+        sizes: dict = {}
         for name in run.figure_names:
-            if self.get_figure_path(run_id, name) is None:
+            fp = self.get_figure_path(run_id, name)
+            if fp is None:
                 out["missing_figures"].append(name)
+                continue
+            wh = png_size(fp)
+            if wh:
+                sizes[name] = wh
+        out["figure_sizes"] = sizes
         return out
 
     def get_figure_path(self, run_id: int, figure_name: str) -> Path | None:

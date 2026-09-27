@@ -45,7 +45,8 @@ class TestStoreHealth:
         f = tmp_path / "data"
         _with_figure(_seed_run(f, 51, qubits=["q1"]))
         h = DatasetStore(f).run_file_health(51)
-        assert h == {"unreadable": [], "files_on_disk": [], "missing_figures": []}
+        assert h == {"unreadable": [], "files_on_disk": [], "missing_figures": [],
+                     "figure_sizes": {"figures.amplitude": (1, 1)}}   # queue item 6
 
     def test_a_truncated_data_json_is_named_and_the_images_listed(self, tmp_path):
         f = tmp_path / "data"

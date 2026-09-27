@@ -17532,10 +17532,12 @@ var _dsSticky = {
 // Queue item 6: the reader's place across run switches (ds-scroll-anchor.js).
 //   intent    -- {tab, anchor} captured at beforeSwap, ONLY when the reader
 //                moved since the last restore (or nothing is known yet)
-//   userMoved -- reader input in the pane, or a pane scroll no pin caused
+//   userMoved -- a real scroll change in the pane (or an inner scroller)
+//                that no restore of this module caused
 //   pin       -- the live DsScrollAnchor.pin keeping the intent in place while
 //                the new run's lazy content settles
-var _dsScroll = { intent: null, userMoved: true, pin: null, recaptured: false };
+var _dsScroll = { intent: null, userMoved: true, pin: null, recaptured: false,
+                  landedTab: undefined };   // the tab the last restore showed
 
 // The tab a dataset detail is SHOWING (its active link), and that tab's
 // content element. Read from the DOM, not window._dsActiveTab, which a fresh
@@ -17551,22 +17553,34 @@ function _dsShownTab(pane) {
     return { tab: tab, container: container };
 }
 
-// Reader input inside the inspector pane = the reader chose a new place.
+// The reader chose a new place ONLY when a scroll position really changed:
+// the pane's, or an inner scroller's (a JSON tree), by anything but this
+// module's own restore. Input alone is not a move -- a click on a blank spot
+// of a clamped run (the pane sits at its end, short of the intent) used to
+// mark the run as "moved", and the next switch re-captured the intent from
+// that clamped landing: -2626 px on the verifier's KH repro (#4110 -> #4111
+// -> click -> #4110). Input still ENDS the pin: the reader is acting here,
+// so nothing should scroll under them.
 (function() {
-    function mark(e) {
+    function _dsPaneOf(t) {
         var pane = document.getElementById('inspector-pane');
-        if (!pane || !e.target || !pane.contains(e.target)) return;
-        if (!pane.querySelector('#ds-detail-root')) return;
-        _dsScroll.userMoved = true;
+        if (!pane || !t || t.nodeType !== 1 || !(t === pane || pane.contains(t))) return null;
+        return pane.querySelector('#ds-detail-root') ? pane : null;
+    }
+    function stopPin(e) {
+        if (!_dsPaneOf(e.target)) return;
         if (_dsScroll.pin) { _dsScroll.pin.stop(); _dsScroll.pin = null; }
     }
     ['wheel', 'touchstart', 'mousedown', 'keydown'].forEach(function(t) {
-        document.addEventListener(t, mark, { capture: true, passive: true });
+        document.addEventListener(t, stopPin, { capture: true, passive: true });
     });
-    // A scroll nobody pinned (scrollbar drag, find-in-page, scrollIntoView).
+    // Wheel, keys, scrollbar drag, find-in-page, scrollIntoView -- all end in
+    // a scroll event (it does not bubble; the capture phase sees them all).
+    // A pin's own write lands on the value it recorded: not a move, even when
+    // the event fires after that pin has stopped.
     document.addEventListener('scroll', function(e) {
-        if (!e.target || e.target.id !== 'inspector-pane') return;
-        if (_dsScroll.pin && _dsScroll.pin.active) return;   // the pin judges its own
+        if (!_dsPaneOf(e.target)) return;
+        if (window.DsScrollAnchor && window.DsScrollAnchor.isOwnScroll(e.target)) return;
         _dsScroll.userMoved = true;
     }, true);
 })();
@@ -17626,7 +17640,11 @@ document.addEventListener('htmx:beforeSwap', function(evt) {
     if (!pane) return;
     if (_dsScroll.pin) { _dsScroll.pin.stop(); _dsScroll.pin = null; }
     var dsRoot = pane.querySelector('#ds-detail-root');
-    if (dsRoot && (_dsScroll.userMoved || !_dsScroll.intent)) {
+    // A tab the reader picked since the restore is a new place even where
+    // the scroll position did not change (the new tab was tall enough).
+    var tabChanged = dsRoot && _dsScroll.landedTab !== undefined &&
+        _dsShownTab(pane).tab !== _dsScroll.landedTab;
+    if (dsRoot && (_dsScroll.userMoved || tabChanged || !_dsScroll.intent)) {
         // The place: the active tab + a landmark chain under the pane's top edge.
         var shown = _dsShownTab(pane);
         _dsScroll.intent = {
@@ -17904,6 +17922,7 @@ document.addEventListener('htmx:afterSwap', function(evt) {
         }
     }
     _dsScroll.userMoved = false;
+    _dsScroll.landedTab = _dsShownTab(pane).tab;
 
     setTimeout(function() {
         // 1. The tab + place were restored in the swap itself (queue item 6,
