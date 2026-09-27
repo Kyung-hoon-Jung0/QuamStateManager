@@ -96,8 +96,11 @@ def test_opening_a_chip_warms_its_lint_and_pointers_without_a_request(app, tmp_p
     store = ctx["store"]
 
     def linted():
+        # w7 integration: the lint memo is keyed on liveedit's store_revs
+        # seq_token (store serial + mutation_seq), not the bare counter
+        from quam_state_manager.core import store_revs
         hit = diagnostics._lint_state_cache.get(store)
-        return hit is not None and hit[0] == store.mutation_seq
+        return hit is not None and hit[0] == store_revs.seq_token(store)
 
     assert _wait(linted), "the opened chip was never linted in the background"
     n_ptr = sum(1 for _dp, v, _pt in loader._walk(store.merged)
@@ -184,11 +187,12 @@ def test_a_request_waiting_on_the_background_env_analysis_takes_its_result(tmp_p
     real = state_env_validate.analyze_state
     runs, entered, go = [], threading.Event(), threading.Event()
 
-    def slow(state, m):
+    def slow(state, m, **kw):
+        # w7 integration: analysis_for_store passes liveedit's _chunks memo
         runs.append(1)
         entered.set()
         go.wait(10)
-        return real(state, m)
+        return real(state, m, **kw)
 
     monkeypatch.setattr(state_env_validate, "analyze_state", slow)
     out = {}

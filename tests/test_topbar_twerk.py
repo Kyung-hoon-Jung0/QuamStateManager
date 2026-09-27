@@ -92,8 +92,10 @@ class TestTheShellCannotOverflow:
         """QA F6: the shell is selected by a class base.html renders, so the
         rule still reaches exactly the body that holds .app-layout."""
         base = (_ROOT / "quam_state_manager" / "web" / "templates" / "base.html").read_text(encoding="utf-8")
-        assert re.search(r'<body class="app-shell"', base)
-        assert base.index('<body class="app-shell"') < base.index('<div class="app-layout">')
+        # w7/smallui adds a second body class (exp-list-compact); the pin is
+        # that the body's class list STARTS with app-shell, whatever follows
+        assert re.search(r'<body class="app-shell(?:\s|")', base)
+        assert base.index('<body class="app-shell') < base.index('<div class="app-layout">')
 
     def test_the_shell_is_not_selected_by_an_ancestor_has(self):
         """QA F6: `body:has(> .app-layout)` made every forced layout read a
