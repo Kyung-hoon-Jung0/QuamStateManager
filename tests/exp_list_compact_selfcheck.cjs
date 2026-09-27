@@ -33,12 +33,42 @@ ok(INLINE && /quam_exp_list_compact/.test(INLINE), 'setup: base.html body starts
 const btn = (id) => (BASE.match(new RegExp('<button[^>]*id="' + id + '"[^>]*>')) || [''])[0];
 ok(bodyTag && btn('exp-density-full') && btn('exp-density-compact'),
    'setup: base.html body tag + both density buttons found');
+// final QA fix 2: the same inline script brings aria-pressed along the moment
+// the parser inserts the two buttons (a MutationObserver: its callback is a
+// microtask, so no frame paints them first)
+ok(/MutationObserver/.test(INLINE) && /exp-density-full/.test(INLINE),
+   'setup: the inline body script also watches for the density buttons');
+// ...and the on-state rules in style.css: the pressed LOOK must come from the
+// body class, which is right before the first paint, never from the buttons'
+// static aria-pressed (compact=true), which app.js fixes only at DCL.
+const CSS = fs.readFileSync(path.join(ROOT, 'quam_state_manager', 'web', 'static', 'style.css'), 'utf8');
+const DRULES = [];
+CSS.replace(/\/\*[\s\S]*?\*\//g, '').replace(/([^{}]+)\{([^{}]*)\}/g, function (_, sel, body) {
+  if (/density/.test(sel)) DRULES.push({ sel: sel.trim(), body: body });
+  return '';
+});
+const ON_RE = /(^|[;\s])color:\s*var\(--pico-primary\)/;
+ok(DRULES.some(function (r) { return ON_RE.test(r.body) && !/:hover/.test(r.sel); }),
+   'setup: style.css carries a density on-state rule (' + DRULES.length + ' density rules)');
+function looksPressed(doc, id) {
+  const el = doc.getElementById(id);
+  return DRULES.some(function (r) {
+    if (!ON_RE.test(r.body)) return false;
+    return r.sel.split(',').some(function (s) {
+      s = s.trim();
+      if (/:hover|:focus|:active/.test(s)) return false;    // no pointer at first paint
+      try { return el.matches(s); } catch (e) { return false; }
+    });
+  });
+}
 
 /* storage: undefined = key absent; 'throw' = a private window that throws on access */
 function world(storage, opts) {
-  const html = '<!doctype html><html><head></head>' + bodyTag
-    + '<div class="sidebar-tree-toolbar">' + btn('exp-density-full') + '</button>'
-    + btn('exp-density-compact') + '</button></div><div id="sidebar-tree"></div></body></html>';
+  // the body starts EMPTY: its inline script runs before the parser reaches the
+  // sidebar, and the toolbar is inserted after it, as the parser inserts it
+  const html = '<!doctype html><html><head></head>' + bodyTag + '</body></html>';
+  const TOOLBAR = '<div class="sidebar-tree-toolbar">' + btn('exp-density-full') + '</button>'
+    + btn('exp-density-compact') + '</button></div><div id="sidebar-tree"></div>';
   const dom = new JSDOM(html, { url: 'http://localhost/datasets', runScripts: 'outside-only', pretendToBeVisual: true });
   const w = dom.window;
   if (storage === 'throw') {
@@ -53,7 +83,18 @@ function world(storage, opts) {
   // the body's inline script runs first, exactly as the browser runs it (a
   // throw here is a throw on every page load for a private window)
   try { new w.Function(INLINE).call(w); } catch (e) { console.error('inline body script threw: ' + e.stack); fails++; }
-  if (opts && opts.inlineOnly) { return { w: w, compact: () => w.document.body.classList.contains('exp-list-compact') }; }
+  const d0 = w.document;
+  d0.body.insertAdjacentHTML('beforeend', TOOLBAR);   // the parser reaches the sidebar
+  const firstPaint = {
+    w: w,
+    compact: () => d0.body.classList.contains('exp-list-compact'),
+    pressed: () => d0.getElementById('exp-density-full').getAttribute('aria-pressed') + '/'
+                 + d0.getElementById('exp-density-compact').getAttribute('aria-pressed'),
+    looks: () => (looksPressed(d0, 'exp-density-full') ? 'full' : '') + (looksPressed(d0, 'exp-density-compact') ? 'compact' : ''),
+  };
+  // buttonsOnly: read synchronously -- the buttons just parsed, not even a
+  // microtask has run; inlineOnly: a microtask later, still before DCL/app.js
+  if (opts && (opts.buttonsOnly || opts.inlineOnly)) return firstPaint;
   try { new w.Function(APP_JS).call(w); } catch (e) { console.error('app.js threw: ' + e.stack); fails++; }
   const d = w.document;
   return {
@@ -111,6 +152,32 @@ const tick = (ms) => new Promise((r) => setTimeout(r, ms || 30));
   const P = world('throw');
   await tick();
   ok(P.compact() && P.pressed() === 'false/true', 'a private window (storage throws) -> compact, no crash');
+}
+
+// 6. final QA fix 2: the toggle's PRESSED LOOK at the first paint. Rows were
+//    right from the first paint already (2b); the buttons shipped a static
+//    compact-pressed state that only app.js's DOMContentLoaded apply fixed --
+//    real Chrome painted the wrong button in 3 of 6 Full-names reloads.
+for (const [st, want] of [['0', 'full'], [undefined, 'compact'], ['1', 'compact'], ['throw', 'compact']]) {
+  const lbl = st === undefined ? 'absent key' : (st === 'throw' ? 'private window' : "stored '" + st + "'");
+  const B = world(st, { buttonsOnly: true });
+  ok(B.looks() === want, lbl + ': the buttons look ' + want + '-pressed the moment they are parsed, before anything else runs (' + B.looks() + ')');
+  const I = world(st, { inlineOnly: true });
+  await Promise.resolve();                     // the observer's microtask -- no task, no frame in between
+  const aria = want === 'full' ? 'true/false' : 'false/true';
+  ok(I.pressed() === aria && I.looks() === want,
+     lbl + ': aria-pressed follows in the same turn, before any frame and before DOMContentLoaded (' + I.pressed() + ', ' + I.looks() + ')');
+}
+{
+  const T = world('0');
+  await tick();
+  const d = T.w.document;
+  const looks = () => (looksPressed(d, 'exp-density-full') ? 'full' : '') + (looksPressed(d, 'exp-density-compact') ? 'compact' : '');
+  ok(looks() === 'full', "after app.js, stored '0' still looks full (" + looks() + ')');
+  T.w.setExpListCompact(true);
+  ok(looks() === 'compact' && T.pressed() === 'false/true', 'pressing Compact moves the look and the aria together (' + looks() + ')');
+  T.w.setExpListCompact(false);
+  ok(looks() === 'full' && T.pressed() === 'true/false', 'pressing Full names moves them back (' + looks() + ')');
 }
 
 console.log(fails ? ('FAILED ' + fails) : ('exp_list_compact_selfcheck: all ok (' + asserts + ' assertions)'));

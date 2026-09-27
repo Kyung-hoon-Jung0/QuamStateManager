@@ -2085,7 +2085,14 @@ details.tree-branch-active > summary {
     padding: .05rem .3rem; border-radius: 3px; font-size: .8rem;
 }
 .tree-density-btn:hover { color: var(--pico-primary); border-color: var(--pico-primary); }
-.tree-density-btn[aria-pressed="true"] {           /* unified outline on-state (G8) */
+/* Unified outline on-state (G8). Final QA fix 2: the pressed LOOK follows the
+   body class, never the buttons' static aria-pressed -- base.html ships
+   compact=true/full=false and app.js only flips them at DOMContentLoaded, so a
+   Full-names user saw "Compact" pressed for up to ~90 ms of painted frames
+   while the rows were already full. The body class is right before the first
+   paint (the inline script at the top of <body>), so this rule is too. */
+body.exp-list-compact #exp-density-compact,
+body:not(.exp-list-compact) #exp-density-full {
     background: color-mix(in srgb, var(--pico-primary) 8%, transparent);
     color: var(--pico-primary);
     border-color: color-mix(in srgb, var(--pico-primary) 45%, transparent);
