@@ -219,7 +219,7 @@
         });
         var title = root.querySelector('#zline-title');
         var q = '/zline/data?line=' + encodeURIComponent(line) + '&model=' + model + (op ? '&op=' + encodeURIComponent(op) : '');
-        fetch(q, { headers: { 'Accept': 'application/json' } })
+        var done = fetch(q, { headers: { 'Accept': 'application/json' } })
             .then(function (r) { return r.json(); })
             .then(function (d) {
                 if (my !== seq || !document.body.contains(root)) return;   // a newer click won
@@ -251,6 +251,85 @@
                 history.replaceState(history.state, '', u.pathname + u.search);
             }
         } catch (e) { /* no URL support -- the page still works */ }
+        return done;
+    }
+
+    /* w7 final-QA P2: the working copy moved under an open page (Take live,
+       a tray undo, an approval written, an Auto-Sync pull, another window's
+       edit) -- `sm:wc-moved` (wc-moved.js). The table and the drawn line
+       were computed from the OLD values and nothing else re-renders this
+       page (the sync's in-place patch finds no cell here), so re-GET the
+       table and re-load the line the reader has selected, with the same
+       operation and model. The figures are redrawn in place (no blank
+       frame); the table body is swapped; focus stays on its row. A table
+       whose shape changed (lines added / removed) is swapped whole. */
+    var rseq = 0;
+    function refresh(root) {
+        var my = ++rseq;
+        var want = root.getAttribute('data-selected') || '';
+        root.setAttribute('data-refreshing', '1');
+        return fetch('/zline' + (want ? '?line=' + encodeURIComponent(want) : ''),
+                     { headers: { 'HX-Request': 'true' } })
+            .then(function (r) { return r.text(); })
+            .then(function (html) {
+                if (my !== rseq || !document.body.contains(root)) return;
+                var box = document.createElement('div');
+                box.innerHTML = html;
+                var fresh = box.querySelector('#zline-root');
+                if (!fresh) return;
+                // what the reader has NOW (a click during the fetch wins)
+                var cur = root.getAttribute('data-selected') || '';
+                var opSel = root.querySelector('#zline-op');
+                var op = opSel ? opSel.value : '';
+                var mSel = root.querySelector('#zline-model');
+                var model = mSel ? mSel.value : '';
+                var a = document.activeElement;
+                var focusLine = (a && a.classList && a.classList.contains('zline-row') && root.contains(a))
+                    ? a.getAttribute('data-line') : null;
+                var has = function (line) {
+                    return !!line && Array.prototype.some.call(fresh.querySelectorAll('.zline-row'),
+                        function (tr) { return tr.getAttribute('data-line') === line; });
+                };
+                var line = has(cur) ? cur : (fresh.getAttribute('data-selected') || '');
+                var oldT = root.querySelector('#zline-table');
+                var newT = fresh.querySelector('#zline-table');
+                var oldRows = oldT ? Array.prototype.map.call(oldT.querySelectorAll('.zline-row'), function (tr) { return tr.getAttribute('data-line'); }).join('|') : '';
+                var newRows = newT ? Array.prototype.map.call(newT.querySelectorAll('.zline-row'), function (tr) { return tr.getAttribute('data-line'); }).join('|') : '';
+                var target = root;
+                if (oldT && newT && oldRows === newRows) {
+                    oldT.replaceChild(newT.querySelector('tbody'), oldT.querySelector('tbody'));
+                } else {
+                    // the chip's flux lines changed: the page is a different page
+                    var h = fresh.querySelector('#zline-model');
+                    if (h && model) h.value = model;
+                    fresh.setAttribute('data-selected', line);
+                    if (window.PlotHost) window.PlotHost.purgeWithin(root);
+                    root.parentNode.replaceChild(fresh, root);
+                    target = fresh;
+                    mount();                        // binds + loads `line`
+                    target.setAttribute('data-refreshed', String(my));
+                    target.removeAttribute('data-refreshing');
+                    return;
+                }
+                if (focusLine) {
+                    Array.prototype.some.call(root.querySelectorAll('.zline-row'), function (tr) {
+                        if (tr.getAttribute('data-line') !== focusLine) return false;
+                        tr.focus();
+                        return true;
+                    });
+                }
+                if (!line) {
+                    root.setAttribute('data-refreshed', String(my));
+                    root.removeAttribute('data-refreshing');
+                    return;
+                }
+                return Promise.resolve(load(root, line, line === cur ? op : undefined)).then(function () {
+                    if (my !== rseq) return;
+                    root.setAttribute('data-refreshed', String(my));
+                    root.removeAttribute('data-refreshing');
+                });
+            })
+            .catch(function () { if (my === rseq) root.removeAttribute('data-refreshing'); });
     }
 
     function mount() {
@@ -278,8 +357,12 @@
         if (first) load(root, first);
     }
 
-    window.ZLine = { mount: mount, _esc: esc, _clearFor: clearFor, _reveal: revealFigures };
+    window.ZLine = { mount: mount, refresh: refresh, _esc: esc, _clearFor: clearFor, _reveal: revealFigures };
     document.addEventListener('DOMContentLoaded', mount);
     document.addEventListener('htmx:afterSwap', mount);
+    document.addEventListener('sm:wc-moved', function () {
+        var root = document.getElementById('zline-root');
+        if (root && root._zlMounted) refresh(root);
+    });
     if (document.readyState !== 'loading') mount();
 })();

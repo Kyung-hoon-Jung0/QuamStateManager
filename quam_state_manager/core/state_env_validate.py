@@ -41,6 +41,8 @@ from dataclasses import dataclass
 from collections.abc import Mapping
 from typing import Any
 
+from quam_state_manager.core import activity as _activity
+
 logger = logging.getLogger(__name__)
 
 _POINTER_PREFIXES = ("#/", "#./", "#../")
@@ -645,7 +647,9 @@ def analysis_for_store(store, manifest: dict | None) -> dict:
         return hit[1]
     lock = getattr(store, "_lock", None)
     if lock is not None:
-        with lock:
+        # w7 final-QA P3b: a caller that wants THIS result is not handed the
+        # lock by a yielding background analysis -- it waits and takes it
+        with _activity.wanting(store), lock:
             # RAM P10: re-check under the lock (the background chip prewarm
             # may have finished this very analysis while we waited for it).
             key = (store_revs.seq_token(store), mkey)
@@ -664,6 +668,14 @@ def analysis_for_store(store, manifest: dict | None) -> dict:
                                   "from a cold analyze_state")
     _analysis_memo[store] = (key, res)
     return res
+
+
+def analysis_is_current(store, manifest: dict | None) -> bool:
+    """Is the memoized analysis of *store* the one for its current content
+    and *manifest*? (The background prewarm stops once a request has it.)"""
+    from quam_state_manager.core import store_revs
+    hit = _analysis_memo.get(store)
+    return hit is not None and hit[0] == (store_revs.seq_token(store), _manifest_key(manifest))
 
 
 def _verify_on() -> bool:
@@ -688,6 +700,10 @@ class _ChunkMemo:
         self._d = slot[1]
 
     def get(self, k1: str, k2: str):
+        # w7 final-QA P3b: one chunk is the unit a background lint / env
+        # analysis may hand the store lock over at -- BEFORE the token read,
+        # so a chunk's token, walk and put always share one hold.
+        _activity.checkpoint()
         # the token is read BEFORE the walk and stored with its result, so a
         # write racing the walk can only make the entry look older than it is
         tok = self._tok(self._store, k1, k2)

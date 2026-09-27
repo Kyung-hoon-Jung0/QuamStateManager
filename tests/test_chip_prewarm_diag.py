@@ -143,8 +143,9 @@ def test_a_warm_pass_is_not_repeated_at_the_same_content(tmp_path, monkeypatch):
     store = QuamStore(_make_chip(tmp_path / "W"))
     assert warm_pointer_cache(store) is True
     walks = []
-    real = loader._walk
-    monkeypatch.setattr(loader, "_walk", lambda *a, **k: walks.append(1) or real(*a, **k))
+    # w7 final-QA P3b: the warm walks pointers only (loader._pointer_leaves)
+    real = loader._pointer_leaves
+    monkeypatch.setattr(loader, "_pointer_leaves", lambda *a, **k: walks.append(1) or real(*a, **k))
     assert warm_pointer_cache(store) is True
     assert walks == []
     Modifier(store).set_value("qubits.q1.T1", 2.0e-5)

@@ -69,6 +69,10 @@
        /field/edit(-batch) that a LAB pulse class is asked about (one fetch
        seam for every editing surface). #}
     <script src="{{ asset_url('lab-check.js') }}"></script>
+    {# w7 final-QA P2/P3a: `sm:wc-moved` -- the one "the working copy this
+       window shows moved" signal (read off the tray's edit_seq) for surfaces
+       outside the Live-Edit patch path: Z-line distortion, the Agent card. #}
+    <script src="{{ asset_url('wc-moved.js') }}"></script>
     {# The search-box typeahead (customer, 2026-09-10). AFTER app.js: it calls
        window._anchorPopover, which is the one body-level popup placement this
        app has — `position:absolute` is clipped by #sidebar's overflow-y:auto,

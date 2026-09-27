@@ -503,8 +503,11 @@ class LazySearchIndex:
             for _ in range(self._OPTIMISTIC_TRIES):
                 with store._lock:
                     token = (store.mutation_seq, id(store.merged))
-                    leaves = list(_walk_leaves(store.merged))
+                    leaves = (list(_walk_leaves(store.merged)) if pace is None
+                              else self._snapshot_yielding(store))
                     keys = self._keys()
+                if leaves is None:
+                    continue           # the chip moved while the snapshot let go
                 built = SearchIndex.from_leaves(
                     leaves if pace is None else _paced(leaves, pace), keys)
                 with store._lock:
@@ -527,11 +530,26 @@ class LazySearchIndex:
         foreground build.
 
         *pre*: other warm steps for the same chip, run by the same worker
-        BEFORE the index build, each as ``step(store, pace)`` (the chip's
-        pointer cache and lint, for the first Chip Status visit). They run
-        even when the index is already built."""
+        AFTER the index build (w7 final-QA P3b), each as ``step(store, pace)``
+        (the chip's pointer cache and lint, for the first Chip Status visit).
+        They run even when the index is already built."""
         if self._index is None or pre:
             _prewarm_submit(self, pre)
+
+    def _snapshot_yielding(self, store):
+        """The background build's leaf snapshot (0.36 s under the store lock
+        on big30x, one hold): taken under the lock, but handing it to a
+        foreground request every :data:`_PACE_CHUNK` leaves (w7 final-QA
+        P3b). ``None`` when the chip moved while it let go -- the caller then
+        retries, like a lost install race. Never lets go while a foreground
+        search waits on this index (``_want``)."""
+        out = []
+        with activity.yielding(store, keep=lambda: self._want > 0) as y:
+            for i, leaf in enumerate(_walk_leaves(store.merged)):
+                if i and not i % _PACE_CHUNK:
+                    activity.checkpoint()
+                out.append(leaf)
+        return None if y.stopped else out
 
     # -- the SearchIndex surface ------------------------------------------
     def search(self, query: str, limit: int = 50, category: str | None = None):
@@ -872,10 +890,22 @@ def _prewarm_worker() -> None:
         lazy = ref()
         if lazy is None:
             continue
-        # The pre-build steps (pointer cache, lint) come first: they are what
-        # the first Chip Status visit waits on. Each starts on a quiet server
-        # and a newer submission abandons the rest.
         pace = _make_pace(lazy)
+        # w7 final-QA P3b: the INDEX first. It holds the store lock only for
+        # its snapshot (0.36 s on big30x) and is what the first topbar search
+        # waits on; the pre-build steps (pointer cache, lint, env analysis --
+        # what the first Chip Status visit waits on) follow. Run first, they
+        # held the lock for seconds while the first search / edit queued
+        # behind them (search 6.8-7.8 s at +2 s after the open on big30x).
+        if lazy._index is None:
+            try:
+                lazy._get(pace)
+                PREWARM_BUILDS[0] += 1
+            except Exception:  # noqa: BLE001 -- a prewarm never raises; search builds on demand
+                logger.debug("search index prewarm failed", exc_info=True)
+        # Each step starts on a quiet server and a newer submission abandons
+        # the rest; a step that holds the store lock yields it to foreground
+        # requests at its checkpoints (``activity.yielding``, in the step).
         for step in pre:
             activity.wait_quiet(stop=superseded)
             if superseded():
@@ -885,14 +915,4 @@ def _prewarm_worker() -> None:
                 PREWARM_STEPS[0] += 1
             except Exception:  # noqa: BLE001 -- a warm step never raises; readers compute on demand
                 logger.debug("chip prewarm step failed", exc_info=True)
-        if superseded() or lazy._index is not None:
-            continue
-        activity.wait_quiet(stop=superseded)
-        if superseded():
-            continue
-        try:
-            lazy._get(_make_pace(lazy))
-            PREWARM_BUILDS[0] += 1
-        except Exception:  # noqa: BLE001 -- a prewarm never raises; search builds on demand
-            logger.debug("search index prewarm failed", exc_info=True)
         del lazy

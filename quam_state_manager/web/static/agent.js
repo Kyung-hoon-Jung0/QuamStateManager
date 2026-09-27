@@ -763,6 +763,11 @@ window.AgentPanel = (function () {
   }
   document.addEventListener("sm:agent-changed", onWake);   // docs/191 P01
   document.addEventListener("sm:runs-changed", onWake);
+  // w7 final-QA P3a: an approval card's "now" column is the value SM holds
+  // NOW (read per poll), and a Take live / undo / pull moves it without any
+  // agent news -- it lagged a Take live by the 30 s idle poll (14-23 s
+  // measured). `sm:wc-moved` (wc-moved.js) is the working copy moving.
+  document.addEventListener("sm:wc-moved", function () { if (S.mounts.length) poll(true); });
   document.addEventListener("focusout", function (e) {
     // a card that waited while the person typed in it catches up now
     var card = e && e.target && e.target.closest && e.target.closest(".ag-card");

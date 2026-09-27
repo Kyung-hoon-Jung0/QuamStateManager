@@ -323,20 +323,28 @@ class QuamStore:
 
         Failures are collected in ``self.pointer_warnings`` (never raises).
         """
-        self.pointer_warnings.clear()
-        for dot_path, value, path_tuple in _walk(self.merged):
-            if not is_pointer(value) or is_self_ref(value):
-                continue
+        # w7 final-QA P3b: the pointer-only walk, same pointers in the same
+        # order as filtering ``_walk`` (5x faster: no dot path per leaf), and
+        # a background lint may hand the store lock over between chunks
+        # (``activity.checkpoint``) -- so the list is built aside and swapped
+        # in whole: a reader in between sees the previous complete list.
+        from quam_state_manager.core import activity
+        found: list[PointerWarning] = []
+        for i, (value, path_tuple) in enumerate(_pointer_leaves(self.merged)):
+            if not i % 2048:
+                activity.checkpoint()
             resolved = self.resolve_pointer(value, path_tuple)
             if resolved == value:
+                dot_path = _dot_path(path_tuple)
                 warning = PointerWarning(
                     dot_path=dot_path,
                     pointer=value,
                     message=f"Could not resolve pointer at {dot_path}",
                     soft=self._pointer_parent_resolves(value, path_tuple),
                 )
-                self.pointer_warnings.append(warning)
+                found.append(warning)
                 logger.debug("Unresolvable pointer at %s: %s", dot_path, value)
+        self.pointer_warnings[:] = found
         if self.pointer_warnings:
             logger.info(
                 "%d pointer(s) could not be resolved (enable DEBUG logging for details)",
@@ -592,8 +600,9 @@ def warm_pointer_cache(store: "QuamStore", pace=None,
         seq, merged_id = store.mutation_seq, id(store.merged)
         if getattr(store, "_ptr_warm_token", None) == (seq, merged_id):
             return True             # already warm at this content: no re-walk
-        todo = [(v, pt) for _dp, v, pt in _walk(store.merged)
-                if is_pointer(v) and not is_self_ref(v)]
+        # w7 final-QA P3b: the pointer-only walk (0.12 s on big30x) instead of
+        # the full leaf walk (0.60 s) -- this list is taken under the lock
+        todo = _pointer_leaves(store.merged)
     for i in range(0, len(todo), chunk):
         if i and pace is not None:
             pace()
@@ -635,6 +644,36 @@ def _walk(
             else:
                 results.append((child_path, value, child_tuple))
     return results
+
+
+def _pointer_leaves(obj: Any, path_tuple: tuple[str, ...] = (),
+                    out: list | None = None) -> list[tuple[str, tuple[str, ...]]]:
+    """``(value, path_tuple)`` of every pointer leaf that is not a self-ref --
+    exactly ``[(v, pt) for _dp, v, pt in _walk(obj) if is_pointer(v) and not
+    is_self_ref(v)]``, same order, without building a dot path per leaf."""
+    if out is None:
+        out = []
+    if isinstance(obj, dict):
+        items = obj.items()
+    elif isinstance(obj, list):
+        items = ((str(i), v) for i, v in enumerate(obj))
+    else:
+        return out
+    for key, value in items:
+        if isinstance(value, (dict, list)):
+            _pointer_leaves(value, path_tuple + (key,), out)
+        elif isinstance(value, str) and value.startswith("#") and not value.startswith("#./"):
+            out.append((value, path_tuple + (key,)))
+    return out
+
+
+def _dot_path(path_tuple: tuple[str, ...]) -> str:
+    """The dot path :func:`_walk` gives the leaf at *path_tuple* (its rule:
+    a segment is joined with a dot only after a non-empty prefix)."""
+    p = ""
+    for k in path_tuple:
+        p = f"{p}.{k}" if p else k
+    return p
 
 
 def flatten(obj: dict) -> dict[str, Any]:
