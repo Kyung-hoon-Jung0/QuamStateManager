@@ -357,6 +357,8 @@ def _parse_port_filter(port: Any) -> tuple[PortFilter | None, list[dict]]:
                 notes.append(_note("block", "ff_all_zero",
                                    "Every FIR tap is 0: the port would output nothing."))
                 block = True
+            # sum |taps| < 1 guideline -- [paper: output_filter.md:248]
+            # "We recommended that the absolute gain of the feedforward taps, defined as $\sum_{k=0}^K |b_k|$, will be below $1$."
             gain = sum(abs(t) for t in taps)
             if gain >= 1.0:
                 notes.append(_note("info", "ff_gain",

@@ -183,6 +183,22 @@ class TestOneBadPortNeverTakesThePageDown:
         st, d = _data(client, "qubits.q1.z")
         assert st == 200 and "model_error" in [n["code"] for n in d["notes"]]
 
+    def test_model_flips_reuse_both_step_curves(self, client, monkeypatch):
+        """Verifier round 4 P3: the step slot held one model, so every Model
+        flip evicted the other curve and recomputed 2e6 samples."""
+        from quam_state_manager.web import routes
+        routes._ZLINE_MEMO.clear()
+        calls = []
+        real = zf.step_response
+        def counting(*a, **k):
+            calls.append(k.get("model"))
+            return real(*a, **k)
+        monkeypatch.setattr(zf, "step_response", counting)
+        for model in ("sum", "cascade", "sum", "cascade"):
+            st, d = _data(client, "qubits.q1.z", model=model)
+            assert st == 200 and d["step"] is not None
+        assert sorted(calls) == ["cascade", "sum"], calls
+
     def test_cascade_note_reaches_the_page(self, client):
         store = TestNeverStale()._store(client)
         with store._lock:

@@ -13713,7 +13713,7 @@ def zline_data():
                 out["notes"].append(n)
             return None
 
-    out["step"] = memo((line, "step"), (pf.key(), model),
+    out["step"] = memo((line, "step", model), (pf.key(), model),
                        lambda: zf.step_response(pf, model=model))
 
     op = request.args.get("op", "").strip()
