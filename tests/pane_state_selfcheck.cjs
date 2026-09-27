@@ -624,7 +624,84 @@ function section11() {
             ok(window.jsonTreeExpandedPaths('explorer-tree-wiring').indexOf('wiring.q1') >= 0,
                'JT-10: Back again brings the expanded nodes back');
             delete window.switchExplorerTab; delete window.Typeahead;
-            setTimeout(() => process.exit(fails ? 1 : 0), 120);
+            setTimeout(section12, 120);
         }, 200);
     }, 200);
+}
+
+// -- 12. w7 final QA (P2): a FULL-page Back is not an htmx restore ----------
+// Enter-edit on /bulk, a full navigation away, Back: neither popstate-with-
+// htmx nor htmx:historyRestore runs, and a page shown from a cache (bfcache
+// `persisted`, or an HTTP cache: navigation type back_forward) carries the
+// tray + values of the moment the user left. Measured in real Chrome with
+// no-store removed: the cached /bulk kept the pre-edit value for good, and
+// this probe alone turned it fresh. The tray's seq beacon decides, once.
+function section12() {
+    const trayHtml = (seq) => '<div id="pending-tray" data-seq="' + seq + '"></div>';
+    let serverSeq = '12';
+    const fetched = [];
+    global.fetch = window.fetch = (url) => {
+        fetched.push(String(url));
+        return Promise.resolve({ ok: true, text: () => Promise.resolve(trayHtml(serverSeq)) });
+    };
+    const calls = [];
+    window.htmx.ajax = (verb, p, opts) => { calls.push({ p: p, opts: opts || {} }); return Promise.resolve(); };
+    const realDiag = window._diagChanged;
+    let diagChanged = 0;
+    window._diagChanged = () => { diagChanged++; };
+    // app.js runs in the Node realm: bare `performance` is Node's
+    let navType = 'navigate';
+    const realGE = performance.getEntriesByType;
+    performance.getEntriesByType = (t) => (t === 'navigation' ? [{ type: navType }] : realGE.call(performance, t));
+    const pageshow = (persisted) => {
+        const ev = new window.Event('pageshow');
+        Object.defineProperty(ev, 'persisted', { value: persisted });
+        window.PaneState.__freshFor = null;     // each case is its own page show
+        window.dispatchEvent(ev);
+    };
+    window.history.pushState({}, '', '/bulk');
+    pane().removeAttribute('data-pane-route');
+    pane().innerHTML = '<div>/bulk as the user left it</div>';
+    doc.getElementById('pending-tray').setAttribute('data-seq', '11');
+    const reset = () => { fetched.length = 0; calls.length = 0; diagChanged = 0; };
+    const trayRe = () => calls.filter((c) => c.p === '/state/tray');
+    const paneRe = () => calls.filter((c) => c.p.indexOf('/bulk') === 0 && c.opts.target === '#table-pane');
+    // (a) an ordinary page load: nothing to probe
+    pageshow(false);
+    setTimeout(() => {
+        ok(fetched.length === 0 && calls.length === 0,
+           'w7 P2: an ordinary page show probes nothing (got ' + JSON.stringify({ fetched, calls }) + ')');
+        // (b) a bfcache restore behind the server: tray + pane refetched, once
+        reset();
+        pageshow(true);
+        setTimeout(() => {
+            ok(fetched.filter((u) => u.indexOf('/state/tray') === 0).length === 1,
+               'w7 P2: a bfcache restore asks the tray beacon once (got ' + JSON.stringify(fetched) + ')');
+            ok(trayRe().length === 1 && trayRe()[0].opts.swap === 'outerHTML'
+               && paneRe().length === 1 && diagChanged === 1,
+               'w7 P2: a bfcache restore behind the server refetches tray + pane (got ' + JSON.stringify(calls) + ')');
+            // (c) back_forward from an HTTP cache, at the server seq: left alone
+            reset();
+            navType = 'back_forward';
+            serverSeq = '11';
+            pageshow(false);
+            setTimeout(() => {
+                ok(fetched.length === 1 && calls.length === 0 && diagChanged === 0,
+                   'w7 P2: a back_forward page at the server seq is probed and left alone (got '
+                   + JSON.stringify({ fetched, calls }) + ')');
+                // (d) back_forward from an HTTP cache, behind: refetched
+                reset();
+                serverSeq = '13';
+                pageshow(false);
+                setTimeout(() => {
+                    ok(trayRe().length === 1 && paneRe().length === 1,
+                       'w7 P2: a back_forward page behind the server refetches tray + pane (got '
+                       + JSON.stringify(calls) + ')');
+                    performance.getEntriesByType = realGE;
+                    window._diagChanged = realDiag;
+                    setTimeout(() => process.exit(fails ? 1 : 0), 60);
+                }, 150);
+            }, 150);
+        }, 150);
+    }, 150);
 }

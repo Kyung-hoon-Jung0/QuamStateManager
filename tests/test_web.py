@@ -6019,15 +6019,29 @@ class TestPhase5StartupLock:
 class TestPhase5CacheControl:
     """Phase 5 §3.1 — HTMX partial responses must carry
     ``Cache-Control: no-store`` so a Back-after-edit doesn't serve a
-    stale cached partial. Non-HTMX requests are left untouched."""
+    stale cached partial. w7 final QA (P2) extended it to FULL pages: a
+    full navigation away and Back served /bulk from Chrome's HTTP cache
+    (transferSize 0) with the pre-edit value, for good. Static assets and
+    responses that chose their own caching are still left untouched."""
 
     def test_htmx_response_has_no_store(self, loaded_client):
         resp = loaded_client.get("/qubits", headers={"HX-Request": "true"})
         assert resp.headers.get("Cache-Control") == "no-store"
 
-    def test_non_htmx_response_has_no_no_store(self, loaded_client):
-        resp = loaded_client.get("/")
+    @pytest.mark.parametrize("url", ["/", "/qubits", "/bulk", "/explorer"])
+    def test_a_full_page_is_no_store_too(self, loaded_client, url):
+        resp = loaded_client.get(url)
+        assert resp.status_code == 200 and resp.mimetype == "text/html", url
+        assert resp.headers.get("Cache-Control") == "no-store", url
+
+    def test_static_assets_are_left_alone(self, loaded_client):
+        resp = loaded_client.get("/static/app.js")
+        assert resp.status_code == 200
         assert resp.headers.get("Cache-Control") != "no-store"
+
+    def test_a_route_that_chose_its_own_caching_keeps_it(self, loaded_client):
+        resp = loaded_client.get("/bulk/all-values")
+        assert resp.headers.get("Cache-Control") == "no-cache"
 
 
 class TestPhase5DatasetLruLock:
@@ -7504,6 +7518,27 @@ class TestSidebarIAr15:
         appjs = self._appjs()
         assert '"/instrument-wiring"' not in appjs
         assert '"/instrument"' in appjs
+
+    def test_no_template_still_names_the_page_by_its_old_name(self):
+        """Queue #2: the page is "Live edit - Json Tree view" (the user's
+        exact wording) everywhere a user can read it -- the sidebar and the
+        palette were renamed first (167c3bd) while 12+ buttons, tooltips and
+        the landing page still said "Json Tree View". Jinja/HTML comments are
+        not user-visible and are skipped. The new name is removed BEFORE the
+        search (not exempted per line): one line can carry both, e.g. a
+        button's title and its label."""
+        import re as _re
+        tdir = self._ROOT / "quam_state_manager" / "web" / "templates"
+        hits = []
+        for f in sorted(tdir.glob("*.html")):
+            txt = f.read_text(encoding="utf-8")
+            txt = _re.sub(r"\{#.*?#\}", "", txt, flags=_re.S)
+            txt = _re.sub(r"<!--.*?-->", "", txt, flags=_re.S)
+            txt = txt.replace("Live edit - Json Tree view", "")
+            for line in txt.splitlines():
+                if _re.search(r"json\s*tree\s*view", line, _re.I):
+                    hits.append(f"{f.name}: {line.strip()[:120]}")
+        assert not hits, hits
 
     def test_palette_covers_every_nav_page(self):
         base = self._base()

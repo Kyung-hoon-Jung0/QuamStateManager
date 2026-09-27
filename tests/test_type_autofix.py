@@ -882,7 +882,7 @@ class TestTheDiagnosticsCard:
         # QA F-G: this pin used to assert the bug ("Auto-correct 0 values" as a
         # PRIMARY button) against its own docstring -- no offer for nothing
         assert "Auto-correct" not in html
-        assert "type the number in the Json Tree View" in html
+        assert "type the number in Live edit - Json Tree view" in html
         assert "See why" in html
 
     # --- QA F-G: the offer counts what SM WILL convert ---------------------
@@ -900,7 +900,7 @@ class TestTheDiagnosticsCard:
         html = client.get("/type-alarm/banner").get_data(as_text=True)
         assert "stored as TEXT" in html                  # still reported...
         assert not re.search(r"Fix \d+ value", html)    # ...but not offered
-        assert "type the number in the Json Tree View" in html
+        assert "type the number in Live edit - Json Tree view" in html
         assert "Why not" in html
 
     def test_a_plan_with_nothing_to_convert_opens_its_reasons(self, client):

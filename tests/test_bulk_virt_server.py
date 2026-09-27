@@ -910,7 +910,7 @@ class TestPairGridVirt:
         assert "BulkPairEdit.openPair(" in joined, "fixture: no cold LIST cell"
         assert "bulk-cell-runtime" in joined, "fixture: no cold RUNTIME cell"
         assert 'placeholder="—"' in joined, "fixture: no cold MISSING cell"
-        assert re.search(r'<input type="text" class="bulk-cell" ', joined), \
+        assert re.search(r'<input type="text" autocomplete="off" class="bulk-cell" ', joined), \
             "fixture: no cold plain SCALAR cell"
 
     def test_every_hydrated_pair_cell_names_its_own_row(self, tmp_path):

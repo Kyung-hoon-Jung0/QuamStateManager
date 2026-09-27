@@ -1958,7 +1958,12 @@ def _chip_needs_generated_config(store) -> bool:
     if cached is not None and cached[0] == key:
         return cached[1]
     try:
-        verdict = any(not row.get("known") for row in PulseIndex(store).rows())
+        # An alias row (x180 -> "#./x180_DragCosine") has no class of its own
+        # -- its `known` is False by construction, and every real chip has
+        # them. Its TARGET is a row of its own and is judged there; counting
+        # the alias made every chip spawn the ~13 s subprocess on open.
+        verdict = any(not row.get("known") and not row.get("is_alias")
+                      for row in PulseIndex(store).rows())
     except Exception:  # noqa: BLE001 -- a probe never breaks an activation
         logger.debug("pulse-class probe failed", exc_info=True)
         return False
@@ -35227,6 +35232,34 @@ _AUTOFIT_BLOCKED_SCHEDULER_ENDPOINTS = {
 }
 
 
+_AUTOFIT_ENGINE_MODULE = "quam_state_manager.core.autofit.engine"
+
+
+def _loaded_autofit_engine():
+    """The autofit engine module if this process has imported it, else None.
+
+    RAM P5 fast path: a never-imported engine means no plan can be running
+    (the registry `get_engine` reads lives in it), so the first edit of a
+    session skips the 171-module import (+1.0 s).
+
+    w7 final QA (P2): `sys.modules` holds a module from the moment its import
+    STARTS. While another request (every page's first /scheduler/status poll)
+    is still executing the engine's body, the entry is half-built and has no
+    `locks_chip` yet -- reading it raised AttributeError, a 500 on the first
+    chip-mutating request after a server start. A half-built entry is handed
+    to a real import instead, which waits on the module's import lock until
+    the other thread has finished, exactly as the pre-P5 `import` did.
+    """
+    mod = sys.modules.get(_AUTOFIT_ENGINE_MODULE)
+    if mod is None:
+        return None
+    if (getattr(getattr(mod, "__spec__", None), "_initializing", False)
+            or not hasattr(mod, "locks_chip")):
+        import importlib
+        mod = importlib.import_module(_AUTOFIT_ENGINE_MODULE)
+    return mod
+
+
 @bp.before_request
 def _scheduler_lock_guard():
     """409 chip-mutating / QM-subprocess routes while the Scheduler is running.
@@ -35248,7 +35281,7 @@ def _scheduler_lock_guard():
         # imported the engine (the registry `get_engine` reads lives in it),
         # so a never-imported engine is "no plan" -- without paying the
         # 171-module import (+1.0 s) on the first edit of every session.
-        autofit_engine = sys.modules.get("quam_state_manager.core.autofit.engine")
+        autofit_engine = _loaded_autofit_engine()
         if autofit_engine is not None and autofit_engine.locks_chip(_sched_inst()):
             resp = make_response(jsonify({
                 "error": "autofit_running",

@@ -45,7 +45,7 @@
           title="Show what SM would store instead, then convert the ones you confirm">Fix {{ type_alarm.strnum.fixable }} value{{ 's' if type_alarm.strnum.fixable != 1 }}&hellip;</button>
   {% elif type_alarm.count and type_alarm.editable %}
   <span class="muted type-alarm-hand">SM won&rsquo;t convert {{ 'these' if type_alarm.count != 1 else 'this one' }}
-    automatically{% if type_alarm.strnum and type_alarm.strnum.hand_fixable %} &mdash; to change one, type the number in the Json Tree View{% endif %}.</span>
+    automatically{% if type_alarm.strnum and type_alarm.strnum.hand_fixable %} &mdash; to change one, type the number in Live edit - Json Tree view{% endif %}.</span>
   <button type="button" class="btn-sm outline"
           onclick="window.openTypeFixPlan && window.openTypeFixPlan()"
           title="Why SM leaves these alone">Why not&hellip;</button>
@@ -53,7 +53,7 @@
   {% if type_alarm.first %}
   <button type="button" class="btn-sm" data-path="{{ type_alarm.first }}"
           onclick="window._navigateToExplorerPath && window._navigateToExplorerPath(this.getAttribute('data-path'))"
-          title="Open the Json Tree View at the first offending field">Show in Json Tree View</button>
+          title="Open Live edit - Json Tree view at the first offending field">Show in Live edit - Json Tree view</button>
   {% endif %}
   <button type="button" class="btn-sm outline" hx-post="/type-alarm/dismiss"
           hx-vals='{"sig": {{ type_alarm.sig | tojson }}, "env_sig": {{ type_alarm.env_sig | tojson }}, "token": {{ type_alarm.token | tojson }}}'

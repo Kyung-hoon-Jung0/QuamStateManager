@@ -255,6 +255,41 @@ class TestTheConfigIsWarmedInAdvance:
         store = app.config["contexts"][app.config["active_context"]]["store"]
         assert R._chip_needs_generated_config(store) is False
 
+    def test_an_alias_pulse_is_not_an_unknown_class(self, tmp_path):
+        """w7 final QA: every real chip carries aliases (x180 ->
+        "#./x180_DragCosine"), whose row has no class of its own and so reads
+        known=False. Counting them spawned the ~13 s subprocess on EVERY chip,
+        lab class or not. The alias's target is judged on its own row."""
+        from quam_state_manager.web import routes as R
+        from quam_state_manager.core.pulse_index import PulseIndex
+        folder = tmp_path / "aliaschip"
+        folder.mkdir()
+        import json as _json
+        (folder / "state.json").write_text(_json.dumps({
+            "qubits": {"q1": {"id": "q1", "f_01": 6.1e9, "xy": {
+                "RF_frequency": 6.1e9, "operations": {
+                    "x180_DragCosine": {
+                        "__class__": ("quam_builder.architecture.superconducting"
+                                      ".components.pulses.DragCosinePulse"),
+                        "amplitude": 0.3, "length": 40, "alpha": -0.05,
+                        "anharmonicity": 2.0e8, "axis_angle": 0.0,
+                        "detuning": 0.0, "digital_marker": None},
+                    "x180": "#./x180_DragCosine"}}}},
+            "active_qubit_names": ["q1"],
+        }), encoding="utf-8")
+        (folder / "wiring.json").write_text(_json.dumps(
+            {"network": {"host": "1.2.3.4"}, "wiring": {"qubits": {}}}),
+            encoding="utf-8")
+        app = create_app(testing=True, instance_path=str(tmp_path / "_i3"))
+        c = app.test_client()
+        c.post("/load", data={"folder": str(folder)})
+        store = app.config["contexts"][app.config["active_context"]]["store"]
+        rows = PulseIndex(store).rows()
+        # the fixture really reaches the state the gate must see through
+        aliases = [r for r in rows if r.get("is_alias")]
+        assert aliases and all(not r.get("known") for r in aliases)
+        assert R._chip_needs_generated_config(store) is False
+
     def test_it_refuses_to_run_without_an_env_the_user_picked(self, tmp_path):
         """SM never chooses the environment; a missing one is said, not
         guessed."""

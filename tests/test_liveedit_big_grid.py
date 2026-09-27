@@ -4,8 +4,11 @@ Drives the real grid-virt.js + bulk-edit.js + pair-edit.js under jsdom via
 ``liveedit_big_grid_selfcheck.cjs``: the header-stats pass is one index (not
 two whole-table scans per column), an empty search query builds no search
 text, the cold right-hand tail of a grid over the cell gate is taken out of
-layout by one rule per column and put back from its left end on demand, and
-the column-visibility pass walks only the columns that changed.
+layout by one rule per column and put back from its left end on demand, a far
+JUMP reveals only the columns it lands on (a blank spacer column holds the
+width of the run left of them, the rules are rewritten one small block at a
+time, and a landing at the end stays at the end), and the column-visibility
+pass walks only the columns that changed.
 """
 from __future__ import annotations
 
@@ -30,4 +33,4 @@ def test_liveedit_big_grid_selfcheck_passes():
     assert r.returncode == 0, (r.stdout + r.stderr)
     # the LAST line, not merely a zero exit: a pending await that never
     # settles ends node with exit 0 and half the checks unrun
-    assert r.stdout.strip().splitlines()[-1] == "all checks passed (51 assertions)", r.stdout[-2000:]
+    assert r.stdout.strip().splitlines()[-1] == "all checks passed (75 assertions)", r.stdout[-2000:]

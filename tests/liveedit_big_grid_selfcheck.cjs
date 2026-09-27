@@ -185,6 +185,7 @@ function world(opts) {
   win.__gvs = {};
   win.GridVirt.create = function (o) {
     if (opts.tailMin) o.tailMinCells = opts.tailMin;
+    if (opts.tailBlock) o.tailBlock = opts.tailBlock;
     return (win.__gvs[o.tableSel] = create(o));
   };
   new win.Function(BULK_JS).call(win);
@@ -269,7 +270,10 @@ const statOf = (win, t, k) => win.document.querySelector('#' + t + ' [data-col-s
     ok(rules === NCOL - HOT, 'one rule per collapsed column (' + rules + ' for ' + (NCOL - HOT) + ') -- a single giant selector list stopped applying in real Chrome');
     ok(sty.textContent.indexOf('#bulk-table th.ck-10,#bulk-table td.ck-10{display:none!important}') >= 0
        && sty.textContent.indexOf('.ck-9{') < 0, 'the run starts at the first cold column and spares the hot ones');
-    const mr = /#bulk-table\{margin-right:(\d+)px\}/.exec(sty.textContent);
+    // (the margin has a sheet of its own: moving it must not invalidate a
+    // block of cells -- see TAIL_BLOCK in grid-virt.js)
+    const msty = d.getElementById('bulk-virt-width-style-tail-m');
+    const mr = /#bulk-table\{margin-right:(\d+)px\}/.exec(msty ? msty.textContent : '');
     const px = win.GridVirt.pxPerChar();
     let want = 0;
     for (let i = HOT; i < NCOL; i++) want += Math.max(10 * px + win.GridVirt.EST_PAD, ('c' + i).length * 7.5 + 30);
@@ -393,12 +397,16 @@ const statOf = (win, t, k) => win.document.querySelector('#' + t + ' [data-col-s
     // geometry: column N starts at N*200px
     Object.defineProperty(win.HTMLElement.prototype, 'offsetLeft', { configurable: true,
       get: function () { const m = /\bck-(\d+)\b/.exec(this.className || ''); return m ? +m[1] * 200 : 0; } });
-    // a jump to the far right: nothing laid out ahead, the whole run comes
-    // back, and only the window around 6000px (c22..c38) is fetched
+    // the whole run on screen (a far JUMP now reveals only where it lands --
+    // section 9 -- so the state this section starts from is set directly);
+    // at 6000px nothing is within two viewports of leaving, and only the
+    // window around it (c22..c38) is fetched
+    const gv8 = win.__gvs['#' + G.id];
     win.__tableW = 0;
+    gv8.revealAll();
     pane.scrollLeft = 6000;
-    for (let i = 0; i < 3; i++) { pane.dispatchEvent(new win.Event('scroll')); await tick(40); }
-    ok(pt.querySelectorAll('th.bulk-virt-collapsed').length === 0, 'a far jump reveals the whole run');
+    for (let i = 0; i < 2; i++) { pane.dispatchEvent(new win.Event('scroll')); await tick(40); }
+    ok(pt.querySelectorAll('th.bulk-virt-collapsed').length === 0, 'the whole run shows, and nothing near the window leaves layout');
     // back at scrollLeft 0: everything past 1200 * (1.5 + 2) = 4200px may leave again
     pane.scrollLeft = 0;
     win.__tableW = 1e6;
@@ -419,14 +427,127 @@ const statOf = (win, t, k) => win.document.querySelector('#' + t + ' [data-col-s
     ok(pt.querySelector('.bulk-group-head[data-group="B"]').colSpan === 2,
        G.pre + ': ' + 'the group band follows (B spans c20..c21: ' + pt.querySelector('.bulk-group-head[data-group="B"]').colSpan + ')');
     // the focus pins its column the same way
-    win.__tableW = 0; pane.scrollLeft = 6000;
-    for (let i = 0; i < 3; i++) { pane.dispatchEvent(new win.Event('scroll')); await tick(40); }
+    win.__tableW = 0; gv8.revealAll(); pane.scrollLeft = 6000;
+    for (let i = 0; i < 2; i++) { pane.dispatchEvent(new win.Event('scroll')); await tick(40); }
     win.__tableW = 1e6; pane.scrollLeft = 0;
     pt.querySelector('tr[' + G.attr + '="q1' + G.sfx + '"] td.ck-35 .bulk-cell').focus();
     pane.dispatchEvent(new win.Event('scroll')); await tick(40);
     ok(!pt.querySelector('th.ck-35').classList.contains('bulk-virt-collapsed')
        && pt.querySelector('th.ck-36').classList.contains('bulk-virt-collapsed'),
        G.pre + ': ' + 'a focused column is never taken out of layout');
+  }
+
+  // ── 9. a far JUMP reveals only where it lands (w7 final QA) ────────────────
+  // The 30Q rig's jump to the far right of its 2,389-column pair grid was one
+  // 3.0-3.2 s task: the scroll pass revealed the WHOLE cold tail up to the
+  // landing (a full style + layout of ~200k cells). Revealing it in rAF slices
+  // does not help -- each slice re-lays out the whole grown table (measured:
+  // 73 -> 294 ms per 50-column slice, 13 s in all). Now the pass reveals the
+  // columns around the landing, the run left of them stays out of layout with
+  // one of its columns kept as a blank spacer holding its width, the rules are
+  // rewritten one small block at a time, and a landing at the END stays at the
+  // end when the real widths beat the estimates.
+  // A coherent layout model: a shown column is its estimate + 10 px wide while
+  // cold and + 30 once its cells are in (so both the reveal AND the landing
+  // cells beat the estimates), a display:none rule takes a column out, a
+  // spacer is its min-width, the pane is 300 px wide and scrolls over the
+  // table + its margin. Run twice: with the cells landing, and with a fetch
+  // that never lands (then only the pass itself can keep the end).
+  for (const LAND of [true, false]) {
+    const ok9 = (c, m) => ok(c, (LAND ? '' : '[no cells land] ') + m);
+    const win = world({ tailMin: 100, tailBlock: 4, coldFrom: NCOL, pairColdFrom: HOT, land: LAND });
+    await tick(10);
+    const d = win.document, pt = d.getElementById('bulk-pair-table'), pane = d.getElementById('table-pane');
+    const gv = win.__gvs['#bulk-pair-table'];
+    const px = win.GridVirt.pxPerChar();
+    const est = (i) => Math.max(10 * px + win.GridVirt.EST_PAD, ('c' + i).length * 7.5 + 30);
+    const tailSheets = () => Array.from(d.querySelectorAll('style')).filter((s) => /^bulk-pair-virt-width-style-tail(-\d+)?$/.test(s.id));
+    const tailText = () => tailSheets().map((s) => s.textContent).join('\n');
+    const marginOf = () => { const m = d.getElementById('bulk-pair-virt-width-style-tail-m'); const r = m && /margin-right:(\d+)px/.exec(m.textContent); return r ? +r[1] : 0; };
+    function geo() {                                // column i -> {x, w} in the pair table
+      const txt = tailText(), out = [];
+      let x = 0;
+      for (let i = 0; i < NCOL; i++) {
+        const none = txt.indexOf('th.ck-' + i + ',') >= 0 && new RegExp('td\\.ck-' + i + '\\{display:none').test(txt);
+        const mw = new RegExp('th\\.ck-' + i + '\\{min-width:(\\d+)px').exec(txt);
+        const td = pt.querySelector('tbody td.ck-' + i);
+        const w = none ? 0 : (mw ? +mw[1] : est(i) + (td && !td.classList.contains('bulk-td-cold') ? 30 : 10));
+        out.push({ x: none ? 0 : x, w: w });
+        x += w;
+      }
+      out.total = x;
+      return out;
+    }
+    const colOf = (el) => { const m = /\bck-(\d+)\b/.exec(el.className || ''); return m ? +m[1] : -1; };
+    Object.defineProperty(win.HTMLElement.prototype, 'offsetLeft', { configurable: true, get: function () {
+      const i = colOf(this); if (i < 0 || !pt.contains(this)) return 0; return geo()[i].x; } });
+    Object.defineProperty(win.HTMLElement.prototype, 'offsetWidth', { configurable: true, get: function () {
+      if (this === pt) return geo().total;
+      if (this.tagName === 'TABLE') return 0;
+      const i = colOf(this); if (i < 0 || !pt.contains(this)) return 0; return geo()[i].w; } });
+    Object.defineProperty(pane, 'clientWidth', { configurable: true, get: () => 300 });
+    Object.defineProperty(pane, 'scrollWidth', { configurable: true, get: () => geo().total + marginOf() });
+    const collapsed = () => { const o = []; for (let i = HOT; i < NCOL; i++) if (gv.isCollapsed('c' + i)) o.push(i); return o; };
+    ok9(collapsed().length === NCOL - HOT, 'model: the whole cold tail starts out of layout');
+    // count what each write reassigns
+    const TC = Object.getOwnPropertyDescriptor(win.Node.prototype, 'textContent');
+    let rewritten = [];
+    Object.defineProperty(win.Node.prototype, 'textContent', { configurable: true, get: TC.get, set: function (v) {
+      if (this.tagName === 'STYLE' && /^bulk-pair-virt-width-style-tail(-\d+)?$/.test(this.id)) rewritten.push((String(v).match(/\{display:none!important\}/g) || []).length);
+      return TC.set.call(this, v); } });
+    win.__fetched = [];
+    // the jump: the scrollbar dragged to the end
+    pane.scrollLeft = pane.scrollWidth - pane.clientWidth;
+    for (let i = 0; i < 4; i++) { pane.dispatchEvent(new win.Event('scroll')); await tick(40); }
+    const col1 = collapsed();
+    const shown1 = []; for (let i = HOT; i < NCOL; i++) if (col1.indexOf(i) < 0) shown1.push(i);
+    ok9(shown1.length > 0 && shown1[shown1.length - 1] === NCOL - 1 && shown1.every((c, k) => k === 0 || c === shown1[k - 1] + 1),
+       'the jump reveals one run of columns ending at the last one (c' + shown1[0] + '..c' + shown1[shown1.length - 1] + ')');
+    // the window is (1 + 2 * 1.5) viewports + one of slack at most, in estimated px
+    ok9(shown1.length <= Math.ceil((300 * 5) / est(20)) + 1 && col1.length >= 10,
+       'and ONLY around the landing: ' + shown1.length + ' shown, ' + col1.length + ' of ' + (NCOL - HOT) + ' still out of layout');
+    const sp = shown1[0] - 1;                       // the middle run's last column
+    const txt1 = tailText();
+    const mw1 = new RegExp('th\\.ck-' + sp + '\\{min-width:(\\d+)px').exec(txt1);
+    let wantMid = 0; for (let i = HOT; i <= sp; i++) wantMid += est(i);
+    ok9(!!mw1 && Math.abs(+mw1[1] - Math.round(wantMid)) <= 1 && !new RegExp('td\\.ck-' + sp + '\\{display:none').test(txt1),
+       'the column left of it is a blank spacer holding the middle run\'s estimated width (' + (mw1 && mw1[1]) + ' vs ' + Math.round(wantMid) + ')');
+    ok9(new RegExp('td\\.ck-' + sp + '>\\*\\{visibility:hidden').test(txt1) && !pt.querySelector('th.ck-' + sp).classList.contains('bulk-virt-collapsed'),
+       'the spacer shows no content, and the group band spans it (no collapsed marker)');
+    ok9(marginOf() === 0, 'nothing is left at the right end, so the margin is 0');
+    const g1 = geo();
+    ok9(Math.abs(pane.scrollLeft - (pane.scrollWidth - pane.clientWidth)) <= 1
+       && g1[NCOL - 1].x + g1[NCOL - 1].w <= pane.scrollLeft + 300 + 1 && g1[NCOL - 1].x >= pane.scrollLeft,
+       'it LANDS at the end: the real widths beat the estimates and the last column is still in view (' + Math.round(pane.scrollLeft) + ' of ' + (pane.scrollWidth - 300) + ')');
+    const total = NCOL - HOT;
+    ok9(rewritten.length > 0 && rewritten.length < Math.ceil(total / 4) && Math.max.apply(null, rewritten) <= 4,
+       'every write reassigned only the small blocks it changed (' + rewritten.length + ' sheet writes of ' + Math.ceil(total / 4) + ' blocks, at most ' + Math.max.apply(null, rewritten) + ' rules each; one sheet would carry all the collapsed columns)');
+    const asked = win.__fetched.map(decodeURIComponent).join(',');
+    const askedMid = col1.filter((i) => new RegExp('[=,]c' + i + '(,|&|$)').test(asked));
+    const askedWin = shown1.filter((i) => new RegExp('[=,]c' + i + '(,|&|$)').test(asked));
+    ok9(askedWin.length > 0 && askedMid.length === 0,
+        'the columns of the landing were fetched (c' + askedWin.join(',c') + '), nothing in the middle run was (' + askedMid.join(',') + ')');
+    // three viewports back left: the middle run gives up its RIGHT end, no more
+    rewritten = [];
+    pane.scrollLeft -= 900;
+    for (let i = 0; i < 3; i++) { pane.dispatchEvent(new win.Event('scroll')); await tick(40); }
+    const col2 = collapsed();
+    const back = col1.length - col2.length;
+    ok9(back > 0 && back <= Math.ceil(300 * 4 / est(20)) + 1 && col2[col2.length - 1] === sp - back,
+       'scrolling back left brings the middle run back from its right end only (' + back + ' columns, it now ends at c' + col2[col2.length - 1] + ')');
+    // back to 0: the far end folds away again, spacer and all
+    pane.scrollLeft = 0;
+    for (let i = 0; i < 3; i++) { pane.dispatchEvent(new win.Event('scroll')); await tick(40); }
+    const txt3 = tailText();
+    ok9(collapsed().length === total && txt3.indexOf('min-width') < 0 && marginOf() > 0,
+       'back at 0 the whole tail is out of layout again, one suffix, no spacer (margin ' + marginOf() + ')');
+    // asking for one column deep inside a run reveals that column, not the run
+    gv.ensureTd(pt.querySelector('tr[data-pair="q2-x"] td.ck-30'));
+    const txt4 = tailText();
+    ok9(!gv.isCollapsed('c30') && gv.isCollapsed('c29') && gv.isCollapsed('c31')
+       && new RegExp('th\\.ck-29\\{min-width:').test(txt4),
+       'a caret asked deep into the tail brings back that column alone, a spacer holding the run left of it');
+    Object.defineProperty(win.Node.prototype, 'textContent', TC);
   }
 
   console.log(fails ? ('FAILED ' + fails + ' of ' + asserts) : ('all checks passed (' + asserts + ' assertions)'));

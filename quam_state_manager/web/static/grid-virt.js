@@ -62,6 +62,21 @@
        on the number of cells it would take out, so every grid under it --
        every real chip measured so far -- is untouched. */
     var TAIL_MIN_CELLS = 20000;
+    /* A FAR JUMP REVEALS ONLY WHERE IT LANDS (w7 final QA). The collapsed
+       set is any set of maximal runs, not only the right-end suffix: a jump
+       deep into a run (the scrollbar dragged to the end of the 30Q rig's
+       2,389-column pair grid) reveals the columns around the landing and the
+       run left of them stays out of layout, its width held by ONE of its
+       columns kept on screen as a blank spacer (min-width = the estimated
+       width of the whole run, contents hidden). Revealing everything up to
+       the far end was one 3.0-3.2 s task (a full style + layout of ~200k
+       cells), and revealing it in rAF slices does not help: every slice
+       re-lays out the whole grown table (measured 73 -> 294 ms per 50-column
+       slice, 13 s in all). The rules live in blocks of TAIL_BLOCK columns,
+       one <style> each, and a write reassigns only the blocks whose text
+       changed: rewriting one sheet of ~2,400 rules costs 0.3-0.9 s of style
+       recalc on its own, emptying a 50-rule block ~0.07 s. */
+    var TAIL_BLOCK = 64;
 
     var _resolved = {
         then: function (f) { try { f(); } catch (e) {} return _resolved; },
@@ -166,6 +181,7 @@
         // with one is never taken back out of layout (see tailRecollapse)
         var dirtyCols = opts.dirtyCols || function () { return {}; };
         var tailMin = opts.tailMinCells > 0 ? opts.tailMinCells : TAIL_MIN_CELLS;
+        var tailBlock = opts.tailBlock > 0 ? opts.tailBlock : TAIL_BLOCK;
         var phase = opts.phase || function () {};
 
         var v = null;                 // { html, vals, cold, remote, inflight, wrap, byPath, pathTd, failed }
@@ -181,8 +197,13 @@
         // out of `cold` (never asked for again) but their tds are still on the
         // page, still empty -- so the instance must stay alive to keep their
         // values in the whole-chip search, and the note must keep saying so.
-        function tailEl(create) {
-            var id = styleId + '-tail';
+        /* Block b of the collapse rules: block 0 is `<styleId>-tail`, block
+           b > 0 is `<styleId>-tail-<b>`, and 'm' is the table's margin -- a
+           sheet of its own, so a margin that moves invalidates the table
+           alone and not a block's worth of cells (measured: the margin in
+           block 0 doubled a far jump's style recalc, 4.5k -> 9.3k elements). */
+        function tailEl(b, create) {
+            var id = styleId + '-tail' + (b ? '-' + b : '');
             var el = document.getElementById(id);
             if (!el && create) { el = document.createElement('style'); el.id = id; document.head.appendChild(el); }
             return el;
@@ -191,8 +212,14 @@
         /* Drop every trace of a collapse: the rules, and the marker class on
            the heads it covered (the group band counts that class as hidden). */
         function tailClear(t) {
-            var el = tailEl(false);
-            if (el) el.textContent = '';
+            var me = tailEl('m', false);
+            if (me) me.textContent = '';
+            for (var b = 0; ; b++) {
+                var el = tailEl(b, false);
+                if (!el) { if (b) break; else continue; }
+                el.textContent = '';
+            }
+            if (v && v.tail) v.tail.texts = [];
             if (t) {
                 Array.prototype.forEach.call(t.querySelectorAll('th.bulk-virt-collapsed'), function (h) {
                     h.classList.remove('bulk-virt-collapsed');
@@ -200,62 +227,180 @@
             }
         }
 
-        /* Write the rules for tail.list[tail.from..]. The margin is the sum of
-           the estimates of the collapsed columns that would SHOW (a hidden
-           one takes no width), read from the head's classes at write time. */
-        function tailWrite() {
-            var tl = v && v.tail; if (!tl) return;
-            var sels = [], w = 0;
-            for (var i = tl.from; i < tl.list.length; i++) {
-                var e = tl.list[i];
-                // one RULE per column: a single rule with ~2,700 selectors stopped
-                // applying past ~1,366 columns in real Chrome (measured on the
-                // 30Q rig: ck-1377 onward stayed laid out)
-                sels.push(tableSel + ' th.' + e.ck + ',' + tableSel + ' td.' + e.ck + '{display:none!important}');
-                if (!thHidden(e.h)) w += e.w;
-                e.h.classList.add('bulk-virt-collapsed');
+        /* The maximal runs of collapsed columns, as [start, end) index pairs. */
+        function tailRuns(tl) {
+            var out = [], n = tl.list.length, i = 0;
+            while (i < n) {
+                if (!tl.col[i]) { i++; continue; }
+                var s0 = i;
+                while (i < n && tl.col[i]) i++;
+                out.push([s0, i]);
             }
-            tailEl(true).textContent = sels.length
-                ? sels.join('\n') + '\n'
-                  + tableSel + '{margin-right:' + Math.round(w) + 'px}'
-                : '';
+            return out;
         }
 
-        /* Put columns back from the left end of the run up to (not
-           including) index `end`. Returns true when anything came back. */
-        function tailReveal(end) {
-            var tl = v && v.tail; if (!tl || end <= tl.from) return false;
-            var t = table();
-            end = Math.min(end, tl.list.length);
-            for (var i = tl.from; i < end; i++) tl.list[i].h.classList.remove('bulk-virt-collapsed');
-            tl.from = end;
-            // fully revealed, the plan is KEPT (empty rules): scrolling back
-            // left can take the far end out of layout again
+        // the estimated width of what a run would take if it showed (a
+        // hidden column takes none), read from the heads' classes now
+        function runWidth(tl, s0, e0) {
+            var w = 0;
+            for (var i = s0; i < e0; i++) if (!thHidden(tl.list[i].h)) w += tl.list[i].w;
+            return w;
+        }
+
+        /* A run with revealed columns after it cannot hand its width to the
+           table's margin: its LAST shown column stays in layout as a blank
+           spacer that holds it. -1 when the run is the right-end suffix, or
+           shows nothing (then it takes no width anyway). */
+        function runSpacer(tl, s0, e0) {
+            if (e0 >= tl.list.length) return -1;
+            for (var i = e0 - 1; i >= s0; i--) if (!thHidden(tl.list[i].h)) return i;
+            return -1;
+        }
+
+        /* Write the rules for every collapsed column, block by block, and
+           assign only the blocks whose text changed. The right-end run's
+           width is the table's margin; an inner run's is its spacer's. */
+        function tailWrite() {
+            var tl = v && v.tail; if (!tl) return;
+            var n = tl.list.length, runs = tailRuns(tl), spacer = {}, margin = 0;
+            runs.forEach(function (r) {
+                var w = runWidth(tl, r[0], r[1]);
+                if (r[1] >= n) margin = w;
+                else {
+                    var sp = runSpacer(tl, r[0], r[1]);
+                    if (sp >= 0) spacer[sp] = w;
+                }
+            });
+            tl.margin = runs.length ? margin : 0;
+            var nb = Math.max(1, Math.ceil(n / tailBlock));
+            for (var b = 0; b < nb; b++) {
+                var sels = [];
+                for (var i = b * tailBlock; i < Math.min(n, (b + 1) * tailBlock); i++) {
+                    var e = tl.list[i];
+                    if (!tl.col[i]) { e.h.classList.remove('bulk-virt-collapsed'); continue; }
+                    if (i in spacer) {
+                        // on screen, so the group band must span it: no marker
+                        e.h.classList.remove('bulk-virt-collapsed');
+                        sels.push(tableSel + ' th.' + e.ck + '{min-width:' + Math.round(spacer[i]) + 'px!important}');
+                        sels.push(tableSel + ' th.' + e.ck + '>*,' + tableSel + ' td.' + e.ck + '>*{visibility:hidden!important}');
+                        sels.push(tableSel + ' td.' + e.ck + '{background:none!important;cursor:default!important}');
+                        continue;
+                    }
+                    // one RULE per column: a single rule with ~2,700 selectors stopped
+                    // applying past ~1,366 columns in real Chrome (measured on the
+                    // 30Q rig: ck-1377 onward stayed laid out)
+                    sels.push(tableSel + ' th.' + e.ck + ',' + tableSel + ' td.' + e.ck + '{display:none!important}');
+                    e.h.classList.add('bulk-virt-collapsed');
+                }
+                var txt = sels.length ? sels.join('\n') : '';
+                if (tl.texts[b] !== txt) { tailEl(b, true).textContent = txt; tl.texts[b] = txt; }
+            }
+            var mtxt = runs.length ? tableSel + '{margin-right:' + Math.round(margin) + 'px}' : '';
+            if (tl.texts.m !== mtxt) { tailEl('m', true).textContent = mtxt; tl.texts.m = mtxt; }
+        }
+
+        function tailSet(s0, e0, on) {
+            var tl = v && v.tail; if (!tl) return false;
+            var hit = false;
+            for (var i = Math.max(0, s0); i < Math.min(e0, tl.list.length); i++) {
+                if (tl.col[i] !== on) { tl.col[i] = on; hit = true; }
+            }
+            return hit;
+        }
+
+        /* Put the columns [s0, e0) back. Returns true when anything came
+           back. The plan is KEPT when everything shows (empty rules):
+           scrolling back left can take the far end out of layout again. */
+        function tailRevealRange(s0, e0) {
+            var tl = v && v.tail; if (!tl) return false;
+            if (!tailSet(s0, e0, false)) return false;
             tailWrite();
-            try { onReveal(t); } catch (e) {}
+            try { onReveal(table()); } catch (e) {}
             return true;
+        }
+
+        /* The scroll pass's reveal. For each run the look-ahead window
+           [left, edge] reaches (right to left): contiguous with what shows on
+           its left -> from its left end, enough to cover the gap plus one
+           viewport (the old reveal); contiguous with a window on its right ->
+           from its right end, likewise; a jump into its interior -> ONLY the
+           columns the window covers (one viewport of slack on the left), by
+           the estimated widths. One run per pass: the pass runs again on the
+           next frame, so every step is its own bounded task. */
+        function tailRevealWindow(t, wrap, cw, left, edge) {
+            var tl = v && v.tail; if (!tl) return false;
+            var n = tl.list.length, runs = tailRuns(tl);
+            for (var r = runs.length - 1; r >= 0; r--) {
+                var s0 = runs[r][0], e0 = runs[r][1], x0, x1, sp = -1;
+                // the suffix reaches as far as the margin written for it (a
+                // search that hid columns since leaves that one wider)
+                if (e0 >= n) { x0 = t.offsetWidth; x1 = x0 + Math.max(runWidth(tl, s0, e0), tl.margin || 0); }
+                else {
+                    sp = runSpacer(tl, s0, e0);
+                    if (sp < 0) continue;
+                    x0 = tl.list[sp].h.offsetLeft;
+                    x1 = x0 + (tl.list[sp].h.offsetWidth || 0);
+                }
+                if (!(edge > x0 && left < x1)) continue;
+                var a = s0, b = s0, acc = 0, i;
+                if (left <= x0 + cw) {
+                    while (b < e0 && acc < (edge - x0) + cw) {
+                        if (!thHidden(tl.list[b].h)) acc += tl.list[b].w;
+                        b++;
+                    }
+                } else if (sp >= 0 && edge >= x1 - cw) {
+                    a = b = e0;
+                    while (a > s0 && acc < (x1 - left) + cw) {
+                        if (!thHidden(tl.list[a - 1].h)) acc += tl.list[a - 1].w;
+                        a--;
+                    }
+                } else {
+                    var x = x0;
+                    a = -1; b = e0;
+                    for (i = s0; i < e0; i++) {
+                        var wi = thHidden(tl.list[i].h) ? 0 : tl.list[i].w;
+                        if (a < 0 && x + wi > left - cw) a = i;
+                        if (x >= edge) { b = i; break; }
+                        x += wi;
+                    }
+                    if (a < 0) {
+                        // past every estimate (the margin outgrew them): its end
+                        a = b = e0;
+                        while (a > s0 && acc < (edge - left) + cw) {
+                            if (!thHidden(tl.list[a - 1].h)) acc += tl.list[a - 1].w;
+                            a--;
+                        }
+                    }
+                }
+                if (tailRevealRange(a, b)) return true;
+            }
+            return false;
         }
 
         /* The other direction (w7 liveedit). Once a jump to the far right had
            revealed the run, every later Enter paid the whole table's layout
            again (big30x: 0.1 s -> 0.55-1.8 s). When the user is back two
            viewports left of a revealed column, the columns from there to the
-           run's current start go back out of layout -- only while each one is
-           clean (no unapplied edit, not holding the focus); a hydrated column
-           keeps its cells (display:none never touches a td) and its margin
-           share becomes its MEASURED width. */
+           right end go back out of layout -- only while each one is clean (no
+           unapplied edit, not holding the focus); a hydrated column keeps its
+           cells (display:none never touches a td) and its margin share
+           becomes its MEASURED width. An inner run on the way joins the
+           suffix (its spacer is no longer needed). */
         function tailRecollapse(t, wrap, cw) {
-            var tl = v && v.tail; if (!tl || tl.from <= 0) return false;
+            var tl = v && v.tail; if (!tl) return false;
+            var n = tl.list.length;
             var limit = (wrap ? wrap.scrollLeft + wrap.clientWidth : 0) + cw * (BUFFER + 2);
             var act = document.activeElement, actK = null;
             if (act && act !== document.body && t.contains(act) && act.closest) {
                 var at = act.closest('[data-col-key]');
                 actK = at && at.getAttribute('data-col-key');
             }
-            var j = tl.from, dirty = null, meas = [];
+            var j = n;
+            while (j > 0 && tl.col[j - 1]) j--;
+            var stop = j, dirty = null, meas = [];
             while (j > 0) {
                 var e = tl.list[j - 1];
-                if (!thHidden(e.h)) {
+                if (!tl.col[j - 1] && !thHidden(e.h)) {
                     if (e.h.offsetLeft <= limit || e.k === actK) break;
                     if (!v.cold.has(e.k)) {
                         if (dirty === null) { try { dirty = dirtyCols() || {}; } catch (x) { dirty = {}; } }
@@ -265,29 +410,44 @@
                 }
                 j--;
             }
-            if (j >= tl.from) return false;
+            if (j >= stop) return false;
             meas.forEach(function (m) { if (m[1] > 0) m[0].w = m[1]; });
-            tl.from = j;
+            tailSet(j, n, true);
             tailWrite();
             try { onReveal(t); } catch (e2) {}
             return true;
         }
 
+        /* A caller asking for columns may be about to look at them. Near a
+           revealed neighbour (within one block) the run comes back THROUGH
+           the column from that side, as it always did from the suffix's left
+           end; deeper inside a run only the column itself comes back -- a
+           spacer holds what is left of it -- so asking for the last column of
+           a 2,389-column grid no longer lays out all of them. */
         function tailRevealKeys(keys) {
             var tl = v && v.tail; if (!tl || !keys) return false;
-            var end = -1;
+            var n = tl.list.length, hit = false;
             keys.forEach(function (k) {
                 var p = tl.pos[k];
-                if (p != null && p >= tl.from && p + 1 > end) end = p + 1;
+                if (p == null || !tl.col[p]) return;
+                var s0 = p, e0 = p + 1;
+                while (s0 > 0 && tl.col[s0 - 1]) s0--;
+                while (e0 < n && tl.col[e0]) e0++;
+                if (e0 < n && e0 - p <= tailBlock) { if (tailSet(p, e0, false)) hit = true; }
+                else if (p - s0 < tailBlock) { if (tailSet(s0, p + 1, false)) hit = true; }
+                else if (tailSet(p, p + 1, false)) hit = true;
             });
-            return end > 0 ? tailReveal(end) : false;
+            if (!hit) return false;
+            tailWrite();
+            try { onReveal(table()); } catch (e) {}
+            return true;
         }
 
         function isCollapsed(k) {
             var tl = v && v.tail;
             if (!tl) return false;
             var p = tl.pos[k];
-            return p != null && p >= tl.from;
+            return p != null && !!tl.col[p];
         }
 
         function deadNote(mine) {
@@ -427,7 +587,7 @@
             if (!list.length || shown * nRows < tailMin) return null;
             var pos = {};
             list.forEach(function (e, j) { pos[e.k] = j; });
-            return { list: list, pos: pos, from: 0 };
+            return { list: list, pos: pos, col: list.map(function () { return true; }), texts: [], margin: 0 };
         }
 
         function init() {
@@ -644,6 +804,7 @@
 
         // the common tail of a hydration, local or remote
         function landed(t, set) {
+            var wrap0 = v && v.wrap, pin0 = v && v.pinEnd;
             // docs/141 4ae C3: release only when there is nothing left to
             // speak for. A retired column's td is still on the page and still
             // empty, and its value lives in `vals` -- dropping the instance
@@ -660,6 +821,15 @@
             // meanwhile, the re-inserted text would be stale; reformat.
             if (window.PhysAmp) window.PhysAmp.applyAll(t);
             try { onLanded(t, set); } catch (e) {}
+            // the pass left the pane at its END and nobody moved it since:
+            // cells that came in wider than their estimates keep it there
+            if (pin0 != null && wrap0 && Math.abs(wrap0.scrollLeft - pin0) <= 2) {
+                var mx = wrap0.scrollWidth - wrap0.clientWidth;
+                if (mx > wrap0.scrollLeft + 1) {
+                    wrap0.scrollLeft = mx;
+                    if (v) v.pinEnd = wrap0.scrollLeft;
+                }
+            }
         }
 
         /* docs/141 4n: fetch the cells of server-cold columns. ONE request per
@@ -824,21 +994,22 @@
             // scrolling back runs this pass again, and keyboard navigation
             // hydrates through ensureTd regardless.
             var left = (wrap ? wrap.scrollLeft : 0) - cw * BUFFER;
-            var tl = v.tail;
-            if (tl) {
-                // the laid-out table ends at offsetWidth (the margin is outside
-                // it): when the look-ahead edge passes it, bring back enough of
-                // the run to cover the gap plus one more viewport
-                var gap = edge - t.offsetWidth;
-                if (gap > 0) {
-                    var acc = 0, end = tl.from;
-                    while (end < tl.list.length && acc < gap + cw) {
-                        if (!thHidden(tl.list[end].h)) acc += tl.list[end].w;
-                        end++;
-                    }
-                    tailReveal(end);
+            // at the END of a real scroll range the user asked for the end:
+            // a reveal, or cells landing, whose real widths differ from the
+            // estimates keeps them there (the old reveal left the last columns
+            // ~670 px out of view on the 30Q rig). landed() re-pins too.
+            var atEnd = !!wrap && wrap.clientWidth > 0 && wrap.scrollWidth > wrap.clientWidth
+                && wrap.scrollLeft > 0 && wrap.scrollLeft >= wrap.scrollWidth - wrap.clientWidth - 2;
+            if (v.tail) {
+                if (tailRevealWindow(t, wrap, cw, left, edge)) {
+                    if (atEnd) { try { wrap.scrollLeft = wrap.scrollWidth - wrap.clientWidth; } catch (e) {} }
+                    edge = (wrap ? wrap.scrollLeft + wrap.clientWidth : 0) + cw * BUFFER;
+                    left = (wrap ? wrap.scrollLeft : 0) - cw * BUFFER;
+                    // anything still to bring back is the NEXT frame's task
+                    onScroll();
                 } else tailRecollapse(t, wrap, cw);
             }
+            v.pinEnd = atEnd ? wrap.scrollLeft : null;
             var due = [];
             t.querySelectorAll('th.bulk-col-head[data-col-key]').forEach(function (h) {
                 var k = h.getAttribute('data-col-key');
@@ -856,7 +1027,7 @@
             state: function () { return v; },
             drop: function () { tailClear(table()); v = null; styleEl().textContent = ''; onState(v); },
             isCollapsed: isCollapsed,
-            revealAll: function () { var tl = v && v.tail; return tl ? tailReveal(tl.list.length) : false; },
+            revealAll: function () { var tl = v && v.tail; return tl ? tailRevealRange(0, tl.list.length) : false; },
             hydrateCols: hydrateCols,
             hydrateCol: hydrateCol,
             hydrateAll: hydrateAll,
@@ -891,5 +1062,6 @@
         EST_PX_PER_CHAR: EST_PX_PER_CHAR,
         EST_PAD: EST_PAD,
         TAIL_MIN_CELLS: TAIL_MIN_CELLS,
+        TAIL_BLOCK: TAIL_BLOCK,
     };
 })();

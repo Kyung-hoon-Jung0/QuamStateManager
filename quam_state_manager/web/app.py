@@ -215,6 +215,15 @@ def _add_security_headers(resp):
         # explicitly opt into caching would have to update after this
         # hook, which currently nobody needs to.
         resp.headers["Cache-Control"] = "no-store"
+    elif (resp.mimetype == "text/html" and request.endpoint != "static"
+          and "Cache-Control" not in resp.headers):
+        # w7 final QA (P2): a FULL page. With no Cache-Control, Chrome serves
+        # a back/forward navigation from its HTTP cache no matter how old
+        # (measured: Enter-edit on /bulk, a full navigation away, Back ->
+        # transferSize 0 and the pre-edit value, for good). no-store makes
+        # Back fetch the page the server has NOW. setdefault-style: a route
+        # that chose its own caching keeps it; static files keep theirs.
+        resp.headers["Cache-Control"] = "no-store"
     return resp
 
 
