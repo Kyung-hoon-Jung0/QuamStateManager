@@ -10613,7 +10613,7 @@ tr.bulk-row-pinned > th, tr.bulk-row-pinned > td { background: color-mix(in srgb
 }
 .pulse-flag-iq { border-color: #9b59b6; }
 .pulse-flag-readout { border-color: #e67e22; }
-/* docs/2xx pulse locations: where a shape-discovered pulse lives */
+/* docs/217 pulse locations: where a shape-discovered pulse lives */
 .pulse-found-at { font-size: 0.75em; overflow-wrap: anywhere; }
 .pulse-found-at code { font-size: inherit; padding: 0 2px; }
 div.pulse-found-at { margin: 0.2rem 0 0.4rem; }
@@ -10787,7 +10787,7 @@ table.prop-table .pulse-slider-row .pulse-slider-commit {
 .pulse-create-form { padding: 0 0.5rem 0.75rem; }
 .pulse-create-form fieldset { margin-bottom: 0.5rem; padding: 0.4rem 0.6rem; }
 /* r15 (docs/71 §2): env-discovery strip on top of the add-pulse form */
-/* docs/2xx adaptive pulses: the "your classes live in another module?"
+/* docs/218 adaptive pulses: the "your classes live in another module?"
    disclosure -- one compact row, never a full-width Pico form */
 .pulse-env-modules { flex: 1 0 100%; margin: 0.1rem 0 0; }
 .pulse-env-modules > summary { cursor: pointer; font-size: 0.95em; }
@@ -14045,6 +14045,13 @@ td.cell-live-stale .cell-live-now {
 }
 .lab-check-badge .lab-check-follow:hover { background: rgba(255, 255, 255, 0.24); }
 .lab-check-badge .lab-check-follow:disabled { opacity: 0.6; cursor: progress; }
+/* docs/218: written, but the lab's code could not vouch for it */
+.lab-check-badge.lab-check-warned {
+    font-style: normal; cursor: pointer;
+    background: var(--color-warning-bg);
+    color: var(--color-warning-text);
+    border-color: var(--color-warning-border);
+}
 .lab-check-badge.lab-check-refused {
     font-style: normal; cursor: pointer;
     background: var(--color-error-bg);

@@ -10161,6 +10161,51 @@ window.clearDetailPanelSearch = function(btnEl) {
         el.appendChild(b);
     }
 
+    /* docs/218 (verifier 4): a lab gate whose by-name ops link into it
+       cannot go alone -- generate_config() would fail for the whole chip --
+       and the ops cannot go first (the gate plays them). The refusal names
+       them (lab_delete_also) and offers the one way: all of them, in ONE
+       batch (one Ctrl+Z), which the server checks again as a whole. */
+    function _appendCascadeBtn(el, path, also) {
+        if (!el || el.querySelector(".tree-cascade-btn")) return;
+        var b = document.createElement("button");
+        b.type = "button";
+        b.className = "btn-sm outline tree-cascade-btn";
+        b.textContent = "Delete together with " + also.length + " op" +
+            (also.length === 1 ? "" : "s");
+        b.title = "Deletes " + path + " and\n" + also.join("\n") +
+            "\nin one batch (one Ctrl+Z)";
+        b.onclick = function (e) {
+            e.stopPropagation();
+            b.disabled = true;
+            var ups = [path].concat(also).map(function (p) {
+                return { dot_path: p, "delete": true };
+            });
+            _smFetch("/field/edit-batch", { method: "POST",
+                headers: {"Content-Type": "application/json"},
+                body: JSON.stringify({ updates: ups, group: "new",
+                                       expect_chip: window.__chipToken || "" }) })
+            .then(function (r) { return r.json(); })
+            .then(function (d) {
+                if (!d.ok) {
+                    b.disabled = false;
+                    el.firstChild.textContent = "✗ " + (d.error || "not deleted") + " ";
+                    return;
+                }
+                if (d.tray_html) { _swapPendingTray(d.tray_html); window._restoreTrayState && window._restoreTrayState(); }
+                if (window.showToast) window.showToast("Deleted " + path + " with " +
+                    also.length + " op" + (also.length === 1 ? "" : "s") + " (one Ctrl+Z)", "success");
+                if (window._diagChanged) window._diagChanged();
+                // several subtrees changed at once: the tree re-reads the chip
+                // in place (a page reload would trip the unsaved-edits guard)
+                if (window._softRefreshLiveSurface) window._softRefreshLiveSurface();
+            })
+            .catch(function (err) { b.disabled = false; el.firstChild.textContent = "✗ " + _netFail(err) + " "; });
+        };
+        el.appendChild(document.createTextNode(" "));
+        el.appendChild(b);
+    }
+
     /* jsontree-r2-17: an inline edit that is open (commit-on-blur is 100 ms
        deferred) or in flight when something re-renders the tree from the
        server. The re-render used to fetch BEFORE the write landed, so the
@@ -11351,6 +11396,9 @@ window.clearDetailPanelSearch = function(btnEl) {
                 if (!d.ok) {
                     var _ec = _showEditError(row, d.error);
                     if (d.chip_mismatch) _appendReloadBtn(_ec);
+                    if (Array.isArray(d.lab_delete_also) && d.lab_delete_also.length) {
+                        _appendCascadeBtn(_ec, m.path, d.lab_delete_also);
+                    }
                     actionsSpan.remove(); return;
                 }
                 var parent = _parentInfo(node);

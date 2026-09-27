@@ -191,6 +191,46 @@ function resp(status, body) {
     ok(b && b.style.top === '26px', 'a badge that would leave the window is pinned inside it (' + (b && b.style.top) + ')');
   }
 
+  // 9 (docs/218): a lab edit written UNCHECKED says so at the cell -- also when
+  //   the answer beat the probe (a missing env answers in ~0.1 s), and never
+  //   for a non-lab edit or a lab edit with nothing to say
+  {
+    const NOTE = 'Your lab code could not be run (the selected Python environment no longer exists): ' +
+      'this edit was NOT checked against your gate cz. It was written unchecked.';
+    const W = world([LAB]);
+    const p = W.w.fetch('/field/edit', { method: 'POST', body: 'dot_path=' + encodeURIComponent(LAB) + '&value=82' });
+    await until(() => W.w.document.querySelector('.lab-check-badge'));
+    W.pending[0](resp(200, { ok: true, warning: NOTE }));
+    await p;
+    await until(() => W.w.document.querySelector('.lab-check-warned'));
+    const b = W.w.document.querySelectorAll('.lab-check-badge');
+    ok(b.length === 1 && b[0].classList.contains('lab-check-warned') && /NOT checked/.test(b[0].title)
+       && /^⚠ written UNCHECKED — your lab code could not be run: the selected Python environment no longer exists$/.test(b[0].textContent),
+       'a 200 carrying the lab note turns the badge into it (' + (b[0] && b[0].textContent) + ')');
+    b[0] && b[0].click();
+    ok(!W.w.document.querySelector('.lab-check-badge'), 'a click dismisses the note');
+
+    const W2 = world([LAB]);
+    const p2 = W2.w.fetch('/field/edit', { method: 'POST', body: 'dot_path=' + encodeURIComponent(LAB) + '&value=83' });
+    W2.pending[0](resp(200, { ok: true, warning: NOTE }));     // before the probe answers
+    await p2;
+    await until(() => W2.w.document.querySelector('.lab-check-warned'));
+    ok(!!W2.w.document.querySelector('.lab-check-warned'), 'an answer that beat the probe still shows the note');
+
+    const W3 = world([LAB]);
+    const p3 = W3.w.fetch('/field/edit', { method: 'POST', body: 'dot_path=qubits.q1.f_01&value=5.1e9' });
+    W3.pending[0](resp(200, { ok: true, warning: 'a re-point target does not exist' }));
+    await p3; await tick(40);
+    ok(!W3.w.document.querySelector('.lab-check-badge'), 'a non-lab edit\'s warning is its surface\'s own business');
+
+    const W4 = world([LAB]);
+    const p4 = W4.w.fetch('/field/edit', { method: 'POST', body: 'dot_path=' + encodeURIComponent(LAB) + '&value=76' });
+    await until(() => W4.w.document.querySelector('.lab-check-badge'));
+    W4.pending[0](resp(200, { ok: true }));
+    await p4; await tick(40);
+    ok(!W4.w.document.querySelector('.lab-check-badge'), 'a checked lab edit leaves no badge');
+  }
+
   if (fails) { console.error(fails + ' FAIL'); process.exit(1); }
   console.log('all ok');
 })();

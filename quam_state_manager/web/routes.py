@@ -1696,7 +1696,7 @@ _schema_warm_lock = threading.Lock()
 # last attempt failed AT A GIVEN STATE (so a fix re-arms it, and a broken env is
 # never retried in a loop). Keyed by the chip's fs key.
 _cfg_warm_inflight: set[str] = set()
-# docs/2xx: a forced re-probe asked for while one with the same key was
+# docs/218: a forced re-probe asked for while one with the same key was
 # running -- the running one read its module set at start, so it re-runs
 _schema_rerun_pending: dict = {}
 
@@ -9598,7 +9598,9 @@ def field_delete():
                                   info=_lab_info)
         if _lab:
             return jsonify(ok=False, lab_refused=True,
-                           error=_lab_refusal_text(_lab[0])), 400
+                           error=_lab_refusal_text(_lab[0]),
+                           **({"lab_delete_also": _lab_info["delete_also"]}
+                              if _lab_info.get("delete_also") else {})), 400
         entry = modifier.delete_subtree(dot_path)
         _invalidate_engine_cache(ctx)
     except (KeyError, TypeError, ValueError, IndexError) as e:
@@ -9821,6 +9823,14 @@ def field_edit_batch():
             continue
         _lab_writes.append((_tgt, _pv))
         _lab_idx.append(_n)
+    if _lab_writes:
+        # docs/218: every delete row rides along -- a gate deleted together
+        # with its by-name mirror ops leaves nothing dangling, and only the
+        # whole batch's 'after' can show that
+        for _n, (_dp, _rv, _c) in enumerate(pairs):
+            if _rv is _BATCH_DELETE and _n not in _lab_idx:
+                _lab_writes.append((_dp, _LAB_DELETE))
+                _lab_idx.append(_n)
     # held from the check through the write (released after the lock block)
     _lab_rel = _lab_hold(modifier.store, [w for w, _v in _lab_writes])
     _lab_info: dict = {}
@@ -9839,6 +9849,8 @@ def field_edit_batch():
             return jsonify(
                 ok=False, lab_refused=True, error=_lab_msg,
                 tray_html=_tray_html(),
+                **({"lab_delete_also": _lab_info["delete_also"]}
+                   if _lab_info.get("delete_also") else {}),
                 lab_follow=(_lab_follow_payload(_one[0], _one[1], _lab_info)
                             if _one and len(pairs) == 1 else None),
                 results=[{"dot_path": dp, "applied": False,
@@ -13521,7 +13533,7 @@ _PULSE_PLOT_MAX_POINTS = 2000
 
 def _is_pulse_path(path: str) -> bool:
     """A path the pulse endpoints may act on: one of the whitelisted shapes,
-    or a pulse the open chip's index DISCOVERED by shape (docs/2xx pulse
+    or a pulse the open chip's index DISCOVERED by shape (docs/217 pulse
     locations -- ``qubit_pairs.<p>.coupler.operations.*``, a TWPA pump, a
     lab's new macro slot). Still never an arbitrary dot path: a discovered
     path is one ``pulse_index.list_pulses`` made a row for."""
@@ -13737,7 +13749,7 @@ def _pulse_rows_filter(rows: list, channel: str, query: str,
     elif channel in ("xy", "z", "resonator", "xy_detuned"):
         rows = [r for r in rows if r["owner_kind"] == "qubit" and r["channel"] == channel]
     elif channel == "found":
-        # docs/2xx: pulses discovered by shape, outside the whitelisted places
+        # docs/217: pulses discovered by shape, outside the whitelisted places
         rows = [r for r in rows if r.get("found")]
     # SERVER-side search across the WHOLE library (not just the current page --
     # the old client filter only saw the 50 rendered rows, so qubits on later
@@ -13784,7 +13796,7 @@ def pulse_row():
     if row.get("is_alias"):
         row["spark_svg"] = None
     elif not row.get("known"):
-        # The lab's own class: its own code drew this (docs/189, docs/2xx).
+        # The lab's own class: its own code drew this (docs/189, docs/218).
         _pulse_fallback_spark(store, path, row)
     else:
         row["spark_svg"] = pulse_index.sparkline(
@@ -13799,7 +13811,7 @@ def pulses_page():
     pulse_index = _pulse_index()
     if not store or not pulse_index:
         return _no_chip("pulses", "pulses")
-    # docs/2xx: validate the attached class schema on read here too (a stat
+    # docs/218: validate the attached class schema on read here too (a stat
     # per recorded lab file) -- a stale one starts its re-probe now, not only
     # when someone happens to open the create form
     try:
@@ -13864,7 +13876,7 @@ def pulses_page():
             path, lambda p=path: sparkline_svg(synth_for_operation(store, p)))
 
     if unknown_paths:
-        # docs/2xx: draw the visible lab-class rows with their own code in the
+        # docs/218: draw the visible lab-class rows with their own code in the
         # background -- the list never waits on a subprocess
         _warm_lab_sparks(store, unknown_paths)
     if rows_only:
@@ -14133,7 +14145,7 @@ def _pulse_section_ctx(store, pulse_index, path: str):
         body, context_slot=actual_path.rsplit(".", 1)[-1])
     unmodeled = (unmodeled_fields(spec, body)
                  if class_match in ("exact", "env", "alias", "leaf") else [])
-    # docs/2xx adaptive pulses: a class SM has no catalog entry for still has
+    # docs/218 adaptive pulses: a class SM has no catalog entry for still has
     # a schema -- the env's own dataclass, probed. Type its fields from that
     # (kind, required) instead of showing them raw, and say which fields the
     # class declares that this pulse leaves at their default.
@@ -14147,7 +14159,7 @@ def _pulse_section_ctx(store, pulse_index, path: str):
                 {"name": p.name, "default": p.default}
                 for p in schema_spec.params
                 if p.name not in body and p.name not in ("id", "digital_marker")]
-    # docs/2xx: the schema above comes from the manifest ATTACHED to the
+    # docs/218: the schema above comes from the manifest ATTACHED to the
     # store -- validate it on read here too, or an edit to the lab's class
     # keeps typing these fields from the old dataclass until someone opens
     # the create form. Stale kicks the re-probe and the note says so.
@@ -14230,7 +14242,7 @@ def _pulse_section_ctx(store, pulse_index, path: str):
                           else prev_links.get(f"{actual_path}.{fname}")),
         })
 
-    # docs/2xx: a discovered op in an `operations` dict renames like a qubit
+    # docs/217: a discovered op in an `operations` dict renames like a qubit
     # op; the whitelisted rows keep exactly the button set they always had
     is_qubit_op = bool(_PULSE_PATH_RES[0].match(path)
                        or (row.get("found") and row.get("renamable")))
@@ -14258,7 +14270,7 @@ def _pulse_section_ctx(store, pulse_index, path: str):
     truth = {}
     lab = {}
     if unknown_class:
-        # docs/2xx: the class's own code at the CURRENT field values, when it
+        # docs/218: the class's own code at the CURRENT field values, when it
         # is already in RAM (a render never spawns); else the generated
         # config (docs/189), which may predate the latest edit -- the page
         # then asks for the lab drawing asynchronously (`needs_lab`).
@@ -14302,7 +14314,7 @@ def _pulse_section_ctx(store, pulse_index, path: str):
         "synth_error": synth_error,
         # docs/189 -- the class is the lab's own and SM cannot synthesize it.
         "synth_unknown_class": unknown_class,
-        # docs/2xx: the class's own schema typed the fields above
+        # docs/218: the class's own schema typed the fields above
         "schema_from_env": spec is None and schema_spec is not None,
         "schema_stale": schema_stale,
         "schema_unset": schema_unset,
@@ -14313,14 +14325,14 @@ def _pulse_section_ctx(store, pulse_index, path: str):
         "plot_config_at": truth.get("at") if plot_source == "config" else None,
         "plot_config_stale": bool(truth.get("stale")) if plot_source == "config" else False,
         "truth_status": truth.get("status") if unknown_class else None,
-        # docs/2xx: ask the class's own code for this pulse once the page is
+        # docs/218: ask the class's own code for this pulse once the page is
         # up -- unless it already drew these exact field values
         "needs_lab": bool(unknown_class and plot_source != "lab"
                           and lab.get("reason") == "not-drawn"),
         "lab_warnings": (lab.get("warnings") or []) if plot_source == "lab" else [],
         "lab_canonical": lab.get("canonical") if plot_source == "lab" else None,
         "can_rename": is_qubit_op and not alias_chain,
-        # docs/2xx pulse locations: where a shape-discovered pulse lives
+        # docs/217 pulse locations: where a shape-discovered pulse lives
         "found_at": row.get("location") if row.get("found") else None,
         "plot": plot,
         "label": f"{row['owner']} · {row['channel']} · {row['op_name']}",
@@ -14699,7 +14711,7 @@ def lab_drawings_for_paths(store, paths, *, spawn: bool, overrides=None,
 
 @bp.route("/api/pulse/lab-waveform", methods=["POST"])
 def api_pulse_lab_waveform():
-    """Draw pulses with the lab's OWN class code (docs/2xx adaptive pulses).
+    """Draw pulses with the lab's OWN class code (docs/218 adaptive pulses).
 
     Body: ``{"paths": [...]}`` (existing pulses; ``params`` overrides the
     fields of a single path) or ``{"qclass": ..., "params": {...}}`` (the
@@ -14748,7 +14760,7 @@ def api_pulse_lab_waveform():
                 # the probe already offered (the roster -- which read only the
                 # chip's modules and the ones the USER named) or SM's own
                 # catalog is drawn. A lab module may talk to an instrument at
-                # import (the rule the probe keeps, docs/2xx).
+                # import (the rule the probe keeps, docs/218).
                 return jsonify({"ok": True, "results": [{
                     "qclass": qclass, "ok": False, "reason": "unknown-class",
                     "error": (f"{qclass} is not a pulse class SM has read from "
@@ -15298,7 +15310,7 @@ _lab_reprobe_lock = threading.Lock()
 
 
 def _lab_schema_check(store) -> dict:
-    """Validate-on-read for the env manifest ATTACHED to *store* (docs/2xx).
+    """Validate-on-read for the env manifest ATTACHED to *store* (docs/218).
 
     The probe-cache entry is checked on every read, but the manifest the
     store holds is what the detail + edit forms type their fields from, so it
@@ -15396,7 +15408,7 @@ def pulse_schema_status():
 @bp.route("/pulse/class-modules", methods=["POST"])
 def pulse_class_modules():
     """Name (or clear) the modules SM imports to find the lab's own pulse
-    classes (docs/2xx adaptive pulses). The probe never walks a package blind,
+    classes (docs/218 adaptive pulses). The probe never walks a package blind,
     so a class in a module the chip does not import yet is reachable only this
     way. Saving re-probes the selected env in the background (force: the
     named set changed) and answers with the env strip, which self-polls."""
@@ -15779,22 +15791,31 @@ def _lab_class_refusal(store, spec, fields: dict, qclass: str | None,
     try:
         python_path = config_generator.get_selected_env(current_app.instance_path)
     except Exception:  # noqa: BLE001
-        return None
-    if not python_path:
-        return None
+        python_path = None
     if not qclass:
         with store._lock:
             qclass = chip_qclass(store.merged, spec)[0]
+    what = [f"your class {str(qclass).rsplit('.', 1)[-1]}"]
+    if not python_path:
+        if notes is not None:
+            _lab_not_run_notes(notes, [(_LAB_NO_ENV, what)])
+        return None
     try:
         from quam_state_manager.core import lab_waveform
         rec = lab_waveform.draw(python_path, [(qclass, dict(fields))])[0]
-    except Exception:  # noqa: BLE001 -- a check that cannot run never blocks
+    except Exception as exc:  # noqa: BLE001 -- a check that cannot run never blocks
         logger.warning("lab class check failed to run", exc_info=True)
+        if notes is not None:
+            _lab_not_run_notes(notes, [(_exc_text(exc), what)])
         return None
-    if rec.get("reason") == "class-unavailable" and notes is not None:
-        notes.append(_lab_unavailable_note(python_path, qclass, rec))
+    if notes is not None:
+        if rec.get("reason") == "class-unavailable":
+            notes.append(_lab_unavailable_note(python_path, qclass, rec))
+        elif rec.get("reason"):
+            # docs/218: a check that could not RUN says so -- never silent
+            _lab_not_run_notes(notes, [(_lab_run_err(rec), what)])
     if rec.get("ok") or rec.get("reason"):
-        return None          # drawn, or not checkable (no-env / run-failed)
+        return None          # drawn, or not checkable (noted above)
     return str(rec.get("error") or "it raised")[:400]
 
 
@@ -15826,13 +15847,14 @@ def _lab_edit_refusal(store, dot_path: str, write_path: str, value) -> str | Non
 
 
 def _lab_write_refusal(store, writes, *, edited_op: str | None = None,
-                       info: dict | None = None, fills_slot: bool = False):
+                       info: dict | None = None,
+                       fills_slot: str | bool | None = None):
     """``(message, refused_write_indices)`` when a LAB class's own code
     rejects what *writes* (``[(write_path, value)]``, the paths the values
     actually land at; value ``_LAB_DELETE`` = the key is removed) would make of
     any of its pulses or gates; else None.
 
-    Two questions, both answered by the lab's own code in the selected env:
+    Three questions, all answered by the lab's own code in the selected env:
 
     1. every lab-class PULSE whose field a write changes is drawn ONCE by its
        own class with all the batch's new values for it
@@ -15845,19 +15867,32 @@ def _lab_write_refusal(store, writes, *, edited_op: str | None = None,
        on the chip with the writes applied -- the check every node that plays
        the gate runs (``assert_lines_compatible``: the control and target
        pulses must share flat_length). Only a gate the writes take from
-       applying to failing is refused.
+       applying to failing is refused;
+    3. a DELETE (or a container written whole) at or above a tracked pulse
+       field's pointer chain, or of a lab gate, is asked whether the chip
+       still loads and ``generate_config()``s (docs/218, verifier 4: deleting
+       a gate's inline pulse left its by-name mirror op pointing at nothing,
+       and the whole chip stopped compiling). Refused when it did before and
+       does not after; otherwise the fields left dangling are named.
 
     *info* (optional, filled in place): ``notes`` -- warnings to show even
-    when the write goes through (the env cannot import the class);
-    ``follow`` -- ``[{"dot_path", "value", "current"}]`` the OTHER field a
-    gate needs set to the same value (a coupled pair), so the caller can offer
-    to set both in one batch.
+    when the write goes through (the env cannot import the class, the lab's
+    code could not be run at all); ``follow`` -- ``[{"dot_path", "value",
+    "current"}]`` the OTHER field a gate needs set to the same value (a
+    coupled pair), so the caller can offer to set both in one batch;
+    ``delete_also`` -- the ops a refused delete would leave dangling.
+
+    *fills_slot* -- the path of the gate whose EMPTY slot a create fills: its
+    null slot stopped the chip loading, so every lab gate on that pair is
+    asked too, and one that now fails is named (never refused: the create
+    did not break it).
 
     SM's own catalog classes never spawn (their preview is in-process), a
     write that reaches no lab pulse or gate costs a stamp compare and a few
-    dict lookups, and a check that cannot run (no env, run failed, the env
-    cannot import the class, a value that cannot be resolved) never blocks --
-    the same rule as create."""
+    dict lookups -- no env settings read -- and a check that cannot run (no
+    env, run failed, timed out, the env cannot import the class, a value that
+    cannot be resolved) never blocks: the write goes through, and the note
+    says it was NOT checked."""
     from quam_state_manager.core import lab_watch
     if info is None:
         info = {}
@@ -15873,6 +15908,7 @@ def _lab_write_refusal(store, writes, *, edited_op: str | None = None,
     macros: dict[str, set] = {}
     new_items: list = []          # (qclass, fields, write index, path)
     changed_fields: list = []     # (op, field, value) -- for a follow offer
+    cfg = {"cut": [], "gates": [], "orphans": {}, "rows": set(), "paths": []}
     for idx, (wp, val) in enumerate(writes):
         if not isinstance(wp, str):
             continue
@@ -15884,6 +15920,8 @@ def _lab_write_refusal(store, writes, *, edited_op: str | None = None,
         aff = watch.affected(wp) if watch else []
         for mp in (watch.macros_for(wp, aff) if watch else ()):
             macros.setdefault(mp, set()).add(idx)
+        if watch and (val is _LAB_DELETE or isinstance(val, (dict, list))):
+            _lab_cfg_scope(watch, idx, wp, val, cfg)
         if not aff or val is _LAB_DELETE:
             continue
         try:
@@ -15894,11 +15932,7 @@ def _lab_write_refusal(store, writes, *, edited_op: str | None = None,
             continue          # rewriting what is there changes nothing
         v = val
         if isinstance(val, str) and is_pointer(val.strip()):
-            from quam_state_manager.core.pointer_resolver import resolve_pointer
-            try:
-                v = resolve_pointer(store.merged, val.strip(), tuple(wp.split(".")))
-            except Exception:  # noqa: BLE001 -- dangling
-                v = None
+            v = _lab_resolve_in_batch(store, val.strip(), wp, writes)
             refusal = _lab_relink_refusal(store, wp, val.strip(), v, aff)
             if refusal:
                 return refusal, [idx]
@@ -15926,56 +15960,220 @@ def _lab_write_refusal(store, writes, *, edited_op: str | None = None,
             rows_of.setdefault(op, set()).add(idx)
             if wp.startswith(op + "."):
                 direct.add(op)       # the value is written IN this pulse
+    if cfg["rows"]:
+        _lab_cfg_settle(cfg, writes)
+    fill_gate = fills_slot if isinstance(fills_slot, str) and fills_slot else None
+    warn_only: set = set()
+    if fill_gate and watch:
+        pre = ".".join(fill_gate.split(".")[:2]) + ".macros."
+        warn_only = {mp for mp in watch.macros if mp.startswith(pre)} - set(macros)
+    # docs/218 (verifier 4): an ordinary edit -- nothing above reached a lab
+    # pulse or gate -- returns here, before the env settings file is read
+    if not (new_items or per_op or macros or warn_only or cfg["rows"]):
+        return None
     try:
         python_path = config_generator.get_selected_env(current_app.instance_path)
     except Exception:  # noqa: BLE001
         python_path = None
-    if new_items and python_path:
-        from quam_state_manager.core import lab_waveform
-        try:
-            recs = lab_waveform.draw(python_path, [(q, f) for q, f, _i, _p in new_items])
-        except Exception:  # noqa: BLE001 -- a check that cannot run never blocks
-            logger.warning("lab class create check failed to run", exc_info=True)
-            recs = []
-        for (q, _f, i, pth), rec in zip(new_items, recs):
-            if rec.get("reason") == "class-unavailable":
-                notes.append(_lab_unavailable_note(python_path, q, rec))
-            if rec.get("ok") or rec.get("reason"):
-                continue
-            return (f"{str(rec.get('error') or 'it raised')[:400]} "
-                    f"(the new {q.rsplit('.', 1)[-1]} at {pth})"), [i]
-    if per_op:
-        ops = sorted(per_op, key=lambda o: (o != edited_op, o))
-        try:
-            recs = lab_drawings_for_paths(store, ops, spawn=True,
-                                          overrides_by_path=per_op)
-        except Exception:  # noqa: BLE001 -- a check that cannot run never blocks
-            logger.warning("lab class edit check failed to run", exc_info=True)
+    not_run: list = []            # (error, [what was not checked])
+    run_err = None if python_path else _LAB_NO_ENV
+    try:
+        if new_items:
+            whats = [f"your class {q.rsplit('.', 1)[-1]} (the new pulse at {pth})"
+                     for q, _f, _i, pth in new_items]
+            recs: list = []
+            if run_err:
+                not_run.append((run_err, whats))
+            else:
+                from quam_state_manager.core import lab_waveform
+                try:
+                    recs = lab_waveform.draw(python_path,
+                                             [(q, f) for q, f, _i, _p in new_items])
+                except Exception as exc:  # noqa: BLE001 -- never blocks
+                    logger.warning("lab class create check failed to run", exc_info=True)
+                    run_err = _exc_text(exc)
+                    not_run.append((run_err, whats))
+            for (q, _f, i, pth), rec, what in zip(new_items, recs, whats):
+                if rec.get("reason") == "class-unavailable":
+                    notes.append(_lab_unavailable_note(python_path, q, rec))
+                elif rec.get("reason"):
+                    run_err = run_err or _lab_run_err(rec)
+                    not_run.append((_lab_run_err(rec), [what]))
+                if rec.get("ok") or rec.get("reason"):
+                    continue
+                return (f"{str(rec.get('error') or 'it raised')[:400]} "
+                        f"(the new {q.rsplit('.', 1)[-1]} at {pth})"), [i]
+        if per_op:
+            ops = sorted(per_op, key=lambda o: (o != edited_op, o))
+            whats = {op: f"your class {str(_qclass_at(store, op)).rsplit('.', 1)[-1]} ({op})"
+                     for op in ops}
             recs = {}
-        for op in ops:
-            rec = recs.get(op)
-            if rec and rec.get("reason") == "class-unavailable":
-                note = _lab_unavailable_note(python_path, rec.get("canonical")
-                                             or _qclass_at(store, op), rec)
-                if note not in notes:
-                    notes.append(note)
-            if not rec or rec.get("ok") or rec.get("reason"):
-                continue      # no record / not run: a check that cannot run never blocks
-            err = str(rec.get("error") or "it raised")[:400]
-            who = ("" if op == edited_op or op in direct
-                   else f" ({op} reads this value)")
-            return f"{err}{who}", sorted(rows_of.get(op) or ())
-    if macros and python_path:
-        try:
-            got = _lab_macro_refusal(store, writes, macros, python_path, info,
-                                     changed_fields, watch,
-                                     fills_slot=fills_slot)
-        except Exception:  # noqa: BLE001 -- a check that cannot run never blocks
-            logger.warning("lab gate check failed to run", exc_info=True)
-            got = None
-        if got:
+            if run_err:
+                not_run.append((run_err, list(whats.values())))
+            else:
+                try:
+                    recs = lab_drawings_for_paths(store, ops, spawn=True,
+                                                  overrides_by_path=per_op)
+                except Exception as exc:  # noqa: BLE001 -- never blocks
+                    logger.warning("lab class edit check failed to run", exc_info=True)
+                    run_err = _exc_text(exc)
+                    not_run.append((run_err, list(whats.values())))
+            for op in ops:
+                rec = recs.get(op)
+                if rec and rec.get("reason") == "class-unavailable":
+                    note = _lab_unavailable_note(python_path, rec.get("canonical")
+                                                 or _qclass_at(store, op), rec)
+                    if note not in notes:
+                        notes.append(note)
+                elif rec and rec.get("reason"):
+                    run_err = run_err or _lab_run_err(rec)
+                    not_run.append((_lab_run_err(rec), [whats[op]]))
+                if not rec or rec.get("ok") or rec.get("reason"):
+                    continue      # no record / not run: never blocks (noted)
+                err = str(rec.get("error") or "it raised")[:400]
+                who = ("" if op == edited_op or op in direct
+                       else f" ({op} reads this value)")
+                return f"{err}{who}", sorted(rows_of.get(op) or ())
+        if macros or warn_only or cfg["rows"]:
+            if run_err:
+                not_run.append((run_err, _lab_gate_whats(
+                    set(macros) | warn_only, cfg)))
+            else:
+                try:
+                    got = _lab_macro_refusal(
+                        store, writes, macros, python_path, info, changed_fields,
+                        watch, fills_slot=fill_gate or bool(fills_slot),
+                        warn_only=warn_only, cfg=cfg if cfg["rows"] else None,
+                        not_run=not_run)
+                except Exception as exc:  # noqa: BLE001 -- never blocks
+                    logger.warning("lab gate check failed to run", exc_info=True)
+                    not_run.append((_exc_text(exc), _lab_gate_whats(
+                        set(macros) | warn_only, cfg)))
+                    got = None
+                if got:
+                    return got
+        return None
+    finally:
+        _lab_not_run_notes(notes, not_run)
+
+
+def _lab_resolve_in_batch(store, pointer: str, wp: str, writes):
+    """What *pointer* (written at *wp*) resolves to once the batch *writes*
+    has landed: a target the same batch creates (a rename re-points its
+    referrers at the new key) is read from the written value, a target the
+    batch deletes resolves to nothing, anything else from the chip."""
+    from quam_state_manager.core.pointer_path import pointer_to_abs
+    from quam_state_manager.core.pointer_resolver import resolve_pointer
+    t = pointer_to_abs(pointer, wp.split("."))
+    if t:
+        for w2, v2 in reversed(writes):
+            if not isinstance(w2, str) or w2 == wp:
+                continue
+            s2 = w2.split(".")
+            if t[:len(s2)] != s2:
+                continue
+            if v2 is _LAB_DELETE:
+                return None
+            ok, got = _walk_path(v2, t[len(s2):])
+            if not ok:
+                return None
+            if isinstance(got, str) and is_pointer(got):
+                try:
+                    return resolve_pointer(store.merged, got, tuple(t))
+                except Exception:  # noqa: BLE001 -- dangling
+                    return None
             return got
-    return None
+    try:
+        return resolve_pointer(store.merged, pointer, tuple(wp.split(".")))
+    except Exception:  # noqa: BLE001 -- dangling
+        return None
+
+
+_LAB_NO_ENV = ("no Python environment is selected -- pick the lab's env in "
+               "Generate Config")
+
+
+def _lab_run_err(rec: dict) -> str:
+    """Why a record was not drawn / not asked, in one line."""
+    if rec.get("reason") == "no-env":
+        return _LAB_NO_ENV
+    err = str(rec.get("error") or "").strip()
+    return err[:240] or str(rec.get("reason") or "it did not answer")
+
+
+def _lab_gate_whats(names, cfg) -> list[str]:
+    out = [f"your gate {mp.rsplit('.', 1)[-1]} ({mp})" for mp in sorted(names)]
+    if cfg and cfg.get("rows"):
+        out.append("your chip's generate_config()")
+    return out
+
+
+def _lab_not_run_notes(notes: list, not_run: list) -> None:
+    """ONE note per error: "Your lab code could not be run (<error>): this
+    edit was NOT checked against <what>" (docs/218, verifier 4: a missing
+    env, a worker that timed out or crashed let a gate-breaking write through
+    with no word at all -- the user thought the gate had been asked)."""
+    by_err: dict[str, list] = {}
+    for err, whats in not_run:
+        lst = by_err.setdefault(str(err or "it did not answer"), [])
+        for w in whats:
+            if w not in lst:
+                lst.append(w)
+    for err, whats in by_err.items():
+        if not whats:
+            continue
+        note = (f"Your lab code could not be run ({err[:240]}): this edit was "
+                f"NOT checked against {', '.join(whats[:6])}"
+                + (f" and {len(whats) - 6} more" if len(whats) > 6 else "")
+                + ". It was written unchecked.")
+        if note not in notes:
+            notes.append(note)
+
+
+def _lab_cfg_scope(watch, idx: int, wp: str, val, cfg: dict) -> None:
+    """Record what a DELETE (or a container written whole) at *wp* removes
+    that the chip's generate_config() may need: tracked pulse fields whose
+    pointer chain passes there (``LabWatch.cut_by``), lab gates inside it,
+    and by-name ops whose gate field goes with it (``named_by``)."""
+    deleting = val is _LAB_DELETE
+    pre = wp + "."
+
+    def gone(p: str) -> bool:
+        if deleting:
+            return p == wp or p.startswith(pre)
+        if not p.startswith(pre):
+            return False
+        ok, _v = _walk_path(val, p[len(pre):].split("."))
+        return not ok
+
+    cut = watch.cut_by(wp, val, deleting=deleting)
+    gates = [mp for mp in watch.gates_under(wp) if gone(mp)]
+    orphans = {}
+    for op, holders in watch.named_by.items():
+        if gone(op):
+            continue
+        hit = {h for h in holders if gone(h)}
+        if hit:
+            orphans[op] = hit
+    if not (cut or gates or orphans):
+        return
+    cfg["cut"].extend(cut)
+    cfg["gates"].extend(gates)
+    for op, hit in orphans.items():
+        cfg["orphans"].setdefault(op, set()).update(hit)
+    cfg["rows"].add(idx)
+    cfg["paths"].append(wp)
+
+
+def _lab_cfg_settle(cfg: dict, writes) -> None:
+    """An op the SAME batch deletes cannot be left dangling (a gate deleted
+    together with its by-name mirror ops leaves nothing behind)."""
+    dels = [w for w, v in writes if v is _LAB_DELETE and isinstance(w, str)]
+
+    def deleted(p):
+        return any(p == d or p.startswith(d + ".") for d in dels)
+    cfg["cut"] = [(op, f, k) for op, f, k in cfg["cut"] if not deleted(op)]
+    cfg["orphans"] = {op: h for op, h in cfg["orphans"].items() if not deleted(op)}
 
 
 #: a write that REMOVES the key (``/field/delete``, a batch delete row)
@@ -16215,8 +16413,11 @@ def _lab_gate_err(rec: dict, mp: str) -> str | None:
 
 def _lab_macro_refusal(store, writes, macros: dict, python_path: str,
                        info: dict, changed_fields, watch, *,
-                       fills_slot: bool = False):
-    """Step 2 of :func:`_lab_write_refusal`: the lab gates' own ``apply()``.
+                       fills_slot: str | bool | None = None,
+                       warn_only=(), cfg: dict | None = None,
+                       not_run: list | None = None):
+    """Steps 2 and 3 of :func:`_lab_write_refusal`: the lab gates' own
+    ``apply()``, and (for a delete, *cfg*) the chip's ``generate_config()``.
 
     Two contents go to the worker in ONE request -- the chip as it is, and the
     chip with *writes* applied -- and a gate is refused only when the first
@@ -16230,66 +16431,143 @@ def _lab_macro_refusal(store, writes, macros: dict, python_path: str,
     with a note saying so, and with a warning when the edit CHANGES the error
     (removing a spectator clash can uncover a mismatch that slipped in).
 
-    *fills_slot* (a create into a gate's EMPTY slot): a required slot left
-    null stops the whole chip loading, so 'before' can never apply -- the
-    create is then judged on 'after' alone: a gate that now loads and refuses
-    the new pulse refuses the create."""
+    Verifier 4 (docs/218): a macro that stops 'before' LOADING (a quam gate
+    with an empty required slot) is dropped from both contents and the
+    question asked again, so one unrelated empty slot no longer switches the
+    check off for every lab gate on the chip.
+
+    *fills_slot* (a create into a gate's EMPTY slot; the gate's path when
+    known): a required slot left null stops the whole chip loading, so
+    'before' can never apply -- the create is then judged on 'after' alone: a
+    gate that now loads and refuses the new pulse refuses the create.
+    *warn_only* gates (every other lab gate on that pair) are asked too and
+    NAMED when they fail, never refused. *not_run* collects what could not
+    be asked at all (the caller turns it into one note)."""
     from quam_state_manager.core import lab_waveform
     notes = info.setdefault("notes", [])
+    if not_run is None:
+        not_run = []
+    fill_gate = fills_slot if isinstance(fills_slot, str) and fills_slot else None
+    warn_only = set(warn_only or ())
     with store._lock:
         merged = store.merged
         root = merged.get("__class__")
         if not isinstance(root, str) or not root:
             return None
         seeds = set()
-        for mp in macros:
+        for mp in set(macros) | warn_only:
             segs = mp.split(".")
             if len(segs) >= 2 and segs[0] in _LAB_PRUNED:
                 seeds.add((segs[0], segs[1]))
         seeds |= _lab_write_seeds(writes)
+        if cfg:
+            for p in (list(cfg["paths"]) + [op for op, _f, _k in cfg["cut"]]
+                      + list(cfg["orphans"])):
+                segs = p.split(".")
+                if len(segs) >= 2 and segs[0] in _LAB_PRUNED:
+                    seeds.add((segs[0], segs[1]))
         base = _lab_contents(merged, seeds)
     new = copy.deepcopy(base)
     _apply_lab_writes(new, writes)
+    if cfg:
+        cfg = _lab_cfg_recheck(cfg, new)
     gone = [w for w, v in writes if v is _LAB_DELETE and isinstance(w, str)]
     # a gate being deleted (or inside a deleted subtree) is not asked
-    names = sorted(mp for mp in macros
+    names = sorted(mp for mp in set(macros) | warn_only
                    if not any(mp == w or mp.startswith(w + ".") for w in gone))
-    if not names:
+    if not names and not cfg:
         return None
+    whats = _lab_gate_whats(names, cfg)
     q = lab_waveform.MACRO_PREFIX + root
+    if cfg:
+        # pointers INTO a member pruning cut (a qubit's mirror ops of other
+        # pairs) would fail generate_config() on both sides and hide the
+        # answer: those ops go, unless a gate being asked plays them
+        keep: set = set()
+        for mp in names:
+            keep |= set((watch.macros.get(mp) or {}).get("ops") or ())
+        for k, gs in watch.macro_exact.items():
+            if gs.intersection(names):
+                keep.add(k)
+        drops = _lab_cut_ops(base, keep)
+        for c in (base, new):
+            for d in drops:
+                _lab_drop_at(c, d)
 
     def ask(b, a):
+        params = {"macros": names}
+        if cfg:
+            params["config"] = True
         try:
             return lab_waveform.draw(python_path, [
-                (q, {"contents": b, "macros": names}),
-                (q, {"contents": a, "macros": names})])
-        except Exception:  # noqa: BLE001 -- a check that cannot run never blocks
+                (q, {**params, "contents": b}), (q, {**params, "contents": a})])
+        except Exception as exc:  # noqa: BLE001 -- a check that cannot run never blocks
             logger.warning("lab gate check failed to run", exc_info=True)
+            not_run.append((_exc_text(exc), whats))
             return None
 
-    got = ask(base, new)
-    if not got:
+    def settle(b, a):
+        """Ask; while 'before' does not LOAD because of a macro nobody asked
+        about, drop that macro from both sides and ask again."""
+        got = ask(b, a)
+        dropped: list = []
+        while got and len(dropped) < 8:
+            before = got[0]
+            if before.get("reason") or not before.get("load_failed"):
+                break
+            p = _lab_unloadable_macro(before.get("error"))
+            if not p or p in names or p in dropped:
+                break
+            dropped.append(p)
+            _lab_drop_at(b, p)
+            if p != fill_gate:      # the slot being filled stays in 'after'
+                _lab_drop_at(a, p)
+            got = ask(b, a)
+        return got
+
+    def cannot_run(got) -> bool:
+        if not got:
+            return True
+        before, after = got
+        for rec in (before, after):
+            if rec.get("reason") == "class-unavailable":
+                notes.append(_lab_unavailable_note(python_path, root, rec))
+                return True
+            if rec.get("reason"):
+                not_run.append((_lab_run_err(rec), whats))
+                return True
+        return False
+
+    got = settle(base, new)
+    if cannot_run(got):
         return None
     before, after = got
-    if before.get("reason") == "class-unavailable":
-        notes.append(_lab_unavailable_note(python_path, root, before))
-        return None
-    if before.get("reason"):
-        return None       # cannot run
-    if any(_lab_gate_err(before, mp) for mp in names):
+    if any(_lab_gate_err(before, mp) for mp in names) or (
+            cfg and _lab_cfg_err(before)):
         # the pruned chip fails before the edit: ask the whole chip once
         with store._lock:
             full = json.loads(json.dumps(store.merged, default=repr))
         full_new = copy.deepcopy(full)
         _apply_lab_writes(full_new, writes)
-        got = ask(full, full_new)
-        if got and not got[0].get("reason"):
-            before, after = got
+        got = settle(full, full_new)
+        if cannot_run(got):
+            return None
+        before, after = got
     for mp in names:
         b_err = _lab_gate_err(before, mp)
         a_err = _lab_gate_err(after, mp)
         short = mp.rsplit(".", 1)[-1]
-        if b_err and fills_slot and a_err and before.get("load_failed")                 and not after.get("load_failed"):
+        if mp in warn_only and mp not in macros:
+            if a_err:
+                notes.append(
+                    f"Your gate {short} ({mp}) fails its own apply() on the "
+                    f"chip as it will be: {a_err[:300]}"
+                    + (f" -- the chip could not load while {fill_gate} had an "
+                       "empty slot, so nothing had checked it" if fill_gate
+                       else ""))
+            continue
+        if b_err and fills_slot and a_err and before.get("load_failed") \
+                and not after.get("load_failed"):
             b_err = None      # the empty slot was the only thing wrong
         if b_err:
             if a_err and a_err != b_err:
@@ -16315,7 +16593,155 @@ def _lab_macro_refusal(store, writes, macros: dict, python_path: str,
                     f"{_fmt_msg_val(f0['value'])} too, both in one batch")
         return (f"your gate {short} ({mp}) refused it in its "
                 f"own apply(): {err}"[:900]), sorted(macros.get(mp) or ())
+    if cfg:
+        return _lab_cfg_verdict(store, cfg, before, after, info, notes)
     return None
+
+
+def _lab_cfg_recheck(cfg: dict, new: dict) -> dict | None:
+    """*cfg* narrowed to what really dangles in the 'after' contents *new*: a
+    field the same writes re-point (a rename's re-pointed referrers) or an op
+    they delete is not left pointing at nothing. None when nothing is left
+    to ask (no dangling field, no orphan, no gate removed)."""
+    from quam_state_manager.core.pointer_path import resolve_field_target
+
+    def exists(p):
+        return _walk_path(new, p.split("."))[0]
+
+    cut = []
+    for op, field, k in cfg["cut"]:
+        if not exists(op):
+            continue
+        try:
+            if resolve_field_target(new, f"{op}.{field}").get("resolvable"):
+                continue
+        except Exception:  # noqa: BLE001 -- unresolvable: it dangles
+            pass
+        cut.append((op, field, k))
+    orphans = {op: h for op, h in cfg["orphans"].items() if exists(op)}
+    if not (cut or orphans or cfg["gates"]):
+        return None
+    return {**cfg, "cut": cut, "orphans": orphans}
+
+
+def _lab_cfg_err(rec: dict) -> str | None:
+    """Why the chip does not load or generate_config() in one record."""
+    if rec.get("load_failed"):
+        return "the chip does not load: " + str(rec.get("error") or "")[:300]
+    if not rec.get("config_ran"):
+        return "generate_config() was not run"
+    err = rec.get("config_error")
+    return str(err)[:400] if err else None
+
+
+def _lab_cfg_verdict(store, cfg: dict, before: dict, after: dict, info: dict,
+                     notes: list):
+    """Refuse a delete that takes the chip from generating its config to not;
+    otherwise name what it leaves dangling (docs/218, verifier 4)."""
+    b_err, a_err = _lab_cfg_err(before), _lab_cfg_err(after)
+    what = _lab_cfg_desc(store, cfg)
+    if not b_err and a_err:
+        info["delete_also"] = sorted({op for op, _f, _k in cfg["cut"]}
+                                     | set(cfg["orphans"]))
+        tail = (" Delete them together in one batch, or re-point them first."
+                if info["delete_also"] else "")
+        return ((f"your chip's generate_config() fails after this: {a_err} -- "
+                 f"{what or 'the removed part is still needed'}.{tail}")[:1200],
+                sorted(cfg["rows"]))
+    if b_err and a_err:
+        notes.append("This edit could not be checked against your chip's "
+                     f"generate_config(): it already fails -- {b_err[:300]}"
+                     + (f" ({what})" if what else ""))
+    elif what:
+        notes.append(f"{what} -- your chip still loads and generate_config() "
+                     "passes, so the delete went through.")
+    return None
+
+
+def _lab_cfg_desc(store, cfg: dict) -> str:
+    """The lab-facing account of what a delete leaves dangling."""
+    by_op: dict[str, list] = {}
+    for op, field, _k in cfg["cut"]:
+        lst = by_op.setdefault(op, [])
+        if field not in lst:
+            lst.append(field)
+    parts = []
+    for op in sorted(by_op)[:6]:
+        cls = str(_qclass_at(store, op)).rsplit(".", 1)[-1]
+        parts.append(f"{', '.join(by_op[op][:5])} of {op} (your {cls})")
+    out = ""
+    if parts:
+        out = ("This leaves " + "; ".join(parts)
+               + (f" and {len(by_op) - 6} more op(s)" if len(by_op) > 6 else "")
+               + " pointing at nothing")
+    orph = sorted(cfg["orphans"])
+    if orph:
+        lst = ", ".join(f"{op} (played by name by "
+                        f"{', '.join(sorted(cfg['orphans'][op]))})"
+                        for op in orph[:6])
+        out += ("; it also leaves " if out else "This leaves ") + (
+            f"{lst} behind with no gate to play them")
+    return out
+
+
+#: ``Quam.qubit_pairs["q2-3"].macros["cz_x"].flux_pulse_qubit`` -- the path
+#: form quam's load errors name an attribute by
+_QPATH_RE = re.compile(r'[A-Za-z_]\w*((?:\.[\w-]+|\["[^"]*"\]|\[\d+\])+)')
+_QSEG_RE = re.compile(r'\.([\w-]+)|\["([^"]*)"\]|\[(\d+)\]')
+
+
+def _lab_unloadable_macro(err) -> str | None:
+    """The dot path of the macro a Quam.load error names (``...macros["x"]``),
+    or None -- e.g. ``TypeError: None is not allowed for required attribute
+    Quam.qubit_pairs["q2-3"].macros["cz_qa_empty"].flux_pulse_qubit``."""
+    if not isinstance(err, str):
+        return None
+    for m in _QPATH_RE.finditer(err):
+        segs = [a or b or c for a, b, c in _QSEG_RE.findall(m.group(1))]
+        for i in range(len(segs) - 1):
+            if segs[i] == "macros":
+                return ".".join(segs[:i + 2])
+    return None
+
+
+def _lab_drop_at(contents: dict, path: str) -> None:
+    ok, parent = _walk_path(contents, path.split(".")[:-1])
+    if ok and isinstance(parent, dict):
+        parent.pop(path.rsplit(".", 1)[-1], None)
+
+
+def _lab_cut_ops(contents: dict, keep: set) -> list[str]:
+    """Channel ops of the kept members whose pointers lead into a member the
+    pruning cut (a qubit's mirror ops of OTHER pairs), except *keep*."""
+    from quam_state_manager.core.pointer_path import pointer_to_abs
+    out: set = set()
+
+    def scan(node, segs):
+        if isinstance(node, dict):
+            items = node.items()
+        elif isinstance(node, list):
+            items = enumerate(node)
+        else:
+            return
+        for k, v in items:
+            s2 = segs + [str(k)]
+            if isinstance(v, str) and v.startswith("#"):
+                t = pointer_to_abs(v, s2)
+                if t and len(t) >= 2 and t[0] in _LAB_PRUNED \
+                        and t[1] not in (contents.get(t[0]) or {}):
+                    for n in range(len(s2) - 1, 0, -1):
+                        if s2[n - 1] == "operations":
+                            op = ".".join(s2[:n + 1])
+                            if op not in keep:
+                                out.add(op)
+                            break
+            elif isinstance(v, (dict, list)):
+                scan(v, s2)
+
+    for coll in _LAB_PRUNED:
+        for name, body in (contents.get(coll) or {}).items():
+            scan(body, [coll, name])
+    return sorted(out)
 
 
 def _lab_follow(store, mp: str, changed_fields, watch) -> list[dict]:
@@ -16451,6 +16877,9 @@ def _lab_follow_payload(path, value, info) -> list[dict] | None:
 
 
 def _lab_refusal_text(message: str) -> str:
+    if message.startswith("your chip's generate_config()"):
+        return ("Your chip's own generate_config() refused this (run in the "
+                f"selected environment) -- nothing was changed: {message}")
     who = "gate" if message.startswith("your gate ") else "pulse class"
     return (f"Your {who} refused this value (its own code, run in "
             f"the selected environment) -- nothing was written: {message}")
@@ -16741,7 +17170,8 @@ def _pulse_create_locked(store, modifier, spec, fields, target_kind,
             _info = g.lab_info = {"notes": []}
         _lab = _lab_write_refusal(store, [(slot_fill[2], template),
                                           (slot_fill[0], slot_fill[1])],
-                                  info=_info, fills_slot=True)
+                                  info=_info,
+                                  fills_slot=slot_fill[0].rsplit(".", 1)[0])
         if _lab:
             return _lab_edit_refused(_lab[0])
     try:
@@ -17203,7 +17633,7 @@ def _config_op_for_pulse_path(config: dict, path: str,
 
 def _config_op_for_found_path(config: dict, path: str,
                               state: dict | None) -> tuple[str | None, str | None]:
-    """docs/2xx pulse locations: a shape-discovered op ``<component>.operations.<op>``
+    """docs/217 pulse locations: a shape-discovered op ``<component>.operations.<op>``
     maps to the config element the component became -- its ``id`` when it has
     one, else quam's ``<parent>.<attr>`` name (``q1.xy2``, ``twpaA.pump``) --
     and ONLY when the generated config actually has that element. A slot
@@ -17232,7 +17662,7 @@ _lab_spark_lock = threading.Lock()
 
 
 def _pulse_fallback_spark(store, path, row) -> None:
-    """The row thumbnail for a class SM cannot synthesize (docs/2xx).
+    """The row thumbnail for a class SM cannot synthesize (docs/218).
 
     Order: the class's OWN code at the pulse's CURRENT field values (a RAM
     hit only -- a list render never spawns) > the generated config (docs/189,
@@ -17350,7 +17780,7 @@ def _pulse_truth_lookup(store, path):
         # docs/190 F49: only the pair-GATE branch guesses. The qubit and
         # pair-drive branches read the op name straight off the path, so a miss
         # there really does mean the config has never heard of this pulse.
-        # A discovered slot outside an `operations` dict (docs/2xx) is never
+        # A discovered slot outside an `operations` dict (docs/217) is never
         # guessed either: SM could not match it, which is not "absent".
         return {"status": "not-matched" if (_PULSE_PATH_RES[1].match(path)
                                              or path.split(".")[-2:-1] != ["operations"])

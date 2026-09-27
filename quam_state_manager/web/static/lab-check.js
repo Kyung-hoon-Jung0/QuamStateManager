@@ -218,18 +218,61 @@
         });
     }
 
+    // docs/218 (verifier 4): a lab edit that WENT THROUGH with a warning --
+    // the lab's code could not be run (no env, timed out, crashed), the env
+    // cannot import the class, the gate already fails -- says so at the cell,
+    // on every surface (the grids never showed a 200's warning at all).
+    function _warnBadge(b, text) {
+        var done = function () {
+            if (b._unbind) b._unbind();
+            if (b.parentNode) b.parentNode.removeChild(b);
+        };
+        // the badge leads with what happened; the full note is the title
+        var m = /^Your lab code could not be run \((.*?)\): this edit was NOT checked/.exec(text);
+        var why = m ? 'written UNCHECKED — your lab code could not be run: ' + m[1] : text;
+        if (why.length > 150) why = why.slice(0, Math.max(why.lastIndexOf(' ', 147), 100)) + '…';
+        b.classList.add('lab-check-warned');
+        b.textContent = '⚠ ' + why;
+        b.title = text + '\n(click to dismiss)';
+        b.onclick = done;
+        var raf = window.requestAnimationFrame || function (f) { return setTimeout(f, 16); };
+        raf(function () { raf(function () { _place(b, b._anchor); }); });
+        setTimeout(done, REFUSED_LIFE_MS);
+    }
+
     function _watch(respP, init) {
         var paths = _pathsOf(init);
         if (!paths.length) return;
-        var settled = false, resp = null, badge = null;
+        var settled = false, resp = null, badge = null, lab = null, warned = false;
         var anchor = _anchorFor(paths);
-        respP.then(function (r) { settled = true; resp = r; _settle(badge, r); },
-                   function () { settled = true; _settle(badge, null); });
+        function warnIfLab() {
+            if (warned || lab !== true || !resp || !(resp.status < 300) || !resp.clone) return;
+            warned = true;
+            resp.clone().json().then(function (j) {
+                if (!j || !j.warning) return;
+                _warnBadge(badge || _badge(anchor), String(j.warning));
+            }, function () { /* not JSON: nothing to say */ });
+        }
+        respP.then(function (r) {
+            settled = true; resp = r;
+            if (r && r.status < 300) {
+                if (badge) {           // the checking badge is replaced
+                    if (badge._unbind) badge._unbind();
+                    if (badge.parentNode) badge.parentNode.removeChild(badge);
+                    badge = null;
+                }
+                warnIfLab();
+            } else {
+                _settle(badge, r);
+            }
+        }, function () { settled = true; _settle(badge, null); });
         _orig.call(window, '/field/lab-watch', {
             method: 'POST', headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ paths: paths.slice(0, 4000) })
         }).then(function (r) { return r.json(); }).then(function (j) {
-            if (!j || !j.lab || settled) return;
+            lab = !!(j && j.lab);
+            if (!lab) return;
+            if (settled) { warnIfLab(); return; }
             setTimeout(function () {
                 if (settled) return;
                 badge = _badge(anchor);

@@ -1,4 +1,4 @@
-"""Draw pulse waveforms with the LAB's own class code (docs/2xx adaptive pulses).
+"""Draw pulse waveforms with the LAB's own class code (docs/218 adaptive pulses).
 
 Runs under the *external* interpreter the user selected (like
 ``probe_state_schema.py``), so at import time it uses ONLY the standard
@@ -175,7 +175,8 @@ def _draw_one(qclass: str, params: dict, max_samples: int) -> dict:
 
 #: an item whose "qclass" starts with this is a GATE check, not a drawing:
 #: ``"@macro:<root QuamRoot class>"`` with params ``{"contents": <state+wiring
-#: dict>, "macros": [dot-paths]}`` (see :func:`_check_macros`)
+#: dict>, "macros": [dot-paths], "config": bool}`` (see :func:`_check_macros`;
+#: ``config`` also runs ``generate_config()`` and answers ``config_error``)
 MACRO_PREFIX = "@macro:"
 
 
@@ -239,9 +240,37 @@ def _check_macros(root_class: str, params: dict) -> dict:
             res["macros"][path] = msg
             if first is None:
                 first = f"{path}.apply(): {msg}"
+    if params.get("config"):
+        # docs/218 (verifier 4): a delete that leaves a by-name mirror op
+        # pointing at nothing still LOADS -- it is generate_config() that
+        # fails, for the whole chip. Asked only when SM sends config=True.
+        res["config_ran"] = True
+        try:
+            with warnings.catch_warnings():
+                warnings.simplefilter("ignore")
+                machine.generate_config()
+            res["config_error"] = None
+        except BaseException as exc:  # noqa: BLE001 -- the lab's own code speaks
+            res["config_error"] = _exc_where(exc)
     res["ok"] = first is None
     res["error"] = first
     return res
+
+
+def _exc_where(exc: BaseException) -> str:
+    """``Type: message`` plus WHERE it was raised -- quam's bare ``assert``
+    has no message, and "AssertionError: " alone tells the user nothing."""
+    msg = f"{type(exc).__name__}: {exc}".rstrip()
+    try:
+        tb = traceback.extract_tb(exc.__traceback__)
+        if tb:
+            fr = tb[-1]
+            code = (fr.line or "").strip()
+            msg += f" (at {Path(fr.filename).name}:{fr.lineno}" + (
+                f": {code}" if code else "") + ")"
+    except Exception:  # noqa: BLE001
+        pass
+    return msg[:600]
 
 
 def draw(items: list, max_samples: int = _MAX_SAMPLES) -> dict:

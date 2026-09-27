@@ -1,4 +1,4 @@
-"""A pulse's waveform drawn by the LAB's own class code (docs/2xx adaptive pulses).
+"""A pulse's waveform drawn by the LAB's own class code (docs/218 adaptive pulses).
 
 ``waveform_synth`` mirrors quam's pulse classes in-process; a class the lab
 wrote has no mirror, and SM deliberately does not transcribe one (docs/189 §2:
@@ -176,6 +176,7 @@ class _Worker:
                          name="lab-waveform-warm").start()
         self._idle: threading.Timer | None = None
         self.requests = 0
+        self.timed_out = False
 
     def _pump(self) -> None:
         try:
@@ -205,7 +206,10 @@ class _Worker:
             self.proc.stdin.write(json.dumps({"items": items}, default=repr) + "\n")  # type: ignore[union-attr]
             self.proc.stdin.flush()                                                   # type: ignore[union-attr]
             line = self._q.get(timeout=timeout)
-        except (OSError, ValueError, queue.Empty):
+        except queue.Empty:
+            self.timed_out = True       # the lab's code did not answer
+            return None
+        except (OSError, ValueError):
             return None
         if line is None:
             return None
@@ -290,9 +294,19 @@ def _run_warm(python_path: str, items: list[dict]) -> dict | None:
     parsed = w.ask(items, TIMEOUT_S)
     if parsed is None:
         _retire(python_path, w)
+        if w.timed_out:
+            # docs/218: the same request run cold would hang as long again --
+            # say so now instead of making the user wait twice
+            return {"ok": False, "error": _timeout_text(), "items": [],
+                    "sources": {}}
         return None
     return {"ok": True, "error": None, "items": parsed.get("items") or [],
             "sources": parsed.get("sources") or {}}
+
+
+def _timeout_text() -> str:
+    return (f"your lab's code did not answer within {TIMEOUT_S} s and was "
+            "stopped")
 
 
 def _run(python_path: str, items: list[dict]) -> dict:
@@ -331,7 +345,10 @@ def _run_cold(python_path: str, items: list[dict]) -> dict:
         _cleanup_work_dir(work_dir)
     parsed = outcome.get("result") or {}
     if not outcome.get("ok"):
-        out["error"] = outcome.get("error") or "drawing with the lab's class failed"
+        out["error"] = (_timeout_text()
+                        if "timed out" in str(outcome.get("stderr") or "")
+                        and not parsed else
+                        outcome.get("error") or "drawing with the lab's class failed")
         return out
     out.update(ok=True, items=parsed.get("items") or [],
                sources=parsed.get("sources") or {})
@@ -391,7 +408,8 @@ def draw(python_path: str | None, items: list[tuple[str, dict]], *,
                     rec = {key: rec.get(key) for key in (
                         "ok", "error", "i", "q", "iq", "kind", "length",
                         "canonical", "dropped", "warnings", "macros",
-                        "load_failed", "reason")}
+                        "load_failed", "reason", "config_ran",
+                        "config_error")}
                     if rec.get("reason"):
                         # "this env cannot run the class" is not an answer
                         # about these fields: never cached, asked again
