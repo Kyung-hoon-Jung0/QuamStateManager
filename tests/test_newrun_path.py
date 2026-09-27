@@ -330,8 +330,14 @@ class TestForegroundYield:
         probe thread was starved past it and the step ran beside the request.
         Now the gate itself reports when the worker reaches it; the worker
         cannot get past it before exit() (the bound is lifted for the test),
-        so "held while in flight" is a fact, not a timing."""
-        fg = run_ingest.FOREGROUND
+        so "held while in flight" is a fact, not a timing.
+
+        The gate is a FRESH Foreground for this test: the process-wide one is
+        fed by every app the suite created before (a count another test left
+        behind, or a poll still ticking, would make THIS pin report their
+        state); run_once reads the module global, so it is swapped here."""
+        fg = run_ingest.Foreground()
+        monkeypatch.setattr(run_ingest, "FOREGROUND", fg)
         entered = threading.Event()
         real_wait = fg.wait_idle
 
