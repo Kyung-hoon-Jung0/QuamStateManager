@@ -413,7 +413,7 @@ def _make_sized_chip(folder: Path, n: int, pad: int) -> Path:
     return folder
 
 
-def test_ten_chip_switches_hold_memory_flat_and_debug_ram_adds_up(app, tmp_path):
+def test_ten_chip_switches_hold_memory_flat_and_debug_ram_adds_up(app, tmp_path, monkeypatch):
     """RAM P10 memory pin. Three chips of 30 / 20 / 5 qubits, a context LRU
     of 2, so every switch evicts (parks) one chip and takes another back.
 
@@ -429,6 +429,16 @@ def test_ten_chip_switches_hold_memory_flat_and_debug_ram_adds_up(app, tmp_path)
     parked memo must hold exactly what its ParkedChip entries say."""
     import gc
     import tracemalloc
+
+    # w7 integration: the open's background prewarm (pointer cache, lint, env
+    # analysis, then the index -- RAM P10 / fq-misc) allocates on a daemon
+    # thread at a time of its own, so the traced heap read after a switch
+    # included whichever of those had landed since ``base`` (measured: the
+    # first-switch growth ran 0.7 KB .. 226 KB across identical runs, once
+    # past the budget under two concurrent pytest processes). This pin is
+    # about parking and eviction, not the prewarm: it is switched off here,
+    # and the index each chip needs is built in the foreground below.
+    monkeypatch.setattr(routes, "_prewarm_search_index", lambda ctx: None)
 
     c = app.test_client()
     chips = [_make_sized_chip(tmp_path / "big30x", 30, 600),
