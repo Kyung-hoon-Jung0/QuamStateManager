@@ -230,10 +230,13 @@ def settle_wal(index_path: Path) -> None:
     with _CONN_LOCK:
         open_ = str(index_path) in _CONNS
     if not open_:
-        # w7 integration: chip_trends_ram keeps its own persistent readers on
-        # the same file (Chip Status Trends), and an open reader from EITHER
-        # pool is a pin. Its readers never checkpoint, so the give-back is
-        # done here, through this pool's connection (opened for it, bounded).
+        # w7 integration: chip_trends_ram keeps its own persistent READ
+        # connection per index (Chip Status Trends), and an open reader from
+        # EITHER pool is a pin. Its readers never checkpoint; since fq-ds its
+        # token's version is read through THIS pool (one version connection
+        # per index, the only one that gives back), so the pool normally holds
+        # the connection already -- this fallback covers an LRU eviction in
+        # between, by re-opening it here (bounded, same owner).
         try:
             from quam_state_manager.core import chip_trends_ram
             open_ = chip_trends_ram.has_conn(index_path)
