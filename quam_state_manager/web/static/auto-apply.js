@@ -279,13 +279,22 @@
     // -- once per distinct set, never once per flush (the session writes on
     // every edit, and the red banner already stays up meanwhile).
     var _crashSaid = '';
-    document.addEventListener('autoApplyApplied', function (e) {
-        applyLogState();
-        var c = e && e.detail && e.detail.crash;
+    function sayCrash(c) {
         if (!c || !c.sentence) { _crashSaid = ''; return; }
         if (c.sig === _crashSaid) return;
         _crashSaid = c.sig;
         toast('Auto-Sync applied to the live chip — ⚠ ' + c.sentence, 'warning');
+    }
+    document.addEventListener('autoApplyApplied', function (e) {
+        applyLogState();
+        // w7 fq-sync: the lint was not ready when the flush answered -- the
+        // advisory follows for the content the flush carried
+        var pend = e && e.detail && e.detail.crash_pending;
+        if (pend !== undefined && pend !== null && window.CrashAdvisory) {
+            window.CrashAdvisory.follow(pend, sayCrash);
+            return;
+        }
+        sayCrash(e && e.detail && e.detail.crash);
     });
 
     document.addEventListener('DOMContentLoaded', function () {
