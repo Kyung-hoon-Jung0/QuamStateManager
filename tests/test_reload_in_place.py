@@ -372,3 +372,65 @@ def test_a_structural_write_after_the_snapshot_is_structural(chip, tmp_path):
         before = R._leaf_snapshot(ctx, lazy=True)
         Modifier(store).create_subtree("qubits.q1.extra", {"a": 1})
         assert R._sync_patch(ctx, before) == {"changes": [], "structural": True}
+
+
+class TestTheOneRecorderSeesTheInPlaceReload:
+    """w7 integration: store_revs.note is the single recorder, and it carries
+    three flags for three consumers -- liveedit's `plain` (column models),
+    pulses' journal (is_value_only_write -> PulseIndex incremental path) and
+    pulsecreate's QuamStore.structure_seq (lab_watch's stamp, bumped by
+    moves_structure: any string, container or __class__). The in-place reload
+    must reach all three exactly as Modifier.set_value does."""
+
+    def _store(self, tmp_path):
+        folder = tmp_path / "chip"
+        _write(folder, _state(), _wiring())
+        return folder, QuamStore(folder)
+
+    def test_a_numeric_pull_moves_no_structure_and_is_value_only_for_pulses(self, tmp_path):
+        folder, store = self._store(tmp_path)
+        s0, struct0, seq0 = store.mutation_seq, store.structure_seq, store.mutation_seq
+        st, wi = _files(folder)
+        st["qubits"]["q1"]["T1"] = 2.5e-5
+        st["qubits"]["q2"]["xy"]["operations"]["x180"]["amplitude"] = 0.123
+        _write(folder, st, wi)
+        assert store.reload() is True                      # the in-place road
+        _assert_is_the_files(store, folder)
+        assert store.structure_seq == struct0, "a numeric value-only pull moved structure_seq"
+        steps = store.mutations_since(seq0)
+        assert steps is not None and [p for _s, p, _v in steps] == [
+            "qubits.q1.T1", "qubits.q2.xy.operations.x180.amplitude"]
+        assert all(vo for _s, _p, vo in steps), "the pulses journal must see value-only steps"
+        assert store_revs.plain_paths(store_revs.changes_since(store, s0)) == [
+            "qubits.q1.T1", "qubits.q2.xy.operations.x180.amplitude"]
+
+    def test_a_string_leaf_pull_bumps_structure_seq_like_an_edit_would(self, tmp_path):
+        # pulsecreate's rule: an op a lab gate plays BY NAME is a string, so a
+        # string write can move what lab_watch models -- through the reload too
+        folder, store = self._store(tmp_path)
+        struct0 = store.structure_seq
+        st, wi = _files(folder)
+        st["qubits"]["q1"]["id"] = "q1-renamed"
+        _write(folder, st, wi)
+        assert store.reload() is True
+        assert store.structure_seq > struct0
+        assert store_revs.plain_paths(store_revs.changes_since(store, 0)) is not None  # still plain for the columns
+
+    def test_a_structural_pull_rebuilds_and_bumps_structure_seq(self, tmp_path):
+        folder, store = self._store(tmp_path)
+        struct0, seq0 = store.structure_seq, store.mutation_seq
+        st, wi = _files(folder)
+        st["qubits"]["q1"]["xy"]["operations"]["y180"] = {"amplitude": 0.2, "length": 40}
+        _write(folder, st, wi)
+        assert store.reload() is False                     # the full road
+        assert store.structure_seq > struct0
+        steps = store.mutations_since(seq0)
+        assert steps == [(store.mutation_seq, None, False)]  # one structural step: recompute cold
+
+    def test_an_unchanged_reload_touches_without_moving_structure(self, tmp_path):
+        folder, store = self._store(tmp_path)
+        struct0, seq0 = store.structure_seq, store.mutation_seq
+        assert store.reload() is True
+        assert store.mutation_seq == seq0 + 1 and store.structure_seq == struct0
+        assert store_revs.plain_paths(store_revs.changes_since(store, seq0)) == []
+
