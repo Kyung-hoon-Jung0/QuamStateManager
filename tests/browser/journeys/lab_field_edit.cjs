@@ -52,7 +52,16 @@ function coldStart() {
   let P = await open(BASE + '/bulk', 1600, 950);
   await sleep(2500);
   const sel = `input.bulk-cell[data-dot-path="${MACRO}"]`;
-  let found = await P.ev(`(function(){var c=document.querySelector('${sel}'); if(!c) return 'none'; c.scrollIntoView({block:'center',inline:'center'}); return c.value;})()`);
+  // a big chip's pair grid keeps far columns COLD (unhydrated): the grid's own
+  // search names the row and the gate, which reveals and hydrates the cell
+  await P.ev(`(function(){var s=document.getElementById('bulk-search'); if(!s) return 0; s.focus(); s.value=${JSON.stringify(PAIR + ' cz_GNZ')}; s.dispatchEvent(new Event('input',{bubbles:true})); return 1})()`);
+  let found = null;
+  for (let i = 0; i < 120; i++) {
+    found = await P.ev(`(function(){var c=document.querySelector('${sel}'); if(!c || !c.getClientRects().length || c.value==='') return null; c.scrollIntoView({block:'center',inline:'center'}); return c.value;})()`);
+    if (found != null) break;
+    await sleep(500);
+  }
+  if (found == null) found = 'none';
   note('pair grid shows cz_GNZ flux_pulse_qubit.flat_length', found !== 'none' && found != null, { value: found });
   const before = await peek(MACRO, P);
   const tray0 = await changes(P);

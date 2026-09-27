@@ -86,9 +86,20 @@
             return;
         }
         var vw = window.innerWidth || 1024;
+        var vh = window.innerHeight || 768;
         badge.style.transform = '';
         badge.style.left = Math.max(4, Math.min(r.left, vw - 380)) + 'px';
-        badge.style.top = Math.max(4, r.bottom + 2) + 'px';
+        // below the cell -- unless that runs off the bottom of the window (a
+        // cell near the bottom of a big grid: the refusal and its "Set ...
+        // too" button were unreachable there, the badge is position:fixed and
+        // cannot be scrolled to). Then above it, else pinned inside the window.
+        var h = badge.offsetHeight || 0;
+        var top = r.bottom + 2;
+        if (h && top + h > vh - 4) {
+            var above = r.top - h - 2;
+            top = above >= 4 ? above : Math.max(4, vh - 4 - h);
+        }
+        badge.style.top = Math.max(4, top) + 'px';
     }
 
     function _badge(anchor) {

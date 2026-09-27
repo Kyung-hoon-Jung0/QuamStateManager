@@ -176,6 +176,21 @@ function resp(status, body) {
     ok(bi > 0, 'the batch went through the wrapped fetch (it gets the badge too)');
   }
 
+  // 8: a refusal that would run off the bottom of the window stays inside it
+  {
+    const W = world([LAB]);
+    Object.defineProperty(W.w, 'innerHeight', { value: 150, configurable: true });
+    Object.defineProperty(W.w.HTMLElement.prototype, 'offsetHeight', { get() { return 120; }, configurable: true });
+    const p = W.w.fetch('/field/edit', { method: 'POST', body: 'dot_path=' + encodeURIComponent(LAB) + '&value=4' });
+    await until(() => W.w.document.querySelector('.lab-check-badge'));
+    W.pending[0](resp(400, { ok: false, lab_refused: true, error: 'Your pulse class refused this value -- nothing was written: x' }));
+    await p;
+    await until(() => W.w.document.querySelector('.lab-check-refused'));
+    await tick(60);
+    const b = W.w.document.querySelector('.lab-check-badge');
+    ok(b && b.style.top === '26px', 'a badge that would leave the window is pinned inside it (' + (b && b.style.top) + ')');
+  }
+
   if (fails) { console.error(fails + ' FAIL'); process.exit(1); }
   console.log('all ok');
 })();
