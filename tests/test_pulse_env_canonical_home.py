@@ -183,14 +183,20 @@ class TestNoneSlotCreateIndexesLeaves:
         assert c.post("/load", data={"folder": str(folder)}).status_code \
             in (200, 302)
         store = routes_tests._store_of(app)
-        # a builder-emitted explicit-null slot (the live case: cz_SNZ)
-        store.state["qubit_pairs"]["qA1-qA2"]["macros"]["cz_unipolar"][
-            "coupler_flux_pulse"] = None
+        # a builder-emitted explicit-null slot (the live case: cz_SNZ), on a
+        # pair whose coupler can play it (2026-09-27: the pulse now lands on
+        # the coupler channel and the slot links to it)
+        pair = store.state["qubit_pairs"]["qA1-qA2"]
+        pair["macros"]["cz_unipolar"]["coupler_flux_pulse"] = None
+        store.state["qubits"]["qA2"] = {"id": "qA2", "z": {"operations": {}}}
+        pair.update({"qubit_control": "#/qubits/qA1",
+                     "qubit_target": "#/qubits/qA2",
+                     "coupler": {"operations": {}}})
         r = c.post("/api/pulse/create", data={
             "target_kind": "pair", "pair": "qA1-qA2", "gate": "cz_unipolar",
             "slot": "coupler_flux_pulse", "pulse_type": "SquarePulse",
             "length": "100", "amplitude": "0.1"})
         assert r.status_code == 200, r.get_data(as_text=True)[:200]
-        target = ("qubit_pairs.qA1-qA2.macros.cz_unipolar"
-                  ".coupler_flux_pulse.amplitude")
+        target = ("qubit_pairs.qA1-qA2.coupler.operations"
+                  ".cz_unipolar_coupler_flux_pulse_qA1_qA2.amplitude")
         assert any(e.dot_path == target for e in store.search_index.entries)

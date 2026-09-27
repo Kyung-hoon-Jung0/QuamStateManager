@@ -697,3 +697,48 @@ class TestAnUndoBackToNullSaysNotSet:
         assert routes_mod._fmt_msg_val(None) == "not set"
         assert routes_mod._fmt_val(None) == ""
         assert routes_mod._fmt_msg_val(0.5) == routes_mod._fmt_val(0.5)
+
+
+# 2026-09-27 (pulse-create QA): creating or deleting a pulse and pressing the
+# one-click Apply answered "collision" although nothing outside SM had written.
+class TestACreatedOrDeletedPulseAppliesInOnePress:
+    def _create(self, env, name="qa_new"):
+        r = env["client"].post("/api/pulse/create", data={
+            "pulse_type": "SquarePulse", "target_kind": "qubit", "qubit": "qA1",
+            "channel": "xy", "op_name": name, "length": "48", "amplitude": "0.2"})
+        assert r.status_code == 200, r.data[:300]
+
+    def test_a_created_pulse(self, env):
+        self._create(env)
+        d = _apply(env).get_json()
+        assert d.get("status") != "collision", d
+        op = _live(env)["qubits"]["qA1"]["xy"]["operations"]["qa_new"]
+        assert op["amplitude"] == 0.2 and op["length"] == 48
+
+    def test_a_deleted_pulse(self, env):
+        r = env["client"].post("/api/pulse/delete", data={
+            "path": "qubits.qA1.xy.operations.x180", "force": "1"})
+        assert r.status_code == 200, r.data[:300]
+        d = _apply(env).get_json()
+        assert d.get("status") != "collision", d
+        assert "x180" not in _live(env)["qubits"]["qA1"]["xy"]["operations"]
+
+    def test_another_writer_creating_the_same_name_still_collides(self, env):
+        self._create(env)
+        st = _state()
+        st["qubits"]["qA1"]["xy"]["operations"]["qa_new"] = {"amplitude": 0.9, "length": 16}
+        _write_chip(env["live"], st, future=True)
+        d = _apply(env).get_json()
+        assert d.get("status") == "collision", d
+
+
+    def test_a_created_pulse_then_edited(self, env):
+        self._create(env, "qa_ed")
+        r = env["client"].post("/pulse/edit", data={
+            "path": "qubits.qA1.xy.operations.qa_ed",
+            "dot_path": "qubits.qA1.xy.operations.qa_ed.amplitude",
+            "mode": "value", "value": "0.33"})
+        assert r.status_code == 200, r.data[:300]
+        d = _apply(env).get_json()
+        assert d.get("status") != "collision", d
+        assert _live(env)["qubits"]["qA1"]["xy"]["operations"]["qa_ed"]["amplitude"] == 0.33

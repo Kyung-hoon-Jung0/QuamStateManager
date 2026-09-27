@@ -438,6 +438,15 @@ async function main() {
     ok(popCall && popCall.chipExpect && popCall.chipExpect.token === 'tok123',
        'Interactive-tab click passes the run chip-identity token to the popup (cross-chip 409 gate)');
 
+    // 2026-09-27 (big30x journey): the host was swapped out while Plotly drew,
+    // so the div never became a plot and has no .on -- a TypeError escaped
+    let threwSwap = null;
+    try {
+        window._attachInteractivePlotClickHandler(document.createElement('div'),
+            { axis: 'x', targets: [{ path: 'qubits.{q}.f_01' }] }, 'r2');
+    } catch (e) { threwSwap = e; }
+    ok(threwSwap === null, 'a plot div swapped out mid-draw (no .on) is skipped, never a TypeError');
+
     /* ══ 7. apply-popup value-domain warning (non-blocking) ═════════════ */
     window._renderPlotApplyPopup([
         { dot_path: 'qubits.q0.xy.operations.x180.amplitude', value: 1.5 },

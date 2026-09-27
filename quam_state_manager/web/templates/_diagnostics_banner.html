@@ -39,6 +39,8 @@
     var KEY = 'quam_diag_banner_dismissed';
     window._dismissDiagBanner = function () {
         try { sessionStorage.setItem(KEY, b.dataset.diagSig || ''); } catch (e) {}
+        // nothing shown any more: stop reserving its space on later loads
+        try { sessionStorage.removeItem('quam_diag_banner_h'); } catch (e) {}
         document.querySelectorAll('.diag-error-banner').forEach(function (x) { x.hidden = true; });
     };
     try {

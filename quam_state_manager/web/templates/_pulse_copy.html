@@ -1,0 +1,72 @@
+{# Copy an existing pulse onto another channel (2026-09-27). The chip's own
+   layout is the pattern: pointers into the source qubit follow to the target
+   qubit, sibling links stay when the target channel has the sibling, anything
+   else is written as its value (pulse_index.copy_pulse_to). #}
+<div id="pulse-copy-root">
+{% set inspector_type = "pulse" %}
+{% set inspector_label = "New pulse" %}
+{% set inspector_sub = "" %}
+{% include '_inspector_header.html' %}
+{% include '_pulse_create_choice.html' %}
+
+<form class="pulse-create-form pulse-copy-form" hx-post="/api/pulse/copy"
+      hx-target="#inspector-pane" hx-swap="innerHTML">
+    <div class="pulse-create-row">
+        <label for="pulse-copy-src">Pulse to copy</label>
+        <input type="text" name="path" id="pulse-copy-src" list="pulse-copy-src-list"
+               required autocomplete="off" value="{{ src_path }}"
+               placeholder="type to search, e.g. q1 x180"
+               onfocus="PulsesPage.copyLoadSources(this)"
+               oninput="PulsesPage.copySourceChanged(this)">
+        <datalist id="pulse-copy-src-list"></datalist>
+        <p class="pulse-type-hint muted" id="pulse-copy-src-hint">{% if src_label %}{{ src_label }}{% endif %}</p>
+    </div>
+
+    <fieldset class="pulse-target-row">
+        <legend>Copy to</legend>
+        <label><input type="radio" name="target_kind" value="qubit" checked
+                      onchange="PulsesPage.copyTargetKind(this)"> Qubit channel</label>
+        <label><input type="radio" name="target_kind" value="pair_channel"
+                      onchange="PulsesPage.copyTargetKind(this)"
+                      {% if not pair_channels_map %}disabled title="No CR/ZZ pair channels on this chip"{% endif %}> Pair CR/ZZ channel</label>
+        <span data-copy-kind="qubit" class="pulse-target-fields">
+            <select name="qubit" aria-label="Qubit">
+                {% for q in qubit_names %}<option>{{ q }}</option>{% endfor %}
+            </select>
+            <select name="channel" aria-label="Channel">
+                <option>xy</option><option>z</option><option>resonator</option>
+                {% if has_xy_detuned %}<option>xy_detuned</option>{% endif %}
+            </select>
+        </span>
+        <span data-copy-kind="pair_channel" class="pulse-target-fields" hidden>
+            <select name="pc_pair" aria-label="Pair">
+                {% for p in pair_channels_map %}<option>{{ p }}</option>{% endfor %}
+            </select>
+            <select name="pc_channel" aria-label="Pair channel">
+                {% for ch in pair_channels_map.values() | first | default([]) %}<option>{{ ch }}</option>{% endfor %}
+            </select>
+        </span>
+    </fieldset>
+
+    <div class="pulse-create-row">
+        <label for="pulse-copy-name">Operation name</label>
+        <input type="text" name="op_name" id="pulse-copy-name" required
+               pattern="[a-zA-Z][a-zA-Z0-9_]{0,63}" autocomplete="off"
+               value="{{ src_name }}" placeholder="e.g. x180_DragCosine">
+    </div>
+    <p class="muted pulse-env-note">The copy is laid out like this chip's own
+        pulses: a link to the source qubit's own value (its anharmonicity, say)
+        becomes a link to the target qubit's, a link to a sibling pulse stays
+        when the target channel has that sibling, a link it cannot re-express
+        is written as its value, and a link into another qubit or pair is kept
+        and named after the copy (editing it there edits that source too).
+        The new pulse opens next, to check and edit.</p>
+
+    <div class="pulse-create-actions">
+        <button type="submit" class="btn-sm">Copy pulse</button>
+        <button type="button" class="btn-sm outline" onclick="closeInspector()">Cancel</button>
+    </div>
+</form>
+<script id="pulse-pair-channels-data" type="application/json">{{ pair_channels_map | tojson }}</script>
+<script>if (window.PulsesPage && window.PulsesPage.initCopy) window.PulsesPage.initCopy();</script>
+</div>

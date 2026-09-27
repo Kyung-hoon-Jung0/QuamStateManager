@@ -36,6 +36,53 @@ from dataclasses import dataclass, field
 from typing import Any, Iterable, Mapping
 
 
+class _Absent:
+    """The live chip has NOTHING at this path (the key is missing there).
+
+    ``Differ().diff(working, live)`` reports such a path as ``removed`` with a
+    ``new_value`` of None, which is indistinguishable from a live leaf that
+    holds null. A created subtree is exactly such a path -- the user made it
+    and the live chip has not got it yet -- so the verdict must tell the two
+    apart (2026-09-27: every pulse created in SM made the one-click Apply
+    report "the live chip changed N fields you also edited")."""
+
+    _inst = None
+
+    def __new__(cls):
+        if cls._inst is None:
+            cls._inst = super().__new__(cls)
+        return cls._inst
+
+    def __repr__(self) -> str:
+        return "<absent on live>"
+
+
+ABSENT = _Absent()
+
+
+def live_view(entries: Iterable[Any]) -> dict[str, Any]:
+    """``{dot_path: live value}`` from ``Differ().diff(working, live)``
+    entries, with :data:`ABSENT` where the live chip has no such key."""
+    out: dict[str, Any] = {}
+    for e in entries or ():
+        out[e.dot_path] = (ABSENT if getattr(e, "change_type", None) == "removed"
+                           else e.new_value)
+    return out
+
+
+def _value_at(tree: Any, rel: list[str]) -> Any:
+    """The value *rel* segments below *tree*, or ABSENT."""
+    node = tree
+    for seg in rel:
+        if isinstance(node, dict) and seg in node:
+            node = node[seg]
+        elif isinstance(node, list) and seg.isdigit() and int(seg) < len(node):
+            node = node[int(seg)]
+        else:
+            return ABSENT
+    return node
+
+
 def covers(ancestor: str, path: str) -> bool:
     """Does *ancestor* cover *path* — the same leaf, or a subtree above it?
 
@@ -92,14 +139,45 @@ def originals_from_change_log(change_log: Iterable[Any]) -> dict[str, Any]:
     return out
 
 
-def _subtree_paths(change_log: Iterable[Any]) -> set[str]:
-    """Paths recorded as a whole created/deleted subtree, not a single leaf."""
-    out: set[str] = set()
+def _subtree_paths(change_log: Iterable[Any]) -> dict[str, str]:
+    """Paths recorded as a whole created/deleted subtree, not a single leaf,
+    mapped to ``"created"`` / ``"deleted"`` (the FIRST entry per path wins,
+    like :func:`originals_from_change_log`)."""
+    out: dict[str, str] = {}
     for entry in change_log or ():
         path = getattr(entry, "dot_path", None)
-        if path and (getattr(entry, "created", False) or getattr(entry, "deleted", False)):
-            out.add(path)
+        if not path or path in out:
+            continue
+        if getattr(entry, "created", False):
+            out[path] = "created"
+        elif getattr(entry, "deleted", False):
+            out[path] = "deleted"
     return out
+
+
+def _subtree_collides(path: str, how: str, orig: Any,
+                      live_by_path: Mapping[str, Any]) -> bool:
+    """Did anyone but the user touch the subtree the user created/deleted?
+
+    Every live difference at or under *path* is expected -- the user's own
+    create/delete IS a difference -- as long as the live side still looks
+    the way it did before the user acted: nothing there for a created
+    subtree, the original content for a deleted one. A difference ABOVE the
+    path (the live chip dropped the parent) is always someone else's.
+    """
+    segs = path.split(".")
+    for lp, lv in live_by_path.items():
+        if covers(path, lp):
+            rel = lp.split(".")[len(segs):]
+            before = ABSENT if how == "created" else _value_at(orig, rel)
+            if lv is ABSENT and before is ABSENT:
+                continue
+            if lv is not ABSENT and before is not ABSENT and lv == before:
+                continue
+            return True
+        elif covers(lp, path):
+            return True
+    return False
 
 
 def classify(
@@ -149,10 +227,19 @@ def classify(
 
     for path, orig in originals.items():
         if path in subtrees:
-            # A whole subtree the user created or deleted: any live change at
-            # or under it collides, and there is no single value to compare.
-            if any(covers(path, lp) or covers(lp, path) for lp in live_by_path):
+            # A whole subtree the user created or deleted: a live change at or
+            # under it collides unless the live side still shows the state
+            # BEFORE the user acted (absent / the original content) -- that
+            # difference is the user's own edit, not another writer's.
+            if _subtree_collides(path, subtrees[path], orig, live_by_path):
                 conflicts.add(path)
+            continue
+        if (path in live_by_path and live_by_path[path] is ABSENT
+                and any(how == "created" and covers(sp, path)
+                        for sp, how in subtrees.items())):
+            # an edit inside a subtree the user CREATED: the live chip has
+            # never had it (the subtree's own check above covers anyone
+            # else writing there)
             continue
         if path in live_by_path and live_by_path[path] != orig:
             # The live chip moved away from what this edit started at, so the

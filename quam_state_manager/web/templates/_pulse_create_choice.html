@@ -1,0 +1,24 @@
+{# The ONE create flow's first step (2026-09-27, user: "버튼이 2개였던 것 같다.
+   2개로 하지 말고 하나로 통일해"). "+ New pulse" opens this strip over whichever
+   way of creating the user picks; each choice re-renders the inspector, so an
+   old link (/pulse/gaussian-cz, the sidebar's "Add pulse") lands on the same
+   strip with its own choice lit. #}
+{% set _k = create_kind | default('pulse') %}
+<nav id="pulse-create-choice" class="pulse-create-choice" role="tablist"
+     aria-label="What to create">
+    <button type="button" role="tab" data-create-kind="pulse"
+            aria-selected="{{ 'true' if _k == 'pulse' else 'false' }}"
+            class="pulse-create-choice-btn{{ ' is-active' if _k == 'pulse' }}"
+            hx-get="/pulse/new?kind=pulse" hx-target="#inspector-pane" hx-swap="innerHTML"
+            title="A new pulse of any class this chip's environment offers, on a qubit channel, a pair channel or an empty gate slot">New pulse</button>
+    <button type="button" role="tab" data-create-kind="copy"
+            aria-selected="{{ 'true' if _k == 'copy' else 'false' }}"
+            class="pulse-create-choice-btn{{ ' is-active' if _k == 'copy' }}"
+            hx-get="/pulse/new?kind=copy" hx-target="#inspector-pane" hx-swap="innerHTML"
+            title="Put an existing pulse on another channel, laid out the way this chip lays out its own pulses">Copy a pulse to another channel</button>
+    <button type="button" role="tab" data-create-kind="gaussian_cz"
+            aria-selected="{{ 'true' if _k == 'gaussian_cz' else 'false' }}"
+            class="pulse-create-choice-btn{{ ' is-active' if _k == 'gaussian_cz' }}"
+            hx-get="/pulse/new?kind=gaussian_cz" hx-target="#inspector-pane" hx-swap="innerHTML"
+            title="Build cz_gaussian_unipolar + cz_gaussian_bipolar for a pair from its calibrated cz_flattop (docs/126)">Gaussian CZ from cz_flattop</button>
+</nav>

@@ -43,7 +43,8 @@
                 {% endif %}
                 {% else %}
                 <form class="inline-edit pulse-edit-form" hx-post="/pulse/edit"
-                      hx-target="#inspector-pane" hx-swap="innerHTML">
+                      hx-target="#inspector-pane" hx-swap="innerHTML"{% if sec.synth_unknown_class %}
+                      hx-indicator="next .pulse-lab-checking"{% endif %}>
                     <input type="hidden" name="path" value="{{ sec.path }}">
                     <input type="hidden" name="dot_path" value="{{ p.dot_path }}">
                     <input type="hidden" name="mode" value="value">
@@ -60,6 +61,10 @@
                            value="{{ p.value if p.value is not none else '' }}"
                            aria-label="{{ p.key }}">
                 </form>
+                {% if sec.synth_unknown_class %}{# 2026-09-27: an edit of a lab
+                   class's pulse is first run through the class's own code in
+                   the selected env (a subprocess, seconds) -- say so while the
+                   commit waits, never a silent hang #}<span class="htmx-indicator muted pulse-lab-checking" role="status">checking with your class&rsquo;s own code&hellip;</span>{% endif %}
                 {# docs/190 F34: what actually leaves the instrument. Every
                    entity surface has carried this since docs/109 -- MW: dBm via
                    P = FSP + 20*log10|amp|, LF/flux: engineering volts -- and the

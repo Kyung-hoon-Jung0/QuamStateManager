@@ -214,3 +214,84 @@ class TestTheReport:
 
 if __name__ == "__main__":       # pragma: no cover
     raise SystemExit(pytest.main([__file__, "-q"]))
+
+
+# 2026-09-27 (pulse-create QA): every pulse created in SM made the one-click
+# Apply report "the live chip changed N fields you also edited". The live chip
+# had not changed at all -- the only difference under the created subtree was
+# the creation itself, which the diff reports as a live value of None.
+class TestTheUsersOwnSubtreeIsNotACollision:
+    def test_a_created_subtree_the_live_chip_lacks_does_not_collide(self):
+        from quam_state_manager.core.sync_conflict import ABSENT
+        v = classify(
+            live_by_path={"qubits.q2.xy.operations.new": ABSENT},
+            change_log=[_Entry("qubits.q2.xy.operations.new", None, created=True)],
+        )
+        assert v.conflicts == ()
+
+    def test_something_the_live_chip_grew_at_the_same_path_still_collides(self):
+        v = classify(
+            live_by_path={"qubits.q2.xy.operations.new.amplitude": 0.3},
+            change_log=[_Entry("qubits.q2.xy.operations.new", None, created=True)],
+        )
+        assert v.conflicts == ("qubits.q2.xy.operations.new",)
+
+    def test_a_deleted_subtree_the_live_chip_still_holds_unchanged_does_not_collide(self):
+        orig = {"amplitude": 0.1, "length": 40}
+        v = classify(
+            live_by_path={"qubits.q1.xy.operations.x": orig},
+            change_log=[_Entry("qubits.q1.xy.operations.x", orig, deleted=True)],
+        )
+        assert v.conflicts == ()
+        # leaf-level live entries under the deleted root, equal to the original
+        v2 = classify(
+            live_by_path={"qubits.q1.xy.operations.x.amplitude": 0.1},
+            change_log=[_Entry("qubits.q1.xy.operations.x", orig, deleted=True)],
+        )
+        assert v2.conflicts == ()
+
+    def test_a_deleted_subtree_the_live_chip_changed_collides(self):
+        orig = {"amplitude": 0.1, "length": 40}
+        v = classify(
+            live_by_path={"qubits.q1.xy.operations.x.amplitude": 0.2},
+            change_log=[_Entry("qubits.q1.xy.operations.x", orig, deleted=True)],
+        )
+        assert v.conflicts == ("qubits.q1.xy.operations.x",)
+
+    def test_the_live_chip_dropping_the_parent_collides(self):
+        from quam_state_manager.core.sync_conflict import ABSENT
+        v = classify(
+            live_by_path={"qubits.q2.xy.operations": ABSENT},
+            change_log=[_Entry("qubits.q2.xy.operations.new", None, created=True)],
+        )
+        assert v.conflicts == ("qubits.q2.xy.operations.new",)
+
+    def test_live_view_marks_a_missing_key_absent_not_none(self):
+        from quam_state_manager.core.differ import DiffEntry
+        from quam_state_manager.core.sync_conflict import ABSENT, live_view
+        lv = live_view([DiffEntry("a.b", 1, None, "removed"),
+                        DiffEntry("a.c", 1, None, "modified"),
+                        DiffEntry("a.d", None, 5, "added")])
+        assert lv == {"a.b": ABSENT, "a.c": None, "a.d": 5}
+
+
+    def test_an_edit_inside_a_created_subtree_is_still_the_users_own(self):
+        # 2026-09-27 journey: create a pulse, then type a new amplitude into
+        # it -- the leaf edit's "original" is the value the create wrote,
+        # and the live chip has no such key at all
+        from quam_state_manager.core.sync_conflict import ABSENT
+        root = "qubits.q2.xy.operations.new"
+        v = classify(
+            live_by_path={root: ABSENT, root + ".amplitude": ABSENT},
+            change_log=[_Entry(root, None, created=True),
+                        _Entry(root + ".amplitude", 0.123)],
+        )
+        assert v.conflicts == ()
+
+    def test_a_leaf_the_live_chip_dropped_outside_any_creation_collides(self):
+        from quam_state_manager.core.sync_conflict import ABSENT
+        v = classify(
+            live_by_path={"qubits.q1.T1": ABSENT},
+            change_log=[_Entry("qubits.q1.T1", 2e-5)],
+        )
+        assert v.conflicts == ("qubits.q1.T1",)

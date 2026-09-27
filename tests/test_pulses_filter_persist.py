@@ -81,9 +81,13 @@ class TestThePageNumberIsPartOfTheView:
         import pathlib
         js = pathlib.Path("quam_state_manager/web/static/app.js").read_text(encoding="utf-8")
         i = js.index("function _pulsesSyncUrl")
-        body = js[i:i + 1800]
+        body = js[i:i + 3000]
         assert 'parts.push("page=" + cur)' in body
-        assert 'parts.push("per_page=" + pp.value)' in body
+        # the picker has NO name attribute: the old select[name='per_page']
+        # lookup never matched (w7/adaptive verifier P3); the behaviour is
+        # pinned in tests/pulses_urlsync_selfcheck.cjs
+        assert 'parts.push("per_page=" + ppVal)' in body
+        assert "#pulses-rows-wrap .page-size-picker select" in body
         assert "data-current-page" in body
         # and the sync runs after the swap that CHANGES the page
         assert 'if (t && (t.id === "pulses-rows-wrap" || t.id === "table-pane")) _pulsesSyncUrl();' in js

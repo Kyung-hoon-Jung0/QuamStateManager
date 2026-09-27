@@ -12,6 +12,11 @@
 <div class="pulse-status-toast pulse-status-{{ status_level }}">{{ status_msg }}</div>
 {% endif %}
 
+{% if found_at %}
+<div class="pulse-found-at muted">Found at <code>{{ found_at }}</code> &mdash;
+    not one of the places SM lists by name; recognised by its shape.</div>
+{% endif %}
+
 {% if alias_chain %}
 <div class="pulse-alias-banner">
     Opened via alias <code>{{ op_name }}</code> &rarr;
@@ -26,13 +31,37 @@
        config fallback landed: the waveform IS on screen, the lab's own code
        drew it. A banner that contradicts the plot under it is worse than no
        banner, so it says what is actually true of each case. #}
-    {% if plot_source == 'config' %}
-    <code>{{ qclass or '(none)' }}</code> is this lab&#39;s own pulse class, so SM
-    cannot synthesize it and shows its fields raw. The waveform below is the
-    real one, taken from this chip&#39;s generated config.
+    {# docs/218 adaptive pulses: the waveform may now come from the class's
+       OWN code (drawn in the selected env) or from the generated config; the
+       label over the plot names which, so this sentence claims neither. #}
+    {% if plot_source in ('config', 'lab') or needs_lab %}
+    <code>{{ qclass or '(none)' }}</code> is your lab&#39;s own pulse class. SM
+    has no copy of its waveform code, so the curve below is drawn by your own
+    code &mdash; the label above the plot says whether that is the class
+    itself or the generated config.
     {% else %}
     Unrecognized pulse class <code>{{ qclass or '(none)' }}</code> &mdash;
-    fields are shown raw; the synthesized preview is unavailable.
+    the synthesized preview is unavailable.
+    {% endif %}
+    {% if schema_from_env and schema_stale %}
+    <span class="pulse-schema-note pulse-schema-stale" data-schema-stale="{{ schema_stale }}">{% if schema_stale == 'failed' %}Your
+      pulse code changed since SM read this class&#39;s fields, and re-reading
+      it failed &mdash; the fields below are typed from the class as it was
+      before the change.{% else %}Your {{ 'named modules' if schema_stale == 'modules' else 'pulse code' }}
+      changed since SM read this class&#39;s fields &mdash; the fields below
+      may be from before the change. SM is re-reading it now and will refresh
+      this view when it is done.{% endif %}</span>
+    {% elif schema_from_env %}
+    <span class="pulse-schema-note">Fields are typed from the class&#39;s own
+      dataclass schema, read from the selected environment.</span>
+    {% else %}
+    <span class="pulse-schema-note">No schema for this class yet (the selected
+      environment has not been probed, or does not import it) &mdash; fields
+      are shown raw.</span>
+    {% endif %}
+    {% if schema_unset %}
+    <span class="pulse-schema-unset muted">Left at the class default:
+      {% for f in schema_unset %}<code>{{ f.name }}{% if f.default is not none %}={{ f.default }}{% endif %}</code>{{ ", " if not loop.last }}{% endfor %}.</span>
     {% endif %}
 </div>
 {% endif %}
@@ -80,7 +109,8 @@
                aria-label="New operation name">
         <label class="pulse-retarget-label" title="Rewrite inbound pointers to follow the new name">
             <input type="checkbox" name="retarget" value="1" checked> re-point
-            {{ used_by | length }} reference(s)
+            {{ used_by | length }} reference(s){% if played_by_name %}
+            (played by name by {% for ref in played_by_name %}<code>{{ ref }}</code>{{ ", " if not loop.last }}{% endfor %} -- a rename is asked of that gate){% endif %}
         </label>
         <button class="btn-sm" type="submit">Rename</button>
         <button class="btn-sm outline" type="button"
@@ -108,12 +138,18 @@
     <p>This deletes the alias <code>{{ op_name }}</code> only — the target
         <code>{{ actual_path.rsplit('.', 1)[-1] }}</code> stays.</p>
     {% endif %}
+    {% if played_by_name %}
+    <p class="pulse-played-by-name"><strong>Played by name:</strong>
+        {% for ref in played_by_name %}<code>{{ ref }}</code>{{ ", " if not loop.last }}{% endfor %}
+        &mdash; your gate looks this operation up by its name, so deleting or
+        renaming it is asked of the gate's own <code>apply()</code> first.</p>
+    {% endif %}
     {% if delete_used_by %}
     <p><strong>Warning:</strong> referenced by
         {% for ref in delete_used_by %}<code>{{ ref }}</code>{{ ", " if not loop.last }}{% endfor %}
         &mdash; deleting leaves dangling pointers (and
         <code>generate_config()</code> will fail on them).</p>
-    {% else %}
+    {% elif not played_by_name %}
     <p>No other operation references this {{ 'alias' if alias_chain else 'pulse' }}.</p>
     {% endif %}
     <form hx-post="/api/pulse/delete" hx-target="#inspector-pane" hx-swap="innerHTML" hx-sync="this:drop" hx-disabled-elt="find button[type=submit]">
@@ -130,7 +166,11 @@
        classes it mirrors; for a lab's own class (e.g. an SNZ two-flux CZ pulse)
        the curve is the lab's own generate_config() output, and passing that
        off as "synthesized" would be a lie about which code drew it. #}
-    {% if plot_source == 'config' %}
+    {% if plot_source == 'lab' %}
+    <span class="pulse-plot-label muted">drawn by the class&#39;s own code
+        (<code>calculate_waveform()</code> in the selected env) at the current
+        field values{% if lab_warnings %} &mdash; it said: {{ lab_warnings | join('; ') }}{% endif %}</span>
+    {% elif plot_source == 'config' %}
     <span class="pulse-plot-label muted">waveform from the generated config
         &mdash; this pulse class is the lab&#39;s own, so its own code drew it{%
         if plot_config_at %} ({{ plot_config_at }}){% endif %}</span>
@@ -143,8 +183,8 @@
     <span class="pulse-dirty-pill" hidden>previewing uncommitted edits &mdash; Enter commits &middot; Esc reverts</span>
     <span class="pulse-verify-note" hidden></span>
     <span class="pulse-synth-err" {% if not synth_error %}hidden{% endif %}>{{ synth_error or '' }}</span>
-    {% if synth_unknown_class and truth_status != 'ok' %}
-    <span class="pulse-plot-cta">{% if truth_status == 'absent' %}Generate this
+    {% if synth_unknown_class and truth_status != 'ok' and plot_source != 'lab' %}
+    <span class="pulse-plot-cta"{% if needs_lab %} data-lab-pending="1"{% endif %}>{% if truth_status == 'absent' %}Generate this
         chip&#39;s config and the lab&#39;s own waveform is plotted here.
         <button type="button" class="btn-sm"
                 onclick="PulsesPage.regenerateThenVerify(this)">Generate now</button>

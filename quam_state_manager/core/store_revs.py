@@ -53,6 +53,18 @@ _CREATE_LOCK = threading.Lock()
 _ATTR = "_sm_revs"
 
 
+def moves_structure(dot_path: str, old: Any, new: Any) -> bool:
+    """Can this write move STRUCTURE (what points where, which class a dict
+    is, which op a gate plays BY NAME)? A plain number/bool/None over a plain
+    number/bool/None cannot; any string (a pointer is a string, an op name is
+    a string), container or ``__class__`` key can. (w7/pulsecreate's rule for
+    ``QuamStore.structure_seq``, the stamp of core/lab_watch -- broader than
+    :func:`is_plain_value`, which admits a non-pointer string.)"""
+    if str(dot_path).rsplit(".", 1)[-1] == "__class__":
+        return True
+    return isinstance(old, (str, dict, list)) or isinstance(new, (str, dict, list))
+
+
 def is_plain_value(v: Any) -> bool:
     """A value whose replacement by another plain value cannot change structure:
     not a container and not a JSON pointer string."""
@@ -153,6 +165,7 @@ def note(store, kind: str, path: str | None, old: Any = None, new: Any = None) -
         # us: record it as unexplained first
         if seq - 1 != r.last_seq and seq != r.last_seq:
             _record(r, seq - 1, None, False)
+            _bump_structure(store)          # unexplained: structure may have moved
         if seq == r.last_seq:
             return                          # already accounted (defensive)
         plain = (kind == "set" and path is not None
@@ -171,6 +184,19 @@ def note(store, kind: str, path: str | None, old: Any = None, new: Any = None) -
             jm(path if kind != "reload" else None,
                kind == "set" and path is not None
                and is_value_only_write(path, old, new))
+        # ... and the third flag (w7/pulsecreate): QuamStore.structure_seq,
+        # the stamp core/lab_watch rebuilds its "what points where / what is
+        # played by name" model on -- bumped only by a write that can move
+        # structure, so ordinary value edits keep that model warm.
+        if kind != "set" or path is None or moves_structure(path, old, new):
+            _bump_structure(store)
+
+
+def _bump_structure(store) -> None:
+    try:
+        store.structure_seq = getattr(store, "structure_seq", 0) + 1
+    except AttributeError:      # pragma: no cover - slotted fakes
+        pass
 
 
 def _sync(store) -> StoreRevs:

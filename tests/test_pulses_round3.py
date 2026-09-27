@@ -293,6 +293,7 @@ def pairs_client(tmp_path):
     app = create_app(testing=True, instance_path=str(tmp_path / "_pinst"))
     c = app.test_client()
     assert c.post("/load", data={"folder": str(folder)}).status_code in (200, 302)
+    c._app = app
     return c
 
 
@@ -309,25 +310,23 @@ class TestTheGateNameBoxIsWired:
         box = html.split('id="pulse-create-newgate-name"')[1][:400]
         assert 'oninput="PulsesPage.createValidateGateName()"' in box, box
 
-    def test_the_server_refusal_is_still_the_backstop(self, pairs_client):
-        """A name that got past the box (an old page, a script, a paste that
-        fired no input event) is still refused BY NAME — the box is a
-        courtesy, never the gate. Nothing about this pin was true before
-        docs/190 F48 either; it was simply never written down."""
-        r = pairs_client.post("/api/pulse/create", data={
-            "target_kind": "pair", "pair": "q1-q2", "gate": "__new__:cz_unipolar",
-            "new_gate_name": "cz_unipolar", "slot": "flux_pulse_qubit",
-            "pulse_type": "SquarePulse"})
-        assert r.status_code == 409, r.status_code
-        assert "already exists on q1-q2" in r.get_data(as_text=True)
-
-    def test_a_free_name_on_the_same_pair_is_created(self, pairs_client):
-        """The refusal must be about the NAME, not about creating gates."""
-        r = pairs_client.post("/api/pulse/create", data={
-            "target_kind": "pair", "pair": "q1-q2", "gate": "__new__:cz_unipolar",
-            "new_gate_name": "cz_brand_new", "slot": "flux_pulse_qubit",
-            "pulse_type": "SquarePulse"})
-        assert r.status_code == 200, r.get_data(as_text=True)[:300]
+    def test_a_new_gate_is_refused_whatever_its_name(self, pairs_client):
+        """2026-09-27: "+ new gate" was withdrawn from the create form -- the
+        gate it wrote carried its slot pulse on no channel, so quam_builder's
+        CZGate.apply() played a name the moving qubit's z did not have
+        (measured with pulse_lab_check.py on the KRS 5Q chip). An old page
+        still posting it is refused, taken or free name alike, and nothing
+        is written."""
+        ctx = next(iter(pairs_client._app.config["contexts"].values()))
+        before = json.dumps(ctx["store"].state, sort_keys=True)
+        for name in ("cz_unipolar", "cz_brand_new"):
+            r = pairs_client.post("/api/pulse/create", data={
+                "target_kind": "pair", "pair": "q1-q2",
+                "gate": "__new__:cz_unipolar", "new_gate_name": name,
+                "slot": "flux_pulse_qubit", "pulse_type": "SquarePulse"})
+            assert r.status_code == 410, r.status_code
+            assert "Gaussian CZ" in r.get_data(as_text=True)
+        assert json.dumps(ctx["store"].state, sort_keys=True) == before
 
 
 # ---------------------------------------------------------------- F47

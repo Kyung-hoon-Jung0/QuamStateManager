@@ -6,8 +6,9 @@
    Self-polls while probing. Env choice is GLOBAL — shared with Generate
    Config (one selected interpreter drives the wizard, diagnostics and this
    form alike). #}
+{% set _busy = env_card.probing or lab_code_changed %}
 <div id="pulse-env-strip" class="pulse-env-strip"
-     {% if env_card.probing %}hx-get="/pulse/new/env-strip" hx-trigger="every 2s"
+     {% if _busy %}hx-get="/pulse/new/env-strip?after_probe=1" hx-trigger="every 2s"
      hx-swap="outerHTML"{% endif %}>
   {% if not env_card.selected %}
     <span class="pulse-env-badge pulse-env-badge-static">static catalog</span>
@@ -23,15 +24,30 @@
       reselect it in
       <a href="/generate" hx-get="/generate" hx-target="#table-pane"
          hx-sync="#table-pane:replace" hx-push-url="true">Generate Config</a>.</span>
-  {% elif env_card.probing %}
+  {% elif _busy %}
     <span class="pulse-env-badge">probing…</span>
-    <span class="muted">reading the environment's pulse classes</span>
+    {# docs/218: an edit to the lab's own package does not move the env's
+       signature, so SM re-stats the files the last probe read and re-reads
+       the classes when one changed -- say which of the two this is #}
+    <span class="muted">{% if lab_code_changed and lab_stale_reason == 'modules' %}the
+      named modules changed since SM last read them — re-reading their
+      classes{% elif lab_code_changed %}your pulse code changed since
+      SM last read it — re-reading its classes{% else %}reading the
+      environment's pulse classes{% endif %}</span>
     <progress class="pulse-env-progress"></progress>
+  {% elif lab_reprobe_failed %}
+    <span class="pulse-env-badge pulse-env-badge-warn">code changed</span>
+    <span class="pulse-env-err">your pulse code changed since SM last read it,
+      and re-reading it failed (a module that does not import right now?) &mdash;
+      the classes below are from before the change.</span>
+    <button type="button" class="btn-sm outline"
+            onclick="PulsesPage.envStripProbe(this, true)">Try again</button>
   {% elif env_card.warm and env_class_count %}
     <span class="pulse-env-badge pulse-env-badge-ok">&#10003; env</span>
     <span class="pulse-env-text">
       <strong>{{ env_class_count }}</strong> pulse class{{ 'es' if env_class_count != 1 }}
-      discovered in
+      discovered{% if lab_class_count %} (<strong>{{ lab_class_count }}</strong>
+      of them your lab&#39;s own){% endif %} in
       <code class="pulse-env-python" title="{{ env_card.selected }}">{{ env_card.selected }}</code>
       {%- for k in ("quam", "quam_builder") %}{% if env_card.versions.get(k) %}
       · <code>{{ k }} {{ env_card.versions[k] }}</code>{% endif %}{% endfor %}
@@ -59,5 +75,41 @@
       classes below are SM's static catalog until then.</span>
     <button type="button" class="btn-sm outline"
             onclick="PulsesPage.envStripProbe(this)">Probe now</button>
+  {% endif %}
+  {% if env_card.selected and env_card.selected_exists %}
+  {# docs/218 adaptive pulses: SM finds your own pulse classes in the modules
+     the chip already imports. A class in a module the chip does not use yet is
+     reachable only by NAMING the module -- the probe never walks a package
+     blind (a lab module may talk to an instrument at import). #}
+  <details class="pulse-env-modules"{% if pulse_modules or modules_error %} open{% endif %}>
+    <summary class="muted">Your own pulse classes live in another module?</summary>
+    <p class="muted">SM already reads every pulse class in the modules this chip
+      imports. Name a module here (e.g. <code>my_lab.cz_pulses</code>) and SM
+      imports it in the selected environment and offers its pulse classes below.</p>
+    {% for m in pulse_modules %}
+    <span class="pulse-env-module">
+      <code>{{ m.name }}</code>
+      {% if m.status == 'ok' %}<span class="pulse-env-badge pulse-env-badge-ok">&#10003; imported</span>
+      {% elif m.status %}<span class="pulse-env-err" title="{{ m.status }}">&#10007; {{ m.status }}</span>
+      {% else %}<span class="muted">not read yet</span>{% endif %}
+      <button type="button" class="btn-sm outline"
+              hx-post="/pulse/class-modules" hx-vals='{"action": "remove", "module": {{ m.name | tojson }}}'
+              hx-target="#pulse-env-strip" hx-swap="outerHTML">remove</button>
+    </span>
+    {% endfor %}
+    <form class="pulse-env-module-form" hx-post="/pulse/class-modules"
+          hx-target="#pulse-env-strip" hx-swap="outerHTML">
+      <input type="hidden" name="action" value="add">
+      <input type="text" name="module" placeholder="package.module" aria-label="Module with your pulse classes"
+             pattern="[A-Za-z_][A-Za-z0-9_]*(\.[A-Za-z_][A-Za-z0-9_]*)*" required>
+      <button type="submit" class="btn-sm">Add module</button>
+    </form>
+    {% if modules_error %}<span class="pulse-env-err">{{ modules_error }}</span>{% endif %}
+  </details>
+  {% endif %}
+  {% if reload_form %}
+  {# the probe finished while the form was open: the class list above was
+     built before it, so rebuild the form (the new classes appear in it) #}
+  <script>if (window.PulsesPage && window.PulsesPage.reloadCreateForm) window.PulsesPage.reloadCreateForm();</script>
   {% endif %}
 </div>

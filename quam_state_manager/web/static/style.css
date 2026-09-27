@@ -2814,6 +2814,8 @@ table.data-table th {
     margin-left: 0.4rem; font-size: 0.82em; font-family: var(--font-ui);
     text-transform: none; white-space: nowrap; opacity: 0.75;
 }
+/* 2026-09-27: a lab-class pulse edit waits on the class's own code (seconds) */
+.pulse-lab-checking { font-size: 0.82em; font-family: var(--font-ui); font-style: italic; }
 table.data-table td {
     padding: var(--data-table-td-pad-v) var(--data-table-td-pad-h);
     font-family: var(--font-mono); font-size: var(--data-table-font);
@@ -5212,6 +5214,22 @@ a.topo-health-tile:hover { background: var(--pico-card-sectioning-background-col
    an ancestor-position :has() is what froze Trends (QA F6, test_topbar_twerk).
    Merged at integration (fix/qa2-dg-nav x fix/qa2-ds-table). */
 html.diag-page-live #diagnostics-banner-slot { display: none; }
+/* The late banner never moves the page under the pointer (app.js
+   _diagBannerSlotSwapped). Reserved: an invisible same-size placeholder holds
+   the space until the banner replaces it. Unreserved: the banner floats at
+   the bottom-left (the slot takes no height; the toast sink is bottom-right)
+   until app.js docks it into the flow at a moment nothing can move under the
+   pointer. */
+.diag-banner-placeholder {
+    visibility: hidden; animation: none; box-sizing: border-box;
+    padding-top: 0; padding-bottom: 0;
+}
+#diagnostics-banner-slot.diag-banner-overlay { height: 0; }
+#diagnostics-banner-slot.diag-banner-overlay > .diag-error-banner {
+    position: fixed; left: 1rem; bottom: 1rem; margin: 0;
+    max-width: min(760px, calc(100vw - 2rem)); z-index: 60;
+    box-shadow: 0 6px 20px rgba(0, 0, 0, 0.28);
+}
 
 /* Live-drift banner — the accumulating "N params changed on the live chip"
    notice. Info (cyan) accent to set it apart from the amber out-of-band
@@ -10587,6 +10605,10 @@ tr.bulk-row-pinned > th, tr.bulk-row-pinned > td { background: color-mix(in srgb
 }
 .pulse-flag-iq { border-color: #9b59b6; }
 .pulse-flag-readout { border-color: #e67e22; }
+/* docs/217 pulse locations: where a shape-discovered pulse lives */
+.pulse-found-at { font-size: 0.75em; overflow-wrap: anywhere; }
+.pulse-found-at code { font-size: inherit; padding: 0 2px; }
+div.pulse-found-at { margin: 0.2rem 0 0.4rem; }
 
 .pulse-usedby {
     display: inline-block; min-width: 1.4em; text-align: center;
@@ -10757,6 +10779,16 @@ table.prop-table .pulse-slider-row .pulse-slider-commit {
 .pulse-create-form { padding: 0 0.5rem 0.75rem; }
 .pulse-create-form fieldset { margin-bottom: 0.5rem; padding: 0.4rem 0.6rem; }
 /* r15 (docs/71 §2): env-discovery strip on top of the add-pulse form */
+/* docs/218 adaptive pulses: the "your classes live in another module?"
+   disclosure -- one compact row, never a full-width Pico form */
+.pulse-env-modules { flex: 1 0 100%; margin: 0.1rem 0 0; }
+.pulse-env-modules > summary { cursor: pointer; font-size: 0.95em; }
+.pulse-env-modules > p { margin: 0.25rem 0; font-size: 0.95em; }
+.pulse-env-module { display: inline-flex; align-items: center; gap: 0.35rem; margin: 0.15rem 0.6rem 0.15rem 0; }
+.pulse-env-module .btn-sm, .pulse-env-module-form .btn-sm { width: auto; margin: 0; padding: 0.1rem 0.5rem; }
+.pulse-env-module-form { display: flex; gap: 0.4rem; align-items: center; margin: 0.25rem 0 0; }
+.pulse-env-module-form input[type="text"] { width: 18rem; max-width: 100%; margin: 0; padding: 0.15rem 0.45rem; height: auto; font-size: 0.95em; }
+.pulse-schema-note, .pulse-schema-unset { display: block; margin-top: 0.25rem; }
 .pulse-env-strip {
     display: flex; align-items: center; flex-wrap: wrap; gap: 0.3rem 0.6rem;
     margin: 0.3rem 0.5rem 0.6rem; padding: 0.3rem 0.6rem;
@@ -14030,3 +14062,53 @@ td.cell-live-stale .cell-live-now {
 .zline-plot { height: 340px; min-width: 0; }
 .zline-stats { font-size: 0.8rem; margin: 0.25rem 0 0; }
 .zline-empty { padding: 3rem 1rem; text-align: center; }
+
+/* 2026-09-27: the one create flow's first step -- what to create */
+.pulse-create-choice { display: flex; flex-wrap: wrap; justify-content: flex-start; gap: 0.35rem; margin: 0.35rem 0.5rem 0.6rem; padding: 0; }
+.pulse-create-choice-btn { font-size: 0.85em; padding: 0.25rem 0.7rem; border-radius: 999px;
+    border: 1px solid var(--pico-muted-border-color); background: transparent;
+    color: var(--pico-color); width: auto; margin: 0; }
+.pulse-create-choice-btn:hover { border-color: var(--pico-primary); }
+.pulse-create-choice-btn.is-active { background: var(--pico-primary-background); border-color: var(--pico-primary-background);
+    color: var(--pico-primary-inverse); }
+.pulse-env-refresh { margin-left: 0.5rem; }
+
+/* lab-check.js (2026-09-27): a /field/edit(-batch) into a LAB-class pulse is
+   asked of the class's own code first -- the cell says so while it waits, and
+   a refusal is named where the edit was made. */
+.lab-check-badge {
+    position: fixed; z-index: 10050; max-width: 380px;
+    padding: 2px 8px; border-radius: 4px;
+    font-family: var(--font-ui); font-size: 0.8rem; font-style: italic;
+    background: var(--color-info-bg);
+    color: var(--color-info-text);
+    border: 1px solid var(--color-info-border);
+    box-shadow: 0 2px 6px rgba(0, 0, 0, 0.18);
+    pointer-events: auto; white-space: normal;
+}
+.lab-check-badge .lab-check-follow {
+    margin-left: 6px;
+    padding: 1px 8px;
+    font: inherit;
+    cursor: pointer;
+    border: 1px solid currentColor;
+    border-radius: 4px;
+    background: rgba(255, 255, 255, 0.12);
+    color: inherit;
+    font-weight: 600;
+}
+.lab-check-badge .lab-check-follow:hover { background: rgba(255, 255, 255, 0.24); }
+.lab-check-badge .lab-check-follow:disabled { opacity: 0.6; cursor: progress; }
+/* docs/218: written, but the lab's code could not vouch for it */
+.lab-check-badge.lab-check-warned {
+    font-style: normal; cursor: pointer;
+    background: var(--color-warning-bg);
+    color: var(--color-warning-text);
+    border-color: var(--color-warning-border);
+}
+.lab-check-badge.lab-check-refused {
+    font-style: normal; cursor: pointer;
+    background: var(--color-error-bg);
+    color: var(--color-error-text);
+    border-color: var(--color-error-border);
+}

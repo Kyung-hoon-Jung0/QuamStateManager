@@ -2,8 +2,11 @@
 // in jsdom against a hand-built create-form DOM and pins:
 //  - createTypeChanged fills the HIDDEN qclass input + the visible display
 //    (users never type class paths) and the "env" provenance hint;
-//  - env-only classes suppress the preview and show the no-transcription
-//    note; switching back restores the plot area;
+//  - env-only classes show the no-transcription note and a "draw with the
+//    class's own code" button instead of an automatic preview (docs/218
+//    adaptive pulses); the button posts qclass + the typed values to
+//    /api/pulse/lab-waveform and draws the answer; switching back to a
+//    synthesized class removes the button;
 //  - options whose class the selected env can NOT import are marked;
 //  - submitting such a class is PREVENTED until the explicit confirm, after
 //    which the request re-fires with force=1 (never-silent);
@@ -54,8 +57,9 @@ const CATALOG = {
     // the REAL sentence env_creatable_specs puts on these (docs/190 F47) --
     // a stub here made P3 pass against a note the product never renders
     doc: 'Discovered in the selected environment — SM has no waveform ' +
-         'transcription for this class, so there is no live preview. Fields ' +
-         'come from the env’s own dataclass schema.',
+         'transcription for this class, so the preview is drawn by the ' +
+         'class\'s own code in that environment. Fields come from the env’s ' +
+         'own dataclass schema.',
     iq: 'never', length_mode: 'explicit', channels: ['xy', 'z', 'resonator'],
     verify: 'env', env_only: true,
     qclass: 'quam_builder.architecture.superconducting.components.pulses.CosineBipolarPulse',
@@ -175,10 +179,13 @@ ok(erfOpt.classList.contains('pulse-opt-envmissing'), 'P2: missing option class'
 const sqOpt = typeSel.querySelector('option[value="SquarePulse"]');
 ok(!/not in this env/.test(sqOpt.textContent), 'P2: env-ok option unmarked');
 
-// P3: env-only class → preview suppressed + note shown; back → restored
+// P3: env-only class → no automatic preview, a lab-draw button + note; back → gone
 typeSel.value = 'CosineBipolarPulse';
 P.createTypeChanged(typeSel);
-ok(doc.getElementById('pulse-create-plot').hidden === true, 'P3: plot hidden');
+ok(doc.getElementById('pulse-create-plot').hidden === false, 'P3: plot area kept');
+ok(doc.getElementById('pulse-create-plot').classList.contains('pulse-plot-empty'),
+   'P3: plot shown empty until drawn');
+ok(!!doc.getElementById('pulse-create-labdraw'), 'P3: lab-draw button offered');
 const note = doc.getElementById('pulse-create-envnote');
 ok(!!note && /no waveform transcription/.test(note.textContent),
    'P3: no-preview note shown');
@@ -186,6 +193,7 @@ typeSel.value = 'SquarePulse';
 P.createTypeChanged(typeSel);
 ok(doc.getElementById('pulse-create-plot').hidden === false, 'P3: plot restored');
 ok(!doc.getElementById('pulse-create-envnote'), 'P3: note removed');
+ok(!doc.getElementById('pulse-create-labdraw'), 'P3: lab-draw button removed');
 
 // P4: never-silent confirm on a missing-in-env class
 const form = root.querySelector('form.pulse-create-form');
@@ -377,8 +385,8 @@ P.createTypeChanged(typeSel);
 var note2 = doc.getElementById('pulse-create-envnote');
 ok(!!note2 && /Declared by this chip/.test(note2.textContent),
    'P13: a chip class says it came from the chip');
-ok(doc.getElementById('pulse-create-plot').hidden === true,
-   'P13: and still claims no preview');
+ok(!!doc.getElementById('pulse-create-labdraw'),
+   'P13: and offers its own code to draw it');
 
 // a class with no doc of its own keeps the env sentence
 typeSel.value = 'CosineBipolarPulse';
@@ -392,6 +400,165 @@ ok(!!note3 && /Discovered in the selected environment/.test(note3.textContent),
    'P13: an entry with no doc keeps the env wording');
 root._catalog.CosineBipolarPulse.doc = envDoc;
 
-if (fails) { console.error(fails + ' failure(s)'); process.exit(1); }
-console.log('ALL OK pulses_create_selfcheck');
-process.exit(0);
+// P14 (docs/218): the button asks the CLASS ITSELF -- qclass + the values in
+// the form, to the lab route -- and draws what comes back, labelled as such.
+typeSel.value = 'LabOwnPulse'; P.createTypeChanged(typeSel);
+var amp = doc.querySelector('#pulse-create-fields input[name="amplitude"]');
+if (amp) amp.value = '0.25';
+var sent = null, drawn = null;
+win.fetch = function (url, opts) {
+  sent = { url: url, body: JSON.parse((opts && opts.body) || '{}') };
+  return win.Promise.resolve({ json: function () { return win.Promise.resolve({
+    ok: true, results: [{ ok: true, warnings: [],
+      plot: { ok: true, traces: [{ name: 'I', x: [0, 1, 2], y: [0, 0.25, 0] }] } }] }); } });
+};
+win._plotlyRender = function (id, data) { drawn = { id: id, data: data }; return null; };
+var bar = root.querySelector('.pulse-plot-bar');
+var lbl = doc.createElement('span'); lbl.className = 'pulse-plot-label'; bar.appendChild(lbl);
+doc.getElementById('pulse-create-labdraw').click();
+setTimeout(function () {
+  ok(sent && sent.url === '/api/pulse/lab-waveform', 'P14: posts to the lab route');
+  ok(sent && sent.body.qclass === 'quam_config.two_flux.LabOwnPulse', 'P14: names the class');
+  ok(sent && sent.body.params && sent.body.params.amplitude === '0.25', 'P14: sends the typed values');
+  ok(drawn && drawn.id === 'pulse-create-plot' && drawn.data.length === 1, 'P14: draws the answer');
+  ok(/class's own code/.test(lbl.textContent), 'P14: labelled as the class\'s own code');
+  ok(!doc.getElementById('pulse-create-plot').classList.contains('pulse-plot-empty'), 'P14: plot no longer empty');
+  p15();
+}, 20);
+
+// P15 (docs/218 verifier round): a detail whose class schema predates a lab
+// edit polls /pulse/schema-status while SM re-reads the class, then
+// re-renders itself -- but never over an uncommitted edit (it says so).
+function p15() {
+  function mkRoot(dirty) {
+    var r = doc.createElement('div'); r.id = 'pulse-detail-root';
+    r.setAttribute('data-pulse-path', 'qubits.q1.z.operations.cz');
+    r.innerHTML = '<span data-schema-stale="code">stale</span>' +
+      '<input data-param="amplitude" data-committed="0.2" value="' + (dirty ? '0.3' : '0.2') + '">';
+    doc.body.appendChild(r);
+    r._sections = [{ el: r, path: 'qubits.q1.z.operations.cz' }];
+    return r;
+  }
+  var answers = [{ ok: true, stale: true, failed: false }, { ok: true, stale: false, failed: false }];
+  var asked = [], reloads = [];
+  win.fetch = function (url) {
+    asked.push(url);
+    var a = answers.length > 1 ? answers.shift() : answers[0];
+    return win.Promise.resolve({ json: function () { return win.Promise.resolve(a); } });
+  };
+  win.htmx = { ajax: function (m, url, o) { reloads.push({ url: url, target: o && o.target }); return null; } };
+  var clean = mkRoot(false);
+  P._pollSchema(clean, 0, 1);
+  setTimeout(function () {
+    ok(asked.length >= 2 && asked[0] === '/pulse/schema-status', 'P15: polls the schema status');
+    ok(reloads.length === 1 && /\/pulse\/detail\?path=qubits\.q1\.z\.operations\.cz/.test(reloads[0].url)
+       && reloads[0].target === '#inspector-pane', 'P15: re-renders the view once fresh');
+    clean.remove();
+    var dirty = mkRoot(true);
+    reloads = [];
+    P._pollSchema(dirty, 0, 1);
+    setTimeout(function () {
+      ok(reloads.length === 0, 'P15: never re-renders over an uncommitted edit');
+      ok(/reopen this pulse/.test(dirty.querySelector('[data-schema-stale]').textContent),
+         'P15: says to reopen instead');
+      p16();                          // p19 (async) ends the run
+    }, 60);
+  }, 60);
+}
+
+
+// 2026-09-27 (pulse-create QA, real Chrome on big30x + KRS 5Q):
+// P16 only the slots the SERVER listed are offered -- a coupler slot on a
+//     pair with no coupler is not in the island, so it must not appear;
+// P17 a probe finishing while the user types never rebuilds the form (it
+//     threw away the class, the name and every typed field on big30x) --
+//     the strip offers the refresh instead, and that refresh does rebuild;
+// P18 an IQ-only class is disabled on a single-output (z) channel.
+function p16() {
+  var info = root._pairsInfo;
+  info['q2-q1'].gates = { cz_x: { slots: {
+    flux_pulse_qubit: { state: 'held', 'class': 'a linked pulse',
+                        path: 'qubits.q2.z.operations.cz_x_flux_pulse_q2_q1' } } } };
+  var pairSel = doc.getElementById('pulse-create-pair');
+  var gateSel = doc.getElementById('pulse-create-gate');
+  var slotSel = doc.getElementById('pulse-create-slot');
+  pairSel.value = 'q2-q1';
+  P.createPairSelected(pairSel);
+  gateSel.value = 'cz_x';
+  P.createGateSelected(gateSel);
+  var vals = Array.prototype.map.call(slotSel.options, function (o) { return o.value; });
+  ok(vals.join(',') === 'flux_pulse_qubit', 'P16: only the listed slot is offered (' + vals + ')');
+
+  var reloads = [];
+  win.htmx = { ajax: function (m, url, o) { reloads.push(url); return null; },
+               trigger: function () {} };
+  var strip = doc.createElement('div'); strip.id = 'pulse-env-strip';
+  root.insertBefore(strip, root.firstChild);
+  root._dirty = false;
+  P.reloadCreateForm();
+  ok(reloads.length === 1 && /^\/pulse\/new/.test(reloads[0]), 'P17: an untouched form is rebuilt');
+  reloads = [];
+  var nameIn = doc.createElement('input'); nameIn.name = 'probe'; root.querySelector('form').appendChild(nameIn);
+  var ev = new win.Event('input', { bubbles: true });
+  nameIn.dispatchEvent(ev);           // synthetic: isTrusted=false -> not dirty
+  ok(!root._dirty, 'P17: a script-fired input does not mark the form touched');
+  root._dirty = true;                 // what a real keystroke sets
+  P.reloadCreateForm();
+  ok(reloads.length === 0, 'P17: a touched form is NOT rebuilt behind the user');
+  var btn = strip.querySelector('.pulse-env-refresh');
+  ok(!!btn && /refresh the list/.test(btn.textContent), 'P17: the strip offers the refresh');
+  P.reloadCreateForm();
+  ok(strip.querySelectorAll('.pulse-env-refresh').length === 1, 'P17: offered once, not stacked');
+  btn.click();
+  ok(reloads.length === 1, 'P17: the offered refresh does rebuild');
+
+  var q = doc.querySelector('input[name="target_kind"][value="qubit"]');
+  q.checked = true;
+  P.createTargetKind(q);
+  var ch = doc.createElement('select'); ch.name = 'channel';
+  ch.innerHTML = '<option>xy</option><option>z</option>';
+  root.querySelector('form').appendChild(ch);
+  var typeSel2 = doc.getElementById('pulse-create-type');
+  var drag = typeSel2.querySelector('option[value="DragCosinePulse"]');
+  ch.value = 'xy'; P.createSyncIqClasses();
+  ok(drag.disabled === false, 'P18: DRAG offered on xy');
+  typeSel2.value = 'DragCosinePulse';
+  ch.value = 'z'; P.createSyncIqClasses();
+  ok(drag.disabled === true, 'P18: DRAG disabled on z');
+  ok(typeSel2.value !== 'DragCosinePulse', 'P18: the selection moves off the disabled class');
+  ch.remove();
+  p19();
+}
+
+// P19: a rebuild requested while the form was clean, whose answer lands
+// AFTER the user started typing (big30x: seconds), must not swap either.
+function p19() {
+  var swaps = [], resolveFetch, swapInfo = null;
+  if (!doc.getElementById('inspector-pane')) { var ip = doc.createElement('div'); ip.id = 'inspector-pane'; doc.body.appendChild(ip); }
+  win.htmx = { ajax: function () { swaps.push('ajax'); }, trigger: function () {},
+               swap: function (t, html, spec, opts) {
+                 swaps.push('swap');
+                 swapInfo = opts && opts.eventInfo; } };
+  win.fetch = function () { return new win.Promise(function (res) { resolveFetch = res; }); };
+  root._dirty = false;
+  var strip = doc.getElementById('pulse-env-strip');
+  strip.querySelectorAll('.pulse-env-refresh').forEach(function (b) { b.remove(); });
+  P.reloadCreateForm();
+  root._dirty = true;                          // the user types while it is in flight
+  resolveFetch({ ok: true, text: function () { return win.Promise.resolve('<div id="pulse-create-root"></div>'); } });
+  setTimeout(function () {
+    ok(swaps.length === 0, 'P19: a late rebuild does not replace a form typed into meanwhile (' + swaps + ')');
+    ok(!!strip.querySelector('.pulse-env-refresh'), 'P19: it offers the refresh instead');
+    root._dirty = false;
+    P.reloadCreateForm();
+    resolveFetch({ ok: true, text: function () { return win.Promise.resolve('<div></div>'); } });
+    setTimeout(function () {
+      ok(swaps.join() === 'swap', 'P19: an untouched form IS rebuilt when the answer lands (' + swaps + ')');
+      ok(swapInfo && swapInfo.target && swapInfo.target.id === 'inspector-pane',
+         'P19: the swap names its target (afterSwap listeners read evt.detail.target.id)');
+      if (fails) { console.error(fails + ' failure(s)'); process.exit(1); }
+      console.log('ALL OK pulses_create_selfcheck (P16-P19)');
+      process.exit(0);
+    }, 30);
+  }, 30);
+}

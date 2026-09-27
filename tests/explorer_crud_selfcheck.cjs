@@ -718,6 +718,7 @@ function nodeAt(container, p) {
     const chip = leaf.querySelector(':scope > .tree-row > .tree-edit-err');
     ok(!!chip && /chipB/.test(chip.textContent), 'C17: the delete refusal is shown');
     ok(!!chip && !!chip.querySelector('.tree-reload-btn'), 'C17: the delete refusal offers Reload page');
+    ok(!!chip && !chip.querySelector('.tree-cascade-btn'), 'C17: a wrong-chip refusal offers no cascade');
     ok(!!nodeAt(c, 'qubits.qA1.f_01'), 'C17: the refused delete left the leaf on screen');
 
     const note = nodeAt(c, 'qubits.qA1.extras.note');
@@ -731,6 +732,46 @@ function nodeAt(container, p) {
     const terr = tpanel.querySelector('.tree-crud-err');
     ok(/chipB/.test(terr.textContent) && !!terr.querySelector('.tree-reload-btn'),
       'C17: the type-assignment refusal offers Reload page');
+  }
+  // C18 (docs/218, verifier 4): a lab gate whose by-name ops link into it
+  //      cannot be deleted alone (generate_config() would fail for the whole
+  //      chip) nor can the ops go first -- the refusal names them
+  //      (lab_delete_also) and offers ONE batch deleting all of them.
+  {
+    const ALSO = ['qubits.qA1.extras.note', 'qubits.qA2.f_01'];
+    const REFUSED = { ok: false, lab_refused: true, lab_delete_also: ALSO,
+      error: "Your chip's own generate_config() refused this ... pointing at nothing" };
+    const win = makeWorld(function (url) {
+      if (url === '/field/delete') return jsonResp(REFUSED, 400);
+      if (url === '/field/edit-batch') return jsonResp({ ok: true, tray_html: '' });
+      if (url.indexOf('/field/refs') === 0) return jsonResp({ ok: true, total: 2, refs: [] });
+      return jsonResp({ ok: true, values: {}, expected: {} });
+    });
+    win._softRefreshLiveSurface = function () { win._softRefreshed = (win._softRefreshed || 0) + 1; };
+    const c = win.document.getElementById('tree');
+    expandAll(c);
+    const leaf = nodeAt(c, 'qubits.qA1.f_01');
+    hover(win, leaf);
+    leaf.querySelector('.tree-act-del').click();
+    await tick(20);
+    leaf.querySelectorAll('.tree-row-actions .tree-act-btn')[0].click();
+    await tick(25);
+    const chip = leaf.querySelector(':scope > .tree-row > .tree-edit-err');
+    ok(!!chip && /generate_config/.test(chip.textContent), 'C18: the lab refusal is shown');
+    const btn = chip && chip.querySelector('.tree-cascade-btn');
+    ok(!!btn && /Delete together with 2 ops/.test(btn.textContent),
+      'C18: the refusal offers deleting the named ops together');
+    ok(!chip.querySelector('.tree-reload-btn'), 'C18: a lab refusal is not a wrong-chip one');
+    if (btn) btn.click();
+    await tick(25);
+    const call = win._fetchCalls.filter(function (x) { return x.url === '/field/edit-batch'; })[0];
+    const body = call ? JSON.parse(call.opts.body) : {};
+    ok(!!call, 'C18: one batch was POSTed');
+    ok(JSON.stringify((body.updates || []).map(function (u) { return [u.dot_path, u.delete]; }))
+       === JSON.stringify([['qubits.qA1.f_01', true]].concat(ALSO.map(function (p) { return [p, true]; }))),
+      'C18: the batch deletes the refused path AND every named op (' + JSON.stringify(body.updates) + ')');
+    ok(body.group === 'new', 'C18: one undo group');
+    ok(win._softRefreshed === 1, 'C18: the tree re-reads the chip in place -- no page reload (the unsaved-edits guard would prompt)');
   }
   {
     const win = makeWorld(function (url) {

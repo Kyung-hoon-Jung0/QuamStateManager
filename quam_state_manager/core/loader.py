@@ -182,6 +182,11 @@ class QuamStore:
         # unjournaled bump, entries aged out of the bound) or a structural
         # step means "recompute cold". See :meth:`mutations_since`.
         self._mut_journal: deque = deque(maxlen=MUT_JOURNAL_MAX)
+        # Bumped only by writes that can move STRUCTURE (a pointer, a class,
+        # a container, a created/deleted key -- never a plain number): caches
+        # of "what points where" (core/lab_watch) survive ordinary edits.
+        # Fed, like the journal above, by the ONE recorder store_revs.note.
+        self.structure_seq: int = 0
         # Per-key expected-type policy (core.type_policy.TypePolicy) —
         # attached by the web layer at activation; None = feature dormant,
         # every edit behaves exactly as before.
@@ -232,6 +237,7 @@ class QuamStore:
         self.generated_config_meta = None
         self.mutation_seq = 0
         self._mut_journal = deque(maxlen=MUT_JOURNAL_MAX)
+        self.structure_seq = 0
         self.type_policy = None
         self._lock = threading.RLock()
         self._pointer_cache = {}
