@@ -70,7 +70,7 @@ class LabWatch:
     checks it). ``macros_for(path)`` -> the lab gates a write can change."""
 
     __slots__ = ("ops", "lab_ops", "exact", "container", "macros",
-                 "macros_of", "macro_exact")
+                 "macros_of", "macro_exact", "named_by", "under")
 
     def __init__(self) -> None:
         self.ops: set[str] = set()
@@ -86,6 +86,13 @@ class LabWatch:
         # a path on the ROUTE from a gate field to its pulse -> gates (a write
         # there re-routes the gate to another pulse)
         self.macro_exact: dict[str, set[str]] = {}
+        # channel op a lab gate plays BY NAME -> {the gate field holding that
+        # name}: ``CZGateTwoFlux`` plays ``qubit_control.z.play(pulse.id)``, so
+        # the op must exist under that name although no pointer names it
+        self.named_by: dict[str, set[str]] = {}
+        # every proper PREFIX of a route path or a played pulse -> gates: a
+        # write that replaces or removes that container reaches them
+        self.under: dict[str, set[str]] = {}
 
     def __bool__(self) -> bool:
         return bool(self.ops) or bool(self.macros)
@@ -100,6 +107,10 @@ class LabWatch:
         for op, _f, _r in (self.affected(path) if aff is None else aff):
             out |= self.macros_of.get(op, set())
         out |= self.macro_exact.get(path, set())
+        # a write that REPLACES or REMOVES a container holding a route or a
+        # played pulse (delete ``qubits.q2.z.operations``, a whole new
+        # ``qubits.q2.z``) reaches the gate as surely as a write on the route
+        out |= self.under.get(path, set())
         segs = path.split(".")
         for n in range(len(segs), 0, -1):
             pre = ".".join(segs[:n])
@@ -196,6 +207,11 @@ def build(merged: dict, lab_test: Callable[[Any], bool] = is_lab_class,
         for op in plays:
             watch.macros_of.setdefault(op, set()).add(mp)
             tracked.setdefault(op, op.split("."))
+    for src in (watch.macro_exact, watch.macros_of):
+        for k, gates in src.items():
+            segs = k.split(".")
+            for n in range(1, len(segs)):
+                watch.under.setdefault(".".join(segs[:n]), set()).update(gates)
     for op, op_segs in tracked.items():
         watch.ops.add(op)
         ok, body = _walk(merged, op_segs)
@@ -234,14 +250,90 @@ def _owner_qubits(merged, mac_segs: list[str]) -> list[str]:
     return out or [".".join(owner)]
 
 
+#: fields of a gate's OWNER (a pair) its ``apply()`` plays through --
+#: ``self.qubit_pair.qubit_control.z.play(...)``, ``...coupler.play(...)``
+_OWNER_ROUTE_KEYS = ("qubit_control", "qubit_target", "coupler")
+
+
+def _owner_routes(merged, watch: "LabWatch", mp: str, mac_segs: list[str]) -> None:
+    """Record the owner's route fields (and every pointer hop on them) for a
+    lab gate: re-linking ``qubit_pairs.p.qubit_control`` to another qubit makes
+    the gate play its pulses on THAT qubit's lines."""
+    owner = mac_segs[:-2]
+    ok, body = _walk(merged, owner)
+    if not ok or not isinstance(body, dict):
+        return
+    for key in _OWNER_ROUTE_KEYS:
+        if key not in body:
+            continue
+        fp = ".".join(owner + [key])
+        watch.macro_exact.setdefault(fp, set()).add(mp)
+        if is_pointer(body.get(key)):
+            for hop in resolve_field_target(merged, fp).get("chain") or ():
+                watch.macro_exact.setdefault(hop["to_path"], set()).add(mp)
+
+
+def _play_hosts(merged, mac_segs: list[str]) -> list[str]:
+    """Every ``operations`` dict a gate can play a NAME on: the owner qubits'
+    channels and the owner pair's own channels (its coupler, a drive line),
+    pointers followed."""
+    hosts: list[str] = []
+    for q in _owner_qubits(merged, mac_segs):
+        ok, qb = _walk(merged, q.split("."))
+        if not ok or not isinstance(qb, dict):
+            continue
+        for ch, cb in qb.items():
+            if isinstance(cb, dict) and isinstance(cb.get("operations"), dict):
+                hosts.append(f"{q}.{ch}.operations")
+    owner = mac_segs[:-2]
+    ok, body = _walk(merged, owner)
+    if ok and isinstance(body, dict) and owner[:1] == ["qubit_pairs"]:
+        for key, raw in body.items():
+            if key == "macros":
+                continue
+            fp = ".".join(owner + [key])
+            cp = fp
+            if is_pointer(raw):
+                rt = resolve_field_target(merged, fp)
+                if not rt.get("resolvable"):
+                    continue
+                cp = rt.get("resolved_path") or fp
+            cb = _at(merged, cp)
+            if isinstance(cb, dict) and isinstance(cb.get("operations"), dict):
+                hosts.append(f"{cp}.operations")
+    return list(dict.fromkeys(hosts))
+
+
+def _played_name(merged, fp: str, body: dict, default: str):
+    """``(holder, name)`` -- the name a gate plays a pulse dict by, as quam
+    builder's ``get_pulse_name`` computes it: the pulse's ``id`` when set
+    (followed through a pointer), else its key in its parent (*default*)."""
+    raw = body.get("id")
+    if isinstance(raw, str) and raw:
+        if not is_pointer(raw):
+            return f"{fp}.id", raw
+        rt = resolve_field_target(merged, f"{fp}.id")
+        v = rt.get("resolved_value")
+        if rt.get("resolvable") and isinstance(v, str) and v and not is_pointer(v):
+            return f"{fp}.id", v
+        return None, None       # an inferred id: the class computes it
+    return fp, default
+
+
 def _gate_pulses(merged, watch: LabWatch, mp: str, mac_segs: list[str],
                  body: dict) -> set[str]:
     """Every pulse dict a lab gate plays: held inline, reached by a pointer
     (any hops), or NAMED (looked up on the owner qubits' channels, as
     ``qubit.get_pulse(name)`` does). Every path on a route is recorded in
-    ``macro_exact``: a write there re-routes the gate."""
+    ``macro_exact``: a write there re-routes the gate.
+
+    An inline or pointed pulse is ALSO played by name: ``CZGateTwoFlux``
+    plays ``qubit_control.z.play(get_pulse_name(pulse))`` -- the pulse's
+    ``id`` -- so the channel op of that name is on the route too (verifier 3,
+    KRS 5Q: deleting ``qubits.q2.z.operations.cz_GNZ_flux_pulse_q2_q3`` went
+    through and every CZ node on the pair failed at program build)."""
     plays: set[str] = set()
-    owners = None
+    names: list[tuple[str, str, str | None]] = []   # (holder, name, pulse path)
     for field, raw in body.items():
         if field == "__class__":
             continue
@@ -249,6 +341,9 @@ def _gate_pulses(merged, watch: LabWatch, mp: str, mac_segs: list[str],
         if isinstance(raw, dict):
             if isinstance(raw.get("__class__"), str):
                 plays.add(fp)
+                holder, name = _played_name(merged, fp, raw, field)
+                if name:
+                    names.append((holder, name, fp))
             continue
         if not isinstance(raw, str) or not raw:
             continue
@@ -259,26 +354,32 @@ def _gate_pulses(merged, watch: LabWatch, mp: str, mac_segs: list[str],
             val = _at(merged, rt.get("resolved_path"))
             if rt.get("resolvable") and isinstance(val, dict) \
                     and isinstance(val.get("__class__"), str):
-                plays.add(rt["resolved_path"])
+                rp = rt["resolved_path"]
+                plays.add(rp)
+                holder, name = _played_name(merged, rp, val, rp.rsplit(".", 1)[-1])
+                if name:
+                    names.append((fp if holder == rp else holder, name, rp))
             continue
-        if owners is None:
-            owners = _owner_qubits(merged, mac_segs)
-        for q in owners:
-            ok, qb = _walk(merged, q.split("."))
-            if not ok or not isinstance(qb, dict):
-                continue
-            for ch, cb in qb.items():
-                ops = cb.get("operations") if isinstance(cb, dict) else None
-                if not isinstance(ops, dict) or raw not in ops:
+        names.append((fp, raw, None))
+    if names:
+        hosts = _play_hosts(merged, mac_segs)
+        for holder, name, pulse in names:
+            for h in hosts:
+                ok, ops = _walk(merged, h.split("."))
+                if not ok or not isinstance(ops, dict) or name not in ops:
                     continue
-                named = f"{q}.{ch}.operations.{raw}"
+                named = f"{h}.{name}"
+                if named == pulse:
+                    continue      # the pointed pulse itself: already routed
                 watch.macro_exact.setdefault(named, set()).add(mp)
+                watch.named_by.setdefault(named, set()).add(holder)
                 rt = resolve_field_target(merged, named)
                 for hop in rt.get("chain") or ():
                     watch.macro_exact.setdefault(hop["to_path"], set()).add(mp)
                 val = _at(merged, rt.get("resolved_path"))
                 if rt.get("resolvable") and isinstance(val, dict):
                     plays.add(rt["resolved_path"])
+    _owner_routes(merged, watch, mp, mac_segs)
     return plays
 
 
@@ -338,12 +439,15 @@ def watch_for(store) -> LabWatch:
     cached = getattr(store, "_lab_watch", None)
     if cached is not None and cached[0] == stamp:
         return cached[1]
-    with _LOCK:
-        cached = getattr(store, "_lab_watch", None)
-        if cached is not None and cached[0] == stamp:
-            return cached[1]
-        with store._lock:
+    # store lock FIRST, then the module lock: a door may already hold the
+    # store lock when it asks (a create into a lab gate's slot), and the
+    # other order would deadlock against a rebuild in another thread
+    with store._lock:
+        with _LOCK:
+            cached = getattr(store, "_lab_watch", None)
             stamp = _stamp(store)
+            if cached is not None and cached[0] == stamp:
+                return cached[1]
             watch = build(store.merged)
-        store._lab_watch = (stamp, watch)
-        return watch
+            store._lab_watch = (stamp, watch)
+            return watch

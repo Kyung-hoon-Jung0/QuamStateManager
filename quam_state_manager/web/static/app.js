@@ -11366,6 +11366,8 @@ window.clearDetailPanelSearch = function(btnEl) {
                     window.showToast("Deleted — " + d.dangling_refs +
                         " pointer(s) now dangle (see Diagnostics).", "warning");
                 }
+                // a lab gate that already fails could not check this delete
+                if (d.warning && window.showToast) window.showToast(d.warning, "warning");
                 if (d.tray_html) { _swapPendingTray(d.tray_html); window._restoreTrayState && window._restoreTrayState(); }
                 if (window._diagChanged) window._diagChanged();
             })

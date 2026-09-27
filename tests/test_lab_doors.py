@@ -118,10 +118,34 @@ class FakeLab:
     def _gate(params):
         contents = params["contents"]
         res = {"ok": True, "macros": {}, "error": None}
+        # Quam.load: a required slot left null stops the whole chip loading
+        for mp in params["macros"]:
+            try:
+                if _walk(contents, mp).get("flux_pulse_qubit", 0) is None:
+                    return {"ok": False, "load_failed": True, "macros": {},
+                            "error": "TypeError: None is not allowed for required "
+                                     f"attribute {mp}.flux_pulse_qubit"}
+            except (KeyError, TypeError):
+                pass
         for mp in params["macros"]:
             try:
                 mac = _walk(contents, mp)
-                a, b = mac["flux_pulse_qubit"], mac["flux_pulse_target"]
+                pair = _walk(contents, mp.rsplit(".macros.", 1)[0])
+
+                def pulse_of(slot, role):
+                    p = mac[slot]
+                    if isinstance(p, str) and p.startswith("#/"):   # a linked pulse
+                        p = _walk(contents, p[2:].replace("/", "."))
+                    # get_pulse_name(pulse) -> <qubit>.z.play(name): the op of
+                    # that id must exist on the pair's own qubit's z line
+                    if isinstance(p, dict) and isinstance(p.get("id"), str):
+                        q = _walk(contents, pair[role][2:].replace("/", "."))
+                        if p["id"] not in q["z"]["operations"]:
+                            raise KeyError(f"Operation {p['id']!r} not found in "
+                                           f"channel {pair[role]}.z")
+                    return p
+                a = pulse_of("flux_pulse_qubit", "qubit_control")
+                b = pulse_of("flux_pulse_target", "qubit_target")
 
                 def knob_of(p, k):          # quam resolves an absolute link
                     v = p.get(k, 0)
@@ -516,3 +540,147 @@ class TestTheWorker:
         b = lab_waveform.draw("py-x.exe", [("lab.X", {"k": 1})])[0]
         assert a["reason"] == b["reason"] == "class-unavailable"
         assert len(runs) == 2          # asked again, not served from RAM
+
+
+# ------------------------------------------------------- verifier 3 (by name)
+def _by_name(st):
+    """Give the lab gate the chip's own layout: its inline pulses carry an
+    ``id`` and the gate plays that NAME on each qubit's z line
+    (CZGateTwoFlux: ``qubit_control.z.play(get_pulse_name(pulse))``)."""
+    mac = _walk(st.state, G)
+    mac["flux_pulse_qubit"]["id"] = "czl_q1"
+    mac["flux_pulse_target"]["id"] = "czl_q2t"
+    st.state["qubits"]["q2"]["z"]["operations"]["czl_q2t"] = {
+        "__class__": LAB, "flat_length": f"#/{FL_T.replace('.', '/')}",
+        "amplitude": 0.1, "padding": 4}
+    st.structure_seq += 1
+
+
+OP_C = "qubits.q1.z.operations.czl_q1"
+OP_T = "qubits.q2.z.operations.czl_q2t"
+
+
+class TestAnOpTheGatePlaysByNameIsOnItsRoute:
+    """Verifier 3 (KRS 5Q): CZGateTwoFlux holds its pulses inline and plays
+    them BY NAME on the pair's own z lines; deleting or renaming that channel
+    op went through every door and every CZ node on the pair then failed."""
+
+    def test_the_watch_records_the_name_and_who_holds_it(self, lab):
+        from quam_state_manager.core import lab_watch
+        c, fake = lab
+        st = _store(c)
+        _by_name(st)
+        w = lab_watch.watch_for(st)
+        assert w.named_by[OP_C] == {f"{G}.flux_pulse_qubit.id"}
+        assert w.named_by[OP_T] == {f"{G}.flux_pulse_target.id"}
+        assert w.macros_for(OP_C) == {G}
+        assert w.macros_for("qubits.q1.z.operations") == {G}   # the container
+        assert w.macros_for(f"qubit_pairs.{PAIR}.qubit_control") == {G}
+
+    def test_every_door_that_removes_or_renames_it_asks_the_gate(self, lab):
+        c, fake = lab
+        _by_name(_store(c))
+        r = c.post("/field/delete", data={"dot_path": OP_C})
+        assert r.status_code == 400 and "not found" in r.get_json()["error"], r.data[:300]
+        r = c.post("/api/pulse/rename", data={"path": OP_C, "new_name": "czl_renamed"})
+        assert r.status_code == 400 and b"not found" in r.data, r.data[:300]
+        r = c.post("/api/pulse/delete", data={"path": OP_T})
+        assert r.status_code == 409 and f"{G}.flux_pulse_target.id".encode() in r.data
+        r = c.post("/api/pulse/delete", data={"path": OP_T, "force": "1"})
+        assert r.status_code == 400 and b"not found" in r.data, r.data[:300]
+        ops = _v(c, "qubits.q1.z.operations")
+        assert "czl_q1" in ops and "czl_renamed" not in ops
+        assert "czl_q2t" in _v(c, "qubits.q2.z.operations")
+        # an op no gate plays still renames and deletes freely
+        st = _store(c)
+        st.state["qubits"]["q2"]["z"]["operations"]["free"] = {"__class__": "quam.P", "amplitude": 0.1}
+        st.structure_seq += 1
+        assert c.post("/api/pulse/rename", data={"path": "qubits.q2.z.operations.free",
+                                                 "new_name": "free2"}).status_code == 200
+        assert c.post("/api/pulse/delete",
+                      data={"path": "qubits.q2.z.operations.free2"}).status_code == 200
+
+    def test_the_pulses_page_names_the_gate_that_plays_it(self, lab):
+        c, fake = lab
+        _by_name(_store(c))
+        t = c.get(f"/pulse/detail?path={OP_C}").get_data(as_text=True)
+        assert "pulse-played-by-name" in t and f"{G}.flux_pulse_qubit.id" in t
+        assert "No other operation references" not in t
+
+    def test_re_linking_the_pair_s_qubit_is_asked_with_that_qubit_in_the_contents(self, lab):
+        c, fake = lab
+        st = _store(c)
+        _by_name(st)
+        ctl = f"qubit_pairs.{PAIR}.qubit_control"
+        # q3 has no op of that name: every program on the pair would fail
+        r = c.post("/field/edit", data={"dot_path": ctl, "value": "#/qubits/q3"})
+        assert r.status_code == 400 and "not found" in r.get_json()["error"], r.data[:300]
+        # once q3 carries it, the same re-link applies -- q3 was SENT
+        st.state["qubits"]["q3"]["z"]["operations"]["czl_q1"] = {"__class__": "quam.P"}
+        st.structure_seq += 1
+        r = c.post("/field/edit", data={"dot_path": ctl, "value": "#/qubits/q3"})
+        assert r.status_code == 200, r.data[:300]
+        assert "q3" in fake.gate_calls[-1]["contents"]["qubits"]
+
+
+class TestACreateIntoAnEmptyLabSlotIsAsked:
+    def test_refused_when_the_gate_refuses_it_and_written_when_it_applies(self, lab):
+        c, fake = lab
+        st = _store(c)
+        _walk(st.state, G)["flux_pulse_qubit"] = None
+        st.structure_seq += 1
+        form = {"target_kind": "pair", "pair": PAIR, "gate": "czl",
+                "slot": "flux_pulse_qubit", "pulse_type": "NZPulse", "qclass": LAB,
+                "amplitude": "0.1", "padding": "4"}
+        r = c.post("/api/pulse/create", data={**form, "flat_length": "40"})
+        assert r.status_code == 400 and b"flat_length differ" in r.data, r.data[:400]
+        assert _walk(st.state, G)["flux_pulse_qubit"] is None
+        assert not any(k.startswith("czl_flux_pulse") for k in _v(c, "qubits.q1.z.operations"))
+        r = c.post("/api/pulse/create", data={**form, "flat_length": "32"})
+        assert r.status_code == 200, r.data[:400]
+        assert isinstance(_walk(st.state, G)["flux_pulse_qubit"], str)
+
+
+class TestAGateThatAlreadyFailsSaysSo:
+    def test_a_note_when_it_cannot_be_checked_and_a_warning_when_the_error_moves(self, lab):
+        c, fake = lab
+        st = _store(c)
+        _walk(st.state, f"{G}.flux_pulse_target")["flat_length"] = 50
+        st.structure_seq += 1
+        r = c.post("/field/edit", data={"dot_path": f"{G}.flux_pulse_qubit.amplitude",
+                                        "value": "0.2"})
+        assert r.status_code == 200, r.data[:300]
+        w = r.get_json().get("warning") or ""
+        assert "could not be checked" in w and "already fails" in w and "(32 vs 50)" in w
+        r = c.post("/field/edit", data={"dot_path": FL_C, "value": "40"})
+        assert r.status_code == 200, r.data[:300]
+        w = r.get_json().get("warning") or ""
+        assert "fails differently" in w and "(40 vs 50)" in w
+
+
+class TestAPrunedFailureIsAskedOfTheWholeChip:
+    def test_a_gate_whose_pulse_lives_in_another_pair_is_still_checked(self, lab):
+        c, fake = lab
+        st = _store(c)
+        st.state["qubits"]["q2"]["z"]["operations"]["tp"] = {
+            "__class__": LAB, "amplitude": 0.1, "padding": 4,
+            "flat_length": "#/qubit_pairs/q2-q3/macros/czl/flux_pulse_qubit/flat_length"}
+        _walk(st.state, G)["flux_pulse_target"] = "#/qubits/q2/z/operations/tp"
+        st.structure_seq += 1
+        n0 = len(fake.gate_calls)
+        r = c.post("/field/edit", data={"dot_path": FL_C, "value": "40"})
+        assert r.status_code == 400 and "flat_length differ" in r.get_json()["error"], r.data[:300]
+        full = fake.gate_calls[-1]["contents"]
+        assert "q2-q3" in full["qubit_pairs"] and len(fake.gate_calls) - n0 == 4
+
+
+class TestTheFollowOfferIgnoresAMirrorOfTheEditedField:
+    def test_a_by_name_mirror_op_does_not_repeat_the_edited_field(self, lab):
+        c, fake = lab
+        _by_name(_store(c))
+        r = c.post("/field/edit", data={"dot_path": FL_C, "value": "40"})
+        assert r.status_code == 400, r.data[:300]
+        # czl_q1 (q1's z op, played by name) links back to FL_C: offering it
+        # would write the edited field twice
+        assert r.get_json()["lab_follow"] == [{"dot_path": FL_C, "value": 40},
+                                              {"dot_path": FL_T, "value": 40}]

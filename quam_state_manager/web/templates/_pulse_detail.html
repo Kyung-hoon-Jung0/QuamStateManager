@@ -109,7 +109,8 @@
                aria-label="New operation name">
         <label class="pulse-retarget-label" title="Rewrite inbound pointers to follow the new name">
             <input type="checkbox" name="retarget" value="1" checked> re-point
-            {{ used_by | length }} reference(s)
+            {{ used_by | length }} reference(s){% if played_by_name %}
+            (played by name by {% for ref in played_by_name %}<code>{{ ref }}</code>{{ ", " if not loop.last }}{% endfor %} -- a rename is asked of that gate){% endif %}
         </label>
         <button class="btn-sm" type="submit">Rename</button>
         <button class="btn-sm outline" type="button"
@@ -137,12 +138,18 @@
     <p>This deletes the alias <code>{{ op_name }}</code> only — the target
         <code>{{ actual_path.rsplit('.', 1)[-1] }}</code> stays.</p>
     {% endif %}
+    {% if played_by_name %}
+    <p class="pulse-played-by-name"><strong>Played by name:</strong>
+        {% for ref in played_by_name %}<code>{{ ref }}</code>{{ ", " if not loop.last }}{% endfor %}
+        &mdash; your gate looks this operation up by its name, so deleting or
+        renaming it is asked of the gate's own <code>apply()</code> first.</p>
+    {% endif %}
     {% if delete_used_by %}
     <p><strong>Warning:</strong> referenced by
         {% for ref in delete_used_by %}<code>{{ ref }}</code>{{ ", " if not loop.last }}{% endfor %}
         &mdash; deleting leaves dangling pointers (and
         <code>generate_config()</code> will fail on them).</p>
-    {% else %}
+    {% elif not played_by_name %}
     <p>No other operation references this {{ 'alias' if alias_chain else 'pulse' }}.</p>
     {% endif %}
     <form hx-post="/api/pulse/delete" hx-target="#inspector-pane" hx-swap="innerHTML" hx-sync="this:drop" hx-disabled-elt="find button[type=submit]">

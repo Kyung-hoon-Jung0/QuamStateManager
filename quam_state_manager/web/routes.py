@@ -9592,8 +9592,10 @@ def field_delete():
     # default -- one half of a coupled pair can then disagree with the other
     # (the gate's own apply() says so); the pulse-level draw is not asked
     _lab_rel = _lab_hold(modifier.store, [dot_path])
+    _lab_info: dict = {}
     try:
-        _lab = _lab_write_refusal(modifier.store, [(dot_path, _LAB_DELETE)])
+        _lab = _lab_write_refusal(modifier.store, [(dot_path, _LAB_DELETE)],
+                                  info=_lab_info)
         if _lab:
             return jsonify(ok=False, lab_refused=True,
                            error=_lab_refusal_text(_lab[0])), 400
@@ -9606,8 +9608,10 @@ def field_delete():
 
     from quam_state_manager.core.modifier import _enumerate_leaves
     removed = sum(1 for _ in _enumerate_leaves(entry.old_value, dot_path))
+    _lab_notes = [n for n in (_lab_info.get("notes") or []) if n]
     return jsonify(ok=True, tray_html=_tray_html(), removed_leaves=removed,
-                   dangling_refs=dangling)
+                   dangling_refs=dangling,
+                   **({"warning": " ".join(_lab_notes)} if _lab_notes else {}))
 
 
 @bp.route("/schema/missing-keys")
@@ -14233,6 +14237,8 @@ def _pulse_section_ctx(store, pulse_index, path: str):
     used_by_target = pulse_index.used_by(actual_path)
     delete_used_by = (pulse_index.used_by(path) if alias_chain
                       else used_by_target)
+    # a lab gate that plays this op BY NAME (verifier 3) -- not a pointer
+    played_by_name = _lab_named_players(store, actual_path)
     # docs/189 (customer, on-site: "pulses 메뉴에서 snz 는 plotting이 안돼").
     # A lab may write its OWN pulse classes -- one customer chip's CZ flux pulse
     # is `quam_config.two_flux_gate.SNZTwoFluxPulse`, and four such classes cover
@@ -14292,6 +14298,7 @@ def _pulse_section_ctx(store, pulse_index, path: str):
         "params": param_rows,
         "used_by": used_by_target,
         "delete_used_by": delete_used_by,
+        "played_by_name": played_by_name,
         "synth_error": synth_error,
         # docs/189 -- the class is the lab's own and SM cannot synthesize it.
         "synth_unknown_class": unknown_class,
@@ -15724,10 +15731,22 @@ def api_pulse_create():
     # existence check and the write. Modifier methods re-enter the RLock;
     # the (synth-heavy) detail render happens after release.
     env_dropped: list[str] = []
-    with store._lock:
-        outcome = _pulse_create_locked(store, modifier, spec, fields,
-                                       target_kind, qclass=qclass or None,
-                                       env_dropped_out=env_dropped)
+    # a pulse created into a LAB gate's empty slot is asked of the gate's own
+    # apply() before it lands (verifier 3: flat_length 82 against a partner at
+    # 74 was created and the gate then refused every program). The lab write
+    # lock is taken BEFORE the store lock, the order every door uses.
+    _hold = []
+    if target_kind == "pair":
+        _hold = [f"qubit_pairs.{request.form.get('pair', '').strip()}.macros."
+                 f"{request.form.get('gate', '').strip()}"]
+    _lab_rel = _lab_hold(store, _hold)
+    try:
+        with store._lock:
+            outcome = _pulse_create_locked(store, modifier, spec, fields,
+                                           target_kind, qclass=qclass or None,
+                                           env_dropped_out=env_dropped)
+    finally:
+        _lab_rel()
     if not isinstance(outcome, str):
         return outcome  # an error response (html, code)
     dot_path = outcome
@@ -15807,7 +15826,7 @@ def _lab_edit_refusal(store, dot_path: str, write_path: str, value) -> str | Non
 
 
 def _lab_write_refusal(store, writes, *, edited_op: str | None = None,
-                       info: dict | None = None):
+                       info: dict | None = None, fills_slot: bool = False):
     """``(message, refused_write_indices)`` when a LAB class's own code
     rejects what *writes* (``[(write_path, value)]``, the paths the values
     actually land at; value ``_LAB_DELETE`` = the key is removed) would make of
@@ -15949,7 +15968,8 @@ def _lab_write_refusal(store, writes, *, edited_op: str | None = None,
     if macros and python_path:
         try:
             got = _lab_macro_refusal(store, writes, macros, python_path, info,
-                                     changed_fields, watch)
+                                     changed_fields, watch,
+                                     fills_slot=fills_slot)
         except Exception:  # noqa: BLE001 -- a check that cannot run never blocks
             logger.warning("lab gate check failed to run", exc_info=True)
             got = None
@@ -15960,6 +15980,24 @@ def _lab_write_refusal(store, writes, *, edited_op: str | None = None,
 
 #: a write that REMOVES the key (``/field/delete``, a batch delete row)
 _LAB_DELETE = object()
+
+
+def _lab_named_players(store, path: str) -> list[str]:
+    """The lab-gate fields that play the op at *path* (or an op under it) BY
+    NAME -- no pointer names it, so ``used_by`` cannot (verifier 3)."""
+    from quam_state_manager.core import lab_watch
+    try:
+        watch = lab_watch.watch_for(store)
+    except Exception:  # noqa: BLE001
+        return []
+    if not watch:
+        return []
+    out: set = set()
+    pre = path + "."
+    for op, holders in watch.named_by.items():
+        if op == path or op.startswith(pre):
+            out |= holders
+    return sorted(out)
 
 
 def _qclass_at(store, path: str):
@@ -16139,14 +16177,63 @@ def _walk_path(root, segs):
     return True, cur
 
 
+def _lab_write_seeds(writes) -> set:
+    """``(coll, name)`` members the WRITTEN values point into: re-linking
+    ``qubit_pairs.p.qubit_control`` to ``#/qubits/q4`` makes the gate play on
+    q4, so the 'after' contents must carry q4 (else a pruning artefact, not
+    the gate, would answer)."""
+    from quam_state_manager.core.pointer_path import pointer_to_abs
+    out: set = set()
+
+    def scan(v, segs):
+        if isinstance(v, str) and v.startswith("#"):
+            t = pointer_to_abs(v, list(segs))
+            if t and len(t) >= 2 and t[0] in _LAB_PRUNED:
+                out.add((t[0], t[1]))
+        elif isinstance(v, dict):
+            for k, x in v.items():
+                scan(x, segs + [str(k)])
+        elif isinstance(v, list):
+            for k, x in enumerate(v):
+                scan(x, segs + [str(k)])
+
+    for wp, val in writes:
+        if isinstance(wp, str) and val is not _LAB_DELETE:
+            scan(val, wp.split("."))
+    return out
+
+
+def _lab_gate_err(rec: dict, mp: str) -> str | None:
+    """The error gate *mp* raised in one worker record (None = it applied)."""
+    if rec.get("load_failed"):
+        return str(rec.get("error") or "the chip does not load")
+    m = rec.get("macros") or {}
+    if mp not in m:
+        return str(rec.get("error") or "it was not run")
+    return str(m[mp]) if m[mp] else None
+
+
 def _lab_macro_refusal(store, writes, macros: dict, python_path: str,
-                       info: dict, changed_fields, watch):
+                       info: dict, changed_fields, watch, *,
+                       fills_slot: bool = False):
     """Step 2 of :func:`_lab_write_refusal`: the lab gates' own ``apply()``.
 
     Two contents go to the worker in ONE request -- the chip as it is, and the
     chip with *writes* applied -- and a gate is refused only when the first
     applies and the second does not (a gate already broken before the edit
-    never blocks a fix, and a pruning artefact would fail both)."""
+    never blocks a fix, and a pruning artefact would fail both).
+
+    Verifier 3: when a gate fails on the PRUNED 'before' contents, the check is
+    asked once more on the FULL chip (a gate whose pulse lives in another pair
+    is cut by pruning -- rare, and the full load is paid only then). A gate
+    that still fails before the edit cannot be checked: the write goes through
+    with a note saying so, and with a warning when the edit CHANGES the error
+    (removing a spectator clash can uncover a mismatch that slipped in).
+
+    *fills_slot* (a create into a gate's EMPTY slot): a required slot left
+    null stops the whole chip loading, so 'before' can never apply -- the
+    create is then judged on 'after' alone: a gate that now loads and refuses
+    the new pulse refuses the create."""
     from quam_state_manager.core import lab_waveform
     notes = info.setdefault("notes", [])
     with store._lock:
@@ -16159,6 +16246,7 @@ def _lab_macro_refusal(store, writes, macros: dict, python_path: str,
             segs = mp.split(".")
             if len(segs) >= 2 and segs[0] in _LAB_PRUNED:
                 seeds.add((segs[0], segs[1]))
+        seeds |= _lab_write_seeds(writes)
         base = _lab_contents(merged, seeds)
     new = copy.deepcopy(base)
     _apply_lab_writes(new, writes)
@@ -16169,29 +16257,55 @@ def _lab_macro_refusal(store, writes, macros: dict, python_path: str,
     if not names:
         return None
     q = lab_waveform.MACRO_PREFIX + root
-    try:
-        before, after = lab_waveform.draw(python_path, [
-            (q, {"contents": base, "macros": names}),
-            (q, {"contents": new, "macros": names})])
-    except Exception:  # noqa: BLE001 -- a check that cannot run never blocks
-        logger.warning("lab gate check failed to run", exc_info=True)
+
+    def ask(b, a):
+        try:
+            return lab_waveform.draw(python_path, [
+                (q, {"contents": b, "macros": names}),
+                (q, {"contents": a, "macros": names})])
+        except Exception:  # noqa: BLE001 -- a check that cannot run never blocks
+            logger.warning("lab gate check failed to run", exc_info=True)
+            return None
+
+    got = ask(base, new)
+    if not got:
         return None
+    before, after = got
     if before.get("reason") == "class-unavailable":
         notes.append(_lab_unavailable_note(python_path, root, before))
         return None
-    if before.get("reason") or before.get("load_failed"):
-        return None       # cannot run / the chip does not load as it is
-    bm = before.get("macros") or {}
-    am = after.get("macros") or {}
+    if before.get("reason"):
+        return None       # cannot run
+    if any(_lab_gate_err(before, mp) for mp in names):
+        # the pruned chip fails before the edit: ask the whole chip once
+        with store._lock:
+            full = json.loads(json.dumps(store.merged, default=repr))
+        full_new = copy.deepcopy(full)
+        _apply_lab_writes(full_new, writes)
+        got = ask(full, full_new)
+        if got and not got[0].get("reason"):
+            before, after = got
     for mp in names:
-        if mp not in bm or bm.get(mp) is not None:
+        b_err = _lab_gate_err(before, mp)
+        a_err = _lab_gate_err(after, mp)
+        short = mp.rsplit(".", 1)[-1]
+        if b_err and fills_slot and a_err and before.get("load_failed")                 and not after.get("load_failed"):
+            b_err = None      # the empty slot was the only thing wrong
+        if b_err:
+            if a_err and a_err != b_err:
+                notes.append(
+                    f"Your gate {short} ({mp}) already failed its own apply() "
+                    f"before this edit ({b_err[:200]}), and now fails "
+                    f"differently: {a_err[:300]}")
+            elif a_err:
+                notes.append(
+                    f"This edit could not be checked against your gate "
+                    f"{short} ({mp}): it already fails its own apply() -- "
+                    f"{b_err[:300]}")
             continue      # did not apply before the edit either: not ours
-        if after.get("load_failed"):
-            err = str(after.get("error") or "the chip does not load")
-        elif am.get(mp):
-            err = str(am[mp])
-        else:
+        if not a_err:
             continue
+        err = a_err
         follow = _lab_follow(store, mp, changed_fields, watch)
         if follow:
             info["follow"] = follow
@@ -16199,7 +16313,7 @@ def _lab_macro_refusal(store, writes, macros: dict, python_path: str,
             err += (f" -- {mp} plays both pulses: set {f0['dot_path']} "
                     f"(now {_fmt_msg_val(f0['current'])}) to "
                     f"{_fmt_msg_val(f0['value'])} too, both in one batch")
-        return (f"your gate {mp.rsplit('.', 1)[-1]} ({mp}) refused it in its "
+        return (f"your gate {short} ({mp}) refused it in its "
                 f"own apply(): {err}"[:900]), sorted(macros.get(mp) or ())
     return None
 
@@ -16214,6 +16328,15 @@ def _lab_follow(store, mp: str, changed_fields, watch) -> list[dict]:
         return []
     plays = watch.macros[mp]["ops"]
     out, seen = [], set()
+    for op, field, _v in changed_fields:
+        # the edited field itself: a mirror op played BY NAME points back at it
+        seen.add(f"{op}.{field}")
+        try:
+            rt = resolve_field_target(store.merged, f"{op}.{field}")
+            if rt.get("resolved_path"):
+                seen.add(rt["resolved_path"])
+        except Exception:  # noqa: BLE001
+            pass
     for op, field, value in changed_fields:
         if op not in plays or isinstance(value, (dict, list)):
             continue
@@ -16611,6 +16734,16 @@ def _pulse_create_locked(store, modifier, spec, fields, target_kind,
     # node would stop compiling. Refuse it here, where it is one pulse.
     if _channel_single(chan_obj) and _template_is_iq(spec.iq, template, spec.key):
         return _iq_on_single_refusal(chan_label)
+    if slot_fill is not None:
+        from flask import g
+        _info = getattr(g, "lab_info", None)
+        if _info is None:
+            _info = g.lab_info = {"notes": []}
+        _lab = _lab_write_refusal(store, [(slot_fill[2], template),
+                                          (slot_fill[0], slot_fill[1])],
+                                  info=_info, fills_slot=True)
+        if _lab:
+            return _lab_edit_refused(_lab[0])
     try:
         if slot_fill is not None:
             # the chip's own gate layout: the pulse is an operation of the
@@ -16652,22 +16785,39 @@ def api_pulse_delete():
         return render_template("_status.html", message="Invalid pulse path",
                                level="error"), 400
 
-    # Check-and-delete under one lock hold so a concurrent edit can't add an
-    # inbound pointer between the used_by check and the pop.
-    with store._lock:
-        referrers = pulse_index.used_by(path)
-        if referrers and not force:
-            return render_template(
-                "_status.html",
-                message=("Refusing to delete: referenced by "
-                         + ", ".join(referrers)
-                         + ". Use the confirm step to delete anyway."),
-                level="error"), 409
-        try:
-            modifier.delete_subtree(path)
-        except (KeyError, ValueError) as exc:
-            return render_template("_status.html", message=str(exc),
-                                   level="error"), 404
+    # Verifier 3 (KRS 5Q): a lab gate plays its channel op BY NAME
+    # (CZGateTwoFlux: qubit_control.z.play(pulse.id)) -- no pointer names it,
+    # so used_by was empty and the delete went through; every CZ node on the
+    # pair then failed. The gate's own apply() is asked, as on every door.
+    from flask import g
+    _lab_info = g.lab_info = {"notes": []}
+    _lab_rel = _lab_hold(store, [path])
+    try:
+        # the gate check runs under the lab write lock only (it may spawn the
+        # worker; the store lock is not held across it)
+        played = _lab_named_players(store, path)
+        if force or not played:
+            _lab = _lab_write_refusal(store, [(path, _LAB_DELETE)], info=_lab_info)
+            if _lab:
+                return _lab_edit_refused(_lab[0])
+        # Check-and-delete under one lock hold so a concurrent edit can't add
+        # an inbound pointer between the used_by check and the pop.
+        with store._lock:
+            referrers = pulse_index.used_by(path)
+            if (referrers or played) and not force:
+                return render_template(
+                    "_status.html",
+                    message=("Refusing to delete: referenced by "
+                             + ", ".join(referrers + played)
+                             + ". Use the confirm step to delete anyway."),
+                    level="error"), 409
+            try:
+                modifier.delete_subtree(path)
+            except (KeyError, ValueError) as exc:
+                return render_template("_status.html", message=str(exc),
+                                       level="error"), 404
+    finally:
+        _lab_rel()
 
     _invalidate_engine_cache()
     logger.info("pulse delete %s (forced=%s, referrers=%d)",
@@ -16676,7 +16826,7 @@ def api_pulse_delete():
     if referrers:
         note += f" — {len(referrers)} reference(s) now dangle"
     detail = render_template("_status.html", message=note, level="success")
-    return _pulse_mutation_response(detail)
+    return _lab_toast(_pulse_mutation_response(detail))
 
 
 @bp.route("/api/pulse/duplicate", methods=["POST"])
@@ -16899,7 +17049,46 @@ def api_pulse_rename():
                                message=f"Already named '{old_name}'",
                                level="warning"), 409
 
+    from flask import g
+    _lab_info = g.lab_info = {"notes": []}
+    _lab_rel = _lab_hold(store, [path])
+    try:
+        return _pulse_rename_locked(store, modifier, pulse_index, path, new_path,
+                                    old_name, new_name, retarget, _lab_info)
+    finally:
+        _lab_rel()
+
+
+def _pulse_rename_locked(store, modifier, pulse_index, path, new_path,
+                         old_name, new_name, retarget, lab_info):
+    """The rename proper; the caller holds the lab write lock (a lab gate
+    that plays the op BY NAME is asked before anything moves)."""
+    from quam_state_manager.core.pulse_index import (
+        rewrite_referrer_pointer, rewrite_subtree_pointers)
     retargeted = 0
+    # the rename as the gate would see it: old key gone, new key there, every
+    # re-pointed referrer following it -- asked under the lab write lock only
+    with store._lock:
+        referrers = pulse_index.used_by(path)
+        try:
+            body = store.get_value(path)
+        except (KeyError, TypeError, ValueError, IndexError):
+            return render_template("_status.html", message=f"Not found: {path}",
+                                   level="error"), 404
+        _writes = [(path, _LAB_DELETE),
+                   (new_path, rewrite_subtree_pointers(body, path, new_path))]
+        if retarget:
+            for referrer in referrers:
+                try:
+                    raw = store.get_value(referrer)
+                except (KeyError, TypeError, ValueError, IndexError):
+                    continue
+                new_ptr = rewrite_referrer_pointer(raw, referrer, path, new_path)
+                if new_ptr and new_ptr != raw:
+                    _writes.append((referrer, new_ptr))
+    _lab = _lab_write_refusal(store, _writes, info=lab_info)
+    if _lab:
+        return _lab_edit_refused(_lab[0])
     with store._lock:
         referrers = pulse_index.used_by(path)
         try:
@@ -16936,8 +17125,8 @@ def api_pulse_rename():
         note += f" · {retargeted} reference(s) re-pointed"
     elif referrers and not retarget:
         note += f" · {len(referrers)} reference(s) now dangle"
-    return _pulse_mutation_response(_render_pulse_detail(
-        new_path, status_msg=note))
+    return _lab_toast(_pulse_mutation_response(_render_pulse_detail(
+        new_path, status_msg=note)))
 
 
 def _config_op_for_pulse_path(config: dict, path: str,
