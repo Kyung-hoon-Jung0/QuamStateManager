@@ -14314,6 +14314,10 @@ function _resolveExperimentPath(experimentName, qubitName) {
 }
 
 function _attachPlotClickHandler(plotDiv) {
+    // 2026-09-27 (big30x journey): the host was swapped out while Plotly
+    // drew -- a detached div was never made a plot and has no .on; a plot
+    // that is gone has nothing to click (it threw a TypeError)
+    if (!plotDiv || typeof plotDiv.on !== 'function') return;
     // docs/118: clearing first is what makes a re-render idempotent. Without
     // it, any path that draws into the SAME node twice (Plotly.react) leaves two
     // handlers, and one click stages the edit twice. ndview.js has done this
@@ -14599,6 +14603,10 @@ window.applyAllFitValues = applyAllFitValues;
    and the figure's qubit. */
 function _attachInteractivePlotClickHandler(plotDiv, clickable, runId) {
     if (!clickable || !clickable.targets || !clickable.targets.length) return;
+    // 2026-09-27 (big30x journey): the host was swapped out while Plotly
+    // drew -- a detached div was never made a plot and has no .on; a plot
+    // that is gone has nothing to click (it threw a TypeError)
+    if (!plotDiv || typeof plotDiv.on !== 'function') return;
     plotDiv.on('plotly_click', function(ev) {
         if (!ev || !ev.points || !ev.points.length) return;
         var pt = ev.points[0];
@@ -24533,6 +24541,8 @@ window.GateInspector = (function() {
 
     function _attachGateInspectorClickHandler(plotDiv, clickable) {
         if (!clickable || !clickable.targets || !clickable.targets.length) return;
+        // a plot swapped out while it drew has no .on (see _attachPlotClickHandler)
+        if (!plotDiv || typeof plotDiv.on !== 'function') return;
         plotDiv.on('plotly_click', function(ev) {
             if (!ev || !ev.points || !ev.points.length) return;
             var pt = ev.points[0];

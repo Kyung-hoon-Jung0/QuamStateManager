@@ -129,7 +129,7 @@ async function fillFields(p, vals) {
 async function submitCreate(p) {
   const before = await p.ev(`(document.querySelector('#pulse-detail-root')||{}).getAttribute ? document.querySelector('#pulse-detail-root').getAttribute('data-pulse-path') : ''`);
   await clickSel(p, '#pulse-create-root .pulse-create-actions button[type=submit]');
-  const r = await waitFor(p, `(function(){var d=document.querySelector('#pulse-detail-root'); if(d) return 'DETAIL '+d.getAttribute('data-pulse-path'); if(!document.getElementById('pulse-create-root')) return 'OTHER '+${INSP}.replace(/\\s+/g,' ').slice(0,200); var v=[].slice.call(document.querySelectorAll('.pulse-create-form input:invalid, .pulse-create-form select:invalid')).map(function(i){return i.name+':'+i.validationMessage}); var st=document.querySelector('#pulse-create-root .status-message, .status-message'); return v.length? 'INVALID '+v.join(';') : (st? 'STATUS '+st.innerText : '')})()`, 30000);
+  const r = await waitFor(p, `(function(){var d=document.querySelector('#pulse-detail-root'); if(d) return 'DETAIL '+d.getAttribute('data-pulse-path'); if(!document.getElementById('pulse-create-root')) return 'OTHER '+${INSP}.replace(/\\s+/g,' ').slice(0,200); var v=[].slice.call(document.querySelectorAll('.pulse-create-form input:invalid, .pulse-create-form select:invalid')).map(function(i){return i.name+':'+i.validationMessage}); var st=document.querySelector('#pulse-create-root .status-message, .status-message'); return v.length? 'INVALID '+v.join(';') : (st? 'STATUS '+st.innerText : '')})()`, 90000);   // a lab class runs its own code first (9-30 s measured)
   return r || 'TIMEOUT ' + before;
 }
 
@@ -279,6 +279,62 @@ async function submitCreate(p) {
     if (check(got === want, `copy ${c.src} -> ${want} (${Date.now() - t0} ms) ${note}`)) expect.push({ path: want, cls: '(copy)', fields: {}, copy_of: c.src });
     else defects.push({ what: 'copy ' + c.src, got: got || (await p.ev(INSP)).slice(0, 200) });
     await p.shot(`${DIR}/24_copied_${c.n}_${W}.png`);
+  }
+
+  // ---- 2026-09-27 verifier: a NON-pulse typed into "Pulse to copy" at once ----
+  // (before the source list loads, the form's own check is not armed yet)
+  {
+    const bad = `qubits.${Q(1)}.xy`;
+    const ok0 = await openCreate(p, 'copy');
+    if (check(!!ok0, 'the copy form opened (non-pulse source)')) {
+      await typeInto(p, '#pulse-copy-src', bad);
+      await choose(p, '#pulse-copy-root select[name=qubit]', Q(3));
+      await choose(p, '#pulse-copy-root select[name=channel]', 'xy');
+      await typeInto(p, '#pulse-copy-name', tag + '_racebad');
+      await p.ev(`(function(){var i=document.getElementById('pulse-copy-src'); if(i&&i.setCustomValidity) i.setCustomValidity(''); return 1})()`);
+      await clickSel(p, '#pulse-copy-root .pulse-create-actions button[type=submit]');
+      const t = await waitFor(p, `(function(){var t=[].slice.call(document.querySelectorAll('.toast')).map(function(x){return x.innerText}).join(' | '); return /not a pulse/.test(t)? t.replace(/\\s+/g,' ').slice(0,200) : ''})()`, 20000);
+      const wrote = await p.ev(`fetch('/api/pulse/paths').then(function(r){return r.json()}).then(function(d){return d.options.some(function(o){return /_racebad$/.test(o[0])})?1:0})`);
+      check(!!t && !wrote, `a channel as the copy source is refused, nothing written: ${t}`);
+      expectedRefusal = true;
+      await p.shot(`${DIR}/25_copy_nonpulse_refused_${W}.png`);
+    }
+  }
+
+  // ---- 2026-09-27 verifier: an EDIT of a lab-class pulse runs its own check ----
+  {
+    const gnz = await p.ev(`fetch('/api/pulse/paths').then(function(r){return r.json()}).then(function(d){var o=d.options.filter(function(o){return /\\.operations\\.cz_GNZ_flux_pulse_/.test(o[0])})[0]; return o? o[0] : ''})`);
+    if (gnz) {
+      await p.ev(`htmx.ajax('GET','/pulse/detail?path=${encodeURIComponent(gnz)}',{target:'#inspector-pane',swap:'innerHTML'})`);
+      await waitFor(p, `document.querySelector('#pulse-detail-root[data-pulse-path="${gnz}"]')?1:0`, 60000);
+      const sel = `#pulse-detail-root input[data-param="flat_length"]`;
+      const before = await p.ev(`(document.querySelector(${J(sel)})||{getAttribute:function(){return null}}).getAttribute('data-committed')`);
+      await typeInto(p, sel, '4');
+      const tc = Date.now();
+      await enter(p);
+      const ind = await waitFor(p, `(function(){var s=document.querySelector('#pulse-detail-root .pulse-lab-checking.htmx-request'); return s && getComputedStyle(s).display!=='none' && getComputedStyle(s).opacity>0.5 && /own code/.test(s.innerText) ? 1 : 0})()`, 5000);
+      check(!!ind, 'the lab-class edit says "checking with your class\'s own code" while it waits');
+      await p.shot(`${DIR}/45_lab_edit_checking_${W}.png`);
+      const t = await waitFor(p, `(function(){var t=[].slice.call(document.querySelectorAll('.toast')).map(function(x){return x.innerText}).join(' | '); return /nothing was written/.test(t)? t.replace(/\\s+/g,' ').slice(0,260) : ''})()`, 60000);
+      console.log(`  lab edit refusal: ${Date.now() - tc} ms`);
+      check(!!t, `flat_length=4 on ${gnz} is refused by the class's own code: ${t}`);
+      await p.shot(`${DIR}/46_lab_edit_refused_${W}.png`);
+      await p.send('Input.dispatchKeyEvent', { type: 'keyDown', key: 'Escape', code: 'Escape', windowsVirtualKeyCode: 27 });
+      await p.send('Input.dispatchKeyEvent', { type: 'keyUp', key: 'Escape', code: 'Escape', windowsVirtualKeyCode: 27 });
+      await p.ev(`htmx.ajax('GET','/pulse/detail?path=${encodeURIComponent(gnz)}',{target:'#inspector-pane',swap:'innerHTML'})`);
+      await sleep(1500);
+      const after = await p.ev(`(document.querySelector(${J(sel)})||{getAttribute:function(){return null}}).getAttribute('data-committed')`);
+      check(after === before, `the refused value was not written (flat_length ${before} -> ${after})`);
+      // a value the class draws commits, with its latency measured
+      const good = String((+before || 20) + 8);
+      await typeInto(p, sel, good);
+      const tg = Date.now();
+      await enter(p);
+      const cm = await waitFor(p, `(function(){var i=document.querySelector(${J(sel)}); return i && i.getAttribute('data-committed')===${J(good)} ? 1 : 0})()`, 90000);
+      console.log(`  lab edit commit (flat_length=${good}): ${Date.now() - tg} ms`);
+      check(!!cm, `flat_length=${good} on ${gnz} commits after the class draws it`);
+      expectedRefusal = true;
+    } else console.log('  lab-class edit: no cz_GNZ pulse on this chip -- skipped');
   }
 
   // ---- pair CR/ZZ channel ---------------------------------------------------
@@ -435,7 +491,7 @@ async function submitCreate(p) {
   console.log('  created rows visible after reload: ' + createdRows);
   await p.shot(`${DIR}/60_reload_${W}.png`);
   clearInterval(dlgTimer);
-  const errs = allErr().filter(e => !(expectedRefusal && /status of 400|Error Code 400 from \/api\/pulse\/create/.test(e))
+  const errs = allErr().filter(e => !(expectedRefusal && /status of 400|Error Code 400 from \/(api\/pulse\/(create|copy)|pulse\/edit)/.test(e))
     && !(undoRefusedOnce && /status of 409|Error Code 409 from \/undo/.test(e)));
   check(errs.length === 0, 'console clean (' + errs.join(' | ').slice(0, 400) + ')');
   fs.writeFileSync(`${DIR}/expect.json`, J({ expect, defects, dialogs, toolbar, out }, null, 1));

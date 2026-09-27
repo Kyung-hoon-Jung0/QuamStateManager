@@ -2870,6 +2870,8 @@ table.data-table th {
     margin-left: 0.4rem; font-size: 0.82em; font-family: var(--font-ui);
     text-transform: none; white-space: nowrap; opacity: 0.75;
 }
+/* 2026-09-27: a lab-class pulse edit waits on the class's own code (seconds) */
+.pulse-lab-checking { font-size: 0.82em; font-family: var(--font-ui); font-style: italic; }
 table.data-table td {
     padding: var(--data-table-td-pad-v) var(--data-table-td-pad-h);
     font-family: var(--font-mono); font-size: var(--data-table-font);
