@@ -30,7 +30,7 @@ function ok(c, m) { if (c) console.log('ok - ' + m); else { console.error('FAIL:
 const tick = (ms) => new Promise((r) => setTimeout(r, ms || 0));
 async function until(f, ms) { const t0 = Date.now(); while (!f() && Date.now() - t0 < (ms || 2000)) await tick(5); return f(); }
 
-function world(labPaths) {
+function world(labPaths, probeDelay) {
   const dom = new JSDOM('<!doctype html><body><table><tr><td>' +
     '<input class="bulk-cell" data-dot-path="qubit_pairs.p.macros.cz.flux.flat_length" value="74">' +
     '</td><td><input class="bulk-cell" data-dot-path="qubits.q1.f_01" value="5e9"></td></tr></table></body>',
@@ -48,7 +48,8 @@ function world(labPaths) {
     if (url === '/field/lab-watch') {
       const body = JSON.parse(init.body);
       const lab = body.paths.some((p) => labPaths.includes(p));
-      return Promise.resolve({ status: 200, json: () => Promise.resolve({ lab }) });
+      const ans = { status: 200, json: () => Promise.resolve({ lab }) };
+      return probeDelay ? new Promise((r) => setTimeout(() => r(ans), probeDelay)) : Promise.resolve(ans);
     }
     return new Promise((resolve) => pending.push(resolve));
   };
@@ -216,6 +217,18 @@ function resp(status, body) {
     await p2;
     await until(() => W2.w.document.querySelector('.lab-check-warned'));
     ok(!!W2.w.document.querySelector('.lab-check-warned'), 'an answer that beat the probe still shows the note');
+
+    // a probe that answers AFTER the caller has read the body (a real
+    // Response cannot be cloned once used): the copy taken on arrival speaks
+    const W5 = world([LAB], 40);
+    const p5 = W5.w.fetch('/field/edit', { method: 'POST', body: 'dot_path=' + encodeURIComponent(LAB) + '&value=84' });
+    let used = false;
+    const real = { status: 200, json: () => { used = true; return Promise.resolve({ ok: true, warning: NOTE }); } };
+    real.clone = () => { if (used) throw new TypeError('body already used'); return { json: () => Promise.resolve({ ok: true, warning: NOTE }) }; };
+    W5.pending[0](real);
+    await (await p5).json();          // the surface reads the body at once
+    await until(() => W5.w.document.querySelector('.lab-check-warned'), 500);
+    ok(!!W5.w.document.querySelector('.lab-check-warned'), 'a late probe answer still shows the note (the body was copied on arrival)');
 
     const W3 = world([LAB]);
     const p3 = W3.w.fetch('/field/edit', { method: 'POST', body: 'dot_path=qubits.q1.f_01&value=5.1e9' });

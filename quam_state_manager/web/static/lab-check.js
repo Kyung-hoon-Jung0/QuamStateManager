@@ -244,11 +244,12 @@
         var paths = _pathsOf(init);
         if (!paths.length) return;
         var settled = false, resp = null, badge = null, lab = null, warned = false;
+        var copy = null;         // cloned on arrival: the caller reads the body
         var anchor = _anchorFor(paths);
         function warnIfLab() {
-            if (warned || lab !== true || !resp || !(resp.status < 300) || !resp.clone) return;
+            if (warned || lab !== true || !copy) return;
             warned = true;
-            resp.clone().json().then(function (j) {
+            copy.json().then(function (j) {
                 if (!j || !j.warning) return;
                 _warnBadge(badge || _badge(anchor), String(j.warning));
             }, function () { /* not JSON: nothing to say */ });
@@ -256,6 +257,9 @@
         respP.then(function (r) {
             settled = true; resp = r;
             if (r && r.status < 300) {
+                // this handler runs before the caller's (registered first), so
+                // the body is still unread -- a late probe answer reads the copy
+                try { copy = r.clone ? r.clone() : null; } catch (e) { copy = null; }
                 if (badge) {           // the checking badge is replaced
                     if (badge._unbind) badge._unbind();
                     if (badge.parentNode) badge.parentNode.removeChild(badge);
