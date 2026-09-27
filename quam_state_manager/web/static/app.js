@@ -7997,6 +7997,12 @@ function _revertCell(dotPath, oldValueStr) {
         var form = hidden.parentElement;
         var input = form.querySelector('input[name="value"]');
         if (input) {
+            // Final QA P3b: the reverted string arrives in the grids' lossless
+            // DISPLAY form ("-363,323.0"); an inspector input holds the RAW
+            // value ("-363323.0", what the server parses and what the input
+            // was rendered with). Only a plain grouped number is unwrapped;
+            // "MW,FEM", a pointer or an exponent string stays as it is.
+            if (window.NumberInput && window.NumberInput.strip) oldValueStr = window.NumberInput.strip(oldValueStr);
             input.value = oldValueStr;
             // The reverted value IS the committed value now. Leaving the
             // baseline (data-committed / defaultValue) at the edited value
@@ -21935,6 +21941,33 @@ function _pulsesActiveFilter() {
     if (tab) { var m = (tab.getAttribute("hx-get") || "").match(/channel=([^&]+)/); if (m) ch = m[1]; }
     return { q: inp ? inp.value.trim() : "", channel: ch, owner: _pulsesOwnerPick() };
 }
+/* Final QA P3c: Ctrl+Z after a delete on the Pulses page brought the pulse
+   back into the store and the list, but the inspector still read "Deleted
+   <name>" -- nothing re-rendered #inspector-pane. When an undo restores a
+   DELETED path while that toast is up for it, re-open the pulse; a path that
+   is not a pulse row answers 404, which htmx never swaps, so the toast stays
+   only where there is nothing to open. */
+document.addEventListener("cellsReverted", function (evt) {
+    var d = evt && evt.detail;
+    var entries = (d && d.entries) || [];
+    if (!entries.length || location.pathname.indexOf("/pulses") !== 0) return;
+    var pane = document.getElementById("inspector-pane");
+    if (!pane) return;
+    var toast = pane.querySelector(".toast");
+    var text = toast ? (toast.textContent || "") : "";
+    if (!/^\s*Deleted\s/.test(text)) return;
+    for (var i = 0; i < entries.length; i++) {
+        var e = entries[i];
+        if (!e || !e.deleted || !e.dot_path) continue;
+        var name = String(e.dot_path).split(".").pop();
+        if (text.indexOf("Deleted " + name) < 0) continue;
+        if (window.htmx) {
+            window.htmx.ajax("GET", "/pulse/detail?path=" + encodeURIComponent(e.dot_path),
+                             { target: "#inspector-pane", swap: "innerHTML", source: pane });
+        }
+        return;
+    }
+});
 document.addEventListener("pulses-rows-changed", function (evt) {
     var d = evt && evt.detail;
     if (!d || !Array.isArray(d.paths)) return;

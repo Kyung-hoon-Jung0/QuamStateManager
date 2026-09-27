@@ -81,6 +81,19 @@ def _floats(seq) -> list:
     return out
 
 
+#: quam warns "This component is not part of any QuamRoot, using last
+#: instantiated QuamRoot ..." when a pulse is built stand-alone while the
+#: PROCESS holds a root from an earlier draw. A cold worker has no such root,
+#: a warm one (core/lab_waveform._Worker) does, so the same pulse drew with
+#: the note on one and not the other (final QA P3a). It describes this
+#: process's history, not the pulse or the lab's class: never reported.
+_PROCESS_STATE_WARNINGS = ("not part of any QuamRoot",)
+
+
+def _is_process_state_warning(message: str) -> bool:
+    return any(s in message for s in _PROCESS_STATE_WARNINGS)
+
+
 def _draw_one(qclass: str, params: dict, max_samples: int) -> dict:
     res = {"ok": False, "canonical": None, "i": [], "q": None, "iq": False,
            "kind": None, "length": None, "dropped": [], "warnings": [],
@@ -134,7 +147,8 @@ def _draw_one(qclass: str, params: dict, max_samples: int) -> dict:
     # a channel, cannot determine sampling rate": the pulse is drawn DETACHED
     # from its channel, and a class that reads the channel says so here
     res["warnings"] = list(dict.fromkeys(
-        str(w.message).strip() for w in caught if str(w.message).strip()))[:5]
+        m for m in (str(w.message).strip() for w in caught)
+        if m and not _is_process_state_warning(m)))[:5]
     if wf is None:
         res["error"] = "the class's calculate_waveform() returned None"
         return res

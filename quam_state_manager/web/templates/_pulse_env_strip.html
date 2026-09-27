@@ -7,7 +7,14 @@
    Config (one selected interpreter drives the wizard, diagnostics and this
    form alike). #}
 {% set _busy = env_card.probing or lab_code_changed %}
-<div id="pulse-env-strip" class="pulse-env-strip"
+{# hx-sync="this:drop" (final QA P2): the strip's requests -- the 2 s
+   after-probe poll, Add/remove module -- synchronise against the STRIP, never
+   against #inspector-pane's hx-sync="this:replace" they would otherwise
+   inherit. Inherited, every poll tick aborted an in-flight POST
+   /api/pulse/create in the browser: the pulse was created on the server and
+   the page showed nothing. `drop` also keeps a tick from stacking behind a
+   poll still in the air. #}
+<div id="pulse-env-strip" class="pulse-env-strip" hx-sync="this:drop"
      {% if _busy %}hx-get="/pulse/new/env-strip?after_probe=1" hx-trigger="every 2s"
      hx-swap="outerHTML"{% endif %}>
   {% if not env_card.selected %}
