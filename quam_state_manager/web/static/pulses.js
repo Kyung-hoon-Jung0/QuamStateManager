@@ -900,8 +900,136 @@ window.PulsesPage = (function () {
     function cancelRename(btn) { toggleBlock(btn, '.pulse-rename-form'); }
     function startDuplicate(btn) { toggleBlock(btn, '.pulse-duplicate-form'); }
     function cancelDuplicate(btn) { toggleBlock(btn, '.pulse-duplicate-form'); }
-    function askDelete(btn) { toggleBlock(btn, '.pulse-delete-confirm'); }
-    function cancelDelete(btn) { toggleBlock(btn, '.pulse-delete-confirm'); }
+    // a refusal left in the delete step must not greet the next open of it
+    function clearDeleteResult() {
+        var root = detailRoot();
+        var slot = root && root.querySelector('#pulse-delete-result');
+        if (slot) slot.innerHTML = '';
+    }
+    function askDelete(btn) { clearDeleteResult(); toggleBlock(btn, '.pulse-delete-confirm'); }
+    function cancelDelete(btn) { clearDeleteResult(); toggleBlock(btn, '.pulse-delete-confirm'); }
+
+    /* w8 (docs/218 open issue): the lab refused this delete because other
+       paths can only go WITH it -- the by-name mirror ops, the gate field
+       that plays it by name, or the gate that cannot exist without it (the
+       refusal lists exactly them; routes._lab_delete_also). One press
+       deletes that set in ONE /field/edit-batch: the door the Json Tree's
+       offer uses, the same lab check asked again as a whole (refused if the
+       batch still breaks the chip), one Ctrl+Z restores all. */
+    function _toastHtml(text, level, reopen) {
+        var d = document.createElement('div');
+        d.className = 'toast toast-' + level;
+        if (reopen) d.setAttribute('data-reopen-path', reopen);
+        var p = document.createElement('p');
+        p.textContent = text;
+        d.appendChild(p);
+        var x = document.createElement('button');
+        x.type = 'button';
+        x.className = 'toast-x';
+        x.setAttribute('aria-label', 'Dismiss');
+        x.onclick = function () { d.remove(); };
+        x.textContent = '×';
+        d.appendChild(x);
+        return d;
+    }
+    function _batchRowError(results) {
+        var rows = Array.isArray(results) ? results : [];
+        for (var i = 0; i < rows.length; i++) {
+            var e = rows[i] && rows[i].error;
+            if (e && !/^rolled back|^not written/.test(e)) return rows[i].dot_path + ': ' + e;
+        }
+        return '';
+    }
+    function deleteTogether(btn) {
+        var box = btn && btn.closest ? btn.closest('.pulse-delete-refused') : null;
+        if (!box || btn.disabled) return null;
+        var paths;
+        try { paths = JSON.parse(box.getAttribute('data-together') || '[]'); } catch (e) { paths = []; }
+        if (!Array.isArray(paths) || paths.length < 2) return null;
+        var main = box.getAttribute('data-refused-path') || paths[0];
+        var myRoot = box.closest('#pulse-detail-root');
+        var status = box.querySelector('.pulse-together-status');
+        var say = function (text, level) {
+            if (!status) return;
+            status.textContent = text || '';
+            status.hidden = !text;
+            status.className = 'pulse-together-status' + (level ? ' pulse-together-' + level : '');
+        };
+        btn.disabled = true;
+        say('Checking the whole batch with your lab code…', 'busy');
+        var p = fetch('/field/edit-batch', {
+            method: 'POST', headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                updates: paths.map(function (x) { return { dot_path: x, 'delete': true }; }),
+                group: 'new', expect_chip: String(window.__chipToken || '') })
+        });
+        if (window.UndoQueue && window.UndoQueue.holdWhile) window.UndoQueue.holdWhile(p);
+        return p.then(function (r) {
+            return r.json().then(function (j) { return { r: r, j: j || {} }; },
+                                 function () { return { r: r, j: {} }; });
+        }).then(function (rj) {
+            var j = rj.j;
+            if (j.tray_html && window._swapPendingTray) {
+                try {
+                    window._swapPendingTray(j.tray_html);
+                    if (window._restoreTrayState) window._restoreTrayState();
+                } catch (e) { /* the tray's own poll catches up */ }
+            }
+            if (!rj.r.ok || !j.ok) {
+                // nothing was written (atomic): say why, in place. A batch the
+                // check still refuses may name MORE that must go with it.
+                var more = (Array.isArray(j.lab_delete_also) ? j.lab_delete_also : [])
+                    .filter(function (x) { return paths.indexOf(x) < 0; });
+                if (more.length && box.isConnected) {
+                    var all = paths.concat(more);
+                    box.setAttribute('data-together', JSON.stringify(all));
+                    var ul = box.querySelector('.pulse-together-list');
+                    more.forEach(function (x) {
+                        if (!ul) return;
+                        var li = document.createElement('li');
+                        li.setAttribute('data-kind', 'more');
+                        var c = document.createElement('code');
+                        c.textContent = x;
+                        li.appendChild(c);
+                        li.appendChild(document.createTextNode(' — named by the check of the whole batch'));
+                        ul.appendChild(li);
+                    });
+                    btn.textContent = 'Delete all ' + all.length + ' together';
+                }
+                btn.disabled = false;
+                say('✗ Nothing was deleted: ' + (j.error || _batchRowError(j.results)
+                    || ('the app answered HTTP ' + rj.r.status)), 'error');
+                return;
+            }
+            var n = paths.length - 1;
+            var name = String(main).split('.').pop();
+            var pane = document.getElementById('inspector-pane');
+            var others = paths.slice(1, 5).join(', ') + (n > 4 ? ' and ' + (n - 4) + ' more' : '');
+            // the pane still shows the pulse that is gone: it says what went
+            // (the ordinary delete's "Deleted <name>" toast, so Ctrl+Z
+            // re-opens the pulse -- app.js cellsReverted -- even when it went
+            // inside a deleted gate). A pane that moved on to another pulse
+            // meanwhile is left alone (the table still refreshes).
+            var shown = false;
+            if (pane && myRoot && myRoot.isConnected && pane.contains(myRoot)) {
+                if (window.PlotHost) { try { window.PlotHost.purgeWithin(pane); } catch (e) { /* */ } }
+                pane.innerHTML = '';
+                pane.appendChild(_toastHtml('Deleted ' + name + ' together with ' + n
+                    + (n === 1 ? ' other path (' : ' other paths (') + others
+                    + ') — one Ctrl+Z restores all', 'success', main));
+                if (j.warning) pane.appendChild(_toastHtml(String(j.warning), 'warning'));
+                shown = true;
+            }
+            // written unchecked (the lab code could not run): said where the
+            // user is looking -- the pane, or a toast when it moved on
+            if (j.warning && !shown && window.showToast) window.showToast(String(j.warning), 'warning');
+            try { if (window.htmx) window.htmx.trigger(document.body, 'pulses-changed'); } catch (e) { /* */ }
+            try { if (window._diagChanged) window._diagChanged(); } catch (e) { /* */ }
+        }, function () {
+            btn.disabled = false;
+            say('✗ Couldn’t reach the app — reload the page to see what is stored.', 'error');
+        });
+    }
 
     /* ---- Verify vs generated config (ground truth) ---- */
 
@@ -1895,6 +2023,7 @@ window.PulsesPage = (function () {
         cancelDuplicate: cancelDuplicate,
         askDelete: askDelete,
         cancelDelete: cancelDelete,
+        deleteTogether: deleteTogether,
         verifyPulse: verifyPulse,
         regenerateThenVerify: regenerateThenVerify,
         startLinkEdit: startLinkEdit,

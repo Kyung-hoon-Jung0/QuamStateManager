@@ -159,6 +159,9 @@
         <button class="btn-sm outline" type="button"
                 onclick="PulsesPage.cancelDelete(this)">Cancel</button>
     </form>
+    {# a lab refusal of this delete lands here (HX-Retarget), with the
+       "Delete together with ..." offer when something must go with it #}
+    <div id="pulse-delete-result" class="pulse-delete-result"></div>
 </div>
 
 <div class="pulse-plot-bar">

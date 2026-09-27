@@ -762,8 +762,13 @@ function nodeAt(container, p) {
     ok(!!btn && /Delete together with 2 ops/.test(btn.textContent),
       'C18: the refusal offers deleting the named ops together');
     ok(!chip.querySelector('.tree-reload-btn'), 'C18: a lab refusal is not a wrong-chip one');
+    // w8: a Ctrl+Z pressed while the batch is being checked must undo IT,
+    // never the edit before it -- the batch holds the undo queue
+    const held = [];
+    if (win.UndoQueue) win.UndoQueue.holdWhile = function (p) { held.push(p); return p; };
     if (btn) btn.click();
     await tick(25);
+    ok(held.length === 1, 'C18: the batch holds Ctrl+Z until it has answered (UndoQueue.holdWhile)');
     const call = win._fetchCalls.filter(function (x) { return x.url === '/field/edit-batch'; })[0];
     const body = call ? JSON.parse(call.opts.body) : {};
     ok(!!call, 'C18: one batch was POSTed');

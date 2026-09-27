@@ -10731,6 +10731,20 @@ div.pulse-found-at { margin: 0.2rem 0 0.4rem; }
 }
 .pulse-delete-confirm form { display: flex; gap: 0.4rem; margin: 0.3rem 0 0; }
 .pulse-delete-confirm button { margin: 0; }
+/* w8: a lab refusal of the delete, in place, with the "Delete together" offer */
+.pulse-delete-refused { margin-top: 0.45rem; }
+.pulse-delete-refused-msg {
+    margin: 0 0 0.35rem; color: var(--color-error-text);
+    overflow-wrap: anywhere; max-height: 9.5em; overflow-y: auto;
+}
+.pulse-together-head { margin: 0 0 0.15rem; font-weight: 600; }
+.pulse-together-list {
+    margin: 0 0 0.4rem 1.1rem; padding: 0; max-height: 12em; overflow-y: auto;
+}
+.pulse-together-list li { list-style: disc; margin-bottom: 0.1rem; overflow-wrap: anywhere; }
+.pulse-together-note { margin-left: 0.4rem; }
+.pulse-together-status { margin: 0.35rem 0 0; overflow-wrap: anywhere; }
+.pulse-together-error { color: var(--color-error-text); }
 
 /* -- Pulses: mutations UI (Stage 5) -- */
 .pulse-status-toast {
