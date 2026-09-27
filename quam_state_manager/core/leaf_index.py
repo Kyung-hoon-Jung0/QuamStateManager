@@ -71,6 +71,7 @@ Not indexed, deliberately: booleans (``True`` is not a parameter) and strings.
 """
 from __future__ import annotations
 
+import heapq
 import logging
 import re
 import sqlite3
@@ -588,6 +589,40 @@ def stats(conn: sqlite3.Connection) -> dict:
                 "truncated": False, "version": None}
 
 
+_FIRST_RUN = re.compile(r"(\d+)")
+
+
+def _coarse_natural_key(path: str) -> tuple:
+    """The first two elements of ``natural_key(path)[0]`` -- the text before
+    the first digit run and that run -- computed the same way (same split,
+    same ``isdigit``/``lower`` per piece). Being a PREFIX of the natural
+    key's parts tuple, it orders paths as a coarsening of natural order."""
+    pieces = _FIRST_RUN.split(path, maxsplit=1)
+    t0 = pieces[0]
+    k0 = int(t0) if t0.isdigit() else t0.lower()
+    if len(pieces) == 1:
+        return (k0,)
+    return (k0, int(pieces[1]))
+
+
+def natural_first(rows: list, n: int) -> list:
+    """``sorted(rows, key=natural_key(row[0]))[:n]`` without computing the
+    full natural key of every row (RAM P8: a regenerate snapshot holds ~29k
+    changed rows on a 5-qubit chip and more on a big one, and every Changes
+    page/keystroke sorted all of them to show 25). Exact: the n smallest
+    coarse keys fix a threshold; a row whose coarse key is ABOVE it compares
+    greater than n rows already, so it cannot be among the first n."""
+    if n <= 0:
+        return []
+    if len(rows) <= 4 * n:
+        return sorted(rows, key=lambda r: natural_key(r[0]))[:n]
+    coarse = [_coarse_natural_key(r[0]) for r in rows]
+    thr = heapq.nsmallest(n, coarse)[-1]
+    cand = [r for r, k in zip(rows, coarse) if k <= thr]
+    cand.sort(key=lambda r: natural_key(r[0]))
+    return cand[:n]
+
+
 def changes_by_snapshot(conn: sqlite3.Connection, *, limit_snaps: int = 20,
                         rows_per_snap: int = 25, prefix: str | None = None,
                         before_ts: str | None = None,
@@ -601,28 +636,44 @@ def changes_by_snapshot(conn: sqlite3.Connection, *, limit_snaps: int = 20,
     true count and the first ``rows_per_snap`` of its rows. ``at_ts`` opens one
     snapshot in full.
     """
-    where = [f"l.kind IN ({KIND_NUM}, {KIND_PTR_NUM})"]
-    params: list[Any] = []
+    # RAM P8: walk the snapshots newest-first and count each one's rows
+    # through ``idx_leaf_cp_snap``, stopping at ``limit_snaps`` snapshots that
+    # have any. The old form joined and GROUPed the WHOLE change-point table
+    # to keep the newest 21 groups -- 124 ms of every page on the big30x
+    # history (180,599 rows). Same rows, same order: a snapshot with no
+    # matching row is skipped exactly as GROUP BY never produced it, and the
+    # count is the same COUNT over the same join and conditions.
+    kind_cond = f"l.kind IN ({KIND_NUM}, {KIND_PTR_NUM})"
+    sub_params: list[Any] = []
+    sub = ("SELECT COUNT(*) FROM leaf_cp l "
+           + ("JOIN leaf_paths p ON p.id = l.path_id " if prefix else "")
+           + f"WHERE l.snap_id = s.id AND {kind_cond}")
     if prefix:
-        where.append("p.path LIKE ? ESCAPE '\\'")
-        params.append(prefix.replace("%", r"\%").replace("_", r"\_") + "%")
+        sub += " AND p.path LIKE ? ESCAPE '\\'"
+        sub_params.append(prefix.replace("%", r"\%").replace("_", r"\_") + "%")
+    outer: list[str] = []
+    outer_params: list[Any] = []
     if at_ts:
-        where.append("s.ts = ?")
-        params.append(at_ts)
+        outer.append("s.ts = ?")
+        outer_params.append(at_ts)
     elif before_ts:
-        where.append("s.ts < ?")
-        params.append(before_ts)
-    cond = " AND ".join(where)
-
-    snaps = conn.execute(
-        "SELECT s.id, s.ts, s.trigger, s.run_id, s.experiment, s.folder, "
-        "       COUNT(*) AS n "
-        "  FROM leaf_cp l "
-        "  JOIN leaf_paths p ON p.id = l.path_id "
-        "  JOIN leaf_snaps s ON s.id = l.snap_id "
-        f" WHERE {cond} "
-        " GROUP BY s.id ORDER BY s.id DESC LIMIT ?",
-        params + [int(limit_snaps)]).fetchall()
+        outer.append("s.ts < ?")
+        outer_params.append(before_ts)
+    cur = conn.execute(
+        f"SELECT s.id, s.ts, s.trigger, s.run_id, s.experiment, s.folder, ({sub}) AS n "
+        "  FROM leaf_snaps s "
+        + (f" WHERE {' AND '.join(outer)} " if outer else "")
+        + " ORDER BY s.id DESC",
+        sub_params + outer_params)
+    snaps = []
+    want = int(limit_snaps)
+    while len(snaps) < want:
+        row = cur.fetchone()
+        if row is None:
+            break
+        if row[6]:
+            snaps.append(row)
+    cur.close()
 
     out: list[dict] = []
     for sid, ts, trigger, run_id, experiment, folder, n in snaps:
@@ -640,8 +691,7 @@ def changes_by_snapshot(conn: sqlite3.Connection, *, limit_snaps: int = 20,
             + (" AND p.path LIKE ? ESCAPE '\\'" if prefix else ""),
             ([sid] + ([prefix.replace("%", r"\%").replace("_", r"\_") + "%"]
                       if prefix else []))).fetchall()
-        rows.sort(key=lambda r: natural_key(r[0]))
-        rows = rows[:int(rows_per_snap)]
+        rows = natural_first(rows, int(rows_per_snap))
         items = []
         for path, value, pid in rows:
             prev = conn.execute(
@@ -749,6 +799,105 @@ def search_paths(conn: sqlite3.Connection, query: str, *,
     # change-point table.
     rows.sort(key=lambda r: (-r[1], natural_key(r[0])))
     return [{"path": r[0], "changes": r[1]} for r in rows[:int(limit)]]
+
+
+# SQLite's built-in LIKE folds case for the 26 ASCII letters only; the RAM form
+# folds exactly those and nothing else ([derived], pinned against SQLite's own
+# LIKE over non-ASCII paths in tests/test_param_history_ram.py).
+_ASCII_FOLD = {c: c + 32 for c in range(ord("A"), ord("Z") + 1)}
+
+
+class PathRank:
+    """Every indexed path with its change count, in ``search_paths``' order
+    (most-moved first, then the natural key), held as two joined strings
+    (original and ASCII-folded, same offsets) so a keystroke is a C-speed
+    substring scan that stops at the ``limit``-th hit (RAM P8: the typeahead
+    re-ran the join + GROUP BY + a Python natural sort of every matching path
+    per keystroke -- 64k paths, 335 ms for ``qubits.q1`` on a 30-qubit chip).
+
+    ``search(q, n) == search_paths(conn, q, limit=n)`` for the database it was
+    built from (pinned over random queries). Paths never contain a newline,
+    which is the separator; a path that does is kept out of the fast scan by
+    falling back to ``search_paths``' own grammar on the row list."""
+
+    __slots__ = ("hay", "low", "offs", "counts", "n", "nbytes", "nat_order")
+
+    def __init__(self, rows: list, nat_order: "dict[str, int] | None" = None) -> None:
+        rows = list(rows)
+        # ``natural_key`` ends in the raw string, so distinct paths never tie
+        # and a path's position in the natural order of ANY superset of the
+        # current paths ranks them exactly as ``natural_key`` does. A capture
+        # moves change COUNTS, almost never the path set, so the previous
+        # rank's order is reused and the sort key is two ints (the natural
+        # key over 180k paths was 2.3 s of a 3.9 s rebuild, measured).
+        if nat_order is None or any(r[0] not in nat_order for r in rows):
+            nat = sorted((r[0] for r in rows), key=natural_key)
+            nat_order = {p: i for i, p in enumerate(nat)}
+        self.nat_order = nat_order
+        rows.sort(key=lambda r: (-r[1], nat_order[r[0]]))
+        from array import array
+        paths = [r[0] for r in rows]
+        self.counts = array("q", [int(r[1]) for r in rows])
+        self.hay = "\n".join(paths) + "\n"
+        self.low = self.hay.translate(_ASCII_FOLD)
+        offs = array("q")
+        o = 0
+        for p in paths:
+            offs.append(o)
+            o += len(p) + 1
+        offs.append(o)
+        self.offs = offs
+        self.n = len(paths)
+        self.nbytes = (len(self.hay) * 2 + 16 * (self.n + 1) + 256
+                       + 120 * len(nat_order))
+        if any("\n" in p for p in paths):     # never on a real index
+            raise ValueError("path with a newline")
+
+    @classmethod
+    def from_conn(cls, conn: sqlite3.Connection,
+                  nat_order: "dict[str, int] | None" = None) -> "PathRank":
+        return cls(conn.execute(
+            "SELECT p.path, COUNT(l.snap_id) AS n "
+            "  FROM leaf_paths p LEFT JOIN leaf_cp l ON l.path_id = p.id "
+            " GROUP BY p.id").fetchall(), nat_order)
+
+    def _row(self, i: int) -> dict:
+        return {"path": self.hay[self.offs[i]:self.offs[i + 1] - 1],
+                "changes": int(self.counts[i])}
+
+    def search(self, query: str, limit: int = 50) -> list[dict]:
+        from bisect import bisect_right
+        from quam_state_manager.core.search_query import groups as _sq_groups
+
+        grps = _sq_groups(query or "")
+        if not grps:
+            return []
+        limit = int(limit)
+        if limit <= 0:
+            return []
+        # the terms arrive lower-cased by search_query.tokens (as the SQL
+        # form's LIKE patterns do); only the hay side needs the ASCII fold
+        low, offs, out = self.low, self.offs, []
+        if len(grps) == 1 and len(grps[0]) == 1:
+            term = grps[0][0]
+            pos = low.find(term)
+            while pos >= 0 and len(out) < limit:
+                i = bisect_right(offs, pos) - 1
+                out.append(self._row(i))
+                pos = low.find(term, offs[i + 1])   # next row
+            return out
+        # AND over groups of OR over terms: one lookahead per group, anchored
+        # at each line start, scanned in C over the folded list; still stops
+        # at the limit-th row in rank order
+        nl = chr(10)
+        pat = "^" + "".join(
+            "(?=[^" + nl + "]*(?:" + "|".join(re.escape(t) for t in g) + "))"
+            for g in grps)
+        for m in re.finditer(pat, low, re.M):
+            out.append(self._row(bisect_right(offs, m.start()) - 1))
+            if len(out) >= limit:
+                break
+        return out
 
 
 # ──────────────────────────────────────────────────────────────────────────

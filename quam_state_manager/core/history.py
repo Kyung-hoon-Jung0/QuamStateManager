@@ -17,6 +17,7 @@ import os
 import re
 import shutil
 import sqlite3
+import copy
 import threading
 import time
 import zlib
@@ -244,6 +245,77 @@ def _to_num(value: Any) -> float | None:
     if isinstance(value, (int, float)):
         return float(value)
     return None
+
+
+# ── distinct values by index skip-scan (RAM P8) ─────────────────────────────
+# ``COUNT(DISTINCT timestamp)`` / ``DISTINCT qubit`` / the per-trigger count
+# SCAN the whole covering index: 16-22 ms each over the 78k rows of a
+# 200-snapshot, 30-qubit history, and /param-history ran five of them after
+# every capture. The same answers are one index SEEK per distinct value when
+# an index leads with the column (a recursive CTE of ``MIN(col) WHERE col >
+# prev``): 200 seeks, well under a millisecond. Without such an index each
+# step would be a full scan, so the old SQL answers instead. [derived; pinned
+# equal to the old SQL, index-less legacy table included, in
+# tests/test_param_history_ram.py]
+
+_SKIP_DISTINCT_SQL = {
+    col: ("WITH RECURSIVE s(v) AS ("
+          f"SELECT MIN({col}) FROM param_history "
+          f"UNION ALL SELECT (SELECT MIN({col}) FROM param_history WHERE {col} > s.v) "
+          "FROM s WHERE s.v IS NOT NULL) SELECT v FROM s WHERE v IS NOT NULL")
+    for col in ("timestamp", "qubit", "trigger")
+}
+_SKIP_TS_FOR_TRIGGER_SQL = (
+    "WITH RECURSIVE s(v) AS ("
+    "SELECT MIN(timestamp) FROM param_history WHERE trigger = ?1 "
+    "UNION ALL SELECT (SELECT MIN(timestamp) FROM param_history "
+    "WHERE trigger = ?1 AND timestamp > s.v) "
+    "FROM s WHERE s.v IS NOT NULL) SELECT COUNT(v) FROM s")
+
+
+def _param_history_index_heads(conn: sqlite3.Connection) -> set:
+    """``(first, second)`` column names of every index on param_history
+    (the PRIMARY KEY's autoindex included); second is None for one column."""
+    heads = set()
+    for row in conn.execute("PRAGMA index_list(param_history)").fetchall():
+        name = row[1]
+        info = conn.execute("SELECT seqno, name FROM pragma_index_info(?) ORDER BY seqno",
+                            (name,)).fetchall()
+        if info:
+            heads.add((info[0][1], info[1][1] if len(info) > 1 else None))
+    return heads
+
+
+def _ph_distinct(conn: sqlite3.Connection, col: str, heads: set | None = None) -> list:
+    """``SELECT DISTINCT col FROM param_history ORDER BY col`` (col in
+    timestamp / qubit / trigger, all NOT NULL, BINARY collation)."""
+    if heads is None:
+        heads = _param_history_index_heads(conn)
+    if any(h[0] == col for h in heads):
+        return [r[0] for r in conn.execute(_SKIP_DISTINCT_SQL[col]).fetchall()]
+    return [r[0] for r in conn.execute(
+        f"SELECT DISTINCT {col} FROM param_history ORDER BY {col}").fetchall()]
+
+
+def _ph_snap_count(conn: sqlite3.Connection, heads: set | None = None) -> int:
+    """``SELECT COUNT(DISTINCT timestamp) FROM param_history``."""
+    if heads is None:
+        heads = _param_history_index_heads(conn)
+    if any(h[0] == "timestamp" for h in heads):
+        return len(conn.execute(_SKIP_DISTINCT_SQL["timestamp"]).fetchall())
+    return conn.execute("SELECT COUNT(DISTINCT timestamp) FROM param_history").fetchone()[0]
+
+
+def _ph_trigger_counts(conn: sqlite3.Connection, heads: set | None = None) -> dict:
+    """``dict(SELECT trigger, COUNT(DISTINCT timestamp) ... GROUP BY trigger)``."""
+    if heads is None:
+        heads = _param_history_index_heads(conn)
+    if ("trigger", "timestamp") in heads:
+        return {t: conn.execute(_SKIP_TS_FOR_TRIGGER_SQL, (t,)).fetchone()[0]
+                for t in _ph_distinct(conn, "trigger", heads)}
+    return dict(conn.execute(
+        "SELECT trigger, COUNT(DISTINCT timestamp) FROM param_history GROUP BY trigger"
+    ).fetchall())
 
 
 def _extract_index_rows_from_state(
@@ -913,6 +985,93 @@ _KEEP_NOTE: Any = object()
 _SNAPSHOT_META_FIELDS: frozenset = frozenset(f.name for f in fields(SnapshotMeta))
 
 
+
+# RAM P8: the snapshot scan tier's per-snapshot memo (see _scan_field_series).
+_SCAN_SERIES: "OrderedDict[tuple[str, str], dict[str, tuple]]" = OrderedDict()
+_SCAN_SERIES_LOCK = threading.Lock()
+_SCAN_SERIES_MAX = 256
+
+
+def _snap_files_sig(snap_dir: Path) -> tuple | None:
+    """(mtime_ns, size) of a snapshot's two files; None when state.json is
+    unreadable (the scan skips such a snapshot)."""
+    try:
+        st = os.stat(snap_dir / "state.json")
+    except OSError:
+        return None
+    try:
+        wt = os.stat(snap_dir / "wiring.json")
+        w = (wt.st_mtime_ns, wt.st_size)
+    except OSError:
+        w = None
+    return (st.st_mtime_ns, st.st_size, w)
+
+
+def _scan_one_snapshot(snap_dir: Path, segs: list[str], is_pointer, is_self_ref,
+                       resolve_pointer) -> tuple[bool, Any]:
+    """``(usable, value)`` of one dot path in one snapshot -- the body of the
+    scan tier's loop, unchanged: ``usable`` False is a snapshot the loop
+    skipped (unreadable / not an object)."""
+    try:
+        root = safe_io.read_json(snap_dir / "state.json")
+    except (OSError, ValueError):
+        return False, None
+    if not isinstance(root, dict):
+        return False, None
+    if segs and segs[0] not in root:
+        try:
+            wiring = safe_io.read_json(snap_dir / "wiring.json")
+        except (OSError, ValueError):
+            wiring = None
+        if isinstance(wiring, dict):
+            merged = dict(root)
+            merged.update(wiring)
+            root = merged
+    found, value = _walk_any_path(root, segs)
+    if not found:
+        value = None
+    elif is_pointer(value) and not is_self_ref(value):
+        value = resolve_pointer(root, value, tuple(segs))
+    return True, value
+
+
+def _file_sig(p: Path) -> tuple | None:
+    """(mtime_ns, size, ino) of *p*, or None when it does not exist."""
+    try:
+        st = os.stat(p)
+    except OSError:
+        return None
+    return (st.st_mtime_ns, st.st_size, st.st_ino)
+
+
+def _dir_bytes(root: Path) -> int:
+    """Total size of every regular file under *root* (the figure
+    ``history_disk_stats`` reports). ``os.scandir`` instead of
+    ``rglob`` + ``is_file`` + ``stat``: on Windows a DirEntry carries the
+    size from the directory listing itself, so 800 snapshot files cost one
+    listing per folder, not two syscalls each (RAM P8, F8: 120 ms after every
+    capture on a 200-snapshot chip). A vanished entry (mid-prune) is skipped,
+    as before."""
+    total = 0
+    stack = [str(root)]
+    while stack:
+        d = stack.pop()
+        try:
+            it = os.scandir(d)
+        except OSError:
+            continue
+        with it:
+            for e in it:
+                try:
+                    if e.is_dir(follow_symlinks=False):
+                        stack.append(e.path)
+                    elif e.is_file():
+                        total += e.stat().st_size
+                except OSError:
+                    continue
+    return total
+
+
 class HistoryManager:
     """Manage state-file snapshots stored under ``<instance_path>/history/``.
 
@@ -982,6 +1141,9 @@ class HistoryManager:
         # cache for ``list_chip_histories``. Token bumps when any chip dir
         # gains a snapshot (via ``_bump_chip_version``).
         self._chip_histories_cache: tuple[int, list[dict[str, Any]]] | None = None
+        # RAM P8: per-chip-dir SQL row of list_chip_histories, validated on
+        # read by the index files' stats + the dir's own version
+        self._chip_row_memo: dict[str, tuple] = {}
         # Bumps any time a chip dir is mutated. Used as the
         # ``list_chip_histories`` cache token.
         self._global_version: int = 0
@@ -2049,6 +2211,14 @@ class HistoryManager:
                     prior = s
                     break
 
+            # w7 integration: the capture's diff is taken ONCE, by the
+            # write-once folder-diff memo (livewrite P4) -- shared with the
+            # drift poll's diff_cache when the poll already took exactly this
+            # pair, and what /prev-state-diff serves right after the write --
+            # and the four-count summary is read off those entries. (datasets
+            # P8 counted the summary from two flat maps instead; that saved a
+            # prior-snapshot re-parse the doc cache already avoids, and would
+            # have left the first /prev-state-diff to diff on the request.)
             if prior is not None:
                 try:
                     prior_dir = hist_dir / prior.timestamp
@@ -3117,28 +3287,33 @@ class HistoryManager:
         truncated = len(snapshots) > len(take)
         segs = dot_path.split(".")
         series: list[tuple] = []
+        # RAM P8 (ram_design.md §1.4 "Field scan-series cache"): one parsed
+        # value per (chip dir, dot path, snapshot), validated on read by that
+        # snapshot's state.json + wiring.json (mtime_ns, size) -- a re-open of
+        # the same leaf parses nothing, a new snapshot parses only itself
+        # (19 MB x 150 snapshots was 45 s per open on a 30-qubit chip). A
+        # pruned or restamped snapshot simply stops being asked for.
+        with _SCAN_SERIES_LOCK:
+            per_ts = _SCAN_SERIES.pop((str(hist_dir), dot_path), None) or {}
+            _SCAN_SERIES[(str(hist_dir), dot_path)] = per_ts      # LRU touch
+            while len(_SCAN_SERIES) > _SCAN_SERIES_MAX:
+                _SCAN_SERIES.popitem(last=False)
         for meta in reversed(take):                    # oldest-first
             snap_dir = hist_dir / meta.timestamp
-            try:
-                root = safe_io.read_json(snap_dir / "state.json")
-            except (OSError, ValueError):
+            sig = _snap_files_sig(snap_dir)
+            if sig is None:
+                continue                               # unreadable: skipped, as before
+            hit = per_ts.get(meta.timestamp)
+            if hit is not None and hit[0] == sig:
+                ok, value = hit[1]
+            else:
+                ok, value = _scan_one_snapshot(snap_dir, segs, is_pointer,
+                                               is_self_ref, resolve_pointer)
+                per_ts[meta.timestamp] = (sig, (ok, value))
+            if not ok:
                 continue
-            if not isinstance(root, dict):
-                continue
-            if segs and segs[0] not in root:
-                try:
-                    wiring = safe_io.read_json(snap_dir / "wiring.json")
-                except (OSError, ValueError):
-                    wiring = None
-                if isinstance(wiring, dict):
-                    merged = dict(root)
-                    merged.update(wiring)
-                    root = merged
-            found, value = _walk_any_path(root, segs)
-            if not found:
-                value = None
-            elif is_pointer(value) and not is_self_ref(value):
-                value = resolve_pointer(root, value, tuple(segs))
+            if isinstance(value, (dict, list)):
+                value = copy.deepcopy(value)       # the memo's copy stays pristine
             series.append((meta.timestamp, value, meta.trigger,
                            meta.run_id, meta.experiment_name,
                            meta.experiment_folder_path))
@@ -4259,9 +4434,7 @@ class HistoryManager:
 
         conn = self._open_index(quam_state_path)
         try:
-            indexed_count = conn.execute(
-                "SELECT COUNT(DISTINCT timestamp) FROM param_history"
-            ).fetchone()[0]
+            indexed_count = _ph_snap_count(conn)
         finally:
             conn.close()
         if indexed_count < snap_count:
@@ -4694,12 +4867,9 @@ class HistoryManager:
 
         conn = self._open_index(path)
         try:
-            total = conn.execute(
-                "SELECT COUNT(DISTINCT timestamp) FROM param_history"
-            ).fetchone()[0]
-            by_trigger = dict(conn.execute(
-                "SELECT trigger, COUNT(DISTINCT timestamp) FROM param_history GROUP BY trigger"
-            ).fetchall())
+            heads = _param_history_index_heads(conn)
+            total = _ph_snap_count(conn, heads)
+            by_trigger = _ph_trigger_counts(conn, heads)
             # MAX() uses the timestamp side of any index that starts with it.
             # Two queries (max-ts + lookup) is faster than ``ORDER BY DESC
             # LIMIT 1`` on a 2 M-row table because the PK is ASC.
@@ -4758,14 +4928,14 @@ class HistoryManager:
             cached = self._disk_stats_cache.get(key)
             if cached is not None and cached[0] == ver:
                 return cached[1]
-        total_bytes = 0
-        if hist_dir.is_dir():
-            for p in hist_dir.rglob("*"):
-                try:
-                    if p.is_file():
-                        total_bytes += p.stat().st_size
-                except OSError:
-                    continue                 # a mid-prune file is not an error
+        # The persistent token reader would otherwise pin index.sqlite-wal at
+        # its high-water size and this walk would count it (verifier D1).
+        try:
+            from quam_state_manager.core import param_history_ram as _phr
+            _phr.settle_wal(hist_dir / "index.sqlite")
+        except Exception:   # noqa: BLE001 -- best effort; the walk still runs
+            pass
+        total_bytes = _dir_bytes(hist_dir) if hist_dir.is_dir() else 0
         result = {
             "snapshots": len(snapshots),
             "bytes": total_bytes,
@@ -4784,10 +4954,34 @@ class HistoryManager:
     # Hardware-aware alignment scan + chip discovery
     # ------------------------------------------------------------------
 
+    def _alignment_token(self, loaded_path: Path, workspace: Workspace) -> tuple:
+        """The key ``scan_workspace_alignment``'s result is valid for."""
+        loaded_fp = self._cached_fingerprint(loaded_path)
+        return (self._workspace_token(workspace, self._root), loaded_fp)
+
+    def cached_workspace_alignment(self, quam_state_path: str | Path,
+                                   workspace: Workspace) -> dict[str, Any] | None:
+        """RAM P7: the alignment result when it is valid for the CURRENT
+        token, else ``None`` -- never a verdict computed for an older one."""
+        loaded_path = Path(quam_state_path)
+        token = self._alignment_token(loaded_path, workspace)
+        with self._lock:
+            cached = self._alignment_cache.get(str(loaded_path.resolve()))
+        if cached is not None and cached[0] == token:
+            return cached[1]
+        return None
+
+    def has_workspace_alignment(self, quam_state_path: str | Path) -> bool:
+        """Whether an alignment was ever computed for this chip (any token)."""
+        with self._lock:
+            return str(Path(quam_state_path).resolve()) in self._alignment_cache
+
     def scan_workspace_alignment(
         self,
         quam_state_path: str | Path,
         workspace: Workspace,
+        *,
+        progress: "Callable[[int, int], None] | None" = None,
     ) -> dict[str, Any]:
         """Group every workspace experiment by alignment with the loaded chip.
 
@@ -4831,15 +5025,20 @@ class HistoryManager:
         # A workspace gaining one new experiment used to invalidate the
         # outer cache and force a 10⁴-entry rescan; with this, only the
         # changed entry re-aligns.
-        for entry in workspace.get_flat_list():
+        flat = workspace.get_flat_list()
+        total_n = len(flat)
+        for i, entry in enumerate(flat):
+            if progress is not None and not (i & 63):
+                progress(i, total_n)
             qs = Path(getattr(entry, "quam_state_path", ""))
             state_path = qs / "state.json"
-            if not qs or not state_path.exists():
-                unknown.append(entry)
-                continue
+            # RAM P7: ONE stat answers both "is it there" and "its mtime"
+            # (the separate exists() was a second stat per workspace run)
             try:
-                entry_mtime = state_path.stat().st_mtime
+                entry_mtime = state_path.stat().st_mtime if qs else None
             except OSError:
+                entry_mtime = None
+            if entry_mtime is None:
                 unknown.append(entry)
                 continue
 
@@ -4887,6 +5086,8 @@ class HistoryManager:
         }
         with self._lock:
             self._alignment_cache[cache_key] = (cache_token, result)
+        if progress is not None:
+            progress(total_n, total_n)
         self._flush_fingerprint_sidecar()
         return result
 
@@ -4936,25 +5137,41 @@ class HistoryManager:
                         "qubits": [],
                     })
                 continue
+            # RAM P8: a capture of ONE chip bumps the global version and
+            # used to re-query EVERY chip's index here (56 ms on a 30-chip
+            # instance, on the first /param-history after each capture). A
+            # chip's row is reused while its index is provably unchanged:
+            # the main file AND its WAL (commits land in -wal until a
+            # checkpoint) have the same (mtime_ns, size, ino), and this
+            # manager's version for the dir has not moved.
+            row_tok = (_file_sig(idx), _file_sig(d / "index.sqlite-wal"),
+                       self._chip_dir_version.get(str(d), 0))
+            memo_row = self._chip_row_memo.get(str(d))
+            if memo_row is not None and memo_row[0] == row_tok:
+                if memo_row[1] is not None:
+                    row = dict(memo_row[1])
+                    row["qubits"] = list(row["qubits"])
+                    # the display name reads the alias registry, not the index
+                    row["display"] = self.display_name_for_dir(d.name)
+                    result.append(row)
+                continue
             try:
                 conn = sqlite3.connect(str(idx))
                 conn.execute("PRAGMA cache_size=-50000")  # ~50 MB per archived chip read
-                snap_count = conn.execute(
-                    "SELECT COUNT(DISTINCT timestamp) FROM param_history"
-                ).fetchone()[0]
+                heads = _param_history_index_heads(conn)
+                snap_count = _ph_snap_count(conn, heads)
                 if snap_count == 0:
                     conn.close()
+                    self._chip_row_memo[str(d)] = (row_tok, None)
                     continue
                 # MAX() uses index forward scan — much faster than reverse-
                 # ordered LIMIT 1 on a multi-million-row table.
                 max_ts = conn.execute(
                     "SELECT MAX(timestamp) FROM param_history"
                 ).fetchone()
-                qubit_rows = conn.execute(
-                    "SELECT DISTINCT qubit FROM param_history ORDER BY qubit"
-                ).fetchall()
+                qubit_rows = [(q,) for q in _ph_distinct(conn, "qubit", heads)]
                 conn.close()
-                result.append({
+                row = {
                     "key": d.name,
                     "display": self.display_name_for_dir(d.name),
                     "snapshot_count": snap_count,
@@ -4964,7 +5181,9 @@ class HistoryManager:
                     # ids on a public result -- order it the way the product
                     # counts (customer rule 2026-09-09).
                     "qubits": sorted((q[0] for q in qubit_rows), key=natural_key),
-                })
+                }
+                result.append(row)
+                self._chip_row_memo[str(d)] = (row_tok, dict(row))
             except Exception:
                 logger.warning("Could not read chip history %s", d.name, exc_info=True)
         result.sort(key=lambda r: r["latest_timestamp"], reverse=True)

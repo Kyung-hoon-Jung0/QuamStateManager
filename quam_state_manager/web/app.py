@@ -41,6 +41,21 @@ from quam_state_manager.core.scanner import Workspace
 # Phase 4 §1 — XSS-safe JSON for inline <script> bodies.
 # ----------------------------------------------------------------------
 
+
+
+class ScriptJson(Markup):
+    """A string ``_script_json_filter`` has already made safe. The filter hands
+    it back unchanged, so a memoized payload (the Datasets rows JSON, ~1 MB on
+    a 4,000-run folder) is escaped once per content version rather than on
+    every render. Only the filter itself creates one."""
+    __slots__ = ()
+
+
+def script_json_once(value) -> "ScriptJson":
+    """``_script_json_filter(value)``, marked as done."""
+    return ScriptJson(_script_json_filter(value))
+
+
 def _script_json_filter(value) -> Markup:
     """Render *value* as JSON safe to embed inside ``<script>...</script>``.
 
@@ -60,6 +75,8 @@ def _script_json_filter(value) -> Markup:
     Accepts either an already-serialised JSON string (legacy callers
     that pre-`json.dumps`'d the value) or a raw object.
     """
+    if isinstance(value, ScriptJson):
+        return value                     # escaped once already, by this filter
     if not isinstance(value, str):
         value = json.dumps(value, separators=(",", ":"), ensure_ascii=False)
     # Six-character "<" / ">" / "&" escapes are valid
@@ -722,14 +739,32 @@ def create_app(*, testing: bool = False, instance_path: str | None = None) -> Fl
     # teardown left, so a leaked scope cannot outlive one request on a
     # reused worker thread.
     app.before_request(dir_sample.begin)
-    # RAM P10: foreground-request activity, so the search-index prewarm waits
-    # for a quiet server and pauses while a request renders (core/activity.py).
+    # Foreground-request activity, ONE hook and ONE gate (activity.is_foreground)
+    # feeding both yield-to-foreground consumers: RAM P10's search-index
+    # prewarm waits for a quiet server and pauses while a request renders
+    # (core/activity.py, unbounded with a supersede stop), and RAM P7's
+    # run-ingest precompute waits, bounded, for the user's requests to finish
+    # (run_ingest.FOREGROUND.wait_idle). Held-open polls, static assets and
+    # the agent's node waits are not a user waiting on a page: neither counts
+    # them, so neither can be stalled by them.
     from quam_state_manager.core import activity as _activity
+    from quam_state_manager.core import run_ingest as _run_ingest
+    from flask import g as _g, request as _request
 
-    @app.before_request
-    def _activity_begin():
-        from flask import request as _rq
-        _activity.begin(_rq.path)
+    def _fg_enter():
+        path = _request.path or ""
+        if not _activity.is_foreground(path):
+            return
+        _activity.begin(path)
+        _run_ingest.FOREGROUND.enter()
+        _g._sm_fg = True
+
+    app.before_request(_fg_enter)
+
+    @app.teardown_request
+    def _fg_exit(exc=None):                 # noqa: ANN001 -- Flask's signature
+        if _g.pop("_sm_fg", False):
+            _run_ingest.FOREGROUND.exit()
 
     @app.teardown_request
     def _close_dir_sample(exc=None):        # noqa: ANN001 — Flask's signature

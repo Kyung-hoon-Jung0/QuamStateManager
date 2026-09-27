@@ -11,8 +11,10 @@ from __future__ import annotations
 import logging
 import math
 import os
+import stat
 import re
 import threading
+import time
 from collections import OrderedDict
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
@@ -97,6 +99,20 @@ class ExperimentEntry:
     # `extract_filter_params`), so `multiplexed=true` means one thing on both
     # surfaces. Empty on a stub entry until hydration parses node.json.
     filter_params: dict = field(default_factory=dict)
+    # RAM P7: what else, besides ``run_mtime``, an incremental rescan must see
+    # unmoved before it may REUSE this entry from a changed run-parent dir
+    # without re-parsing it -- ``(node.json (mtime_ns, size), quam_state dir
+    # mtime_ns)``, stat'ed BEFORE node.json is read (so a rewrite racing the
+    # parse leaves an old signature and re-parses next time). ``None`` (a
+    # stub, a standalone entry, an entry from the listing cache) never
+    # qualifies, so such an entry is re-parsed exactly as before. Not
+    # persisted: the listing cache is an accelerator (docs/142).
+    scan_sig: tuple | None = None
+    # RAM P7: for an entry that parsed as STANDALONE inside a run-named folder
+    # (node.json not written yet), the run folder's mtime stat'ed BEFORE that
+    # parse -- what ``Workspace._is_root_stale`` watches for the node.json
+    # landing. 0.0 everywhere else.
+    seen_mtime: float = 0.0
 
     @property
     def short_label(self) -> str:
@@ -291,6 +307,21 @@ class Workspace:
         # cache (set by the web app to instance/workspace_cache). None (the
         # default, and what every test gets) disables caching entirely.
         self.cache_dir: Path | None = None
+        # RAM P7: listing-cache writes leave the rescan's thread (the cache
+        # is an accelerator; a crash before the write only means the next
+        # session verifies against an older listing, docs/142).
+        self._save_cv = threading.Condition()
+        self._save_pending: set[str] = set()
+        self._save_thread: threading.Thread | None = None
+        self._save_busy = False
+        self.save_debounce_s = 0.5
+        # RAM P7: per root, {run folder: its mtime when it parsed as
+        # STANDALONE} -- a run caught between its quam_state and its node.json.
+        # Its node.json landing moves only the RUN folder's mtime, which the
+        # spine deliberately does not watch, so without this the half-written
+        # run stayed standalone until an unrelated run landed. A few stats.
+        self._incomplete: dict[str, dict[str, float]] = {}
+        self._rescan_gates: dict[str, threading.Lock] = {}
 
     @property
     def version(self) -> int:
@@ -481,10 +512,58 @@ class Workspace:
                         for e in entries],
                 }
             p.parent.mkdir(parents=True, exist_ok=True)
-            safe_io.atomic_write_json(p, payload)
+            # RAM P7: compact -- ``indent`` forces json's pure-Python encoder
+            # (a 4,121-run listing measured ~1.4 s of GIL; docs/171 made the
+            # same call for the store cache). Nobody reads this file by eye.
+            safe_io.atomic_write_json(p, payload, compact=True)
         except Exception:
             logger.warning("listing cache save for %s failed", root_key,
                            exc_info=True)
+
+    def _schedule_listing_save(self, root_key: str) -> None:
+        """RAM P7: persist *root_key*'s listing on the saver thread, coalesced
+        (a burst of rescans writes once). Measured: the synchronous write of
+        a 4,121-run listing was 1.2-1.6 s of every rescan after a new run."""
+        if self.cache_dir is None:
+            return
+        with self._save_cv:
+            self._save_pending.add(root_key)
+            if self._save_thread is None or not self._save_thread.is_alive():
+                self._save_thread = threading.Thread(
+                    target=self._save_loop, name="ws-listing-save", daemon=True)
+                self._save_thread.start()
+            self._save_cv.notify()
+
+    def _save_loop(self) -> None:
+        while True:
+            with self._save_cv:
+                while not self._save_pending:
+                    if not self._save_cv.wait(timeout=30.0):
+                        if not self._save_pending:
+                            self._save_thread = None
+                            return             # idle: the next schedule restarts it
+            time.sleep(self.save_debounce_s)       # coalesce a burst
+            with self._save_cv:
+                keys = sorted(self._save_pending)
+                self._save_pending.clear()
+                self._save_busy = True
+            try:
+                for k in keys:
+                    self._save_listing_cache(k)
+            finally:
+                with self._save_cv:
+                    self._save_busy = False
+
+    def flush_listing_saves(self, timeout: float = 10.0) -> bool:
+        """Wait until no listing save is pending or running (tests, shutdown)."""
+        deadline = time.monotonic() + timeout
+        while time.monotonic() < deadline:
+            with self._save_cv:
+                idle = not self._save_pending and not self._save_busy
+            if idle:
+                return True
+            time.sleep(0.02)
+        return False
 
     def _verify_cached_root(self, root: Path) -> None:
         """docs/142: background half of a cache-served ``add_root`` -- one
@@ -648,8 +727,16 @@ class Workspace:
         # subtrees and verify the reused entries — because a refresh is
         # almost always "the same archive plus a few new runs". Full stays
         # for the first scan, a standalone root, and callers that ask.
-        if (full or not old_probe
-                or any(e.is_standalone for e in old_entries)):
+        # RAM P7: "a standalone root" is the ROOT being a quam_state folder.
+        # The old test (ANY standalone entry) also fired for a run caught
+        # between its quam_state and its node.json landing -- which parses as
+        # standalone -- so the rescan right after a new run was often a full
+        # re-walk and re-parse of the whole archive (~5 s on KH). A standalone
+        # entry inside a run folder carries run_mtime 0.0 and so re-parses on
+        # the incremental path's verify pass as soon as its folder is seen.
+        standalone_root = any(e.is_standalone and str(e.quam_state_path) == key
+                              for e in old_entries)
+        if full or not old_probe or standalone_root:
             entries = _scan_root(registered)           # the slow part — no lock
         else:
             entries = _incremental_rescan(registered, old_entries, old_probe)
@@ -681,9 +768,11 @@ class Workspace:
         # Refresh round-trip from ~1.1 s into the ~0.45 s scan itself).
         unchanged_scan = (len(entries) == len(old_entries)
                           and all(a is b for a, b in zip(entries, old_entries)))
+        incomplete = _incomplete_runs(entries)
         with self._lock:
             if self._find_registered_root(registered) is None:
                 return entries                         # removed mid-scan — discard
+            self._incomplete[key] = incomplete
             if unchanged_scan and key in self.tree:
                 self._scan_spines[key] = spine
                 self._scan_probes[key] = probe
@@ -708,7 +797,7 @@ class Workspace:
             self._scan_probes[key] = probe
             self._version += 1
             logger.info("Rescanned %s: %d quam_state folders", registered, len(entries))
-        self._save_listing_cache(key)
+        self._schedule_listing_save(key)
         return entries
 
     def rescan_all(self) -> None:
@@ -725,11 +814,27 @@ class Workspace:
         """
         rescanned = False
         for root in list(self.root_folders):
-            if self._is_root_stale(root):
-                logger.debug("Stale root detected, rescanning: %s", root)
-                self.rescan_root(root)
-                rescanned = True
+            if not self._is_root_stale(root):
+                continue
+            # RAM P7: single-flight per root. The run-watch worker rescans on
+            # the tick; a request arriving mid-rescan used to start a second,
+            # identical walk. It now waits for the one in flight and re-checks
+            # (a rescan that finished leaves nothing stale; a newer change is
+            # still seen, since the check runs again under the gate).
+            with self._rescan_gate(root):
+                if self._is_root_stale(root):
+                    logger.debug("Stale root detected, rescanning: %s", root)
+                    self.rescan_root(root)
+                    rescanned = True
         return rescanned
+
+    def _rescan_gate(self, root: Path) -> threading.Lock:
+        key = str(root)
+        with self._lock:
+            g = self._rescan_gates.get(key)
+            if g is None:
+                g = self._rescan_gates[key] = threading.Lock()
+            return g
 
     def _is_root_stale(self, root: Path) -> bool:
         """True if any spine directory's mtime moved since the last scan.
@@ -753,7 +858,16 @@ class Workspace:
         if spine is None:
             return True    # never probed (legacy state) — one rescan seeds it
         cur = _probe_dirs(spine)
-        return cur != self._scan_probes.get(key)
+        if cur != self._scan_probes.get(key):
+            return True
+        # RAM P7: a half-written run whose node.json has landed since
+        for folder, mt in list((self._incomplete.get(key) or {}).items()):
+            try:
+                if os.stat(folder).st_mtime != mt:
+                    return True
+            except OSError:
+                return True        # vanished: the rescan drops it
+        return False
 
     # ------------------------------------------------------------------
     # Entry lookup
@@ -1093,13 +1207,6 @@ def _incremental_rescan(root: Path, old_entries: list[ExperimentEntry],
     tops = [d for d in sorted(changed)
             if not any(d != o and d.startswith(o + os.sep) for o in changed)]
 
-    fresh: dict[Path, ExperimentEntry] = {}
-    candidates: list[Path] = []
-    for t in tops:
-        tp = Path(t)
-        if tp.is_dir():
-            candidates.extend(_discover(tp, prune=unchanged))
-
     # An entry is REPLACED by the re-walk only if the walk actually reaches
     # it: from its folder upward, meeting an UNCHANGED spine dir first means
     # the walk prunes there (the entry is reused), meeting a walked top first
@@ -1108,6 +1215,15 @@ def _incremental_rescan(root: Path, old_entries: list[ExperimentEntry],
     # it), and the sweep then re-parsed the whole archive to rescue them.
     tops_set = set(tops)
 
+    # RAM P7: a new run bumps its DATE dir, which then became a top whose
+    # every run was re-walked and re-parsed -- 649 node.json reads on the KH
+    # archive's busiest day for ONE new run (measured 1.9 s of a 4.2 s
+    # rescan). A run folder the walk would reach is now reused instead when
+    # nothing that parse read can have moved: its own mtime (the existing
+    # ``run_mtime`` contract), node.json's (mtime_ns, size) and the
+    # quam_state dir's mtime (a state/wiring file created, renamed or
+    # removed), all stat'ed fresh here. Such folders are pruned from the walk
+    # and their entries kept; everything else is walked exactly as before.
     def _rewalked(folder: Path) -> bool:
         d = folder
         while True:
@@ -1121,8 +1237,33 @@ def _incremental_rescan(root: Path, old_entries: list[ExperimentEntry],
                 return False               # outside every walked top
             d = nd
 
+    reuse: dict[str, ExperimentEntry] = {}
+    for e in old_entries:
+        if e.scan_sig is None or e.needs_parse or e.is_standalone:
+            continue
+        if not _rewalked(e.folder_path):
+            continue
+        try:
+            if os.stat(e.folder_path).st_mtime != e.run_mtime:
+                continue
+        except OSError:
+            continue
+        if _scan_sig_of(e.quam_state_path) != e.scan_sig:
+            continue
+        reuse[str(e.folder_path)] = e
+    prune = (unchanged | frozenset(reuse)) if reuse else unchanged
+
+    fresh: dict[Path, ExperimentEntry] = {}
+    candidates: list[Path] = []
+    for t in tops:
+        tp = Path(t)
+        if tp.is_dir():
+            candidates.extend(_discover(tp, prune=prune))
+
     kept: list[ExperimentEntry] = []
     for e in old_entries:
+        if str(e.folder_path) in reuse:
+            continue                       # verified above; rejoins at the end
         if _rewalked(e.folder_path):
             continue                       # replaced (or vanished) by a re-walk
         kept.append(e)
@@ -1193,6 +1334,13 @@ def _incremental_rescan(root: Path, old_entries: list[ExperimentEntry],
                     fresh[e.folder_path] = e
 
     kept = [e for e in kept if e.folder_path not in fresh]
+    if reuse:
+        # the reused entries rejoin in their previous order, so a rescan that
+        # found nothing new still returns the same objects in the same order
+        # (rescan_root's ``unchanged_scan`` identity check)
+        keep_ids = {id(e) for e in kept}
+        keep_ids.update(id(e) for e in reuse.values())
+        kept = [e for e in old_entries if id(e) in keep_ids]
     return kept + list(fresh.values())
 
 
@@ -1411,8 +1559,21 @@ def _parse_experiment_folder(quam_state_path: Path) -> ExperimentEntry:
         run_mtime = experiment_folder.stat().st_mtime
     except OSError:
         run_mtime = 0.0
-    if not node_json_path.is_file():
-        return _make_standalone_entry(quam_state_path)
+    # RAM P7: the reuse signature is taken BEFORE node.json is read (see
+    # ``ExperimentEntry.scan_sig``). os.stat replaces the old is_file() probe
+    # one for one: the same call answers both "is it a regular file" and
+    # "what are its size and mtime".
+    try:
+        nst = os.stat(node_json_path)
+        node_is_file = stat.S_ISREG(nst.st_mode)
+    except OSError:
+        nst = None
+        node_is_file = False
+    if not node_is_file:
+        e = _make_standalone_entry(quam_state_path)
+        e.seen_mtime = run_mtime
+        return e
+    scan_sig = _scan_sig_of(quam_state_path, nst)
 
     # Workspace experiment folders can include a chip whose state.json is
     # currently being written by an active experiment program. ``safe_io``
@@ -1474,7 +1635,30 @@ def _parse_experiment_folder(quam_state_path: Path) -> ExperimentEntry:
         is_standalone=False,
         run_mtime=run_mtime,
         filter_params=extract_filter_params(node_parameters(data)),
+        scan_sig=scan_sig,
     )
+
+
+def _incomplete_runs(entries: list[ExperimentEntry]) -> dict[str, float]:
+    """RAM P7: {run folder: pre-parse mtime} of every run-named folder whose
+    entry parsed as standalone (see ``ExperimentEntry.seen_mtime``)."""
+    out: dict[str, float] = {}
+    for e in entries:
+        if e.is_standalone and e.seen_mtime and _FOLDER_RE.match(e.folder_path.name):
+            out[str(e.folder_path)] = e.seen_mtime
+    return out
+
+
+def _scan_sig_of(quam_state_path: Path, node_stat=None) -> tuple | None:
+    """``(node.json (mtime_ns, size), quam_state dir mtime_ns)`` or ``None``
+    when either cannot be stat'ed (RAM P7; see ``ExperimentEntry.scan_sig``)."""
+    try:
+        nst = node_stat if node_stat is not None else os.stat(
+            quam_state_path.parent / "node.json")
+        qst = os.stat(quam_state_path)
+    except OSError:
+        return None
+    return ((nst.st_mtime_ns, nst.st_size), qst.st_mtime_ns)
 
 
 def _make_standalone_entry(quam_state_path: Path) -> ExperimentEntry:

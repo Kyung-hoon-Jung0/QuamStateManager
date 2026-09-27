@@ -17,8 +17,23 @@ from __future__ import annotations
 import threading
 import time
 
-#: Requests that block by design (docs/141 §4p ``/datasets/wait``) or stream.
-LONG_POLL_PATHS = frozenset({"/datasets/wait", "/workbench/watch"})
+#: Requests that block by design (docs/141 §4p ``/datasets/wait``) or stream,
+#: plus the background polls and the agent's held node waits (RAM P7: ``/api/
+#: agent/run/<key>?wait_s=`` and ``POST /api/agent/run-node`` hold the request
+#: open up to 3,600 s while an agent waits on a node -- exactly when runs land
+#: -- so counting them would stall every background step for its full bound).
+#: ONE rule for every yield-to-foreground mechanism (the search-index prewarm
+#: here, ``run_ingest.FOREGROUND`` for the run-watch tick): ``is_foreground``.
+LONG_POLL_PATHS = frozenset({"/datasets/wait", "/datasets/poll", "/workspace/tree/poll",
+                             "/workbench/watch", "/api/agent/run-node"})
+#: Requests that are not a user waiting on a page.
+EXEMPT_PREFIXES = ("/static/", "/debug/", "/api/agent/run/")
+
+
+def is_foreground(path: str | None) -> bool:
+    """Does a request to *path* count as a user waiting on a page?"""
+    p = path or ""
+    return not (p in LONG_POLL_PATHS or p.startswith(EXEMPT_PREFIXES))
 
 #: How long the server must have been quiet before :func:`busy` says no.
 QUIET_S = 0.5
@@ -33,7 +48,7 @@ def begin(path: str | None) -> None:
     missed ``end`` on a reused worker thread is closed first."""
     if getattr(_LOCAL, "open", False):
         end()
-    if path in LONG_POLL_PATHS:
+    if not is_foreground(path):
         return
     with _LOCK:
         _STATE["inflight"] += 1

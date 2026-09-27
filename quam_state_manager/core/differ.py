@@ -90,52 +90,25 @@ class Differ:
 
         ``_tree_diff`` returns exactly this list (pinned by a randomized
         parity test against this function); it only skips subtrees that
-        are provably identical instead of flattening them."""
-        keys_a = set(flat_a.keys())
-        keys_b = set(flat_b.keys())
-
+        are provably identical instead of flattening them. The comparison
+        itself is ``_classify`` -- one pass over the new side (RAM P8),
+        shared with :meth:`summary_between`."""
         entries: list[DiffEntry] = []
-
-        # F7: no per-bucket natural sort -- the final sort below is a total
-        # order (natural_key ends in the raw string), so it alone decides.
-        for key in keys_b - keys_a:
-            if _leaf_key(key) in ignore:
-                continue
+        for key, change_type in _classify(flat_a, flat_b, float_tolerance, ignore):
             entries.append(DiffEntry(
                 dot_path=key,
-                old_value=None,
-                new_value=flat_b[key],
-                change_type="added",
-            ))
-
-        for key in keys_a - keys_b:
-            if _leaf_key(key) in ignore:
-                continue
-            entries.append(DiffEntry(
-                dot_path=key,
-                old_value=flat_a[key],
-                new_value=None,
-                change_type="removed",
-            ))
-
-        for key in keys_a & keys_b:
-            if _leaf_key(key) in ignore:
-                continue
-            val_a = flat_a[key]
-            val_b = flat_b[key]
-            if _values_equal(val_a, val_b, float_tolerance):
-                continue
-            entries.append(DiffEntry(
-                dot_path=key,
-                old_value=val_a,
-                new_value=val_b,
-                change_type="modified",
+                old_value=None if change_type == "added" else flat_a[key],
+                new_value=None if change_type == "removed" else flat_b[key],
+                change_type=change_type,
             ))
 
         # customer report 2026-09-09: a list index is a NUMBER, so the rows
         # read 1009 · 101 · 1011 under a plain string sort. Every ordered
         # display of paths in SM goes through natural_key (q10 after q2,
         # weights_imag.101 before .1009).
+        # Dot paths are unique across added/removed/modified, so this one
+        # sort fixes the order completely (RAM P8 dropped three per-set
+        # pre-sorts it overrode -- 313k natural_key calls each on a big chip).
         entries.sort(key=lambda e: natural_key(e.dot_path))
         return entries
 
@@ -152,6 +125,25 @@ class Differ:
             merged.update(wiring)
             return merged
         return QuamStore(side, validate=False).merged
+
+    @staticmethod
+    def summary_between(
+        flat_a: dict[str, Any],
+        flat_b: dict[str, Any],
+        *,
+        float_tolerance: float = 1e-12,
+        ignore_keys: set[str] | None = None,
+    ) -> dict[str, int]:
+        """``Differ.summary(diff(a, b))`` from two already-flattened sides,
+        without building or sorting the entries (RAM P8: the snapshot
+        capture's diff_summary is these four counts). Same classification
+        as :meth:`diff` -- both go through ``_classify``."""
+        ignore = ignore_keys if ignore_keys is not None else _DEFAULT_IGNORE
+        counts = {"added": 0, "removed": 0, "modified": 0, "total": 0}
+        for _key, change_type in _classify(flat_a, flat_b, float_tolerance, ignore):
+            counts[change_type] += 1
+            counts["total"] += 1
+        return counts
 
     @staticmethod
     def _flatten_side(
@@ -471,6 +463,44 @@ class Differ:
 # ======================================================================
 # Internal helpers
 # ======================================================================
+
+
+_MISSING = object()
+
+
+def _classify(flat_a: dict[str, Any], flat_b: dict[str, Any],
+              float_tolerance: float, ignore: set[str]):
+    """Yield ``(dot_path, change_type)`` for every difference between two
+    flat sides -- the one classification :meth:`Differ.diff` and
+    :meth:`Differ.summary_between` share.
+
+    UNORDERED (``diff`` sorts by the natural key, which is unique per path).
+    One pass over *flat_b* with a lookup into *flat_a* instead of three set
+    operations over ~300k keys (RAM P8); the removed side is only computed
+    when *flat_a* has keys *flat_b* lacks."""
+    get = flat_a.get
+    common = 0
+    for key, vb in flat_b.items():
+        va = get(key, _MISSING)
+        if va is _MISSING:
+            if _leaf_key(key) not in ignore:
+                yield key, "added"
+            continue
+        common += 1
+        # same type and == is exactly the case _values_equal answers True
+        # for (every branch of it); checked first because it is nearly every
+        # key, and the ignore test only matters for a key that differs
+        if type(va) is type(vb) and va == vb:
+            continue
+        if _values_equal(va, vb, float_tolerance):
+            continue
+        if _leaf_key(key) in ignore:
+            continue
+        yield key, "modified"
+    if common < len(flat_a):
+        for key in flat_a.keys() - flat_b.keys():
+            if _leaf_key(key) not in ignore:
+                yield key, "removed"
 
 
 def _leaf_key(dot_path: str) -> str:

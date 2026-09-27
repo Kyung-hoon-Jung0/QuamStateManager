@@ -9458,6 +9458,43 @@ def _run_ts_stamp(run: Any) -> str:
     return f"{stamp}_{rid % 1000:03d}"
 
 
+# RAM P8 (ram_design.md §1.4 "Runs-tier candidate index"): every workspace
+# run's snapshot-format stamp, sorted newest-first, per dataset store -- the
+# drawer and Column History used to re-derive it (one strptime + two
+# timezone conversions per run, 4,162 runs) on EVERY open. Keyed on the
+# store's identity + runs generation, read atomically under its scan lock
+# (which also closes F5: ``st.runs.values()`` raced a concurrent rescan).
+# Chip-relative verdicts are NOT cached here; they are re-derived per call.
+_RUN_CANDIDATES_MEMO = _ramcache.KeyedMemo(
+    "drawer.run_candidates", max_entries=16,
+    sizeof=lambda v: 64 + 120 * len(v))
+
+
+def _store_run_candidates(st: DatasetStore) -> list[tuple[str, Any]]:
+    with st._scan_lock:
+        gen = st.generation
+        runs = list(st.runs.values())
+
+    def compute():
+        out = [(_run_ts_stamp(run), run) for run in runs]
+        out.sort(key=lambda t: t[0], reverse=True)
+        return _ramcache.Keyed(out, gen)
+    return _RUN_CANDIDATES_MEMO.get(("store", st.instance_seq), gen, compute,
+                                    wait_s=30.0)
+
+
+def _runs_candidates(roots: list[Path]) -> list[tuple[str, Any, Path]]:
+    """``(ts, run, root)`` newest-first over *roots* (see the memo above)."""
+    merged: list[tuple[str, Any, Path]] = []
+    for root in roots:
+        st = _get_or_create_store(root, rescan=True)
+        if st is None:
+            continue
+        merged.extend((ts, run, root) for ts, run in _store_run_candidates(st))
+    merged.sort(key=lambda t: t[0], reverse=True)
+    return merged
+
+
 def _runs_field_series(ctx: dict, dot_path: str, *,
                        max_runs: int = 60) -> tuple[list[tuple], int]:
     """Direct-scan tier over the workspace runs' own quam_state copies.
@@ -9499,14 +9536,7 @@ def _runs_field_series(ctx: dict, dot_path: str, *,
             seen_roots.add(k)
             roots.append(Path(cand))
 
-    candidates: list[tuple[str, Any]] = []      # (ts, run)
-    for root in roots:
-        st = _get_or_create_store(root, rescan=True)
-        if st is None:
-            continue
-        for run in st.runs.values():
-            candidates.append((_run_ts_stamp(run), run))
-    candidates.sort(key=lambda t: t[0], reverse=True)
+    candidates = [(ts, run) for ts, run, _root in _runs_candidates(roots)]
 
     series: list[tuple] = []
     examined = 0
@@ -9640,14 +9670,9 @@ def _runs_column_series(ctx: dict, path_map: dict[str, str], *,
             seen_roots.add(k)
             roots.append((Path(cand), _folder_key(cand)))
 
-    candidates: list[tuple[str, Any, str]] = []      # (ts, run, root_key)
-    for root, rkey in roots:
-        st = _get_or_create_store(root, rescan=True)
-        if st is None:
-            continue
-        for run in st.runs.values():
-            candidates.append((_run_ts_stamp(run), run, rkey))
-    candidates.sort(key=lambda t: t[0], reverse=True)
+    rkeys = {str(root): rkey for root, rkey in roots}
+    candidates = [(ts, run, rkeys[str(root)])
+                  for ts, run, root in _runs_candidates([r for r, _k in roots])]
 
     segs_by_row = {row: dp.split(".") for row, dp in path_map.items()}
     out: list[dict] = []
@@ -9962,22 +9987,35 @@ def field_history():
     # Runs tier (docs/20 v2): the workspace runs' own quam_state copies keep
     # the timeline fresh independent of Param History ingestion — today's
     # runs appear with a guaranteed Data link.
-    try:
-        runs_series, _examined = _runs_field_series(ctx, dot_path)
-    except Exception:  # noqa: BLE001 — the popover must survive a bad root
-        logger.debug("field-history runs tier failed", exc_info=True)
-        runs_series = []
-    hist = _history().field_history(ctx["path"], dot_path,
-                                    extra_series=runs_series)
-
     from quam_state_manager.core.pointer_path import resolve_field_target
     current = None
+    hist_path = dot_path
     try:
         ft = resolve_field_target(store.merged, dot_path)
         if ft.get("resolvable"):
             current = ft.get("resolved_value")
+            # RAM P8 / F3: an ALIAS path (``xy.operations.x180.amplitude``
+            # where ``x180 == "#./x180_DragCosine"``) was walked literally by
+            # both history tiers: the leaf index never holds it, so the
+            # drawer fell to the snapshot SCAN -- 150 full state.json parses,
+            # 45 s on a 19 MB chip -- and still found nothing. Read history
+            # at the leaf the alias names NOW (mid-path pointers followed,
+            # the leaf itself untouched), the rule Column History already
+            # applies (QA F5).
+            leaf = (ft.get("candidates") or [{}])[0].get("path")
+            if leaf and ft.get("chain"):
+                hist_path = leaf
     except Exception:  # noqa: BLE001
         pass
+    try:
+        runs_series, _examined = _runs_field_series(ctx, hist_path)
+    except Exception:  # noqa: BLE001 — the popover must survive a bad root
+        logger.debug("field-history runs tier failed", exc_info=True)
+        runs_series = []
+    hist = _history().field_history(ctx["path"], hist_path,
+                                    extra_series=runs_series)
+    hist["dot_path"] = dot_path
+    hist["history_path"] = hist_path
 
     roots = _uid_roots()
     for pt in hist["points"]:
@@ -22452,6 +22490,35 @@ def workspace_remove():
 # the workspace actually changes.
 _TREE_HTML_MEMO: "weakref.WeakKeyDictionary" = weakref.WeakKeyDictionary()
 
+
+def _unfiltered_tree_html(ws: Any) -> str:
+    """The unfiltered sidebar tree for *ws*, memoized.
+
+    The render reads the workspace (its version) AND the active chip
+    (``_tree_render_ctx`` pre-opens the lazy groups on the active chip's
+    path), so both are the key: a chip switch used to be served the tree drawn
+    for the previous chip. The version is read BEFORE the tree, so the stamp
+    (and the key) can only ever be older than the content it labels -- never
+    newer; the page's first poll compares it with the live version (RAM P7).
+    One function for ``/workspace/tree``, ``/workspace/refresh`` and the
+    run-watch tick's pre-render, so all three agree on the key and the markup.
+    """
+    v0 = ws.version if ws else None
+    try:
+        active = _active_path()
+    except Exception:  # noqa: BLE001 -- no app/ctx: nothing is pre-opened
+        active = None
+    key = (v0, active)
+    memo = _TREE_HTML_MEMO.get(ws) if ws else None
+    if memo and memo[0] == key:
+        return memo[1]
+    html = render_template("_sidebar_tree.html",
+                           **_tree_render_ctx(ws.tree if ws else {}, ws=ws),
+                           tree_ws_version=v0)
+    if ws:
+        _TREE_HTML_MEMO[ws] = (key, html)
+    return html
+
 # docs/142: filtered-tree HTML, small LRU per workspace keyed
 # (ws.version, query) -- see workspace_tree.
 _FILTERED_TREE_MEMO: "weakref.WeakKeyDictionary" = weakref.WeakKeyDictionary()
@@ -22484,14 +22551,9 @@ def workspace_tree():
             fmemo.pop(next(iter(fmemo)))
         return html
 
-    memo = _TREE_HTML_MEMO.get(ws) if ws else None
-    if memo and memo[0] == ws.version:
-        return memo[1]
-    html = render_template("_sidebar_tree.html",
-                           **_tree_render_ctx(ws.tree if ws else {}, ws=ws))
-    if ws:
-        _TREE_HTML_MEMO[ws] = (ws.version, html)
-    return html
+    # RAM P7: the run-watch worker rescans (and pre-renders) in the
+    # background, so this is normally a memo hit -- see _unfiltered_tree_html.
+    return _unfiltered_tree_html(ws)
 
 
 @bp.route("/workspace/tree/group")
@@ -22758,14 +22820,7 @@ def workspace_refresh():
     # docs/126 r3: a no-change rescan keeps the version, so the memoized
     # unfiltered HTML is still valid — the Refresh round-trip pays only the
     # scan itself, not a 450 KB re-render of an identical tree.
-    memo = _TREE_HTML_MEMO.get(ws) if ws else None
-    if memo and memo[0] == ws.version:
-        return memo[1]
-    html = render_template("_sidebar_tree.html",
-                           **_tree_render_ctx(tree, ws=ws))
-    if ws:
-        _TREE_HTML_MEMO[ws] = (ws.version, html)
-    return html
+    return _unfiltered_tree_html(ws)
 
 
 @bp.route("/workspace/select", methods=["POST"])
@@ -25297,6 +25352,19 @@ def param_history():
     )
 
 
+def _alignment_jobs():
+    """The app's one ``AlignmentJobs`` (RAM P7)."""
+    from quam_state_manager.core.alignment_job import AlignmentJobs
+    app = current_app._get_current_object()
+    jobs = app.config.get("alignment_jobs")
+    if jobs is None:
+        with _exp_state_init_lock:
+            jobs = app.config.get("alignment_jobs")
+            if jobs is None:
+                jobs = app.config["alignment_jobs"] = AlignmentJobs()
+    return jobs
+
+
 @bp.route("/param-history/alignment")
 def param_history_alignment():
     """docs/142: the deferred half of /param-history -- the O(N) workspace
@@ -25314,7 +25382,22 @@ def param_history_alignment():
     summary_total = request.args.get("summary_total", type=int) or 0
     alignment = None
     try:
-        alignment = hm.scan_workspace_alignment(loaded_path, ws) if ws else None
+        if ws:
+            # RAM P7: the O(N) scan runs on a background job (single-flight
+            # per chip); this request waits a moment for it, then answers a
+            # self-refetching placeholder that says how far it got. The
+            # previous verdict is never shown as the current one.
+            # (the test client, whose tiny workspaces finish in ms, waits
+            # longer so route tests stay deterministic on a loaded machine)
+            wait_s = current_app.config.get(
+                "ALIGNMENT_WAIT_S", 5.0 if current_app.testing else 0.12)
+            st = _alignment_jobs().request(hm, loaded_path, ws, wait_s=wait_s)
+            if st["state"] != "ready":
+                return render_template("_param_history_alignment_pending.html",
+                                       done=st.get("done") or 0,
+                                       total=st.get("total") or 0,
+                                       summary_total=summary_total)
+            alignment = st["result"]
     except Exception:
         logger.warning("Alignment scan failed", exc_info=True)
     importable_count = 0
@@ -25345,6 +25428,11 @@ def param_history_alignment():
     )
 
 
+# RAM P8: (groups, stats) of one feed page, see param_history_changes
+_PH_CHANGES_MEMO = _ramcache.KeyedMemo("param_history.changes", max_entries=16,
+                                       max_bytes=16 * 1024 * 1024,
+                                       sizeof=lambda v: 2048 + 400 * sum(
+                                           len(g.get("rows") or ()) for g in v[0]))
 _CHANGES_SNAPS = 20        # snapshots per page — the feed's unit is the EVENT
 _CHANGES_ROWS = 25         # rows shown per snapshot before "and N more"
 _CHANGES_ROWS_AT = 2000    # one snapshot opened in full
@@ -25371,26 +25459,47 @@ def param_history_changes():
     prefix = (request.args.get("prefix") or "").strip()
     before = (request.args.get("before") or "").strip() or None
     at = (request.args.get("at") or "").strip() or None
+    roots = _uid_roots()
+
+    def compute():
+        try:
+            groups = hm.leaf_change_groups(
+                path, limit_snaps=1 if at else _CHANGES_SNAPS + 1,
+                rows_per_snap=_CHANGES_ROWS_AT if at else _CHANGES_ROWS,
+                prefix=prefix or None, before_ts=before, at_ts=at)
+        except Exception as exc:      # noqa: BLE001 — never 500 the menu
+            logger.warning("param-history changes failed: %s", exc, exc_info=True)
+            groups = []
+        for g in groups:
+            ts = g.get("timestamp") or ""
+            g["when"] = (f"{ts[0:4]}-{ts[4:6]}-{ts[6:8]} {ts[9:11]}:{ts[11:13]}"
+                         if len(ts) >= 13 else ts)
+            g["uid"] = _uid_for_run_ref(g.get("experiment_folder_path"),
+                                        g.get("run_id"), roots)
+        return groups, hm.leaf_stats(path)
+
+    # RAM P8: the feed page is a function of the chip's history store and
+    # the dataset roots its Data links resolve against -- validated on read
+    # (``param_history_ram.hist_token``: in-process version, the index's
+    # PRAGMA data_version, the snapshot list). The freshness gate runs first,
+    # exactly as leaf_change_groups ran it, so a behind index is still seen.
+    from quam_state_manager.core import param_history_ram as _phr
     try:
-        groups = hm.leaf_change_groups(
-            path, limit_snaps=1 if at else _CHANGES_SNAPS + 1,
-            rows_per_snap=_CHANGES_ROWS_AT if at else _CHANGES_ROWS,
-            prefix=prefix or None, before_ts=before, at_ts=at)
-    except Exception as exc:      # noqa: BLE001 — never 500 the menu
-        logger.warning("param-history changes failed: %s", exc, exc_info=True)
-        groups = []
+        hm._ensure_leaf_index_fresh(path)
+        token = (_phr.hist_token(hm, path), tuple((str(r), k) for r, k in roots))
+        slot = ("changes", token[0][0], prefix, before, at)
+        groups, stats = _PH_CHANGES_MEMO.get(slot, token, compute, wait_s=30.0)
+    except _ramcache.Warming:
+        groups, stats = compute()
+    except Exception:             # noqa: BLE001 — the token is an accelerator
+        logger.debug("changes memo bypassed", exc_info=True)
+        groups, stats = compute()
+    try:
+        _phr.warm_path_rank(hm, path)     # the typeahead on this page
+    except Exception:             # noqa: BLE001
+        logger.debug("path-rank warm not started", exc_info=True)
     has_more = (not at) and len(groups) > _CHANGES_SNAPS
     groups = groups[:1 if at else _CHANGES_SNAPS]
-
-    roots = _uid_roots()
-    for g in groups:
-        ts = g.get("timestamp") or ""
-        g["when"] = (f"{ts[0:4]}-{ts[4:6]}-{ts[6:8]} {ts[9:11]}:{ts[11:13]}"
-                     if len(ts) >= 13 else ts)
-        g["uid"] = _uid_for_run_ref(g.get("experiment_folder_path"),
-                                    g.get("run_id"), roots)
-
-    stats = hm.leaf_stats(path)
     oldest = groups[-1]["timestamp"] if groups else None
     template = ("_param_history_changes.html" if _is_htmx()
                 else "param_history_changes.html")
@@ -25408,7 +25517,8 @@ def param_history_param_search():
         return jsonify(ok=False, results=[]), 400
     q = (request.args.get("q") or "").strip()
     try:
-        hits = _history().leaf_search(Path(_active_path()), q, limit=30)
+        from quam_state_manager.core import param_history_ram as _phr
+        hits = _phr.leaf_search(_history(), Path(_active_path()), q, limit=30)
     except Exception:      # noqa: BLE001
         logger.debug("param search failed", exc_info=True)
         hits = []
@@ -26759,6 +26869,39 @@ _dataset_candidates_lock = threading.Lock()
 _dataset_candidates_cache: dict[Any, tuple[Any, int, list[Path]]] = {}
 
 
+def _entry_grandparents(entries) -> set[Path]:
+    """``{entry.folder_path.parent.parent}`` over the non-standalone entries.
+
+    RAM P7: this ran on the first /datasets after EVERY new run (a run bumps
+    ``ws.version``), and two ``Path.parent`` per entry over 4,175 entries was
+    ~60 ms of it. The dirname is taken on the path STRING, deduped, and only
+    the distinct results become ``Path`` objects -- ``ntpath``/``posixpath``
+    ``dirname`` is the string form of ``PurePath.parent`` for a normalized
+    path (pathlib keeps the normalized string; pinned against the Path form
+    in tests/test_newrun_path.py)."""
+    dn = os.path.dirname
+    memo = _GRANDPARENT_OF
+    if len(memo) > 200_000:            # bound: a pure function's memo, never stale
+        memo.clear()
+    seen: set[str] = set()
+    for entry in entries:
+        if entry.is_standalone:
+            continue
+        s = str(entry.folder_path)
+        g = memo.get(s)
+        if g is None:
+            g = memo[s] = dn(dn(s))
+        seen.add(g)
+    return {Path(g) for g in seen}
+
+
+# path string -> dirname(dirname(path string)): a pure function of its key, so
+# an entry can never be stale; after a new run only that run's path is new
+# (the rest of the ~25-35 ms per first /datasets after a run was re-splitting
+# 4,157 unchanged paths).
+_GRANDPARENT_OF: dict[str, str] = {}
+
+
 def _dataset_candidate_folders(*, fast: bool = False) -> list[Path]:
     """Sorted, deduped, existing data-root folders for the current workspace.
 
@@ -26828,12 +26971,7 @@ def _dataset_candidate_folders(*, fast: bool = False) -> list[Path]:
     # 9.7 s of SMB round-trips per /datasets render. The set below is exactly
     # what that loop built anyway, so nothing about the result changes; a
     # grandparent that is already a known root skips the stat entirely.
-    grandparents: set[Path] = set()
-    for entry in ws.all_entries:
-        if entry.is_standalone:
-            continue
-        grandparents.add(entry.folder_path.parent.parent)
-    for cand in grandparents:
+    for cand in _entry_grandparents(ws.all_entries):
         if cand in candidates:
             continue
         if cand.is_dir():
@@ -27077,65 +27215,45 @@ def collections():
     return _datasets_view("collections")
 
 
-def _datasets_view(view_mode: str):
-    """Shared renderer for the Datasets and Collections pages (parameterized).
+# RAM P7 (ram_design.md §1.4 "/datasets rows JSON bytes"): the table payload
+# and every aggregate drawn beside it, keyed on what they are computed from --
+# per active folder its key, path, store identity (``instance_seq``, never
+# reused) and both generations (runs list, tag/note/bookmark metadata) -- plus
+# the view and the date tab. Validated on read: a new run, a tag, a folder
+# added or dropped moves the token and the next request recomputes. The
+# rendered page is NOT cached (it carries the request's own context); only
+# this ~3.5 MB string and its siblings are.
+def _script_json_once(value):
+    from quam_state_manager.web.app import script_json_once
+    return script_json_once(value)
 
-    ``view_mode`` is 'datasets' (all runs) or 'collections' (only tagged runs +
-    tag-filter chips). Everything else — store lookup, payload, exp chips, date
-    tabs, virtual table, compare bar — is identical and reused.
-    """
+
+_DATASETS_PAYLOAD = _ramcache.KeyedMemo("datasets.payload", max_entries=6,
+                                        max_bytes=32 * 1024 * 1024)
+
+
+def _datasets_payload_token(active: list[dict], is_collections: bool,
+                            date: str | None) -> tuple:
+    return (bool(is_collections), date or "",
+            tuple((f["key"], f["path"], f["store"].instance_seq,
+                   f["store"].generation, f["store"].meta_generation)
+                  for f in active))
+
+
+def _datasets_payload(active: list[dict], is_collections: bool,
+                      date: str | None) -> dict[str, Any]:
+    token = _datasets_payload_token(active, is_collections, date)
+    slot = ("datasets", bool(is_collections), date or "")
+    return _DATASETS_PAYLOAD.get(
+        slot, token, lambda: _datasets_payload_compute(active, is_collections, date),
+        sizeof=lambda v: len(v["rows_json"]) + 4096)
+
+
+def _datasets_payload_compute(active: list[dict], is_collections: bool,
+                              date: str | None) -> dict[str, Any]:
+    """Everything ``_datasets_view`` shows that is a function of the stores
+    alone (see ``_DATASETS_PAYLOAD``)."""
     from quam_state_manager.core.dataset import FAVORITE_TAG
-    from quam_state_manager.core.fit_targets import curated_fit_keys as _curated_fit_keys
-
-    is_collections = view_mode == "collections"
-    page = "collections" if is_collections else "datasets"
-    # Multi-folder: the table merges runs from EVERY active data folder, not the
-    # single "most-runs" winner. Each row is tagged with its folder_key ("f") so
-    # the client can build a uid ("<f>:<id>") and the folder filter badges.
-    # docs/170: BOUNDED. On a fresh process the cold build is truncated at
-    # _COLD_SCAN_BUDGET_S (docs/142 E) and the next rescan_if_stale continued
-    # it unbounded -- on the customer's share that was the user's first click
-    # on Datasets blocking for the remaining walk (31.6 s measured at 1.8 ms
-    # per file operation, 2,655 runs). The panel now shows what is indexed
-    # inside the budget and SAYS so (`scan_partial`); the delta poll already
-    # carries the continuation (docs/105 #4) and fills the rest in.
-    active = _active_dataset_stores(
-        deadline=time.monotonic() + _RENDER_SCAN_BUDGET_S)
-    # A deep link from a qubit/pair inspector: /datasets?q=q7. SM does not
-    # INTERPRET the token — it hands the string to the search box and lets the
-    # grammar dataset-virtual.js already ships do the filtering, which is the
-    # only way a link cannot disagree with typing the same thing by hand.
-    # (The token is the BARE name on purpose: a bare `q1` is matched exactly
-    # against the run's own qubit list, while the `qubit:` scope is a substring
-    # test that would drag q10…q19 in with it.)
-    # (docs/170: `q` stays a GET-only preset on purpose -- a Rescan POST never
-    # carries one, so the swap it answers with clears no filters; only the
-    # date tab rides along, read below through request.values.)
-    search = (request.args.get("q") or "").strip()
-    # QA F9: a Rescan POST carries the box's LIVE text back as `keep_q` (never
-    # as `q`: a preset clears every picker/facet tick, docs/167). It refills
-    # the box's value only -- data-preset stays `search`, so nothing clears.
-    search_value = search or ((request.form.get("keep_q") or "").strip()
-                              if request.method == "POST" else "")
-    if _is_htmx():
-        template = "_datasets.html"
-    else:
-        template = "collections.html" if is_collections else "datasets.html"
-    if not active:
-        return render_template(template, **_ctx(page=page),
-                               rows_json="[]", initial_poll_ts=0, total=0,
-                               active_folder="", folders=[], folders_json="[]",
-                               no_workspace=True, curated_keys_json="[]",
-                               view_mode=view_mode, collection_tags=[],
-                               search=search, search_value=search_value)
-    import time as _t
-    poll_ts = _t.time()
-    date = request.values.get("date")
-    # docs/170: still indexing? (any store whose last walk stopped at its
-    # deadline). Rendered as one muted note beside the count; the client
-    # hides it on the first delta poll that reports a complete scan.
-    scan_partial = any(getattr(f["store"], "scan_truncated", False) for f in active)
-
     rows: list[dict] = []
     folders: list[dict] = []
     experiments_set: set[str] = set()
@@ -27246,6 +27364,87 @@ def _datasets_view(view_mode: str):
     # dataset-virtual.js).
     folder_sig = ",".join(sorted(f["key"] for f in folders))
 
+    return {
+        # escaped for the <script> body here, once per payload version
+        "rows_json": _script_json_once(json.dumps(rows, separators=(",", ":"))),
+        "folders": folders,
+        "folders_json": json.dumps(folders, separators=(",", ":")),
+        "folder_sig": folder_sig,
+        "total": total,
+        "experiments": experiments,
+        "exp_categories": exp_categories,
+        "dates": dates,
+        "stats": stats,
+        "all_tags": all_tags,
+        "collection_tags": collection_tags,
+        "digest": digest,
+    }
+
+
+def _datasets_view(view_mode: str):
+    """Shared renderer for the Datasets and Collections pages (parameterized).
+
+    ``view_mode`` is 'datasets' (all runs) or 'collections' (only tagged runs +
+    tag-filter chips). Everything else — store lookup, payload, exp chips, date
+    tabs, virtual table, compare bar — is identical and reused.
+    """
+    from quam_state_manager.core.dataset import FAVORITE_TAG
+    from quam_state_manager.core.fit_targets import curated_fit_keys as _curated_fit_keys
+
+    is_collections = view_mode == "collections"
+    page = "collections" if is_collections else "datasets"
+    # Multi-folder: the table merges runs from EVERY active data folder, not the
+    # single "most-runs" winner. Each row is tagged with its folder_key ("f") so
+    # the client can build a uid ("<f>:<id>") and the folder filter badges.
+    # docs/170: BOUNDED. On a fresh process the cold build is truncated at
+    # _COLD_SCAN_BUDGET_S (docs/142 E) and the next rescan_if_stale continued
+    # it unbounded -- on the customer's share that was the user's first click
+    # on Datasets blocking for the remaining walk (31.6 s measured at 1.8 ms
+    # per file operation, 2,655 runs). The panel now shows what is indexed
+    # inside the budget and SAYS so (`scan_partial`); the delta poll already
+    # carries the continuation (docs/105 #4) and fills the rest in.
+    active = _active_dataset_stores(
+        deadline=time.monotonic() + _RENDER_SCAN_BUDGET_S)
+    # A deep link from a qubit/pair inspector: /datasets?q=q7. SM does not
+    # INTERPRET the token — it hands the string to the search box and lets the
+    # grammar dataset-virtual.js already ships do the filtering, which is the
+    # only way a link cannot disagree with typing the same thing by hand.
+    # (The token is the BARE name on purpose: a bare `q1` is matched exactly
+    # against the run's own qubit list, while the `qubit:` scope is a substring
+    # test that would drag q10…q19 in with it.)
+    # (docs/170: `q` stays a GET-only preset on purpose -- a Rescan POST never
+    # carries one, so the swap it answers with clears no filters; only the
+    # date tab rides along, read below through request.values.)
+    search = (request.args.get("q") or "").strip()
+    # QA F9: a Rescan POST carries the box's LIVE text back as `keep_q` (never
+    # as `q`: a preset clears every picker/facet tick, docs/167). It refills
+    # the box's value only -- data-preset stays `search`, so nothing clears.
+    search_value = search or ((request.form.get("keep_q") or "").strip()
+                              if request.method == "POST" else "")
+    if _is_htmx():
+        template = "_datasets.html"
+    else:
+        template = "collections.html" if is_collections else "datasets.html"
+    if not active:
+        return render_template(template, **_ctx(page=page),
+                               rows_json="[]", initial_poll_ts=0, total=0,
+                               active_folder="", folders=[], folders_json="[]",
+                               no_workspace=True, curated_keys_json="[]",
+                               view_mode=view_mode, collection_tags=[],
+                               search=search, search_value=search_value)
+    import time as _t
+    poll_ts = _t.time()
+    date = request.values.get("date")
+    # docs/170: still indexing? (any store whose last walk stopped at its
+    # deadline). Rendered as one muted note beside the count; the client
+    # hides it on the first delta poll that reports a complete scan.
+    scan_partial = any(getattr(f["store"], "scan_truncated", False) for f in active)
+
+    pl = _datasets_payload(active, is_collections, date)
+    rows_json = pl["rows_json"]
+    folders = pl["folders"]
+    folder_sig = pl["folder_sig"]
+
     # Project lens (docs/63): which of the present folders are recorded for
     # the active context's project scope. Seeds the client's folder filter
     # only — rows, uids and the folder_key contract are untouched, and the
@@ -27260,10 +27459,10 @@ def _datasets_view(view_mode: str):
         scope_keys=scope_keys,
         scope_keys_json=json.dumps(scope_keys, separators=(",", ":")),
         view_mode=view_mode,
-        collection_tags=collection_tags,
+        collection_tags=pl["collection_tags"],
         scan_partial=scan_partial,
-        digest=digest,
-        rows_json=json.dumps(rows, separators=(",", ":")),
+        digest=pl["digest"],
+        rows_json=rows_json,
         # Curated fit-key order (from FIT_TARGET_MAP) for the Sort banner's
         # Fit-metrics group — the client builds the key union + counts from each
         # row's `sm` map (so it stays correct after delta-poll merges) and floats
@@ -27274,13 +27473,13 @@ def _datasets_view(view_mode: str):
         # Active data folders → folder filter badges + per-row folder chip
         # lookups (folder_key → label/full_path) in dataset-virtual.js.
         folders=folders,
-        folders_json=json.dumps(folders, separators=(",", ":")),
-        total=total,
-        experiments=experiments,
-        exp_categories=exp_categories,
-        dates=dates,
-        stats=stats,
-        all_tags=all_tags,
+        folders_json=pl["folders_json"],
+        total=pl["total"],
+        experiments=pl["experiments"],
+        exp_categories=pl["exp_categories"],
+        dates=pl["dates"],
+        stats=pl["stats"],
+        all_tags=pl["all_tags"],
         active_date=date,
         search=search,
         search_value=search_value,
@@ -27910,8 +28109,66 @@ def _run_ingest(app):
 
     ing = run_ingest.RunIngest(resolve)
     app.config["run_ingest"] = ing
+    for step in _ingest_after_steps(app):
+        ing.add_after(step, step.__name__)
     ing.start()
     return ing
+
+
+def _ingest_after_steps(app) -> list:
+    """RAM P7: the precompute that rides the run-watch tick after the stores
+    (``RunIngest.add_after``), in order. Each fills a cache validated on read,
+    so a tick that is late or skipped costs time, never correctness."""
+
+    def workspace_sidebar(roots: list[str]) -> None:
+        # the sidebar's rescan (the first /workspace/tree or /tree/poll after
+        # a run used to pay it: 1.85-5.2 s measured on KH)
+        ws = app.config.get("workspace")
+        if ws is None:
+            return
+        if ws.rescan_if_stale():
+            app.config.pop("dataset_store", None)   # the routes' own follow-up
+        # ...and draw it, so that request is a memo hit (the render of a
+        # 4,000-run tree is the ~250 ms the rescan used to hide behind). Same
+        # function and key as the route: a pre-render for a version or chip
+        # that moved on is simply never asked for.
+        with app.test_request_context("/workspace/tree"):
+            _unfiltered_tree_html(ws)
+
+    def datasets_payload(roots: list[str]) -> None:
+        # re-encode the Datasets payload views somebody has open
+        views = [sl for sl in _DATASETS_PAYLOAD.slots()
+                 if isinstance(sl, tuple) and sl and sl[0] == "datasets"]
+        if not views:
+            return
+        with app.app_context():
+            active = [f for f in _active_dataset_stores(fast=True, rescan=False)
+                      if f["store"].run_count > 0]
+            for _tag, coll, date in views:
+                try:
+                    _datasets_payload(active, coll, date or None)
+                except _ramcache.Warming:
+                    pass
+
+    def alignment(roots: list[str]) -> None:
+        # the active chip's workspace alignment, when somebody has viewed it
+        ws = app.config.get("workspace")
+        hm = app.config.get("history_manager")
+        name = app.config.get("active_context")
+        ctx = (app.config.get("contexts") or {}).get(name) if name else None
+        if ws is None or hm is None or not ctx or ctx.get("type") != "quam" or not ctx.get("path"):
+            return
+        from quam_state_manager.core.run_ingest import FOREGROUND as fg
+
+        def yield_between(_done: int, _total: int) -> None:
+            # every 64 runs: a request that arrived mid-scan goes first
+            if fg.active:
+                fg.wait_idle(quiet_s=0.05, max_s=1.0)
+
+        with app.app_context():
+            _alignment_jobs().refresh(hm, Path(ctx["path"]), ws, progress=yield_between)
+
+    return [workspace_sidebar, datasets_payload, alignment]
 
 
 @bp.route("/datasets/wait")
