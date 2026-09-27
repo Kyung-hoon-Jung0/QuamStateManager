@@ -330,13 +330,14 @@ def test_differ_diff_order_and_content_unchanged(monkeypatch):
                 continue
             old.append((key, a[key], b[key], "modified"))
         old.sort(key=lambda e: natural_key(e[0]))
-        # compare through the flat-side seam directly
+        # compare through the flat-side seam directly. w7 integration: diff()
+        # now takes livewrite's tree diff and reaches the flat algorithm only
+        # as its fallback, so the seam IS Differ._diff_flat (the reference the
+        # tree diff is parity-pinned against, tests/test_differ_tree_parity.py)
         got = Differ().diff(({}, {}), ({}, {}))
         assert got == []
-        with monkeypatch.context() as mp:
-            mp.setattr(Differ, "_flatten_side", staticmethod(lambda side: side))
-            got = [(e.dot_path, e.old_value, e.new_value, e.change_type)
-                   for e in Differ().diff(a, b)]
+        got = [(e.dot_path, e.old_value, e.new_value, e.change_type)
+               for e in Differ._diff_flat(a, b, _DEFAULT_IGNORE, 1e-12)]
         assert got == old
         assert Differ.summary_between(a, b) == {
             "added": sum(1 for e in old if e[3] == "added"),
