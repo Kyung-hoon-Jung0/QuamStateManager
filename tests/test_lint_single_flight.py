@@ -68,24 +68,49 @@ def _quiet_activity():
     activity._init_flights()
 
 
+class _Walks(list):
+    """The stores whose lint walked, in order. w7 integration: the wrapper
+    below is process-wide, so a lint of ANOTHER store on another thread --
+    the chip prewarm of an earlier test's chip, unleashed the moment this
+    fixture marks the server quiet -- landed in the count too and read as a
+    restart ([1, 1]) in a full run. Each pin now counts its own store."""
+
+    target = None            # the pin's own store (set by the test)
+
+    def of(self, store) -> list:
+        return [s for s in self if s is store]
+
+
 @pytest.fixture
 def slow(monkeypatch):
     """A lint whose first section takes ~1 s in 50 checkpointed steps."""
     entered = threading.Event()
     real = diagnostics._port_findings
+    walks = _Walks()
+    current = threading.local()
 
     def port_findings(root):
-        entered.set()
+        # `entered` is the pin's own lint starting: another store's lint on
+        # another thread (see _Walks) must not open the gate early
+        if getattr(current, "store", None) is walks.target:
+            entered.set()
         for _ in range(50):
             time.sleep(0.02)
             activity.checkpoint()
         return real(root)
 
     monkeypatch.setattr(diagnostics, "_port_findings", port_findings)
-    walks = []
     real_unc = diagnostics._lint_state_uncached
-    monkeypatch.setattr(diagnostics, "_lint_state_uncached",
-                        lambda s, incremental=True: (walks.append(1), real_unc(s, incremental))[1])
+
+    def uncached(s, incremental=True):
+        current.store = s
+        walks.append(s)
+        try:
+            return real_unc(s, incremental)
+        finally:
+            current.store = None
+
+    monkeypatch.setattr(diagnostics, "_lint_state_uncached", uncached)
     return entered, walks, real_unc
 
 
@@ -104,6 +129,7 @@ def _request_lint(store, out, key="r", path="/diagnostics/summary", **kw):
 def test_a_request_computing_the_lint_hands_the_lock_to_another_request(tmp_path, slow):
     entered, walks, real_unc = slow
     store = QuamStore(_chip(tmp_path / "A"))
+    walks.target = store
     out = {}
     t = _request_lint(store, out)
     assert entered.wait(10)
@@ -120,12 +146,13 @@ def test_a_request_computing_the_lint_hands_the_lock_to_another_request(tmp_path
     t.join(10)
     assert not t.is_alive()
     assert _dicts(out["r"]) == _dicts(real_unc(QuamStore(tmp_path / "A"), False))
-    assert walks == [1]                           # nothing moved: no restart
+    assert walks.of(store) == [store]             # nothing moved: no restart
 
 
 def test_a_chip_edited_while_the_lock_was_handed_over_is_relinted(tmp_path, slow):
     entered, walks, real_unc = slow
     store = QuamStore(_chip(tmp_path / "B"))
+    walks.target = store
     out = {}
     t = _request_lint(store, out)
     assert entered.wait(10)
@@ -141,7 +168,7 @@ def test_a_chip_edited_while_the_lock_was_handed_over_is_relinted(tmp_path, slow
         activity.end()
     t.join(20)
     assert not t.is_alive()
-    assert len(walks) >= 2, "the lint of the old content went on"
+    assert len(walks.of(store)) >= 2, "the lint of the old content went on"
     assert diagnostics.lint_is_current(store)
     cold = real_unc(QuamStore.from_dicts(json.loads(json.dumps(store.state)),
                                          json.loads(json.dumps(store.wiring))), False)
@@ -153,6 +180,7 @@ def test_a_chip_edited_while_the_lock_was_handed_over_is_relinted(tmp_path, slow
 def test_two_requests_asking_together_lint_once(tmp_path, slow):
     entered, walks, _real = slow
     store = QuamStore(_chip(tmp_path / "C"))
+    walks.target = store
     out = {}
     t1 = _request_lint(store, out, "a")
     assert entered.wait(10)
@@ -163,15 +191,16 @@ def test_two_requests_asking_together_lint_once(tmp_path, slow):
     assert activity._WANT.get(store, 0) == 1, "the second request never waited for the first"
     t1.join(10)
     t2.join(10)
-    assert walks == [1]
+    assert walks.of(store) == [store]
     assert _dicts(out["a"]) == _dicts(out["b"])
 
 
 def test_a_follower_does_not_hold_the_lock_while_it_waits(tmp_path, slow):
     """The page load's banner waits for the summary's lint -- on the result,
     not on the store lock, so a third request is not stuck behind both."""
-    entered, _walks, _real = slow
+    entered, walks, _real = slow
     store = QuamStore(_chip(tmp_path / "D"))
+    walks.target = store
     out = {}
     t1 = _request_lint(store, out, "a")
     assert entered.wait(10)
@@ -193,6 +222,7 @@ def test_a_follower_does_not_hold_the_lock_while_it_waits(tmp_path, slow):
 def test_a_budget_returns_none_and_the_next_caller_finishes(tmp_path, slow):
     entered, walks, real_unc = slow
     store = QuamStore(_chip(tmp_path / "E"))
+    walks.target = store
     out = {}
     t0 = time.monotonic()
     t = _request_lint(store, out, budget_s=0.1)
@@ -208,6 +238,7 @@ def test_a_caller_already_inside_the_lock_computes_instead_of_waiting(tmp_path, 
     there would deadlock both until the follower's bound (minutes)."""
     entered, walks, _real = slow
     store = QuamStore(_chip(tmp_path / "F"))
+    walks.target = store
     out = {}
     t1 = _request_lint(store, out, "a")
     assert entered.wait(10)
