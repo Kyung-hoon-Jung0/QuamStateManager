@@ -125,11 +125,69 @@
             badge.textContent = '\u2717 refused by your pulse class \u2014 nothing written: ' + why;
             badge.title = full + '\n(click to dismiss)';
             badge.onclick = done;
+            // A coupled pair (a lab GATE's two pulses must share a field):
+            // the server names the other field(s) that must follow; one press
+            // sets them all in ONE batch (one check, one Ctrl+Z).
+            var follow = Array.isArray(j.lab_follow) ? j.lab_follow : null;
+            if (follow && follow.length > 1) {
+                var btn = document.createElement('button');
+                btn.type = 'button';
+                btn.className = 'lab-check-follow';
+                var others = follow.slice(1).map(function (u) {
+                    return String(u.dot_path).split('.').slice(-2).join('.');
+                }).join(', ');
+                btn.textContent = 'Set ' + others + ' too (' + follow.length + ' fields, one batch)';
+                btn.title = follow.map(function (u) {
+                    return u.dot_path + ' = ' + JSON.stringify(u.value);
+                }).join('\n');
+                btn.onclick = function (ev) {
+                    ev.stopPropagation();
+                    btn.disabled = true;
+                    _setBoth(follow).then(done, done);
+                };
+                badge.appendChild(document.createTextNode(' '));
+                badge.appendChild(btn);
+                badge.onclick = null;
+                badge.title = full;
+                badge._keep = true;      // the offer stays until pressed / dismissed
+            }
             // the surface's own error markup can move the cell: re-anchor
             var raf = window.requestAnimationFrame || function (f) { return setTimeout(f, 16); };
             raf(function () { raf(function () { _place(badge, badge._anchor); }); });
-            setTimeout(done, REFUSED_LIFE_MS);
+            setTimeout(function () { if (!badge._keep) done(); }, REFUSED_LIFE_MS);
         }, done);
+    }
+
+    function _setBoth(updates) {
+        // through window.fetch, so the badge shows while the class checks it
+        return window.fetch('/field/edit-batch', {
+            method: 'POST', headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ updates: updates, group: 'new' })
+        }).then(function (r) {
+            return r.json().then(function (j) { return [r, j]; });
+        }).then(function (rj) {
+            var r = rj[0], j = rj[1] || {};
+            if (j.tray_html && window._swapPendingTray) {
+                try { window._swapPendingTray(j.tray_html); } catch (e) { /* next poll */ }
+            }
+            if (!r.ok) {
+                if (window.showToast) window.showToast(String(j.error || 'not written'), 'error');
+                return;
+            }
+            // repaint every written cell / input by path; it stays pending
+            var entries = (j.results || []).filter(function (x) { return x && x.applied; })
+                .map(function (x) {
+                    return { dot_path: x.resolved_path || x.dot_path,
+                             old_value_disp: String(x.display != null ? x.display : x.new_value),
+                             old_kind: 'num', still_pending: true };
+                });
+            try {
+                document.dispatchEvent(new CustomEvent('cellsReverted', { detail: {
+                    entries: entries,
+                    message: 'Set ' + entries.length + ' fields together (one Ctrl+Z)' } }));
+                document.body.dispatchEvent(new CustomEvent('pulses-changed', { bubbles: true }));
+            } catch (e) { /* the values are written regardless */ }
+        });
     }
 
     function _watch(respP, init) {
@@ -166,5 +224,5 @@
         } catch (e) { /* the badge is a courtesy, never a failure */ }
         return p;
     };
-    window.LabCheck = { _pathsOf: _pathsOf, _isEditPost: _isEditPost };
+    window.LabCheck = { _pathsOf: _pathsOf, _isEditPost: _isEditPost, _setBoth: _setBoth };
 })();

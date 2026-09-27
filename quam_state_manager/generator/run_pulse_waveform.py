@@ -88,13 +88,18 @@ def _draw_one(qclass: str, params: dict, max_samples: int) -> dict:
     try:
         cls = _import_class(qclass)
     except BaseException as exc:  # noqa: BLE001 -- SystemExit from a lab import too
+        # NOT the value's fault: this env cannot run the class at all (another
+        # chip's env, a module not installed). A check that cannot run never
+        # blocks -- the caller says so and lets the write through.
         res["error"] = f"could not import {qclass}: {type(exc).__name__}: {exc}"
+        res["reason"] = "class-unavailable"
         return res
     res["canonical"] = f"{cls.__module__}.{cls.__qualname__}"
     try:
         from quam.components.pulses import Pulse
     except Exception as exc:  # noqa: BLE001
         res["error"] = f"quam is not importable in this environment: {exc}"
+        res["reason"] = "class-unavailable"
         return res
     if not issubclass(cls, Pulse):
         res["error"] = f"{res['canonical']} is not a quam Pulse"
@@ -168,6 +173,77 @@ def _draw_one(qclass: str, params: dict, max_samples: int) -> dict:
     return res
 
 
+#: an item whose "qclass" starts with this is a GATE check, not a drawing:
+#: ``"@macro:<root QuamRoot class>"`` with params ``{"contents": <state+wiring
+#: dict>, "macros": [dot-paths]}`` (see :func:`_check_macros`)
+MACRO_PREFIX = "@macro:"
+
+
+def _node_at(root, path: str):
+    obj = root
+    for seg in path.split("."):
+        if isinstance(obj, (list, tuple)):
+            obj = obj[int(seg)]
+        elif hasattr(obj, "__getitem__") and not hasattr(type(obj), seg)                 and not isinstance(obj, str):
+            try:
+                obj = obj[seg]
+                continue
+            except (KeyError, TypeError, IndexError):
+                obj = getattr(obj, seg)
+        else:
+            obj = getattr(obj, seg)
+    return obj
+
+
+def _check_macros(root_class: str, params: dict) -> dict:
+    """Load *contents* with the lab's OWN root class and call every named
+    macro's own ``apply()`` inside a QUA ``program()`` -- exactly what every
+    node that plays the gate does (CZGateTwoFlux.apply runs
+    ``assert_lines_compatible``: control/target flat_length must match).
+
+    ``macros`` answers per path: None (applied) or the error it raised. A
+    failure to import or to load is reported, never guessed: the caller
+    compares against the same check WITHOUT the edit, so only a macro the edit
+    takes from applying to failing is ever refused."""
+    res = {"ok": False, "error": None, "macros": {}, "kind": "macro",
+           "i": [], "q": None, "iq": False, "length": None, "canonical": None,
+           "dropped": [], "warnings": []}
+    try:
+        cls = _import_class(root_class)
+        from qm.qua import program
+    except BaseException as exc:  # noqa: BLE001
+        res["error"] = f"could not import {root_class}: {type(exc).__name__}: {exc}"
+        res["reason"] = "class-unavailable"
+        return res
+    res["canonical"] = f"{cls.__module__}.{cls.__qualname__}"
+    import warnings
+    try:
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore")
+            machine = cls.load(params.get("contents") or {})
+    except BaseException as exc:  # noqa: BLE001
+        res["error"] = f"the chip does not load: {type(exc).__name__}: {exc}"
+        res["load_failed"] = True
+        return res
+    first = None
+    for path in params.get("macros") or []:
+        try:
+            mac = _node_at(machine, path)
+            with warnings.catch_warnings():
+                warnings.simplefilter("ignore")
+                with program():
+                    mac.apply()
+            res["macros"][path] = None
+        except BaseException as exc:  # noqa: BLE001 -- the lab's own check speaks
+            msg = f"{type(exc).__name__}: {exc}"[:600]
+            res["macros"][path] = msg
+            if first is None:
+                first = f"{path}.apply(): {msg}"
+    res["ok"] = first is None
+    res["error"] = first
+    return res
+
+
 def draw(items: list, max_samples: int = _MAX_SAMPLES) -> dict:
     out = []
     for it in items or []:
@@ -175,6 +251,10 @@ def draw(items: list, max_samples: int = _MAX_SAMPLES) -> dict:
         params = (it or {}).get("params") or {}
         if not isinstance(qclass, str) or not qclass:
             out.append({"ok": False, "error": "no class named"})
+            continue
+        if qclass.startswith(MACRO_PREFIX):
+            out.append(_check_macros(qclass[len(MACRO_PREFIX):],
+                                     params if isinstance(params, dict) else {}))
             continue
         out.append(_draw_one(qclass, params if isinstance(params, dict) else {},
                              max_samples))

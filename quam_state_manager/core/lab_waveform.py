@@ -52,6 +52,11 @@ _ENV_LOCKS: dict[str, threading.Lock] = {}
 
 TIMEOUT_S = 90
 
+#: an item whose class starts with this is a GATE check (the lab's own
+#: ``macro.apply()`` on a loaded chip), not a drawing -- the same string
+#: ``generator/run_pulse_waveform.MACRO_PREFIX`` dispatches on
+MACRO_PREFIX = "@macro:"
+
 
 def _env_lock(python_path: str) -> threading.Lock:
     with _SLOT_LOCK:
@@ -385,7 +390,14 @@ def draw(python_path: str | None, items: list[tuple[str, dict]], *,
                         "ok": False, "error": "no answer for this pulse"}
                     rec = {key: rec.get(key) for key in (
                         "ok", "error", "i", "q", "iq", "kind", "length",
-                        "canonical", "dropped", "warnings")}
+                        "canonical", "dropped", "warnings", "macros",
+                        "load_failed", "reason")}
+                    if rec.get("reason"):
+                        # "this env cannot run the class" is not an answer
+                        # about these fields: never cached, asked again
+                        results[n] = {**rec, "cached": False}
+                        continue
+                    rec.pop("reason", None)
                     slot = slot_for(python_path, *items[n])
                     with _SLOT_LOCK:
                         _SLOT_FILES[slot] = files

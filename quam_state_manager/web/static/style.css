@@ -14032,6 +14032,16 @@ td.cell-live-stale .cell-live-now {
     box-shadow: 0 2px 6px rgba(0, 0, 0, 0.18);
     pointer-events: auto; white-space: normal;
 }
+.lab-check-badge .lab-check-follow {
+    margin-left: 6px;
+    padding: 1px 8px;
+    font: inherit;
+    cursor: pointer;
+    border: 1px solid currentColor;
+    border-radius: 4px;
+    background: var(--bg-primary, #fff);
+    color: inherit;
+}
 .lab-check-badge.lab-check-refused {
     font-style: normal; cursor: pointer;
     background: var(--color-error-bg);

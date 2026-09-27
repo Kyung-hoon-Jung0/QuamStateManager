@@ -7597,7 +7597,20 @@ def qubit_edit(name: str):
         # with no twin stays ungrouped, so one undo still reverts it.
         gid = (modifier.new_group_id()
                if freq_sync and _freq_twin_path(target_path) else None)
-        entry = modifier.set_value(target_path, parsed, group_id=gid)
+        # the inspector is an editing door like /field/edit: a value landing
+        # in a lab pulse or gate is asked of the lab's own code first
+        _lab_rel = _lab_hold(modifier.store, [target_path])
+        try:
+            _lab_info: dict = {}
+            _lab = _lab_write_refusal(modifier.store, [(target_path, parsed)],
+                                      info=_lab_info)
+            if _lab:
+                return render_template(
+                    "_status.html", level="error",
+                    message=_lab_refusal_text(_lab[0])), 400
+            entry = modifier.set_value(target_path, parsed, group_id=gid)
+        finally:
+            _lab_rel()
         mirrored = _maybe_mirror_freq(modifier, target_path, entry, group_id=gid) if freq_sync else None
         _invalidate_engine_cache(ctx)
     except (KeyError, TypeError, ValueError, IndexError) as e:
@@ -7613,8 +7626,20 @@ def qubit_edit(name: str):
     # and pulse-derived surfaces — the inspector edit otherwise leaves them stale
     # until a full reload. Mirrors the gate-macro / undo paths.
     resp = make_response(out)
-    resp.headers["HX-Trigger"] = "pulses-changed, diagnostics-changed"
+    _lab_trigger(resp, _lab_info)
     return resp
+
+
+def _lab_trigger(resp, info) -> None:
+    """The inspector forms' HX-Trigger, plus an ``sm:toast`` warning when the
+    lab check could not run (the env cannot import the class)."""
+    notes = [n for n in ((info or {}).get("notes") or []) if n]
+    if not notes:
+        resp.headers["HX-Trigger"] = "pulses-changed, diagnostics-changed"
+        return
+    resp.headers["HX-Trigger"] = json.dumps({
+        "pulses-changed": True, "diagnostics-changed": True,
+        "sm:toast": {"message": " ".join(notes)[:900], "level": "warning"}})
 
 
 def _op_of_path(dot_path: str) -> str | None:
@@ -8002,11 +8027,21 @@ def field_edit():
         # A value landing in a LAB-class pulse (directly or through any number
         # of pointer hops) is asked of the class's own code first; refused =
         # nothing written, no tray entry (same door as /pulse/edit).
-        _lab = _lab_write_refusal(modifier.store, [(target_path, parsed)])
-        if _lab:
-            return jsonify(ok=False, lab_refused=True,
-                           error=_lab_refusal_text(_lab[0])), 400
-        _entry = modifier.set_value(target_path, parsed)
+        # held from the check to the write: a second edit to the same lab
+        # pulse/gate waits and is checked against THIS one's result
+        _lab_rel = _lab_hold(modifier.store, [target_path])
+        try:
+            _lab_info: dict = {}
+            _lab = _lab_write_refusal(modifier.store, [(target_path, parsed)],
+                                      info=_lab_info)
+            if _lab:
+                return jsonify(ok=False, lab_refused=True,
+                               error=_lab_refusal_text(_lab[0]),
+                               lab_follow=_lab_follow_payload(
+                                   target_path, parsed, _lab_info)), 400
+            _entry = modifier.set_value(target_path, parsed)
+        finally:
+            _lab_rel()
         if hasattr(_entry, "actor"):
             _entry.actor = _request_actor()   # docs/172-173: who staged it
         _invalidate_engine_cache(ctx)
@@ -8018,6 +8053,9 @@ def field_edit():
     # JT-12: a re-point to nowhere lands (docs/190 F27) but is SAID, inline.
     from quam_state_manager.core.edit_policy import dangling_pointer_warning
     _warn = dangling_pointer_warning(modifier.store, target_path)
+    _lab_notes = [n for n in (_lab_info.get("notes") or []) if n]
+    if _lab_notes:
+        _warn = " ".join(([_warn] if _warn else []) + _lab_notes)
     _wkw = {"warning": _warn} if _warn else {}
     # Echo what was ACTUALLY committed (the coercer may have kept the old
     # type) so the client can re-render the value with honest type styling.
@@ -9487,7 +9525,21 @@ def field_create():
                     path=dot_path, expected=hint, got=type(parsed).__name__)
         else:
             parsed = _tp.parse_value(raw_value)
-        modifier.create_subtree(dot_path, parsed)
+        # The ＋ is a create door: a key created inside a lab pulse (a
+        # re-added field) or a whole new lab-class pulse / gate dict is asked
+        # of the lab's own code like every other write (the verifier created
+        # padding=-3 and a flat_length=3 GaussianNZ here unchecked).
+        _lab_rel = _lab_hold(modifier.store, [dot_path])
+        try:
+            _lab_info: dict = {}
+            _lab = _lab_write_refusal(modifier.store, [(dot_path, parsed)],
+                                      info=_lab_info)
+            if _lab:
+                return jsonify(ok=False, lab_refused=True,
+                               error=_lab_refusal_text(_lab[0])), 400
+            modifier.create_subtree(dot_path, parsed)
+        finally:
+            _lab_rel()
         _invalidate_engine_cache(ctx)
     except _tp.TypeMismatchError as e:
         return jsonify(ok=False, error=str(e), **e.as_json()), 400
@@ -9504,7 +9556,9 @@ def field_create():
             _attach_type_policy(ctx)
         except ValueError:
             pass
-    return jsonify(ok=True, tray_html=_tray_html(), created_path=dot_path)
+    _lab_notes = [n for n in (_lab_info.get("notes") or []) if n]
+    return jsonify(ok=True, tray_html=_tray_html(), created_path=dot_path,
+                   **({"warning": " ".join(_lab_notes)} if _lab_notes else {}))
 
 
 @bp.route("/field/delete", methods=["POST"])
@@ -9534,11 +9588,21 @@ def field_delete():
         return jsonify(ok=False, error=reason, error_kind="policy"), 400
 
     dangling, _ = _count_refs_into(modifier.store, dot_path)
+    # a removed field of a pulse a lab GATE plays falls back to the class
+    # default -- one half of a coupled pair can then disagree with the other
+    # (the gate's own apply() says so); the pulse-level draw is not asked
+    _lab_rel = _lab_hold(modifier.store, [dot_path])
     try:
+        _lab = _lab_write_refusal(modifier.store, [(dot_path, _LAB_DELETE)])
+        if _lab:
+            return jsonify(ok=False, lab_refused=True,
+                           error=_lab_refusal_text(_lab[0])), 400
         entry = modifier.delete_subtree(dot_path)
         _invalidate_engine_cache(ctx)
     except (KeyError, TypeError, ValueError, IndexError) as e:
         return jsonify(ok=False, error=_exc_text(e)), 400
+    finally:
+        _lab_rel()
 
     from quam_state_manager.core.modifier import _enumerate_leaves
     removed = sum(1 for _ in _enumerate_leaves(entry.old_value, dot_path))
@@ -9738,11 +9802,14 @@ def field_edit_batch():
         logger.warning("lab-class watch map failed", exc_info=True)
         _watch = None
     for _n, (_dp, _rv, _c) in enumerate(pairs if _watch else ()):
-        if _rv is _BATCH_DELETE:
-            continue
         try:
+            if _rv is _BATCH_DELETE:
+                if _watch.touches(_dp):
+                    _lab_writes.append((_dp, _LAB_DELETE))
+                    _lab_idx.append(_n)
+                continue
             _tgt = _resolve_edit_path(modifier.store, _dp)
-            if not _watch.affected(_tgt):
+            if not _watch.touches(_tgt):
                 continue
             _pv = (_parse_for_target(modifier.store, _tgt, _rv)
                    if isinstance(_rv, str) else _rv)
@@ -9750,14 +9817,26 @@ def field_edit_batch():
             continue
         _lab_writes.append((_tgt, _pv))
         _lab_idx.append(_n)
-    _lab = _lab_write_refusal(modifier.store, _lab_writes) if _lab_writes else None
+    # held from the check through the write (released after the lock block)
+    _lab_rel = _lab_hold(modifier.store, [w for w, _v in _lab_writes])
+    _lab_info: dict = {}
+    try:
+        _lab = (_lab_write_refusal(modifier.store, _lab_writes, info=_lab_info)
+                if _lab_writes else None)
+    except BaseException:
+        _lab_rel()
+        raise
     if _lab:
         _lab_msg = _lab_refusal_text(_lab[0])
         _lab_skip = {_lab_idx[k] for k in _lab[1]}
         if not independent:
+            _lab_rel()
+            _one = _lab_writes[_lab[1][0]] if len(_lab[1]) == 1 else None
             return jsonify(
                 ok=False, lab_refused=True, error=_lab_msg,
                 tray_html=_tray_html(),
+                lab_follow=(_lab_follow_payload(_one[0], _one[1], _lab_info)
+                            if _one and len(pairs) == 1 else None),
                 results=[{"dot_path": dp, "applied": False,
                           "lab_refused": n in _lab_skip,
                           "error": (_lab_msg if n in _lab_skip else
@@ -9779,7 +9858,7 @@ def field_edit_batch():
     # and never a journal step's. Anything else gets a fresh gid.
     _grp = _pj.get("group")
 
-    with modifier.store._lock:
+    with _lab_released(_lab_rel), modifier.store._lock:
         if isinstance(_grp, str) and _grp:
             _log = modifier.store.change_log
             _top = _log[-1].group_id if _log else None
@@ -9914,9 +9993,11 @@ def field_edit_batch():
 
     if applied_entries:
         _invalidate_engine_cache(ctx)
+    _lab_notes = [n for n in (_lab_info.get("notes") or []) if n]
     return jsonify(ok=ok_overall, tray_html=_tray_html(), results=results,
                    modified=_modified_delta(),
-                   group_id=_batch_gid if applied_entries else None)
+                   group_id=_batch_gid if applied_entries else None,
+                   **({"warning": " ".join(_lab_notes)} if _lab_notes else {}))
 
 
 # ======================================================================
@@ -10820,7 +10901,20 @@ def pair_edit(name: str):
         # single Ctrl+Z reverts both atomically instead of leaving f_01≠RF.
         gid = (modifier.new_group_id()
                if freq_sync and _freq_twin_path(target_path) else None)
-        entry = modifier.set_value(target_path, parsed, group_id=gid)
+        # the pair inspector shows gate pulses' fields as plain inputs (the
+        # verifier typed flat_length=9 there): same lab check as /field/edit
+        _lab_rel = _lab_hold(modifier.store, [target_path])
+        try:
+            _lab_info: dict = {}
+            _lab = _lab_write_refusal(modifier.store, [(target_path, parsed)],
+                                      info=_lab_info)
+            if _lab:
+                return render_template(
+                    "_status.html", level="error",
+                    message=_lab_refusal_text(_lab[0])), 400
+            entry = modifier.set_value(target_path, parsed, group_id=gid)
+        finally:
+            _lab_rel()
         # No-op for pair-level fields (their paths carry no f_01/RF suffix); covers
         # the case where a pair inspector exposes a member qubit's frequency.
         mirrored = _maybe_mirror_freq(modifier, target_path, entry, group_id=gid) if freq_sync else None
@@ -10837,7 +10931,7 @@ def pair_edit(name: str):
     # Keep the diagnostics badge/banner + pulse surfaces in sync after an
     # inspector edit (see qubit_edit) — they listen on diagnostics-changed.
     resp = make_response(out)
-    resp.headers["HX-Trigger"] = "pulses-changed, diagnostics-changed"
+    _lab_trigger(resp, _lab_info)
     return resp
 
 
@@ -14301,6 +14395,12 @@ def pulse_edit():
         except Exception:  # noqa: BLE001 -- a dangling pointer has no target
             _old_target = None
     try:
+        _lab_paths = [dot_path, _resolve_edit_path(store, dot_path)]
+    except Exception:  # noqa: BLE001
+        _lab_paths = [dot_path]
+    # held from the lab check to the write (see _lab_hold)
+    _lab_rel = _lab_hold(store, _lab_paths)
+    try:
         if mode == "pointer":
             value = raw_value.strip()
             if not value.startswith(("#/", "#./", "#../")):
@@ -14331,10 +14431,12 @@ def pulse_edit():
                     message=("That pointer resolves to a container, not a value "
                              "-- point at a leaf (e.g. .../amplitude)"),
                     level="error"), 400
-            if probe is not None:
-                _lab_no = _lab_edit_refusal(store, dot_path, dot_path, probe)
-                if _lab_no:
-                    return _lab_edit_refused(_lab_no)
+            # a dangling re-link of a LAB field is refused by the lab check
+            # (the class could never accept "nothing"); resolvable: drawn
+            _lab_no = _lab_edit_refusal(store, dot_path, dot_path,
+                                        probe if probe is not None else value)
+            if _lab_no:
+                return _lab_edit_refused(_lab_no)
             modifier.set_value(dot_path, value)
         elif mode == "literal":
             # Break-link: type the literal after the RESOLVED value, write
@@ -14408,6 +14510,8 @@ def pulse_edit():
     except (KeyError, TypeError, ValueError, IndexError) as exc:
         return render_template("_status.html", message=str(exc),
                                level="error"), 400
+    finally:
+        _lab_rel()
 
     _invalidate_engine_cache()
     _touched = [dot_path]
@@ -14434,7 +14538,27 @@ def pulse_edit():
         # a 404 the UI drops -- re-render around the pulse just edited
         view_paths = [p_ for p_ in view_paths if p_ != view_main]
         resp = _render_pulse_detail(path, paths=view_paths or None)
-    return _pulse_mutation_response(resp, paths=_touched)
+    return _lab_toast(_pulse_mutation_response(resp, paths=_touched))
+
+
+def _lab_toast(resp):
+    """Add the request's lab-check warnings (``g.lab_info``) as an
+    ``sm:toast`` to *resp*'s HX-Trigger, keeping what it already triggers."""
+    from flask import g
+    notes = [n for n in ((getattr(g, "lab_info", None) or {}).get("notes") or []) if n]
+    if not notes or isinstance(resp, tuple):
+        return resp
+    cur = resp.headers.get("HX-Trigger")
+    trig: dict = {}
+    if cur:
+        try:
+            trig = json.loads(cur)
+        except ValueError:
+            trig = {k.strip(): True for k in cur.split(",") if k.strip()}
+    trig["sm:toast"] = {"message": " ".join(dict.fromkeys(notes))[:900],
+                        "level": "warning"}
+    resp.headers["HX-Trigger"] = json.dumps(trig)
+    return resp
 
 
 @bp.route("/api/pulse/synth", methods=["POST"])
@@ -15584,7 +15708,10 @@ def api_pulse_create():
     # lab's rules; the class can. Run its own code on the typed values once
     # (the same subprocess the create form's "Draw" button uses) and refuse
     # what it refuses. When it cannot be run (no env), creation proceeds.
-    lab_refusal = _lab_class_refusal(store, spec, fields, qclass)
+    from flask import g
+    _notes = g.lab_info = {"notes": []}
+    lab_refusal = _lab_class_refusal(store, spec, fields, qclass,
+                                     notes=_notes["notes"])
     if lab_refusal:
         return render_template(
             "_status.html", level="error",
@@ -15615,18 +15742,20 @@ def api_pulse_create():
         msg += (" — omitted " + ", ".join(env_dropped)
                 + " (not in the selected environment's "
                 + f"{spec.key} model)")
-    return _pulse_mutation_response(_render_pulse_detail(
-        dot_path, status_msg=msg))
+    return _lab_toast(_pulse_mutation_response(_render_pulse_detail(
+        dot_path, status_msg=msg)))
 
 
-def _lab_class_refusal(store, spec, fields: dict, qclass: str | None) -> str | None:
+def _lab_class_refusal(store, spec, fields: dict, qclass: str | None,
+                       notes: list | None = None) -> str | None:
     """The error a lab class's OWN code raises for *fields*, or None when it
-    draws them (or cannot be run -- no env, the run failed). Only for classes
-    SM does not transcribe (the env's and the chip's own); SM's catalog
-    classes are drawn in-process by the form's preview already."""
+    draws them (or cannot be run -- no env, the run failed, the selected env
+    cannot import the class: then *notes* says so). Only for classes SM does
+    not transcribe (the env's and the chip's own); SM's catalog classes are
+    drawn in-process by the form's preview already."""
     from quam_state_manager.core.pulse_catalog import (PULSE_CATALOG,
                                                        chip_qclass)
-    if spec.key in PULSE_CATALOG and PULSE_CATALOG[spec.key].creatable:
+    if spec is not None and spec.key in PULSE_CATALOG and PULSE_CATALOG[spec.key].creatable:
         return None
     try:
         python_path = config_generator.get_selected_env(current_app.instance_path)
@@ -15643,9 +15772,19 @@ def _lab_class_refusal(store, spec, fields: dict, qclass: str | None) -> str | N
     except Exception:  # noqa: BLE001 -- a check that cannot run never blocks
         logger.warning("lab class check failed to run", exc_info=True)
         return None
+    if rec.get("reason") == "class-unavailable" and notes is not None:
+        notes.append(_lab_unavailable_note(python_path, qclass, rec))
     if rec.get("ok") or rec.get("reason"):
         return None          # drawn, or not checkable (no-env / run-failed)
     return str(rec.get("error") or "it raised")[:400]
+
+
+def _lab_unavailable_note(python_path, qclass, rec) -> str:
+    """The warning for a check the selected env could not run at all."""
+    return (f"The selected environment ({python_path}) cannot import "
+            f"{qclass}, so your class's own check was skipped -- the value "
+            "was written unchecked. Select the lab's environment in Generate "
+            f"Config to have it checked. ({str(rec.get('error') or '')[:200]})")
 
 
 def _lab_edit_refusal(store, dot_path: str, write_path: str, value) -> str | None:
@@ -15656,44 +15795,77 @@ def _lab_edit_refusal(store, dot_path: str, write_path: str, value) -> str | Non
     ``GaussianNZTwoFluxPulse`` committed, and after Apply generate_config()
     raised for the WHOLE chip. One door with /field/edit(-batch): see
     :func:`_lab_write_refusal`."""
+    from flask import g
+    info = getattr(g, "lab_info", None)
+    if info is None:
+        info = g.lab_info = {}
     got = _lab_write_refusal(store, [(write_path, value)],
                              edited_op=(dot_path.rsplit(".", 1)[0]
-                                        if "." in dot_path else None))
+                                        if "." in dot_path else None),
+                             info=info)
     return got[0] if got else None
 
 
-def _lab_write_refusal(store, writes, *, edited_op: str | None = None):
+def _lab_write_refusal(store, writes, *, edited_op: str | None = None,
+                       info: dict | None = None):
     """``(message, refused_write_indices)`` when a LAB class's own code
     rejects what *writes* (``[(write_path, value)]``, the paths the values
-    actually land at) would make of any of its pulses; else None.
+    actually land at; value ``_LAB_DELETE`` = the key is removed) would make of
+    any of its pulses or gates; else None.
 
-    Every lab-class pulse whose field a write changes is drawn ONCE by its own
-    class with all the batch's new values for it (``lab_drawings_for_paths``,
-    one subprocess for all of them -- the same drawing the Pulses detail view
-    shows, so its re-render after the commit is a RAM hit). "Changes" is
-    :mod:`core.lab_watch`: a write inside the pulse dict, or anywhere on one
-    of its fields' pointer chains, any number of hops.
+    Two questions, both answered by the lab's own code in the selected env:
+
+    1. every lab-class PULSE whose field a write changes is drawn ONCE by its
+       own class with all the batch's new values for it
+       (``lab_drawings_for_paths``); "changes" is :mod:`core.lab_watch`: a
+       write inside the pulse dict, or anywhere on one of its fields' pointer
+       chains, any number of hops. A new dict written whole (the Json Tree's
+       ＋) that is itself a lab-class pulse is drawn from its own fields;
+    2. every lab-class GATE (a macro such as ``CZGateTwoFlux``) that plays a
+       changed pulse, or that the write lands in, has its OWN ``apply()`` run
+       on the chip with the writes applied -- the check every node that plays
+       the gate runs (``assert_lines_compatible``: the control and target
+       pulses must share flat_length). Only a gate the writes take from
+       applying to failing is refused.
+
+    *info* (optional, filled in place): ``notes`` -- warnings to show even
+    when the write goes through (the env cannot import the class);
+    ``follow`` -- ``[{"dot_path", "value", "current"}]`` the OTHER field a
+    gate needs set to the same value (a coupled pair), so the caller can offer
+    to set both in one batch.
 
     SM's own catalog classes never spawn (their preview is in-process), a
-    write that reaches no lab-class pulse costs a stamp compare and a few dict
-    lookups, and a check that cannot run (no env, run failed, a value that
-    cannot be resolved) never blocks -- the same rule as create."""
+    write that reaches no lab pulse or gate costs a stamp compare and a few
+    dict lookups, and a check that cannot run (no env, run failed, the env
+    cannot import the class, a value that cannot be resolved) never blocks --
+    the same rule as create."""
     from quam_state_manager.core import lab_watch
+    if info is None:
+        info = {}
+    notes = info.setdefault("notes", [])
     try:
         watch = lab_watch.watch_for(store)
     except Exception:  # noqa: BLE001 -- a check that cannot run never blocks
         logger.warning("lab-class watch map failed", exc_info=True)
         return None
-    if not watch:
-        return None
     per_op: dict[str, dict] = {}
     rows_of: dict[str, set] = {}
     direct: set = set()
+    macros: dict[str, set] = {}
+    new_items: list = []          # (qclass, fields, write index, path)
+    changed_fields: list = []     # (op, field, value) -- for a follow offer
     for idx, (wp, val) in enumerate(writes):
         if not isinstance(wp, str):
             continue
-        aff = watch.affected(wp)
-        if not aff:
+        if isinstance(val, dict):
+            new_items.extend((q, f, idx, p) for q, f, p in
+                             _new_lab_pulses(store, wp, val))
+            for mp in _new_lab_macros(wp, val):
+                macros.setdefault(mp, set()).add(idx)
+        aff = watch.affected(wp) if watch else []
+        for mp in (watch.macros_for(wp, aff) if watch else ()):
+            macros.setdefault(mp, set()).add(idx)
+        if not aff or val is _LAB_DELETE:
             continue
         try:
             cur = store.get_value(wp)
@@ -15706,9 +15878,12 @@ def _lab_write_refusal(store, writes, *, edited_op: str | None = None):
             from quam_state_manager.core.pointer_resolver import resolve_pointer
             try:
                 v = resolve_pointer(store.merged, val.strip(), tuple(wp.split(".")))
-            except Exception:  # noqa: BLE001 -- dangling: nothing to draw
+            except Exception:  # noqa: BLE001 -- dangling
                 v = None
-            if v is None or isinstance(v, (dict, list)) or is_pointer(v):
+            refusal = _lab_relink_refusal(store, wp, val.strip(), v, aff)
+            if refusal:
+                return refusal, [idx]
+            if v is None or is_pointer(v):
                 continue
         segs = wp.split(".")
         for op, field, rel in aff:
@@ -15724,28 +15899,385 @@ def _lab_write_refusal(store, writes, *, edited_op: str | None = None):
                 if not _set_nested(base, rel, v):
                     continue
                 fv = base
+            else:
+                changed_fields.append((op, field, fv))
+            if op not in watch.lab_ops:
+                continue          # a gate's pulse of a catalog class: step 2 only
             per_op.setdefault(op, {})[field] = fv
             rows_of.setdefault(op, set()).add(idx)
             if wp.startswith(op + "."):
                 direct.add(op)       # the value is written IN this pulse
-    if not per_op:
-        return None
-    ops = sorted(per_op, key=lambda o: (o != edited_op, o))
     try:
-        recs = lab_drawings_for_paths(store, ops, spawn=True,
-                                      overrides_by_path=per_op)
-    except Exception:  # noqa: BLE001 -- a check that cannot run never blocks
-        logger.warning("lab class edit check failed to run", exc_info=True)
-        return None
-    for op in ops:
-        rec = recs.get(op)
-        if not rec or rec.get("ok") or rec.get("reason"):
-            continue      # no record / not run: a check that cannot run never blocks
-        err = str(rec.get("error") or "it raised")[:400]
-        who = ("" if op == edited_op or op in direct
-               else f" ({op} reads this value)")
-        return f"{err}{who}", sorted(rows_of.get(op) or ())
+        python_path = config_generator.get_selected_env(current_app.instance_path)
+    except Exception:  # noqa: BLE001
+        python_path = None
+    if new_items and python_path:
+        from quam_state_manager.core import lab_waveform
+        try:
+            recs = lab_waveform.draw(python_path, [(q, f) for q, f, _i, _p in new_items])
+        except Exception:  # noqa: BLE001 -- a check that cannot run never blocks
+            logger.warning("lab class create check failed to run", exc_info=True)
+            recs = []
+        for (q, _f, i, pth), rec in zip(new_items, recs):
+            if rec.get("reason") == "class-unavailable":
+                notes.append(_lab_unavailable_note(python_path, q, rec))
+            if rec.get("ok") or rec.get("reason"):
+                continue
+            return (f"{str(rec.get('error') or 'it raised')[:400]} "
+                    f"(the new {q.rsplit('.', 1)[-1]} at {pth})"), [i]
+    if per_op:
+        ops = sorted(per_op, key=lambda o: (o != edited_op, o))
+        try:
+            recs = lab_drawings_for_paths(store, ops, spawn=True,
+                                          overrides_by_path=per_op)
+        except Exception:  # noqa: BLE001 -- a check that cannot run never blocks
+            logger.warning("lab class edit check failed to run", exc_info=True)
+            recs = {}
+        for op in ops:
+            rec = recs.get(op)
+            if rec and rec.get("reason") == "class-unavailable":
+                note = _lab_unavailable_note(python_path, rec.get("canonical")
+                                             or _qclass_at(store, op), rec)
+                if note not in notes:
+                    notes.append(note)
+            if not rec or rec.get("ok") or rec.get("reason"):
+                continue      # no record / not run: a check that cannot run never blocks
+            err = str(rec.get("error") or "it raised")[:400]
+            who = ("" if op == edited_op or op in direct
+                   else f" ({op} reads this value)")
+            return f"{err}{who}", sorted(rows_of.get(op) or ())
+    if macros and python_path:
+        try:
+            got = _lab_macro_refusal(store, writes, macros, python_path, info,
+                                     changed_fields, watch)
+        except Exception:  # noqa: BLE001 -- a check that cannot run never blocks
+            logger.warning("lab gate check failed to run", exc_info=True)
+            got = None
+        if got:
+            return got
     return None
+
+
+#: a write that REMOVES the key (``/field/delete``, a batch delete row)
+_LAB_DELETE = object()
+
+
+def _qclass_at(store, path: str):
+    try:
+        body = store.get_value(path)
+    except (KeyError, TypeError, ValueError, IndexError):
+        return path
+    return body.get("__class__", path) if isinstance(body, dict) else path
+
+
+def _new_lab_pulses(store, path: str, value: dict):
+    """``[(qclass, fields, path)]`` for every LAB-class pulse dict inside a
+    dict about to be written whole at *path*: its own literal fields, and an
+    absolute pointer's current value (a relative ``#./inferred_*`` is a
+    property of the class itself and is left to it)."""
+    from quam_state_manager.core import lab_watch
+    from quam_state_manager.core.pointer_resolver import resolve_pointer
+    out = []
+
+    def visit(node, segs):
+        if isinstance(node, dict):
+            c = node.get("__class__")
+            if isinstance(c, str) and lab_watch.is_lab_class(c):
+                fields = {}
+                for k, v in node.items():
+                    if k == "__class__":
+                        continue
+                    if isinstance(v, str) and is_pointer(v):
+                        if not v.startswith("#/"):
+                            continue
+                        try:
+                            rv = resolve_pointer(store.merged, v, tuple(segs + [k]))
+                        except Exception:  # noqa: BLE001
+                            continue
+                        if rv is None or isinstance(rv, (dict, list)) or is_pointer(rv):
+                            continue
+                        v = rv
+                    fields[k] = v
+                out.append((c, fields, ".".join(segs)))
+            for k, v in node.items():
+                if isinstance(v, (dict, list)):
+                    visit(v, segs + [str(k)])
+        elif isinstance(node, list):
+            for i, v in enumerate(node):
+                visit(v, segs + [str(i)])
+
+    visit(value, path.split("."))
+    return out
+
+
+def _new_lab_macros(path: str, value: dict) -> list[str]:
+    """Lab GATE dicts inside a dict about to be written whole at *path*."""
+    from quam_state_manager.core import lab_watch
+    out = []
+
+    def visit(node, segs):
+        if not isinstance(node, dict):
+            return
+        if len(segs) >= 2 and segs[-2] == "macros" \
+                and lab_watch.is_lab_macro(node.get("__class__")):
+            out.append(".".join(segs))
+        for k, v in node.items():
+            if isinstance(v, dict):
+                visit(v, segs + [str(k)])
+
+    visit(value, path.split("."))
+    return out
+
+
+def _lab_relink_refusal(store, wp: str, pointer: str, resolved, aff) -> str | None:
+    """A lab field re-linked to a node that cannot be its value: a container
+    where the field holds a single value, or a pointer that resolves to
+    nothing. The class could never accept either; the link would land and
+    every later typed value would be refused as a pointer cell."""
+    from quam_state_manager.core.pointer_path import resolve_field_target
+    direct = [(op, f) for op, f, rel in aff if not rel]
+    if not direct:
+        return None
+    try:
+        rp = resolve_field_target(store.merged, wp).get("resolved_path") or wp
+        cur = store.get_value(rp)
+    except Exception:  # noqa: BLE001
+        cur = None
+    op, field = direct[0]
+    if resolved is None or is_pointer(resolved):
+        return (f"{pointer} does not resolve to a value, so {field} of "
+                f"{op} would have none -- point it at an existing leaf. "
+                "Nothing was written.")
+    if isinstance(resolved, (dict, list)) and not isinstance(cur, (dict, list)):
+        kind = "a dict" if isinstance(resolved, dict) else "a list"
+        return (f"{pointer} is {kind}, but {field} of {op} holds a single "
+                "value -- point it at a leaf. Nothing was written.")
+    return None
+
+
+#: collections Quam.load gets only the members a gate check needs from (a
+#: 30-qubit chip's 19 MB state loads in ~13 s; a pair + its qubits in <1 s)
+_LAB_PRUNED = ("qubits", "qubit_pairs")
+
+
+def _lab_contents(merged: dict, seeds: set) -> dict:
+    """*merged* with ``qubits`` / ``qubit_pairs`` cut to *seeds* ((coll, name)
+    pairs) plus everything any kept member points at, transitively. The rest
+    of the root is kept whole. A pointer into a cut member would fail only if
+    followed -- and the check refuses only when the SAME contents without the
+    edit applied cleanly, so a pruning artefact can never refuse a write."""
+    from quam_state_manager.core.pointer_path import pointer_to_abs
+    keep = set(seeds)
+    todo = list(seeds)
+
+    def scan(node, segs):
+        if isinstance(node, dict):
+            items = node.items()
+        elif isinstance(node, list):
+            items = enumerate(node)
+        else:
+            return
+        for k, v in items:
+            if isinstance(v, str) and v.startswith("#"):
+                t = pointer_to_abs(v, segs + [str(k)])
+                # a qubit's links INTO other pairs (its z operations that are
+                # other gates' pulses) are not followed: a gate's apply()
+                # plays its own pulses only, and on a 30-qubit chip following
+                # them pulled in every qubit and pair (9.5 MB, ~20 s a check)
+                if t and len(t) >= 2 and t[0] == "qubit_pairs" and segs[0] == "qubits":
+                    continue
+                if t and len(t) >= 2 and t[0] in _LAB_PRUNED:
+                    key = (t[0], t[1])
+                    if key not in keep:
+                        keep.add(key)
+                        todo.append(key)
+            elif isinstance(v, (dict, list)):
+                scan(v, segs + [str(k)])
+
+    while todo:
+        coll, name = todo.pop()
+        node = (merged.get(coll) or {}).get(name)
+        if node is not None:
+            scan(node, [coll, name])
+    out = {}
+    for k, v in merged.items():
+        if k in _LAB_PRUNED and isinstance(v, dict):
+            out[k] = {n: b for n, b in v.items() if (k, n) in keep}
+        else:
+            out[k] = v
+    return json.loads(json.dumps(out, default=repr))
+
+
+def _apply_lab_writes(contents: dict, writes) -> None:
+    for wp, val in writes:
+        if not isinstance(wp, str):
+            continue
+        segs = wp.split(".")
+        if segs[0] in _LAB_PRUNED and (len(segs) < 2
+                                       or segs[1] not in (contents.get(segs[0]) or {})):
+            continue          # a member the gates do not reach
+        if val is _LAB_DELETE:
+            ok, parent = _walk_path(contents, segs[:-1])
+            if ok and isinstance(parent, dict):
+                parent.pop(segs[-1], None)
+            continue
+        _set_nested(contents, segs, copy.deepcopy(val))
+
+
+def _walk_path(root, segs):
+    cur = root
+    for seg in segs:
+        if isinstance(cur, dict) and seg in cur:
+            cur = cur[seg]
+        elif isinstance(cur, list):
+            try:
+                cur = cur[int(seg)]
+            except (ValueError, IndexError):
+                return False, None
+        else:
+            return False, None
+    return True, cur
+
+
+def _lab_macro_refusal(store, writes, macros: dict, python_path: str,
+                       info: dict, changed_fields, watch):
+    """Step 2 of :func:`_lab_write_refusal`: the lab gates' own ``apply()``.
+
+    Two contents go to the worker in ONE request -- the chip as it is, and the
+    chip with *writes* applied -- and a gate is refused only when the first
+    applies and the second does not (a gate already broken before the edit
+    never blocks a fix, and a pruning artefact would fail both)."""
+    from quam_state_manager.core import lab_waveform
+    notes = info.setdefault("notes", [])
+    with store._lock:
+        merged = store.merged
+        root = merged.get("__class__")
+        if not isinstance(root, str) or not root:
+            return None
+        seeds = set()
+        for mp in macros:
+            segs = mp.split(".")
+            if len(segs) >= 2 and segs[0] in _LAB_PRUNED:
+                seeds.add((segs[0], segs[1]))
+        base = _lab_contents(merged, seeds)
+    new = copy.deepcopy(base)
+    _apply_lab_writes(new, writes)
+    gone = [w for w, v in writes if v is _LAB_DELETE and isinstance(w, str)]
+    # a gate being deleted (or inside a deleted subtree) is not asked
+    names = sorted(mp for mp in macros
+                   if not any(mp == w or mp.startswith(w + ".") for w in gone))
+    if not names:
+        return None
+    q = lab_waveform.MACRO_PREFIX + root
+    try:
+        before, after = lab_waveform.draw(python_path, [
+            (q, {"contents": base, "macros": names}),
+            (q, {"contents": new, "macros": names})])
+    except Exception:  # noqa: BLE001 -- a check that cannot run never blocks
+        logger.warning("lab gate check failed to run", exc_info=True)
+        return None
+    if before.get("reason") == "class-unavailable":
+        notes.append(_lab_unavailable_note(python_path, root, before))
+        return None
+    if before.get("reason") or before.get("load_failed"):
+        return None       # cannot run / the chip does not load as it is
+    bm = before.get("macros") or {}
+    am = after.get("macros") or {}
+    for mp in names:
+        if mp not in bm or bm.get(mp) is not None:
+            continue      # did not apply before the edit either: not ours
+        if after.get("load_failed"):
+            err = str(after.get("error") or "the chip does not load")
+        elif am.get(mp):
+            err = str(am[mp])
+        else:
+            continue
+        follow = _lab_follow(store, mp, changed_fields, watch)
+        if follow:
+            info["follow"] = follow
+            f0 = follow[0]
+            err += (f" -- {mp} plays both pulses: set {f0['dot_path']} "
+                    f"(now {_fmt_msg_val(f0['current'])}) to "
+                    f"{_fmt_msg_val(f0['value'])} too, both in one batch")
+        return (f"your gate {mp.rsplit('.', 1)[-1]} ({mp}) refused it in its "
+                f"own apply(): {err}"[:900]), sorted(macros.get(mp) or ())
+    return None
+
+
+def _lab_follow(store, mp: str, changed_fields, watch) -> list[dict]:
+    """The OTHER pulses' same field a gate needs to follow the changed one:
+    ``[{"dot_path", "value", "current"}]`` for every sibling pulse of *mp*
+    whose *field* differs from the new value. Plain data -- the gate's own
+    apply() already decided that the pair is inconsistent."""
+    from quam_state_manager.core.pointer_path import resolve_field_target
+    if not watch or mp not in watch.macros:
+        return []
+    plays = watch.macros[mp]["ops"]
+    out, seen = [], set()
+    for op, field, value in changed_fields:
+        if op not in plays or isinstance(value, (dict, list)):
+            continue
+        for other in sorted(plays):
+            if other == op:
+                continue
+            fp = f"{other}.{field}"
+            try:
+                rt = resolve_field_target(store.merged, fp)
+            except Exception:  # noqa: BLE001
+                continue
+            if not rt.get("resolvable"):
+                continue
+            wp = rt.get("resolved_path") or fp
+            cur = rt.get("resolved_value")
+            if wp in seen or cur == value or isinstance(cur, (dict, list)):
+                continue
+            seen.add(wp)
+            out.append({"dot_path": wp, "value": value, "current": cur})
+    return out
+
+
+_LAB_LOCKS_GUARD = threading.Lock()
+
+
+@contextlib.contextmanager
+def _lab_released(release):
+    """``with`` form of a :func:`_lab_hold` release (the batch's lock block)."""
+    try:
+        yield
+    finally:
+        release()
+
+
+def _lab_hold(store, paths):
+    """Serialize check-then-write for writes that reach a lab pulse or gate
+    (the verifier's race: two coupled edits each checked against the OLD
+    state, both landed). Returns a release callable. Only such writes take
+    the per-store lock, so an ordinary edit never waits on a lab check."""
+    from quam_state_manager.core import lab_watch
+    try:
+        watch = lab_watch.watch_for(store)
+    except Exception:  # noqa: BLE001
+        watch = None
+    hit = False
+    if watch:
+        for pth in paths:
+            if isinstance(pth, str) and pth and watch.touches(pth):
+                hit = True
+                break
+    if not hit:
+        return lambda: None
+    with _LAB_LOCKS_GUARD:
+        lk = getattr(store, "_lab_write_lock", None)
+        if lk is None:
+            lk = store._lab_write_lock = threading.Lock()
+    lk.acquire()
+    released = []
+
+    def release():
+        if not released:
+            released.append(1)
+            lk.release()
+    return release
 
 
 _MISSING = object()
@@ -15782,6 +16314,17 @@ def _pulse_edit_write_path(store, dot_path: str, raw_current, target_path: str) 
         t = resolve_field_target(store.merged, dot_path)
         return t["resolved_path"] if t.get("resolvable") else dot_path
     return target_path
+
+
+def _lab_follow_payload(path, value, info) -> list[dict] | None:
+    """The one-batch offer for a coupled gate: this write plus the sibling
+    field(s) the gate's own apply() needs to follow, as /field/edit-batch
+    updates (JSON values, so the batch writes exactly these)."""
+    follow = (info or {}).get("follow") or []
+    if not follow:
+        return None
+    return ([{"dot_path": path, "value": value}]
+            + [{"dot_path": f["dot_path"], "value": f["value"]} for f in follow])
 
 
 def _lab_refusal_text(message: str) -> str:
@@ -17806,6 +18349,73 @@ def changes():
     return render_template("_changes.html", changes=modifier.get_change_log())
 
 
+def _lab_restore_warning(store, indices=None, *, writes=None) -> str | None:
+    """What the lab's own code says about the combination a partial revert
+    RESTORES (a tray ✕ of change-log entries *indices*, or an applied-log
+    revert's *writes*), or None. Never blocks -- the revert is the user's --
+    and names the other pending entries on the same pulse or gate, so the
+    user can ✕ them too."""
+    from quam_state_manager.core import lab_watch
+    try:
+        watch = lab_watch.watch_for(store)
+    except Exception:  # noqa: BLE001
+        return None
+    if not watch:
+        return None
+    if writes is None:
+        writes = []
+        with store._lock:
+            log = list(store.change_log)
+        for i in indices or ():
+            if not isinstance(i, int) or not (0 <= i < len(log)):
+                continue
+            e = log[i]
+            writes.append((e.dot_path, _LAB_DELETE if getattr(e, "created", False)
+                           else copy.deepcopy(e.old_value)))
+    else:
+        with store._lock:
+            log = list(store.change_log)
+    writes = [(w, v) for w, v in writes if isinstance(w, str) and watch.touches(w)]
+    if not writes:
+        return None
+    info: dict = {}
+    try:
+        got = _lab_write_refusal(store, writes, info=info)
+    except Exception:  # noqa: BLE001 -- a warning that cannot be computed is not said
+        logger.warning("lab restore check failed", exc_info=True)
+        return None
+    if not got:
+        return None
+    # the other pending entries that feed the same pulses / gates
+    hit_ops, hit_macros = set(), set()
+    for w, _v in writes:
+        aff = watch.affected(w)
+        hit_ops |= {op for op, _f, _r in aff}
+        hit_macros |= watch.macros_for(w, aff)
+    for mp in hit_macros:
+        hit_ops |= set(watch.macros.get(mp, {}).get("ops") or ())
+    restored = {w for w, _v in writes}
+    # a gate named the coupled field(s): those pending entries, exactly;
+    # otherwise every pending entry on the same pulses / gates
+    follow = {f["dot_path"] for f in (info.get("follow") or [])}
+    others = []
+    for e in log:
+        dp = e.dot_path
+        if dp in restored:
+            continue
+        if follow:
+            if dp in follow:
+                others.append(dp)
+            continue
+        aff = watch.affected(dp)
+        if any(op in hit_ops for op, _f, _r in aff) or (watch.macros_for(dp, aff) & hit_macros):
+            others.append(dp)
+    tail = (" Discard " + ", ".join(dict.fromkeys(others)) + " too, or edit it,"
+            " to keep the pulse consistent." if others else "")
+    return ("Reverted -- but the combination this restores is one your "
+            f"pulse class / gate refuses: {got[0]}.{tail}")[:900]
+
+
 @bp.route("/discard", methods=["POST"])
 def discard():
     modifier = _modifier()
@@ -17827,6 +18437,12 @@ def discard():
     store = ctx.get("store") if ctx else None
     _redo_begin(ctx, store)   # docs/107: a foreign edit since forks history
     from quam_state_manager.core import mw_fem
+    # A ✕ restores ONE field; if it is one half of a pair a lab pulse or gate
+    # checks together (flat_length 96 + filter 20 MHz, discard the 96), the
+    # restored combination may be one the lab's code refuses and that never
+    # existed. The discard still happens (it is the user's undo); the check
+    # runs on what it restores and the answer is said, naming the entries.
+    _lab_warn = _lab_restore_warning(modifier.store, [index])
     try:
         # QA liveedit-r2-16: a ✕ on any member of an FSP compensation bundle
         # takes the whole bundle (one gid = one Review bundle = one Ctrl+Z =
@@ -17884,6 +18500,8 @@ def discard():
             },
             "pulses-changed": True,
             "diagnostics-changed": True,
+            **({"sm:toast": {"message": _lab_warn, "level": "warning"}}
+               if _lab_warn else {}),
         })
         return resp
 
@@ -17903,7 +18521,11 @@ def discard():
         "pulses-changed": True,
         # refresh the diagnostics tray badge + error banner
         "diagnostics-changed": True,
+        **({"sm:toast": {"message": _lab_warn, "level": "warning"}}
+           if _lab_warn else {}),
     })
+    if _lab_warn:
+        resp.headers["X-SM-Lab-Warning"] = "1"
     return resp
 
 
@@ -18590,6 +19212,11 @@ def auto_apply_revert():
     ents = list(reversed(unit.get("entries") or []))
     ops = undo_journal.inverse_ops(unit)
     gid = "alr:" + str(unit_id)
+    # same as the tray ✕: a revert of one half of a coupled pair is checked
+    # (never blocked) and the answer is said
+    _lab_warn = _lab_restore_warning(store, writes=[
+        (path, _LAB_DELETE if op == "delete" else value)
+        for (op, path, value, _src) in ops])
     staged: list = []
     with store._lock:
         # ── CAS pre-check under the same lock hold as the staging, so nothing
@@ -18670,6 +19297,8 @@ def auto_apply_revert():
         },
         "pulses-changed": True,
         "diagnostics-changed": True,
+        **({"sm:toast": {"message": _lab_warn, "level": "warning"}}
+           if _lab_warn else {}),
     })
     return resp
 

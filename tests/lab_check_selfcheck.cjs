@@ -10,7 +10,11 @@
  *      the edit request goes out FIRST, the watch probe is a side request;
  *   4. the caller receives the very Response object fetch gave (untouched);
  *   5. a GET, or another URL, is never probed;
- *   6. a batch's JSON body names its paths to the probe.
+ *   6. a batch's JSON body names its paths to the probe;
+ *   7. fix3: a GATE refusal that names the coupled field (lab_follow) offers
+ *      "Set ... too"; the press posts ONE /field/edit-batch with both
+ *      updates (group "new"), repaints both cells as still pending, and the
+ *      offer does not time out before it is pressed.
  * Run: node tests/lab_check_selfcheck.cjs (driven by tests/test_lab_check.py).
  * Exit 0 ok, 1 fail, 2 no jsdom.
  */
@@ -134,6 +138,38 @@ function resp(status, body) {
     const probe = W.log.find((l) => l.url === '/field/lab-watch');
     ok(probe && JSON.parse(probe.init.body).paths.length === 2, 'a batch names all its paths to the probe');
     ok(!!W.w.document.querySelector('.lab-check-badge'), 'a batch touching a lab pulse shows the badge');
+  }
+
+  // 7: the set-both offer of a coupled gate
+  {
+    const W = world([LAB]);
+    const T = 'qubit_pairs.p.macros.cz.flux_target.flat_length';
+    const events = [];
+    W.w.document.addEventListener('cellsReverted', (e) => events.push(e.detail));
+    const p = W.w.fetch('/field/edit', { method: 'POST', body: 'dot_path=' + encodeURIComponent(LAB) + '&value=80' });
+    await until(() => W.w.document.querySelector('.lab-check-badge'));
+    W.pending[0](resp(400, { ok: false, lab_refused: true,
+      error: 'Your pulse class refused this value -- nothing was written: your gate cz refused it in its own apply(): control/target flat_length differ (80 vs 74)',
+      lab_follow: [{ dot_path: LAB, value: 80 }, { dot_path: T, value: 80 }] }));
+    await p;
+    await until(() => W.w.document.querySelector('.lab-check-follow'));
+    const btn = W.w.document.querySelector('.lab-check-follow');
+    ok(btn && /flux_target\.flat_length too/.test(btn.textContent) && /2 fields, one batch/.test(btn.textContent),
+       'a coupled gate refusal offers to set the other field too (' + (btn && btn.textContent) + ')');
+    btn.click();
+    await until(() => W.log.some((l) => l.url === '/field/edit-batch'));
+    const post = W.log.find((l) => l.url === '/field/edit-batch');
+    const body = post && JSON.parse(post.init.body);
+    ok(body && body.group === 'new' && body.updates.length === 2 && body.updates[1].dot_path === T && body.updates[1].value === 80,
+       'the press posts ONE batch with both updates');
+    const bi = W.log.indexOf(post);
+    W.pending[W.pending.length - 1](Object.assign(resp(200, { ok: true, results: [
+      { dot_path: LAB, resolved_path: LAB, applied: true, display: '80' },
+      { dot_path: T, resolved_path: T, applied: true, display: '80' }] }), { ok: true }));
+    await until(() => events.length);
+    ok(events.length && events[0].entries.length === 2 && events[0].entries.every((e) => e.still_pending && e.old_value_disp === '80'),
+       'both written cells are repainted, still pending');
+    ok(bi > 0, 'the batch went through the wrapped fetch (it gets the badge too)');
   }
 
   if (fails) { console.error(fails + ' FAIL'); process.exit(1); }
