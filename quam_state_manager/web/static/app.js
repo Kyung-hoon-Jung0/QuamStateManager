@@ -21953,7 +21953,9 @@ function _pulsesSyncUrl(push) {
     // inspector swap dropped per_page from the URL ("All" -> open a pulse ->
     // reload came back at 50 rows). Read the picker itself; with no picker
     // rendered, fall back to the per_page the rows wrap itself refetches with.
-    var ppSel = document.querySelector("#pulses-rows-wrap .page-size-picker select");
+    // (w7 integration: a NAMED per_page select -- the older markup the
+    // escape-ladder pin renders -- is still read first-class.)
+    var ppSel = document.querySelector("#pulses-rows-wrap .page-size-picker select, select[name='per_page']");
     var ppVal = ppSel ? ppSel.value : "";
     if (!ppVal) {
         var wrap = document.getElementById("pulses-rows-wrap");

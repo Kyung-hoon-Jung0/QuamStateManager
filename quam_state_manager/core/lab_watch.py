@@ -476,7 +476,7 @@ def _dict_pulses(merged, watch: LabWatch, mp: str, dict_fields, plays: set) -> N
     """Dict-of-pulses gate fields (``spectator_qubits_control``): each entry
     is a pulse -- inline, or a pointer -- that the gate plays BY NAME on the
     qubit a sibling dict field maps the same key to (``spectator_qubits``):
-    ``self.spectator_qubits[q].z.play(get_pulse_name(pulse))`` (KRISS
+    ``self.spectator_qubits[q].z.play(get_pulse_name(pulse))`` (a customer's
     ``CZGateTwoFlux.apply``). docs/218, verifier 4: deleting the spectator's
     op went through and every program on the pair failed.
 

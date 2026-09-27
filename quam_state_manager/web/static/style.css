@@ -14067,7 +14067,8 @@ td.cell-live-stale .cell-live-now {
 .pulse-create-choice { display: flex; flex-wrap: wrap; justify-content: flex-start; gap: 0.35rem; margin: 0.35rem 0.5rem 0.6rem; padding: 0; }
 .pulse-create-choice-btn { font-size: 0.85em; padding: 0.25rem 0.7rem; border-radius: 999px;
     border: 1px solid var(--pico-muted-border-color); background: transparent;
-    color: var(--pico-color); width: auto; margin: 0; }
+    /* --pico-contrast, not --pico-color: Pico rescopes --pico-color to white on <button> */
+    color: var(--pico-contrast); width: auto; margin: 0; }
 .pulse-create-choice-btn:hover { border-color: var(--pico-primary); }
 .pulse-create-choice-btn.is-active { background: var(--pico-primary-background); border-color: var(--pico-primary-background);
     color: var(--pico-primary-inverse); }
