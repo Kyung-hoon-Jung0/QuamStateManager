@@ -163,13 +163,64 @@ passed, 2 skipped; 2/2 mutations red. Defects, open for Round 4:
   into an empty lab-gate slot is not gate-checked (82 vs 74 → 200); minor — a gate already failing hides a
   later breakage with no note; minor — pruning cut (0 artefacts on the real chips).
 
-## Round 4 (pending)
+## Round 4 — out_fix_pulsecreate4 + out_verify_pulsecreate4
 
-TODO: the final numbers of the last fix round will be added later.
-- TODO: commits (branch head at the time of writing: `d27a372`; its report is not in yet).
-- TODO: per verifier-3 defect, what was fixed and how.
-- TODO: measured numbers (implementer / independent verifier), chips and settings.
-- TODO: pins and mutation counts.
+Fix 4 (`d27a372`, implementer-measured, krs5 in-process): the verifier-3 major. An op a lab gate plays BY
+NAME is now on the gate's route — `lab_watch._gate_pulses` finds the name each inline or pointed pulse is
+played by (its `id`, followed through a pointer, else its key — quam_builder's `get_pulse_name` rule) and
+looks it up on every `operations` dict the gate can play on (the owner qubits' channels and the pair's own
+channels, pointers followed); every rename / delete / create door asks the gate. Verifier-3 scripts re-run:
+V1 by-name `/field/delete` → 400 (gate `KeyError`), V2 `qubit_control` → `#/qubits/q4` → 400, V3
+`/api/pulse/rename` → 400, V4 `/api/pulse/delete` → 409 naming the slot's `id`, then `force=1` → 400; the
+full-state `apply()` stays clean after each; V5 a mismatch edit on a clash-broken gate → 200 with a "could
+not be checked" note. Tests 427 passed, 2 skipped (8 new pins in `test_lab_doors`); 16 mutations red;
+selfchecks lab_check / ctrlz / pulses_create / pulses_commit exit 0.
+
+Verifier 4 (independent; tempdir chip copies, rigs 5261/9561 krs5 and 5262/9562 big30x, torn down after):
+all five round-3 defects confirmed fixed with round 3's own scripts. Verdict DEFECTS — five minor:
+1. a lab check that cannot RUN (the env's python missing, a worker timeout at 90 s or crash) let the write
+   through with no word at all;
+2. an empty required gate slot on a pair switched the gate check off for every lab gate on that pair, and
+   the later "gate slot" fill said nothing when the chip went from not loading to a broken lab gate;
+3. deleting a lab gate, or its inline target pulse, left the by-name mirror ops' linked fields dangling and
+   `generate_config()` then failed for the WHOLE chip;
+4. perf — every ordinary edit read the env settings file from disk before checking whether anything
+   lab-related was touched;
+5. (admitted open issue, confirmed) spectator pulses (`spectator_qubits_control`) are not on the route; no
+   real chip has such a gate.
+The machine was out of commit memory (other agents' rigs); two MemoryErrors were re-run clean and are not
+SM defects. A first `lab_field_edit` launch with `LFE_COLD=1` may have killed other agents' warm workers
+once (they re-spawn on demand); re-run without it.
+
+## Round 5 — out_fix_pulsecreate5
+
+Fix 5 (`7640213`, `11f6b22`, `643be06`; krs5 in-process, big30x rig), per verifier-4 defect:
+1. `_lab_write_refusal` gathers every pulse / gate / config question that could not be asked (no env
+   selected, the env's python gone, a run-failed record, an exception, a worker timeout) and emits ONE note
+   per error — "Your lab code could not be run (<error>): this edit was NOT checked against your class X
+   (<path>), your gate Y (<path>)[, your chip's generate_config()]"; a timed-out warm worker falls back to
+   a cold run; the note survives a probe that answers after the body was read (`11f6b22`);
+2. an unloadable macro is dropped from BOTH sides of the before/after comparison, and a slot fill asks the
+   pair's other lab gates — D1 breaking `cz_GNZ` (82 vs 74) while the pair has an empty slot → 400 (was
+   200 "could not be checked"); D2 a valid fill → 200, 22/22 macros; D3 → 400 (was 200);
+3. deletes reach a config question: a delete that breaks `generate_config()` is refused (gate or its inline
+   pulse), one that still generates but orphans a link warns and names the orphans; the Json Tree offers
+   "Delete together with N ops" and the batch delete rows ride along;
+4. the env settings are read only once something lab-related is touched;
+5. `chain_under` with prefixes puts a delete above a lab field's chain end on the route.
+Tests 533 passed, 2 skipped (16 files, 7 m 58 s); `test_lab_doors` 50 (15 new pins, 2 adjusted to the new
+rule); 18/18 server mutations red (scratch copy, baseline green first, source restored byte-equal). Measured:
+the delete config question costs two loads and two `generate_config()` calls — ~1.4 s warm on krs5, ~7 s
+warm / 21–26 s cold on big30x — paid only by deletes that reach a lab chain, gate or name-holder; G1 a
+gate-breaking edit with the env path gone → 200 + the not-run warning; `pulse_lab_check` big30x 3469/3470
+gates `apply()`, config ok; krs5 `indep_check` 0 bad, twice. Open after round 5: a lab gate can no longer
+be deleted ALONE while its by-name mirror ops link into it (by design; the Pulses-page delete of its inline
+pulse is refused with the "delete them together" text); `lab_field_edit`'s "checking badge shown" step is a
+timing race on a warm worker (passes on a cold one, big30x 20/20); big30x `indep_check` not completed
+(~3.6 h of QUA serialisation at that load); a Json-Tree edit that goes through with a note shows it twice
+(the tree's toast and the amber cell badge); the pruned config question sets aside only channel ops.
+The code's `docs/217` / `docs/218` references (`643be06`) resolve to docs/217 and this document, both
+written on `w7/docs` and merged with `w7/pulsecreate` in integration round 3 (docs/224).
 
 ## 5. Pins
 
