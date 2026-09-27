@@ -399,6 +399,64 @@ def test_the_first_edit_does_not_import_the_autofit_engine(client, monkeypatch):
     assert "quam_state_manager.core.autofit.engine" not in sys.modules
 
 
+def _half_built_engine(monkeypatch, *, with_locks_chip):
+    """Put the engine into sys.modules the way a concurrent importer leaves
+    it: present, `__spec__._initializing` True, and its body not yet run
+    past some point. A thread holds the module's REAL import lock and, after
+    a pause, finishes the body (names appear, the flag drops) -- the same
+    order CPython's `_load_unlocked` uses."""
+    import importlib.machinery
+    import threading
+    import time
+    import types
+    from importlib import _bootstrap
+    from quam_state_manager.core.autofit import engine as real
+    name = "quam_state_manager.core.autofit.engine"
+    stub = types.ModuleType(name)
+    spec = importlib.machinery.ModuleSpec(name, None)
+    spec._initializing = True
+    stub.__spec__ = spec
+    if with_locks_chip:
+        # defined, but what it calls is further down the body -- not yet run
+        stub.locks_chip = lambda inst: stub.get_engine(inst) is not None
+    monkeypatch.setitem(sys.modules, name, stub)
+    holding, done = threading.Event(), {}
+
+    def importer():
+        with _bootstrap._ModuleLockManager(name):
+            holding.set()
+            time.sleep(0.4)
+            stub.get_engine = real.get_engine
+            stub.locks_chip = real.locks_chip
+            spec._initializing = False
+            done["t"] = time.monotonic()
+
+    t = threading.Thread(target=importer, daemon=True)
+    t.start()
+    assert holding.wait(5)
+    return t, done
+
+
+@pytest.mark.parametrize("with_locks_chip", [False, True],
+                         ids=["no-attribute-yet", "attribute-but-body-unfinished"])
+def test_a_half_built_engine_is_waited_for_never_read(client, monkeypatch,
+                                                      with_locks_chip):
+    """w7 final QA (P2): every open page's first /scheduler/status poll
+    imports the engine (~1 s). The P5 fast path read `sys.modules` directly,
+    where the module sits HALF-BUILT for that whole second, so the first edit
+    after a server start raised AttributeError -> HTTP 500 (5/5 on the rig).
+    The guard must wait for the import to finish, like a real import does."""
+    import time
+    t, done = _half_built_engine(monkeypatch, with_locks_chip=with_locks_chip)
+    r = client.post("/field/edit-batch", json={"updates": [
+        {"dot_path": "qubits.q1.T1", "value": "4e-5"}]})
+    answered = time.monotonic()
+    t.join(5)
+    assert r.status_code == 200, r.get_data(as_text=True)[:300]
+    # it WAITED for the body to finish, not raced past it
+    assert "t" in done and done["t"] <= answered
+
+
 # ---------------------------------------------------------------------------
 # the sidebar project submenu
 # ---------------------------------------------------------------------------
