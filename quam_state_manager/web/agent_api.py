@@ -1890,7 +1890,7 @@ def _may_change(steps: list[dict], cap: int = 60) -> tuple[list[dict], int]:
     autofit writer uses (``families.resolve_alias_path``): real chips carry
     ``operations.x180 = "#./x180_DragCosine"``, so the raw
     ``...x180.amplitude`` does not exist and every row read "now: not set" on
-    a chip that holds the value (measured on the KRISS 5Q chip)."""
+    a chip that holds the value (measured on a customer's 5Q chip)."""
     from quam_state_manager.core.autofit import families
     r = _r()
     store = r._store()

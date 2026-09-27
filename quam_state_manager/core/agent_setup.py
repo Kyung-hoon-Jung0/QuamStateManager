@@ -409,7 +409,7 @@ def detect_facts(state: dict, wiring: dict | None = None, node_names: list[str] 
         "qdac_seen": bool(modes.get("qdac") or modes.get("bias_tee")),
         # a VALUE, not the key: quam_builder's pair class always carries
         # `coupler: null`, so the key alone "detected" a tunable coupler on
-        # every modern chip (the KRISS 5Q chip has none) -- QA agents round
+        # every modern chip (a customer's 5Q chip has none) -- QA agents round
         "couplers_seen": any(isinstance(p, dict) and p.get("coupler") not in (None, "", {}, [])
                              for p in pairs.values()),
         "purcell_mentioned": "purcell" in text,
