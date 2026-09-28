@@ -4813,6 +4813,11 @@ html.topbar-hidden .topo-dashboard .topo-section-title[data-group] { scroll-marg
 }
 #topo-density-slider { width: 88px; margin: 0; vertical-align: middle; }
 .topo-section { }
+/* w9 uxpolish: a 2Q RB panel's slot on a big chip (chip-status.js _rbStart).
+   The panel goes INTO it later; the slot itself makes no box, so the page
+   lays out as if the panel were the host's own child -- and an insertion
+   restyles only the slot, not every panel beside it. */
+.topo-rb-slot { display: contents; }
 .topo-section-title { font-size: var(--topo-section-title-size); font-weight: 600; margin: 0 0 0.5rem 0; color: var(--pico-color); }
 .topo-section-subtitle { font-size: var(--topo-section-subtitle-size); color: var(--pico-muted-color); font-weight: 400; margin-left: 0.5rem; }
 

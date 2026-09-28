@@ -248,7 +248,9 @@ function world(opts) {
   };
   Object.defineProperty(dash, 'offsetHeight', { configurable: true, get: () => layout().total });
   let lastTotal = -1;
-  new win.MutationObserver(drop).observe(dash, {
+  // opts.roOnMutation (w9 uxpolish): every DOM change is a layout change the
+  // dashboard's ResizeObserver sees (the 2Q panels arriving in slices)
+  new win.MutationObserver(function () { drop(); if (opts.roOnMutation) T.relayout(); }).observe(dash, {
     childList: true, subtree: true, attributes: true,
     attributeFilter: ['id', 'data-density-panel', 'data-rb-heading', 'data-group', 'data-topo-section'] });
   T.relayout = function () {
@@ -270,7 +272,8 @@ function world(opts) {
   win._plotlyRender = function () { return new win.Promise(function (r) { win.setTimeout(r, 300); }); };
   // the entry's state as a reload finds it, BEFORE the mount
   if (opts.state) win.history.replaceState(opts.state, '');
-  win.ChipStatus.mount({ topo: JSON.parse(JSON.stringify(CHAIN)), rawWiring: {}, defaultThresholds: {},
+  if (opts.before) opts.before(win);
+  win.ChipStatus.mount({ topo: JSON.parse(JSON.stringify(opts.topo || CHAIN)), rawWiring: {}, defaultThresholds: {},
                          diagFindings: [], metricMeta: {}, chipView: opts.chipView || '' });
   lastTotal = layout().total;
   T.rec = function () { return win.history.state && win.history.state.smChipScroll; };
@@ -324,7 +327,7 @@ function press(T, how, what) {
   }
 }
 
-(async function main() {
+async function main() {
   // ── J1: a tile jump writes its record in the same call as its URL ────────
   {
     const T = world({ state: { htmx: true } });
@@ -497,4 +500,10 @@ function press(T, how, what) {
   console.log(fails ? ('FAILED (' + fails + ')')
     : ('chip_status_place_selfcheck ok (' + asserts + ' assertions)'));
   process.exit(fails ? 1 : 0);
-})().catch(function (e) { console.error('FAIL: threw ' + (e && e.stack || e)); process.exit(1); });
+}
+// w9 uxpolish: tests/chip_rb_slices_selfcheck.cjs drives the same world
+module.exports = { world: world, press: press, clone: clone, node: node, SM: SM, PANE_TOP: PANE_TOP,
+                   T1SEL: T1SEL, T2SEL: T2SEL, IRBSEL: IRBSEL, ROSEL: ROSEL, SEC: SEC };
+if (require.main === module) {
+  main().catch(function (e) { console.error('FAIL: threw ' + (e && e.stack || e)); process.exit(1); });
+}

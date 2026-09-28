@@ -1,0 +1,386 @@
+/* w9 uxpolish -- on a big chip the 2Q RB section is built panel by panel,
+ * the panel a jump goes to FIRST.
+ *
+ * Measured in real Chrome on big30x (96 2Q panels, 69 pairs each) before the
+ * change: an Overview tile / tab press that needed the 2Q section was a
+ * 0.8-1.3 s task (making every panel, then laying out ~6,600 cells at once)
+ * before its jump could even start. Now the press makes the target panel and
+ * the one or two under it; the rest follow in small slices once the jump's
+ * smooth scroll has come to rest, and the page ends up exactly as the
+ * one-shot build makes it.
+ *
+ * Pins (the REAL app.js + topo-graph.js + chip-status.js under jsdom, the
+ * layout model + virtual clock of tests/chip_status_place_selfcheck.cjs, a
+ * 30-qubit lattice with 49 pairs and 20 RB panels = 980 cells):
+ *  S1  an IRB tile press builds the IRB heading's first panels in the press
+ *      (a chunk, not the section) and the jump lands on the IRB heading
+ *  S2  no slice runs while the jump's smooth scroll is in flight
+ *  S3  every panel arrives; the section is then EXACTLY what the one-shot
+ *      build makes (same markup, same order, same paint, the reader's stored
+ *      tile size and Show Meta Info applied), and the IRB heading is still
+ *      under the sticky bar after the panels above it grew
+ *  S4  no chart is drawn -- this section's nor the metrics' -- before the
+ *      last panel is in; then all of them are
+ *  S5  a pair cell of a panel built in a later slice opens that pair
+ *  S6  a changed-vs-live pair is marked in a panel built in a later slice
+ *  S7  a T1 tile press builds no 2Q panel in the press; T1 lands, and stays
+ *      under the bar while the whole 2Q section grows above it
+ *  S8  a second jump while the slices run builds ITS target at once
+ *  S9  navigating away stops the slices
+ *  S10 F5 on a place inside a 2Q panel deep in the list: that panel is built
+ *      at once and lands at its offset, and stays there as the rest arrive
+ *  S11 F5 at 0 / 0.3 / 2 s after an IRB / T1 jump lands exactly (the matrix
+ *      the place selfcheck runs on the 5Q chain, on the big chip)
+ *  S12 a 5-qubit chain still builds every panel in the press (nothing sliced)
+ *
+ * Run: node tests/chip_rb_slices_selfcheck.cjs   (driven by tests/test_chip_status.py)
+ */
+'use strict';
+
+let P;
+try {
+  P = require('./chip_status_place_selfcheck.cjs');
+} catch (e) {
+  if (/jsdom/.test(String(e && e.message))) { console.error('jsdom not installed'); process.exit(2); }
+  throw e;
+}
+const { world, press, clone, node, SM, IRBSEL, T1SEL } = P;
+
+let fails = 0, asserts = 0;
+function ok(c, m) { asserts++; if (!c) { console.error('FAIL: ' + m); fails++; } else { console.log('ok - ' + m); } }
+
+// a 6 x 5 lattice: 30 qubits, 49 nearest-neighbour pairs, 10 gates x (SRB, IRB)
+const GATES = ['cz_g0', 'cz_g1', 'cz_g2', 'cz_g3', 'cz_g4', 'cz_g5', 'cz_g6', 'cz_g7', 'cz_g8', 'cz_g9'];
+function bigTopo() {
+  const nodes = [], edges = [];
+  const id = (r, c) => 'q' + (r * 6 + c + 1);
+  for (let r = 0; r < 5; r++) for (let c = 0; c < 6; c++) nodes.push(node(id(r, c), c + ',' + r));
+  let n = 0;
+  function edge(a, b) {
+    n++;
+    const gf = [];
+    GATES.forEach(function (g, i) {
+      gf.push({ metric: 'StandardRB', gate: g, level: 'gate', value: 0.9 + ((n * 7 + i * 3) % 90) / 1000 });
+      gf.push({ metric: 'InterleavedRB', gate: g, level: 'gate', value: 0.91 + ((n * 5 + i * 11) % 80) / 1000 });
+    });
+    edges.push({ pair_id: a + '-' + b, source: a, target: b, has_cz: true, gate_kind: 'cz', gate_fidelities: gf });
+  }
+  for (let r = 0; r < 5; r++) for (let c = 0; c < 6; c++) {
+    if (c < 5) edge(id(r, c), id(r, c + 1));
+    if (r < 4) edge(id(r, c), id(r + 1, c));
+  }
+  return { nodes: nodes, edges: edges };
+}
+const BIG = bigTopo();
+const KEY = (t, g) => '2q:' + t + ':' + g;
+const PSEL = (k) => '.topo-section[data-density-panel="' + k + '"]';
+
+function built(T) {
+  return Array.prototype.map.call(T.doc.querySelectorAll('#topo-2q-rb-panels .topo-section[data-density-panel]'),
+                                  (e) => e.getAttribute('data-density-panel'));
+}
+// the section's content in page order, whatever wraps it. The keyboard
+// grid's roving-tabindex marks are left out: it adds them to the cells it
+// finds when it starts (a section built by then has them) and to later cells
+// on the first arrow key -- as for any lazily built panel.
+function section(T) {
+  return Array.prototype.map.call(
+    T.doc.querySelectorAll('#topo-2q-rb-panels .topo-fidelity-subtitle, #topo-2q-rb-panels [data-rb-heading], '
+                           + '#topo-2q-rb-panels .topo-section[data-density-panel]'),
+    (e) => {
+      const c = e.cloneNode(true);
+      c.querySelectorAll('[data-kbd-cell]').forEach((x) => {
+        ['data-kbd-cell', 'tabindex', 'role'].forEach((a) => x.removeAttribute(a));
+      });
+      return c.outerHTML;
+    });
+}
+// advance until the slices have begun (more than the press built), 5 ms at a time
+async function untilSlicing(T, from) {
+  for (let t = 0; t < 3000 && built(T).length <= from; t += 5) await T.advance(5);
+  return built(T).length;
+}
+// every chart drawn, with the time it was asked for
+function countCharts(win, T) {
+  T.charts = [];
+  win._plotlyRender = function (el) {
+    T.charts.push({ id: el && el.id, at: win.Date.now() });
+    return new win.Promise(function (r) { win.setTimeout(r, 300); });
+  };
+}
+// the stored per-panel choices a reader made (tile size, Show Meta Info)
+function stored(win) {
+  win.localStorage.setItem('quam_chip_density_panels', JSON.stringify({ [KEY('StandardRB', 'cz_g4')]: 0.8 }));
+  win.localStorage.setItem('quam_chip_meta_panels', JSON.stringify({ [KEY('InterleavedRB', 'cz_g8')]: true }));
+}
+const big = (o) => world(Object.assign({ topo: BIG, roOnMutation: true }, o || {}));
+
+(async function main() {
+  // the storage keys the page reads (so S3's choices are the page's own)
+  {
+    const fs = require('fs'), path = require('path');
+    const cs = fs.readFileSync(path.join(__dirname, '..', 'quam_state_manager', 'web', 'static', 'chip-status.js'), 'utf8');
+    ok(/'quam_chip_density_panels'/.test(cs) && /'quam_chip_meta_panels'/.test(cs),
+       'setup: the tile-size and Show Meta Info stores are the keys this test writes');
+  }
+
+  // ── S1 / S2 / S3 / S4: an IRB tile press ─────────────────────────────────
+  let T;
+  {
+    T = big({ state: { htmx: true }, before: function (w) { stored(w); } });
+    countCharts(T.win, T);
+    await T.advance(1000);
+    const before = built(T).length;
+    press(T, 'mouse', 'irb');
+    const now = built(T);
+    ok(before === 0 && now.length >= 1 && now.length <= 4 && now[0] === KEY('InterleavedRB', 'cz_g0')
+       && now.every((k) => /^2q:InterleavedRB:/.test(k))
+       && !!T.doc.querySelector(IRBSEL) && !!T.doc.querySelector('[data-rb-heading="StandardRB"]'),
+       'S1 the IRB press builds the IRB heading\'s first panels in the press -- a chunk, not the section: '
+       + JSON.stringify(now));
+    await T.advance(100);                       // the smooth scroll is part way
+    const mid = built(T).length;
+    await T.advance(300);                       // its last step (400 ms)
+    const atEnd = built(T).length;
+    ok(mid === now.length && atEnd === now.length,
+       'S2 no slice runs while the jump\'s smooth scroll is in flight (' + now.length + ' -> ' + mid + ' -> ' + atEnd + ')');
+    await T.advance(40);                        // its last step has run
+    ok(T.topOf(IRBSEL) === SM && built(T).length === now.length,
+       'S1 ...and the jump landed the IRB heading under the sticky bar, on the press\'s own panels — ' + T.topOf(IRBSEL));
+    const chartsDuring = [];
+    let doneAt = null;
+    for (let t = 0; t < 12000 && doneAt === null; t += 5) {
+      await T.advance(5);
+      if (built(T).length === 20) doneAt = T.win.Date.now();
+      else chartsDuring.push(T.charts.length);
+    }
+    ok(doneAt !== null, 'S3 every one of the 20 panels arrives (' + built(T).length + ')');
+    ok(chartsDuring.length > 20 && chartsDuring.every((n) => n === 0),
+       'S4 no chart is drawn while the slices run -- ' + JSON.stringify(chartsDuring.slice(-3))
+       + ' done at ' + doneAt + ', charts at ' + JSON.stringify(T.charts.slice(0, 3)));
+    await T.advance(20000);
+    const ids = T.charts.map((c) => c.id);
+    ok(ids.length === 20 && new Set(ids).size === 20 && ids[0] === 'rb-InterleavedRB-cz-g0-chart',
+       'S4 ...then all 20 charts, the jump\'s target first — ' + ids.length + ' ' + ids.slice(0, 2).join(','));
+    ok(T.topOf(IRBSEL) === SM,
+       'S3 the IRB heading is still under the sticky bar after the 10 SRB panels above it arrived — ' + T.topOf(IRBSEL));
+    // the one-shot build: F5 on a record relative to the 2Q section's top
+    const R = big({ url: '/topology?view=fidelity2q', chipView: 'fidelity2q', before: function (w) { stored(w); },
+                    state: { htmx: true, smChipScroll: { url: '/topology?view=fidelity2q', view: 'fidelity2q', d: 40, top: 1 } } });
+    await R.advance(100);
+    const a = section(T), b = section(R);
+    const same = a.length === b.length && a.every((h, i) => h === b[i]);
+    ok(b.length === 23 && built(R).length === 20 && same,
+       'S3 ...and the section is EXACTLY the one-shot build\'s: ' + a.length + ' vs ' + b.length + ' blocks'
+       + (same ? '' : ', first difference at ' + a.findIndex((h, i) => h !== b[i]) + ': ' + (function () {
+         const i = a.findIndex((h, j) => h !== b[j]);
+         let k = 0; while (k < a[i].length && a[i][k] === b[i][k]) k++;
+         return JSON.stringify(a[i].slice(Math.max(0, k - 80), k + 80)) + ' vs ' + JSON.stringify(b[i].slice(Math.max(0, k - 80), k + 80));
+       })()));
+    // the slots stay, and make no box: an insertion among the host's own
+    // children restyled every panel beside it (207-630 ms in real Chrome)
+    const css = require('fs').readFileSync(require('path').join(__dirname, '..', 'quam_state_manager', 'web', 'static', 'style.css'), 'utf8');
+    const host = T.doc.getElementById('topo-2q-rb-panels');
+    const inSlots = Array.prototype.every.call(host.querySelectorAll('.topo-section[data-density-panel]'),
+      (e) => e.parentNode.classList.contains('topo-rb-slot') && e.parentNode.parentNode === host && e.parentNode.children.length === 1);
+    ok(inSlots && host.querySelectorAll(':scope > .topo-rb-slot').length === 20
+       && /\.topo-rb-slot\s*\{\s*display:\s*contents;\s*\}/.test(css),
+       'S3 every panel went INTO its own slot, a display:contents wrapper that stays');
+    const g4 = T.doc.querySelector(PSEL(KEY('StandardRB', 'cz_g4'))), g8 = T.doc.querySelector(PSEL(KEY('InterleavedRB', 'cz_g8')));
+    ok(g4 && g4.style.getPropertyValue('--topo-density-scale') === '0.8' && g8 && g8.classList.contains('topo-meta-on'),
+       'S3 ...with the reader\'s stored tile size (SRB cz_g4, built in a late slice) and Show Meta Info (IRB cz_g8)');
+    ok(T.errors().length === 0 && R.errors().length === 0, 'S1-S4 no timer threw — ' + T.errors().concat(R.errors()).join(' | ').slice(0, 300));
+  }
+
+  // ── S5 / S6: a panel built in a later slice is wired and marked ───────────
+  {
+    const U = big({ state: { htmx: true }, before: function (w) {
+      w.fetch = function (url) {
+        if (String(url).indexOf('/state/live-diff') === 0) {
+          return w.Promise.resolve({ json: function () { return w.Promise.resolve(
+            { ok: true, entries: [{ dot_path: 'qubit_pairs.q2-q3.macros.cz_g6.fidelity' }] }); } });
+        }
+        return new w.Promise(function () {});
+      };
+    } });
+    const calls = [];
+    U.win.htmx.ajax = function (verb, url) { calls.push(verb + ' ' + url); return new U.win.Promise(function () {}); };
+    await U.advance(500);
+    U.win.ChipStatus.liveDiff.refresh();        // live differs on q2-q3
+    await U.advance(100);
+    press(U, 'mouse', 'irb');
+    ok(!U.doc.querySelector(PSEL(KEY('StandardRB', 'cz_g6'))), 'S5 setup: SRB cz_g6 is not built by the press');
+    await U.advance(12000);
+    const cell = U.doc.querySelector(PSEL(KEY('StandardRB', 'cz_g6')) + ' .heatmap-cell[data-pair="q2-q3"]');
+    ok(!!cell && cell.classList.contains('topo-changed') && /changed vs live/.test(cell.getAttribute('title') || ''),
+       'S6 the changed-vs-live pair is marked in a panel built in a later slice');
+    cell.dispatchEvent(new U.win.MouseEvent('click', { bubbles: true }));
+    ok(calls.indexOf('GET /pair/q2-q3') >= 0, 'S5 a click on that panel\'s cell opens the pair — ' + JSON.stringify(calls));
+    const others = U.doc.querySelectorAll('#topo-2q-rb-panels .heatmap-cell.topo-changed');
+    ok(others.length === 20, 'S6 ...in every one of the 20 panels, once each (' + others.length + ')');
+  }
+
+  // ── S7: a T1 press -- the 2Q section is all above it ──────────────────────
+  {
+    const V = big({ state: { htmx: true } });
+    countCharts(V.win, V);
+    await V.advance(1000);
+    press(V, 'mouse', 't1');
+    ok(built(V).length === 0 && !!V.doc.querySelector(T1SEL),
+       'S7 a T1 press builds no 2Q panel in the press (the metrics are built): ' + built(V).length);
+    await V.advance(600);
+    const landed = V.topOf(T1SEL);
+    let doneAt = null, early = 0;
+    for (let t = 0; t < 12000 && doneAt === null; t += 5) {
+      await V.advance(5);
+      if (built(V).length === 20) doneAt = t; else early += V.charts.length;
+    }
+    ok(doneAt !== null && early === 0,
+       'S7 the metrics section\'s charts wait for the 2Q slices too (charts seen before the last panel: ' + early + ')');
+    await V.advance(12000);
+    ok(landed === SM && built(V).length === 20 && V.topOf(T1SEL) === SM,
+       'S7 T1 lands under the bar and stays there while all 20 2Q panels grow above it — ' + landed + ' -> ' + V.topOf(T1SEL));
+    ok(V.charts.length > 0 && V.errors().length === 0, 'S7 ...then the charts are drawn (' + V.charts.length + '), no timer threw');
+  }
+
+  // ── S8: a second jump while the slices run ───────────────────────────────
+  {
+    const W = big({ state: { htmx: true } });
+    await W.advance(1000);
+    press(W, 'mouse', 'irb');
+    await untilSlicing(W, built(W).length);     // rested: the slices run (IRB panels first)
+    const mid = built(W);
+    press(W, 'mouse', 'srb');
+    const now = built(W);
+    ok(mid.length < 20 && mid.indexOf(KEY('StandardRB', 'cz_g0')) < 0 && now.indexOf(KEY('StandardRB', 'cz_g0')) >= 0,
+       'S8 an SRB press while the slices run builds the SRB heading\'s first panel in the press ('
+       + mid.length + ' -> ' + now.length + ')');
+    await W.advance(12000);
+    ok(built(W).length === 20 && W.topOf('[data-rb-heading="StandardRB"]') === SM,
+       'S8 ...lands on it, and the rest still arrive — ' + W.topOf('[data-rb-heading="StandardRB"]'));
+  }
+
+  // ── S9: navigating away stops the slices ─────────────────────────────────
+  {
+    const X = big({ state: { htmx: true } });
+    await X.advance(1000);
+    press(X, 'mouse', 'irb');
+    await untilSlicing(X, built(X).length);
+    X.doc.body.dispatchEvent(new X.win.CustomEvent('htmx:beforeSwap', { bubbles: true,
+      detail: { target: X.pane, shouldSwap: true, requestConfig: {} } }));
+    const at = built(X).length;
+    await X.advance(12000);
+    ok(at < 20 && built(X).length === at && X.errors().length === 0,
+       'S9 after the pane is swapped no slice runs (' + at + ' -> ' + built(X).length + ')');
+  }
+
+  // ── S10: F5 on a place deep inside the 2Q list ───────────────────────────
+  {
+    const k = KEY('StandardRB', 'cz_g7');
+    const rec = { url: '/topology?view=fidelity2q', view: 'fidelity2q', d: 5000, sel: PSEL(k), ds: 120, top: 1 };
+    const Y = big({ url: '/topology?view=fidelity2q', chipView: 'fidelity2q', state: { htmx: true, smChipScroll: rec } });
+    ok(!!Y.doc.querySelector(PSEL(k)) && built(Y).length <= 4,
+       'S10 F5 on a place inside SRB cz_g7 builds that panel at once, not the section (' + built(Y).length + ')');
+    await Y.advance(20);                        // the restore's frame
+    const at = Y.topOf(PSEL(k));
+    await Y.advance(12000);
+    ok(at === -120 && built(Y).length === 20 && Y.topOf(PSEL(k)) === -120,
+       'S10 ...lands 120 px into it and is still there once the 7 panels above it arrived — ' + at + ' -> ' + Y.topOf(PSEL(k)));
+  }
+
+  // ── S11: the F5 matrix on the big chip ───────────────────────────────────
+  for (const c of [['mouse', 'irb', 'fidelity2q', IRBSEL], ['Enter', 't1', 'coherence', T1SEL]]) {
+    for (const delay of [0, 300, 2000]) {
+      const A = big({ state: { htmx: true } });
+      await A.advance(3000);
+      press(A, c[0], c[1]);
+      await A.advance(delay);
+      A.win.dispatchEvent(new A.win.Event('pagehide'));        // F5
+      const st = clone(A.win.history.state), url = A.url();
+      const B = big({ url: url, chipView: (url.match(/view=([^&]*)/) || [])[1] || '', state: st });
+      await B.advance(15000);
+      const top = B.topOf(c[3]);
+      ok(url === '/topology?view=' + c[2] && top === SM && B.lit() === c[2] && built(B).length === 20
+         && A.errors().length === 0 && B.errors().length === 0,
+         'S11 big chip: ' + c[0] + ' -> ' + c[1] + ', F5 after ' + delay + ' ms lands on it — top ' + top
+         + ' (want ' + SM + '), tab ' + B.lit() + ', panels ' + built(B).length);
+    }
+  }
+
+  // ── S13 / S14: the lazy observer -- the pane reaching the section ─────────
+  {
+    let io = null;
+    const I = big({ state: { htmx: true }, before: function (w) {
+      w.IntersectionObserver = function (cb) { io = cb; this.observe = function () {}; this.disconnect = function () {}; };
+    } });
+    await I.advance(500);
+    const host = I.doc.querySelector('[data-topo-section="2qrb"]');
+    io([{ isIntersecting: true, target: host }]);        // scrolled near it
+    const first = built(I);
+    ok(first.length >= 1 && first.length <= 4 && first[0] === KEY('StandardRB', 'cz_g0'),
+       'S14 the pane reaching the 2Q section builds its TOP panels at once, the rest in slices: ' + JSON.stringify(first));
+    await I.advance(12000);
+    ok(built(I).length === 20, 'S14 ...and the rest arrive (' + built(I).length + ')');
+    // a jump passing the section while its slices run
+    const J2 = big({ state: { htmx: true }, before: function (w) {
+      w.IntersectionObserver = function (cb) { io = cb; this.observe = function () {}; this.disconnect = function () {}; };
+    } });
+    await J2.advance(500);
+    press(J2, 'mouse', 'irb');
+    await untilSlicing(J2, built(J2).length);
+    const before = built(J2);
+    io([{ isIntersecting: true, target: J2.doc.querySelector('[data-topo-section="2qrb"]') }]);
+    const after = built(J2);
+    ok(before.length === after.length && after.indexOf(KEY('StandardRB', 'cz_g0')) < 0,
+       'S13 the observer seeing the section while the slices run changes nothing (' + before.length + ' -> ' + after.length + ')');
+  }
+
+  // ── S15: a chart pump already running pauses while the slices run ─────────
+  {
+    let io = null;
+    const K = big({ state: { htmx: true }, before: function (w) {
+      w.IntersectionObserver = function (cb) { io = cb; this.observe = function () {}; this.disconnect = function () {}; };
+    } });
+    countCharts(K.win, K);
+    await K.advance(500);
+    io([{ isIntersecting: true, target: K.doc.querySelector('[data-topo-section="metrics"]') }]);   // the metrics, reached first
+    await K.advance(5);                         // its first batch is drawn, the rest to come
+    const running = K.charts.length;
+    press(K, 'mouse', 'irb');
+    const at = K.charts.length;
+    let during = 0, done = false;
+    for (let t = 0; t < 12000 && !done; t += 5) {
+      await K.advance(5);
+      if (built(K).length === 20) done = true; else during = K.charts.length - at;
+    }
+    await K.advance(20000);
+    ok(running > 0 && running < 8 && done && during === 0 && K.charts.length === 28,
+       'S15 the metrics\' chart pump, already drawing, pauses while the 2Q slices run and goes on after ('
+       + running + ' drawn, ' + during + ' during the slices, ' + K.charts.length + ' in the end)');
+  }
+  // ── S16: Plotly itself is not loaded while the slices run ────────────────
+  {
+    const loads = [];
+    const L = big({ state: { htmx: true }, before: function (w) {
+      w.Plotly = undefined;
+      w.requirePlotly = function () { loads.push(built(L).length); w.Plotly = {}; return w.Promise.resolve(); };
+    } });
+    await L.advance(1000);
+    press(L, 'mouse', 't1');
+    await L.advance(15000);
+    ok(loads.length >= 1 && loads[0] === 20,
+       'S16 Plotly (a 0.6 s task of its own) is loaded only once the 2Q slices are done: panels at load ' + JSON.stringify(loads));
+  }
+
+  // ── S12: a 5-qubit chain builds every panel in the press ─────────────────
+  {
+    const Z = world({ state: { htmx: true } });
+    await Z.advance(1000);
+    press(Z, 'mouse', 'irb');
+    ok(built(Z).length === 2 && !Z.doc.querySelector('.topo-rb-slot'),
+       'S12 a 5-qubit chain builds all of its 2Q panels in the press, no slots (' + built(Z).length + ')');
+  }
+
+  console.log(fails ? ('FAILED (' + fails + ')') : ('chip_rb_slices_selfcheck ok (' + asserts + ' assertions)'));
+  process.exit(fails ? 1 : 0);
+})().catch(function (e) { console.error('FAIL: threw ' + (e && e.stack || e)); process.exit(1); });
