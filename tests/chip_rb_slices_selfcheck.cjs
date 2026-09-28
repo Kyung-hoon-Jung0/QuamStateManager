@@ -277,7 +277,8 @@ const big = (o) => world(Object.assign({ topo: BIG, roOnMutation: true, roFrame:
     const mid = built(W);
     press(W, 'mouse', 'srb');
     const now = built(W);
-    ok(mid.length < 20 && mid.indexOf(KEY('StandardRB', 'cz_g0')) < 0 && now.indexOf(KEY('StandardRB', 'cz_g0')) >= 0,
+    ok(mid.length < 20 && mid.indexOf(KEY('StandardRB', 'cz_g0')) < 0 && now.indexOf(KEY('StandardRB', 'cz_g0')) >= 0
+       && now.length - mid.length <= 2,
        'S8 an SRB press while the slices run builds the SRB heading\'s first panel in the press ('
        + mid.length + ' -> ' + now.length + ')');
     await W.advance(12000);

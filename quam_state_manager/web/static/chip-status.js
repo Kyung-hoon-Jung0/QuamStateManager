@@ -5169,10 +5169,11 @@ window.ChipStatus.mount = function (opts) {
         // growth); a record relative to a section's top needs all of it. A
         // metrics view has the whole 2Q section above it (lazily, first: the
         // metrics' charts then wait for its slices, see setChipStatusView).
-        // The slices wait for the landing frame to pass (wait), as a jump's do.
-        if (spec.build === 'metrics') _ensureSectionBuilt('2qrb', { lazy: true, wait: true });
+        // (No wait: a restore lands at once, not by a smooth scroll; its own
+        // section slices first, below the target first.)
+        if (spec.build === 'metrics') _ensureSectionBuilt('2qrb', { lazy: true });
         if (spec.build === '2qrb' || spec.build === 'metrics') {
-            _ensureSectionBuilt(spec.build, (hs.jump || hs.sel) ? { prio: hs.sel || spec.sel, wait: true } : null);
+            _ensureSectionBuilt(spec.build, (hs.jump || hs.sel) ? { prio: hs.sel || spec.sel } : null);
         }
         window.setChipStatusView(hs.view, null, false);
         var jv = hs.sel ? ('sel:' + hs.view + ':' + hs.sel) : hs.view;
