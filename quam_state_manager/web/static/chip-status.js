@@ -3696,7 +3696,8 @@ window.ChipStatus.mount = function (opts) {
        siblings, and a universal sibling rule, `.calc-sec > summary + *`,
        invalidating the host's whole subtree), one inside a wrapper 4-5 ms. */
     var RB_SYNC_ALL_CELLS = 300;   // at or under this many cells every panel is built at once (a 5-qubit chip: tens to ~100)
-    var RB_SLICE_CELLS = 130;      // a slice (and the press's own chunk): about this many cells, 4 panels at most
+    var RB_SLICE_CELLS = 130;      // a slice: about this many cells, 4 panels at most
+    var RB_PRESS_PANELS = 2;       // the press's own chunk: the target and the one under it (a big panel fills the pane)
     var _slicers = [];             // the slice builders of this mount (the 2Q RB section, the metric panels)
     function _rbBusy() {
         for (var i = 0; i < _slicers.length; i++) if (!_slicers[i].done && !_slicers[i].dead) return true;
@@ -3772,9 +3773,9 @@ window.ChipStatus.mount = function (opts) {
             for (a = k - 1; a >= 0; a--) o.push(a);
             st.order = o; st.pos = 0;
         }
-        function nextChunk() {
+        function nextChunk(most) {
             var ks = [], cells = 0;
-            while (st.pos < st.order.length && ks.length < 4 && cells < RB_SLICE_CELLS) {
+            while (st.pos < st.order.length && ks.length < (most || 4) && cells < RB_SLICE_CELLS) {
                 var k = st.order[st.pos++];
                 if (panels[k].built) continue;
                 ks.push(k); cells += panels[k].cells;
@@ -3863,7 +3864,7 @@ window.ChipStatus.mount = function (opts) {
             if (st.done || st.dead) return;
             st.lazy = false;                    // its section is the reader's target now: it goes first
             startAt(indexFor(sel));
-            build(nextChunk());
+            build(nextChunk(RB_PRESS_PANELS));
         };
         st.flush = function () {                // a caller that needs every panel now
             if (st.done || st.dead) return;
@@ -3875,7 +3876,7 @@ window.ChipStatus.mount = function (opts) {
         window.ChipStatus._onLeave(document.querySelector('.topo-dashboard'), function _rbTeardown() { stop(); });
         _renderChartSpecsProgressively(specs, function () { return !st.done && !st.dead; });
         startAt(opt.lazy ? 0 : indexFor(opt.prio));
-        if (!opt.lazy) build(nextChunk());
+        if (!opt.lazy) build(nextChunk(RB_PRESS_PANELS));
         if (!st.done) {
             if (opt.wait) whenQuiet(function () { later(); });
             else later();

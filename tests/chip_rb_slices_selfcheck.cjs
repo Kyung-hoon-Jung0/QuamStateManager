@@ -157,7 +157,7 @@ const big = (o) => world(Object.assign({ topo: BIG, roOnMutation: true, roFrame:
     const before = built(T).length;
     press(T, 'mouse', 'irb');
     const now = built(T);
-    ok(before === 0 && now.length >= 1 && now.length <= 4 && now[0] === KEY('InterleavedRB', 'cz_g0')
+    ok(before === 0 && now.length >= 1 && now.length <= 2 && now[0] === KEY('InterleavedRB', 'cz_g0')
        && now.every((k) => /^2q:InterleavedRB:/.test(k))
        && !!T.doc.querySelector(IRBSEL) && !!T.doc.querySelector('[data-rb-heading="StandardRB"]'),
        'S1 the IRB press builds the IRB heading\'s first panels in the press -- a chunk, not the section: '
@@ -309,7 +309,7 @@ const big = (o) => world(Object.assign({ topo: BIG, roOnMutation: true, roFrame:
     const k = KEY('StandardRB', 'cz_g7');
     const rec = { url: '/topology?view=fidelity2q', view: 'fidelity2q', d: 5000, sel: PSEL(k), ds: 120, top: 1 };
     const Y = big({ url: '/topology?view=fidelity2q', chipView: 'fidelity2q', state: { htmx: true, smChipScroll: rec } });
-    ok(!!Y.doc.querySelector(PSEL(k)) && built(Y).length <= 4,
+    ok(!!Y.doc.querySelector(PSEL(k)) && built(Y).length <= 2,
        'S10 F5 on a place inside SRB cz_g7 builds that panel at once, not the section (' + built(Y).length + ')');
     await Y.advance(20);                        // the restore's frame
     const at = Y.topOf(PSEL(k));
@@ -348,7 +348,7 @@ const big = (o) => world(Object.assign({ topo: BIG, roOnMutation: true, roFrame:
     const host = I.doc.querySelector('[data-topo-section="2qrb"]');
     io([{ isIntersecting: true, target: host }]);        // scrolled near it
     const first = built(I);
-    ok(first.length >= 1 && first.length <= 4 && first[0] === KEY('StandardRB', 'cz_g0'),
+    ok(first.length >= 1 && first.length <= 2 && first[0] === KEY('StandardRB', 'cz_g0'),
        'S14 the pane reaching the 2Q section builds its TOP panels at once, the rest in slices: ' + JSON.stringify(first));
     await I.advance(12000);
     ok(built(I).length === 20, 'S14 ...and the rest arrive (' + built(I).length + ')');
@@ -357,7 +357,7 @@ const big = (o) => world(Object.assign({ topo: BIG, roOnMutation: true, roFrame:
     const ro = Array.prototype.map.call(I.doc.querySelectorAll('#topo-fidelity-ro-panels .topo-section[data-density-panel], '
       + '#topo-fidelity-1q-panels .topo-section[data-density-panel], #topo-metric-panels .topo-section[data-density-panel]'),
       (e) => e.getAttribute('data-density-panel'));
-    ok(ro.length >= 1 && ro.length <= 4 && ro[0] === 'assignment_fidelity' && ro.indexOf('gate_fidelity_avg') < 0,
+    ok(ro.length >= 1 && ro.length <= 2 && ro[0] === 'assignment_fidelity' && ro.indexOf('gate_fidelity_avg') < 0,
        'S14 the pane reaching the Read. Fid. section builds the readout panels first: ' + JSON.stringify(ro));
     // a jump passing the section while its slices run
     const J2 = big({ state: { htmx: true }, before: function (w) {
@@ -446,7 +446,7 @@ const big = (o) => world(Object.assign({ topo: BIG, roOnMutation: true, roFrame:
     await M.advance(1000);
     press(M, 'mouse', 't1');
     const now = mkeys(M);
-    ok(now.length >= 1 && now.length <= 4 && now[0] === 'T1' && now.indexOf('gate_fidelity_avg') < 0
+    ok(now.length >= 1 && now.length <= 2 && now[0] === 'T1' && now.indexOf('gate_fidelity_avg') < 0
        && now.indexOf('assignment_fidelity') < 0 && !!M.doc.querySelector('#topo-metric-panels [data-group="coherence"]'),
        'S17 a T1 press builds the T1 panel and the ones under it in the press, not the metric section: ' + JSON.stringify(now));
     await M.advance(12000);
@@ -469,7 +469,7 @@ const big = (o) => world(Object.assign({ topo: BIG, roOnMutation: true, roFrame:
     await N.advance(1000);
     press(N, 'tab', 'readout');
     const rn = mkeys(N);
-    ok(rn[0] === 'assignment_fidelity' && rn.length <= 4, 'S17 a Read. Fid. tab press builds the readout section\'s top panels first: ' + JSON.stringify(rn));
+    ok(rn[0] === 'assignment_fidelity' && rn.length <= 2, 'S17 a Read. Fid. tab press builds the readout section\'s top panels first: ' + JSON.stringify(rn));
     await N.advance(12000);
     ok(mkeys(N).length === 15 && built(N).length === 20 && N.topOf('#sec-readout') === SM && N.errors().length === 0,
        'S17 ...and everything arrives around it, the section still under the bar — ' + N.topOf('#sec-readout'));
@@ -477,7 +477,7 @@ const big = (o) => world(Object.assign({ topo: BIG, roOnMutation: true, roFrame:
     await F.advance(1000);
     press(F, 'tab', 'frequencies');
     const fr = mkeys(F);
-    ok(fr[0] === 'f_01' && fr.length <= 4, 'S17 a Frequencies tab press builds that group\'s first panels first: ' + JSON.stringify(fr));
+    ok(fr[0] === 'f_01' && fr.length <= 2, 'S17 a Frequencies tab press builds that group\'s first panels first: ' + JSON.stringify(fr));
     // F5 on a place inside a metric panel: that panel at once, at its offset
     const E = big({ url: '/topology?view=coherence', chipView: 'coherence', state: { htmx: true,
       smChipScroll: { url: '/topology?view=coherence', view: 'coherence', d: 900, sel: '.topo-section[data-density-panel="T2echo"]', ds: 50, top: 1 } } });
@@ -485,7 +485,7 @@ const big = (o) => world(Object.assign({ topo: BIG, roOnMutation: true, roFrame:
     await E.advance(20);
     const eAt = E.topOf('.topo-section[data-density-panel="T2echo"]');
     await E.advance(12000);
-    ok(e0[0] === 'T2echo' && e0.length <= 4 && eAt === -50 && mkeys(E).length === 15
+    ok(e0[0] === 'T2echo' && e0.length <= 2 && eAt === -50 && mkeys(E).length === 15
        && E.topOf('.topo-section[data-density-panel="T2echo"]') === -50,
        'S17 F5 on a place inside the T2 Echo panel builds it at once and lands 50 px into it, and it stays there — '
        + JSON.stringify(e0) + ' ' + eAt + ' -> ' + E.topOf('.topo-section[data-density-panel="T2echo"]'));
