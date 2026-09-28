@@ -82,7 +82,40 @@ FIRST lab check: an edit the lab's gate refuses (`q1-2 cz_SNZ flux_pulse_qubit.f
 after every sample). See §3 table in the branch report `out_w8_labwarm.json` for the
 per-sample lines; summary filled below.
 
-(filled in from `lw9-krs5/ab.jsonl`, `lw9-big/ab.jsonl`)
+First lab check after the open, ms (each number one fresh-server sample; A and B
+interleaved; every check refused by the lab's gate, nothing written):
+
+| chip | check @ | A (base) | B (labwarm) |
+|---|---|---|---|
+| krs5 | edit +5 s | 25983, 25566, 14835 | 15289, 10247, 12964 |
+| krs5 | delete +5 s | 17896, 16055, 19344 | 27882, 10532, 19896 |
+| krs5 | edit +15 s | 26710, 16255, 20801 | 12487, 2313, 8650 |
+| krs5 | delete +15 s | 22803, 15123, 19729 | 9666, 1889, 11243 |
+| krs5 | edit +60 s | 12103 | **483** |
+| krs5 | delete +60 s | 16478 | **1302** |
+| big30x | edit (sent when `/bulk` finished, 32-45 s) | 12176, 10284, 11384, 11309, 18021 | **1939, 1132, 1921, 1582, 1467** |
+| big30x | delete (same) | 12323 | **4010** |
+| big30x | edit / delete +15 s (sent at ~44 s) | 25304 / 14273 | **1909 / 2172** |
+| big30x | edit / delete +60 s | 11497 / 13320 | **2002 / 1421** |
+| big30x, Pulses page first | delete / edit +15 s | 23541 / 26020 | **6911 / 2821** |
+
+- Open → worker ready (B, polled): krs5 median 18.4 s (15.0-32.6 s), big30x median
+  17.6 s (13.6-24.5 s) — the import alone, on a machine at 60-85 % CPU (docs/218
+  measured the same spawn at 8.8 s unloaded). At +5 s the worker is still importing,
+  so B's first check there is the rest of the import plus the check (still faster in
+  5 of 6 krs5 samples); once ready the remaining cost is the check itself (krs5 edit
+  0.48 s, delete 1.3 s — the delete asks `generate_config()` twice; big30x 1.1-2.0 s
+  edit, 1.4-4.0 s delete, the pruned gate `apply()` / config question on a 30-qubit chip).
+- Page loads, medians A → B: krs5 `/load` 461 → 463 ms, `/qubits` 503 → 475, `/bulk`
+  2234 → 2100 (14 + 14 samples); big30x `/load` 1029 → 1187, `/qubits` 1511 → 1527,
+  `/bulk` 38.7 → 39.3 s (10 + 10). The big30x `/load` gap was re-measured in process
+  (Flask test client, fresh process per sample, 6 + 6 interleaved): A median 2195 ms,
+  B 2070 ms — no slowdown.
+- The extra process: working set 284-290 MB, private commit ~1.21 GB (Win32
+  `PrivatePageCount`) — the same worker the first check started before; now alive from
+  the open until 60 min idle.
+- Pulses page first, big30x journey: the delete's first check 43.8 s → 12.4 s after the
+  sparkline warm was chunked (worker's first answer 71 s → 26 s after the open).
 
 ## 4. Pins
 
@@ -90,16 +123,24 @@ per-sample lines; summary filled below.
 route, delete step, activity exemption, quiet cap), `tests/lab_check_selfcheck.cjs`
 10-11 (+ render-time state), `tests/test_project_env.py` (memory, landing, opening,
 badge, OOB repaint, re-activation), `tests/landing_env_selfcheck.cjs` (picker, badge
-refresh). Mutation sweep: 40 mutations, each turned its pin(s) red, source restored
+refresh). Mutation sweep: 44 mutations (M1-M44), each turned its pin(s) red, source restored
 byte-equal (hash-checked). Journey: `tests/browser/journeys/lab_prewarm.cjs` (phases
 first / prep / grid / second / other / change).
 
-## 5. Open
+Refute-lens review (an independent critic agent over the diff): one P1 — an env
+selected from an ordinary chip open killed the old env's worker on the request thread
+(`Popen.wait(timeout=5)`) — fixed (`retire_except(background=True)`, pinned, mutation
+red); two P2 noted as design tradeoffs (below).
 
+## 5. Open
+- Only ONE env's worker is kept (the user's rule: retire on env change). A session that
+  alternates between two projects on DIFFERENT envs restarts a worker on every switch
+  (in the background, ~15-30 s under load) — the 60-min idle does not help that pattern.
 - The Pulses list's own sparkline warm (`_warm_lab_sparks`, docs/218) already started
   the worker when the user went to Pulses right after the open; the pre-warm defers to
   it (a check holding the env) — both A and B then pay that first batch (all visible lab
-  rows drawn in one ask) before the first check.
+  rows) before the first check. Fixed in-branch: that warm now asks in chunks of 4 and
+  yields to a waiting check between chunks; the first chunk still carries the imports.
 - The worker's commit charge is ~1.2 GB private (PrivatePageCount), working set ~285
   MB — the same process the first check started before, now alive from the open until
   60 min idle.
