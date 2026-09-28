@@ -41,6 +41,14 @@
  *      margins between every block, judged by an INDEPENDENT reading of the
  *      reader's view (the probe's rule: every landmark under the line, plus
  *      the next block below when no content sits at the line).
+ *   K. w8/dstab, app.js's real capture + afterSwap restore + switchDatasetTab
+ *      executed: a run WITHOUT the reader's tab (no Interactive, State N/A)
+ *      shows Full View at its top and leaves the intent alone, so the next
+ *      run with the tab lands on it at the same place; a scroll or a tab
+ *      press on that run (even Full View, the tab it already shows) replaces
+ *      the intent, a click does not, and re-pressing the restored tab on a
+ *      clamped run does not; a run opened into an EMPTY pane (after a close)
+ *      is a fresh open -- Full View at the top, not the stale offset.
  *
  * Run: node tests/ds_scroll_anchor_selfcheck.cjs
  */
@@ -671,6 +679,157 @@ const tpl = fs.readFileSync(path.join(__dirname, '..', 'quam_state_manager', 'we
         flushScroll();
         beforeSwap();
         ok(S().recaptured === false, 'H: same tab, no scroll: the intent is kept');
+    }
+}
+
+// ── K: the tab INTENT survives a run that lacks the tab (w8/dstab) ───────
+// The real capture listener, the real afterSwap restore (its synchronous
+// part, up to the settle timer) and the real switchDatasetTab, executed.
+// The reader is on tab T deep in run A; run C has no T (no HDF5 -> no
+// Interactive; State N/A): C shows Full View at its top WITHOUT rewriting
+// the intent, and the next run that has T lands on T at the same place --
+// unless the reader acted on C (a scroll, a tab press: even Full View, the
+// tab C already shows). A run opened into a pane that showed no run (after
+// a close) is a fresh open: Full View at the top (KH rig: 194 px down).
+{
+    const app3 = app.replace(/\r/g, '');
+    const sl = (a, b, from) => { const s = app3.indexOf(a, from || 0); const e = app3.indexOf(b, s);
+        if (s < 0 || e < 0) throw new Error('K: slice not found: ' + a); return app3.slice(s, e + b.length); };
+    const asStart = app3.indexOf("document.addEventListener('htmx:afterSwap', function(evt) {",
+        app3.indexOf('// Restore state after HTMX loads new dataset detail'));
+    const asEnd = app3.indexOf('\n    setTimeout(function() {\n        // 1. The tab + place', asStart);
+    const src = [
+        "var _DS_COMBINED_TABS = ['full', 'overview', 'results', 'figures'];",
+        'var _pendingTreeHighlight = null;',
+        'function syncSidebarTreeHighlight() {}',
+        'function _h5Panel() { return document.getElementById("inspector-pane"); }',
+        'function loadDatasetInteractive() {} function _observeInteractiveResize() {} function loadPrevDiffInto() {}',
+        'var htmx = undefined;',
+        sl('var _dsSticky = {', '\n};'),
+        sl('var _dsScroll = {', '};'),
+        sl('window.switchDatasetTab = function(tabName, linkEl) {', '\n};'),
+        'var switchDatasetTab = window.switchDatasetTab;',   // app.js calls it bare
+        sl('function _dsShownTab(pane) {', '\n}'),
+        sl('(function() {\n    function _dsPaneOf', '\n})();'),
+        bs.slice(bs.indexOf('document.addEventListener')).replace(/\r/g, ''),
+        (asStart > 0 && asEnd > asStart) ? app3.slice(asStart, asEnd) + '\n});' : 'throw new Error("K: afterSwap slice")',
+        'return { get s() { return _dsScroll; } };',
+    ].join('\n');
+    let K;
+    try { K = new Function('window', 'document', 'setTimeout', src)(window, document, function () {}); }
+    catch (e) { ok(false, 'K: the app.js slices run: ' + e.message); }
+    if (K) {
+        const IF = (hs) => hs.map((h, i) => ({ name: 'f' + (i + 1), h }));
+        const run = (uid, o) => Object.assign({ uid, ifigs: null, state: true, figH: 600, infoH: 1600 }, o);
+        const KA = run('ka', { ifigs: IF([400, 400, 500, 400]) });
+        const KB = run('kb', { ifigs: IF([300, 450, 500, 400]), infoH: 1900 });   // other heights above f3
+        const KC = run('kc', { ifigs: null, infoH: 2600 });                         // no Interactive
+        const KN = run('kn', { ifigs: IF([400, 400, 500, 400]), state: false });     // State N/A
+        const KS = run('ks', { ifigs: IF([300, 200]) });                             // Interactive, but short
+        const html = (o) => {
+            const link = (t, has) => has ? `<a data-ds-tab="${t}"${t === 'full' ? ' class="active"' : ''} data-h="0"></a>`
+                                         : (t === 'state' ? '<a class="disabled" data-h="0"></a>' : '');
+            return `<div id="ds-detail-root" data-uid="${o.uid}">
+              <div class="hdr" data-h="80"></div>
+              <nav class="dataset-tabs" data-h="40">${link('full', 1)}${link('figures', 1)}${link('interactive', !!o.ifigs)}${link('state', o.state)}</nav>
+              <div class="dataset-tab-content" id="ds-tab-combined" data-view="full">
+                <section data-fvsec="figures"><div data-h="${o.figH}"></div></section>
+                <section data-fvsec="overview"><details open class="detail-section"><summary data-h="24">Experiment Info</summary><div data-h="${o.infoH}"></div></details></section>
+              </div>
+              <div class="dataset-tab-content hidden" id="ds-tab-interactive">${(o.ifigs || []).map(f =>
+                  `<div class="ds-interactive-fig" data-fig="${f.name}" data-h="${f.h}"></div>`).join('')}</div>
+              <div class="dataset-tab-content hidden" id="ds-tab-state">${o.state ? '<details open><summary data-h="24">state.json</summary><div data-h="2400"></div></details>' : ''}</div>
+            </div>`;
+        };
+        const ev = (name) => pane.dispatchEvent(new window.CustomEvent(name, { bubbles: true, detail: { target: pane } }));
+        const swap = (o) => {   // one htmx swap into the pane: beforeSwap -> new content -> afterSwap
+            ev('htmx:beforeSwap');
+            pane.innerHTML = html(o);
+            if (scrollTop > maxTop()) pane.scrollTop = maxTop();
+            ev('htmx:afterSwap');
+            flushScroll();
+        };
+        const shown = () => { const a = pane.querySelector('.dataset-tabs a.active[data-ds-tab]'); return a ? a.getAttribute('data-ds-tab') : null; };
+        const press = (t) => window.switchDatasetTab(t, pane.querySelector(`.dataset-tabs a[data-ds-tab="${t}"]`));   // the link's onclick
+        const ifig = (n) => pane.querySelector(`.ds-interactive-fig[data-fig="${n}"]`);
+        const offIfig = (n) => PANE_TOP - ifig(n).getBoundingClientRect().top;
+        const readerAt = (tab, n, within) => {   // the reader picks `tab` and scrolls to `within` px into landmark n
+            press(tab); flushScroll();
+            const tgt = tab === 'interactive' ? ifig(n) : pane.querySelector('#ds-tab-state details');
+            pane.scrollTop = scrollTop + (tgt.getBoundingClientRect().top - PANE_TOP) + within;
+            flushScroll();
+        };
+        const S = () => K.s;
+
+        // a first open into the empty pane: Full View, top
+        pane.innerHTML = ''; scrollTop = 0;
+        swap(KA);
+        ok(shown() === 'full' && pane.scrollTop === 0, 'K: first open lands on Full View at the top');
+        readerAt('interactive', 'f3', 55);
+        ok(offIfig('f3') === 55 && S().userMoved === true, 'K: (fixture) the reader is 55 px into f3 on Interactive');
+        const homeTop = pane.scrollTop;
+        // C lacks Interactive: Full View at its top, the intent untouched
+        swap(KC);
+        ok(shown() === 'full' && pane.scrollTop === 0, 'K1: a run without the tab shows Full View at its top, got ' + shown() + '@' + pane.scrollTop);
+        ok(S().intent && S().intent.tab === 'interactive', 'K1: the intent still names Interactive');
+        swap(KB);
+        ok(shown() === 'interactive', 'K1: the next run WITH the tab lands on it, got ' + shown());
+        ok(offIfig('f3') === 55, 'K1: ...at the same place (55 px into f3), got ' + offIfig('f3'));
+        swap(KC); swap(KA);
+        ok(shown() === 'interactive' && pane.scrollTop === homeTop && offIfig('f3') === 55,
+           'K1: home again through C: identical scrollTop ' + pane.scrollTop + ' vs ' + homeTop);
+
+        // a click on a blank spot of C is not a choice
+        swap(KC);
+        pane.querySelector('.hdr').dispatchEvent(new window.MouseEvent('mousedown', { bubbles: true }));
+        swap(KB);
+        ok(shown() === 'interactive' && offIfig('f3') === 55, 'K3: a click (no scroll) on C keeps the intent, got ' + shown());
+
+        // Full View PRESSED on C (the tab it already shows) is the reader's choice
+        swap(KC);
+        press('full');
+        swap(KB);
+        ok(shown() === 'full', 'K2: Full View pressed on the run without the tab replaces the intent, got ' + shown());
+        ok(S().intent && S().intent.tab === 'full', 'K2: the intent now names Full View');
+        // ...and pressing the tab a run ALREADY landed on (the intent's own tab)
+        // is not a new place: on a run too short to hold it, a re-press must
+        // not re-capture the clamped landing
+        readerAt('interactive', 'f3', 55);
+        swap(KS);
+        ok(shown() === 'interactive' && S().pin && S().pin.last && S().pin.last.exact === false,
+           'K2: (fixture) the short run lands on Interactive, clamped');
+        press('interactive');                      // re-press the tab it restored
+        swap(KB);
+        ok(offIfig('f3') === 55, 'K2: re-pressing the restored tab on a clamped run keeps the intent, got ' + offIfig('f3'));
+
+        // a reader scroll on C replaces it (Full View at C's place)
+        swap(KC);
+        pane.scrollTop = 700; flushScroll();
+        swap(KB);
+        ok(shown() === 'full' && S().intent.tab === 'full', 'K4: a scroll on the run without the tab is a new place, got ' + shown());
+
+        // State N/A: the same for the State tab
+        swap(KA);
+        readerAt('state', null, 333);
+        const stTop = pane.scrollTop;
+        swap(KN);
+        ok(shown() === 'full' && pane.scrollTop === 0, 'K5: a run with State N/A shows Full View at its top, got ' + shown());
+        swap(KA);
+        ok(shown() === 'state' && pane.scrollTop === stTop, 'K5: back on a run with State: same tab, same place ' + pane.scrollTop + ' vs ' + stTop);
+
+        // a close, then an open: fresh -- not the intent, not the emptied pane's stale offset
+        swap(KB);
+        readerAt('interactive', 'f3', 55);
+        pane.innerHTML = '';                       // closeInspector(); Chrome kept the old offset (KH: 194)
+        ok(scrollTop > 0, '(fixture) the emptied pane still holds the old offset');
+        swap(KA);
+        ok(shown() === 'full' && pane.scrollTop === 0, 'K6: open after a close lands on Full View at the top, got ' + shown() + '@' + pane.scrollTop);
+        swap(KB);
+        ok(shown() === 'full', 'K6: ...and the next switch keeps THAT view (Full View), got ' + shown());
+        readerAt('interactive', 'f3', 55);
+        pane.innerHTML = '';
+        swap(KB);                                  // the SAME run re-opened after the close
+        ok(shown() === 'full' && pane.scrollTop === 0, 'K6: the same run re-opened after a close: Full View at the top, got ' + shown() + '@' + pane.scrollTop);
     }
 }
 

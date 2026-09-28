@@ -13484,6 +13484,14 @@ var _DS_COMBINED_TABS = ['full', 'overview', 'results', 'figures'];
 window.switchDatasetTab = function(tabName, linkEl) {
     window._dsActiveTab = tabName;
     _dsSticky.tab = tabName;
+    // w8/dstab: the tab the reader PICKED on this run (a click / Enter on a
+    // tab of the run in the inspector). Kept apart from the tab SHOWN: a run
+    // without the reader's tab shows Full View without it being their
+    // choice, but a press on Full View there IS their choice. The restore's
+    // own switch is cleared again when it records its landing.
+    if (linkEl && linkEl.closest && linkEl.closest('#inspector-pane #ds-detail-root')) {
+        _dsScroll.picked = tabName;
+    }
     // Scope EVERY query to the panel containing the clicked tab. In the pinned
     // compare view there are two detail panels (the left one's ids are `pinned-`
     // prefixed), so global getElementById/querySelectorAll would clobber both and
@@ -17840,8 +17848,14 @@ var _dsSticky = {
 //                that no restore of this module caused
 //   pin       -- the live DsScrollAnchor.pin keeping the intent in place while
 //                the new run's lazy content settles
+//   picked    -- the tab the reader picked on this run since it landed (null:
+//                none); a pick that differs from the intent's tab re-captures
+//   fromRun   -- whether the pane showed a run when this swap began; a run
+//                opened into an empty pane (after a close, over a qubit
+//                inspector, the first open) is a FRESH open, not a switch
 var _dsScroll = { intent: null, userMoved: true, pin: null, recaptured: false,
-                  landedTab: undefined };   // the tab the last restore showed
+                  landedTab: undefined,   // the tab the last restore showed
+                  picked: null, fromRun: undefined };
 
 // The tab a dataset detail is SHOWING (its active link), and that tab's
 // content element. Read from the DOM, not window._dsActiveTab, which a fresh
@@ -17939,15 +17953,23 @@ document.addEventListener('htmx:beforeSwap', function(evt) {
     _dsScroll.recaptured = false;
     if (!evt.detail || !evt.detail.target) return;
     if (evt.detail.target.id !== 'inspector-pane') return;
-    if (window._pinnedRunId) return;
     var pane = document.getElementById('inspector-pane');
+    // Read before anything returns: the afterSwap below needs it for EVERY
+    // swap into the pane (a stale value would call a close + reopen a switch).
+    _dsScroll.fromRun = !!(pane && pane.querySelector('#ds-detail-root'));
+    if (window._pinnedRunId) return;
     if (!pane) return;
     if (_dsScroll.pin) { _dsScroll.pin.stop(); _dsScroll.pin = null; }
     var dsRoot = pane.querySelector('#ds-detail-root');
     // A tab the reader picked since the restore is a new place even where
-    // the scroll position did not change (the new tab was tall enough).
-    var tabChanged = dsRoot && _dsScroll.landedTab !== undefined &&
-        _dsShownTab(pane).tab !== _dsScroll.landedTab;
+    // the scroll position did not change (the new tab was tall enough) --
+    // and even where it is the tab already SHOWN: Full View pressed on a run
+    // that lacked the reader's tab replaces that tab (w8/dstab). A run that
+    // lacked it and was merely looked at keeps the intent for the next run.
+    var tabChanged = dsRoot && (
+        (_dsScroll.landedTab !== undefined && _dsShownTab(pane).tab !== _dsScroll.landedTab) ||
+        (_dsScroll.picked != null && (!_dsScroll.intent || _dsScroll.picked !== _dsScroll.intent.tab)));
+    _dsScroll.picked = null;   // a pick belongs to the run it was made on
     if (dsRoot && (_dsScroll.userMoved || tabChanged || !_dsScroll.intent)) {
         // The place: the active tab + a landmark chain under the pane's top edge.
         var shown = _dsShownTab(pane);
@@ -18164,6 +18186,14 @@ document.addEventListener('htmx:afterSwap', function(evt) {
     // swap so a failed detail render can never leak it onto a later navigation.
     var freshOpen = window._dsOpenAtTop === true;
     window._dsOpenAtTop = false;
+    // w8/dstab: a run opened into a pane that showed NO run (closed with x,
+    // a qubit inspector, the first open) is a fresh open too: Full View at
+    // the top. It used to replay the last intent (a run switch the reader
+    // never made) or, with none captured, keep the emptied pane's stale
+    // offset -- Full View opened 194 px down on the KH rig after a close.
+    var fromRun = _dsScroll.fromRun;
+    _dsScroll.fromRun = undefined;
+    if (fromRun === false) freshOpen = true;
     var root = pane.querySelector('#ds-detail-root');
     if (!root) return;
 
@@ -18175,7 +18205,10 @@ document.addEventListener('htmx:afterSwap', function(evt) {
     syncSidebarTreeHighlight(newRunId, root.dataset.date);
 
     if (newRunId === _dsSticky.currentRunId) {
-        if (freshOpen) pane.scrollTop = 0;   // re-opened the same run from the popup
+        if (freshOpen) {   // re-opened the same run from the popup, or after a close
+            pane.scrollTop = 0;
+            _dsScroll.userMoved = true;
+        }
         return;
     }
 
@@ -18203,7 +18236,10 @@ document.addEventListener('htmx:afterSwap', function(evt) {
     // this swap (a delayed restore painted the new run at the old pixel offset
     // first and then jumped), and keep it there while lazy content settles.
     // Full View stays the landing tab for a fresh open (above) and for a run
-    // that has no such tab (State N/A, no HDF5 → no Interactive).
+    // that has no such tab (State N/A, no HDF5 → no Interactive) -- at its
+    // top, WITHOUT touching the intent: the next run that has the tab gets
+    // the reader's place back (w8/dstab, measured on the KH rig), unless the
+    // reader scrolled or picked a tab on this one (see the capture above).
     window._dsActiveTab = 'full';
     var it = _dsScroll.intent;
     if (it) {
@@ -18227,6 +18263,7 @@ document.addEventListener('htmx:afterSwap', function(evt) {
     }
     _dsScroll.userMoved = false;
     _dsScroll.landedTab = _dsShownTab(pane).tab;
+    _dsScroll.picked = null;   // the restore's own switch is not the reader's pick
 
     setTimeout(function() {
         // 1. The tab + place were restored in the swap itself (queue item 6,

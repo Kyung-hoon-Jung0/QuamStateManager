@@ -144,3 +144,63 @@ Merged into `integ/w7` with no conflicts listed for this branch.
   is not a run-navigation key in the detail.
 - The full 6-tab journey takes more than 10 minutes; Raw Data needs `--height
   700` on this rig and Interactive about 64 switches.
+
+## 8. w8/dstab (2026-09-28): the tab intent across a run that lacks the tab
+
+The customer's wish, verbatim: "run 2529를 열어 놓고 스크롤하거나 다른 탭을 연
+상태에서 run 3002를 클릭하면, 방금 봤던 바로 그 스크롤 위치와 탭 위치를 유지하는
+것". §4 left one question open: does a run WITHOUT the reader's tab (no HDF5 ->
+no Interactive; State N/A) overwrite the remembered tab when it falls back to
+Full View? Measured on the merged head `4e0a9b5`, KH rig, 1600x950, real clicks
+and keys, before any change: **no**. A (#4121, Interactive, deep) -> C (#4106,
+no Interactive: Full View at its top) -> D (#4109): Interactive, the same tile
+at delta 0 under the sticky header; back on A the identical scrollTop. The same
+with `]`/`[` and with j+Enter over #4107 > #4106 > #4105, and with a click on a
+blank spot of C. The dsscroll matrix (8 cases) was already clean.
+
+Two adjacent gaps were found and fixed (`app.js`):
+
+1. **A tab pressed on C was ignored when it was the tab C already showed.**
+   The re-capture compared the shown tab with the tab the restore landed on;
+   pressing Full View on C (Full View already shown) changed neither, so D went
+   back to Interactive against the reader's explicit choice. `_dsScroll.picked`
+   now records a tab the reader presses on a run in the inspector
+   (`switchDatasetTab` from the link's onclick, Enter/Space included); a pick
+   that differs from the INTENT's tab re-captures at the next switch. A pick
+   equal to the intent's tab (re-pressing the restored tab on a clamped run)
+   still re-captures nothing, so it cannot store the clamped landing.
+2. **A run opened into an EMPTY pane was treated as a run switch.** After x
+   (or over a qubit inspector) the pane shows no run, yet the next open
+   replayed the last intent -- or, when none had been captured, kept the
+   emptied pane's old offset: Full View opened 194-388 px down, the tab strip
+   scrolled away. `_dsScroll.fromRun` (read in the capture-phase beforeSwap,
+   before the pinned return) makes such an open FRESH: Full View at the top,
+   the next switch keeps that view. A run opened from another page while the
+   (collapsed) inspector still holds a run is still a switch.
+
+Measured after (probe `intent_probe.cjs` + journey, same rig, same head):
+
+| case | before | after |
+|---|---|---|
+| A Interactive -> C (lacks it) -> D -> A: D exact, A identical (click, `]`/`[`, j+Enter, blank click on C) | pass | pass |
+| Full View pressed on C -> D | Interactive (388 px) | Full View |
+| x on A, then open a run | Full View at 388 px | Full View at 0 |
+| first open / full-page `/dataset/<uid>` | Full View at 0 | Full View at 0 |
+| clamp: Figures deep -> #4071 (no figures) -> A | identical | identical |
+| dsscroll matrix, 8 cases | 0 miss, back 47/47, 0 jumps | 0 miss, back 47/47, 0 jumps |
+| jenter switch latency (interleaved, 2 each) | 367 / 419 ms | 368 / 376 ms |
+
+Not changed, recorded: on #4102 (16_iq_blobs, 16 Interactive tiles) the return
+to A lands the reader's tile at delta 0 and the pane pixel-identical, but
+scrollTop is 100-120 px lower than the first visit -- tiles above the reader
+that were rendered on the first visit (386 px) are unrendered placeholders
+(366 px) on the return. Identical on base and fix; not a tab-intent defect.
+
+Pins: `tests/ds_scroll_anchor_selfcheck.cjs` §K (the real capture listener,
+afterSwap restore and `switchDatasetTab` executed; 102/102) and
+`tests/browser/journeys/ds_tab_intent.cjs` (real Chrome, runs discovered from
+the table). Mutations, each red: pick clause dropped; pick compared with the
+shown tab; any pick re-captures; pick not recorded; `fromRun` ignored;
+`fromRun` always true; same-run reopen keeps the stale offset; landing records
+the intended tab (C overwrites the intent). Journey: the last, the unrecorded
+pick and the ignored `fromRun`, each red.
