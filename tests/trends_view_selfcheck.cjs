@@ -26,6 +26,7 @@
  */
 'use strict';
 require('./_sm_root_boot.cjs').install();
+const PREFIX = process.env.SM_TEST_URL_PREFIX || '';   // docs/226: expected addresses live under this mode's URL prefix
 try { require('jsdom'); } catch (e) { console.error('jsdom not installed'); process.exit(2); }
 const H = require('./trends_view_harness.cjs');
 
@@ -141,7 +142,7 @@ async function view(body, opts) {
     const labels = () => Array.from(fig.querySelectorAll('.figure-strip-label')).map((x) => x.textContent);
     ok(labels().length === 50 && labels()[0] === '#1129' && labels()[49] === '#1080', 'F: the newest 50 first (' + labels()[0] + '..' + labels()[49] + ')');
     const img = fig.querySelector('img');
-    ok(img.getAttribute('src') === '/dataset/kk:1129/fig/figure' && /toggleFigureZoom\(this\)/.test(img.getAttribute('onclick') || '')
+    ok(img.getAttribute('src') === PREFIX + '/dataset/kk:1129/fig/figure' && /toggleFigureZoom\(this\)/.test(img.getAttribute('onclick') || '')
        && img.getAttribute('loading') === 'lazy', 'F: each is the run\'s figure, lazy, opening the viewer');
     const more = fig.querySelector('.trends-figtl-more');
     ok(more && !more.hidden && /^Show 50 older \(80 not shown yet\)$/.test(more.textContent), 'F: "Show older" says how many remain (' + (more && more.textContent) + ')');
@@ -239,14 +240,14 @@ async function view(body, opts) {
     ];
     const el = d.el;
     el.__handlers.plotly_click[0]({ points: pts, event: { clientY: 10 + 100 - 30000 / 200 } });
-    const clicked = W.ajax.filter((a) => /^\/dataset\//.test(a.url)).map((a) => a.url);
-    ok(clicked[clicked.length - 1] === '/dataset/kk:1010', 'I: a click opens the point drawn nearest the pointer (' + clicked.join(',') + ')');
+    const clicked = W.ajax.filter((a) => String(a.url).indexOf(PREFIX + '/dataset/') === 0).map((a) => a.url);
+    ok(clicked[clicked.length - 1] === PREFIX + '/dataset/kk:1010', 'I: a click opens the point drawn nearest the pointer (' + clicked.join(',') + ')');
     el.__handlers.plotly_click[0]({ points: pts, event: { clientY: 10 + 100 - 5000 / 200 } });
-    const c2 = W.ajax.filter((a) => /^\/dataset\//.test(a.url)).map((a) => a.url);
-    ok(c2[c2.length - 1] === '/dataset/kk:1009', 'I: ...and the normal point when the pointer is on it');
+    const c2 = W.ajax.filter((a) => String(a.url).indexOf(PREFIX + '/dataset/') === 0).map((a) => a.url);
+    ok(c2[c2.length - 1] === PREFIX + '/dataset/kk:1009', 'I: ...and the normal point when the pointer is on it');
     el.__handlers.plotly_click[0]({ points: pts.slice().reverse() });
-    const c3 = W.ajax.filter((a) => /^\/dataset\//.test(a.url)).map((a) => a.url);
-    ok(c3.length === c2.length + 1 && c3[c3.length - 1] === '/dataset/kk:1010', 'I: no pointer height -> the first uid, as before');
+    const c3 = W.ajax.filter((a) => String(a.url).indexOf(PREFIX + '/dataset/') === 0).map((a) => a.url);
+    ok(c3.length === c2.length + 1 && c3[c3.length - 1] === PREFIX + '/dataset/kk:1010', 'I: no pointer height -> the first uid, as before');
   }
   {
     const n = 40, v = [];

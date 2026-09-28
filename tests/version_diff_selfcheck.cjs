@@ -13,6 +13,7 @@
  */
 'use strict';
 require('./_sm_root_boot.cjs').install();
+const PREFIX = process.env.SM_TEST_URL_PREFIX || '';   // docs/226: expected addresses live under this mode's URL prefix
 const fs = require('fs');
 const path = require('path');
 let JSDOM;
@@ -236,7 +237,7 @@ function partial(ts, extra) {
         .join('');
     SV.compare('CHIP_A');
     await tick();
-    ok(seen.length === 1 && seen[0].indexOf('/diff/versions?') === 0,
+    ok(seen.length === 1 && seen[0].indexOf(PREFIX + '/diff/versions?') === 0,
        '3 ticks go to the differences-only table, not the Compare hub: ' + seen[0]);
     ok(seen[0].indexOf('chip_key=CHIP_A') > -1,
        'the N-way URL carries the chip identity too');
@@ -248,7 +249,7 @@ function partial(ts, extra) {
         .join('');
     SV.compare('CHIP_A');
     await tick();
-    ok(seen.length === 1 && seen[0].indexOf('/diff/snapshots?') === 0,
+    ok(seen.length === 1 && seen[0].indexOf(PREFIX + '/diff/snapshots?') === 0,
        '2 ticks still open the docs/84 workbench: ' + seen[0]);
 
     // ---- 9. Compare lights the sidebar's Compare item (docs/132) -------

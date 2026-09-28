@@ -27,6 +27,7 @@
  */
 'use strict';
 require('./_sm_root_boot.cjs').install();
+const PREFIX = process.env.SM_TEST_URL_PREFIX || '';   // docs/226: expected addresses live under this mode's URL prefix
 
 const fs = require('fs');
 const path = require('path');
@@ -294,7 +295,7 @@ world.push((function () {
     ok(fire(win, 'plotly_click', { points: [{ customdata: pts[1] }] }) === 1,
        '4a exactly one click handler is bound');
     ok(win._htmxCalls.length === 1, '4b a uid point issues one request');
-    ok(win._htmxCalls[0][0] === 'GET' && win._htmxCalls[0][1] === '/dataset/a1b2c3d4:34',
+    ok(win._htmxCalls[0][0] === 'GET' && win._htmxCalls[0][1] === PREFIX + '/dataset/a1b2c3d4:34',
        '4c ...to /dataset/<folder_key>:<run_id>, never a bare run id');
     // htmx 2 has NO `pushUrl` ajax option -- the bundled htmx.min.js contains
     // the string zero times -- so passing one only looked like history support.
@@ -438,7 +439,7 @@ world.push((function () {
         fn({ points: [{ customdata: cd }] }); }); };
     fireIt(withUid);
     ok(win._htmxCalls.length === 1
-       && win._htmxCalls[0][1] === '/dataset/a1b2c3d4:34',
+       && win._htmxCalls[0][1] === PREFIX + '/dataset/a1b2c3d4:34',
        '6e the click opens /dataset/<folder_key>:<run_id>, not a bare run id');
     win._htmxCalls.length = 0;
     fireIt(noUid);
@@ -458,7 +459,7 @@ world.push((function () {
     win._htmxCalls.length = 0;
     fireIt(split);
     ok(win._htmxCalls.length === 1
-       && win._htmxCalls[0][1] === '/dataset/a1b2c3d4:64',
+       && win._htmxCalls[0][1] === PREFIX + '/dataset/a1b2c3d4:64',
        '6k the tier-split point opens the run the hint promised');
   });
 })());

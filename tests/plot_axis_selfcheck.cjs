@@ -19,6 +19,7 @@
  * previous version only grepped for the call.
  */
 require('./_sm_root_boot.cjs').install();
+const PREFIX = process.env.SM_TEST_URL_PREFIX || '';   // docs/226: expected addresses live under this mode's URL prefix
 const fs = require('fs');
 const path = require('path');
 const { JSDOM } = require('jsdom');
@@ -174,7 +175,7 @@ done.push(new Promise(function (resolve) {
                 win._htmxCalls.length = 0;
                 chart._h.plotly_click({ points: [{ customdata: [0, 0, 0, 0, 'ab12cd34:34'] }] });
                 const call = win._htmxCalls[0] || [];
-                ok(call[1] === '/dataset/ab12cd34:34', '3f a drawer click opens that run');
+                ok(call[1] === PREFIX + '/dataset/ab12cd34:34', '3f a drawer click opens that run');
                 ok(call[2] && call[2].target === '#inspector-pane' && call[2].source === '#inspector-pane',
                    '3g ...in the inspector pane, never over the chart it came from');
                 resolve();

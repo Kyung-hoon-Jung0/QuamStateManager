@@ -21,6 +21,7 @@
  */
 'use strict';
 require('./_sm_root_boot.cjs').install();
+const PREFIX = process.env.SM_TEST_URL_PREFIX || '';   // docs/226: expected addresses live under this mode's URL prefix
 
 const fs = require('fs');
 const path = require('path');
@@ -39,8 +40,8 @@ function ok(c, m) { asserts++; if (!c) { console.error('FAIL: ' + m); fails++; }
 
 const HTML = '<!doctype html><html><body>'
   + '<aside class="sidebar"><nav class="sidebar-nav"><ul>'
-  + '<li><a id="nav-diag" href="/diagnostics" hx-get="/diagnostics" hx-target="#table-pane" hx-push-url="true" class="active">Diagnostics</a></li>'
-  + '<li><a id="nav-explorer" href="/explorer" hx-get="/explorer" hx-target="#table-pane" hx-sync="#table-pane:replace" hx-push-url="true">Json Tree View</a></li>'
+  + '<li><a id="nav-diag" href="' + PREFIX + '/diagnostics" hx-get="' + PREFIX + '/diagnostics" hx-target="#table-pane" hx-push-url="true" class="active">Diagnostics</a></li>'
+  + '<li><a id="nav-explorer" href="' + PREFIX + '/explorer" hx-get="' + PREFIX + '/explorer" hx-target="#table-pane" hx-sync="#table-pane:replace" hx-push-url="true">Json Tree View</a></li>'
   + '</ul></nav></aside>'
   + '<main><div id="table-pane"></div></main><div id="status-bar"></div></body></html>';
 
@@ -85,7 +86,7 @@ window.eval(fs.readFileSync(path.join(STATIC, 'app.js'), 'utf8'));
 window._showPlotClickToast = function () {};
 
 function sleep(ms) { return new Promise(function (r) { setTimeout(r, ms); }); }
-function explorerCalls() { return calls.filter(function (c) { return String(c.url).indexOf('/explorer') === 0; }); }
+function explorerCalls() { return calls.filter(function (c) { var u = String(c.url); if (PREFIX && u.indexOf(PREFIX + '/') === 0) u = u.slice(PREFIX.length); return u.indexOf('/explorer') === 0; }); }
 
 async function main() {
   ok(typeof window._navigateToExplorerPath === 'function', 'preflight: the helper is exported');
