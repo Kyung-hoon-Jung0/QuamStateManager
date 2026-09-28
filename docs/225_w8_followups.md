@@ -210,3 +210,44 @@ Full suite: run as three parallel shards in detached worktrees at the w8
 head (`D:\work\sm_qa_rigs\_findings\w8_shard{1,2,3}.txt`); the result and
 the classification against `be7884c` are in `out_integ_w8.json` beside this
 document's sources.
+
+## 7. Addendum (2026-09-28, second w8 wave): two more branches
+
+| branch | branch head | what |
+|---|---|---|
+| `w8/dstab` | `b7a193c` | Datasets: the reader's tab survives a run that lacks it -- a tab PRESSED on that run is recorded (`_dsScroll.picked`), and a run opened into an empty or non-run pane is a FRESH open (Full View at the top); docs/221 §8 |
+| `w8/pulsehint` | `82e41e7` | Pulses: "Don't see your pulse class?" under the + New pulse class list (`_pulse_class_find.html`; ok / failed-module / no-env states), OOB-synced with the env strip, one env probe per Add/Remove module, in-place class-list update that keeps a touched form |
+
+Both cut from `4e0a9b5`, merged pairwise clean and clean against the head.
+
+**dstab, measured (implementer, real Chrome).** Journey `ds_tab_intent.cjs`:
+5Q KH rig 8/10 → 10/10 and big30x 8/10 → 10/10 (the two failures were the
+pick on a tab-less run landing back on Interactive at 388 px, and a re-open
+after close at 388 px); keyboard pick (focus + Enter) D = interactive@414 →
+full@0; intent probe 44 → 47 of 56 (the 9 left are clamped short runs and a
+pre-existing #4102 Interactive scrollTop offset, identical on base); the
+dsscroll matrix stays 0 miss / back exact 47/47 with switch medians within
+noise (e.g. full_1600 329 → 327 ms). Pins: `ds_scroll_anchor_selfcheck.cjs`
+section K (19 assertions, 102 total), 8 mutations red in jsdom + 3 in real
+Chrome. Open: the #4102 return lands 100-120 px lower in scrollTop (tiles
+above are 366 px placeholders on return, pre-existing); a run opened from
+another page while the collapsed inspector still holds a run counts as a
+switch (design choice to confirm); docs/221 §7 still awaits confirmation.
+
+**pulsehint, measured (implementer, real Chrome, interleaved vs 4e0a9b5).**
+krs5 add-a-module-to-a-class-in-the-picker: 32.2 / 31.6 s plus an extra
+"refresh (clears this form)" click → 14.9 / 16.9 s with no click; env probes
+per Add module 2 → 1, per Remove 2 → 1; a touched form (op name typed) gets
+the class in place at 12.8 s with the name kept; big30x New-pulse click to
+class list 521 → 507 ms, strip GET 13 → 14 ms, keystrokes within noise; one
+line at 1366/1600, light and dark. Also fixed on the way: typing a module
+name in the strip marked the whole create form dirty (now only edits inside
+`form.pulse-create-form` do). Pins: `tests/test_pulse_class_find.py` (10,
+driving `tests/pulses_classfind_fragcheck.cjs` -- real htmx + app.js +
+pulses.js on the real route renders), journey `pulses_classfind.cjs`; 19
+mutation/pin pairs red. Open: a reload inside the ~15 s post-create re-probe
+window shows a transient schema banner (pre-existing harvest-drift re-probe,
+docs/218); if the selected class's own spec changes in the same probe that
+brings a new module, the touched form still falls back to the "refresh"
+offer.
+
