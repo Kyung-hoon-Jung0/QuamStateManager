@@ -387,6 +387,17 @@ window.ChipStatus.jumpGuard = (function () {
         var o = (off > 0 && off >= room(el, pane)) ? 0 : off;
         pane.scrollTop += r.top - pane.getBoundingClientRect().top + o;
     }
+    /* w8 chipplace: a restore anchored on a PANEL ("sel:<tab>:<panel>") carries
+       an offset into that panel. When the page has no such panel (the chip
+       lost that metric, or it is not built), the selector falls back to the
+       tab's section -- and the panel's offset means nothing there: the
+       section's own offset (`foff`, recorded beside it) does. */
+    function offFor(sel) {
+        if (last.off === null) return null;
+        var m = /^sel:[^:]+:(.+)$/.exec(String(last.view || ''));
+        if (m && sel !== m[1]) return (typeof last.foff === 'number') ? last.foff : 0;
+        return last.off;
+    }
     var BELOW = ['fidelity2q', 'fidelity1q', 'readout',
                  'coherence', 'frequencies', 'calibration'];   // rendered below Trends
     /* QA F-06: a jump TO Trends is re-anchored too. It is not displaced but
@@ -433,9 +444,10 @@ window.ChipStatus.jumpGuard = (function () {
         /* QA F-20: `off` (optional) is a position INSIDE the section -- px past
            its top edge -- so a Back restore survives the lazy content above it
            the same way a jump does. Without it: the section's own top, as ever. */
-        note: function (view, pane, off) {
+        note: function (view, pane, off, foff) {
             var now = Date.now();
-            last = { view: view, at: now, act: now, off: (typeof off === 'number') ? off : null };
+            last = { view: view, at: now, act: now, off: (typeof off === 'number') ? off : null,
+                     foff: (typeof foff === 'number') ? foff : null };
             arm(pane);
         },
         below: BELOW,
@@ -466,7 +478,7 @@ window.ChipStatus.jumpGuard = (function () {
             if (!el || !el.scrollIntoView) return false;
             last.act = Date.now();
             if (last.off !== null && armedPane) {
-                land(el, armedPane, last.off);
+                land(el, armedPane, offFor(sel));
                 return true;
             }
             el.scrollIntoView({ behavior: 'auto', block: 'start' });
@@ -4507,8 +4519,12 @@ window.ChipStatus.mount = function (opts) {
         // mount's deep link passes no button: it runs mid-swap, before htmx has
         // pushed the new entry, and must not rewrite the previous page's URL.
         // history.state is kept (htmx's {htmx:true} marker rides the entry).
+        // w8 chipplace: the place a jump goes to is known NOW -- it is noted as
+        // this entry's scroll record in the same write (an F5 before the
+        // debounced scroll record ran used to come back at the section top).
+        if (scroll !== false) _placeJumped(view, null);
         if (btn && TAB_SPEC[view]) {
-            try { history.replaceState(history.state, '', '/topology?view=' + view); } catch (e) {}
+            _placeWriteJump('/topology?view=' + view);
             if (window.syncSidebarNavActive) window.syncSidebarNavActive();
         }
         if (scroll !== false) _jump.note(view);
@@ -4542,7 +4558,11 @@ window.ChipStatus.mount = function (opts) {
         // jump too -- the URL names the tab it went to, so F5 or a copied
         // link comes back there. Without it F5 rode on the debounced scroll
         // record alone, which a big chip's load kept re-arming (never ran).
-        try { history.replaceState(history.state, '', '/topology?view=' + view); } catch (e) {}
+        // w8 chipplace: and the record names the PANEL, written in the same
+        // call -- the URL alone brought F5 back to the tab's section top
+        // (2/10 on big30x: the IRB heading is 80-107k px below it).
+        _placeJumped(view, sel);
+        _placeWriteJump('/topology?view=' + view);
         if (window.syncSidebarNavActive) window.syncSidebarNavActive();
         _jump.note(jv);
         _setActiveTab(view);
@@ -4636,38 +4656,25 @@ window.ChipStatus.mount = function (opts) {
            so the end of a smooth jump is recorded too; written only while this
            dashboard is the one on screen. */
         var _dashEl = document.querySelector('.topo-dashboard');
-        var _recT = null, _lastRec = null;
-        function _recWrite(rec) {
-            history.replaceState(Object.assign({}, history.state || {}, { smChipScroll: rec }), '');
-        }
+        var _recT = null;
         function _recordScroll() {
             _recT = null;
             try {
                 if (!pane || !_dashEl || !_dashEl.isConnected
                     || location.pathname !== '/topology') return;
+                var here = location.pathname + location.search;
                 // QA F-20 (review): mid-restore the pane is where the page lets
                 // it be, not where the record says; keep the record until the
-                // restore ends (landed and settled, or the user took over)
-                var it = window.ChipStatus.jumpGuard.intent();
-                if (it && _restoring && it.view === _restoring.view
-                    && _restoring.url === location.pathname + location.search) {
-                    _recWrite(_restoring);
-                    _lastRec = _restoring;
+                // restore ends (landed and settled, or the user took over).
+                // w8 chipplace: the same for a JUMP still landing -- a smooth
+                // jump crossing the page, or the guard re-landing it while the
+                // big chip grows. The place is where it is going.
+                var it = _placeIntent;
+                if (it && window.ChipStatus.jumpGuard.current() === it.jv) {
+                    _placeWrite(_placeStamp(it.rec, here));
                     return;
                 }
-                var paneTop = pane.getBoundingClientRect().top;
-                var best = null, bestTop = -Infinity;
-                Object.keys(TAB_SPEC).forEach(function(v) {
-                    var el = document.querySelector(TAB_SPEC[v].sel);
-                    if (!el) return;
-                    var top = el.getBoundingClientRect().top - paneTop;
-                    if (top <= 130 && top > bestTop) { bestTop = top; best = v; }
-                });
-                var rec = { url: location.pathname + location.search,
-                            view: best, d: best ? Math.round(-bestTop) : 0,
-                            top: Math.round(pane.scrollTop) };
-                _recWrite(rec);
-                _lastRec = rec;
+                _placeWrite(_placeNow(pane, here));
             } catch (e) { /* a record is a nicety; scrolling must never break */ }
         }
         function _recHandler() { clearTimeout(_recT); _recT = setTimeout(_recordScroll, 250); }
@@ -4682,10 +4689,23 @@ window.ChipStatus.mount = function (opts) {
             }
             try {
                 if (_lastRec && _lastRec.url === location.pathname + location.search
-                    && !(history.state && history.state.smChipScroll)) _recWrite(_lastRec);
+                    && !(history.state && history.state.smChipScroll)) _placeWrite(_lastRec);
             } catch (e) { /* nicety */ }
         }
         document.body.addEventListener('htmx:beforeHistoryUpdate', _recKeep);
+        /* w8 chipplace: F5 / closing the tab / switching away writes the place
+           NOW. The debounced record above never ran on a big chip still
+           loading after a jump -- every scroll event of its growth re-armed
+           the timer (11 events in 10 s, zero records), and F5 read the stale
+           record or none. A write here cannot be starved. */
+        function _recFlush() { clearTimeout(_recT); _recordScroll(); }
+        function _recOnHidden() { if (document.visibilityState === 'hidden') _recFlush(); }
+        window.addEventListener('pagehide', _recFlush);
+        document.addEventListener('visibilitychange', _recOnHidden);
+        window.ChipStatus._onLeave(_dashEl, function _recFlushTeardown() {
+            window.removeEventListener('pagehide', _recFlush);
+            document.removeEventListener('visibilitychange', _recOnHidden);
+        });
         if (pane) {
             var _spyHandler = _throttle(onScroll, 120);
             pane.addEventListener('scroll', _spyHandler, { passive: true });
@@ -4711,6 +4731,96 @@ window.ChipStatus.mount = function (opts) {
         }
     }
 
+    /* w8 chipplace -- the reader's place, anchored on what they were reading.
+       F5 right after an Overview tile jump came back to the tab's section top
+       2 times in 10 on big30x: the record was written only by the debounced
+       scroll handler, which the big chip's growth kept re-arming, and it named
+       the tab's SECTION plus a pixel offset (the IRB heading sits 80-107k px
+       below the 2Q Fid. section top there, so that offset is only right once
+       every panel above it has its final height). Now:
+         - a jump writes its record in the same call that writes its URL
+           (`jump: true` -- land it again the way the jump does);
+         - F5 / closing / hiding the tab writes the place at once (pagehide,
+           visibilitychange), whatever the debounce is doing;
+         - a place names the PANEL at the pane top (`sel`, `ds` px into it)
+           beside the tab's section (`view`, `d`); `top` is only the last
+           fallback when neither is on the page any more. */
+    var _placeIntent = null;     // {jv, rec}: a jump / restore the guard is still landing
+    var _lastRec = null;         // the record last written on this entry
+    var PLACE_ANCHORS = '.topo-section[data-density-panel], [data-rb-heading]';
+    var PLACE_SEL_RE = /^(?:\.topo-section\[data-density-panel="[^"\\]*"\]|\[data-rb-heading="[^"\\]*"\])$/;
+    function _placeSelOf(el) {
+        var k = el.getAttribute('data-rb-heading'), s = null;
+        if (k !== null) s = '[data-rb-heading="' + k + '"]';
+        else if ((k = el.getAttribute('data-density-panel')) !== null) s = '.topo-section[data-density-panel="' + k + '"]';
+        return (s && PLACE_SEL_RE.test(s)) ? s : null;
+    }
+    function _placeFind(sel) {
+        try { return sel ? document.querySelector(sel) : null; } catch (e) { return null; }
+    }
+    // a jump: where it GOES, not where the pane is while it gets there
+    function _placeJumped(view, sel) {
+        _placeIntent = { jv: sel ? ('sel:' + view + ':' + sel) : view,
+                         rec: { view: view, sel: (sel && PLACE_SEL_RE.test(sel)) ? sel : null, jump: true } };
+    }
+    // `top` is the last-resort fallback only (neither the panel nor the tab's
+    // section on the page). A jump's record takes 0 rather than read
+    // pane.scrollTop: that read forces a layout, on the click path of a page
+    // whose layout costs tens of ms (big30x).
+    function _placeStamp(rec, url) {
+        return Object.assign({ top: 0 }, rec, { url: url });
+    }
+    function _placeWrite(rec, url) {
+        var st = Object.assign({}, history.state || {}, { smChipScroll: rec });
+        if (url) history.replaceState(st, '', url);
+        else history.replaceState(st, '');
+        _lastRec = rec;
+    }
+    // the jump's URL and its record in ONE history write (the URL alone if the
+    // record cannot be made -- F5 then lands on the tab, as before)
+    function _placeWriteJump(url) {
+        try { _placeWrite(_placeStamp(_placeIntent.rec, url), url); }
+        catch (e) { try { history.replaceState(history.state, '', url); } catch (e2) {} }
+    }
+    // where the pane IS: the tab's section at the top (the spy's pick) and the
+    // panel at the top inside it, each with the offset past its top edge
+    function _placeNow(pane, url) {
+        var paneTop = pane.getBoundingClientRect().top;
+        var best = null, bestTop = -Infinity;
+        Object.keys(TAB_SPEC).forEach(function(v) {
+            var el = document.querySelector(TAB_SPEC[v].sel);
+            if (!el) return;
+            var top = el.getBoundingClientRect().top - paneTop;
+            if (top <= 130 && top > bestTop) { bestTop = top; best = v; }
+        });
+        var rec = { url: url, view: best, d: best ? Math.round(-bestTop) : 0,
+                    top: Math.round(pane.scrollTop) };
+        if (!best) return rec;
+        var dash = document.querySelector('.topo-dashboard');
+        if (!dash) return rec;
+        var pEl = null, pTop = -Infinity;
+        // the panel under the 130 px line, by hit-testing: panels stack, so the
+        // one the line crosses is the last one starting above it. A scan of
+        // every panel is the fallback (a gap, an overlay on the line) -- on
+        // big30x it is 111 elements in a large DOM, ~7 ms per record.
+        var pr = pane.getBoundingClientRect();
+        var hit = document.elementFromPoint ? document.elementFromPoint(pr.left + pr.width / 2, paneTop + 129) : null;
+        var ha = hit && hit.closest ? hit.closest(PLACE_ANCHORS) : null;
+        if (ha) { pEl = ha; pTop = ha.getBoundingClientRect().top - paneTop; }
+        if (!pEl) {
+            var list = dash.querySelectorAll(PLACE_ANCHORS);
+            for (var i = 0; i < list.length; i++) {
+                var r = list[i].getBoundingClientRect();
+                if (!r.width && !r.height) continue;         // not laid out
+                var t = r.top - paneTop;
+                if (t <= 130 && t > pTop && t >= bestTop) { pTop = t; pEl = list[i]; }
+            }
+        }
+        var ps = pEl && _placeSelOf(pEl);
+        if (ps) { rec.sel = ps; rec.ds = Math.round(-pTop); }
+        return rec;
+    }
+
     /* QA F-20: the record _setupScrollSpy left on THIS history entry, or null.
        Only for the very URL it was taken at: a forward navigation is a new entry
        (htmx pushes before it swaps) and an in-page jump rewrites the URL, so
@@ -4726,14 +4836,18 @@ window.ChipStatus.mount = function (opts) {
         if (!hs || typeof hs !== 'object' || typeof hs.top !== 'number') return null;
         if (hs.url !== location.pathname + location.search) return null;
         if (hs.view && !TAB_SPEC[hs.view]) return null;
+        // a panel is only ever one of the two anchor shapes this page writes
+        if (hs.sel != null && !(typeof hs.sel === 'string' && PLACE_SEL_RE.test(hs.sel))) {
+            hs = Object.assign({}, hs, { sel: null });
+        }
         return hs;
     }
-    /* Put the pane back where the record says: the section it was in, plus the
-       offset inside it. The section is built (and, for a metrics view, the 2Q
-       RB host above it, as a jump does); the jump guard carries the offset so
-       the lazy content landing above re-anchors it, and a wheel / key / touch
-       still hands the pane back to the user. */
-    var _restoring = null;   // the record a live restore is putting back
+    /* Put the pane back where the record says: the panel (else the section) it
+       was in, plus the offset inside it. The section is built (and, for a
+       metrics view, the 2Q RB host above it, as a jump does); the jump guard
+       carries the offset so the lazy content landing above re-anchors it, and
+       a wheel / key / touch still hands the pane back to the user. A jump's
+       record is landed the way the jump lands (target under the sticky bar). */
     function _restoreChipScroll(hs) {
         var pane = _scrollPane();
         if (!pane) return;
@@ -4746,12 +4860,25 @@ window.ChipStatus.mount = function (opts) {
         var spec = TAB_SPEC[hs.view];
         window.setChipStatusView(hs.view, null, false);
         if (spec.build === 'metrics') _ensureSectionBuilt('2qrb');
-        window.ChipStatus.jumpGuard.note(hs.view, pane, hs.d || 0);
-        _restoring = hs;
+        var jv = hs.sel ? ('sel:' + hs.view + ':' + hs.sel) : hs.view;
+        _placeIntent = { jv: jv, rec: hs };
+        if (hs.jump) {
+            window.ChipStatus.jumpGuard.note(jv, pane);
+            requestAnimationFrame(function() {
+                var el = _placeFind(_jumpSelOf(jv));
+                _jumpBaseH = _dashH();
+                if (el) el.scrollIntoView({ behavior: 'auto', block: 'start' });
+                else pane.scrollTop = hs.top;
+            });
+            return;
+        }
+        var off = hs.sel ? (hs.ds || 0) : (hs.d || 0);
+        window.ChipStatus.jumpGuard.note(jv, pane, off, hs.d || 0);
         requestAnimationFrame(function() {     // let the just-built section lay out
-            var el = document.querySelector(spec.sel);
+            var pel = _placeFind(hs.sel);
+            var el = pel || document.querySelector(spec.sel);
             if (el) {
-                window.ChipStatus.jumpGuard.land(el, pane, hs.d || 0);
+                window.ChipStatus.jumpGuard.land(el, pane, pel ? off : (hs.d || 0));
             } else {
                 pane.scrollTop = hs.top;
             }
