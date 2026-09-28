@@ -6973,7 +6973,7 @@ def _grid_memo(slot: str, ctx: dict, store: QuamStore, variant: Any, modified: d
             return (getattr(store, "mutation_seq", None), SR.column_token(store),
                     mod, *build(mod))
         seq, coltok, modified, grid, psts = _activity.single_flight(
-            store, "grid:" + slot, lambda: _activity.MISS, compute)
+            store, "grid:" + slot, lambda: _activity.MISS, compute, main=True)
         ent = {"store": store, "variant": variant, "seq": seq, "coltok": coltok,
                "mod": dict(modified), "grid": grid, "pst": psts,
                "serial": next(_GRID_SERIAL), "row_ver": {}, "col_ver": {},
@@ -15726,7 +15726,7 @@ def pulses_page():
     # runs, and ~200 of them made this page 9.7 s in real Chrome on big30x
     # right after a structural pull. A chip that moves meanwhile stops the
     # held pass; the rows it did not draw are drawn the ordinary way.
-    with _activity.yielding(store, foreground=True):
+    with _activity.yielding(store, foreground=True, main=True):
         with store._lock:
             _spark_rows(page_rows)
     _spark_rows(page_rows)

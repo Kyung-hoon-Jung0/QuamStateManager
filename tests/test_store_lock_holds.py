@@ -596,3 +596,159 @@ def test_a_caller_holding_the_store_lock_saves_under_it(tmp_path):
     assert not t.is_alive() and "error" not in out, out.get("error")
     assert _disk_state(tmp_path / "chip")["qubits"]["q1"]["T1"] == 3.3e-05
     assert st.change_log == []
+
+
+def _page_walk(st, steps, entered, n=120):
+    def compute():                   # the page's own content, ~n * 10 ms
+        for _ in range(n):
+            steps["a"] += 1
+            entered.set()
+            time.sleep(0.01)
+            activity.checkpoint()
+        return "a"
+    return lambda: activity.single_flight(st, "grid", lambda: activity.MISS, compute, main=True)
+
+
+def test_a_page_walk_does_not_slice_itself_with_another_walk():
+    """In real Chrome on big30x the cold /bulk at a chip's open got slower
+    once its grid build handed the lock to the lint / env analysis / another
+    page's build as well (they are walks too: sliced together, each runs at a
+    fraction of the CPU). A page's own content (``main=True``) does not hand
+    the lock to another request's walk: that walk waits for it whole, as it
+    did before the build handed over at all."""
+    st = _FakeStore()
+    steps = {"a": 0}
+    a_in = threading.Event()
+    seen: dict = {}
+
+    def w_compute():                 # a side panel's walk
+        seen.setdefault("w_first_at_a", steps["a"])
+        for _ in range(10):
+            time.sleep(0.005)
+            activity.checkpoint()
+        return "w"
+    out: dict = {}
+    ta = _in_request("/bulk", _page_walk(st, steps, a_in), out, "a")
+    assert a_in.wait(10)
+    stop = []
+
+    def poll():                      # short requests: the page walk keeps handing over
+        while not stop:
+            activity.begin("/state/drift")
+            try:
+                with st._lock:
+                    pass
+            finally:
+                activity.end()
+            time.sleep(0.005)
+    tp = threading.Thread(target=poll, daemon=True)
+    tp.start()
+    tw = _in_request("/diagnostics/summary", lambda: activity.single_flight(
+        st, "lint", lambda: activity.MISS, w_compute), out, "w")
+    for t in (tw, ta):
+        t.join(30)
+    stop.append(1)
+    tp.join(5)
+    assert "error" not in out, out.get("error")
+    assert out == {"a": "a", "w": "w"}
+    assert seen["w_first_at_a"] == 120, ("a side walk sliced into the page's walk", seen)
+
+
+def test_a_page_walk_still_lets_a_short_request_in():
+    st = _FakeStore()
+    steps = {"a": 0}
+    a_in = threading.Event()
+    seen: dict = {}
+    out: dict = {}
+    ta = _in_request("/bulk", _page_walk(st, steps, a_in), out, "a")
+    assert a_in.wait(10)
+    time.sleep(0.1)
+
+    def short():
+        t0 = time.monotonic()
+        with st._lock:
+            seen["wait"] = time.monotonic() - t0
+            seen["at_a"] = steps["a"]
+        return True
+    ts = _in_request("/field/edit", short, out, "s")
+    for t in (ts, ta):
+        t.join(30)
+    assert "error" not in out, out.get("error")
+    assert seen["at_a"] < 120 and seen["wait"] < 0.5, seen
+
+
+def test_a_side_walk_that_let_go_waits_for_the_page_walk_to_end():
+    """A side walk (the lint) already under way when the page's own walk
+    starts: at its next hand-over the page walk takes the lock, and the side
+    walk does not take it back at the page walk's hand-overs to the short
+    requests (a drift poll every few ms here) -- it resumes when the page walk
+    has ended."""
+    st = _FakeStore()
+    steps = {"a": 0, "w": 0}
+    a_in, w_in = threading.Event(), threading.Event()
+    marks: dict = {}
+
+    def w_compute():                 # the lint, started first
+        for _ in range(60):
+            steps["w"] += 1
+            w_in.set()
+            time.sleep(0.01)
+            activity.checkpoint()
+        return "w"
+
+    def a_compute():                 # the page's own content
+        marks["w_at_a_start"] = steps["w"]
+        for _ in range(60):
+            steps["a"] += 1
+            a_in.set()
+            time.sleep(0.01)
+            activity.checkpoint()
+        marks["w_at_a_end"] = steps["w"]
+        return "a"
+    out: dict = {}
+    tw = _in_request("/diagnostics/summary", lambda: activity.single_flight(
+        st, "lint", lambda: activity.MISS, w_compute), out, "w")
+    assert w_in.wait(10)
+    ta = _in_request("/bulk", lambda: activity.single_flight(
+        st, "grid", lambda: activity.MISS, a_compute, main=True), out, "a")
+    assert a_in.wait(10)
+    stop = []
+
+    def poll():                      # short requests keep the page walk handing over
+        while not stop:
+            activity.begin("/state/drift")
+            try:
+                with st._lock:
+                    pass
+            finally:
+                activity.end()
+            time.sleep(0.005)
+    tp = threading.Thread(target=poll, daemon=True)
+    tp.start()
+    ta.join(30)
+    stop.append(1)
+    tw.join(30)
+    tp.join(5)
+    assert "error" not in out, out.get("error")
+    assert out == {"a": "a", "w": "w"}
+    assert marks["w_at_a_end"] == marks["w_at_a_start"], ("the lint took the lock back mid page walk", marks)
+
+
+def test_a_page_walk_does_not_hand_over_when_only_walks_wait():
+    """The waiting side walks cannot take the lock while a page's own walk
+    runs, so a hand-over for them would be a 2 ms sleep nobody uses."""
+    st = _FakeStore()
+    steps = {"a": 0}
+    a_in = threading.Event()
+    out: dict = {}
+    ta = _in_request("/bulk", _page_walk(st, steps, a_in, n=40), out, "a")
+    assert a_in.wait(10)
+    y0 = activity.YIELDS[0]
+    tw = _in_request("/diagnostics/summary", lambda: activity.single_flight(
+        st, "lint", lambda: activity.MISS, lambda: "w"), out, "w")
+    ta.join(30)
+    handed = activity.YIELDS[0] - y0
+    tw.join(30)
+    assert out == {"a": "a", "w": "w"}
+    assert handed == 0, handed
+

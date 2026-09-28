@@ -114,10 +114,12 @@ class Superseded(BaseException):
 
 class _Yield:
     __slots__ = ("store", "done", "keep", "suspended", "stopped", "fg", "deadline",
-                 "expired", "last", "relock", "__weakref__")
+                 "expired", "last", "relock", "main", "counted", "__weakref__")
 
-    def __init__(self, store, done, keep, fg=False, deadline=None):
+    def __init__(self, store, done, keep, fg=False, deadline=None, main=False):
         self.store = store
+        self.main = main             # w8/locks: a page's own content (see _handover)
+        self.counted = False         # w8/locks: one of the request walks in _WALKS
         self.done = done
         self.keep = keep
         self.suspended = False
@@ -132,6 +134,12 @@ class _Yield:
 _TL = threading.local()
 _ACTIVE: "weakref.WeakKeyDictionary" = None      # store -> the _Yield running on it
 _WANT: "weakref.WeakKeyDictionary" = None        # store -> foreground callers waiting
+_WALKS: "weakref.WeakKeyDictionary" = None       # store -> request walks running (count)
+_MAIN: "weakref.WeakKeyDictionary" = None        # store -> request MAIN walks running (count)
+#: w8/locks: guards _WALKS/_MAIN; a walk waiting for a main walk to end waits on it
+_WALK_CV = threading.Condition(threading.Lock())
+#: a walk never waits for another request's main walk longer than this
+_DEFER_MAX_S = 60.0
 #: store-lock hand-overs so far (tests / debugging)
 YIELDS = [0]
 _SUSPEND_POLL_S = 0.005
@@ -145,10 +153,12 @@ _HANDOVER_S = 0.002
 
 
 def _init_maps() -> None:
-    global _ACTIVE, _WANT
+    global _ACTIVE, _WANT, _WALKS, _MAIN
     import weakref
     _ACTIVE = weakref.WeakKeyDictionary()
     _WANT = weakref.WeakKeyDictionary()
+    _WALKS = weakref.WeakKeyDictionary()
+    _MAIN = weakref.WeakKeyDictionary()
 
 
 _init_maps()
@@ -179,8 +189,9 @@ class yielding:
     the lock is then kept, exactly like :func:`wanting`.
     A ``Superseded`` raised inside is absorbed here; ``.stopped`` says so."""
 
-    def __init__(self, store, done=None, keep=None, *, foreground=False, deadline=None):
-        self._y = _Yield(store, done, keep, foreground, deadline)
+    def __init__(self, store, done=None, keep=None, *, foreground=False, deadline=None,
+                 main=False):
+        self._y = _Yield(store, done, keep, foreground, deadline, main)
         self._prev = None
 
     def __enter__(self):
@@ -191,10 +202,23 @@ class yielding:
                 _ACTIVE[self._y.store] = self._y
             except TypeError:          # pragma: no cover - not weak-referenceable
                 pass
+        elif getattr(_LOCAL, "open", False) and self._prev is None:
+            # a request's (outermost) walk: _others_inflight counts that
+            # request, so a main walk can tell the requests that are walks;
+            # and it waits here while another request's MAIN walk runs
+            try:
+                _enter_walk(self._y)
+            except TypeError:          # pragma: no cover
+                pass
         return self._y
 
     def __exit__(self, et, ev, tb):
         _TL.y = self._prev
+        if self._y.counted:
+            try:
+                _exit_walk(self._y)
+            except TypeError:          # pragma: no cover
+                pass
         try:
             if _ACTIVE.get(self._y.store) is self._y:
                 del _ACTIVE[self._y.store]
@@ -204,6 +228,62 @@ class yielding:
             self._y.stopped = True
             return True
         return False
+
+
+def _dec(m, store) -> None:
+    n = m.get(store, 0) - 1
+    if n > 0:
+        m[store] = n
+    else:
+        m.pop(store, None)
+
+
+def _wait_no_main(store, until: float) -> None:
+    """Under _WALK_CV: wait while another request's main walk runs."""
+    while _MAIN.get(store, 0) > 0:
+        left = until - time.monotonic()
+        if left <= 0:
+            return
+        _WALK_CV.wait(min(left, 0.05))
+
+
+def _enter_walk(y) -> None:
+    """w8/locks: register a request's walk -- after waiting, unless this
+    thread already holds the store lock (the main walk could never take it),
+    for any other request's MAIN walk on the store to end. A page's own
+    content goes first; the side walks (lint, env analysis, another page's
+    build) wait for it whole, as they did before it handed over at all --
+    while the short requests still get in at its hand-overs."""
+    own = getattr(getattr(y.store, "_lock", None), "_is_owned", None)
+    with _WALK_CV:
+        # counted as a walk WHILE it waits: a running main walk then knows
+        # there is no one to hand the lock over to
+        _WALKS[y.store] = _WALKS.get(y.store, 0) + 1
+        y.counted = True
+        if not (own is not None and own()):
+            _wait_no_main(y.store, time.monotonic() + _DEFER_MAX_S)
+        if y.main:
+            _MAIN[y.store] = _MAIN.get(y.store, 0) + 1
+
+
+def _exit_walk(y) -> None:
+    with _WALK_CV:
+        y.counted = False
+        _dec(_WALKS, y.store)
+        if y.main:
+            _dec(_MAIN, y.store)
+        _WALK_CV.notify_all()
+
+
+def _wait_no_main_but_self(y) -> None:
+    """Under _WALK_CV: wait while a main walk runs (y itself is no main walk)."""
+    _wait_no_main(y.store, time.monotonic() + _DEFER_MAX_S)
+
+
+def _main_elsewhere(y) -> bool:
+    """Another request's main walk runs on this store."""
+    with _WALK_CV:
+        return _MAIN.get(y.store, 0) - (1 if (y.main and y.counted) else 0) > 0
 
 
 class wanting:
@@ -283,7 +363,16 @@ def _handover(y) -> None:
     if now - y.last < HANDOVER_EVERY_S:
         return
     y.last = now
-    if _others_inflight(y.store) <= 0 and not _producer_waiting(y):
+    others = _others_inflight(y.store)
+    if y.main:
+        # w8/locks: a page's OWN content (the Live-Edit grid, the Pulses
+        # page's index and sparklines) hands the lock to the short requests
+        # (an edit, a poll, a search's snapshot) only: the other requests'
+        # walks wait for it to end (_enter_walk / below), so a hand-over for
+        # them would be a 2 ms sleep nobody uses.
+        with _WALK_CV:
+            others -= _WALKS.get(y.store, 0) - (1 if y.counted else 0)
+    if others <= 0 and not _producer_waiting(y):
         return
     lock = getattr(y.store, "_lock", None)
     release = getattr(lock, "_release_save", None)
@@ -301,6 +390,11 @@ def _handover(y) -> None:
     YIELDS[0] += 1
     try:
         time.sleep(_HANDOVER_S)
+        if y.counted and not y.main and _main_elsewhere(y):
+            # a side walk that let go does not take the lock back while a
+            # page's own walk runs: it resumes when that walk has ended
+            with _WALK_CV:
+                _wait_no_main_but_self(y)
     finally:
         restore(saved)
         y.relock = False
@@ -435,7 +529,8 @@ def in_flight(store, name: str) -> bool:
         return name in (_FLIGHTS.get(store) or {})
 
 
-def single_flight(store, name: str, lookup, compute, *, budget_s: float | None = None):
+def single_flight(store, name: str, lookup, compute, *, budget_s: float | None = None,
+                  main: bool = False):
     """The result of *compute* for *store*, computed once however many callers
     ask at the same time.
 
@@ -444,7 +539,10 @@ def single_flight(store, name: str, lookup, compute, *, budget_s: float | None =
     re-check the memo, compute, store the memo and return the result.
     *budget_s*: how long this caller waits at most -- ``None`` is returned
     past it (a leader stops at its next checkpoint; what it finished stays in
-    its per-chunk memos, and the next caller continues from there)."""
+    its per-chunk memos, and the next caller continues from there).
+    *main* (w8/locks): the result IS the page a request renders -- a leader
+    then hands the lock over to short requests only, never to other
+    foreground walks (see :func:`_handover`)."""
     deadline = None if budget_s is None else time.monotonic() + budget_s
     lock = getattr(store, "_lock", None)
     tries = 0
@@ -480,7 +578,7 @@ def single_flight(store, name: str, lookup, compute, *, budget_s: float | None =
                 with lock:                  # a chip that keeps moving: finish
                     return compute()
             tries += 1
-            with yielding(store, foreground=True, deadline=deadline) as yy:
+            with yielding(store, foreground=True, deadline=deadline, main=main) as yy:
                 with lock:
                     return compute()
             if yy.expired:
