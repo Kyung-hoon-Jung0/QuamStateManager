@@ -2055,7 +2055,13 @@ window.PulsesPage = (function () {
     // events bubble to document anyway.
     // Opt the pulses table into the shared drag-resizable columns (B-columns).
     // Idempotent and cheap — safe to call after any swap that (re)renders it.
-    function enhancePulsesTable() {
+    function enhancePulsesTable(root) {
+        // w9/pulsesall: a virtual "All" table renders its first rows BEFORE
+        // the column widths are frozen below (they are measured off them)
+        if (window.PulsesVT) {
+            try { window.PulsesVT.init(root && root.querySelector ? root : document); }
+            catch (e) { if (window.console) console.error('PulsesVT.init', e); }
+        }
         if (window.enhanceColumnResize && document.getElementById('pulses-table')) {
             window.enhanceColumnResize('pulses-table', 'quam_pulses_col_widths');
         }
@@ -2095,12 +2101,12 @@ window.PulsesPage = (function () {
             // it would silently strand a stale selection. Re-sync it to the (empty)
             // DOM so the compare bar/count match what the user sees.
             if (window.clearPulseSelection) window.clearPulseSelection();
-            enhancePulsesTable();
+            enhancePulsesTable(evt.detail.target);
         } else if (evt.detail.target.id === 'table-pane' ||
                    evt.detail.target.querySelector &&
                    evt.detail.target.querySelector('#pulses-table')) {
             // first navigation to /pulses (full table-pane swap)
-            enhancePulsesTable();
+            enhancePulsesTable(evt.detail.target);
         }
     });
     // server-rendered first paint (no swap fired)

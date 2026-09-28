@@ -15789,7 +15789,13 @@ def pulse_row():
     path = (request.args.get("path") or "").strip()
     if not store or not pulse_index or not path:
         return "", 404
-    row = pulse_index.row(path)
+    vt = request.args.get("vt") == "1"
+    if vt:
+        # w9/pulsesall: the row and the stamp it was read at, together -- the
+        # virtual view orders every text it receives by that stamp
+        row, vt_stamp = _pulse_vt_row_stamp(store, pulse_index, path)
+    else:
+        row = pulse_index.row(path)
     if row is None:
         return "", 404
     # the page's active filter rides along: a row that no longer matches it
@@ -15797,7 +15803,15 @@ def pulse_row():
     if not _pulse_rows_filter([row], request.args.get("channel", ""),
                               (request.args.get("q") or "").strip(),
                               (request.args.get("owner") or "").strip()):
+        if vt:
+            resp = make_response("", 204)
+            resp.headers["X-Pulse-Stamp"] = vt_stamp
+            return resp
         return "", 204
+    # w9/pulsesall: the virtual All view keys its row model by the digest of
+    # the row's text (the same one /pulses/vids lists), so a patched row is
+    # not fetched again by the next structural refresh
+    vt_ver = _pulse_vt_entry(row)[1] if vt else None
     row = dict(row)
     from quam_state_manager.core.waveform_synth import sparkline_svg, synth_for_operation
     if row.get("is_alias"):
@@ -15808,7 +15822,322 @@ def pulse_row():
     else:
         row["spark_svg"] = pulse_index.sparkline(
             path, lambda p=path: sparkline_svg(synth_for_operation(store, p)))
-    return render_template("_pulse_row.html", r=row)
+    if vt_ver is None:
+        return render_template("_pulse_row.html", r=row)
+    resp = make_response(render_template("_pulse_row.html", r=row))
+    resp.headers["X-Pulse-Ver"] = vt_ver
+    resp.headers["X-Pulse-Stamp"] = vt_stamp
+    return resp
+
+
+# ---------------------------------------------------------------------------
+# w9/pulsesall: the virtual per-page "All" view
+# ---------------------------------------------------------------------------
+#
+# big30x (30 qubits, 69 pairs) has ~8,800 pulse rows. With per-page "All" the
+# page held all of them (656k DOM nodes), so every layout the page forced --
+# an inspector swap, a row patch, Split.js measuring its gutter -- walked the
+# whole table: 22 s per field commit, 5 s per Ctrl+Z, 14 s to open a pulse
+# (real Chrome, 91c8aae). And a structural change (create, delete, rename, a
+# pull) re-rendered all 8,800 rows with ~400 lab-drawn thumbnails: 7-11 s of
+# server time and 14 MB for one refresh.
+#
+# The virtual view ships each row's TEXT once (thumbnails are drawn lazily,
+# for the rows on screen), keyed by a digest of exactly that text, and the
+# client renders only the rows near the viewport. A change re-lists the
+# (path, digest) pairs of the active filter and fetches only the rows whose
+# digest moved.
+
+#: Libraries at least this big render "All" virtually. The 5Q chip (173 rows)
+#: stays below it, so its All view -- and every per-page 25/50/100 view on any
+#: chip -- renders exactly as before. Overridable (tests) through the app
+#: config key ``PULSES_VIRTUAL_MIN``.
+_PULSES_VT_MIN = 400
+_PULSE_VT_UIDS = itertools.count(1)
+
+
+def _pulses_vt_on(library_size: int, per_page: int) -> bool:
+    if per_page != 0:
+        return False
+    try:
+        floor = int(current_app.config.get("PULSES_VIRTUAL_MIN", _PULSES_VT_MIN))
+    except (TypeError, ValueError):
+        floor = _PULSES_VT_MIN
+    return library_size >= floor
+
+
+def _pulse_vt_memo():
+    """The per-chip-context :class:`RowMemo` of each row's text HTML + its
+    digest. Per CONTEXT, not per index: a working-copy replace (a pull, Take
+    live) builds a new store and so a new index, and every row it did not
+    change keeps its rendered text by content equality."""
+    from quam_state_manager.core.pulse_index import RowMemo
+    ctx = _active_ctx()
+    if ctx is None:
+        return RowMemo()
+    memo = ctx.get("pulse_vt_memo")
+    if memo is None:
+        memo = ctx["pulse_vt_memo"] = RowMemo()
+    return memo
+
+
+#: Every row key ``_pulse_row.html`` reads -- pinned against the template by
+#: tests/test_pulses_virtual.py. The virtual text is a pure function of THESE,
+#: so they are what :class:`RowMemo` compares to carry a rendered text across
+#: an index rebuild (the thumbnail keys are drawn lazily, never in the text).
+_PULSE_ROW_KEYS = ("path", "summary", "is_alias", "known", "owner", "channel",
+                   "op_name", "alias_target", "iq", "readout", "found", "location",
+                   "class_match", "unmodeled", "qclass", "class_short",
+                   "length_implausible", "length_stored", "length", "amplitude",
+                   "used_by")
+
+
+def _pulse_vt_sig(row: dict) -> tuple:
+    """What the virtual text is rendered FROM, type-strictly: Python calls
+    ``100 == 100.0`` and ``True == 1`` equal, the template prints them apart."""
+    out = []
+    for k in _PULSE_ROW_KEYS:
+        v = row.get(k)
+        if isinstance(v, (list, tuple)):
+            v = tuple((type(x).__name__, x) for x in v)
+        out.append((k, type(v).__name__, v))
+    return tuple(out)
+
+
+def _pulse_vt_render(row: dict) -> tuple[str, str]:
+    """(text HTML, digest) of one row in the virtual view: ``_pulse_row.html``
+    with the thumbnail left as a sized placeholder. A pure function of the row
+    dict -- the template reads nothing else -- which is what lets
+    :class:`RowMemo` carry it across rebuilds by content equality."""
+    html = current_app.jinja_env.get_template("_pulse_row.html").render(
+        r=row, lazy_spark=True).strip()
+    ver = hashlib.blake2b(html.encode("utf-8"), digest_size=8).hexdigest()
+    return html, ver
+
+
+def _pulse_vt_entry(row: dict) -> tuple[str, str]:
+    return _pulse_vt_memo().get("vt", row, _pulse_vt_render, sig=_pulse_vt_sig)
+
+
+#: this server process -- a stamp from another process never orders against ours
+_PULSE_VT_BOOT = uuid.uuid4().hex[:8]
+
+
+def _pulse_vt_stamp(store, pulse_index) -> str:
+    """What a text or a thumbnail was read AT: this process, this store object,
+    and the index's freshness token (mutation_seq, class knowledge, env
+    overlay, the count of cold builds -- a rebuild on an invalidate hint moves
+    nothing else). ``boot:uid:seq:gen:builds:overlay``. The client orders every
+    text by (seq, gen, builds) within one boot + store, and redraws the
+    thumbnails on screen when any of it moves (a thumbnail also reads
+    pointer-followed fields outside its row)."""
+    uid = getattr(store, "_pulses_vt_uid", None)
+    if uid is None:
+        uid = next(_PULSE_VT_UIDS)
+        try:
+            store._pulses_vt_uid = uid
+        except AttributeError:      # a store that refuses attributes
+            uid = "i%x" % id(store)
+    seq, gen, ov = pulse_index.stamp()
+    builds = pulse_index.stats.get("cold", 0)
+    return f"{_PULSE_VT_BOOT}:{uid}:{seq}:{gen}:{builds}:{ov:x}"
+
+
+def _pulse_vt_rows_stamp(store, pulse_index) -> tuple[list, str]:
+    """Every row and the stamp they were read at, as ONE observation. The rows
+    are brought current first (outside any hold of ours: a cold build hands
+    the lock over), then read again with the stamp under the store lock."""
+    pulse_index.rows()
+    with store._lock:
+        return pulse_index.rows(), _pulse_vt_stamp(store, pulse_index)
+
+
+def _pulse_vt_row_stamp(store, pulse_index, path: str):
+    """One row (or None) and its stamp, as one observation."""
+    pulse_index.row(path)
+    with store._lock:
+        return pulse_index.row(path), _pulse_vt_stamp(store, pulse_index)
+
+
+def _pulse_vt_empty_html(channel: str) -> str:
+    # the same row the rendered table shows (_pulse_rows.html)
+    return ('<tr><td colspan="9" class="muted" style="text-align:center;padding:2rem">'
+            'No pulses found' + (' on this channel' if channel else '')
+            + '.</td></tr>')
+
+
+def _pulse_vt_widest(rows: list, per_col: int = 2) -> list[str]:
+    """The rows with the longest text in each column (character counts: the
+    table's cells are monospace). The rendered table sized its columns to
+    ALL its rows; the virtual one renders ~50, so it lays these few out too
+    -- invisibly (``visibility: collapse``) -- before the widths are frozen,
+    or a long amplitude further down wraps onto two lines."""
+    cols: dict[int, list[tuple[int, str]]] = {}
+
+    def consider(col, n, path):
+        lst = cols.setdefault(col, [])
+        lst.append((n, path))
+        if len(lst) > 4 * per_col:
+            lst.sort(key=lambda t: -t[0])
+            del lst[per_col:]
+
+    for r in rows:
+        p = r["path"]
+        consider(1, len(str(r.get("owner") or "")), p)
+        consider(2, len(str(r.get("channel") or "")), p)
+        consider(3, len(str(r.get("op_name") or "")) + (6 if r.get("is_alias") else 0)
+                 + (3 if r.get("iq") else 0) + (3 if r.get("readout") else 0), p)
+        consider(4, len(str(r.get("class_short") or "")), p)
+        consider(6, len(str(r.get("length"))) + (2 if r.get("length_implausible") else 0), p)
+        amp = r.get("amplitude")
+        consider(7, len("%.4g" % amp) if isinstance(amp, (int, float)) else 1, p)
+        consider(8, len(str(len(r.get("used_by") or []))), p)
+    out: list[str] = []
+    for col in sorted(cols):
+        for _n, p in sorted(cols[col], key=lambda t: -t[0])[:per_col]:
+            if p not in out:
+                out.append(p)
+    return out
+
+
+def _pulse_vt_payload(store, pulse_index, rows: list, channel: str, *,
+                      want_html: bool, stamp: str) -> str:
+    """The virtual view's row model for *rows* (already filtered, in table
+    order) as JSON: ``[path, digest, html]`` per row, or ``[path, digest]``
+    when the client already holds the text (``vids=1``); ``wide`` names the
+    rows that size the columns (:func:`_pulse_vt_widest`)."""
+    memo = _pulse_vt_memo()
+    out = []
+    for r in rows:
+        html, ver = memo.get("vt", r, _pulse_vt_render, sig=_pulse_vt_sig)
+        out.append([r["path"], ver, html] if want_html else [r["path"], ver])
+    return json.dumps({"v": 1, "stamp": stamp,
+                       "n": len(rows), "rows": out, "wide": _pulse_vt_widest(rows),
+                       "empty": _pulse_vt_empty_html(channel)},
+                      separators=(",", ":"), ensure_ascii=False)
+
+
+@bp.route("/pulses/vids")
+def pulses_vids():
+    """The active filter's (path, digest) list -- what the virtual view
+    re-reads after a change, to fetch only the rows whose text moved."""
+    store = _store()
+    pulse_index = _pulse_index()
+    if not store or not pulse_index:
+        return jsonify(ok=False, error="no chip loaded"), 409
+    channel = request.args.get("channel", "")
+    raw, stamp = _pulse_vt_rows_stamp(store, pulse_index)
+    rows = _pulse_rows_filter(raw, channel,
+                              request.args.get("q", "").strip(),
+                              request.args.get("owner", "").strip())
+    resp = make_response(_pulse_vt_payload(store, pulse_index, rows, channel,
+                                           want_html=False, stamp=stamp))
+    resp.mimetype = "application/json"
+    return resp
+
+
+def _pulse_vt_paths_arg(cap: int) -> list[str]:
+    body = request.get_json(silent=True) or {}
+    paths = body.get("paths") if isinstance(body, dict) else None
+    if not isinstance(paths, list):
+        return []
+    return [p for p in paths if isinstance(p, str) and p][:cap]
+
+
+@bp.route("/pulses/vrows", methods=["POST"])
+def pulses_vrows():
+    """The text of the named rows, ``[path, digest, html]`` each; a path
+    that is no longer a pulse is listed under ``gone``."""
+    store = _store()
+    pulse_index = _pulse_index()
+    if not store or not pulse_index:
+        return jsonify(ok=False, error="no chip loaded"), 409
+    raw, stamp = _pulse_vt_rows_stamp(store, pulse_index)
+    by = {r["path"]: r for r in raw}
+    out, gone = [], []
+    for p in _pulse_vt_paths_arg(50000):
+        r = by.get(p)
+        if r is None:
+            gone.append(p)
+            continue
+        html, ver = _pulse_vt_entry(r)
+        out.append([p, ver, html])
+    return jsonify(ok=True, stamp=stamp, rows=out, gone=gone)
+
+
+@bp.route("/pulses/sparks", methods=["POST"])
+def pulses_sparks():
+    """The thumbnails of the rows on screen, drawn exactly as the rendered
+    table draws them: each answer is the row's full ``_pulse_row.html`` (the
+    client takes its waveform cell) with the digest of the row's text, so a
+    row whose text moved meanwhile is caught too. Lab-class rows are drawn
+    from RAM or the generated config and their own code is warmed in the
+    background, as for a rendered page."""
+    store = _store()
+    pulse_index = _pulse_index()
+    if not store or not pulse_index:
+        return jsonify(ok=False, error="no chip loaded"), 409
+    raw, stamp = _pulse_vt_rows_stamp(store, pulse_index)
+    by = {r["path"]: r for r in raw}
+    asked = _pulse_vt_paths_arg(400)
+    want = [p for p in asked if p in by]
+    gone = [p for p in asked if p not in by]
+    rows = [dict(by[p]) for p in want]
+    unknown = _pulse_draw_sparks(store, pulse_index, rows)
+    if unknown:
+        _warm_lab_sparks(store, unknown)
+    tmpl = current_app.jinja_env.get_template("_pulse_row.html")
+    cells = {}
+    for p, r in zip(want, rows):
+        cells[p] = [_pulse_vt_entry(by[p])[1], tmpl.render(r=r).strip()]
+    # `gone`: asked for, not a pulse any more -- the client re-lists instead
+    # of asking again (a path it keeps on screen would otherwise loop)
+    return jsonify(ok=True, stamp=stamp, rows=cells, warming=unknown, gone=gone)
+
+
+def _pulse_draw_sparks(store, pulse_index, rows) -> list[str]:
+    """Put ``spark_svg`` (+ the lab-drawn flags) on each of *rows* -- COPIES
+    of index rows -- and return the paths of the lab-class rows among them.
+
+    Sparklines for the visible page only, memoized per (op, mutation_seq) so
+    repeated search keystrokes / pagination over an unchanged chip never
+    re-synthesize. Aliases / unknown classes render "→ target" instead."""
+    from quam_state_manager.core.waveform_synth import sparkline_svg, synth_for_operation
+    unknown_paths: list[str] = []
+
+    def _spark_rows(rows) -> None:
+        for row in rows:
+            if "spark_svg" in row:
+                continue                       # drawn before a hand-over
+            _activity.checkpoint()
+            if row["is_alias"]:
+                row["spark_svg"] = None
+                continue
+            path = row["path"]
+            if not row["known"]:
+                # A class SM has no synthesizer for -- SNZ, GaussianNZ, a lab's own
+                # readout weights. Drawn from the lab's generated config, and marked
+                # as such in the markup so it never reads as one SM drew.
+                if path not in unknown_paths:
+                    _pulse_fallback_spark(store, path, row)
+                    unknown_paths.append(path)
+                continue
+            row["spark_svg"] = pulse_index.sparkline(
+                path, lambda p=path: sparkline_svg(synth_for_operation(store, p)))
+    # w8/locks: ONE hold of the store lock for the whole page of sparklines
+    # (handed to other requests every HANDOVER_EVERY_S), not the up to four
+    # short takes per row it used to be (index check, row read, sparkline
+    # store, the synth's own read: ~200 for a page of 50). Each short take
+    # waits for the current holder's next hand-over while a cold Live-Edit
+    # grid build or the lint runs; the page measured 9.6-9.7 s in real
+    # Chrome on big30x right after a structural pull. A chip that moves
+    # meanwhile stops the held pass; the rows it did not draw are drawn the
+    # ordinary way.
+    with _activity.yielding(store, foreground=True, main=True):
+        with store._lock:
+            _spark_rows(rows)
+    _spark_rows(rows)
+    return unknown_paths
 
 
 # ---------------------------------------------------------------------------
@@ -16026,51 +16355,28 @@ def pulses_page():
                          and r["channel"] in PAIR_PULSE_CHANNELS
                          for r in all_rows)
     has_found = any(r.get("found") for r in all_rows)
+    vt = _pulses_vt_on(len(all_rows), per_page)
     all_rows = _pulse_rows_filter(all_rows, channel, query, owner)
 
     page_rows, total, page, total_pages = _paginate(all_rows, page, per_page)
-    # the index's row dicts are shared across requests (docs/2xx pulses RAM):
-    # the spark keys below go on a copy
-    page_rows = [dict(r) for r in page_rows]
-
-    # Sparklines for the visible page only, memoized per (op, mutation_seq) so
-    # repeated search keystrokes / pagination over an unchanged chip never
-    # re-synthesize. Aliases / unknown classes render "→ target" instead.
-    from quam_state_manager.core.waveform_synth import sparkline_svg, synth_for_operation
+    vt_json = None
     unknown_paths: list[str] = []
-
-    def _spark_rows(rows) -> None:
-        for row in rows:
-            if "spark_svg" in row:
-                continue                       # drawn before a hand-over
-            _activity.checkpoint()
-            if row["is_alias"]:
-                row["spark_svg"] = None
-                continue
-            path = row["path"]
-            if not row["known"]:
-                # A class SM has no synthesizer for -- SNZ, GaussianNZ, a lab's own
-                # readout weights. Drawn from the lab's generated config, and marked
-                # as such in the markup so it never reads as one SM drew.
-                if path not in unknown_paths:
-                    _pulse_fallback_spark(store, path, row)
-                    unknown_paths.append(path)
-                continue
-            row["spark_svg"] = pulse_index.sparkline(
-                path, lambda p=path: sparkline_svg(synth_for_operation(store, p)))
-    # w8/locks: ONE hold of the store lock for the whole page of sparklines
-    # (handed to other requests every HANDOVER_EVERY_S), not the up to four
-    # short takes per row it used to be (index check, row read, sparkline
-    # store, the synth's own read: ~200 for a page of 50). Each short take
-    # waits for the current holder's next hand-over while a cold Live-Edit
-    # grid build or the lint runs; the page measured 9.6-9.7 s in real
-    # Chrome on big30x right after a structural pull. A chip that moves
-    # meanwhile stops the held pass; the rows it did not draw are drawn the
-    # ordinary way.
-    with _activity.yielding(store, foreground=True, main=True):
-        with store._lock:
-            _spark_rows(page_rows)
-    _spark_rows(page_rows)
+    if vt:
+        # w9/pulsesall: the rows travel as data; nothing is rendered or drawn
+        # here (the thumbnails are drawn for the rows on screen, lazily). The
+        # rows are re-read with their stamp as one observation.
+        raw, stamp = _pulse_vt_rows_stamp(store, pulse_index)
+        all_rows = _pulse_rows_filter(raw, channel, query, owner)
+        total = len(all_rows)
+        vt_json = _pulse_vt_payload(store, pulse_index, all_rows, channel,
+                                    want_html=request.args.get("vids") != "1",
+                                    stamp=stamp)
+        page_rows = []
+    else:
+        # the index's row dicts are shared across requests (docs/2xx pulses
+        # RAM): the spark keys go on a copy
+        page_rows = [dict(r) for r in page_rows]
+        unknown_paths = _pulse_draw_sparks(store, pulse_index, page_rows)
 
     if unknown_paths:
         # docs/218: draw the visible lab-class rows with their own code in the
@@ -16125,6 +16431,7 @@ def pulses_page():
             has_pair_flux=has_pair_flux,
             has_pair_drive=has_pair_drive,
             has_found=has_found,
+            vt_json=vt_json,
         ),
     )
 

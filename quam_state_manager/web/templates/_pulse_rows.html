@@ -1,6 +1,11 @@
 {# The pulses table + pagination — re-fetched on `pulses-changed`. #}
 {# docs/190 F35: the h2 count sits outside this swap target; a search or
-   channel tab used to leave it frozen at the unfiltered library total. #}
+   channel tab used to leave it frozen at the unfiltered library total. #}{#
+   w9/pulsesall: the per-page "All" view of a big library is VIRTUAL (vt_json
+   set): the tbody ships empty and the rows travel once as data in
+   #pulses-vdata; pulses.js (PulsesVT) renders only the rows near the
+   viewport, between two spacer rows, and an edit patches the rows it touched
+   in that model instead of re-rendering every row. #}
 <small class="muted" id="pulses-total" hx-swap-oob="true">({{ total }})</small>
 <div class="pulse-compare-bar" id="pulse-compare-bar" hidden>
     <span id="pulse-compare-count">0</span> selected
@@ -23,8 +28,8 @@
             <th class="sortable" data-col="8" data-type="num">Used by</th>
         </tr>
     </thead>
-    <tbody>
-    {% if rows %}
+    <tbody{% if vt_json %} data-pulses-virtual="1"{% endif %}>
+    {% if vt_json %}{% elif rows %}
     {% for r in rows %}
         {% include '_pulse_row.html' %}
     {% endfor %}
@@ -34,7 +39,7 @@
         </td></tr>
     {% endif %}
     </tbody>
-</table>
+</table>{% if vt_json %}<script type="application/json" id="pulses-vdata">{{ vt_json | script_json }}</script>{% endif %}
 
 {% set base_url = "/pulses" %}
 {% set extra_qs = (("&channel=" ~ active_channel) if active_channel else "")
