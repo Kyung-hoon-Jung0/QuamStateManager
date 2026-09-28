@@ -167,7 +167,7 @@ class TestTheDrawingIsAControl:
             "the SERVER decides whether the pick is shown"
         assert '<strong id="pulses-owner-chip-id">{{ active_owner' in tpl, \
             "and names it, rather than waiting for a script to fill it in"
-        assert 'href="/pulses' in tpl and "window.pulsePickOwner" in tpl, \
+        assert 'href="{{ root }}/pulses' in tpl and "window.pulsePickOwner" in tpl, \
             "the x is a real link; the click handler is the fast path, not the only one"
 
     def test_the_picked_entity_is_visibly_picked(self):

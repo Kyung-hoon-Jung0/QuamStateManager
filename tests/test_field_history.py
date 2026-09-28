@@ -16,6 +16,7 @@ import pytest
 
 from quam_state_manager.web import routes as routes_mod
 from quam_state_manager.web.app import create_app
+from tests._prefix import PREFIX
 
 _WIRING = {"network": {"host": "1.1.1.1", "cluster_name": "C1"},
            "ports": {"mw_outputs": {"con1": {"1": {"2": {"band": 1}}}}}}
@@ -192,7 +193,7 @@ class TestFieldHistoryRoute:
         r = c.get("/field/history?path=qubits.qA1.f_01")
         html = r.data.decode()
         key = routes_mod._folder_key(data_root)
-        assert f'hx-get="/dataset/{key}:31"' in html
+        assert f'hx-get="{PREFIX}/dataset/{key}:31"' in html
         assert 'hx-target="#inspector-pane"' in html
         assert ":99" not in html, "unregistered run folder must not get a Data link"
 
@@ -241,7 +242,7 @@ class TestRunsTier:
         assert 'data-value="5320000000.0"' in html
         assert "06_ramsey" in html and "#32" in html
         key = routes_mod._folder_key(data_root)
-        assert f'hx-get="/dataset/{key}:32"' in html, \
+        assert f'hx-get="{PREFIX}/dataset/{key}:32"' in html, \
             "run-derived rows carry a guaranteed Data link"
         assert "9900000000" not in html, "foreign chip's runs are gated out"
         assert "live run value" in html

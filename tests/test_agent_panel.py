@@ -28,6 +28,7 @@ from quam_state_manager.web import chat_api
 from quam_state_manager.web.app import create_app
 from tests.test_agent_runs import NODE_SRC, FakeRun, AGENT, HUMAN, _arm, _wait
 from tests.test_chat_api import _FakeClaude, _FakeCodex
+from tests._prefix import RE_PREFIX
 
 
 @pytest.fixture
@@ -279,7 +280,7 @@ class TestHome:
         # customer feedback 2026-09-08: no tool-row Agent button any more -- the Agent is a
         # nav entry (id nav-agent, above the Calibration log) that opens /agent in the pane
         assert 'class="sidebar-tool agent-btn"' not in html and 'id="nav-agent"' in html
-        assert re.search(r'href="/agent"[^>]*hx-get="/agent"[^>]*hx-target="#table-pane"', html)
+        assert re.search(rf'href="{RE_PREFIX}/agent"[^>]*hx-get="{RE_PREFIX}/agent"[^>]*hx-target="#table-pane"', html)
         assert re.search(r'id="nav-agent" class="active"', html), "with a chip open, / IS the Agent home: the entry is active"
         assert "agent.js" in html and '"label": "Agent home"' in html and '"url": "/agent"' in html
 

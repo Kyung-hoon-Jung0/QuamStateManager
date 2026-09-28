@@ -126,7 +126,7 @@ def test_the_config_viewer_path_is_unchanged(tmp_path, monkeypatch):
 def test_the_button_asks_for_the_verdict():
     tpl = (_ROOT / "quam_state_manager" / "web" / "templates"
            / "_diagnostics_env.html").read_text(encoding="utf-8")
-    btn = re.search(r'<button[^>]*hx-post="/config/regenerate"[^>]*>', tpl).group(0)
+    btn = re.search(r'<button[^>]*hx-post="{{ root }}/config/regenerate"[^>]*>', tpl).group(0)
     assert "hx-vals='{\"deep\": \"1\"}'" in btn
     assert 'hx-disabled-elt="this"' in btn
 

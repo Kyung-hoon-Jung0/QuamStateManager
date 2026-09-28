@@ -24,6 +24,7 @@ from pathlib import Path
 import pytest
 
 from quam_state_manager.web.app import create_app
+from tests._prefix import PREFIX
 
 _ROOT = Path(__file__).resolve().parent.parent
 _TPL = _ROOT / "quam_state_manager" / "web" / "templates"
@@ -129,7 +130,7 @@ class TestPopoutDoor:
 
     def test_the_door_renders_the_route(self, tmp_path):
         page = _client(tmp_path).get("/").get_data(as_text=True)
-        assert 'data-calc-window-url="/calc-window"' in page
+        assert f'data-calc-window-url="{PREFIX}/calc-window"' in page
         assert page.count("calc-popout") == 1
 
     def test_calc_js_contract(self):

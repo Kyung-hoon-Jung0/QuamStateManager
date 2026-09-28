@@ -22,6 +22,7 @@ from pathlib import Path
 import pytest
 
 from quam_state_manager.web.app import create_app
+from tests._prefix import PREFIX, RE_PREFIX
 
 _WIRING = {"network": {"host": "1.1.1.1", "cluster_name": "C1"}}
 
@@ -65,7 +66,7 @@ class TestLoadFailureIsPersistent:
             "a subfolder holding state.json must be offered whatever it is named"
         assert "quam_state" in html
         assert "notes" not in html.split("load-failed-candidates")[-1]
-        assert 'hx-post="/load"' in html     # one click loads it
+        assert f'hx-post="{PREFIX}/load"' in html     # one click loads it
 
     def test_missing_folder_still_explains(self, client, tmp_path):
         r = client.post("/load", data={"folder": str(tmp_path / "nope")})
@@ -135,7 +136,7 @@ class TestSidebarLoadFailedSlotFits:
     def _candidate_targets(html: str) -> list[str]:
         import re
         block = html.split("load-failed-candidates", 1)[1]
-        return re.findall(r'hx-post="/load"[^>]*?hx-target="([^"]*)"', block)
+        return re.findall(rf'hx-post="{RE_PREFIX}/load"[^>]*?hx-target="([^"]*)"', block)
 
     def test_a_sidebar_panel_keeps_its_candidates_in_the_sidebar(self, client, tmp_path):
         """F17 review: a candidate that ALSO fails re-renders the panel into

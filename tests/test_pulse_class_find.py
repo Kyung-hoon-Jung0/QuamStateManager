@@ -38,6 +38,7 @@ import pytest
 from quam_state_manager.core import state_env_schema
 from quam_state_manager.web.app import create_app
 from tests.test_pulses_routes import _make_state, _make_wiring
+from tests._prefix import PREFIX
 
 _ROOT = Path(__file__).resolve().parents[1]
 FIND_RE = re.compile(r'<p id="pulse-create-classfind"[^>]*>.*?</p>', re.S)
@@ -103,7 +104,7 @@ class TestTheLineUnderTheClassList:
         assert 'data-classfind-state="noenv"' in frag
         assert "Don&#39;t see your pulse class?" in frag or "Don't see your pulse class?" in frag
         assert "Pick a Python environment first" in frag
-        assert 'href="/generate"' in frag and 'hx-get="/generate"' in frag
+        assert f'href="{PREFIX}/generate"' in frag and f'hx-get="{PREFIX}/generate"' in frag
         assert "data-pulse-module-open" not in frag   # nothing to open without an env
 
     def test_a_vanished_env_says_so(self, chip):

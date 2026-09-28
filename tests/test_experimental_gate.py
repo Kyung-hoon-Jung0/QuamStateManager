@@ -19,8 +19,9 @@ import re
 import pytest
 
 from quam_state_manager.web.app import create_app
+from tests._prefix import PREFIX
 
-TRIO = ('href="/scheduler"', 'href="/fit-audit"', 'href="/autofit"')
+TRIO = (f'href="{PREFIX}/scheduler"', f'href="{PREFIX}/fit-audit"', f'href="{PREFIX}/autofit"')
 LABELS = ("Experiment Runner", "Fit Replay", "Auto Calibrate")
 
 
@@ -79,6 +80,6 @@ class TestOptIn:
 
     def test_the_flag_is_read_per_request(self, client, monkeypatch):
         monkeypatch.setenv("SM_EXPERIMENTAL", "1")
-        assert 'href="/autofit"' in client.get("/").get_data(as_text=True)
+        assert f'href="{PREFIX}/autofit"' in client.get("/").get_data(as_text=True)
         monkeypatch.delenv("SM_EXPERIMENTAL")
-        assert 'href="/autofit"' not in client.get("/").get_data(as_text=True)
+        assert f'href="{PREFIX}/autofit"' not in client.get("/").get_data(as_text=True)

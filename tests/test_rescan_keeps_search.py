@@ -47,7 +47,7 @@ class TestRescanKeepsTheSearch:
         assert 'value="name:&#34;a b&#34;"' in tag
 
     def test_the_box_is_what_the_button_sends(self):
-        i = _DS_HTML.index('hx-post="/datasets/rescan"')
+        i = _DS_HTML.index('hx-post="{{ root }}/datasets/rescan"')
         btn = _DS_HTML[i - 200:i + 400]
         assert "#dataset-search" in btn.split("hx-include=", 1)[1].split('"')[1]
         assert '<input type="search" id="dataset-search" name="keep_q"' in _DS_HTML

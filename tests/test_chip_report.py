@@ -16,6 +16,7 @@ from pathlib import Path
 import pytest
 
 from quam_state_manager.web.app import create_app
+from tests._prefix import PREFIX
 
 
 def _chip(folder: Path) -> Path:
@@ -57,7 +58,7 @@ class TestSidebarAffordance:
         row_end = page.index("nav-sub-toggle", i)
         row = page[i:row_end]
         assert 'class="nav-print"' in row
-        assert 'href="/chip-status/report"' in row
+        assert f'href="{PREFIX}/chip-status/report"' in row
         assert 'target="_blank"' in row              # a report opens its own tab
         assert "ic-printer" in row                    # SVG, never an emoji
 

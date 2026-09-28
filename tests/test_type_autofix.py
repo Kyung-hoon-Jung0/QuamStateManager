@@ -16,6 +16,7 @@ import pytest
 
 from quam_state_manager.core import type_fix
 from quam_state_manager.web.app import create_app
+from tests._prefix import PREFIX
 
 # q1 carries one of every shape the plan has to reason about.
 _STATE = {
@@ -838,7 +839,7 @@ class TestArchivesAreNotOfferedRepair:
 class TestTheBannerRefreshes:
     def test_the_slot_re_renders_itself(self, client):
         html = client.get("/qubits").get_data(as_text=True)
-        assert 'hx-get="/type-alarm/banner"' in html
+        assert f'hx-get="{PREFIX}/type-alarm/banner"' in html
         assert "diagnostics-changed from:body" in html
 
     def test_the_count_drops_after_a_repair(self, client):
@@ -868,7 +869,7 @@ class TestTheDiagnosticsCard:
     def test_it_reports_both_classes_and_self_refreshes(self, client):
         html = client.get("/diagnostics/types-card").get_data(as_text=True)
         assert "Numbers stored as text" in html
-        assert 'hx-get="/diagnostics/types-card"' in html
+        assert f'hx-get="{PREFIX}/diagnostics/types-card"' in html
         assert "diagnostics-changed from:body" in html
 
     def test_nothing_is_left_to_auto_correct_after_a_repair(self, client):

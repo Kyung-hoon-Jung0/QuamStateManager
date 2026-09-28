@@ -14,6 +14,7 @@ from pathlib import Path
 import pytest
 
 from quam_state_manager.web.app import create_app
+from tests._prefix import PREFIX
 
 _ROOT = Path(__file__).resolve().parent.parent
 _STATIC = _ROOT / "quam_state_manager" / "web" / "static"
@@ -47,7 +48,7 @@ def test_the_findings_list_is_a_self_refreshing_slot(client):
     html = r.get_data(as_text=True)
     i = html.index('id="diag-findings"')
     head = html[i:i + 400]
-    assert 'hx-get="/diagnostics"' in head and 'hx-select="#diag-findings"' in head \
+    assert f'hx-get="{PREFIX}/diagnostics"' in head and 'hx-select="#diag-findings"' in head \
         and 'hx-swap="outerHTML"' in head
     assert "diagnostics-changed from:body" in head and "stateRestored from:body" in head
     # the list itself sits INSIDE the slot (one render path, no second route)

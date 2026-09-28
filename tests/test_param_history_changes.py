@@ -18,6 +18,7 @@ from pathlib import Path
 import pytest
 
 from quam_state_manager.web.app import create_app
+from tests._prefix import PREFIX
 
 _WIRING = {"network": {"host": "1.1.1.1", "cluster_name": "C1"},
            "ports": {"mw_outputs": {"con1": {"1": {"2": {"band": 1}}}}}}
@@ -179,7 +180,7 @@ class TestTheSurface:
     def test_changes_offers_the_way_back(self, env):
         _snap(env, _state())
         html = _get(env, "/param-history/changes").get_data(as_text=True)
-        assert 'hx-get="/param-history"' in html
+        assert f'hx-get="{PREFIX}/param-history"' in html
 
     def test_direct_navigation_renders_a_full_page(self, env):
         _snap(env, _state())

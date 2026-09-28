@@ -24,6 +24,7 @@ from quam_state_manager.core.differ import Differ
 from quam_state_manager.core.loader import QuamStore, flatten, merge_state_wiring
 from quam_state_manager.web import routes as R
 from quam_state_manager.web.app import create_app
+from tests._prefix import PREFIX
 
 _WIRING = {"network": {"host": "1.1.1.1", "cluster_name": "C1"},
            "ports": {"mw_outputs": {"con1": {"1": {"2": {"band": 1}}}}}}
@@ -398,7 +399,7 @@ def test_changes_filter_input_survives_the_swap(env):
     inp = _re.search(r'<input[^>]*name="prefix"[^>]*>', html).group(0)
     assert 'id="ph-changes-prefix"' in inp and 'hx-preserve="true"' in inp
     clear = _re.search(r'<[^>]*>Clear</', html).group(0)
-    assert "hx-get" not in clear and 'href="/param-history/changes"' in clear
+    assert "hx-get" not in clear and f'href="{PREFIX}/param-history/changes"' in clear
 
 
 def test_chip_histories_rows_equal_cold_over_random_events(tmp_path):

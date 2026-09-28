@@ -18,6 +18,7 @@ import pytest
 
 from quam_state_manager.core import mw_fem
 from quam_state_manager.web.app import create_app
+from tests._prefix import PREFIX
 
 _WIRING = {
     "network": {"host": "3.3.3.3", "cluster_name": "F1"},
@@ -440,7 +441,7 @@ class TestTrayDiscardKeepsTheBundleWhole:
         # warning must travel with it -- the server discards the unit either way
         _commit_comp(env)
         html = env["client"].get("/state/review").data.decode()
-        assert html.count('hx-post="/discard"') == 4, html[:400]
+        assert html.count(f'hx-post="{PREFIX}/discard"') == 4, html[:400]
         assert html.count("with its full-scale-power bundle (4 changes") == 4, html[:400]
 
     # review follow-up: the unit is the FSP + its amplitudes, never the whole

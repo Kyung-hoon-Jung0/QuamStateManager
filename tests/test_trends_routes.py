@@ -20,6 +20,7 @@ import pytest
 from quam_state_manager.core import trend_index as ti
 from quam_state_manager.web import routes as routes_mod
 from quam_state_manager.web.app import create_app
+from tests._prefix import PREFIX
 
 A = "05_rabi"
 
@@ -85,7 +86,7 @@ class TestShell:
         assert len(html.encode()) < 6000, len(html.encode())
         m = re.search(r'data-series-url="([^"]+)"', html)
         assert m and f"folders={key}" in m.group(1) and f"experiment={A}" in m.group(1)
-        assert 'data-params-url="/trends/param-diff?' in html
+        assert f'data-params-url="{PREFIX}/trends/param-diff?' in html
         # the figure timeline is a closed <details>, the strip item a <template>
         assert re.search(r'<details class="trends-section trends-figtl"[^>]*hidden', html)
         assert "toggleFigureZoom(this)" in html
@@ -194,7 +195,7 @@ class TestParamDiff:
         heads = re.findall(r"<th title=\"#(\d+) ", html)
         assert heads == [str(i) for i in range(11, 31)], heads
         assert "<code>shots</code>" in html and "<code>span</code>" not in html
-        assert 'hx-get="/trends/param-diff?experiment=' in html and "window=all" in html
+        assert f'hx-get="{PREFIX}/trends/param-diff?experiment=' in html and "window=all" in html
         assert "show all 30 runs" in text
 
     def test_all_runs_on_request(self, app_client):

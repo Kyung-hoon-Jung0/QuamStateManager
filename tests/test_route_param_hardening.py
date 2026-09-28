@@ -10,6 +10,7 @@ import pytest
 
 from quam_state_manager.web.app import create_app
 from quam_state_manager.web import routes as R
+from tests._prefix import RE_PREFIX
 
 
 @pytest.fixture
@@ -138,6 +139,6 @@ def test_no_chip_full_page_marks_the_menu_and_names_it(client):
     import re
     body = client.get("/explorer").data.decode()
     # the sidebar highlights the menu that was asked for ...
-    assert re.search(r'href="/explorer"[^>]*class="active"', body)
+    assert re.search(rf'href="{RE_PREFIX}/explorer"[^>]*class="active"', body)
     # ... while the empty state still reads the human label, not the nav token
     assert "Load a chip to view the state explorer." in body

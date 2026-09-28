@@ -15,6 +15,7 @@ from pathlib import Path
 import pytest
 
 from quam_state_manager.web.app import create_app
+from tests._prefix import PREFIX
 
 _WIRING = {"network": {"host": "1.1.1.1", "cluster_name": "C1"}}
 _STATE = {"qubits": {"qA1": {"id": "qA1", "f_01": 5.0e9}},
@@ -49,7 +50,7 @@ class TestHelpPage:
         assert client.post("/load", data={"folder": str(live)}).status_code in (200, 302)
         for page in ("/qubits", "/bulk", "/datasets"):
             html = client.get(page).data.decode("utf-8")
-            assert 'href="/help"' in html, page
+            assert f'href="{PREFIX}/help"' in html, page
 
     def test_help_partial_for_htmx(self, client):
         r = client.get("/help", headers={"HX-Request": "true"})
@@ -64,7 +65,7 @@ class TestLandingCta:
         html = client.get("/").data.decode("utf-8")
         assert "landing-cta" in html
         assert "Open a state folder" in html
-        assert 'href="/help"' in html
+        assert f'href="{PREFIX}/help"' in html
 
 
 class TestTrayTeaching:

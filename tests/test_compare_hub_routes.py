@@ -15,6 +15,7 @@ from pathlib import Path
 import pytest
 
 from quam_state_manager.web.app import create_app
+from tests._prefix import PREFIX
 
 
 # ---------------------------------------------------------------------------
@@ -110,8 +111,8 @@ class TestHubShell:
         not come back is the old three-entry sidebar."""
         c, _a, _b = env
         r = c.get("/compare-hub")   # full page (no HX-Request header)
-        assert b'href="/diff"' in r.data
-        assert b'href="/chip-compare"' not in r.data
+        assert f'href="{PREFIX}/diff"'.encode() in r.data
+        assert f'href="{PREFIX}/chip-compare"'.encode() not in r.data
 
     def test_two_sources_without_bucket_prompts_for_context(self, env):
         """Axiom 2 — the context is user-declared, never auto-run."""
@@ -932,7 +933,7 @@ class TestP4Redirects:
         msg = json.loads(resp.headers["HX-Trigger"])["sm:toast"]["message"]
         assert "12 runs" in msg and "untick 7" in msg
         resp = c.post("/compare", data={"paths": paths})
-        assert resp.status_code == 302 and resp.headers["Location"] == "/diff"
+        assert resp.status_code == 302 and resp.headers["Location"] == f"{PREFIX}/diff"
 
     def test_command_palette_points_at_hub(self, env):
         """The palette follows the front door (docs/84): Compare opens the diff
@@ -959,12 +960,12 @@ class TestFinalAuditHardening:
         for url in (f"/diff?src=ws:{a}", "/chip-compare"):
             r = c.get(url, headers={"HX-Request": "true"})
             assert r.status_code == 200
-            assert r.headers["HX-Redirect"].startswith("/compare-hub")
+            assert r.headers["HX-Redirect"].startswith(f"{PREFIX}/compare-hub")
 
     def test_legacy_bare_get_lands_with_moved_note(self, env):
         c, _a, _b = env
         r = c.get("/chip-compare")
-        assert r.headers["Location"] == "/compare-hub?from=chip-compare"
+        assert r.headers["Location"] == f"{PREFIX}/compare-hub?from=chip-compare"
         r2 = c.get(r.headers["Location"])
         assert b"moved here" in r2.data
 

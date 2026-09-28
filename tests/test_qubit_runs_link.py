@@ -76,8 +76,8 @@ class TestTheLink:
         """
         actions = _actions_block(_text("_inspector_header.html"))
         assert "inspector_type in ('qubit', 'pair')" in actions
-        assert 'href="/datasets?q={{ inspector_label }}"' in actions
-        assert 'hx-get="/datasets?q={{ inspector_label }}"' in actions
+        assert 'href="{{ root }}/datasets?q={{ inspector_label }}"' in actions
+        assert 'hx-get="{{ root }}/datasets?q={{ inspector_label }}"' in actions
 
     def test_it_ships_the_bare_name_not_the_qubit_scope(self):
         """The whole design decision, in one assert.

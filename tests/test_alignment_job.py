@@ -23,6 +23,7 @@ from quam_state_manager.web import routes as R
 from quam_state_manager.web.app import create_app
 
 from tests.test_scanner_reuse import _TICK
+from tests._prefix import PREFIX
 
 
 def _chip(d: Path, qubits=("q0", "q1")) -> Path:
@@ -84,7 +85,7 @@ class TestPlaceholder:
         body = _get(c)
         assert time.perf_counter() - t0 < 0.5
         assert "ph-alignment-pending" in body
-        assert 'hx-get="/param-history/alignment?summary_total=3"' in body
+        assert f'hx-get="{PREFIX}/param-history/alignment?summary_total=3"' in body
         assert 'hx-trigger="load delay:700ms"' in body
         # it stamps nothing the auto-backfill gate reads
         assert "data-importable-count" not in body and "setAttribute" not in body

@@ -14,6 +14,7 @@ from urllib.parse import quote
 import pytest
 
 from quam_state_manager.web.app import create_app
+from tests._prefix import PREFIX
 
 PNG = (b"\x89PNG\r\n\x1a\n" + bytes(range(16)))  # any bytes -- served, not decoded
 
@@ -188,7 +189,7 @@ class TestFiguresTab:
         assert "diff-wb-figs" in html
         assert "repeat(3, 1fr)" in html
         # every image still renders exactly once
-        assert html.count('src="/diff/fig?') == 2 + 1 + 2
+        assert html.count(f'src="{PREFIX}/diff/fig?') == 2 + 1 + 2
         # 2 rows: the name-matched fig_a + ONE mixed positional row
         assert html.count('class="diff-fig-name"') == 2
         # the mixed row's cells carry their own captions
@@ -199,7 +200,7 @@ class TestFiguresTab:
 
     def test_two_way_figures(self, env):
         html = _get(env, _url(env, tab="figures", three=False))
-        assert "repeat(2, 1fr)" in html and html.count('src="/diff/fig?') == 3
+        assert "repeat(2, 1fr)" in html and html.count(f'src="{PREFIX}/diff/fig?') == 3
 
     def test_disjoint_experiments_still_sit_side_by_side(self, env, tmp_path):
         """The customer's exact case: two DIFFERENT experiments -- zero shared
@@ -210,7 +211,7 @@ class TestFiguresTab:
         html = _get(env, f"/diff?a={quote(d1)}&b={quote(d2)}&tab=figures&view=list")
         # 3 rows (max of the two counts), every one positional/mixed
         assert html.count('class="diff-fig-name"') == 3
-        assert html.count('src="/diff/fig?') == 5
+        assert html.count(f'src="{PREFIX}/diff/fig?') == 5
         assert html.count('class="compare-figure-na"') == 1   # B's 3rd vs A's absent
         # side-by-side: A's first figure and B's first figure share the SAME
         # row (names are folder-sorted, so B's first is delta) -- the exact

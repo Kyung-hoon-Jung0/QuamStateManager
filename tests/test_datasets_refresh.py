@@ -286,7 +286,7 @@ class TestRescanSwapsTheTable:
         assert b'id="ds-active-date" name="date" value="2026-05-01"' in r.data
 
     def test_the_button_sends_its_date_and_view_and_cannot_double_fire(self):
-        i = _DS_HTML.index('hx-post="/datasets/rescan"')
+        i = _DS_HTML.index('hx-post="{{ root }}/datasets/rescan"')
         btn = _DS_HTML[i - 200:i + 400]
         # QA F9: the search box rides along too, so the swap keeps the search
         assert 'hx-include="#ds-active-date, #dataset-search"' in btn

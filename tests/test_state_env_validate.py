@@ -19,6 +19,7 @@ from quam_state_manager.core import state_env_validate as sev
 
 # reuse the hand-made manifest + state from the type-policy tests
 from tests.test_type_policy import MANIFEST, _state  # noqa: E402
+from tests._prefix import PREFIX
 
 
 def _findings(state, manifest=MANIFEST):
@@ -296,7 +297,7 @@ class TestDiagnosticsIntegration:
         busy = client.get("/diagnostics/env-card?poll=1")
         assert "HX-Trigger" not in busy.headers
         # ...and the self-poll it renders mid-probe is the announcing one
-        assert 'hx-get="/diagnostics/env-card?poll=1"' in busy.get_data(as_text=True)
+        assert f'hx-get="{PREFIX}/diagnostics/env-card?poll=1"' in busy.get_data(as_text=True)
 
     def test_same_quam_version_reads_as_such(self, client):
         from flask import render_template
@@ -342,7 +343,7 @@ class TestDiagnosticsIntegration:
         assert "env_unknown_field" not in flat()
         assert "duration_qubit" not in card()
         env_card = client.get("/diagnostics/env-card").get_data(as_text=True)
-        assert "no longer exists" in env_card and 'hx-get="/generate"' in env_card
+        assert "no longer exists" in env_card and f'hx-get="{PREFIX}/generate"' in env_card
         # a different env selected (settings edited outside SM): withdrawn too
         other = tmp_path / "envs" / "other" / "python.exe"
         other.parent.mkdir(parents=True)

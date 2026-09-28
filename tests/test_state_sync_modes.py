@@ -18,6 +18,7 @@ from pathlib import Path
 import pytest
 
 from quam_state_manager.web.app import create_app
+from tests._prefix import PREFIX
 
 
 # ---------------------------------------------------------------------------
@@ -385,7 +386,7 @@ class TestAcceptThenSyncPreservesEdit:
         # sync-ux 2026-09-25 (user decision: the review modal became the sync panel):
         # the saved version is pushed WHOLE (the safe direct push), and the
         # destructive Take live is a second press that names what it drops.
-        assert 'hx-post="/state/apply-to-live"' in html
+        assert f'hx-post="{PREFIX}/state/apply-to-live"' in html
         assert "doStateSync('apply'" not in html, "no pull-first merge over a saved version"
         i = html.index("sp-take")
         tag = html[html.rindex("<button", 0, i):html.index(">", i)]
@@ -412,7 +413,7 @@ class TestAcceptThenSyncPreservesEdit:
         # sync-ux 2026-09-25 (user decision: the review modal became the sync panel):
         # the status control's action is the direct push, never the pull-merge
         tray = loaded_client.get("/state/tray").data.decode()
-        assert 'hx-post="/state/apply-to-live"' in tray
+        assert f'hx-post="{PREFIX}/state/apply-to-live"' in tray
         assert "doStateSync('apply')" not in tray
         assert "Apply to live now" not in html
 

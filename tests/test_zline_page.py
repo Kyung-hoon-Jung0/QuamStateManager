@@ -14,6 +14,7 @@ import pytest
 
 from quam_state_manager.core import zline_filters as zf
 from quam_state_manager.web.app import create_app
+from tests._prefix import PREFIX
 
 
 def _chip():
@@ -64,7 +65,7 @@ def _data(c, line, **kw):
 class TestPage:
     def test_sidebar_entry_under_live_state_edit(self, client):
         html = client.get("/zline").get_data(as_text=True)
-        i_p, i_z = html.index('href="/pulses"'), html.index('href="/zline"')
+        i_p, i_z = html.index(f'href="{PREFIX}/pulses"'), html.index(f'href="{PREFIX}/zline"')
         assert i_p < i_z and "Z-line distortion" in html
         assert 'id="live-edit-subnav"' in html and "nav-subitems-collapsed" not in html.split('id="live-edit-subnav"')[0][-200:]
 

@@ -17,6 +17,7 @@ from pathlib import Path
 import pytest
 
 from quam_state_manager.web.app import create_app
+from tests._prefix import PREFIX
 
 
 def _write(path: Path, text: str) -> None:
@@ -116,7 +117,7 @@ class TestListingAndPage:
 
     def test_sidebar_and_subnav(self, env):
         home = env["client"].get("/").get_data(as_text=True)
-        assert 'hx-get="/qualibrate/subnav"' in home     # lazy submenu
+        assert f'hx-get="{PREFIX}/qualibrate/subnav"' in home     # lazy submenu
         sub = env["client"].get("/qualibrate/subnav").get_data(as_text=True)
         assert "beta" in sub
         # active dot on alpha, warn triangle on its dangling state_path

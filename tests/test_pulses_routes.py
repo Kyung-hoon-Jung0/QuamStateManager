@@ -8,6 +8,7 @@ from pathlib import Path
 import pytest
 
 from quam_state_manager.web.app import create_app
+from tests._prefix import PREFIX, RE_PREFIX
 
 QC = "quam.components.pulses."
 
@@ -137,11 +138,11 @@ class TestPulsesLibrary:
         assert 'hx-target="#inspector-pane"' in create
         # create=1 adds an auto-load trigger for the create form ON TOP of the
         # always-present "+ New pulse" button -> exactly one more /pulse/new.
-        assert create.count('hx-get="/pulse/new"') == plain.count('hx-get="/pulse/new"') + 1
+        assert create.count(f'hx-get="{PREFIX}/pulse/new"') == plain.count(f'hx-get="{PREFIX}/pulse/new"') + 1
         # The auto-open trigger div carries hx-trigger="load" (the button does not).
         import re
-        assert re.search(r'hx-get="/pulse/new"[^>]*hx-trigger="load"'
-                         r'|hx-trigger="load"[^>]*hx-get="/pulse/new"', create)
+        assert re.search(rf'hx-get="{RE_PREFIX}/pulse/new"[^>]*hx-trigger="load"'
+                         rf'|hx-trigger="load"[^>]*hx-get="{RE_PREFIX}/pulse/new"', create)
 
     def test_pulses_nested_under_live_edit_nav(self):
         # r15 IA (docs/69): Pulses moved into the Live-State-Edit subnav and the
@@ -157,7 +158,7 @@ class TestPulsesLibrary:
         assert "quam_liveedit_nav_collapsed" in base and \
                "quam_liveedit_nav_collapsed" in app_js
         # The old nav row (and its subnav) must be fully gone.
-        assert 'hx-get="/pulses?create=1"' not in base
+        assert 'hx-get="{{ root }}/pulses?create=1"' not in base
         assert "pulses-subnav" not in base
         # Pulses + Json Tree View are the group's children.
         i = base.index('id="live-edit-subnav"')
@@ -183,7 +184,7 @@ class TestPulsesLibrary:
 
     def test_sidebar_entry_active(self, loaded_client):
         html = loaded_client.get("/pulses").data.decode()
-        assert 'href="/pulses"' in html
+        assert f'href="{PREFIX}/pulses"' in html
 
 
 class TestPulseDetail:
@@ -2000,7 +2001,7 @@ class TestOneCreateButton:
 
     def test_the_toolbar_has_one_create_button(self, slot_client):
         html = slot_client.get("/pulses", headers={"HX-Request": "true"}).data.decode()
-        assert html.count('hx-get="/pulse/new"') >= 1
+        assert html.count(f'hx-get="{PREFIX}/pulse/new"') >= 1
         assert "pulse-gcz-btn" not in html
         assert "+ Gaussian CZ" not in html
 
