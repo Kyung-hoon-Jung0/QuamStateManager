@@ -3681,8 +3681,8 @@ window.ChipStatus.mount = function (opts) {
        press's own task; the rest follow in
        small slices, one per frame in the idle time after it, once the jump's
        smooth scroll has come to rest (a slice that grows the page mid-scroll
-       would make the jump guard re-land it instantly): first the panels below
-       the target, then the ones above it, nearest first. Every panel ends up
+       would make the jump guard re-land it instantly): outwards from the
+       target, one below and one above, nearest first. Every panel ends up
        exactly what the one-shot build makes (same markup, same order), and
        the charts wait until the last panel is in, then draw in build order.
        Panels that grow above the reader are what the jump guard (re-land on
@@ -3766,11 +3766,16 @@ window.ChipStatus.mount = function (opts) {
             if (want) { for (k = 0; k < panels.length; k++) if (want(panels[k])) return k; }
             return 0;
         }
-        // this panel, the ones under it, then the ones above it (nearest first)
+        // this panel and the one under it, then outwards from it, one above
+        // and one below, nearest first: a reader who scrolls either way from
+        // the target right after the jump finds panels there (below-first
+        // left ~1 s of empty headings above an IRB jump, real Chrome)
         function startAt(k) {
-            var o = [], a;
-            for (a = k; a < panels.length; a++) o.push(a);
-            for (a = k - 1; a >= 0; a--) o.push(a);
+            var o = [k], a;
+            for (a = 1; k + a < panels.length || k - a >= 0; a++) {
+                if (k + a < panels.length) o.push(k + a);
+                if (k - a >= 0) o.push(k - a);
+            }
             st.order = o; st.pos = 0;
         }
         function nextChunk(most) {

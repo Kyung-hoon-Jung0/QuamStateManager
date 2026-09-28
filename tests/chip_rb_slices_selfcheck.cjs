@@ -43,7 +43,12 @@
  *      the 1Q / readout panels above; all arrive, the three metric hosts end
  *      EXACTLY as the one-shot build; a later panel's qubit cell opens it; a
  *      Read. Fid. / Frequencies tab press builds that section's panels first;
- *      F5 inside the T2 Echo panel builds it at once and lands in it
+ *      F5 inside the T2 Echo panel builds it at once and lands in it (and
+ *      every frame painted after keeps it there)
+ *  S18 one section slices at a time: the jump's own first, a lazy one after;
+ *      a second jump that promotes the lazy one puts it first
+ *  S19 the slices build outwards from the target (one below, one above):
+ *      the panel right above an IRB jump's heading comes in the first slices
  *
  * Run: node tests/chip_rb_slices_selfcheck.cjs   (driven by tests/test_chip_status.py)
  */
@@ -312,11 +317,16 @@ const big = (o) => world(Object.assign({ topo: BIG, roOnMutation: true, roFrame:
     const Y = big({ url: '/topology?view=fidelity2q', chipView: 'fidelity2q', state: { htmx: true, smChipScroll: rec } });
     ok(!!Y.doc.querySelector(PSEL(k)) && built(Y).length <= 2,
        'S10 F5 on a place inside SRB cz_g7 builds that panel at once, not the section (' + built(Y).length + ')');
+    // what each frame that follows a layout change paints (after its
+    // ResizeObserver, as in Chrome): the panel never leaves its place
+    const painted = [];
+    Y.onPaint = function () { painted.push(Y.topOf(PSEL(k))); };
     await Y.advance(20);                        // the restore's frame
-    const at = Y.topOf(PSEL(k));
     await Y.advance(12000);
-    ok(at === -120 && built(Y).length === 20 && Y.topOf(PSEL(k)) === -120,
-       'S10 ...lands 120 px into it and is still there once the 7 panels above it arrived — ' + at + ' -> ' + Y.topOf(PSEL(k)));
+    const after = painted.slice(Math.max(0, painted.indexOf(-120)));
+    ok(painted[0] === -120 && built(Y).length === 20 && Y.topOf(PSEL(k)) === -120 && after.length > 3 && after.every((v) => v === -120),
+       'S10 ...lands 120 px into it and every frame painted while the 7 panels above it arrive shows it there — '
+       + painted[0] + ' -> ' + Y.topOf(PSEL(k)) + ' (' + after.length + ' frames: ' + JSON.stringify(after.filter((v) => v !== -120).slice(0, 3)) + ')');
   }
 
   // ── S11: the F5 matrix on the big chip ───────────────────────────────────
@@ -483,13 +493,15 @@ const big = (o) => world(Object.assign({ topo: BIG, roOnMutation: true, roFrame:
     const E = big({ url: '/topology?view=coherence', chipView: 'coherence', state: { htmx: true,
       smChipScroll: { url: '/topology?view=coherence', view: 'coherence', d: 900, sel: '.topo-section[data-density-panel="T2echo"]', ds: 50, top: 1 } } });
     const e0 = mkeys(E);
+    const ePainted = [];
+    E.onPaint = function () { ePainted.push(E.topOf('.topo-section[data-density-panel="T2echo"]')); };
     await E.advance(20);
-    const eAt = E.topOf('.topo-section[data-density-panel="T2echo"]');
     await E.advance(12000);
-    ok(e0[0] === 'T2echo' && e0.length <= 2 && eAt === -50 && mkeys(E).length === 15
-       && E.topOf('.topo-section[data-density-panel="T2echo"]') === -50,
+    const eAfter = ePainted.slice(Math.max(0, ePainted.indexOf(-50)));
+    ok(e0[0] === 'T2echo' && e0.length <= 2 && ePainted[0] === -50 && mkeys(E).length === 15
+       && E.topOf('.topo-section[data-density-panel="T2echo"]') === -50 && eAfter.length > 3 && eAfter.every((v) => v === -50),
        'S17 F5 on a place inside the T2 Echo panel builds it at once and lands 50 px into it, and it stays there — '
-       + JSON.stringify(e0) + ' ' + eAt + ' -> ' + E.topOf('.topo-section[data-density-panel="T2echo"]'));
+       + JSON.stringify(e0) + ' ' + ePainted[0] + ' -> ' + E.topOf('.topo-section[data-density-panel="T2echo"]'));
   }
 
   // ── S18: one section slices at a time -- the jump's own first ────────────
@@ -526,6 +538,19 @@ const big = (o) => world(Object.assign({ topo: BIG, roOnMutation: true, roFrame:
     const r2 = await track(Q2, (m, q) => m === 15 && q === 20);
     ok(mAt > 4 && mAt < 15 && r2.both === 0 && /^q+m+$/.test(r2.seq),
        'S18 an IRB press while they run puts the 2Q slices first (metric panels at the press: ' + mAt + '): ' + r2.seq);
+  }
+
+  // ── S19: outwards from the target -- the panel just above it comes early ──
+  {
+    const O = big({ state: { htmx: true } });
+    await O.advance(1000);
+    press(O, 'mouse', 'irb');
+    const pressed = built(O).length;
+    for (let t = 0; t < 5000 && built(O).length < pressed + 4; t += 4) await O.advance(4);
+    const early = built(O);
+    ok(early.indexOf(KEY('StandardRB', 'cz_g9')) >= 0 && early.indexOf(KEY('InterleavedRB', 'cz_g2')) >= 0,
+       'S19 the first slices after an IRB jump build outwards: the SRB panel right above the IRB heading comes as early '
+       + 'as the IRB panels under it (a reader scrolling up finds it) — ' + JSON.stringify(early));
   }
 
   // ── S12: a 5-qubit chain builds every panel in the press ─────────────────

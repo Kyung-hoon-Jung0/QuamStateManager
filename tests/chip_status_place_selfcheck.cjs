@@ -260,6 +260,7 @@ function world(opts) {
     lastTotal = tot;
     const fire = function () {
       ros.forEach(function (o) { if (o.els.indexOf(dash) >= 0) o.cb([{ target: dash }]); });
+      if (T.onPaint) T.onPaint();   // what that frame paints (after its ResizeObserver)
     };
     // opts.roFrame: in the next frame, after its animation-frame callbacks and
     // before its paint -- where Chrome delivers a ResizeObserver
