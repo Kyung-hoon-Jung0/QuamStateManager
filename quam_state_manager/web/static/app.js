@@ -1,3 +1,20 @@
+/* URL prefix (docs/226). A reverse proxy may mount SM under a path prefix
+ * (e.g. /sm); sm-root.js -- the first script of every page -- publishes
+ * window.SM. _smUrl(p): an app route -> the URL the browser must use (adds the
+ * prefix, idempotently). _smPath(p): a pathname / request path -> the app
+ * route (strips it). Both are the IDENTITY at root and whenever window.SM is
+ * absent (a page or harness that did not load sm-root.js), so a root install
+ * behaves exactly as before. fetch('/x'), htmx requests and pushState are
+ * prefixed by sm-root.js's wrappers; only what those cannot reach goes
+ * through here: location reads and navigations, selectors, attributes. */
+function _smUrl(p) {
+    var s = window.SM;
+    return (s && typeof s.url === 'function') ? s.url(p) : p;
+}
+function _smPath(p) {
+    var s = window.SM;
+    return (s && typeof s.path === 'function') ? s.path(p) : p;
+}
 /* ================================================================
  * UI_CONFIG — Design tokens for JavaScript-only consumers
  * ----------------------------------------------------------------
@@ -399,7 +416,7 @@ document.addEventListener('htmx:beforeSwap', function(evt) {
     // and htmx dropped it -- the user pressed Revert and got an EMPTY status
     // bar, which is what the stress round measured and read as a dead button.
     if (t.id === 'status-bar' && status >= 400 && status < 500) {
-        var _p409 = (evt.detail.requestConfig && evt.detail.requestConfig.path) || '';
+        var _p409 = _smPath((evt.detail.requestConfig && evt.detail.requestConfig.path) || '');
         if (_p409.indexOf('/state-history/') === 0) {
             evt.detail.shouldSwap = true;
             evt.detail.isError = false;
@@ -408,7 +425,7 @@ document.addEventListener('htmx:beforeSwap', function(evt) {
     // Data-folder cross-machine confirm (docs/20 r10): /chip-data-folder/set
     // answers 409 with _data_folder_confirm.html into the banner strip.
     if (t.id === 'chip-name-banner' && status === 409) {
-        var _pdf = (evt.detail.requestConfig && evt.detail.requestConfig.path) || '';
+        var _pdf = _smPath((evt.detail.requestConfig && evt.detail.requestConfig.path) || '');
         if (_pdf.indexOf('/chip-data-folder/') === 0) {
             evt.detail.shouldSwap = true;
             evt.detail.isError = false;
@@ -973,7 +990,7 @@ window.requirePlotly = function() {
     if (window._plotlyPromise) return window._plotlyPromise;
     window._plotlyPromise = new Promise(function(resolve, reject) {
         var src = (document.body && document.body.getAttribute('data-plotly-src'))
-                  || '/static/plotly.min.js';
+                  || _smUrl('/static/plotly.min.js');
         var s = document.createElement('script');
         s.src = src;
         s.async = true;
@@ -2177,7 +2194,7 @@ window.chipNavView = function(view, ev) {
             if (window.syncSidebarNavActive) window.syncSidebarNavActive();
         });
     } else {
-        window.location.href = '/topology?view=' + view;
+        window.location.href = _smUrl('/topology?view=' + view);
     }
     return false;
 };
@@ -2700,8 +2717,8 @@ function _dsHost(el) {
  * list the way the sidebar link does (its hx-get + push-url). */
 window.dsCloseRun = function(btn) {
     if (_dsHost(btn) === '#inspector-pane') { window.closeInspector(); return; }
-    var a = document.querySelector('.sidebar-nav a[href="/datasets"]');
-    if (a) a.click(); else window.location.assign('/datasets');
+    var a = document.querySelector('.sidebar-nav a[href="' + _smUrl('/datasets') + '"]');
+    if (a) a.click(); else window.location.assign(_smUrl('/datasets'));
 };
 /* ...and the full page keeps its address honest: a run that replaced it in
  * #table-pane (↑/↓ above, the detail's own parent link below) is what the URL
@@ -2709,10 +2726,10 @@ window.dsCloseRun = function(btn) {
  * run link) must never have the entry it leaves renamed. */
 function _dsSyncFullPageUrl(sel) {
     var t = document.querySelector(sel);
-    if (!t || t.id !== 'table-pane' || location.pathname.indexOf('/dataset/') !== 0) return;
+    if (!t || t.id !== 'table-pane' || _smPath(location.pathname).indexOf('/dataset/') !== 0) return;
     var r = t.querySelector('#ds-detail-root');
     var uid = r && r.getAttribute('data-uid');
-    if (uid && location.pathname !== '/dataset/' + uid) {
+    if (uid && _smPath(location.pathname) !== '/dataset/' + uid) {
         try { history.replaceState({htmx: true}, '', '/dataset/' + uid); } catch (e) {}
     }
 }
@@ -2872,7 +2889,7 @@ window.dsOpenFullPage = function(btn) {
     if (!uid) return;
     // QA r2-06: a REAL page (one code path with a pasted /dataset/<uid>, and a
     // history entry, so Back returns to where ⛶ was pressed).
-    window.location.assign('/dataset/' + uid);
+    window.location.assign(_smUrl('/dataset/' + uid));
 };
 
 /* "vs prev": one-click compare against the previous run of the SAME experiment
@@ -4397,7 +4414,7 @@ document.addEventListener("htmx:beforeSwap", function (evt) {
     var det = evt.detail;
     if (!det || !det.xhr || det.xhr.status !== 409) return;
     if (!det.target || det.target.id !== "pending-tray") return;
-    var path = (det.requestConfig && det.requestConfig.path) || "";
+    var path = _smPath((det.requestConfig && det.requestConfig.path) || "");
     if (path.indexOf("/state/apply-to-live?force=1") !== 0) return;
     var d = window._keepMineInFlight;
     var data = null;
@@ -5354,7 +5371,7 @@ function _softRefreshLiveSurface() {
                        "/table", "/bulk", "/wiring",
                        "/instrument", "/topology", "/workbench",
                        "/pulses", "/config", "/scheduler"];
-    var path = location.pathname;
+    var path = _smPath(location.pathname);
     var isStatePage = STATE_PAGES.some(function(p) {
         return path === p || path.indexOf(p + "/") === 0;
     });
@@ -5423,8 +5440,8 @@ window.compareSelectedSnapshots = function() {
 /* Two snapshot timestamps -> the diff workbench. HX-Redirect when htmx is
    present (the response navigates), a plain location change otherwise. */
 function _openDiffForSnapshots(tsA, tsB) {
-    var url = "/diff/snapshots?ts_a=" + encodeURIComponent(tsA)
-            + "&ts_b=" + encodeURIComponent(tsB);
+    var url = _smUrl("/diff/snapshots?ts_a=" + encodeURIComponent(tsA)
+            + "&ts_b=" + encodeURIComponent(tsB));
     if (window.htmx) { htmx.ajax("GET", url, {target: "body", swap: "none"}); }
     else { window.location.href = url; }
 }
@@ -6444,7 +6461,7 @@ window.PaneState = (function () {
     var stash = {};   // route -> {holder, seq, chip, scroll, order}
     var soft = {};    // route -> {inputs: [{key, value}]}
     var _order = 0;
-    var _cur = location.pathname;
+    var _cur = _smPath(location.pathname);
 
     function pane() { return document.getElementById('table-pane'); }
     function seqNow() {
@@ -6746,7 +6763,7 @@ window.PaneState = (function () {
         var pi = detail && detail.pathInfo;
         var path = pi && (pi.finalRequestPath || pi.requestPath);
         if (!path && detail && detail.requestConfig) path = detail.requestConfig.path;
-        return path ? String(path).split('?')[0] : null;
+        return path ? _smPath(String(path)).split('?')[0] : null;
     }
 
     /* docs/139 fix 1 - skip the fetch when the parked copy will win anyway.
@@ -6864,17 +6881,17 @@ window.PaneState = (function () {
         // order-safe: a pane htmx already replaced carries the INCOMING
         // route's stamp (a full page load's pane is unstamped, and is _cur).
         var lp = pane();
-        if (lp && lp.firstElementChild && _cur !== location.pathname && SOFT.indexOf(_cur) >= 0) {
+        if (lp && lp.firstElementChild && _cur !== _smPath(location.pathname) && SOFT.indexOf(_cur) >= 0) {
             var stampL = lp.getAttribute('data-pane-route');
             if (!stampL || stampL === _cur) soft[_cur] = _captureSoft(lp, _cur);
         }
         // a NEW route change gets its own re-apply (the token below is shared
         // only by the two funnels of the same change; a Back -> Forward -> Back
         // inside its 1 s expiry used to be skipped)
-        if (_cur !== location.pathname) window.PaneState.__softFor = null;
+        if (_cur !== _smPath(location.pathname)) window.PaneState.__softFor = null;
         for (var k in stash) _purge(stash[k].holder);
         stash = {};
-        _cur = location.pathname;
+        _cur = _smPath(location.pathname);
         // docs/141 4l-review: on a Back into a page whose bundles are still
         // loading, htmx's restore is DEFERRED by the loader (Bundles chains
         // onpopstate) -- the mismatch check below would otherwise fire on
@@ -6899,7 +6916,7 @@ window.PaneState = (function () {
             // under /explorer after Back). An unstamped pane is a full page
             // load: the server rendered it for THIS url, leave it alone.
             var stamped = p.getAttribute('data-pane-route');
-            var mismatch = stamped && stamped !== location.pathname;
+            var mismatch = stamped && stamped !== _smPath(location.pathname);
             _historyFreshness(!p.firstElementChild || mismatch);
             if (!p.firstElementChild || mismatch) {
                 // A mismatch also means htmx's history cache is POISONED:
@@ -6913,23 +6930,23 @@ window.PaneState = (function () {
                 }
                 // popstate AND htmx:historyRestore both funnel here - one
                 // refetch is enough.
-                if (window.PaneState.__refetchFor === location.pathname) return;
-                window.PaneState.__refetchFor = location.pathname;
+                if (window.PaneState.__refetchFor === _smPath(location.pathname)) return;
+                window.PaneState.__refetchFor = _smPath(location.pathname);
                 setTimeout(function () { window.PaneState.__refetchFor = null; }, 1000);
                 window.htmx.ajax('GET', location.pathname + location.search,
                                  { source: '#table-pane', target: '#table-pane',
                                    swap: 'innerHTML' });
-            } else if (SOFT.indexOf(location.pathname) >= 0) {
+            } else if (SOFT.indexOf(_smPath(location.pathname)) >= 0) {
                 // JT-10 (review): htmx served this Back from its OWN cache --
                 // no swap, so afterSwap never ran and the SOFT tier was never
                 // re-applied: the partial's inline script rendered a fresh
                 // depth-1 tree under an empty search box (measured: Back ->
                 // Forward -> Back again lost search, tab and expansion). Both
                 // funnels (popstate, htmx:historyRestore) land here: once.
-                if (window.PaneState.__softFor === location.pathname) return;
-                window.PaneState.__softFor = location.pathname;
+                if (window.PaneState.__softFor === _smPath(location.pathname)) return;
+                window.PaneState.__softFor = _smPath(location.pathname);
                 setTimeout(function () { window.PaneState.__softFor = null; }, 1000);
-                _reapplySoft(location.pathname);
+                _reapplySoft(_smPath(location.pathname));
             }
         }, 60);
     }
@@ -6944,17 +6961,17 @@ window.PaneState = (function () {
     function _historyFreshness(paneRefetching) {
         if (!document.getElementById('pending-tray')) return;
         // popstate AND htmx:historyRestore both funnel here - one probe
-        if (window.PaneState.__freshFor === location.pathname) return;
-        window.PaneState.__freshFor = location.pathname;
+        if (window.PaneState.__freshFor === _smPath(location.pathname)) return;
+        window.PaneState.__freshFor = _smPath(location.pathname);
         setTimeout(function () { window.PaneState.__freshFor = null; }, 1000);
-        var shown = seqNow(), route = location.pathname;
+        var shown = seqNow(), route = _smPath(location.pathname);
         try {
             fetch('/state/tray', { cache: 'no-store' })
                 .then(function (r) { return r.ok ? r.text() : null; })
                 .then(function (html) {
                     if (!html || !window.htmx) return;
                     var m = html.match(/data-seq="([^"]*)"/);
-                    if (!m || m[1] === shown || location.pathname !== route) return;
+                    if (!m || m[1] === shown || _smPath(location.pathname) !== route) return;
                     window.htmx.ajax('GET', '/state/tray',
                                      { target: '#pending-tray', swap: 'outerHTML' });
                     if (!paneRefetching) {
@@ -7290,6 +7307,9 @@ window.Bundles = (function () {
     function forPath(path) {
         var out = [];
         try { path = String(path || ""); if (path.indexOf("http") === 0) path = new URL(path).pathname + (new URL(path).search || ""); } catch (e) {}
+        // the app route (docs/226) -- spelled inline, not via _smPath: the
+        // bundles selfcheck evaluates this loader block on its own
+        if (window.SM && typeof window.SM.path === "function") path = window.SM.path(path);
         PATHS.forEach(function (pr) { if (pr[0].test(path)) pr[1].forEach(function (n) { if (out.indexOf(n) < 0) out.push(n); }); });
         return out;
     }
@@ -7713,7 +7733,7 @@ document.addEventListener("htmx:afterSwap", function (evt) {
     var want = window._pulseNavWanted;
     var root = t.querySelector("#pulse-detail-root");
     var got = root ? root.getAttribute("data-pulse-path") : null;
-    var from = (evt.detail && evt.detail.pathInfo && evt.detail.pathInfo.requestPath) || "";
+    var from = _smPath((evt.detail && evt.detail.pathInfo && evt.detail.pathInfo.requestPath) || "");
     // The blur-commit's own response is a full re-render of the OLD pulse and
     // lands AFTER the row's (the commit is issued first, the row's request is
     // lighter). Its swap removes the form, so "is a commit in flight" cannot
@@ -7831,7 +7851,7 @@ window.UndoQueue = (function () {
     document.addEventListener("htmx:beforeRequest", function (e) {
         var d = e.detail || {}, cfg = d.requestConfig || {};
         var verb = String(cfg.verb || "").toLowerCase();
-        var path = String(cfg.path || (d.pathInfo && d.pathInfo.requestPath) || "");
+        var path = _smPath(String(cfg.path || (d.pathInfo && d.pathInfo.requestPath) || ""));
         if (!verb || verb === "get" || /^\/(undo|redo)(?![A-Za-z0-9_])/.test(path)) return;
         _mut.push({ xhr: d.xhr, t: Date.now() });
     });
@@ -12312,7 +12332,7 @@ window.clearDetailPanelSearch = function(btnEl) {
  * chip-status's _setActiveTab (its own group only). Every navigation now
  * clears everything and re-derives the active set from the URL. */
 window.syncSidebarNavActive = function() {
-    var path = window.location.pathname;
+    var path = _smPath(window.location.pathname);
     // The diff family is ONE destination in the sidebar: /diff/versions and
     // /diff/snapshots are entry routes into the same Compare surface, and the
     // server's own full render marks Compare for page="diff" — the client
@@ -12324,7 +12344,7 @@ window.syncSidebarNavActive = function() {
     var matches = [];
     document.querySelectorAll(".sidebar-nav a[href]").forEach(function(a) {
         a.classList.remove("active");
-        var href = a.getAttribute("href") || "";
+        var href = _smPath(a.getAttribute("href") || "");
         var q = href.indexOf("?");
         var hPath = q < 0 ? href : href.slice(0, q);
         if (hPath !== path) return;
@@ -16129,9 +16149,9 @@ function _navigateToExplorerPath(dotPath) {
         // same history entry + sidebar sync as clicking it (F-C); already on
         // /explorer -> no source, no same-URL entry. With no such link,
         // _navigateTablePane pushes the entry on the swap itself (F16).
-        var onExplorer = location.pathname === '/explorer';
+        var onExplorer = _smPath(location.pathname) === '/explorer';
         var src = onExplorer ? null
-            : document.querySelector('.sidebar-nav a[href="/explorer"][hx-push-url="true"]');
+            : document.querySelector('.sidebar-nav a[href="' + _smUrl('/explorer') + '"][hx-push-url="true"]');
         var req = (src || onExplorer)
             ? htmx.ajax('GET', '/explorer', {source: src || undefined, target: '#table-pane', swap: 'innerHTML'})
             : _navigateTablePane('/explorer');
@@ -16189,10 +16209,10 @@ function _navigateToExplorerPath(dotPath) {
  * /explorer: it pushes the entry itself and fires no afterSwap) releases them
  * via paneRestored. Same contract as the command palette's navigation. */
 function _navigateTablePane(url) {
-    var bare = url.split('?')[0];
+    var bare = _smPath(url).split('?')[0];
     var same = function (d) {
         var got = (d && d.pathInfo && (d.pathInfo.finalRequestPath || d.pathInfo.requestPath)) || '';
-        return !got || got.split('?')[0] === bare;
+        return !got || _smPath(got).split('?')[0] === bare;
     };
     var off = function () {
         document.removeEventListener('htmx:afterSwap', onSwap);
@@ -16203,7 +16223,7 @@ function _navigateTablePane(url) {
         if (!evt.target || evt.target.id !== 'table-pane' || !same(evt.detail)) return;
         off();
         try {
-            if (window.location.pathname + window.location.search !== url) {
+            if (_smPath(window.location.pathname) + window.location.search !== _smPath(url)) {
                 window.history.pushState({ htmx: true }, '', url);
             }
         } catch (e) { /* file:// */ }
@@ -16976,7 +16996,7 @@ window.diffSelectedDatasets = function() {
         if (window.showToast) window.showToast('Pick 2–5 runs to diff.', 'info');
         return;
     }
-    var url = '/diff/runs?uids=' + uids.map(encodeURIComponent).join(',');
+    var url = _smUrl('/diff/runs?uids=' + uids.map(encodeURIComponent).join(','));
     if (window.htmx) { htmx.ajax('GET', url, {target: 'body', swap: 'none'}); }
     else { window.location.href = url; }
 };
@@ -17469,7 +17489,7 @@ window.DatasetTrends = (function () {
             try {
                 var uid = uidOf(evt, el);
                 if (!uid) return;
-                var url = '/dataset/' + uid;
+                var url = _smUrl('/dataset/' + uid);
                 if (window.htmx && window.htmx.ajax) {
                     window.htmx.ajax('GET', url, { source: '#inspector-pane', target: '#inspector-pane',
                                                    swap: 'innerHTML' });
@@ -17549,7 +17569,7 @@ window.DatasetTrends = (function () {
                     lab.textContent = '#' + run[0];
                     lab.title = fmtInstant(run[1]);
                     var img = item.querySelector('img');
-                    img.setAttribute('src', '/dataset/' + run[2] + '/fig/' + key);
+                    img.setAttribute('src', _smUrl('/dataset/' + run[2] + '/fig/' + key));
                     img.setAttribute('alt', key + ' #' + run[0]);
                     add.appendChild(item);
                 }
@@ -18543,7 +18563,7 @@ document.addEventListener('htmx:afterSwap', function(evt) {
     // the list you just refreshed shows the runs the chip was counting.
     document.addEventListener('click', function (ev) {
         var t = ev.target && ev.target.closest
-            ? ev.target.closest('.btn-workspace-refresh, button[hx-post="/datasets/rescan"]') : null;
+            ? ev.target.closest('.btn-workspace-refresh, button[hx-post="' + _smUrl('/datasets/rescan') + '"]') : null;
         if (t) _ackNewRuns();
     }, true);
 
@@ -18754,7 +18774,7 @@ document.addEventListener('htmx:afterSwap', function(evt) {
         var did = { sidebar: false, datasets: false };
         var ws = document.querySelector('.btn-workspace-refresh');
         if (ws && !ws.classList.contains('htmx-request')) { ws.click(); did.sidebar = true; }
-        var rs = document.querySelector('button[hx-post="/datasets/rescan"]');
+        var rs = document.querySelector('button[hx-post="' + _smUrl('/datasets/rescan') + '"]');
         if (rs && !rs.classList.contains('htmx-request') && !rs.disabled) { rs.click(); did.datasets = true; }
         return did;
     };
@@ -19292,7 +19312,7 @@ function paramHistoryRenderDrawerChart(data, currentValue) {
                 // already withheld the click hint.
                 if (!uid) return;
                 // Use HTMX so the dataset detail loads inside the main pane
-                var url = '/dataset/' + uid;
+                var url = _smUrl('/dataset/' + uid);
                 if (window.htmx) {
                     // See chip-status.js's twin: `source` for hx-sync queueing,
                     // and no pushUrl -- htmx 2 has no such ajax option.
@@ -19715,7 +19735,7 @@ window.PendingMarkers = (function () {
     function getLoader() { return document.getElementById('quam-loader'); }
 
     function isSlow(detail) {
-        var path = (detail && detail.requestConfig && detail.requestConfig.path) || '';
+        var path = _smPath((detail && detail.requestConfig && detail.requestConfig.path) || '');
         // docs/158: a Param History FILTER change is an in-page refinement
         // (the grid renders from SQLite in ~0.2 s, docs/142) and swaps only
         // the results — the page-load popup flashing over it on every chip
@@ -21765,7 +21785,7 @@ document.addEventListener('click', function(evt) {
     // amber when only warnings/recommendations, none when clean — so a by-design
     // advisory (e.g. the band-edge nudge) doesn't light the sidebar red.
     function setNavDot(href, level) {  // level: 'error' | 'warn' | null
-        var els = document.querySelectorAll('#sidebar a[href="' + href + '"]');
+        var els = document.querySelectorAll('#sidebar a[href="' + _smUrl(href) + '"]');
         for (var i = 0; i < els.length; i++) {
             els[i].classList.toggle('nav-diag-dot', level === 'error');
             els[i].classList.toggle('nav-diag-dot-warn', level === 'warn');
@@ -22053,7 +22073,7 @@ function _pulsesActiveFilter() {
 document.addEventListener("cellsReverted", function (evt) {
     var d = evt && evt.detail;
     var entries = (d && d.entries) || [];
-    if (!entries.length || location.pathname.indexOf("/pulses") !== 0) return;
+    if (!entries.length || _smPath(location.pathname).indexOf("/pulses") !== 0) return;
     var pane = document.getElementById("inspector-pane");
     if (!pane) return;
     var toast = pane.querySelector(".toast");
@@ -22140,7 +22160,7 @@ document.addEventListener("pulses-rows-changed", function (evt) {
 });
 
 function _pulsesSyncUrl(push) {
-    if (location.pathname.indexOf("/pulses") !== 0) return;
+    if (_smPath(location.pathname).indexOf("/pulses") !== 0) return;
     var inp = document.querySelector('.table-filter input[name="q"]');
     var q = inp ? inp.value.trim() : "";
     var tab = document.querySelector("#pulse-channel-tabs a.active");
@@ -22185,7 +22205,7 @@ function _pulsesSyncUrl(push) {
     if (openPath) parts.push("pulse=" + encodeURIComponent(openPath));
     var url = "/pulses" + (parts.length ? "?" + parts.join("&") : "");
     try {
-        if (push && url !== location.pathname + location.search) {
+        if (push && url !== _smPath(location.pathname) + location.search) {
             history.pushState(history.state, "", url);
         } else {
             history.replaceState(history.state, "", url);
@@ -22201,7 +22221,7 @@ window._pulsesSyncUrl = _pulsesSyncUrl;
    query; PaneState's own handler ignores this case (the pane is populated and
    its route stamp matches), so the two never both act. */
 function _pulsesRestoreFromUrl() {
-    if (location.pathname.indexOf("/pulses") !== 0) return;
+    if (_smPath(location.pathname).indexOf("/pulses") !== 0) return;
     var wrap = document.getElementById("pulses-rows-wrap");
     if (!wrap || !window.htmx) return;
     var q = new URLSearchParams(location.search);
@@ -22244,14 +22264,14 @@ document.addEventListener("htmx:afterSwap", function (evt) {
     if (t && (t.id === "pulses-rows-wrap" || t.id === "table-pane")) _pulsesSyncUrl();
     // docs/190 F39: opening / closing a pulse changes the URL too.
     if (t && (t.id === "inspector-pane" || (t.closest && t.closest("#inspector-pane")))
-        && location.pathname.indexOf("/pulses") === 0) _pulsesSyncUrl();
+        && _smPath(location.pathname).indexOf("/pulses") === 0) _pulsesSyncUrl();
 });
 
 // Persist the search keyword to the URL as the user types (cheap, no network).
 document.addEventListener("input", function (e) {
     if (e.target && e.target.matches &&
         e.target.matches('.table-filter input[name="q"]') &&
-        location.pathname.indexOf("/pulses") === 0) {
+        _smPath(location.pathname).indexOf("/pulses") === 0) {
         _pulsesSyncUrl();
     }
 });
@@ -23547,11 +23567,11 @@ window.UndoNav = (function () {
             htmx.ajax("GET", os.url, { target: "#table-pane", swap: "innerHTML" });
             try {
                 if (window.history && history.pushState) {
-                    history.pushState({}, "", os.url.split("?")[0]);
+                    history.pushState({}, "", _smUrl(os.url).split("?")[0]);
                 }
             } catch (e) {}
         } else {
-            window.location.assign(os.url);
+            window.location.assign(_smUrl(os.url));
         }
     }
 
@@ -23968,6 +23988,7 @@ window.StateVersions = (function () {
             }).join('&')
                 + (chipKey ? '&chip_key=' + encodeURIComponent(chipKey) : '');
         }
+        url = _smUrl(url);   // docs/226: a navigation target (location.href below)
         close();
         if (window.htmx) {
             htmx.ajax('GET', url, { target: '#table-pane', swap: 'innerHTML' });
@@ -25018,7 +25039,7 @@ window.diskGuardRefresh = function () {
     var slot = document.getElementById('disk-guard-slot');
     if (slot && window.htmx) window.htmx.ajax('GET', '/disk/banner', { target: slot, swap: 'innerHTML' });
     var pane = document.getElementById('table-pane');
-    if (pane && window.htmx && /(^|\/)disk$/.test(location.pathname)) {
+    if (pane && window.htmx && /(^|\/)disk$/.test(_smPath(location.pathname))) {
         window.htmx.ajax('GET', '/disk', { target: pane, swap: 'innerHTML' });
     }
 };
