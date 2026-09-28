@@ -4806,10 +4806,7 @@ window.ChipStatus.mount = function (opts) {
         var pr = pane.getBoundingClientRect();
         var hit = document.elementFromPoint ? document.elementFromPoint(pr.left + pr.width / 2, paneTop + 129) : null;
         var ha = hit && hit.closest ? hit.closest(PLACE_ANCHORS) : null;
-        if (ha && dash.contains(ha)) {
-            var ht = ha.getBoundingClientRect().top - paneTop;
-            if (ht <= 130 && ht >= bestTop) { pTop = ht; pEl = ha; }
-        }
+        if (ha) { pEl = ha; pTop = ha.getBoundingClientRect().top - paneTop; }
         if (!pEl) {
             var list = dash.querySelectorAll(PLACE_ANCHORS);
             for (var i = 0; i < list.length; i++) {
