@@ -77,6 +77,49 @@
        changed: rewriting one sheet of ~2,400 rules costs 0.3-0.9 s of style
        recalc on its own, emptying a 50-rule block ~0.07 s. */
     var TAIL_BLOCK = 64;
+    /* A BOUNDED WINDOW, BOTH SIDES, AND NO SHEET WRITE WHILE SCROLLING (w8
+       gridscroll). Two things still made a slow scroll across the 30Q rig's
+       pair grid cost 0.25-0.77 s per step:
+       - only the RIGHT side was ever taken back out of layout, so a slow
+         scroll to the far right ended up laying out the whole table (every
+         step re-laid 200k+ layout objects);
+       - every reveal rewrote a rule block, and ANY stylesheet change -- even
+         one rule matching nothing -- makes Blink walk every element of the
+         document to schedule the invalidation (measured on the rig: 19-50 ms
+         per sheet change over 247k elements, against 3 ms to toggle a class
+         on one column's 70 elements; the walk grows as columns hydrate).
+       So the rule blocks are written ONCE, when the tail is planned, and each
+       rule lifts itself off a column that carries TAIL_ON
+       (`th.ck-N:not(.bulk-virt-on)`); from then on a reveal, a collapse or a
+       spacer is a class (and, for a spacer, an inline min-width) on that
+       column's own th + tds, found through an index built in the same init
+       walk, and the right-end margin is an inline style on the table. Columns
+       that leave the window on the LEFT are collapsed too, behind a spacer
+       holding their MEASURED width (so what is on screen does not move), and
+       any shift a reveal from estimates still causes is scrolled back. */
+    var TAIL_ON = 'bulk-virt-on';
+    var TAIL_SPACER = 'bulk-virt-spacer';
+    /* One layout change per FRAME, across grids (w8). The page's two grids
+       scroll together (#table-pane is their one scroller), and when both
+       changed their windows in the same rAF each forced the other's layout
+       and the frame paid both: 250-340 ms. The first grid to change its
+       layout in a frame stamps the frame; the other defers to the next one
+       -- a frame later, with nothing forced -- and is OWED that frame: the
+       grid whose rAF runs first yields it once, so a scroll that keeps one
+       grid changing every frame cannot starve the other (its cells would
+       show cold). A debt older than 100 ms (its grid unmounted) lapses. */
+    var _busyFrame = -1, _owed = null, _owedTs = 0;
+    /* The window's size and grain (w8, measured on the 30Q rig with a real
+       wheel). A column stays laid out while its box is within TAIL_KEEP
+       viewports past the look-ahead window (BUFFER) on either side; the
+       window moves in steps of TAIL_STEP viewports -- a reveal brings that
+       much past what the look-ahead needs, a collapse waits until that much
+       is out. (KEEP, STEP) = (2, 1): per-step tasks p99 125-129 ms, max 137-
+       143; (1, 0.5): slow wheel p99 145-151, over-100 ms 23-25 per 350
+       steps; (0.5, 0.25): no better, more steps; (0.5, 0.5): slow wheel p99
+       96-101, 2 tasks over 100 ms per 350 steps. */
+    var TAIL_KEEP = 0.5;
+    var TAIL_STEP = 0.5;
 
     var _resolved = {
         then: function (f) { try { f(); } catch (e) {} return _resolved; },
@@ -186,6 +229,7 @@
 
         var v = null;                 // { html, vals, cold, remote, inflight, wrap, byPath, pathTd, failed }
         var scrollPending = false;
+        var me = { yielded: false };  // this instance, for the frame debt (_owed)
 
         function styleEl() {
             var el = document.getElementById(styleId);
@@ -198,10 +242,10 @@
         // page, still empty -- so the instance must stay alive to keep their
         // values in the whole-chip search, and the note must keep saying so.
         /* Block b of the collapse rules: block 0 is `<styleId>-tail`, block
-           b > 0 is `<styleId>-tail-<b>`, and 'm' is the table's margin -- a
-           sheet of its own, so a margin that moves invalidates the table
-           alone and not a block's worth of cells (measured: the margin in
-           block 0 doubled a far jump's style recalc, 4.5k -> 9.3k elements). */
+           b > 0 is `<styleId>-tail-<b>`, and 's' holds the spacer's two
+           static rules. All of them are written once, at plan time (see
+           TAIL_ON); 'm' is the retired margin sheet, cleared if a page still
+           has one. */
         function tailEl(b, create) {
             var id = styleId + '-tail' + (b ? '-' + b : '');
             var el = document.getElementById(id);
@@ -209,22 +253,54 @@
             return el;
         }
 
-        /* Drop every trace of a collapse: the rules, and the marker class on
-           the heads it covered (the group band counts that class as hidden). */
-        function tailClear(t) {
-            var me = tailEl('m', false);
-            if (me) me.textContent = '';
+        /* Drop every trace of a collapse: the rules, the classes and inline
+           widths `tl` put on its columns (a re-mount on the SAME table keeps
+           them, and a column still carrying TAIL_ON would ignore the next
+           plan's rules), the table's margin, and the marker class on the heads
+           it covered (the group band counts that class as hidden). */
+        function tailClear(t, tl) {
+            if (tl && tl.els && t && tl.list.length && t.contains(tl.list[0].h)) {
+                for (var i = 0; i < tl.list.length; i++) {
+                    if (tl.applied[i] && tl.applied[i] !== 'off') colState(tl, i, tl.applied[i], 'off');
+                    tl.applied[i] = 'off';
+                }
+                if (tl.appliedM) { t.style.marginRight = ''; tl.appliedM = ''; }
+                (tl.pinned || []).forEach(function (r) { r.style.height = ''; });
+                tl.pinned = [];
+            }
+            ['m', 's'].forEach(function (x) { var e = tailEl(x, false); if (e) e.textContent = ''; });
             for (var b = 0; ; b++) {
                 var el = tailEl(b, false);
                 if (!el) { if (b) break; else continue; }
                 el.textContent = '';
             }
-            if (v && v.tail) v.tail.texts = [];
+            if (tl) tl.texts = [];
             if (t) {
                 Array.prototype.forEach.call(t.querySelectorAll('th.bulk-virt-collapsed'), function (h) {
                     h.classList.remove('bulk-virt-collapsed');
                 });
             }
+        }
+
+        /* One column's state change on the page. 'off' = out of layout (its
+           rule applies), 'on' = TAIL_ON lifts the rule, 'sp:<w>' = on, blank,
+           and at least <w> px wide (it holds a whole run). Only the column's
+           own elements are written: a class toggle on ~70 elements is ~3 ms of
+           style work where a sheet change walked the whole document. */
+        function colState(tl, i, from, to) {
+            var els = tl.els[i], h = tl.list[i].h;
+            var on = to !== 'off', wasOn = !!from && from !== 'off';
+            var sp = to.charAt(0) === 's', wasSp = !!from && from.charAt(0) === 's';
+            if (on !== wasOn || sp !== wasSp) {
+                for (var j = 0; j < els.length; j++) {
+                    if (on !== wasOn) els[j].classList.toggle(TAIL_ON, on);
+                    if (sp !== wasSp) els[j].classList.toggle(TAIL_SPACER, sp);
+                }
+            }
+            if (sp) h.style.setProperty('min-width', to.slice(3) + 'px', 'important');
+            else if (wasSp) h.style.removeProperty('min-width');
+            // on screen as a spacer too, so the group band must span it
+            h.classList.toggle('bulk-virt-collapsed', !on);
         }
 
         /* The maximal runs of collapsed columns, as [start, end) index pairs. */
@@ -257,12 +333,44 @@
             return -1;
         }
 
-        /* Write the rules for every collapsed column, block by block, and
-           assign only the blocks whose text changed. The right-end run's
-           width is the table's margin; an inner run's is its spacer's. */
+        /* The rule blocks, written ONCE when the tail is planned: one rule per
+           tail column, each lifted by TAIL_ON, so what is in layout is decided
+           by the columns' own classes from then on (see TAIL_ON). One RULE per
+           column: a single rule with ~2,700 selectors stopped applying past
+           ~1,366 columns in real Chrome (measured on the 30Q rig: ck-1377
+           onward stayed laid out). */
+        function tailRules(tl) {
+            var n = tl.list.length, nb = Math.max(1, Math.ceil(n / tailBlock));
+            for (var b = 0; b < nb; b++) {
+                var sels = [];
+                for (var i = b * tailBlock; i < Math.min(n, (b + 1) * tailBlock); i++) {
+                    var ck = tl.list[i].ck;
+                    sels.push(tableSel + ' th.' + ck + ':not(.' + TAIL_ON + '),' + tableSel + ' td.' + ck
+                              + ':not(.' + TAIL_ON + '){display:none!important}');
+                }
+                var txt = sels.join('\n');
+                if (tl.texts[b] !== txt) { tailEl(b, true).textContent = txt; tl.texts[b] = txt; }
+            }
+            // a spacer is on screen but blank: its contents hidden, no cold look
+            var stxt = tableSel + ' th.' + TAIL_SPACER + '>*,' + tableSel + ' td.' + TAIL_SPACER + '>*{visibility:hidden!important}\n'
+                     + tableSel + ' td.' + TAIL_SPACER + '{background:none!important;cursor:default!important}';
+            if (tl.texts.s !== stxt) { tailEl('s', true).textContent = stxt; tl.texts.s = stxt; }
+        }
+
+        // a spacer's width, to the 1/1000 px: a left spacer holds MEASURED
+        // widths, and rounding each run to whole px would move what is on
+        // screen by the rounding every time the run grows
+        function spx(w) { return String(Math.round(w * 1000) / 1000); }
+
+        /* Bring the page in line with the plan: every collapsed column is out
+           of layout, except the last shown column of an inner run, which stays
+           as a blank spacer holding the run's width; the right-end run's width
+           is the table's margin. Writes only the columns whose state changed.
+           Returns true when anything was written. */
         function tailWrite() {
-            var tl = v && v.tail; if (!tl) return;
-            var n = tl.list.length, runs = tailRuns(tl), spacer = {}, margin = 0;
+            var tl = v && v.tail; if (!tl) return false;
+            var t = table();
+            var n = tl.list.length, runs = tailRuns(tl), spacer = {}, margin = 0, hit = false;
             runs.forEach(function (r) {
                 var w = runWidth(tl, r[0], r[1]);
                 if (r[1] >= n) margin = w;
@@ -272,31 +380,16 @@
                 }
             });
             tl.margin = runs.length ? margin : 0;
-            var nb = Math.max(1, Math.ceil(n / tailBlock));
-            for (var b = 0; b < nb; b++) {
-                var sels = [];
-                for (var i = b * tailBlock; i < Math.min(n, (b + 1) * tailBlock); i++) {
-                    var e = tl.list[i];
-                    if (!tl.col[i]) { e.h.classList.remove('bulk-virt-collapsed'); continue; }
-                    if (i in spacer) {
-                        // on screen, so the group band must span it: no marker
-                        e.h.classList.remove('bulk-virt-collapsed');
-                        sels.push(tableSel + ' th.' + e.ck + '{min-width:' + Math.round(spacer[i]) + 'px!important}');
-                        sels.push(tableSel + ' th.' + e.ck + '>*,' + tableSel + ' td.' + e.ck + '>*{visibility:hidden!important}');
-                        sels.push(tableSel + ' td.' + e.ck + '{background:none!important;cursor:default!important}');
-                        continue;
-                    }
-                    // one RULE per column: a single rule with ~2,700 selectors stopped
-                    // applying past ~1,366 columns in real Chrome (measured on the
-                    // 30Q rig: ck-1377 onward stayed laid out)
-                    sels.push(tableSel + ' th.' + e.ck + ',' + tableSel + ' td.' + e.ck + '{display:none!important}');
-                    e.h.classList.add('bulk-virt-collapsed');
-                }
-                var txt = sels.length ? sels.join('\n') : '';
-                if (tl.texts[b] !== txt) { tailEl(b, true).textContent = txt; tl.texts[b] = txt; }
+            for (var i = 0; i < n; i++) {
+                var want = !tl.col[i] ? 'on' : (i in spacer) ? 'sp:' + spx(spacer[i]) : 'off';
+                if (tl.applied[i] === want) continue;
+                colState(tl, i, tl.applied[i], want);
+                tl.applied[i] = want;
+                hit = true;
             }
-            var mtxt = runs.length ? tableSel + '{margin-right:' + Math.round(margin) + 'px}' : '';
-            if (tl.texts.m !== mtxt) { tailEl('m', true).textContent = mtxt; tl.texts.m = mtxt; }
+            var m = runs.length ? Math.round(margin) + 'px' : '';
+            if (t && tl.appliedM !== m) { t.style.marginRight = m; tl.appliedM = m; hit = true; }
+            return hit;
         }
 
         function tailSet(s0, e0, on) {
@@ -311,12 +404,39 @@
         /* Put the columns [s0, e0) back. Returns true when anything came
            back. The plan is KEPT when everything shows (empty rules):
            scrolling back left can take the far end out of layout again. */
-        function tailRevealRange(s0, e0) {
+        function tailRevealRange(s0, e0, leftish) {
             var tl = v && v.tail; if (!tl) return false;
+            var before = tl.col.slice();
             if (!tailSet(s0, e0, false)) return false;
             tailWrite();
             try { onReveal(table()); } catch (e) {}
+            hydrateRevealed(before, leftish);
             return true;
+        }
+
+        /* The columns a reveal just put back get their cells in the same
+           step (w8). A LOCAL one -- parked by tailPark, or detached at mount
+           -- gets the same nodes back, no fetch: shown empty for a frame it
+           would sit at its estimated width and move everything right of it
+           when the cells came back. A server-cold one is asked for now (the
+           fetch is off the main thread); the pass that revealed it no longer
+           reads geometry after its change, so waiting for the next frame's
+           pass only delayed the request. */
+        function hydrateRevealed(before, leftish) {
+            var tl = v && v.tail; if (!tl) return;
+            var ks = [];
+            for (var i = 0; i < tl.list.length; i++) {
+                if (!before[i] || tl.col[i]) continue;
+                var k = tl.list[i].k;
+                if (!v.cold.has(k) || thHidden(tl.list[i].h)) continue;
+                ks.push(k);
+                // a server-cold column revealed at or left of what is on screen
+                // lands later, maybe wider than its estimate: landed() keeps
+                // the screen (a local one is back in this step, and the pass
+                // that revealed it keeps the screen for both)
+                if (leftish && v.remote.has(k)) (v.leftDue || (v.leftDue = {}))[k] = 1;
+            }
+            if (ks.length) hydrateCols(ks, { reveal: false });
         }
 
         /* The scroll pass's reveal. For each run the look-ahead window
@@ -324,7 +444,7 @@
            its left -> from its left end, enough to cover the gap plus one
            viewport (the old reveal); contiguous with a window on its right ->
            from its right end, likewise; a jump into its interior -> ONLY the
-           columns the window covers (one viewport of slack on the left), by
+           columns the window covers (TAIL_STEP of slack on the left), by
            the estimated widths. One run per pass: the pass runs again on the
            next frame, so every step is its own bounded task. */
         function tailRevealWindow(t, wrap, cw, left, edge) {
@@ -342,15 +462,16 @@
                     x1 = x0 + (tl.list[sp].h.offsetWidth || 0);
                 }
                 if (!(edge > x0 && left < x1)) continue;
-                var a = s0, b = s0, acc = 0, i;
+                var a = s0, b = s0, acc = 0, i, leftish = true;
                 if (left <= x0 + cw) {
-                    while (b < e0 && acc < (edge - x0) + cw) {
+                    leftish = false;
+                    while (b < e0 && acc < (edge - x0) + cw * TAIL_STEP) {
                         if (!thHidden(tl.list[b].h)) acc += tl.list[b].w;
                         b++;
                     }
                 } else if (sp >= 0 && edge >= x1 - cw) {
                     a = b = e0;
-                    while (a > s0 && acc < (x1 - left) + cw) {
+                    while (a > s0 && acc < (x1 - left) + cw * TAIL_STEP) {
                         if (!thHidden(tl.list[a - 1].h)) acc += tl.list[a - 1].w;
                         a--;
                     }
@@ -359,63 +480,179 @@
                     a = -1; b = e0;
                     for (i = s0; i < e0; i++) {
                         var wi = thHidden(tl.list[i].h) ? 0 : tl.list[i].w;
-                        if (a < 0 && x + wi > left - cw) a = i;
+                        // TAIL_STEP of slack on the left, no more: anything
+                        // past TAIL_KEEP would leave again on the next pass
+                        if (a < 0 && x + wi > left - cw * TAIL_STEP) a = i;
                         if (x >= edge) { b = i; break; }
                         x += wi;
                     }
                     if (a < 0) {
                         // past every estimate (the margin outgrew them): its end
                         a = b = e0;
-                        while (a > s0 && acc < (edge - left) + cw) {
+                        while (a > s0 && acc < (edge - left) - cw * BUFFER) {
                             if (!thHidden(tl.list[a - 1].h)) acc += tl.list[a - 1].w;
                             a--;
                         }
                     }
                 }
-                if (tailRevealRange(a, b)) return true;
+                // what is on screen moves only when an INNER run comes back
+                // from widths nobody measured (a run a jump skipped): only then
+                // is it read before, and kept after (tailKeep)
+                var anc = null;
+                if (e0 < n) for (i = a; i < b; i++) if (!tl.list[i].m && !thHidden(tl.list[i].h)) { anc = tailAnchor(wrap); break; }
+                if (tailRevealRange(a, b, leftish)) return { anc: anc };
             }
             return false;
         }
 
-        /* The other direction (w7 liveedit). Once a jump to the far right had
-           revealed the run, every later Enter paid the whole table's layout
-           again (big30x: 0.1 s -> 0.55-1.8 s). When the user is back two
-           viewports left of a revealed column, the columns from there to the
-           right end go back out of layout -- only while each one is clean (no
-           unapplied edit, not holding the focus); a hydrated column keeps its
-           cells (display:none never touches a td) and its margin share
-           becomes its MEASURED width. An inner run on the way joins the
-           suffix (its spacer is no longer needed). */
+        /* The other direction (w7 liveedit), now on BOTH sides (w8). Once a
+           jump to the far right had revealed the run, every later Enter paid
+           the whole table's layout again (big30x: 0.1 s -> 0.55-1.8 s); and a
+           slow scroll to the far right revealed column after column and never
+           took any back, so it ended up laying out the whole table. A shown
+           column whose box lies more than TAIL_KEEP viewports past the look-
+           ahead window -- right of it, or LEFT of it -- goes back out of layout,
+           only while it is clean (no unapplied edit, not holding the focus,
+           not pinned: a pinned column sticks to the pane's edge and must keep
+           its box). Columns are taken TAIL_STEP viewports' worth at a time per
+           side, so a slow scroll pays one bounded step per half viewport and
+           not one per column. A hydrated column keeps its cells (display:none never
+           touches a td) and its width becomes its MEASURED one, so the margin
+           (right end) or the spacer (anything left of the window) holding it
+           is exact and nothing on screen moves. A column with no box of its
+           own (search- or checkbox-hidden) goes with its neighbours. */
         function tailRecollapse(t, wrap, cw) {
             var tl = v && v.tail; if (!tl) return false;
             var n = tl.list.length;
-            var limit = (wrap ? wrap.scrollLeft + wrap.clientWidth : 0) + cw * (BUFFER + 2);
+            var sl = wrap ? wrap.scrollLeft : 0, vw = wrap ? wrap.clientWidth : 0;
+            var hi = sl + vw + cw * (BUFFER + TAIL_KEEP), lo = sl - cw * (BUFFER + TAIL_KEEP);
             var act = document.activeElement, actK = null;
             if (act && act !== document.body && t.contains(act) && act.closest) {
                 var at = act.closest('[data-col-key]');
                 actK = at && at.getAttribute('data-col-key');
             }
-            var j = n;
-            while (j > 0 && tl.col[j - 1]) j--;
-            var stop = j, dirty = null, meas = [];
-            while (j > 0) {
-                var e = tl.list[j - 1];
-                if (!tl.col[j - 1] && !thHidden(e.h)) {
-                    if (e.h.offsetLeft <= limit || e.k === actK) break;
-                    if (!v.cold.has(e.k)) {
-                        if (dirty === null) { try { dirty = dirtyCols() || {}; } catch (x) { dirty = {}; } }
-                        if (dirty[e.k]) break;
-                    }
-                    meas.push([e, e.h.offsetWidth]);
-                }
-                j--;
+            // the focus, a pin (it sticks to the pane's edge and must keep its
+            // box) and a live multi-cell selection (Ctrl+D / paste act on it)
+            // hold their column in layout
+            var held = function (e) {
+                if (e.k === actK || e.h.classList.contains('bulk-col-pinned')) return true;
+                var els = tl.els[tl.pos[e.k]];
+                for (var q = 1; q < els.length; q++) if (els[q].classList.contains('bulk-sel')) return true;
+                return false;
+            };
+            // a side goes once TAIL_STEP viewports' worth is out there, or
+            // anything is a whole viewport further out (left behind by a jump)
+            var side = [], acc = { L: 0, R: 0 }, go = { L: false, R: false }, i;
+            for (i = 0; i < n; i++) {
+                var e = tl.list[i];
+                if (tl.col[i] || thHidden(e.h)) continue;
+                var x = e.h.offsetLeft, w = e.h.offsetWidth || 0;
+                var s = x > hi ? 'R' : (x + w < lo ? 'L' : null);
+                if (!s || held(e)) continue;
+                side[i] = s; acc[s] += w || e.w;
+                if (s === 'R' ? x > hi + cw : x + w < lo - cw) go[s] = true;
             }
-            if (j >= stop) return false;
-            meas.forEach(function (m) { if (m[1] > 0) m[0].w = m[1]; });
-            tailSet(j, n, true);
+            if (acc.L >= cw * TAIL_STEP) go.L = true;
+            if (acc.R >= cw * TAIL_STEP) go.R = true;
+            if (!go.L && !go.R) return false;
+            // out after this pass: already collapsed, or chosen now
+            var out = function (j) { return tl.col[j] || (side[j] && go[side[j]]); };
+            // a boxless column follows the nearest boxed column on each side
+            var prevOut = [], nextOut = [], p = true;
+            for (i = 0; i < n; i++) { prevOut[i] = p; if (!thHidden(tl.list[i].h)) p = !!out(i); }
+            p = true;
+            for (i = n - 1; i >= 0; i--) { nextOut[i] = p; if (!thHidden(tl.list[i].h)) p = !!out(i); }
+            var cand = [];
+            for (i = 0; i < n; i++) {
+                if (tl.col[i]) continue;
+                var e2 = tl.list[i];
+                if (thHidden(e2.h)) { if (prevOut[i] && nextOut[i] && !held(e2)) cand.push(i); }
+                else if (side[i] && go[side[i]]) cand.push(i);
+            }
+            // an unapplied edit keeps its column: asked of the owner for the
+            // hydrated candidates ONLY, with their cells -- the unscoped form
+            // walked every cell of the table on every pass that had one
+            var hyd = cand.filter(function (j) { return !v.cold.has(tl.list[j].k); });
+            var dirty = {};
+            if (hyd.length) {
+                var scope = {};
+                hyd.forEach(function (j) { scope[tl.list[j].k] = tl.els[j].slice(1); });
+                try { dirty = dirtyCols(scope) || {}; } catch (x) { dirty = {}; }
+            }
+            var hit = [];
+            cand.forEach(function (j) {
+                var e3 = tl.list[j];
+                if (dirty[e3.k]) return;
+                if (!thHidden(e3.h)) {
+                    // the measured width, to the subpixel: a left spacer is the
+                    // sum of these, and anything short of exact moves the screen
+                    var r = e3.h.getBoundingClientRect ? e3.h.getBoundingClientRect() : null;
+                    var mw = (r && r.width) || e3.h.offsetWidth || 0;
+                    if (mw > 0) { e3.w = mw; e3.m = true; }
+                }
+                hit.push(j);
+            });
+            if (!hit.length) return false;
+            pinRows(t, tl);
+            hit.forEach(function (j) { tl.col[j] = true; });
+            tailPark(tl, hit);
             tailWrite();
-            try { onReveal(t); } catch (e2) {}
+            try { onReveal(t); } catch (e4) {}
             return true;
+        }
+
+        /* A collapse must not make a row SHORTER. A row is as tall as its
+           tallest laid-out cell; when that cell's column leaves (a two-line
+           cell far left of the window), the row shrinks and everything below
+           it moves up -- on the 30Q rig the qubit grid lost 158 px when the
+           window passed its end, shoving the pair grid the user was scrolling
+           sideways upward. So before any collapse each row's height (read on
+           the layout the pass already has) becomes its inline height, which a
+           table row treats as a minimum: rows can grow as columns come in,
+           never shrink as they leave. Cleared with the tail (tailClear). */
+        function pinRows(t, tl) {
+            var rs = t.rows || [], hs = [], i;
+            if (!tl.pinned) tl.pinned = [];
+            for (i = 0; i < rs.length; i++) hs.push(rs[i].getBoundingClientRect().height);
+            for (i = 0; i < rs.length; i++) {
+                var h = Math.round(hs[i] * 1000) / 1000;
+                if (h > 0 && h > (parseFloat(rs[i].style.height) || 0) + 0.01) {
+                    if (!rs[i].style.height) tl.pinned.push(rs[i]);
+                    rs[i].style.height = h + 'px';
+                }
+            }
+        }
+
+        /* A hydrated column taken out of layout also gives its cells back to
+           fragments -- the init-time client detach (docs/141 4i), so it is a
+           LOCAL cold column again: out of the document, its values kept in
+           `vals` for the whole-chip search, and back (the same nodes, no
+           fetch) the moment the window reaches it. Out of layout was not
+           enough: every <input> still in the document is walked by Chrome's
+           own form scan after each landing (a native 150-230 ms task on the
+           30Q rig that grows with every column a scroll has hydrated). Only
+           clean, fully landed columns (tailRecollapse filtered the held and
+           dirty ones; a column with a cell still cold keeps what it has). */
+        function tailPark(tl, idxs) {
+            var parked = {};
+            idxs.forEach(function (i) {
+                var k = tl.list[i].k, els = tl.els[i], j;
+                if (v.cold.has(k) || (v.dead && v.dead.has(k))) return;
+                for (j = 1; j < els.length; j++) if (!els[j].isConnected || els[j].classList.contains('bulk-td-cold')) return;
+                for (j = 1; j < els.length; j++) {
+                    var td = els[j];
+                    var inp = td.querySelector('.bulk-cell');
+                    var val = inp ? String(inp.value) : (td.textContent || '');
+                    v.vals.set(td, val.toLowerCase());
+                    var frag = document.createDocumentFragment();
+                    while (td.firstChild) frag.appendChild(td.firstChild);
+                    v.html.set(td, frag);
+                    td.classList.add('bulk-td-cold');
+                }
+                v.cold.add(k);
+                parked[k] = 1;
+            });
+            if (Object.keys(parked).length) markHeads(table(), parked);
         }
 
         /* A caller asking for columns may be about to look at them. Near a
@@ -426,7 +663,7 @@
            a 2,389-column grid no longer lays out all of them. */
         function tailRevealKeys(keys) {
             var tl = v && v.tail; if (!tl || !keys) return false;
-            var n = tl.list.length, hit = false;
+            var n = tl.list.length, hit = false, before = tl.col.slice();
             keys.forEach(function (k) {
                 var p = tl.pos[k];
                 if (p == null || !tl.col[p]) return;
@@ -440,6 +677,7 @@
             if (!hit) return false;
             tailWrite();
             try { onReveal(table()); } catch (e) {}
+            hydrateRevealed(before);
             return true;
         }
 
@@ -498,9 +736,14 @@
         // offsetLeft/offsetWidth window is unchanged. It is removed the moment
         // the column lands; a RETIRED column (4ae) says the other, permanent
         // thing, because "still coming" and "never coming" are not one state.
-        function markHeads(t) {
+        function markHeads(t, only) {
             if (!t) return;
-            t.querySelectorAll('th.bulk-col-head[data-col-key]').forEach(function (h) {
+            // a landing in tail mode re-marks only its own columns' heads (a
+            // walk of all 2,389 heads, a query each, per landing otherwise)
+            var hs = (only && v && v.headOf)
+                ? Object.keys(only).map(function (k) { return v.headOf[k]; }).filter(Boolean)
+                : t.querySelectorAll('th.bulk-col-head[data-col-key]');
+            Array.prototype.forEach.call(hs, function (h) {
                 var k = h.getAttribute('data-col-key');
                 var msg = !v ? '' : (v.dead && v.dead.has(k)) ? 'could not be loaded'
                         : v.cold.has(k) ? 'not loaded' : '';
@@ -587,15 +830,20 @@
             if (!list.length || shown * nRows < tailMin) return null;
             var pos = {};
             list.forEach(function (e, j) { pos[e.k] = j; });
-            return { list: list, pos: pos, col: list.map(function () { return true; }), texts: [], margin: 0 };
+            // els[j]: column j's th and every td, filled by init's own walk --
+            // what a reveal/collapse writes and what a landing fills, without
+            // a whole-table scan per step
+            return { list: list, pos: pos, col: list.map(function () { return true; }), texts: [], margin: 0,
+                     els: list.map(function (e) { return [e.h]; }), applied: [], appliedM: undefined };
         }
 
         function init() {
+            var old = v;
             v = null;
             onState(v);
             styleEl().textContent = '';
             var t = table();
-            tailClear(t);
+            tailClear(t, old && old.tail);
             if (!t) return null;
             var tds = t.querySelectorAll('tbody td[data-col-key]');
             // server-cold columns are ALREADY empty: they must be adopted
@@ -688,9 +936,13 @@
             onState(v);
             styleEl().textContent = widths.join('\n');
             phase('virt: plan');
+            // planned before the walk below so the walk can index the tail's
+            // cells (tailPlan reads only the heads and the cold set)
+            var tailP = tailPlan(order, rowsOf().length);
             Array.prototype.forEach.call(tds, function (td) {
                 var colKey = td.getAttribute('data-col-key');
                 if (!v.cold.has(colKey)) return;
+                if (tailP) { var tp = tailP.pos[colKey]; if (tp != null) tailP.els[tp].push(td); }
                 if (srv && td.classList.contains('bulk-td-cold') && srv.keys.has(colKey)) {
                     // a server-cold cell: its value + paths come from the map
                     v.remote.add(colKey);
@@ -728,8 +980,14 @@
                 v.html.set(td, frag);
                 td.classList.add('bulk-td-cold');
             });
-            v.tail = tailPlan(order, rowsOf().length);
+            v.tail = tailP;
             if (v.tail) {
+                // the header order and key -> head, so the scroll pass and a
+                // landing never query the whole table for them
+                v.order = order;
+                v.headOf = {};
+                order.forEach(function (e) { v.headOf[e.k] = e.h; });
+                tailRules(v.tail);
                 tailWrite();
                 try { onReveal(t); } catch (e) {}   // the group band spans only what shows
                 phase('virt: tail ' + v.tail.list.length + ' columns out of layout');
@@ -787,7 +1045,9 @@
             // patch press cost 1.2–1.6 s on the real 20Q chip (docs/126 ③).
             var set = {};
             due.forEach(function (k) { set[k] = 1; v.cold.delete(k); });
-            t.querySelectorAll('td.bulk-td-cold').forEach(function (td) {
+            var idx = coldTdsOf(set), got = idx ? [] : null;
+            var anc = (idx && leftLanding(set)) ? tailAnchor(v.wrap) : null;
+            Array.prototype.forEach.call(idx || t.querySelectorAll('td.bulk-td-cold'), function (td) {
                 var k = td.getAttribute('data-col-key');
                 if (!k || !set[k]) return;
                 var h = v.html.get(td);
@@ -797,30 +1057,68 @@
                     v.html.delete(td); v.vals.delete(td);
                 }
                 td.classList.remove('bulk-td-cold');
+                if (got) got.push(td);
             });
-            landed(t, set);
+            landed(t, set, got, anc);
             return pending || _resolved;
         }
 
-        // the common tail of a hydration, local or remote
-        function landed(t, set) {
+        // does a landing include a column the pass saw LEFT of the viewport?
+        function leftLanding(set) {
+            var ld = v && v.leftDue, hit = false;
+            if (!ld) return false;
+            Object.keys(set).forEach(function (k) { if (ld[k]) { hit = true; delete ld[k]; } });
+            return hit;
+        }
+
+        /* Tail mode: the still-cold tds of the columns in `set`, from the
+           tail's own index -- a landing scanned every cold td of the table
+           for its few columns (150-190 ms per landing on the 30Q rig's pair
+           grid). null -- the caller scans, as ever -- outside tail mode, for a
+           column the tail does not index, or when the index is stale (a td
+           no longer in the document). */
+        function coldTdsOf(set) {
+            var tl = v && v.tail;
+            if (!tl || !tl.els) return null;
+            var out = [], ks = Object.keys(set);
+            for (var a = 0; a < ks.length; a++) {
+                var i = tl.pos[ks[a]];
+                if (i == null) return null;
+                var els = tl.els[i];
+                for (var j = 1; j < els.length; j++) {
+                    if (!els[j].isConnected) return null;
+                    if (els[j].classList.contains('bulk-td-cold')) out.push(els[j]);
+                }
+            }
+            return out;
+        }
+
+        // the common tail of a hydration, local or remote. `tds` (tail mode
+        // only) are the cells that just landed: everything below is scoped to
+        // them instead of re-walking the whole table per landing
+        function landed(t, set, tds, anc) {
             var wrap0 = v && v.wrap, pin0 = v && v.pinEnd;
             // docs/141 4ae C3: release only when there is nothing left to
             // speak for. A retired column's td is still on the page and still
             // empty, and its value lives in `vals` -- dropping the instance
             // would take that value out of the whole-chip search and leave the
             // cell unexplained.
-            if (v && !v.cold.size && !(v.dead && v.dead.size)) {
-                if (v.tail) { v.tail = null; tailClear(t); try { onReveal(t); } catch (e) {} }
+            // w8: a TAIL is never released -- with nothing left to fetch it
+            // still keeps the columns far from the window out of layout, and
+            // dropping it put the whole 2,389-column table back in one task.
+            if (v && !v.tail && !v.cold.size && !(v.dead && v.dead.size)) {
                 v = null; styleEl().textContent = '';
             }
             onState(v);
-            markHeads(t);                       // docs/141 4af B-1
+            markHeads(t, tds ? set : null);     // docs/141 4af B-1
             // docs/109: cold cells were detached with their SERVER-rendered
             // dBm annotations — if the viewer switched the MW-power unit
             // meanwhile, the re-inserted text would be stale; reformat.
-            if (window.PhysAmp) window.PhysAmp.applyAll(t);
-            try { onLanded(t, set); } catch (e) {}
+            if (window.PhysAmp) {
+                if (tds && window.PhysAmp.paintWithin) window.PhysAmp.paintWithin(tds);
+                else window.PhysAmp.applyAll(t);
+            }
+            try { if (tds) onLanded(t, set, tds); else onLanded(t, set); } catch (e) {}
             // the pass left the pane at its END and nobody moved it since:
             // cells that came in wider than their estimates keep it there
             if (pin0 != null && wrap0 && Math.abs(wrap0.scrollLeft - pin0) <= 2) {
@@ -829,6 +1127,9 @@
                     wrap0.scrollLeft = mx;
                     if (v) v.pinEnd = wrap0.scrollLeft;
                 }
+            } else if (anc) {
+                // cells wider than their estimate, left of what is on screen
+                tailKeep(wrap0, anc);
             }
         }
 
@@ -929,7 +1230,9 @@
                 set[k] = 1; v.cold.delete(k); v.remote.delete(k);
             });
             if (!Object.keys(set).length) return;
-            t.querySelectorAll('td.bulk-td-cold').forEach(function (td) {
+            var idx = coldTdsOf(set), got = idx ? [] : null;
+            var anc = (idx && leftLanding(set)) ? tailAnchor(v.wrap) : null;
+            Array.prototype.forEach.call(idx || t.querySelectorAll('td.bulk-td-cold'), function (td) {
                 var k = td.getAttribute('data-col-key');
                 if (!k || !set[k]) return;
                 var tr = td.parentNode;
@@ -945,8 +1248,9 @@
                 td.innerHTML = html;
                 v.vals.delete(td);
                 td.classList.remove('bulk-td-cold');
+                if (got) got.push(td);
             });
-            landed(t, set);
+            landed(t, set, got, anc);
         }
 
         function hydrateCol(key) { return hydrateCols([key]); }
@@ -974,15 +1278,23 @@
             if (immediate) { scrollPending = false; pass(); return; }
             if (scrollPending) return;
             scrollPending = true;
-            (window.requestAnimationFrame || function (f) { setTimeout(f, 0); })(function () {
+            (window.requestAnimationFrame || function (f) { setTimeout(f, 0); })(function (ts) {
                 scrollPending = false;
-                pass();
+                pass(ts);
             });
         }
 
-        function pass() {
+        function pass(ts) {
             if (!v) return;
             var t = table(); if (!t) return;
+            // another grid already changed layout in this frame: ours is the
+            // next frame's (see _busyFrame) -- before reading any geometry
+            if (v.tail && ts != null) {
+                if (_busyFrame === ts) { _owed = me; _owedTs = ts; onScroll(); return; }
+                if (_owed && _owed !== me && !me.yielded && ts - _owedTs < 100) { me.yielded = true; onScroll(); return; }
+                me.yielded = false;
+                if (_owed === me) _owed = null;
+            }
             var wrap = v.wrap;
             var cw = (wrap && wrap.clientWidth) || 1200;
             var edge = (wrap ? wrap.scrollLeft + wrap.clientWidth : 0) + cw * BUFFER;
@@ -1001,31 +1313,103 @@
             var atEnd = !!wrap && wrap.clientWidth > 0 && wrap.scrollWidth > wrap.clientWidth
                 && wrap.scrollLeft > 0 && wrap.scrollLeft >= wrap.scrollWidth - wrap.clientWidth - 2;
             if (v.tail) {
-                if (tailRevealWindow(t, wrap, cw, left, edge)) {
+                // a font/letter-spacing/UI-scale change resizes every cell: a
+                // width measured before it no longer holds, so a run brought
+                // back from those is scrolled back like one from estimates
+                // (a style read of the root, never a layout)
+                var ppc = pxPerChar();
+                if (v.tail.ppc !== ppc) {
+                    if (v.tail.ppc != null) v.tail.list.forEach(function (e) { e.m = false; });
+                    v.tail.ppc = ppc;
+                }
+                // ONE layout change per pass, and no geometry read after it:
+                // a reveal, else a collapse, else a width sync. A reveal asks
+                // for its own columns' cells as it happens (hydrateRevealed);
+                // anything else due in the window is left to the NEXT frame's
+                // pass, on the layout that frame computes anyway (reading it
+                // here forced a second layout per grid per frame)
+                var rv = tailRevealWindow(t, wrap, cw, left, edge), changed = !!rv;
+                if (rv) {
                     if (atEnd) { try { wrap.scrollLeft = wrap.scrollWidth - wrap.clientWidth; } catch (e) {} }
-                    edge = (wrap ? wrap.scrollLeft + wrap.clientWidth : 0) + cw * BUFFER;
-                    left = (wrap ? wrap.scrollLeft : 0) - cw * BUFFER;
-                    // anything still to bring back is the NEXT frame's task
+                    else if (rv.anc) tailKeep(wrap, rv.anc);
+                } else if (tailRecollapse(t, wrap, cw)) {
+                    // measured widths: the spacer or margin holds them exactly
+                    changed = true;
+                } else if (tailWrite()) {
+                    // nothing moved in or out, but a search or a column toggle
+                    // changed what the runs' boxes hold: their widths follow
+                    changed = true;
+                }
+                if (changed) {
+                    v.pinEnd = atEnd ? wrap.scrollLeft : null;
+                    if (ts != null) _busyFrame = ts;
                     onScroll();
-                } else tailRecollapse(t, wrap, cw);
+                    return;
+                }
             }
             v.pinEnd = atEnd ? wrap.scrollLeft : null;
             var due = [];
-            t.querySelectorAll('th.bulk-col-head[data-col-key]').forEach(function (h) {
+            // tail mode: the header order init kept -- the table's heads are
+            // fixed until the next init, and querying them walked every cell
+            Array.prototype.forEach.call(v.order || t.querySelectorAll('th.bulk-col-head[data-col-key]'), function (h) {
+                if (h.h) h = h.h;
                 var k = h.getAttribute('data-col-key');
                 // a hidden column (search or checkbox) reports offsetLeft 0 --
                 // it is not on screen, do not hydrate it; nor is a collapsed one
                 if (!v || !v.cold.has(k) || thHidden(h) || isCollapsed(k)) return;
-                var x = h.offsetLeft;
-                if (x < edge && x + (h.offsetWidth || 0) > left) due.push(k);
+                var x = h.offsetLeft, xw = x + (h.offsetWidth || 0);
+                if (x < edge && xw > left) {
+                    due.push(k);
+                    // cells landing wider than their estimate LEFT of the
+                    // viewport move what is on screen: landed() keeps it
+                    if (v.tail && wrap && xw <= wrap.scrollLeft) (v.leftDue || (v.leftDue = {}))[k] = 1;
+                }
             });
             hydrateCols(due);
+        }
+
+        /* What the user is looking at before the tail changes around it: the
+           first laid-out head (not a spacer, not pinned) inside the pane, and
+           where it sits on screen. tailKeep scrolls by however far a change
+           moved it -- a run revealed from ESTIMATED widths, or cells landing
+           wider than their estimate, left of the viewport, would otherwise
+           shove what is on screen sideways. Tail mode only.
+           The two grids share ONE horizontal scroller, and their columns
+           have nothing to do with each other: a scroll that keeps one grid
+           still moves the other by the same amount. So only a grid that
+           fills more than half of the pane's height -- the one being looked
+           at -- keeps the screen (measured on the 30Q rig: the qubit grid,
+           scrolled out of view above, "kept" its own cells and shoved the
+           pair grid the user was reading 26-77 px sideways). */
+        function tailAnchor(wrap) {
+            var tl = v && v.tail;
+            if (!tl || !wrap || !v.order || !wrap.getBoundingClientRect) return null;
+            var pr = wrap.getBoundingClientRect();
+            if (!(pr.right > pr.left)) return null;
+            var t = table(), tr = t && t.getBoundingClientRect();
+            if (!tr || !(Math.min(tr.bottom, pr.bottom) - Math.max(tr.top, pr.top) > (pr.bottom - pr.top) / 2)) return null;
+            for (var i = 0; i < v.order.length; i++) {
+                var e = v.order[i], p = tl.pos[e.k];
+                if (p != null && tl.col[p]) continue;          // out of layout, or a spacer
+                if (thHidden(e.h) || e.h.classList.contains('bulk-col-pinned')) continue;
+                var r = e.h.getBoundingClientRect();
+                if (r.left >= pr.right) return null;
+                if (r.width > 0 && r.right > pr.left) return { h: e.h, x: r.left };
+            }
+            return null;
+        }
+        function tailKeep(wrap, a) {
+            if (!a || !wrap || !a.h.isConnected) return;
+            var d = a.h.getBoundingClientRect().left - a.x;
+            if (Math.abs(d) >= 0.5) {
+                try { wrap.scrollLeft = wrap.scrollLeft + d; } catch (e) {}
+            }
         }
 
         return {
             init: init,
             state: function () { return v; },
-            drop: function () { tailClear(table()); v = null; styleEl().textContent = ''; onState(v); },
+            drop: function () { tailClear(table(), v && v.tail); v = null; styleEl().textContent = ''; onState(v); },
             isCollapsed: isCollapsed,
             revealAll: function () { var tl = v && v.tail; return tl ? tailRevealRange(0, tl.list.length) : false; },
             hydrateCols: hydrateCols,
@@ -1063,5 +1447,7 @@
         EST_PAD: EST_PAD,
         TAIL_MIN_CELLS: TAIL_MIN_CELLS,
         TAIL_BLOCK: TAIL_BLOCK,
+        TAIL_KEEP: TAIL_KEEP,
+        TAIL_STEP: TAIL_STEP,
     };
 })();

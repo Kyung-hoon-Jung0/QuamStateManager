@@ -709,16 +709,24 @@
     // Keep each group head's colspan equal to its number of VISIBLE columns (the
     // checkbox + search layers hide individual columns); an all-hidden group
     // collapses. Without this the band drifts out of alignment on every toggle.
-    function _updateGroupHeader() {
+    // `fromReveal`: GridVirt moved columns in or out of layout (w8). That
+    // changes spans, never the band's height (nowrap heads, one font), so
+    // the height is re-measured -- a forced layout, every scroll step on the
+    // 30Q rig -- only when a whole group head appeared or went.
+    function _updateGroupHeader(fromReveal) {
         var t = table(); if (!t) return;
-        var heads = t.querySelectorAll('.bulk-group-head');
+        // both kinds of head live in the header rows: walking only <thead>
+        // is the same set, without every cell of a wide grid (w8)
+        var th0 = t.tHead || t;
+        var flipped = false;
+        var heads = th0.querySelectorAll('.bulk-group-head');
         if (!heads.length) return;
         // ONE pass buckets the heads by section: a selector per group head
         // scanned the whole table (tbody included) each time, ~14 ms per call
         // on the 30Q rig (w7 liveedit). Same membership: the attribute VALUE
         // equals the group's, as the escaped selector matched.
         var bySec = Object.create(null);
-        Array.prototype.forEach.call(t.querySelectorAll('.bulk-col-head[data-section]'), function (ch) {
+        Array.prototype.forEach.call(th0.querySelectorAll('.bulk-col-head[data-section]'), function (ch) {
             var s0 = ch.getAttribute('data-section');
             (bySec[s0] || (bySec[s0] = [])).push(ch);
         });
@@ -729,10 +737,13 @@
                 if (!ch.classList.contains('bulk-col-hidden') && !ch.classList.contains('bulk-search-hidden')
                     && !ch.classList.contains('bulk-virt-collapsed')) n++;
             });
-            if (n > 0) { gh.colSpan = n; gh.classList.remove('bulk-col-hidden'); }
+            // an unchanged span is not written: a colspan write re-lays the
+            // table's column grid even when the value is the same
+            if ((n > 0) === gh.classList.contains('bulk-col-hidden')) flipped = true;
+            if (n > 0) { if (gh.colSpan !== n) gh.colSpan = n; gh.classList.remove('bulk-col-hidden'); }
             else { gh.classList.add('bulk-col-hidden'); }
         });
-        _updateStickyOffset();
+        if (!fromReveal || flipped) _updateStickyOffset();
     }
     // The 2nd header row (column heads) sticks BELOW the group band, so offset its
     // sticky `top` by the band's measured height (varies with the font scale).
@@ -1558,8 +1569,30 @@
         return { stat: function (k) { return stats[k] || null; },
                  cells: function (k) { return cells[k] ? cells[k].slice() : []; } };
     }
+    /* The same index over the cells inside `tds` only (w8, GridVirt tail
+       mode): a keyed pass for the columns that just LANDED, whose cells are
+       exactly the cells inside their tds. The stats spans live in the header
+       row, so the head is all that is walked for them. */
+    function _statIndexIn(t, tds) {
+        var stats = Object.create(null), cells = Object.create(null);
+        Array.prototype.forEach.call((t.tHead || t).querySelectorAll('[data-col-stats]'), function (el) {
+            var k = el.getAttribute('data-col-stats');
+            if (!(k in stats)) stats[k] = el;
+        });
+        tds.forEach(function (td) {
+            Array.prototype.forEach.call(td.querySelectorAll('.bulk-cell'), function (cell) {
+                for (var p = cell.parentElement; p; p = p.parentElement) {
+                    var k = p.getAttribute('data-col-key');
+                    if (k != null) (cells[k] || (cells[k] = [])).push(cell);
+                    if (p === t) break;
+                }
+            });
+        });
+        return { stat: function (k) { return stats[k] || null; },
+                 cells: function (k) { return cells[k] ? cells[k].slice() : []; } };
+    }
 
-    function _recomputeStats(onlyKeys) {
+    function _recomputeStats(onlyKeys, tds) {
         var t = table(); if (!t) return;
         var ix = null;   // built lazily: a keyed pass over cold columns needs none
         var hide = _effectiveHidden();   // a forced column is on screen and counts
@@ -1572,7 +1605,7 @@
             // the server's numbers are wiped and never come back.
             if (_virt && ((_virt.cold && _virt.cold.has(c.key))
                           || (_virt.dead && _virt.dead.has(c.key)))) return;
-            var stat = (ix || (ix = _statIndex(t))).stat(c.key);
+            var stat = (ix || (ix = (tds && onlyKeys) ? _statIndexIn(t, tds) : _statIndex(t))).stat(c.key);
             if (!stat) return;
             if (hide.has(c.key)) { stat.textContent = ''; return; }
             var allCells = ix.cells(c.key);
@@ -2208,7 +2241,27 @@
     function _pinBars(scroller) {
         var x = scroller.scrollLeft || 0;
         var tf = x ? 'translateX(' + x + 'px)' : '';
-        (scroller.querySelectorAll ? scroller : document).querySelectorAll(_BAR_SEL).forEach(function (b) { if (b.style.transform !== tf) b.style.transform = tf; });
+        Array.prototype.forEach.call(_barsUnder(scroller), function (b) { if (b.style.transform !== tf) b.style.transform = tf; });
+    }
+    /* The bars under `root`, in document order, walking neither into a
+       <table> nor into a bar: no bar lives inside either (checked on the 30Q
+       rig's page: 8 bars, none nested, none in a table), and on that page
+       (2,389 pair columns x 69 pairs + 1,264 qubit columns) the plain
+       querySelectorAll over the pane walked every cell and both column
+       menus -- 22-50 ms of EVERY scroll frame; this visits ~60 elements
+       (w8 gridscroll). */
+    function _barsUnder(root) {
+        if (!root.querySelectorAll) return document.querySelectorAll(_BAR_SEL);
+        if (root.nodeType !== 1 || !root.firstElementChild || !root.matches) return root.querySelectorAll(_BAR_SEL);
+        var out = [];
+        (function walk(el) {
+            for (var c = el.firstElementChild; c; c = c.nextElementSibling) {
+                if (c.tagName === 'TABLE') continue;
+                if (c.matches(_BAR_SEL)) { out.push(c); continue; }
+                walk(c);
+            }
+        })(root);
+        return out;
     }
     function _pinBarsToScroll() {
         var t = table(); if (!t) return;
@@ -2286,18 +2339,31 @@
                 if (tok) q += '&chip=' + encodeURIComponent(tok);
                 return q;
             },
-            onLanded: function (t, set) {
+            onLanded: function (t, set, tds) {
                 _hayCache = null;        // hydrated inputs join the DOM haystacks
                 // a cold column's header stats were left alone; now that its
-                // cells are here, compute them -- for these columns only
-                try { _recomputeStats(set); } catch (e) {}
+                // cells are here, compute them -- for these columns only (and,
+                // in tail mode, from the landed cells only: w8)
+                try { if (tds) _recomputeStats(set, tds); else _recomputeStats(set); } catch (e) {}
             },
             phase: _ph,
             onState: function (st) { _virt = st; },
             // the tail collapse put columns back: the group band's spans and
             // the top scrollbar proxy both count them
-            onReveal: function () { try { _updateGroupHeader(); } catch (e) {} },
-            dirtyCols: function () { return _dirtyColKeys(); },
+            onReveal: function () { try { _updateGroupHeader(true); } catch (e) {} },
+            // w8: scoped to the columns (and their tds) GridVirt is about to
+            // take out of layout, when it names them
+            dirtyCols: function (scope) {
+                if (!scope) return _dirtyColKeys();
+                var out = {};
+                Object.keys(scope).forEach(function (k) {
+                    (scope[k] || []).forEach(function (td) {
+                        if (out[k]) return;
+                        Array.prototype.forEach.call(td.querySelectorAll('.bulk-cell'), function (c) { if (_isDirty(c)) out[k] = 1; });
+                    });
+                });
+                return out;
+            },
         });
         return _gv;
     }
@@ -4398,6 +4464,11 @@
     BulkEdit._bandEdit = function (cell) { _validateBandGroup(cell); _updateBandWarnCount(); };
     BulkEdit._bandScan = function (root) {
         Array.prototype.slice.call(root.querySelectorAll('.bulk-cell[data-lo-field]')).forEach(_validateBand);
+        _updateBandWarnCount();
+    };
+    // the same over a given set of cells (a GridVirt landing, w8)
+    BulkEdit._bandScanCells = function (cells) {
+        Array.prototype.forEach.call(cells, _validateBand);
         _updateBandWarnCount();
     };
     BulkEdit._bandWarnLine = _bandWarnLine;

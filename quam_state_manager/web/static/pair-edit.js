@@ -72,13 +72,24 @@
                 if (tok) q += '&chip=' + encodeURIComponent(tok);
                 return q;
             },
-            onLanded: function (t, set) {
+            onLanded: function (t, set, tds) {
+                // w8: in tail mode the core names the cells that landed, and
+                // each pass below is scoped to them -- the whole-table forms
+                // re-walked every hydrated cell of a 2,389-column grid per
+                // landing. Without `tds` (every grid under the tail gate)
+                // nothing changes.
+                if (tds) {
+                    try { _recomputeStats(set, tds); } catch (e) {}
+                    try { _markLinkedCells(tds); } catch (e) {}
+                    try { _bandScanIn(tds); } catch (e) {}
+                    return;
+                }
                 try { _recomputeStats(); } catch (e) {}
                 try { _markLinkedCells(); } catch (e) {}
                 try { _bandScan(t); } catch (e) {}   // a fetched LO cell is judged too
             },
             onState: function (st) { _pvirt = st; },
-            onReveal: function () { try { _updateGroupHeader(); } catch (e) {} },
+            onReveal: function () { try { _updateGroupHeader(true); } catch (e) {} },
             dirtyCols: _pairDirtyCols,
         });
         return _pgv;
@@ -101,9 +112,21 @@
     function _isDirty(c) { return c.value !== c.getAttribute('data-orig'); }
     // the columns holding an unapplied edit -- GridVirt never takes one of
     // them back out of layout (its tail re-collapse)
-    function _pairDirtyCols() {
+    function _pairDirtyCols(scope) {
         var t = table(), out = {};
         if (!t) return out;
+        // w8: GridVirt names the columns it is about to take out, with their
+        // tds -- only those cells are read (the whole-table walk ran on every
+        // scroll pass of a 2,389-column grid)
+        if (scope) {
+            Object.keys(scope).forEach(function (k) {
+                (scope[k] || []).forEach(function (td) {
+                    if (out[k]) return;
+                    Array.prototype.forEach.call(td.querySelectorAll('.bulk-cell'), function (c) { if (_isDirty(c)) out[k] = 1; });
+                });
+            });
+            return out;
+        }
         _cells(t).forEach(function (c) {
             if (!_isDirty(c)) return;
             var td = c.closest('td[data-col-key]');
@@ -150,16 +173,22 @@
     }
 
     // ── group-header band (spanning section headers) ─────────────────────────
-    function _updateGroupHeader() {
+    // `fromReveal`: see bulk-edit.js's twin -- GridVirt's reveal/collapse
+    // moves spans, not the band's height; re-measure only on a head flip (w8)
+    function _updateGroupHeader(fromReveal) {
         var t = table(); if (!t) return;
-        var heads = t.querySelectorAll('.bulk-group-head');
+        // both kinds of head live in the header rows: walking only <thead>
+        // is the same set, without every cell of a wide grid (w8)
+        var th0 = t.tHead || t;
+        var flipped = false;
+        var heads = th0.querySelectorAll('.bulk-group-head');
         if (!heads.length) return;
         // ONE pass buckets the heads by section: a selector per group head
         // scanned the whole table (tbody included) each time, ~14 ms per call
         // on the 30Q rig (w7 liveedit). Same membership: the attribute VALUE
         // equals the group's, as the escaped selector matched.
         var bySec = Object.create(null);
-        Array.prototype.forEach.call(t.querySelectorAll('.bulk-col-head[data-section]'), function (ch) {
+        Array.prototype.forEach.call(th0.querySelectorAll('.bulk-col-head[data-section]'), function (ch) {
             var s0 = ch.getAttribute('data-section');
             (bySec[s0] || (bySec[s0] = [])).push(ch);
         });
@@ -170,10 +199,13 @@
                 if (!ch.classList.contains('bulk-col-hidden') && !ch.classList.contains('bulk-search-hidden')
                     && !ch.classList.contains('bulk-virt-collapsed')) n++;
             });
-            if (n > 0) { gh.colSpan = n; gh.classList.remove('bulk-col-hidden'); }
+            // an unchanged span is not written: a colspan write re-lays the
+            // table's column grid even when the value is the same
+            if ((n > 0) === gh.classList.contains('bulk-col-hidden')) flipped = true;
+            if (n > 0) { if (gh.colSpan !== n) gh.colSpan = n; gh.classList.remove('bulk-col-hidden'); }
             else { gh.classList.add('bulk-col-hidden'); }
         });
-        _updateStickyOffset();
+        if (!fromReveal || flipped) _updateStickyOffset();
     }
     // docs/120 item 19 — the pair grid's twin of the qubit grid's geometry
     // sync, and the reason that fix had to be made TWICE. The page carries two
@@ -460,8 +492,30 @@
         return { stat: function (k) { return stats[k] || null; },
                  cells: function (k) { return cells[k] ? cells[k].slice() : []; } };
     }
+    /* The same index over the cells inside `tds` only (w8, GridVirt tail
+       mode): a keyed pass for the columns that just LANDED, whose cells are
+       exactly the cells inside their tds. The stats spans live in the header
+       row, so the head is all that is walked for them. */
+    function _statIndexIn(t, tds) {
+        var stats = Object.create(null), cells = Object.create(null);
+        Array.prototype.forEach.call((t.tHead || t).querySelectorAll('[data-col-stats]'), function (el) {
+            var k = el.getAttribute('data-col-stats');
+            if (!(k in stats)) stats[k] = el;
+        });
+        tds.forEach(function (td) {
+            Array.prototype.forEach.call(td.querySelectorAll('.bulk-cell'), function (cell) {
+                for (var p = cell.parentElement; p; p = p.parentElement) {
+                    var k = p.getAttribute('data-col-key');
+                    if (k != null) (cells[k] || (cells[k] = [])).push(cell);
+                    if (p === t) break;
+                }
+            });
+        });
+        return { stat: function (k) { return stats[k] || null; },
+                 cells: function (k) { return cells[k] ? cells[k].slice() : []; } };
+    }
 
-    function _recomputeStats(onlyKeys) {
+    function _recomputeStats(onlyKeys, tds) {
         var t = table(); if (!t) return;
         var ix = null;   // built lazily: a keyed pass over cold columns needs none
         var hide = _hiddenSet();
@@ -475,7 +529,7 @@
         };
         COLS.forEach(function (c) {
             if (onlyKeys && !onlyKeys[c.key]) return;   // QA F9: a keyed pass (repaint / Escape)
-            var stat = (ix || (ix = _statIndex(t))).stat(c.key);
+            var stat = (ix || (ix = (tds && onlyKeys) ? _statIndexIn(t, tds) : _statIndex(t))).stat(c.key);
             if (!stat) return;
             if (hide.has(c.key)) { stat.textContent = ''; return; }
             // ...and the guard itself. It was defined and never CALLED for a
@@ -699,19 +753,47 @@
     function _bandScan(t) {
         if (t && window.BulkEdit && window.BulkEdit._bandScan) window.BulkEdit._bandScan(t);
     }
+    // the landed cells only (w8, GridVirt tail mode): a landing changes no
+    // other cell's verdict, and none at all when it brings no LO field
+    function _bandScanIn(tds) {
+        var cells = [];
+        tds.forEach(function (td) {
+            Array.prototype.forEach.call(td.querySelectorAll('.bulk-cell[data-lo-field]'), function (c) { cells.push(c); });
+        });
+        if (cells.length && window.BulkEdit && window.BulkEdit._bandScanCells) window.BulkEdit._bandScanCells(cells);
+    }
     function _bandWarnLine(cells) {
         return (window.BulkEdit && window.BulkEdit._bandWarnLine) ? window.BulkEdit._bandWarnLine(cells) : '';
     }
-    function _markLinkedCells() {
+    /* w8: resolved path -> every linkable cell of the table, kept from the
+       last whole-table pass so a landing (GridVirt tail mode passes its tds)
+       marks only the groups its own cells join. The whole-table pass
+       rebuilds it; a different table (a re-render) forces one. */
+    var _linkIx = null;
+    function _markLinkedCells(tds) {
         var t = table(); if (!t) return;
-        var groups = {};
-        _cells(t).forEach(function (c) {
-            var rp = c.getAttribute('data-resolved');
-            if (!rp || c.getAttribute('data-linkable') !== '1') return;
-            (groups[rp] = groups[rp] || []).push(c);
-        });
-        Object.keys(groups).forEach(function (rp) {
-            var cells = groups[rp];
+        var groups = {}, only = null;
+        if (tds && _linkIx && _linkIx.t === t) {
+            groups = _linkIx.groups; only = {};
+            tds.forEach(function (td) {
+                Array.prototype.forEach.call(td.querySelectorAll('.bulk-cell'), function (c) {
+                    var rp = c.getAttribute('data-resolved');
+                    if (!rp || c.getAttribute('data-linkable') !== '1') return;
+                    var g = groups[rp] || (groups[rp] = []);
+                    if (g.indexOf(c) < 0) g.push(c);
+                    only[rp] = 1;
+                });
+            });
+        } else {
+            _cells(t).forEach(function (c) {
+                var rp = c.getAttribute('data-resolved');
+                if (!rp || c.getAttribute('data-linkable') !== '1') return;
+                (groups[rp] = groups[rp] || []).push(c);
+            });
+            _linkIx = { t: t, groups: groups };
+        }
+        Object.keys(only || groups).forEach(function (rp) {
+            var cells = only ? groups[rp].filter(function (c) { return c.isConnected; }) : groups[rp];
             if (cells.length < 2) return;
             var v0 = cells[0].getAttribute('data-orig');
             var divergent = cells.some(function (c) { return c.getAttribute('data-orig') !== v0; });

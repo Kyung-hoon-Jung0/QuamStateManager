@@ -6152,7 +6152,21 @@ window.PhysAmp = (function () {
     } else {
         applyAll(document);
     }
-    return { unit: unit, setUnit: setUnit, applyAll: applyAll,
+    /* applyAll's cell half, for cells that just landed in a wide grid
+       (GridVirt tail mode, w8): the [data-dbm] marks inside `roots` only.
+       applyAll(table) re-painted every mark of the table and walked the whole
+       document twice for the unit labels + buttons -- per landing, on a
+       250k-element page -- and a landing changes neither of those. */
+    function paintWithin(roots) {
+        Array.prototype.forEach.call(roots || [], function (r) {
+            if (!r || !r.querySelectorAll) return;
+            r.querySelectorAll('[data-dbm]').forEach(function (el) {
+                var d = parseFloat(el.getAttribute('data-dbm'));
+                if (isFinite(d)) paint(el, d);
+            });
+        });
+    }
+    return { unit: unit, setUnit: setUnit, applyAll: applyAll, paintWithin: paintWithin,
              fmt: fmt, vrms: vrms };
 })();
 
