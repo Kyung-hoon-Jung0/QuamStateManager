@@ -508,7 +508,10 @@ window.ChipStatus.paneResume = (function () {
         // it on configRequest); detail.elt here is only the swap target.
         var rc = detail.requestConfig || {};
         if (detail.shouldSwap === false || !document.body || rc.elt !== document.body) return false;
-        return /^\/topology(\?|$)/.test(String(rc.path || ''))
+        // docs/226: under a URL prefix rc.path arrives prefixed ('/sm/topology')
+        var rp = String(rc.path || '');
+        if (window.SM) rp = window.SM.path(rp);
+        return /^\/topology(\?|$)/.test(rp)
             && String(rc.verb || 'get').toLowerCase() === 'get';
     }
     return {
@@ -4661,7 +4664,7 @@ window.ChipStatus.mount = function (opts) {
             _recT = null;
             try {
                 if (!pane || !_dashEl || !_dashEl.isConnected
-                    || location.pathname !== '/topology') return;
+                    || (window.SM ? window.SM.path(location.pathname) : location.pathname) !== '/topology') return;
                 var here = location.pathname + location.search;
                 // QA F-20 (review): mid-restore the pane is where the page lets
                 // it be, not where the record says; keep the record until the
@@ -4779,6 +4782,10 @@ window.ChipStatus.mount = function (opts) {
     // the jump's URL and its record in ONE history write (the URL alone if the
     // record cannot be made -- F5 then lands on the tab, as before)
     function _placeWriteJump(url) {
+        // docs/226: the record's url is compared with location.pathname +
+        // location.search (_chipScrollRecord, popRec, _recKeep), which carry
+        // the mount prefix -- so the jump writes and records the PREFIXED url
+        if (window.SM) url = window.SM.url(url);
         try { _placeWrite(_placeStamp(_placeIntent.rec, url), url); }
         catch (e) { try { history.replaceState(history.state, '', url); } catch (e2) {} }
     }
@@ -5060,8 +5067,9 @@ window.ChipStatus.mount = function (opts) {
                                      ? czMeasured + ' of ' + edges.length + ' measured'
                                      : 'all pairs in spec')));
         var diagTotal = diagErr + diagWarn;
+        var diagUrl = window.SM ? window.SM.url('/diagnostics') : '/diagnostics';   // docs/226
         html += '<a class="topo-health-tile ' + (diagErr ? 'fail' : (diagWarn ? 'warn' : 'pass')) + '" ' +
-                'href="/diagnostics" hx-get="/diagnostics" hx-target="#table-pane" hx-push-url="true" ' +
+                'href="' + diagUrl + '" hx-get="' + diagUrl + '" hx-target="#table-pane" hx-push-url="true" ' +
                 'style="text-decoration:none">' +
                 '<div class="tile-val">' + (diagTotal || '✓') + '</div>' +
                 '<div class="tile-label">structural issues</div>' +
@@ -5856,7 +5864,8 @@ window.closeJsonPanel = function() {
 // thresholds", edited or not.
 window.ChipStatus.reportHref = function (linkEl, fmt) {
     try {
-        linkEl.href = '/topology/report?format=' + encodeURIComponent(fmt);
+        var href = '/topology/report?format=' + encodeURIComponent(fmt);
+        linkEl.href = window.SM ? window.SM.url(href) : href;      // docs/226
     } catch (e) { /* fall back to the plain href */ }
     // QA chipstatus-r2-14: a picked format closes the menu (after the default
     // download has started from the rewritten href).
@@ -6632,6 +6641,7 @@ window.ChipTrends = (function () {
             // navigation to a 404, no error.
             if (!info || !info.uid) return;
             var url = '/dataset/' + info.uid;
+            if (window.SM) url = window.SM.url(url);   // docs/226: the location.href fallback too
             if (window.htmx && window.htmx.ajax) {
                 // `source` is not optional: htmx reads the SOURCE element's
                 // hx-sync, and without one every dataset load shares body's

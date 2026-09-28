@@ -1,0 +1,15 @@
+# docs/226 -- reviewed exceptions to tests/test_js_root_lint.py.
+# One `file:regex` per line; the regex is matched against the flagged line's
+# text (not its number), and the reason goes on the comment line above it.
+# An entry that matches no lint hit fails test_allow_list_has_no_stale_entries.
+
+# agent.js: "/run" is the chat composer's slash command, not a URL.
+agent.js:cmd(\.toLowerCase\(\))? *[!=]== *"/run"
+
+# app.js Bundles PATHS table: route KEYS matched by forPath(), which strips
+# the prefix from its argument first (spec 4.4, C1: `path = window.SM.path(path)`).
+app.js:^\[/\^\\/[a-z]
+
+# app.js _captureSoft / _reapplySoft: `route` is a parameter; every caller passes
+# _routeOf(..) or _cur, both prefix-stripped with SM.path (spec 4.4, C1).
+app.js:\broute === '/(explorer|pulses)'

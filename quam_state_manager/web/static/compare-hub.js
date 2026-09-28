@@ -24,10 +24,17 @@
 
     function root() { return document.getElementById("cmp-hub-root"); }
 
+    // The app route this page is on -- the location path without the URL
+    // prefix a reverse proxy mounted SM under (docs/226; identity at root).
+    function herePath() {
+        var p = window.location.pathname;
+        return window.SM ? window.SM.path(p) : p;
+    }
+
     function currentParams() {
         // The hub always pushes its canonical URL, so location.search is
         // authoritative once we're on /compare-hub.
-        if (window.location.pathname === "/compare-hub") {
+        if (herePath() === "/compare-hub") {
             return new URLSearchParams(window.location.search || "");
         }
         return new URLSearchParams("");
@@ -367,7 +374,7 @@
         // history entries; ours carry {cmpHub: true} and need a refetch.
         window.addEventListener("popstate", function (ev) {
             if (ev.state && ev.state.htmx) return;             // htmx's own
-            if (window.location.pathname !== "/compare-hub") return;
+            if (herePath() !== "/compare-hub") return;
             if (!document.getElementById("table-pane")) return;
             htmx.ajax("GET", window.location.pathname + window.location.search, {
                 target: "#table-pane", swap: "innerHTML",
@@ -448,7 +455,7 @@
         // next interaction — but only when results are actually showing
         // (bucket declared, ≥2 sources) and the URL didn't pin a preset.
         var stored = lsGet(STRICT_KEY);
-        if (window.location.pathname === "/compare-hub"
+        if (herePath() === "/compare-hub"
             && (stored === "exact" || stored === "wide")
             && r.dataset.preset !== stored
             && r.dataset.bucket !== "0"

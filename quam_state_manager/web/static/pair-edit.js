@@ -1226,6 +1226,7 @@
         },
         openPair: function (id) {
             var url = '/pair/' + encodeURIComponent(id);
+            if (window.SM) url = window.SM.url(url);   // docs/226: the location.href fallback too
             if (window.htmx && document.getElementById('inspector-pane')) {
                 htmx.ajax('GET', url, { source: '#inspector-pane', target: '#inspector-pane', swap: 'innerHTML' });
             } else if (window.htmx && document.getElementById('table-pane')) {

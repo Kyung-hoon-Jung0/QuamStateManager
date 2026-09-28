@@ -246,7 +246,7 @@
             });
         try {
             var u = new URL(window.location.href);
-            if (u.pathname === '/zline') {
+            if ((window.SM ? window.SM.path(u.pathname) : u.pathname) === '/zline') {   // docs/226
                 u.searchParams.set('line', line);
                 history.replaceState(history.state, '', u.pathname + u.search);
             }
