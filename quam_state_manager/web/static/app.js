@@ -1317,6 +1317,15 @@ window.showWaveformPlot = function(btn) {
         var dir = asc ? 'desc' : 'asc';
         th.classList.add('sort-' + dir);
 
+        // w9/pulsesall: the virtual Pulses "All" view holds ~50 of its rows in
+        // the DOM -- it sorts its model with the same keys and comparator
+        if (tbody.hasAttribute('data-pulses-virtual') && window.PulsesVT) {
+            window.PulsesVT.sort(table, col, isNum, dir);
+            table.setAttribute('data-sorted-col', String(col));
+            table.setAttribute('data-sorted-dir', dir);
+            return;
+        }
+
         var rows = Array.from(tbody.querySelectorAll('tr'));
         rows.sort(function(a, b) {
             // docs/109: a cell may carry data-sort — a display-independent sort
@@ -1413,6 +1422,14 @@ window.showWaveformPlot = function(btn) {
         if (active && (active.tagName === 'INPUT' || active.tagName === 'TEXTAREA' || active.tagName === 'SELECT')) return;
 
         if (evt.key !== 'ArrowUp' && evt.key !== 'ArrowDown' && evt.key !== 'Enter') return;
+
+        // w9/pulsesall: the virtual Pulses "All" view moves through its MODEL
+        // (every row, not the ~50 rendered), scrolling the next one in
+        if (window.PulsesVT && window.PulsesVT.active()
+                && tablePane.querySelector('tbody[data-pulses-virtual]')) {
+            if (window.PulsesVT.key(evt.key)) evt.preventDefault();
+            return;
+        }
 
         var rows = Array.from(tablePane.querySelectorAll('tr.clickable-row'));
         if (!rows.length) return;
@@ -22093,6 +22110,12 @@ document.addEventListener("pulses-rows-changed", function (evt) {
     if (!d || !Array.isArray(d.paths)) return;
     var wrap = document.getElementById("pulses-rows-wrap");
     if (!wrap) return;
+    // w9/pulsesall: the virtual "All" view patches its model (a row off
+    // screen is still a row of the table, not a missing one)
+    if (window.PulsesVT && window.PulsesVT.active()) {
+        window.PulsesVT.rowsChanged(d.paths);
+        return;
+    }
     var structural = function () { if (window.htmx) window.htmx.trigger(document.body, "pulses-changed"); };
     var filt = _pulsesActiveFilter();
     var seen = {}, missing = false;
@@ -22268,6 +22291,18 @@ var _pulseSelection = [];   // paths of selected pulses (max 5)
 var _PULSE_MAX_COMPARE = 4;   // docs/141 4k: the view holds up to four sections
 
 window.pulseSelChanged = function (clicked) {
+    // w9/pulsesall: the virtual "All" view keeps the selection in its model
+    // (a checked row scrolled out of the DOM is still checked)
+    if (window.PulsesVT && window.PulsesVT.active()) {
+        var res = window.PulsesVT.check(clicked, _PULSE_MAX_COMPARE);
+        _pulseSelection = res.paths;
+        if (res.over && window.showToast) window.showToast("A view holds up to " + _PULSE_MAX_COMPARE + " pulses", "warning");
+        var vbar = document.getElementById("pulse-compare-bar");
+        var vcount = document.getElementById("pulse-compare-count");
+        if (vbar) vbar.hidden = _pulseSelection.length < 2;
+        if (vcount) vcount.textContent = _pulseSelection.length;
+        return;
+    }
     _pulseSelection = [];
     document.querySelectorAll(".pulse-sel-chk:checked").forEach(function (cb) {
         _pulseSelection.push(cb.getAttribute("data-path"));
@@ -22297,6 +22332,7 @@ window.clearPulseSelection = function () {
     document.querySelectorAll(".pulse-sel-chk:checked").forEach(function (cb) {
         cb.checked = false;
     });
+    if (window.PulsesVT) window.PulsesVT.clearChecked();
     _pulseSelection = [];
     var bar = document.getElementById("pulse-compare-bar");
     if (bar) bar.hidden = true;
@@ -22400,6 +22436,11 @@ document.addEventListener("htmx:configRequest", function (evt) {
     delete evt.detail.parameters["q"];
     delete evt.detail.parameters["channel"];
     delete evt.detail.parameters["owner"];
+    // w9/pulsesall: the virtual "All" view already holds every row's text --
+    // it asks for the (path, digest) list only and fetches just what moved
+    if (window.PulsesVT && window.PulsesVT.hasModel() && /[?&]per_page=0(&|$)/.test(path)) {
+        evt.detail.path = _setQueryParam(path, "vids", "1");
+    }
     // Keep the browser URL in sync so a later full re-fetch / reload preserves both.
     if (window._pulsesSyncUrl) window._pulsesSyncUrl();
 });

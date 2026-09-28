@@ -28,9 +28,15 @@
                 {%- if not r.is_alias and r.class_match == 'leaf' %} title="Matched by class name only — this chip stores {{ r.qclass }}"
                 {%- elif not r.is_alias and r.unmodeled %} title="Field(s) the catalog spec does not model: {{ r.unmodeled | join(', ') }}"{% endif %}>{{
                 '→' if r.is_alias else r.class_short }}</span></td>
-            <td class="pulse-spark-cell">
+            <td class="pulse-spark-cell"{% if lazy_spark and not r.is_alias %} data-spark-lazy="1"{% endif %}>
                 {%- if r.is_alias -%}
                 <span class="muted pulse-alias-target">&rarr; {{ r.alias_target.rsplit('.', 1)[-1] if r.alias_target else '?' }}</span>
+                {%- elif lazy_spark -%}
+                {#- w9/pulsesall: the virtual All view draws the thumbnail
+                    lazily, for the rows on screen (POST /pulses/sparks). The
+                    placeholder holds the sparkline's box so the row does not
+                    change height -- or the column width -- when it lands. -#}
+                <span class="pulse-spark-pending" aria-hidden="true"></span>
                 {%- elif r.spark_svg and r.spark_from_lab -%}
                 {#- docs/218: drawn by the class's OWN code at the pulse's
                     current values -- never older than the fields, unlike a

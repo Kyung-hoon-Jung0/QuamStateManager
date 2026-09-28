@@ -45,6 +45,7 @@ __all__ = [
     "PAIR_PULSE_CHANNELS",
     "GATE_SLOTS",
     "PulseIndex",
+    "RowMemo",
     "build_reverse_pointer_index",
     "list_pulses",
     "used_by",
@@ -1028,6 +1029,63 @@ class PulseIndex:
                 if j is not None and self._rows[j] is row:
                     self._spark[op_path] = (row, svg)
         return svg
+
+
+class RowMemo:
+    """A value that is a PURE function of one pulse row's CONTENT, memoized
+    per op path (w9/pulsesall: the virtual All view's per-row text HTML and
+    its version digest).
+
+    Validated on read, never invalidated by hand: a hit is served while the
+    row passed in is the very object the value was computed for, or equal to
+    it in content. :class:`PulseIndex` renews EVERY row object on a cold
+    rebuild (a create, a delete, a pull), so identity alone would recompute
+    the whole library after each structural change; content equality is what
+    lets the 8,800 rows a create did not touch keep their value. That is only
+    sound because *compute* reads nothing but the row -- a sparkline, which
+    also reads pointer-followed fields OUTSIDE the row, must never go through
+    here (it has its own identity-only memo on :class:`PulseIndex`).
+
+    Held per chip context (it survives a working-copy replace, where a new
+    store gets a new index), bounded by *max_entries* (cleared whole when
+    exceeded -- every entry recomputes on demand). ``SM_RAM_VERIFY=1``
+    recomputes every hit and raises on a difference.
+    """
+
+    def __init__(self, max_entries: int = 60000) -> None:
+        self._memo: dict[tuple[str, str], tuple[dict, Any]] = {}
+        self.max_entries = max_entries
+        self.stats = {"hit": 0, "carry": 0, "miss": 0}
+
+    def get(self, kind: str, row: dict, compute):
+        key = (kind, row.get("path", ""))
+        hit = self._memo.get(key)
+        if hit is not None:
+            same = hit[0] is row
+            if same or hit[0] == row:
+                if not same:
+                    # an equal row from a newer build: re-bind, so the next
+                    # read is an identity hit
+                    self._memo[key] = (row, hit[1])
+                    self.stats["carry"] += 1
+                else:
+                    self.stats["hit"] += 1
+                if _verify_on():
+                    fresh = compute(row)
+                    if fresh != hit[1]:
+                        from quam_state_manager.core.ramcache import StaleCacheError
+                        raise StaleCacheError(
+                            f"RowMemo {kind} for {key[1]} differs from a fresh compute")
+                return hit[1]
+        self.stats["miss"] += 1
+        val = compute(row)
+        if len(self._memo) >= self.max_entries:
+            self._memo.clear()
+        self._memo[key] = (row, val)
+        return val
+
+    def __len__(self) -> int:
+        return len(self._memo)
 
 
 _NO_OVERLAY = object()

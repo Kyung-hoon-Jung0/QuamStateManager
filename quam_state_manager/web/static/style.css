@@ -10554,6 +10554,15 @@ tr.bulk-row-pinned > th, tr.bulk-row-pinned > td { background: color-mix(in srgb
 .pulse-spark { color: var(--pico-muted-color); display: block; }
 .pulse-spark .spark-q { opacity: 0.45; }
 .pulse-spark-cell { min-width: 96px; }
+/* w9/pulsesall: the virtual "All" view draws thumbnails lazily; the
+   placeholder holds the sparkline's box (sparkline_svg: 90x24) so neither the
+   row height nor the frozen column width moves when one lands. */
+.pulse-spark-pending { display: block; width: 90px; height: 24px; }
+/* its spacer rows: pure height, no cell padding or border */
+#pulses-table tr.pulse-vpad > td { padding: 0 !important; border: 0 !important; }
+/* the view keeps the first visible row in place itself (pulses-vt.js) --
+   the browser's own scroll anchoring would correct the same shift twice */
+#table-pane:has(tbody[data-pulses-virtual]) { overflow-anchor: none; }
 /* A waveform the LAB's own code drew (docs/195): SM has no synthesizer
    for this class, so the curve is read out of the generated config. It
    is dashed so it never reads as one SM drew itself -- the provenance
