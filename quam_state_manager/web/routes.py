@@ -15699,20 +15699,37 @@ def pulses_page():
     # re-synthesize. Aliases / unknown classes render "→ target" instead.
     from quam_state_manager.core.waveform_synth import sparkline_svg, synth_for_operation
     unknown_paths: list[str] = []
-    for row in page_rows:
-        if row["is_alias"]:
-            row["spark_svg"] = None
-            continue
-        path = row["path"]
-        if not row["known"]:
-            # A class SM has no synthesizer for -- SNZ, GaussianNZ, a lab's own
-            # readout weights. Drawn from the lab's generated config, and marked
-            # as such in the markup so it never reads as one SM drew.
-            _pulse_fallback_spark(store, path, row)
-            unknown_paths.append(path)
-            continue
-        row["spark_svg"] = pulse_index.sparkline(
-            path, lambda p=path: sparkline_svg(synth_for_operation(store, p)))
+
+    def _spark_rows(rows) -> None:
+        for row in rows:
+            if "spark_svg" in row:
+                continue                       # drawn before a hand-over
+            _activity.checkpoint()
+            if row["is_alias"]:
+                row["spark_svg"] = None
+                continue
+            path = row["path"]
+            if not row["known"]:
+                # A class SM has no synthesizer for -- SNZ, GaussianNZ, a lab's own
+                # readout weights. Drawn from the lab's generated config, and marked
+                # as such in the markup so it never reads as one SM drew.
+                if path not in unknown_paths:
+                    _pulse_fallback_spark(store, path, row)
+                    unknown_paths.append(path)
+                continue
+            row["spark_svg"] = pulse_index.sparkline(
+                path, lambda p=path: sparkline_svg(synth_for_operation(store, p)))
+    # w8/locks: ONE hold of the store lock for the whole page of sparklines
+    # (handed to other requests every HANDOVER_EVERY_S), not the ~4 short
+    # takes per row it used to be. Each short take waits for the current
+    # holder's next hand-over while a cold Live-Edit grid build or the lint
+    # runs, and ~200 of them made this page 9.7 s in real Chrome on big30x
+    # right after a structural pull. A chip that moves meanwhile stops the
+    # held pass; the rows it did not draw are drawn the ordinary way.
+    with _activity.yielding(store, foreground=True):
+        with store._lock:
+            _spark_rows(page_rows)
+    _spark_rows(page_rows)
 
     if unknown_paths:
         # docs/218: draw the visible lab-class rows with their own code in the

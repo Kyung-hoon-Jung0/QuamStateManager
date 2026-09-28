@@ -301,6 +301,56 @@ def test_a_request_needing_the_rows_never_waits_on_the_parked_open_decision(slow
     assert ctx["pulse_index"] is idx, "the finished background walk replaced the page's index"
 
 
+class _CountingRLock(threading._PyRLock):
+    """Counts the TOP-LEVEL takes of the lock per thread name."""
+
+    def __init__(self):
+        super().__init__()
+        self.takes: dict = {}
+
+    def acquire(self, blocking=True, timeout=-1):
+        rc = super().acquire(blocking, timeout)
+        if rc and self._count == 1:
+            n = threading.current_thread().name
+            self.takes[n] = self.takes.get(n, 0) + 1
+        return rc
+    __enter__ = acquire
+
+    def __exit__(self, *a):
+        self.release()
+
+
+def test_the_pulses_page_draws_its_sparklines_in_one_held_pass(tmp_path):
+    """Every short take of the store lock waits for the current holder's next
+    hand-over while a cold grid build or the lint runs; the page used to take
+    it up to four times per row (index check, row read, sparkline store, the
+    synth's own read) and took 9.7 s in real Chrome on big30x right after a
+    structural pull. The sparklines are now drawn in ONE hold that hands the
+    lock over itself."""
+    from quam_state_manager.web.app import create_app
+    s, w = _ram_chip.build(12, 2)
+    chip = tmp_path / "chip"
+    chip.mkdir()
+    (chip / "state.json").write_text(json.dumps(s), encoding="utf-8")
+    (chip / "wiring.json").write_text(json.dumps(w), encoding="utf-8")
+    app = create_app(testing=True, instance_path=str(tmp_path / "_inst"))
+    c = app.test_client()
+    assert c.post("/load", data={"folder": str(chip)}).status_code in (200, 302)
+    ctx = next(x for x in app.config["contexts"].values()
+               if isinstance(x, dict) and x.get("store") is not None)
+    st = ctx["store"]
+    lk = _CountingRLock()
+    st._lock = lk
+    me = threading.current_thread().name
+    r = c.get("/pulses?per_page=0")
+    assert r.status_code == 200
+    page = r.data.decode()
+    drawn = page.count("<svg")
+    rows = len(PI.list_pulses(st.merged))
+    assert rows >= 40 and drawn >= 20, (rows, drawn)
+    assert lk.takes.get(me, 0) <= 12, ("short takes per page", lk.takes.get(me), "rows", rows)
+
+
 class _FakeStore:
     """The store surface activity reads: the lock and the content token."""
 
