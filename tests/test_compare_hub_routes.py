@@ -887,10 +887,10 @@ class TestP4Redirects:
         resp = c.post("/compare", data={"paths": [str(a), str(run_qs)]})
         assert resp.status_code == 302
         loc = resp.headers["Location"]
-        assert loc.startswith("/diff?a=ws%3A") and "&b=run%3A" in loc and loc.endswith("&tab=state")
+        assert loc.startswith(f"{PREFIX}/diff?a=ws%3A") and "&b=run%3A" in loc and loc.endswith("&tab=state")
         resp = c.post("/compare", data={"paths": [str(a), str(run_qs), str(a)]})
         loc = resp.headers["Location"]
-        assert loc.startswith("/diff?a=ws%3A") and "&b=run%3A" in loc and "&c=ws%3A" in loc
+        assert loc.startswith(f"{PREFIX}/diff?a=ws%3A") and "&b=run%3A" in loc and "&c=ws%3A" in loc
         assert "compare-hub" not in loc
 
     def test_two_checked_runs_open_the_diff_on_figures(self, env, tmp_path):

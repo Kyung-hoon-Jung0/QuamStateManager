@@ -265,7 +265,7 @@ class TestOneFrontDoor:
         a, b = env["metas"][2].timestamp, env["metas"][0].timestamp
         r = _get(env, f"/diff/snapshots?ts_a={a}&ts_b={b}")
         target = r.headers["HX-Redirect"]
-        assert target.startswith("/diff?a=hist:")
+        assert target.startswith(f"{PREFIX}/diff?a=hist:")
         assert env["metas"][0].timestamp in target.split("&b=")[0], "oldest is A"
 
     def test_a_plain_browser_click_gets_a_real_redirect(self, env):

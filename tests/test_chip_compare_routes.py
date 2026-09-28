@@ -140,7 +140,7 @@ class TestChipCompareRedirect:
         resp = client.post("/chip-compare", data={"paths": two_chips})
         assert resp.status_code == 302
         loc = resp.headers["Location"]
-        assert loc.startswith("/compare-hub?")
+        assert loc.startswith(f"{PREFIX}/compare-hub?")
         assert loc.count("src=") == 2
         # plain folders → ws: tokens (archive-run layouts get run:)
         assert "src=ws%3A" in loc or "src=ws:" in loc
