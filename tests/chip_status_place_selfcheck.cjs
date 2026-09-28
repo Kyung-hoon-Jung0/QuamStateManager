@@ -211,6 +211,17 @@ function world(opts) {
     const top = PANE_TOP + b.y - box.st;
     return { top: top, bottom: top + b.h, left: 0, right: 1000, width: 1000, height: b.h };
   };
+  /* hit-testing (Chrome's elementFromPoint): the innermost block whose band
+     holds the point's content y; T.overlay puts something else on top (a
+     hover card), which is not a panel */
+  T.overlay = null;
+  doc.elementFromPoint = function (x, y) {
+    if (T.overlay) return T.overlay;
+    const cy = y - PANE_TOP + box.st, L = layout();
+    let hit = null, hitH = Infinity;
+    L.m.forEach(function (b, el) { if (cy >= b.y && cy < b.y + b.h && b.h > 0 && b.h <= hitH) { hit = el; hitH = b.h; } });
+    return hit || doc.body;
+  };
   win.Element.prototype.scrollIntoView = function (o) {
     const b = layout().m.get(this);
     T.scrolled.push({ el: this, behavior: o && o.behavior });
@@ -328,9 +339,10 @@ function press(T, how, what) {
     // ── J3: while the jump is landing, the record stays the jump's target ──
     await T.advance(100);                       // the smooth scroll is part way
     const mid = T.topOf(T1SEL), midSt = T.box.st;
+    T.win.history.replaceState({ htmx: true }, '');     // wipe it: what follows must be pagehide's own write
     T.win.dispatchEvent(new T.win.Event('pagehide'));   // F5 mid-flight: the record is written NOW
     const r3 = T.rec();
-    ok(mid > SM + 100 && midSt > 0 && r3 && r3.top === midSt && r3.jump === true && r3.sel === T1SEL && r3.view === 'coherence',
+    ok(mid > SM + 100 && midSt > 0 && r3 && r3.jump === true && r3.sel === T1SEL && r3.view === 'coherence',
        'J3 a record written while the jump is still in flight (T1 at ' + mid + ' px) is the jump\'s target, not the pane\'s passing place — ' + JSON.stringify(r3));
     await T.advance(3000);
     ok(T.topOf(T1SEL) === SM, 'J3 (the jump landed the T1 panel under the sticky bar: ' + T.topOf(T1SEL) + ')');
@@ -345,7 +357,7 @@ function press(T, how, what) {
        'J2 a tab-bar press writes the record in the same call as its URL: the tab\'s section — ' + JSON.stringify(r));
   }
   // ── J4 / J5: the reader moved on; a starved debounce; F5 / hidden writes ──
-  for (const how of ['pagehide', 'hidden']) {
+  for (const how of ['pagehide', 'hidden', 'overlay']) {
     const T = world({ state: { htmx: true } });
     await T.advance(1000);
     press(T, 'mouse', 't1');
@@ -363,7 +375,12 @@ function press(T, how, what) {
     T.pane.dispatchEvent(new T.win.Event('scroll'));
     await T.advance(100);
     const starved = clone(T.rec());
-    if (how === 'pagehide') {
+    const tag = how === 'pagehide' ? 'J4' : (how === 'hidden' ? 'J5' : 'J4b');
+    if (how === 'overlay') T.overlay = T.doc.body;       // a card on the 130 px line: no panel hit
+    const hits = [];
+    const efp = T.doc.elementFromPoint;
+    T.doc.elementFromPoint = function (x, y) { const e = efp.call(this, x, y); hits.push(e); return e; };
+    if (how !== 'hidden') {
       T.win.dispatchEvent(new T.win.Event('pagehide'));
     } else {
       Object.defineProperty(T.doc, 'visibilityState', { configurable: true, get: () => 'hidden' });
@@ -371,10 +388,14 @@ function press(T, how, what) {
     }
     const r = T.rec();
     ok(JSON.stringify(starved) === JSON.stringify(recJump),
-       (how === 'pagehide' ? 'J4' : 'J5') + ' setup: the debounced record was starved (still the jump\'s)');
+       tag + ' setup: the debounced record was starved (still the jump\'s)');
     ok(r && !r.jump && r.view === 'coherence' && r.sel === T2SEL && r.ds === 300 && r.url === '/topology?view=coherence',
-       (how === 'pagehide' ? 'J4 F5 (pagehide)' : 'J5 hiding the tab (visibilitychange)')
+       ({ J4: 'J4 F5 (pagehide)', J5: 'J5 hiding the tab (visibilitychange)',
+          J4b: 'J4b F5 with a card over the line (the hit-test misses, the panel scan finds it)' })[tag]
        + ' writes the place at once: the T2 Ramsey PANEL, 300 px into it — ' + JSON.stringify(r));
+    ok(hits.length === 1 && (how === 'overlay' ? hits[0] === T.doc.body : hits[0] === T.doc.querySelector(T2SEL)),
+       tag + ' ...by ONE hit-test at the 130 px line, which found ' + (how === 'overlay' ? 'the overlay' : 'the T2 Ramsey panel itself')
+       + ' — ' + hits.length + ' ' + (hits[0] && (hits[0].id || hits[0].tagName)));
   }
   // ── R1: F5 on a jump's record lands the jump's target again ───────────────
   {

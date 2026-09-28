@@ -19,7 +19,7 @@
  *   SM_CDP_PORT=9605 node tests/browser/journeys/chip_place.cjs ring new=5305 <shot-dir>
  * env: REPS (1), OTHER_REPS (REPS: reps for the 2nd+ server), OPENW (7000),
  *      SETTLE (20000), DELAYS (0,300,2000,12000), MODES (mouse,Enter,Space,tab),
- *      OUT (json path)
+ *      OUT (json path), CASES (mode:target:delay,... -- exactly these)
  * Exit 1 on any FAIL of the first server label (the one under test).
  */
 'use strict';
@@ -42,7 +42,7 @@ const log = (...a) => console.log(new Date().toISOString().slice(11, 19), ...a);
 // what each mode presses, rotated across the delays so every target is hit
 const TARGETS = {
   mouse: [['tile', 't1'], ['tile', 'irb'], ['tile', 'ro_ge'], ['tile', 't2ramsey']],
-  Enter: [['tile', 'irb'], ['tile', 'gate1q'], ['tile', 't1'], ['tile', 'ro_gef']],
+  Enter: [['tile', 'irb'], ['tile', 'gate1q'], ['tile', 't1'], ['tile', 'srb_gate']],
   Space: [['tile', 't2ramsey'], ['tile', 'ro_ge'], ['tile', 'irb'], ['tile', 'srb']],
   tab: [['tab', 'coherence'], ['tab', 'frequencies'], ['tab', 'fidelity1q'], ['tab', 'calibration']],
 };
@@ -121,7 +121,23 @@ async function trial(S, mode, delay, what, tag) {
 
 async function place() {
   const res = [];
-  for (let rep = 1; rep <= REPS; rep++) {
+  // CASES=mode:target:delay,... runs exactly those (a tab target is a view)
+  const only = process.env.CASES ? process.env.CASES.split(',').map((c) => c.split(':')) : null;
+  for (let rep = 1; only && rep <= REPS; rep++) {
+    for (const c of only) {
+      const what = [c[0] === 'tab' ? 'tab' : 'tile', c[1]], delay = +c[2];
+      for (const S of SERVERS) {
+        if (S !== SERVERS[0] && rep > OTHER_REPS) continue;
+        const r = await trial(S, c[0], delay, what, 'c' + rep);
+        res.push(r);
+        const L = r.samples ? r.samples[r.samples.length - 1] : null;
+        log((r.exact ? 'EXACT ' : (r.skip ? 'SKIP  ' : 'OFF   ')) + S.label.padEnd(5) + ' ' + c[0].padEnd(5) + ' ' + String(c[1]).padEnd(12)
+            + ' F5@' + String(delay).padEnd(5) + ' top ' + (L && L.top) + ' (sm ' + (L && L.sm) + ') tab ' + (L && L.tab)
+            + (r.err ? ' ERR ' + r.err : '') + (r.errs && r.errs.length ? ' JSERR ' + r.errs[0] : ''));
+      }
+    }
+  }
+  for (let rep = 1; !only && rep <= REPS; rep++) {
     for (const mode of MODES) {
       for (let i = 0; i < DELAYS.length; i++) {
         const delay = DELAYS[i], what = TARGETS[mode][(i + rep - 1) % TARGETS[mode].length];

@@ -4763,9 +4763,12 @@ window.ChipStatus.mount = function (opts) {
         _placeIntent = { jv: sel ? ('sel:' + view + ':' + sel) : view,
                          rec: { view: view, sel: (sel && PLACE_SEL_RE.test(sel)) ? sel : null, jump: true } };
     }
+    // `top` is the last-resort fallback only (neither the panel nor the tab's
+    // section on the page). A jump's record takes 0 rather than read
+    // pane.scrollTop: that read forces a layout, on the click path of a page
+    // whose layout costs tens of ms (big30x).
     function _placeStamp(rec, url) {
-        var p = _scrollPane();
-        return Object.assign({ top: p ? Math.round(p.scrollTop) : 0 }, rec, { url: url });
+        return Object.assign({ top: 0 }, rec, { url: url });
     }
     function _placeWrite(rec, url) {
         var st = Object.assign({}, history.state || {}, { smChipScroll: rec });
@@ -4794,13 +4797,27 @@ window.ChipStatus.mount = function (opts) {
                     top: Math.round(pane.scrollTop) };
         if (!best) return rec;
         var dash = document.querySelector('.topo-dashboard');
-        var list = dash ? dash.querySelectorAll(PLACE_ANCHORS) : [];
+        if (!dash) return rec;
         var pEl = null, pTop = -Infinity;
-        for (var i = 0; i < list.length; i++) {
-            var r = list[i].getBoundingClientRect();
-            if (!r.width && !r.height) continue;         // not laid out
-            var t = r.top - paneTop;
-            if (t <= 130 && t > pTop && t >= bestTop) { pTop = t; pEl = list[i]; }
+        // the panel under the 130 px line, by hit-testing: panels stack, so the
+        // one the line crosses is the last one starting above it. A scan of
+        // every panel is the fallback (a gap, an overlay on the line) -- on
+        // big30x it is 111 elements in a large DOM, ~7 ms per record.
+        var pr = pane.getBoundingClientRect();
+        var hit = document.elementFromPoint ? document.elementFromPoint(pr.left + pr.width / 2, paneTop + 129) : null;
+        var ha = hit && hit.closest ? hit.closest(PLACE_ANCHORS) : null;
+        if (ha && dash.contains(ha)) {
+            var ht = ha.getBoundingClientRect().top - paneTop;
+            if (ht <= 130 && ht >= bestTop) { pTop = ht; pEl = ha; }
+        }
+        if (!pEl) {
+            var list = dash.querySelectorAll(PLACE_ANCHORS);
+            for (var i = 0; i < list.length; i++) {
+                var r = list[i].getBoundingClientRect();
+                if (!r.width && !r.height) continue;         // not laid out
+                var t = r.top - paneTop;
+                if (t <= 130 && t > pTop && t >= bestTop) { pTop = t; pEl = list[i]; }
+            }
         }
         var ps = pEl && _placeSelOf(pEl);
         if (ps) { rec.sel = ps; rec.ds = Math.round(-pTop); }
