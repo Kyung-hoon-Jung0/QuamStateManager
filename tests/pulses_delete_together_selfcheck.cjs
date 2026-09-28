@@ -190,6 +190,11 @@ function freshRefusal(together) {
                                    { dot_path: OP, applied: true, deleted: true }] });
         await sleep(400);
         ok(undoPosts() === n0 + 1, 'a Ctrl+Z pressed while the batch is checked waits for it');
+        const up = ajaxCalls.filter((c) => c.method === 'POST' && /^\/undo/.test(c.url)).pop();
+        // released on the answer's ARRIVAL, the press declared the old tray
+        // ("s0") and the server refused it as another window's (real Chrome)
+        ok(up && up.opts && up.opts.values && up.opts.values.expect_sig === 's1',
+           '3: and declares the tray the batch left (its signature), not the one before it');
         const toast = d.querySelector('#inspector-pane .toast.toast-success');
         ok(!!toast && /^Deleted flux_pulse_target together with 1 other path \(/.test(toast.textContent.trim()),
            '4: the pane says what went, the ordinary "Deleted <name>" way');

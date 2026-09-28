@@ -740,6 +740,7 @@ function nodeAt(container, p) {
   {
     const ALSO = ['qubits.qA1.extras.note', 'qubits.qA2.f_01'];
     const REFUSED = { ok: false, lab_refused: true, lab_delete_also: ALSO,
+      lab_delete_label: 'Delete together with 1 gate field and 1 op',
       error: "Your chip's own generate_config() refused this ... pointing at nothing" };
     const win = makeWorld(function (url) {
       if (url === '/field/delete') return jsonResp(REFUSED, 400);
@@ -759,16 +760,26 @@ function nodeAt(container, p) {
     const chip = leaf.querySelector(':scope > .tree-row > .tree-edit-err');
     ok(!!chip && /generate_config/.test(chip.textContent), 'C18: the lab refusal is shown');
     const btn = chip && chip.querySelector('.tree-cascade-btn');
-    ok(!!btn && /Delete together with 2 ops/.test(btn.textContent),
-      'C18: the refusal offers deleting the named ops together');
+    // w8: the set can hold a gate field or a gate -- the button says what
+    // the server says it is, never "2 ops" for a gate field and an op
+    ok(!!btn && btn.textContent === 'Delete together with 1 gate field and 1 op',
+      'C18: the refusal offers deleting them together, named by kind (' + (btn && btn.textContent) + ')');
     ok(!chip.querySelector('.tree-reload-btn'), 'C18: a lab refusal is not a wrong-chip one');
     // w8: a Ctrl+Z pressed while the batch is being checked must undo IT,
     // never the edit before it -- the batch holds the undo queue
     const held = [];
-    if (win.UndoQueue) win.UndoQueue.holdWhile = function (p) { held.push(p); return p; };
+    let releasedAfterHandling = null;
+    if (win.UndoQueue) win.UndoQueue.holdWhile = function (p) {
+        held.push(p);
+        // released on the answer's arrival, the press declared the OLD tray
+        // and was refused as another window's (real Chrome, Pulses page twin)
+        p.then(function () { releasedAfterHandling = win._softRefreshed === 1; });
+        return p;
+    };
     if (btn) btn.click();
     await tick(25);
     ok(held.length === 1, 'C18: the batch holds Ctrl+Z until it has answered (UndoQueue.holdWhile)');
+    ok(releasedAfterHandling === true, 'C18: ...and until the answer is HANDLED (tray swapped), not merely arrived');
     const call = win._fetchCalls.filter(function (x) { return x.url === '/field/edit-batch'; })[0];
     const body = call ? JSON.parse(call.opts.body) : {};
     ok(!!call, 'C18: one batch was POSTed');

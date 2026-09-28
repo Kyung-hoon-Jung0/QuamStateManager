@@ -10870,7 +10870,9 @@ def field_delete():
             _also = _lab_delete_also(modifier.store, [dot_path], _lab_info)
             return jsonify(ok=False, lab_refused=True,
                            error=_lab_refusal_text(_lab[0]),
-                           **({"lab_delete_also": _also} if _also else {})), 400
+                           **({"lab_delete_also": _also,
+                               "lab_delete_label": _lab_delete_label(modifier.store, _also)}
+                              if _also else {})), 400
         entry = modifier.delete_subtree(dot_path)
         _invalidate_engine_cache(ctx)
     except (KeyError, TypeError, ValueError, IndexError) as e:
@@ -11125,7 +11127,9 @@ def field_edit_batch():
             return jsonify(
                 ok=False, lab_refused=True, error=_lab_msg,
                 tray_html=_tray_html(),
-                **({"lab_delete_also": _also} if _also else {}),
+                **({"lab_delete_also": _also,
+                    "lab_delete_label": _lab_delete_label(modifier.store, _also)}
+                   if _also else {}),
                 lab_follow=(_lab_follow_payload(_one[0], _one[1], _lab_info)
                             if _one and len(pairs) == 1 else None),
                 results=[{"dot_path": dp, "applied": False,
@@ -19140,6 +19144,19 @@ def api_pulse_delete():
         note += f" — {len(referrers)} reference(s) now dangle"
     detail = render_template("_status.html", message=note, level="success")
     return _lab_toast(_pulse_mutation_response(detail))
+
+
+def _lab_delete_label(store, also) -> str:
+    """The offer's button text for *also* (``lab_delete_label`` on the Json
+    Tree's refusal: its old "N ops" miscounted a gate field or a gate)."""
+    from quam_state_manager.core import lab_watch
+    try:
+        gates = set(lab_watch.watch_for(store).macros)
+    except Exception:  # noqa: BLE001 -- wording only
+        gates = set()
+    return _together_label([
+        "gate" if p in gates else "field"
+        if any(p.startswith(g + ".") for g in gates) else "op" for p in also])
 
 
 def _together_label(kinds: list[str]) -> str:

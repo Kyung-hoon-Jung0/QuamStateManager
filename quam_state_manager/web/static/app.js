@@ -10293,13 +10293,15 @@ window.clearDetailPanelSearch = function(btnEl) {
        and the ops cannot go first (the gate plays them). The refusal names
        them (lab_delete_also) and offers the one way: all of them, in ONE
        batch (one Ctrl+Z), which the server checks again as a whole. */
-    function _appendCascadeBtn(el, path, also) {
+    function _appendCascadeBtn(el, path, also, label) {
         if (!el || el.querySelector(".tree-cascade-btn")) return;
         var b = document.createElement("button");
         b.type = "button";
         b.className = "btn-sm outline tree-cascade-btn";
-        b.textContent = "Delete together with " + also.length + " op" +
-            (also.length === 1 ? "" : "s");
+        // w8: the set can hold a gate field or a whole gate, not only ops --
+        // the server names what it is (lab_delete_label)
+        b.textContent = label || ("Delete together with " + also.length + " op" +
+            (also.length === 1 ? "" : "s"));
         b.title = "Deletes " + path + " and\n" + also.join("\n") +
             "\nin one batch (one Ctrl+Z)";
         b.onclick = function (e) {
@@ -10312,9 +10314,11 @@ window.clearDetailPanelSearch = function(btnEl) {
                 headers: {"Content-Type": "application/json"},
                 body: JSON.stringify({ updates: ups, group: "new",
                                        expect_chip: window.__chipToken || "" }) });
-            // a Ctrl+Z pressed while the batch is being checked undoes IT
-            if (window.UndoQueue && window.UndoQueue.holdWhile) window.UndoQueue.holdWhile(_pr);
-            _pr.then(function (r) { return r.json(); })
+            // a Ctrl+Z pressed while the batch is being checked undoes IT: held
+            // until the answer is HANDLED (the tray swapped to the batch's
+            // signature), not merely arrived -- else the press declares the
+            // old tray and is refused as "made in another window"
+            var _chain = _pr.then(function (r) { return r.json(); })
             .then(function (d) {
                 if (!d.ok) {
                     b.disabled = false;
@@ -10322,14 +10326,17 @@ window.clearDetailPanelSearch = function(btnEl) {
                     return;
                 }
                 if (d.tray_html) { _swapPendingTray(d.tray_html); window._restoreTrayState && window._restoreTrayState(); }
-                if (window.showToast) window.showToast("Deleted " + path + " with " +
-                    also.length + " op" + (also.length === 1 ? "" : "s") + " (one Ctrl+Z)", "success");
+                if (window.showToast) window.showToast("Deleted " + path + " together with " +
+                    also.length + " other path" + (also.length === 1 ? "" : "s") + " (one Ctrl+Z)", "success");
+                // w8: a batch the lab code could not check went through UNCHECKED -- say so
+                if (d.warning && window.showToast) window.showToast(String(d.warning), "warning");
                 if (window._diagChanged) window._diagChanged();
                 // several subtrees changed at once: the tree re-reads the chip
                 // in place (a page reload would trip the unsaved-edits guard)
                 if (window._softRefreshLiveSurface) window._softRefreshLiveSurface();
             })
             .catch(function (err) { b.disabled = false; el.firstChild.textContent = "✗ " + _netFail(err) + " "; });
+            if (window.UndoQueue && window.UndoQueue.holdWhile) window.UndoQueue.holdWhile(_chain);
         };
         el.appendChild(document.createTextNode(" "));
         el.appendChild(b);
@@ -11527,7 +11534,7 @@ window.clearDetailPanelSearch = function(btnEl) {
                     var _ec = _showEditError(row, d.error);
                     if (d.chip_mismatch) _appendReloadBtn(_ec);
                     if (Array.isArray(d.lab_delete_also) && d.lab_delete_also.length) {
-                        _appendCascadeBtn(_ec, m.path, d.lab_delete_also);
+                        _appendCascadeBtn(_ec, m.path, d.lab_delete_also, d.lab_delete_label);
                     }
                     actionsSpan.remove(); return;
                 }

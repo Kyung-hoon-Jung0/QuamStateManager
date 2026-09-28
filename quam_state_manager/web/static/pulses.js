@@ -963,8 +963,7 @@ window.PulsesPage = (function () {
                 updates: paths.map(function (x) { return { dot_path: x, 'delete': true }; }),
                 group: 'new', expect_chip: String(window.__chipToken || '') })
         });
-        if (window.UndoQueue && window.UndoQueue.holdWhile) window.UndoQueue.holdWhile(p);
-        return p.then(function (r) {
+        var chain = p.then(function (r) {
             return r.json().then(function (j) { return { r: r, j: j || {} }; },
                                  function () { return { r: r, j: {} }; });
         }).then(function (rj) {
@@ -1029,6 +1028,12 @@ window.PulsesPage = (function () {
             btn.disabled = false;
             say('✗ Couldn’t reach the app — reload the page to see what is stored.', 'error');
         });
+        // a Ctrl+Z pressed while the batch is checked undoes IT: held until
+        // the answer is HANDLED -- the tray swapped to the batch's signature.
+        // Released on arrival alone, the press declared the OLD tray and the
+        // server refused it as "made in another window" (real Chrome, 5Q).
+        if (window.UndoQueue && window.UndoQueue.holdWhile) window.UndoQueue.holdWhile(chain);
+        return chain;
     }
 
     /* ---- Verify vs generated config (ground truth) ---- */

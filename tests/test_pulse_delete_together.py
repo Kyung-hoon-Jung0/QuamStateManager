@@ -132,8 +132,11 @@ class TestTheRefusalNamesWhatGoesTogether:
         _by_name(_store(c))
         j = c.post("/field/delete", data={"dot_path": OP_T}).get_json()
         assert j["lab_refused"] is True and j["lab_delete_also"] == [SLOT_T]
+        # the tree's button said "1 op" for a gate field: the server names it
+        assert j["lab_delete_label"] == "Delete together with 1 gate field"
         j = c.post("/field/delete", data={"dot_path": SLOT_T}).get_json()
         assert j["lab_delete_also"] == [OP_T]
+        assert j["lab_delete_label"] == "Delete together with 1 op"
 
 
 class TestTheOfferGoesThroughAsOneBatch:

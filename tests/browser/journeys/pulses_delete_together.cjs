@@ -196,10 +196,52 @@ async function runCase(p, name, path, q, expectTogether, expectLabel) {
   await runCase(p, 'B_by_name_op', OP_T, `${GATE}_flux_pulse_${TGT}_${CTL}`, [OP_T, SLOT_T], 'Delete together with 1 gate field');
   await runCase(p, 'C_required_control_pulse', SLOT_C, `${GATE} ${PAIR}`, [SLOT_C, G, OP_C, OP_T], 'Delete together with 1 gate and 2 ops');
 
+  // Ctrl+Z pressed WHILE the batch is being checked: held, then it undoes
+  // the batch (never the edit before it, never "nothing to undo" + the batch
+  // left standing)
+  {
+    console.log('\n== F_ctrl_z_during_check');
+    const PAIR3 = E('PAIR3', 'q3-4'), CTL3 = E('CTL3', 'q3'), TGT3 = E('TGT3', 'q4');
+    const G3 = `qubit_pairs.${PAIR3}.macros.${GATE}`;
+    const S3 = `${G3}.flux_pulse_target`, O3 = `qubits.${TGT3}.z.operations.${GATE}_flux_pulse_${TGT3}_${CTL3}`;
+    if (check(!!(await openPulse(p, S3, `${GATE} ${PAIR3}`)), 'F: the pulse opens')) {
+      const info = await refuse(p, 'F_ctrl_z_during_check', S3);
+      if (info && check(J(info.together) === J([S3, O3]), `F: offer ${J(info.together)}`)) {
+        const before = await p.ev(PEEK(info.together));
+        // what the page shows between the press and the end: the batch's
+        // "Deleted" answer, and any refusal of the Ctrl+Z (recorded, the
+        // answer and the undo come and go faster than a poll)
+        await p.ev(`(function(){window.__qaF={deleted:0,refused:''}; var o=new MutationObserver(function(){var t=document.querySelector('#inspector-pane .toast-success'); if(t&&/^\\s*Deleted /.test(t.innerText)) window.__qaF.deleted=1; [].slice.call(document.querySelectorAll('.toast')).forEach(function(x){ if(/Nothing undone/.test(x.innerText)) window.__qaF.refused=x.innerText.slice(0,200); });}); o.observe(document.body,{childList:true,subtree:true,characterData:true}); window.__qaFobs=o; return 1})()`);
+        const t1 = Date.now();
+        await clickSel(p, '.pulse-delete-refused .pulse-delete-together');
+        await sleep(60);
+        const inFlight = await p.ev(`(document.querySelector('.pulse-together-status')||{}).innerText||''`);
+        await pressZ(p);
+        const back = await waitFor(p, `(function(){if(!window.__qaF.deleted) return 0; return ${PEEK(info.together)}.then(function(s){return s===${J(before)}?1:0})})()`, 120000);
+        timing.F_press_during_check_ms = Date.now() - t1;
+        check(/Checking the whole batch/.test(inFlight), `F: the press landed while the batch was being checked ("${inFlight}")`);
+        check(!!back, `F: the batch landed, then the held Ctrl+Z undid it -- both paths back byte-equal (${timing.F_press_during_check_ms} ms)`);
+        const refusedZ = await p.ev(`window.__qaF.refused`);
+        check(!refusedZ, `F: the held press was never refused as another window's ("${refusedZ}")`);
+        const reop = await waitFor(p, `document.querySelector('#pulse-detail-root[data-pulse-path=${J(S3)}]')?1:0`, 30000);
+        check(!!reop, 'F: and the pulse is re-opened');
+        await sleep(1500);
+        check(J(JSON.parse(await p.ev(PEEK(info.together)))) === J(JSON.parse(before)), 'F: nothing lands after it (still byte-equal 1.5 s later)');
+        await p.shot(`${DIR}/F_ctrl_z_during_check.png`);
+      }
+    }
+  }
+
   // reload: the page equals a cold render
   const rowsBefore = await p.ev(ROWS), totBefore = await p.ev(TOTAL);
+  const evMark = p.events.length;
   await p.send('Page.reload', {});
-  await sleep(800);
+  await sleep(1500);
+  // every case above ended undone: a reload must not meet the unsaved-edits
+  // guard (a dialog would also block every later evaluate -- answer it)
+  const dlg = p.events.slice(evMark).some(e => e.method === 'Page.javascriptDialogOpening');
+  if (dlg) await p.send('Page.handleJavaScriptDialog', { accept: true });
+  check(!dlg, 'the reload met no unsaved-edits guard (every batch above was undone)');
   await waitFor(p, `document.readyState==='complete' && document.querySelectorAll('tr[data-pulse-path]').length`, 90000);
   await typeInto(p, '.table-filter input[name="q"]', `${GATE} ${PAIR}`);
   await sleep(1500);
