@@ -1796,6 +1796,7 @@ def _activate_quam(folder_path: str | Path, *, origin: str = "live") -> dict:
         except Exception:  # noqa: BLE001 — a hint never blocks activation
             pass
         _acquire_project_scope(current)
+        _select_scope_env(current)          # w9/labwarm
         # docs/20 v2: re-evaluate the first-open chip-name banner on every
         # activation (origin can flip live→archive; a staged name dismisses),
         # and adopt the chip's declared data folder(s) as workspace roots.
@@ -1816,6 +1817,7 @@ def _activate_quam(folder_path: str | Path, *, origin: str = "live") -> dict:
         # answers "already-fresh" and starts nothing.
         _maybe_warm_generated_config(current, current_app.instance_path)
         _prewarm_search_index(current)
+        _maybe_prewarm_lab_worker(current, current_app.instance_path)   # w9/labwarm
         return current
 
     # Slow path. Serialise builds for THIS folder so two threads don't
@@ -1874,6 +1876,7 @@ def _activate_quam(folder_path: str | Path, *, origin: str = "live") -> dict:
         # chip without its memo); every activation path converges on the
         # reverse index, so a lost memo self-heals.
         _acquire_project_scope(ctx)
+        _select_scope_env(ctx)              # w9/labwarm
         _maybe_identity_confirm(ctx)
         _maybe_chip_name_prompt(ctx)
         _adopt_extras_data_folders(ctx)
@@ -1917,6 +1920,7 @@ def _activate_quam(folder_path: str | Path, *, origin: str = "live") -> dict:
         # chip actually having one: every other chip pays nothing.
         _maybe_warm_generated_config(ctx, current_app.instance_path)
         _prewarm_search_index(ctx)
+        _maybe_prewarm_lab_worker(ctx, current_app.instance_path)   # w9/labwarm
         return ctx
 
 
@@ -2130,6 +2134,103 @@ def _maybe_warm_generated_config(ctx, inst) -> None:
             logger.debug("config warm decision failed", exc_info=True)
 
     threading.Thread(target=_decide, daemon=True).start()
+
+
+#: w9/labwarm: the pre-warm's in-process step (the class map, a store-lock
+#: walk) waits at most this long for a quiet server, then goes: what follows
+#: is a SUBPROCESS -- no GIL, no lock -- and every second it waits is a second
+#: the first check waits (measured on krs5: the chip-open page loads kept the
+#: server "busy" ~14 s under load, and a +15 s check found no worker yet).
+_LAB_PREWARM_QUIET_MAX_S = 3.0
+
+
+def _lab_prewarm_wait(stop) -> None:
+    """Block until no foreground request is in flight (``activity.busy``,
+    the one yield-to-foreground rule) and no live write is open
+    (``bg_gate``) -- or *stop()*, or the cap."""
+    deadline = time.monotonic() + _LAB_PREWARM_QUIET_MAX_S
+    while time.monotonic() < deadline:
+        if stop():
+            return
+        _bg_gate.wait_quiet(max_wait=1.0)
+        if not _activity.busy() and not _bg_gate.busy():
+            return
+        time.sleep(0.05)
+
+
+def _lab_prewarm_classes(store) -> list[str]:
+    """The classes a lab check on this chip would import -- empty when the
+    check would ask nothing (no LAB pulse class, no LAB gate). The same map
+    every edit door consults (``lab_watch.watch_for``, cached by structure),
+    plus the chip's root class, which the gate check loads the chip with."""
+    from quam_state_manager.core import lab_watch
+    from quam_state_manager.core.pointer_path import _walk
+    watch = lab_watch.watch_for(store)
+    if not watch or not (watch.lab_ops or watch.macros):
+        return []
+    out: set[str] = set()
+    with store._lock:
+        merged = store.merged
+        for op in watch.lab_ops:
+            ok, body = _walk(merged, op.split("."))
+            c = body.get("__class__") if ok and isinstance(body, dict) else None
+            if isinstance(c, str) and c:
+                out.add(c)
+        for rec in watch.macros.values():
+            c = (rec or {}).get("qclass")
+            if isinstance(c, str) and c:
+                out.add(c)
+        root = merged.get("__class__")
+        if isinstance(root, str) and "." in root:
+            out.add(root)
+    return sorted(out)
+
+
+def _maybe_prewarm_lab_worker(ctx, inst, *, reason: str = "chip-open") -> None:
+    """w9/labwarm: start the lab-code worker for the open chip, off the
+    request path -- only when the chip carries a lab class the pulse/gate
+    check would ask AND an env is selected. Everything (the env read, the
+    class map, the spawn) runs on a daemon thread after the server is quiet;
+    the request pays for starting a thread. A read-only archive never writes,
+    so it is never checked and never pre-warmed."""
+    store = (ctx or {}).get("store")
+    if store is None or not ctx.get("path"):
+        return
+    if (ctx.get("origin") or "live") != "live":
+        return
+    app = current_app._get_current_object()
+    # the house rule for background warms (see _maybe_warm_generated_config):
+    # the suite does not spawn subprocesses unless a pin asks for it
+    if app.config.get("TESTING") and not app.config.get("SM_LAB_PREWARM_IN_TESTS"):
+        return
+    starter = app.config.get("SM_LAB_PREWARM_STARTER")   # tests: record, never spawn
+
+    def _still_active() -> bool:
+        reg = app.config.get("contexts") or {}
+        return reg.get(app.config.get("active_context")) is ctx
+
+    def _decide():
+        from quam_state_manager.core import lab_waveform
+        try:
+            _lab_prewarm_wait(lambda: not _still_active())
+            if not _still_active():
+                return
+            python_path = config_generator.get_selected_env(inst)
+            if not python_path or not Path(python_path).is_file():
+                return
+            classes = _lab_prewarm_classes(store)
+            if not classes:
+                return
+            if starter is not None:
+                starter(python_path, classes, reason)
+                return
+            # no second wait: an env switch meanwhile supersedes it
+            # (retire_except), and the spawn itself holds nothing of ours
+            lab_waveform.prewarm(python_path, classes, start_thread=False)
+        except Exception:  # noqa: BLE001 -- a warm-up never breaks anything
+            logger.debug("lab worker pre-warm decision failed", exc_info=True)
+
+    threading.Thread(target=_decide, daemon=True, name="lab-prewarm-decide").start()
 
 
 def _attach_type_policy(ctx, inst=None) -> None:
@@ -5426,11 +5527,86 @@ def _home_landing(config_exists, session):
 def landing_projects():
     """The landing's lazy project-cards fragment (docs/63) — the only place
     the landing pays the listing + doctor cost."""
+    listing = _qualibrate_listing()
     return render_template(
         "_landing_projects.html",
-        listing=_qualibrate_listing(),
+        listing=listing,
         last_project=_load_session().get("last_project"),
+        env_views=_project_env_views([p["name"] for p in listing.get("projects") or []]),
     )
+
+
+def _project_env_views(names) -> dict:
+    """``{project: project_env.view(...)}`` -- what each card's env row says.
+    Reads the memory file and stats each env: no discovery, no probe."""
+    from quam_state_manager.core import project_env
+    inst = current_app.instance_path
+    try:
+        selected = config_generator.get_selected_env(inst)
+    except Exception:  # noqa: BLE001
+        selected = None
+    out = {}
+    for n in names:
+        v = project_env.view(inst, n, selected)
+        # a stable DOM id per project (a name may hold any character): the
+        # rows a sync changes are swapped by it, out of band
+        v["dom_id"] = "lenv-" + hashlib.sha1(n.encode("utf-8")).hexdigest()[:12]
+        out[n] = v
+    return out
+
+
+@bp.route("/qualibrate/project-env", methods=["POST"])
+def qualibrate_project_env():
+    """Sync a project with an env (w9/labwarm): the user CONFIRMED the
+    suggested env (``how=confirmed``) or picked another one (``changed``).
+    Remembered per project (``core/project_env``); when that project is the
+    one open in SM, the env also becomes THE selected env right away (the
+    old env's lab worker retired, the open chip's started). Answers the
+    card's env row, plus the sidebar badge out of band."""
+    from quam_state_manager.core import project_env
+    name = (request.form.get("project") or "").strip()
+    raw = _unquote_path(request.form.get("python"))
+    how = "changed" if request.form.get("how") == "changed" else "confirmed"
+    if not name:
+        return render_template("_status.html", message="No project named.",
+                               level="error"), 400
+    names = [p["name"] for p in _qualibrate_listing().get("projects") or []]
+    if name not in names:
+        return render_template("_status.html",
+                               message=f"Unknown qualibrate project: {name!r}",
+                               level="error"), 404
+    python_path = config_generator.resolve_python_interpreter(raw) if raw else None
+    if not python_path:
+        return render_template(
+            "_status.html", level="error",
+            message=(f"No Python interpreter at: {raw or '(empty)'}. Point at the "
+                     "interpreter file or a venv folder.")), 400
+    inst = current_app.instance_path
+    project_env.remember(inst, name, python_path, how)
+    ctx = _active_ctx()
+    applied = False
+    if ctx and ctx.get("qualibrate_project") == name:
+        cur = config_generator.get_selected_env(inst)
+        if not cur or os.path.normcase(cur) != os.path.normcase(python_path):
+            _apply_selected_env(python_path)
+            applied = True
+    logger.info("project env: %s -> %s (%s%s)", name, python_path, how,
+                ", selected now" if applied else "")
+    views = _project_env_views(names)
+    row = render_template("_landing_project_env.html", p={"name": name},
+                          pe=views[name], env_saved=how)
+    # every OTHER card whose row this sync changed: a never-synced project's
+    # suggestion is "the env used most recently", which this sync just moved
+    # (the page must say what a cold reload says)
+    others = "".join(
+        f'<div class="landing-card-env" data-project="{escape(n)}" id="{v["dom_id"]}" '
+        f'hx-swap-oob="true">'
+        + render_template("_landing_project_env.html", p={"name": n}, pe=v)
+        + "</div>"
+        for n, v in views.items() if n != name and v["state"] == "suggested")
+    badge = render_template("_sidebar_folder_badge.html",
+                            qualibrate_tray=_qualibrate_tray_badge(), oob=True)
+    return row + others + badge
 
 
 @bp.route("/workbench")
@@ -5817,7 +5993,36 @@ def _qualibrate_tray_badge() -> dict | None:
             "standalone": standalone,
             # The folder itself, so the chip can name what is being edited
             # rather than just asserting a category.
-            "standalone_path": (ctx or {}).get("live_path") if standalone else None}
+            "standalone_path": (ctx or {}).get("live_path") if standalone else None,
+            # w9/labwarm: WHICH env SM runs the lab's code with, beside the
+            # project it belongs to (two small file reads, stat-memoized)
+            "env": _active_env_badge(sm_scope)}
+
+
+def _active_env_badge(project: str | None) -> dict:
+    """The selected env as the sidebar shows it, relative to *project*'s
+    memory: ``remembered`` (the project's own env), ``suggested`` (the
+    project was never synced -- confirm it on the Projects page),
+    ``differs`` (the project remembers another env than the one selected
+    now, e.g. Generate Config picked another), ``global`` (no project scope),
+    ``none`` (no env selected at all)."""
+    from quam_state_manager.core import project_env
+    inst = current_app.instance_path
+    try:
+        active = config_generator.get_selected_env(inst)
+    except Exception:  # noqa: BLE001
+        active = None
+    if not active:
+        return {"state": "none", "label": "", "python": None, "project": project}
+    if not project:
+        state = "global"
+    else:
+        rem = project_env.remembered(inst, project)
+        state = ("suggested" if not rem
+                 else "remembered" if os.path.normcase(rem) == os.path.normcase(active)
+                 else "differs")
+    return {"state": state, "label": project_env.label(active), "python": active,
+            "project": project, "exists": os.path.isfile(active)}
 
 
 @bp.route("/api/qualibrate/projects")
@@ -6165,10 +6370,13 @@ def qualibrate_open_project():
                      "in qualibrate first (see the Doctor panel)."),
             level="error"), 409
 
+    env_changed = _select_project_env(name)
     try:
         opened = _activate_quam(state["native"])
     except (FileNotFoundError, ValueError, OSError) as e:
         return render_template("_status.html", message=str(e), level="error"), 400
+    if env_changed:
+        _bind_to_selected_env(opened, current_app.instance_path)
     _remember_load_path(state["native"])
 
     # a qualibrate project is a SCOPE on the context, not a new context type.
@@ -6214,6 +6422,85 @@ def qualibrate_open_project():
         resp.headers["HX-Redirect"] = url_for("main.qubits")
         return resp
     return redirect(url_for("main.qubits"))
+
+
+@bp.route("/sidebar/folder-badges")
+def sidebar_folder_badges():
+    """w9/labwarm: the sidebar's project + env badges, fresh -- fetched after
+    an env is selected outside the landing (Generate Config, the Runner), so
+    the badge never names the env that was active before (a cold reload and
+    the page must agree)."""
+    return render_template("_sidebar_folder_badge.html",
+                           qualibrate_tray=_qualibrate_tray_badge())
+
+
+def _select_scope_env(ctx) -> None:
+    """w9/labwarm: a chip opened any other way than the project's Open
+    (State Load, Resume, a workspace pick, switching back to it) whose
+    derived project scope was SYNCED with an env gets that env selected --
+    the same promise as the project's Open. A never-synced scope is left
+    alone here (a plain folder load does not adopt a suggestion); an
+    archive never selects anything. Only a change runs anything. The chip
+    that is ALREADY the active one re-activating (a topology refresh, the
+    same folder loaded again) is not an open: an env picked meanwhile in
+    Generate Config stays until the user actually opens something."""
+    if not ctx or (ctx.get("origin") or "live") != "live":
+        return
+    if _active_ctx() is ctx:
+        return
+    name = ctx.get("qualibrate_project")
+    if not name:
+        return
+    from quam_state_manager.core import project_env
+    inst = current_app.instance_path
+    try:
+        rem = project_env.remembered(inst, name)
+        if not rem or not os.path.isfile(rem):
+            return
+        cur = config_generator.get_selected_env(inst)
+        if not cur or os.path.normcase(cur) != os.path.normcase(rem):
+            _apply_selected_env(rem, rebind=False)
+            project_env.mark_used(inst, name, rem)
+            _bind_to_selected_env(ctx, inst)
+    except Exception:  # noqa: BLE001 -- an env never blocks opening a chip
+        logger.warning("scope env selection failed for %s", name, exc_info=True)
+
+
+def _bind_to_selected_env(ctx, inst) -> None:
+    """The chip being opened, bound to the env just selected: its type
+    policy and schema warm. (A cached chip's re-activation binds nothing on
+    its own; a fresh build binds again later -- cheap, single-flight.) The
+    lab-worker pre-warm needs nothing: it reads the env when it runs."""
+    _attach_type_policy(ctx, inst)
+    _warm_state_schema_async(ctx.get("store"), inst, live_folder=ctx.get("path"))
+
+
+def _select_project_env(name: str) -> bool:
+    """w9/labwarm: opening project *name* makes its env THE selected env --
+    the one it was synced with, or (never synced) the suggested one. Only a
+    CHANGE runs what a selection means (``_apply_selected_env``: probes, the
+    old lab worker retired); the same env again touches nothing, so a
+    project opened with its remembered env re-discovers and re-probes
+    nothing. Before ``_activate_quam``, so the chip's lab-worker pre-warm
+    and (a fresh build) type policy start with the right env; True when the
+    env changed -- the caller then binds the chip it opened (a cached chip's
+    re-activation binds nothing by itself)."""
+    from quam_state_manager.core import project_env
+    inst = current_app.instance_path
+    changed = False
+    try:
+        cur = config_generator.get_selected_env(inst)
+        view = project_env.view(inst, name, cur)
+        want = view.get("python")
+        if not want or not view.get("exists"):
+            return False    # nothing to select, or it vanished: the card says so
+        if not cur or os.path.normcase(cur) != os.path.normcase(want):
+            _apply_selected_env(want, rebind=False)
+            changed = True
+        project_env.mark_used(inst, name, want)
+    except Exception:  # noqa: BLE001 -- an env never blocks opening a project
+        logger.warning("project env selection failed for %s", name, exc_info=True)
+    return changed
 
 
 @bp.route("/load", methods=["POST"])
@@ -9213,8 +9500,45 @@ def field_lab_watch():
         except Exception:  # noqa: BLE001
             tgt = dp
         if watch.affected(tgt) or watch.affected(dp):
-            return jsonify(lab=True)
+            return jsonify(lab=True, worker=_lab_worker_state())
     return jsonify(lab=False)
+
+
+def _lab_worker_state() -> str:
+    """w9/labwarm: the selected env's lab worker -- ``ready`` / ``starting``
+    / ``cold`` / ``no-env`` (``lab_waveform.worker_state``). A check that
+    finds anything but ``ready`` pays the worker's start: the UI says
+    "Preparing your lab code... (first check after start)"."""
+    from quam_state_manager.core import lab_waveform
+    try:
+        python_path = config_generator.get_selected_env(current_app.instance_path)
+    except Exception:  # noqa: BLE001
+        python_path = None
+    return lab_waveform.worker_state(python_path)
+
+
+@bp.route("/api/lab/worker-status")
+def api_lab_worker_status():
+    """``{"state", "env", "prewarm"}`` for the selected env's lab worker --
+    polled by the "checking..." indicators while a lab check is in flight
+    (their text says "Preparing your lab code..." until the worker is
+    ready). Read-only, never spawns: a dict read and a few stats."""
+    from quam_state_manager.core import lab_waveform
+    try:
+        python_path = config_generator.get_selected_env(current_app.instance_path)
+    except Exception:  # noqa: BLE001
+        python_path = None
+    state = lab_waveform.worker_state(python_path)
+    out = {"state": state, "env": python_path}
+    log = dict(lab_waveform.PREWARM_LOG.get(python_path or "") or {})
+    if log:
+        now = time.monotonic()
+        pre = {"state": log.get("state")}
+        for k in ("t_request", "t_spawn", "t_ready"):
+            if isinstance(log.get(k), (int, float)):
+                pre[k.replace("t_", "") + "_ago_s"] = round(now - log[k], 3)
+        out["prewarm"] = pre
+    return jsonify(out)
 
 
 @bp.route("/field/edit", methods=["POST"])
@@ -16124,6 +16448,9 @@ def _pulse_section_ctx(store, pulse_index, path: str):
                       else used_by_target)
     # a lab gate that plays this op BY NAME (verifier 3) -- not a pointer
     played_by_name = _lab_named_players(store, actual_path)
+    # w9/labwarm: the delete step says "Checking with your lab code..." beside
+    # its disabled button -- only when the delete is asked of the lab at all
+    delete_lab_check = _lab_delete_asks(store, path)
     # docs/189 (customer, on-site: "pulses 메뉴에서 snz 는 plotting이 안돼").
     # A lab may write its OWN pulse classes -- one customer chip's CZ flux pulse
     # is `quam_config.two_flux_gate.SNZTwoFluxPulse`, and four such classes cover
@@ -16184,6 +16511,13 @@ def _pulse_section_ctx(store, pulse_index, path: str):
         "used_by": used_by_target,
         "delete_used_by": delete_used_by,
         "played_by_name": played_by_name,
+        "delete_lab_check": delete_lab_check,
+        # w9/labwarm: the lab worker's state AT RENDER -- the first word the
+        # lab indicators say before their own status poll answers (a busy
+        # server answered that poll 1.2 s late on krs5: the step said
+        # "Checking..." first, then "Preparing..."); corrected by the poll
+        "lab_worker_state": (_lab_worker_state()
+                             if (delete_lab_check or unknown_class) else None),
         "synth_error": synth_error,
         # docs/189 -- the class is the lab's own and SM cannot synthesize it.
         "synth_unknown_class": unknown_class,
@@ -16549,7 +16883,7 @@ def _coerce_lab_overrides(store, path: str, overrides: dict) -> dict:
 
 
 def lab_drawings_for_paths(store, paths, *, spawn: bool, overrides=None,
-                           overrides_by_path=None):
+                           overrides_by_path=None, background: bool = False):
     """``{path: record}`` -- each pulse drawn by its OWN class's code in the
     selected env (``core/lab_waveform``). ONE function for the detail view,
     the edit refresh and the row sparklines, so they cannot draw the same
@@ -16576,8 +16910,11 @@ def lab_drawings_for_paths(store, paths, *, spawn: bool, overrides=None,
         items.append((qclass, params))
         owners.append(path)
     if items:
+        # background only when it is one (a stand-in draw that predates the
+        # keyword keeps working for every foreground caller)
+        kw = {"background": True} if background else {}
         for path, rec in zip(owners, lab_waveform.draw(python_path, items,
-                                                       spawn=spawn)):
+                                                       spawn=spawn, **kw)):
             out[path] = rec
     return out
 
@@ -18191,6 +18528,26 @@ def _lab_named_players(store, path: str) -> list[str]:
     return sorted(out)
 
 
+def _lab_delete_asks(store, path: str) -> bool:
+    """Would ``/api/pulse/delete`` of *path* be asked of the lab's own code?
+    The delete branch of :func:`_lab_write_refusal`: a lab gate the delete
+    reaches (``macros_for``), or a ``generate_config()`` question
+    (``_lab_cfg_scope``: a tracked chain, a gate or a by-name op it cuts).
+    A map lookup -- never a subprocess, never the env settings."""
+    from quam_state_manager.core import lab_watch
+    try:
+        watch = lab_watch.watch_for(store)
+    except Exception:  # noqa: BLE001 -- wording only
+        return False
+    if not watch or not isinstance(path, str) or not path:
+        return False
+    if watch.macros_for(path):
+        return True
+    cfg = {"cut": [], "gates": [], "orphans": {}, "rows": set(), "paths": []}
+    _lab_cfg_scope(watch, 0, path, _LAB_DELETE, cfg)
+    return bool(cfg["rows"])
+
+
 def _qclass_at(store, path: str):
     try:
         body = store.get_value(path)
@@ -19769,6 +20126,10 @@ def _pulse_fallback_spark(store, path, row) -> None:
     row["spark_from_config"] = bool(row["spark_svg"])
 
 
+#: rows per background ask of the sparkline warm (see _warm_lab_sparks)
+_LAB_SPARK_CHUNK = 4
+
+
 def _warm_lab_sparks(store, paths) -> None:
     """Draw *paths* with their own class code in ONE background subprocess,
     so the next render of these rows has a current thumbnail. Single-flight
@@ -19797,9 +20158,17 @@ def _warm_lab_sparks(store, paths) -> None:
         _lab_spark_inflight.add(key)
 
     def _run():
+        # w9/labwarm: in CHUNKS, yielding the env's worker between them to any
+        # user check waiting for it -- one ask for a whole page of lab rows
+        # held a delete on big30x behind the page's thumbnails (43.8 s, the
+        # worker "ready" only 71 s after the open)
+        from quam_state_manager.core import lab_waveform
         try:
             with app.app_context():
-                lab_drawings_for_paths(store, todo, spawn=True)
+                for i in range(0, len(todo), _LAB_SPARK_CHUNK):
+                    lab_waveform.yield_to_foreground(python_path)
+                    lab_drawings_for_paths(store, todo[i:i + _LAB_SPARK_CHUNK],
+                                           spawn=True, background=True)
         except Exception:  # noqa: BLE001
             logger.debug("lab sparkline warm failed", exc_info=True)
         finally:
@@ -33184,10 +33553,22 @@ def generate_select_env():
                           "fail with 'produced no _result.json'. Pick the "
                           "env's bin/python instead."),
             }), 400
+    _apply_selected_env(python_path)
+    return jsonify({"ok": True, "selected": python_path})
+
+
+def _apply_selected_env(python_path: str, *, rebind: bool = True) -> None:
+    """Make *python_path* THE selected env (``config_generator``'s one
+    setting -- the lab worker, the class probe, the config warm and the
+    Generate Config default all read it) and run what a selection means.
+    Shared by Generate Config's picker and the project env (w9/labwarm).
+    *rebind* False: called from inside an activation, which binds the chip
+    it is publishing to the new env itself -- the one active until then is
+    not re-bound (that would warm a probe for a chip being left)."""
     config_generator.set_selected_env(current_app.instance_path, python_path)
     # The pulse-roster overlay belongs to the PREVIOUS env — clear it now; the
     # warm below re-applies the new env's roster when its probe lands.
-    from quam_state_manager.core import pulse_catalog
+    from quam_state_manager.core import lab_waveform, pulse_catalog
     pulse_catalog.apply_env_overlay(None)
     pulse_catalog.apply_chip_classes(None)      # docs/190 F47, same lifetime
     # Warm the capability manifest in the background so the review step's report
@@ -33197,15 +33578,18 @@ def generate_select_env():
         target=lambda: config_generator.probe_capabilities(python_path, inst),
         daemon=True,
     ).start()
+    # w9/labwarm: the old env's lab worker goes NOW (it would only have gone
+    # at the next check), and the open chip's is started for the new one
+    lab_waveform.retire_except(python_path, background=True)
     # Re-bind the active chip's type policy to the NEW env (stat-cached read —
     # likely cold for a fresh env → assignments-only until the warm lands),
     # then warm the schema manifest in the background (single-flight).
-    _ctx = _active_ctx()
+    _ctx = _active_ctx() if rebind else None
     if _ctx:
         _attach_type_policy(_ctx, inst)
         _warm_state_schema_async(_ctx.get("store"), inst,
                                  live_folder=_ctx.get("path"))
-    return jsonify({"ok": True, "selected": python_path})
+        _maybe_prewarm_lab_worker(_ctx, inst, reason="env-select")
 
 
 @bp.route("/generate/capabilities", methods=["POST"])

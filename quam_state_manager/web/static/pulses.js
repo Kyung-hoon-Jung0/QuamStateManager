@@ -1293,6 +1293,20 @@ window.PulsesPage = (function () {
         });
     }
 
+    /* w9/labwarm: does the create about to be sent ask the lab's own code?
+       A class SM does not draw in-process (env_only: the env's or the chip's
+       own) is drawn by its class first; a pulse into a gate's empty slot is
+       asked of the gate. lab-check.js then says "Preparing your lab code..."
+       on the busy line while the worker is still starting. */
+    function createNeedsLab() {
+        var root = createRoot();
+        if (!root || !root._catalog) return false;
+        var sel = root.querySelector('#pulse-create-type');
+        var spec = sel ? root._catalog[sel.value] : null;
+        var kind = root.querySelector('input[name="target_kind"]:checked');
+        return !!((spec && spec.env_only) || (kind && kind.value === 'pair'));
+    }
+
     function createTypeChanged(sel) {
         var root = createRoot();
         if (!root || !root._catalog) return;
@@ -2119,6 +2133,7 @@ window.PulsesPage = (function () {
         regenerateThenVerify: regenerateThenVerify,
         startLinkEdit: startLinkEdit,
         createTypeChanged: createTypeChanged,
+        createNeedsLab: createNeedsLab,
         createTargetKind: createTargetKind,
         createPairGates: createPairGates,
         createPairSelected: createPairSelected,

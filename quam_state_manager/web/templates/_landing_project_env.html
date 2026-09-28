@@ -1,0 +1,28 @@
+{#- w9/labwarm: one project card's environment row (the landing's lazy
+    fragment, and the answer of POST /qualibrate/project-env).
+    pe = project_env.view(): state "remembered" (synced -- opening the project
+    selects it, nothing is re-discovered or re-probed), "suggested" (never
+    synced -- the env used most recently; remembered once confirmed or
+    changed), "none" (nothing to offer). -#}
+<span class="landing-env-label" title="{{ pe.python or 'no Python environment yet' }}">env
+    {% if pe.python %}<code>{{ pe.label }}</code>{% else %}<em>none</em>{% endif %}</span>
+{%- if pe.python and not pe.exists %}
+<span class="landing-env-missing" title="{{ pe.python }} does not exist any more — choose another">&#10007; not found</span>
+{%- endif %}
+{%- if pe.state == 'suggested' %}
+<span class="landing-env-suggested"
+      title="This project has not been synced with an environment yet. This is the one used most recently; it is used when you open the project, and remembered for it once you confirm or change it.">suggested &mdash; confirm</span>
+<button type="button" class="btn-sm landing-env-confirm"
+        hx-post="/qualibrate/project-env" hx-target="closest .landing-card-env" hx-swap="innerHTML"
+        hx-vals='{{ {"project": p.name, "python": pe.python, "how": "confirmed"} | tojson }}'
+        {% if not pe.exists %}disabled{% endif %}
+        title="Remember {{ pe.python }} for {{ p.name }}">Confirm</button>
+{%- elif pe.state == 'remembered' and pe.exists %}
+<span class="landing-env-ok" title="Remembered for this project — opening it selects this environment; nothing is re-discovered or re-probed">&#10003;</span>
+{%- endif %}
+<button type="button" class="btn-sm outline landing-env-change"
+        data-env-change="{{ p.name }}" data-env-current="{{ pe.python or '' }}"
+        title="Pick the Python environment {{ p.name }} runs with (conda, uv/venv, or a path)">{{ 'Choose…' if pe.state == 'none' else 'Change…' }}</button>
+{%- if env_saved %}
+<span class="landing-env-saved muted" role="status">{{ 'confirmed' if env_saved == 'confirmed' else 'saved' }}</span>
+{%- endif %}

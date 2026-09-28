@@ -25,6 +25,12 @@
             {% if n_doctor %}<span class="landing-card-doctor"
                 title="doctor findings for this project — see Manage / doctor">⚠ {{ n_doctor }}</span>{% endif %}
         </div>
+        {# w9/labwarm: the environment this project runs the lab's code with.
+           Remembered per project; opening the project selects it. #}
+        {% set pe = (env_views or {}).get(p.name) or {"python": None, "label": "", "state": "none", "exists": False, "dom_id": ""} %}
+        <div class="landing-card-env" data-project="{{ p.name }}"{% if pe.dom_id %} id="{{ pe.dom_id }}"{% endif %}>
+            {% include '_landing_project_env.html' %}
+        </div>
         <div class="landing-card-actions">
             <form method="post" action="/qualibrate/open" hx-post="/qualibrate/open"
                   hx-target="#landing-open-err" hx-swap="innerHTML"
@@ -48,6 +54,30 @@
     </div>
     {% endfor %}
 </div>
+{# w9/labwarm: the environment picker -- the same discovery as Generate
+   Config (conda envs, uv/venv from the qualibrate projects, a typed path).
+   NOT modal: the project's Open button stays pressable while envs are
+   discovered and probed (landing-env.js). #}
+<section id="landing-env-picker" class="landing-env-picker" hidden aria-label="Python environment picker">
+    <div class="landing-env-picker-head">
+        <strong>Python environment for <span data-env-project></span></strong>
+        <span class="muted landing-env-picker-note">Opening the project does not wait for this — the environment is used from the moment you pick it.</span>
+        <span class="landing-env-picker-tools">
+            <button type="button" class="btn-sm outline" data-env-rescan
+                    title="Re-scan conda environments (conda env list)">Rescan</button>
+            <button type="button" class="btn-sm outline" data-env-close aria-label="Close the environment picker">&times;</button>
+        </span>
+    </div>
+    <p class="muted landing-env-loading" data-env-loading role="status">Discovering environments&hellip;</p>
+    <div class="landing-env-list" data-env-list role="listbox" aria-label="Python environments"></div>
+    <div class="landing-env-custom">
+        <input type="text" data-env-custom autocomplete="off" spellcheck="false"
+               placeholder="an interpreter (…\python.exe) or a venv / project folder"
+               aria-label="Interpreter or venv folder path">
+        <button type="button" class="btn-sm outline" data-env-use>Use</button>
+        <span class="muted" data-env-custom-status role="status"></span>
+    </div>
+</section>
 <dialog id="landing-config-dialog" class="landing-config-dialog">
     <div id="landing-config-body"><p class="muted">loading&hellip;</p></div>
 </dialog>

@@ -15,6 +15,15 @@
  *      "Set ... too"; the press posts ONE /field/edit-batch with both
  *      updates (group "new"), repaints both cells as still pending, and the
  *      offer does not time out before it is pressed.
+ *  10. w9/labwarm: while the lab worker is still STARTING the badge says
+ *      "Preparing your lab code... (first check after start)", switches to
+ *      the ordinary line the moment the status says ready, never polls once
+ *      the edit is answered, and a late status answer never overwrites a
+ *      refusal; a ready worker is never polled at all;
+ *  11. the Pulses page's htmx lab indicators ([data-lab-indicator]: inside the
+ *      requesting form, or its next sibling) get the same text while the
+ *      worker starts, and their own text back after the request; the create
+ *      form's only when PulsesPage.createNeedsLab() says the create asks.
  * Run: node tests/lab_check_selfcheck.cjs (driven by tests/test_lab_check.py).
  * Exit 0 ok, 1 fail, 2 no jsdom.
  */
@@ -30,7 +39,8 @@ function ok(c, m) { if (c) console.log('ok - ' + m); else { console.error('FAIL:
 const tick = (ms) => new Promise((r) => setTimeout(r, ms || 0));
 async function until(f, ms) { const t0 = Date.now(); while (!f() && Date.now() - t0 < (ms || 2000)) await tick(5); return f(); }
 
-function world(labPaths, probeDelay) {
+function world(labPaths, probeDelay, opts) {
+  opts = opts || {};
   const dom = new JSDOM('<!doctype html><body><table><tr><td>' +
     '<input class="bulk-cell" data-dot-path="qubit_pairs.p.macros.cz.flux.flat_length" value="74">' +
     '</td><td><input class="bulk-cell" data-dot-path="qubits.q1.f_01" value="5e9"></td></tr></table></body>',
@@ -48,8 +58,16 @@ function world(labPaths, probeDelay) {
     if (url === '/field/lab-watch') {
       const body = JSON.parse(init.body);
       const lab = body.paths.some((p) => labPaths.includes(p));
-      const ans = { status: 200, json: () => Promise.resolve({ lab }) };
+      const j = { lab };
+      if (lab && opts.worker) j.worker = opts.worker;
+      const ans = { status: 200, json: () => Promise.resolve(j) };
       return probeDelay ? new Promise((r) => setTimeout(() => r(ans), probeDelay)) : Promise.resolve(ans);
+    }
+    if (url === '/api/lab/worker-status') {
+      const st = (opts.states && opts.states.length > 1) ? opts.states.shift()
+        : (opts.states && opts.states[0]) || 'ready';
+      const ans = { status: 200, json: () => Promise.resolve({ state: st }) };
+      return opts.statusDelay ? new Promise((r) => setTimeout(() => r(ans), opts.statusDelay)) : Promise.resolve(ans);
     }
     return new Promise((resolve) => pending.push(resolve));
   };
@@ -242,6 +260,126 @@ function resp(status, body) {
     W4.pending[0](resp(200, { ok: true }));
     await p4; await tick(40);
     ok(!W4.w.document.querySelector('.lab-check-badge'), 'a checked lab edit leaves no badge');
+  }
+
+  // 10 (w9/labwarm): "Preparing your lab code..." while the worker starts
+  {
+    const PREP = 'Preparing your lab code\u2026 (first check after start)';
+    const states = ['starting', 'starting', 'ready'];
+    const W = world([LAB], 0, { worker: 'cold', states });
+    const p = W.w.fetch('/field/edit', { method: 'POST', body: 'dot_path=' + encodeURIComponent(LAB) + '&value=86' });
+    await until(() => W.w.document.querySelector('.lab-check-badge'));
+    const b = W.w.document.querySelector('.lab-check-badge');
+    ok(b && b.textContent === PREP && b.classList.contains('lab-check-preparing'),
+       'a check waiting on a starting worker says Preparing (' + (b && b.textContent) + ')');
+    await until(() => /checking with your class/.test(b.textContent), 4000);
+    ok(/^checking with your class's own code/.test(b.textContent) && !b.classList.contains('lab-check-preparing'),
+       'the badge says the ordinary line once the worker is ready (' + b.textContent + ')');
+    const polls = () => W.log.filter((l) => l.url === '/api/lab/worker-status').length;
+    const n = polls();
+    ok(n >= 3, 'it asked the status while preparing (' + n + ' polls)');
+    W.pending[0](resp(200, { ok: true }));
+    await p; await tick(1400);
+    ok(polls() === n, 'no status poll once the worker is ready / the edit is answered');
+    ok(!W.w.document.querySelector('.lab-check-badge'), 'the badge is gone after the answer');
+
+    // a ready worker: the ordinary line, never polled
+    const R = world([LAB], 0, { worker: 'ready', states: ['ready'] });
+    const pr = R.w.fetch('/field/edit', { method: 'POST', body: 'dot_path=' + encodeURIComponent(LAB) + '&value=87' });
+    await until(() => R.w.document.querySelector('.lab-check-badge'));
+    const rb = R.w.document.querySelector('.lab-check-badge');
+    ok(rb && /^checking with your class's own code/.test(rb.textContent), 'a ready worker: the ordinary line');
+    await tick(700);
+    ok(!R.log.some((l) => l.url === '/api/lab/worker-status'), 'a ready worker is never polled');
+    R.pending[0](resp(200, { ok: true })); await pr;
+
+    // a refusal arriving while preparing is never overwritten by a late status
+    const F = world([LAB], 0, { worker: 'starting', states: ['starting'] });
+    const pf = F.w.fetch('/field/edit', { method: 'POST', body: 'dot_path=' + encodeURIComponent(LAB) + '&value=88' });
+    await until(() => F.w.document.querySelector('.lab-check-badge'));
+    F.pending[0](resp(400, { ok: false, lab_refused: true,
+      error: 'Your pulse class refused this value -- nothing was written: ValueError: odd' }));
+    await pf;
+    await until(() => F.w.document.querySelector('.lab-check-refused'));
+    await tick(1400);
+    const fb = F.w.document.querySelector('.lab-check-badge');
+    ok(fb && /ValueError: odd/.test(fb.textContent) && !/Preparing/.test(fb.textContent),
+       'a refusal stays the refusal (' + (fb && fb.textContent) + ')');
+  }
+
+  // 11 (w9/labwarm): the Pulses page's htmx lab indicators
+  {
+    const PREP = 'Preparing your lab code\u2026 (first check after start)';
+    const W = world([LAB], 0, { states: ['cold', 'cold', 'ready'] });
+    const d = W.w.document;
+    d.body.insertAdjacentHTML('beforeend',
+      '<form id="del"><button type="submit" disabled>Delete x</button>' +
+      '<span class="htmx-indicator" data-lab-indicator>Checking with your lab code\u2026</span></form>' +
+      '<form id="fld"><input name="value"></form><span id="nx" class="htmx-indicator" data-lab-indicator>checking with your class\u2019s own code\u2026</span>' +
+      '<form id="plain"><span class="htmx-indicator">Saving\u2026</span></form>' +
+      '<form id="cre"><span id="cb" class="htmx-indicator" data-lab-indicator="create">Creating\u2026</span></form>');
+    const fire = (el, name) => el.dispatchEvent(new W.w.CustomEvent(name, { bubbles: true, detail: { elt: el } }));
+    const del = d.getElementById('del');
+    const ind = del.querySelector('[data-lab-indicator]');
+    fire(del, 'htmx:beforeRequest');
+    await until(() => ind.textContent === PREP, 2000);
+    ok(ind.textContent === PREP, 'the delete step says Preparing while the worker starts (' + ind.textContent + ')');
+    await until(() => /^Checking with your lab code/.test(ind.textContent), 4000);
+    ok(/^Checking with your lab code/.test(ind.textContent), 'and "Checking with your lab code..." once it is ready');
+    fire(del, 'htmx:afterRequest');
+    ok(ind.textContent === 'Checking with your lab code\u2026' && !ind.classList.contains('lab-check-preparing'),
+       'the indicator gets its own text back after the request');
+
+    const W2 = world([LAB], 0, { states: ['starting'] });
+    const d2 = W2.w.document;
+    d2.body.insertAdjacentHTML('beforeend',
+      '<form id="fld"><input name="value"></form><span id="nx" class="htmx-indicator" data-lab-indicator>checking with your class\u2019s own code\u2026</span>' +
+      '<form id="plain"><span class="htmx-indicator">Saving\u2026</span></form>' +
+      '<form id="cre"><span id="cb" class="htmx-indicator" data-lab-indicator="create">Creating\u2026</span></form>');
+    const fire2 = (el, name) => el.dispatchEvent(new W2.w.CustomEvent(name, { bubbles: true, detail: { elt: el } }));
+    const fld = d2.getElementById('fld');
+    fire2(fld, 'htmx:beforeRequest');
+    await until(() => d2.getElementById('nx').textContent === PREP, 2000);
+    ok(d2.getElementById('nx').textContent === PREP, 'a field form\'s NEXT-sibling indicator says Preparing too');
+    fire2(fld, 'htmx:afterRequest');
+    const plain = d2.getElementById('plain');
+    fire2(plain, 'htmx:beforeRequest');
+    await tick(50);
+    ok(plain.textContent === 'Saving\u2026', 'an indicator not marked data-lab-indicator is never touched');
+    const cre = d2.getElementById('cre');
+    W2.w.PulsesPage = { createNeedsLab: () => false };
+    fire2(cre, 'htmx:beforeRequest');
+    await tick(80);
+    ok(d2.getElementById('cb').textContent === 'Creating\u2026', 'a create of a catalog class keeps its own busy line');
+    fire2(cre, 'htmx:afterRequest');
+    W2.w.PulsesPage = { createNeedsLab: () => true };
+    fire2(cre, 'htmx:beforeRequest');
+    await until(() => d2.getElementById('cb').textContent === PREP, 2000);
+    ok(d2.getElementById('cb').textContent === PREP, 'a create that asks the lab says Preparing while the worker starts');
+    fire2(cre, 'htmx:afterRequest');
+    ok(d2.getElementById('cb').textContent === 'Creating\u2026', 'and its own line back after');
+
+    // before its first status answer (a busy server), the indicator says what
+    // the server RENDERED into it (data-lab-state), never the ordinary line first
+    const W3 = world([LAB], 0, { states: ['starting'], statusDelay: 400 });
+    const d3 = W3.w.document;
+    d3.body.insertAdjacentHTML('beforeend',
+      '<form id="d1"><span class="htmx-indicator" data-lab-indicator data-lab-state="starting">Checking with your lab code\u2026</span></form>' +
+      '<form id="d2"><span class="htmx-indicator" data-lab-indicator data-lab-state="ready">Checking with your lab code\u2026</span></form>');
+    const fire3 = (el, name) => el.dispatchEvent(new W3.w.CustomEvent(name, { bubbles: true, detail: { elt: el } }));
+    const f1 = d3.getElementById('d1');
+    fire3(f1, 'htmx:beforeRequest');
+    ok(f1.querySelector('span').textContent === PREP,
+       'a worker rendered as starting: Preparing at once, before the status answers');
+    fire3(f1, 'htmx:afterRequest');
+    const W4 = world([LAB], 0, { states: ['ready'], statusDelay: 400 });
+    const d4 = W4.w.document;
+    d4.body.insertAdjacentHTML('beforeend',
+      '<form id="d2"><span class="htmx-indicator" data-lab-indicator data-lab-state="ready">Checking with your lab code\u2026</span></form>');
+    const f2 = d4.getElementById('d2');
+    f2.dispatchEvent(new W4.w.CustomEvent('htmx:beforeRequest', { bubbles: true, detail: { elt: f2 } }));
+    ok(f2.querySelector('span').textContent === 'Checking with your lab code\u2026',
+       'a worker rendered as ready: the ordinary line at once');
   }
 
   if (fails) { console.error(fails + ' FAIL'); process.exit(1); }
