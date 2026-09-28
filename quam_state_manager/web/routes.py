@@ -6440,8 +6440,13 @@ def _select_scope_env(ctx) -> None:
     derived project scope was SYNCED with an env gets that env selected --
     the same promise as the project's Open. A never-synced scope is left
     alone here (a plain folder load does not adopt a suggestion); an
-    archive never selects anything. Only a change runs anything."""
+    archive never selects anything. Only a change runs anything. The chip
+    that is ALREADY the active one re-activating (a topology refresh, the
+    same folder loaded again) is not an open: an env picked meanwhile in
+    Generate Config stays until the user actually opens something."""
     if not ctx or (ctx.get("origin") or "live") != "live":
+        return
+    if _active_ctx() is ctx:
         return
     name = ctx.get("qualibrate_project")
     if not name:

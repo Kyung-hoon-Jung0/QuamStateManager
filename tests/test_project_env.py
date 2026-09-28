@@ -267,6 +267,19 @@ class TestOpening:
         lab["c"].post("/load", data={"folder": str(chip_a)})           # again: nothing
         assert lab["seen"]["apply"] == [lab["A"]]
 
+    def test_re_activating_the_active_chip_keeps_an_env_picked_meanwhile(self, lab):
+        project_env.remember(lab["inst"], "alpha", lab["A"])
+        chip_a = lab["tmp"] / "chips" / "a"
+        lab["c"].post("/load", data={"folder": str(chip_a)})
+        assert os.path.normcase(_selected(lab)) == os.path.normcase(lab["A"])
+        # Generate Config picks another env while alpha's chip stays open
+        assert lab["c"].post("/generate/select-env", json={"python": lab["B"]}).status_code == 200
+        lab["c"].get("/api/topology?refresh=1")           # re-activates the active chip
+        lab["c"].post("/load", data={"folder": str(chip_a)})
+        assert os.path.normcase(_selected(lab)) == os.path.normcase(lab["B"])
+        with lab["app"].test_request_context("/"):
+            assert routes._active_env_badge("alpha")["state"] == "differs"
+
     def test_a_state_load_of_a_never_synced_folder_adopts_no_suggestion(self, lab):
         project_env.remember(lab["inst"], "alpha", lab["A"])
         config_generator.set_selected_env(str(lab["inst"]), lab["B"])
