@@ -1977,14 +1977,14 @@ def _chip_needs_generated_config(store, ctx: dict | None = None,
     cached = getattr(store, "_needs_cfg_memo", None)
     if cached is not None and cached[0] == key and cached[2] is overlay:
         return cached[1]
-    # w8/locks: the context's OWN index when *ctx* still serves this store --
-    # the walk done here is then the one the Pulses page reads, not a second
-    # cold build of the same rows a moment later (both held the store lock).
-    idx = ctx.get("pulse_index") if ctx is not None else None
-    if idx is None or idx.store is not store:
-        idx = PulseIndex(store)
-        if ctx is not None and ctx.get("store") is store:
-            ctx["pulse_index"] = idx
+    # w8/locks: its OWN index, never the context's while it is being built. A
+    # request needing the rows builds the context's index itself (a
+    # foreground leader that hands the lock over) instead of waiting on this
+    # parked daemon walk -- measured on big30x, the Pulses page waiting on it
+    # took 8 s behind a Live-Edit grid build and the post-pull lint, where
+    # building its own took ~1 s. When this walk finishes first, its rows
+    # become the context's (below), so the page opened afterwards is warm.
+    idx = PulseIndex(store)
 
     def _walk() -> bool:
         # An alias row (x180 -> "#./x180_DragCosine") has no class of its own
@@ -1997,14 +1997,12 @@ def _chip_needs_generated_config(store, ctx: dict | None = None,
         verdict = None
         if background:
             # w8/locks: a daemon thread's cold build PARKS at its checkpoints
-            # while any request is in flight (activity.yielding), and a request
-            # that needs these very rows takes them over (single_flight's
-            # follower + ``wanting``). NEVER on a request thread: a background
-            # step parks until no request is in flight, its own included.
+            # while any request is in flight (activity.yielding) -- it held
+            # the store lock 1.3-2.2 s at a big chip's open and after every
+            # structural pull. NEVER on a request thread: a background step
+            # parks until no request is in flight, its own included.
             for _ in range(3):
-                with _activity.yielding(
-                        store, done=lambda: idx._rows is not None
-                        and idx._seq == store.mutation_seq) as y:
+                with _activity.yielding(store) as y:
                     verdict = _walk()
                 if not y.stopped:
                     break
@@ -2014,6 +2012,10 @@ def _chip_needs_generated_config(store, ctx: dict | None = None,
     except Exception:  # noqa: BLE001 -- a probe never breaks an activation
         logger.debug("pulse-class probe failed", exc_info=True)
         return False
+    if ctx is not None and ctx.get("store") is store:
+        cur = ctx.get("pulse_index")
+        if cur is None or cur.store is not store or cur._rows is None:
+            ctx["pulse_index"] = idx        # the page opened next is warm
     store._needs_cfg_memo = (key, verdict, overlay)
     return verdict
 

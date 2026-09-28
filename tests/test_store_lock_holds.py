@@ -169,6 +169,8 @@ def slow_rows(monkeypatch):
 
     def row(*a, **k):
         seen["n"] += 1
+        me = threading.current_thread().name
+        seen[me] = seen.get(me, 0) + 1
         entered.set()
         time.sleep(0.004)
         return real(*a, **k)
@@ -232,10 +234,10 @@ def test_pulse_rows_built_while_the_chip_moved_are_the_rows_of_the_new_content(s
     assert idx.stamp()[0] == st.mutation_seq
 
 
-def test_the_open_decision_parks_while_a_request_runs_and_fills_the_context_index(slow_rows):
+def test_the_open_decision_parks_while_a_request_runs_and_warms_the_context_index(slow_rows):
     """The chip-open probe (``_decide``) is a daemon thread: while a request is
-    in flight its walk stands still and the lock is free; the rows it builds
-    are the ones the Pulses page then reads (one walk, not two)."""
+    in flight its walk stands still and the lock is free. The rows it built
+    become the context's, so the Pulses page opened afterwards is warm."""
     from quam_state_manager.web import routes as R
     seen, entered = slow_rows
     st = _store(12)
@@ -244,7 +246,7 @@ def test_the_open_decision_parks_while_a_request_runs_and_fills_the_context_inde
 
     def decide():
         res["v"] = R._chip_needs_generated_config(st, ctx, background=True)
-    bg = threading.Thread(target=decide, daemon=True)
+    bg = threading.Thread(target=decide, daemon=True, name="decide")
     bg.start()
     assert entered.wait(10)                       # a quiet server: the walk runs
     activity.begin("/bulk")                       # the user's page arrives
@@ -268,79 +270,99 @@ def test_the_open_decision_parks_while_a_request_runs_and_fills_the_context_inde
     assert res["v"] == any(not r.get("known") and not r.get("is_alias") for r in rows)
 
 
-def test_a_request_needing_the_rows_takes_over_a_parked_background_build(slow_rows):
+def test_a_request_needing_the_rows_never_waits_on_the_parked_open_decision(slow_rows):
+    """Measured on big30x (the Chrome PULL journey): a Pulses page that waited
+    on the parked open-decision walk as a single_flight follower took 8 s --
+    the walk resumed only in slices shared with the Live-Edit grid build and
+    the post-pull lint. The page now builds the context's index itself (a
+    foreground leader) while the daemon walk stays parked; the finished walk
+    does not replace the page's fresher index."""
     from quam_state_manager.web import routes as R
     seen, entered = slow_rows
     st = _store(12)
     ctx: dict = {"store": st}
     bg = threading.Thread(target=lambda: R._chip_needs_generated_config(
-        st, ctx, background=True), daemon=True)
+        st, ctx, background=True), daemon=True, name="decide")
     bg.start()
     assert entered.wait(10)
     activity.begin("/pulses")                     # the Pulses page, in flight
     try:
         time.sleep(0.05)                          # the background walk parks
-        n0 = seen["n"]
-        rows = ctx["pulse_index"].rows()          # ... and this request needs its rows
-        assert seen["n"] > n0, "the parked walk never resumed for the request waiting on it"
+        bg_before = seen.get("decide", 0)
+        idx = ctx.get("pulse_index") or PI.PulseIndex(st)     # routes._pulse_index()
+        ctx["pulse_index"] = idx
+        rows = idx.rows()
+        assert seen.get("decide", 0) == bg_before, "the page woke the parked walk and waited on it"
     finally:
         activity.end()
     bg.join(60)
     assert not bg.is_alive()
-    # ONE walk's rows in all: the request took the parked walk over rather
-    # than starting its own beside it
-    assert seen["n"] == len(rows), (seen["n"], len(rows))
-    assert ctx["pulse_index"].stats["cold"] == 1, "two walks of one chip"
     assert rows == PI.list_pulses(st.merged)
+    assert ctx["pulse_index"] is idx, "the finished background walk replaced the page's index"
 
 
+class _FakeStore:
+    """The store surface activity reads: the lock and the content token."""
+
+    def __init__(self):
+        self._lock = threading.RLock()
+        self.mutation_seq = 0
+        self.merged: dict = {}
 
 
-def test_a_request_waiting_on_a_background_build_is_not_stuck_behind_another_walk(
-        slow_rows, monkeypatch):
-    """Measured on big30x: the Pulses page (waiting on the chip-open decision's
-    pulse-index build) waited 4.6-6.7 s for an UNRELATED Live-Edit grid build
-    to finish. The grid build did not count the Pulses page as someone waiting
-    (it waits on a result, not on the lock), so it never let the background
-    producer of that result have the lock back. Now a foreground walk hands
-    the lock over while a background producer some request waits on needs it:
-    the Pulses page is served while the grid is still being built."""
-    from quam_state_manager.web import routes as R
-    seen_rows, entered_rows = slow_rows
-    real_cell = R._qubit_cell_for
-    cells = {"n": 0}
-    grid_entered = threading.Event()
+def test_a_foreground_walk_hands_the_lock_to_a_background_producer_a_request_waits_on():
+    """Found on big30x: a request following a BACKGROUND single_flight leader
+    (it waits on a result, so _others_inflight leaves it out) sat behind an
+    unrelated foreground walk for that walk's whole length -- the walk never
+    handed the lock over, and the background producer, having let go of it
+    (parked, or mid hand-over), could not take it back to finish. A
+    foreground walk now hands over while such a producer needs the lock."""
+    st = _FakeStore()
+    memo: dict = {}
+    bg_in, fg_in = threading.Event(), threading.Event()
+    steps = {"fg": 0}
 
-    def cell(*a, **k):
-        cells["n"] += 1
-        grid_entered.set()
-        time.sleep(0.003)
-        return real_cell(*a, **k)
-    monkeypatch.setattr(R, "_qubit_cell_for", cell)
-    monkeypatch.setattr(R, "_GRID_TICK", 4)
-    st = _store(12)
-    ctx: dict = {"store": st}
-    bg = threading.Thread(target=lambda: R._chip_needs_generated_config(
-        st, ctx, background=True), daemon=True)
-    bg.start()
-    assert entered_rows.wait(10)                 # the background build is under way
+    def x_compute():                 # the background producer's walk
+        for _ in range(30):
+            bg_in.set()
+            time.sleep(0.01)
+            activity.checkpoint()
+        memo["X"] = "x"
+        return "x"
+
+    def y_compute():                 # an unrelated foreground walk, ~2 s
+        for _ in range(200):
+            steps["fg"] += 1
+            fg_in.set()
+            time.sleep(0.01)
+            activity.checkpoint()
+        return "y"
+
+    def lookup_x():
+        return memo.get("X", activity.MISS)
+
+    def background():
+        with activity.yielding(st):
+            activity.single_flight(st, "X", lookup_x, x_compute)
+    tbg = threading.Thread(target=background, daemon=True)
+    tbg.start()
+    assert bg_in.wait(10)
     out: dict = {}
-    ta = _in_request("/bulk", lambda: R._bulk_grid_entry(st, set(), R._modified_map_of(st), {}), out, "grid")
-    assert grid_entered.wait(10)                 # ... and a long foreground walk too
-    at = {}
+    ta = _in_request("/bulk", lambda: activity.single_flight(st, "Y", lambda: activity.MISS, y_compute), out, "y")
+    assert fg_in.wait(10)
+    at: dict = {}
 
-    def pulses():
-        rows = ctx["pulse_index"].rows()
-        at["cells"] = cells["n"]
-        return rows
-    tb = _in_request("/pulses", pulses, out, "rows")
-    tb.join(60)
-    ta.join(60)
-    bg.join(60)
+    def want_x():
+        r = activity.single_flight(st, "X", lookup_x, x_compute)
+        at["fg"] = steps["fg"]
+        return r
+    tb = _in_request("/pulses", want_x, out, "x")
+    tb.join(30)
+    ta.join(30)
+    tbg.join(30)
     assert "error" not in out, out.get("error")
-    assert out["rows"] == PI.list_pulses(st.merged)
-    total = cells["n"]
-    assert at["cells"] < total, ("the Pulses page waited for the whole grid build", at, total)
+    assert out["x"] == "x" and out["y"] == "y"
+    assert at["fg"] < 200, "the request waited for the whole unrelated walk"
 
 
 # ------------------------------------------------------------ Saver
