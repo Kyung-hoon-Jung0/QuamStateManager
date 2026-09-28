@@ -795,4 +795,4 @@ class TestTitleLinkIsTheLanding:
         c = scoped["client"]
         c.post("/load", data={"folder": str(scoped["chip_a"])})
         body = c.get("/").get_data(as_text=True)
-        assert 'href="/?landing=1" class="app-title-link"' in body
+        assert f'href="{PREFIX}/?landing=1" class="app-title-link"' in body

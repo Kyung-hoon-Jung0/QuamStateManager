@@ -114,7 +114,9 @@ class TestOneSource:
         """No htmx, no app.js, no bundles — the calculator needs calc.js and
         the stylesheet. Anything more is a slower window for nothing."""
         scripts = re.findall(r"<script src=\"[^\"]*?([\w\-\.]+\.js)", _WIN)
-        assert scripts == ["calc.js"], scripts
+        # docs/226 §3.2-7: sm-root.js is the FIRST script of every full document
+        # (calc.js builds the window's URLs through window.SM); identity at root
+        assert scripts == ["sm-root.js", "calc.js"], scripts
         assert 'class="calc-window"' in _WIN and "calc-standalone" in _WIN
 
 

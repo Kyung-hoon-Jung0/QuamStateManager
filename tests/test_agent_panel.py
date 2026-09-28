@@ -314,7 +314,7 @@ class TestHome:
         import re
         html = c.get("/").get_data(as_text=True)
         m = re.search(r'<a class="agent-home-link"[^>]*>', html)
-        assert m and 'href="/"' in m.group(0) and "hx-get" not in m.group(0) and "hx-target" not in m.group(0)
+        assert m and f'href="{PREFIX}/"' in m.group(0) and "hx-get" not in m.group(0) and "hx-target" not in m.group(0)
 
     def test_the_setup_page_is_wired(self, c):
         """docs/173 S7: /agent/setup renders the shell inside the shell page with

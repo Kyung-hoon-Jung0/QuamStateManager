@@ -2011,7 +2011,7 @@ class TestCompareRedirect:
         loc_obj = json.loads(resp.headers["HX-Location"])
         assert loc_obj["target"] == "#table-pane" and loc_obj["swap"] == "innerHTML"
         loc = loc_obj["path"]
-        assert loc.startswith("/diff?a=ws%3A") and "&b=ws%3A" in loc and loc.endswith("&tab=state")
+        assert loc.startswith(f"{PREFIX}/diff?a=ws%3A") and "&b=ws%3A" in loc and loc.endswith("&tab=state")
         assert "hint" not in loc   # manual basket (U1b)
         # docs/141 4y: three, four, five all open the diff (a..e), never the hub
         for n in (3, 4, 5):
