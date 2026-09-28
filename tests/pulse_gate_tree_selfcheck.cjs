@@ -45,16 +45,24 @@ const DATA = {
                                 // pulse place: inside a pulse, it is a field
                                 meta: { operations: { k: 1 } } },
                         alias: '#./x180' } } } },
-  qubit_pairs: { 'q1-2': { macros: { cz: {
-    __class__: 'lab.CZGate', flux_pulse_qubit: '#/qubits/q1/xy/operations/x180',
-    coupler_flux_pulse: null, phase: 0.1,
-    spect: { q3: { __class__: SQ, amplitude: 0.01, length: 8 } } } } } },
+  qubit_pairs: { 'q1-2': { macros: {
+    cz: {
+      __class__: 'lab.CZGate', flux_pulse_qubit: '#/qubits/q1/xy/operations/x180',
+      coupler_flux_pulse: null, phase: 0.1,
+      spect: { q3: { __class__: SQ, amplitude: 0.01, length: 8 } } },
+    cz2: {
+      __class__: 'lab.CZGate',
+      // an inline (unclassed) slot pulse -- and a pulse the discovery finds
+      // INSIDE it (the server ships that row)
+      flux_pulse_qubit: { amplitude: 0.1, length: 20,
+                          inner: { __class__: SQ, amplitude: 0.2, length: 4 } } } } } },
   extras: { operations: { z: 1 } }
 };
 const PAYLOAD = {
   skip_tops: ['extras', 'network', 'ports', 'wiring'],
   gate_slots: ['flux_pulse_qubit', 'coupler_flux_pulse', 'flux_pulse_target'],
-  rows: ['qubit_pairs.q1-2.macros.cz.spect.q3'], rows_known: true, goto: '/pulses/goto'
+  rows: ['qubit_pairs.q1-2.macros.cz.spect.q3', 'qubit_pairs.q1-2.macros.cz2.flux_pulse_qubit.inner'],
+  rows_known: true, goto: '/pulses/goto'
 };
 const NOTE = 'Pulses are added, removed and renamed on the Pulses page';
 
@@ -121,8 +129,9 @@ const quiet = function (url) {
       ['qubits.q1.xy.operations.x180', 'an operations entry (a pulse dict)'],
       ['qubits.q1.xy.operations.alias', 'an operations entry (an alias)'],
       ['qubits.q1.xy.operations', 'an operations dict'],
-      ['qubit_pairs.q1-2.macros.cz.flux_pulse_qubit', 'a pair gate slot holding a link'],
-      ['qubit_pairs.q1-2.macros.cz.spect.q3', 'a pulse the Pulses page found by shape']
+      ['qubit_pairs.q1-2.macros.cz2.flux_pulse_qubit', 'a pair gate slot holding a pulse object'],
+      ['qubit_pairs.q1-2.macros.cz.spect.q3', 'a pulse the Pulses page found by shape'],
+      ['qubit_pairs.q1-2.macros.cz2.flux_pulse_qubit.inner', 'a found pulse inside an unclassed slot (the server ships it)']
     ];
     guarded.forEach(function (g) {
       const a = acts(win, g[0]);
@@ -138,6 +147,8 @@ const quiet = function (url) {
       ['qubits.q1.xy', true, true, 'a channel'],
       ['qubit_pairs.q1-2.macros.cz', true, true, 'a gate'],
       ['qubit_pairs.q1-2.macros.cz.coupler_flux_pulse', true, false, 'an empty (null) gate slot'],
+      ['qubit_pairs.q1-2.macros.cz.flux_pulse_qubit', true, false, 'a gate slot holding a LINK (a re-link, not a pulse)'],
+      ['qubit_pairs.q1-2.macros.cz2.flux_pulse_qubit.amplitude', true, false, 'a field of an inline slot pulse'],
       ['qubit_pairs.q1-2.macros.cz.spect', true, true, 'a plain dict inside a gate'],
       ['extras.operations.z', true, false, 'anything under extras'],
       ['extras.operations', true, true, 'an operations dict under extras'],

@@ -11066,8 +11066,12 @@ _BATCH_DELETE = object()
 def _pulse_structure_change(store, op: str, path: str, value: Any = None,
                             *, absent: bool = False):
     """``pulse_structure.structural_change`` under the store lock; *absent*
-    means "no value" (a delete). None = the write may go ahead. A classifier
-    bug never bricks an edit (logged, allowed)."""
+    means "no value" (a delete). None = the write may go ahead.
+
+    A check that fails is never a way round the rule, and never bricks an
+    ordinary edit: a write that could not change which pulses exist anyway
+    (:func:`_ps_candidate` -- a scalar over a scalar outside an operations
+    entry or a gate slot) goes ahead; any other is refused as unchecked."""
     from quam_state_manager.core import pulse_structure as _ps
     try:
         with store._lock:
@@ -11076,7 +11080,14 @@ def _pulse_structure_change(store, op: str, path: str, value: Any = None,
     except Exception:  # noqa: BLE001
         logger.warning("pulse-structure check failed for %s %s", op, path,
                        exc_info=True)
-        return None
+        try:
+            with store._lock:
+                could = _ps_candidate(store.merged, path, None if absent else value)
+        except Exception:  # noqa: BLE001
+            could = True
+        if not could:
+            return None
+        return _ps.Change(op=op, path=path, kind="pulse", added=[path])
 
 
 def _pulse_structure_payload(ch) -> dict:
@@ -11189,8 +11200,14 @@ def _ps_row_refusal(store, dp: str, raw, allow_create: bool, live) -> dict | Non
                                          target, value)
     except Exception:  # noqa: BLE001 -- the row loop reports a bad row
         return None
-    if ch is None or (live is not None and live.holds(target, value)):
+    if ch is None:
         return None
+    if live is not None:
+        try:
+            if live.holds(target, value):
+                return None
+        except Exception:  # noqa: BLE001 -- unverifiable: refused
+            pass
     return _pulse_structure_payload(ch)
 
 
@@ -11207,11 +11224,16 @@ def _pulse_structure_rows(store, pairs, live) -> dict:
 
 
 def _ps_moved_structure(entry) -> bool:
-    """Did an applied batch entry change structure (so a later row of the
-    same batch must be judged again)?"""
+    """Did an applied batch entry change what a later row of the same batch
+    would be judged against? A created or deleted key, a dict written or
+    replaced -- and a POINTER written or replaced: a later row's path is
+    resolved through pointers, so a link row 1 writes can send row 2 into an
+    ``operations`` dict (refute review, 2026-09-28)."""
+    old = getattr(entry, "old_value", None)
+    new = getattr(entry, "new_value", None)
     return bool(getattr(entry, "created", False) or getattr(entry, "deleted", False)
-                or isinstance(getattr(entry, "old_value", None), dict)
-                or isinstance(getattr(entry, "new_value", None), dict))
+                or isinstance(old, dict) or isinstance(new, dict)
+                or is_pointer(old) or is_pointer(new))
 
 
 def _path_present(merged: dict, path: str) -> bool:
@@ -12383,11 +12405,20 @@ def pair_gate_form(name: str):
                   if arch.get(v.get("arch", "flux"))}
     if _parametric_cz_evidence(store) is None:
         gate_types = {k: v for k, v in gate_types.items() if k != "cz_parametric"}
+    # w9/pulsegate: a flux gate type writes its flux pulses into the gate --
+    # new pulse objects, which are added on the Pulses page (pair_add_gate
+    # refuses them too). The form offers what creates no pulse (CR / Stark)
+    # and says where the rest is built.
+    flux_moved = any(v.get("arch", "flux") == "flux" for v in gate_types.values())
+    gate_types = {k: v for k, v in gate_types.items() if v.get("arch", "flux") != "flux"}
+    if not gate_types:
+        return render_template("_pair_add_gate_pulses.html", pair_name=name)
     parametric_qclass = _parametric_cz_qclass(store)
     return render_template(
         "_pair_add_gate.html",
         pair_name=name,
         gate_types=gate_types,
+        flux_moved=flux_moved,
         existing_gates=existing_gates,
         # The JSON preview in the form must show the class the SERVER will
         # write (chip-derived when possible), not a duplicated literal.
@@ -12487,6 +12518,19 @@ def pair_add_gate(name: str):
         cz_qclass=cr_semantics.gate_class_evidence(store.merged, "CZGate"),
         slot_qclasses=_slot_qclasses_for(store, gate_type))
     dot_path = f"qubit_pairs.{name}.macros.{gate_name}"
+    # w9/pulsegate: a gate whose slots hold pulses brings new pulse objects
+    # -- built on the Pulses page (+ New pulse: the Gaussian CZ builder writes
+    # the channel ops and links the slots), or by the lab's own gate script.
+    # A gate without pulses (CR / Stark) is created here as before.
+    _psc = _pulse_structure_change(store, "create", dot_path, template)
+    if _psc is not None:
+        return render_template(
+            "_status.html", level="error",
+            message=(f"{gate_type} writes its flux pulses into the gate "
+                     f"({', '.join(_psc.paths[:3])}) -- a new pulse. Pulses are "
+                     "added on the Pulses page: + New pulse -> \"Gaussian CZ from "
+                     "cz_flattop\" builds the gate with its channel ops, or use "
+                     "your lab's gate script.")), 409
     try:
         modifier.create_subtree(dot_path, template)
         _invalidate_engine_cache()
@@ -19552,7 +19596,10 @@ def _lab_delete_pulses_link(store, main: str, also) -> dict:
     opening the first pulse of the set with ``together=`` the refused path).
     A set of gates and gate fields only stays the tree's own batch."""
     from quam_state_manager.core import pulse_structure as _ps
-    for p in [main] + list(also or ()):
+    paths = [main] + list(also or ())
+    if _delete_together_check(store, main, paths)[0]:
+        return {}             # not a set that route takes: the tree's own batch
+    for p in paths:
         if _pulse_structure_change(store, "delete", p, absent=True) is not None:
             return {"lab_delete_pulses_url": _ps.goto_url(p, together=main)}
     return {}
@@ -19659,11 +19706,13 @@ def _pulse_delete_refused_html(store, path: str, message: str, info: dict,
 def _delete_together_check(store, main: str, paths: list) -> tuple[list, bool]:
     """``(outsiders, holds_a_pulse)`` for a "Delete together" set.
 
-    The set is what :func:`_lab_delete_also` offers: pulses (ops, gate
-    slots), lab gates and fields of a lab gate -- plus the refused path
-    itself, which may be anything the Json Tree's ✕ was allowed to delete (a
-    gate field, a channel). Anything else is an outsider: this route deletes
-    pulses, it is not a second generic delete door."""
+    The set is what the lab refusal offers: the refused path and
+    :func:`_lab_delete_also` -- pulses (ops, gate slots), lab gates and fields
+    of a lab gate. Every path, the refused one included, must be one of
+    those: this route deletes pulses with what cannot stay without them; it
+    is not a second generic delete door. (A tree refusal of anything else --
+    a channel whose set holds a pulse -- gets no link:
+    :func:`_lab_delete_pulses_link`.)"""
     from quam_state_manager.core import lab_watch
     try:
         gates = set(lab_watch.watch_for(store).macros)
@@ -19674,7 +19723,7 @@ def _delete_together_check(store, main: str, paths: list) -> tuple[list, bool]:
     for p in paths:
         is_pulse = _pulse_structure_change(store, "delete", p, absent=True) is not None
         holds_pulse = holds_pulse or is_pulse
-        if p == main or is_pulse:
+        if is_pulse:
             continue
         if p in gates or any(p.startswith(g_ + ".") for g_ in gates):
             continue
@@ -19750,6 +19799,10 @@ def api_pulse_delete_together_offer():
         return render_template(
             "_status.html", level="info",
             message=f"{main} is not on this chip any more -- nothing to delete.")
+    if "." not in main:
+        return render_template(
+            "_status.html", level="warning",
+            message="Top-level containers are not deleted here."), 400
     from flask import g
     info = g.lab_info = {"notes": []}
     lab = _lab_write_refusal(store, [(main, _LAB_DELETE)], info=info)

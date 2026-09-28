@@ -74,7 +74,9 @@ async function hoverRow(p, path) {
             shown:g?getComputedStyle(g).opacity:'', href:a?a.getAttribute('href'):''}})()`);
 }
 async function clickIn(p, rootSel, sel) {
-  const r = await p.ev(`(function(){var root=document.querySelector(${J(rootSel)}); var e=root&&root.querySelector(${J(sel)}); if(!e) return null; e.scrollIntoView({block:'center'}); var b=e.getBoundingClientRect(); return [b.left+b.width/2,b.top+b.height/2]})()`);
+  // the FIRST line box of the element: a wrapped inline link's bounding box
+  // has a gap a real mouse would not aim at
+  const r = await p.ev(`(function(){var root=document.querySelector(${J(rootSel)}); var e=root&&root.querySelector(${J(sel)}); if(!e) return null; e.scrollIntoView({block:'center'}); var b=(e.getClientRects()[0])||e.getBoundingClientRect(); return [b.left+b.width/2,b.top+b.height/2]})()`);
   if (!r) return false;
   await p.click(r[0], r[1]);
   return true;

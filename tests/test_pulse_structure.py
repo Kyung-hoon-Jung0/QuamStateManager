@@ -44,6 +44,7 @@ OPS = "qubits.q1.xy.operations"
 W3 = "qubit_pairs.q1-2.macros.cz_unipolar.flux_pulse_qubit"
 W3P = "qubit_pairs.q1-2.macros.cz_unipolar.coupler_flux_pulse"
 GATE = "qubit_pairs.q1-2.macros.cz_custom"
+NEST = "qubit_pairs.q1-2.macros.cz_nest.flux_pulse_target.inner"
 INNER = f"{XY2}.holder.inner"
 
 
@@ -64,6 +65,11 @@ def _state() -> dict:
         "note": "not a pulse", "inner": {"__class__": QC + "SquarePulse", "length": 8,
                                          "amplitude": 0.1}}
     st["qubits"]["q1"]["spare"] = None               # a null a whole pulse could land on
+    # an UNCLASSED gate slot: a row, and the discovery looks inside it
+    st["qubit_pairs"]["q1-2"]["macros"]["cz_nest"] = {
+        "__class__": "lab_pkg.gates.CZGateCustom",
+        "flux_pulse_target": {"note": "hand-made", "inner": {
+            "__class__": QC + "SquarePulse", "length": 8, "amplitude": 0.1}}}
     st["top_pulse"] = {"__class__": QC + "SquarePulse", "length": 4, "amplitude": 0.1}
     st["ports"] = {"x": {"operations": {"p": {"__class__": QC + "SquarePulse"}}}}
     return st
@@ -90,6 +96,7 @@ class TestAPulseIsWhatThePulsesPageLists:
         rows = _rows(m)
         assert "qubits.q2.z.opx_trigger_out.operations.trigger" in rows
         assert INNER in rows and f"{XY2}.holder" not in rows
+        assert NEST in rows and NEST.rsplit(".", 1)[0] in rows
         assert _places(m) == rows
 
     @pytest.mark.parametrize("chip", sorted(_golden()["chips"]))
@@ -133,13 +140,16 @@ class TestWhatIsStructural:
         ("delete", W3, ps.ABSENT, "pulse"),                 # a gate slot
         ("delete", SPEC, ps.ABSENT, "pulse"),               # found by shape (R2)
         ("delete", SLOT, ps.ABSENT, "pulse"),
+        ("delete", NEST, ps.ABSENT, "pulse"),               # found inside an unclassed slot
         ("create", "qubit_pairs.q1-2.macros.cz_custom.new_slot", _PULSE, "pulse"),
         ("delete", "qubits.q2.z.opx_trigger_out.operations.trigger", ps.ABSENT, "pulse"),
         # an operations dict holding pulses
         ("delete", OPS, ps.ABSENT, "operations"),
         ("create", "qubits.q2.z.operations", {"a": _PULSE}, "operations"),
-        # a value write that makes / unmakes a pulse
-        ("set", W3P, None, "pulse"),                          # the slot emptied
+        # a value write that makes / unmakes / replaces a pulse
+        ("set", W3P, dict(_PULSE), "pulse"),                  # a link becomes an object
+        ("set", X180, "#./x90", "pulse"),                     # a pulse becomes an alias
+        ("set", X180, dict(_PULSE, **{"__class__": QC + "DragPulse"}), "pulse"),  # class swap
         ("set", f"{XY2}.unclassed", _PULSE, "pulse"),        # a found entry becomes one
         ("set", "qubits.q1.notes_blob", _PULSE, "pulse"),    # R2 appears in place
         ("set", f"{XY2}.x180_alias", 7, "pulse"),            # a found alias stops being one
@@ -148,7 +158,7 @@ class TestWhatIsStructural:
         ("create", "qubits.q1.xy3", {"operations": {"a": _PULSE}}, "carries"),
         ("create", "qubit_pairs.q1-2.macros.cz_new",
          {"__class__": "lab_pkg.gates.CZGateCustom",
-          "flux_pulse_qubit": "#/qubits/q1/xy/operations/x180"}, "carries"),
+          "flux_pulse_qubit": dict(_PULSE)}, "carries"),
         ("set", "qubits.q1.spare", {"operations": {"a": _PULSE}}, "carries"),
     ])
     def test_structural(self, op, path, value, kind):
@@ -163,7 +173,13 @@ class TestWhatIsStructural:
         # re-links: the pulse set stays
         ("set", "qubits.q1.xy.operations.x90", "#./x180_other"),
         ("set", W3P, "#/qubits/q1/xy/operations/x180"),
-        ("set", X180, "#./x90"),                            # a whitelisted op may alias
+        ("set", W3P, None),                                 # a slot's link emptied
+        ("set", W3P, "#/qubits/q1/xy/operations/x90"),       # a slot re-linked
+        ("delete", W3P, ps.ABSENT),                         # a slot's link removed
+        ("create", "qubit_pairs.q1-2.macros.cz_linked",     # a gate that LINKS a pulse
+         {"__class__": "lab_pkg.gates.CZGateCustom",
+          "flux_pulse_qubit": "#/qubits/q1/xy/operations/x180"}),
+        ("set", f"{X180}", "SAME_X180"),                    # an identical pulse body
         # a non-pulse object coming or going with its pulses
         ("delete", "qubits.q1.xy2", ps.ABSENT),
         ("delete", "qubits.q1", ps.ABSENT),
@@ -192,6 +208,8 @@ class TestWhatIsStructural:
         m = _state()
         if value == "SAME":
             value = copy.deepcopy(m["qubits"]["q1"]["xy"]["operations"])
+        if value == "SAME_X180":
+            value = copy.deepcopy(m["qubits"]["q1"]["xy"]["operations"]["x180"])
         assert ps.structural_change(m, op, path, value) is None
 
     def test_a_whole_dict_edit_names_what_it_adds_and_removes(self):
@@ -229,7 +247,7 @@ class TestJsonSame:
 def test_tree_payload_ships_only_what_the_tree_cannot_derive():
     m = _state()
     pl = ps.tree_payload(list(_rows(m)))
-    assert set(pl["rows"]) == {SPEC, SLOT, INNER}   # found outside `operations`
+    assert set(pl["rows"]) == {SPEC, SLOT, INNER, NEST}   # found outside `operations`
     assert pl["rows_known"] is True and pl["gate_slots"] == list(pulse_index.GATE_SLOTS)
     assert "extras" in pl["skip_tops"] and pl["goto"] == "/pulses/goto"
     assert ps.tree_payload(None)["rows_known"] is False
@@ -307,16 +325,30 @@ class TestTheGenericDoorsRefuse:
         ops = copy.deepcopy(_get(chip, OPS))
         del ops["x90"]
         _refused(chip.post("/field/edit", data={"dot_path": OPS, "value": json.dumps(ops)}))
-        # a gate's pulse slot taken out of the gate by a whole-gate edit (a
-        # null typed over the slot's pointer is refused earlier: docs/121)
+        # a gate's inline pulse taken out of the gate by a whole-gate edit
         gate = copy.deepcopy(_get(chip, "qubit_pairs.q1-2.macros.cz_unipolar"))
-        gate["coupler_flux_pulse"] = None
+        gate["flux_pulse_qubit"] = None
         _refused(chip.post("/field/edit", data={
             "dot_path": "qubit_pairs.q1-2.macros.cz_unipolar", "value": json.dumps(gate)}))
+        # ...while its LINKED slot emptied is an unlink, not a pulse removed
+        gate = copy.deepcopy(_get(chip, "qubit_pairs.q1-2.macros.cz_unipolar"))
+        gate["coupler_flux_pulse"] = None
+        r = chip.post("/field/edit", data={
+            "dot_path": "qubit_pairs.q1-2.macros.cz_unipolar", "value": json.dumps(gate)})
+        assert r.status_code == 200, r.data[:300]
+        # a whole-object edit that swaps a pulse's class is a replaced pulse
+        x = copy.deepcopy(_get(chip, X180))
+        x["__class__"] = QC + "DragPulse"
+        j = _refused(chip.post("/field/edit", data={"dot_path": X180, "value": json.dumps(x)}))
+        assert "replace the pulse" in j["error"]
         xy = copy.deepcopy(_get(chip, "qubits.q1.xy"))
         xy["operations"]["x270"] = copy.deepcopy(_PULSE)
         _refused(chip.post("/field/edit", data={"dot_path": "qubits.q1.xy",
                                                  "value": json.dumps(xy)}))
+        # a null filled with an object that brings a pulse (a paste, a JSON edit)
+        j = _refused(chip.post("/field/edit", data={
+            "dot_path": "qubits.q1.spare", "value": json.dumps({"operations": {"a": _PULSE}})}))
+        assert "would bring the new pulse" in j["error"] and _get(chip, "qubits.q1.spare") is None
         # value edits inside pulses, a whole-dict edit that keeps the set,
         # and re-links stay
         ops = copy.deepcopy(_get(chip, OPS))
@@ -376,6 +408,44 @@ class TestTheGenericDoorsRefuse:
         assert j["results"][0]["applied"] is True
         assert j["results"][1]["error_kind"] == "pulse_structure"
         assert _get(chip, "qubits.q1.newch.operations") == {}
+
+    def test_batch_a_pointer_row_cannot_steer_a_later_row(self, chip):
+        """Refute review: row 1 writes a pointer, row 2's path resolves
+        through it into an operations dict -- judged again, refused."""
+        n = len(_store(chip).change_log)
+        r = chip.post("/field/edit-batch", json={"updates": [
+            {"dot_path": "qubits.q1.spare", "value": "#/qubits/q1/xy/operations"},
+            {"dot_path": "qubits.q1.spare.y90", "value": _PULSE, "create": True}]})
+        _refused(r)
+        assert "y90" not in _get(chip, OPS) and len(_store(chip).change_log) == n
+
+    def test_a_value_deeper_than_any_recursion_is_still_judged(self, chip):
+        """Refute review: a deep value used to make the recursive walk raise
+        -- and a check that raised let the write through."""
+        deep: dict = {}
+        cur = deep
+        for _ in range(1200):
+            cur["d"] = {}
+            cur = cur["d"]
+        body = {"operations": {"evil": _PULSE}, "deep": deep}
+        r = chip.post("/field/edit-batch", json={"updates": [
+            {"dot_path": "qubits.q1.deepch", "value": body, "create": True}]})
+        _refused(r)
+        assert "deepch" not in _get(chip, "qubits.q1")
+
+    def test_a_check_that_fails_never_waves_a_container_through(self, chip, monkeypatch):
+        from quam_state_manager.core import pulse_structure as psm
+
+        def boom(*a, **k):
+            raise RuntimeError("classifier bug")
+        monkeypatch.setattr(psm, "structural_change", boom)
+        # an ordinary leaf edit is never bricked by it
+        assert chip.post("/field/edit", data={"dot_path": f"{X180}.length",
+                                               "value": "44"}).status_code == 200
+        # a write that could change which pulses exist is refused as unchecked
+        _refused(chip.post("/field/create", data={
+            "dot_path": f"{OPS}.y90", "value": json.dumps(_PULSE), "expect_type": "dict"}))
+        assert "y90" not in _get(chip, OPS)
 
     def test_batch_independent(self, chip):
         r = chip.post("/field/edit-batch", json={"independent": True, "updates": [
@@ -473,6 +543,9 @@ class TestDeleteTogetherIsItsOwnVerifiedDoor:
         assert r.status_code == 400                          # main not in the set
         r = dt(X180, [X180, "qubits.q1.anharmonicity"])
         assert r.status_code == 400 and "qubits.q1.anharmonicity" in r.get_json()["error"]
+        # the refused path itself must be one of them too (refute review)
+        r = dt("qubits.q1.anharmonicity", ["qubits.q1.anharmonicity", X180])
+        assert r.status_code == 400 and "qubits.q1.anharmonicity" in r.get_json()["error"]
         r = dt("qubits.q1.notes_blob", ["qubits.q1.notes_blob", "qubits.q1.stash"])
         assert r.status_code == 400
         assert "x180" in _get(chip, OPS) and "anharmonicity" in _get(chip, "qubits.q1")
@@ -525,13 +598,15 @@ class TestTheLinkLandsOnThePulse:
         assert r.status_code == 200 and b"can be deleted on its own" in r.data
         r = chip.get(f"/api/pulse/delete-together/offer?path={OPS}.gone&pulse={X180}")
         assert r.status_code == 200 and b"not on this chip" in r.data
+        r = chip.get(f"/api/pulse/delete-together/offer?path=qubits&pulse={X180}")
+        assert r.status_code == 400 and b"can be deleted on its own" not in r.data
 
     def test_the_tree_asks_for_the_rows_after_a_cold_render(self, chip):
         _store(chip).mutation_seq += 1                  # cold: /explorer cannot say
         html = chip.get("/explorer").get_data(as_text=True)
         assert '"rows_known": false' in html and "window._pulseGateFill()" in html
         pl = chip.get("/explorer/pulse-gate").get_json()
-        assert pl["rows_known"] is True and set(pl["rows"]) == {SPEC, SLOT, INNER}
+        assert pl["rows_known"] is True and set(pl["rows"]) == {SPEC, SLOT, INNER, NEST}
 
     def test_the_tree_payload_never_builds_a_cold_index(self, chip):
         def payload():
@@ -540,7 +615,7 @@ class TestTheLinkLandsOnThePulse:
         chip.get("/pulses")                                  # warm it
         idx = _ctx(chip)["pulse_index"]
         pl = payload()
-        assert pl["rows_known"] is True and set(pl["rows"]) == {SPEC, SLOT, INNER}
+        assert pl["rows_known"] is True and set(pl["rows"]) == {SPEC, SLOT, INNER, NEST}
         # an unexplained change: only a whole-chip walk could say -- the
         # tree does not wait for one (the write doors still check)
         cold0 = idx.stats["cold"]

@@ -11345,8 +11345,14 @@ window.clearDetailPanelSearch = function(btnEl) {
     function _pgIsPulse(segs, value, pg) {
         var n = segs.length;
         if (n >= 2 && segs[n - 2] === "operations") return true;
+        // a pair gate slot holding a pulse OBJECT (an inline dict); one
+        // holding a pointer is a link to a pulse on its channel -- filling,
+        // re-pointing or emptying it is a re-link (value undefined: an
+        // ancestor, which only a dict can be)
         if (n === 5 && segs[0] === "qubit_pairs" && segs[2] === "macros"
-            && (pg.gate_slots || []).indexOf(segs[4]) >= 0 && value !== null) return true;
+            && (pg.gate_slots || []).indexOf(segs[4]) >= 0
+            && (value === undefined || (value !== null && typeof value === "object"
+                                         && !Array.isArray(value)))) return true;
         return !!pg._rowSet[segs.join(".")];
     }
     function _pulseGateKind(path, value) {
@@ -11358,6 +11364,9 @@ window.clearDetailPanelSearch = function(btnEl) {
         }
         var segs = String(path).split(".");
         if (segs.length < 2 || (pg.skip_tops || []).indexOf(segs[0]) >= 0) return null;
+        // a row the Pulses page found by shape is one, wherever it sits (the
+        // discovery looks inside an unclassed entry or gate slot)
+        if (pg._rowSet[segs.join(".")]) return "pulse";
         for (var i = 2; i < segs.length; i++) {       // inside a pulse: a field
             if (_pgIsPulse(segs.slice(0, i), undefined, pg)) return null;
         }
