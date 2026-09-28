@@ -469,20 +469,20 @@ class TestTheLinkLandsOnThePulse:
         assert r.status_code == 200 and b"not on this chip" in r.data
 
     def test_the_tree_payload_never_builds_a_cold_index(self, chip):
-        idx = _ctx(chip).get("pulse_index")
-        cold0 = idx.stats["cold"] if idx is not None else 0
-        _store(chip).mutation_seq += 0
-        html = chip.get("/explorer").get_data(as_text=True)
-        assert "window._treePulseGate" in html
-        idx = _ctx(chip).get("pulse_index")
-        # the open decision may have warmed it; /explorer itself built nothing
-        if idx is not None:
-            assert idx.stats["cold"] == cold0
+        def payload():
+            html = chip.get("/explorer").get_data(as_text=True)
+            return json.loads(html.split("window._treePulseGate = ", 1)[1].split(";\n", 1)[0])
         chip.get("/pulses")                                  # warm it
-        html = chip.get("/explorer").get_data(as_text=True)
-        seg = html.split("window._treePulseGate = ", 1)[1].split(";\n", 1)[0]
-        pl = json.loads(seg)
+        idx = _ctx(chip)["pulse_index"]
+        pl = payload()
         assert pl["rows_known"] is True and set(pl["rows"]) == {SPEC, SLOT}
+        # an unexplained change: only a whole-chip walk could say -- the
+        # tree does not wait for one (the write doors still check)
+        cold0 = idx.stats["cold"]
+        _store(chip).mutation_seq += 1
+        pl = payload()
+        assert pl["rows_known"] is False and pl["rows"] == []
+        assert idx.stats["cold"] == cold0
 
 
 # ---------------------------------------------------------------------------
