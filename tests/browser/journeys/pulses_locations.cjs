@@ -148,7 +148,7 @@ const reload = p => go(p, 'Page.reload');
   check(!!(await waitFor(p, `!document.querySelector('${rowSel(REN)}') ? 1 : 0`, 20000)), 'delete: x180_hand_ren row gone');
 
   // 5. the tab, then away + back, then reload
-  await clickSel(p, 'a[href^="/pulses?channel=found"]');
+  await clickSel(p, 'a[href^="' + smUrl('/pulses?channel=found') + '"]');   // the tab's rendered href carries the prefix
   const onlyFound = await waitFor(p, `(function(){var rs=[...document.querySelectorAll('tr[data-pulse-path]')]; return rs.length && rs.every(r=>r.querySelector('.pulse-found-at')) ? rs.length : 0})()`, 20000);
   check(!!onlyFound, `"Other places" tab lists only found rows (${onlyFound})`);
   await p.shot(`${DIR}/loc_6_tab.png`);
