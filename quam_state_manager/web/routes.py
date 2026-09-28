@@ -19204,8 +19204,18 @@ def _pulse_delete_refused(store, path: str, message: str, info: dict):
             kind, role = "gate", (f"the gate {p.rsplit('.', 1)[-1]} ({cls}): "
                                   "it cannot exist without the field that goes")
         elif any(p.startswith(g_ + ".") for g_ in gates):
-            kind, role = "field", ("the gate field that plays it by name: "
-                                   "the gate stops playing it")
+            plays = sorted(op for op, hs in watch.named_by.items()
+                           if _under_any(op, together)
+                           and any(_under_any(h, [p]) for h in hs))
+            kind = "field"
+            if plays:
+                role = (f"the gate field that plays {', '.join(plays[:2])} by "
+                        "name: the gate stops playing it")
+            elif cut.get(p):
+                role = (f"a pulse of the gate ({cls}): its {', '.join(cut[p][:5])} "
+                        "would point at nothing")
+            else:
+                role = f"a field of the gate ({cls})"
         elif holders:
             kind, role = "op", (f"{cls}, played by name by {', '.join(holders[:3])}"
                                 ", which goes")

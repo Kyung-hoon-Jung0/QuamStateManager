@@ -278,6 +278,47 @@ async function runCase(p, name, path, q, expectTogether, expectLabel) {
     }
   }
 
+  // the Json Tree names the same set, by kind (TREE=1): its ✕ on the by-name
+  // op -> "Delete together with 1 gate field" -> one batch -> Ctrl+Z
+  if (process.env.TREE) {
+    console.log('\n== T_json_tree');
+    const T = await open(`http://127.0.0.1:${PORT}/explorer`);
+    await sleep(2500 * SLOW);
+    const segs = OP_T.split('.');
+    await T.ev(`(function(){var s=document.getElementById('explorer-search'); s.focus(); s.value=${J(segs[segs.length - 2] + ' ' + segs[segs.length - 1])}; s.dispatchEvent(new Event('input',{bubbles:true})); return 1})()`);
+    await sleep(2000 * SLOW);
+    const found = await T.ev(`(function(){var n=document.querySelector('.tree-node[data-path=${J(OP_T)}]'); if(!n) return 0; var r=n.querySelector(':scope > .tree-row'); r.scrollIntoView({block:'center'}); window.__qaRow=r; return 1})()`);
+    if (check(!!found, 'T: the Json Tree shows the by-name op')) {
+      const hov = await T.ev(`(function(){var b=window.__qaRow.getBoundingClientRect(); return [b.left+40,b.top+b.height/2]})()`);
+      await T.send('Input.dispatchMouseEvent', { type: 'mouseMoved', x: hov[0], y: hov[1] });
+      await sleep(300);
+      const del = await T.ev(`(function(){var d=window.__qaRow.querySelector('.tree-act-del'); if(!d) return null; var b=d.getBoundingClientRect(); return [b.left+b.width/2,b.top+b.height/2]})()`);
+      if (check(!!del, 'T: its ✕ is there on hover')) {
+        await T.click(del[0], del[1]);
+        await sleep(400);
+        const conf = await T.ev(`(function(){var d=window.__qaRow.querySelector('.tree-row-actions .tree-act-btn'); if(!d) return null; var b=d.getBoundingClientRect(); return [b.left+b.width/2,b.top+b.height/2]})()`);
+        if (conf) await T.click(conf[0], conf[1]);
+        const btn = await waitFor(T, `(function(){var b=window.__qaRow.querySelector('.tree-cascade-btn'); return b? b.textContent : 0})()`, 120000);
+        check(btn === 'Delete together with 1 gate field', `T: the refusal offers "${btn}" (the tree's old text said "1 op" for a gate field)`);
+        await T.shot(`${DIR}/T_tree_offer.png`);
+        if (btn) {
+          const before = await T.ev(PEEK([OP_T, SLOT_T]));
+          const cb = await T.ev(`(function(){var b=window.__qaRow.querySelector('.tree-cascade-btn').getBoundingClientRect(); return [b.left+b.width/2,b.top+b.height/2]})()`);
+          await T.click(cb[0], cb[1]);
+          const gone = await waitFor(T, `(function(){return ${PEEK([OP_T, SLOT_T])}.then(function(s){return s.split('<absent>').length===3?1:0})})()`, 120000);
+          check(!!gone, 'T: both went in one batch');
+          await sleep(800);
+          await pressZ(T);
+          const back = await waitFor(T, `(function(){return ${PEEK([OP_T, SLOT_T])}.then(function(s){return s===${J(before)}?1:0})})()`, 60000);
+          check(!!back, 'T: one Ctrl+Z restores both byte-equal');
+        }
+      }
+    }
+    const terrs = T.errors(0).filter(m => !/status of 400 \(BAD REQUEST\)/.test(m));
+    check(terrs.length === 0, 'T: no page errors ' + J(terrs.slice(0, 3)));
+    await T.close();
+  }
+
   // keep one batch and Apply to live (the caller runs pulse_lab_check.py)
   if (!process.env.NO_APPLY) {
     console.log('\n== E_apply');

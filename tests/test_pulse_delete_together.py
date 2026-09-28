@@ -86,6 +86,7 @@ class TestTheRefusalNamesWhatGoesTogether:
         body = r.get_data(as_text=True)
         assert "not found" in body                   # the gate's own apply()
         assert "Delete together with 1 gate field" in body
+        assert f"the gate field that plays {OP_T} by name" in body   # its role, named
         assert "czl_q2t" in _v(c, "qubits.q2.z.operations")
 
     def test_a_required_gate_field_brings_the_whole_gate(self, lab, monkeypatch):
