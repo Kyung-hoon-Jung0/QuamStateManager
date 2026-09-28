@@ -225,7 +225,7 @@ class TestOpening:
         lab["c"].post("/qualibrate/open", data={"project": "alpha"})
         assert os.path.normcase(_selected(lab)) == os.path.normcase(lab["B"])
         row = _card_env(lab["c"].get("/landing/projects").get_data(as_text=True), "alpha")
-        assert "not found" in row
+        assert "not found" in row and "&#10003;" not in row      # never "gone" AND "fine"
 
     def test_changing_the_open_projects_env_selects_it_now(self, lab):
         project_env.remember(lab["inst"], "alpha", lab["A"])

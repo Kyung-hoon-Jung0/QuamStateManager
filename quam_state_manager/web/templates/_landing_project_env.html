@@ -17,7 +17,7 @@
         hx-vals='{{ {"project": p.name, "python": pe.python, "how": "confirmed"} | tojson }}'
         {% if not pe.exists %}disabled{% endif %}
         title="Remember {{ pe.python }} for {{ p.name }}">Confirm</button>
-{%- elif pe.state == 'remembered' %}
+{%- elif pe.state == 'remembered' and pe.exists %}
 <span class="landing-env-ok" title="Remembered for this project — opening it selects this environment; nothing is re-discovered or re-probed">&#10003;</span>
 {%- endif %}
 <button type="button" class="btn-sm outline landing-env-change"
