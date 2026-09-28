@@ -352,6 +352,13 @@ const big = (o) => world(Object.assign({ topo: BIG, roOnMutation: true, roFrame:
        'S14 the pane reaching the 2Q section builds its TOP panels at once, the rest in slices: ' + JSON.stringify(first));
     await I.advance(12000);
     ok(built(I).length === 20, 'S14 ...and the rest arrive (' + built(I).length + ')');
+    // the readout section reached first: ITS panels first, not the 1Q ones above it
+    io([{ isIntersecting: true, target: I.doc.querySelector('[data-topo-section="fidro"]') }]);
+    const ro = Array.prototype.map.call(I.doc.querySelectorAll('#topo-fidelity-ro-panels .topo-section[data-density-panel], '
+      + '#topo-fidelity-1q-panels .topo-section[data-density-panel], #topo-metric-panels .topo-section[data-density-panel]'),
+      (e) => e.getAttribute('data-density-panel'));
+    ok(ro.length >= 1 && ro.length <= 4 && ro[0] === 'assignment_fidelity' && ro.indexOf('gate_fidelity_avg') < 0,
+       'S14 the pane reaching the Read. Fid. section builds the readout panels first: ' + JSON.stringify(ro));
     // a jump passing the section while its slices run
     const J2 = big({ state: { htmx: true }, before: function (w) {
       w.IntersectionObserver = function (cb) { io = cb; this.observe = function () {}; this.disconnect = function () {}; };
@@ -402,6 +409,23 @@ const big = (o) => world(Object.assign({ topo: BIG, roOnMutation: true, roFrame:
     await L.advance(15000);
     ok(loads.length >= 1 && loads[0] === 20,
        'S16 Plotly (a 0.6 s task of its own) is loaded only once the 2Q slices are done: panels at load ' + JSON.stringify(loads));
+    // the same on a chip whose few metric panels are built in one go (8 x 30
+    // cells) under a sliced 2Q section: the metric build must not start its
+    // charts (or Plotly) inside the press, before the 2Q slices exist
+    const small = JSON.parse(JSON.stringify(BIG));
+    small.nodes = small.nodes.map((n) => node(n.id, n.grid_location));
+    const loads2 = [];
+    const L2 = world({ topo: small, roOnMutation: true, roFrame: true, state: { htmx: true }, before: function (w) {
+      w.Plotly = undefined;
+      w.requirePlotly = function () { loads2.push(built(L2).length); w.Plotly = {}; return w.Promise.resolve(); };
+    } });
+    await L2.advance(1000);
+    press(L2, 'mouse', 't1');
+    const inPress = loads2.length;
+    await L2.advance(15000);
+    ok(inPress === 0 && loads2.length >= 1 && loads2[0] === 20,
+       'S16 ...also when the metric panels are built in one go under a sliced 2Q section: panels at load '
+       + JSON.stringify(loads2) + ' (in the press: ' + inPress + ')');
   }
 
   // ── S17: the metric panels are sliced the same way (15 panels, 450 cells) ─
