@@ -296,6 +296,53 @@ def test_a_request_needing_the_rows_takes_over_a_parked_background_build(slow_ro
 
 
 
+def test_a_request_waiting_on_a_background_build_is_not_stuck_behind_another_walk(
+        slow_rows, monkeypatch):
+    """Measured on big30x: the Pulses page (waiting on the chip-open decision's
+    pulse-index build) waited 4.6-6.7 s for an UNRELATED Live-Edit grid build
+    to finish. The grid build did not count the Pulses page as someone waiting
+    (it waits on a result, not on the lock), so it never let the background
+    producer of that result have the lock back. Now a foreground walk hands
+    the lock over while a background producer some request waits on needs it:
+    the Pulses page is served while the grid is still being built."""
+    from quam_state_manager.web import routes as R
+    seen_rows, entered_rows = slow_rows
+    real_cell = R._qubit_cell_for
+    cells = {"n": 0}
+    grid_entered = threading.Event()
+
+    def cell(*a, **k):
+        cells["n"] += 1
+        grid_entered.set()
+        time.sleep(0.003)
+        return real_cell(*a, **k)
+    monkeypatch.setattr(R, "_qubit_cell_for", cell)
+    monkeypatch.setattr(R, "_GRID_TICK", 4)
+    st = _store(12)
+    ctx: dict = {"store": st}
+    bg = threading.Thread(target=lambda: R._chip_needs_generated_config(
+        st, ctx, background=True), daemon=True)
+    bg.start()
+    assert entered_rows.wait(10)                 # the background build is under way
+    out: dict = {}
+    ta = _in_request("/bulk", lambda: R._bulk_grid_entry(st, set(), R._modified_map_of(st), {}), out, "grid")
+    assert grid_entered.wait(10)                 # ... and a long foreground walk too
+    at = {}
+
+    def pulses():
+        rows = ctx["pulse_index"].rows()
+        at["cells"] = cells["n"]
+        return rows
+    tb = _in_request("/pulses", pulses, out, "rows")
+    tb.join(60)
+    ta.join(60)
+    bg.join(60)
+    assert "error" not in out, out.get("error")
+    assert out["rows"] == PI.list_pulses(st.merged)
+    total = cells["n"]
+    assert at["cells"] < total, ("the Pulses page waited for the whole grid build", at, total)
+
+
 # ------------------------------------------------------------ Saver
 def _disk_state(folder: Path) -> dict:
     return json.loads((folder / "state.json").read_text(encoding="utf-8"))

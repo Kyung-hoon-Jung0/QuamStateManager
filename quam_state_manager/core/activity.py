@@ -114,7 +114,7 @@ class Superseded(BaseException):
 
 class _Yield:
     __slots__ = ("store", "done", "keep", "suspended", "stopped", "fg", "deadline",
-                 "expired", "last", "__weakref__")
+                 "expired", "last", "relock", "__weakref__")
 
     def __init__(self, store, done, keep, fg=False, deadline=None):
         self.store = store
@@ -126,6 +126,7 @@ class _Yield:
         self.deadline = deadline     # monotonic time the caller stops waiting
         self.expired = False
         self.last = time.monotonic()
+        self.relock = False          # w8/locks: let go of the lock, not back yet
 
 
 _TL = threading.local()
@@ -256,17 +257,31 @@ def _others_inflight(store) -> int:
         return n - _WANT.get(store, 0)
 
 
+def _producer_waiting(y) -> bool:
+    """w8/locks: a request waits (``wanting``) for a result a BACKGROUND step
+    on this store is producing, and that step has let go of the lock (parked,
+    or mid hand-over) -- it needs the lock back to finish. ``_others_inflight``
+    leaves the waiting request out (it waits on a result, not on the lock), so
+    without this a foreground holder of an unrelated long walk (a Live-Edit
+    grid build) kept the lock for its whole walk while the Pulses page waited
+    on the pulse-index build behind it (measured 4.6-6.7 s on big30x)."""
+    bg = _ACTIVE.get(y.store)
+    return bg is not None and bg is not y and bg.relock and _wanted(y.store)
+
+
 def _handover(y) -> None:
     """Let go of the store lock for a moment (every recursion level), take it
     back, verify the chip did not move -- the time-sliced yield of a holder
     that must keep going (w7 fq-sync). At most every
-    :data:`HANDOVER_EVERY_S`, and only while another request is in flight:
-    the longest hold anyone waits behind is one slice plus one chunk."""
+    :data:`HANDOVER_EVERY_S`, and only while another request is in flight
+    (or a parked background producer a request waits on needs the lock:
+    :func:`_producer_waiting`): the longest hold anyone waits behind is one
+    slice plus one chunk."""
     now = time.monotonic()
     if now - y.last < HANDOVER_EVERY_S:
         return
     y.last = now
-    if _others_inflight(y.store) <= 0:
+    if _others_inflight(y.store) <= 0 and not _producer_waiting(y):
         return
     lock = getattr(y.store, "_lock", None)
     release = getattr(lock, "_release_save", None)
@@ -275,15 +290,18 @@ def _handover(y) -> None:
     if release is None or restore is None or owned is None or not owned():
         return
     before = _token(y.store)
+    y.relock = True
     try:
         saved = release()
     except Exception:                    # pragma: no cover - owned() was checked
+        y.relock = False
         return
     YIELDS[0] += 1
     try:
         time.sleep(_HANDOVER_S)
     finally:
         restore(saved)
+        y.relock = False
         y.last = time.monotonic()
     if _token(y.store) != before or (y.done is not None and y.done()):
         y.stopped = True
@@ -333,10 +351,11 @@ def checkpoint() -> None:
     # parked BEFORE the lock goes: a `wanting` caller that looks in between
     # must wait for us to resume, not race us to the lock
     y.suspended = True
+    y.relock = True
     try:
         saved = release()                # every recursion level
     except Exception:                    # pragma: no cover - owned() was checked
-        y.suspended = False
+        y.suspended = y.relock = False
         return
     YIELDS[0] += 1
     try:
@@ -344,7 +363,7 @@ def checkpoint() -> None:
             time.sleep(_SUSPEND_POLL_S)
     finally:
         restore(saved)
-        y.suspended = False
+        y.suspended = y.relock = False
     if _token(store) != before or (y.done is not None and y.done()):
         y.stopped = True
         raise Superseded()
