@@ -259,7 +259,9 @@ async function openPulseByUrl(p) {
     const cold = await cardText(p, PROJ);
     check(/KRISS_CZ/.test(cold) && !/suggested/.test(cold), `a cold reload shows the same -> "${cold}"`);
   }
-  const errs = p.errors(mark);
+  // a lab REFUSAL answers 400 by design (prep, grid): that one line is the
+  // expected answer, not a page error
+  const errs = p.errors(mark).filter((e) => !(['prep', 'grid'].includes(PHASE) && /status of 400/.test(e)));
   check(errs.length === 0, 'no console errors' + (errs.length ? ': ' + J(errs.slice(0, 3)) : ''));
   fs.writeFileSync(`${DIR}/lab_prewarm_${PHASE}.json`, J({ phase: PHASE, ok: bad === 0, out, timing }, null, 1));
   console.log(J(timing));

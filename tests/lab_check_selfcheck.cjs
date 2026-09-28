@@ -66,7 +66,8 @@ function world(labPaths, probeDelay, opts) {
     if (url === '/api/lab/worker-status') {
       const st = (opts.states && opts.states.length > 1) ? opts.states.shift()
         : (opts.states && opts.states[0]) || 'ready';
-      return Promise.resolve({ status: 200, json: () => Promise.resolve({ state: st }) });
+      const ans = { status: 200, json: () => Promise.resolve({ state: st }) };
+      return opts.statusDelay ? new Promise((r) => setTimeout(() => r(ans), opts.statusDelay)) : Promise.resolve(ans);
     }
     return new Promise((resolve) => pending.push(resolve));
   };
@@ -357,6 +358,28 @@ function resp(status, body) {
     ok(d2.getElementById('cb').textContent === PREP, 'a create that asks the lab says Preparing while the worker starts');
     fire2(cre, 'htmx:afterRequest');
     ok(d2.getElementById('cb').textContent === 'Creating\u2026', 'and its own line back after');
+
+    // before its first status answer (a busy server), the indicator says what
+    // the server RENDERED into it (data-lab-state), never the ordinary line first
+    const W3 = world([LAB], 0, { states: ['starting'], statusDelay: 400 });
+    const d3 = W3.w.document;
+    d3.body.insertAdjacentHTML('beforeend',
+      '<form id="d1"><span class="htmx-indicator" data-lab-indicator data-lab-state="starting">Checking with your lab code\u2026</span></form>' +
+      '<form id="d2"><span class="htmx-indicator" data-lab-indicator data-lab-state="ready">Checking with your lab code\u2026</span></form>');
+    const fire3 = (el, name) => el.dispatchEvent(new W3.w.CustomEvent(name, { bubbles: true, detail: { elt: el } }));
+    const f1 = d3.getElementById('d1');
+    fire3(f1, 'htmx:beforeRequest');
+    ok(f1.querySelector('span').textContent === PREP,
+       'a worker rendered as starting: Preparing at once, before the status answers');
+    fire3(f1, 'htmx:afterRequest');
+    const W4 = world([LAB], 0, { states: ['ready'], statusDelay: 400 });
+    const d4 = W4.w.document;
+    d4.body.insertAdjacentHTML('beforeend',
+      '<form id="d2"><span class="htmx-indicator" data-lab-indicator data-lab-state="ready">Checking with your lab code\u2026</span></form>');
+    const f2 = d4.getElementById('d2');
+    f2.dispatchEvent(new W4.w.CustomEvent('htmx:beforeRequest', { bubbles: true, detail: { elt: f2 } }));
+    ok(f2.querySelector('span').textContent === 'Checking with your lab code\u2026',
+       'a worker rendered as ready: the ordinary line at once');
   }
 
   if (fails) { console.error(fails + ' FAIL'); process.exit(1); }

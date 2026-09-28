@@ -56,8 +56,10 @@
                     if (!t.stopped && _preparing(st)) t.timer = setTimeout(poll, POLL_MS);
                 }, function () { /* the ordinary line stays */ });
         }
-        // named by the caller (the lab-watch answer) or the last answer seen
-        var st0 = state0 !== undefined ? state0 : _lastState;
+        // named by the caller (the lab-watch answer), else the last answer
+        // seen on this page, else what the server rendered into the element
+        var st0 = state0 !== undefined ? state0
+            : (_lastState || (el.getAttribute && el.getAttribute('data-lab-state')) || null);
         apply(st0);
         // a state the caller NAMED as ready needs no poll; anything else asks
         if (state0 === undefined || _preparing(state0)) poll();

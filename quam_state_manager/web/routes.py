@@ -16491,6 +16491,12 @@ def _pulse_section_ctx(store, pulse_index, path: str):
         "delete_used_by": delete_used_by,
         "played_by_name": played_by_name,
         "delete_lab_check": delete_lab_check,
+        # w9/labwarm: the lab worker's state AT RENDER -- the first word the
+        # lab indicators say before their own status poll answers (a busy
+        # server answered that poll 1.2 s late on krs5: the step said
+        # "Checking..." first, then "Preparing..."); corrected by the poll
+        "lab_worker_state": (_lab_worker_state()
+                             if (delete_lab_check or unknown_class) else None),
         "synth_error": synth_error,
         # docs/189 -- the class is the lab's own and SM cannot synthesize it.
         "synth_unknown_class": unknown_class,

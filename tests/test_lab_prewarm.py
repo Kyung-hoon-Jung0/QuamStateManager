@@ -438,7 +438,7 @@ class TestTheDeleteStep:
         i = t.index('class="btn-sm pulse-confirm-delete"')
         after = t[i:t.index("</form>", i)]
         assert ('class="htmx-indicator muted pulse-delete-checking" role="status" '
-                'data-lab-indicator>Checking with your lab code&hellip;</span>') in after
+                'data-lab-indicator data-lab-state="cold">Checking with your lab code&hellip;</span>') in after
         # beside the button the press disables
         assert 'hx-disabled-elt="find button[type=submit]"' in t[t.rindex("<form", 0, i):i]
 
