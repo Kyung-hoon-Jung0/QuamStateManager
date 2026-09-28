@@ -520,3 +520,113 @@ def test_the_prewarm_waits_for_quiet_only_briefly(monkeypatch):
     t0 = time.perf_counter()
     routes._lab_prewarm_wait(lambda: False)
     assert time.perf_counter() - t0 < 0.3
+
+
+# ------------------------------- 6. a background batch yields to a user check
+class TestTheBackgroundBatchYields:
+    def test_a_check_waits_one_chunk_not_the_whole_batch(self, tmp_path, monkeypatch):
+        py = tmp_path / "python.exe"
+        py.write_bytes(b"")
+        py = str(py)
+
+        def slow_run(p, items):
+            time.sleep(0.4)
+            return {"ok": True, "error": None, "sources": {},
+                    "items": [{"ok": True, "i": [float(len(it["qclass"]))], "q": None,
+                               "iq": False, "kind": "arbitrary", "length": 1,
+                               "canonical": it["qclass"], "dropped": [], "warnings": [],
+                               "error": None} for it in items]}
+        monkeypatch.setattr(lab_waveform, "_run", slow_run)
+        monkeypatch.setattr(lab_waveform, "_env_sig", lambda p: "sig")
+        lab_waveform.MEMO.clear()
+        done = []
+
+        def batch():                     # 8 chunks x 0.4 s = 3.2 s in all
+            for i in range(8):
+                lab_waveform.yield_to_foreground(py)
+                lab_waveform.draw(py, [(f"bg.C{i}", {"k": i})], background=True)
+            done.append(time.perf_counter())
+        th = threading.Thread(target=batch)
+        th.start()
+        time.sleep(0.2)                  # the batch holds the env now
+        t0 = time.perf_counter()
+        rec = lab_waveform.draw(py, [("fg.Check", {"k": 1})])[0]
+        dt = time.perf_counter() - t0
+        th.join(10)
+        assert rec["ok"]
+        assert dt < 1.3, f"the check waited {dt:.2f} s (the whole batch is 3.2 s)"
+        assert done and done[0] - t0 > dt       # the batch was still running after
+        assert not lab_waveform._FG, "the foreground count leaked"
+        lab_waveform.MEMO.clear()
+
+    def test_the_sparkline_warm_asks_in_chunks_and_yields_first(self, tmp_path, monkeypatch):
+        from quam_state_manager.core import config_generator
+        from quam_state_manager.web import routes
+        py = tmp_path / "python.exe"
+        py.write_bytes(b"")
+        monkeypatch.setattr(config_generator, "get_selected_env", lambda inst: str(py))
+        log = []
+
+        def fake(store, paths, *, spawn, background=False, **kw):
+            if not spawn:
+                return {p: {"ok": False, "reason": "not-drawn"} for p in paths}
+            log.append(("draw", len(paths), background))
+            return {}
+        monkeypatch.setattr(routes, "lab_drawings_for_paths", fake)
+        monkeypatch.setattr(lab_waveform, "yield_to_foreground",
+                            lambda p, max_s=120.0: log.append(("yield",)) or 0.0)
+        app = create_app(testing=True, instance_path=str(tmp_path / "inst"))
+        with app.test_request_context("/"):
+            routes._warm_lab_sparks(object(), [f"qubits.q{i}.z.operations.op" for i in range(10)])
+        for _ in range(100):
+            if sum(1 for e in log if e[0] == "draw") == 3:
+                break
+            time.sleep(0.02)
+        draws = [e for e in log if e[0] == "draw"]
+        assert [d[1] for d in draws] == [4, 4, 2] and all(d[2] for d in draws)
+        assert [e[0] for e in log] == ["yield", "draw"] * 3
+
+
+def test_a_background_batch_waits_while_a_check_waits(tmp_path, monkeypatch):
+    """The yield itself: a foreground draw blocked on the env lock is counted,
+    and yield_to_foreground returns only once that draw has the lock."""
+    py = tmp_path / "python.exe"
+    py.write_bytes(b"")
+    py = str(py)
+    monkeypatch.setattr(lab_waveform, "_run", lambda p, items: {
+        "ok": True, "error": None, "sources": {},
+        "items": [{"ok": True, "i": [1.0], "q": None, "iq": False, "kind": "arbitrary",
+                   "length": 1, "canonical": "x", "dropped": [], "warnings": [],
+                   "error": None} for _ in items]})
+    monkeypatch.setattr(lab_waveform, "_env_sig", lambda p: "sig")
+    lab_waveform.MEMO.clear()
+    lk = lab_waveform._env_lock(py)
+    lk.acquire()
+    held = True
+    try:
+        fg = threading.Thread(target=lambda: lab_waveform.draw(py, [("fg.C", {"k": 2})]),
+                              daemon=True)
+        fg.start()
+        for _ in range(100):
+            if lab_waveform._FG.get(py):
+                break
+            time.sleep(0.01)
+        assert lab_waveform._FG.get(py) == 1
+        yielded = []
+        y = threading.Thread(target=lambda: yielded.append(
+            lab_waveform.yield_to_foreground(py, 10)), daemon=True)
+        y.start()
+        time.sleep(0.4)
+        assert not yielded, "the batch went ahead of a waiting check"
+        lk.release()
+        held = False
+    finally:
+        if held:                 # a failed assert must not hang the suite
+            lk.release()
+    fg.join(5)
+    y.join(5)
+    assert yielded and yielded[0] >= 0.35 and not lab_waveform._FG
+    # a background draw is never counted
+    lab_waveform.draw(py, [("bg.C", {"k": 3})], background=True)
+    assert not lab_waveform._FG
+    lab_waveform.MEMO.clear()

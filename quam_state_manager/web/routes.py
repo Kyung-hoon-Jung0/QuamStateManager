@@ -16883,7 +16883,7 @@ def _coerce_lab_overrides(store, path: str, overrides: dict) -> dict:
 
 
 def lab_drawings_for_paths(store, paths, *, spawn: bool, overrides=None,
-                           overrides_by_path=None):
+                           overrides_by_path=None, background: bool = False):
     """``{path: record}`` -- each pulse drawn by its OWN class's code in the
     selected env (``core/lab_waveform``). ONE function for the detail view,
     the edit refresh and the row sparklines, so they cannot draw the same
@@ -16910,8 +16910,11 @@ def lab_drawings_for_paths(store, paths, *, spawn: bool, overrides=None,
         items.append((qclass, params))
         owners.append(path)
     if items:
+        # background only when it is one (a stand-in draw that predates the
+        # keyword keeps working for every foreground caller)
+        kw = {"background": True} if background else {}
         for path, rec in zip(owners, lab_waveform.draw(python_path, items,
-                                                       spawn=spawn)):
+                                                       spawn=spawn, **kw)):
             out[path] = rec
     return out
 
@@ -20123,6 +20126,10 @@ def _pulse_fallback_spark(store, path, row) -> None:
     row["spark_from_config"] = bool(row["spark_svg"])
 
 
+#: rows per background ask of the sparkline warm (see _warm_lab_sparks)
+_LAB_SPARK_CHUNK = 4
+
+
 def _warm_lab_sparks(store, paths) -> None:
     """Draw *paths* with their own class code in ONE background subprocess,
     so the next render of these rows has a current thumbnail. Single-flight
@@ -20151,9 +20158,17 @@ def _warm_lab_sparks(store, paths) -> None:
         _lab_spark_inflight.add(key)
 
     def _run():
+        # w9/labwarm: in CHUNKS, yielding the env's worker between them to any
+        # user check waiting for it -- one ask for a whole page of lab rows
+        # held a delete on big30x behind the page's thumbnails (43.8 s, the
+        # worker "ready" only 71 s after the open)
+        from quam_state_manager.core import lab_waveform
         try:
             with app.app_context():
-                lab_drawings_for_paths(store, todo, spawn=True)
+                for i in range(0, len(todo), _LAB_SPARK_CHUNK):
+                    lab_waveform.yield_to_foreground(python_path)
+                    lab_drawings_for_paths(store, todo[i:i + _LAB_SPARK_CHUNK],
+                                           spawn=True, background=True)
         except Exception:  # noqa: BLE001
             logger.debug("lab sparkline warm failed", exc_info=True)
         finally:

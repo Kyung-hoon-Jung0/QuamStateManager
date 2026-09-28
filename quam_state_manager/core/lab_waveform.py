@@ -570,15 +570,48 @@ def _run_cold(python_path: str, items: list[dict]) -> dict:
     return out
 
 
+#: w9/labwarm: python_path -> foreground draws waiting for the env lock. A
+#: BACKGROUND batch (the Pulses list's sparkline warm) yields between its
+#: chunks while this is non-zero, so a user's check never waits behind a
+#: whole page of thumbnails being drawn.
+_FG: dict[str, int] = {}
+_FG_LOCK = threading.Lock()
+
+
+def _fg_add(python_path: str, n: int) -> None:
+    with _FG_LOCK:
+        v = _FG.get(python_path, 0) + n
+        if v > 0:
+            _FG[python_path] = v
+        else:
+            _FG.pop(python_path, None)
+
+
+def yield_to_foreground(python_path: str | None, max_s: float = 120.0) -> float:
+    """For a BACKGROUND batch, before it takes the env lock for its next
+    chunk: wait while a foreground draw is waiting for that lock (bounded).
+    Returns the seconds waited."""
+    t0 = time.monotonic()
+    if not python_path:
+        return 0.0
+    while time.monotonic() - t0 < max_s:
+        with _FG_LOCK:
+            if not _FG.get(python_path):
+                break
+        time.sleep(0.02)
+    return time.monotonic() - t0
+
+
 def draw(python_path: str | None, items: list[tuple[str, dict]], *,
-         spawn: bool = True) -> list[dict]:
+         spawn: bool = True, background: bool = False) -> list[dict]:
     """Drawings for ``[(qclass, params), ...]`` in the same order.
 
     Every entry is ``{"ok", "error", "i", "q", "iq", "kind", "length",
     "canonical", "dropped", "warnings", "cached"}``. Hits are served from RAM;
     the misses of one call share ONE subprocess. With ``spawn=False`` a miss
     answers ``{"ok": False, "reason": "not-drawn"}`` (a list render may never
-    wait on a subprocess).
+    wait on a subprocess). *background*: a batch nobody waits on (it does not
+    count as a foreground waiter; see :func:`yield_to_foreground`).
     """
     if not python_path:
         return [{"ok": False, "reason": "no-env",
@@ -600,7 +633,16 @@ def draw(python_path: str | None, items: list[tuple[str, dict]], *,
         return results  # type: ignore[return-value]
 
     _TL.waited_since = time.monotonic()
-    with _env_lock(python_path):
+    lock = _env_lock(python_path)
+    if background:
+        lock.acquire()
+    else:
+        _fg_add(python_path, 1)
+        try:
+            lock.acquire()
+        finally:
+            _fg_add(python_path, -1)
+    try:
         # a concurrent request may have drawn these while we waited
         for n in todo:
             hit = cached(python_path, *items[n])
@@ -639,6 +681,8 @@ def draw(python_path: str | None, items: list[tuple[str, dict]], *,
                                      lambda r=rec: Keyed(r, token),
                                      sizeof=_sizeof)
                     results[n] = {**value, "cached": False}
+    finally:
+        lock.release()
     return results  # type: ignore[return-value]
 
 
