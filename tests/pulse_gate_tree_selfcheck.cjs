@@ -49,7 +49,8 @@ const DATA = {
     cz: {
       __class__: 'lab.CZGate', flux_pulse_qubit: '#/qubits/q1/xy/operations/x180',
       coupler_flux_pulse: null, phase: 0.1,
-      spect: { q3: { __class__: SQ, amplitude: 0.01, length: 8 } } },
+      // a found pulse -- with a field that merely looks like an operations dict
+      spect: { q3: { __class__: SQ, amplitude: 0.01, length: 8, operations: { k: 1 } } } },
     cz2: {
       __class__: 'lab.CZGate',
       // an inline (unclassed) slot pulse -- and a pulse the discovery finds
@@ -149,6 +150,7 @@ const quiet = function (url) {
       ['qubit_pairs.q1-2.macros.cz.coupler_flux_pulse', true, false, 'an empty (null) gate slot'],
       ['qubit_pairs.q1-2.macros.cz.flux_pulse_qubit', true, false, 'a gate slot holding a LINK (a re-link, not a pulse)'],
       ['qubit_pairs.q1-2.macros.cz2.flux_pulse_qubit.amplitude', true, false, 'a field of an inline slot pulse'],
+      ['qubit_pairs.q1-2.macros.cz.spect.q3.operations.k', true, false, 'a field of a FOUND pulse shaped like an operations entry'],
       ['qubit_pairs.q1-2.macros.cz.spect', true, true, 'a plain dict inside a gate'],
       ['extras.operations.z', true, false, 'anything under extras'],
       ['extras.operations', true, true, 'an operations dict under extras'],
@@ -329,9 +331,12 @@ const quiet = function (url) {
     }, COLD);
     const pr2 = win2._pulseGateFill();
     win2._treePulseGate = Object.assign({}, COLD, { rows: [] });
+    const built = acts(win2, SP);                  // the new page built this row's actions
     answer({ ok: true, status: 200, json: function () { return Promise.resolve(Object.assign({}, PAYLOAD)); } });
     await pr2;
     ok(win2._treePulseGate.rows_known === false, 'G7: an answer for a replaced page is dropped');
+    ok(built.del && !!built.node.querySelector(':scope > .tree-row > .tree-row-actions'),
+       'G7: ...and touches none of the new page\'s rows');
   }
 
   if (fails) { console.error(fails + ' FAILED'); process.exit(1); }

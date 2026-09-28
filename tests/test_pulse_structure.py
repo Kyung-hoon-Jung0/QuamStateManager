@@ -168,6 +168,7 @@ class TestWhatIsStructural:
         # inside a pulse: its fields
         ("set", f"{X180}.amplitude", 0.3),
         ("create", f"{X180}.digital_marker", "ON"),
+        ("create", f"{X180}.nested", _PULSE),               # a pulse-shaped FIELD of a pulse
         ("delete", f"{X180}.amplitude", ps.ABSENT),
         ("set", f"{PUMP}.pump.length", 120),
         # re-links: the pulse set stays
