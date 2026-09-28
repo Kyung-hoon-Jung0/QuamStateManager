@@ -15585,18 +15585,53 @@ def _pulse_vt_empty_html(channel: str) -> str:
             + '.</td></tr>')
 
 
+def _pulse_vt_widest(rows: list, per_col: int = 2) -> list[str]:
+    """The rows with the longest text in each column (character counts: the
+    table's cells are monospace). The rendered table sized its columns to
+    ALL its rows; the virtual one renders ~50, so it lays these few out too
+    -- invisibly (``visibility: collapse``) -- before the widths are frozen,
+    or a long amplitude further down wraps onto two lines."""
+    cols: dict[int, list[tuple[int, str]]] = {}
+
+    def consider(col, n, path):
+        lst = cols.setdefault(col, [])
+        lst.append((n, path))
+        if len(lst) > 4 * per_col:
+            lst.sort(key=lambda t: -t[0])
+            del lst[per_col:]
+
+    for r in rows:
+        p = r["path"]
+        consider(1, len(str(r.get("owner") or "")), p)
+        consider(2, len(str(r.get("channel") or "")), p)
+        consider(3, len(str(r.get("op_name") or "")) + (6 if r.get("is_alias") else 0)
+                 + (3 if r.get("iq") else 0) + (3 if r.get("readout") else 0), p)
+        consider(4, len(str(r.get("class_short") or "")), p)
+        consider(6, len(str(r.get("length"))) + (2 if r.get("length_implausible") else 0), p)
+        amp = r.get("amplitude")
+        consider(7, len("%.4g" % amp) if isinstance(amp, (int, float)) else 1, p)
+        consider(8, len(str(len(r.get("used_by") or []))), p)
+    out: list[str] = []
+    for col in sorted(cols):
+        for _n, p in sorted(cols[col], key=lambda t: -t[0])[:per_col]:
+            if p not in out:
+                out.append(p)
+    return out
+
+
 def _pulse_vt_payload(store, pulse_index, rows: list, channel: str, *,
                       want_html: bool) -> str:
     """The virtual view's row model for *rows* (already filtered, in table
     order) as JSON: ``[path, digest, html]`` per row, or ``[path, digest]``
-    when the client already holds the text (``vids=1``)."""
+    when the client already holds the text (``vids=1``); ``wide`` names the
+    rows that size the columns (:func:`_pulse_vt_widest`)."""
     memo = _pulse_vt_memo()
     out = []
     for r in rows:
         html, ver = memo.get("vt", r, _pulse_vt_render)
         out.append([r["path"], ver, html] if want_html else [r["path"], ver])
     return json.dumps({"v": 1, "stamp": _pulse_vt_stamp(store, pulse_index),
-                       "n": len(rows), "rows": out,
+                       "n": len(rows), "rows": out, "wide": _pulse_vt_widest(rows),
                        "empty": _pulse_vt_empty_html(channel)},
                       separators=(",", ":"), ensure_ascii=False)
 

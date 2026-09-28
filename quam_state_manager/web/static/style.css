@@ -10560,6 +10560,9 @@ tr.bulk-row-pinned > th, tr.bulk-row-pinned > td { background: color-mix(in srgb
 .pulse-spark-pending { display: block; width: 90px; height: 24px; }
 /* its spacer rows: pure height, no cell padding or border */
 #pulses-table tr.pulse-vpad > td { padding: 0 !important; border: 0 !important; }
+/* the rows that size the virtual table's columns (pulses-vt.js renderSizer):
+   counted by the column widths, never shown */
+#pulses-table tbody.pulse-vsizer > tr { visibility: collapse; }
 /* the view keeps the first visible row in place itself (pulses-vt.js) --
    the browser's own scroll anchoring would correct the same shift twice */
 #table-pane:has(tbody[data-pulses-virtual]) { overflow-anchor: none; }

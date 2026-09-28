@@ -316,6 +316,39 @@ window.PulsesVT = (function () {
         return changed;
     }
 
+    /* The rendered table sized its columns to ALL its rows; this one renders
+       ~50. The server names the few rows with the longest text per column
+       (`wide`), and they are laid out too -- in their own tbody, with
+       `visibility: collapse`: no height, no pointer, no path, but counted by
+       the table's column widths before app.js freezes them. Without it a long
+       amplitude further down wrapped onto two lines. */
+    function renderSizer() {
+        if (!st || !st.table) return;
+        var body = st.table.querySelector('tbody.pulse-vsizer');
+        if (!body) {
+            body = document.createElement('tbody');
+            body.className = 'pulse-vsizer';
+            body.setAttribute('aria-hidden', 'true');
+            st.table.appendChild(body);
+        }
+        var html = (st.wide || []).map(function (p) {
+            var e = cache.get(p); return e && e.h ? e.h : '';
+        }).join('');
+        var trs = parseRows(html);
+        trs.forEach(function (tr) {
+            ['data-pulse-path', 'hx-get', 'hx-target', 'hx-swap', 'hx-indicator', 'title', 'class']
+                .forEach(function (a) { tr.removeAttribute(a); });
+            var c0 = tr.cells[0];
+            if (c0) { c0.innerHTML = ''; c0.removeAttribute('onclick'); }
+            Array.prototype.forEach.call(tr.querySelectorAll('[data-path], [title]'), function (n) {
+                n.removeAttribute('data-path'); n.removeAttribute('title');
+            });
+        });
+        while (body.firstChild) body.removeChild(body.firstChild);
+        trs.forEach(function (tr) { body.appendChild(tr); });
+        tpl.innerHTML = '';
+    }
+
     function empty() {
         st.rendered.forEach(function (tr) { if (tr.parentNode) tr.parentNode.removeChild(tr); });
         st.rendered = new Map();
@@ -614,6 +647,8 @@ window.PulsesVT = (function () {
             if (idx < 0) return false;
             scrollToIndex(idx);
             var tr = st.rendered.get(st.sel);
+            if (tr && tr.scrollIntoView) { tr.scrollIntoView({ block: 'nearest' }); render(false); }
+            tr = st.rendered.get(st.sel);
             if (tr) tr.click();
             return true;
         }
@@ -625,7 +660,12 @@ window.PulsesVT = (function () {
         st.sel = st.view[idx];
         scrollToIndex(idx);
         var cur = st.rendered.get(st.sel);
-        if (cur) cur.classList.add('row-selected');
+        if (cur) {
+            cur.classList.add('row-selected');
+            // the model got it rendered; the browser places it exactly, as the
+            // rendered table's own handler does (block: 'nearest')
+            if (cur.scrollIntoView) { cur.scrollIntoView({ block: 'nearest' }); render(false); }
+        }
         return true;
     }
 
@@ -740,6 +780,7 @@ window.PulsesVT = (function () {
         setStamp(data.stamp);
         var got = adopt(data);
         st = newState(tbody, data);
+        st.wide = data.wide || [];
         setView(got.paths);
         // prune the compare selection to what this table can show
         checked.forEach(function (p) { if (!st.pos.has(p)) checked.delete(p); });
@@ -763,6 +804,7 @@ window.PulsesVT = (function () {
             try { st.ro.observe(st.scrollEl); } catch (e) {}
         }
         render(true);
+        renderSizer();
         if (got.miss.length) {
             var mine = st;
             busy(true);
@@ -772,6 +814,7 @@ window.PulsesVT = (function () {
                 // the sort read those rows' keys as blank: read it again
                 if (st.sort) applySort(st.sort);
                 render(true);
+                renderSizer();
             }, function () { busy(false); if (st === mine) refetchWhole(); });
         }
         return true;
@@ -807,6 +850,7 @@ window.PulsesVT = (function () {
                 if (gen !== refreshGen || st !== my || !active()) return;
                 setStamp(d.stamp);
                 if (d.empty) st.empty = d.empty;
+                if (d.wide) st.wide = d.wide;
                 setView(got.paths);
                 if (st.sort) applySort(st.sort);
                 checked.forEach(function (p) { if (!st.pos.has(p)) checked.delete(p); });
@@ -816,6 +860,7 @@ window.PulsesVT = (function () {
                 // the compare bar follows a selection a delete pruned
                 if (window.pulseSelChanged) window.pulseSelChanged(null);
                 render(true);
+                renderSizer();
             });
         }).then(function () { busy(false); }, function () {
             busy(false);

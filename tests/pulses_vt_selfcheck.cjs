@@ -149,7 +149,8 @@ function tableHtml(id, virtual, rowsHtml) {
         + '</tr></thead><tbody' + (virtual ? ' data-pulses-virtual="1"' : '') + '>' + (rowsHtml || '') + '</tbody></table>';
 }
 const payload = { v: 1, stamp: server.stamp, n: server.rows.length,
-                  rows: server.rows.map((r) => [r.p, r.v, r.h]), empty: '<tr><td colspan="9">No pulses found.</td></tr>' };
+                  rows: server.rows.map((r) => [r.p, r.v, r.h]), empty: '<tr><td colspan="9">No pulses found.</td></tr>',
+                  wide: [server.rows[1400].p, server.rows[777].p, server.rows[5].p] };
 doc.body.innerHTML =
     '<div id="table-pane" style="overflow-y:auto">'
     + ' <div class="table-header-row"><h2>Pulses <small id="pulses-total">(' + server.rows.length + ')</small></h2>'
@@ -238,6 +239,13 @@ function viewportCovered() {
     ok(r0.join('|') === st.view.slice(0, r0.length).join('|'), 'the rendered rows are the model in order');
     ok(doc.getElementById('pulses-vdata').textContent === '', 'the payload is consumed (not kept twice)');
     ok(processed.length >= r0.length, 'every rendered row is htmx-processed (its click opens the pulse)');
+    // the column sizer: the server's `wide` rows, laid out but collapsed and anonymous
+    const sz = Array.from(doc.querySelectorAll('#pulses-table tbody.pulse-vsizer > tr'));
+    ok(sz.length === 3 && sz[0].cells.length === 9 && sz[0].cells[3].textContent.indexOf(server.rows[1400].op) >= 0,
+       'the column sizer lays out the server\'s widest rows (' + sz.length + ')');
+    ok(sz.every((t) => !t.hasAttribute('data-pulse-path') && !t.hasAttribute('hx-get') && !t.querySelector('[data-path], input')),
+       'sizer rows carry no path, no click, no checkbox');
+    ok(doc.querySelectorAll('tr[data-pulse-path]').length === r0.length, 'and are not rows of the table');
     ok(viewportCovered(), 'A: the viewport is covered at the top');
 
     // ---- J: thumbnails ---------------------------------------------------------

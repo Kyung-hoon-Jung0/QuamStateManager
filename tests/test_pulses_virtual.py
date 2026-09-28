@@ -207,6 +207,29 @@ def test_undo_restores_the_digest(vt):
     assert dict(_vids(client)["rows"]) == before
 
 
+def test_the_widest_rows_size_the_columns(vt):
+    """The rendered table sized its columns to every row; the virtual one lays
+    out the rows the server names as the longest per column (measured on
+    big30x: without them 21 amplitudes wrapped onto two lines after a sorted
+    re-swap)."""
+    from quam_state_manager.web import routes
+    rows = [
+        {"path": "a", "owner": "q1", "channel": "xy", "op_name": "x", "class_short": "S",
+         "length": 40, "amplitude": 0.5, "used_by": []},
+        {"path": "b", "owner": "q1", "channel": "xy", "op_name": "x", "class_short": "S",
+         "length": 40, "amplitude": -0.0046021, "used_by": []},
+        {"path": "c", "owner": "q29-30", "channel": "flux_pulse_target", "op_name": "a_very_long_op_name",
+         "class_short": "ComplexWeightsReadoutPulse", "length": 20000, "amplitude": 1.0,
+         "used_by": ["x"] * 12},
+    ]
+    wide = routes._pulse_vt_widest(rows, per_col=1)
+    assert "b" in wide and "c" in wide, wide           # the longest amplitude; the rest
+    app, client, _ = vt
+    d = _vdata(client.get("/pulses?rows=1&per_page=0").data.decode())
+    paths = {r[0] for r in d["rows"]}
+    assert d["wide"] and set(d["wide"]) <= paths
+
+
 def test_the_paged_views_and_a_small_library_render_as_before(tmp_path):
     app, client, _ = _app(tmp_path, floor=None)        # the shipped floor (400)
     for qs in ("?per_page=0", "?per_page=50", "?per_page=25", "?rows=1&per_page=0"):
@@ -308,5 +331,7 @@ def test_the_virtual_view_selfcheck():
                 "H: the row at the top of the view kept its place",
                 "I: the All view asks for digests only",
                 "J: a moved stamp re-asks every rendered thumbnail",
-                "K: a history restore re-fetches the rows through the table"):
+                "K: a history restore re-fetches the rows through the table",
+                "the column sizer lays out the server's widest rows",
+                "sizer rows carry no path, no click, no checkbox"):
         assert "ok - " + pin in r.stdout, pin
