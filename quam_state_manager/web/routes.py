@@ -6647,6 +6647,16 @@ def explorer():
         state_json = _state_json_text(store)
     wiring_json = _wiring_json()
     template = "_explorer.html" if _is_htmx() else "explorer.html"
+    # w9/pulsegate: which rows are pulses (＋/✕ hidden, the Pulses page link
+    # shown) -- the structural part is the tree's own, the shape-discovered
+    # rows come from the Pulses page's index when it is warm (never built
+    # here: a cold index must not slow the tree; the write doors still check)
+    from quam_state_manager.core import pulse_structure as _ps
+    try:
+        _pidx = _pulse_index()
+        _known = _pidx.paths_if_warm() if _pidx is not None else None
+    except Exception:  # noqa: BLE001 -- the doors are the backstop
+        _known = None
     return render_template(
         template,
         **_ctx(page="explorer"),
@@ -6656,7 +6666,21 @@ def explorer():
         # The tree builds its rows client-side, so it gets the durable
         # read-only vocabulary rather than a second spelling of it.
         read_only_policy=json.dumps(readonly_policy()),
+        pulse_gate=json.dumps(_ps.tree_payload(_known)),
     )
+
+
+@bp.route("/explorer/pulse-gate")
+def explorer_pulse_gate():
+    """w9/pulsegate: the tree payload's rows when /explorer rendered before the
+    Pulses index was warm (``rows_known`` false): asked once by the page,
+    after its render, so the walk never holds the tree up. The walk is the
+    index's own single-flight build (shared with the Pulses page)."""
+    from quam_state_manager.core import pulse_structure as _ps
+    pidx = _pulse_index()
+    if pidx is None:
+        return jsonify(_ps.tree_payload(None))
+    return jsonify(_ps.tree_payload(list(pidx.known_paths())))
 
 
 @bp.route("/explorer/model")
@@ -9185,6 +9209,11 @@ def qubit_edit(name: str):
         # with no twin stays ungrouped, so one undo still reverts it.
         gid = (modifier.new_group_id()
                if freq_sync and _freq_twin_path(target_path) else None)
+        # w9/pulsegate: same rule as /field/edit (these routes take any path)
+        _psc = _pulse_structure_change(modifier.store, "set", target_path, parsed)
+        if _psc is not None:
+            return render_template("_status.html", level="error",
+                                   message=_pulse_structure_payload(_psc)["error"]), 400
         # the inspector is an editing door like /field/edit: a value landing
         # in a lab pulse or gate is asked of the lab's own code first
         _lab_rel = _lab_hold(modifier.store, [target_path])
@@ -9649,6 +9678,12 @@ def field_edit():
             # makes the two answers agree.
             raw_value = json.dumps(raw_value)
         parsed = _parse_for_target(modifier.store, target_path, raw_value)
+        # w9/pulsegate: a whole-object edit (the tree's JSON editor, a paste)
+        # that adds, removes or renames a pulse is the Pulses page's job; a
+        # value inside a pulse, or a re-link, passes untouched
+        _psc = _pulse_structure_change(modifier.store, "set", target_path, parsed)
+        if _psc is not None:
+            return _pulse_structure_refused(_psc)
         # A value landing in a LAB-class pulse (directly or through any number
         # of pointer hops) is asked of the class's own code first; refused =
         # nothing written, no tray entry (same door as /pulse/edit).
@@ -11188,6 +11223,11 @@ def field_create():
                     path=dot_path, expected=hint, got=type(parsed).__name__)
         else:
             parsed = _tp.parse_value(raw_value)
+        # w9/pulsegate: a new key that is a pulse (an operations entry, a gate
+        # slot, a pulse-class dict) is created on the Pulses page
+        _psc = _pulse_structure_change(modifier.store, "create", dot_path, parsed)
+        if _psc is not None:
+            return _pulse_structure_refused(_psc)
         # The ＋ is a create door: a key created inside a lab pulse (a
         # re-added field) or a whole new lab-class pulse / gate dict is asked
         # of the lab's own code like every other write (the verifier created
@@ -11249,6 +11289,11 @@ def field_delete():
     reason = _crud_policy_reason(modifier.store, dot_path, deleting=True)
     if reason is not None:
         return jsonify(ok=False, error=reason, error_kind="policy"), 400
+    # w9/pulsegate: a pulse (or an operations dict holding pulses) is deleted
+    # on the Pulses page -- refused before the lab check costs anything
+    _psc = _pulse_structure_change(modifier.store, "delete", dot_path, absent=True)
+    if _psc is not None:
+        return _pulse_structure_refused(_psc)
 
     dangling, _ = _count_refs_into(modifier.store, dot_path)
     # a removed field of a pulse a lab GATE plays falls back to the class
@@ -11264,7 +11309,8 @@ def field_delete():
             return jsonify(ok=False, lab_refused=True,
                            error=_lab_refusal_text(_lab[0]),
                            **({"lab_delete_also": _also,
-                               "lab_delete_label": _lab_delete_label(modifier.store, _also)}
+                               "lab_delete_label": _lab_delete_label(modifier.store, _also),
+                               **_lab_delete_pulses_link(modifier.store, dot_path, _also)}
                               if _also else {})), 400
         entry = modifier.delete_subtree(dot_path)
         _invalidate_engine_cache(ctx)
@@ -11330,9 +11376,213 @@ def schema_missing_keys():
 _BATCH_DELETE = object()
 
 
+# ----------------------------------------------------------------------
+# w9/pulsegate (user decision 2026-09-28): a pulse is added, deleted, renamed
+# or copied ONLY on the Pulses page. The generic write doors ask
+# core.pulse_structure whether a write changes WHICH pulses exist and refuse
+# it with the way there; a value write inside a pulse, a re-link, and a
+# non-pulse object coming or going with its pulses pass untouched. The Pulses
+# page's own flows never reach these doors (/api/pulse/*; its "Delete
+# together" has its own route, api_pulse_delete_together). Undo/redo, revert,
+# take-live, whole-state loads and history restore do not call them either.
+# ----------------------------------------------------------------------
+
+def _pulse_structure_change(store, op: str, path: str, value: Any = None,
+                            *, absent: bool = False):
+    """``pulse_structure.structural_change`` under the store lock; *absent*
+    means "no value" (a delete). None = the write may go ahead.
+
+    A check that fails is never a way round the rule, and never bricks an
+    ordinary edit: a write that could not change which pulses exist anyway
+    (:func:`_ps_candidate` -- a scalar over a scalar outside an operations
+    entry or a gate slot) goes ahead; any other is refused as unchecked."""
+    from quam_state_manager.core import pulse_structure as _ps
+    try:
+        with store._lock:
+            return _ps.structural_change(store.merged, op, path,
+                                         _ps.ABSENT if absent else value)
+    except Exception:  # noqa: BLE001
+        logger.warning("pulse-structure check failed for %s %s", op, path,
+                       exc_info=True)
+        try:
+            with store._lock:
+                could = _ps_candidate(store.merged, path, None if absent else value)
+        except Exception:  # noqa: BLE001
+            could = True
+        if not could:
+            return None
+        return _ps.Change(op=op, path=path, kind="pulse", added=[path])
+
+
+def _pulse_structure_payload(ch) -> dict:
+    """The refusal every generic door answers with: the reason, and the
+    Pulses page link that opens on the pulse (or its channel)."""
+    from quam_state_manager.core import pulse_structure as _ps
+    return {"ok": False, "error_kind": "pulse_structure",
+            "error": _ps.refusal_message(ch),
+            "pulses_page": _ps.goto_url(ch.anchor),
+            "pulse_paths": ch.paths[:20]}
+
+
+def _pulse_structure_refused(ch):
+    return jsonify(**_pulse_structure_payload(ch)), 409
+
+
+def _ps_candidate(merged: dict, target: str, raw) -> bool:
+    """Cheap pre-filter for a batch row: can this write change which pulses
+    exist at all? A scalar written over a scalar anywhere that is not an
+    ``operations`` entry / dict or a pair gate slot cannot (a 2,000-row grid
+    Apply-all must not pay the full check per cell)."""
+    from quam_state_manager.core.pulse_index import GATE_SLOTS
+    segs = target.split(".")
+    if segs[-1] == "operations" or (len(segs) >= 2 and segs[-2] == "operations"):
+        return True
+    if (len(segs) == 5 and segs[0] == "qubit_pairs" and segs[2] == "macros"
+            and segs[4] in GATE_SLOTS):
+        return True
+    if isinstance(raw, dict) or (isinstance(raw, str) and raw.lstrip().startswith("{")):
+        return True
+    cur: Any = merged
+    for s in segs:
+        if not isinstance(cur, dict) or s not in cur:
+            return False
+        cur = cur[s]
+    return isinstance(cur, dict)
+
+
+def _ps_live_at(pair, path: str):
+    """The live chip's raw value at *path* (state first, then wiring), or
+    ``pulse_structure.ABSENT``."""
+    from quam_state_manager.core import pulse_structure as _ps
+    segs = path.split(".")
+    for doc in (pair.state, pair.wiring):
+        if not isinstance(doc, dict) or segs[0] not in doc:
+            continue
+        cur: Any = doc
+        for s in segs:
+            if not isinstance(cur, dict) or s not in cur:
+                return _ps.ABSENT
+            cur = cur[s]
+        return cur
+    return _ps.ABSENT
+
+
+class _PulseLive:
+    """The live chip's documents for a batch that says ``"source": "live"``
+    (the Explorer live-diff's accept and Accept all, the sync review's
+    accept): TAKE LIVE, row by row, which stays unaffected -- but the claim is
+    checked, never trusted. A row passes only when the live chip itself holds
+    exactly that value at that path (a delete: when it has no such key); an
+    edited value, or live that moved on, is refused like any structural edit.
+    Read at most once per batch, and only when a row needs it."""
+
+    def __init__(self, ctx):
+        self.ctx = ctx
+        self._pair: Any = False
+
+    def holds(self, target: str, value) -> bool:
+        from quam_state_manager.core import pulse_structure as _ps
+        if self._pair is False:
+            self._pair = None
+            wc = self.ctx.get("working_copy") if self.ctx else None
+            if wc is not None:
+                try:
+                    self._pair = working_copy.read_live_shared(wc, attempts=4)
+                except Exception:  # noqa: BLE001 -- unverifiable: refused
+                    self._pair = None
+        if self._pair is None:
+            return False
+        live = _ps_live_at(self._pair, target)
+        if value is _ps.ABSENT:
+            return live is _ps.ABSENT
+        return live is not _ps.ABSENT and _ps.json_same(value, live)
+
+
+def _ps_row_refusal(store, dp: str, raw, allow_create: bool, live) -> dict | None:
+    """The refusal payload for ONE /field/edit-batch row, judged against the
+    store as it is NOW -- the write loop asks again before a row once an
+    earlier row of the same batch changed structure (a parent created, a
+    channel deleted and re-created), so a pulse is never waved through
+    because its parent did not exist yet. None = the row may go ahead."""
+    from quam_state_manager.core import pulse_structure as _ps
+    try:
+        if raw is _BATCH_DELETE:
+            target, value = dp, _ps.ABSENT
+            ch = _pulse_structure_change(store, "delete", dp, absent=True)
+        else:
+            target = _resolve_edit_path(store, dp)
+            with store._lock:
+                merged = store.merged
+                if not _ps_candidate(merged, target, raw):
+                    return None
+                exists = _path_present(merged, target)
+            if not exists and not allow_create:
+                return None                    # the row fails on its own
+            value = (_parse_for_target(store, target, raw)
+                     if isinstance(raw, str) else raw)
+            ch = _pulse_structure_change(store, "set" if exists else "create",
+                                         target, value)
+    except Exception:  # noqa: BLE001 -- the row loop reports a bad row
+        return None
+    if ch is None:
+        return None
+    if live is not None:
+        try:
+            if live.holds(target, value):
+                return None
+        except Exception:  # noqa: BLE001 -- unverifiable: refused
+            pass
+    return _pulse_structure_payload(ch)
+
+
+def _pulse_structure_rows(store, pairs, live) -> dict:
+    """``{row index: refusal payload}`` for the rows of an /field/edit-batch
+    that would add, remove or rename a pulse, each judged against the store
+    before the batch (see :func:`_ps_row_refusal` for the rows after one)."""
+    out: dict = {}
+    for n, (dp, raw, allow_create) in enumerate(pairs):
+        r = _ps_row_refusal(store, dp, raw, allow_create, live)
+        if r is not None:
+            out[n] = r
+    return out
+
+
+def _ps_moved_structure(entry) -> bool:
+    """Did an applied batch entry change what a later row of the same batch
+    would be judged against? A created or deleted key, a dict written or
+    replaced -- and a POINTER written or replaced: a later row's path is
+    resolved through pointers, so a link row 1 writes can send row 2 into an
+    ``operations`` dict (refute review, 2026-09-28)."""
+    old = getattr(entry, "old_value", None)
+    new = getattr(entry, "new_value", None)
+    return bool(getattr(entry, "created", False) or getattr(entry, "deleted", False)
+                or isinstance(old, dict) or isinstance(new, dict)
+                or is_pointer(old) or is_pointer(new))
+
+
+def _path_present(merged: dict, path: str) -> bool:
+    cur: Any = merged
+    for s in path.split("."):
+        if isinstance(cur, dict) and s in cur:
+            cur = cur[s]
+        else:
+            return False
+    return True
+
+
 @bp.route("/field/edit-batch", methods=["POST"])
 def field_edit_batch():
+    return _field_edit_batch_impl()
+
+
+def _field_edit_batch_impl(payload=None, *, pulse_door: bool = False):
     """Apply many edits atomically; report per-path success/failure.
+
+    w9/pulsegate: *payload* (a dict shaped like the JSON body) and
+    *pulse_door* are the Pulses page's own "Delete together"
+    (:func:`api_pulse_delete_together`) -- a server-side argument, never a
+    field a client can send. Every other caller is refused a row that adds,
+    removes or renames a pulse (:func:`_pulse_structure_rows`).
 
     Powers the Plotly popup's "Apply All" button. Accepts either:
       * form ``dot_path=<p1>&value=<v1>&dot_path=<p2>&value=<v2>...``
@@ -11361,7 +11611,8 @@ def field_edit_batch():
     if _lk is not None:
         return _lk
 
-    payload = request.get_json(silent=True)
+    if payload is None:
+        payload = request.get_json(silent=True)
     # Cross-chip guard (audit #1): the apply-fit popup stamps the run's chip token.
     _pj = payload if isinstance(payload, dict) else {}
     guard = _chip_mismatch_response(
@@ -11397,6 +11648,27 @@ def field_edit_batch():
         return jsonify(ok=False, error="No updates supplied"), 400
 
     independent = bool(_pj.get("independent"))
+
+    # w9/pulsegate: a row that adds, removes or renames a pulse is the Pulses
+    # page's job. Atomic: nothing is written (409, the rows named). An
+    # independent batch skips just those rows. Before every other gate -- it
+    # is the cheapest, and a refused row must not cost a lab check.
+    _ps_live = _PulseLive(ctx) if _pj.get("source") == "live" else None
+    _ps_skip: dict = ({} if pulse_door
+                      else _pulse_structure_rows(modifier.store, pairs, _ps_live))
+    _ps_late = None             # a row refused in the loop (after an earlier row)
+    if _ps_skip and not independent:
+        _first = _ps_skip[min(_ps_skip)]
+        return jsonify(
+            **_first, tray_html=_tray_html(),
+            results=[{"dot_path": dp, "applied": False,
+                      "error": (_ps_skip[n]["error"] if n in _ps_skip else
+                                "not written: another row of this batch adds, "
+                                "removes or renames a pulse"),
+                      **({"error_kind": "pulse_structure",
+                          "pulses_page": _ps_skip[n]["pulses_page"]}
+                         if n in _ps_skip else {})}
+                     for n, (dp, _v, _c) in enumerate(pairs)]), 409
 
     # docs/20 r12-B: an FSP edit never silently changes amplitudes — and
     # never commits before the compensation offer was seen. Batches without
@@ -11473,6 +11745,8 @@ def field_edit_batch():
         logger.warning("lab-class watch map failed", exc_info=True)
         _watch = None
     for _n, (_dp, _rv, _c) in enumerate(pairs if _watch else ()):
+        if _n in _ps_skip:          # independent mode: never written
+            continue
         try:
             if _rv is _BATCH_DELETE:
                 if _watch.touches(_dp):
@@ -11493,7 +11767,7 @@ def field_edit_batch():
         # with its by-name mirror ops leaves nothing dangling, and only the
         # whole batch's 'after' can show that
         for _n, (_dp, _rv, _c) in enumerate(pairs):
-            if _rv is _BATCH_DELETE and _n not in _lab_idx:
+            if _rv is _BATCH_DELETE and _n not in _lab_idx and _n not in _ps_skip:
                 _lab_writes.append((_dp, _LAB_DELETE))
                 _lab_idx.append(_n)
     # held from the check through the write (released after the lock block)
@@ -11521,7 +11795,9 @@ def field_edit_batch():
                 ok=False, lab_refused=True, error=_lab_msg,
                 tray_html=_tray_html(),
                 **({"lab_delete_also": _also,
-                    "lab_delete_label": _lab_delete_label(modifier.store, _also)}
+                    "lab_delete_label": _lab_delete_label(modifier.store, _also),
+                    **(_lab_delete_pulses_link(modifier.store, _dels[0], _also)
+                       if _dels and not pulse_door else {})}
                    if _also else {}),
                 lab_follow=(_lab_follow_payload(_one[0], _one[1], _lab_info)
                             if _one and len(pairs) == 1 else None),
@@ -11556,7 +11832,30 @@ def field_edit_batch():
             elif _batch_gid is None:
                 _batch_gid = modifier.new_group_id()
         ok_overall = True
+        _ps_moved = False
         for _row_n, (dot_path, raw_value, allow_create) in enumerate(pairs):
+            if _ps_moved and not pulse_door and _row_n not in _ps_skip:
+                # an earlier row changed structure: this one is judged again
+                # against what the batch has written so far
+                _psr = _ps_row_refusal(modifier.store, dot_path, raw_value,
+                                       allow_create, _ps_live)
+                if _psr is not None:
+                    results.append({"dot_path": dot_path, "applied": False,
+                                    "error_kind": "pulse_structure",
+                                    "error": _psr["error"],
+                                    "pulses_page": _psr["pulses_page"]})
+                    ok_overall = False
+                    _ps_late = _ps_late or _psr
+                    if not independent:
+                        break
+                    continue
+            if _row_n in _ps_skip:       # independent mode only (see above)
+                results.append({"dot_path": dot_path, "applied": False,
+                                "error_kind": "pulse_structure",
+                                "error": _ps_skip[_row_n]["error"],
+                                "pulses_page": _ps_skip[_row_n]["pulses_page"]})
+                ok_overall = False
+                continue
             if _row_n in _lab_skip:      # independent mode only (see above)
                 results.append({"dot_path": dot_path, "applied": False,
                                 "lab_refused": True, "error": _lab_msg})
@@ -11572,6 +11871,7 @@ def field_edit_batch():
                         raise ValueError(_cr)
                     entry = modifier.delete_subtree(dot_path, group_id=_batch_gid)
                     applied_entries.append(entry)
+                    _ps_moved = True
                     results.append({"dot_path": dot_path, "resolved_path": entry.dot_path,
                                     "applied": True, "deleted": True,
                                     "new_value": None, "display": ""})
@@ -11630,6 +11930,7 @@ def field_edit_batch():
                             f"or stage the version from State History)."
                         ) from ce
                 applied_entries.append(entry)
+                _ps_moved = _ps_moved or _ps_moved_structure(entry)
                 # Echo the COMMITTED value (type-coerced by set_value) + its display
                 # + the resolved write path, so the client re-renders the cell from
                 # the server's truth (never the typed string) and can match the
@@ -11660,6 +11961,8 @@ def field_edit_batch():
                 if r["applied"]:
                     r["applied"] = False
                     r["error"] = "rolled back due to other failure(s) in this batch"
+            if _ps_late is not None:     # w9/pulsegate: said like the pre-check
+                return jsonify(**_ps_late, tray_html=_tray_html(), results=results), 409
             return jsonify(
                 ok=False,
                 tray_html=_tray_html(),
@@ -12426,11 +12729,20 @@ def pair_gate_form(name: str):
                   if arch.get(v.get("arch", "flux"))}
     if _parametric_cz_evidence(store) is None:
         gate_types = {k: v for k, v in gate_types.items() if k != "cz_parametric"}
+    # w9/pulsegate: a flux gate type writes its flux pulses into the gate --
+    # new pulse objects, which are added on the Pulses page (pair_add_gate
+    # refuses them too). The form offers what creates no pulse (CR / Stark)
+    # and says where the rest is built.
+    flux_moved = any(v.get("arch", "flux") == "flux" for v in gate_types.values())
+    gate_types = {k: v for k, v in gate_types.items() if v.get("arch", "flux") != "flux"}
+    if not gate_types:
+        return render_template("_pair_add_gate_pulses.html", pair_name=name)
     parametric_qclass = _parametric_cz_qclass(store)
     return render_template(
         "_pair_add_gate.html",
         pair_name=name,
         gate_types=gate_types,
+        flux_moved=flux_moved,
         existing_gates=existing_gates,
         # The JSON preview in the form must show the class the SERVER will
         # write (chip-derived when possible), not a duplicated literal.
@@ -12530,6 +12842,19 @@ def pair_add_gate(name: str):
         cz_qclass=cr_semantics.gate_class_evidence(store.merged, "CZGate"),
         slot_qclasses=_slot_qclasses_for(store, gate_type))
     dot_path = f"qubit_pairs.{name}.macros.{gate_name}"
+    # w9/pulsegate: a gate whose slots hold pulses brings new pulse objects
+    # -- built on the Pulses page (+ New pulse: the Gaussian CZ builder writes
+    # the channel ops and links the slots), or by the lab's own gate script.
+    # A gate without pulses (CR / Stark) is created here as before.
+    _psc = _pulse_structure_change(store, "create", dot_path, template)
+    if _psc is not None:
+        return render_template(
+            "_status.html", level="error",
+            message=(f"{gate_type} writes its flux pulses into the gate "
+                     f"({', '.join(_psc.paths[:3])}) -- a new pulse. Pulses are "
+                     "added on the Pulses page: + New pulse -> \"Gaussian CZ from "
+                     "cz_flattop\" builds the gate with its channel ops, or use "
+                     "your lab's gate script.")), 409
     try:
         modifier.create_subtree(dot_path, template)
         _invalidate_engine_cache()
@@ -12589,6 +12914,11 @@ def pair_edit(name: str):
         # single Ctrl+Z reverts both atomically instead of leaving f_01≠RF.
         gid = (modifier.new_group_id()
                if freq_sync and _freq_twin_path(target_path) else None)
+        # w9/pulsegate: same rule as /field/edit (these routes take any path)
+        _psc = _pulse_structure_change(modifier.store, "set", target_path, parsed)
+        if _psc is not None:
+            return render_template("_status.html", level="error",
+                                   message=_pulse_structure_payload(_psc)["error"]), 400
         # the pair inspector shows gate pulses' fields as plain inputs (the
         # verifier typed flat_length=9 there): same lab check as /field/edit
         _lab_rel = _lab_hold(modifier.store, [target_path])
@@ -16401,6 +16731,10 @@ def pulses_page():
             open_pulse, open_pulse_missing = "", open_pulse
     else:
         open_pulse = ""
+    # w9/pulsegate: the Json Tree's "Delete together" link -- the pulse opens
+    # on its delete step with the same offer (the path the tree refused)
+    open_together = (request.args.get("together", "").strip()
+                     if open_pulse else "")
     return render_template(
         template,
         **_ctx(
@@ -16411,6 +16745,7 @@ def pulses_page():
             open_create=(request.args.get("create") == "1"),
             open_pulse=open_pulse,
             open_pulse_missing=open_pulse_missing,
+            open_together=open_together,
             rows=page_rows,
             active_channel=channel,
             active_query=query,
@@ -16467,7 +16802,8 @@ def pulse_detail():
     paths = _view_paths_arg(requested)
     if paths and not path:
         path = paths[0]
-    return _render_pulse_detail(path, paths=paths or None, requested=requested)
+    return _render_pulse_detail(path, paths=paths or None, requested=requested,
+                                together=request.args.get("together", "").strip())
 
 
 _PULSE_VIEW_MAX = 4
@@ -16514,7 +16850,7 @@ def _pulse_section_role(path: str) -> str:
 
 def _render_pulse_detail(path: str, *, status_msg: str | None = None,
                          status_level: str = "success", paths: list[str] | None = None,
-                         requested: list[str] | None = None):
+                         requested: list[str] | None = None, together: str = ""):
     """Shared renderer for the pulse detail partial (GET + mutation responses).
 
     docs/141 4k: the inspector is a VIEW of one to four pulses -- the main
@@ -16608,6 +16944,7 @@ def _render_pulse_detail(path: str, *, status_msg: str | None = None,
         detail_json=detail_json,
         status_msg=status_msg,
         status_level=status_level,
+        open_together=together,
         **{k: v for k, v in main.items() if k not in ("index", "color", "role", "label", "plot", "params_json")},
     )
 
@@ -19916,6 +20253,22 @@ def api_pulse_delete():
     return _lab_toast(_pulse_mutation_response(detail))
 
 
+def _lab_delete_pulses_link(store, main: str, also) -> dict:
+    """w9/pulsegate: when the set a lab refusal says must go together holds a
+    PULSE, that set is deleted on the Pulses page -- the Json Tree's offer
+    becomes a link to the same offer there (``lab_delete_pulses_url``,
+    opening the first pulse of the set with ``together=`` the refused path).
+    A set of gates and gate fields only stays the tree's own batch."""
+    from quam_state_manager.core import pulse_structure as _ps
+    paths = [main] + list(also or ())
+    if _delete_together_check(store, main, paths)[0]:
+        return {}             # not a set that route takes: the tree's own batch
+    for p in paths:
+        if _pulse_structure_change(store, "delete", p, absent=True) is not None:
+            return {"lab_delete_pulses_url": _ps.goto_url(p, together=main)}
+    return {}
+
+
 def _lab_delete_label(store, also) -> str:
     """The offer's button text for *also* (``lab_delete_label`` on the Json
     Tree's refusal: its old "N ops" miscounted a gate field or a gate)."""
@@ -19945,12 +20298,24 @@ def _pulse_delete_refused(store, path: str, message: str, info: dict):
     """A lab refusal of a Pulses-page delete (docs/218 open issue, w8): the
     refusal in place, in the delete step it came from, with the one way
     through when there is one -- everything :func:`_lab_delete_also` says
-    must go with it, deleted in ONE /field/edit-batch (one Ctrl+Z) that the
-    same lab check asks again as a whole. The Json Tree offers the same set
-    (its /field/delete refusal carries it as ``lab_delete_also``).
+    must go with it, deleted in ONE batch (one Ctrl+Z) that the same lab
+    check asks again as a whole: ``/api/pulse/delete-together`` (w9: the
+    Pulses page's own door; the generic batch door refuses pulse deletes).
+    The Json Tree's refusal links to this same offer (``together=``).
 
     400, retargeted into the detail's ``#pulse-delete-result`` slot (app.js
     lets exactly this body swap there; any other 4xx stays a toast)."""
+    resp = make_response(_pulse_delete_refused_html(store, path, message, info), 400)
+    resp.headers["HX-Retarget"] = "#pulse-delete-result"
+    resp.headers["HX-Reswap"] = "innerHTML"
+    return resp
+
+
+def _pulse_delete_refused_html(store, path: str, message: str, info: dict,
+                               subject: str | None = None) -> str:
+    """The offer's markup (``_pulse_delete_refused.html``). *subject* names
+    the refused path's role when it is not the open pulse (the Json Tree's
+    delete, opened here through its link)."""
     from quam_state_manager.core import lab_watch
     also = _lab_delete_also(store, [path], info)
     try:
@@ -19995,14 +20360,200 @@ def _pulse_delete_refused(store, path: str, message: str, info: dict):
         else:
             kind, role = "op", cls
         rows.append({"path": p, "kind": kind, "role": role})
-    html = render_template(
+    return render_template(
         "_pulse_delete_refused.html", path=path,
         message=_lab_refusal_text(message), also=rows, together=together,
+        subject=subject,
         label=_together_label([r["kind"] for r in rows]) if rows else "")
-    resp = make_response(html, 400)
-    resp.headers["HX-Retarget"] = "#pulse-delete-result"
-    resp.headers["HX-Reswap"] = "innerHTML"
-    return resp
+
+
+def _delete_together_check(store, main: str, paths: list) -> tuple[list, bool]:
+    """``(outsiders, holds_a_pulse)`` for a "Delete together" set.
+
+    The set is what the lab refusal offers: the refused path and
+    :func:`_lab_delete_also` -- pulses (ops, gate slots), lab gates and fields
+    of a lab gate. Every path, the refused one included, must be one of
+    those: this route deletes pulses with what cannot stay without them; it
+    is not a second generic delete door. (A tree refusal of anything else --
+    a channel whose set holds a pulse -- gets no link:
+    :func:`_lab_delete_pulses_link`.)"""
+    from quam_state_manager.core import lab_watch
+    try:
+        gates = set(lab_watch.watch_for(store).macros)
+    except Exception:  # noqa: BLE001 -- no watch map: pulses only
+        gates = set()
+    outsiders: list = []
+    holds_pulse = False
+    for p in paths:
+        is_pulse = _pulse_structure_change(store, "delete", p, absent=True) is not None
+        holds_pulse = holds_pulse or is_pulse
+        if is_pulse:
+            continue
+        if p in gates or any(p.startswith(g_ + ".") for g_ in gates):
+            continue
+        outsiders.append(p)
+    return outsiders, holds_pulse
+
+
+@bp.route("/api/pulse/delete-together", methods=["POST"])
+def api_pulse_delete_together():
+    """The Pulses page's "Delete together with ..." (w8, docs/225 §4): the
+    refused pulse and everything the lab check says must go with it, in ONE
+    batch -- one Ctrl+Z restores all -- that the same lab check asks again as
+    a whole.
+
+    w9/pulsegate: its own route, so the generic batch door can refuse every
+    pulse delete while this one stays possible. The distinction is the ROUTE
+    (a server-side ``pulse_door`` argument), never a flag in the body; the
+    set is verified here (:func:`_delete_together_check`) so the route cannot
+    delete arbitrary paths. Everything after that is /field/edit-batch's own
+    code (chip gate, agent lock, lab check, atomic rollback, the answer's
+    shape -- ``lab_delete_also`` when the batch as a whole names more)."""
+    ctx = _active_ctx()
+    modifier = ctx.get("modifier") if ctx else None
+    if not modifier:
+        return jsonify(ok=False, error=_NO_CHIP_MSG), 400
+    pj = request.get_json(silent=True)
+    if not isinstance(pj, dict):
+        return jsonify(ok=False, error="A JSON body is required"), 400
+    main = _normalize_dot_path(str(pj.get("path") or "").strip())
+    raw = pj.get("paths")
+    paths = (list(dict.fromkeys(
+        _normalize_dot_path(p.strip()) for p in raw if isinstance(p, str) and p.strip()))
+        if isinstance(raw, list) else [])
+    if not main or main not in paths or len(paths) < 2:
+        return jsonify(ok=False, error=(
+            "A Delete together names the refused path and what must go with "
+            "it (two or more paths).")), 400
+    outsiders, holds_pulse = _delete_together_check(modifier.store, main, paths)
+    if outsiders:
+        return jsonify(ok=False, error=(
+            "Not part of a pulse's Delete together: " + ", ".join(outsiders[:5])
+            + (f" and {len(outsiders) - 5} more" if len(outsiders) > 5 else "")
+            + " -- only pulses, a lab gate and its fields go together here.")), 400
+    if not holds_pulse:
+        return jsonify(ok=False, error=(
+            "Nothing in this set is a pulse -- delete it where it lives "
+            "(Live edit - Json Tree view).")), 400
+    payload = {"updates": [{"dot_path": p, "delete": True} for p in paths],
+               "group": pj.get("group") or "new",
+               "expect_chip": pj.get("expect_chip") or "",
+               "force_chip": pj.get("force_chip")}
+    return _field_edit_batch_impl(payload, pulse_door=True)
+
+
+@bp.route("/api/pulse/delete-together/offer")
+def api_pulse_delete_together_offer():
+    """The offer for ``path`` (the Json Tree's refused delete, opened here
+    through its link): the same lab check, asked without writing anything,
+    rendered as the Pulses page's own offer. 200 with markup for
+    ``#pulse-delete-result``."""
+    store = _store()
+    if not store:
+        return render_template("_status.html", message="No state loaded",
+                               level="warning")
+    main = _normalize_dot_path(request.args.get("path", "").strip())
+    pulse = _normalize_dot_path(request.args.get("pulse", "").strip())
+    if not main:
+        return render_template("_status.html", message="path required",
+                               level="error"), 400
+    with store._lock:
+        present = _path_present(store.merged, main)
+    if not present:
+        return render_template(
+            "_status.html", level="info",
+            message=f"{main} is not on this chip any more -- nothing to delete.")
+    if "." not in main:
+        return render_template(
+            "_status.html", level="warning",
+            message="Top-level containers are not deleted here."), 400
+    from flask import g
+    info = g.lab_info = {"notes": []}
+    lab = _lab_write_refusal(store, [(main, _LAB_DELETE)], info=info)
+    if not lab:
+        return render_template(
+            "_status.html", level="info",
+            message=(f"{main} can be deleted on its own now -- nothing else "
+                     "has to go with it."))
+    subject = None if main == pulse else "the path you deleted in the Json Tree"
+    return _pulse_delete_refused_html(store, main, lab[0], info, subject=subject)
+
+
+def _pulse_tab_of(row: dict) -> str:
+    """The Pulses page's channel tab a row lives under ("" = none)."""
+    from quam_state_manager.core.pulse_index import GATE_SLOTS, PAIR_PULSE_CHANNELS
+    if row.get("found"):
+        return "found"
+    kind, chan = row.get("owner_kind"), row.get("channel")
+    if kind == "pair" and chan in GATE_SLOTS:
+        return "flux"
+    if kind == "pair" and chan in PAIR_PULSE_CHANNELS:
+        return "pair_drive"
+    if kind == "qubit" and chan in ("xy", "z", "resonator", "xy_detuned"):
+        return chan
+    return ""
+
+
+def _pulses_url_for(pulse_index, path: str, together: str = "") -> str:
+    """The Pulses page address for a Json Tree path: a pulse (or a field
+    inside one) opens that pulse, beside its owner's rows; an ``operations``
+    dict (or anything else holding pulses) shows its owner's rows on its
+    channel tab. ``together`` (a refused delete's path) opens the pulse's
+    delete step on the same offer."""
+    row = pulse_index.row(path) if path else None
+    if row is None and path:
+        segs = path.split(".")
+        for n in range(len(segs) - 1, 1, -1):
+            row = pulse_index.row(".".join(segs[:n]))
+            if row is not None:
+                break
+    params: list = []
+    if row is not None:
+        params = [("owner", row.get("owner")), ("channel", _pulse_tab_of(row)),
+                  ("pulse", row["path"])]
+        if together:
+            params.append(("together", together))
+    elif path:
+        prefix = path + "."
+        inside = [r for r in pulse_index.rows() if r["path"].startswith(prefix)]
+        if inside:
+            params.append(("owner", inside[0].get("owner")))
+            tabs = {_pulse_tab_of(r) for r in inside}
+            if len(tabs) == 1:
+                params.append(("channel", tabs.pop()))
+        else:
+            segs = path.split(".")
+            if len(segs) >= 2 and segs[0] in ("qubits", "qubit_pairs"):
+                params.append(("owner", segs[1]))
+                if segs[0] == "qubits" and len(segs) >= 3 and segs[2] in (
+                        "xy", "z", "resonator", "xy_detuned"):
+                    params.append(("channel", segs[2]))
+    params = [(k, v) for k, v in params if v]
+    return "/pulses" + ("?" + urlencode(params) if params else "")
+
+
+@bp.route("/pulses/goto")
+def pulses_goto():
+    """The Json Tree's "Pulses page" link (w9/pulsegate): resolves a tree path
+    to the Pulses page address on the SERVER (one rule, the page's own index).
+    ``json=1`` (the tree's click) answers ``{"url": ...}`` and the page
+    navigates its table pane there the app's own way; a plain GET (a new
+    tab) is redirected. Never ``HX-Location``: htmx would first snapshot the
+    whole tree into its history cache (over the storage quota on a large
+    chip)."""
+    store = _store()
+    pulse_index = _pulse_index()
+    path = _normalize_dot_path(request.args.get("path", "").strip())
+    together = _normalize_dot_path(request.args.get("together", "").strip())
+    url = "/pulses"
+    if store and pulse_index and path:
+        try:
+            url = _pulses_url_for(pulse_index, path, together)
+        except Exception:  # noqa: BLE001 -- the page itself is still the way
+            logger.warning("pulses/goto %s failed", path, exc_info=True)
+    if request.args.get("json") == "1":
+        return jsonify(ok=True, url=url)
+    return redirect(url)
 
 
 @bp.route("/api/pulse/duplicate", methods=["POST"])

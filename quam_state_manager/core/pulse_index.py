@@ -965,6 +965,16 @@ class PulseIndex:
         """Is *path* a pulse row right now? (w7/pulsecreate)"""
         return self.row(path) is not None
 
+    def paths_if_warm(self) -> list[str] | None:
+        """Every row path when the rows are current WITHOUT a whole-chip walk
+        (fresh, or only value writes since); None when only a cold rebuild
+        could say. Never builds (w9/pulsegate: the Json Tree's page render
+        must not wait on a cold index -- the write doors still check)."""
+        with self.store._lock:
+            if self._warm():
+                return list(self._pos)
+        return None
+
     def known_paths(self):
         """Every pulse op path, as an O(1) membership container."""
         self._ensure()

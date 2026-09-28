@@ -1,0 +1,10 @@
+{# w9/pulsegate: where a flux CZ gate (with its pulses) is built instead #}
+<p class="muted add-gate-pulses-why">A flux CZ gate brings its flux pulses with it, and
+    pulses are added on the Pulses page: <strong>+ New pulse &rarr; &ldquo;Gaussian CZ
+    from cz_flattop&rdquo;</strong> builds the gate with its channel operations &mdash;
+    or use your lab's gate script.
+    <a class="add-gate-pulses-link"
+       href="/pulses?owner={{ pair_name | urlencode }}&amp;channel=flux"
+       hx-get="/pulses?owner={{ pair_name | urlencode }}&amp;channel=flux"
+       hx-target="#table-pane" hx-sync="#table-pane:replace" hx-push-url="true">Open the
+        Pulses page for {{ pair_name }}</a></p>

@@ -913,9 +913,11 @@ window.PulsesPage = (function () {
        paths can only go WITH it -- the by-name mirror ops, the gate field
        that plays it by name, or the gate that cannot exist without it (the
        refusal lists exactly them; routes._lab_delete_also). One press
-       deletes that set in ONE /field/edit-batch: the door the Json Tree's
-       offer uses, the same lab check asked again as a whole (refused if the
-       batch still breaks the chip), one Ctrl+Z restores all. */
+       deletes that set in ONE batch, the same lab check asked again as a
+       whole (refused if the batch still breaks the chip), one Ctrl+Z
+       restores all. w9/pulsegate: through /api/pulse/delete-together, the
+       Pulses page's own door -- /field/edit-batch refuses pulse deletes. The
+       Json Tree's refusal links here (together=) instead of deleting. */
     function _toastHtml(text, level, reopen) {
         var d = document.createElement('div');
         d.className = 'toast toast-' + level;
@@ -957,10 +959,9 @@ window.PulsesPage = (function () {
         };
         btn.disabled = true;
         say('Checking the whole batch with your lab code…', 'busy');
-        var p = fetch('/field/edit-batch', {
+        var p = fetch('/api/pulse/delete-together', {
             method: 'POST', headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-                updates: paths.map(function (x) { return { dot_path: x, 'delete': true }; }),
+            body: JSON.stringify({ path: main, paths: paths,
                 group: 'new', expect_chip: String(window.__chipToken || '') })
         });
         var chain = p.then(function (r) {
@@ -1001,9 +1002,17 @@ window.PulsesPage = (function () {
                 return;
             }
             var n = paths.length - 1;
-            var name = String(main).split('.').pop();
+            // the Json Tree's offer (together=) names a path that is not
+            // the open pulse: the pulse is what Ctrl+Z re-opens
+            var shownPulse = (myRoot && myRoot.getAttribute('data-pulse-path')) || main;
+            var goes = paths.some(function (x) {
+                return shownPulse === x || String(shownPulse).indexOf(x + '.') === 0;
+            });
+            var reopen = goes ? shownPulse : main;
+            var name = String(reopen).split('.').pop();
             var pane = document.getElementById('inspector-pane');
-            var others = paths.slice(1, 5).join(', ') + (n > 4 ? ' and ' + (n - 4) + ' more' : '');
+            var rest = paths.filter(function (x) { return x !== reopen; });
+            var others = rest.slice(0, 4).join(', ') + (n > 4 ? ' and ' + (n - 4) + ' more' : '');
             // the pane still shows the pulse that is gone: it says what went
             // (the ordinary delete's "Deleted <name>" toast, so Ctrl+Z
             // re-opens the pulse -- app.js cellsReverted -- even when it went
@@ -1015,7 +1024,7 @@ window.PulsesPage = (function () {
                 pane.innerHTML = '';
                 pane.appendChild(_toastHtml('Deleted ' + name + ' together with ' + n
                     + (n === 1 ? ' other path (' : ' other paths (') + others
-                    + ') — one Ctrl+Z restores all', 'success', main));
+                    + ') — one Ctrl+Z restores all', 'success', reopen));
                 if (j.warning) pane.appendChild(_toastHtml(String(j.warning), 'warning'));
                 shown = true;
             }

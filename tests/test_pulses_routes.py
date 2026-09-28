@@ -1496,8 +1496,12 @@ class TestCzGateFirst:
         assert "cz_snz" not in html               # no roster -> legacy list
         pc.apply_env_overlay(modern_roster)
         html = pairs_client.get("/pair/q1-q2/gate/new").data.decode()
-        assert 'value="cz_snz"' in html and 'value="cz_bipolar"' in html
+        # w9/pulsegate: a verified flux variant still writes its flux pulses
+        # into the gate -- new pulses, built on the Pulses page; the form
+        # says where instead of offering any flux gate
+        assert 'value="cz_snz"' not in html and 'value="cz_bipolar"' not in html
         assert 'value="cz_flattop_erf"' not in html
+        assert "Gaussian CZ" in html
 
     def test_a_new_gate_is_refused_and_nothing_is_written(self, pairs_client,
                                                           modern_roster):

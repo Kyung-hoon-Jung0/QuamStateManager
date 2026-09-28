@@ -5676,6 +5676,17 @@ input.tree-edit-input {
 .tree-row:hover .tree-act-btn { opacity: 0.7; }
 .tree-act-btn:hover { opacity: 1 !important; color: var(--pico-color); }
 .tree-act-del:hover { color: var(--color-error-text) !important; }
+/* w9/pulsegate: on a pulse or an operations dict the ＋/✕ give way to where
+   pulses are added, removed and renamed -- hover-revealed like the icons. */
+.tree-pulse-gate {
+    font-size: 0.8em; color: var(--pico-muted-color); white-space: nowrap;
+    opacity: 0; transition: opacity 0.12s;
+}
+.tree-row:hover .tree-pulse-gate, .tree-row:focus .tree-pulse-gate { opacity: 1; }
+/* one line: a link split over two lines in the narrow error chip has a gap
+   in its box -- a click there landed on the chip (which closes) */
+.tree-pulses-link { color: var(--pico-primary); text-decoration: underline; cursor: pointer;
+                    white-space: nowrap; }
 /* jsontree-r2-31: the hover tools are controls, not content — keep their
    glyphs (⧉ ⚙ ✕ ✎ ?) out of a drag selection and out of Ctrl+C. */
 .tree-row-actions, .tree-json-edit-btn, .key-help-btn.tree-help { -webkit-user-select: none; user-select: none; }

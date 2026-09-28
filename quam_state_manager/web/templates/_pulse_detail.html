@@ -133,7 +133,10 @@
 </div>
 {% endif %}
 
-<div class="pulse-delete-confirm" hidden>
+{# w9/pulsegate: the Json Tree's "Delete together" link opens here with
+   together=<the path it refused> -- the delete step open, the same offer
+   loaded into #pulse-delete-result (asked of the lab again, nothing written) #}
+<div class="pulse-delete-confirm"{% if not open_together %} hidden{% endif %}>
     {% if alias_chain %}
     <p>This deletes the alias <code>{{ op_name }}</code> only — the target
         <code>{{ actual_path.rsplit('.', 1)[-1] }}</code> stays.</p>
@@ -165,7 +168,10 @@
     </form>
     {# a lab refusal of this delete lands here (HX-Retarget), with the
        "Delete together with ..." offer when something must go with it #}
-    <div id="pulse-delete-result" class="pulse-delete-result"></div>
+    <div id="pulse-delete-result" class="pulse-delete-result">{% if open_together %}<p class="muted pulse-together-loading"
+        hx-get="/api/pulse/delete-together/offer?path={{ open_together | urlencode }}&amp;pulse={{ path | urlencode }}"
+        hx-trigger="load" hx-swap="outerHTML">Asking your lab code what has to go together with
+        <code>{{ open_together }}</code>&hellip;</p>{% endif %}</div>
 </div>
 
 <div class="pulse-plot-bar">
