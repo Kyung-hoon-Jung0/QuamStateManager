@@ -17,6 +17,7 @@
 // Drives the REAL grid-virt.js + bulk-edit.js + pair-edit.js under jsdom.
 // Run: node tests/liveedit_big_grid_selfcheck.cjs   (driven by tests/test_liveedit_big_grid.py)
 'use strict';
+require('./_sm_root_boot.cjs').install();
 
 const fs = require('fs');
 const path = require('path');

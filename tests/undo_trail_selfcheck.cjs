@@ -9,6 +9,7 @@
  *   5. the trail is bounded (8 steps)
  * Run: node tests/undo_trail_selfcheck.cjs   (driven by tests/test_undo_trail.py)
  */
+require('./_sm_root_boot.cjs').install();
 const fs = require('fs');
 const path = require('path');
 const { JSDOM } = require('jsdom');

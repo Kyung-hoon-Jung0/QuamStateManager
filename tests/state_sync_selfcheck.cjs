@@ -14,6 +14,8 @@
  *
  * Run: node tests/state_sync_selfcheck.cjs  (driven by tests/test_state_roundtrip.py).
  */
+require('./_sm_root_boot.cjs').install();
+const PREFIX = process.env.SM_TEST_URL_PREFIX || '';   // docs/226: expected addresses live under this mode's URL prefix
 const fs = require('fs');
 const path = require('path');
 const { JSDOM } = require('jsdom');
@@ -449,7 +451,7 @@ window.eval(fs.readFileSync(path.join(STATIC, 'app.js'), 'utf8'));
     const realClose = window.closeInspector;
     window.closeInspector = function () { inspectorClosed++; };
     window.document.dispatchEvent(new window.CustomEvent('stateRestored', { bubbles: true }));
-    ok(ajaxCalls.some(function (c) { return c.method === 'GET' && c.url.indexOf('/bulk') === 0; }),
+    ok(ajaxCalls.some(function (c) { return c.method === 'GET' && c.url.indexOf(PREFIX + '/bulk') === 0; }),
        'stateRestored soft-refreshes the /bulk surface');
     ok(inspectorClosed === 1, 'stateRestored closes a non-dataset inspector');
 

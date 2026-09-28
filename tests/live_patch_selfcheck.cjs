@@ -11,6 +11,8 @@
  *      structural → wholesale refresh (re-GET issued) with the scroll carried
  * Run: node tests/live_patch_selfcheck.cjs   (driven by tests/test_live_patch.py)
  */
+require('./_sm_root_boot.cjs').install();
+const PREFIX = process.env.SM_TEST_URL_PREFIX || '';   // docs/226: expected addresses live under this mode's URL prefix
 const fs = require('fs');
 const path = require('path');
 const { JSDOM } = require('jsdom');
@@ -211,7 +213,7 @@ ok(ajax.length === 1 && closed === 1, 'a bare stateRestored (unbracketed route) 
                         value: '#/ports/mw_outputs/con1/3/4' }];
         ajax.length = 0;
         ok(window._patchOrRefreshLiveSurface({ changes: pull, structural: false }) === 'refreshed'
-           && ajax.length === 1 && ajax[0] === '/instrument',
+           && ajax.length === 1 && ajax[0] === PREFIX + '/instrument',
            'r2-10: a marked pane takes the wholesale re-GET on a non-structural pull (got '
            + JSON.stringify(ajax) + ')');
         ajax.length = 0;
@@ -226,7 +228,7 @@ ok(ajax.length === 1 && closed === 1, 'a bare stateRestored (unbracketed route) 
             + ' value="#/ports/mw_outputs/con1/3/3">';
         d.body.appendChild(insp);
         d.dispatchEvent(new window.CustomEvent('stateRestored', { detail: { structural: false, changes: pull } }));
-        ok(ajax.length === 1 && ajax[0] === '/instrument',
+        ok(ajax.length === 1 && ajax[0] === PREFIX + '/instrument',
            'r2-10: an auto-sync pull (stateRestored patch detail) re-GETs a marked pane too (got '
            + JSON.stringify(ajax) + ')');
         ok(closed === 0, 'r2-10 (review): that pull keeps the inspector open (closeInspector calls: '
@@ -248,7 +250,7 @@ ok(ajax.length === 1 && closed === 1, 'a bare stateRestored (unbracketed route) 
         tp.innerHTML = panelHtml(true);
         ajax.length = 0; closed = 0;
         d.dispatchEvent(new window.CustomEvent('stateRestored', { detail: { structural: false, changes: pull } }));
-        ok(ajax.length === 1 && ajax[0] === '/instrument', 'r2-10 (review): fixture -- the marked pane is re-GET');
+        ok(ajax.length === 1 && ajax[0] === PREFIX + '/instrument', 'r2-10 (review): fixture -- the marked pane is re-GET');
         tp.innerHTML = panelHtml(false);                       // what the re-GET swaps in
         window._rawWiring = { wiring: { qubits: { q3: { xy: { opx_output: '#/ports/mw_outputs/con1/3/4' } } } } };
         tp.dispatchEvent(new window.CustomEvent('htmx:afterSettle', { bubbles: true, detail: { target: tp } }));

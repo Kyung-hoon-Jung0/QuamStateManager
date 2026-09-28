@@ -8,6 +8,7 @@
  *
  * Run:  node tests/generate_build_unplayable_selfcheck.cjs
  */
+require('./_sm_root_boot.cjs').install();
 const fs = require('fs');
 const path = require('path');
 

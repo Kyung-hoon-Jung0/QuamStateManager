@@ -14,6 +14,7 @@
  *
  * Run: node tests/cellbtn_selfcheck.cjs   (driven by tests/test_tab_focus.py).
  */
+require('./_sm_root_boot.cjs').install();
 const fs = require('fs');
 const path = require('path');
 const { JSDOM } = require('jsdom');

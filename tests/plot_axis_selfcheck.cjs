@@ -18,6 +18,7 @@
  * pins that they APPLY what they are given, because a review round found the
  * previous version only grepped for the call.
  */
+require('./_sm_root_boot.cjs').install();
 const fs = require('fs');
 const path = require('path');
 const { JSDOM } = require('jsdom');

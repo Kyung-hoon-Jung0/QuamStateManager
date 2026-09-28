@@ -15,6 +15,7 @@
  * Sloppy mode on purpose, like the other app.js harnesses: a getter-only
  * global (navigator, window.localStorage) just keeps its own value.
  */
+require('./_sm_root_boot.cjs').install();
 const fs = require('fs');
 const path = require('path');
 let JSDOM;

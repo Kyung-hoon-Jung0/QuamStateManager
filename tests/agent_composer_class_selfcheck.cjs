@@ -6,6 +6,7 @@
  * Back (historyRestore), float show / hide via toggleFloat, and a hide done by
  * anyone else directly on the popover's class (the attribute observer).
  * Run: node tests/agent_composer_class_selfcheck.cjs */
+require('./_sm_root_boot.cjs').install();
 const fs = require('fs');
 const path = require('path');
 const vm = require('vm');

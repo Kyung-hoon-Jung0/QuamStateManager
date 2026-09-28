@@ -9,6 +9,7 @@
  *
  * Run: node tests/topbar_hold_selfcheck.cjs   (driven by tests/test_topbar_twerk.py).
  */
+require('./_sm_root_boot.cjs').install();
 const fs = require('fs');
 const path = require('path');
 const { JSDOM } = require('jsdom');

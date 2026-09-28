@@ -18,6 +18,7 @@
  *      (driven by tests/test_ds_state_pinned.py)
  */
 'use strict';
+require('./_sm_root_boot.cjs').install();
 const fs = require('fs');
 const path = require('path');
 let JSDOM;

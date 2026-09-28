@@ -13,6 +13,7 @@
  * jsdom realm's bare globals -- everything the code under test reads is
  * installed on `w` (the window), and the file is eval'd IN that realm.
  */
+require('./_sm_root_boot.cjs').install();
 const fs = require('fs');
 const path = require('path');
 const { JSDOM } = require('jsdom');

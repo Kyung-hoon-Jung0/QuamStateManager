@@ -17,6 +17,7 @@
  * (AND surfaces), or a superset that contains every old match (the tree,
  * whose whole-substring matcher was the reported defect).
  */
+require('./_sm_root_boot.cjs').install();
 const fs = require('fs');
 const path = require('path');
 let JSDOM;

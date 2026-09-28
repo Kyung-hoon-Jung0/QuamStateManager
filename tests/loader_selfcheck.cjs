@@ -11,6 +11,7 @@
  *     while the main thread is blocked) + the please-wait line
  * Run: node tests/loader_selfcheck.cjs   (needs jsdom)
  */
+require('./_sm_root_boot.cjs').install();
 const fs = require('fs');
 const path = require('path');
 const { JSDOM } = require('jsdom');

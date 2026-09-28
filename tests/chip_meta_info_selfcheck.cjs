@@ -40,6 +40,8 @@
  * Run: node tests/chip_meta_info_selfcheck.cjs  (driven by tests/test_chip_metric_meta.py)
  */
 'use strict';
+require('./_sm_root_boot.cjs').install();
+const PREFIX = process.env.SM_TEST_URL_PREFIX || '';   // docs/226: expected addresses live under this mode's URL prefix
 
 const fs = require('fs');
 const path = require('path');
@@ -352,7 +354,7 @@ const metaFetches = (win) => win._fetches.filter(function (u) { return /metric-m
     win.history.replaceState({ htmx: true, mark: c[0] }, '', '/topology?view=overview');
     if (c[0] === 'click') tile(c[1]).dispatchEvent(new win.MouseEvent('click', { bubbles: true }));
     else tile(c[1]).dispatchEvent(new win.KeyboardEvent('keydown', { key: c[0], bubbles: true, cancelable: true }));
-    ok(here() === '/topology?view=' + c[2] && win.history.state && win.history.state.htmx === true
+    ok(here() === PREFIX + '/topology?view=' + c[2] && win.history.state && win.history.state.htmx === true
          && win.history.state.mark === c[0],
        'Q2 (' + JSON.stringify(c[0]) + '): a tile jump writes its tab into the URL, history.state kept -- '
          + here() + ' ' + JSON.stringify(win.history.state));

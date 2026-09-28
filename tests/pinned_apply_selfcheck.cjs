@@ -11,6 +11,7 @@
  * Run: node tests/pinned_apply_selfcheck.cjs  (driven by tests/test_pinned_apply.py)
  */
 'use strict';
+require('./_sm_root_boot.cjs').install();
 const fs = require('fs');
 const path = require('path');
 let JSDOM;

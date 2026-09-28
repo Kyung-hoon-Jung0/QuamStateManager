@@ -9,6 +9,7 @@
  *
  * Run: node tests/interactive_theme_selfcheck.cjs (driven by tests/test_interactive_theme.py).
  */
+require('./_sm_root_boot.cjs').install();
 const fs = require('fs');
 const path = require('path');
 const { JSDOM } = require('jsdom');

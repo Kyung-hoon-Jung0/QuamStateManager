@@ -13,6 +13,7 @@
  * Run: node tests/type_fix_tree_refresh_selfcheck.cjs
  *      (driven by tests/test_type_autofix.py::test_type_fix_tree_refresh_selfcheck)
  */
+require('./_sm_root_boot.cjs').install();
 const fs = require('fs');
 const path = require('path');
 let JSDOM;

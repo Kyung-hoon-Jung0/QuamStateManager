@@ -15,6 +15,7 @@
  *
  * Run: node tests/wiring_portlabel_selfcheck.cjs  (driven by tests/test_gen_ux_selfchecks.py).
  */
+require('./_sm_root_boot.cjs').install();
 const fs = require('fs');
 const path = require('path');
 let JSDOM;

@@ -25,6 +25,7 @@
  * Run: node tests/trends_view_selfcheck.cjs (driven by tests/test_trends_view.py).
  */
 'use strict';
+require('./_sm_root_boot.cjs').install();
 try { require('jsdom'); } catch (e) { console.error('jsdom not installed'); process.exit(2); }
 const H = require('./trends_view_harness.cjs');
 

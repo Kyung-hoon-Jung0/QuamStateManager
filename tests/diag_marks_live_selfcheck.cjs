@@ -16,6 +16,7 @@
 //
 // Run: node tests/diag_marks_live_selfcheck.cjs   (needs jsdom; exit 2 = skip)
 'use strict';
+require('./_sm_root_boot.cjs').install();
 
 const fs = require('fs');
 const path = require('path');

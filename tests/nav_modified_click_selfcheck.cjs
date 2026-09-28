@@ -21,6 +21,7 @@
  * Mutation: delete the listener and N2/N3 go red (the control N1 stays green).
  */
 'use strict';
+require('./_sm_root_boot.cjs').install();
 
 const fs = require('fs');
 const path = require('path');

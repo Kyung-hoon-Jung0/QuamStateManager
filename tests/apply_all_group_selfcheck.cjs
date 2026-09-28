@@ -14,6 +14,7 @@
 //
 // Run: node tests/apply_all_group_selfcheck.cjs   (driven by test_apply_all_group.py)
 'use strict';
+require('./_sm_root_boot.cjs').install();
 
 const fs = require('fs');
 const path = require('path');

@@ -7,6 +7,7 @@
  *  - an HX-Trigger {"sm:toast": …} reaches showToast
  * Run: node tests/sidebar_compare_selfcheck.cjs   (driven by tests/test_sidebar_compare.py)
  */
+require('./_sm_root_boot.cjs').install();
 const fs = require('fs');
 const path = require('path');
 const { JSDOM } = require('jsdom');

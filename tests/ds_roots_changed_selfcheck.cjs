@@ -9,6 +9,7 @@
  *      (driven by tests/test_workspace_remove_datasets.py)
  */
 'use strict';
+require('./_sm_root_boot.cjs').install();
 
 const fs = require('fs');
 const path = require('path');

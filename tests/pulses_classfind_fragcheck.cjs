@@ -25,6 +25,7 @@
  * Run: node tests/pulses_classfind_fragcheck.cjs <fixture.json>
  */
 'use strict';
+require('./_sm_root_boot.cjs').install();
 const fs = require('fs');
 const path = require('path');
 let JSDOM;

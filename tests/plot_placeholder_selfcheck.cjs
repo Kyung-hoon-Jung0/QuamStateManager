@@ -14,6 +14,7 @@
  * where the clearing belongs -- and only on the newPlot branch, which is by
  * definition the branch where the div holds no plot yet.
  */
+require('./_sm_root_boot.cjs').install();
 const fs = require('fs');
 const path = require('path');
 const { JSDOM } = require('jsdom');

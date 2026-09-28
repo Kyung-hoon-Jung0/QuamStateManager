@@ -15,6 +15,7 @@
  *  4. probe: the CLI's own words on failure, provider/model on success
  * Run: node tests/autofit_ai_selfcheck.cjs   (needs jsdom)
  */
+require('./_sm_root_boot.cjs').install();
 const fs = require('fs');
 const path = require('path');
 const vm = require('vm');

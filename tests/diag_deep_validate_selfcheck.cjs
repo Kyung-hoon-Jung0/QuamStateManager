@@ -13,6 +13,8 @@
  * Run: node tests/diag_deep_validate_selfcheck.cjs
  *      (driven by tests/test_diag_deep_validate.py)
  */
+require('./_sm_root_boot.cjs').install();
+const PREFIX = process.env.SM_TEST_URL_PREFIX || '';   // docs/226: expected addresses live under this mode's URL prefix
 const fs = require('fs');
 const path = require('path');
 let JSDOM;
@@ -24,7 +26,8 @@ const TPL = fs.readFileSync(path.join(ROOT, 'quam_state_manager', 'web', 'templa
 let fails = 0;
 function ok(c, m) { if (!c) { console.error('FAIL: ' + m); fails++; } else { console.log('ok - ' + m); } }
 
-const btn = TPL.match(/<button[^>]*hx-post="\/config\/regenerate"[^>]*>/);
+// the template's hx-post is rooted by B's rewrite (`{{ root }}/config/regenerate`)
+const btn = TPL.match(new RegExp('<button[^>]*hx-post="' + PREFIX.replace(/[.]/g, '\\.') + '/config/regenerate"[^>]*>'));
 ok(!!btn, 'the Validate deeply button posts /config/regenerate');
 const tgt = btn && btn[0].match(/hx-target="#([\w-]+)"/);
 ok(!!tgt, 'the button names an hx-target');

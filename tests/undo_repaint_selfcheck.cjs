@@ -14,6 +14,7 @@
  * Run: node tests/undo_repaint_selfcheck.cjs
  */
 'use strict';
+require('./_sm_root_boot.cjs').install();
 const fs = require('fs');
 const path = require('path');
 let JSDOM;

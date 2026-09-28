@@ -13,6 +13,7 @@
  * Run: node tests/exp_list_compact_selfcheck.cjs  (driven by tests/test_exp_list_compact.py)
  */
 'use strict';
+require('./_sm_root_boot.cjs').install();
 const fs = require('fs');
 const path = require('path');
 let JSDOM;

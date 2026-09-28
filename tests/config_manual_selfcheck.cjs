@@ -10,6 +10,7 @@
  *      Escape closes; F1 on a state cell opens the node view for its path
  * Run: node tests/config_manual_selfcheck.cjs   (driven by tests/test_config_manual.py)
  */
+require('./_sm_root_boot.cjs').install();
 const fs = require('fs');
 const path = require('path');
 const { JSDOM } = require('jsdom');

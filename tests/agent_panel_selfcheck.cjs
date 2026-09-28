@@ -4,6 +4,7 @@
  * doors; a "/run ..." line POSTs a plan, other text starts or continues the session; approve
  * sends the EDITED rows; the beforeunload guard fires only mid-turn; the float mount is compact.
  * Run: node tests/agent_panel_selfcheck.cjs */
+require('./_sm_root_boot.cjs').install();
 const fs = require('fs');
 const path = require('path');
 const vm = require('vm');

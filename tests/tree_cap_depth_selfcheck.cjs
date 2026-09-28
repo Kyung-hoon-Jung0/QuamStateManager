@@ -14,6 +14,7 @@
  * result set (every 4b pin's fixture) orders exactly as before.
  * Run: node tests/tree_cap_depth_selfcheck.cjs   (needs jsdom)
  */
+require('./_sm_root_boot.cjs').install();
 const fs = require('fs');
 const path = require('path');
 const { JSDOM } = require('jsdom');

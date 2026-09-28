@@ -20,6 +20,7 @@
 //
 // Run: node tests/generate_setall_undo_selfcheck.cjs   (driven by test_generate_setall_undo.py)
 'use strict';
+require('./_sm_root_boot.cjs').install();
 
 const fs = require('fs');
 const path = require('path');

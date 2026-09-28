@@ -13,6 +13,7 @@
  *
  * Run:  node tests/generate_regen_fsp_selfcheck.cjs   (driven by test_generate_regen_fsp.py)
  */
+require('./_sm_root_boot.cjs').install();
 const fs = require('fs');
 const path = require('path');
 

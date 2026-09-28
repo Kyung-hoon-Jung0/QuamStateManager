@@ -9,6 +9,7 @@
  *
  * Usage:  node tests/value_delta_parity.cjs <cases.json>   -> JSON on stdout
  */
+require('./_sm_root_boot.cjs').install();
 const fs = require('fs');
 const path = require('path');
 const { JSDOM } = require('jsdom');

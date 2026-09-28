@@ -17,6 +17,7 @@
  * tests/test_trends_data_click.py). Exit 0 ok, 1 fail, 2 no jsdom.
  */
 'use strict';
+require('./_sm_root_boot.cjs').install();
 try { require('jsdom'); } catch (e) { console.error('jsdom not installed'); process.exit(2); }
 const H = require('./trends_view_harness.cjs');
 

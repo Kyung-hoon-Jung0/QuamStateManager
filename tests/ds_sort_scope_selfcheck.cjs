@@ -8,6 +8,7 @@
  * Run: node tests/ds_sort_scope_selfcheck.cjs  (driven by tests/test_ds_sort_scope.py)
  */
 'use strict';
+require('./_sm_root_boot.cjs').install();
 
 const fs = require('fs');
 const path = require('path');

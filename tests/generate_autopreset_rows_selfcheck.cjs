@@ -19,6 +19,7 @@
  *
  * Run:  node tests/generate_autopreset_rows_selfcheck.cjs
  */
+require('./_sm_root_boot.cjs').install();
 const fs = require('fs');
 const path = require('path');
 

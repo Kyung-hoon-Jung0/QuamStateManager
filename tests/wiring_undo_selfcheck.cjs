@@ -12,6 +12,7 @@
  *
  * Run:  node tests/wiring_undo_selfcheck.cjs   (driven by test_generate_feedback_r4.py).
  */
+require('./_sm_root_boot.cjs').install();
 const fs = require('fs');
 const path = require('path');
 

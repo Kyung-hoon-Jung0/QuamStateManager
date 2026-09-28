@@ -17,6 +17,7 @@
 //
 // Run: node tests/bulk_dyncols_selfcheck.cjs   (needs jsdom)
 'use strict';
+require('./_sm_root_boot.cjs').install();
 
 const fs = require('fs');
 const path = require('path');

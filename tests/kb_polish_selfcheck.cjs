@@ -5,6 +5,7 @@
  *
  * Run: node tests/kb_polish_selfcheck.cjs  (driven by tests/test_kb_polish.py)
  */
+require('./_sm_root_boot.cjs').install();
 const fs = require('fs');
 const path = require('path');
 const { JSDOM } = require('jsdom');

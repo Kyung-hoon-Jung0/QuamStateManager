@@ -7,6 +7,7 @@
  * This harness does what htmx does -- body.innerHTML = snapshot, then
  * `htmx:historyRestore` -- against the REAL agent.js and agent-setup.js.
  * Run: node tests/agent_history_restore_selfcheck.cjs */
+require('./_sm_root_boot.cjs').install();
 const fs = require('fs');
 const path = require('path');
 const vm = require('vm');

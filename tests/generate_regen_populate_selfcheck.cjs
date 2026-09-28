@@ -18,6 +18,7 @@
  *
  * Run:  node tests/generate_regen_populate_selfcheck.cjs
  */
+require('./_sm_root_boot.cjs').install();
 const fs = require('fs');
 const path = require('path');
 

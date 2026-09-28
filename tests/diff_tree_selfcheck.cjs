@@ -17,6 +17,7 @@
  * Run: NODE_PATH=<node_modules> node tests/diff_tree_selfcheck.cjs
  * (driven by tests/test_diff_tree_client.py)
  */
+require('./_sm_root_boot.cjs').install();
 const fs = require('fs');
 const path = require('path');
 const { JSDOM } = require('jsdom');

@@ -20,6 +20,7 @@
  * Run: node tests/drift_banner_follow_selfcheck.cjs   (needs jsdom)
  */
 
+require('./_sm_root_boot.cjs').install();
 const fs = require('fs');
 const path = require('path');
 let JSDOM;

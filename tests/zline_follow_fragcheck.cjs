@@ -13,6 +13,7 @@
  * A *_fragcheck (not *_selfcheck): it needs the server-rendered fixture, so
  * npm run selfcheck does not run it; tests/test_wc_moved_follow.py does.
  * Run: node tests/zline_follow_fragcheck.cjs FIXTURE.json */
+require('./_sm_root_boot.cjs').install();
 const fs = require('fs');
 const path = require('path');
 const vm = require('vm');

@@ -19,6 +19,7 @@
  * Run: node tests/json_panel_height_selfcheck.cjs  (driven by tests/test_json_panel_height.py)
  */
 'use strict';
+require('./_sm_root_boot.cjs').install();
 const fs = require('fs');
 const path = require('path');
 let JSDOM, VirtualConsole;

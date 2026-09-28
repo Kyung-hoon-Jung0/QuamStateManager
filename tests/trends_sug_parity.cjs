@@ -11,6 +11,7 @@
 //   node tests/trends_sug_parity.cjs <input.json>   (needs jsdom; exit 2 without)
 // input.json: {"rows": [...], "server_html": "<the unmatched slot>"}
 'use strict';
+require('./_sm_root_boot.cjs').install();
 
 const fs = require('fs');
 const path = require('path');

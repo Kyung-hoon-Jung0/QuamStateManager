@@ -19,7 +19,8 @@ function ok(cond, msg) {
 }
 
 // ── minimal browser stubs ────────────────────────────────────────────
-const loc = { pathname: "/compare-hub", search: "" };
+const PREFIX = process.env.SM_TEST_URL_PREFIX || "";   // docs/226: the page lives under the prefix in /sm mode
+const loc = { pathname: PREFIX + "/compare-hub", search: "" };
 const historyLog = [];
 const history = {
     pushState(_s, _t, url) {
@@ -76,6 +77,16 @@ const localStorage = {
     removeItem(k) { delete localStorageStore[k]; },
 };
 const window = { location: loc, addEventListener() {} };
+// The page boots sm-root.js before compare-hub.js (docs/226 §5.2): the stub
+// window gets the members sm-root.js reads (<html data-root>, history) and is
+// booted; under SM_TEST_URL_PREFIX the stub location sits under the prefix too.
+document.documentElement = {
+    _a: {}, getAttribute(k) { return Object.prototype.hasOwnProperty.call(this._a, k) ? this._a[k] : null; },
+    setAttribute(k, v) { this._a[k] = String(v); },
+};
+window.document = document;
+window.history = history;
+require("./_sm_root_boot.cjs")(window);
 
 // eval the real file with our stubs in scope
 const SRC = fs.readFileSync(
@@ -107,7 +118,7 @@ function makeRow(srcIdx, ref, validIdx) {
     return { row, btn };
 }
 return_check: {
-    loc.pathname = "/compare-hub";
+    loc.pathname = PREFIX + "/compare-hub";
     loc.search = "?src=ws:/a&src=ws:/b&src=ws:/c&ref=0";
     const A = makeRow(0, "ws:/a", 0), B = makeRow(1, "ws:/b", 1);
     rootEl._rows = [A.row, B.row];
@@ -151,7 +162,7 @@ while (pendingAjax.length) pendingAjax.shift().resolve();
 // source.
 setref_check: {
     // (a) fresh: token still at its rendered src position → ref moves to it
-    loc.pathname = "/compare-hub";
+    loc.pathname = PREFIX + "/compare-hub";
     loc.search = "?src=ws:/a&src=ws:/b&ref=0";
     const A = makeRow(0, "ws:/a", 0), B = makeRow(1, "ws:/b", 1);
     rootEl._rows = [A.row, B.row];

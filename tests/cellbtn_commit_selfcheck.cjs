@@ -16,6 +16,7 @@
  * Run: node tests/cellbtn_commit_selfcheck.cjs   (driven by tests/test_tab_focus.py)
  */
 'use strict';
+require('./_sm_root_boot.cjs').install();
 const fs = require('fs');
 const path = require('path');
 let JSDOM;

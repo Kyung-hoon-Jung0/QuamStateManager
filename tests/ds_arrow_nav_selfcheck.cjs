@@ -9,6 +9,7 @@
  *
  * Run: node tests/ds_arrow_nav_selfcheck.cjs  (driven by tests/test_ds_flow.py)
  */
+require('./_sm_root_boot.cjs').install();
 const fs = require('fs');
 const path = require('path');
 let JSDOM;

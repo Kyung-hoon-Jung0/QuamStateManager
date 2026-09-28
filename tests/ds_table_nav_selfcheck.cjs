@@ -11,6 +11,7 @@
  * Run: node tests/ds_table_nav_selfcheck.cjs  (driven by tests/test_ds_table_nav.py)
  */
 'use strict';
+require('./_sm_root_boot.cjs').install();
 const fs = require('fs');
 const path = require('path');
 let JSDOM;

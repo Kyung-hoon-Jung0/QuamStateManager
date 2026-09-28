@@ -21,6 +21,7 @@
  * tests/test_ds_table_live.py). Exit 0 ok, 1 fail, 2 no jsdom.
  */
 'use strict';
+require('./_sm_root_boot.cjs').install();
 const fs = require('fs');
 const path = require('path');
 let JSDOM;

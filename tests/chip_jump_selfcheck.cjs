@@ -24,6 +24,8 @@
 //
 // Run: node tests/chip_jump_selfcheck.cjs   (needs jsdom)
 'use strict';
+require('./_sm_root_boot.cjs').install();
+const PREFIX = process.env.SM_TEST_URL_PREFIX || '';   // docs/226: expected addresses live under this mode's URL prefix
 
 const fs = require('fs');
 const path = require('path');
@@ -381,7 +383,7 @@ function world(topo, opts) {
     const win = T.win, doc = T.doc;
     const btn = doc.querySelector('.topo-subnav-btn[data-view="coherence"]');
     win.setChipStatusView('coherence', btn, true);
-    ok(win.location.pathname + win.location.search === '/topology?view=coherence',
+    ok(win.location.pathname + win.location.search === PREFIX + '/topology?view=coherence',
        'F-19 an in-page tab rewrites the URL, so F5 / a copied link lands there ('
        + win.location.search + ')');
     ok(win.history.state && win.history.state.htmx === true,
@@ -425,7 +427,7 @@ function world(topo, opts) {
     pane.dispatchEvent(new win.Event('scroll'));
     await sleep(320);
     const rec = win.history.state && win.history.state.smChipScroll;
-    ok(rec && rec.url === '/topology?view=coherence' && rec.view === 'coherence' && rec.d === 300 && rec.top === 5751,
+    ok(rec && rec.url === PREFIX + '/topology?view=coherence' && rec.view === 'coherence' && rec.d === 300 && rec.top === 5751,
        'F-20 a scroll is recorded ON the history entry: section + offset inside it (' + JSON.stringify(rec) + ')');
     ok(win.history.state.htmx === true, 'F-20 ...merged, so htmx\'s {htmx:true} marker survives');
     // a jump lands its target just UNDER the sticky bar (+67 px in real Chrome):
@@ -454,7 +456,7 @@ function world(topo, opts) {
     win.history.replaceState({ htmx: true }, '');
     T.doc.body.dispatchEvent(new win.CustomEvent('htmx:beforeHistoryUpdate', { detail: {} }));
     const rec3 = win.history.state && win.history.state.smChipScroll;
-    ok(win.history.state.htmx === true && rec3 && rec3.d === 449 && rec3.url === '/topology?view=coherence',
+    ok(win.history.state.htmx === true && rec3 && rec3.d === 449 && rec3.url === PREFIX + '/topology?view=coherence',
        'F-20 the record survives htmx\'s own history save of the outgoing page ('
        + JSON.stringify(win.history.state) + ')');
     await sleep(10);
@@ -466,7 +468,7 @@ function world(topo, opts) {
   {
     // the restore: Back into that entry re-renders the page, whose deep link
     // used to win and land on the section anchor
-    const rec = { url: '/topology?view=coherence', view: 'coherence', d: 300, top: 5751 };
+    const rec = { url: PREFIX + '/topology?view=coherence', view: 'coherence', d: 300, top: 5751 };
     let box;
     const T = world(CHAIN, { url: '/topology?view=coherence', chipView: 'coherence',
                              state: { smChipScroll: rec },
@@ -488,7 +490,7 @@ function world(topo, opts) {
     // htmx's own Back: its restore re-saves the page it leaves and REPLACES the
     // returned-to entry's state with a bare {htmx:true} before the page mounts
     // (measured in real Chrome). The popstate event still carried the record.
-    const rec = { url: '/topology?view=coherence', view: 'coherence', d: 300, top: 5751 };
+    const rec = { url: PREFIX + '/topology?view=coherence', view: 'coherence', d: 300, top: 5751 };
     let box;
     const T = world(CHAIN, { url: '/topology?view=coherence', chipView: 'coherence',
                              state: { htmx: true },
@@ -514,7 +516,7 @@ function world(topo, opts) {
     // clamped every offset past 40 px to the header -- d 233 and d 533 both
     // came back at the same place. The room is the run to the NEXT section.
     for (const d of [233, 533]) {
-      const rec = { url: '/topology?view=coherence', view: 'coherence', d: d, top: 5451 + 67 + d };
+      const rec = { url: PREFIX + '/topology?view=coherence', view: 'coherence', d: d, top: 5451 + 67 + d };
       let box;
       const T = world(CHAIN, { url: '/topology?view=coherence', chipView: 'coherence',
                                state: { smChipScroll: rec },
@@ -526,7 +528,7 @@ function world(topo, opts) {
     }
     // the LAST section runs to the end of the pane's content (stub: 20000)
     {
-      const rec = { url: '/topology?view=calibration', view: 'calibration', d: 400, top: 9000 };
+      const rec = { url: PREFIX + '/topology?view=calibration', view: 'calibration', d: 400, top: 9000 };
       let box;
       const T = world(CHAIN, { url: '/topology?view=calibration', chipView: 'calibration',
                                state: { smChipScroll: rec },
@@ -539,7 +541,7 @@ function world(topo, opts) {
   }
   {
     // a record for another URL is not this entry's: the deep link stands
-    const rec = { url: '/topology?view=overview', view: 'overview', d: 10, top: 10 };
+    const rec = { url: PREFIX + '/topology?view=overview', view: 'overview', d: 10, top: 10 };
     const T = world(CHAIN, { url: '/topology?view=coherence', chipView: 'coherence', state: { smChipScroll: rec } });
     await sleep(60);
     ok(T.scrolled.some((s) => s.behavior === 'smooth' && s.id === 'coherence'),
@@ -567,7 +569,7 @@ function world(topo, opts) {
   {
     // measured on the 5Q rig: record {trends, d 533}; at mount Trends is the
     // 51 px lazy placeholder 455 px down the pane, the 2Q panels right under it
-    const rec = { url: '/topology?view=trends', view: 'trends', d: 533, top: 2592 };
+    const rec = { url: PREFIX + '/topology?view=trends', view: 'trends', d: 533, top: 2592 };
     let box;
     const T = world(CHAIN, { url: '/topology?view=trends', chipView: 'trends', ro: true,
                              state: { htmx: true, smChipScroll: rec },
@@ -622,7 +624,7 @@ function world(topo, opts) {
     // a restore ABOVE Trends is not displaced, but it can be clamped by the
     // unbuilt page below it: it is re-landed on growth too (a plain jump there
     // is still left alone -- the F-06 control above)
-    const rec = { url: '/topology?view=topology', view: 'topology', d: 400, top: 900 };
+    const rec = { url: PREFIX + '/topology?view=topology', view: 'topology', d: 400, top: 900 };
     let box;
     const T = world(CHAIN, { url: '/topology?view=topology', chipView: 'topology', ro: true,
                              state: { smChipScroll: rec },

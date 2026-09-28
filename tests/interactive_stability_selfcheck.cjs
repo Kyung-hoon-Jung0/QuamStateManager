@@ -5,6 +5,7 @@
  * goes weird". Four independent mechanisms produced that, and each one is
  * pinned here because each one is invisible until it bites.
  */
+require('./_sm_root_boot.cjs').install();
 const fs = require('fs');
 const path = require('path');
 const { JSDOM } = require('jsdom');

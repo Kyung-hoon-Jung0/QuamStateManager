@@ -1,4 +1,5 @@
 /* docs/208: the Trends client half of the IRB fix, under jsdom. */
+require('./_sm_root_boot.cjs').install();
 const {JSDOM} = require('jsdom');
 const fs = require('fs');
 const assert = require('assert');

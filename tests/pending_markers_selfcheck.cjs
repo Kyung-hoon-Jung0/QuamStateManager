@@ -10,6 +10,7 @@
  *  4. the JS _swapPendingTray path and the OOB swap path both clear
  * Run: node tests/pending_markers_selfcheck.cjs   (needs jsdom)
  */
+require('./_sm_root_boot.cjs').install();
 const fs = require('fs');
 const path = require('path');
 const { JSDOM } = require('jsdom');
