@@ -178,6 +178,29 @@ def slow_rows(monkeypatch):
     return seen, entered
 
 
+def test_the_ticked_reverse_index_is_the_plain_one_in_the_same_order():
+    """The cold build's walk is loader._walk one subtree at a time: the same
+    referrers in the same order, the edge shapes included (an empty top key,
+    top-level lists and scalars, empty containers)."""
+    st = _store(5)
+    merged = json.loads(json.dumps(st.merged))
+    merged[""] = {"a": "#/qubits/q1/f_01", "b": [1, "#/qubits/q2/f_01"]}
+    merged["top_list"] = ["#/qubits/q3/f_01", {"x": "#/qubits/q4/f_01"}, []]
+    merged["top_scalar"] = "#/qubits/q5/f_01"
+    merged["empty"] = {}
+    ticks = {"n": 0}
+
+    def tick():
+        ticks["n"] += 1
+    plain = PI.build_reverse_pointer_index(merged)
+    ticked = PI.build_reverse_pointer_index(merged, tick)
+    assert ticks["n"] > 0
+    assert list(ticked.items()) == list(plain.items())
+    assert {"a", "b.1"} <= set(sum(plain.values(), []))
+    rows, ref = PI._list_pulses_with(merged, plain, tick=tick)
+    assert rows == PI.list_pulses(merged)
+
+
 def test_a_cold_pulse_index_build_hands_the_store_lock_to_another_request(slow_rows):
     seen, entered = slow_rows
     st = _store()
@@ -346,6 +369,29 @@ def test_an_edit_landing_while_the_bytes_are_written_stays_pending(tmp_path, mon
     assert st.change_log[0].old_value == old_q2 and st.state["qubits"]["q2"]["T1"] == 7.7e-05
     assert calls["n"] == 2, "the save rendered again instead of keeping the edit pending"
     assert not list((tmp_path / "chip").glob("*.tmp")), "a stale temp file was left"
+
+
+def test_the_snapshot_is_taken_before_the_backup_copies(tmp_path, monkeypatch):
+    """The snapshot is the moment the save stands for -- taken right after
+    the caller journaled the log. An edit that lands while the .bak copies
+    run is AFTER it: pending, not saved-and-cleared behind the journal's back."""
+    st = _folder_store(tmp_path / "chip")
+    real_b = SV.Saver._backup
+    calls = {"n": 0}
+
+    def backup(path, stamp):
+        calls["n"] += 1
+        if calls["n"] == 1:
+            Modifier(st).set_value("qubits.q3.T1", 6.6e-05)
+        return real_b(path, stamp)
+
+    monkeypatch.setattr(SV.Saver, "_backup", staticmethod(backup))
+    Modifier(st).set_value("qubits.q1.T1", 3.3e-05)
+    SV.Saver(st).save()
+    on_disk = _disk_state(tmp_path / "chip")
+    assert on_disk["qubits"]["q1"]["T1"] == 3.3e-05
+    assert on_disk["qubits"]["q3"]["T1"] != 6.6e-05
+    assert [e.dot_path for e in st.change_log] == ["qubits.q3.T1"]
 
 
 def test_an_undo_landing_while_the_bytes_are_written_is_never_written_back(tmp_path, monkeypatch):

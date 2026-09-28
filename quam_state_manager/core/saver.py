@@ -120,13 +120,14 @@ class Saver:
         (the LazySearchIndex pattern -- build from a consistent snapshot,
         install only if the store did not move):
 
+        * under the store lock, first: the content token, the change-log
+          entries this save stands for, and ``marshal.dumps`` of both
+          documents (~15-25 ms for the 19 MB big30x state -- the documents are
+          plain JSON data, which marshal copies exactly: key order, types,
+          float bits);
         * the ``.bak`` copies and the rotation run under this folder's save
           lock only -- they copy the files ON DISK, which only a save of this
           folder (serialised here) or a build-lock writer replaces;
-        * under the store lock: the content token, the change-log entries this
-          save stands for, and ``marshal.dumps`` of both documents (~15-25 ms
-          for the 19 MB big30x state -- the documents are plain JSON data,
-          which marshal copies exactly: key order, types, float bits);
         * with the lock free: the copy is rendered and written to the ``.tmp``
           files by the same ``_write_tmp_json`` as before -- the same bytes;
         * under the store lock again, the swap and the log clear, when
@@ -162,8 +163,12 @@ class Saver:
             return target
 
         with safe_io.path_lock(target / _SAVE_LOCK_NAME):
-            self._backup_and_rotate(state_path, wiring_path)
+            backed_up = False
             for _ in range(_SAVE_TRIES):
+                # the snapshot FIRST: it is the moment this save stands for,
+                # so an edit that lands during the .bak copies below stays
+                # pending instead of being saved (and its entry cleared) past
+                # a caller that journaled the log just before calling us
                 with store._lock:
                     token = self._token()
                     logged = list(store.change_log)
@@ -171,6 +176,9 @@ class Saver:
                         snap = marshal.dumps((store.state, store.wiring), _MARSHAL_V)
                     except (ValueError, TypeError):
                         break           # not plain JSON data: the single-hold save
+                if not backed_up:
+                    self._backup_and_rotate(state_path, wiring_path)
+                    backed_up = True
                 state_c, wiring_c = marshal.loads(snap)
                 del snap
                 s_tmp = safe_io._write_tmp_json(state_path, state_c)
@@ -195,6 +203,8 @@ class Saver:
                 # rendered: this snapshot no longer describes memory
                 _unlink(s_tmp)
                 _unlink(w_tmp)
+            if not backed_up:
+                self._backup_and_rotate(state_path, wiring_path)
             with store._lock:
                 self._write_locked(state_path, wiring_path)
             logger.info("Saved quam_state to %s", target)

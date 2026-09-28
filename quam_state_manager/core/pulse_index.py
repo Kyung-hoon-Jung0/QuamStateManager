@@ -857,7 +857,8 @@ class PulseIndex:
         own = getattr(store._lock, "_is_owned", None)
         if own is not None and own():
             return
-        activity.single_flight(store, "pulse_index", self._lookup, self._compute)
+        # per INDEX: a throwaway index on the same store is a different result
+        activity.single_flight(store, "pulse_index:%x" % id(self), self._lookup, self._compute)
 
     def _lookup(self):
         from quam_state_manager.core import activity
