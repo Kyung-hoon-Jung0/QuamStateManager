@@ -29,8 +29,11 @@ LONG_POLL_PATHS = frozenset({"/datasets/wait", "/datasets/poll", "/workspace/tre
                              # w7/agentsqa: Agent setup's "Test" holds the request
                              # while it polls the agent process (default 90 s)
                              "/api/agent/setup/test"})
-#: Requests that are not a user waiting on a page.
-EXEMPT_PREFIXES = ("/static/", "/debug/", "/api/agent/run/")
+#: Requests that are not a user waiting on a page. w9/labwarm: the lab
+#: worker's status is a poll (the "Preparing your lab code..." text asks it
+#: every 600 ms while a check waits) -- counted, it would keep the server
+#: "busy" and hold back the very pre-warm it is reporting on.
+EXEMPT_PREFIXES = ("/static/", "/debug/", "/api/agent/run/", "/api/lab/worker-status")
 
 
 def is_foreground(path: str | None) -> bool:
