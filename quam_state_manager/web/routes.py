@@ -5525,11 +5525,70 @@ def _home_landing(config_exists, session):
 def landing_projects():
     """The landing's lazy project-cards fragment (docs/63) — the only place
     the landing pays the listing + doctor cost."""
+    listing = _qualibrate_listing()
     return render_template(
         "_landing_projects.html",
-        listing=_qualibrate_listing(),
+        listing=listing,
         last_project=_load_session().get("last_project"),
+        env_views=_project_env_views([p["name"] for p in listing.get("projects") or []]),
     )
+
+
+def _project_env_views(names) -> dict:
+    """``{project: project_env.view(...)}`` -- what each card's env row says.
+    Reads the memory file and stats each env: no discovery, no probe."""
+    from quam_state_manager.core import project_env
+    inst = current_app.instance_path
+    try:
+        selected = config_generator.get_selected_env(inst)
+    except Exception:  # noqa: BLE001
+        selected = None
+    return {n: project_env.view(inst, n, selected) for n in names}
+
+
+@bp.route("/qualibrate/project-env", methods=["POST"])
+def qualibrate_project_env():
+    """Sync a project with an env (w9/labwarm): the user CONFIRMED the
+    suggested env (``how=confirmed``) or picked another one (``changed``).
+    Remembered per project (``core/project_env``); when that project is the
+    one open in SM, the env also becomes THE selected env right away (the
+    old env's lab worker retired, the open chip's started). Answers the
+    card's env row, plus the sidebar badge out of band."""
+    from quam_state_manager.core import project_env
+    name = (request.form.get("project") or "").strip()
+    raw = _unquote_path(request.form.get("python"))
+    how = "changed" if request.form.get("how") == "changed" else "confirmed"
+    if not name:
+        return render_template("_status.html", message="No project named.",
+                               level="error"), 400
+    names = [p["name"] for p in _qualibrate_listing().get("projects") or []]
+    if name not in names:
+        return render_template("_status.html",
+                               message=f"Unknown qualibrate project: {name!r}",
+                               level="error"), 404
+    python_path = config_generator.resolve_python_interpreter(raw) if raw else None
+    if not python_path:
+        return render_template(
+            "_status.html", level="error",
+            message=(f"No Python interpreter at: {raw or '(empty)'}. Point at the "
+                     "interpreter file or a venv folder.")), 400
+    inst = current_app.instance_path
+    project_env.remember(inst, name, python_path, how)
+    ctx = _active_ctx()
+    applied = False
+    if ctx and ctx.get("qualibrate_project") == name:
+        cur = config_generator.get_selected_env(inst)
+        if not cur or os.path.normcase(cur) != os.path.normcase(python_path):
+            _apply_selected_env(python_path)
+            applied = True
+    logger.info("project env: %s -> %s (%s%s)", name, python_path, how,
+                ", selected now" if applied else "")
+    view = project_env.view(inst, name, config_generator.get_selected_env(inst))
+    row = render_template("_landing_project_env.html", p={"name": name}, pe=view,
+                          env_saved=how)
+    badge = render_template("_sidebar_folder_badge.html",
+                            qualibrate_tray=_qualibrate_tray_badge(), oob=True)
+    return row + badge
 
 
 @bp.route("/workbench")
@@ -5916,7 +5975,36 @@ def _qualibrate_tray_badge() -> dict | None:
             "standalone": standalone,
             # The folder itself, so the chip can name what is being edited
             # rather than just asserting a category.
-            "standalone_path": (ctx or {}).get("live_path") if standalone else None}
+            "standalone_path": (ctx or {}).get("live_path") if standalone else None,
+            # w9/labwarm: WHICH env SM runs the lab's code with, beside the
+            # project it belongs to (two small file reads, stat-memoized)
+            "env": _active_env_badge(sm_scope)}
+
+
+def _active_env_badge(project: str | None) -> dict:
+    """The selected env as the sidebar shows it, relative to *project*'s
+    memory: ``remembered`` (the project's own env), ``suggested`` (the
+    project was never synced -- confirm it on the Projects page),
+    ``differs`` (the project remembers another env than the one selected
+    now, e.g. Generate Config picked another), ``global`` (no project scope),
+    ``none`` (no env selected at all)."""
+    from quam_state_manager.core import project_env
+    inst = current_app.instance_path
+    try:
+        active = config_generator.get_selected_env(inst)
+    except Exception:  # noqa: BLE001
+        active = None
+    if not active:
+        return {"state": "none", "label": "", "python": None, "project": project}
+    if not project:
+        state = "global"
+    else:
+        rem = project_env.remembered(inst, project)
+        state = ("suggested" if not rem
+                 else "remembered" if os.path.normcase(rem) == os.path.normcase(active)
+                 else "differs")
+    return {"state": state, "label": project_env.label(active), "python": active,
+            "project": project, "exists": os.path.isfile(active)}
 
 
 @bp.route("/api/qualibrate/projects")
@@ -6264,6 +6352,7 @@ def qualibrate_open_project():
                      "in qualibrate first (see the Doctor panel)."),
             level="error"), 409
 
+    _select_project_env(name)
     try:
         opened = _activate_quam(state["native"])
     except (FileNotFoundError, ValueError, OSError) as e:
@@ -6313,6 +6402,39 @@ def qualibrate_open_project():
         resp.headers["HX-Redirect"] = url_for("main.qubits")
         return resp
     return redirect(url_for("main.qubits"))
+
+
+@bp.route("/sidebar/folder-badges")
+def sidebar_folder_badges():
+    """w9/labwarm: the sidebar's project + env badges, fresh -- fetched after
+    an env is selected outside the landing (Generate Config, the Runner), so
+    the badge never names the env that was active before (a cold reload and
+    the page must agree)."""
+    return render_template("_sidebar_folder_badge.html",
+                           qualibrate_tray=_qualibrate_tray_badge())
+
+
+def _select_project_env(name: str) -> None:
+    """w9/labwarm: opening project *name* makes its env THE selected env --
+    the one it was synced with, or (never synced) the suggested one. Only a
+    CHANGE runs what a selection means (``_apply_selected_env``: probes, the
+    old lab worker retired); the same env again touches nothing, so a
+    project opened with its remembered env re-discovers and re-probes
+    nothing. Before ``_activate_quam``, so the chip's type policy, schema
+    warm and lab-worker pre-warm all start with the right env."""
+    from quam_state_manager.core import project_env
+    inst = current_app.instance_path
+    try:
+        cur = config_generator.get_selected_env(inst)
+        view = project_env.view(inst, name, cur)
+        want = view.get("python")
+        if not want or not view.get("exists"):
+            return          # nothing to select, or it vanished: the card says so
+        if not cur or os.path.normcase(cur) != os.path.normcase(want):
+            _apply_selected_env(want)
+        project_env.mark_used(inst, name, want)
+    except Exception:  # noqa: BLE001 -- an env never blocks opening a project
+        logger.warning("project env selection failed for %s", name, exc_info=True)
 
 
 @bp.route("/load", methods=["POST"])

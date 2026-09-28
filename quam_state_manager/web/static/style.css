@@ -2596,6 +2596,46 @@ body.pageheader-collapsed .pageheader-toggle { transform: rotate(180deg); }
 .landing-card-open .btn-sm { width: auto; margin: 0; }
 .landing-card-actions { display: flex; gap: 0.4rem; align-items: center; }
 .landing-card-actions .btn-sm { width: auto; margin: 0; }
+/* w9/labwarm: each project's Python environment -- a row on the card, and
+   one inline (non-modal) picker under the cards. */
+.landing-card-env { display: flex; flex-wrap: wrap; align-items: center; gap: 0.3rem;
+    font-size: 0.8em; min-height: 1.6rem; }
+.landing-card-env code { font-size: 0.95em; padding: 0 0.25rem; }
+.landing-card-env .btn-sm { width: auto; margin: 0; padding: 0.05rem 0.45rem; font-size: 0.95em; }
+.landing-env-suggested { color: var(--color-warning-text, #b45309); font-style: italic; }
+.landing-env-missing { color: var(--cell-bad-color, #d62728); }
+.landing-env-ok { color: #16a34a; }
+.landing-env-saved { font-style: italic; }
+.landing-env-picker { border: 1px solid var(--pico-muted-border-color); border-radius: 8px;
+    padding: 0.55rem 0.7rem; margin: 0 0 1rem; background: var(--pico-card-background-color); }
+.landing-env-picker-head { display: flex; flex-wrap: wrap; align-items: baseline; gap: 0.5rem; }
+.landing-env-picker-note { font-size: 0.8em; }
+.landing-env-picker-tools { margin-left: auto; display: flex; gap: 0.3rem; }
+.landing-env-picker-tools .btn-sm { width: auto; margin: 0; }
+.landing-env-loading { margin: 0.4rem 0; font-size: 0.85em; }
+.landing-env-list { display: flex; flex-direction: column; margin: 0.35rem 0; }
+.landing-env-row { display: grid; grid-template-columns: minmax(7rem, auto) auto 1fr auto auto;
+    align-items: center; gap: 0.5rem; padding: 0.22rem 0.3rem; font-size: 0.82em;
+    border-bottom: 1px solid var(--pico-muted-border-color); }
+.landing-env-row:last-child { border-bottom: 0; }
+.landing-env-row.selected { background: color-mix(in srgb, var(--pico-primary) 8%, transparent); }
+.landing-env-name { font-weight: 600; }
+.landing-env-kind { font-size: 0.85em; border: 1px solid var(--pico-muted-border-color);
+    border-radius: 0.8rem; padding: 0 0.4rem; }
+.landing-env-row:not(:has(.landing-env-kind)) .landing-env-path { grid-column: 2 / 4; }
+.landing-env-path { font-family: var(--font-mono); color: var(--pico-muted-color);
+    overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
+.landing-env-status[data-state="ok"] { color: #16a34a; }
+.landing-env-status[data-state="bad"] { color: var(--cell-bad-color, #d62728); }
+.landing-env-status[data-state="checking"] { color: var(--pico-muted-color); font-style: italic; }
+.landing-env-row .btn-sm { width: auto; margin: 0; padding: 0.05rem 0.5rem; }
+.landing-env-custom { display: flex; flex-wrap: wrap; align-items: center; gap: 0.4rem; font-size: 0.85em; }
+.landing-env-custom input { flex: 1 1 18rem; margin: 0; padding: 0.2rem 0.45rem; height: auto; font-size: 0.95em; }
+.landing-env-custom .btn-sm { width: auto; margin: 0; }
+@media (max-width: 640px) {
+    .landing-env-row { grid-template-columns: 1fr auto; }
+    .landing-env-path, .landing-env-kind { grid-column: 1 / -1; }
+}
 /* r8 feedback: per-project config popup (paths + ports, read-only). */
 .landing-config-dialog {
     max-width: 46rem; width: min(92vw, 46rem); padding: 1rem 1.1rem;
@@ -13959,6 +13999,19 @@ html.topbar-hidden #pending-tray > :not(.state-status-badge):not(.auto-sync-wrap
 .topbar .wb-link { white-space: nowrap; margin-left: .35rem; }
 .sidebar-folder-badges { display: flex; flex-wrap: wrap; gap: .3rem; margin-top: .4rem; }
 .sidebar-folder-badges .qualibrate-tray-badge { font-size: .74em; margin: 0; }
+/* w9/labwarm: the Python environment SM runs the lab's code with, beside the
+   project badge -- neutral when it is the project's own, amber when only
+   suggested / not the project's / none, red when the interpreter is gone. */
+.sidebar-folder-badges .project-env-badge { display: inline-flex; align-items: center; gap: .1rem;
+    font-size: .74em; padding: .12rem .5rem; border: 1px solid var(--pico-muted-border-color);
+    border-radius: 1rem; color: var(--color-text-muted, var(--pico-muted-color));
+    text-decoration: none; white-space: nowrap; max-width: 100%; overflow: hidden; text-overflow: ellipsis; }
+.sidebar-folder-badges .project-env-badge:hover { border-color: var(--pico-primary); color: var(--pico-primary); }
+.sidebar-folder-badges .project-env-badge-warn { border-color: var(--cell-ok-color, #ff7f0e);
+    color: var(--cell-ok-color, #ff7f0e); }
+.sidebar-folder-badges .project-env-badge-danger { border-color: var(--cell-bad-color, #d62728);
+    color: var(--cell-bad-color, #d62728); }
+.project-env-note { font-style: italic; }
 
 /* ---- the panel: a popover under the control, never a modal ---- */
 .state-review-overlay.sync-panel-overlay {
