@@ -143,6 +143,13 @@ class TestWhatIsStructural:
         ("set", f"{XY2}.unclassed", _PULSE, "pulse"),        # a found entry becomes one
         ("set", "qubits.q1.notes_blob", _PULSE, "pulse"),    # R2 appears in place
         ("set", f"{XY2}.x180_alias", 7, "pulse"),            # a found alias stops being one
+        # a NEW non-pulse object that brings pulses (else: delete the channel,
+        # create it again with one more op)
+        ("create", "qubits.q1.xy3", {"operations": {"a": _PULSE}}, "carries"),
+        ("create", "qubit_pairs.q1-2.macros.cz_new",
+         {"__class__": "lab_pkg.gates.CZGateCustom",
+          "flux_pulse_qubit": "#/qubits/q1/xy/operations/x180"}, "carries"),
+        ("set", "qubits.q1.spare", {"operations": {"a": _PULSE}}, "carries"),
     ])
     def test_structural(self, op, path, value, kind):
         assert _kind(op, path, value) == kind
@@ -161,7 +168,8 @@ class TestWhatIsStructural:
         ("delete", "qubits.q1.xy2", ps.ABSENT),
         ("delete", "qubits.q1", ps.ABSENT),
         ("delete", GATE, ps.ABSENT),
-        ("create", "qubits.q1.xy3", {"operations": {"a": _PULSE}}),
+        ("create", "qubit_pairs.q1-2.macros.cz_new", {"__class__": "lab_pkg.gates.CZGateCustom",
+                                                       "flux_pulse_qubit": None}),
         ("create", "qubits.q1.new_block", {"k": 1}),
         ("create", "qubits.q2.xy.custom", {}),
         ("set", "qubits.q1.xy", None),                      # the channel disappears
@@ -276,12 +284,17 @@ class TestTheGenericDoorsRefuse:
             "expect_type": "dict"}))
         assert j["pulse_paths"] == [f"{OPS}.y90"]
         assert "y90" not in _get(chip, OPS) and len(_store(chip).change_log) == n
-        # a field inside a pulse, and a channel that brings its pulses, go
+        # a field inside a pulse, and an empty channel, go
         assert chip.post("/field/create", data={
             "dot_path": f"{X180}.digital_marker", "value": "ON"}).status_code == 200
         assert chip.post("/field/create", data={
-            "dot_path": "qubits.q1.xy3", "value": json.dumps({"operations": {"a": _PULSE}}),
+            "dot_path": "qubits.q1.xy3", "value": json.dumps({"operations": {}}),
             "expect_type": "dict"}).status_code == 200
+        # ...a channel that BRINGS a pulse does not (the way round the rule)
+        j = _refused(chip.post("/field/create", data={
+            "dot_path": "qubits.q1.xy4", "value": json.dumps({"operations": {"a": _PULSE}}),
+            "expect_type": "dict"}))
+        assert "would bring the new pulse qubits.q1.xy4.operations.a" in j["error"]
 
     def test_delete(self, chip):
         for p in (X180, OPS, W3, SPEC):
@@ -334,6 +347,35 @@ class TestTheGenericDoorsRefuse:
                 {"dot_path": "qubits.q1.spare", "value": value}]})
             _refused(r)
             assert _get(chip, "qubits.q1.spare") is None
+
+    def test_batch_rows_are_judged_in_order(self, chip):
+        """A pulse whose parent an earlier row of the SAME batch creates is
+        judged against what the batch has written so far -- not waved through
+        because the parent did not exist yet."""
+        n = len(_store(chip).change_log)
+        r = chip.post("/field/edit-batch", json={"updates": [
+            {"dot_path": "qubits.q1.newch", "value": {}, "create": True},
+            {"dot_path": "qubits.q1.newch.operations", "value": {}, "create": True},
+            {"dot_path": "qubits.q1.newch.operations.x", "value": _PULSE, "create": True}]})
+        j = _refused(r)
+        assert j["results"][2]["error_kind"] == "pulse_structure"
+        assert "newch" not in _get(chip, "qubits.q1") and len(_store(chip).change_log) == n
+        # delete a channel, then create it again with one more op
+        xy = copy.deepcopy(_get(chip, "qubits.q1.xy"))
+        xy["operations"]["y90"] = copy.deepcopy(_PULSE)
+        r = chip.post("/field/edit-batch", json={"updates": [
+            {"dot_path": "qubits.q1.xy", "delete": True},
+            {"dot_path": "qubits.q1.xy", "value": xy, "create": True}]})
+        _refused(r)
+        assert "y90" not in _get(chip, OPS) and "x180" in _get(chip, OPS)
+        # independent: that row alone is refused, the rest applies
+        r = chip.post("/field/edit-batch", json={"independent": True, "updates": [
+            {"dot_path": "qubits.q1.newch", "value": {"operations": {}}, "create": True},
+            {"dot_path": "qubits.q1.newch.operations.x", "value": _PULSE, "create": True}]})
+        j = r.get_json()
+        assert j["results"][0]["applied"] is True
+        assert j["results"][1]["error_kind"] == "pulse_structure"
+        assert _get(chip, "qubits.q1.newch.operations") == {}
 
     def test_batch_independent(self, chip):
         r = chip.post("/field/edit-batch", json={"independent": True, "updates": [

@@ -20,10 +20,13 @@ What is NOT a structural pulse edit, by construction:
 
 * anything strictly INSIDE a pulse (its fields: value edits, a re-link, a
   field added or removed) -- the pulse stays the same object;
-* creating or deleting a NON-pulse object that happens to carry pulses (a
+* deleting (or emptying) a NON-pulse object that happens to carry pulses (a
   qubit, a channel, a gate): the object of the edit is the qubit/channel/gate,
-  and its pulses come and go with it -- deleting a qubit from the Json Tree
-  stays exactly as it was;
+  and its pulses go with it -- deleting a qubit from the Json Tree stays
+  exactly as it was. The other direction is asymmetric on purpose: a new
+  object that BRINGS pulses (a channel typed with its ``operations``, a gate
+  whose slots hold pulses) is adding pulses, and would be the way round the
+  rule (delete the channel, create it again with one more op);
 * a value write that leaves every pulse row in place (an alias re-pointed to
   another op, a gate slot re-linked).
 
@@ -255,7 +258,7 @@ class Change:
     """A write that changes which pulses exist."""
     op: str
     path: str
-    kind: str                     # "pulse" | "operations" | "within"
+    kind: str                     # "pulse" | "operations" | "within" | "carries"
     added: list = field(default_factory=list)
     removed: list = field(default_factory=list)
 
@@ -313,12 +316,17 @@ def structural_change(merged: dict, op: str, path: str, value: Any = ABSENT) -> 
     elif is_ops:
         kind = "operations"
     else:
-        # a non-pulse object: coming or going WITH its pulses (a create, a
-        # delete, a value that is no dict before or after) is fine; its
-        # pulses changing while it stays a dict is not
-        if not (isinstance(old, dict) and isinstance(new, dict)):
+        # a non-pulse object. Going WITH its pulses (a delete, a value that is
+        # no dict after) is fine; one that stays or arrives a dict may not
+        # bring a pulse, and one that stays may not lose one
+        if not isinstance(new, dict):
             return None
-        kind = "within"
+        if isinstance(old, dict):
+            kind = "within"
+        elif added:
+            kind = "carries"
+        else:
+            return None
     return Change(op=op, path=path, kind=kind, added=added, removed=removed)
 
 
@@ -348,6 +356,9 @@ def refusal_message(ch: Change) -> str:
             if ch.removed:
                 parts.append(f"remove {_names(ch.removed)}")
             what = f"this edit of {ch.path} would " + " and ".join(parts)
+    elif ch.kind == "carries":
+        what = (f"{ch.path} would bring the new pulse{'s' if len(ch.added) > 1 else ''} "
+                f"{_names(ch.added)} with it")
     else:
         parts = []
         if ch.added:

@@ -11132,60 +11132,86 @@ def _ps_live_at(pair, path: str):
     return _ps.ABSENT
 
 
-def _pulse_structure_rows(ctx, store, pairs, pj) -> dict:
-    """``{row index: refusal payload}`` for the rows of an /field/edit-batch
-    that would add, remove or rename a pulse.
+class _PulseLive:
+    """The live chip's documents for a batch that says ``"source": "live"``
+    (the Explorer live-diff's accept and Accept all, the sync review's
+    accept): TAKE LIVE, row by row, which stays unaffected -- but the claim is
+    checked, never trusted. A row passes only when the live chip itself holds
+    exactly that value at that path (a delete: when it has no such key); an
+    edited value, or live that moved on, is refused like any structural edit.
+    Read at most once per batch, and only when a row needs it."""
 
-    ``"source": "live"`` (the Explorer live-diff's accept and Accept all, the
-    sync review's accept) is TAKE LIVE, row by row, and stays unaffected --
-    but the claim is checked, never trusted: a row passes only when the live
-    chip itself holds exactly that value at that path (a delete: when the
-    live chip has no such key). An edited value, or live that moved on, is an
-    ordinary structural edit and is refused like one."""
+    def __init__(self, ctx):
+        self.ctx = ctx
+        self._pair: Any = False
+
+    def holds(self, target: str, value) -> bool:
+        from quam_state_manager.core import pulse_structure as _ps
+        if self._pair is False:
+            self._pair = None
+            wc = self.ctx.get("working_copy") if self.ctx else None
+            if wc is not None:
+                try:
+                    self._pair = working_copy.read_live_shared(wc, attempts=4)
+                except Exception:  # noqa: BLE001 -- unverifiable: refused
+                    self._pair = None
+        if self._pair is None:
+            return False
+        live = _ps_live_at(self._pair, target)
+        if value is _ps.ABSENT:
+            return live is _ps.ABSENT
+        return live is not _ps.ABSENT and _ps.json_same(value, live)
+
+
+def _ps_row_refusal(store, dp: str, raw, allow_create: bool, live) -> dict | None:
+    """The refusal payload for ONE /field/edit-batch row, judged against the
+    store as it is NOW -- the write loop asks again before a row once an
+    earlier row of the same batch changed structure (a parent created, a
+    channel deleted and re-created), so a pulse is never waved through
+    because its parent did not exist yet. None = the row may go ahead."""
     from quam_state_manager.core import pulse_structure as _ps
-    found: dict = {}
-    merged = store.merged
-    for n, (dp, raw, allow_create) in enumerate(pairs):
-        try:
-            if raw is _BATCH_DELETE:
-                ch = _pulse_structure_change(store, "delete", dp, absent=True)
-                if ch is not None:
-                    found[n] = (ch, dp, _ps.ABSENT)
-                continue
+    try:
+        if raw is _BATCH_DELETE:
+            target, value = dp, _ps.ABSENT
+            ch = _pulse_structure_change(store, "delete", dp, absent=True)
+        else:
             target = _resolve_edit_path(store, dp)
             with store._lock:
+                merged = store.merged
                 if not _ps_candidate(merged, target, raw):
-                    continue
+                    return None
                 exists = _path_present(merged, target)
             if not exists and not allow_create:
-                continue                       # the row fails on its own
+                return None                    # the row fails on its own
             value = (_parse_for_target(store, target, raw)
                      if isinstance(raw, str) else raw)
             ch = _pulse_structure_change(store, "set" if exists else "create",
                                          target, value)
-        except Exception:  # noqa: BLE001 -- the row loop reports a bad row
-            continue
-        if ch is not None:
-            found[n] = (ch, target, value)
-    if found and pj.get("source") == "live":
-        wc = ctx.get("working_copy") if ctx else None
-        pair = None
-        if wc is not None:
-            try:
-                pair = working_copy.read_live_shared(wc, attempts=4)
-            except Exception:  # noqa: BLE001 -- unverifiable: refused below
-                pair = None
-        if pair is not None:
-            for n in list(found):
-                _ch, target, value = found[n]
-                live = _ps_live_at(pair, target)
-                if value is _ps.ABSENT:
-                    same = live is _ps.ABSENT
-                else:
-                    same = live is not _ps.ABSENT and _ps.json_same(value, live)
-                if same:
-                    del found[n]
-    return {n: _pulse_structure_payload(v[0]) for n, v in found.items()}
+    except Exception:  # noqa: BLE001 -- the row loop reports a bad row
+        return None
+    if ch is None or (live is not None and live.holds(target, value)):
+        return None
+    return _pulse_structure_payload(ch)
+
+
+def _pulse_structure_rows(store, pairs, live) -> dict:
+    """``{row index: refusal payload}`` for the rows of an /field/edit-batch
+    that would add, remove or rename a pulse, each judged against the store
+    before the batch (see :func:`_ps_row_refusal` for the rows after one)."""
+    out: dict = {}
+    for n, (dp, raw, allow_create) in enumerate(pairs):
+        r = _ps_row_refusal(store, dp, raw, allow_create, live)
+        if r is not None:
+            out[n] = r
+    return out
+
+
+def _ps_moved_structure(entry) -> bool:
+    """Did an applied batch entry change structure (so a later row of the
+    same batch must be judged again)?"""
+    return bool(getattr(entry, "created", False) or getattr(entry, "deleted", False)
+                or isinstance(getattr(entry, "old_value", None), dict)
+                or isinstance(getattr(entry, "new_value", None), dict))
 
 
 def _path_present(merged: dict, path: str) -> bool:
@@ -11281,8 +11307,10 @@ def _field_edit_batch_impl(payload=None, *, pulse_door: bool = False):
     # page's job. Atomic: nothing is written (409, the rows named). An
     # independent batch skips just those rows. Before every other gate -- it
     # is the cheapest, and a refused row must not cost a lab check.
+    _ps_live = _PulseLive(ctx) if _pj.get("source") == "live" else None
     _ps_skip: dict = ({} if pulse_door
-                      else _pulse_structure_rows(ctx, modifier.store, pairs, _pj))
+                      else _pulse_structure_rows(modifier.store, pairs, _ps_live))
+    _ps_late = None             # a row refused in the loop (after an earlier row)
     if _ps_skip and not independent:
         _first = _ps_skip[min(_ps_skip)]
         return jsonify(
@@ -11458,7 +11486,23 @@ def _field_edit_batch_impl(payload=None, *, pulse_door: bool = False):
             elif _batch_gid is None:
                 _batch_gid = modifier.new_group_id()
         ok_overall = True
+        _ps_moved = False
         for _row_n, (dot_path, raw_value, allow_create) in enumerate(pairs):
+            if _ps_moved and not pulse_door and _row_n not in _ps_skip:
+                # an earlier row changed structure: this one is judged again
+                # against what the batch has written so far
+                _psr = _ps_row_refusal(modifier.store, dot_path, raw_value,
+                                       allow_create, _ps_live)
+                if _psr is not None:
+                    results.append({"dot_path": dot_path, "applied": False,
+                                    "error_kind": "pulse_structure",
+                                    "error": _psr["error"],
+                                    "pulses_page": _psr["pulses_page"]})
+                    ok_overall = False
+                    _ps_late = _ps_late or _psr
+                    if not independent:
+                        break
+                    continue
             if _row_n in _ps_skip:       # independent mode only (see above)
                 results.append({"dot_path": dot_path, "applied": False,
                                 "error_kind": "pulse_structure",
@@ -11481,6 +11525,7 @@ def _field_edit_batch_impl(payload=None, *, pulse_door: bool = False):
                         raise ValueError(_cr)
                     entry = modifier.delete_subtree(dot_path, group_id=_batch_gid)
                     applied_entries.append(entry)
+                    _ps_moved = True
                     results.append({"dot_path": dot_path, "resolved_path": entry.dot_path,
                                     "applied": True, "deleted": True,
                                     "new_value": None, "display": ""})
@@ -11539,6 +11584,7 @@ def _field_edit_batch_impl(payload=None, *, pulse_door: bool = False):
                             f"or stage the version from State History)."
                         ) from ce
                 applied_entries.append(entry)
+                _ps_moved = _ps_moved or _ps_moved_structure(entry)
                 # Echo the COMMITTED value (type-coerced by set_value) + its display
                 # + the resolved write path, so the client re-renders the cell from
                 # the server's truth (never the typed string) and can match the
@@ -11569,6 +11615,8 @@ def _field_edit_batch_impl(payload=None, *, pulse_door: bool = False):
                 if r["applied"]:
                     r["applied"] = False
                     r["error"] = "rolled back due to other failure(s) in this batch"
+            if _ps_late is not None:     # w9/pulsegate: said like the pre-check
+                return jsonify(**_ps_late, tray_html=_tray_html(), results=results), 409
             return jsonify(
                 ok=False,
                 tray_html=_tray_html(),
