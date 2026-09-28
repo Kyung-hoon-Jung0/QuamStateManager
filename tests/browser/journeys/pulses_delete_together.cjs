@@ -192,14 +192,16 @@ async function runCase(p, name, path, q, expectTogether, expectLabel) {
   const SLOT_T = `${G}.flux_pulse_target`, SLOT_C = `${G}.flux_pulse_qubit`;
   const OP_T = `qubits.${TGT}.z.operations.${GATE}_flux_pulse_${TGT}_${CTL}`;
   const OP_C = `qubits.${CTL}.z.operations.${GATE}_flux_pulse_${CTL}_${TGT}`;
-  await runCase(p, 'A_gate_inline_pulse', SLOT_T, `${GATE} ${PAIR}`, [SLOT_T, OP_T], 'Delete together with 1 op');
-  await runCase(p, 'B_by_name_op', OP_T, `${GATE}_flux_pulse_${TGT}_${CTL}`, [OP_T, SLOT_T], 'Delete together with 1 gate field');
-  await runCase(p, 'C_required_control_pulse', SLOT_C, `${GATE} ${PAIR}`, [SLOT_C, G, OP_C, OP_T], 'Delete together with 1 gate and 2 ops');
+  // ONLY=A,B,... runs just those cases (a rig whose chip an earlier Apply changed)
+  const want = k => !process.env.ONLY || process.env.ONLY.split(',').indexOf(k) >= 0;
+  if (want('A')) await runCase(p, 'A_gate_inline_pulse', SLOT_T, `${GATE} ${PAIR}`, [SLOT_T, OP_T], 'Delete together with 1 op');
+  if (want('B')) await runCase(p, 'B_by_name_op', OP_T, `${GATE}_flux_pulse_${TGT}_${CTL}`, [OP_T, SLOT_T], 'Delete together with 1 gate field');
+  if (want('C')) await runCase(p, 'C_required_control_pulse', SLOT_C, `${GATE} ${PAIR}`, [SLOT_C, G, OP_C, OP_T], 'Delete together with 1 gate and 2 ops');
 
   // Ctrl+Z pressed WHILE the batch is being checked: held, then it undoes
   // the batch (never the edit before it, never "nothing to undo" + the batch
   // left standing)
-  {
+  if (want('F')) {
     console.log('\n== F_ctrl_z_during_check');
     const PAIR3 = E('PAIR3', 'q3-4'), CTL3 = E('CTL3', 'q3'), TGT3 = E('TGT3', 'q4');
     const G3 = `qubit_pairs.${PAIR3}.macros.${GATE}`;
@@ -233,23 +235,24 @@ async function runCase(p, name, path, q, expectTogether, expectLabel) {
   }
 
   // reload: the page equals a cold render
-  const rowsBefore = await p.ev(ROWS), totBefore = await p.ev(TOTAL);
-  const evMark = p.events.length;
-  await p.send('Page.reload', {});
-  await sleep(1500);
-  // every case above ended undone: a reload must not meet the unsaved-edits
-  // guard (a dialog would also block every later evaluate -- answer it)
-  const dlg = p.events.slice(evMark).some(e => e.method === 'Page.javascriptDialogOpening');
-  if (dlg) await p.send('Page.handleJavaScriptDialog', { accept: true });
-  check(!dlg, 'the reload met no unsaved-edits guard (every batch above was undone)');
-  await waitFor(p, `document.readyState==='complete' && document.querySelectorAll('tr[data-pulse-path]').length`, 90000);
-  await typeInto(p, '.table-filter input[name="q"]', `${GATE} ${PAIR}`);
-  await sleep(1500);
-  check((await p.ev(TOTAL)) === (await p.ev(COLD_TOTAL)), 'after reload the count equals a cold render');
-  void rowsBefore; void totBefore;
+  if (want('R')) {
+    const evMark = p.events.length;
+    await p.send('Page.reload', {});
+    await sleep(1500);
+    // every case above ended undone: a reload must not meet the unsaved-edits
+    // guard (a dialog would also block every later evaluate -- answer it)
+    const dlg = p.events.slice(evMark).some(e => e.method === 'Page.javascriptDialogOpening');
+    if (dlg) await p.send('Page.handleJavaScriptDialog', { accept: true });
+    check(!dlg, 'the reload met no unsaved-edits guard (every batch above was undone)');
+    await waitFor(p, `document.readyState==='complete' && document.querySelectorAll('tr[data-pulse-path]').length`, 90000);
+    await typeInto(p, '.table-filter input[name="q"]', `${GATE} ${PAIR}`);
+    await sleep(1500);
+    await settled(p);
+    check((await p.ev(TOTAL)) === (await p.ev(COLD_TOTAL)), 'after reload the count equals a cold render');
+  }
 
   // the unavailable-worker path: refusal with a working env, then the env breaks
-  if (process.env.UNAVAIL && process.env.ENV_FILE) {
+  if (want('D') && process.env.UNAVAIL && process.env.ENV_FILE) {
     console.log('\n== D_worker_unavailable');
     const G2 = `qubit_pairs.${PAIR2}.macros.${GATE}`;
     const SLOT_T2 = `${G2}.flux_pulse_target`;
@@ -280,13 +283,16 @@ async function runCase(p, name, path, q, expectTogether, expectLabel) {
 
   // the Json Tree names the same set, by kind (TREE=1): its ✕ on the by-name
   // op -> "Delete together with 1 gate field" -> one batch -> Ctrl+Z
-  if (process.env.TREE) {
+  if (want('T') && process.env.TREE) {
     console.log('\n== T_json_tree');
     const T = await open(`http://127.0.0.1:${PORT}/explorer`);
     await sleep(2500 * SLOW);
     const segs = OP_T.split('.');
     await T.ev(`(function(){var s=document.getElementById('explorer-search'); s.focus(); s.value=${J(segs[segs.length - 2] + ' ' + segs[segs.length - 1])}; s.dispatchEvent(new Event('input',{bubbles:true})); return 1})()`);
     await sleep(2000 * SLOW);
+    // the search's suggestion list lies over the rows: Esc closes it, as a user does
+    await T.key('Escape', 'Escape', 27);
+    await sleep(300);
     const found = await T.ev(`(function(){var n=document.querySelector('.tree-node[data-path=${J(OP_T)}]'); if(!n) return 0; var r=n.querySelector(':scope > .tree-row'); r.scrollIntoView({block:'center'}); window.__qaRow=r; return 1})()`);
     if (check(!!found, 'T: the Json Tree shows the by-name op')) {
       const hov = await T.ev(`(function(){var b=window.__qaRow.getBoundingClientRect(); return [b.left+40,b.top+b.height/2]})()`);
@@ -320,7 +326,7 @@ async function runCase(p, name, path, q, expectTogether, expectLabel) {
   }
 
   // keep one batch and Apply to live (the caller runs pulse_lab_check.py)
-  if (!process.env.NO_APPLY) {
+  if (want('E') && !process.env.NO_APPLY) {
     console.log('\n== E_apply');
     const info = await (async () => {
       if (!(await openPulse(p, SLOT_T, `${GATE} ${PAIR}`))) return null;
