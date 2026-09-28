@@ -11367,6 +11367,31 @@ window.clearDetailPanelSearch = function(btnEl) {
         return null;
     }
     window._pulseGateKind = _pulseGateKind;
+    /* The page renders with the Pulses index's rows only when that index is
+       warm (the tree never waits on a whole-chip walk). Cold, the rows the
+       path alone cannot tell (shape-discovered pulses outside `operations`)
+       are asked for once, after the render; a row hovered before they came
+       had its actions built without them -- dropped, so the next hover
+       rebuilds them. A page re-rendered meanwhile ignores the answer. */
+    window._pulseGateFill = function () {
+        var pg = window._treePulseGate;
+        if (!pg || pg.rows_known || pg._filling) return null;
+        pg._filling = true;
+        return fetch("/explorer/pulse-gate", { cache: "no-store" })
+            .then(function (r) { return r.ok ? r.json() : null; })
+            .then(function (d) {
+                if (!d || !d.rows_known || window._treePulseGate !== pg) return;
+                pg.rows = d.rows || [];
+                pg.rows_known = true;
+                delete pg._rowSet;
+                pg.rows.forEach(function (p) {
+                    document.querySelectorAll('.tree-node[data-path="' + _cssAttrVal(p)
+                        + '"] > .tree-row > .tree-row-actions').forEach(function (s) { s.remove(); });
+                });
+            })
+            .catch(function () { /* the write doors still refuse */ })
+            .then(function () { pg._filling = false; });
+    };
     function _pulsesPageLink(url, text) {
         var a = document.createElement("a");
         a.className = "tree-pulses-link";
@@ -11375,12 +11400,25 @@ window.clearDetailPanelSearch = function(btnEl) {
         a.onclick = function (e) {
             e.stopPropagation();
             // a new tab / window keeps the browser's own way (a plain GET
-            // redirects); a click stays in the app: /pulses/goto answers
-            // HX-Location, the table pane swaps, the real address is pushed
+            // redirects); a click stays in the app: the server names the
+            // Pulses page address, and the table pane navigates there the
+            // app's own way (_navigateTablePane: the address is pushed AFTER
+            // the swap). htmx's HX-Location would first snapshot the whole
+            // tree into its history cache -- measured on a 30-qubit chip:
+            // over the storage quota, htmx:historyCacheError, and the time.
             if (e.ctrlKey || e.metaKey || e.shiftKey || e.button === 1) return;
-            if (!window.htmx) return;
+            if (!window._navigateTablePane) return;
             e.preventDefault();
-            window.htmx.ajax("GET", url, { target: "#table-pane", swap: "innerHTML" });
+            fetch(url + (url.indexOf("?") >= 0 ? "&" : "?") + "json=1", { cache: "no-store" })
+                .then(function (r) { return r.ok ? r.json() : null; })
+                .then(function (d) {
+                    if (d && typeof d.url === "string" && d.url.indexOf("/pulses") === 0) {
+                        window._navigateTablePane(d.url);
+                    } else {
+                        window.location.href = url;
+                    }
+                })
+                .catch(function () { window.location.href = url; });
         };
         return a;
     }

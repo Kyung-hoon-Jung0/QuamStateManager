@@ -6383,6 +6383,19 @@ def explorer():
     )
 
 
+@bp.route("/explorer/pulse-gate")
+def explorer_pulse_gate():
+    """w9/pulsegate: the tree payload's rows when /explorer rendered before the
+    Pulses index was warm (``rows_known`` false): asked once by the page,
+    after its render, so the walk never holds the tree up. The walk is the
+    index's own single-flight build (shared with the Pulses page)."""
+    from quam_state_manager.core import pulse_structure as _ps
+    pidx = _pulse_index()
+    if pidx is None:
+        return jsonify(_ps.tree_payload(None))
+    return jsonify(_ps.tree_payload(list(pidx.known_paths())))
+
+
 @bp.route("/explorer/model")
 def explorer_model():
     """QA F2 (windows): the two documents the Json Tree View renders, as data.
@@ -19757,10 +19770,12 @@ def _pulses_url_for(pulse_index, path: str, together: str = "") -> str:
 @bp.route("/pulses/goto")
 def pulses_goto():
     """The Json Tree's "Pulses page" link (w9/pulsegate): resolves a tree path
-    to the Pulses page address on the SERVER (one rule, the page's own index)
-    and goes there -- an htmx request through ``HX-Location`` (the table pane
-    swaps and the real address is pushed, so Back returns to the tree), a
-    plain one (a new tab) through a redirect."""
+    to the Pulses page address on the SERVER (one rule, the page's own index).
+    ``json=1`` (the tree's click) answers ``{"url": ...}`` and the page
+    navigates its table pane there the app's own way; a plain GET (a new
+    tab) is redirected. Never ``HX-Location``: htmx would first snapshot the
+    whole tree into its history cache (over the storage quota on a large
+    chip)."""
     store = _store()
     pulse_index = _pulse_index()
     path = _normalize_dot_path(request.args.get("path", "").strip())
@@ -19771,11 +19786,8 @@ def pulses_goto():
             url = _pulses_url_for(pulse_index, path, together)
         except Exception:  # noqa: BLE001 -- the page itself is still the way
             logger.warning("pulses/goto %s failed", path, exc_info=True)
-    if _is_htmx():
-        resp = make_response("", 200)
-        resp.headers["HX-Location"] = json.dumps(
-            {"path": url, "target": "#table-pane", "swap": "innerHTML"})
-        return resp
+    if request.args.get("json") == "1":
+        return jsonify(ok=True, url=url)
     return redirect(url)
 
 

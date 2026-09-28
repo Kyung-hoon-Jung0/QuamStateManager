@@ -158,6 +158,15 @@ class TestTheRefusalNamesWhatGoesTogether:
         assert r.status_code == 302, r.data[:200]
         loc = r.headers["Location"]
         assert "pulse=" in loc and "together=" in loc, loc
+        # ...where the pulse's delete step asks the same check, writing
+        # nothing, and shows the same set as the Pulses page's own offer
+        pulse = loc.split("pulse=", 1)[1].split("&", 1)[0]
+        n = len(_store(c).change_log)
+        r = c.get(f"/api/pulse/delete-together/offer?path={G}&pulse={pulse}")
+        assert r.status_code == 200 and b"pulse-delete-refused" in r.data, r.data[:300]
+        assert _together(r) == [G] + j["lab_delete_also"]
+        assert b"the path you deleted in the Json Tree" in r.data
+        assert len(_store(c).change_log) == n and "czl" in _v(c, "qubit_pairs.q1-q2.macros")
 
 
 class TestTheOfferGoesThroughAsOneBatch:

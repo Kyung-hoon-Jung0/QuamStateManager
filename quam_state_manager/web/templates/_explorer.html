@@ -88,6 +88,9 @@
 
     renderJsonTree("explorer-tree-state", stateData, { defaultDepth: 1, crud: true });
     renderJsonTree("explorer-tree-wiring", wiringData, { defaultDepth: 1, crud: true });
+    // w9/pulsegate: rendered before the Pulses index was warm -- ask for the
+    // rows the path cannot tell, once, after the page is up
+    if (window._pulseGateFill) window._pulseGateFill();
     // JT-06: a search with no hits on one tab names the other tab's hits, and
     // its button switches there (_treeSearchResults' zero-match notice).
     [["explorer-tree-state", "explorer-tree-wiring", "wiring.json", "wiring"],

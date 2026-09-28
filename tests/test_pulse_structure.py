@@ -63,6 +63,7 @@ def _state() -> dict:
     st["qubits"]["q1"]["xy2"]["operations"]["holder"] = {
         "note": "not a pulse", "inner": {"__class__": QC + "SquarePulse", "length": 8,
                                          "amplitude": 0.1}}
+    st["qubits"]["q1"]["spare"] = None               # a null a whole pulse could land on
     st["top_pulse"] = {"__class__": QC + "SquarePulse", "length": 4, "amplitude": 0.1}
     st["ports"] = {"x": {"operations": {"p": {"__class__": QC + "SquarePulse"}}}}
     return st
@@ -325,6 +326,15 @@ class TestTheGenericDoorsRefuse:
         assert "another row" in j["results"][0]["error"]
         assert len(_store(chip).change_log) == n and _get(chip, f"{X180}.length") == 40
 
+    def test_batch_a_whole_pulse_over_a_null(self, chip):
+        """The batch's cheap pre-filter must not wave through a dict landing
+        on a key that holds no dict yet (JSON value, or JSON text)."""
+        for value in (_PULSE, json.dumps(_PULSE)):
+            r = chip.post("/field/edit-batch", json={"updates": [
+                {"dot_path": "qubits.q1.spare", "value": value}]})
+            _refused(r)
+            assert _get(chip, "qubits.q1.spare") is None
+
     def test_batch_independent(self, chip):
         r = chip.post("/field/edit-batch", json={"independent": True, "updates": [
             {"dot_path": f"{X180}.length", "value": 48},
@@ -444,10 +454,9 @@ class TestDeleteTogetherIsItsOwnVerifiedDoor:
 
 class TestTheLinkLandsOnThePulse:
     def test_goto(self, chip):
-        r = chip.get(f"/pulses/goto?path={X180}", headers={"HX-Request": "true"})
-        loc = json.loads(r.headers["HX-Location"])
-        assert loc["target"] == "#table-pane"
-        assert loc["path"] == f"/pulses?owner=q1&channel=xy&pulse={X180}"
+        r = chip.get(f"/pulses/goto?path={X180}&json=1")
+        assert r.get_json()["url"] == f"/pulses?owner=q1&channel=xy&pulse={X180}"
+        assert "HX-Location" not in r.headers
         r = chip.get(f"/pulses/goto?path={X180}.amplitude")
         assert r.status_code == 302 and r.headers["Location"].endswith(f"pulse={X180}")
         r = chip.get(f"/pulses/goto?path={OPS}")
@@ -474,6 +483,13 @@ class TestTheLinkLandsOnThePulse:
         assert r.status_code == 200 and b"can be deleted on its own" in r.data
         r = chip.get(f"/api/pulse/delete-together/offer?path={OPS}.gone&pulse={X180}")
         assert r.status_code == 200 and b"not on this chip" in r.data
+
+    def test_the_tree_asks_for_the_rows_after_a_cold_render(self, chip):
+        _store(chip).mutation_seq += 1                  # cold: /explorer cannot say
+        html = chip.get("/explorer").get_data(as_text=True)
+        assert '"rows_known": false' in html and "window._pulseGateFill()" in html
+        pl = chip.get("/explorer/pulse-gate").get_json()
+        assert pl["rows_known"] is True and set(pl["rows"]) == {SPEC, SLOT, INNER}
 
     def test_the_tree_payload_never_builds_a_cold_index(self, chip):
         def payload():

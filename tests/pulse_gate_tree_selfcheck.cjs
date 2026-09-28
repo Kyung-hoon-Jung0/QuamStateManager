@@ -8,8 +8,10 @@
 //      extras keep their ＋/✕ exactly as before
 //   G2 without the server's payload (a dataset tree, a harness) the tree has
 //      no opinion -- the old buttons
-//   G3 the link navigates IN the app (htmx GET into #table-pane; the server
-//      answers HX-Location); a modifier click keeps the browser's own way
+//   G3 the link navigates IN the app: the server names the address
+//      (/pulses/goto?...&json=1) and the table pane goes there the app's own
+//      way (_navigateTablePane -- never an htmx history snapshot of the whole
+//      tree); a modifier click keeps the browser's own way
 //   G4 the write doors' refusals carry the way on: a structural refusal ->
 //      "Open the Pulses page"; a lab "Delete together" whose set holds a
 //      pulse -> a link to the same offer there (no batch button); a set
@@ -38,7 +40,10 @@ const DATA = {
   qubits: { q1: {
     __class__: 'q.Transmon',
     xy: { __class__: 'q.IQChannel', intermediate_frequency: 1e8,
-          operations: { x180: { __class__: SQ, amplitude: 0.1, length: 40 },
+          operations: { x180: { __class__: SQ, amplitude: 0.1, length: 40,
+                                // a field of the pulse that merely LOOKS like a
+                                // pulse place: inside a pulse, it is a field
+                                meta: { operations: { k: 1 } } },
                         alias: '#./x180' } } } },
   qubit_pairs: { 'q1-2': { macros: { cz: {
     __class__: 'lab.CZGate', flux_pulse_qubit: '#/qubits/q1/xy/operations/x180',
@@ -135,7 +140,9 @@ const quiet = function (url) {
       ['qubit_pairs.q1-2.macros.cz.coupler_flux_pulse', true, false, 'an empty (null) gate slot'],
       ['qubit_pairs.q1-2.macros.cz.spect', true, true, 'a plain dict inside a gate'],
       ['extras.operations.z', true, false, 'anything under extras'],
-      ['extras.operations', true, true, 'an operations dict under extras']
+      ['extras.operations', true, true, 'an operations dict under extras'],
+      ['qubits.q1.xy.operations.x180.meta.operations.k', true, false, 'a field inside a pulse shaped like an operations entry'],
+      ['qubits.q1.xy.operations.x180.meta.operations', true, true, 'a dict named operations inside a pulse']
     ];
     open.forEach(function (o) {
       const a = acts(win, o[0]);
@@ -152,20 +159,30 @@ const quiet = function (url) {
   }
   // G3 --------------------------------------------------------------------
   {
-    const win = makeWorld(quiet, PAYLOAD);
+    const DEST = '/pulses?owner=q1&channel=xy&pulse=qubits.q1.xy.operations.x180';
+    const win = makeWorld(function (url) {
+      if (url.indexOf('/pulses/goto?') === 0) return jsonResp({ ok: true, url: DEST });
+      return quiet(url);
+    }, PAYLOAD);
+    const navs = [];
+    win._navigateTablePane = function (u) { navs.push(u); return Promise.resolve(); };
     const a = acts(win, 'qubits.q1.xy.operations.x180');
     const link = a.note.querySelector('a');
     let bubbled = 0;
     a.node.addEventListener('click', function () { bubbled++; });
     const ev = new win.MouseEvent('click', { bubbles: true, cancelable: true });
     link.dispatchEvent(ev);
-    const call = win._ajax[0];
-    ok(!!call && call.m === 'GET' && call.u === '/pulses/goto?path=qubits.q1.xy.operations.x180'
-       && call.o && call.o.target === '#table-pane', 'G3: a click goes through htmx into #table-pane');
+    await tick(20);
+    const asked = win._fetchCalls.filter(function (x) { return x.url.indexOf('/pulses/goto?') === 0; });
+    ok(asked.length === 1 && asked[0].url === '/pulses/goto?path=qubits.q1.xy.operations.x180&json=1',
+       'G3: the server is asked where the pulse lives');
+    ok(navs.length === 1 && navs[0] === DEST, 'G3: ...and the table pane goes there the app\'s own way');
+    ok(win._ajax.length === 0, 'G3: never an htmx request that would snapshot the tree');
     ok(ev.defaultPrevented && bubbled === 0, 'G3: ...not a page load, and the row does not also react');
     const ev2 = new win.MouseEvent('click', { bubbles: true, cancelable: true, ctrlKey: true });
     link.dispatchEvent(ev2);
-    ok(win._ajax.length === 1 && !ev2.defaultPrevented, 'G3: Ctrl+click keeps the browser\'s own way (a new tab)');
+    await tick(10);
+    ok(navs.length === 1 && !ev2.defaultPrevented, 'G3: Ctrl+click keeps the browser\'s own way (a new tab)');
   }
   // G4 --------------------------------------------------------------------
   async function refuse(answer, onPath) {
@@ -273,6 +290,37 @@ const quiet = function (url) {
     const i = src.indexOf('updates: updates, independent: true');
     ok(i > 0 && /source: "live"/.test(src.slice(i, i + 80)),
        'G6: Accept all says it is taking live');
+  }
+
+  // G7 --------------------------------------------------------------------
+  // a render before the Pulses index was warm: the found rows come after
+  {
+    const COLD = Object.assign({}, PAYLOAD, { rows: [], rows_known: false });
+    let answer = null;
+    const win = makeWorld(function (url) {
+      if (url === '/explorer/pulse-gate') return new Promise(function (r) { answer = r; });
+      return quiet(url);
+    }, COLD);
+    const SP = 'qubit_pairs.q1-2.macros.cz.spect.q3';
+    ok(acts(win, SP).del, 'G7: before the rows arrive, a found pulse is not known to be one');
+    const pr = win._pulseGateFill();
+    ok(win._pulseGateFill() === null, 'G7: asked once, not per call');
+    answer({ ok: true, status: 200, json: function () {
+      return Promise.resolve(Object.assign({}, PAYLOAD)); } });
+    await pr;
+    const a = acts(win, SP);
+    ok(!a.del && !a.add && !!a.note, 'G7: once they arrive, the row built too early is rebuilt: no ✕, the note');
+    ok(win._treePulseGate.rows_known === true, 'G7: the payload now knows its rows');
+    // a page re-rendered meanwhile never takes an older answer
+    const win2 = makeWorld(function (url) {
+      if (url === '/explorer/pulse-gate') return new Promise(function (r) { answer = r; });
+      return quiet(url);
+    }, COLD);
+    const pr2 = win2._pulseGateFill();
+    win2._treePulseGate = Object.assign({}, COLD, { rows: [] });
+    answer({ ok: true, status: 200, json: function () { return Promise.resolve(Object.assign({}, PAYLOAD)); } });
+    await pr2;
+    ok(win2._treePulseGate.rows_known === false, 'G7: an answer for a replaced page is dropped');
   }
 
   if (fails) { console.error(fails + ' FAILED'); process.exit(1); }
