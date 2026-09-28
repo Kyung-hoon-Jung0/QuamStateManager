@@ -1796,6 +1796,7 @@ def _activate_quam(folder_path: str | Path, *, origin: str = "live") -> dict:
         except Exception:  # noqa: BLE001 — a hint never blocks activation
             pass
         _acquire_project_scope(current)
+        _select_scope_env(current)          # w9/labwarm
         # docs/20 v2: re-evaluate the first-open chip-name banner on every
         # activation (origin can flip live→archive; a staged name dismisses),
         # and adopt the chip's declared data folder(s) as workspace roots.
@@ -1875,6 +1876,7 @@ def _activate_quam(folder_path: str | Path, *, origin: str = "live") -> dict:
         # chip without its memo); every activation path converges on the
         # reverse index, so a lost memo self-heals.
         _acquire_project_scope(ctx)
+        _select_scope_env(ctx)              # w9/labwarm
         _maybe_identity_confirm(ctx)
         _maybe_chip_name_prompt(ctx)
         _adopt_extras_data_folders(ctx)
@@ -6352,11 +6354,13 @@ def qualibrate_open_project():
                      "in qualibrate first (see the Doctor panel)."),
             level="error"), 409
 
-    _select_project_env(name)
+    env_changed = _select_project_env(name)
     try:
         opened = _activate_quam(state["native"])
     except (FileNotFoundError, ValueError, OSError) as e:
         return render_template("_status.html", message=str(e), level="error"), 400
+    if env_changed:
+        _bind_to_selected_env(opened, current_app.instance_path)
     _remember_load_path(state["native"])
 
     # a qualibrate project is a SCOPE on the context, not a new context type.
@@ -6414,27 +6418,68 @@ def sidebar_folder_badges():
                            qualibrate_tray=_qualibrate_tray_badge())
 
 
-def _select_project_env(name: str) -> None:
+def _select_scope_env(ctx) -> None:
+    """w9/labwarm: a chip opened any other way than the project's Open
+    (State Load, Resume, a workspace pick, switching back to it) whose
+    derived project scope was SYNCED with an env gets that env selected --
+    the same promise as the project's Open. A never-synced scope is left
+    alone here (a plain folder load does not adopt a suggestion); an
+    archive never selects anything. Only a change runs anything."""
+    if not ctx or (ctx.get("origin") or "live") != "live":
+        return
+    name = ctx.get("qualibrate_project")
+    if not name:
+        return
+    from quam_state_manager.core import project_env
+    inst = current_app.instance_path
+    try:
+        rem = project_env.remembered(inst, name)
+        if not rem or not os.path.isfile(rem):
+            return
+        cur = config_generator.get_selected_env(inst)
+        if not cur or os.path.normcase(cur) != os.path.normcase(rem):
+            _apply_selected_env(rem, rebind=False)
+            project_env.mark_used(inst, name, rem)
+            _bind_to_selected_env(ctx, inst)
+    except Exception:  # noqa: BLE001 -- an env never blocks opening a chip
+        logger.warning("scope env selection failed for %s", name, exc_info=True)
+
+
+def _bind_to_selected_env(ctx, inst) -> None:
+    """The chip being opened, bound to the env just selected: its type
+    policy and schema warm. (A cached chip's re-activation binds nothing on
+    its own; a fresh build binds again later -- cheap, single-flight.) The
+    lab-worker pre-warm needs nothing: it reads the env when it runs."""
+    _attach_type_policy(ctx, inst)
+    _warm_state_schema_async(ctx.get("store"), inst, live_folder=ctx.get("path"))
+
+
+def _select_project_env(name: str) -> bool:
     """w9/labwarm: opening project *name* makes its env THE selected env --
     the one it was synced with, or (never synced) the suggested one. Only a
     CHANGE runs what a selection means (``_apply_selected_env``: probes, the
     old lab worker retired); the same env again touches nothing, so a
     project opened with its remembered env re-discovers and re-probes
-    nothing. Before ``_activate_quam``, so the chip's type policy, schema
-    warm and lab-worker pre-warm all start with the right env."""
+    nothing. Before ``_activate_quam``, so the chip's lab-worker pre-warm
+    and (a fresh build) type policy start with the right env; True when the
+    env changed -- the caller then binds the chip it opened (a cached chip's
+    re-activation binds nothing by itself)."""
     from quam_state_manager.core import project_env
     inst = current_app.instance_path
+    changed = False
     try:
         cur = config_generator.get_selected_env(inst)
         view = project_env.view(inst, name, cur)
         want = view.get("python")
         if not want or not view.get("exists"):
-            return          # nothing to select, or it vanished: the card says so
+            return False    # nothing to select, or it vanished: the card says so
         if not cur or os.path.normcase(cur) != os.path.normcase(want):
-            _apply_selected_env(want)
+            _apply_selected_env(want, rebind=False)
+            changed = True
         project_env.mark_used(inst, name, want)
     except Exception:  # noqa: BLE001 -- an env never blocks opening a project
         logger.warning("project env selection failed for %s", name, exc_info=True)
+    return changed
 
 
 @bp.route("/load", methods=["POST"])
@@ -33470,11 +33515,14 @@ def generate_select_env():
     return jsonify({"ok": True, "selected": python_path})
 
 
-def _apply_selected_env(python_path: str) -> None:
+def _apply_selected_env(python_path: str, *, rebind: bool = True) -> None:
     """Make *python_path* THE selected env (``config_generator``'s one
     setting -- the lab worker, the class probe, the config warm and the
     Generate Config default all read it) and run what a selection means.
-    Shared by Generate Config's picker and the project env (w9/labwarm)."""
+    Shared by Generate Config's picker and the project env (w9/labwarm).
+    *rebind* False: called from inside an activation, which binds the chip
+    it is publishing to the new env itself -- the one active until then is
+    not re-bound (that would warm a probe for a chip being left)."""
     config_generator.set_selected_env(current_app.instance_path, python_path)
     # The pulse-roster overlay belongs to the PREVIOUS env — clear it now; the
     # warm below re-applies the new env's roster when its probe lands.
@@ -33494,7 +33542,7 @@ def _apply_selected_env(python_path: str) -> None:
     # Re-bind the active chip's type policy to the NEW env (stat-cached read —
     # likely cold for a fresh env → assignments-only until the warm lands),
     # then warm the schema manifest in the background (single-flight).
-    _ctx = _active_ctx()
+    _ctx = _active_ctx() if rebind else None
     if _ctx:
         _attach_type_policy(_ctx, inst)
         _warm_state_schema_async(_ctx.get("store"), inst,

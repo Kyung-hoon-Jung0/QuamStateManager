@@ -74,9 +74,9 @@ version = 3
     seen = {"apply": [], "discover": 0, "probe": 0, "caps": 0}
     real_apply = routes._apply_selected_env
 
-    def apply(py):
+    def apply(py, **kw):
         seen["apply"].append(py)
-        return real_apply(py)
+        return real_apply(py, **kw)
     monkeypatch.setattr(routes, "_apply_selected_env", apply)
     monkeypatch.setattr(config_generator, "probe_capabilities",
                         lambda *a, **k: seen.__setitem__("caps", seen["caps"] + 1) or {})
@@ -224,6 +224,37 @@ class TestOpening:
                       data={"project": "beta", "python": lab["B"], "how": "changed"})
         assert os.path.normcase(_selected(lab)) == os.path.normcase(lab["A"])
         assert project_env.remembered(lab["inst"], "beta") == lab["B"]
+
+    def test_re_opening_a_cached_chip_binds_it_to_the_new_env(self, lab, monkeypatch):
+        bound = []
+        real = routes._bind_to_selected_env
+        monkeypatch.setattr(routes, "_bind_to_selected_env",
+                            lambda ctx, inst: bound.append(ctx.get("path")) or real(ctx, inst))
+        project_env.remember(lab["inst"], "alpha", lab["A"])
+        lab["c"].post("/qualibrate/open", data={"project": "alpha"})
+        lab["c"].post("/qualibrate/open", data={"project": "beta"})
+        lab["c"].post("/qualibrate/project-env",          # alpha is not open
+                      data={"project": "alpha", "python": lab["B"], "how": "changed"})
+        bound.clear()
+        lab["c"].post("/qualibrate/open", data={"project": "alpha"})   # cached: fast path
+        assert os.path.normcase(_selected(lab)) == os.path.normcase(lab["B"])
+        assert len(bound) == 1 and bound[0].endswith("a")
+
+    def test_a_state_load_of_a_synced_projects_folder_selects_its_env(self, lab):
+        project_env.remember(lab["inst"], "alpha", lab["A"])
+        config_generator.set_selected_env(str(lab["inst"]), lab["B"])
+        chip_a = lab["tmp"] / "chips" / "a"
+        assert lab["c"].post("/load", data={"folder": str(chip_a)}).status_code in (200, 302)
+        assert os.path.normcase(_selected(lab)) == os.path.normcase(lab["A"])
+        lab["c"].post("/load", data={"folder": str(chip_a)})           # again: nothing
+        assert lab["seen"]["apply"] == [lab["A"]]
+
+    def test_a_state_load_of_a_never_synced_folder_adopts_no_suggestion(self, lab):
+        project_env.remember(lab["inst"], "alpha", lab["A"])
+        config_generator.set_selected_env(str(lab["inst"]), lab["B"])
+        lab["c"].post("/load", data={"folder": str(lab["tmp"] / "chips" / "b")})
+        assert os.path.normcase(_selected(lab)) == os.path.normcase(lab["B"])
+        assert lab["seen"]["apply"] == []
 
     def test_the_sidebar_names_the_active_env(self, lab):
         project_env.remember(lab["inst"], "alpha", lab["A"])
