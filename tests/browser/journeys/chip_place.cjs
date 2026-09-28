@@ -7,7 +7,9 @@
  *          OPENW ms, jumps, waits the delay, reloads (Page.reload = F5) and
  *          reads where the target sits SETTLE ms later. "Exact" = the
  *          target's top edge within 8 px of where a jump lands it (its own
- *          scroll-margin-top under the pane top), on the tab it jumped to.
+ *          scroll-margin-top under the pane top), on the tab it jumped to; a
+ *          target the page end keeps lower (the last section on a small chip)
+ *          counts when the pane is scrolled to its end with the target on screen.
  *          Several servers may be given (label=port,...): the trials are
  *          interleaved across them (A/B on one machine, one Chrome).
  *   ring   Datasets run-list toolbar: a MOUSE press on "Full names" leaves
@@ -56,7 +58,7 @@ const WHERE = (sel) => `(function(){var pn=document.getElementById('table-pane')
   var pt=pn.getBoundingClientRect().top; var r=el?el.getBoundingClientRect():null;
   return JSON.stringify({url:location.pathname+location.search, tab:a?a.getAttribute('data-view'):null,
     top:r?Math.round(r.top-pt):null, sm:el?Math.round(parseFloat(getComputedStyle(el).scrollMarginTop)):null,
-    st:Math.round(pn.scrollTop), sh:pn.scrollHeight,
+    st:Math.round(pn.scrollTop), sh:pn.scrollHeight, ch:pn.clientHeight,
     rec:(history.state&&history.state.smChipScroll)||null});})()`;
 const J = async (p, e) => { const v = await p.ev(e); try { return JSON.parse(v); } catch (x) { return v; } };
 
@@ -110,7 +112,14 @@ async function trial(S, mode, delay, what, tag) {
   const T = [3000, 7000, 12000, SETTLE].filter((x, i, a) => x <= SETTLE && a.indexOf(x) === i);
   let waited = 0;
   for (const at of T) { await sleep(at - waited); waited = at; last = await J(p, WHERE(sel)); samples.push(Object.assign({ t: at }, last || {})); }
-  const exact = !err && last && last.top !== null && last.sm !== null && Math.abs(last.top - last.sm) <= 8
+  // on it: under the sticky bar where a jump puts it -- or, for a target the
+  // page end keeps from reaching the top (Calibration on a 5-qubit chip), on
+  // screen with the pane scrolled as far as it goes
+  const atEnd = last && last.sh - last.ch - last.st <= 2;
+  const exact = !err && last && last.top !== null && last.sm !== null
+    && (Math.abs(last.top - last.sm) <= 8 || (atEnd && last.top > last.sm && last.top < last.ch - 40
+        // ...and where the jump itself had put it, when it had settled before F5
+        && (delay < 2000 || !pre || pre.top === null || Math.abs(last.top - pre.top) <= 8)))
     && last.tab === view && last.url === '/topology?view=' + view;
   const shot = path.join(SHOTS, `f5_${S.label}_${mode}_${what[1]}_${delay}_${tag}.png`);
   await p.shot(shot);
@@ -174,14 +183,18 @@ async function ring() {
     const Q = `(function(){var tb=document.querySelector('.sidebar-tree-toolbar'); var f=document.getElementById('exp-density-full'), c=document.getElementById('exp-density-compact');
       if(!tb||!f) return JSON.stringify(null); var r=f.getBoundingClientRect(), rc=c.getBoundingClientRect(), rt=tb.getBoundingClientRect();
       var ae=document.activeElement;
-      return JSON.stringify({shadow:getComputedStyle(tb).boxShadow, fx:Math.round(r.left+r.width/2), fy:Math.round(r.top+r.height/2),
+      var hf=document.elementFromPoint(r.left+r.width/2, r.top+r.height/2);
+      return JSON.stringify({hitFull:!!(hf&&(hf===f||f.contains(hf))), shadow:getComputedStyle(tb).boxShadow, fx:Math.round(r.left+r.width/2), fy:Math.round(r.top+r.height/2),
         cx:Math.round(rc.left+rc.width/2), cy:Math.round(rc.top+rc.height/2), tb:[Math.round(rt.left),Math.round(rt.top),Math.round(rt.width),Math.round(rt.height)],
         vis:r.width>0&&r.height>0, active:ae?(ae.id||ae.tagName):null, compact:document.body.classList.contains('exp-list-compact'),
         fv:!!document.querySelector('.sidebar-tree-toolbar :focus-visible')});})()`;
     // Pico's resting group shadow computes to a transparent 0-spread one; the ring is coloured
     const ringOn = (sh) => !!sh && sh !== 'none' && !/^rgba\(0, 0, 0, 0\)/.test(String(sh).trim());
+    // a person scrolls the sidebar until the toolbar is on screen
+    await p.ev(`(function(){var tb=document.querySelector('.sidebar-tree-toolbar'); if(tb) tb.scrollIntoView({block:'center', behavior:'instant'}); return 1;})()`);
+    await sleep(300);
     const before = await J(p, Q);
-    if (!before || !before.vis) { console.log('FAIL ring ' + S.label + ' toolbar not visible ' + JSON.stringify(before)); allOk = false; await p.close(); continue; }
+    if (!before || !before.vis || !before.hitFull) { console.log('FAIL ring ' + S.label + ' toolbar not visible ' + JSON.stringify(before)); allOk = false; await p.close(); continue; }
     await p.click(before.fx, before.fy);                 // a real mouse press on "Full names"
     await sleep(400);
     const afterMouse = await J(p, Q);
@@ -193,7 +206,13 @@ async function ring() {
     await sleep(400);
     const afterKey = await J(p, Q);
     await p.shot(path.join(SHOTS, `ring_${S.label}_keyboard.png`));
-    // put the choice back the way a person would (mouse on Compact), then reload
+    // put the choice back the way a person would: a mouse press on the "rows"
+    // label first (focus leaves the keyboard-focused button -- a press on an
+    // element that already has keyboard focus keeps :focus-visible, by the
+    // browser's own rule), then the mouse on Compact, then reload
+    const lab = await J(p, `(function(){var l=document.querySelector('.sidebar-tree-toolbar .toolbar-label'); var r=l.getBoundingClientRect(); return JSON.stringify({x:Math.round(r.left+r.width/2), y:Math.round(r.top+r.height/2)});})()`);
+    await p.click(lab.x, lab.y);
+    await sleep(200);
     await p.click(before.cx, before.cy);
     await sleep(300);
     const backMouse = await J(p, Q);
