@@ -306,15 +306,16 @@ def structural_change(merged: dict, op: str, path: str, value: Any = ABSENT) -> 
         added = [p for p in flipped if p in a_rows]
     is_ops = segs[-1] == _OPS and not ch.parent_ops and (
         isinstance(old, dict) or isinstance(new, dict))
-    if ch.parent_ops or path in before or path in after:
+    if path in before or path in after:
+        # a row, or an operations entry (every one of them is in the sets:
+        # `entries` holds each key of an operations dict, row or not)
         kind = "pulse"
     elif is_ops:
         kind = "operations"
     else:
-        # a non-pulse object: coming or going WITH its pulses is fine; its
-        # pulses changing while it stays is not
-        if op in ("create", "delete"):
-            return None
+        # a non-pulse object: coming or going WITH its pulses (a create, a
+        # delete, a value that is no dict before or after) is fine; its
+        # pulses changing while it stays a dict is not
         if not (isinstance(old, dict) and isinstance(new, dict)):
             return None
         kind = "within"
@@ -383,9 +384,7 @@ def json_same(a: Any, b: Any) -> bool:
     if _num(a) and _num(b):
         fa, fb = float(a), float(b)
         return fa == fb or (math.isnan(fa) and math.isnan(fb))
-    if isinstance(a, bool) or isinstance(b, bool):
-        return type(a) is type(b) and a == b
-    return type(a) is type(b) and a == b
+    return type(a) is type(b) and a == b      # a bool is never a number here
 
 
 def tree_payload(rows_known) -> dict:

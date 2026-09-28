@@ -44,6 +44,7 @@ OPS = "qubits.q1.xy.operations"
 W3 = "qubit_pairs.q1-2.macros.cz_unipolar.flux_pulse_qubit"
 W3P = "qubit_pairs.q1-2.macros.cz_unipolar.coupler_flux_pulse"
 GATE = "qubit_pairs.q1-2.macros.cz_custom"
+INNER = f"{XY2}.holder.inner"
 
 
 def _state() -> dict:
@@ -57,6 +58,11 @@ def _state() -> dict:
                                 "amplitude": 0.1}}}},
           "xy": {"operations": {}}}
     st["qubits"]["q2"] = q2
+    # an unclassed entry of a found operations dict is looked INSIDE: a
+    # pulse-class dict there is a row (docs/217 "an unclassed dict: look inside")
+    st["qubits"]["q1"]["xy2"]["operations"]["holder"] = {
+        "note": "not a pulse", "inner": {"__class__": QC + "SquarePulse", "length": 8,
+                                         "amplitude": 0.1}}
     st["top_pulse"] = {"__class__": QC + "SquarePulse", "length": 4, "amplitude": 0.1}
     st["ports"] = {"x": {"operations": {"p": {"__class__": QC + "SquarePulse"}}}}
     return st
@@ -82,6 +88,7 @@ class TestAPulseIsWhatThePulsesPageLists:
         m = _state()
         rows = _rows(m)
         assert "qubits.q2.z.opx_trigger_out.operations.trigger" in rows
+        assert INNER in rows and f"{XY2}.holder" not in rows
         assert _places(m) == rows
 
     @pytest.mark.parametrize("chip", sorted(_golden()["chips"]))
@@ -213,7 +220,7 @@ class TestJsonSame:
 def test_tree_payload_ships_only_what_the_tree_cannot_derive():
     m = _state()
     pl = ps.tree_payload(list(_rows(m)))
-    assert set(pl["rows"]) == {SPEC, SLOT}          # found outside `operations`
+    assert set(pl["rows"]) == {SPEC, SLOT, INNER}   # found outside `operations`
     assert pl["rows_known"] is True and pl["gate_slots"] == list(pulse_index.GATE_SLOTS)
     assert "extras" in pl["skip_tops"] and pl["goto"] == "/pulses/goto"
     assert ps.tree_payload(None)["rows_known"] is False
@@ -475,7 +482,7 @@ class TestTheLinkLandsOnThePulse:
         chip.get("/pulses")                                  # warm it
         idx = _ctx(chip)["pulse_index"]
         pl = payload()
-        assert pl["rows_known"] is True and set(pl["rows"]) == {SPEC, SLOT}
+        assert pl["rows_known"] is True and set(pl["rows"]) == {SPEC, SLOT, INNER}
         # an unexplained change: only a whole-chip walk could say -- the
         # tree does not wait for one (the write doors still check)
         cold0 = idx.stats["cold"]
