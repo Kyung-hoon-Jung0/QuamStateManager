@@ -271,6 +271,14 @@ function _debounce(key, fn, delay) {
 window.setPageSize = function(selectEl, baseUrl, extraQs, storageKey) {
     var val = selectEl.value;
     try { localStorage.setItem(storageKey, val); } catch(e) {}
+    // w9 final QA (P3): on the Pulses page the pulse open in the inspector
+    // stays in view across the size change (pulses.js revealOpenPulse reads
+    // this once, when the new table lands) -- switching to All used to leave
+    // it far below the fold of the virtual list
+    if (baseUrl === '/pulses') {
+        var det = document.querySelector('#inspector-pane #pulse-detail-root[data-pulse-path]');
+        window._pulsesRevealOnce = det ? { path: det.getAttribute('data-pulse-path'), at: Date.now() } : null;
+    }
     if (window.htmx) {
         htmx.ajax('GET', baseUrl + '?page=1&per_page=' + val + extraQs, {target: '#table-pane', swap: 'innerHTML'});
     }
@@ -4729,6 +4737,88 @@ window.livePushExtrasLine = function (typedPaths) {
             .catch(function () { return "failed"; });
     }
     window._followOnExplorer = followOnExplorer;
+    /* w9 final QA (P2): htmx.ajax with no `source` issues from document.body,
+       and htmx keeps ONE request per element with the `last` queue -- so the
+       /state/tray GET this poll sends and the inspector's /pulse/detail GET
+       shared a lane, and the second tray GET (onSyncSig, same poll) REPLACED
+       the queued detail GET: the row followed the other window's edit, the
+       open inspector kept the old value forever. Each background refresh gets
+       a lane of its own: a hidden body-level element no response ever swaps
+       (a queued request re-issued against a swapped-out source dies on htmx's
+       isConnected guard -- the docs/141 UndoQueue lesson), inside body so the
+       HX-Trigger events it raises still bubble to the listeners on body. Not
+       #inspector-pane either: its hx-sync="this:replace" would ABORT this
+       window's own commit in flight. */
+    function _syncLane(id) {
+        var s = document.getElementById(id);
+        if (!s) {
+            s = document.createElement("div");
+            s.id = id;
+            s.hidden = true;
+            s.style.display = "none";
+            document.body.appendChild(s);
+        }
+        return s;
+    }
+    window._syncLane = _syncLane;
+    function _trayRefresh() {
+        return window.htmx.ajax("GET", "/state/tray",
+                                { source: _syncLane("tray-refresh-src"),
+                                  target: "#pending-tray", swap: "outerHTML" });
+    }
+    /* The open pulse inspector follows a foreign edit the same way the grid and
+       the tree do: only while nobody is using it (a keystroke or click in the
+       last two seconds, focus inside it, a rename/duplicate/delete step open,
+       a typed value not yet committed), retried every 2 s until then -- a
+       reader who scrolled the table as the edit arrived used to keep the old
+       value forever too. A pane that has since re-rendered (a commit, another
+       pulse) is already fresh and is left alone. */
+    var _inspFollowTimer = null;
+    function _inspectorInUse(insp) {
+        if ((Date.now() - (window.__lastUserAct || 0)) < 2000) return true;
+        var a = document.activeElement;
+        if (a && a !== document.body && insp.contains(a)) return true;
+        if (insp.querySelector(".pulse-rename-form:not([hidden]), .pulse-duplicate-form:not([hidden]),"
+                               + " .pulse-delete-confirm:not([hidden])")) return true;
+        return Array.prototype.some.call(insp.querySelectorAll("input[data-param][data-committed]"),
+            function (i) { return i.value !== i.getAttribute("data-committed"); });
+    }
+    function followOnInspector(path, root) {
+        if (_inspFollowTimer) { clearTimeout(_inspFollowTimer); _inspFollowTimer = null; }
+        var insp = document.getElementById("inspector-pane");
+        var cur = insp && insp.querySelector("#pulse-detail-root");
+        if (!window.htmx || !cur || cur !== root || cur.getAttribute("data-pulse-path") !== path) return "gone";
+        if (_inspectorInUse(insp)) {
+            _inspFollowTimer = setTimeout(function () { followOnInspector(path, root); }, 2000);
+            return "deferred";
+        }
+        window.htmx.ajax("GET", "/pulse/detail?path=" + encodeURIComponent(path),
+                         { source: _syncLane("insp-follow-src"), target: "#inspector-pane",
+                           swap: "innerHTML",
+                           // names the request at landing (htmx 2.0.4's beforeSwap
+                           // detail carries no source element)
+                           headers: { "X-SM-Follow-Pulse": encodeURIComponent(path) } });
+        return "sent";
+    }
+    window._followOnInspector = followOnInspector;
+    /* ...and it lands only where it still belongs: the pane shows that pulse
+       and nobody started using it while the GET was out (then it waits, and
+       asks again). Capture phase: decided before the plot teardown reads
+       shouldSwap. */
+    document.addEventListener("htmx:beforeSwap", function (evt) {
+        var rc = evt.detail && evt.detail.requestConfig;
+        var tag = rc && rc.headers && rc.headers["X-SM-Follow-Pulse"];
+        if (!tag) return;
+        var path = decodeURIComponent(tag);
+        var insp = document.getElementById("inspector-pane");
+        var cur = insp && insp.querySelector("#pulse-detail-root");
+        if (!cur || cur.getAttribute("data-pulse-path") !== path) {
+            evt.detail.shouldSwap = false;
+        } else if (_inspectorInUse(insp)) {
+            evt.detail.shouldSwap = false;
+            _inspFollowTimer = setTimeout(function () { followOnInspector(path, cur); }, 2000);
+        }
+    }, true);
     /* ...and the one entry point for "the working copy moved under this
        screen": the grids and the tree, each through its own refresher. */
     window._followValuesOnScreen = function () {
@@ -4755,8 +4845,7 @@ window.livePushExtrasLine = function (typedPaths) {
         var done = function () { _foreignRefreshing = false; };
         var after = function () { done(); if (foreign) window._followValuesOnScreen(); };
         try {
-            var p = window.htmx.ajax("GET", "/state/tray",
-                                     { target: "#pending-tray", swap: "outerHTML" });
+            var p = _trayRefresh();
             if (p && p.then) p.then(after, done); else after();
         } catch (e) { done(); }
         // the values on screen: the pulses table patches its own rows, the
@@ -4768,23 +4857,13 @@ window.livePushExtrasLine = function (typedPaths) {
         // change too (debounced there, so it coalesces with a local one).
         try { if (window._diagChanged) window._diagChanged(); } catch (e) {}
         try {
+            // Only for a window that is genuinely LOOKING: never take the pane
+            // away from someone who is using it (followOnInspector waits for
+            // them); the tray refresh above already told them the chip moved.
             var insp = document.getElementById("inspector-pane");
             var root = insp && insp.querySelector("#pulse-detail-root");
             var path = root && root.getAttribute("data-pulse-path");
-            // Only for a window that is genuinely LOOKING: never take the pane
-            // away from someone who is using it. Anything typed or clicked in
-            // the last two seconds means this window has a user in it, and the
-            // tray refresh above already told them the chip moved.
-            var busy = (Date.now() - (window.__lastUserAct || 0)) < 2000;
-            var a = document.activeElement;
-            var inside = insp && a && insp.contains(a);
-            var open = insp && insp.querySelector(
-                ".pulse-rename-form:not([hidden]), .pulse-duplicate-form:not([hidden]),"
-                + " .pulse-delete-confirm:not([hidden])");
-            if (path && !busy && !inside && !open) {
-                window.htmx.ajax("GET", "/pulse/detail?path=" + encodeURIComponent(path),
-                                 { target: "#inspector-pane", swap: "innerHTML" });
-            }
+            if (path) followOnInspector(path, root);
         } catch (e) {}
     }
     /* The poll's own decision, as a function a test can drive: the FIRST
@@ -4835,8 +4914,7 @@ window.livePushExtrasLine = function (typedPaths) {
         _pillRefreshing = true;
         var done = function () { _pillRefreshing = false; };
         try {
-            var p = window.htmx.ajax("GET", "/state/tray",
-                                     { target: "#pending-tray", swap: "outerHTML" });
+            var p = _trayRefresh();
             if (p && p.then) p.then(done, done); else done();
         } catch (e) { done(); }
         return true;
@@ -4868,8 +4946,7 @@ window.livePushExtrasLine = function (typedPaths) {
             if (window.SyncPanel && window.SyncPanel.isOpen()) window.SyncPanel.refresh();
         };
         try {
-            var p = window.htmx.ajax("GET", "/state/tray",
-                                     { target: "#pending-tray", swap: "outerHTML" });
+            var p = _trayRefresh();
             if (p && p.then) p.then(done, done); else done();
         } catch (e) { done(); }
         return true;
@@ -14467,7 +14544,12 @@ window.PlotHost = (function () {
  * The exception is a pane PaneState is about to PARK — those plots are meant to
  * come back alive, and purging them would hand the user a corpse on return. */
 function _plotSwapTeardown(evt) {
-    var t = evt && evt.target;
+    // w9 final QA (P3): the element the swap REPLACES, not the one the event
+    // fires on. htmx 2.0.4 raises beforeSwap on the ORIGINAL target even when
+    // the response is retargeted (HX-Retarget), so a lab-refused pulse delete
+    // -- hx-target #inspector-pane, retargeted into #pulse-delete-result --
+    // purged the inspector's waveform plot and nothing ever drew it again.
+    var t = (evt && evt.detail && evt.detail.target) || (evt && evt.target);
     if (!t || !t.querySelectorAll) return;
     if (evt.detail && evt.detail.shouldSwap === false) return;
     if (t.id === 'table-pane' && window.PaneState && window.PaneState.isKeepRoute
@@ -22358,7 +22440,16 @@ function _pulsesSyncUrl(push) {
     // chip reloaded (or shared, or Back'd) as page 1 with no way to tell.
     var info = document.querySelector("#pulses-rows-wrap [data-current-page]");
     var cur = info ? (info.getAttribute("data-current-page") || "") : "";
-    if (cur && cur !== "1") parts.push("page=" + cur);
+    // w9 final QA (P3): with no page= the server opens the page that holds
+    // ?pulse=, so page 1 is written out whenever the open pulse's row is NOT
+    // on it -- a reload keeps the page the reader chose.
+    var det0 = document.querySelector("#inspector-pane #pulse-detail-root[data-pulse-path]");
+    var open0 = det0 ? (det0.getAttribute("data-pulse-path") || "") : "";
+    var paged = !document.querySelector("#pulses-rows-wrap tbody[data-pulses-virtual]");
+    var offPage = !!(open0 && paged && !Array.prototype.some.call(
+        document.querySelectorAll("#pulses-rows-wrap tr[data-pulse-path]"),
+        function (tr) { return tr.getAttribute("data-pulse-path") === open0; }));
+    if (cur && (cur !== "1" || offPage)) parts.push("page=" + cur);
     // The page-size <select> in _pagination.html carries NO name attribute, so
     // the old select[name='per_page'] lookup never matched and every rows /
     // inspector swap dropped per_page from the URL ("All" -> open a pulse ->
