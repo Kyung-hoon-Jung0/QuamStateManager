@@ -65,6 +65,13 @@ def pytest_sessionstart(session):
     from quam_state_manager.web.app import create_app
 
     want = _TEST_URL_PREFIX.rstrip("/")
+    if not want.startswith("/"):
+        # measured: Git Bash hands `SM_TEST_URL_PREFIX=/sm` to python.exe as
+        # 'C:/Program Files/Git/sm' (MSYS path conversion)
+        raise pytest.UsageError(
+            f"SM_TEST_URL_PREFIX={_TEST_URL_PREFIX!r} is not a URL path like '/sm'"
+            + (" -- Git Bash rewrote it; run with MSYS_NO_PATHCONV=1"
+               if len(want) > 1 and want[1] == ":" else ""))
     inst = tempfile.mkdtemp(prefix="sm_prefix_mode_probe_")
     try:
         app = create_app(testing=True, instance_path=inst)
