@@ -138,19 +138,51 @@ window.PulsesVT = (function () {
         return e && e.s !== undefined && e.sv === e.v && e.se === epoch;
     }
 
-    function setStamp(s) {
-        if (s && s !== stamp) {
-            if (stamp !== null) epoch++;
-            stamp = s;
-        }
+    /* The server's stamp: boot:uid:seq:gen:builds:overlay (routes.py
+       _pulse_vt_stamp) -- this process, this store, and how far the store had
+       moved when the text or the thumbnail was read. */
+    function parseStamp(s) {
+        var a = String(s || '').split(':');
+        if (a.length < 6) return null;
+        return { store: a[0] + ':' + a[1], seq: +a[2] || 0, gen: +a[3] || 0, builds: +a[4] || 0, raw: String(s) };
     }
 
-    function putText(p, v, h) {
+    /* Is `inc` at least as new as `cur`? Only stamps of one process and one
+       store are ordered; any other store is simply a different chip (or a
+       restarted server) and wins. */
+    function notOlder(cur, inc) {
+        if (!cur || !inc) return true;
+        if (cur.store !== inc.store) return true;
+        if (inc.seq !== cur.seq) return inc.seq > cur.seq;
+        if (inc.gen !== cur.gen) return inc.gen > cur.gen;
+        return inc.builds >= cur.builds;
+    }
+
+    function setStamp(s) {
+        if (!s || s === stamp) return;
+        var prev = parseStamp(stamp), next = parseStamp(s);
+        if (stamp !== null) {
+            epoch++;
+            // another store (a chip switch, a replaced working copy, a
+            // restarted server): no thumbnail of the old one is shown, not
+            // even until its redraw lands
+            if (!prev || !next || prev.store !== next.store) {
+                cache.forEach(function (e) { e.s = undefined; e.sn = (e.sn || 0) + 1; });
+            }
+        }
+        stamp = s;
+    }
+
+    /* Take a row's text -- unless the model already holds a NEWER one: a slow
+       response that started before a change must not land over the text of
+       the change (w9 review P2). Returns the entry, or null when refused. */
+    function putText(p, v, h, stp) {
         var e = cache.get(p);
-        if (e && e.v === v) { if (h) e.h = h; return e; }
+        if (e && e.stp && stp && !notOlder(e.stp, stp)) return null;
+        if (e && e.v === v) { if (h) e.h = h; if (stp) e.stp = stp; return e; }
         // a row whose text moved never shows the waveform of the old text:
         // its cell waits for the new thumbnail (a placeholder, not a stale curve)
-        var n = { v: v, h: h, s: undefined, sv: null, se: -1,
+        var n = { v: v, h: h, s: undefined, sv: null, se: -1, stp: stp || null,
                   sn: e ? (e.sn || 0) + 1 : 0, keys: null };
         cache.set(p, n);
         return n;
@@ -276,6 +308,19 @@ window.PulsesVT = (function () {
             out.set(paths[i], tr);
         }
         return out;
+    }
+
+    /* A rendered row's waveform cell follows its entry: the thumbnail when
+       there is one, else the placeholder (a withdrawn thumbnail -- another
+       store's -- is never left standing). */
+    function syncSpark(tr, e) {
+        if (!e || !tr._pvt || tr._pvt.sn === e.sn) return;
+        var td = tr.querySelector('td.pulse-spark-cell');
+        if (td && !td.querySelector('.pulse-alias-target')) {
+            if (e.s !== undefined) { td.innerHTML = e.s; td.removeAttribute('data-spark-lazy'); }
+            else { td.innerHTML = '<span class="pulse-spark-pending" aria-hidden="true"></span>'; td.setAttribute('data-spark-lazy', '1'); }
+        }
+        tr._pvt.sn = e.sn;
     }
 
     function processRows(trs) {
@@ -425,15 +470,9 @@ window.PulsesVT = (function () {
             if (keepSet.has(p)) {
                 var trk = old.get(p);
                 rendered.set(p, trk);
-                // an updated thumbnail on a kept row
+                // an updated (or withdrawn) thumbnail on a kept row
                 var e = cache.get(p);
-                if (e && trk._pvt && trk._pvt.sn !== e.sn && e.s !== undefined) {
-                    var td = trk.querySelector('td.pulse-spark-cell');
-                    if (td && !td.querySelector('.pulse-alias-target')) {
-                        td.innerHTML = e.s; td.removeAttribute('data-spark-lazy');
-                    }
-                    trk._pvt.sn = e.sn;
-                }
+                syncSpark(trk, e);
                 if (e && !sparkFresh(e) && !trk.querySelector('.pulse-alias-target')) st.sparkWant.add(p);
                 cursor = trk.nextSibling;
                 return;
@@ -499,6 +538,14 @@ window.PulsesVT = (function () {
         st.sparkWant.forEach(function (p) { if (st.rendered.has(p) && paths.length < SPARK_BATCH) paths.push(p); });
         paths.forEach(function (p) { st.sparkWant.delete(p); });
         st.sparkWant.forEach(function (p) { if (!st.rendered.has(p)) st.sparkWant.delete(p); });
+        // at most two asks per row per stamp: a row the server keeps refusing
+        // (or that moved under the ask) is never asked in a loop
+        paths = paths.filter(function (p) {
+            var e = cache.get(p);
+            if (!e) return false;
+            if (e.askEp !== epoch) { e.askEp = epoch; e.askN = 0; }
+            return ++e.askN <= 2;
+        });
         if (!paths.length) return;
         var my = st, ep = epoch;
         my.sparkBusy = true;
@@ -506,16 +553,21 @@ window.PulsesVT = (function () {
             my.sparkBusy = false;
             if (!d || !d.ok) return;
             setStamp(d.stamp);
-            var textMoved = false;
+            var moved = [];
             Object.keys(d.rows || {}).forEach(function (p) {
                 var pair = d.rows[p];
+                var e = cache.get(p);
+                // a thumbnail belongs to the text it was drawn with: a row
+                // whose text differs is re-read through its own door (with
+                // the ordering), never taken from here (w9 review P2)
+                if (!e || e.v !== pair[0]) { moved.push(p); return; }
                 var sp = splitFull(pair[1]);
                 if (!sp) return;
-                var e = cache.get(p);
-                if (!e || e.v !== pair[0]) { e = putText(p, pair[0], sp[0]); textMoved = true; }
                 e.s = sp[1]; e.sv = pair[0]; e.se = (ep === epoch) ? epoch : -1; e.sn = (e.sn || 0) + 1;
             });
             if (st === my && active()) {
+                if ((d.gone || []).length) refresh();
+                else if (moved.length) rowsChanged(moved.filter(function (p) { return st.pos.has(p); }));
                 // warming lab thumbnails: one more ask once their own code drew them
                 var warm = [];
                 (d.warming || []).forEach(function (p) {
@@ -527,7 +579,6 @@ window.PulsesVT = (function () {
                     warm.forEach(function (p) { var e = cache.get(p); if (e) e.se = -1; });
                     refreshRendered();
                 }, 4000);
-                if (textMoved) st.preDirty = true;
                 refreshRendered();
             }
             if (my.sparkWant.size) fillSparksSoon();
@@ -552,13 +603,7 @@ window.PulsesVT = (function () {
                 rebuilt.push(fresh);
                 return;
             }
-            if (tr._pvt.sn !== e.sn && e.s !== undefined) {
-                var td = tr.querySelector('td.pulse-spark-cell');
-                if (td && !td.querySelector('.pulse-alias-target')) {
-                    td.innerHTML = e.s; td.removeAttribute('data-spark-lazy');
-                }
-                tr._pvt.sn = e.sn;
-            }
+            syncSpark(tr, e);
             if (!sparkFresh(e) && !tr.querySelector('.pulse-alias-target')) st.sparkWant.add(p);
         });
         processRows(rebuilt);
@@ -698,23 +743,45 @@ window.PulsesVT = (function () {
         });
     }
 
+    function unselect(p) {
+        var had = checked.delete(p);
+        if (st && st.sel === p) st.sel = null;
+        if (had && window.pulseSelChanged) window.pulseSelChanged(null);
+    }
+
+    /* Column widths are frozen once per table (app.js enhanceColumnResize);
+       a refresh whose widest rows changed (a created pulse with a longer
+       name) lets the table size them again -- the widths the user dragged
+       stay (they are app.js's `saved`). */
+    function refreeze() {
+        if (!st || !st.table || !window.enhanceColumnResize) return;
+        var saved = {};
+        try { saved = JSON.parse(localStorage.getItem('quam_pulses_col_widths') || '{}') || {}; } catch (e) {}
+        var ths = st.table.querySelectorAll('thead th');
+        Array.prototype.forEach.call(ths, function (th, i) { if (!saved[i]) th.style.width = ''; });
+        st.table.style.tableLayout = '';
+        st.table.style.width = '';
+        try { window.enhanceColumnResize('pulses-table', 'quam_pulses_col_widths'); } catch (e) {}
+    }
+
     // ── fetching text ───────────────────────────────────────────────────
-    function fetchRows(paths) {
+    function fetchRows(paths, my) {
         if (!paths.length) return Promise.resolve();
         return postJson('/pulses/vrows', { paths: paths }).then(function (d) {
-            if (!d || !d.ok) return;
-            (d.rows || []).forEach(function (r) { putText(r[0], r[1], r[2]); });
+            if (!d || !d.ok || st !== my) return;
+            var stp = parseStamp(d.stamp);
+            (d.rows || []).forEach(function (r) { putText(r[0], r[1], r[2], stp); });
         });
     }
 
     function adopt(data) {
         // [path, digest, html?] per row: the text is taken, or checked against
         // what the model holds; the rows it cannot vouch for are returned
-        var paths = [], miss = [];
+        var paths = [], miss = [], stp = parseStamp(data.stamp);
         (data.rows || []).forEach(function (r) {
             var p = r[0], v = r[1];
             paths.push(p);
-            if (r.length > 2) { putText(p, v, r[2]); return; }
+            if (r.length > 2) { putText(p, v, r[2], stp); return; }
             var e = cache.get(p);
             if (!e || e.v !== v || !e.h) miss.push(p);
             if (!e) cache.set(p, { v: null, h: null, s: undefined, sv: null, se: -1, sn: 0, keys: null });
@@ -781,6 +848,7 @@ window.PulsesVT = (function () {
         var got = adopt(data);
         st = newState(tbody, data);
         st.wide = data.wide || [];
+        st.listStp = parseStamp(data.stamp);
         setView(got.paths);
         // prune the compare selection to what this table can show
         checked.forEach(function (p) { if (!st.pos.has(p)) checked.delete(p); });
@@ -808,7 +876,7 @@ window.PulsesVT = (function () {
         if (got.miss.length) {
             var mine = st;
             busy(true);
-            fetchRows(got.miss).then(function () {
+            fetchRows(got.miss, mine).then(function () {
                 busy(false);
                 if (st !== mine) return;
                 // the sort read those rows' keys as blank: read it again
@@ -846,10 +914,12 @@ window.PulsesVT = (function () {
           .then(function (d) {
             if (gen !== refreshGen || st !== my) return null;
             var got = adopt(d);
-            return fetchRows(got.miss).then(function () {
+            return fetchRows(got.miss, my).then(function () {
                 if (gen !== refreshGen || st !== my || !active()) return;
                 setStamp(d.stamp);
+                st.listStp = parseStamp(d.stamp);
                 if (d.empty) st.empty = d.empty;
+                var wideMoved = d.wide && d.wide.join('\u0000') !== (st.wide || []).join('\u0000');
                 if (d.wide) st.wide = d.wide;
                 setView(got.paths);
                 if (st.sort) applySort(st.sort);
@@ -861,6 +931,7 @@ window.PulsesVT = (function () {
                 if (window.pulseSelChanged) window.pulseSelChanged(null);
                 render(true);
                 renderSizer();
+                if (wideMoved) refreeze();
             });
         }).then(function () { busy(false); }, function () {
             busy(false);
@@ -886,27 +957,35 @@ window.PulsesVT = (function () {
             fetch('/pulse/row?path=' + encodeURIComponent(p) + '&vt=1' + filterQs(f), {
                 credentials: 'same-origin', headers: { 'HX-Request': 'true' }
             }).then(function (r) {
-                if (r.status === 204) return { gone: true };
+                if (r.status === 204) return { gone: true, stp: parseStamp(r.headers.get('X-Pulse-Stamp')) };
                 if (!r.ok) return Promise.reject(new Error('HTTP ' + r.status));
                 var ver = r.headers.get('X-Pulse-Ver');
-                return r.text().then(function (t) { return { html: t, ver: ver }; });
+                var hs = r.headers.get('X-Pulse-Stamp');
+                return r.text().then(function (t) { return { html: t, ver: ver, stp: parseStamp(hs) }; });
             }).then(function (res) { busy(false); return res; },
                     function (err) { busy(false); throw err; })
               .then(function (res) {
                 if (rowGen[p] !== gen || st !== my || !active()) return;
                 if (res.gone) {
+                    // a listing newer than this answer already decided the row
+                    if (st.listStp && res.stp && !notOlder(st.listStp, res.stp)) return;
+                    if (!st.pos.has(p)) return;
                     var v = st.view.filter(function (x) { return x !== p; });
                     setView(v);
                     st.n = Math.max(0, st.n - 1);
                     updateCounts(st.n);
+                    unselect(p);
                     render(true);
                     return;
                 }
                 var sp = splitFull(res.html);
                 if (!sp || !res.ver) { refresh(); return; }
-                var e = putText(p, res.ver, sp[0]);
+                var e = putText(p, res.ver, sp[0], res.stp);
+                if (!e) return;                  // the model already holds newer text
                 e.h = sp[0];
                 e.s = sp[1]; e.sv = res.ver; e.se = epoch; e.sn = (e.sn || 0) + 1;
+                // a row that stopped being comparable (no checkbox) leaves the selection
+                if (checked.has(p) && sp[0].indexOf('pulse-sel-chk') < 0) unselect(p);
                 var tr = st.rendered.get(p);
                 if (tr) {
                     // the whole row: its text may have moved (a new digest)

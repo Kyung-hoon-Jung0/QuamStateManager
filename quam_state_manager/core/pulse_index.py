@@ -1053,20 +1053,27 @@ class RowMemo:
     """
 
     def __init__(self, max_entries: int = 60000) -> None:
-        self._memo: dict[tuple[str, str], tuple[dict, Any]] = {}
+        self._memo: dict[tuple[str, str], tuple[dict, Any, Any]] = {}
         self.max_entries = max_entries
         self.stats = {"hit": 0, "carry": 0, "miss": 0}
 
-    def get(self, kind: str, row: dict, compute):
+    def get(self, kind: str, row: dict, compute, sig=None):
+        """*compute(row)*, memoized. *sig(row)* (optional) is what *compute*
+        actually reads, compared type-strictly; without it the whole row is
+        compared with ``==`` (which calls ``100 == 100.0`` equal -- pass a
+        *sig* whenever the value would print them apart)."""
         key = (kind, row.get("path", ""))
         hit = self._memo.get(key)
+        s = None
         if hit is not None:
             same = hit[0] is row
-            if same or hit[0] == row:
+            if not same:
+                s = sig(row) if sig is not None else None
+            if same or (hit[2] == s if sig is not None else hit[0] == row):
                 if not same:
                     # an equal row from a newer build: re-bind, so the next
                     # read is an identity hit
-                    self._memo[key] = (row, hit[1])
+                    self._memo[key] = (row, hit[1], s if sig is not None else None)
                     self.stats["carry"] += 1
                 else:
                     self.stats["hit"] += 1
@@ -1081,7 +1088,9 @@ class RowMemo:
         val = compute(row)
         if len(self._memo) >= self.max_entries:
             self._memo.clear()
-        self._memo[key] = (row, val)
+        if sig is not None and s is None:
+            s = sig(row)
+        self._memo[key] = (row, val, s)
         return val
 
     def __len__(self) -> int:

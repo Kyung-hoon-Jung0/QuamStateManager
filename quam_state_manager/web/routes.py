@@ -15465,7 +15465,13 @@ def pulse_row():
     path = (request.args.get("path") or "").strip()
     if not store or not pulse_index or not path:
         return "", 404
-    row = pulse_index.row(path)
+    vt = request.args.get("vt") == "1"
+    if vt:
+        # w9/pulsesall: the row and the stamp it was read at, together -- the
+        # virtual view orders every text it receives by that stamp
+        row, vt_stamp = _pulse_vt_row_stamp(store, pulse_index, path)
+    else:
+        row = pulse_index.row(path)
     if row is None:
         return "", 404
     # the page's active filter rides along: a row that no longer matches it
@@ -15473,11 +15479,15 @@ def pulse_row():
     if not _pulse_rows_filter([row], request.args.get("channel", ""),
                               (request.args.get("q") or "").strip(),
                               (request.args.get("owner") or "").strip()):
+        if vt:
+            resp = make_response("", 204)
+            resp.headers["X-Pulse-Stamp"] = vt_stamp
+            return resp
         return "", 204
     # w9/pulsesall: the virtual All view keys its row model by the digest of
     # the row's text (the same one /pulses/vids lists), so a patched row is
     # not fetched again by the next structural refresh
-    vt_ver = (_pulse_vt_entry(row)[1] if request.args.get("vt") == "1" else None)
+    vt_ver = _pulse_vt_entry(row)[1] if vt else None
     row = dict(row)
     from quam_state_manager.core.waveform_synth import sparkline_svg, synth_for_operation
     if row.get("is_alias"):
@@ -15492,7 +15502,7 @@ def pulse_row():
         return render_template("_pulse_row.html", r=row)
     resp = make_response(render_template("_pulse_row.html", r=row))
     resp.headers["X-Pulse-Ver"] = vt_ver
-    resp.headers["X-Pulse-Stamp"] = _pulse_vt_stamp(store, pulse_index)
+    resp.headers["X-Pulse-Stamp"] = vt_stamp
     return resp
 
 
@@ -15547,6 +15557,29 @@ def _pulse_vt_memo():
     return memo
 
 
+#: Every row key ``_pulse_row.html`` reads -- pinned against the template by
+#: tests/test_pulses_virtual.py. The virtual text is a pure function of THESE,
+#: so they are what :class:`RowMemo` compares to carry a rendered text across
+#: an index rebuild (the thumbnail keys are drawn lazily, never in the text).
+_PULSE_ROW_KEYS = ("path", "summary", "is_alias", "known", "owner", "channel",
+                   "op_name", "alias_target", "iq", "readout", "found", "location",
+                   "class_match", "unmodeled", "qclass", "class_short",
+                   "length_implausible", "length_stored", "length", "amplitude",
+                   "used_by")
+
+
+def _pulse_vt_sig(row: dict) -> tuple:
+    """What the virtual text is rendered FROM, type-strictly: Python calls
+    ``100 == 100.0`` and ``True == 1`` equal, the template prints them apart."""
+    out = []
+    for k in _PULSE_ROW_KEYS:
+        v = row.get(k)
+        if isinstance(v, (list, tuple)):
+            v = tuple((type(x).__name__, x) for x in v)
+        out.append((k, type(v).__name__, v))
+    return tuple(out)
+
+
 def _pulse_vt_render(row: dict) -> tuple[str, str]:
     """(text HTML, digest) of one row in the virtual view: ``_pulse_row.html``
     with the thumbnail left as a sized placeholder. A pure function of the row
@@ -15559,23 +15592,47 @@ def _pulse_vt_render(row: dict) -> tuple[str, str]:
 
 
 def _pulse_vt_entry(row: dict) -> tuple[str, str]:
-    return _pulse_vt_memo().get("vt", row, _pulse_vt_render)
+    return _pulse_vt_memo().get("vt", row, _pulse_vt_render, sig=_pulse_vt_sig)
+
+
+#: this server process -- a stamp from another process never orders against ours
+_PULSE_VT_BOOT = uuid.uuid4().hex[:8]
 
 
 def _pulse_vt_stamp(store, pulse_index) -> str:
-    """What a lazily drawn thumbnail was drawn AT: this store object + the
-    index's freshness token (mutation_seq, class knowledge). A thumbnail also
-    reads pointer-followed fields outside its row, so it goes stale on ANY
-    change -- the client redraws the ones on screen when this moves."""
+    """What a text or a thumbnail was read AT: this process, this store object,
+    and the index's freshness token (mutation_seq, class knowledge, env
+    overlay, the count of cold builds -- a rebuild on an invalidate hint moves
+    nothing else). ``boot:uid:seq:gen:builds:overlay``. The client orders every
+    text by (seq, gen, builds) within one boot + store, and redraws the
+    thumbnails on screen when any of it moves (a thumbnail also reads
+    pointer-followed fields outside its row)."""
     uid = getattr(store, "_pulses_vt_uid", None)
     if uid is None:
         uid = next(_PULSE_VT_UIDS)
         try:
             store._pulses_vt_uid = uid
-        except AttributeError:      # a store that refuses attributes: per call
-            pass
+        except AttributeError:      # a store that refuses attributes
+            uid = "i%x" % id(store)
     seq, gen, ov = pulse_index.stamp()
-    return f"{uid}:{seq}:{gen}:{ov:x}"
+    builds = pulse_index.stats.get("cold", 0)
+    return f"{_PULSE_VT_BOOT}:{uid}:{seq}:{gen}:{builds}:{ov:x}"
+
+
+def _pulse_vt_rows_stamp(store, pulse_index) -> tuple[list, str]:
+    """Every row and the stamp they were read at, as ONE observation. The rows
+    are brought current first (outside any hold of ours: a cold build hands
+    the lock over), then read again with the stamp under the store lock."""
+    pulse_index.rows()
+    with store._lock:
+        return pulse_index.rows(), _pulse_vt_stamp(store, pulse_index)
+
+
+def _pulse_vt_row_stamp(store, pulse_index, path: str):
+    """One row (or None) and its stamp, as one observation."""
+    pulse_index.row(path)
+    with store._lock:
+        return pulse_index.row(path), _pulse_vt_stamp(store, pulse_index)
 
 
 def _pulse_vt_empty_html(channel: str) -> str:
@@ -15620,7 +15677,7 @@ def _pulse_vt_widest(rows: list, per_col: int = 2) -> list[str]:
 
 
 def _pulse_vt_payload(store, pulse_index, rows: list, channel: str, *,
-                      want_html: bool) -> str:
+                      want_html: bool, stamp: str) -> str:
     """The virtual view's row model for *rows* (already filtered, in table
     order) as JSON: ``[path, digest, html]`` per row, or ``[path, digest]``
     when the client already holds the text (``vids=1``); ``wide`` names the
@@ -15628,9 +15685,9 @@ def _pulse_vt_payload(store, pulse_index, rows: list, channel: str, *,
     memo = _pulse_vt_memo()
     out = []
     for r in rows:
-        html, ver = memo.get("vt", r, _pulse_vt_render)
+        html, ver = memo.get("vt", r, _pulse_vt_render, sig=_pulse_vt_sig)
         out.append([r["path"], ver, html] if want_html else [r["path"], ver])
-    return json.dumps({"v": 1, "stamp": _pulse_vt_stamp(store, pulse_index),
+    return json.dumps({"v": 1, "stamp": stamp,
                        "n": len(rows), "rows": out, "wide": _pulse_vt_widest(rows),
                        "empty": _pulse_vt_empty_html(channel)},
                       separators=(",", ":"), ensure_ascii=False)
@@ -15645,10 +15702,12 @@ def pulses_vids():
     if not store or not pulse_index:
         return jsonify(ok=False, error="no chip loaded"), 409
     channel = request.args.get("channel", "")
-    rows = _pulse_rows_filter(pulse_index.rows(), channel,
+    raw, stamp = _pulse_vt_rows_stamp(store, pulse_index)
+    rows = _pulse_rows_filter(raw, channel,
                               request.args.get("q", "").strip(),
                               request.args.get("owner", "").strip())
-    resp = make_response(_pulse_vt_payload(store, pulse_index, rows, channel, want_html=False))
+    resp = make_response(_pulse_vt_payload(store, pulse_index, rows, channel,
+                                           want_html=False, stamp=stamp))
     resp.mimetype = "application/json"
     return resp
 
@@ -15669,7 +15728,8 @@ def pulses_vrows():
     pulse_index = _pulse_index()
     if not store or not pulse_index:
         return jsonify(ok=False, error="no chip loaded"), 409
-    by = {r["path"]: r for r in pulse_index.rows()}
+    raw, stamp = _pulse_vt_rows_stamp(store, pulse_index)
+    by = {r["path"]: r for r in raw}
     out, gone = [], []
     for p in _pulse_vt_paths_arg(50000):
         r = by.get(p)
@@ -15678,8 +15738,7 @@ def pulses_vrows():
             continue
         html, ver = _pulse_vt_entry(r)
         out.append([p, ver, html])
-    return jsonify(ok=True, stamp=_pulse_vt_stamp(store, pulse_index),
-                   rows=out, gone=gone)
+    return jsonify(ok=True, stamp=stamp, rows=out, gone=gone)
 
 
 @bp.route("/pulses/sparks", methods=["POST"])
@@ -15694,8 +15753,11 @@ def pulses_sparks():
     pulse_index = _pulse_index()
     if not store or not pulse_index:
         return jsonify(ok=False, error="no chip loaded"), 409
-    by = {r["path"]: r for r in pulse_index.rows()}
-    want = [p for p in _pulse_vt_paths_arg(400) if p in by]
+    raw, stamp = _pulse_vt_rows_stamp(store, pulse_index)
+    by = {r["path"]: r for r in raw}
+    asked = _pulse_vt_paths_arg(400)
+    want = [p for p in asked if p in by]
+    gone = [p for p in asked if p not in by]
     rows = [dict(by[p]) for p in want]
     unknown = _pulse_draw_sparks(store, pulse_index, rows)
     if unknown:
@@ -15704,8 +15766,9 @@ def pulses_sparks():
     cells = {}
     for p, r in zip(want, rows):
         cells[p] = [_pulse_vt_entry(by[p])[1], tmpl.render(r=r).strip()]
-    return jsonify(ok=True, stamp=_pulse_vt_stamp(store, pulse_index),
-                   rows=cells, warming=unknown)
+    # `gone`: asked for, not a pulse any more -- the client re-lists instead
+    # of asking again (a path it keeps on screen would otherwise loop)
+    return jsonify(ok=True, stamp=stamp, rows=cells, warming=unknown, gone=gone)
 
 
 def _pulse_draw_sparks(store, pulse_index, rows) -> list[str]:
@@ -15976,9 +16039,14 @@ def pulses_page():
     unknown_paths: list[str] = []
     if vt:
         # w9/pulsesall: the rows travel as data; nothing is rendered or drawn
-        # here (the thumbnails are drawn for the rows on screen, lazily)
+        # here (the thumbnails are drawn for the rows on screen, lazily). The
+        # rows are re-read with their stamp as one observation.
+        raw, stamp = _pulse_vt_rows_stamp(store, pulse_index)
+        all_rows = _pulse_rows_filter(raw, channel, query, owner)
+        total = len(all_rows)
         vt_json = _pulse_vt_payload(store, pulse_index, all_rows, channel,
-                                    want_html=request.args.get("vids") != "1")
+                                    want_html=request.args.get("vids") != "1",
+                                    stamp=stamp)
         page_rows = []
     else:
         # the index's row dicts are shared across requests (docs/2xx pulses

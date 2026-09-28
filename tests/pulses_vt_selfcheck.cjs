@@ -89,14 +89,17 @@ global.fetch = window.fetch = function (url, opts) {
         const by = new Map(server.rows.map((r) => [r.p, r]));
         const out = {};
         body.paths.forEach((p) => { const r = by.get(p); if (r) out[p] = [r.v, full(r)]; });
-        return resp(200, { ok: true, stamp: server.stamp, rows: out, warming: [] });
+        const sg = server.sparkGone || new Set();
+        sg.forEach((p) => { delete out[p]; });
+        return resp(200, { ok: true, stamp: server.stamp, rows: out, warming: [],
+                           gone: body.paths.filter((p) => !by.has(p) || sg.has(p)) });
     }
     if (u.pathname === '/pulse/row') {
         const p = u.searchParams.get('path');
         const r = server.rows.find((x) => x.p === p);
         if (!r) return resp(404, '');
-        if (server.rowHook) return server.rowHook(r);
-        return resp(200, full(r), { 'X-Pulse-Ver': r.v });
+        if (server.rowHook) { const h = server.rowHook(r); if (h) return h; }
+        return resp(200, full(r), { 'X-Pulse-Ver': r.v, 'X-Pulse-Stamp': server.stamp });
     }
     return resp(404, '');
 };
@@ -413,6 +416,81 @@ function viewportCovered() {
     }
     ok(/[?&]vids=1(&|$)/.test(cfg('/pulses?rows=1&channel=&per_page=0')), 'I: the All view asks for digests only');
     ok(!/vids=/.test(cfg('/pulses?rows=1&channel=&per_page=50')), 'I: a paged view never does');
+
+    // ---- L: a slow answer never lands over a newer one (w9 review P2) ---------------------------
+    const wrapL = doc.getElementById('pulses-rows-wrap');
+    const confirmRefresh = () => wrapL.dispatchEvent(new window.CustomEvent('htmx:confirm', { bubbles: true, cancelable: true,
+        detail: { elt: wrapL, triggeringEvent: { type: 'pulses-changed' } } }));
+    server.stamp = 'b0:1:10:0:1:0';
+    confirmRefresh(); await tick(10); await flush(12);
+    const tL = rendered().find((p) => !server.rows.find((r) => r.p === p).alias);
+    const rL = server.rows.find((r) => r.p === tL);
+    const oldHtml = full(rL), oldVer = rL.v;
+    let releaseL; const gateL = new Promise((r) => { releaseL = r; });
+    server.rowHook = (r) => (r.p === tL
+        ? gateL.then(() => resp(200, oldHtml, { 'X-Pulse-Ver': oldVer, 'X-Pulse-Stamp': 'b0:1:10:0:1:0' }))
+        : null);
+    doc.dispatchEvent(new window.CustomEvent('pulses-rows-changed', { detail: { paths: [tL] }, bubbles: true }));
+    await tick(5);
+    // meanwhile the chip moves (seq 11) and a structural refresh lands first
+    rL.amp = 0.4242; rL.h = rowHtml(rL); rL.v = rL.v + '_L'; server.stamp = 'b0:1:11:0:1:0';
+    confirmRefresh(); await tick(10); await flush(12);
+    ok(VT._cache.get(tL).v === rL.v, 'L: the refresh put the newer text');
+    releaseL(); await tick(10); await flush(12);
+    ok(VT._cache.get(tL).v === rL.v, 'L: the slower, older answer did not overwrite it');
+    const trL = tbodyOf().querySelector('tr[data-pulse-path="' + tL + '"]');
+    ok(trL && trL.cells[7].textContent === '0.4242', 'L: the row on screen shows the newer amplitude');
+    server.rowHook = null;
+
+    // ---- M: a thumbnail answer never brings text --------------------------------------------------
+    await tick(150); await flush();
+    const tM = rendered().filter((p) => !server.rows.find((r) => r.p === p).alias)[2];
+    const rM = server.rows.find((r) => r.p === tM);
+    rM.amp = 0.5151; rM.h = rowHtml(rM); rM.v = rM.v + '_M';       // moved on the server, model not told
+    calls.length = 0;
+    VT._cache.get(tM).se = -1;                                     // its thumbnail is due
+    VT._render(true);
+    await tick(150); await flush(12); await tick(50); await flush(12);
+    const askedM = calls.some((c) => c.url === '/pulses/sparks' && c.body.paths.indexOf(tM) >= 0);
+    ok(askedM, 'M: premise -- the thumbnail was asked');
+    ok(calls.some((c) => c.url.indexOf('/pulse/row?path=' + encodeURIComponent(tM)) === 0),
+       'M: a thumbnail drawn for other text sends the row through its own door');
+    const trM = tbodyOf().querySelector('tr[data-pulse-path="' + tM + '"]');
+    ok(VT._cache.get(tM).v === rM.v && trM && trM.cells[7].textContent === '0.5151',
+       'M: and the row shows the new text (taken there, with its stamp)');
+
+    // ---- N: a path the thumbnail door calls gone: re-listed, never asked in a loop ------------------
+    // N1: the listing still holds it (the two doors disagree): the asks stay bounded
+    const tN = rendered().filter((p) => !server.rows.find((r) => r.p === p).alias)[4];
+    server.sparkGone = new Set([tN]);
+    calls.length = 0;
+    VT._cache.get(tN).se = -1;
+    VT._render(true);
+    for (let i = 0; i < 14; i++) { await tick(80); await flush(); }
+    const asksN = calls.filter((c) => c.url === '/pulses/sparks' && c.body.paths.indexOf(tN) >= 0).length;
+    ok(asksN >= 1 && asksN <= 2, 'N: a gone path is asked at most twice (' + asksN + ')');
+    ok(calls.some((c) => c.url.indexOf('/pulses/vids') === 0), 'N: `gone` re-lists the table');
+    server.sparkGone = null;
+    // N2: really gone: the re-list takes the row out
+    server.rows = server.rows.filter((r) => r.p !== tN);
+    VT._cache.get(tN).se = -1; VT._cache.get(tN).askEp = -1;
+    VT._render(true);
+    for (let i = 0; i < 10; i++) { await tick(80); await flush(); }
+    ok(!VT._state().pos.has(tN), 'N: and a row that is really gone leaves the view');
+
+    // ---- O: a 204 older than the listing is ignored; a newer one removes the row -------------------
+    server.stamp = 'b0:1:12:0:1:0';
+    confirmRefresh(); await tick(10); await flush(12);
+    const tO = rendered()[6];
+    server.rowHook = (r) => (r.p === tO ? resp(204, '', { 'X-Pulse-Stamp': 'b0:1:11:0:1:0' }) : null);
+    doc.dispatchEvent(new window.CustomEvent('pulses-rows-changed', { detail: { paths: [tO] }, bubbles: true }));
+    await tick(10); await flush(12);
+    ok(VT._state().pos.has(tO), 'O: an older 204 does not remove a row the newer listing holds');
+    server.rowHook = (r) => (r.p === tO ? resp(204, '', { 'X-Pulse-Stamp': 'b0:1:13:0:1:0' }) : null);
+    doc.dispatchEvent(new window.CustomEvent('pulses-rows-changed', { detail: { paths: [tO] }, bubbles: true }));
+    await tick(10); await flush(12);
+    ok(!VT._state().pos.has(tO), 'O: a newer 204 does');
+    server.rowHook = null;
 
     // ---- K: htmx's history restore puts back a dead snapshot: re-fetched ---------------------
     const ajaxCalls = [];

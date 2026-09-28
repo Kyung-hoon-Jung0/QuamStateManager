@@ -333,5 +333,74 @@ def test_the_virtual_view_selfcheck():
                 "J: a moved stamp re-asks every rendered thumbnail",
                 "K: a history restore re-fetches the rows through the table",
                 "the column sizer lays out the server's widest rows",
-                "sizer rows carry no path, no click, no checkbox"):
+                "sizer rows carry no path, no click, no checkbox",
+                "L: the slower, older answer did not overwrite it",
+                "M: a thumbnail drawn for other text sends the row through its own door",
+                "N: a gone path is asked at most twice",
+                "O: an older 204 does not remove a row the newer listing holds"):
         assert "ok - " + pin in r.stdout, pin
+
+
+# ---- the review round: ordering, type-strict carry, `gone` -------------------------
+
+def test_every_row_key_the_template_reads_is_in_the_memo_signature():
+    """The virtual text is carried across rebuilds by comparing the keys the
+    row template reads; a key the template gains without the signature would
+    let an old text stand for a new row."""
+    from quam_state_manager.web import routes
+    tpl = (Path(__file__).resolve().parent.parent / "quam_state_manager" / "web"
+           / "templates" / "_pulse_row.html").read_text(encoding="utf-8")
+    read = set(re.findall(r"\br\.([A-Za-z_]+)", tpl))
+    lazy_only_absent = {"spark_svg", "spark_from_lab", "spark_from_config", "spark_at"}
+    missing = read - set(routes._PULSE_ROW_KEYS) - lazy_only_absent
+    assert not missing, missing
+    assert read >= {"path", "length", "amplitude", "used_by"}
+
+
+def test_the_carry_is_type_strict(monkeypatch):
+    """Python calls 100 == 100.0 equal; the template prints them apart. An
+    alias row shows its target's length as stored."""
+    monkeypatch.delenv("SM_RAM_VERIFY", raising=False)
+    from quam_state_manager.web import routes
+    m = pi.RowMemo()
+    base = {k: None for k in routes._PULSE_ROW_KEYS}
+    base.update(path="p", is_alias=True, length=100, used_by=[])
+    other = dict(base, length=100.0)
+    assert base == other                                   # the trap
+    calls = []
+
+    def f(r):
+        calls.append(r["length"])
+        return repr(r["length"])
+
+    assert m.get("vt", base, f, sig=routes._pulse_vt_sig) == "100"
+    assert m.get("vt", other, f, sig=routes._pulse_vt_sig) == "100.0"
+    same = dict(base)
+    assert m.get("vt", same, f, sig=routes._pulse_vt_sig) == "100" and m.stats["carry"] == 0
+    assert m.get("vt", dict(same), f, sig=routes._pulse_vt_sig) == "100" and m.stats["carry"] == 1
+
+
+def test_stamps_order_and_the_doors_carry_them(vt):
+    app, client, _ = vt
+    s1 = _vids(client)["stamp"]
+    parts = s1.split(":")
+    assert len(parts) == 6 and parts[2].isdigit()
+    vr = client.post("/pulses/vrows", json={"paths": [f"{XY}.x180_DragCosine"]}).get_json()
+    assert vr["stamp"] == s1                               # nothing moved in between
+    client.post("/pulse/edit", data={
+        "path": f"{XY}.x180_DragCosine", "dot_path": f"{XY}.x180_DragCosine.amplitude",
+        "mode": "value", "value": "0.111"})
+    r = client.get(f"/pulse/row?path={XY}.x180_DragCosine&vt=1")
+    s2 = r.headers["X-Pulse-Stamp"]
+    assert s2.split(":")[:2] == parts[:2] and int(s2.split(":")[2]) > int(parts[2])
+    # a row that left the filter answers 204 WITH the stamp it was judged at
+    r204 = client.get(f"/pulse/row?path={XY}.x180_DragCosine&vt=1&q=zzzz_nothing")
+    assert r204.status_code == 204 and r204.headers.get("X-Pulse-Stamp") == s2
+    assert "X-Pulse-Stamp" not in client.get(
+        f"/pulse/row?path={XY}.x180_DragCosine&q=zzzz_nothing").headers
+
+
+def test_sparks_names_what_is_gone(vt):
+    app, client, _ = vt
+    sp = client.post("/pulses/sparks", json={"paths": [f"{XY}.x180_DragCosine", f"{XY}.no_such"]}).get_json()
+    assert sp["gone"] == [f"{XY}.no_such"] and f"{XY}.x180_DragCosine" in sp["rows"]
