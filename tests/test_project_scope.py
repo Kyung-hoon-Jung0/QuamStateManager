@@ -333,7 +333,7 @@ class TestSidebarReorg:
 
     def test_command_palette_lists_projects(self):
         base = self._src("quam_state_manager/web/templates/base.html")
-        assert '{"label": "Projects",          "url": "/qualibrate"}' in base
+        assert '{"label": "Projects",          "url": "{{ root }}/qualibrate"}' in base
 
     def test_subnav_caps_at_three_with_show_all(self, scoped):
         """r8 feedback: with many projects the expanded subnav buried the

@@ -188,8 +188,10 @@ def make_fixture(work: Path) -> dict:
     (chip / "wiring.json").write_text(json.dumps(tw._make_wiring(), indent=2), encoding="utf-8")
     data = work / "data"
     dl._seed_run(data, 1, state=tw._make_state(), wiring=tw._make_wiring())
+    # a second DATE: the datasets/collections date tabs only render with two
+    # (their hx-get base is a template variable -- a place a leak can hide)
     dl._seed_run(data, 2, state=tw._make_state(), wiring=tw._make_wiring(),
-                 hhmmss="020000", name="32_ramsey")
+                 date="2026-07-30", hhmmss="020000", name="32_ramsey")
     return {"chip": chip, "data": data}
 
 
@@ -206,7 +208,8 @@ def url_list(app, uid: str) -> list[str]:
         "/dataset/by-run/1",
         "/diff?a=nonsense:x&b=nonsense:y",
         "/topology?view=overview", "/topology?view=trends", "/topology?view=coherence",
-        "/datasets?q=qA1", "/pulses?per_page=200", "/zline?line=qubits.qA1.z",
+        "/datasets?q=qA1", "/datasets?date=2026-07-29", "/collections?q=qA1",
+        "/pulses?per_page=200", "/zline?line=qubits.qA1.z",
         "/journal/day?date=2026-07-29",
     ]
     return urls

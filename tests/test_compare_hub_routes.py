@@ -908,7 +908,7 @@ class TestP4Redirects:
         loc_obj = json.loads(resp.headers["HX-Location"])
         assert loc_obj["target"] == "#table-pane"
         loc = loc_obj["path"]
-        assert loc.startswith("/diff?a=run%3A") and "&b=run%3A" in loc and loc.endswith("&tab=figures")
+        assert loc.startswith(f"{PREFIX}/diff?a=run%3A") and "&b=run%3A" in loc and loc.endswith("&tab=figures")
         page = c.get(loc)
         assert page.status_code == 200 and b"Pick the comparison context" not in page.data
 
@@ -940,8 +940,8 @@ class TestP4Redirects:
         workbench. The legacy chip-compare entry stays gone."""
         c, _a, _b = env
         html = c.get("/compare-hub").data.decode()
-        assert '"/diff"' in html
-        assert '"/chip-compare"' not in html   # the palette entry too
+        assert f'"{PREFIX}/diff"' in html
+        assert f'"{PREFIX}/chip-compare"' not in html   # the palette entry too
 
 
 # ===========================================================================

@@ -28,7 +28,7 @@ from quam_state_manager.web import chat_api
 from quam_state_manager.web.app import create_app
 from tests.test_agent_runs import NODE_SRC, FakeRun, AGENT, HUMAN, _arm, _wait
 from tests.test_chat_api import _FakeClaude, _FakeCodex
-from tests._prefix import RE_PREFIX
+from tests._prefix import PREFIX, RE_PREFIX
 
 
 @pytest.fixture
@@ -282,7 +282,7 @@ class TestHome:
         assert 'class="sidebar-tool agent-btn"' not in html and 'id="nav-agent"' in html
         assert re.search(rf'href="{RE_PREFIX}/agent"[^>]*hx-get="{RE_PREFIX}/agent"[^>]*hx-target="#table-pane"', html)
         assert re.search(r'id="nav-agent" class="active"', html), "with a chip open, / IS the Agent home: the entry is active"
-        assert "agent.js" in html and '"label": "Agent home"' in html and '"url": "/agent"' in html
+        assert "agent.js" in html and '"label": "Agent home"' in html and f'"url": "{PREFIX}/agent"' in html
 
     def test_agent_is_a_page_in_the_pane_and_a_full_page(self, c):
         # htmx (the sidebar click): the partial only -- the mount point, no shell
