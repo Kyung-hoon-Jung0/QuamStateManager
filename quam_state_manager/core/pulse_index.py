@@ -65,21 +65,30 @@ PAIR_PULSE_CHANNELS = ("cross_resonance", "zz_drive", "zz", "xy_detuned")
 # pulsed, each with its own amplitude) carries a THIRD slot -- 37 of them on
 # the pilot chip, none of which had a row (stress round 2026-09-16, docs/190).
 GATE_SLOTS = ("flux_pulse_qubit", "coupler_flux_pulse", "flux_pulse_target")
+#: w8/locks: a cold build's *tick* runs every this many rows (a row is ~0.06 ms
+#: on big30x, so a tick is ~4 ms of work apart -- far below one hand-over slice)
+_TICK_ROWS = 64
 
 
 # ---------------------------------------------------------------------------
 # Reverse pointer index
 # ---------------------------------------------------------------------------
 
-def build_reverse_pointer_index(merged: dict) -> dict[str, list[str]]:
+def build_reverse_pointer_index(merged: dict, tick=None) -> dict[str, list[str]]:
     """One pass over every leaf: ``{absolute_target_path: [referrer, ...]}``.
 
     Unresolvable-by-form pointers (malformed, relative from too-shallow
     holders) are skipped; dangling-but-well-formed targets ARE indexed (the
     target key may be re-created, and delete-safety wants to know).
+
+    *tick* (w8/locks): called between second-level subtrees (``qubits.q7``)
+    -- the :class:`PulseIndex` cold build passes ``activity.checkpoint`` so
+    the store lock is handed over during the walk. The leaves come in exactly
+    :func:`loader._walk`'s order either way.
     """
     index: dict[str, list[str]] = {}
-    for dot_path, value, path_tuple in _walk(merged):
+    for dot_path, value, path_tuple in (_walk(merged) if tick is None
+                                        else _walk_ticked(merged, tick)):
         if not is_pointer(value):
             continue
         target = pointer_to_abs(value, list(path_tuple))
@@ -87,6 +96,26 @@ def build_reverse_pointer_index(merged: dict) -> dict[str, list[str]]:
             continue
         index.setdefault(".".join(target), []).append(dot_path)
     return index
+
+
+def _walk_ticked(merged: dict, tick):
+    """:func:`loader._walk` over *merged*, one second-level subtree at a time,
+    calling *tick* before each: the same triples in the same order (the
+    prefix rule is ``_walk``'s own -- an empty key joins without a dot)."""
+    for key, value in merged.items():
+        if isinstance(value, dict):
+            for k2, v2 in value.items():
+                tick()
+                p = f"{key}.{k2}" if key else k2
+                if isinstance(v2, (dict, list)):
+                    yield from _walk(v2, p, (key, k2))
+                else:
+                    yield p, v2, (key, k2)
+        elif isinstance(value, list):
+            tick()
+            yield from _walk(value, key, (key,))
+        else:
+            yield key, value, (key,)
 
 
 def used_by(merged: dict, op_path: str,
@@ -356,7 +385,7 @@ def _owner_of(merged: dict, segs: list[str]) -> tuple[str, str, int]:
     return "component", top, 1
 
 
-def _discover(merged: dict, known: set[str]) -> list[tuple[str, Any, dict]]:
+def _discover(merged: dict, known: set[str], tick=None) -> list[tuple[str, Any, dict]]:
     """Pulses found by SHAPE, not by name (docs/217 pulse locations).
 
     A lab hand-adds pulses where SM's whitelist never looked (a second drive
@@ -412,7 +441,13 @@ def _discover(merged: dict, known: set[str]) -> list[tuple[str, Any, dict]]:
             owner_kind=kind, owner=owner, channel=channel, op_name=op_name,
             gate=gate, location=".".join(segs[:-1]))))
 
+    nodes = [0]
+
     def walk(node: dict, segs: list[str]) -> None:
+        if tick is not None:
+            nodes[0] += 1
+            if not nodes[0] % _TICK_ROWS:
+                tick()
         for key, val in node.items():
             if not isinstance(val, dict):
                 continue
@@ -470,12 +505,13 @@ def list_pulses(merged: dict, *, with_used_by: bool = True,
 
 def _list_pulses_with(merged: dict, reverse_index, *,
                       only: tuple[str, str] | None = None,
-                      discover: bool = True) -> tuple[list[dict], dict | None]:
+                      discover: bool = True, tick=None) -> tuple[list[dict], dict | None]:
     """:func:`list_pulses` over a reverse index the caller already built
     (w7/pulses), returning ``(rows, op_referrers)`` -- the forward referrer map
     depends on the DISCOVERED paths (docs/217), so it is built here and handed
     back to the :class:`PulseIndex`, whose incremental row recompute reuses it.
-    ``only`` as in :func:`list_pulses`."""
+    ``only`` as in :func:`list_pulses`. *tick* (w8/locks) is called every
+    :data:`_TICK_ROWS` rows (see :func:`build_reverse_pointer_index`)."""
     # (path, body, kwargs) first; rows are built once the discovered paths are
     # known, because the used_by map needs them (a pointer INTO a discovered
     # pulse maps to that pulse's row).
@@ -554,18 +590,27 @@ def _list_pulses_with(merged: dict, reverse_index, *,
                     channel=channel, op_name=op_name, gate=None)))
 
     known = {p for p, _b, _k in pending}
+    if tick is not None:
+        tick()
     # docs/217: ``discover=False`` is the whitelist alone -- the pin that the
     # shape discovery never moves, alters or duplicates an existing row
-    found = _discover(merged, known) if discover else []
+    found = _discover(merged, known, tick) if discover else []
+    if tick is not None:
+        tick()
     if only is not None:
         found = [f for f in found if (f[2]["owner_kind"], f[2]["owner"]) == only]
     op_referrers = (build_op_referrers(
         reverse_index, frozenset(p for p, _b, _k in found) or None)
         if reverse_index is not None else None)
-    rows = [_row_for_pulse(merged, p, b, reverse_index=reverse_index,
-                           op_referrers=op_referrers, **kw)
-            for p, b, kw in pending]
-    for p, b, kw in found:
+    rows = []
+    for i, (p, b, kw) in enumerate(pending):
+        if tick is not None and not i % _TICK_ROWS:
+            tick()
+        rows.append(_row_for_pulse(merged, p, b, reverse_index=reverse_index,
+                                   op_referrers=op_referrers, **kw))
+    for i, (p, b, kw) in enumerate(found):
+        if tick is not None and not i % _TICK_ROWS:
+            tick()
         loc = kw.pop("location")
         row = _row_for_pulse(merged, p, b, reverse_index=reverse_index,
                              op_referrers=op_referrers, **kw)
@@ -742,11 +787,20 @@ class PulseIndex:
         return _catalog_overlay(), pulse_catalog.class_info_generation()
 
     def _rebuild_cold(self, seq: int, overlay: Any, gen: int) -> None:
+        # w8/locks: the walk calls activity.checkpoint between subtrees and
+        # every _TICK_ROWS rows. Outside activity.yielding that is a no-op; a
+        # cold build run through _ensure (single_flight) hands the store lock
+        # over there -- or parks, on a background thread -- and a chip that
+        # moved meanwhile abandons the walk (Superseded) before anything below
+        # is assigned: the index stays dropped and the next read builds again.
+        from quam_state_manager.core import activity
+        tick = activity.checkpoint
         merged = self.store.merged
-        reverse = build_reverse_pointer_index(merged)
+        reverse = build_reverse_pointer_index(merged, tick)
         # discovery on: the rows are exactly list_pulses(merged), and the
         # referrer map knows the discovered paths (docs/217)
-        self._rows, op_ref = _list_pulses_with(merged, reverse)
+        rows, op_ref = _list_pulses_with(merged, reverse, tick=tick)
+        self._rows = rows
         self._pos = {r["path"]: i for i, r in enumerate(self._rows)}
         self._reverse = reverse
         self._targets = sorted(reverse)
@@ -756,23 +810,65 @@ class PulseIndex:
         self._gen = gen
         self.stats["cold"] += 1
 
+    def _warm(self) -> bool:
+        """Bring the rows up to the store's current token when that needs no
+        whole-chip walk -- nothing changed, or only value writes (the
+        incremental road). False when only a cold rebuild can. Under
+        store._lock."""
+        if self._rows is None:
+            return False
+        overlay, gen = self._knowledge()
+        if self._overlay is not overlay or self._gen != gen:
+            return False
+        seq = self.store.mutation_seq
+        if self._seq == seq:
+            return not self._drop_hint
+        mut_since = getattr(self.store, "mutations_since", None)
+        steps = mut_since(self._seq) if mut_since is not None else None
+        if steps and all(vo and isinstance(p, str) for _, p, vo in steps):
+            if self._apply_value_steps([p for _, p, _ in steps], seq):
+                self._drop_hint = False
+                return True
+        return False
+
     def _sync(self) -> None:
         """Bring the rows up to the store's current token. Under store._lock."""
+        if self._warm():
+            return
         seq = self.store.mutation_seq
         overlay, gen = self._knowledge()
-        hint, self._drop_hint = self._drop_hint, False
-        if self._rows is not None and self._overlay is overlay and self._gen == gen:
-            if self._seq == seq:
-                if not hint:
-                    return
-            else:
-                mut_since = getattr(self.store, "mutations_since", None)
-                steps = mut_since(self._seq) if mut_since is not None else None
-                if steps and all(vo and isinstance(p, str) for _, p, vo in steps):
-                    if self._apply_value_steps([p for _, p, _ in steps], seq):
-                        return
+        self._drop_hint = False
         self._drop()
         self._rebuild_cold(seq, overlay, gen)
+
+    def _ensure(self) -> None:
+        """w8/locks: get the rows current WITHOUT one whole-walk hold of the
+        store lock. The cold build (a chip's open, a structural pull, a class
+        probe landing: 0.5-2.2 s on big30x, every request waiting behind it)
+        runs through :func:`activity.single_flight` -- one walk however many
+        callers ask; a request leader hands the lock over every
+        ``HANDOVER_EVERY_S`` while other requests are in flight, a background
+        one parks at its checkpoints, and a walk the chip moved under starts
+        again. The cheap roads (fresh, value-only steps) are one short hold,
+        exactly as before. A caller already holding the store lock builds
+        under it (its own hold is not ours to hand over)."""
+        from quam_state_manager.core import activity
+        store = self.store
+        own = getattr(store._lock, "_is_owned", None)
+        if own is not None and own():
+            return
+        # per INDEX: a throwaway index on the same store is a different result
+        activity.single_flight(store, "pulse_index:%x" % id(self), self._lookup, self._compute,
+                               main=True)
+
+    def _lookup(self):
+        from quam_state_manager.core import activity
+        with self.store._lock:
+            return True if self._warm() else activity.MISS
+
+    def _compute(self) -> bool:
+        self._sync()          # under store._lock (single_flight holds it)
+        return True
 
     def _holders_touching(self, path: str) -> list[str]:
         """Pointer holders whose target is *path*, an ancestor of it, or a
@@ -851,12 +947,14 @@ class PulseIndex:
     def rows(self) -> list[dict]:
         """Every pulse row at the store's current content. The list and its
         dicts are shared: a caller copies a row before adding keys to it."""
+        self._ensure()
         with self.store._lock:
             self._sync()
             return self._rows
 
     def row(self, op_path: str) -> dict | None:
         """The row of *op_path*, or None -- O(1)."""
+        self._ensure()
         with self.store._lock:
             self._sync()
             i = self._pos.get(op_path)
@@ -868,11 +966,13 @@ class PulseIndex:
 
     def known_paths(self):
         """Every pulse op path, as an O(1) membership container."""
+        self._ensure()
         with self.store._lock:
             self._sync()
             return self._pos
 
     def reverse_index(self) -> dict[str, list[str]]:
+        self._ensure()
         with self.store._lock:
             self._sync()
             return self._reverse
@@ -880,6 +980,7 @@ class PulseIndex:
     def used_by(self, op_path: str) -> list[str]:
         """Same answer as :func:`used_by` over the whole reverse index, but
         only the targets at or under *op_path* are visited (bisect)."""
+        self._ensure()
         with self.store._lock:
             self._sync()
             rev = self._reverse
@@ -902,6 +1003,7 @@ class PulseIndex:
         that produces the SVG (or None) on a miss. Valid while the op's ROW
         object is the one it was drawn for: a row survives a mutation only
         when that mutation could not reach its waveform inputs."""
+        self._ensure()
         with self.store._lock:
             self._sync()
             i = self._pos.get(op_path)

@@ -82,6 +82,7 @@ from quam_state_manager.core import compare as compare_engine
 from quam_state_manager.core import qdac as qdac_mod
 from quam_state_manager.core import ramcache as _ramcache
 from quam_state_manager.core import bg_gate as _bg_gate
+from quam_state_manager.core import activity as _activity
 from quam_state_manager.core import json_pieces as _json_pieces
 from quam_state_manager.core import trend_index as _trend_index
 from quam_state_manager.core import chip_trends_ram
@@ -532,6 +533,8 @@ def _bulk_col_maxlen(columns: list[dict], grid: dict, ids: list[str]) -> None:
     NATURAL column width is already "value + clock, tight" (the dblclick
     auto-fit resets to this). Cap 26→28 keeps the reserve on long values."""
     for ci, col in enumerate(columns):
+        if not ci % 128:
+            _activity.checkpoint()    # w8/locks: a cold grid build (see _grid_memo)
         col["maxlen"] = _col_maxlen(col["label"], (grid[i][ci]["display"] for i in ids))
 
 
@@ -1944,7 +1947,8 @@ _cfg_warm_failed: dict[str, str] = {}
 _cfg_warm_lock = threading.Lock()
 
 
-def _chip_needs_generated_config(store) -> bool:
+def _chip_needs_generated_config(store, ctx: dict | None = None,
+                                 background: bool = False) -> bool:
     """True when this chip carries a pulse class SM cannot synthesize.
 
     The ONLY reason to spend a subprocess on a config the user did not ask
@@ -1973,16 +1977,46 @@ def _chip_needs_generated_config(store) -> bool:
     cached = getattr(store, "_needs_cfg_memo", None)
     if cached is not None and cached[0] == key and cached[2] is overlay:
         return cached[1]
-    try:
+    # w8/locks: its OWN index, never the context's while it is being built. A
+    # request needing the rows builds the context's index itself (a
+    # foreground leader that hands the lock over) instead of waiting on this
+    # parked daemon walk -- measured in real Chrome on big30x, the Pulses page
+    # waiting on it took 8.0-8.7 s behind a Live-Edit grid build and the
+    # post-pull lint; building its own measured 0.5-2.7 s in the same spot.
+    # When this walk finishes first, its rows become the context's (below),
+    # so the page opened afterwards is warm.
+    idx = PulseIndex(store)
+
+    def _walk() -> bool:
         # An alias row (x180 -> "#./x180_DragCosine") has no class of its own
         # -- its `known` is False by construction, and every real chip has
         # them. Its TARGET is a row of its own and is judged there; counting
         # the alias made every chip spawn the ~13 s subprocess on open.
-        verdict = any(not row.get("known") and not row.get("is_alias")
-                      for row in PulseIndex(store).rows())
+        return any(not row.get("known") and not row.get("is_alias")
+                   for row in idx.rows())
+    try:
+        verdict = None
+        if background:
+            # w8/locks: a daemon thread's cold build PARKS at its checkpoints
+            # while any request is in flight (activity.yielding) -- it held
+            # the store lock 1.3-2.2 s at a big chip's open and after every
+            # structural pull. NEVER on a request thread: a background step
+            # parks until no request is in flight, its own included.
+            for _ in range(3):
+                with _activity.yielding(store) as y:
+                    verdict = _walk()
+                if not y.stopped:
+                    break
+                verdict = None
+        if verdict is None:
+            verdict = _walk()
     except Exception:  # noqa: BLE001 -- a probe never breaks an activation
         logger.debug("pulse-class probe failed", exc_info=True)
         return False
+    if ctx is not None and ctx.get("store") is store:
+        cur = ctx.get("pulse_index")
+        if cur is None or cur.store is not store or cur._rows is None:
+            ctx["pulse_index"] = idx        # the page opened next is warm
     store._needs_cfg_memo = (key, verdict, overlay)
     return verdict
 
@@ -2085,7 +2119,7 @@ def _maybe_warm_generated_config(ctx, inst) -> None:
     def _decide():
         try:
             _bg_gate.wait_quiet()   # w7/livewrite: a full pulse-index build
-            if _chip_needs_generated_config(store):
+            if _chip_needs_generated_config(store, ctx, background=True):
                 _warm_generated_config_async(ctx, inst)
         except Exception:  # noqa: BLE001
             logger.debug("config warm decision failed", exc_info=True)
@@ -6570,14 +6604,16 @@ def _qubit_bulk_grid(store: QuamStore, dyn_hidden: set[str], modified: dict,
         if c.get("kind") != "note" and c["key"] not in dyn_hidden
     ]
 
-    columns = [
-        {"key": c["key"], "label": c["label"], "section": c["section"],
-         "unit": c.get("unit", ""), "default_on": c.get("default_on", True),
-         "dyn": bool(c.get("dyn")), "multi": c.get("multi", 0),
-         # the operation ids the fold hid from the header — search only
-         "search": _search_text(c)}
-        for c in specs
-    ]
+    columns = []
+    for i, c in enumerate(specs):
+        if not i % 256:
+            _activity.checkpoint()    # w8/locks: see _grid_memo
+        columns.append(
+            {"key": c["key"], "label": c["label"], "section": c["section"],
+             "unit": c.get("unit", ""), "default_on": c.get("default_on", True),
+             "dyn": bool(c.get("dyn")), "multi": c.get("multi", 0),
+             # the operation ids the fold hid from the header — search only
+             "search": _search_text(c)})
     # (kind, con, fem, port) -> {qubit (owner), band, freq} — built as cells
     # resolve, then used to compute each port's LO-coupled peer (Out2↔Out3, …).
     port_info: dict[tuple, dict[str, Any]] = {}
@@ -6593,6 +6629,8 @@ def _qubit_bulk_grid(store: QuamStore, dyn_hidden: set[str], modified: dict,
         for qi, qid in enumerate(qids):
             cells: list[dict[str, Any]] = []
             for si, spec in enumerate(specs):
+                if not si % _GRID_TICK:
+                    _activity.checkpoint()    # w8/locks: see _grid_memo
                 if pst is None:
                     cells.append(_qubit_cell_for(merged, spec, qid, modified, port_info)[0])
                     continue
@@ -6639,6 +6677,7 @@ def _qubit_bulk_grid(store: QuamStore, dyn_hidden: set[str], modified: dict,
     # client can show "shares LO with qX (band N)" and warn when a freq leaves its band.
     rows = []
     for qid in qids:
+        _activity.checkpoint()
         for cell in grid[qid]:
             _attach_lo_meta(cell, port_info)
         rows.append({"id": qid, "cells": grid[qid]})
@@ -6728,6 +6767,9 @@ _LO_VALUE_FIELDS = ("band", "upconverter_frequency", "downconverter_frequency")
 _GRID_LOCKS = {"bulk_grid_cache": threading.Lock(), "pair_grid_cache": threading.Lock(),
                "extra_grid_cache": threading.Lock()}
 _GRID_SERIAL = itertools.count(1)
+#: w8/locks: a cold grid build calls activity.checkpoint every this many cells
+#: (~0.03-0.09 ms a cell on big30x: a few ms of work apart)
+_GRID_TICK = 64
 
 
 def _pst_new() -> dict:
@@ -6869,7 +6911,7 @@ def _grid_memo(slot: str, ctx: dict, store: QuamStore, variant: Any, modified: d
                build, cell_fn, views, install, after_patch=None) -> dict:
     """The memo shared by the three Live-Edit grid kinds (see the block note).
 
-    ``build()`` makes a fresh grid and returns ``(grid, {key: pst})``; the
+    ``build(modified)`` makes a fresh grid and returns ``(grid, {key: pst})``; the
     entry carries ``grid`` plus render versions -- ``serial`` (new on every
     rebuild), ``row_ver[key][row]`` and ``col_ver[key]`` (moves when a column
     width moved) -- which the fragment cache keys on."""
@@ -6912,10 +6954,27 @@ def _grid_memo(slot: str, ctx: dict, store: QuamStore, variant: Any, modified: d
                 hit["mod"] = dict(modified)
                 ctx[slot] = hit
                 return hit
+        # w8/locks: the cold build (3.2-3.8 s per grid on big30x under load,
+        # the store lock held throughout) runs through single_flight: it holds
+        # the lock but hands it over every HANDOVER_EVERY_S while another
+        # request is in flight (the builders call activity.checkpoint), and a
+        # build the chip moved under starts again -- so `seq`/`coltok` below
+        # are always the content every cell was read from. A caller already
+        # holding the store lock builds under it, as before.
+        #
+        # The caller read `modified` from the change log before the build; an
+        # edit that lands in a hand-over moves both the content and the log,
+        # so a caller that passed the LIVE map gets it re-read with the
+        # content it marks (a cold render shows that edit's marker too).
         with store._lock:
-            seq = getattr(store, "mutation_seq", None)
-            coltok = SR.column_token(store)
-            grid, psts = build()
+            live_mod = modified == _modified_map_of(store)
+
+        def compute():
+            mod = _modified_map_of(store) if live_mod else modified
+            return (getattr(store, "mutation_seq", None), SR.column_token(store),
+                    mod, *build(mod))
+        seq, coltok, modified, grid, psts = _activity.single_flight(
+            store, "grid:" + slot, lambda: _activity.MISS, compute, main=True)
         ent = {"store": store, "variant": variant, "seq": seq, "coltok": coltok,
                "mod": dict(modified), "grid": grid, "pst": psts,
                "serial": next(_GRID_SERIAL), "row_ver": {}, "col_ver": {},
@@ -6960,9 +7019,9 @@ def _qubit_meta_of(merged: dict, qids: list[str]) -> list[dict]:
 
 def _bulk_grid_entry(store: QuamStore, dyn_hidden: set[str], modified: dict,
                      ctx: dict | None = None) -> dict:
-    def build():
+    def build(mod):
         pst = _pst_new()
-        return _qubit_bulk_grid(store, dyn_hidden, modified, pst), {"q": pst}
+        return _qubit_bulk_grid(store, dyn_hidden, mod, pst), {"q": pst}
 
     def cell_fn(pst, i, j, lo_log, mod):
         return _qubit_cell_for(store.merged, pst["specs"][j], pst["ids"][i], mod, {}, lo_log)
@@ -6987,9 +7046,9 @@ def _pair_grid_cached(store: QuamStore, modified: dict) -> tuple:
 
 
 def _pair_grid_entry(store: QuamStore, modified: dict, ctx: dict | None = None) -> dict:
-    def build():
+    def build(mod):
         pst = _pst_new()
-        return _pair_bulk_grid(store, modified, pst), {"p": pst}
+        return _pair_bulk_grid(store, mod, pst), {"p": pst}
 
     def cell_fn(pst, i, j, lo_log, mod):
         return _entity_cell_for(store.merged, pst["specs"][i].get(pst["col_keys"][j]),
@@ -7013,13 +7072,13 @@ def _extra_grids_entry(store: QuamStore, modified: dict, doc: str,
                        ctx: dict | None = None) -> dict:
     from quam_state_manager.core import entity_grids
 
-    def build():
+    def build(mod):
         out: list[dict] = []
         psts: dict = {}
         for spec in entity_grids.discover(store.merged, doc):
             pst = _pst_new()
             cols, groups, rows = _entity_bulk_grid(
-                store, spec["root"], spec["ids"], modified, spec["expand_ports"], pst)
+                store, spec["root"], spec["ids"], mod, spec["expand_ports"], pst)
             if not cols or not rows:
                 continue          # a collection with nothing settable renders nothing
             out.append({"key": spec["key"], "root": spec["root"],
@@ -7852,7 +7911,9 @@ def _entity_bulk_grid(store: QuamStore, root: str, ids: list[str] | None,
     # live under `qubit_pairs.<p>.gates.cz.*` and its coupler under
     # `...coupler.*`, so the template words and the coupler/cz group both
     # matter here too.
-    for _c in columns:
+    for i, _c in enumerate(columns):
+        if not i % 256:
+            _activity.checkpoint()    # w8/locks: see _grid_memo
         _c["search"] = _search_text(_c)
 
     port_info: dict[tuple, dict[str, Any]] = {}
@@ -7864,6 +7925,8 @@ def _entity_bulk_grid(store: QuamStore, root: str, ids: list[str] | None,
             pm = path_map.get(pid, {})
             cells = []
             for ci, col in enumerate(columns):
+                if not ci % _GRID_TICK:
+                    _activity.checkpoint()    # w8/locks: see _grid_memo
                 spec = pm.get(col["key"])
                 if pst is None:
                     cells.append(_entity_cell_for(merged, spec, pid, modified, port_info)[0])
@@ -7876,6 +7939,7 @@ def _entity_bulk_grid(store: QuamStore, root: str, ids: list[str] | None,
 
     rows = []
     for pid in pair_ids:
+        _activity.checkpoint()
         for cell in grid[pid]:
             if "_port" in cell:
                 _attach_lo_meta(cell, port_info)
@@ -15645,20 +15709,39 @@ def pulses_page():
     # re-synthesize. Aliases / unknown classes render "→ target" instead.
     from quam_state_manager.core.waveform_synth import sparkline_svg, synth_for_operation
     unknown_paths: list[str] = []
-    for row in page_rows:
-        if row["is_alias"]:
-            row["spark_svg"] = None
-            continue
-        path = row["path"]
-        if not row["known"]:
-            # A class SM has no synthesizer for -- SNZ, GaussianNZ, a lab's own
-            # readout weights. Drawn from the lab's generated config, and marked
-            # as such in the markup so it never reads as one SM drew.
-            _pulse_fallback_spark(store, path, row)
-            unknown_paths.append(path)
-            continue
-        row["spark_svg"] = pulse_index.sparkline(
-            path, lambda p=path: sparkline_svg(synth_for_operation(store, p)))
+
+    def _spark_rows(rows) -> None:
+        for row in rows:
+            if "spark_svg" in row:
+                continue                       # drawn before a hand-over
+            _activity.checkpoint()
+            if row["is_alias"]:
+                row["spark_svg"] = None
+                continue
+            path = row["path"]
+            if not row["known"]:
+                # A class SM has no synthesizer for -- SNZ, GaussianNZ, a lab's own
+                # readout weights. Drawn from the lab's generated config, and marked
+                # as such in the markup so it never reads as one SM drew.
+                if path not in unknown_paths:
+                    _pulse_fallback_spark(store, path, row)
+                    unknown_paths.append(path)
+                continue
+            row["spark_svg"] = pulse_index.sparkline(
+                path, lambda p=path: sparkline_svg(synth_for_operation(store, p)))
+    # w8/locks: ONE hold of the store lock for the whole page of sparklines
+    # (handed to other requests every HANDOVER_EVERY_S), not the up to four
+    # short takes per row it used to be (index check, row read, sparkline
+    # store, the synth's own read: ~200 for a page of 50). Each short take
+    # waits for the current holder's next hand-over while a cold Live-Edit
+    # grid build or the lint runs; the page measured 9.6-9.7 s in real
+    # Chrome on big30x right after a structural pull. A chip that moves
+    # meanwhile stops the held pass; the rows it did not draw are drawn the
+    # ordinary way.
+    with _activity.yielding(store, foreground=True, main=True):
+        with store._lock:
+            _spark_rows(page_rows)
+    _spark_rows(page_rows)
 
     if unknown_paths:
         # docs/218: draw the visible lab-class rows with their own code in the

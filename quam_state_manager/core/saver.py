@@ -1,7 +1,8 @@
 """Persist QUAM state to disk with atomic writes, auto-backup, and exports.
 
 Saver wraps a QuamStore and provides:
-  - Atomic save via :func:`core.safe_io.atomic_write_json` — the same
+  - Atomic save through :func:`core.safe_io.atomic_write_json`'s two halves
+    (``_write_tmp_json`` + ``_replace_into_place``) — the same
     ``ReplaceFileW``-backed code path the live-file ``apply-to-live`` flow
     uses, so a save never fails because another process has the target
     file open for reading on Windows
@@ -14,6 +15,7 @@ from __future__ import annotations
 
 import csv
 import logging
+import marshal
 import re
 import shutil
 from datetime import datetime, timezone
@@ -38,6 +40,22 @@ DEFAULT_BACKUP_RETENTION = 20
 # retention budget. Lexicographic order on the stamp stays chronological
 # across both forms (the shorter old form sorts before a same-second new one).
 _BACKUP_RE = re.compile(r"\.bak\.(\d{8}_\d{6}(?:_\d{6})?)$")
+
+# w8/locks: one save of a folder at a time (its .bak copies, rotation and
+# swap), keyed by the folder through safe_io.path_lock -- the key names no
+# real file. A save whose snapshot went stale before the swap (not by edits
+# alone) snapshots again at most this many times, then holds the store lock
+# throughout. Format 2: no back-references (json_pieces' reason, docs/2xx).
+_SAVE_LOCK_NAME = ".sm-save.lock"
+_SAVE_TRIES = 3
+_MARSHAL_V = 2
+
+
+def _unlink(p: Path) -> None:
+    try:
+        p.unlink(missing_ok=True)
+    except OSError:
+        pass
 
 DEFAULT_PROPERTIES = [
     "id",
@@ -94,30 +112,165 @@ class Saver:
 
         The store holds raw ``#/`` pointer strings (never resolved in-place),
         so ``json.dump`` preserves pointer semantics as-is.
+
+        w8/locks: the store lock is held for a SNAPSHOT and for the swap, never
+        for disk I/O or the render. Measured on big30x: 0.26-0.7 s per save
+        with every other request waiting (a save after a pull renders its
+        pieces cold, ~0.5 s; the .tmp write + fsync is ~65 ms of it warm). Now
+        (the LazySearchIndex pattern -- build from a consistent snapshot,
+        install only if the store did not move):
+
+        * under the store lock, first: the content token, the change-log
+          entries this save stands for, and ``marshal.dumps`` of both
+          documents (~15-25 ms for the 19 MB big30x state -- the documents are
+          plain JSON data, which marshal copies exactly: key order, types,
+          float bits);
+        * the ``.bak`` copies and the rotation run under this folder's save
+          lock only -- they copy the files ON DISK, which only a save of this
+          folder (serialised here) or a build-lock writer replaces;
+        * with the lock free: the copy is rendered and written to the ``.tmp``
+          files by the same ``_write_tmp_json`` as before -- the same bytes;
+        * under the store lock again, the swap and the log clear, when
+          - nothing moved: the whole log is cleared, as always;
+          - only EDITS landed meanwhile (entries appended after the ones
+            snapshotted, one journaled step each): the file holds the content
+            before them and only the snapshotted entries are cleared -- the
+            edits stay pending, exactly as when they waited for a single-hold
+            save to finish;
+          - anything else (an undo, a discard, a reload): the tmps are dropped
+            and it snapshots again, so the file never differs from memory
+            with a clean log.
+
+        A caller that already holds the store lock, a document marshal refuses
+        and a chip that keeps moving get the single-hold save it always was.
         """
-        with self.store._lock:
-            target = Path(folder_path) if folder_path else self.store.folder_path
-            target.mkdir(parents=True, exist_ok=True)
+        store = self.store
+        with store._lock:
+            target = Path(folder_path) if folder_path else store.folder_path
+        target.mkdir(parents=True, exist_ok=True)
 
-            state_path = target / "state.json"
-            wiring_path = target / "wiring.json"
+        state_path = target / "state.json"
+        wiring_path = target / "wiring.json"
 
-            # Microseconds in the stamp: two saves inside one second used to
-            # produce the SAME .bak name — the second save's copy2 overwrote
-            # the first save's backup, silently losing the older pre-image.
-            stamp = datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S_%f")
-            self._backup(state_path, stamp)
-            self._backup(wiring_path, stamp)
-            self._rotate_backups(state_path)
-            self._rotate_backups(wiring_path)
-
-            self._atomic_write(state_path, self.store.state)
-            self._atomic_write(wiring_path, self.store.wiring)
-
-            self.store.change_log.clear()
-
+        own = getattr(store._lock, "_is_owned", None)
+        if own is not None and own():
+            # the caller's own hold: nothing here may let go of it, and no save
+            # lock may be waited for under it (a save holding that one waits
+            # for the store lock), so this is the single-hold save
+            self._backup_and_rotate(state_path, wiring_path)
+            self._write_locked(state_path, wiring_path)
             logger.info("Saved quam_state to %s", target)
             return target
+
+        with safe_io.path_lock(target / _SAVE_LOCK_NAME):
+            backed_up = False
+            for _ in range(_SAVE_TRIES):
+                # the snapshot FIRST: it is the moment this save stands for,
+                # so an edit that lands during the .bak copies below stays
+                # pending instead of being saved (and its entry cleared) past
+                # a caller that journaled the log just before calling us
+                with store._lock:
+                    token = self._token()
+                    logged = list(store.change_log)
+                    try:
+                        snap = marshal.dumps((store.state, store.wiring), _MARSHAL_V)
+                    except (ValueError, TypeError):
+                        break           # not plain JSON data: the single-hold save
+                if not backed_up:
+                    self._backup_and_rotate(state_path, wiring_path)
+                    backed_up = True
+                state_c, wiring_c = marshal.loads(snap)
+                del snap
+                s_tmp = safe_io._write_tmp_json(state_path, state_c)
+                try:
+                    w_tmp = safe_io._write_tmp_json(wiring_path, wiring_c)
+                except BaseException:
+                    _unlink(s_tmp)
+                    raise
+                del state_c, wiring_c
+                with store._lock:
+                    if self._token() == token:
+                        self._install(s_tmp, state_path, w_tmp, wiring_path)
+                        logger.info("Saved quam_state to %s", target)
+                        return target
+                    if self._only_edits_since(token, logged):
+                        self._install(s_tmp, state_path, w_tmp, wiring_path,
+                                      clear=len(logged))
+                        logger.info("Saved quam_state to %s (%d later edit(s) still pending)",
+                                    target, len(store.change_log))
+                        return target
+                # an undo / discard / reload landed while the bytes were
+                # rendered: this snapshot no longer describes memory
+                _unlink(s_tmp)
+                _unlink(w_tmp)
+            if not backed_up:
+                self._backup_and_rotate(state_path, wiring_path)
+            with store._lock:
+                self._write_locked(state_path, wiring_path)
+            logger.info("Saved quam_state to %s", target)
+            return target
+
+    # w8/locks helpers ---------------------------------------------------
+
+    def _token(self) -> tuple:
+        """The store's content token: every edit, undo and reload moves
+        ``mutation_seq`` under the store lock; a reload also swaps the
+        documents."""
+        st = self.store
+        return (st.mutation_seq, id(st.merged), id(st.state), id(st.wiring))
+
+    def _only_edits_since(self, token: tuple, logged: list) -> bool:
+        """Is everything that happened since *token* an edit APPENDED to the
+        change log after the *logged* entries -- one journaled step per new
+        entry, on its path, the documents themselves unswapped? Then the
+        snapshot is the content before those edits. Under the store lock."""
+        st = self.store
+        if (id(st.merged), id(st.state), id(st.wiring)) != token[1:]:
+            return False
+        log = st.change_log
+        n = len(logged)
+        if len(log) <= n or any(a is not b for a, b in zip(log, logged)):
+            return False
+        since = getattr(st, "mutations_since", None)
+        steps = since(token[0]) if since is not None else None
+        new = log[n:]
+        return (steps is not None and len(steps) == len(new)
+                and all(step[1] == e.dot_path for step, e in zip(steps, new)))
+
+    def _install(self, s_tmp: Path, state_path: Path, w_tmp: Path, wiring_path: Path,
+                 clear: int | None = None) -> None:
+        """Swap both staged files in (state first, as the save always wrote
+        them) and clear the change log -- all of it, or its first *clear*
+        entries. Under the store lock. A failed state swap drops the wiring
+        tmp too; a failed wiring swap leaves the new state, exactly as the
+        sequential write did -- and the log intact."""
+        safe_io._replace_state_or_drop_wiring_tmp(s_tmp, state_path, w_tmp)
+        safe_io._replace_into_place(w_tmp, wiring_path)
+        if clear is None:
+            self.store.change_log.clear()
+        else:
+            del self.store.change_log[:clear]
+
+    def _write_locked(self, state_path: Path, wiring_path: Path) -> None:
+        """The single-hold save: render, stage and swap the live documents,
+        under the store lock the caller holds."""
+        s_tmp = safe_io._write_tmp_json(state_path, self.store.state)
+        try:
+            w_tmp = safe_io._write_tmp_json(wiring_path, self.store.wiring)
+        except BaseException:
+            _unlink(s_tmp)
+            raise
+        self._install(s_tmp, state_path, w_tmp, wiring_path)
+
+    def _backup_and_rotate(self, state_path: Path, wiring_path: Path) -> None:
+        # Microseconds in the stamp: two saves inside one second used to
+        # produce the SAME .bak name — the second save's copy2 overwrote
+        # the first save's backup, silently losing the older pre-image.
+        stamp = datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S_%f")
+        self._backup(state_path, stamp)
+        self._backup(wiring_path, stamp)
+        self._rotate_backups(state_path)
+        self._rotate_backups(wiring_path)
 
     # ------------------------------------------------------------------
     # CSV export
@@ -251,21 +404,6 @@ class Saver:
                 logger.debug("Rotated old backup: %s", old.name)
             except OSError as exc:
                 logger.warning("Could not delete old backup %s: %s", old, exc)
-
-    @staticmethod
-    def _atomic_write(file_path: Path, data: dict) -> None:
-        """Write JSON data atomically.
-
-        Delegates to :func:`core.safe_io.atomic_write_json`, which writes a
-        ``.tmp`` sibling (flushed + fsync'd), then replaces the target via
-        ``ReplaceFileW`` on Windows (or ``os.replace`` on POSIX) with three
-        backoff-retried attempts. This is the same chokepoint the
-        ``apply-to-live`` flow uses, so save and apply share a single
-        well-tested atomic-write path. ``safe_io.LiveFileError`` propagates
-        as ``OSError`` (its base class) so existing callers see the same
-        error type they did before.
-        """
-        safe_io.atomic_write_json(file_path, data)
 
 
 def _labeled_columns(
