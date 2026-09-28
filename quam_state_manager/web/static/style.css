@@ -2079,17 +2079,22 @@ details.tree-branch-active > summary {
 .sidebar-tree-toolbar .toolbar-label {
     font-size: var(--tree-entry-time-font); color: var(--pico-muted-color);
 }
-/* w8 chipplace: the toolbar is a [role=group], and Pico rings a whole group
-   while any button in it has :focus -- which a mouse click gives the button in
-   Chrome -- so pressing "Full names" left a ring around the entire "rows"
-   toolbar until the next click elsewhere or a reload. The ring stays for the
-   keyboard (:focus-visible), not for the mouse. The :has(button:focus)
-   argument is what outranks Pico's own :has() rule (0,3,1 > 0,3,0). */
-.sidebar-tree-toolbar[role=group]:has(button:focus) {
+/* w8 chipplace + w9 uxpolish: Pico rings a WHOLE [role=group] while any
+   button in it has :focus -- which a mouse click gives the button in Chrome --
+   so pressing "Full names" (Datasets rows toolbar), Table/Flat View, a
+   Figures-per-row count, Changes/Summary, a Compare context / strictness, a
+   quick-filter chip or a sidebar tool left a ring around the entire group
+   until the next click elsewhere or a reload. ONE rule for every group: when
+   the focused member is a button focused WITHOUT :focus-visible (a mouse or
+   touch press), the group has no ring; keyboard focus (:focus-visible) never
+   matches it, so Pico's own ring stays. The member list is Pico's own
+   (button, [type=submit], [type=button], [role=button]); specificity 0,4,0
+   (:is() takes [type=submit], then :focus, :not(:focus-visible), and the
+   [role=group] itself) outranks Pico's 0,3,0 wherever the two meet. A browser
+   without :focus-visible drops the whole rule and keeps Pico's ring. */
+[role=group]:has(:is(button, [type=submit], [type=button], [role=button]):focus:not(:focus-visible)),
+[role=search]:has(:is(button, [type=submit], [type=button], [role=button]):focus:not(:focus-visible)) {
     --pico-group-box-shadow: 0 0 0 transparent;
-}
-.sidebar-tree-toolbar[role=group]:has(button:focus-visible) {
-    --pico-group-box-shadow: var(--pico-group-box-shadow-focus-with-button);
 }
 .tree-density-btn {
     background: none; border: 1px solid var(--pico-muted-border-color);
@@ -4813,6 +4818,11 @@ html.topbar-hidden .topo-dashboard .topo-section-title[data-group] { scroll-marg
 }
 #topo-density-slider { width: 88px; margin: 0; vertical-align: middle; }
 .topo-section { }
+/* w9 uxpolish: a 2Q RB panel's slot on a big chip (chip-status.js _rbStart).
+   The panel goes INTO it later; the slot itself makes no box, so the page
+   lays out as if the panel were the host's own child -- and an insertion
+   restyles only the slot, not every panel beside it. */
+.topo-rb-slot { display: contents; }
 .topo-section-title { font-size: var(--topo-section-title-size); font-weight: 600; margin: 0 0 0.5rem 0; color: var(--pico-color); }
 .topo-section-subtitle { font-size: var(--topo-section-subtitle-size); color: var(--pico-muted-color); font-weight: 400; margin-left: 0.5rem; }
 

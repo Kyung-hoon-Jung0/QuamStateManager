@@ -2546,7 +2546,8 @@ document.addEventListener('click', function(evt) {
         // rejects this promise (htmx 2 p.onabort) -- the abort is intended and
         // still fires htmx:sendAbort; only the unhandled rejection goes.
         var p = htmx.ajax('GET', '/dataset/' + uid,
-                  {source: target, target: target, swap: 'innerHTML'});
+                  {source: target, target: target, swap: 'innerHTML',
+                   headers: window._dsListNav()});   // w9 uxpolish: a list switch
         if (p && typeof p.catch === 'function') p.catch(function() {});
     }
 });
@@ -2625,7 +2626,8 @@ window.dsNavRun = function(dir, btn) {
                 var target = host;
                 _dsMarkSlowLoad(target, d.run_id);
                 htmx.ajax('GET', '/dataset/' + d.uid,
-                          {source: target, target: target, swap: 'innerHTML'})
+                          {source: target, target: target, swap: 'innerHTML',
+                           headers: window._dsListNav()})   // w9 uxpolish: a list switch
                     .then(function() { _dsSyncFullPageUrl(target); }, function() {});   // F20: an hx-sync abort is not an error
             }).catch(function() {});
     }
@@ -17855,7 +17857,33 @@ var _dsSticky = {
 //                inspector, the first open) is a FRESH open, not a switch
 var _dsScroll = { intent: null, userMoved: true, pin: null, recaptured: false,
                   landedTab: undefined,   // the tab the last restore showed
-                  picked: null, fromRun: undefined };
+                  picked: null, fromRun: undefined,
+                  fromList: undefined };  // see _dsListNav below
+
+// w9 uxpolish (user decision 2026-09-28): only the Datasets run LIST switches
+// runs -- the sidebar run tree, the Datasets / Collections table, ]/[ and
+// j+Enter (all of which end in the tree's click handler, the table's
+// openDatasetDetail or dsNavRun's server neighbour). They keep the reader's
+// tab and place (queue item 6, docs/221 sections 4/8). A run opened from
+// anywhere ELSE -- a Chip Status or Datasets Trends point, Param History
+// "Data", the value-history drawer / Column History "Data", a Versions run
+// link, a fit-audit row, the detail's parent-run link, a search result -- is
+// a FRESH open: Full View at the top, as when the pane showed no run. The
+// list marks its OWN requests with this header, so a new opener anywhere is
+// fresh by default; a flag set beside the request would outlive one that
+// was aborted (the pane's hx-sync:replace) or failed, and mislabel the next.
+var _DS_LIST_NAV_HEADER = 'X-SM-DS-Nav';
+window._dsListNav = function() {
+    var h = {};
+    h[_DS_LIST_NAV_HEADER] = 'list';
+    return h;
+};
+// did THIS swap's request come from the run list?
+function _dsFromList(detail) {
+    var rc = detail && detail.requestConfig;
+    var h = (rc && rc.headers) || (detail && detail.etc && detail.etc.headers) || null;
+    return !!(h && h[_DS_LIST_NAV_HEADER] === 'list');
+}
 
 // The tab a dataset detail is SHOWING (its active link), and that tab's
 // content element. Read from the DOM, not window._dsActiveTab, which a fresh
@@ -17957,6 +17985,7 @@ document.addEventListener('htmx:beforeSwap', function(evt) {
     // Read before anything returns: the afterSwap below needs it for EVERY
     // swap into the pane (a stale value would call a close + reopen a switch).
     _dsScroll.fromRun = !!(pane && pane.querySelector('#ds-detail-root'));
+    _dsScroll.fromList = _dsFromList(evt.detail);   // w9 uxpolish: same rule
     if (window._pinnedRunId) return;
     if (!pane) return;
     if (_dsScroll.pin) { _dsScroll.pin.stop(); _dsScroll.pin = null; }
@@ -18194,6 +18223,11 @@ document.addEventListener('htmx:afterSwap', function(evt) {
     var fromRun = _dsScroll.fromRun;
     _dsScroll.fromRun = undefined;
     if (fromRun === false) freshOpen = true;
+    // w9 uxpolish: a run opened from OUTSIDE the run list (see _dsListNav) is
+    // a fresh open too, whatever the pane showed before it
+    var fromList = _dsScroll.fromList;
+    _dsScroll.fromList = undefined;
+    if (fromList === false) freshOpen = true;
     var root = pane.querySelector('#ds-detail-root');
     if (!root) return;
 

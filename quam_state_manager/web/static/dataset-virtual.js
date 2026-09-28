@@ -1494,7 +1494,9 @@
         window._dsNavFromTable = id;
         state.lastDetailId = id;
         state._reissuedIds = state._reissuedIds || {};
-        window.htmx.ajax('GET', '/dataset/' + id, { source: '#inspector-pane', target: '#inspector-pane', swap: 'innerHTML' });
+        // w9 uxpolish: a LIST switch keeps tab + place (app.js _dsListNav)
+        var listNav = window._dsListNav ? window._dsListNav() : undefined;
+        window.htmx.ajax('GET', '/dataset/' + id, { source: '#inspector-pane', target: '#inspector-pane', swap: 'innerHTML', headers: listNav });
         setTimeout(function () {
             var p = document.getElementById('inspector-pane');
             // Per-ID one-shot (not a global flag): a fast second click on a DIFFERENT run
@@ -1516,7 +1518,7 @@
             var clobberedBySearch = !hasDetail && !!p.querySelector('.search-panel, .search-table');
             if (empty || clobberedBySearch) {
                 state._reissuedIds[id] = true;
-                window.htmx.ajax('GET', '/dataset/' + id, { source: '#inspector-pane', target: '#inspector-pane', swap: 'innerHTML' });
+                window.htmx.ajax('GET', '/dataset/' + id, { source: '#inspector-pane', target: '#inspector-pane', swap: 'innerHTML', headers: listNav });
                 setTimeout(function () { delete state._reissuedIds[id]; }, 600);
             }
         }, 300);
