@@ -257,14 +257,18 @@ def normalise(text: str, work: Path, code: Path | None = None) -> str:
     return text
 
 
-# Spec §5.3 declares two deltas, but §3.2 rule 3 itself mandates a third,
-# textual one: base.html's inline menu hook compares `window.SM.path(href)`
-# instead of `href` (identity at root -- sm-root.js's path() returns its input
-# when data-root is empty). Declared here EXACTLY, branch text -> base text;
-# nothing looser. Any other inline-JS change is a real difference.
-DECLARED_TEXT_DELTAS = (
-    ('window.SM.path(href).indexOf("/datasets") === 0', 'href.indexOf("/datasets") === 0'),
-)
+# Spec §5.3 declares two deltas, but the spec itself forces a third CLASS:
+# inline template JS that must compare app routes wraps the value in
+# `window.SM.path(...)` (§3.2 rule 3: the base.html menu hook; the same shape
+# fixes onChipPage) or builds a URL with `window.SM.url(...)`. Both functions
+# return their input unchanged when data-root is empty (sm-root.js, §4.2), so
+# at root the wrapper is behaviour-neutral -- but it is a byte change. Declared
+# here as exactly that: `window.SM.path(E)` / `window.SM.url(E)` with E a plain
+# identifier/member chain or one string literal maps back to `E`. Nothing
+# else: an edit next to the wrapper, a different call, a wrapped expression
+# with an operator in it -- all stay real differences.
+_SM_IDENTITY_CALL = re.compile(
+    r"""window\.SM\.(?:path|url)\(((?:[A-Za-z_$][\w$]*(?:\.[A-Za-z_$][\w$]*)*)|'[^'\\\n]*'|"[^"\\\n]*")\)""")
 
 
 def strip_declared(text: str) -> tuple[str, dict]:
@@ -275,13 +279,12 @@ def strip_declared(text: str) -> tuple[str, dict]:
         "sm_root_script": len(_SM_ROOT_TAG.findall(text)),
         "hx_ext_sm_root": text.count('hx-ext="sm-root"'),
         "data_root_any": len(re.findall(r"\bdata-root=", text)),
-        "text_deltas": sum(text.count(new) for new, _ in DECLARED_TEXT_DELTAS),
+        "text_deltas": len(_SM_IDENTITY_CALL.findall(text)),
     }
     text = _DATA_ROOT_EMPTY.sub("", text)
     text = _SM_ROOT_LINE.sub("", text)
     text = _SM_ROOT_TAG.sub("", text)
-    for new, old in DECLARED_TEXT_DELTAS:
-        text = text.replace(new, old)
+    text = _SM_IDENTITY_CALL.sub(lambda m: m.group(1), text)
     return text, counts
 
 
@@ -301,13 +304,48 @@ _TOP_HTML = re.compile(r"\A\s*(?:<!doctype[^>]*>\s*)?(?:<!--.*?-->\s*)*(<html\b[
                        re.I | re.S)
 _REDIRECT_HEADERS = ("Location", "HX-Redirect", "HX-Push-Url", "HX-Replace-Url")
 
+ALLOW_FILE = TESTS / "golden" / "prefix_render_allow.txt"
+
+
+def load_allow(path: Path = ALLOW_FILE) -> list:
+    """Allow-list for route KEYS in inline JS (never for URLs that are requested).
+
+    One entry per line: ``region-regex <TAB> requires-regex <TAB> why``.
+    A quoted '/route' literal is allowed only if it lies inside a match of
+    ``region`` AND ``requires`` matches somewhere in the same page ('-' = no
+    requirement). ``requires`` is what makes an entry self-checking: a key
+    list is only harmless while the code compares it against a STRIPPED path,
+    so the entry names that stripping call -- revert it and the leak is back.
+    Blank lines and '#' comments are ignored."""
+    out = []
+    if not path.exists():
+        return out
+    for line in path.read_text(encoding="utf-8").splitlines():
+        if not line.strip() or line.lstrip().startswith("#"):
+            continue
+        parts = line.split("\t")
+        if len(parts) != 3:
+            raise ValueError(f"{path.name}: need 3 TAB-separated fields: {line!r}")
+        region, requires, why = parts
+        out.append((re.compile(region), None if requires == "-" else re.compile(requires), why))
+    return out
+
+
+def _allowed_spans(text: str, allow: list | None) -> list[tuple[int, int]]:
+    spans = []
+    for region, requires, _why in allow or ():
+        if requires is not None and not requires.search(text):
+            continue
+        spans += [(m.start(), m.end()) for m in region.finditer(text)]
+    return spans
+
 
 def _under(v: str, prefix: str) -> bool:
     return v == prefix or v.startswith((prefix + "/", prefix + "?", prefix + "#"))
 
 
 def scan_page(text: str, headers: dict, prefix: str, segs: set,
-              status: int = 200) -> list[tuple[str, str]]:
+              status: int = 200, allow: list | None = None) -> list[tuple[str, str]]:
     """Return [(kind, snippet)] of every root-absolute app URL not under `prefix`.
 
     kinds: attr (a URL attribute), data-attr (a data-* attribute naming an app
@@ -329,9 +367,10 @@ def scan_page(text: str, headers: dict, prefix: str, segs: set,
             continue                              # a data-* path that is not an app URL
         out.append(("data-attr" if attr.startswith("data-") else "attr",
                     text[m.start(1):m.end()][:160]))
+    spans = _allowed_spans(text, allow) if prefix else []
     if literal is not None:
         for m in literal.finditer(text):
-            if m.start() in covered:
+            if m.start() in covered or any(a <= m.start() < b for a, b in spans):
                 continue
             out.append(("literal", text[max(0, m.start() - 40):m.end() + 40]
                         .replace("\n", " ")[:160]))
@@ -372,10 +411,12 @@ def scan_dir(out: Path) -> dict:
     idx = json.loads((out / "_index.json").read_text(encoding="utf-8"))
     segs = set(idx.get("route_segments") or [])
     prefix = idx["prefix"]
+    allow = load_allow()
     found = {}
     for key, meta in idx["pages"].items():
         text = (out / "pages" / meta["file"]).read_text(encoding="utf-8")
-        hits = scan_page(text, meta.get("headers") or {}, prefix, segs, meta.get("status", 200))
+        hits = scan_page(text, meta.get("headers") or {}, prefix, segs,
+                         meta.get("status", 200), allow=allow)
         if hits:
             found[key] = hits
     return found

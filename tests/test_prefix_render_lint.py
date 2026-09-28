@@ -135,6 +135,21 @@ def test_scanner_passes(text):
     assert rp.scan_page(text, {}, MOUNT, _SEGS) == []
 
 
+def test_allow_list_is_self_checking():
+    """A key list is allowed only while the page strips the prefix before the compare."""
+    allow = rp.load_allow()
+    keys = 'var CHIP_PAGES = ["/qubits", "/diff"];\n'
+    good = keys + 'function onChipPage() {\n  var p = window.SM.path(location.pathname);\n'
+    bad = keys + 'function onChipPage() {\n  var p = location.pathname;\n'
+    assert rp.scan_page(good, {}, MOUNT, _SEGS, allow=allow) == []
+    assert [k for k, _ in rp.scan_page(bad, {}, MOUNT, _SEGS, allow=allow)] == ["literal"] * 2
+    # the allowance is a REGION: the same literal elsewhere on the page still counts
+    assert rp.scan_page(good + "fetch('/qubits')", {}, MOUNT, _SEGS, allow=allow)
+    js = 'if (href === "#" || window.SM.path(href).indexOf("/datasets") === 0) return;'
+    assert rp.scan_page(js, {}, MOUNT, _SEGS, allow=allow) == []
+    assert rp.scan_page(js.replace("window.SM.path(href)", "href"), {}, MOUNT, _SEGS, allow=allow)
+
+
 def test_scanner_headers_and_documents():
     assert rp.scan_page("", {"Location": "/diff"}, MOUNT, _SEGS)
     assert rp.scan_page("", {"HX-Redirect": "/qubits"}, MOUNT, _SEGS)

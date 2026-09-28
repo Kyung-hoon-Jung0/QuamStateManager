@@ -151,6 +151,13 @@ def test_declared_delta_stripper_removes_exactly_the_two_deltas():
     assert rp.strip_declared(js_b)[1]["text_deltas"] == 1
     # ...and a neighbouring edit does not ride along
     assert rp.strip_declared(js_b.replace("=== 0", "== 0"))[0] != js_a
+    # the class: an identity-at-root wrapper around ONE plain operand
+    assert rp.strip_declared("var p = window.SM.path(location.pathname);")[0] == \
+        "var p = location.pathname;"
+    assert rp.strip_declared("u = window.SM.url('/calc-window');")[0] == "u = '/calc-window';"
+    for kept in ("window.SM.path(a + b)", "window.SM.url(f(x))", "window.SM.root",
+                 "window.SM.path(x, y)", "SM.path(x)"):
+        assert rp.strip_declared(kept)[0] == kept, kept
     # a whitespace-only line left where a comment rendered is NOT declared
     assert rp.strip_declared(branch.replace("<head>\n", "<head>\n    \n"))[0] != base
     # anything else stays a difference
