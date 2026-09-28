@@ -1,6 +1,10 @@
 <!DOCTYPE html>
-<html lang="en">
+<html lang="en" data-root="{{ root }}">
 <head>
+  {# sm-root.js MUST be the first script -- harmless here (workbench has no
+     other first-party JS reading window.SM today) but keeps the rule simple:
+     every full document loads it first. #}
+  <script src="{{ asset_url('sm-root.js') }}"></script>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>Sync-Qualibrate · QUAM State Manager + Qualibrate</title>
@@ -167,7 +171,7 @@
       </div>
     </div>
     <div id="wb-right">
-      <iframe id="wb-sm" title="QUAM State Manager" src="/"></iframe>
+      <iframe id="wb-sm" title="QUAM State Manager" src="{{ root }}/"></iframe>
     </div>
     <div id="wb-readout"></div>
   </div>
@@ -442,7 +446,7 @@
       function pollWatch() {
         if (pollWatch._inFlight) return;   // don't overlap on a slow server
         pollWatch._inFlight = true;
-        fetch("/workbench/watch", { cache: "no-store" })
+        fetch("{{ root }}/workbench/watch", { cache: "no-store" })
           .then(function (r) { return r.json(); })
           .then(function (d) {
             watchFails = 0;
@@ -474,7 +478,7 @@
       function onLiveChanged() {
         if (liveDiffInFlight) return;   // don't stack reads if one is slow
         liveDiffInFlight = true;
-        fetch("/state/live-diff", { cache: "no-store" })
+        fetch("{{ root }}/state/live-diff", { cache: "no-store" })
           .then(function (r) { return r.json(); })
           .then(function (d) {
             if (!d || !d.ok) {
@@ -539,7 +543,7 @@
       function pollMatch() {
         if (pollMatch._inFlight) return;   // don't overlap on a slow server
         pollMatch._inFlight = true;
-        fetch("/workbench/match", { cache: "no-store" })
+        fetch("{{ root }}/workbench/match", { cache: "no-store" })
           .then(function (r) { return r.json(); })
           .then(function (d) {
             if (!d) return;
@@ -573,7 +577,7 @@
         if (!matchLoadPath) return;
         var btn = this, orig = btn.textContent; btn.disabled = true; btn.textContent = "Loading…";
         // a context switch, NOT a clobber — pending edits on the old chip survive (per-folder working copy)
-        fetch("/load", {
+        fetch("{{ root }}/load", {
           method: "POST",
           headers: { "Content-Type": "application/x-www-form-urlencoded", "HX-Request": "true" },
           body: "folder=" + encodeURIComponent(matchLoadPath),

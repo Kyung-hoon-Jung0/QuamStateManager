@@ -134,7 +134,7 @@
            it was pressed from; disabled while in flight so a double press
            cannot queue a second full re-read. The "N new" chip on the sync
            pill presses this same button (app.js refreshRunLists). #}
-        <button class="btn-sm outline" hx-post="/datasets/rescan" hx-target="#table-pane"
+        <button class="btn-sm outline" hx-post="{{ root }}/datasets/rescan" hx-target="#table-pane"
                 hx-include="#ds-active-date, #dataset-search" hx-vals='{"view": "{{ view_mode }}"}'
                 hx-disabled-elt="this" title="Rescan for new runs">Rescan</button>
     </div>

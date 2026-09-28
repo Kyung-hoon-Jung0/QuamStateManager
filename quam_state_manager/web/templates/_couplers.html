@@ -27,7 +27,7 @@
     <tbody>
     {% if pairs %}
     {% for p in pairs %}
-    <tr class="clickable-row{% if not p.is_active %} row-inactive{% endif %}" data-pair-id="{{ p.id }}" hx-get="/pair/{{ p.id }}" hx-target="#inspector-pane" hx-swap="innerHTML" hx-indicator="#inspector-pane">
+    <tr class="clickable-row{% if not p.is_active %} row-inactive{% endif %}" data-pair-id="{{ p.id }}" hx-get="{{ root }}/pair/{{ p.id }}" hx-target="#inspector-pane" hx-swap="innerHTML" hx-indicator="#inspector-pane">
         <td><strong>{{ p.id }}</strong></td>
         <td>{{ p.qubit_control or '-' }}</td>
         <td>{{ p.qubit_target or '-' }}</td>
@@ -43,7 +43,7 @@
     </tbody>
 </table>
 
-{% set base_url = "/couplers" %}
+{% set base_url = root ~ "/couplers" %}
 {% set extra_qs = "" %}
 {% set storage_key = "quam_couplers_per_page" %}
 {% include "_pagination.html" %}

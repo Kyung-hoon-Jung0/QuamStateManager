@@ -12,7 +12,7 @@
 {% set cap = 3 %}
 {% for p in listing.projects %}
 <li{% if loop.index > cap %} hidden data-subnav-extra{% endif %}>
-    <form method="post" action="/qualibrate/open" hx-post="/qualibrate/open"
+    <form method="post" action="{{ root }}/qualibrate/open" hx-post="{{ root }}/qualibrate/open"
           hx-target="#table-pane" class="qualibrate-open-form">
         <input type="hidden" name="project" value="{{ p.name }}">
         <button type="submit" class="qualibrate-project-row{% if p.active %} qualibrate-project-active{% endif %}"

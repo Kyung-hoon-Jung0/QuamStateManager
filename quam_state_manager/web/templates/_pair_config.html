@@ -12,7 +12,7 @@
         <p class="muted">No generated config cached yet.</p>
         <button type="button"
                 class="btn-sync primary"
-                hx-post="/config/regenerate"
+                hx-post="{{ root }}/config/regenerate"
                 hx-target="closest .config-status-host"
                 hx-swap="innerHTML"
                 hx-indicator="closest .config-status-host"

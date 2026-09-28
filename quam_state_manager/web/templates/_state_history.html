@@ -7,7 +7,7 @@
     <h2>State History{% if project_scope %} <span class="scope-suffix">— {{ project_scope }}</span>{% endif %}
         <small class="muted">full state.json + wiring.json snapshots — review, compare, roll back</small>
     </h2>
-    <button class="btn-sm outline" hx-post="/state-history/snapshot"
+    <button class="btn-sm outline" hx-post="{{ root }}/state-history/snapshot"
             hx-target="#table-pane" hx-swap="innerHTML"
             title="Capture the current state now">Take snapshot</button>
 </div>
@@ -35,7 +35,7 @@
    refreshes on first load, when the baseline is reset/applied (liveDriftChanged),
    and after a stage/restore (stateRestored). #}
 <div id="live-drift-panel"
-     hx-get="/state/drift/view?embed=1"
+     hx-get="{{ root }}/state/drift/view?embed=1"
      hx-trigger="load, liveDriftChanged from:body, stateRestored from:body"
      hx-swap="innerHTML"></div>
 
@@ -48,7 +48,7 @@
    NOT close the inspector the way stateRestored does). Re-fetches only the body so the
    result/diff in #state-history-detail beside it is preserved. Lives outside
    #state-history-body so the swap can't remove this listener. #}
-<span hidden hx-get="/state-history?body=1"
+<span hidden hx-get="{{ root }}/state-history?body=1"
       hx-trigger="stateRestored from:body, stateHistoryChanged from:body"
       hx-target="#state-history-body" hx-swap="innerHTML"></span>
 

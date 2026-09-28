@@ -1,13 +1,13 @@
 <div class="add-gate-form-wrap">
     <form class="add-gate-form"
-          hx-post="/pair/{{ pair_name }}/gate"
+          hx-post="{{ root }}/pair/{{ pair_name }}/gate"
           hx-target="#inspector-pane"
           hx-swap="innerHTML">
         <header class="add-gate-form-header">
             <strong>Add gate to {{ pair_name }}</strong>
             <button type="button"
                     class="add-gate-cancel"
-                    hx-get="/pair/{{ pair_name }}/gate/new/cancel"
+                    hx-get="{{ root }}/pair/{{ pair_name }}/gate/new/cancel"
                     hx-target="#pair-add-gate-area"
                     hx-swap="outerHTML"
                     title="Cancel">×</button>

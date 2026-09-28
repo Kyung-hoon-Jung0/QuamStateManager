@@ -35,7 +35,7 @@
                         <em class="selfref-value">{{ p.raw }} <span class="tag-runtime">(runtime)</span></em>
                     {% elif p.editable %}
                         {% set _stored = p.key | unit_hint %}
-                        <form class="inline-edit fh-host" hx-post="/qubit/{{ qubit_name }}/edit" hx-target="#inspector-pane" hx-swap="innerHTML"
+                        <form class="inline-edit fh-host" hx-post="{{ root }}/qubit/{{ qubit_name }}/edit" hx-target="#inspector-pane" hx-swap="innerHTML"
                               {# docs/183: NOT hx-vals='js:…' — htmx compiles those with
                                  new Function, which this app's CSP forbids, and htmx
                                  aborts the whole request while trying. One delegated
@@ -93,9 +93,9 @@
        create flow pre-targeted at this qubit's xy channel. #}
     <div class="qubit-add-pulse-link">
         <button type="button" class="btn-sm outline"
-                hx-get="/pulse/new?qubit={{ qubit_name }}&channel=xy"
+                hx-get="{{ root }}/pulse/new?qubit={{ qubit_name }}&channel=xy"
                 hx-target="#inspector-pane" hx-swap="innerHTML">+ Add pulse…</button>
-        <a class="muted" href="/pulses?q={{ qubit_name }}" hx-get="/pulses?q={{ qubit_name }}"
+        <a class="muted" href="{{ root }}/pulses?q={{ qubit_name }}" hx-get="{{ root }}/pulses?q={{ qubit_name }}"
            hx-target="#table-pane" hx-sync="#table-pane:replace" hx-push-url="true">view all {{ qubit_name }} pulses →</a>
     </div>
 
@@ -104,7 +104,7 @@
             Generated Config
             <small class="muted">— offline preview of <code>generate_config()</code></small>
         </summary>
-        <div hx-get="/qubit/{{ qubit_name }}/config"
+        <div hx-get="{{ root }}/qubit/{{ qubit_name }}/config"
              hx-trigger="toggle once from:closest details, configRegenerated from:body"
              hx-swap="innerHTML">
             <p class="muted">loading…</p>

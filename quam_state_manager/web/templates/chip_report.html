@@ -25,8 +25,11 @@
        a value means. `pct` below is the one thing this file adds: a fidelity
        as a percentage, which `qty` has no opinion about.
 #}
-<html lang="en" data-theme="dark">
+<html lang="en" data-theme="dark" data-root="{{ root }}">
 <head>
+    {# sm-root.js MUST be the first script -- topo-graph.js/component-map.js
+       run in this document (bottom of body, but window.SM must exist by then). #}
+    <script src="{{ asset_url('sm-root.js') }}"></script>
     <meta charset="utf-8">
     <link rel="icon" type="image/svg+xml"
           href="{{ url_for('static', filename='favicon.svg') }}">

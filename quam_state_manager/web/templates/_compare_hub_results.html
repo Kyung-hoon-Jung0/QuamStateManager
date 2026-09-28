@@ -228,7 +228,7 @@
     <details class="cmp-group"
              {% if not g.lazy and g.n_rows %}open{% endif %}
              {% if g.lazy %}data-lazy="1"
-             data-url="/compare-hub/group?{{ hub_qs }}&amp;section={{ sec.name | urlencode }}&amp;entity={{ g.entity | urlencode }}"{% endif %}>
+             data-url="{{ root }}/compare-hub/group?{{ hub_qs }}&amp;section={{ sec.name | urlencode }}&amp;entity={{ g.entity | urlencode }}"{% endif %}>
       <summary class="cmp-group-summary">
         <span class="cmp-group-entity">{{ g.entity }}{% if g.mapped_to %} <span class="cmp-group-mapped">&harr; {{ g.mapped_to }} · mapped by {{ result.mapping.method }}</span>{% endif %}</span>
         <span class="cmp-group-counts">

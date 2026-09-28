@@ -228,7 +228,7 @@
                image loads, so a run switch holds the reader's place on its
                FIRST painted frame (an unsized img is 0 px until it arrives) #}
             {% set _wh = (_fh.figure_sizes or {}).get(fig_name) %}
-            <img src="/dataset/{{ uid }}/fig/{{ fig_name }}"
+            <img src="{{ root }}/dataset/{{ uid }}/fig/{{ fig_name }}"
                  alt="{{ fig_name }}"
                  {% if _wh %}width="{{ _wh[0] }}" height="{{ _wh[1] }}"{% endif %}
                  loading="lazy"
@@ -269,7 +269,7 @@
                 {% endif %}
                 {% if run.parent_id %}
                 <tr><td class="col-prop"><code>parent</code></td>
-                    <td class="col-val"><a href="#" hx-get="/dataset/{{ folder_key }}:{{ run.parent_id }}" hx-target="closest #table-pane, #inspector-pane" hx-swap="innerHTML">#{{ run.parent_id }}</a></td></tr>
+                    <td class="col-val"><a href="#" hx-get="{{ root }}/dataset/{{ folder_key }}:{{ run.parent_id }}" hx-target="closest #table-pane, #inspector-pane" hx-swap="innerHTML">#{{ run.parent_id }}</a></td></tr>
                 {% endif %}
             </tbody>
         </table>
@@ -317,7 +317,7 @@
     {% if experimental %}
     <div class="autofit-diag-bar">
         <button type="button" class="btn-sm outline"
-                hx-post="/dataset/{{ uid }}/autofit-diagnose"
+                hx-post="{{ root }}/dataset/{{ uid }}/autofit-diagnose"
                 hx-target="#autofit-diag-slot" hx-swap="innerHTML"
                 hx-indicator="#autofit-diag-busy"
                 title="Re-fit this run's frozen data with today's analysis in the QM env and show before/after (read-only over the archive)">
@@ -431,7 +431,7 @@
        (switchDatasetTab fires ds-h5-open; data-loaded guard). The shell lists
        every *.h5 in the run folder; each variable's cube loads on click. #}
     <div id="h5-summary-container"
-         hx-get="/dataset/{{ uid }}/ndview"
+         hx-get="{{ root }}/dataset/{{ uid }}/ndview"
          hx-trigger="ds-h5-open" hx-swap="innerHTML">
         <p class="muted" style="padding:1rem">Loading data files…</p>
     </div>
@@ -452,17 +452,17 @@
        slot below. #}
     {% if run.has_quam_state %}
     <div class="ds-state-action-bar">
-        <button hx-post="/dataset/{{ uid }}/load-state?apply=1"
+        <button hx-post="{{ root }}/dataset/{{ uid }}/load-state?apply=1"
                 hx-target="#ds-load-state-result" hx-swap="innerHTML"
                 class="btn-sm"
                 title="One click: this run's state becomes the working state AND is applied to the live chip. Reversible for the chip — ↺ Revert last apply stages the pre-apply state, and Apply puts it back on the chip. Unsaved working edits are replaced and named in the result, not recoverable.">Apply to chip</button>
-        <button hx-post="/dataset/{{ uid }}/load-state"
+        <button hx-post="{{ root }}/dataset/{{ uid }}/load-state"
                 hx-target="#ds-load-state-result" hx-swap="innerHTML"
                 class="btn-sm outline"
                 title="Review first: stage into the open chip's working state only — the live chip is untouched until you Apply from the top bar.{{ auto_push_note }}">Stage only</button>
         <small class="muted">Apply writes the live chip now (revertible);
             Stage&nbsp;only lets you review first. With no chip open, opens read-only.</small>
-        <button hx-post="/dataset/{{ uid }}/load-state?mode=archive"
+        <button hx-post="{{ root }}/dataset/{{ uid }}/load-state?mode=archive"
                 hx-target="#ds-load-state-result" hx-swap="innerHTML"
                 class="btn-sm ds-load-archive-btn"
                 title="Switch SM to this run's frozen quam_state, read-only. Your chip's files and working state are untouched — the status badge offers the way back.">Open read-only</button>
@@ -527,7 +527,7 @@
             if (!el) return;
             var cid = el.id;
             el.innerHTML = '<p class="muted" style="padding:.5rem">Loading\u2026</p>';
-            fetch('/dataset/' + runId + '/json?file=' + which)
+            fetch('{{ root }}/dataset/' + runId + '/json?file=' + which)
                 .then(function(r){ return r.json(); })
                 .then(function(data){
                     el.innerHTML = '';

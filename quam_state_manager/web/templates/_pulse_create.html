@@ -17,7 +17,7 @@
    the form's indicator lit "Creating... a class of your lab's is first run"
    on a click that creates nothing, and its disabled-elt selector found no
    button relative to the link (a console error on every press). #}
-<form class="pulse-create-form" hx-post="/api/pulse/create"
+<form class="pulse-create-form" hx-post="{{ root }}/api/pulse/create"
       hx-target="#inspector-pane" hx-swap="innerHTML"
       hx-indicator="#pulse-create-busy" hx-disabled-elt="find button[type=submit]"
       hx-disinherit="hx-target hx-swap hx-indicator hx-disabled-elt">

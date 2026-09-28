@@ -9,16 +9,16 @@
     <button type="button" role="tab" data-create-kind="pulse"
             aria-selected="{{ 'true' if _k == 'pulse' else 'false' }}"
             class="pulse-create-choice-btn{{ ' is-active' if _k == 'pulse' }}"
-            hx-get="/pulse/new?kind=pulse" hx-target="#inspector-pane" hx-swap="innerHTML"
+            hx-get="{{ root }}/pulse/new?kind=pulse" hx-target="#inspector-pane" hx-swap="innerHTML"
             title="A new pulse of any class this chip's environment offers, on a qubit channel, a pair channel or an empty gate slot">New pulse</button>
     <button type="button" role="tab" data-create-kind="copy"
             aria-selected="{{ 'true' if _k == 'copy' else 'false' }}"
             class="pulse-create-choice-btn{{ ' is-active' if _k == 'copy' }}"
-            hx-get="/pulse/new?kind=copy" hx-target="#inspector-pane" hx-swap="innerHTML"
+            hx-get="{{ root }}/pulse/new?kind=copy" hx-target="#inspector-pane" hx-swap="innerHTML"
             title="Put an existing pulse on another channel, laid out the way this chip lays out its own pulses">Copy a pulse to another channel</button>
     <button type="button" role="tab" data-create-kind="gaussian_cz"
             aria-selected="{{ 'true' if _k == 'gaussian_cz' else 'false' }}"
             class="pulse-create-choice-btn{{ ' is-active' if _k == 'gaussian_cz' }}"
-            hx-get="/pulse/new?kind=gaussian_cz" hx-target="#inspector-pane" hx-swap="innerHTML"
+            hx-get="{{ root }}/pulse/new?kind=gaussian_cz" hx-target="#inspector-pane" hx-swap="innerHTML"
             title="Build cz_gaussian_unipolar + cz_gaussian_bipolar for a pair from its calibrated cz_flattop (docs/126)">Gaussian CZ from cz_flattop</button>
 </nav>

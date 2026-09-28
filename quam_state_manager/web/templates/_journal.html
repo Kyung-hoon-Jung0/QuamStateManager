@@ -9,13 +9,13 @@
         <p class="muted jr-tagline">every run, whoever ran it — what it wrote, why, and how it looked</p>
     </div>
     <div class="jr-head-actions">
-        <a class="btn-sm outline" href="/journal/raw?day={{ story.day }}" hx-get="/journal/raw?day={{ story.day }}"
+        <a class="btn-sm outline" href="{{ root }}/journal/raw?day={{ story.day }}" hx-get="{{ root }}/journal/raw?day={{ story.day }}"
            hx-target="#jr-raw" hx-swap="innerHTML" title="The day's markdown file as SM renders it">Raw .md</a>
         <span class="muted jr-folder" title="{{ story.folder }}">{{ story.folder }}</span>
     </div>
 </div>
 
-<form id="jr-filters" class="jr-filters" hx-get="/journal/day" hx-target="#jr-body" hx-swap="innerHTML"
+<form id="jr-filters" class="jr-filters" hx-get="{{ root }}/journal/day" hx-target="#jr-body" hx-swap="innerHTML"
       hx-trigger="change, submit, keyup changed delay:300ms from:#jr-q">
     <input type="hidden" name="day" id="jr-day" value="{{ story.day }}">
     {% include '_journal_daynav.html' %}

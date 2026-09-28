@@ -24,7 +24,7 @@
 #}
 {% if has_chip %}
 <button type="button" class="state-version-chip{% if ver.unmatched %} state-version-unsaved{% endif %}{% if ver.dirty %} state-version-dirty{% endif %}"
-        hx-get="/state/versions" hx-target="#state-version-panel" hx-swap="innerHTML"
+        hx-get="{{ root }}/state/versions" hx-target="#state-version-panel" hx-swap="innerHTML"
         onclick="StateVersions.toggle()"
         aria-haspopup="dialog" aria-expanded="false"
         title="{% if ver.ts %}The live chip is on recorded version {{ ver.ts }}.{% else %}No recorded version holds exactly the live chip's content (an out-of-band write or an applied edit puts it here).{% endif %}{% if ver.dirty %} State Manager holds edits that are not in it yet — apply them and a new version is recorded.{% endif %} Click for the history — compare any two, or go back to one.">

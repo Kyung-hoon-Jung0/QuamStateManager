@@ -9,7 +9,7 @@
    Rendered only while ON (the state a person can mistake for a calibration). #}
 {% if agent_dry_run %}
 <p class="muted ag-dryrun-note" id="ag-dryrun-note" role="status">Dry run is ON — agent runs are simulated
-    (<a href="/agent/setup" hx-get="/agent/setup" hx-target="#table-pane" hx-push-url="true">change in Agent setup</a>)</p>
+    (<a href="{{ root }}/agent/setup" hx-get="{{ root }}/agent/setup" hx-target="#table-pane" hx-push-url="true">change in Agent setup</a>)</p>
 {% endif %}
 <div id="agent-home" class="agent-home"
      data-observer-hint="observer mode hides Start / Stop / approve on THIS window (an accident guard, not a permission)">

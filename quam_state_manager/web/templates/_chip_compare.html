@@ -13,11 +13,11 @@
 <div class="chip-compare-tabs" role="tablist">
     <button class="chip-compare-tab active" data-tab="topology"
             onclick="switchChipCompareTab(this)"
-            hx-get="/chip-compare/topology?ref={{ ref_idx }}{{ qs_paths }}"
+            hx-get="{{ root }}/chip-compare/topology?ref={{ ref_idx }}{{ qs_paths }}"
             hx-target="#chip-compare-content" hx-swap="innerHTML">Topology</button>
     <button class="chip-compare-tab" data-tab="diff" id="chip-compare-diff-tab"
             onclick="switchChipCompareTab(this)"
-            hx-get="/chip-compare/diff?ref={{ ref_idx }}{{ qs_paths }}"
+            hx-get="{{ root }}/chip-compare/diff?ref={{ ref_idx }}{{ qs_paths }}"
             hx-include="#chip-compare-tolerance"
             hx-target="#chip-compare-content" hx-swap="innerHTML">Differences</button>
     {# Relative tolerance for the Differences tab — same field style as /diff.
@@ -35,7 +35,7 @@
 </div>
 
 <div id="chip-compare-content"
-     hx-get="/chip-compare/topology?ref={{ ref_idx }}{{ qs_paths }}"
+     hx-get="{{ root }}/chip-compare/topology?ref={{ ref_idx }}{{ qs_paths }}"
      hx-trigger="load"
      hx-swap="innerHTML">
     <p class="muted" style="padding:1rem">Loading topology…</p>

@@ -34,9 +34,9 @@
         <details class="topo-report-export">
             <summary class="btn-sm outline" title="Download a dated chip report card">&#11015; Report</summary>
             <div class="topo-report-menu">
-                <a class="btn-sm" href="/topology/report?format=md" download onclick="return ChipStatus.reportHref(this,'md')">Markdown</a>
-                <a class="btn-sm" href="/topology/report?format=csv" download onclick="return ChipStatus.reportHref(this,'csv')">CSV</a>
-                <a class="btn-sm" href="/topology/report?format=html" download onclick="return ChipStatus.reportHref(this,'html')">HTML</a>
+                <a class="btn-sm" href="{{ root }}/topology/report?format=md" download onclick="return ChipStatus.reportHref(this,'md')">Markdown</a>
+                <a class="btn-sm" href="{{ root }}/topology/report?format=csv" download onclick="return ChipStatus.reportHref(this,'csv')">CSV</a>
+                <a class="btn-sm" href="{{ root }}/topology/report?format=html" download onclick="return ChipStatus.reportHref(this,'html')">HTML</a>
             </div>
         </details>
         <span class="topo-health-asof muted" id="topo-health-asof"></span>
@@ -80,13 +80,13 @@
         <h2 style="white-space:nowrap">Chip Status</h2>
         {% if diag_summary is defined and diag_summary %}
           {% if diag_summary.error %}
-          <a class="topo-health-badge bad" href="/diagnostics" hx-get="/diagnostics" hx-target="#table-pane" hx-sync="#table-pane:replace" hx-push-url="true"
+          <a class="topo-health-badge bad" href="{{ root }}/diagnostics" hx-get="{{ root }}/diagnostics" hx-target="#table-pane" hx-sync="#table-pane:replace" hx-push-url="true"
              title="Open the diagnostics report">&#9940; {{ diag_summary.error }} error{{ 's' if diag_summary.error != 1 }}</a>
           {% elif diag_summary.warning %}
-          <a class="topo-health-badge warn" href="/diagnostics" hx-get="/diagnostics" hx-target="#table-pane" hx-sync="#table-pane:replace" hx-push-url="true"
+          <a class="topo-health-badge warn" href="{{ root }}/diagnostics" hx-get="{{ root }}/diagnostics" hx-target="#table-pane" hx-sync="#table-pane:replace" hx-push-url="true"
              title="Open the diagnostics report">&#9888; {{ diag_summary.warning }} warning{{ 's' if diag_summary.warning != 1 }}</a>
           {% elif diag_summary.info %}
-          <a class="topo-health-badge info" href="/diagnostics" hx-get="/diagnostics" hx-target="#table-pane" hx-sync="#table-pane:replace" hx-push-url="true"
+          <a class="topo-health-badge info" href="{{ root }}/diagnostics" hx-get="{{ root }}/diagnostics" hx-target="#table-pane" hx-sync="#table-pane:replace" hx-push-url="true"
              title="Open the diagnostics report">&#9432; {{ diag_summary.info }} note{{ 's' if diag_summary.info != 1 }}</a>
           {% else %}
           <span class="topo-health-badge ok" title="No structural problems found">&#10003; healthy</span>
@@ -231,7 +231,7 @@ ChipStatus.mount({
         <button class="outline btn-sm" onclick="toggleHistoryPanel()">&#10005;</button>
     </div>
     <div id="history-content"
-         hx-get="/api/history"
+         hx-get="{{ root }}/api/history"
          hx-trigger="intersect once"
          hx-swap="innerHTML">
         <p class="muted" style="padding: 0.5rem;">Loading history...</p>

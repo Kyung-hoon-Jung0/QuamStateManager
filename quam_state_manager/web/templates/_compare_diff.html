@@ -196,7 +196,7 @@ window.changeRef = function(sel) {
     {% endif %}
     var qs = paths.map(function(p) { return 'paths=' + encodeURIComponent(p); }).join('&');
     qs += '&ref=' + sel.value;
-    htmx.ajax('GET', '/compare/diff?' + qs, {target: '#compare-content', swap: 'innerHTML'});
+    htmx.ajax('GET', '{{ root }}/compare/diff?' + qs, {target: '#compare-content', swap: 'innerHTML'});
 };
 </script>
 {% else %}

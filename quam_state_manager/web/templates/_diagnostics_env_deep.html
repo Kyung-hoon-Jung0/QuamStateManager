@@ -30,7 +30,7 @@
   &middot; {{ k }}&nbsp;{{ meta.versions[k] }}{% endif %}{% endfor %}
   {% if meta.qubits %}&middot; {{ meta.qubits | length }}&nbsp;qubits, {{ meta.qubit_pairs | length }}&nbsp;pairs{% endif %}
   &middot; <time datetime="{{ meta.at }}">{{ checked_at_local }}</time>
-  &middot; <a href="/config" hx-get="/config" hx-target="#table-pane"
+  &middot; <a href="{{ root }}/config" hx-get="{{ root }}/config" hx-target="#table-pane"
               hx-sync="#table-pane:replace" hx-push-url="true">open in Config Viewer</a>
 </div>
 {% if fallback %}

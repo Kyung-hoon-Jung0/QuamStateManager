@@ -14,10 +14,10 @@
 
 <nav class="chain-tabs">
     <ul>
-        <li><a href="/qubits?per_page={{ per_page }}" hx-get="/qubits?per_page={{ per_page }}" hx-target="#table-pane"
+        <li><a href="{{ root }}/qubits?per_page={{ per_page }}" hx-get="{{ root }}/qubits?per_page={{ per_page }}" hx-target="#table-pane"
                class="{% if not active_chain %}active{% endif %}">All</a></li>
         {% for ch in chains %}
-        <li><a href="/qubits?chain={{ ch }}&per_page={{ per_page }}" hx-get="/qubits?chain={{ ch }}&per_page={{ per_page }}" hx-target="#table-pane"
+        <li><a href="{{ root }}/qubits?chain={{ ch }}&per_page={{ per_page }}" hx-get="{{ root }}/qubits?chain={{ ch }}&per_page={{ per_page }}" hx-target="#table-pane"
                class="{% if active_chain == ch %}active{% endif %}">Chain {{ ch }}</a></li>
         {% endfor %}
     </ul>
@@ -42,7 +42,7 @@
     <tbody>
     {% if qubits %}
     {% for q in qubits %}
-        <tr class="clickable-row{% if not q.is_active %} row-inactive{% endif %}" data-qubit-id="{{ q.id }}" hx-get="/qubit/{{ q.id }}" hx-target="#inspector-pane" hx-swap="innerHTML" hx-indicator="#inspector-pane">
+        <tr class="clickable-row{% if not q.is_active %} row-inactive{% endif %}" data-qubit-id="{{ q.id }}" hx-get="{{ root }}/qubit/{{ q.id }}" hx-target="#inspector-pane" hx-swap="innerHTML" hx-indicator="#inspector-pane">
             <td><strong>{{ q.id }}</strong></td>
             {# r15: ALL qubits are listed; this column marks active_qubit_names
                membership (absent/empty list in state.json = everything active) #}
@@ -78,7 +78,7 @@
     </tbody>
 </table>
 
-{% set base_url = "/qubits" %}
+{% set base_url = root ~ "/qubits" %}
 {% set extra_qs = ("&chain=" ~ active_chain) if active_chain else "" %}
 {% set storage_key = "quam_qubits_per_page" %}
 {% include "_pagination.html" %}

@@ -23,7 +23,7 @@
     </summary>
     {# Button kept out of <summary> (not a valid summary descendant) — CSS
        pins it to the summary row. #}
-    <button type="button" hx-post="/workspace/remove" hx-target="#sidebar-tree"
+    <button type="button" hx-post="{{ root }}/workspace/remove" hx-target="#sidebar-tree"
             hx-vals='{"folder": {{ root_path | string | tojson }}}' class="btn-remove" title="Remove">&times;</button>
     {# docs/105 #9: the discovery walk's 50k-dir bound used to be a log line
        only — runs silently missing from this tree with no UI trace. #}
@@ -31,7 +31,7 @@
     {# docs/142: listing-first scan -- names/ids are real, statuses and qubit
        search fill in when the background parse lands. The div refetches the
        tree after a short delay until the note stops rendering. #}
-    <p class="muted tree-hydrating-note" hx-get="/workspace/tree"
+    <p class="muted tree-hydrating-note" hx-get="{{ root }}/workspace/tree"
        hx-trigger="load delay:2s" hx-target="#sidebar-tree" hx-swap="innerHTML"
        hx-include="#sidebar-filter-input"><small>&#8987; indexing runs&hellip;
       statuses and qubit search fill in shortly</small></p>

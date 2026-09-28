@@ -33,7 +33,7 @@
             <div class="compare-figure-cell">
                 <div class="compare-figure-run-label">#{{ run.run_id }}</div>
                 {% if fig_key in run.figure_names %}
-                <img src="/dataset/{{ run.uid }}/fig/{{ fig_key }}"
+                <img src="{{ root }}/dataset/{{ run.uid }}/fig/{{ fig_key }}"
                      alt="{{ fig_key }}" loading="lazy"
                      onclick="toggleFigureZoom(this)">
                 {% else %}

@@ -55,7 +55,7 @@
           onclick="window._navigateToExplorerPath && window._navigateToExplorerPath(this.getAttribute('data-path'))"
           title="Open Live edit - Json Tree view at the first offending field">Show in Live edit - Json Tree view</button>
   {% endif %}
-  <button type="button" class="btn-sm outline" hx-post="/type-alarm/dismiss"
+  <button type="button" class="btn-sm outline" hx-post="{{ root }}/type-alarm/dismiss"
           hx-vals='{"sig": {{ type_alarm.sig | tojson }}, "env_sig": {{ type_alarm.env_sig | tojson }}, "token": {{ type_alarm.token | tojson }}}'
           hx-target="#type-alarm-slot" hx-swap="innerHTML"
           title="Hide for this exact set — any NEW anomaly raises it again">Dismiss</button>

@@ -2,7 +2,7 @@
     <h2>Instrument Wiring</h2>
     {# QA diagnostics-r2-10: follows the state like the topbar pill (#diag-tray-slot) --
        an outerHTML swap on `load` replaced its own trigger, so it could never refresh. #}
-    <span class="diag-header-slot" hx-get="/diagnostics/summary"
+    <span class="diag-header-slot" hx-get="{{ root }}/diagnostics/summary"
           hx-trigger="load, diagnostics-changed from:body delay:500ms" hx-swap="innerHTML"></span>
     {# r15 CG1 (docs/70): jump straight into the Re-generate wizard's Wiring
        step (step 5) pre-filled with THIS chip — the wizard's drag-and-drop is
@@ -13,7 +13,7 @@
        IDENTITY name and can be None (an unnamed chip), hiding the button
        even though the rack is right there (customer-reported). #}
     <button type="button" class="btn-sync primary iw-modify-btn"
-            hx-get="/regenerate?step=5" hx-target="#table-pane"
+            hx-get="{{ root }}/regenerate?step=5" hx-target="#table-pane"
             hx-sync="#table-pane:replace" hx-push-url="true"
             title="Open this chip in Re-generate at the Wiring step — drag ports to rewire, then rebuild with calibrated values carried over">
         Modify wiring&hellip;</button>
@@ -70,7 +70,7 @@
         // Ring ports flagged by connectivity diagnostics (band mismatch,
         // freq-out-of-band, missing/colliding ports). Reuses the same
         // highlighter the wiring-preview uses; '.iw-port-problem' = red ring.
-        fetch('/diagnostics/findings.json', { cache: 'no-store' })
+        fetch('{{ root }}/diagnostics/findings.json', { cache: 'no-store' })
             .then(function(r) { return r.json(); })
             .then(function(d) {
                 if (window._highlightInstrumentPorts && d && d.ports && d.ports.length) {

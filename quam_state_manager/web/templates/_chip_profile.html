@@ -8,7 +8,7 @@
   {% if readonly %}
   <p class="muted">Read-only archive — open the live chip to declare its profile.</p>
   {% endif %}
-  <form hx-post="/chip-profile/set" hx-target="#chip-profile-status" hx-swap="innerHTML">
+  <form hx-post="{{ root }}/chip-profile/set" hx-target="#chip-profile-status" hx-swap="innerHTML">
     <table class="chip-profile-table" style="width:100%">
       <tbody>
       {% for f in fields %}

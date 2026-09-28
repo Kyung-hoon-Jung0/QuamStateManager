@@ -4,7 +4,7 @@
 {% if snap.status == 'running' %}
 <button id="fa-run-btn" class="btn-sync primary" hx-swap-oob="true" disabled aria-busy="true">Auditing…</button>
 {% else %}
-<button id="fa-run-btn" class="btn-sync primary" hx-swap-oob="true" hx-post="/fit-audit/run"
+<button id="fa-run-btn" class="btn-sync primary" hx-swap-oob="true" hx-post="{{ root }}/fit-audit/run"
         hx-target="#fit-audit-digest" hx-swap="innerHTML">Run backlog audit</button>
 {% endif %}
 <span id="fa-live" hx-swap-oob="true" role="status" aria-live="polite"
@@ -23,7 +23,7 @@
     <strong>{{ snap.done }}/{{ snap.total }}</strong> run{{ 's' if snap.total != 1 }} audited
     {% if snap.status == 'running' %}
       <span class="muted">— auditing…</span>
-      <button class="btn-sm outline" hx-post="/fit-audit/cancel"
+      <button class="btn-sm outline" hx-post="{{ root }}/fit-audit/cancel"
               hx-target="#fit-audit-digest" hx-swap="innerHTML">Cancel</button>
     {% elif snap.status == 'error' %}
       <span class="fa-warn">— stopped</span>
@@ -60,7 +60,7 @@
             <td>{{ r.family }}</td>
             <td class="fa-run">
               {% if r.uid %}
-                <a href="/dataset/{{ r.uid }}" hx-get="/dataset/{{ r.uid }}"
+                <a href="{{ root }}/dataset/{{ r.uid }}" hx-get="{{ root }}/dataset/{{ r.uid }}"
                    hx-target="#inspector-pane" hx-swap="innerHTML" hx-sync="#inspector-pane:replace">{{ r.run }}</a>
               {% else %}{{ r.run }}{% endif %}
             </td>

@@ -40,7 +40,7 @@
         <td colspan="7"><span class="cell-bad" title="{{ p._error }}">&#9888; unreadable pair &mdash; {{ p._error }}</span></td>
     </tr>
     {% else %}
-    <tr class="clickable-row{% if not p.is_active %} row-inactive{% endif %}" data-pair-id="{{ p.id }}" hx-get="/pair/{{ p.id }}" hx-target="#inspector-pane" hx-swap="innerHTML" hx-indicator="#inspector-pane">
+    <tr class="clickable-row{% if not p.is_active %} row-inactive{% endif %}" data-pair-id="{{ p.id }}" hx-get="{{ root }}/pair/{{ p.id }}" hx-target="#inspector-pane" hx-swap="innerHTML" hx-indicator="#inspector-pane">
         <td><strong>{{ p.qubit_control or '?' }} &rarr; {{ p.qubit_target or '?' }}</strong> <small class="muted">{{ p.id }}</small></td>
         <td>{{ p.qubit_control or '-' }}</td>
         <td>{{ p.qubit_target or '-' }}</td>
@@ -103,7 +103,7 @@
         <td colspan="7"><span class="cell-bad" title="{{ p._error }}">&#9888; unreadable pair &mdash; {{ p._error }}</span></td>
     </tr>
     {% else %}
-    <tr class="clickable-row{% if not p.is_active %} row-inactive{% endif %}" data-pair-id="{{ p.id }}" hx-get="/pair/{{ p.id }}" hx-target="#inspector-pane" hx-swap="innerHTML" hx-indicator="#inspector-pane">
+    <tr class="clickable-row{% if not p.is_active %} row-inactive{% endif %}" data-pair-id="{{ p.id }}" hx-get="{{ root }}/pair/{{ p.id }}" hx-target="#inspector-pane" hx-swap="innerHTML" hx-indicator="#inspector-pane">
         <td><strong>{{ p.id }}</strong></td>
         <td>{{ p.qubit_control or '-' }}</td>
         <td>{{ p.qubit_target or '-' }}</td>
@@ -135,7 +135,7 @@
 </table>
 {% endif %}
 
-{% set base_url = "/pairs" %}
+{% set base_url = root ~ "/pairs" %}
 {% set extra_qs = "" %}
 {% set storage_key = "quam_pairs_per_page" %}
 {% include "_pagination.html" %}

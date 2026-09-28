@@ -14,7 +14,7 @@
   <p><b>Found inside this folder:</b></p>
   <div class="load-failed-candidates">
     {% for c in candidates %}
-    <button class="btn-sm" hx-post="/load" hx-vals='{{ {"folder": c} | tojson }}'
+    <button class="btn-sm" hx-post="{{ root }}/load" hx-vals='{{ {"folder": c} | tojson }}'
             hx-target="{{ candidate_target or '#table-pane' }}" hx-swap="innerHTML"
             title="Load {{ c }}">&#128193; {{ c }}</button>
     {% endfor %}

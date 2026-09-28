@@ -43,7 +43,7 @@
         <div class="qualibrate-locate-body">
             {% include '_qualibrate_locate.html' %}
             {% if listing.source == 'sm-override' %}
-            <form hx-post="/qualibrate/use-default-location" class="locate-use-form"
+            <form hx-post="{{ root }}/qualibrate/use-default-location" class="locate-use-form"
                   hx-confirm="Forget the chosen folder and go back to the default/env resolution?">
                 <button type="submit" class="btn-sm">Reset to default location</button>
             </form>
@@ -106,7 +106,7 @@
             <td>{{ pathcell(p.storage) }}</td>
             <td>{{ pathcell(p.calibration_library) }}</td>
             <td>
-                <form method="post" action="/qualibrate/open" hx-post="/qualibrate/open"
+                <form method="post" action="{{ root }}/qualibrate/open" hx-post="{{ root }}/qualibrate/open"
                       hx-target="#table-pane" onclick="event.stopPropagation()">
                     <input type="hidden" name="project" value="{{ p.name }}">
                     <button type="submit" class="btn-sm outline"

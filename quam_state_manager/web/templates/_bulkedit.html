@@ -25,11 +25,11 @@
            so this switches which grids render, not which page you are on. #}
         <div class="bulk-docbadges" role="group" aria-label="Document">
             <a class="bulk-docbadge{% if bulk_doc != 'wiring' %} active{% endif %}"
-               href="/bulk" hx-get="/bulk" hx-target="#table-pane" hx-push-url="true"
+               href="{{ root }}/bulk" hx-get="{{ root }}/bulk" hx-target="#table-pane" hx-push-url="true"
                {% if bulk_doc != 'wiring' %}aria-current="true"{% endif %}
                title="Edit state.json — qubits, pairs and every other component">state.json</a>
             <a class="bulk-docbadge{% if bulk_doc == 'wiring' %} active{% endif %}"
-               href="/bulk?doc=wiring" hx-get="/bulk?doc=wiring" hx-target="#table-pane" hx-push-url="true"
+               href="{{ root }}/bulk?doc=wiring" hx-get="{{ root }}/bulk?doc=wiring" hx-target="#table-pane" hx-push-url="true"
                {% if bulk_doc == 'wiring' %}aria-current="true"{% endif %}
                title="Edit wiring.json — which physical port each channel is cabled to">wiring.json</a>
         </div>

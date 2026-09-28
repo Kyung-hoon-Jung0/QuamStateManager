@@ -33,7 +33,7 @@
     <p class="muted state-versions-empty">
         No recorded versions for this chip yet. One is captured every time the
         chip is <b>applied to live</b> — saving alone stays in your working copy
-        — or on demand from <a href="/state-history" hx-get="/state-history"
+        — or on demand from <a href="{{ root }}/state-history" hx-get="{{ root }}/state-history"
         hx-target="#table-pane" hx-push-url="true" onclick="StateVersions.close()">State History</a>.
     </p>
     {% else %}
@@ -124,16 +124,16 @@
                    rendered where a run is actually RECORDED — never a
                    time-based guess. #}
                 {% if r.run_uid %}
-                <a class="sv-run" href="/dataset/{{ r.run_uid }}"
-                   hx-get="/dataset/{{ r.run_uid }}" hx-target="#inspector-pane"
+                <a class="sv-run" href="{{ root }}/dataset/{{ r.run_uid }}"
+                   hx-get="{{ root }}/dataset/{{ r.run_uid }}" hx-target="#inspector-pane"
                    hx-swap="innerHTML" onclick="StateVersions.close()"
                    title="{{ r.experiment or 'experiment' }} — open this run's data panel">
                     <span class="sv-run-id">After #{{ r.run_id }}</span>
                     {% if r.experiment %}<span class="sv-run-name">{{ r.experiment }}</span>{% endif %}
                 </a>
                 {% else %}
-                <a class="sv-run" href="/dataset/by-run/{{ r.run_id }}"
-                   hx-get="/dataset/by-run/{{ r.run_id }}" hx-target="#inspector-pane"
+                <a class="sv-run" href="{{ root }}/dataset/by-run/{{ r.run_id }}"
+                   hx-get="{{ root }}/dataset/by-run/{{ r.run_id }}" hx-target="#inspector-pane"
                    hx-swap="innerHTML" onclick="StateVersions.close()"
                    title="{{ r.experiment or 'experiment' }} — open this run's data panel (resolved by run id)">
                     <span class="sv-run-id">After #{{ r.run_id }}</span>
@@ -151,7 +151,7 @@
                    The two independent force gates are unchanged; this is the
                    styling and the wording catching up to what the button does. #}
                 <button type="button" class="btn-xs outline sv-restore live-diverged-overwrite"
-                        hx-post="/state-history/{{ r.ts }}/restore-live"
+                        hx-post="{{ root }}/state-history/{{ r.ts }}/restore-live"
                         hx-target="#table-pane" hx-swap="innerHTML"
                         onclick="StateVersions.close()"
                         {# Label concise per the user (2026-08-20): the ACT —
@@ -195,7 +195,7 @@
                 onclick="StateVersions.more({{ cap }})">All {{ visible_total if visible_total <= cap else cap }}</button>
         {% if visible_total > cap %}
         <span class="muted sv-cap-note">of {{ visible_total }} — open
-            <a href="/state-history" hx-get="/state-history" hx-target="#table-pane"
+            <a href="{{ root }}/state-history" hx-get="{{ root }}/state-history" hx-target="#table-pane"
                hx-push-url="true" onclick="StateVersions.close()">State History</a>
             for the full list</span>
         {% endif %}
@@ -215,7 +215,7 @@
             <a href="#" onclick="StateVersions.setChanges('only'); return false;">hide them</a></span>
         {% endif %}
         <span class="sv-kept-note">All {{ total }} {{ 'version is' if total == 1 else 'versions are' }} kept — full list in
-            <a href="/state-history" hx-get="/state-history" hx-target="#table-pane"
+            <a href="{{ root }}/state-history" hx-get="{{ root }}/state-history" hx-target="#table-pane"
                hx-push-url="true" onclick="StateVersions.close()">State History</a>.</span>
     </div>
     {% endif %}

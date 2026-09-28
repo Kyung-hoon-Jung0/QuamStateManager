@@ -7,7 +7,7 @@
     <div class="config-status-actions">
         <button type="button"
                 class="btn-sync primary config-regen-btn"
-                hx-post="/config/regenerate"
+                hx-post="{{ root }}/config/regenerate"
                 hx-target="closest .config-status-host"
                 hx-swap="innerHTML"
                 hx-indicator="closest .config-status-host"
@@ -26,9 +26,9 @@
     {% if meta %}
     <div class="config-export-row">
         <span class="config-export-lead">For bare QUA:</span>
-        <a class="btn-sync outline config-export-btn" href="/config/export?format=json" download
+        <a class="btn-sync outline config-export-btn" href="{{ root }}/config/export?format=json" download
            title="Download the raw QM config dict as config.json (json.load &rarr; qmm.open_qm)">&#x2193; config.json</a>
-        <a class="btn-sync outline config-export-btn" href="/config/export?format=py" download
+        <a class="btn-sync outline config-export-btn" href="{{ root }}/config/export?format=py" download
            title="Download a standalone config.py (import config &rarr; qmm.open_qm); no QUAM needed">&#x2193; config.py</a>
         <small class="config-export-hint muted">feed straight to <code>qmm.open_qm()</code>{% if config_stale is defined and config_stale %} &middot; exports the last generated config &mdash; {% if config_needs_save %}save your edits, then Regenerate{% else %}Regenerate for recent edits{% endif %}{% endif %}</small>
     </div>

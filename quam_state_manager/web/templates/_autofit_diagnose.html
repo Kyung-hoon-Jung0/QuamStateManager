@@ -8,13 +8,13 @@
     <div>
       <h6>Before — stored fit (the node's own figure)</h6>
       {% for f in row.stored_figures %}
-      <img src="/dataset/{{ uid }}/fig/{{ f.rsplit('/', 1)[-1].replace('figures.', '').replace('.png','') }}" alt="stored figure" loading="lazy">
+      <img src="{{ root }}/dataset/{{ uid }}/fig/{{ f.rsplit('/', 1)[-1].replace('figures.', '').replace('.png','') }}" alt="stored figure" loading="lazy">
       {% else %}<p class="muted">no stored figure</p>{% endfor %}
     </div>
     <div>
       <h6>After — today's analysis, re-fit on the same frozen data</h6>
       {% for name in refit_figs %}
-      <img src="/dataset/{{ uid }}/autofit-diagnose-fig/{{ name }}" alt="refit figure" loading="lazy">
+      <img src="{{ root }}/dataset/{{ uid }}/autofit-diagnose-fig/{{ name }}" alt="refit figure" loading="lazy">
       {% else %}<p class="muted">refit figure unavailable
         {%- if row.refit_errors %} ({{ row.refit_errors | join(', ') }}){% endif %}</p>{% endfor %}
     </div>
@@ -79,7 +79,7 @@
 function autofitDiagApply(btn, target, family, fresh, parameters) {
   var token = TOKEN;
   var box = document.getElementById("autofit-diag-confirm");
-  fetch("/autofit/diagnose-rows", {
+  fetch("{{ root }}/autofit/diagnose-rows", {
     method: "POST", headers: {"Content-Type": "application/json"},
     body: JSON.stringify({target: target, family: family, fresh: fresh,
                           parameters: parameters}),
@@ -132,7 +132,7 @@ function autofitDiagApply(btn, target, family, fresh, parameters) {
       var updates = d.rows.map(function (row) {
         return {dot_path: row.path, value: row.value};
       });
-      fetch("/field/edit-batch", {
+      fetch("{{ root }}/field/edit-batch", {
         method: "POST", headers: {"Content-Type": "application/json"},
         body: JSON.stringify({updates: updates, expect_chip: token}),
       }).then(function (r2) {

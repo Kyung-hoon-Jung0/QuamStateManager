@@ -24,7 +24,7 @@
                             <button class="btn-sm landing-cta-open"
                                     onclick="window.smOpenStateFolder &amp;&amp; window.smOpenStateFolder()"
                                     title="Open a chip's quam_state folder (state.json + wiring.json)">&#128193; Open a state folder&hellip;</button>
-                            <a class="btn-sm outline" href="/help" hx-get="/help"
+                            <a class="btn-sm outline" href="{{ root }}/help" hx-get="{{ root }}/help"
                                hx-target="#table-pane" hx-push-url="true">? How SM works &mdash; 2 min</a>
                         </div>
                         <p class="welcome-lead">Inspect, edit, generate, and track your QUAM chip state — a working copy always sits between you and the live instrument, so nothing reaches the hardware by accident.</p>

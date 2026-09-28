@@ -8,7 +8,7 @@
     </div>
 </div>
 
-<form id="table-form" hx-get="/table" hx-target="#table-pane" class="table-controls">
+<form id="table-form" hx-get="{{ root }}/table" hx-target="#table-pane" class="table-controls">
     <input type="hidden" name="per_page" value="{{ per_page }}">
     <div class="prop-selector">
         <div class="prop-select-all">
@@ -48,7 +48,7 @@
         </select>
         {% endif %}
         <button type="submit" class="outline btn-sm">Update</button>
-        <a href="/export?{{ 'props=' + selected_props | join('&props=') }}" class="outline btn-sm" role="button">Export CSV</a>
+        <a href="{{ root }}/export?{{ 'props=' + selected_props | join('&props=') }}" class="outline btn-sm" role="button">Export CSV</a>
     </div>
 </form>
 
@@ -78,7 +78,7 @@ function syncGroupCheckbox(groupEl) {
 {% for p in selected_props %}{% set ns.qs = ns.qs ~ "&props=" ~ p %}{% endfor %}
 {% if active_chain %}{% set ns.qs = ns.qs ~ "&chain=" ~ active_chain %}{% endif %}
 {% if sort_by %}{% set ns.qs = ns.qs ~ "&sort=" ~ sort_by ~ "&dir=" ~ sort_dir %}{% endif %}
-{% set base_url = "/table" %}
+{% set base_url = root ~ "/table" %}
 {% set extra_qs = ns.qs %}
 {% set storage_key = "quam_table_per_page" %}
 {% include "_pagination.html" %}
@@ -90,7 +90,7 @@ function syncGroupCheckbox(groupEl) {
             <th>ID</th>
             {% for prop in selected_props %}
             <th>
-                <a hx-get="/table?{% for p in selected_props %}props={{ p }}&{% endfor %}sort={{ prop }}&dir={% if sort_by == prop and sort_dir == 'asc' %}desc{% else %}asc{% endif %}{% if active_chain %}&chain={{ active_chain }}{% endif %}&per_page={{ per_page }}"
+                <a hx-get="{{ root }}/table?{% for p in selected_props %}props={{ p }}&{% endfor %}sort={{ prop }}&dir={% if sort_by == prop and sort_dir == 'asc' %}desc{% else %}asc{% endif %}{% if active_chain %}&chain={{ active_chain }}{% endif %}&per_page={{ per_page }}"
                    hx-target="#table-pane" class="sort-header">
                     {{ prop }}
                     {% if sort_by == prop %}
@@ -103,7 +103,7 @@ function syncGroupCheckbox(groupEl) {
     </thead>
     <tbody>
     {% for row in rows %}
-        <tr class="clickable-row" hx-get="/qubit/{{ row.id }}" hx-target="#inspector-pane" hx-swap="innerHTML">
+        <tr class="clickable-row" hx-get="{{ root }}/qubit/{{ row.id }}" hx-target="#inspector-pane" hx-swap="innerHTML">
             <td><strong>{{ row.id }}</strong></td>
             {% for prop in selected_props %}
             {% set val = row.get(prop) %}

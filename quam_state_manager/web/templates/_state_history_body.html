@@ -41,16 +41,16 @@
     {% if s.note %}<div class="sh-note" title="Bookmark note">&#128221; {{ s.note }}</div>{% endif %}
 
     <div class="sh-entry-actions">
-        <button class="outline btn-sm" hx-get="/api/history/{{ s.timestamp }}/diff"
+        <button class="outline btn-sm" hx-get="{{ root }}/api/history/{{ s.timestamp }}/diff"
                 hx-target="#state-history-detail" hx-swap="innerHTML">View changes vs current</button>
         {% if chip_origin == 'live' %}
         <button class="outline btn-sm"
-                hx-post="/state-history/{{ s.timestamp }}/stage"
+                hx-post="{{ root }}/state-history/{{ s.timestamp }}/stage"
                 hx-target="#state-history-detail" hx-swap="innerHTML"
                 hx-confirm="Load snapshot {{ s.timestamp | format_ts }} as the working state? You can then review the diff and Apply to live.{{ auto_push_note }}"
                 title="Mode 1 (safe): load as the working state, review, then apply{{ auto_push_note }}">Load as working state</button>
         <button class="outline btn-sm sh-restore-live"
-                hx-post="/state-history/{{ s.timestamp }}/restore-live"
+                hx-post="{{ root }}/state-history/{{ s.timestamp }}/restore-live"
                 hx-target="#state-history-detail" hx-swap="innerHTML"
                 hx-confirm="Restore the LIVE chip to snapshot {{ s.timestamp | format_ts }} now? The current state is snapshotted first (reversible)."
                 title="Mode 2: replace the live chip directly (the current state is snapshotted first)">Restore to live</button>
@@ -58,7 +58,7 @@
         {# Pin re-renders only the TIMELINE (body=1 → #state-history-body), not the whole
            page, so an open compare/diff in the sibling #state-history-detail survives. #}
         <button class="outline btn-sm"
-                hx-post="/state-history/{{ s.timestamp }}/label?pinned={{ 0 if s.pinned else 1 }}&label={{ s.label | default('', true) | urlencode }}&body=1"
+                hx-post="{{ root }}/state-history/{{ s.timestamp }}/label?pinned={{ 0 if s.pinned else 1 }}&label={{ s.label | default('', true) | urlencode }}&body=1"
                 hx-target="#state-history-body" hx-swap="innerHTML"
                 title="{{ 'Unpin' if s.pinned else 'Pin (exempt from pruning)' }}">{{ 'Unpin' if s.pinned else 'Pin' }}</button>
         {# This snapshot vs the current working state, in the diff workbench
@@ -68,7 +68,7 @@
            already does, so the button keeps the exact pair it always built. #}
         {% if hist_chip_key %}
         <button class="outline btn-sm"
-                hx-get="/diff?a=hist:{{ hist_chip_key | urlencode }}/{{ s.timestamp | urlencode }}&b=working:{{ active_path | urlencode }}&tab=state"
+                hx-get="{{ root }}/diff?a=hist:{{ hist_chip_key | urlencode }}/{{ s.timestamp | urlencode }}&b=working:{{ active_path | urlencode }}&tab=state"
                 hx-target="#table-pane" hx-sync="#table-pane:replace" hx-push-url="true"
                 title="Diff this snapshot against the current working state">&#8644; Compare&#8230;</button>
         {% endif %}
@@ -80,12 +80,12 @@
 {% if total_pages > 1 %}
 <nav class="history-pagination">
     {% if current_page > 1 %}
-    <button class="outline btn-sm" hx-get="/state-history?page={{ current_page - 1 }}&per_page={{ per_page }}"
+    <button class="outline btn-sm" hx-get="{{ root }}/state-history?page={{ current_page - 1 }}&per_page={{ per_page }}"
             hx-target="#table-pane" hx-swap="innerHTML">&laquo; Prev</button>
     {% endif %}
     <span class="muted">Page {{ current_page }} / {{ total_pages }}</span>
     {% if current_page < total_pages %}
-    <button class="outline btn-sm" hx-get="/state-history?page={{ current_page + 1 }}&per_page={{ per_page }}"
+    <button class="outline btn-sm" hx-get="{{ root }}/state-history?page={{ current_page + 1 }}&per_page={{ per_page }}"
             hx-target="#table-pane" hx-swap="innerHTML">Next &raquo;</button>
     {% endif %}
 </nav>

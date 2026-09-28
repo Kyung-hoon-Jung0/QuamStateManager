@@ -24,13 +24,13 @@
     {{ identity_confirm.when }}). Its <code>extras</code> identity was wiped
     (e.g. a regenerated state). <strong>Is this correct?</strong>
   </span>
-  <form class="cnb-form" hx-post="/chip-name/set"
+  <form class="cnb-form" hx-post="{{ root }}/chip-name/set"
         hx-target="#chip-name-banner" hx-swap="outerHTML">
     <input type="hidden" name="name" value="{{ identity_confirm.name }}">
     {% if identity_confirm.data_folder %}<input type="hidden" name="data_folder" value="{{ identity_confirm.data_folder }}">{% endif %}
     <button type="submit" class="cnb-set"
             title="Stages extras.chip_name{% if identity_confirm.data_folder %} + extras.data_folder{% endif %} into the working state — Apply to live publishes it">Yes — restore this identity</button>
-    <button type="button" class="cnb-no" hx-post="/chip-identity/decline"
+    <button type="button" class="cnb-no" hx-post="{{ root }}/chip-identity/decline"
             hx-include="closest form"
             hx-target="#chip-name-banner" hx-swap="outerHTML"
             title="Not this chip — switch to entering the name / data folder yourself">No — different chip</button>
@@ -46,7 +46,7 @@
     and run attribution stable even when state folders move or share a parent
     directory.
   </span>
-  <form class="cnb-form" hx-post="/chip-name/set"
+  <form class="cnb-form" hx-post="{{ root }}/chip-name/set"
         hx-target="#chip-name-banner" hx-swap="outerHTML">
     <input type="text" name="name" value="{{ chip_name_prompt.suggest }}"
            maxlength="64" required aria-label="Chip name"
@@ -63,7 +63,7 @@
     <button type="button" class="cnb-no"
             onclick="openFolderBrowser('cnb-name-df','dataset',{autoSubmit:false})"
             title="Pick the data folder — fills the box only; Set name commits">Browse&hellip;</button>
-    <button type="button" class="cnb-no" hx-post="/chip-name/decline"
+    <button type="button" class="cnb-no" hx-post="{{ root }}/chip-name/decline"
             hx-include="closest form"
             hx-target="#chip-name-banner" hx-swap="outerHTML"
             title="Don't ask again for this chip">Not now</button>
@@ -83,7 +83,7 @@
     {% for raw in extras_data_dangling %}<code>{{ raw }}</code>{% if not loop.last %}, {% endif %}{% endfor %}
     <span class="cnb-note">(<code>extras.data_folder</code>{% if extras_data_dangling | length > 1 %} — setting one folder replaces all {{ extras_data_dangling | length }}{% endif %})</span>
   </span>
-  <form class="cnb-form cnb-df-form" hx-post="/chip-data-folder/set"
+  <form class="cnb-form cnb-df-form" hx-post="{{ root }}/chip-data-folder/set"
         hx-target="#chip-name-banner" hx-swap="outerHTML">
     <input type="text" id="cnb-df-input" name="value"
            aria-label="Data folder path" placeholder="e.g. D:\data\myproject"
@@ -124,11 +124,11 @@
     chip's data folder (<code>extras.data_folder</code>)? Datasets and run
     attribution then pair with it wherever the chip is opened.
   </span>
-  <form class="cnb-form" hx-post="/chip-data-folder/set"
+  <form class="cnb-form" hx-post="{{ root }}/chip-data-folder/set"
         hx-target="#chip-name-banner" hx-swap="outerHTML">
     <input type="hidden" name="use" value="{{ data_folder_suggest.candidate.value }}">
     <button type="submit" class="cnb-set">Record</button>
-    <button type="button" class="cnb-no" hx-post="/chip-data-folder/decline"
+    <button type="button" class="cnb-no" hx-post="{{ root }}/chip-data-folder/decline"
             hx-include="closest form"
             hx-target="#chip-name-banner" hx-swap="outerHTML"
             title="Don't ask again for this chip">Not now</button>

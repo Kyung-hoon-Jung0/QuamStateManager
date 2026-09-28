@@ -29,7 +29,7 @@
         macro to source from.</p>
     {% else %}
     <form id="gcz-form"
-          hx-post="/api/pulse/gaussian-cz" hx-target="#gcz-result" hx-swap="innerHTML">
+          hx-post="{{ root }}/api/pulse/gaussian-cz" hx-target="#gcz-result" hx-swap="innerHTML">
         <label>Pair
             <select name="pair_id" required>
                 {% for p in pairs %}

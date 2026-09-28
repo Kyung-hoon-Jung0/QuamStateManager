@@ -10,7 +10,7 @@
     {% for f in files %}
     <button type="button" class="ndv-file-tab{% if f == which %} active{% endif %}"
             role="tab" data-file="{{ f }}"
-            hx-get="/dataset/{{ uid }}/ndview?which={{ f | urlencode }}"
+            hx-get="{{ root }}/dataset/{{ uid }}/ndview?which={{ f | urlencode }}"
             hx-target="#ndv-root" hx-swap="outerHTML">{{ f | replace('.h5','') }}</button>
     {% endfor %}
   </div>

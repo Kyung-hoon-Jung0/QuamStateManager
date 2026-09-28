@@ -33,7 +33,7 @@
         <button type="button" class="ag-wire-help" aria-label="How does this work?"
                 title="How does SM reach the CLI?"
                 onclick="AgentPanel &amp;&amp; AgentPanel.wireHelp(this)">?</button>
-        <a class="ag-wire-setup" href="/agent/setup" hx-get="/agent/setup"
+        <a class="ag-wire-setup" href="{{ root }}/agent/setup" hx-get="{{ root }}/agent/setup"
            hx-target="#table-pane" hx-push-url="true">Setup &rarr;</a>
     </span>
 </div>
