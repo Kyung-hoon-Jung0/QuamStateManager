@@ -263,8 +263,10 @@ def _producer_waiting(y) -> bool:
     or mid hand-over) -- it needs the lock back to finish. ``_others_inflight``
     leaves the waiting request out (it waits on a result, not on the lock), so
     without this a foreground holder of an unrelated long walk (a Live-Edit
-    grid build) kept the lock for its whole walk while the Pulses page waited
-    on the pulse-index build behind it (measured 4.6-6.7 s on big30x)."""
+    grid build) kept the lock for its whole walk while the request waited
+    behind it: measured 4.6-6.7 s on big30x for a Pulses page following the
+    chip-open pulse-index walk (that walk has since got an index of its own;
+    a request following the chip prewarm's lint is the same shape)."""
     bg = _ACTIVE.get(y.store)
     return bg is not None and bg is not y and bg.relock and _wanted(y.store)
 
