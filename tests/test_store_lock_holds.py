@@ -610,12 +610,13 @@ def _page_walk(st, steps, entered, n=120):
 
 
 def test_a_page_walk_does_not_slice_itself_with_another_walk():
-    """In real Chrome on big30x the cold /bulk at a chip's open got slower
-    once its grid build handed the lock to the lint / env analysis / another
-    page's build as well (they are walks too: sliced together, each runs at a
-    fraction of the CPU). A page's own content (``main=True``) does not hand
-    the lock to another request's walk: that walk waits for it whole, as it
-    did before the build handed over at all."""
+    """Measured in process on big30x (a cold /bulk while another tab opens
+    Pulses and its side panels lint the chip): once the grid build handed the
+    lock to the lint / env analysis / another page's build as well -- walks
+    too, sliced together, each at a fraction of the CPU -- /bulk went from
+    10.1 s to 13.6 s (median of 3). A page's own content (``main=True``) does
+    not hand the lock to another request's walk, and that walk does not start
+    while it runs: 11.4 s."""
     st = _FakeStore()
     steps = {"a": 0}
     a_in = threading.Event()

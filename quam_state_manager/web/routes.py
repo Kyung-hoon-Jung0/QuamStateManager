@@ -1980,10 +1980,11 @@ def _chip_needs_generated_config(store, ctx: dict | None = None,
     # w8/locks: its OWN index, never the context's while it is being built. A
     # request needing the rows builds the context's index itself (a
     # foreground leader that hands the lock over) instead of waiting on this
-    # parked daemon walk -- measured on big30x, the Pulses page waiting on it
-    # took 8 s behind a Live-Edit grid build and the post-pull lint, where
-    # building its own took ~1 s. When this walk finishes first, its rows
-    # become the context's (below), so the page opened afterwards is warm.
+    # parked daemon walk -- measured in real Chrome on big30x, the Pulses page
+    # waiting on it took 8.0-8.7 s behind a Live-Edit grid build and the
+    # post-pull lint; building its own measured 0.5-2.7 s in the same spot.
+    # When this walk finishes first, its rows become the context's (below),
+    # so the page opened afterwards is warm.
     idx = PulseIndex(store)
 
     def _walk() -> bool:
@@ -15720,12 +15721,14 @@ def pulses_page():
             row["spark_svg"] = pulse_index.sparkline(
                 path, lambda p=path: sparkline_svg(synth_for_operation(store, p)))
     # w8/locks: ONE hold of the store lock for the whole page of sparklines
-    # (handed to other requests every HANDOVER_EVERY_S), not the ~4 short
-    # takes per row it used to be. Each short take waits for the current
-    # holder's next hand-over while a cold Live-Edit grid build or the lint
-    # runs, and ~200 of them made this page 9.7 s in real Chrome on big30x
-    # right after a structural pull. A chip that moves meanwhile stops the
-    # held pass; the rows it did not draw are drawn the ordinary way.
+    # (handed to other requests every HANDOVER_EVERY_S), not the up to four
+    # short takes per row it used to be (index check, row read, sparkline
+    # store, the synth's own read: ~200 for a page of 50). Each short take
+    # waits for the current holder's next hand-over while a cold Live-Edit
+    # grid build or the lint runs; the page measured 9.6-9.7 s in real
+    # Chrome on big30x right after a structural pull. A chip that moves
+    # meanwhile stops the held pass; the rows it did not draw are drawn the
+    # ordinary way.
     with _activity.yielding(store, foreground=True, main=True):
         with store._lock:
             _spark_rows(page_rows)
