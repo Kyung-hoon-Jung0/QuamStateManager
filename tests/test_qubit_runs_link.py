@@ -93,8 +93,9 @@ class TestTheLink:
     def test_the_href_and_the_htmx_get_agree(self):
         """A middle-click must land where a left-click lands."""
         head = _text("_inspector_header.html")
-        hrefs = re.findall(r'href="(/datasets\?q=[^"]+)"', head)
-        gets = re.findall(r'hx-get="(/datasets\?q=[^"]+)"', head)
+        # docs/226: the template roots both attributes with {{ root }}
+        hrefs = re.findall(r'href="\{\{ root \}\}(/datasets\?q=[^"]+)"', head)
+        gets = re.findall(r'hx-get="\{\{ root \}\}(/datasets\?q=[^"]+)"', head)
         assert hrefs and hrefs == gets
 
     def test_the_grammar_still_treats_a_bare_token_as_exact(self):
