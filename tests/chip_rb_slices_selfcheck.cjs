@@ -491,6 +491,42 @@ const big = (o) => world(Object.assign({ topo: BIG, roOnMutation: true, roFrame:
        + JSON.stringify(e0) + ' ' + eAt + ' -> ' + E.topOf('.topo-section[data-density-panel="T2echo"]'));
   }
 
+  // ── S18: one section slices at a time -- the jump's own first ────────────
+  {
+    const mcount = (T) => T.doc.querySelectorAll('#topo-metric-panels .topo-section[data-density-panel], '
+      + '#topo-fidelity-1q-panels .topo-section[data-density-panel], #topo-fidelity-ro-panels .topo-section[data-density-panel]').length;
+    const track = async (T, until) => {
+      let pm = mcount(T), pq = built(T).length, both = 0;
+      const seq = [];
+      for (let t = 0; t < 15000; t += 4) {
+        await T.advance(4);
+        const m = mcount(T), q = built(T).length;
+        if (m > pm && q > pq) both++;
+        if (m > pm) seq.push('m');
+        if (q > pq) seq.push('q');
+        pm = m; pq = q;
+        if (until(m, q)) break;
+      }
+      return { both: both, seq: seq.join('') };
+    };
+    const Q = big({ state: { htmx: true } });
+    await Q.advance(1000);
+    press(Q, 'mouse', 't1');
+    const r = await track(Q, (m, q) => m === 15 && q === 20);
+    ok(r.both === 0 && /^m+q+$/.test(r.seq),
+       'S18 after a T1 press the metric section (the jump\'s own) slices first, then the 2Q section above it, never both in one frame: ' + r.seq);
+    // an IRB press while the metric slices run makes the 2Q section the reader's target: it goes first now
+    const Q2 = big({ state: { htmx: true } });
+    await Q2.advance(1000);
+    press(Q2, 'mouse', 't1');
+    for (let t = 0; t < 3000 && mcount(Q2) <= 4; t += 4) await Q2.advance(4);
+    const mAt = mcount(Q2);
+    press(Q2, 'mouse', 'irb');
+    const r2 = await track(Q2, (m, q) => m === 15 && q === 20);
+    ok(mAt > 4 && mAt < 15 && r2.both === 0 && /^q+m+$/.test(r2.seq),
+       'S18 an IRB press while they run puts the 2Q slices first (metric panels at the press: ' + mAt + '): ' + r2.seq);
+  }
+
   // ── S12: a 5-qubit chain builds every panel in the press ─────────────────
   {
     const Z = world({ state: { htmx: true } });

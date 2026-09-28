@@ -3702,6 +3702,17 @@ window.ChipStatus.mount = function (opts) {
         for (var i = 0; i < _slicers.length; i++) if (!_slicers[i].done && !_slicers[i].dead) return true;
         return false;
     }
+    // whose turn it is to slice: the first running builder that was started
+    // for its own target, else the first running lazy one
+    function _sliceTurn(st) {
+        var best = null;
+        for (var i = 0; i < _slicers.length; i++) {
+            var s = _slicers[i];
+            if (s.done || s.dead) continue;
+            if (!best || (best.lazy && !s.lazy)) best = s;
+        }
+        return best === st;
+    }
     function _slicerOf(name) {
         for (var i = 0; i < _slicers.length; i++) {
             var s = _slicers[i];
@@ -3740,7 +3751,7 @@ window.ChipStatus.mount = function (opts) {
                 slots[+el.getAttribute('data-rb-slot')] = el;
             });
         });
-        var st = { name: name, done: false, dead: false, order: [], pos: 0, left: panels.length, cancel: null };
+        var st = { name: name, lazy: !!opt.lazy, done: false, dead: false, order: [], pos: 0, left: panels.length, cancel: null };
         _slicers.push(st);
         // the panel a selector names: an RB heading's first panel, a panel by
         // its key, a metric group's (or fidelity section's) first panel
@@ -3804,6 +3815,9 @@ window.ChipStatus.mount = function (opts) {
             if (!hosts[0].el.isConnected) { stop(); return; }   // the page went away
             // RAM P2: Trends goes first (a slice is small, but the rule is one)
             if (window.ChipTrends && window.ChipTrends.busy && window.ChipTrends.busy()) { later(40); return; }
+            // one slicer at a time (two in one frame doubled its cost): the
+            // jump's own section first, the lazy 2Q section above it after
+            if (!_sliceTurn(st)) { later(40); return; }
             build(nextChunk());
             if (!st.done) later();
         }
@@ -3847,6 +3861,7 @@ window.ChipStatus.mount = function (opts) {
         }
         st.promote = function (sel) {           // another jump / restore while the slices run
             if (st.done || st.dead) return;
+            st.lazy = false;                    // its section is the reader's target now: it goes first
             startAt(indexFor(sel));
             build(nextChunk());
         };
