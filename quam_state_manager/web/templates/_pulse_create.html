@@ -12,9 +12,15 @@
    picker, the user sees WHERE the class list came from before choosing. #}
 {% include '_pulse_env_strip.html' %}
 
+{# hx-disinherit (w8 pulsehint): the "Pick a Python environment first" link
+   under the class list is the one htmx element inside this form. Inherited,
+   the form's indicator lit "Creating... a class of your lab's is first run"
+   on a click that creates nothing, and its disabled-elt selector found no
+   button relative to the link (a console error on every press). #}
 <form class="pulse-create-form" hx-post="/api/pulse/create"
       hx-target="#inspector-pane" hx-swap="innerHTML"
-      hx-indicator="#pulse-create-busy" hx-disabled-elt="find button[type=submit]">
+      hx-indicator="#pulse-create-busy" hx-disabled-elt="find button[type=submit]"
+      hx-disinherit="hx-target hx-swap hx-indicator hx-disabled-elt">
 
     <fieldset class="pulse-target-row">
         <legend>Target</legend>
@@ -91,6 +97,7 @@
             </optgroup>
             {% endfor %}
         </select>
+        {% include '_pulse_class_find.html' %}
         <p class="pulse-type-hint muted" id="pulse-create-hint"></p>
     </div>
 

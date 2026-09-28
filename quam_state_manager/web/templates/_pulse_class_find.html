@@ -1,0 +1,39 @@
+{# w8 pulsehint (user, 2026-09-28): the one guidance line under the create
+   form's class list for a lab class the chip does not use yet. The way in is
+   the env strip's "another module?" disclosure above the form (docs/218) --
+   this line points there instead of repeating it: the link opens that
+   <details>, scrolls it into view and focuses its module input
+   (PulsesPage.openModuleForm, a delegated click, so it survives every swap).
+
+   Rendered from the SAME context as the strip. The strip-only responses
+   (after-probe poll, Add/remove module, Probe now) carry it again with
+   hx-swap-oob so the line never disagrees with the strip it points at --
+   a module that failed to import says so here too. `classfind_oob` is set ONLY there:
+   htmx 2 processes nested OOB (allowNestedOobSwaps), so inside the full
+   create form the attribute would detach the line from the form. #}
+{% set _mods = pulse_modules | default([]) %}
+{% set _failed = _mods | selectattr('status') | rejectattr('status', 'equalto', 'ok') | list %}
+{% set _unread = _mods | rejectattr('status') | list %}
+<p id="pulse-create-classfind" class="pulse-class-find muted"{% if classfind_oob %} hx-swap-oob="true"{% endif %}
+   data-classfind-state="{% if not env_card.selected or not env_card.selected_exists %}noenv{% elif _failed %}failed{% else %}ok{% endif %}">
+  <span class="pulse-class-find-q">Don&#39;t see your pulse class?</span>
+  {% if not env_card.selected or not env_card.selected_exists %}
+  <a href="/generate" hx-get="/generate" hx-target="#table-pane"
+     hx-sync="#table-pane:replace" hx-push-url="true"
+     data-after-request="closeInspectorOnSuccess"
+     class="pulse-class-find-link">Pick a Python environment first</a>
+  {%- if env_card.selected %}<span> (the selected one no longer exists)</span>{% endif %}
+  {% else %}
+  <a href="#pulse-env-strip" class="pulse-class-find-link" data-pulse-module-open
+     title="Opens the module box above the form">Name the module it lives in</a>
+  <span>(e.g. <code>my_lab.cz_pulses</code>)</span>
+  {% for m in _failed %}
+  {% set _err = m.status[7:] if m.status.startswith('error: ') else m.status %}
+  <span class="pulse-env-err pulse-class-find-err" title="{{ m.name }}: {{ _err }}">&#10007; {{ m.name }}: {{ _err }}</span>
+  {% endfor %}
+  {% if _unread and (lab_code_changed or env_card.probing) %}
+  {% set _rd = "reading " ~ (_unread | map(attribute='name') | join(', ')) ~ "… the list refreshes when done" %}
+  <span class="pulse-class-find-busy" title="{{ _rd }}">&middot; {{ _rd }}</span>
+  {% endif %}
+  {% endif %}
+</p>

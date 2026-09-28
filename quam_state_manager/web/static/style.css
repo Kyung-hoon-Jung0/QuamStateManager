@@ -10868,6 +10868,17 @@ table.prop-table .pulse-slider-row .pulse-slider-commit {
 .pulse-create-row label { font-size: 0.82em; font-weight: 600; margin-bottom: 0.15rem; }
 .pulse-create-row select, .pulse-create-row input { margin-bottom: 0; }
 .pulse-type-hint { font-size: 0.8em; margin: 0.2rem 0 0; }
+/* w8 pulsehint: the one line under the class list that points at the env
+   strip's module box -- compact, the link in SM's primary blue (both themes).
+   A flex row so an import failure / "reading" note takes what is LEFT of the
+   line and clips there (full text in its title) instead of wrapping to a
+   second line; it drops to its own line only when under 14em remains. */
+.pulse-class-find { display: flex; flex-wrap: wrap; align-items: baseline; column-gap: 0.3em; font-size: 0.8em; margin: 0.2rem 0 0; line-height: 1.35; }
+.pulse-class-find > * { flex: none; }
+.pulse-class-find-link { color: var(--pico-primary); font-weight: 600; text-decoration: underline; text-underline-offset: 0.15em; }
+.pulse-class-find-link:hover, .pulse-class-find-link:focus-visible { color: var(--pico-primary-hover, var(--pico-primary)); }
+.pulse-class-find code { font-size: 0.95em; padding: 0 0.25em; }
+.pulse-class-find > .pulse-class-find-err, .pulse-class-find > .pulse-class-find-busy { flex: 1 1 0; min-width: 14em; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .pulse-create-grid {
     display: grid; grid-template-columns: repeat(auto-fill, minmax(160px, 1fr));
     gap: 0.4rem 0.8rem; border: none; padding: 0; margin: 0 0 0.5rem;

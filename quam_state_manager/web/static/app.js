@@ -24400,6 +24400,15 @@ window.TopbarHold = (function () {
            the tray; re-read the open panel so it shows the same state */
         syncPanelRefresh: function () {
             if (window.SyncPanel && window.SyncPanel.isOpen()) window.SyncPanel.refresh();
+        },
+        /* w8 pulsehint: the create form's "Pick a Python environment first"
+           (and the env strip's own env links) leave the form for the env
+           picker. The form was built without an env and is stale once one is
+           picked; left open it also squeezed the picker into the top pane with
+           the env list below its fold. Closed only once the picker landed. */
+        closeInspectorOnSuccess: function (el, ev) {
+            if (!(ev && ev.detail && ev.detail.successful)) return;
+            if (window.closeInspector) window.closeInspector();
         }
     };
     /* sync-ux 2026-09-25: server-side words for a panel press, and a nudge that the
