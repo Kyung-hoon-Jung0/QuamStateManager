@@ -2018,7 +2018,7 @@ class TestCompareRedirect:
             resp = client.post("/compare", data={"paths": folders[:n]},
                                headers={"HX-Request": "true"})
             loc = json.loads(resp.headers["HX-Location"])["path"]
-            assert loc.startswith("/diff?a=ws%3A") and "compare-hub" not in loc
+            assert loc.startswith(f"{PREFIX}/diff?a=ws%3A") and "compare-hub" not in loc
             assert all(f"&{slot}=ws%3A" in loc for slot in "bcde"[:n - 1])
             assert not any(f"&{slot}=" in loc for slot in "bcde"[n - 1:])
 

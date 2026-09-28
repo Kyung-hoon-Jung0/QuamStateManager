@@ -159,6 +159,9 @@ def test_scanner_headers_and_documents():
     assert rp.scan_page(doc, {}, MOUNT, _SEGS) == []
     assert rp.scan_page(doc.replace(' hx-ext="sm-root"', ""), {}, MOUNT, _SEGS)
     assert rp.scan_page(doc.replace('data-root="/sm"', 'data-root=""'), {}, MOUNT, _SEGS)
+    # at root a root-absolute URL is exactly right -- nothing but the document rules apply
+    assert rp.scan_page("fetch('/qubits'); var u = \"/diff\";", {"Location": "/diff"}, "", _SEGS) == []
+    assert rp.scan_page('<a href="/qubits">', {}, "", _SEGS) == []
     # the same document is clean at root only with data-root="" and no hx-ext
     root_doc = doc.replace('data-root="/sm"', 'data-root=""').replace(' hx-ext="sm-root"', "")
     assert rp.scan_page(root_doc, {}, "", _SEGS) == []

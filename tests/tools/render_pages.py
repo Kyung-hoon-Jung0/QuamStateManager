@@ -371,7 +371,7 @@ def scan_page(text: str, headers: dict, prefix: str, segs: set,
         out.append(("data-attr" if attr.startswith("data-") else "attr",
                     text[m.start(1):m.end()][:160]))
     spans = _allowed_spans(text, allow) if prefix else []
-    if literal is not None:
+    if literal is not None and prefix:            # at root every '/route' literal is right
         for m in literal.finditer(text):
             if m.start() in covered or any(a <= m.start() < b for a, b in spans):
                 continue

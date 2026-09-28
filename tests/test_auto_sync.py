@@ -28,7 +28,6 @@ from pathlib import Path
 import pytest
 
 from quam_state_manager.web.app import create_app
-from tests._prefix import PREFIX
 
 
 def _mk(tmp_path):
@@ -667,8 +666,8 @@ class TestTheButtonActuallyPosts:
 
     def test_the_form_still_posts_to_the_route(self):
         p = self._panel()
-        assert f'hx-post="{PREFIX}/auto-sync/set"' in p
-        assert f'hx-post="{PREFIX}/auto-apply/disarm"' in p
+        assert 'hx-post="{{ root }}/auto-sync/set"' in p      # raw template (B's rewrite form)
+        assert 'hx-post="{{ root }}/auto-apply/disarm"' in p
 
     def test_the_popup_closes_from_the_document_not_from_itself(self):
         """Anything hung on the form dies with the swap that replaces its
