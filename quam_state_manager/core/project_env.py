@@ -154,7 +154,7 @@ def suggestion(inst, fallback: str | None = None) -> str | None:
 
 def label(python: str | None) -> str:
     """A short name for an interpreter path, from the path alone: a conda
-    env's folder (``envs/KRISS_CZ/python.exe`` -> ``KRISS_CZ``), a venv's
+    env's folder (``envs/my_lab/python.exe`` -> ``my_lab``), a venv's
     project (``proj/.venv/Scripts/python.exe`` -> ``proj (.venv)``)."""
     if not python:
         return ""
