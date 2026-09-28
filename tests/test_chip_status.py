@@ -356,14 +356,14 @@ def test_a_reload_keeps_the_readers_place():
 
 def test_a_jump_builds_its_own_2q_panel_first():
     """w9 uxpolish: on big30x an Overview tile / tab press that needed the 2Q
-    RB section was a 0.8-1.3 s task (every panel made, then ~6,600 cells laid
-    out at once) before the jump could start. On a big chip the press now
-    makes the panel it goes to (and the one under it); the rest arrive in
-    slices once the jump has come to rest, each INTO its own display:contents
-    slot, and the section ends up exactly what the one-shot build makes. The
-    charts (this section's and the metrics') wait for the last panel; F5, a
-    second jump, the lazy observer, navigating away and a 5-qubit chip are
-    pinned too."""
+    RB section or the metric panels was a 0.7-1.1 s task (every panel made,
+    then ~7,000 cells laid out at once) before the jump could start. On a big
+    chip the press now makes the panel it goes to (and the ones under it);
+    the rest arrive in slices once the jump has come to rest, each INTO its
+    own display:contents slot, and each section ends up exactly what the
+    one-shot build makes. The charts and Plotly itself wait for the last
+    panel; F5, a second jump, the lazy observer, navigating away and a
+    5-qubit chip are pinned too."""
     _run_selfcheck("chip_rb_slices_selfcheck.cjs", timeout=600)
 
 

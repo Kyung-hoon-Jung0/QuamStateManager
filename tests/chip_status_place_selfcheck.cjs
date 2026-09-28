@@ -258,9 +258,13 @@ function world(opts) {
     const tot = layout().total;
     if (tot === lastTotal) return;
     lastTotal = tot;
-    win.setTimeout(function () {
+    const fire = function () {
       ros.forEach(function (o) { if (o.els.indexOf(dash) >= 0) o.cb([{ target: dash }]); });
-    }, 16);
+    };
+    // opts.roFrame: in the next frame, after its animation-frame callbacks and
+    // before its paint -- where Chrome delivers a ResizeObserver
+    if (opts.roFrame) win.requestAnimationFrame(fire);
+    else win.setTimeout(fire, 16);
   };
   T.G = G;
   T.pane = pane;
