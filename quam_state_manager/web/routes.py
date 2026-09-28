@@ -33565,7 +33565,7 @@ def _apply_selected_env(python_path: str, *, rebind: bool = True) -> None:
     ).start()
     # w9/labwarm: the old env's lab worker goes NOW (it would only have gone
     # at the next check), and the open chip's is started for the new one
-    lab_waveform.retire_except(python_path)
+    lab_waveform.retire_except(python_path, background=True)
     # Re-bind the active chip's type policy to the NEW env (stat-cached read —
     # likely cold for a fresh env → assignments-only until the warm lands),
     # then warm the schema manifest in the background (single-flight).

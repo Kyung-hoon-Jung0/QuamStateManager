@@ -286,10 +286,13 @@ import atexit  # noqa: E402
 atexit.register(shutdown_workers)
 
 
-def retire_except(python_path: str | None) -> int:
+def retire_except(python_path: str | None, *, background: bool = False) -> int:
     """Kill every warm worker that is not *python_path*'s (another env was
     selected), and stand down any pre-warm still waiting for another env.
-    Returns how many workers were killed."""
+    Returns how many workers were retired. The workers leave ``_WORKERS``
+    at once either way (nothing asks them again); *background* True kills
+    them on a daemon thread -- a request (an env selected, a chip opened)
+    must never wait on ``Popen.wait`` (up to 5 s)."""
     with _PREWARM_LOCK:
         for key in list(_PREWARM):
             if key != python_path:
@@ -302,8 +305,12 @@ def retire_except(python_path: str | None) -> int:
         for key in list(_WORKERS):
             if key != python_path:
                 stale.append(_WORKERS.pop(key))
-    for s in stale:
-        s.kill()
+    if stale and background:
+        threading.Thread(target=lambda: [w.kill() for w in stale], daemon=True,
+                         name="lab-waveform-retire").start()
+    else:
+        for w in stale:
+            w.kill()
     return len(stale)
 
 

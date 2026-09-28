@@ -229,6 +229,27 @@ class TestRetirement:
         assert lab_waveform.retire_except("C:/another/env/python.exe") == 1
         assert _w() is None and w.proc.poll() is not None
 
+    def test_a_background_retire_never_waits_on_the_kill(self, labpkg, monkeypatch):
+        lab_waveform.prewarm(sys.executable, [CLS], start_thread=False)
+        w = _w()
+        real_kill = w.kill
+        done = []
+
+        def slow_kill():
+            time.sleep(2)
+            real_kill()
+            done.append(1)
+        monkeypatch.setattr(w, "kill", slow_kill)
+        t0 = time.perf_counter()
+        assert lab_waveform.retire_except("C:/another/env/python.exe", background=True) == 1
+        assert time.perf_counter() - t0 < 0.5
+        assert _w() is None                     # never asked again, at once
+        for _ in range(100):
+            if done:
+                break
+            time.sleep(0.1)
+        assert done and w.proc.poll() is not None
+
     def test_the_same_env_keeps_its_worker(self, labpkg):
         lab_waveform.prewarm(sys.executable, [CLS], start_thread=False)
         w = _w()
@@ -301,7 +322,7 @@ def started(tmp_path, monkeypatch):
     monkeypatch.setattr(config_generator, "get_selected_env",
                         lambda inst: env["python"])
     monkeypatch.setattr(lab_waveform, "retire_except",
-                        lambda p: retired.append(p) or 0)
+                        lambda p, **kw: retired.append(p) or 0)
     # the other background warms of a selection / an open are not these pins'
     # subject (and must not spawn the fake interpreter)
     from quam_state_manager.web import routes
@@ -383,6 +404,34 @@ class TestWhenItStarts:
         _settle()
         assert retired and retired[-1] == str(other)
         assert calls[-1][0] == str(other) and calls[-1][2] == "env-select"
+
+    def test_an_env_select_never_waits_on_the_old_worker_dying(self, tmp_path, monkeypatch):
+        from quam_state_manager.core import config_generator
+        from quam_state_manager.web import routes
+        monkeypatch.setattr(config_generator, "probe_capabilities", lambda *a, **k: {})
+        monkeypatch.setattr(routes, "_warm_state_schema_async", lambda *a, **k: None)
+        killed = []
+
+        class Slow:
+            def kill(self):
+                time.sleep(3)
+                killed.append(1)
+        with lab_waveform._WORKERS_LOCK:
+            lab_waveform._WORKERS["C:/old/env/python.exe"] = Slow()
+        app = create_app(testing=True, instance_path=str(tmp_path / "inst"))
+        new = tmp_path / "envB" / "python.exe"
+        new.parent.mkdir()
+        new.write_bytes(b"")
+        t0 = time.perf_counter()
+        r = app.test_client().post("/generate/select-env", json={"python": str(new)})
+        assert r.status_code == 200
+        assert time.perf_counter() - t0 < 2.0, "the request waited on the kill"
+        assert "C:/old/env/python.exe" not in lab_waveform._WORKERS
+        for _ in range(60):
+            if killed:
+                break
+            time.sleep(0.1)
+        assert killed == [1]
 
     def test_the_request_never_waits_for_the_decision(self, started, monkeypatch):
         from quam_state_manager.web import routes
