@@ -1752,16 +1752,7 @@ window.PulsesPage = (function () {
 
         var typeSel = document.getElementById('pulse-create-type');
         if (typeSel) {
-            // r15 (docs/71 §2): env verdicts on the options — a class the
-            // selected env can NOT import is marked (creating it is still
-            // possible, behind the explicit confirm below).
-            Array.prototype.forEach.call(typeSel.options, function (opt) {
-                var s = root._catalog[opt.value];
-                if (s && s.verify === 'missing') {
-                    opt.textContent += ' — ✗ not in this env';
-                    opt.classList.add('pulse-opt-envmissing');
-                }
-            });
+            _decorateTypeOptions(root, typeSel);
             createTypeChanged(typeSel);
         }
 
@@ -1792,15 +1783,97 @@ window.PulsesPage = (function () {
         }
 
         root.addEventListener('input', function (evt) {
-            if (evt.isTrusted) root._dirty = true;
+            if (_createEditMarksDirty(evt)) root._dirty = true;
             if (evt.target.closest && evt.target.closest('#pulse-create-fields')) {
                 schedulCreatePreview(root);
             }
         });
         root.addEventListener('change', function (evt) {
-            if (evt.isTrusted) root._dirty = true;
+            if (_createEditMarksDirty(evt)) root._dirty = true;
         });
         createSyncIqClasses();
+    }
+
+    /* w8 pulsehint: only a real edit of the FORM is something a rebuild would
+       throw away. The env strip sits inside #pulse-create-root too, and typing
+       a module name there used to mark the form touched -- so the probe that
+       module started, on landing, offered "refresh the list (clears this
+       form)" instead of simply showing the new classes. */
+    function _createEditMarksDirty(evt) {
+        if (!evt || !evt.isTrusted) return false;
+        var t = evt.target;
+        return !!(t && t.closest && t.closest('form.pulse-create-form'));
+    }
+
+    /* w8 pulsehint: "Don't see your pulse class? Name the module it lives in"
+       under the class list -> open the env strip's module disclosure, bring it
+       into view and put the caret in its input. Looked up at click time (the
+       strip is re-rendered by every poll / Add module), never cached. */
+    function openModuleForm() {
+        var strip = document.getElementById('pulse-env-strip');
+        var det = strip && strip.querySelector('details.pulse-env-modules');
+        if (!det) return false;
+        det.open = true;
+        var input = det.querySelector('input[name="module"]');
+        try {
+            det.scrollIntoView({ block: 'center', behavior: 'smooth' });
+        } catch (e) {
+            try { det.scrollIntoView(false); } catch (e2) {}
+        }
+        if (input) {
+            try { input.focus({ preventScroll: true }); } catch (e) { input.focus(); }
+        }
+        return true;
+    }
+    document.addEventListener('click', function (evt) {
+        var a = evt.target && evt.target.closest
+            && evt.target.closest('[data-pulse-module-open]');
+        if (!a) return;
+        // the href (#pulse-env-strip) is the no-JS fallback only
+        if (openModuleForm()) evt.preventDefault();
+    });
+
+    // r15 (docs/71 §2): env verdicts on the options — a class the selected
+    // env can NOT import is marked (creating it is still possible, behind the
+    // explicit confirm in initCreate).
+    function _decorateTypeOptions(root, typeSel) {
+        Array.prototype.forEach.call(typeSel.options, function (opt) {
+            var s = root._catalog[opt.value];
+            if (s && s.verify === 'missing') {
+                opt.textContent += ' — ✗ not in this env';
+                opt.classList.add('pulse-opt-envmissing');
+            }
+        });
+    }
+
+    /* w8 pulsehint: a probe that lands while the form is touched (a qubit
+       picked, a name typed) used to offer only "refresh the list (clears this
+       form)". Bring the class LIST up to date in place instead -- options +
+       catalog from a fresh render -- and leave everything typed alone. Refused
+       (-> the old offer) when the class the user has SELECTED is gone or its
+       own spec moved (a lab edit): its field rows would be stale, and a
+       rebuild is the honest fix. */
+    function _mergeCreateClasses(root, html) {
+        var sel = document.getElementById('pulse-create-type');
+        if (!sel || !root._catalog || typeof window.DOMParser !== 'function') return false;
+        var doc;
+        try { doc = new window.DOMParser().parseFromString(html, 'text/html'); } catch (e) { return false; }
+        var newSel = doc.getElementById('pulse-create-type');
+        var catEl = doc.getElementById('pulse-catalog-data');
+        if (!newSel || !catEl) return false;
+        var cat;
+        try { cat = JSON.parse(catEl.textContent); } catch (e) { return false; }
+        if (!cat || typeof cat !== 'object') return false;
+        var cur = sel.value;
+        if (cur && JSON.stringify(root._catalog[cur]) !== JSON.stringify(cat[cur])) return false;
+        root._catalog = cat;
+        sel.innerHTML = newSel.innerHTML;
+        _decorateTypeOptions(root, sel);
+        if (cur) sel.value = cur;
+        var tk = root.querySelector('input[name="target_kind"]:checked');
+        _applyPairTypeFilter(!!(tk && tk.value === 'pair'));
+        createSyncIqClasses();
+        return true;
     }
 
     // Env-strip "Probe now" — rides the diagnostics probe (single-flighted;
@@ -1826,9 +1899,13 @@ window.PulsesPage = (function () {
         if (!root || !window.htmx) return;
         // 2026-09-27 (big30x): a probe finishing mid-typing rebuilt the form
         // and threw away the class, the name and every typed field. A form
-        // the user has touched is never rebuilt behind their back -- the
-        // strip offers the refresh instead.
-        if (root._dirty && force !== true) {
+        // the user has touched is never rebuilt behind their back -- its
+        // class LIST is brought up to date in place (w8, _mergeCreateClasses,
+        // below), and only when that cannot be done does the strip offer the
+        // refresh.
+        var canFetch = typeof window.htmx.swap === 'function'
+            && typeof window.fetch === 'function';
+        if (root._dirty && force !== true && !canFetch) {
             offerCreateRefresh();
             return;
         }
@@ -1842,13 +1919,20 @@ window.PulsesPage = (function () {
         // ... and the same holds for a rebuild ALREADY IN FLIGHT when the user
         // starts typing (big30x: the response takes seconds): fetch first,
         // swap only if the form is still untouched when the answer lands.
-        if (force !== true && typeof window.htmx.swap === 'function'
-                && typeof window.fetch === 'function') {
+        if (force !== true && canFetch) {
             window.fetch(url, { headers: { 'HX-Request': 'true' } })
                 .then(function (r) { return r.ok ? r.text() : null; })
                 .then(function (html) {
-                    if (html == null || createRoot() !== root) return;
-                    if (root._dirty) { offerCreateRefresh(); return; }
+                    if (createRoot() !== root) return;
+                    if (html == null) {
+                        // a touched form keeps its way out when the fetch failed
+                        if (root._dirty) offerCreateRefresh();
+                        return;
+                    }
+                    if (root._dirty) {
+                        if (!_mergeCreateClasses(root, html)) offerCreateRefresh();
+                        return;
+                    }
                     // eventInfo: htmx.swap() fires htmx:afterSwap with ONLY
                     // what it is given -- without a target the app's
                     // afterSwap listeners throw (measured: base.html reads
@@ -1858,7 +1942,9 @@ window.PulsesPage = (function () {
                     window.htmx.swap(pane, html, { swapStyle: 'innerHTML' },
                                      { eventInfo: { target: pane, elt: pane } });
                 })
-                .catch(function () {});
+                .catch(function () {
+                    if (createRoot() === root && root._dirty) offerCreateRefresh();
+                });
             return;
         }
         window.htmx.ajax('GET', url, { target: '#inspector-pane', swap: 'innerHTML' });
@@ -2043,6 +2129,8 @@ window.PulsesPage = (function () {
         createValidateGateName: createValidateGateName,
         createSyncQdacChannel: createSyncQdacChannel,
         envStripProbe: envStripProbe,
+        openModuleForm: openModuleForm,
+        _createEditMarksDirty: _createEditMarksDirty,   // w8: for the selfcheck
         _pollSchema: pollSchema,   // docs/218: exported for the selfcheck
         reloadCreateForm: reloadCreateForm,
         createSyncIqClasses: createSyncIqClasses,

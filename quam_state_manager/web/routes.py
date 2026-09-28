@@ -1930,6 +1930,10 @@ _cfg_warm_inflight: set[str] = set()
 # docs/218: a forced re-probe asked for while one with the same key was
 # running -- the running one read its module set at start, so it re-runs
 _schema_rerun_pending: dict = {}
+# w8 pulsehint: the named-module set each running ``_kick_env_reprobe`` probe
+# was started with, so a kick that only wants THAT set read does not queue a
+# second, identical probe behind it
+_schema_inflight_modules: dict = {}
 
 
 def _end_schema_flight(key: str) -> None:
@@ -1937,6 +1941,7 @@ def _end_schema_flight(key: str) -> None:
     it was held (``_kick_env_reprobe``)."""
     with _schema_warm_lock:
         _schema_warm_inflight.discard(key)
+        _schema_inflight_modules.pop(key, None)
         again = _schema_rerun_pending.pop(key, None)
     if again is not None:
         try:
@@ -17161,16 +17166,22 @@ def pulse_env_strip(error=None):
     from quam_state_manager.core.pulse_catalog import (env_overlay_active,
                                                        env_roster_breakdown)
     roster = env_overlay_active()
-    return render_template(
-        "_pulse_env_strip.html",
+    ctx = dict(
         env_card=_env_card_state(store),
         env_class_count=len(roster or {}),
         env_roster=env_roster_breakdown(roster),
         **_pulse_modules_ctx(store),
         modules_error=error,
+        # read AFTER the modules check, which may just have kicked a re-probe
         reload_form=(request.args.get("after_probe") == "1"
                      and not _env_card_state(store)["probing"]),
     )
+    # w8 pulsehint: the create form's "Don't see your pulse class?" line
+    # rides along out-of-band, rendered from the SAME context, so it never
+    # disagrees with the strip it points at (a module that failed to import,
+    # the env going away, a read in progress)
+    return (render_template("_pulse_env_strip.html", **ctx)
+            + render_template("_pulse_class_find.html", classfind_oob=True, **ctx))
 
 
 _lab_reprobe_tried: set = set()
@@ -17220,7 +17231,7 @@ def _lab_schema_check(store) -> dict:
         if first:
             ctx = _active_ctx()
             try:
-                _kick_env_reprobe(store, inst, (ctx or {}).get("path"))
+                _kick_env_reprobe(store, inst, (ctx or {}).get("path"), reason)
             except Exception:  # noqa: BLE001
                 pass
         else:
@@ -17306,10 +17317,14 @@ def pulse_class_modules():
     return pulse_env_strip(error=error)
 
 
-def _kick_env_reprobe(store, inst, live_folder) -> None:
+def _kick_env_reprobe(store, inst, live_folder, reason=None) -> None:
     """Re-probe the selected env for this chip in the background, forced (the
     cache would otherwise answer for a module set it never imported). The
-    same single-flight key as /diagnostics/env-probe."""
+    same single-flight key as /diagnostics/env-probe.
+
+    *reason* ``"modules"`` = the caller only wants the CURRENT named-module
+    set read (``_lab_schema_check``); a probe already running with exactly
+    that set answers it. Any other reason (a lab file edited) re-runs."""
     from quam_state_manager.core import state_env_schema
     try:
         python_path = config_generator.get_selected_env(inst)
@@ -17320,13 +17335,21 @@ def _kick_env_reprobe(store, inst, live_folder) -> None:
     with store._lock:
         classes = state_env_schema.harvest_classes(store.state)
     key = python_path + "|" + ",".join(sorted(classes))
+    mods_now = tuple(sorted(state_env_schema.load_pulse_modules(inst)))
     with _schema_warm_lock:
         if key in _schema_warm_inflight:
             # the running probe read its module set when it STARTED: ask it
-            # to go again when it ends, or a module named now is never read
-            _schema_rerun_pending[key] = (store, inst, live_folder)
+            # to go again when it ends, or a module named now is never read.
+            # w8 pulsehint: ... unless it started with exactly this set -- the
+            # Add-module press kicks a probe, and the strip it answers with
+            # saw that set as "not read yet" and queued a SECOND, identical
+            # probe: the new classes showed only after two probes
+            if not (reason == "modules"
+                    and _schema_inflight_modules.get(key) == mods_now):
+                _schema_rerun_pending[key] = (store, inst, live_folder)
             return
         _schema_warm_inflight.add(key)
+        _schema_inflight_modules[key] = mods_now
 
     def _run():
         try:
