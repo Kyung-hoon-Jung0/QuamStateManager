@@ -5545,7 +5545,14 @@ def _project_env_views(names) -> dict:
         selected = config_generator.get_selected_env(inst)
     except Exception:  # noqa: BLE001
         selected = None
-    return {n: project_env.view(inst, n, selected) for n in names}
+    out = {}
+    for n in names:
+        v = project_env.view(inst, n, selected)
+        # a stable DOM id per project (a name may hold any character): the
+        # rows a sync changes are swapped by it, out of band
+        v["dom_id"] = "lenv-" + hashlib.sha1(n.encode("utf-8")).hexdigest()[:12]
+        out[n] = v
+    return out
 
 
 @bp.route("/qualibrate/project-env", methods=["POST"])
@@ -5585,12 +5592,21 @@ def qualibrate_project_env():
             applied = True
     logger.info("project env: %s -> %s (%s%s)", name, python_path, how,
                 ", selected now" if applied else "")
-    view = project_env.view(inst, name, config_generator.get_selected_env(inst))
-    row = render_template("_landing_project_env.html", p={"name": name}, pe=view,
-                          env_saved=how)
+    views = _project_env_views(names)
+    row = render_template("_landing_project_env.html", p={"name": name},
+                          pe=views[name], env_saved=how)
+    # every OTHER card whose row this sync changed: a never-synced project's
+    # suggestion is "the env used most recently", which this sync just moved
+    # (the page must say what a cold reload says)
+    others = "".join(
+        f'<div class="landing-card-env" data-project="{escape(n)}" id="{v["dom_id"]}" '
+        f'hx-swap-oob="true">'
+        + render_template("_landing_project_env.html", p={"name": n}, pe=v)
+        + "</div>"
+        for n, v in views.items() if n != name and v["state"] == "suggested")
     badge = render_template("_sidebar_folder_badge.html",
                             qualibrate_tray=_qualibrate_tray_badge(), oob=True)
-    return row + badge
+    return row + others + badge
 
 
 @bp.route("/workbench")

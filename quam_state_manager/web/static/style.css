@@ -2878,7 +2878,7 @@ table.data-table th {
 /* w9/labwarm: the delete step's "Checking with your lab code..." beside the
    disabled Delete button (htmx shows it only while the press is in flight) */
 .pulse-delete-checking { font-size: 0.82em; font-family: var(--font-ui); font-style: italic;
-    margin: 0 0.5rem; align-self: center; }
+    margin: 0 0.5rem; align-self: center; white-space: nowrap; flex: 0 0 auto; }
 table.data-table td {
     padding: var(--data-table-td-pad-v) var(--data-table-td-pad-h);
     font-family: var(--font-mono); font-size: var(--data-table-font);

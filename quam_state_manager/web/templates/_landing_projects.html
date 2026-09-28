@@ -27,8 +27,8 @@
         </div>
         {# w9/labwarm: the environment this project runs the lab's code with.
            Remembered per project; opening the project selects it. #}
-        <div class="landing-card-env" data-project="{{ p.name }}">
-            {% set pe = (env_views or {}).get(p.name) or {"python": None, "label": "", "state": "none", "exists": False} %}
+        {% set pe = (env_views or {}).get(p.name) or {"python": None, "label": "", "state": "none", "exists": False, "dom_id": ""} %}
+        <div class="landing-card-env" data-project="{{ p.name }}"{% if pe.dom_id %} id="{{ pe.dom_id }}"{% endif %}>
             {% include '_landing_project_env.html' %}
         </div>
         <div class="landing-card-actions">

@@ -155,11 +155,29 @@ class TestTheLanding:
                           data={"project": "alpha", "python": lab["A"], "how": "confirmed"})
         assert r.status_code == 200
         body = r.get_data(as_text=True)
-        assert "&#10003;" in body and "suggested" not in body.split("sidebar-folder-badges-slot")[0]
+        own = body.split("hx-swap-oob")[0]           # the requested row itself
+        assert "&#10003;" in own and "suggested" not in own
         assert 'id="sidebar-folder-badges-slot" hx-swap-oob="true"' in body
         assert project_env.remembered(lab["inst"], "alpha") == lab["A"]
         row = _card_env(lab["c"].get("/landing/projects").get_data(as_text=True), "alpha")
         assert "&#10003;" in row and "suggested" not in row
+
+    def test_a_sync_repaints_every_card_whose_suggestion_it_moved(self, lab):
+        config_generator.set_selected_env(str(lab["inst"]), lab["A"])
+        html = lab["c"].get("/landing/projects").get_data(as_text=True)
+        assert "ENV_A" in _card_env(html, "beta")              # suggested A
+        r = lab["c"].post("/qualibrate/project-env",
+                          data={"project": "alpha", "python": lab["B"], "how": "changed"})
+        body = r.get_data(as_text=True)
+        i = body.index('data-project="beta"')
+        beta = body[body.rindex("<div", 0, i):body.index("</div>", i)]
+        assert 'hx-swap-oob="true"' in beta and "ENV_B" in beta and "suggested" in beta
+        # the id it swaps is the one the landing rendered
+        dom = beta.split('id="')[1].split('"')[0]
+        assert f'id="{dom}"' in html
+        # and it equals a cold render
+        cold = _card_env(lab["c"].get("/landing/projects").get_data(as_text=True), "beta")
+        assert "ENV_B" in cold and "suggested" in cold
 
     def test_an_unknown_project_or_path_is_refused(self, lab):
         r = lab["c"].post("/qualibrate/project-env",
