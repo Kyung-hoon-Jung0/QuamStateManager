@@ -3,7 +3,7 @@
  *   SM_CDP_PORT=9413 node agent_enum.cjs 5113 OUTDIR [width]
  */
 'use strict';
-const { open, sleep } = require('./cdp.cjs');
+const { open, sleep, base, baseFrom, smPath, smUrl } = require('./cdp.cjs');
 const SM = process.argv[2] || '5113';
 const OUT = process.argv[3] || '.';
 const W = +(process.argv[4] || 1600);
@@ -24,7 +24,7 @@ const ENUM = `(() => {
 
 (async () => {
   for (const s of SURFACES) {
-    const p = await open(`http://127.0.0.1:${SM}${s}`, W, 900);
+    const p = await open(`${base(SM)}${s}`, W, 900);
     await sleep(2500);
     const r = JSON.parse(await p.ev(ENUM));
     const tag = s.replace(/\//g, '_') + '_' + W;

@@ -22,15 +22,21 @@
  */
 'use strict';
 const fs = require('fs');
-const { open } = require('./cdp.cjs');
+const { open, baseFrom } = require('./cdp.cjs');
 
 const argv = process.argv.slice(2);
 const arg = (n, d) => { const i = argv.indexOf('--' + n); return i >= 0 ? argv[i + 1] : d; };
-const BASE = arg('base', 'http://127.0.0.1:5099');
+const BASE = baseFrom(arg('base', null), 5099);
 const PATH = arg('path', '/topology?view=overview');
 const OUT = arg('out', 'crawl.jsonl');
 const FROM = +arg('from', 0), TO = +arg('to', 1e9);
 const URL_ = BASE + PATH;
+// Under a rig (SM_BASE_URL set, docs/226) the page's OWN load is judged too: a
+// URL-prefix leak happens while the page loads (a script, a stylesheet, the
+// first poll), before any target is pressed -- and with the Network domain on,
+// a request outside the prefix counts even when something answered it.
+const RIG = !!process.env.SM_BASE_URL;
+const NET = RIG ? { network: true } : undefined;
 
 const PRESCROLL = `(async function(){ var pane=document.getElementById('table-pane'); if(!pane) return 0;
   for(var y=0;y<pane.scrollHeight;y+=600){ pane.scrollTop=y; await new Promise(function(r){setTimeout(r,250);}); }
@@ -81,16 +87,31 @@ const POS = id => `(function(){ var el=document.querySelector('[data-crawl="${id
 
 (async () => {
   const out = fs.openSync(OUT, 'a');
-  const p0 = await open(URL_); await p0.sleep(7000); await p0.ev(PRESCROLL);
-  const all = JSON.parse(await p0.ev(COLLECT)); await p0.close();
-  console.log('targets', all.length);
+  const p0 = await open(URL_, undefined, undefined, NET); await p0.sleep(7000); await p0.ev(PRESCROLL);
+  const raw0 = await p0.ev(COLLECT);
+  let all;
+  // under a rig a page that never became an SM page (a proxy 404, a leaked
+  // redirect) is a FINDING to record, not a crash of the crawler
+  try { all = JSON.parse(raw0); } catch (e) { if (!RIG) throw e; all = null; }
   let bad = 0;
+  if (RIG) {
+    const rq = p0.requests(0);
+    const load = { id: 'load', url: URL_, errors: p0.errors(0), leaks: rq.leaks, bad: rq.bad, requests: rq.total, targets: all ? all.length : null };
+    if (!all) { load.not_an_sm_page = String(raw0).slice(0, 160); bad++; }
+    if (load.errors.length || load.leaks.length || load.bad.length) bad++;
+    fs.writeSync(out, JSON.stringify(load) + '\n');
+    console.log('load', URL_, 'requests', rq.total, 'leaks', rq.leaks.length, 'bad', rq.bad.length, 'errors', load.errors.length,
+      rq.leaks.length ? 'LEAK ' + rq.leaks[0] : '', load.errors.length ? 'ERR ' + load.errors[0].slice(0, 80) : '');
+  }
+  await p0.close();
+  if (!all) { console.log('bad', bad, '(the page never became an SM page: no #table-pane)'); process.exit(1); }
+  console.log('targets', all.length);
   for (const t of all) {
     if (t.id < FROM || t.id > TO) continue;
     const rec = { id: t.id, kind: t.kind, label: t.label, cls: t.cls, errors: [] };
     let pg;
     try {
-      pg = await open(URL_); await pg.sleep(6500); await pg.ev(PRESCROLL); await pg.ev(COLLECT);
+      pg = await open(URL_, undefined, undefined, NET); await pg.sleep(6500); await pg.ev(PRESCROLL); await pg.ev(COLLECT);
       const s0 = JSON.parse(await pg.ev(STATE)); const mark = pg.events.length;
       const pos = JSON.parse(await pg.ev(POS(t.id)));
       if (!pos) { rec.opened = 'not-found-on-fresh-load'; fs.writeSync(out, JSON.stringify(rec) + '\n'); await pg.close(); continue; }
@@ -129,9 +150,10 @@ const POS = id => `(function(){ var el=document.querySelector('[data-crawl="${id
         rec.back = back; rec.leftover = s2.fixed.filter(f => s0.fixed.indexOf(f) < 0);
       } else rec.back = true;
       rec.errors = pg.errors(mark);
+      if (RIG) { const rq = pg.requests(mark); rec.leaks = rq.leaks; rec.bad = rq.bad; }
     } catch (e) { rec.crash = String(e).slice(0, 200); }
     try { if (pg) await pg.close(); } catch (e) {}
-    if (rec.back === false || rec.errors.length || rec.crash) bad++;
+    if (rec.back === false || rec.errors.length || rec.crash || (rec.leaks && rec.leaks.length)) bad++;
     fs.writeSync(out, JSON.stringify(rec) + '\n');
     console.log(t.id, t.kind, (t.label || '').slice(0, 26), '->', rec.opened, rec.back === false ? 'NO-WAY-BACK' : '', rec.errors.length ? 'ERR ' + rec.errors[0].slice(0, 80) : '', rec.crash ? 'CRASH' : '');
   }

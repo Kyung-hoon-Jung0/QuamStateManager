@@ -27,6 +27,17 @@ const REPO = path.join(__dirname, '..', '..');
 const PY = 'D:\\miniconda3\\envs\\cqt\\python.exe';
 // --chip overrides the default real-chip folder (a verification may need a
 // specific snapshot generation, e.g. the shared-trigger-port one).
+// --url-prefix /sm and/or --behind-proxy (docs/226) go straight to create_app;
+// omitted, the generated boot code is exactly what it was before.
+const URL_PREFIX = arg('url-prefix', null);
+const BEHIND_PROXY = argv.indexOf('--behind-proxy') >= 0;
+if (URL_PREFIX !== null && !/^(\/[A-Za-z0-9._~-]+)*\/?$/.test(URL_PREFIX)) {
+  console.error('[srv] FATAL: --url-prefix ' + JSON.stringify(URL_PREFIX) + ' is not a URL path'
+    + (/^[A-Za-z]:/.test(URL_PREFIX) ? ' (Git Bash path conversion: export MSYS_NO_PATHCONV=1)' : ''));
+  process.exit(2);
+}
+const APP_KW = (URL_PREFIX !== null ? ', url_prefix=' + JSON.stringify(URL_PREFIX) : '')
+  + (BEHIND_PROXY ? ', behind_proxy=True' : '');
 const CHIP = arg('chip',
   'D:\\work\\Customer_Codes\\CQT\\CS_installations\\qualibration_graphs'
   + '\\superconducting\\quam_state');
@@ -81,7 +92,7 @@ const code = [
   '_mod = os.path.normcase(os.path.normpath(quam_state_manager.__file__))',
   'assert _mod.startswith(_repo + os.sep), quam_state_manager.__file__',
   'from quam_state_manager.web.app import create_app',
-  'app = create_app(instance_path=r"' + inst + '")',
+  'app = create_app(instance_path=r"' + inst + '"' + APP_KW + ')',
   'def _load():',
   '    url = "http://127.0.0.1:' + PORT + '"',
   '    for _ in range(60):',
@@ -116,6 +127,7 @@ p.stdout.on('data', (d) => process.stderr.write('[srv] ' + d));
 p.stderr.on('data', (d) => process.stderr.write('[srv] ' + d));
 p.on('exit', (c) => { process.stderr.write('[srv] exited ' + c + '\n'); process.exit(c || 0); });
 
-console.log(JSON.stringify({ port: Number(PORT), root, chip, instance: inst, pid: p.pid }));
+console.log(JSON.stringify(Object.assign({ port: Number(PORT), root, chip, instance: inst, pid: p.pid },
+  URL_PREFIX !== null || BEHIND_PROXY ? { url_prefix: URL_PREFIX, behind_proxy: BEHIND_PROXY } : {})));
 
 }

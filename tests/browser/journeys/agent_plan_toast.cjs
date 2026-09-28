@@ -5,11 +5,11 @@
  *   SM_CDP_PORT=9413 node agent_plan_toast.cjs 5113 OUTDIR WIDTH NQ
  */
 'use strict';
-const { open, sleep } = require('./cdp.cjs');
+const { open, sleep, base, baseFrom, smPath, smUrl } = require('./cdp.cjs');
 const [SM, OUT, W, NQ] = [process.argv[2], process.argv[3], +process.argv[4] || 1366, +process.argv[5] || 30];
 
 (async () => {
-  const p = await open(`http://127.0.0.1:${SM}/agent`, W, 900);
+  const p = await open(`${base(SM)}/agent`, W, 900);
   await sleep(3000);
   const line = '/run 05_power_rabi ' + Array.from({ length: NQ }, (_, i) => 'q' + (i + 1)).join(' ');
   const ta = JSON.parse(await p.ev(`(() => { const t = document.querySelector('#agent-home .ag-input'); const b = t.getBoundingClientRect(); return JSON.stringify([b.x + 20, b.y + b.height/2]); })()`));

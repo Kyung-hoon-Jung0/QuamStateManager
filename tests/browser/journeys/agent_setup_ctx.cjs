@@ -3,11 +3,11 @@
  *   SM_CDP_PORT=9413 node agent_setup_ctx.cjs 5113 OUTDIR WIDTH ALLOWED_ROOT
  */
 'use strict';
-const { open, sleep } = require('./cdp.cjs');
+const { open, sleep, base, baseFrom, smPath, smUrl } = require('./cdp.cjs');
 const [SM, OUT, W, ROOT] = [process.argv[2], process.argv[3], +process.argv[4] || 1366, process.argv[5]];
 
 (async () => {
-  const p = await open(`http://127.0.0.1:${SM}/agent/setup`, W, 900);
+  const p = await open(`${base(SM)}/agent/setup`, W, 900);
   await sleep(2000);
   const at = async (re) => {
     const r = await p.ev(`(() => { const d = [...document.querySelectorAll('details.as-sec')].find(d => /Lab context/.test(d.textContent)); d.open = true;

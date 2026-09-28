@@ -7,10 +7,10 @@
  * a chip that has Trends history and pairs. Exit 1 on any FAIL.
  */
 'use strict';
-const { open } = require('./cdp.cjs');
+const { open, base } = require('./cdp.cjs');
 const fs = require('fs');
 const PORT = process.argv[2] || '5099';
-const BASE = `http://127.0.0.1:${PORT}`;
+const BASE = base(PORT);
 const res = [];
 function rec(name, ok, detail) { res.push({ name, ok, detail }); console.log((ok ? 'PASS ' : 'FAIL ') + name + (detail ? '  ' + JSON.stringify(detail).slice(0, 400) : '')); }
 const ERRS = p => p.errors(0);

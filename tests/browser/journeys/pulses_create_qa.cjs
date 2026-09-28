@@ -15,11 +15,11 @@
  */
 'use strict';
 const fs = require('fs');
-const { open, sleep } = require('./cdp.cjs');
+const { open, sleep, base, baseFrom, smPath, smUrl } = require('./cdp.cjs');
 const PORT = process.env.SM_PORT || 5116;
 const DIR = process.env.SHOT_DIR || '.';
 const W = +(process.env.W || 1600);
-const BASE = `http://127.0.0.1:${PORT}`;
+const BASE = base(PORT);
 fs.mkdirSync(DIR, { recursive: true });
 const out = []; let bad = 0; const defects = []; let expectedRefusal = false; let undoRefusedOnce = false;
 function check(c, m) { const l = (c ? 'ok   ' : 'FAIL ') + m; out.push(l); console.log(l); if (!c) bad++; return c; }
@@ -294,7 +294,7 @@ async function submitCreate(p) {
       await p.ev(`(function(){var i=document.getElementById('pulse-copy-src'); if(i&&i.setCustomValidity) i.setCustomValidity(''); return 1})()`);
       await clickSel(p, '#pulse-copy-root .pulse-create-actions button[type=submit]');
       const t = await waitFor(p, `(function(){var t=[].slice.call(document.querySelectorAll('.toast')).map(function(x){return x.innerText}).join(' | '); return /not a pulse/.test(t)? t.replace(/\\s+/g,' ').slice(0,200) : ''})()`, 20000);
-      const wrote = await p.ev(`fetch('/api/pulse/paths').then(function(r){return r.json()}).then(function(d){return d.options.some(function(o){return /_racebad$/.test(o[0])})?1:0})`);
+      const wrote = await p.ev(`fetch('${smUrl(`/api/pulse/paths`)}').then(function(r){return r.json()}).then(function(d){return d.options.some(function(o){return /_racebad$/.test(o[0])})?1:0})`);
       check(!!t && !wrote, `a channel as the copy source is refused, nothing written: ${t}`);
       expectedRefusal = true;
       await p.shot(`${DIR}/25_copy_nonpulse_refused_${W}.png`);
@@ -303,7 +303,7 @@ async function submitCreate(p) {
 
   // ---- 2026-09-27 verifier: an EDIT of a lab-class pulse runs its own check ----
   {
-    const gnz = await p.ev(`fetch('/api/pulse/paths').then(function(r){return r.json()}).then(function(d){var o=d.options.filter(function(o){return /\\.operations\\.cz_GNZ_flux_pulse_/.test(o[0])})[0]; return o? o[0] : ''})`);
+    const gnz = await p.ev(`fetch('${smUrl(`/api/pulse/paths`)}').then(function(r){return r.json()}).then(function(d){var o=d.options.filter(function(o){return /\\.operations\\.cz_GNZ_flux_pulse_/.test(o[0])})[0]; return o? o[0] : ''})`);
     if (gnz) {
       await p.ev(`htmx.ajax('GET','/pulse/detail?path=${encodeURIComponent(gnz)}',{target:'#inspector-pane',swap:'innerHTML'})`);
       await waitFor(p, `document.querySelector('#pulse-detail-root[data-pulse-path="${gnz}"]')?1:0`, 60000);
@@ -412,7 +412,7 @@ async function submitCreate(p) {
     const t0 = Date.now();
     let banner = '';
     for (let i = 0; i < 60; i++) {
-      banner = await p.ev(`(function(){return fetch('/diagnostics/banner',{headers:{'HX-Request':'true'}}).then(function(r){return r.ok?r.text():''}).then(function(t){var d=document.createElement('div'); d.innerHTML=t; return d.innerText.replace(/\\s+/g,' ').slice(0,300)}).catch(function(){return 'n/a'})})()`);
+      banner = await p.ev(`(function(){return fetch('${smUrl(`/diagnostics/banner`)}',{headers:{'HX-Request':'true'}}).then(function(r){return r.ok?r.text():''}).then(function(t){var d=document.createElement('div'); d.innerHTML=t; return d.innerText.replace(/\\s+/g,' ').slice(0,300)}).catch(function(){return 'n/a'})})()`);
       if (!/harvest drift|was not probed/.test(banner)) break;
       await sleep(2000);
     }
@@ -457,7 +457,7 @@ async function submitCreate(p) {
     await clickSel(p, '#pulse-detail-root .pulse-delete-btn');
     await clickSel(p, '.pulse-delete-confirm button[type=submit]');
     // the delete has LANDED when the server's pulse list no longer has it
-    const landed = await waitFor(p, `fetch('/api/pulse/paths').then(function(r){return r.json()}).then(function(d){return d.options.some(function(o){return o[0]===${J(renPath)}})?0:1})`, 60000);
+    const landed = await waitFor(p, `fetch('${smUrl(`/api/pulse/paths`)}').then(function(r){return r.json()}).then(function(d){return d.options.some(function(o){return o[0]===${J(renPath)}})?0:1})`, 60000);
     check(!!landed, 'delete landed on the server');
     // on a big chip the row may be on another page of the table: judge the
     // table only when the row was on screen, the server always
@@ -465,7 +465,7 @@ async function submitCreate(p) {
     const rowGone = onPage ? await waitFor(p, `document.querySelector('tr[data-pulse-path="${renPath}"]')?0:1`, 15000) : 1;
     check(!!rowGone, 'deleted row gone from the table' + (onPage ? '' : ' (not on this page; server-checked)'));
     await p.shot(`${DIR}/41_deleted_${W}.png`);
-    const SRV_HAS = `fetch('/api/pulse/paths').then(function(r){return r.json()}).then(function(d){return d.options.some(function(o){return o[0]===${J(renPath)}})?1:0})`;
+    const SRV_HAS = `fetch('${smUrl(`/api/pulse/paths`)}').then(function(r){return r.json()}).then(function(d){return d.options.some(function(o){return o[0]===${J(renPath)}})?1:0})`;
     const pressZ = async () => {
       await p.ev(`(document.activeElement&&document.activeElement.blur&&document.activeElement.blur(), 1)`);
       await p.send('Input.dispatchKeyEvent', { type: 'keyDown', key: 'z', code: 'KeyZ', windowsVirtualKeyCode: 90, modifiers: 2 });

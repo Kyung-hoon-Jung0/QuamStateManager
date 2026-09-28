@@ -7,10 +7,10 @@
  * with a chip loaded that has history snapshots. Exit 1 on any FAIL.
  */
 'use strict';
-const { open } = require('./cdp.cjs');
+const { open, base, smUrl } = require('./cdp.cjs');
 const PORT = process.argv[2] || '5099';
 const SHOTS = process.argv[3] || '.';
-const BASE = `http://127.0.0.1:${PORT}`;
+const BASE = base(PORT);
 // a big chip (big30x) needs longer before its page settles and its first
 // metadata arrives (docs: the live-diff read stalls the whole server ~9 s)
 const SETTLE = Number(process.env.SM_SETTLE || 6000);
@@ -151,7 +151,7 @@ const hover = (p, x, y) => p.send('Input.dispatchMouseEvent', { type: 'mouseMove
     await p.send('Page.reload'); await p.sleep(SETTLE + 1000);
     await p.ev(`window.setChipStatusView && window.setChipStatusView('readout')`); await p.sleep(4000);
     const r = JSON.parse(await p.ev(`(async function(){
-      var d = await (await fetch('/topology/metric-meta', {cache:'no-store'})).json();
+      var d = await (await fetch('${smUrl(`/topology/metric-meta`)}', {cache:'no-store'})).json();
       var MI = window.ChipStatus.metaInfo, cells = [], badFirst = [];
       ['q','p'].forEach(function(g){ Object.keys(d[g]||{}).forEach(function(k){ Object.keys(d[g][k]).forEach(function(id){
         var e = d[g][k][id]; if (e.first && e.ts !== d.oldest) badFirst.push([k,id,e.ts]); }); }); });
@@ -304,8 +304,8 @@ const hover = (p, x, y) => p.send('Input.dispatchMouseEvent', { type: 'mouseMove
     await p.ev(`window.setChipStatusView && window.setChipStatusView('coherence')`); await p.sleep(4000);
     // the page's shown tags vs a cold recompute from a fresh /topology/metric-meta
     const cmp = JSON.parse(await p.ev(`(async function(){
-      var d = await (await fetch('/topology/metric-meta', {cache:'no-store'})).json();
-      var topo = await (await fetch('/api/topology', {cache:'no-store'})).json();
+      var d = await (await fetch('${smUrl(`/topology/metric-meta`)}', {cache:'no-store'})).json();
+      var topo = await (await fetch('${smUrl(`/api/topology`)}', {cache:'no-store'})).json();
       var MI = window.ChipStatus.metaInfo, out = [];
       document.querySelectorAll('.topo-section[data-density-panel="T1"] .heatmap-cell[data-qubit]').forEach(function(c){
         var q = c.getAttribute('data-qubit'); if (c.classList.contains('heatmap-cell-none')) return;
@@ -317,7 +317,7 @@ const hover = (p, x, y) => p.send('Input.dispatchMouseEvent', { type: 'mouseMove
       });
       return JSON.stringify(out); })()`));
     rec('M4b every T1 tile shows exactly what a cold recompute says', cmp.length > 0 && cmp.every(x => x.same), cmp);
-    const t1first = JSON.parse(await p.ev(`(async function(){ var d = await (await fetch('/topology/metric-meta', {cache:'no-store'})).json();
+    const t1first = JSON.parse(await p.ev(`(async function(){ var d = await (await fetch('${smUrl(`/topology/metric-meta`)}', {cache:'no-store'})).json();
       var t = (d.q||{}).T1 || {}; return JSON.stringify(Object.keys(t).map(function(q){ return {q:q, ts:t[q].ts, first:t[q].first, appeared:!!t[q].appeared, oldest:d.oldest}; })); })()`));
     rec('M4d after Take live no T1 entry claims "since history began" unless at the oldest snapshot',
         t1first.every(x => !x.first || x.ts === x.oldest), t1first);

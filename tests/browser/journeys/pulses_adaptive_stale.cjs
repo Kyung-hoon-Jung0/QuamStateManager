@@ -19,11 +19,11 @@
  */
 'use strict';
 const fs = require('fs');
-const { open, sleep } = require('./cdp.cjs');
+const { open, sleep, base, baseFrom, smPath, smUrl } = require('./cdp.cjs');
 const PORT = process.env.SM_PORT || 5112;
 const DIR = process.env.SHOT_DIR || '.';
 const LAB_FILE = process.env.LAB_FILE;
-const BASE = `http://127.0.0.1:${PORT}`;
+const BASE = base(PORT);
 const WOB = 'qubits.q1.z.operations.cz_wobble';
 fs.mkdirSync(DIR, { recursive: true });
 let bad = 0;
@@ -38,8 +38,8 @@ async function waitFor(p, expr, ms = 60000) {
   }
   return null;
 }
-const post = (url, body) => `fetch(${JSON.stringify(url)},{method:'POST',headers:{'Content-Type':'application/x-www-form-urlencoded'},body:${JSON.stringify(body)}}).then(function(r){return r.status})`;
-const STRIP = `fetch('/pulse/new/env-strip').then(function(r){return r.text()})`;
+const post = (url, body) => `fetch(${JSON.stringify(smUrl(url))},{method:'POST',headers:{'Content-Type':'application/x-www-form-urlencoded'},body:${JSON.stringify(body)}}).then(function(r){return r.status})`;
+const STRIP = `fetch('${smUrl(`/pulse/new/env-strip`)}').then(function(r){return r.text()})`;
 
 (async () => {
   const original = fs.readFileSync(LAB_FILE, 'utf8');
@@ -87,7 +87,7 @@ const STRIP = `fetch('/pulse/new/env-strip').then(function(r){return r.text()})`
     await p.shot(`${DIR}/stale_2b_detail_fresh.png`);
 
     // 3. the create-draw route never imports a path nobody named
-    const refused = await p.ev(`fetch('/api/pulse/lab-waveform',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({qclass:'this.s',params:{}})}).then(function(r){return r.json()}).then(function(j){return j.results[0].reason+' | '+j.results[0].error})`);
+    const refused = await p.ev(`fetch('${smUrl(`/api/pulse/lab-waveform`)}',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({qclass:'this.s',params:{}})}).then(function(r){return r.json()}).then(function(j){return j.results[0].reason+' | '+j.results[0].error})`);
     check(/^unknown-class/.test(refused), 'an unnamed class is refused: ' + refused.slice(0, 120));
   } finally {
     // 4. close: restore the rig

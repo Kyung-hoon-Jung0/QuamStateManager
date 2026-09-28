@@ -2,7 +2,7 @@
  *   SM_CDP_PORT=9413 node agent_setup_back.cjs 5113 OUTDIR
  */
 'use strict';
-const { open, sleep } = require('./cdp.cjs');
+const { open, sleep, base, baseFrom, smPath, smUrl } = require('./cdp.cjs');
 const SM = process.argv[2] || '5113';
 const OUT = process.argv[3] || '.';
 
@@ -18,7 +18,7 @@ const PROBE = `(() => { const S = window.AgentSetup && AgentSetup._state; const 
     prev: document.querySelectorAll('#table-pane .as-diff, #table-pane pre.as-diff, #table-pane [class*=diff]').length }); })()`;
 
 (async () => {
-  const p = await open(`http://127.0.0.1:${SM}/agent/setup`, 1600, 900);
+  const p = await open(`${base(SM)}/agent/setup`, 1600, 900);
   await sleep(2500);
   console.log('open   ', await p.ev(PROBE));
   await clickSel(p, '#nav-agent'); await sleep(2000);

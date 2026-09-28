@@ -30,7 +30,8 @@ async function open(url) {
 }
 const PORT = process.argv[2] || '5111';
 const SHOTS = process.argv[3] || '.';
-const BASE = `http://127.0.0.1:${PORT}`;
+const BASE = cdp.base(PORT);
+const { smPath, smUrl } = cdp;
 const res = [];
 function rec(name, ok, detail) { res.push({ name, ok }); console.log((ok ? 'PASS ' : 'FAIL ') + name + (detail !== undefined ? '  ' + JSON.stringify(detail).slice(0, 300) : '')); }
 
@@ -55,7 +56,7 @@ const plotted = p => p.ev(`(function(){ var s=document.getElementById('zline-ste
   {
     const p = await open(`${BASE}/pulses`); await p.sleep(2500);
     const mark = p.events.length;
-    const link = await center(p, '#live-edit-subnav a[href="/zline"]');
+    const link = await center(p, '#live-edit-subnav a[href="' + smUrl('/zline') + '"]');
     rec('Z1a sidebar shows Z-line distortion under Live State Edit', !!link);
     if (link) { await p.click(link.x, link.y); }
     const r0 = await waitRendered(p);
@@ -66,7 +67,7 @@ const plotted = p => p.ev(`(function(){ var s=document.getElementById('zline-ste
     const vis = JSON.parse(await p.ev(`JSON.stringify((document.getElementById('zline-step').data||[]).map(function(t){return [t.name, t.visible === undefined ? true : t.visible];}))`));
     rec('Z1c2 a line with both filters shows all four step curves by default',
       vis.length === 4 && vis.every(v => v[1] === true), vis);
-    rec('Z1d the address is /zline', (await p.ev('location.pathname')) === '/zline');
+    rec('Z1d the address is /zline', smPath(await p.ev('location.pathname')) === '/zline');
     await p.shot(`${SHOTS}/z1_first_line.png`);
 
     const row = await center(p, '.zline-row[data-line="qubits.q3.z"]');
@@ -93,7 +94,7 @@ const plotted = p => p.ev(`(function(){ var s=document.getElementById('zline-ste
     await p.ev('setTimeout(function(){history.back();},0); 1'); await p.sleep(3000);
     const back = await p.ev(`JSON.stringify({path:location.pathname, pulses:!!document.querySelector('#table-pane table'), zl:!!document.getElementById('zline-root')})`);
     const b = JSON.parse(back);
-    rec('Z1i Back returns to Pulses, intact', b.path === '/pulses' && b.pulses && !b.zl, b);
+    rec('Z1i Back returns to Pulses, intact', smPath(b.path) === '/pulses' && b.pulses && !b.zl, b);
     // forward, then reload onto q3
     await p.ev(`setTimeout(function(){location.href='${BASE}/zline?line=qubits.q3.z';},0); 1`); await p.sleep(1500);
     const rr = await waitRendered(p, 'qubits.q3.z');
@@ -165,11 +166,11 @@ const plotted = p => p.ev(`(function(){ var s=document.getElementById('zline-ste
   {
     const p = await open(`${BASE}/zline?line=qubits.q3.z`); await waitRendered(p, 'qubits.q3.z');
     const mark = p.events.length;
-    const d0 = JSON.parse(await p.ev(`fetch('/zline/data?line=qubits.q3.z').then(function(r){return r.text();})`));
+    const d0 = JSON.parse(await p.ev(`fetch('${smUrl(`/zline/data?line=qubits.q3.z`)}').then(function(r){return r.text();})`));
     const pp = d0.port_path;
     const orig = d0.port ? d0.port.exponential : null;
     const edit = v => p.ev(`(function(){var f=new FormData(); f.append('dot_path', ${JSON.stringify(pp + '.exponential_filter')}); f.append('value', ${JSON.stringify(JSON.stringify(v))});
-      return fetch('/field/edit',{method:'POST',body:f,headers:{'HX-Request':'true'}}).then(function(r){return r.status;});})()`);
+      return fetch('${smUrl(`/field/edit`)}',{method:'POST',body:f,headers:{'HX-Request':'true'}}).then(function(r){return r.status;});})()`);
     const cell = () => p.ev(`(function(){var r=document.querySelector('.zline-row[data-line="qubits.q3.z"] .zline-models'); return r ? r.textContent.replace(/ +/g,' ').trim() : '';})()`);
     const noteCodes = () => p.ev(`JSON.stringify(Array.from(document.querySelectorAll('#zline-notes li')).map(function(l){return [l.getAttribute('data-code'), l.className, l.textContent];}))`).then(JSON.parse);
     const setModel = async m => { await p.ev(`(function(){var s=document.getElementById('zline-model'); s.value='${m}'; s.dispatchEvent(new Event('change'));})()`); return waitRendered(p, 'qubits.q3.z|'); };
@@ -203,7 +204,7 @@ const plotted = p => p.ev(`(function(){ var s=document.getElementById('zline-ste
     await p.ev('setTimeout(function(){location.reload();},0); 1'); await p.sleep(1200);
     const r3 = await waitRendered(p, 'qubits.q3.z|');
     const pl4 = await plotted(p);
-    const d4 = JSON.parse(await p.ev(`fetch('/zline/data?line=qubits.q3.z').then(function(r){return r.text();})`));
+    const d4 = JSON.parse(await p.ev(`fetch('${smUrl(`/zline/data?line=qubits.q3.z`)}').then(function(r){return r.text();})`));
     rec('Z5g restored: q3 draws again with its original set', s3 === 200 && !!r3 && pl4.step >= 2
       && JSON.stringify(d4.port.exponential) === JSON.stringify(orig), { s3, pl4 });
     // Chrome logs its own refusal of SM's unsaved-edits beforeunload guard

@@ -25,12 +25,12 @@
  * Exit 1 on any FAIL of the first server label (the one under test).
  */
 'use strict';
-const { open, sleep } = require('./cdp.cjs');
+const { open, sleep, base, baseFrom, smPath, smUrl } = require('./cdp.cjs');
 const fs = require('fs');
 const path = require('path');
 
 const CMD = process.argv[2];
-const SERVERS = (process.argv[3] || 'new=5108').split(',').map((s) => { const a = s.split('='); return { label: a[0], base: 'http://127.0.0.1:' + a[1] }; });
+const SERVERS = (process.argv[3] || 'new=5108').split(',').map((s, i) => { const a = s.split('='); return { label: a[0], base: i === 0 ? base(a[1]) : 'http://127.0.0.1:' + a[1] }; });
 const SHOTS = process.argv[4] || '.';
 const REPS = +(process.env.REPS || 1);
 const OPENW = +(process.env.OPENW || 7000);
@@ -120,7 +120,7 @@ async function trial(S, mode, delay, what, tag) {
     && (Math.abs(last.top - last.sm) <= 8 || (atEnd && last.top > last.sm && last.top < last.ch - 40
         // ...and where the jump itself had put it, when it had settled before F5
         && (delay < 2000 || !pre || pre.top === null || Math.abs(last.top - pre.top) <= 8)))
-    && last.tab === view && last.url === '/topology?view=' + view;
+    && last.tab === view && smPath(last.url) === '/topology?view=' + view;
   const shot = path.join(SHOTS, `f5_${S.label}_${mode}_${what[1]}_${delay}_${tag}.png`);
   await p.shot(shot);
   const errs = p.errors(mark);

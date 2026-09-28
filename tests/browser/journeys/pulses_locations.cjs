@@ -15,10 +15,10 @@
  *   SM_CDP_PORT=9414 SM_PORT=5114 SHOT_DIR=... node pulses_locations.cjs
  */
 'use strict';
-const { open, sleep } = require('./cdp.cjs');
+const { open, sleep, base, baseFrom, smPath, smUrl } = require('./cdp.cjs');
 const PORT = process.env.SM_PORT || 5114;
 const DIR = process.env.SHOT_DIR || '.';
-const BASE = `http://127.0.0.1:${PORT}`;
+const BASE = base(PORT);
 require('fs').mkdirSync(DIR, { recursive: true });
 let bad = 0;
 function check(c, m) { console.log((c ? 'ok   ' : 'FAIL ') + m); if (!c) bad++; }
@@ -83,7 +83,7 @@ const reload = p => go(p, 'Page.reload');
   console.log(`info before taking live, x180_hand row shown: ${before}`);
 
   // 0. the user's own path: take the live file they edited
-  const st = await p.ev(`fetch('/state/sync',{method:'POST',headers:{'HX-Request':'true','Content-Type':'application/x-www-form-urlencoded'},body:'mode=discard'}).then(r=>r.json()).then(j=>j.status)`);
+  const st = await p.ev(`fetch('${smUrl(`/state/sync`)}',{method:'POST',headers:{'HX-Request':'true','Content-Type':'application/x-www-form-urlencoded'},body:'mode=discard'}).then(r=>r.json()).then(j=>j.status)`);
   check(st === 'ok', `take live -> ${st}`);
   await reload(p);
   const n = await waitFor(p, `document.querySelectorAll('tr[data-pulse-path]').length`, 30000);

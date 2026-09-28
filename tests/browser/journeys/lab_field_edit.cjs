@@ -12,10 +12,10 @@
  * Writes OUT_DIR/lab_field_edit.json + the deciding screenshots. Exit 0 = all ok.
  */
 'use strict';
-const { open, sleep } = require('./cdp.cjs');
+const { open, sleep, base, baseFrom, smPath, smUrl } = require('./cdp.cjs');
 const fs = require('fs');
 const path = require('path');
-const BASE = process.argv[2] || 'http://127.0.0.1:5181';
+const BASE = baseFrom(process.argv[2] || null, 5181);
 const OUT = process.argv[3] || '.';
 fs.mkdirSync(OUT, { recursive: true });
 const res = { steps: [], errors: [] };
@@ -45,8 +45,8 @@ function coldStart() {
 }
 
 (async () => {
-  const peek = async (p, P) => P.ev(`fetch('/field/peek?dot_path=${p}').then(r=>r.json()).then(j=>JSON.stringify(j.values||j))`);
-  const changes = async (P) => P.ev(`fetch('/changes').then(r=>r.text()).then(t=>(t.match(/<tr/g)||[]).length)`);
+  const peek = async (p, P) => P.ev(`fetch('${smUrl(`/field/peek?dot_path=${p}`)}').then(r=>r.json()).then(j=>JSON.stringify(j.values||j))`);
+  const changes = async (P) => P.ev(`fetch('${smUrl(`/changes`)}').then(r=>r.text()).then(t=>(t.match(/<tr/g)||[]).length)`);
 
   // ---------------- 1. Live Edit pair grid ----------------
   let P = await open(BASE + '/bulk', 1600, 950);
