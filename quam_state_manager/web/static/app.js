@@ -414,6 +414,31 @@ document.addEventListener('htmx:beforeSwap', function(evt) {
             evt.detail.isError = false;
         }
     }
+    // w8 (docs/218 open issue): a lab refusal of a Pulses-page delete answers
+    // 400, retargeted into that detail's delete step with the "Delete
+    // together with ..." offer. Narrow: only that body, only into the detail
+    // of the SAME pulse, and only while its delete step is open -- a pane
+    // that moved on (another pulse opened, the step closed) keeps the toast.
+    // (htmx 2.0.4 raises beforeSwap on the ORIGINAL target with detail.elt =
+    // that target, so the requesting form is not in the event: the refusal
+    // names its pulse instead.)
+    if (t.id === 'pulse-delete-result' && status === 400 && evt.detail.xhr
+        && /pulse-delete-refused/.test(evt.detail.xhr.responseText || '')) {
+        var _pdm = /data-refused-path="([^"]*)"/.exec(evt.detail.xhr.responseText || '');
+        var _pdr = t.closest ? t.closest('#pulse-detail-root') : null;
+        var _pdc = t.closest ? t.closest('.pulse-delete-confirm') : null;
+        var _pdp = null;
+        if (_pdm) {
+            var _pdt = document.createElement('textarea');
+            _pdt.innerHTML = _pdm[1];            // the body is Jinja-escaped
+            _pdp = _pdt.value;
+        }
+        if (_pdp && _pdr && _pdr.getAttribute('data-pulse-path') === _pdp
+                && !(_pdc && _pdc.hidden)) {
+            evt.detail.shouldSwap = true;
+            evt.detail.isError = false;
+        }
+    }
 });
 
 /* Surface a toast on ANY htmx error response. htmx 2.x drops error-response
@@ -7816,7 +7841,7 @@ window.UndoQueue = (function () {
     });
     function mutationsInFlight() {
         var now = Date.now();
-        _mut = _mut.filter(function (m) { return now - m.t < 20000; });
+        _mut = _mut.filter(function (m) { return now - m.t < (m.ttl || 20000); });
         return _mut.length > 0;
     }
     function pump() {
@@ -7907,6 +7932,24 @@ window.UndoQueue = (function () {
         },
         depth: function () { return pending(); },
         busy: function () { return busy; },
+        /* w8: a write this window makes with fetch (not htmx) -- the Pulses
+           page's "Delete together" batch -- holds a press exactly like an
+           htmx write in flight: a Ctrl+Z pressed while the lab check is
+           still asking must undo THAT batch once it lands, never the edit
+           before it. Returns the promise untouched. */
+        holdWhile: function (p) {
+            if (!p || typeof p.then !== "function") return p;
+            // a lab check on a big chip with a cold worker answers in ~25 s:
+            // the promise itself ends the hold, the TTL only guards a leak
+            var tok = { xhr: {}, t: Date.now(), ttl: 120000 };
+            _mut.push(tok);
+            var off = function () {
+                _mut = _mut.filter(function (m) { return m !== tok; });
+                pump();
+            };
+            p.then(off, off);
+            return p;
+        },
     };
 })();
 
@@ -10264,13 +10307,15 @@ window.clearDetailPanelSearch = function(btnEl) {
        and the ops cannot go first (the gate plays them). The refusal names
        them (lab_delete_also) and offers the one way: all of them, in ONE
        batch (one Ctrl+Z), which the server checks again as a whole. */
-    function _appendCascadeBtn(el, path, also) {
+    function _appendCascadeBtn(el, path, also, label) {
         if (!el || el.querySelector(".tree-cascade-btn")) return;
         var b = document.createElement("button");
         b.type = "button";
         b.className = "btn-sm outline tree-cascade-btn";
-        b.textContent = "Delete together with " + also.length + " op" +
-            (also.length === 1 ? "" : "s");
+        // w8: the set can hold a gate field or a whole gate, not only ops --
+        // the server names what it is (lab_delete_label)
+        b.textContent = label || ("Delete together with " + also.length + " op" +
+            (also.length === 1 ? "" : "s"));
         b.title = "Deletes " + path + " and\n" + also.join("\n") +
             "\nin one batch (one Ctrl+Z)";
         b.onclick = function (e) {
@@ -10279,11 +10324,15 @@ window.clearDetailPanelSearch = function(btnEl) {
             var ups = [path].concat(also).map(function (p) {
                 return { dot_path: p, "delete": true };
             });
-            _smFetch("/field/edit-batch", { method: "POST",
+            var _pr = _smFetch("/field/edit-batch", { method: "POST",
                 headers: {"Content-Type": "application/json"},
                 body: JSON.stringify({ updates: ups, group: "new",
-                                       expect_chip: window.__chipToken || "" }) })
-            .then(function (r) { return r.json(); })
+                                       expect_chip: window.__chipToken || "" }) });
+            // a Ctrl+Z pressed while the batch is being checked undoes IT: held
+            // until the answer is HANDLED (the tray swapped to the batch's
+            // signature), not merely arrived -- else the press declares the
+            // old tray and is refused as "made in another window"
+            var _chain = _pr.then(function (r) { return r.json(); })
             .then(function (d) {
                 if (!d.ok) {
                     b.disabled = false;
@@ -10291,14 +10340,17 @@ window.clearDetailPanelSearch = function(btnEl) {
                     return;
                 }
                 if (d.tray_html) { _swapPendingTray(d.tray_html); window._restoreTrayState && window._restoreTrayState(); }
-                if (window.showToast) window.showToast("Deleted " + path + " with " +
-                    also.length + " op" + (also.length === 1 ? "" : "s") + " (one Ctrl+Z)", "success");
+                if (window.showToast) window.showToast("Deleted " + path + " together with " +
+                    also.length + " other path" + (also.length === 1 ? "" : "s") + " (one Ctrl+Z)", "success");
+                // w8: a batch the lab code could not check went through UNCHECKED -- say so
+                if (d.warning && window.showToast) window.showToast(String(d.warning), "warning");
                 if (window._diagChanged) window._diagChanged();
                 // several subtrees changed at once: the tree re-reads the chip
                 // in place (a page reload would trip the unsaved-edits guard)
                 if (window._softRefreshLiveSurface) window._softRefreshLiveSurface();
             })
             .catch(function (err) { b.disabled = false; el.firstChild.textContent = "✗ " + _netFail(err) + " "; });
+            if (window.UndoQueue && window.UndoQueue.holdWhile) window.UndoQueue.holdWhile(_chain);
         };
         el.appendChild(document.createTextNode(" "));
         el.appendChild(b);
@@ -11496,7 +11548,7 @@ window.clearDetailPanelSearch = function(btnEl) {
                     var _ec = _showEditError(row, d.error);
                     if (d.chip_mismatch) _appendReloadBtn(_ec);
                     if (Array.isArray(d.lab_delete_also) && d.lab_delete_also.length) {
-                        _appendCascadeBtn(_ec, m.path, d.lab_delete_also);
+                        _appendCascadeBtn(_ec, m.path, d.lab_delete_also, d.lab_delete_label);
                     }
                     actionsSpan.remove(); return;
                 }
@@ -21970,6 +22022,23 @@ document.addEventListener("cellsReverted", function (evt) {
     var toast = pane.querySelector(".toast");
     var text = toast ? (toast.textContent || "") : "";
     if (!/^\s*Deleted\s/.test(text)) return;
+    // w8: a "Delete together" batch names the pulse it was opened from; it
+    // may have gone INSIDE a deleted gate, so an ancestor's restore counts
+    var reopen = toast.getAttribute("data-reopen-path");
+    if (reopen) {
+        for (var k = 0; k < entries.length; k++) {
+            var ek = entries[k];
+            if (!ek || !ek.deleted || !ek.dot_path) continue;
+            if (reopen === ek.dot_path || reopen.indexOf(ek.dot_path + ".") === 0) {
+                if (window.htmx) {
+                    window.htmx.ajax("GET", "/pulse/detail?path=" + encodeURIComponent(reopen),
+                                     { target: "#inspector-pane", swap: "innerHTML", source: pane });
+                }
+                return;
+            }
+        }
+        return;
+    }
     for (var i = 0; i < entries.length; i++) {
         var e = entries[i];
         if (!e || !e.deleted || !e.dot_path) continue;

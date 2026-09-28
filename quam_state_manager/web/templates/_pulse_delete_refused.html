@@ -1,0 +1,26 @@
+{# w8 (docs/218 open issue): a lab refusal of a Pulses-page delete, shown in
+   the delete step it came from (it used to be a toast that said "delete them
+   together" on a page that had no way to). When something else must go with
+   the pulse, the offer lists EXACTLY that set and deletes it in ONE
+   /field/edit-batch -- one Ctrl+Z restores all -- which the same lab check
+   asks again as a whole. PulsesPage.deleteTogether drives the button. #}
+<div class="pulse-delete-refused" data-refused-path="{{ path }}"
+     data-together='{{ together | tojson }}'>
+    <p class="pulse-delete-refused-msg">{{ message }}</p>
+    {% if also %}
+    <div class="pulse-together">
+        <p class="pulse-together-head">Goes only together with:</p>
+        <ul class="pulse-together-list">
+            <li><code>{{ path }}</code> <span class="muted">&mdash; this pulse</span></li>
+            {% for a in also %}
+            <li data-kind="{{ a.kind }}"><code>{{ a.path }}</code> <span class="muted">&mdash; {{ a.role }}</span></li>
+            {% endfor %}
+        </ul>
+        <button type="button" class="btn-sm pulse-delete-together"
+                title="Deletes these {{ together | length }} paths in one batch (one Ctrl+Z); your lab code checks the batch again as a whole"
+                onclick="PulsesPage.deleteTogether(this)">{{ label }}</button>
+        <span class="muted pulse-together-note">one batch, one Ctrl+Z &mdash; checked again as a whole</span>
+        <p class="pulse-together-status" role="status" aria-live="polite" hidden></p>
+    </div>
+    {% endif %}
+</div>

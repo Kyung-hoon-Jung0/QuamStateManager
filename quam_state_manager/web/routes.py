@@ -10867,10 +10867,12 @@ def field_delete():
         _lab = _lab_write_refusal(modifier.store, [(dot_path, _LAB_DELETE)],
                                   info=_lab_info)
         if _lab:
+            _also = _lab_delete_also(modifier.store, [dot_path], _lab_info)
             return jsonify(ok=False, lab_refused=True,
                            error=_lab_refusal_text(_lab[0]),
-                           **({"lab_delete_also": _lab_info["delete_also"]}
-                              if _lab_info.get("delete_also") else {})), 400
+                           **({"lab_delete_also": _also,
+                               "lab_delete_label": _lab_delete_label(modifier.store, _also)}
+                              if _also else {})), 400
         entry = modifier.delete_subtree(dot_path)
         _invalidate_engine_cache(ctx)
     except (KeyError, TypeError, ValueError, IndexError) as e:
@@ -11116,11 +11118,18 @@ def field_edit_batch():
         if not independent:
             _lab_rel()
             _one = _lab_writes[_lab[1][0]] if len(_lab[1]) == 1 else None
+            # a batch of deletes that still breaks the chip names what else
+            # must go with it (the Pulses page's "Delete together" widens)
+            _dels = [dp for dp, v, _c in pairs if v is _BATCH_DELETE]
+            _also = (_lab_delete_also(modifier.store, _dels, _lab_info)
+                     if _dels and len(_dels) == len(pairs)
+                     else list(_lab_info.get("delete_also") or ()))
             return jsonify(
                 ok=False, lab_refused=True, error=_lab_msg,
                 tray_html=_tray_html(),
-                **({"lab_delete_also": _lab_info["delete_also"]}
-                   if _lab_info.get("delete_also") else {}),
+                **({"lab_delete_also": _also,
+                    "lab_delete_label": _lab_delete_label(modifier.store, _also)}
+                   if _also else {}),
                 lab_follow=(_lab_follow_payload(_one[0], _one[1], _lab_info)
                             if _one and len(pairs) == 1 else None),
                 results=[{"dot_path": dp, "applied": False,
@@ -17952,6 +17961,108 @@ def _lab_cfg_settle(cfg: dict, writes) -> None:
     cfg["orphans"] = {op: h for op, h in cfg["orphans"].items() if not deleted(op)}
 
 
+def _under_any(p: str, roots) -> bool:
+    return any(p == r or p.startswith(r + ".") for r in roots)
+
+
+def _fold_paths(paths) -> list[str]:
+    """*paths* without any that lies under another one (a batch deleting
+    ``g`` and then ``g.x`` would fail on the second row), order kept."""
+    ps = list(dict.fromkeys(p for p in paths if isinstance(p, str) and p))
+    return [p for p in ps if not any(q != p and p.startswith(q + ".") for q in ps)]
+
+
+def _lab_field_required(store, gate: str, field: str) -> bool:
+    """True only when the selected env's own dataclass schema says *field* of
+    the class at *gate* has no default and is not Optional (quam_builder's
+    ``CZGate.flux_pulse_qubit``: the gate cannot exist without it). An env
+    that was never probed, or a class it does not know, answers False."""
+    policy = getattr(store, "type_policy", None)
+    manifest = getattr(policy, "manifest", None) if policy is not None else None
+    if not manifest:
+        return False
+    try:
+        from quam_state_manager.core.state_env_validate import _fields_for
+        fields = _fields_for(manifest, str(_qclass_at(store, gate)))
+    except Exception:  # noqa: BLE001 -- no schema: never escalates
+        return False
+    f = (fields or {}).get(field)
+    return bool(f) and not f.get("has_default") and not f.get("optional")
+
+
+def _lab_holder_goes(watch, holder: str) -> str | None:
+    """What must go so a lab gate stops playing a name it holds at *holder*
+    (``<gate>.<slot>.id``, a plain-name ``<gate>.<slot>``, or a dict entry
+    ``<gate>.<field>.<key>``): that slot (a required one takes the gate with
+    it -- :func:`_lab_delete_also`). None when *holder* is not in a gate."""
+    gate = next((mp for mp in sorted(watch.macros, key=len, reverse=True)
+                 if holder.startswith(mp + ".")), None)
+    if gate is None:
+        return None
+    rel = holder[len(gate) + 1:].split(".")
+    if len(rel) > 1 and rel[-1] == "id":
+        rel = rel[:-1]
+    return gate + "." + ".".join(rel)
+
+
+def _lab_delete_also(store, deleted, info: dict | None = None) -> list[str]:
+    """What must be deleted TOGETHER with *deleted* (a refused delete's paths)
+    so that no by-name op and no lab gate field is left behind broken
+    (docs/218 open issue, w8: the Pulses page's refusal names them and offers
+    them in one batch, like the Json Tree). The union of what the lab check
+    itself named (``info["delete_also"]``: ops left dangling or orphaned) and
+    the closure over the lab watch map, repeated until nothing new is added:
+
+    * an op whose tracked field's pointer chain the deletes cut goes
+      (``cut_by``);
+    * an op a gate plays BY NAME whose name-holding gate field goes
+      (``orphans_under``);
+    * an op being deleted that a gate plays by name: the gate field holding
+      that name goes -- the gate stops playing it;
+    * a gate field going that the env's own schema says is required (the
+      gate's inline control pulse, or the field holding a name): the whole
+      gate goes -- a gate cannot exist without it.
+
+    Nothing here is a verdict: the batch these paths ride in is checked again
+    as a whole by the same lab check, and refused if it still breaks the chip.
+    Returned folded (no path under another), without *deleted* and anything
+    under them; [] when the watch map cannot be built."""
+    from quam_state_manager.core import lab_watch
+    base = [p for p in (deleted or ()) if isinstance(p, str) and p]
+    named = [p for p in ((info or {}).get("delete_also") or ()) if isinstance(p, str)]
+    try:
+        watch = lab_watch.watch_for(store)
+    except Exception:  # noqa: BLE001 -- only what the check named
+        watch = None
+    got = _fold_paths(base + named)
+    for _round in range(16 if watch else 0):
+        add: list = []
+        for s in got:
+            add.extend(op for op, _f, _k in watch.cut_by(s, deleting=True))
+            add.extend(watch.orphans_under(s))
+            # a required field of a lab gate going (the pulse itself may be
+            # one: the gate's inline control pulse) takes the gate with it
+            gate, _sep, field = s.rpartition(".")
+            if gate in watch.macros and _lab_field_required(store, gate, field):
+                add.append(gate)
+        for op, holders in watch.named_by.items():
+            if not _under_any(op, got):
+                continue
+            for h in sorted(holders):
+                if not _under_any(h, got):
+                    add.append(_lab_holder_goes(watch, h))
+        new = [a for a in dict.fromkeys(add) if a and not _under_any(a, got)]
+        if not new:
+            break
+        got = _fold_paths(got + new)
+    gates = set(watch.macros) if watch else set()
+
+    def rank(p):   # gates, then gate fields, then ops -- how the list reads
+        return (0 if p in gates else 1 if any(p.startswith(g + ".") for g in gates)
+                else 2, p)
+    return sorted((p for p in got if not _under_any(p, base)), key=rank)
+
+
 #: a write that REMOVES the key (``/field/delete``, a batch delete row)
 _LAB_DELETE = object()
 
@@ -19005,7 +19116,7 @@ def api_pulse_delete():
         if force or not played:
             _lab = _lab_write_refusal(store, [(path, _LAB_DELETE)], info=_lab_info)
             if _lab:
-                return _lab_edit_refused(_lab[0])
+                return _pulse_delete_refused(store, path, _lab[0], _lab_info)
         # Check-and-delete under one lock hold so a concurrent edit can't add
         # an inbound pointer between the used_by check and the pop.
         with store._lock:
@@ -19033,6 +19144,95 @@ def api_pulse_delete():
         note += f" — {len(referrers)} reference(s) now dangle"
     detail = render_template("_status.html", message=note, level="success")
     return _lab_toast(_pulse_mutation_response(detail))
+
+
+def _lab_delete_label(store, also) -> str:
+    """The offer's button text for *also* (``lab_delete_label`` on the Json
+    Tree's refusal: its old "N ops" miscounted a gate field or a gate)."""
+    from quam_state_manager.core import lab_watch
+    try:
+        gates = set(lab_watch.watch_for(store).macros)
+    except Exception:  # noqa: BLE001 -- wording only
+        gates = set()
+    return _together_label([
+        "gate" if p in gates else "field"
+        if any(p.startswith(g + ".") for g in gates) else "op" for p in also])
+
+
+def _together_label(kinds: list[str]) -> str:
+    """"Delete together with 2 ops and 1 gate field" from the roles' kinds."""
+    parts = []
+    for kind, one, many in (("gate", "gate", "gates"),
+                            ("field", "gate field", "gate fields"),
+                            ("op", "op", "ops")):
+        n = kinds.count(kind)
+        if n:
+            parts.append(f"{n} {one if n == 1 else many}")
+    return "Delete together with " + " and ".join(parts)
+
+
+def _pulse_delete_refused(store, path: str, message: str, info: dict):
+    """A lab refusal of a Pulses-page delete (docs/218 open issue, w8): the
+    refusal in place, in the delete step it came from, with the one way
+    through when there is one -- everything :func:`_lab_delete_also` says
+    must go with it, deleted in ONE /field/edit-batch (one Ctrl+Z) that the
+    same lab check asks again as a whole. The Json Tree offers the same set
+    (its /field/delete refusal carries it as ``lab_delete_also``).
+
+    400, retargeted into the detail's ``#pulse-delete-result`` slot (app.js
+    lets exactly this body swap there; any other 4xx stays a toast)."""
+    from quam_state_manager.core import lab_watch
+    also = _lab_delete_also(store, [path], info)
+    try:
+        watch = lab_watch.watch_for(store)
+    except Exception:  # noqa: BLE001 -- roles are wording only
+        watch = None
+    gates = set(watch.macros) if watch else set()
+    together = [path] + also
+    cut: dict[str, list] = {}
+    if watch:
+        for s in together:
+            for op, field, _k in watch.cut_by(s, deleting=True):
+                if field not in cut.setdefault(op, []):
+                    cut[op].append(field)
+    rows = []
+    for p in also:
+        cls = str(_qclass_at(store, p)).rsplit(".", 1)[-1]
+        holders = sorted(h for h in ((watch.named_by.get(p) if watch else None) or ())
+                         if _under_any(h, together))
+        if p in gates:
+            kind, role = "gate", (f"the gate {p.rsplit('.', 1)[-1]} ({cls}): "
+                                  "it cannot exist without the field that goes")
+        elif any(p.startswith(g_ + ".") for g_ in gates):
+            plays = sorted(op for op, hs in watch.named_by.items()
+                           if _under_any(op, together)
+                           and any(_under_any(h, [p]) for h in hs))
+            kind = "field"
+            if plays:
+                role = (f"the gate field that plays {', '.join(plays[:2])} by "
+                        "name: the gate stops playing it")
+            elif cut.get(p):
+                role = (f"a pulse of the gate ({cls}): its {', '.join(cut[p][:5])} "
+                        "would point at nothing")
+            else:
+                role = f"a field of the gate ({cls})"
+        elif holders:
+            kind, role = "op", (f"{cls}, played by name by {', '.join(holders[:3])}"
+                                ", which goes")
+        elif cut.get(p):
+            kind, role = "op", (f"{cls}: its {', '.join(cut[p][:5])} would "
+                                "point at nothing")
+        else:
+            kind, role = "op", cls
+        rows.append({"path": p, "kind": kind, "role": role})
+    html = render_template(
+        "_pulse_delete_refused.html", path=path,
+        message=_lab_refusal_text(message), also=rows, together=together,
+        label=_together_label([r["kind"] for r in rows]) if rows else "")
+    resp = make_response(html, 400)
+    resp.headers["HX-Retarget"] = "#pulse-delete-result"
+    resp.headers["HX-Reswap"] = "innerHTML"
+    return resp
 
 
 @bp.route("/api/pulse/duplicate", methods=["POST"])
