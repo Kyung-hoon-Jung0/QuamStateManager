@@ -1,8 +1,7 @@
-# docs/(w9) — The lab-code worker starts before the first lab check; each project remembers its Python env
+# docs/228 — The lab-code worker starts before the first lab check; each project remembers its Python env
 
 2026-09-28, branch `w9/labwarm` (base `91c8aae` = origin/main after w8), worktree
-`D:\work\sm-w9-labwarm`. **Doc number to be assigned at integration** (other w9 branches
-run in parallel). Chips: krs5 (rig copy of 260907_KRS_5Q) and big30x; lab env KRISS_CZ.
+`D:\work\sm-w9-labwarm`. Numbered docs/228 at integration (integ/w9, docs/227 is the combined w9 record). Chips: krs5 (rig copy of 260907_KRS_5Q) and big30x; lab env KRISS_CZ.
 Everything measured by the implementer on a machine at 60-85 % CPU from other agents'
 work (Windows `% Processor Time`, sampled before each run): absolute seconds are
 inflated; the A/B pairs were interleaved sample by sample on the same rig, same port,
