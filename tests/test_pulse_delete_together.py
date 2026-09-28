@@ -39,6 +39,12 @@ def _together(r) -> list[str]:
     return json.loads(unescape(m.group(1)))
 
 
+def _dt(c, main, paths, **extra):
+    """w9/pulsegate: the offer's button posts the Pulses page's own door."""
+    return c.post("/api/pulse/delete-together",
+                  json={"path": main, "paths": list(paths), "group": "new", **extra})
+
+
 def _refused(c, path):
     r = c.post("/api/pulse/delete", data={"path": path, "force": "1"})
     assert r.status_code == 400, r.data[:400]
@@ -110,8 +116,7 @@ class TestTheRefusalNamesWhatGoesTogether:
         _required_manifest(monkeypatch, c)
         r = _refused(c, SLOT_C)
         assert _together(r) == [SLOT_C, G, OP_C, OP_T]
-        r = c.post("/field/edit-batch", json={"updates": [
-            {"dot_path": p, "delete": True} for p in _together(r)], "group": "new"})
+        r = _dt(c, SLOT_C, _together(r))
         assert r.status_code == 200, r.data[:300]
         assert "czl" not in _v(c, "qubit_pairs.q1-q2.macros")
 
@@ -121,23 +126,38 @@ class TestTheRefusalNamesWhatGoesTogether:
         r = _refused(c, OP_C)
         assert _together(r) == [OP_C, SLOT_C]
         # the batch still breaks the gate: refused as a whole, nothing written
-        r = c.post("/field/edit-batch", json={"updates": [
-            {"dot_path": p, "delete": True} for p in (OP_C, SLOT_C)], "group": "new"})
+        r = _dt(c, OP_C, (OP_C, SLOT_C))
         assert r.status_code == 400 and r.get_json()["lab_refused"] is True, r.data[:300]
         assert "czl_q1" in _v(c, "qubits.q1.z.operations") and "flux_pulse_qubit" in _v(c, G)
 
     def test_the_json_tree_names_the_same_set(self, lab):
         """One function for every door: /field/delete's lab_delete_also is the
-        Pulses page's list without the pulse itself."""
+        Pulses page's list without the refused path itself.
+
+        w9/pulsegate: the tree no longer deletes a pulse at all (an op, a gate
+        slot: refused before the lab is asked); a gate FIELD it may delete,
+        and when what must go with it holds a pulse, the offer is a link to
+        the same offer on the Pulses page."""
         c, fake = lab
         _by_name(_store(c))
-        j = c.post("/field/delete", data={"dot_path": OP_T}).get_json()
-        assert j["lab_refused"] is True and j["lab_delete_also"] == [SLOT_T]
-        # the tree's button said "1 op" for a gate field: the server names it
-        assert j["lab_delete_label"] == "Delete together with 1 gate field"
-        j = c.post("/field/delete", data={"dot_path": SLOT_T}).get_json()
-        assert j["lab_delete_also"] == [OP_T]
-        assert j["lab_delete_label"] == "Delete together with 1 op"
+        n0 = len(fake.gate_calls)
+        for pulse in (OP_T, SLOT_T):
+            r = c.post("/field/delete", data={"dot_path": pulse})
+            j = r.get_json()
+            assert r.status_code == 409 and j["error_kind"] == "pulse_structure", r.data[:300]
+            assert "Pulses page" in j["error"] and j["pulses_page"].startswith("/pulses/goto?path=")
+        assert len(fake.gate_calls) == n0              # refused before any lab check
+        # the gate itself is not a pulse: the tree may delete it, and the lab
+        # names the by-name ops that must go with it
+        j = c.post("/field/delete", data={"dot_path": G}).get_json()
+        assert j["lab_refused"] is True and OP_T in j["lab_delete_also"], j
+        url = j["lab_delete_pulses_url"]
+        assert url.startswith("/pulses/goto?path=") and "together=" in url, url
+        # the link lands on the pulse with its delete step's offer for idf
+        r = c.get(url)
+        assert r.status_code == 302, r.data[:200]
+        loc = r.headers["Location"]
+        assert "pulse=" in loc and "together=" in loc, loc
 
 
 class TestTheOfferGoesThroughAsOneBatch:
@@ -147,9 +167,13 @@ class TestTheOfferGoesThroughAsOneBatch:
         _by_name(st)
         before = json.dumps(st.merged, sort_keys=True)
         together = _together(_refused(c, SLOT_T))
+        # the generic batch door refuses it (w9/pulsegate) -- nothing written
         r = c.post("/field/edit-batch", json={
             "updates": [{"dot_path": p, "delete": True} for p in together],
             "group": "new"})
+        assert r.status_code == 409 and r.get_json()["error_kind"] == "pulse_structure"
+        assert "flux_pulse_target" in _v(c, G)
+        r = _dt(c, SLOT_T, together)
         assert r.status_code == 200 and r.get_json()["ok"], r.data[:400]
         assert "flux_pulse_target" not in _v(c, G)
         assert "czl_q2t" not in _v(c, "qubits.q2.z.operations")
@@ -166,9 +190,7 @@ class TestTheOfferGoesThroughAsOneBatch:
         _required_manifest(monkeypatch, c)
         before = json.dumps(st.merged, sort_keys=True)
         together = _together(_refused(c, OP_C))
-        r = c.post("/field/edit-batch", json={
-            "updates": [{"dot_path": p, "delete": True} for p in together],
-            "group": "new"})
+        r = _dt(c, OP_C, together)
         assert r.status_code == 200, r.data[:400]
         assert "czl" not in _v(c, "qubit_pairs.q1-q2.macros")
         assert c.post("/undo").status_code == 200
@@ -179,10 +201,16 @@ class TestTheOfferGoesThroughAsOneBatch:
         refusal names the field -- the offer widens instead of dead-ending."""
         c, fake = lab
         _by_name(_store(c))
-        r = c.post("/field/edit-batch", json={"updates": [
-            {"dot_path": OP_T, "delete": True}], "group": "new"})
+        # a set of one is not a Delete together; the op with a stranger that
+        # does not fix it is refused as a whole, naming the gate field
+        free = "qubits.q2.z.operations.free"
+        st = _store(c)
+        st.state["qubits"]["q2"]["z"]["operations"]["free"] = {
+            "__class__": "quam.P", "amplitude": 0.1}
+        st.structure_seq += 1
+        r = _dt(c, OP_T, (OP_T, free))
         j = r.get_json()
-        assert r.status_code == 400 and j["lab_refused"] is True
+        assert r.status_code == 400 and j["lab_refused"] is True, r.data[:300]
         assert j["lab_delete_also"] == [SLOT_T]
 
     def test_a_worker_that_cannot_run_never_blocks_and_says_unchecked(self, lab, monkeypatch):
@@ -191,9 +219,7 @@ class TestTheOfferGoesThroughAsOneBatch:
         together = _together(_refused(c, SLOT_T))
         from quam_state_manager.core import config_generator
         monkeypatch.setattr(config_generator, "get_selected_env", lambda inst: None)
-        r = c.post("/field/edit-batch", json={
-            "updates": [{"dot_path": p, "delete": True} for p in together],
-            "group": "new"})
+        r = _dt(c, SLOT_T, together)
         j = r.get_json()
         assert r.status_code == 200 and j["ok"], r.data[:300]
         assert "NOT checked" in j["warning"] and "written unchecked" in j["warning"]
@@ -208,9 +234,7 @@ class TestTheOfferGoesThroughAsOneBatch:
         def boom(*a, **k):
             raise TimeoutError("the lab worker did not answer in 90 s")
         monkeypatch.setattr(lab_waveform, "draw", boom)
-        r = c.post("/field/edit-batch", json={
-            "updates": [{"dot_path": p, "delete": True} for p in together],
-            "group": "new"})
+        r = _dt(c, SLOT_T, together)
         j = r.get_json()
         assert r.status_code == 200 and j["ok"], r.data[:300]
         assert "NOT checked" in j["warning"] and "did not answer" in j["warning"]

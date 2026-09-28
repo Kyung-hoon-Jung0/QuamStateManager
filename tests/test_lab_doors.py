@@ -286,19 +286,27 @@ class TestTheTreePlusIsADoorToo:
         assert "padding" not in _v(c, f"{G}.flux_pulse_qubit")
 
     def test_a_whole_new_lab_class_dict_is_drawn_by_its_class(self, lab):
+        """w9/pulsegate: a whole new pulse is created on the Pulses page only
+        -- the tree's ＋ is refused before the lab is asked, and the Pulses
+        page's create asks the class's own code."""
         c, fake = lab
         body = {"__class__": LAB, "amplitude": 0.1, "flat_length": 3}
         r = c.post("/field/create", data={
             "dot_path": "qubits.q2.z.operations.qa_bad", "key": "qa_bad",
             "value": json.dumps(body), "expect_type": "dict"})
-        assert r.status_code == 400, r.data[:300]
-        assert "must be even" in r.get_json()["error"]
+        assert r.status_code == 409 and r.get_json()["error_kind"] == "pulse_structure"
+        assert fake.calls == [] and "qa_bad" not in _v(c, "qubits.q2.z.operations")
+        form = {"target_kind": "qubit", "qubit": "q2", "channel": "z",
+                "pulse_type": "NZPulse", "qclass": LAB, "amplitude": "0.1",
+                "padding": "4"}
+        r = c.post("/api/pulse/create", data={**form, "op_name": "qa_bad",
+                                              "flat_length": "3"})
+        assert r.status_code == 400 and b"must be even" in r.data, r.data[:300]
         assert "qa_bad" not in _v(c, "qubits.q2.z.operations")
-        body["flat_length"] = 4
-        r = c.post("/field/create", data={
-            "dot_path": "qubits.q2.z.operations.qa_ok", "key": "qa_ok",
-            "value": json.dumps(body), "expect_type": "dict"})
+        r = c.post("/api/pulse/create", data={**form, "op_name": "qa_ok",
+                                              "flat_length": "4"})
         assert r.status_code == 200, r.data[:300]
+        assert "qa_ok" in _v(c, "qubits.q2.z.operations")
 
 
 # ------------------------------------------------------------------ MAJOR 2
@@ -333,12 +341,23 @@ class TestAnEnvThatCannotImportTheClassNeverBlocks:
             not q.startswith("@macro:") for _py, items in fake.calls for q, _p in items)
 
     def test_a_create_goes_through_with_a_warning(self, lab):
+        """w9/pulsegate: the create door for a pulse is the Pulses page."""
         c, fake = lab
         fake.unavailable = True
+        r = c.post("/api/pulse/create", data={
+            "target_kind": "qubit", "qubit": "q2", "channel": "z", "op_name": "qa_new",
+            "pulse_type": "NZPulse", "qclass": LAB, "amplitude": "0.1",
+            "flat_length": "3", "padding": "4"})
+        assert r.status_code == 200, r.data[:300]
+        assert ENV in json.loads(r.headers["HX-Trigger"])["sm:toast"]["message"]
+        # a field re-created inside an existing pulse is not a structural
+        # edit: the tree's ＋ still goes through (with the same warning)
+        st = _store(c)
+        del st.state["qubits"]["q2"]["z"]["operations"]["qa_new"]["padding"]
+        st.structure_seq += 1
         r = c.post("/field/create", data={
-            "dot_path": "qubits.q2.z.operations.qa_new", "key": "qa_new",
-            "value": json.dumps({"__class__": LAB, "amplitude": 0.1, "flat_length": 3}),
-            "expect_type": "dict"})
+            "dot_path": "qubits.q2.z.operations.qa_new.padding", "key": "padding",
+            "value": "4"})
         assert r.status_code == 200, r.data[:300]
         assert ENV in r.get_json()["warning"]
 
@@ -396,9 +415,16 @@ class TestTheLabGateIsAskedToo:
         # generate_config() would fail for the whole chip; together it may
         r = c.post("/field/delete", data={"dot_path": G})
         assert r.status_code == 400 and "czl_q1" in r.get_json()["error"], r.data[:300]
+        # w9/pulsegate: the set holds a pulse (czl_q1) -- the tree's offer is
+        # a link to the Pulses page, whose own door deletes it together
+        j = r.get_json()
+        assert "qubits.q1.z.operations.czl_q1" in j["lab_delete_also"]
+        assert "together=" in j["lab_delete_pulses_url"]
+        paths = [G, "qubits.q1.z.operations.czl_q1"]
         r = c.post("/field/edit-batch", json={"updates": [
-            {"dot_path": G, "delete": True},
-            {"dot_path": "qubits.q1.z.operations.czl_q1", "delete": True}]})
+            {"dot_path": p, "delete": True} for p in paths]})
+        assert r.status_code == 409 and r.get_json()["error_kind"] == "pulse_structure"
+        r = c.post("/api/pulse/delete-together", json={"path": G, "paths": paths})
         assert r.status_code == 200, r.data[:300]
         assert "czl" not in _v(c, f"qubit_pairs.{PAIR}.macros")
 
@@ -634,8 +660,11 @@ class TestAnOpTheGatePlaysByNameIsOnItsRoute:
     def test_every_door_that_removes_or_renames_it_asks_the_gate(self, lab):
         c, fake = lab
         _by_name(_store(c))
+        # w9/pulsegate: the Json Tree is no longer a door for it at all
         r = c.post("/field/delete", data={"dot_path": OP_C})
-        assert r.status_code == 400 and "not found" in r.get_json()["error"], r.data[:300]
+        assert r.status_code == 409 and r.get_json()["error_kind"] == "pulse_structure"
+        r = c.post("/api/pulse/delete", data={"path": OP_C, "force": "1"})
+        assert r.status_code == 400 and b"not found" in r.data, r.data[:300]
         r = c.post("/api/pulse/rename", data={"path": OP_C, "new_name": "czl_renamed"})
         assert r.status_code == 400 and b"not found" in r.data, r.data[:300]
         r = c.post("/api/pulse/delete", data={"path": OP_T})
@@ -774,10 +803,10 @@ class TestALabCheckThatCannotRunSaysSo:
         assert "NOT checked against" in w and f"your gate czl ({G})" in w, w
         assert "your class NZPulse" in w, w
         assert _v(c, FL_C) == 40
-        # the by-name op delete: written, and said
-        r = c.post("/field/delete", data={"dot_path": OP_T})
+        # the by-name op delete (the Pulses page's door): written, and said
+        r = c.post("/api/pulse/delete", data={"path": OP_T, "force": "1"})
         assert r.status_code == 200, r.data[:300]
-        assert "NOT checked against" in (r.get_json().get("warning") or "")
+        assert "NOT checked against" in json.loads(r.headers["HX-Trigger"])["sm:toast"]["message"]
         # the pair inspector's toast carries it too
         r = c.post(f"/pair/{PAIR}/edit", data={"dot_path": FL_T, "value": "42"})
         assert r.status_code == 200, r.data[:300]
@@ -894,8 +923,10 @@ class TestADeleteThatBreaksGenerateConfigIsRefused:
         assert OP_C in j["error"] and OP_T in j["error"]
         assert "played by name by" in j["error"]
         assert set(j["lab_delete_also"]) >= {OP_C, OP_T}
+        assert "together=" in j["lab_delete_pulses_url"]      # w9: a link, not a batch
+        # w9/pulsegate: the gate's inline pulse is a pulse -- the tree refuses
         r = c.post("/field/delete", data={"dot_path": f"{G}.flux_pulse_target"})
-        assert r.status_code == 400 and OP_T in r.get_json()["error"], r.data[:300]
+        assert r.status_code == 409 and r.get_json()["error_kind"] == "pulse_structure"
         r = c.post("/api/pulse/delete", data={"path": f"{G}.flux_pulse_target",
                                               "force": "1"})
         assert r.status_code == 400 and b"generate_config()" in r.data, r.data[:400]
@@ -929,8 +960,9 @@ class TestADeleteThatBreaksGenerateConfigIsRefused:
         st.state["qubits"]["q1"]["xy"]["operations"]["plain"] = {
             "__class__": "quam.P", "amplitude": f"#/{G.replace('.', '/')}/flux_pulse_qubit/amplitude"}
         st.structure_seq += 1
-        r = c.post("/field/edit-batch", json={"updates": [
-            {"dot_path": p, "delete": True} for p in (G, OP_C, OP_T, plain)]})
+        # w9/pulsegate: through the Pulses page's own door
+        r = c.post("/api/pulse/delete-together",
+                   json={"path": G, "paths": [G, OP_C, OP_T, plain]})
         assert r.status_code == 200, r.data[:300]
         assert "czl" not in _v(c, f"qubit_pairs.{PAIR}.macros")
         assert "plain" not in _v(c, "qubits.q1.xy.operations")
@@ -1020,8 +1052,9 @@ class TestASpectatorPulseIsOnTheRoute:
         w = lab_watch.watch_for(st)
         assert w.macros_for("qubits.q3.z.operations.park") == {G}
         assert w.macros_for(f"{G}.spectator_qubits.q3") == {G}
-        r = c.post("/field/delete", data={"dot_path": "qubits.q3.z.operations.park"})
-        assert r.status_code == 400 and "no attribute 'id'" in r.get_json()["error"], r.data[:300]
+        r = c.post("/api/pulse/delete", data={"path": "qubits.q3.z.operations.park",
+                                              "force": "1"})
+        assert r.status_code == 400 and b"no attribute" in r.data, r.data[:300]
         assert "q3" in fake.gate_calls[-1]["contents"]["qubits"]
 
     def test_an_inline_spectator_pulse_played_by_its_id(self, lab):
@@ -1031,8 +1064,9 @@ class TestASpectatorPulseIsOnTheRoute:
         w = lab_watch.watch_for(st)
         assert w.named_by["qubits.q3.z.operations.park"] == {
             f"{G}.spectator_qubits_control.q3.id"}
-        r = c.post("/field/delete", data={"dot_path": "qubits.q3.z.operations.park"})
-        assert r.status_code == 400 and "not found" in r.get_json()["error"], r.data[:300]
+        r = c.post("/api/pulse/delete", data={"path": "qubits.q3.z.operations.park",
+                                              "force": "1"})
+        assert r.status_code == 400 and b"not found" in r.data, r.data[:300]
         r = c.post("/api/pulse/rename", data={"path": "qubits.q3.z.operations.park",
                                               "new_name": "park2"})
         assert r.status_code == 400, r.data[:300]

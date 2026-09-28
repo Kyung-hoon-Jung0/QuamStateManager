@@ -19,7 +19,7 @@
    pane. `_pulsesSyncUrl` writes ?pulse= as it is opened; this opens it again,
    the same way the sidebar's "Add pulse" entry opens the create form. #}
 <div id="pulse-open-loader"
-     hx-get="/pulse/detail?path={{ open_pulse | urlencode }}"
+     hx-get="/pulse/detail?path={{ open_pulse | urlencode }}{% if open_together %}&amp;together={{ open_together | urlencode }}{% endif %}"
      hx-target="#inspector-pane" hx-swap="innerHTML"
      hx-trigger="load" style="display:none"></div>
 {% endif %}

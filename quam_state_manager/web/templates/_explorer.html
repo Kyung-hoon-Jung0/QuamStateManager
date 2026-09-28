@@ -81,6 +81,11 @@
     // the write doors will refuse never opens an edit box in the first place.
     window._treeReadOnly = {{ read_only_policy | default('null') | script_json }};
 
+    // w9/pulsegate: pulses are added, removed and renamed on the Pulses page
+    // -- the tree offers no ＋/✕ on a pulse or an operations dict, and says
+    // where instead (core.pulse_structure.tree_payload).
+    window._treePulseGate = {{ pulse_gate | default('null') | script_json }};
+
     renderJsonTree("explorer-tree-state", stateData, { defaultDepth: 1, crud: true });
     renderJsonTree("explorer-tree-wiring", wiringData, { defaultDepth: 1, crud: true });
     // JT-06: a search with no hits on one tab names the other tab's hits, and

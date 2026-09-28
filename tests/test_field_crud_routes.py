@@ -39,18 +39,30 @@ class TestCreate:
 
     def test_subtree_create_json(self, client):
         r = client.post("/field/create", data={
+            "dot_path": "qubits.qA1.extras.calib_block",
+            "value": '{"when": "today", "points": [1, 2, 3]}'})
+        assert r.status_code == 200
+        # w9/pulsegate: a new key in an operations dict IS a new pulse --
+        # created on the Pulses page only
+        r = client.post("/field/create", data={
             "dot_path": "qubits.qA1.xy.operations.y90",
             "value": '{"__class__": "q.Pulse", "amplitude": 0.05, "length": 20}'})
-        assert r.status_code == 200
+        assert r.status_code == 409 and r.get_json()["error_kind"] == "pulse_structure"
 
     def test_env_schema_enforced_via_modifier_not_route(self, client):
-        # a created pulse with a wrong-typed field is blocked by the MODIFIER
-        # gate (check_subtree), not any route-level duplicate
+        # a created subtree with a wrong-typed field (its embedded __class__
+        # anchors the check) is blocked by the MODIFIER gate (check_subtree),
+        # not any route-level duplicate. (w9: a CHANNEL -- a new pulse-class
+        # dict is a new pulse, refused before any type is judged.)
         r = client.post("/field/create", data={
-            "dot_path": "qubits.qA1.xy.operations.bad",
-            "value": '{"__class__": "q.Pulse", "amplitude": "oops", "length": 20}'})
+            "dot_path": "qubits.qA1.xy2",
+            "value": '{"__class__": "q.Channel", "intermediate_frequency": "oops"}'})
         assert r.status_code == 400
         assert r.get_json()["error_kind"] == "type_mismatch"
+        r = client.post("/field/create", data={
+            "dot_path": "qubits.qA1.xy.bad_block",
+            "value": '{"__class__": "q.Pulse", "amplitude": "oops", "length": 20}'})
+        assert r.status_code == 409 and r.get_json()["error_kind"] == "pulse_structure"
 
     def test_existing_key_conflict(self, client):
         r = client.post("/field/create", data={
@@ -186,12 +198,19 @@ class TestCreate:
 
 class TestDelete:
     def test_delete_reports_counts(self, client):
+        # w9/pulsegate: a pulse is deleted on the Pulses page -- refused here
         r = client.post("/field/delete", data={
             "dot_path": "qubits.qA1.xy.operations.x180"})
+        assert r.status_code == 409 and r.get_json()["error_kind"] == "pulse_structure"
+        # a non-pulse subtree another field points into
+        assert client.post("/field/create", data={
+            "dot_path": "qubits.qA1.if_link",
+            "value": "#/qubits/qA1/xy/intermediate_frequency"}).status_code == 200
+        r = client.post("/field/delete", data={"dot_path": "qubits.qA1.xy"})
         j = r.get_json()
-        assert r.status_code == 200 and j["ok"] is True
+        assert r.status_code == 200 and j["ok"] is True, j
         assert j["removed_leaves"] >= 2
-        # the alias pointer "#./x180" now dangles and is reported
+        # the pointer into it now dangles and is reported
         assert j["dangling_refs"] >= 1
 
     def test_delete_then_undo_restores(self, client):

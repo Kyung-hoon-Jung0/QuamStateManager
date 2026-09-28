@@ -10337,6 +10337,13 @@ window.clearDetailPanelSearch = function(btnEl) {
                 if (!d.ok) {
                     b.disabled = false;
                     el.firstChild.textContent = "✗ " + (d.error || "not deleted") + " ";
+                    // w9/pulsegate: the widened set holds a pulse -- the way on
+                    if (d.lab_delete_pulses_url || d.pulses_page) {
+                        b.remove();
+                        _appendPulsesLink(el, d.lab_delete_pulses_url || d.pulses_page,
+                            d.lab_delete_pulses_url ? "Delete together on the Pulses page"
+                                                    : "Open the Pulses page");
+                    }
                     return;
                 }
                 if (d.tray_html) { _swapPendingTray(d.tray_html); window._restoreTrayState && window._restoreTrayState(); }
@@ -10965,7 +10972,11 @@ window.clearDetailPanelSearch = function(btnEl) {
             })
             .then(function(r) { return r.json(); })
             .then(function(data) {
-                if (!data.ok) { err.hidden = false; err.textContent = data.error || "Edit rejected"; save.disabled = false; return; }
+                if (!data.ok) {
+                    err.hidden = false; err.textContent = data.error || "Edit rejected";
+                    if (data.pulses_page) _appendPulsesLink(err, data.pulses_page, "Open the Pulses page");
+                    save.disabled = false; return;
+                }
                 close();
                 var fresh = _rebuildNode(node, parsed);
                 if (fresh) {
@@ -11321,6 +11332,73 @@ window.clearDetailPanelSearch = function(btnEl) {
         } else { done(_copyClipboardFallback(txt)); }
     }
 
+    /* w9/pulsegate (user decision 2026-09-28): a pulse is added, deleted,
+       renamed or copied ONLY on the Pulses page -- it checks what the pulse
+       is used by and asks the lab's own code. The tree keeps every VALUE edit
+       inside a pulse; on a pulse object and on an `operations` dict (a new
+       key there IS a new pulse) it offers no ＋/✕ and says where instead.
+       The rule is the server's (core.pulse_structure), shipped as
+       window._treePulseGate: the structural part (an `operations` entry, a
+       pair gate slot) plus the rows the Pulses page found by shape. No
+       payload (a dataset tree, a harness) = no opinion; the write doors
+       refuse either way. */
+    function _pgIsPulse(segs, value, pg) {
+        var n = segs.length;
+        if (n >= 2 && segs[n - 2] === "operations") return true;
+        if (n === 5 && segs[0] === "qubit_pairs" && segs[2] === "macros"
+            && (pg.gate_slots || []).indexOf(segs[4]) >= 0 && value !== null) return true;
+        return !!pg._rowSet[segs.join(".")];
+    }
+    function _pulseGateKind(path, value) {
+        var pg = window._treePulseGate;
+        if (!pg || !path) return null;
+        if (!pg._rowSet) {
+            pg._rowSet = {};
+            (pg.rows || []).forEach(function (p) { pg._rowSet[p] = 1; });
+        }
+        var segs = String(path).split(".");
+        if (segs.length < 2 || (pg.skip_tops || []).indexOf(segs[0]) >= 0) return null;
+        for (var i = 2; i < segs.length; i++) {       // inside a pulse: a field
+            if (_pgIsPulse(segs.slice(0, i), undefined, pg)) return null;
+        }
+        if (_pgIsPulse(segs, value, pg)) return "pulse";
+        if (segs[segs.length - 1] === "operations" && value !== null
+            && typeof value === "object" && !Array.isArray(value)) return "ops";
+        return null;
+    }
+    window._pulseGateKind = _pulseGateKind;
+    function _pulsesPageLink(url, text) {
+        var a = document.createElement("a");
+        a.className = "tree-pulses-link";
+        a.href = url;
+        a.textContent = text;
+        a.onclick = function (e) {
+            e.stopPropagation();
+            // a new tab / window keeps the browser's own way (a plain GET
+            // redirects); a click stays in the app: /pulses/goto answers
+            // HX-Location, the table pane swaps, the real address is pushed
+            if (e.ctrlKey || e.metaKey || e.shiftKey || e.button === 1) return;
+            if (!window.htmx) return;
+            e.preventDefault();
+            window.htmx.ajax("GET", url, { target: "#table-pane", swap: "innerHTML" });
+        };
+        return a;
+    }
+    function _appendPulsesLink(el, url, text) {
+        if (!el || !url || el.querySelector(".tree-pulses-link")) return;
+        el.appendChild(document.createTextNode(" "));
+        el.appendChild(_pulsesPageLink(url, text));
+    }
+    function _pulsesPageNote(path) {
+        var pg = window._treePulseGate || {};
+        var s = document.createElement("span");
+        s.className = "tree-pulse-gate";
+        s.appendChild(document.createTextNode("Pulses are added, removed and renamed on the "));
+        s.appendChild(_pulsesPageLink((pg.goto || "/pulses/goto") + "?path="
+                                      + encodeURIComponent(path), "Pulses page"));
+        return s;
+    }
+
     function _buildRowActions(container, node, row) {
         var m = node._meta, v = node._value;
         var parent = _parentInfo(node);
@@ -11347,7 +11425,9 @@ window.clearDetailPanelSearch = function(btnEl) {
             "tree-act-copy", function (b) { _copyKeyValue(node, b); }));
 
         if (!inList && !identity) {          // elements/identity: value-edit + copy only
-            if (isDict) {
+            // w9/pulsegate: a pulse / an operations dict -- no ＋/✕, the way
+            var pgKind = _pulseGateKind(m.path, v);
+            if (isDict && !pgKind) {
                 span.appendChild(_mkBtn("＋", "Add a key under " + (m.key || "root"),
                     "tree-act-add", function () { _openAddKey(container, node); }));
             }
@@ -11355,10 +11435,11 @@ window.clearDetailPanelSearch = function(btnEl) {
                 span.appendChild(_mkBtn("⚙", "Expected type of " + m.key,
                     "tree-act-type", function (b) { _openTypePicker(node, row, b); }));
             }
-            if (!topLevel) {
+            if (!topLevel && !pgKind) {
                 span.appendChild(_mkBtn("✕", "Delete " + m.key,
                     "tree-act-del", function () { _confirmDelete(container, node, row, span); }));
             }
+            if (pgKind) span.appendChild(_pulsesPageNote(m.path));
         }
         if (span.children.length) row.appendChild(span);
         // docs/141 4w: the ? (Config Manual) sits RIGHT of the action group, and
@@ -11474,6 +11555,7 @@ window.clearDetailPanelSearch = function(btnEl) {
                 if (!d.ok) {
                     err.textContent = d.error || "create failed";
                     if (d.chip_mismatch) _appendReloadBtn(err);
+                    if (d.pulses_page) _appendPulsesLink(err, d.pulses_page, "Open the Pulses page");
                     return;
                 }
                 // pull the committed value (server truth) and rebuild this node
@@ -11547,8 +11629,16 @@ window.clearDetailPanelSearch = function(btnEl) {
                 if (!d.ok) {
                     var _ec = _showEditError(row, d.error);
                     if (d.chip_mismatch) _appendReloadBtn(_ec);
+                    if (d.pulses_page) _appendPulsesLink(_ec, d.pulses_page, "Open the Pulses page");
                     if (Array.isArray(d.lab_delete_also) && d.lab_delete_also.length) {
-                        _appendCascadeBtn(_ec, m.path, d.lab_delete_also, d.lab_delete_label);
+                        // w9/pulsegate: a set holding a pulse goes on the
+                        // Pulses page -- the same offer there, one click away
+                        if (d.lab_delete_pulses_url) {
+                            _appendPulsesLink(_ec, d.lab_delete_pulses_url,
+                                (d.lab_delete_label || "Delete together") + " on the Pulses page");
+                        } else {
+                            _appendCascadeBtn(_ec, m.path, d.lab_delete_also, d.lab_delete_label);
+                        }
                     }
                     actionsSpan.remove(); return;
                 }
@@ -16039,7 +16129,9 @@ window.reviewAccept = function (btn) {
     btn.disabled = true; btn.textContent = '…';
     fetch('/field/edit-batch', {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ updates: [{ dot_path: dotPath, value: input.value, create: isAdded }] })
+        // w9/pulsegate: take live (an EDITED value is checked like any edit)
+        body: JSON.stringify({ updates: [{ dot_path: dotPath, value: input.value, create: isAdded }],
+                               source: "live" })
     }).then(function (r) { return r.json(); }).then(function (d) {
         var row = btn.closest('.review-row, tr');
         if (d && d.ok) {
@@ -21295,7 +21387,9 @@ document.addEventListener('click', function(evt) {
         _liveFetchJson("/field/edit-batch", {
             method: "POST",
             headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ updates: [u] })
+            // w9/pulsegate: TAKE LIVE -- the server checks the value IS the
+            // live chip's before a pulse may come or go through this door
+            body: JSON.stringify({ updates: [u], source: "live" })
         }).then(function (res) {
             var d = res.data;
             if (!res.ok || !d) {
@@ -21356,7 +21450,8 @@ document.addEventListener('click', function(evt) {
         _liveFetchJson("/field/edit-batch", {
             method: "POST",
             headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ updates: [{ dot_path: dotPath, value: liveValue }] })
+            body: JSON.stringify({ updates: [{ dot_path: dotPath, value: liveValue }],
+                                   source: "live" })   // w9/pulsegate: take live
         }).then(function (res) {
             var d = res.data;
             if (!res.ok || !d) {
@@ -21656,7 +21751,7 @@ document.addEventListener('click', function(evt) {
         _liveFetchJson("/field/edit-batch", {
             method: "POST",
             headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ updates: updates, independent: true })
+            body: JSON.stringify({ updates: updates, independent: true, source: "live" })
         }).then(function (res) {
             var d = res.data;
             if (!res.ok && !(d && d.results)) {
