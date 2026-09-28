@@ -71,8 +71,31 @@ def _repo_root() -> str:
 
 
 def _sm_url() -> str:
-    """The exact origin the CSRF guard accepts -- what the MCP client sends."""
-    return request.host_url.rstrip("/")
+    """The base the spawned CLI's MCP client talks to SM through.
+
+    Root (no prefix, not behind a proxy): the exact origin the CSRF guard
+    accepts, as always. Hosted (docs/226): the CLI runs BESIDE SM, so it goes
+    straight to the port SM bound on loopback -- never back out through the
+    platform's proxy (and its login) -- with the prefix, which the tolerant
+    strip accepts; the MCP client derives its Origin from the netloc only.
+    """
+    cfg = current_app.config
+    port = cfg.get("SM_BIND_PORT")
+    if (cfg.get("SM_BEHIND_PROXY") or cfg.get("SM_URL_PREFIX")) and port:
+        return f"http://{_loopback_host(cfg.get('SM_BIND_HOST'))}:{port}{cfg.get('SM_URL_PREFIX') or ''}"
+    return request.host_url.rstrip("/") + (request.script_root or "")
+
+
+def _loopback_host(bind_host) -> str:
+    """Where a process on this machine reaches a server bound to
+    ``bind_host``: the wildcard binds (and unknown) -> 127.0.0.1; a specific
+    address -> that address (IPv6 bracketed)."""
+    h = str(bind_host or "").strip()
+    if h in ("", "0.0.0.0", "::", "[::]", "*", "localhost"):
+        return "127.0.0.1"
+    if ":" in h and not h.startswith("["):
+        return f"[{h}]"
+    return h
 
 
 def _home() -> str:

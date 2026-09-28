@@ -132,7 +132,7 @@ def journal_raw():
     chip = request.args.get("chip") or _chip_name()
     text = journal_mod.read(current_app.instance_path, chip, day)
     return render_template("_journal_raw.html", chip=chip, day=day, text=text,
-                           html=journal_mod.render(text),
+                           html=journal_mod.render(text, root=request.script_root or ""),
                            file=str(journal_mod.day_file(current_app.instance_path, chip, day)))
 
 

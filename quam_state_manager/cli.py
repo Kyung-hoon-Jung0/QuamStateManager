@@ -153,6 +153,11 @@ def _run_app(flask_app, *, host: str, port: int, debug: bool) -> None:
     there). Otherwise this runs under waitress, a production WSGI server, so
     that warning doesn't show for normal ``qsm serve``/``qsm browser`` use.
     """
+    # docs/226: the port (and address) actually bound. Behind a reverse proxy
+    # the request's Host is the public one, so the instance registry and the
+    # spawned agent CLIs need the real one from here.
+    flask_app.config["SM_BIND_PORT"] = port
+    flask_app.config["SM_BIND_HOST"] = host
     if debug:
         flask_app.run(host=host, port=port, debug=True)
         return
@@ -171,7 +176,16 @@ def _run_app(flask_app, *, host: str, port: int, debug: bool) -> None:
         # one thread in a <=25 s `/datasets/wait` long poll and four tabs
         # froze the whole UI (measured: GET / at 22.8 s). Idle-blocked
         # threads cost nothing; the route also bounds its own waiters.
-        waitress_serve(flask_app, host=host, port=port, threads=_SERVE_THREADS)
+        extra = {}
+        if flask_app.config.get("SM_BEHIND_PROXY") is True:
+            # docs/226: waitress (3.x default clear_untrusted_proxy_headers=True)
+            # DELETES X-Forwarded-For/Host/Proto/Port before the app runs, so
+            # the ProxyFix that --behind-proxy installs would never see them
+            # (measured: a host-rewriting proxy's POST was a CSRF 403). Leave
+            # them to ProxyFix -- ONE implementation, one trusted hop. Off
+            # (the default), waitress keeps scrubbing them as before.
+            extra["clear_untrusted_proxy_headers"] = False
+        waitress_serve(flask_app, host=host, port=port, threads=_SERVE_THREADS, **extra)
     except OSError as exc:
         # docs/104 #17: the friendly banner prints BEFORE the bind, so a
         # second `qsm serve` on the same port used to say "open http://..."
@@ -186,6 +200,39 @@ def _run_app(flask_app, *, host: str, port: int, debug: bool) -> None:
         raise
 
 
+def _hosting_flags(url_prefix: str, frame_ancestors: str) -> tuple[str, str]:
+    """The docs/226 hosting flags, validated -> ``(prefix, frame_ancestors)``.
+
+    Runs BEFORE ``create_app`` and before the banner: a bad value is a usage
+    error (exit 2, one line, no traceback) and nothing has started yet.
+    """
+    from quam_state_manager.web.url_prefix import normalize_prefix, validate_frame_ancestors
+    try:
+        prefix = normalize_prefix(url_prefix)
+    except ValueError as exc:
+        raise typer.BadParameter(str(exc), param_hint="--url-prefix")
+    try:
+        fa = validate_frame_ancestors(frame_ancestors)
+    except ValueError as exc:
+        raise typer.BadParameter(str(exc), param_hint="--frame-ancestors")
+    return prefix, fa
+
+
+def _hosted_app(create_app, prefix: str, behind_proxy: bool, frame_ancestors: str):
+    """``create_app`` with the validated hosting flags. Typer already folded
+    CLI > env > default into them, so they are passed verbatim (``''`` =
+    root; ``create_app`` reads the env only for ``None``). A prefix that
+    collides with an SM route is a usage error too."""
+    from quam_state_manager.web.url_prefix import PrefixCollisionError
+    try:
+        return create_app(url_prefix=prefix, behind_proxy=bool(behind_proxy),
+                          frame_ancestors=frame_ancestors)
+    except PrefixCollisionError as exc:
+        raise typer.BadParameter(
+            f"{exc.prefix} collides with SM route /{exc.segment}; choose another prefix",
+            param_hint="--url-prefix")
+
+
 # ------------------------------------------------------------------
 # serve — run the web UI in a browser
 # ------------------------------------------------------------------
@@ -196,6 +243,16 @@ def serve(
     port: int = typer.Option(5050, "--port", "-p", help="Port to serve on"),
     host: str = typer.Option("127.0.0.1", "--host", help="Host to bind to"),
     debug: bool = typer.Option(False, "--debug", help="Flask debug mode (auto-reload)"),
+    url_prefix: str = typer.Option(
+        "", "--url-prefix", envvar="SM_URL_PREFIX",
+        help="Serve the UI under this path when a reverse proxy mounts it there, e.g. /sm. Default: root."),
+    behind_proxy: bool = typer.Option(
+        False, "--behind-proxy", envvar="SM_BEHIND_PROXY",
+        help="Trust X-Forwarded-For/Proto/Host/Port/Prefix from the ONE proxy in front. "
+             "Never on by default. The proxy must overwrite these headers from clients."),
+    frame_ancestors: str = typer.Option(
+        "", "--frame-ancestors", envvar="SM_FRAME_ANCESTORS",
+        help="Extra origins allowed to embed SM in an iframe (space-separated), e.g. https://lab.example"),
 ) -> None:
     """Run the web UI in your browser at http://HOST:PORT.
 
@@ -209,8 +266,14 @@ def serve(
     # ASCII-only banner: a cp949/legacy-codepage console (Korean/Japanese
     # Windows default) can't encode an em-dash — typer.echo then raised
     # UnicodeEncodeError and  DIED before binding the port.
-    typer.echo(f"QUAM State Manager - open  http://{host}:{port}   (Ctrl+C to quit)")
-    _run_app(create_app(), host=host, port=port, debug=debug)
+    prefix, fa = _hosting_flags(url_prefix, frame_ancestors)
+    # Root keeps the old order (banner, then the app). Under a prefix the app
+    # is built first, so a colliding prefix fails before anything is announced.
+    flask_app = _hosted_app(create_app, prefix, behind_proxy, fa) if prefix else None
+    typer.echo(f"QUAM State Manager - open  http://{host}:{port}{prefix}   (Ctrl+C to quit)")
+    if flask_app is None:
+        flask_app = _hosted_app(create_app, prefix, behind_proxy, fa)
+    _run_app(flask_app, host=host, port=port, debug=debug)
 
 
 # ------------------------------------------------------------------
@@ -226,6 +289,16 @@ def browser(
     no_open: bool = typer.Option(
         False, "--no-open", help="Don't auto-open the browser; just print the URL"
     ),
+    url_prefix: str = typer.Option(
+        "", "--url-prefix", envvar="SM_URL_PREFIX",
+        help="Serve the UI under this path when a reverse proxy mounts it there, e.g. /sm. Default: root."),
+    behind_proxy: bool = typer.Option(
+        False, "--behind-proxy", envvar="SM_BEHIND_PROXY",
+        help="Trust X-Forwarded-For/Proto/Host/Port/Prefix from the ONE proxy in front. "
+             "Never on by default. The proxy must overwrite these headers from clients."),
+    frame_ancestors: str = typer.Option(
+        "", "--frame-ancestors", envvar="SM_FRAME_ANCESTORS",
+        help="Extra origins allowed to embed SM in an iframe (space-separated), e.g. https://lab.example"),
 ) -> None:
     """Launch the web UI and open it in your default browser (``qsm browser``).
 
@@ -238,14 +311,18 @@ def browser(
 
     from quam_state_manager.web.app import create_app
 
-    url = f"http://{host}:{port}"
+    prefix, fa = _hosting_flags(url_prefix, frame_ancestors)
+    flask_app = _hosted_app(create_app, prefix, behind_proxy, fa) if prefix else None   # see `serve`
+    url = f"http://{host}:{port}{prefix}"
     typer.echo(f"QUAM State Manager - opening  {url}   (Ctrl+C to quit)")
 
     if not no_open:
         # Open after a short delay so the server is accepting connections.
         threading.Timer(1.0, lambda: webbrowser.open(url)).start()
 
-    _run_app(create_app(), host=host, port=port, debug=debug)
+    if flask_app is None:
+        flask_app = _hosted_app(create_app, prefix, behind_proxy, fa)
+    _run_app(flask_app, host=host, port=port, debug=debug)
 
 
 # ------------------------------------------------------------------

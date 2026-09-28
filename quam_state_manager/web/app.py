@@ -25,7 +25,7 @@ import time
 from datetime import timedelta
 from pathlib import Path
 
-from flask import Flask, current_app, request
+from flask import Flask, current_app, has_request_context, request
 from markupsafe import Markup, escape
 
 from quam_state_manager.core import dir_sample
@@ -148,11 +148,18 @@ def _record_own_port():
     if current_app.config.get("_instance_port_recorded"):
         return None
     current_app.config["_instance_port_recorded"] = True
-    try:
-        host = request.host or ""
-        port = int(host.rsplit(":", 1)[1]) if ":" in host else None
-    except (ValueError, IndexError):
-        port = None
+    # docs/226: the port the server BOUND, when the launcher told us. Behind a
+    # reverse proxy ``request.host`` is the PUBLIC host (ProxyFix), whose port
+    # is the proxy's -- recording it would hide this window from the loopback
+    # clients that find SM through this registry (agent_link.candidate_urls).
+    # Unset (a WSGI host that never said) -> the request's Host, as before.
+    port = current_app.config.get("SM_BIND_PORT")
+    if not isinstance(port, int) or isinstance(port, bool) or port <= 0:
+        try:
+            host = request.host or ""
+            port = int(host.rsplit(":", 1)[1]) if ":" in host else None
+        except (ValueError, IndexError):
+            port = None
     if port:
         from quam_state_manager.core import instances, scheduler
         instances.update(current_app.instance_path, port=port)
@@ -162,37 +169,64 @@ def _record_own_port():
     return None
 
 
-_CSP = (
-    "default-src 'self'; "
-    "script-src 'self' 'unsafe-inline'; "  # many inline <script> blocks
-    "style-src 'self' 'unsafe-inline'; "   # inline style attributes
-    "img-src 'self' data:; "
-    "connect-src 'self'; "
-    "object-src 'none'; "
-    "base-uri 'self'; "
-    # /workbench (the Qualibrate co-display shell) embeds two iframes: the
-    # State Manager's own pages (same-origin) and Qualibrate, which runs on a
-    # localhost port that MOVES (8001/8002/…). frame-src must therefore allow
-    # 'self' + any localhost port. This widens only what WE may embed; it is a
-    # localhost-only tool so framing local ports is benign.
-    "frame-src 'self' http://127.0.0.1:* http://localhost:*; "
-    # Was 'none'. Relaxed to 'self' so /workbench can embed the State Manager's
-    # OWN pages in its right pane. External sites still cannot frame us.
-    "frame-ancestors 'self'"
-)
+def url_root() -> str:
+    """The mount prefix for the URL being built now (docs/226): the request's
+    ``script_root`` inside a request, else the configured ``SM_URL_PREFIX``
+    (a background render under ``app_context``), else ``''``. ``''`` at root,
+    always."""
+    if has_request_context():
+        return request.script_root or ""
+    try:
+        return current_app.config.get("SM_URL_PREFIX") or ""
+    except RuntimeError:            # no app context either
+        return ""
 
-# docs/206 (customer, 2026-09-25): the /workbench shell asks the Qualibrate
-# address whether anything is listening with a fetch() to ANOTHER localhost
-# port (8001 by default). `connect-src 'self'` forbids exactly that fetch, so
-# the browser rejected it, the shell concluded "Nothing answered at
-# http://127.0.0.1:8001", and the failure panel covered an iframe that had in
-# fact loaded (frame-src already allows localhost ports). Measured in real
-# Chrome with a stub server on 8001. Only the shell gets to connect to local
-# ports; every other page keeps connect-src 'self'.
-_CSP_WORKBENCH = _CSP.replace(
-    "connect-src 'self'; ",
-    "connect-src 'self' http://127.0.0.1:* http://localhost:*; ")
-assert _CSP_WORKBENCH != _CSP, "the connect-src directive moved; the workbench relaxation no longer applies"
+
+def _build_csp(frame_ancestors: str = "") -> tuple[str, str]:
+    """``(page CSP, /workbench CSP)`` for the validated ``frame_ancestors``
+    extra sources (``url_prefix.validate_frame_ancestors``). ``""`` builds the
+    exact strings SM has always sent -- pinned by string equality."""
+    if frame_ancestors == "'none'":
+        fa = "frame-ancestors 'none'"
+    elif frame_ancestors:
+        fa = "frame-ancestors 'self' " + frame_ancestors
+    else:
+        fa = "frame-ancestors 'self'"
+    csp = (
+        "default-src 'self'; "
+        "script-src 'self' 'unsafe-inline'; "  # many inline <script> blocks
+        "style-src 'self' 'unsafe-inline'; "   # inline style attributes
+        "img-src 'self' data:; "
+        "connect-src 'self'; "
+        "object-src 'none'; "
+        "base-uri 'self'; "
+        # /workbench (the Qualibrate co-display shell) embeds two iframes: the
+        # State Manager's own pages (same-origin) and Qualibrate, which runs on a
+        # localhost port that MOVES (8001/8002/…). frame-src must therefore allow
+        # 'self' + any localhost port. This widens only what WE may embed; it is a
+        # localhost-only tool so framing local ports is benign.
+        "frame-src 'self' http://127.0.0.1:* http://localhost:*; "
+        # Was 'none'. Relaxed to 'self' so /workbench can embed the State Manager's
+        # OWN pages in its right pane. External sites still cannot frame us --
+        # unless the operator names them (--frame-ancestors, docs/226).
+        + fa
+    )
+    # docs/206 (customer, 2026-09-25): the /workbench shell asks the Qualibrate
+    # address whether anything is listening with a fetch() to ANOTHER localhost
+    # port (8001 by default). `connect-src 'self'` forbids exactly that fetch, so
+    # the browser rejected it, the shell concluded "Nothing answered at
+    # http://127.0.0.1:8001", and the failure panel covered an iframe that had in
+    # fact loaded (frame-src already allows localhost ports). Measured in real
+    # Chrome with a stub server on 8001. Only the shell gets to connect to local
+    # ports; every other page keeps connect-src 'self'.
+    workbench = csp.replace(
+        "connect-src 'self'; ",
+        "connect-src 'self' http://127.0.0.1:* http://localhost:*; ")
+    assert workbench != csp, "the connect-src directive moved; the workbench relaxation no longer applies"
+    return csp, workbench
+
+
+_CSP, _CSP_WORKBENCH = _build_csp("")
 
 
 def _add_security_headers(resp):
@@ -208,8 +242,11 @@ def _add_security_headers(resp):
     """
     resp.headers.setdefault("X-Content-Type-Options", "nosniff")
     resp.headers.setdefault("Referrer-Policy", "same-origin")
+    cfg = current_app.config
     resp.headers.setdefault("Content-Security-Policy",
-                            _CSP_WORKBENCH if request.path == "/workbench" else _CSP)
+                            cfg.get("_SM_CSP_WORKBENCH", _CSP_WORKBENCH)
+                            if request.path == "/workbench"
+                            else cfg.get("_SM_CSP", _CSP))
     if request.headers.get("HX-Request") == "true":
         # Don't cache HTMX partials. Set, not setdefault — routes that
         # explicitly opt into caching would have to update after this
@@ -425,7 +462,9 @@ def warm_templates(app: Flask) -> int:
     return n
 
 
-def create_app(*, testing: bool = False, instance_path: str | None = None) -> Flask:
+def create_app(*, testing: bool = False, instance_path: str | None = None,
+               url_prefix: str | None = None, behind_proxy: bool | None = None,
+               frame_ancestors: str | None = None) -> Flask:
     """Create and configure the Flask application.
 
     Args:
@@ -435,7 +474,29 @@ def create_app(*, testing: bool = False, instance_path: str | None = None) -> Fl
             real ``instance/``. If ``testing=True`` is set *without* an
             explicit ``instance_path``, an OS tmp dir is auto-allocated as
             a defensive isolation default.
+        url_prefix: the path a reverse proxy mounts SM under (docs/226), e.g.
+            ``/sm``. ``None`` reads ``SM_URL_PREFIX``; ``""`` means root.
+        behind_proxy: trust ONE hop of ``X-Forwarded-*`` (ProxyFix). ``None``
+            reads ``SM_BEHIND_PROXY``. Never on by default.
+        frame_ancestors: extra CSP ``frame-ancestors`` sources. ``None`` reads
+            ``SM_FRAME_ANCESTORS``.
+
+    Raises ``ValueError`` (one line) for an invalid prefix / proxy flag /
+    frame-ancestors value, and ``url_prefix.PrefixCollisionError`` when the
+    prefix's first segment is one of SM's own routes. With none of the three
+    set, no middleware is installed and every header is what it always was.
     """
+    # docs/226: resolve the three hosting knobs FIRST, so a bad value fails
+    # before anything is created on disk.
+    from quam_state_manager.web import url_prefix as _url_prefix
+    cfg_prefix = _url_prefix.normalize_prefix(
+        os.environ.get("SM_URL_PREFIX") if url_prefix is None else url_prefix)
+    cfg_behind_proxy = _url_prefix.parse_bool(
+        os.environ.get("SM_BEHIND_PROXY") if behind_proxy is None else behind_proxy)
+    cfg_frame_ancestors = _url_prefix.validate_frame_ancestors(
+        os.environ.get("SM_FRAME_ANCESTORS", "") if frame_ancestors is None
+        else frame_ancestors)
+
     template_dir = _resource_path("templates")
     static_dir = _resource_path("static")
 
@@ -467,6 +528,17 @@ def create_app(*, testing: bool = False, instance_path: str | None = None) -> Fl
     os.makedirs(app.instance_path, exist_ok=True)
     app.config["TESTING"] = testing
     app.config["SECRET_KEY"] = os.urandom(24).hex()
+    # docs/226 hosting surface -- read-only for everything else.
+    app.config["SM_URL_PREFIX"] = cfg_prefix
+    app.config["SM_BEHIND_PROXY"] = cfg_behind_proxy
+    app.config["SM_FRAME_ANCESTORS"] = cfg_frame_ancestors
+    app.config["SM_BIND_PORT"] = None      # the launcher stamps the port it binds
+    app.config["SM_BIND_HOST"] = None      # ... and the address (chat_api._sm_url)
+    app.config["_SM_CSP"], app.config["_SM_CSP_WORKBENCH"] = _build_csp(cfg_frame_ancestors)
+    if cfg_prefix:
+        # url_for / test_request_context outside a real request (the run-watch
+        # tick's pre-renders) build under the prefix too.
+        app.config["APPLICATION_ROOT"] = cfg_prefix
 
     # SM-side qualibrate config-location override (docs/63 §B): the UI-chosen
     # directory persists in instance/qualibrate_location.json and is installed
@@ -715,6 +787,15 @@ def create_app(*, testing: bool = False, instance_path: str | None = None) -> Fl
     # Calibrate) is hidden from every navigation surface unless the operator
     # opts in. Routes stay registered -- code kept, menus gone. Read per
     # render so a test can flip it with monkeypatch.setenv.
+    # docs/226: `root` -- the mount prefix as the template sees it ('' at
+    # root). A plain str, so `|tojson`, `~` and `{% set %}` all behave. Never
+    # placed before a `{{ variable }}` the server already rooted (_rooted).
+    # Outside a request (a background pre-render under app_context) it is the
+    # CONFIGURED prefix, so a memoized render served later is not un-prefixed.
+    @app.context_processor
+    def _url_root_ctx():
+        return {"root": url_root()}
+
     @app.context_processor
     def _experimental_flag():
         return {"experimental": os.environ.get("SM_EXPERIMENTAL") == "1"}
@@ -900,5 +981,10 @@ def create_app(*, testing: bool = False, instance_path: str | None = None) -> Fl
     from quam_state_manager.web.setup_api import setup_bp, page_bp
     app.register_blueprint(setup_bp)
     app.register_blueprint(page_bp)
+
+    # docs/226: the prefix / proxy middleware wraps app.wsgi_app LAST, once
+    # the route map is complete (the collision rule reads it). Nothing is
+    # installed at root with --behind-proxy off: the WSGI stack is unchanged.
+    _url_prefix.install(app, cfg_prefix, behind_proxy=cfg_behind_proxy)
 
     return app
