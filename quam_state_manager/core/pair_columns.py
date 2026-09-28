@@ -43,6 +43,7 @@ from __future__ import annotations
 import re
 from typing import Any
 
+from quam_state_manager.core import activity
 from quam_state_manager.core.loader import natural_key
 from quam_state_manager.core.pointer_resolver import is_pointer, is_self_ref
 
@@ -252,6 +253,7 @@ def _walk_pair(pair_id: str, node: Any, real_segs: list[str],
     """
     if not isinstance(node, dict):
         return
+    activity.checkpoint()      # w8/locks: a no-op outside activity.yielding
     parent = real_segs[-1] if real_segs else None
     for k, v in node.items():
         if k in _SKIP_KEYS:
@@ -329,6 +331,9 @@ def derive_entity_columns(store, root: str, entity_ids: list[str] | None = None,
     A second walker is how the two would drift, so this is the SAME one with
     the root parameterised — `derive_pair_columns` is now a call to it.
     """
+    # w8/locks: activity.checkpoint() in the walk and the loops below lets a
+    # Live-Edit grid build hand the store lock over (a no-op outside
+    # activity.yielding; the content token is re-verified on resume)
     with store._lock:
         merged = store.merged
         coll: Any = merged
@@ -356,6 +361,7 @@ def derive_entity_columns(store, root: str, entity_ids: list[str] | None = None,
     gate_first_seen: dict[str, int] = {}
 
     for pid in pair_ids:
+        activity.checkpoint()
         for lf in per_pair[pid]:
             ck = _col_key(lf["group"], lf["tmpl_segs"])
             col = cols.get(ck)
@@ -388,7 +394,9 @@ def derive_entity_columns(store, root: str, entity_ids: list[str] | None = None,
     kept.sort(key=lambda c: c["_order"])
 
     out: list[dict] = []
-    for c in kept:
+    for i, c in enumerate(kept):
+        if not i % 256:
+            activity.checkpoint()
         ks = c["kinds"]
         if ks == {"list"}:
             kind, editable = "list", False

@@ -45,6 +45,7 @@ import re
 from typing import Any
 from weakref import WeakKeyDictionary
 
+from quam_state_manager.core import activity
 from quam_state_manager.core.loader import natural_key
 from quam_state_manager.core import qdac
 from quam_state_manager.core.param_specs import _BULK_COLUMNS_SPEC
@@ -268,6 +269,7 @@ def _walk_qubit(qid: str, node: Any, real_segs: list[str], tmpl_segs: list[str],
     """
     if not isinstance(node, dict):
         return
+    activity.checkpoint()      # w8/locks: one qubit's extras alone is ~60 ms on big30x
     parent = tmpl_segs[-1] if tmpl_segs else None
     for k, v in node.items():
         if k in _SKIP_KEYS:
@@ -308,6 +310,9 @@ def _order_key(col: dict, chan_order: dict[str, int]) -> tuple:
 
 
 def _derive(store) -> tuple[list[dict], set[str]]:
+    # w8/locks: activity.checkpoint() in the walk and the loops below lets a
+    # Live-Edit grid build hand the store lock over (a no-op outside
+    # activity.yielding; the content token is re-verified on resume)
     with store._lock:
         merged = store.merged
         qubits = merged.get("qubits") or {}
@@ -332,6 +337,7 @@ def _derive(store) -> tuple[list[dict], set[str]]:
     # 21-qubit CR chip from 115 columns to 925.
     multi: dict[str, int] = {}
     for qid in qids:
+        activity.checkpoint()
         seen_here: dict[str, int] = {}
         for lf in per_qubit[qid]:
             seen_here[lf["tmpl"]] = seen_here.get(lf["tmpl"], 0) + 1
@@ -348,6 +354,7 @@ def _derive(store) -> tuple[list[dict], set[str]]:
     # section from whichever leaf happens to create it first.
     tmpl_qdac: dict[str, bool] = {}
     for qid in qids:
+        activity.checkpoint()
         for lf in per_qubit[qid]:
             t = lf["tmpl"]
             tmpl_qdac[t] = tmpl_qdac.get(t, True) and bool(lf["qdac"])
@@ -360,6 +367,7 @@ def _derive(store) -> tuple[list[dict], set[str]]:
     paths: dict[str, dict[str, str]] = {}
     modes: dict[str, dict[str, str]] = {}
     for qid in qids:
+        activity.checkpoint()
         for lf in per_qubit[qid]:
             if lf["tmpl"] in _CURATED_TMPLS:
                 continue      # the curated grid already renders this template
@@ -408,7 +416,9 @@ def _derive(store) -> tuple[list[dict], set[str]]:
     kept.sort(key=lambda c: _order_key(c, chan_order))
 
     out: list[dict] = []
-    for c in kept:
+    for i, c in enumerate(kept):
+        if not i % 256:
+            activity.checkpoint()
         ks = c["kinds"]
         if "listedit" in ks:
             kind = "listedit"     # any list cell ⇒ the ✎ popup column
