@@ -9,6 +9,7 @@
  *      tests/test_ds_picker_labels.py)
  */
 'use strict';
+require('./_sm_root_boot.cjs').install();
 
 const fs = require('fs');
 const path = require('path');

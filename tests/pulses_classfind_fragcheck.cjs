@@ -25,6 +25,11 @@
  * Run: node tests/pulses_classfind_fragcheck.cjs <fixture.json>
  */
 'use strict';
+require('./_sm_root_boot.cjs').install();
+const PREFIX = process.env.SM_TEST_URL_PREFIX || '';   // docs/226: the rendered fixture's URLs live under it
+// app route of a request path: rendered attributes carry the prefix, JS literals do not
+// (the harness body has no hx-ext, so htmx's sm-root extension never runs here)
+const rel = (p) => (PREFIX && String(p).indexOf(PREFIX + '/') === 0 ? String(p).slice(PREFIX.length) : p);
 const fs = require('fs');
 const path = require('path');
 let JSDOM;
@@ -170,13 +175,13 @@ const txt = (el) => (el ? el.textContent.replace(/\s+/g, ' ').trim() : '');
      'C5: says "Pick a Python environment first" -> ' + txt(find));
   ok(!find.querySelector('[data-pulse-module-open]') && P.openModuleForm() === false,
      'C5: nothing to open without an env');
-  const envA = find.querySelector('a[href="/generate"]');
+  const envA = find.querySelector('a[href="' + PREFIX + '/generate"]');   // as rendered
   ok(!!envA, 'C5: the env picker link is there');
   const nBefore = T.xhrs.length;
   const errBefore = T.consoleErrors.length;
   clickLink(T, envA);
   await tick(20);
-  const gen = T.xhrs.slice(nBefore).find(x => x.method === 'GET' && /^\/generate/.test(x.url));
+  const gen = T.xhrs.slice(nBefore).find(x => x.method === 'GET' && /^\/generate/.test(rel(x.url)));
   ok(!!gen, 'C5: the link opens the env picker through htmx (' + T.xhrs.slice(nBefore).map(x => x.method + ' ' + x.url).join(', ') + ')');
   const busy = d.getElementById('pulse-create-busy');
   ok(!!busy && !busy.classList.contains('htmx-request'),

@@ -14,11 +14,11 @@
  * Exit 1 on any FAIL.
  */
 'use strict';
-const { open } = require('./cdp.cjs');
+const { open, base, smPath, smUrl } = require('./cdp.cjs');
 const path = require('path');
 const PORT = process.argv[2] || '5108';
 const SHOTS = process.argv[3] || '.';
-const BASE = `http://127.0.0.1:${PORT}`;
+const BASE = base(PORT);
 const res = [];
 function rec(name, ok, detail) { res.push({ name, ok }); console.log((ok ? 'PASS ' : 'FAIL ') + name + (detail !== undefined ? '  ' + JSON.stringify(detail).slice(0, 500) : '')); }
 const J = async (p, e) => { const v = await p.ev(e); try { return JSON.parse(v); } catch (x) { return v; } };
@@ -48,11 +48,11 @@ const WATCH = `(function(){ if (window.__ldr) return 'already'; window.__ldr=[];
     const c = await center(p, '#live-edit-subnav a', 'Live edit - Json Tree view');
     if (c) { await p.click(c.x, c.y); await p.sleep(3000); }
     const on = await J(p, `JSON.stringify({path:location.pathname, tree:!!document.querySelector('#explorer-tree-state, .json-tree'), active:(document.querySelector('#live-edit-subnav a.active')||{}).textContent||null})`);
-    rec('#2 clicking it opens the tree at /explorer and lights itself', on.path === '/explorer' && on.tree && /Live edit - Json Tree view/.test(on.active || ''), on);
+    rec('#2 clicking it opens the tree at /explorer and lights itself', smPath(on.path) === '/explorer' && on.tree && /Live edit - Json Tree view/.test(on.active || ''), on);
     await p.shot(path.join(SHOTS, 'q2_explorer.png'));
     await p.ev('history.back()'); await p.sleep(3000);
     const back = await J(p, `JSON.stringify({path:location.pathname, grid:!!document.querySelector('#table-pane .bulk-cell')})`);
-    rec('#2 Back returns to Live State Edit, grid intact', back.path === '/bulk' && back.grid, back);
+    rec('#2 Back returns to Live State Edit, grid intact', smPath(back.path) === '/bulk' && back.grid, back);
     await p.send('Page.navigate', { url: `${BASE}/explorer` }); await p.sleep(3500);
     const re = await J(p, `JSON.stringify({tree:!!document.querySelector('#explorer-tree-state, .json-tree'), active:(document.querySelector('#live-edit-subnav a.active')||{}).textContent||null, palette:document.documentElement.innerHTML.indexOf('Json Tree View')})`);
     rec('#2 a reload of /explorer keeps the tree and the new label (no old label anywhere in the page)', re.tree && /Live edit - Json Tree view/.test(re.active || '') , re);
@@ -88,7 +88,7 @@ const WATCH = `(function(){ if (window.__ldr) return 'already'; window.__ldr=[];
     await p.ev(WATCH);
     await p.send('Network.enable');
     await p.send('Network.emulateNetworkConditions', { offline: false, latency: 1800, downloadThroughput: -1, uploadThroughput: -1 });
-    const c = await center(p, '.sidebar-nav a[href="/bulk"]');
+    const c = await center(p, '.sidebar-nav a[href="' + smUrl('/bulk') + '"]');
     const t0 = Date.now();
     if (c) await p.click(c.x, c.y);
     await p.sleep(900);
@@ -104,11 +104,11 @@ const WATCH = `(function(){ if (window.__ldr) return 'already'; window.__ldr=[];
         { top: f.top, topbarBottom: f.tbBottom, height: f.h, width: f.w, vh: f.vh });
     rec('#7 ...one line: the please-wait text, no big brand title', vis.every(x => /^Please wait a moment/.test(x.txt) && !/QUAM/.test(x.txt)), vis.map(x => x.txt).slice(-1));
     const end = await J(p, `JSON.stringify({visible:document.getElementById('quam-loader').classList.contains('visible'), path:location.pathname, grid:!!document.querySelector('#table-pane .bulk-cell')})`);
-    rec('#7 the page painted and the strip is gone', !end.visible && end.path === '/bulk' && end.grid, end);
+    rec('#7 the page painted and the strip is gone', !end.visible && smPath(end.path) === '/bulk' && end.grid, end);
     await p.shot(path.join(SHOTS, 'q7_after.png'));
     await p.ev('history.back()'); await p.sleep(3000);
     const bk = await J(p, `JSON.stringify({path:location.pathname, visible:document.getElementById('quam-loader').classList.contains('visible')})`);
-    rec('#7 Back to the previous page: no stranded strip', bk.path === '/journal' && !bk.visible, bk);
+    rec('#7 Back to the previous page: no stranded strip', smPath(bk.path) === '/journal' && !bk.visible, bk);
     rec('#7 no JS exceptions', p.errors(0).length === 0, p.errors(0));
     await p.close();
   }

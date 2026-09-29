@@ -7,6 +7,15 @@ const path = require('path');
 global.window = {};
 global.document = { readyState: 'complete', getElementById: () => null, addEventListener: () => {} };
 global.navigator = {};
+// The page boots sm-root.js before calc.js (docs/226 §5.2): give the stub window
+// the members sm-root.js reads (<html data-root>, history) and boot it.
+global.document.documentElement = {
+  _a: {}, getAttribute(k) { return Object.prototype.hasOwnProperty.call(this._a, k) ? this._a[k] : null; },
+  setAttribute(k, v) { this._a[k] = String(v); },
+};
+global.window.document = global.document;
+global.window.history = { pushState() {}, replaceState() {} };
+require('./_sm_root_boot.cjs')(global.window);
 
 const src = fs.readFileSync(path.join(__dirname, '..', 'quam_state_manager', 'web', 'static', 'calc.js'), 'utf8');
 // eslint-disable-next-line no-eval

@@ -13,6 +13,7 @@ from pathlib import Path
 import pytest
 
 from quam_state_manager.web.app import create_app
+from tests._prefix import PREFIX, RE_PREFIX
 
 _ROOT = Path(__file__).resolve().parent.parent
 _STATIC = _ROOT / "quam_state_manager" / "web" / "static"
@@ -27,7 +28,7 @@ LAZY = {"grid-virt.js", "bulk-edit.js", "pair-edit.js", "all-values.js", "pulses
 
 
 def _scripts(html: str):
-    tags = re.findall(r'<script src="/static/([A-Za-z_\-\.]+\.js)[^"]*"( data-bundle-file="[^"]*")?', html)
+    tags = re.findall(rf'<script src="{RE_PREFIX}/static/([A-Za-z_\-\.]+\.js)[^"]*"( data-bundle-file="[^"]*")?', html)
     return [t[0] for t in tags], [t[0] for t in tags if t[1]]
 
 
@@ -85,7 +86,7 @@ def test_the_manifest_names_every_lazy_file_once_and_the_page_map_covers_the_rou
     man = _manifest(client.get("/explorer").get_data(as_text=True))
     assert set(man["files"]) == LAZY
     for f, url in man["files"].items():
-        assert url.startswith("/static/" + f), (f, url)
+        assert url.startswith(f"{PREFIX}/static/" + f), (f, url)
         assert (_STATIC / f).exists(), f
     for name, files in man["bundles"].items():
         assert files and all(f in man["files"] for f in files), name

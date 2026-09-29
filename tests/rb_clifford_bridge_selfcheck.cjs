@@ -29,6 +29,7 @@
  * Run: node tests/rb_clifford_bridge_selfcheck.cjs
  */
 'use strict';
+require('./_sm_root_boot.cjs').install();
 
 const fs = require('fs');
 const path = require('path');

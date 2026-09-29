@@ -28,6 +28,7 @@ from quam_state_manager.web import chat_api
 from quam_state_manager.web.app import create_app
 from tests.test_agent_runs import NODE_SRC, FakeRun, AGENT, HUMAN, _arm, _wait
 from tests.test_chat_api import _FakeClaude, _FakeCodex
+from tests._prefix import PREFIX, RE_PREFIX
 
 
 @pytest.fixture
@@ -279,9 +280,9 @@ class TestHome:
         # customer feedback 2026-09-08: no tool-row Agent button any more -- the Agent is a
         # nav entry (id nav-agent, above the Calibration log) that opens /agent in the pane
         assert 'class="sidebar-tool agent-btn"' not in html and 'id="nav-agent"' in html
-        assert re.search(r'href="/agent"[^>]*hx-get="/agent"[^>]*hx-target="#table-pane"', html)
+        assert re.search(rf'href="{RE_PREFIX}/agent"[^>]*hx-get="{RE_PREFIX}/agent"[^>]*hx-target="#table-pane"', html)
         assert re.search(r'id="nav-agent" class="active"', html), "with a chip open, / IS the Agent home: the entry is active"
-        assert "agent.js" in html and '"label": "Agent home"' in html and '"url": "/agent"' in html
+        assert "agent.js" in html and '"label": "Agent home"' in html and f'"url": "{PREFIX}/agent"' in html
 
     def test_agent_is_a_page_in_the_pane_and_a_full_page(self, c):
         # htmx (the sidebar click): the partial only -- the mount point, no shell
@@ -313,7 +314,7 @@ class TestHome:
         import re
         html = c.get("/").get_data(as_text=True)
         m = re.search(r'<a class="agent-home-link"[^>]*>', html)
-        assert m and 'href="/"' in m.group(0) and "hx-get" not in m.group(0) and "hx-target" not in m.group(0)
+        assert m and f'href="{PREFIX}/"' in m.group(0) and "hx-get" not in m.group(0) and "hx-target" not in m.group(0)
 
     def test_the_setup_page_is_wired(self, c):
         """docs/173 S7: /agent/setup renders the shell inside the shell page with

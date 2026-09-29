@@ -12,6 +12,7 @@
 // Run: node tests/tree_structural_revert_selfcheck.cjs   (driven by
 // tests/test_undo_trail.py::test_tree_structural_revert_selfcheck)
 'use strict';
+require('./_sm_root_boot.cjs').install();
 
 const fs = require('fs');
 const path = require('path');

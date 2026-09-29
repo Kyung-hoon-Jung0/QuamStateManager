@@ -32,6 +32,7 @@
  * Run: node tests/live_sync_selfcheck.cjs   (driven by tests/test_live_sync_client.py)
  */
 'use strict';
+require('./_sm_root_boot.cjs').install();
 const fs = require('fs');
 const path = require('path');
 let JSDOM;

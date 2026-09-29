@@ -34,11 +34,11 @@
 'use strict';
 const fs = require('fs');
 const path = require('path');
-const { open, sleep } = require('./cdp.cjs');
+const { open, sleep, base, baseFrom, smPath, smUrl } = require('./cdp.cjs');
 
 const argv = process.argv.slice(2);
 const arg = (n, d) => { const i = argv.indexOf('--' + n); return i >= 0 ? argv[i + 1] : d; };
-const BASE = arg('base', 'http://127.0.0.1:5099');
+const BASE = baseFrom(arg('base', null), 5099);
 const SWITCHES = +arg('switches', 30);
 const TABS = arg('tabs', 'full,figures,results,state,data,interactive').split(',');
 const SHOTS = arg('shots', '');

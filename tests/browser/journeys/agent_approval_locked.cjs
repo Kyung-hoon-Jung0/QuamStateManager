@@ -6,12 +6,12 @@
  *   SM_CDP_PORT=9413 node agent_approval_locked.cjs 5113 OUTDIR BIG_ID SMALL_ID HOLD_S
  */
 'use strict';
-const { open, sleep } = require('./cdp.cjs');
+const { open, sleep, base, baseFrom, smPath, smUrl } = require('./cdp.cjs');
 const [SM, OUT, BIG, SMALL, HOLD] = [process.argv[2], process.argv[3], process.argv[4], process.argv[5], +process.argv[6] || 30];
 
 (async () => {
   const t00 = Date.now();
-  const p = await open(`http://127.0.0.1:${SM}/agent`, 1366, 900);
+  const p = await open(`${base(SM)}/agent`, 1366, 900);
   setInterval(async () => {
     for (const e of p.events.splice(0)) {
       if (e.method === 'Page.javascriptDialogOpening') await p.send('Page.handleJavaScriptDialog', { accept: true, promptText: 'rejected in the locked-file journey' });
@@ -26,7 +26,7 @@ const [SM, OUT, BIG, SMALL, HOLD] = [process.argv[2], process.argv[3], process.a
       const r = b.getBoundingClientRect(); return JSON.stringify([r.x + r.width / 2, r.y + r.height / 2]); })()`);
     return xy === 'null' ? null : JSON.parse(xy);
   };
-  const drift = () => p.ev(`fetch('/state/drift').then(r => r.json()).then(d => JSON.stringify(d.sync))`);
+  const drift = () => p.ev(`fetch('${smUrl(`/state/drift`)}').then(r => r.json()).then(d => JSON.stringify(d.sync))`);
   console.log('drift at open', await drift());
   let xy = await btn(BIG, /Write to chip/);
   console.log('big card Write to chip', JSON.stringify(xy));

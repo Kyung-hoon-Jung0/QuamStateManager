@@ -17,6 +17,7 @@ import pytest
 
 from quam_state_manager.web import routes as routes_mod
 from quam_state_manager.web.app import create_app
+from tests._prefix import PREFIX
 
 _WIRING = {"network": {"host": "1.1.1.1", "cluster_name": "C1"}}
 
@@ -92,7 +93,7 @@ class TestColumnHistoryPanel:
         html = r.data.decode()
         # run columns newest-first with values + direct Data links
         key = routes_mod._folder_key(data_root)
-        assert f'hx-get="/dataset/{key}:33"' in html
+        assert f'hx-get="{PREFIX}/dataset/{key}:33"' in html
         assert 'data-fill="0.081"' in html and 'data-fill="0.112"' in html
         # per-run Use all + per-value fill hooks
         assert "ColumnHistory.useAll" in html
@@ -220,7 +221,7 @@ class TestColumnHistoryChanges:
         # 0.079 was INTRODUCED by run 31 — the chip links to that run, and
         # the hover Data affordance exists.
         assert "ch-chip-data" in ch
-        assert f'hx-get="/dataset/{key}:31"' in ch
+        assert f'hx-get="{PREFIX}/dataset/{key}:31"' in ch
 
     def test_repeated_run_values_collapse_to_one_chip(self, env):
         """3 runs with the same value → ONE chip (the wall of identical
@@ -248,8 +249,8 @@ class TestColumnHistoryChanges:
         ch, byrun = html.split("ch-view-byrun")
         key = routes_mod._folder_key(data_root)
         # introducers 51 + 52 are OUTSIDE the newest-6 (53..58) By-run window
-        assert f'hx-get="/dataset/{key}:51"' in ch
-        assert f'hx-get="/dataset/{key}:52"' in ch
+        assert f'hx-get="{PREFIX}/dataset/{key}:51"' in ch
+        assert f'hx-get="{PREFIX}/dataset/{key}:52"' in ch
         assert f'/dataset/{key}:51"' not in byrun
         assert "newest 6 of 8 matching runs" in byrun
 
@@ -273,7 +274,7 @@ class TestColumnHistoryChanges:
                                        "qA2": "qubits.qA2.f_01"},
                                    label="f 01", unit="Hz").data.decode())
         key = routes_mod._folder_key(data_root)
-        assert f'hx-get="/dataset/{key}:77"' in ch
+        assert f'hx-get="{PREFIX}/dataset/{key}:77"' in ch
 
     def test_tab_markup_and_js_pins(self, env):
         c = env["client"]

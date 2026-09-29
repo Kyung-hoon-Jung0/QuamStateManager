@@ -17,6 +17,7 @@
  * Run: node tests/tree_long_value_selfcheck.cjs   (driven by tests/test_tree_long_value.py)
  */
 'use strict';
+require('./_sm_root_boot.cjs').install();
 const fs = require('fs');
 const path = require('path');
 let JSDOM;

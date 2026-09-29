@@ -12,6 +12,7 @@
  *        raw template itself and asserts every case.
  * case = scroll | notes | tall   (the rendered page decides step 5 vs none)
  */
+require('./_sm_root_boot.cjs').install();
 const fs = require('fs');
 const path = require('path');
 

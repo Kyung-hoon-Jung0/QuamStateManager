@@ -4,6 +4,7 @@
  * never strand it on a lost script), the Back/Forward hold (htmx restores
  * history WITHOUT an htmx:confirm) and Bundles.call for global controls.
  * Only the loader block is evaluated -- the rest of app.js is not needed. */
+require('./_sm_root_boot.cjs').install();
 const fs = require("fs");
 const path = require("path");
 let JSDOM;

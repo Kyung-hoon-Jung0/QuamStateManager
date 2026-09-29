@@ -30,6 +30,7 @@ from quam_state_manager.core.loader import QuamStore
 from quam_state_manager.core.modifier import Modifier
 from quam_state_manager.web import routes as routes_mod
 from quam_state_manager.web.app import create_app
+from tests._prefix import PREFIX
 
 _WIRING = {"network": {"host": "1.1.1.1", "cluster_name": "C1"}}
 
@@ -438,7 +439,7 @@ class TestTrayDiscard:
         # (default 6), recoverable with Ctrl+Shift+Z like before
         html = c.get("/state/review").data.decode("utf-8")
         assert "hx-confirm" not in html
-        assert 'hx-post="/discard_all"' in html
+        assert f'hx-post="{PREFIX}/discard_all"' in html
         assert "Discard my 1 edit" in html
 
     def test_discard_all_then_shift_z_restores_in_order(self, env):

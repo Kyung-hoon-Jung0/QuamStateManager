@@ -13,10 +13,10 @@
  *   SM_CDP_PORT=9412 SM_PORT=5112 SHOT_DIR=... node pulses_adaptive.cjs
  */
 'use strict';
-const { open, sleep } = require('./cdp.cjs');
+const { open, sleep, base, baseFrom, smPath, smUrl } = require('./cdp.cjs');
 const PORT = process.env.SM_PORT || 5112;
 const DIR = process.env.SHOT_DIR || '.';
-const BASE = `http://127.0.0.1:${PORT}`;
+const BASE = base(PORT);
 const out = [];
 require('fs').mkdirSync(DIR, { recursive: true });
 let bad = 0;

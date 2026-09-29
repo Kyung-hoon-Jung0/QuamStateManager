@@ -17,6 +17,7 @@
  * Run: node tests/chip_status_hero_selfcheck.cjs   (driven by tests/test_topology_hero.py)
  */
 'use strict';
+require('./_sm_root_boot.cjs').install();
 
 const fs = require('fs');
 const path = require('path');

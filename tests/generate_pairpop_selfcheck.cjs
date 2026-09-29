@@ -6,6 +6,7 @@
  *
  * Run:  node tests/generate_pairpop_selfcheck.cjs   (driven by test_generate_pairpop.py).
  */
+require('./_sm_root_boot.cjs').install();
 const fs = require('fs');
 const path = require('path');
 

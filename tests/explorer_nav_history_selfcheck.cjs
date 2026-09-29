@@ -14,6 +14,8 @@
  * Run: node tests/explorer_nav_history_selfcheck.cjs  (driven by tests/test_explorer_nav_history.py)
  */
 'use strict';
+require('./_sm_root_boot.cjs').install();
+const PREFIX = process.env.SM_TEST_URL_PREFIX || '';   // docs/226: expected addresses live under this mode's URL prefix
 const fs = require('fs');
 const path = require('path');
 let JSDOM;
@@ -97,7 +99,7 @@ doc.addEventListener('htmx:beforeRequest', function (e) {
   doc.getElementById('q3').click();
   await tick(150);
   ok(!!doc.querySelector('#table-pane #explorer-tree-state'), 'the Explorer is in #table-pane');
-  ok(w.location.pathname === '/explorer', 'the address bar names the Explorer: ' + w.location.pathname);
+  ok(w.location.pathname === PREFIX + '/explorer', 'the address bar names the Explorer: ' + w.location.pathname);
   ok(w.history.length === h0 + 1, 'exactly one history entry for the jump (Back undoes it)');
   ok(w.history.state && w.history.state.htmx === true, 'an htmx-shaped entry (Back runs htmx\'s own restore)');
   ok(sidebarSyncs >= 1, 'the sidebar highlight is re-synced to the new address');
@@ -117,11 +119,11 @@ doc.addEventListener('htmx:beforeRequest', function (e) {
   const h2 = w.history.length;
   w._navigateTablePane('/explorer');
   await tick(80);
-  ok(w.location.pathname === '/datasets' && w.history.length === h2, 'a failed load leaves the address alone');
+  ok(w.location.pathname === PREFIX + '/datasets' && w.history.length === h2, 'a failed load leaves the address alone');
   explorerStatus = 200;
   htmx.ajax('GET', '/explorer', { source: '#table-pane', target: '#table-pane', swap: 'innerHTML' });
   await tick(80);
-  ok(w.location.pathname === '/datasets',
+  ok(w.location.pathname === PREFIX + '/datasets',
      'the failed jump\'s listener is gone (a later foreign /explorer swap is not renamed)');
 
   // ── PaneState's skip path pushes its own entry and fires paneRestored ──
@@ -138,11 +140,11 @@ doc.addEventListener('htmx:beforeRequest', function (e) {
   w._navigateTablePane('/explorer');
   await tick(80);
   doc.removeEventListener('htmx:beforeRequest', cancelSkip, true);
-  ok(w.history.length === h3 + 1 && w.location.pathname === '/explorer', 'the skip path leaves exactly one /explorer entry');
+  ok(w.history.length === h3 + 1 && w.location.pathname === PREFIX + '/explorer', 'the skip path leaves exactly one /explorer entry');
   w.history.pushState({ htmx: true }, '', '/datasets');
   htmx.ajax('GET', '/explorer', { source: '#table-pane', target: '#table-pane', swap: 'innerHTML' });
   await tick(80);
-  ok(w.location.pathname === '/datasets', 'the skip path released the listeners (paneRestored)');
+  ok(w.location.pathname === PREFIX + '/datasets', 'the skip path released the listeners (paneRestored)');
 
   process.exit(fails ? 1 : 0);
 })().catch(e => { console.error('HARNESS ERROR:', e && e.stack || e); process.exit(1); });

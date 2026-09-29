@@ -1,0 +1,4 @@
+# tests/test_prefix_render_lint.py allow-list: route KEYS in inline JS, never requested URLs.
+# region-regex <TAB> requires-regex ('-' = none) <TAB> why. Keep it short; every entry is reviewed.
+window\.SM\.path\(href\)\.indexOf\("/datasets"\) === 0	-	base.html menu hook: a route KEY compared after the prefix is stripped (spec 3.2 rule 3)
+var CHIP_PAGES = \[[^\]]*\];	function onChipPage\(\) \{\s*var p = window\.SM\.path\(location\.pathname\);	base.html scheduler lock: route KEYS, harmless only while onChipPage() strips the prefix first

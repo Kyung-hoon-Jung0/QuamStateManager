@@ -64,7 +64,12 @@ async function open(opts) {
   // 8811+, deliberately: 5000-5150 sits inside a Windows/Hyper-V excluded port
   // range on this machine ("An attempt was made to access a socket in a way
   // forbidden by its access permissions"), which looks like the app failing.
-  page._base = 'http://127.0.0.1:' + (o.port || 8811);
+  // SM_BASE_URL (docs/226) points the harness at SM behind a reverse proxy,
+  // prefix included, e.g. http://127.0.0.1:5341/sm -- goto(page, '/bulk') then
+  // requests /sm/bulk. Unset = the root URL, exactly as before.
+  page._base = process.env.SM_BASE_URL
+    ? process.env.SM_BASE_URL.replace(/\/+$/, '')
+    : 'http://127.0.0.1:' + (o.port || 8811);
   return { browser, page };
 }
 
@@ -103,10 +108,35 @@ async function typeInto(page, selector, text, opts) {
   return page.$eval(selector, (el) => el.value);
 }
 
+/* The mount prefix (docs/226): SM_URL_PREFIX, else the path of SM_BASE_URL,
+   else ''. path() turns a location.pathname read in the page back into the
+   app route a check compares with; identity at root. */
+function prefix() {
+  let p = process.env.SM_URL_PREFIX || '';
+  if (!p && process.env.SM_BASE_URL) {
+    try { p = new URL(process.env.SM_BASE_URL).pathname; } catch (e) { p = ''; }
+  }
+  if (p === '/') p = '';
+  while (p.length && p.charAt(p.length - 1) === '/') p = p.slice(0, -1);
+  // Git Bash hands node.exe SM_URL_PREFIX=/sm as 'C:/Program Files/Git/sm' (measured)
+  if (p && !/^(\/[A-Za-z0-9._~-]+)+$/.test(p))
+    throw new Error('URL prefix ' + JSON.stringify(p) + ' is not a URL path'
+      + (/^[A-Za-z]:/.test(p) ? ' (Git Bash path conversion: export MSYS_NO_PATHCONV=1)' : ''));
+  return p;
+}
+function smPath(pathname) {
+  const pre = prefix();
+  if (!pre || typeof pathname !== 'string') return pathname;
+  if (pathname === pre) return '/';
+  if (pathname.indexOf(pre + '/') === 0) return pathname.slice(pre.length);
+  if (pathname.indexOf(pre + '?') === 0 || pathname.indexOf(pre + '#') === 0) return '/' + pathname.slice(pre.length);
+  return pathname;
+}
+
 function errors(page) {
   // Chrome's own noise that says nothing about the app.
   const IGNORE = [/favicon/i, /DevTools/i, /Autofill\./i];
   return page._errors.filter((e) => !IGNORE.some((re) => re.test(e)));
 }
 
-module.exports = { open, goto, shot, computed, typeInto, sleep, errors, SHOTS, CHROME };
+module.exports = { open, goto, shot, computed, typeInto, sleep, errors, path: smPath, prefix, SHOTS, CHROME };

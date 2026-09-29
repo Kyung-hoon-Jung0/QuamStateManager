@@ -24,6 +24,7 @@ import pytest
 
 from quam_state_manager.core import scanner
 from quam_state_manager.core.scanner import Workspace
+from tests._prefix import PREFIX
 
 
 def _mk_run(root: Path, date: str, rid: int, name: str = "04_power_rabi",
@@ -254,7 +255,7 @@ class TestParamHistoryDeferredAlignment:
     def test_page_carries_the_lazy_fragment_slot(self, client):
         html = client.get("/param-history").data.decode("utf-8")
         assert 'id="ph-alignment-slot"' in html
-        assert 'hx-get="/param-history/alignment' in html
+        assert f'hx-get="{PREFIX}/param-history/alignment' in html
 
     def test_fragment_returns_counts_and_rearm_script(self, client):
         html = client.get("/param-history/alignment").data.decode("utf-8")

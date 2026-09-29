@@ -9,6 +9,8 @@
  * The URL sync has to carry the page number: page 4 of a 156-pulse chip used to
  * reload as page 1.
  */
+require('./_sm_root_boot.cjs').install();
+const PREFIX = process.env.SM_TEST_URL_PREFIX || '';   // docs/226: expected addresses live under this mode's URL prefix
 const fs = require('fs');
 const path = require('path');
 const { JSDOM } = require('jsdom');
@@ -301,7 +303,7 @@ window.history.replaceState({}, '', '/bulk');
 const ev39b = new window.CustomEvent('htmx:afterSwap', { bubbles: true, detail: {} });
 Object.defineProperty(ev39b, 'target', { value: insp2 });
 doc.dispatchEvent(ev39b);
-ok(window.location.pathname === '/bulk',
+ok(window.location.pathname === PREFIX + '/bulk',
    'a swap off the Pulses page leaves the address alone (got ' + window.location.pathname + ')');
 window.history.replaceState({}, '', '/pulses');
 inspectorWith(null);

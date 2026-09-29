@@ -16,6 +16,7 @@ import pytest
 
 from quam_state_manager.core import working_copy as W
 from quam_state_manager.web.app import create_app
+from tests._prefix import PREFIX
 
 
 def _make_live(tmp_path, f01=6.0e9):
@@ -60,7 +61,7 @@ class TestStateHistoryPage:
     def test_page_renders(self, client):
         html = client.get("/state-history").data.decode()
         assert "State History" in html
-        assert 'href="/state-history"' in html   # sidebar entry
+        assert f'href="{PREFIX}/state-history"' in html   # sidebar entry
 
     def test_no_state(self, app):
         html = app.test_client().get("/state-history").data.decode()

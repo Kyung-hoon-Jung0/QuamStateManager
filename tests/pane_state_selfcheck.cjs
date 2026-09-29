@@ -10,6 +10,8 @@
  *
  * Run: node tests/pane_state_selfcheck.cjs  (driven by tests/test_pane_state.py)
  */
+require('./_sm_root_boot.cjs').install();
+const PREFIX = process.env.SM_TEST_URL_PREFIX || '';   // docs/226: expected addresses live under this mode's URL prefix
 const fs = require('fs');
 const path = require('path');
 const { JSDOM } = require('jsdom');
@@ -237,7 +239,7 @@ swapTo('/bulk', '<div>bulk</div>');                       // parks explorer agai
 ok(Object.keys(window.PaneState._stash()).length === 1, 'parked before Back');
 window.dispatchEvent(new window.CustomEvent('popstate'));
 ok(Object.keys(window.PaneState._stash()).length === 0, 'Back clears the stash');
-ok(window.PaneState._cur() === window.location.pathname,
+ok(window.PaneState._cur() === window.SM.path(window.location.pathname),
    'Back re-syncs the current route (the v1 wrong-DOM-under-/explorer bug)');
 
 // ── 7. stateRestored (wholesale replace) clears every parked pane ──────────
@@ -272,7 +274,7 @@ ok(req.defaultPrevented, 'skip-fetch: the request to a fresh KEEP copy is cancel
 ok(!!doc.getElementById('bulk-live'),
    'skip-fetch: the bulk grid is restored synchronously, no fetch (docs/139)');
 ok(window.PaneState._cur() === '/bulk', 'skip-fetch: the route tracked the skip');
-ok(window.location.pathname === '/bulk', 'skip-fetch: the URL was pushed');
+ok(window.location.pathname === PREFIX + '/bulk', 'skip-fetch: the URL was pushed');
 ok(!!window.PaneState._stash()['/explorer'],
    'skip-fetch: the outgoing pane was parked on the way');
 req = requestTo('/explorer');
@@ -424,7 +426,7 @@ setTimeout(() => {   // let earlier scenarios' 60ms fallback timers drain first
     window.history.pushState({}, '', '/explorer');
     window.dispatchEvent(new window.CustomEvent('popstate'));
     setTimeout(() => {
-        ok(calls.length === 1 && calls[0].indexOf('/explorer') === 0,
+        ok(calls.length === 1 && calls[0].indexOf(PREFIX + '/explorer') === 0,
            'Back with a route-mismatched pane refetches the URL route (got '
            + JSON.stringify(calls) + ')');
         // an unstamped pane (full page load) with content is left alone
@@ -476,7 +478,7 @@ function section10() {
            'Back: ONE server probe of the tray for popstate + historyRestore (got '
            + JSON.stringify(fetched) + ')');
         const tray = calls.filter((c) => c.p === '/state/tray');
-        const paneRe = calls.filter((c) => c.p.indexOf('/diagnostics') === 0);
+        const paneRe = calls.filter((c) => c.p.indexOf(PREFIX + '/diagnostics') === 0);
         ok(tray.length === 1 && tray[0].opts.target === '#pending-tray'
            && tray[0].opts.swap === 'outerHTML',
            'a restored tray behind the server is re-rendered from it (got ' + JSON.stringify(calls) + ')');
@@ -665,7 +667,7 @@ function section12() {
     doc.getElementById('pending-tray').setAttribute('data-seq', '11');
     const reset = () => { fetched.length = 0; calls.length = 0; diagChanged = 0; };
     const trayRe = () => calls.filter((c) => c.p === '/state/tray');
-    const paneRe = () => calls.filter((c) => c.p.indexOf('/bulk') === 0 && c.opts.target === '#table-pane');
+    const paneRe = () => calls.filter((c) => c.p.indexOf(PREFIX + '/bulk') === 0 && c.opts.target === '#table-pane');
     // (a) an ordinary page load: nothing to probe
     pageshow(false);
     setTimeout(() => {

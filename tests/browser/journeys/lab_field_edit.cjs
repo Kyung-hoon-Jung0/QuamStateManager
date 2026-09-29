@@ -12,10 +12,10 @@
  * Writes OUT_DIR/lab_field_edit.json + the deciding screenshots. Exit 0 = all ok.
  */
 'use strict';
-const { open, sleep } = require('./cdp.cjs');
+const { open, sleep, base, baseFrom, smPath, smUrl } = require('./cdp.cjs');
 const fs = require('fs');
 const path = require('path');
-const BASE = process.argv[2] || 'http://127.0.0.1:5181';
+const BASE = baseFrom(process.argv[2] || null, 5181);
 const OUT = process.argv[3] || '.';
 fs.mkdirSync(OUT, { recursive: true });
 const res = { steps: [], errors: [] };
@@ -45,8 +45,8 @@ function coldStart() {
 }
 
 (async () => {
-  const peek = async (p, P) => P.ev(`fetch('/field/peek?dot_path=${p}').then(r=>r.json()).then(j=>JSON.stringify(j.values||j))`);
-  const changes = async (P) => P.ev(`fetch('/changes').then(r=>r.text()).then(t=>(t.match(/<tr/g)||[]).length)`);
+  const peek = async (p, P) => P.ev(`fetch('${smUrl(`/field/peek?dot_path=${p}`)}').then(r=>r.json()).then(j=>JSON.stringify(j.values||j))`);
+  const changes = async (P) => P.ev(`fetch('${smUrl(`/changes`)}').then(r=>r.text()).then(t=>(t.match(/<tr/g)||[]).length)`);
 
   // ---------------- 1. Live Edit pair grid ----------------
   let P = await open(BASE + '/bulk', 1600, 950);
@@ -294,7 +294,10 @@ function coldStart() {
   res.errors.push(...P.errors());
   await P.close();
   // a refusal IS an HTTP 400 (every edit refusal in the app is): Chrome logs it
-  const unexpected = res.errors.filter((e) => !/status of 400|Status Error Code 400 from \/pair\//.test(e));
+  // (behind a prefixed proxy Chrome names the prefixed URL: "... from /sm/pair/q2-3/edit")
+  const refusal400 = new RegExp('status of 400|Status Error Code 400 from '
+    + smUrl('/pair/').replace(/[.*+?^${}()|[\]\\/]/g, '\\$&'));
+  const unexpected = res.errors.filter((e) => !refusal400.test(e));
   note('console clean (the expected refusal 400s aside)', unexpected.length === 0, { errors: unexpected.slice(0, 5), refusals_400: res.errors.length - unexpected.length });
   fs.writeFileSync(path.join(OUT, 'lab_field_edit.json'), JSON.stringify(res, null, 1));
   process.exit(bad ? 1 : 0);

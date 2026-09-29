@@ -29,6 +29,7 @@
  *
  * Run:  node tests/generate_lo_ports_selfcheck.cjs   (driven by test_generate_lo_ports.py)
  */
+require('./_sm_root_boot.cjs').install();
 const fs = require('fs');
 const path = require('path');
 

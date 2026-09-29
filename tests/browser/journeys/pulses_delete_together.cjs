@@ -19,7 +19,7 @@
  */
 'use strict';
 const fs = require('fs');
-const { open, sleep } = require('./cdp.cjs');
+const { open, sleep, base, baseFrom, smPath, smUrl } = require('./cdp.cjs');
 
 const PORT = +(process.env.PORT || 5309);
 const DIR = process.env.SHOT_DIR || '.';
@@ -75,8 +75,8 @@ async function pressZ(p) {
   await p.send('Input.dispatchKeyEvent', { type: 'keyDown', key: 'z', code: 'KeyZ', windowsVirtualKeyCode: 90, modifiers: 2 });
   await p.send('Input.dispatchKeyEvent', { type: 'keyUp', key: 'z', code: 'KeyZ', windowsVirtualKeyCode: 90, modifiers: 2 });
 }
-const PEEK = (paths) => `fetch('/field/peek?'+${J(paths)}.map(function(x){return 'dot_path='+encodeURIComponent(x)}).join('&')).then(function(r){return r.json()}).then(function(d){var o={};${J(paths)}.forEach(function(x){o[x]= d.errors&&d.errors[x] ? '<absent>' : JSON.stringify(d.values[x])}); return JSON.stringify(o)})`;
-const SRV_PATHS = `fetch('/api/pulse/paths').then(function(r){return r.json()}).then(function(d){return JSON.stringify(d.options.map(function(o){return o[0]}).sort())})`;
+const PEEK = (paths) => `fetch('${smUrl(`/field/peek?`)}'+${J(paths)}.map(function(x){return 'dot_path='+encodeURIComponent(x)}).join('&')).then(function(r){return r.json()}).then(function(d){var o={};${J(paths)}.forEach(function(x){o[x]= d.errors&&d.errors[x] ? '<absent>' : JSON.stringify(d.values[x])}); return JSON.stringify(o)})`;
+const SRV_PATHS = `fetch('${smUrl(`/api/pulse/paths`)}').then(function(r){return r.json()}).then(function(d){return JSON.stringify(d.options.map(function(o){return o[0]}).sort())})`;
 const TOTAL = `(document.getElementById('pulses-total')||{}).textContent||''`;
 // the rows wrap's own URL, fetched cold: what a reload would show for the same filter
 // (the live search keyword rides every table request -- app.js's configRequest
@@ -185,7 +185,7 @@ async function runCase(p, name, path, q, expectTogether, expectLabel) {
 }
 
 (async () => {
-  const p = await open(`http://127.0.0.1:${PORT}/pulses`);
+  const p = await open(`${base(PORT)}/pulses`);
   await waitFor(p, `document.querySelectorAll('tr[data-pulse-path]').length`, 90000);
   const mark = p.events.length;
   const G = `qubit_pairs.${PAIR}.macros.${GATE}`;
@@ -285,7 +285,7 @@ async function runCase(p, name, path, q, expectTogether, expectLabel) {
   // op -> "Delete together with 1 gate field" -> one batch -> Ctrl+Z
   if (want('T') && process.env.TREE) {
     console.log('\n== T_json_tree');
-    const T = await open(`http://127.0.0.1:${PORT}/explorer`);
+    const T = await open(`${base(PORT)}/explorer`);
     await sleep(2500 * SLOW);
     const segs = OP_T.split('.');
     await T.ev(`(function(){var s=document.getElementById('explorer-search'); s.focus(); s.value=${J(segs[segs.length - 2] + ' ' + segs[segs.length - 1])}; s.dispatchEvent(new Event('input',{bubbles:true})); return 1})()`);

@@ -22,6 +22,7 @@ from quam_state_manager.core import journal
 from quam_state_manager.core.dataset import DatasetStore
 from quam_state_manager.web.app import create_app
 from tests.test_story import DAY, _run_folder
+from tests._prefix import PREFIX, RE_PREFIX
 
 ROOT = Path(__file__).resolve().parent.parent
 _H = {"Origin": "http://localhost"}
@@ -46,7 +47,7 @@ class TestThePage:
         c = world["client"]
         html = c.get(f"/journal?day={DAY}").get_data(as_text=True)
         assert 'id="card-101"' in html and 'id="card-104"' in html
-        assert "rabi left-biased" in html and 'href="/dataset/by-run/104"' in html
+        assert "rabi left-biased" in html and f'href="{PREFIX}/dataset/by-run/104"' in html
         assert "✗ failed" in html and "jr-digest" in html
         assert "journal.js" in html, "the page bundle is emitted"
         part = c.get(f"/journal?day={DAY}", headers={"HX-Request": "true"}).get_data(as_text=True)
@@ -166,21 +167,21 @@ class TestTheSidebar:
         i_sub = html.index('id="journal-subnav"')
         above = html[i_sub - 2500:i_sub]          # the sidebar just above the Calibration log entry
         below = html[i_sub:i_sub + 1200]          # its own sub-list
-        assert 'href="/journal"' in above and 'href="/agent"' in above, "the Agent entry is right above the Calibration log"
-        assert above.index('href="/agent"') < above.index('href="/journal"')
-        assert 'href="/state-history"' not in above, "State History no longer stands alone above the Calibration log"
-        assert 'href="/state-history"' in below and 'href="/param-history"' in below, "both histories are its sub-items"
-        assert below.index('href="/state-history"') < below.index('href="/param-history"')
+        assert f'href="{PREFIX}/journal"' in above and f'href="{PREFIX}/agent"' in above, "the Agent entry is right above the Calibration log"
+        assert above.index(f'href="{PREFIX}/agent"') < above.index(f'href="{PREFIX}/journal"')
+        assert f'href="{PREFIX}/state-history"' not in above, "State History no longer stands alone above the Calibration log"
+        assert f'href="{PREFIX}/state-history"' in below and f'href="{PREFIX}/param-history"' in below, "both histories are its sub-items"
+        assert below.index(f'href="{PREFIX}/state-history"') < below.index(f'href="{PREFIX}/param-history"')
         assert 'id="state-history-subnav"' not in html
         assert html.count(">Calibration log</a>") == 1
-        assert (above + below).count('href="/state-history"') == 1, "State History appears once in the nav around the Calibration log"
+        assert (above + below).count(f'href="{PREFIX}/state-history"') == 1, "State History appears once in the nav around the Calibration log"
         pal = re.search(r'<script id="cmd-palette-data"[^>]*>(.*?)</script>', html, re.S).group(1)
         labels = [e["label"] for e in json.loads(pal)["pages"]]
         assert "Calibration log" in labels
 
     def test_the_page_marks_itself_active(self, world):
         html = world["client"].get("/journal").get_data(as_text=True)
-        assert re.search(r'href="/journal"[^>]*class="active"', html)
+        assert re.search(rf'href="{RE_PREFIX}/journal"[^>]*class="active"', html)
 
 
 @pytest.mark.skipif(shutil.which("node") is None, reason="node not on PATH")

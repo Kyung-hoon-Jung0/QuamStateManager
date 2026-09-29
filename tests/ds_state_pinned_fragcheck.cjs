@@ -18,6 +18,11 @@
  *      (driven by tests/test_ds_state_pinned.py)
  */
 'use strict';
+require('./_sm_root_boot.cjs').install();
+const PREFIX = process.env.SM_TEST_URL_PREFIX || '';   // docs/226: the rendered fixture's URLs live under it
+// app route of a request path: rendered attributes carry the prefix, JS literals do not
+// (the harness body has no hx-ext, so htmx's sm-root extension never runs here)
+const rel = (p) => (PREFIX && String(p).indexOf(PREFIX + '/') === 0 ? String(p).slice(PREFIX.length) : p);
 const fs = require('fs');
 const path = require('path');
 let JSDOM;
@@ -48,7 +53,7 @@ window.fetch = function (url) {
 };
 function answer(uid, file) {
     const want = '/dataset/' + uid + '/json?file=' + file;
-    const i = held.findIndex(function (h) { return h.url === want; });
+    const i = held.findIndex(function (h) { return rel(h.url) === want; });
     if (i < 0) return false;
     const h = held.splice(i, 1)[0];
     h.resolve({ ok: true, status: 200, json: function () { return Promise.resolve({ uid: uid, file: file }); } });
@@ -84,7 +89,7 @@ window.jsonTreeExpandToDepth = function (id) { depths.push(id); };
     ok(!!pane.querySelector('.inspector-pinned-col #pinned-ds-tab-state')
        && !!pane.querySelector('.inspector-current-col #ds-tab-state'), 'split built: both columns carry a State tab');
     // the PINNED column's fetch answers LAST (the race the old code lost)
-    ok(held.some(function (h) { return h.url === '/dataset/' + uidP + '/json?file=state'; }),
+    ok(held.some(function (h) { return rel(h.url) === '/dataset/' + uidP + '/json?file=state'; }),
        'the pinned column re-renders its own run\'s state.json');
     answer(uidC, 'state');
     await sleep(5);

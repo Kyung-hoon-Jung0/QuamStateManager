@@ -21,6 +21,11 @@
  * (driven by tests/test_ds_fullpage.py)
  */
 'use strict';
+require('./_sm_root_boot.cjs').install();
+const PREFIX = process.env.SM_TEST_URL_PREFIX || '';   // docs/226: the rendered fixture's URLs live under it
+// app route of a request path: rendered attributes carry the prefix, JS literals do not
+// (the harness body has no hx-ext, so htmx's sm-root extension never runs here)
+const rel = (p) => (PREFIX && String(p).indexOf(PREFIX + '/') === 0 ? String(p).slice(PREFIX.length) : p);
 const fs = require('fs');
 const path = require('path');
 let JSDOM, VirtualConsole;
@@ -54,7 +59,7 @@ vconsole.on('jsdomError', function (e) {
 // runScripts 'dangerously': the template's inline onclick="..." handlers are
 // what a press runs, so they must run here too
 const dom = new JSDOM('<!doctype html><html><head></head><body>'
-  + '<nav class="sidebar-nav"><ul><li><a href="/datasets" id="nav-ds">Datasets</a></li></ul></nav>'
+  + '<nav class="sidebar-nav"><ul><li><a href="' + PREFIX + '/datasets" id="nav-ds">Datasets</a></li></ul></nav>'   // as the template renders it
   + '<div id="sidebar-tree"><ul class="tree-entries">' + entry(RUN + 1) + entry(RUN) + entry(RUN - 1) + '</ul></div>'
   + '<div id="table-pane"></div><div id="inspector-pane"></div></body></html>',
   { url: 'http://localhost/dataset/' + UID, runScripts: 'dangerously', pretendToBeVisual: true,
@@ -98,10 +103,10 @@ doc.addEventListener('htmx:configRequest', function (e) {
   reqs.push({ path: d.path, target: t && t.id });
   e.preventDefault();
   let html = null;
-  const m = /^\/dataset\/([^/?]+)$/.exec(d.path);
+  const m = /^\/dataset\/([^/?]+)$/.exec(rel(d.path));
   if (m) html = detailFor(decodeURIComponent(m[1]));
-  else if (d.path === '/explorer') html = '<div id="explorer-tree-state"><div>tree</div></div>';
-  else if (d.path === '/datasets') html = '<div id="datasets-page"></div>';
+  else if (rel(d.path) === '/explorer') html = '<div id="explorer-tree-state"><div>tree</div></div>';
+  else if (rel(d.path) === '/datasets') html = '<div id="datasets-page"></div>';
   if (html != null && t) {
     t.innerHTML = html;
     htmx.process(t);
@@ -110,7 +115,7 @@ doc.addEventListener('htmx:configRequest', function (e) {
 });
 htmx.process(doc.body);
 const navLink = doc.getElementById('nav-ds');
-navLink.setAttribute('hx-get', '/datasets');
+navLink.setAttribute('hx-get', PREFIX + '/datasets');
 navLink.setAttribute('hx-target', '#table-pane');
 htmx.process(navLink);
 
@@ -124,26 +129,26 @@ function btn(sel, pane) { return doc.querySelector('#' + pane + ' ' + sel); }
   ok(!!down, '(fixture) the rendered full page has the ↓ button');
   down.click();
   await tick();
-  ok(lastReq().path === '/dataset/' + KEY + ':' + (RUN - 1) && lastReq().target === 'table-pane',
+  ok(rel(lastReq().path) === '/dataset/' + KEY + ':' + (RUN - 1) && lastReq().target === 'table-pane',
      '↓ on a full page loads the next run INTO #table-pane: ' + JSON.stringify(lastReq()));
   ok(roots().length === 1 && roots()[0].getAttribute('data-uid') === KEY + ':' + (RUN - 1),
      'exactly one run detail on screen (never stacked under the full page)');
-  ok(w.location.pathname === '/dataset/' + KEY + ':' + (RUN - 1),
+  ok(w.location.pathname === PREFIX + '/dataset/' + KEY + ':' + (RUN - 1),
      'the URL names the run on screen: ' + w.location.pathname);
   btn('.inspector-nav-btn[aria-label="Older run"]', 'table-pane').click();
   await tick(40);
-  ok(lastReq().path === '/dataset/' + KEY + ':' + (RUN - 2) && lastReq().target === 'table-pane',
+  ok(rel(lastReq().path) === '/dataset/' + KEY + ':' + (RUN - 2) && lastReq().target === 'table-pane',
      'past the tree end the server neighbor also lands in #table-pane (navigation advances)');
 
   // ── the parent link resolves to the pane that holds the run ────────────
-  const parent = btn('a[hx-get^="/dataset/"]', 'table-pane');
+  const parent = btn('a[hx-get^="' + PREFIX + '/dataset/"]', 'table-pane');
   ok(!!parent, '(fixture) the rendered detail has the parent link');
   parent.click();
   await tick();
   ok(lastReq().target === 'table-pane', 'the parent link on a full page targets #table-pane: '
      + JSON.stringify(lastReq()));
   ok(roots().length === 1, 'still exactly one run detail after the parent link');
-  ok(w.location.pathname === '/dataset/' + KEY + ':' + (RUN - 10),
+  ok(w.location.pathname === PREFIX + '/dataset/' + KEY + ':' + (RUN - 10),
      'the URL follows the parent link too: ' + w.location.pathname);
 
   // ...but a swap that is NOT the run's own control (e.g. a journal/agent run
@@ -162,7 +167,7 @@ function btn(sel, pane) { return doc.querySelector('#' + pane + ' ' + sel); }
   const n0 = reqs.length;
   w._navigateToExplorerPath('qubits.q1.f_01');
   await tick(80);
-  const seq = reqs.slice(n0).map(r => r.path + '>' + r.target);
+  const seq = reqs.slice(n0).map(r => rel(r.path) + '>' + r.target);
   ok(seq.length >= 2 && /^\/dataset\/.+>inspector-pane$/.test(seq[0]) && seq[1] === '/explorer>table-pane',
      'Go to state moves the run into the inspector BEFORE the Explorer takes #table-pane: ' + JSON.stringify(seq));
   ok(splitPresets[splitPresets.length - 1] === 'collapsed', 'and collapses it to the user preset after that swap');
@@ -189,7 +194,7 @@ function btn(sel, pane) { return doc.querySelector('#' + pane + ' ' + sel); }
   const n1 = reqs.length;
   btn('.inspector-close', 'table-pane').click();
   await tick();
-  ok(reqs.length > n1 && lastReq().path === '/datasets' && lastReq().target === 'table-pane',
+  ok(reqs.length > n1 && rel(lastReq().path) === '/datasets' && lastReq().target === 'table-pane',
      '× on a full page returns to the Datasets list: ' + JSON.stringify(lastReq()));
   ok(!doc.querySelector('#table-pane #ds-detail-root'), 'the full page is gone after ×');
 
@@ -199,7 +204,7 @@ function btn(sel, pane) { return doc.querySelector('#' + pane + ' ' + sel); }
   ins.innerHTML = detailFor(KEY + ':' + (RUN + 50)); htmx.process(ins);
   btn('.inspector-nav-btn[aria-label="Older run"]', 'table-pane').click();
   await tick(40);
-  ok(lastReq().path === '/dataset/' + KEY + ':' + (RUN - 1) && lastReq().target === 'table-pane',
+  ok(rel(lastReq().path) === '/dataset/' + KEY + ':' + (RUN - 1) && lastReq().target === 'table-pane',
      'the full page\'s ↓ steps from ITS run, not the inspector\'s: ' + JSON.stringify(lastReq()));
   ok(ins.querySelector('#ds-detail-root').getAttribute('data-uid') === KEY + ':' + (RUN + 50),
      'the inspector run is left alone');

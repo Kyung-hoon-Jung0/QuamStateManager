@@ -12,6 +12,7 @@
  *   6. a slow older refresh never lands over a newer one (generation token)
  * Run: node tests/pulses_undo_selfcheck.cjs   (driven by tests/test_undo_trail.py)
  */
+require('./_sm_root_boot.cjs').install();
 const fs = require('fs');
 const path = require('path');
 const { JSDOM } = require('jsdom');

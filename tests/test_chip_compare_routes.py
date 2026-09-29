@@ -13,6 +13,7 @@ from pathlib import Path
 import pytest
 
 from quam_state_manager.web.app import create_app
+from tests._prefix import PREFIX
 
 
 # ---------------------------------------------------------------------------
@@ -133,13 +134,13 @@ class TestChipCompareRedirect:
         resp = client.get("/chip-compare")
         assert resp.status_code == 302
         # bare landings carry from= so the hub explains where the page went
-        assert resp.headers["Location"] == "/compare-hub?from=chip-compare"
+        assert resp.headers["Location"] == f"{PREFIX}/compare-hub?from=chip-compare"
 
     def test_post_translates_paths_to_src_tokens(self, client, two_chips):
         resp = client.post("/chip-compare", data={"paths": two_chips})
         assert resp.status_code == 302
         loc = resp.headers["Location"]
-        assert loc.startswith("/compare-hub?")
+        assert loc.startswith(f"{PREFIX}/compare-hub?")
         assert loc.count("src=") == 2
         # plain folders → ws: tokens (archive-run layouts get run:)
         assert "src=ws%3A" in loc or "src=ws:" in loc
@@ -150,7 +151,7 @@ class TestChipCompareRedirect:
         resp = client.post("/chip-compare", data={"paths": two_chips},
                            headers={"HX-Request": "true"})
         assert resp.status_code == 200
-        assert resp.headers["HX-Redirect"].startswith("/compare-hub?")
+        assert resp.headers["HX-Redirect"].startswith(f"{PREFIX}/compare-hub?")
 
     def test_single_path_still_redirects(self, client, two_chips):
         resp = client.post("/chip-compare", data={"paths": two_chips[0]})
@@ -161,8 +162,8 @@ class TestChipCompareRedirect:
         """The legacy chip-compare entry stays gone. Since docs/84 the sidebar's
         Compare opens the diff workbench; the hub is reachable from there."""
         html = client.get("/compare-hub").data.decode()
-        assert 'href="/chip-compare"' not in html
-        assert 'href="/diff"' in html
+        assert f'href="{PREFIX}/chip-compare"' not in html
+        assert f'href="{PREFIX}/diff"' in html
 
 
 

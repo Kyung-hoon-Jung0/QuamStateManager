@@ -9,6 +9,7 @@
  *
  * Run: node tests/pulses_urlsync_selfcheck.cjs (driven by tests/test_pulses_url_banner.py)
  */
+require('./_sm_root_boot.cjs').install();
 const fs = require('fs');
 const path = require('path');
 const { JSDOM } = require('jsdom');

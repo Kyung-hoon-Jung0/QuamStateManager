@@ -11,6 +11,7 @@
  *
  * Run: node tests/apply_ux_selfcheck.cjs  (driven by tests/test_apply_ux.py).
  */
+require('./_sm_root_boot.cjs').install();
 const fs = require('fs');
 const path = require('path');
 const { JSDOM } = require('jsdom');

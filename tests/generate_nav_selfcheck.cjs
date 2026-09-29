@@ -6,6 +6,7 @@
  * Run:  NODE_PATH=<dir-with-jsdom> node tests/generate_nav_selfcheck.cjs
  * Driven by tests/test_generate_nav.py when node + jsdom are present (else skip).
  */
+require('./_sm_root_boot.cjs').install();
 const fs = require('fs');
 const path = require('path');
 

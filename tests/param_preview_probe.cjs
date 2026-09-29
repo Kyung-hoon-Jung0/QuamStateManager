@@ -10,6 +10,7 @@
 // argv[2] is {payload, asks:[{key, op, want}]}; stdout is one
 // {values, runs, insert} per ask, or null when the panel offers no preview.
 'use strict';
+require('./_sm_root_boot.cjs').install();
 
 const fs = require('fs');
 const path = require('path');

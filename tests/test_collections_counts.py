@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import re
 
+from tests._prefix import P
 from tests.test_datasets_refresh import HX, _app, _seed_run
 
 
@@ -86,14 +87,14 @@ class TestCollectionsCountsTheCollection:
         tabs = coll[coll.index("ds-date-tabs"):]
         tabs = tabs[:tabs.index("</div>")]
         gets = re.findall(r'hx-get="([^"]*)"', tabs)
-        assert gets == ["/collections?q=q1",
-                        "/collections?date=2026-05-03&q=q1",
-                        "/collections?date=2026-05-01&q=q1"], gets
+        assert gets == [P("/collections?q=q1"),
+                        P("/collections?date=2026-05-03&q=q1"),
+                        P("/collections?date=2026-05-01&q=q1")], gets
         # ...and the tab it points at renders Collections, narrowed to the date
         r = c.get("/collections?date=2026-05-01", headers=HX).get_data(as_text=True)
         assert 'data-view="collections"' in r
         ds = c.get("/datasets", headers=HX).get_data(as_text=True)
         dtabs = ds[ds.index("ds-date-tabs"):]
         dtabs = dtabs[:dtabs.index("</div>")]
-        assert all(g.startswith("/datasets")
+        assert all(g.startswith(P("/datasets"))
                    for g in re.findall(r'hx-get="([^"]*)"', dtabs))

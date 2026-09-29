@@ -3,11 +3,11 @@
  *   SM_CDP_PORT=9413 node agent_controls.cjs 5113 OUTDIR WIDTH
  */
 'use strict';
-const { open, sleep } = require('./cdp.cjs');
+const { open, sleep, base, baseFrom, smPath, smUrl } = require('./cdp.cjs');
 const [SM, OUT, W] = [process.argv[2], process.argv[3], +process.argv[4] || 1600];
 
 (async () => {
-  const p = await open(`http://127.0.0.1:${SM}/agent`, W, 900);
+  const p = await open(`${base(SM)}/agent`, W, 900);
   const dialogs = [];
   setInterval(async () => {
     for (const e of p.events.splice(0)) {

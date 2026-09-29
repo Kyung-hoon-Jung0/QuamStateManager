@@ -4,6 +4,7 @@
  * burst and never when it must not: the timing rule the user chose is
  * "immediate, and coalesce anything that arrives while a write is in flight".
  */
+require('./_sm_root_boot.cjs').install();
 const fs = require('fs');
 const path = require('path');
 const { JSDOM } = require('jsdom');

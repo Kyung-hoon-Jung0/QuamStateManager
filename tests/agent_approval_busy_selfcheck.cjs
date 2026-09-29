@@ -3,6 +3,7 @@
  * answered "no pending approval". And Cancel on Reject's note prompt REJECTED
  * the approval anyway (prompt() -> null -> "" -> POST). Real agent.js under jsdom.
  * Run: node tests/agent_approval_busy_selfcheck.cjs */
+require('./_sm_root_boot.cjs').install();
 const fs = require('fs');
 const path = require('path');
 const vm = require('vm');

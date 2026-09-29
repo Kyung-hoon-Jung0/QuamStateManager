@@ -14,6 +14,7 @@
  * Run: node tests/pin_compare_selfcheck.cjs  (driven by tests/test_pin_compare.py)
  */
 'use strict';
+require('./_sm_root_boot.cjs').install();
 const fs = require('fs');
 const path = require('path');
 let JSDOM;

@@ -4,6 +4,7 @@
  * popover with its path, a claim POSTs run/who/note and remembers the name,
  * day() drives the filter form, copyDigest reads the strip.
  * Run: node tests/journal_page_selfcheck.cjs   (needs jsdom) */
+require('./_sm_root_boot.cjs').install();
 const fs = require('fs');
 const path = require('path');
 const vm = require('vm');

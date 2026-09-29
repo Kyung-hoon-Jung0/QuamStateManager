@@ -13,6 +13,7 @@
  *      navigates.
  * Run: node tests/undo_pages_selfcheck.cjs   (driven by tests/test_undo_trail.py)
  */
+require('./_sm_root_boot.cjs').install();
 const fs = require('fs');
 const path = require('path');
 const { JSDOM } = require('jsdom');

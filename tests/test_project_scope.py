@@ -17,6 +17,7 @@ from quam_state_manager.core import path_match
 from quam_state_manager.core import qualibrate_config as qc
 from quam_state_manager.web import routes as routes_mod
 from quam_state_manager.web.app import create_app
+from tests._prefix import PREFIX
 
 
 def _write(path: Path, text: str) -> None:
@@ -332,7 +333,7 @@ class TestSidebarReorg:
 
     def test_command_palette_lists_projects(self):
         base = self._src("quam_state_manager/web/templates/base.html")
-        assert '{"label": "Projects",          "url": "/qualibrate"}' in base
+        assert '{"label": "Projects",          "url": "{{ root }}/qualibrate"}' in base
 
     def test_subnav_caps_at_three_with_show_all(self, scoped):
         """r8 feedback: with many projects the expanded subnav buried the
@@ -690,7 +691,7 @@ class TestLanding:
     def test_landing_shell_with_config(self, scoped):
         body = scoped["client"].get("/").get_data(as_text=True)
         assert 'id="landing-cards"' in body
-        assert 'hx-get="/landing/projects"' in body
+        assert f'hx-get="{PREFIX}/landing/projects"' in body
         # the shell must NOT inline the project list (lazy fragment only)
         assert "landing-card-grid" not in body
         # greeting + question header (user feedback), NOT the legacy welcome
@@ -794,4 +795,4 @@ class TestTitleLinkIsTheLanding:
         c = scoped["client"]
         c.post("/load", data={"folder": str(scoped["chip_a"])})
         body = c.get("/").get_data(as_text=True)
-        assert 'href="/?landing=1" class="app-title-link"' in body
+        assert f'href="{PREFIX}/?landing=1" class="app-title-link"' in body

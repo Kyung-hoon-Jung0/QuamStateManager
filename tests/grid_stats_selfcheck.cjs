@@ -17,6 +17,7 @@
 //
 // Run: node tests/grid_stats_selfcheck.cjs   (driven by tests/test_grid_stats.py)
 'use strict';
+require('./_sm_root_boot.cjs').install();
 
 const fs = require('fs');
 const path = require('path');

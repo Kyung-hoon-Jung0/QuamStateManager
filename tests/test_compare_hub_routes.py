@@ -15,6 +15,7 @@ from pathlib import Path
 import pytest
 
 from quam_state_manager.web.app import create_app
+from tests._prefix import PREFIX
 
 
 # ---------------------------------------------------------------------------
@@ -110,8 +111,8 @@ class TestHubShell:
         not come back is the old three-entry sidebar."""
         c, _a, _b = env
         r = c.get("/compare-hub")   # full page (no HX-Request header)
-        assert b'href="/diff"' in r.data
-        assert b'href="/chip-compare"' not in r.data
+        assert f'href="{PREFIX}/diff"'.encode() in r.data
+        assert f'href="{PREFIX}/chip-compare"'.encode() not in r.data
 
     def test_two_sources_without_bucket_prompts_for_context(self, env):
         """Axiom 2 — the context is user-declared, never auto-run."""
@@ -886,10 +887,10 @@ class TestP4Redirects:
         resp = c.post("/compare", data={"paths": [str(a), str(run_qs)]})
         assert resp.status_code == 302
         loc = resp.headers["Location"]
-        assert loc.startswith("/diff?a=ws%3A") and "&b=run%3A" in loc and loc.endswith("&tab=state")
+        assert loc.startswith(f"{PREFIX}/diff?a=ws%3A") and "&b=run%3A" in loc and loc.endswith("&tab=state")
         resp = c.post("/compare", data={"paths": [str(a), str(run_qs), str(a)]})
         loc = resp.headers["Location"]
-        assert loc.startswith("/diff?a=ws%3A") and "&b=run%3A" in loc and "&c=ws%3A" in loc
+        assert loc.startswith(f"{PREFIX}/diff?a=ws%3A") and "&b=run%3A" in loc and "&c=ws%3A" in loc
         assert "compare-hub" not in loc
 
     def test_two_checked_runs_open_the_diff_on_figures(self, env, tmp_path):
@@ -907,7 +908,7 @@ class TestP4Redirects:
         loc_obj = json.loads(resp.headers["HX-Location"])
         assert loc_obj["target"] == "#table-pane"
         loc = loc_obj["path"]
-        assert loc.startswith("/diff?a=run%3A") and "&b=run%3A" in loc and loc.endswith("&tab=figures")
+        assert loc.startswith(f"{PREFIX}/diff?a=run%3A") and "&b=run%3A" in loc and loc.endswith("&tab=figures")
         page = c.get(loc)
         assert page.status_code == 200 and b"Pick the comparison context" not in page.data
 
@@ -932,15 +933,15 @@ class TestP4Redirects:
         msg = json.loads(resp.headers["HX-Trigger"])["sm:toast"]["message"]
         assert "12 runs" in msg and "untick 7" in msg
         resp = c.post("/compare", data={"paths": paths})
-        assert resp.status_code == 302 and resp.headers["Location"] == "/diff"
+        assert resp.status_code == 302 and resp.headers["Location"] == f"{PREFIX}/diff"
 
     def test_command_palette_points_at_hub(self, env):
         """The palette follows the front door (docs/84): Compare opens the diff
         workbench. The legacy chip-compare entry stays gone."""
         c, _a, _b = env
         html = c.get("/compare-hub").data.decode()
-        assert '"/diff"' in html
-        assert '"/chip-compare"' not in html   # the palette entry too
+        assert f'"{PREFIX}/diff"' in html
+        assert f'"{PREFIX}/chip-compare"' not in html   # the palette entry too
 
 
 # ===========================================================================
@@ -959,12 +960,12 @@ class TestFinalAuditHardening:
         for url in (f"/diff?src=ws:{a}", "/chip-compare"):
             r = c.get(url, headers={"HX-Request": "true"})
             assert r.status_code == 200
-            assert r.headers["HX-Redirect"].startswith("/compare-hub")
+            assert r.headers["HX-Redirect"].startswith(f"{PREFIX}/compare-hub")
 
     def test_legacy_bare_get_lands_with_moved_note(self, env):
         c, _a, _b = env
         r = c.get("/chip-compare")
-        assert r.headers["Location"] == "/compare-hub?from=chip-compare"
+        assert r.headers["Location"] == f"{PREFIX}/compare-hub?from=chip-compare"
         r2 = c.get(r.headers["Location"])
         assert b"moved here" in r2.data
 

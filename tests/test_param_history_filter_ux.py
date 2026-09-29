@@ -31,6 +31,7 @@ from pathlib import Path
 import pytest
 
 from quam_state_manager.web.app import create_app
+from tests._prefix import PREFIX
 
 _ROOT = Path(__file__).resolve().parent.parent
 _STATIC = _ROOT / "quam_state_manager" / "web" / "static"
@@ -94,7 +95,7 @@ class TestDebouncedTrigger:
         only #param-history-results (hx-select picks it out of the full
         render) so the form the user just set never re-renders under them."""
         tag = re.match(r"<form[^>]*>", filter_form).group(0)
-        assert 'hx-get="/param-history"' in tag
+        assert f'hx-get="{PREFIX}/param-history"' in tag
         assert 'hx-target="#param-history-results"' in tag
         assert 'hx-select="#param-history-results"' in tag
         assert 'hx-target="#param-history-root"' not in tag

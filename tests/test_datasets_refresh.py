@@ -286,7 +286,7 @@ class TestRescanSwapsTheTable:
         assert b'id="ds-active-date" name="date" value="2026-05-01"' in r.data
 
     def test_the_button_sends_its_date_and_view_and_cannot_double_fire(self):
-        i = _DS_HTML.index('hx-post="/datasets/rescan"')
+        i = _DS_HTML.index('hx-post="{{ root }}/datasets/rescan"')
         btn = _DS_HTML[i - 200:i + 400]
         # QA F9: the search box rides along too, so the swap keeps the search
         assert 'hx-include="#ds-active-date, #dataset-search"' in btn
@@ -330,10 +330,12 @@ class TestTheChipClickWiring:
         i = _APP_JS.index("window.refreshRunLists = function () {")
         body = _APP_JS[i:i + 700]
         assert "'.btn-workspace-refresh'" in body
-        assert "button[hx-post=\"/datasets/rescan\"]" in body
+        # docs/226 §4.4: the template attribute is prefixed, so the selector is too
+        assert """'button[hx-post="' + _smUrl('/datasets/rescan') + '"]'""" in body
         assert "htmx-request" in body                  # never a second request on top of one in flight
 
     def test_pressing_a_refresh_button_yourself_acknowledges(self):
         i = _APP_JS.index("function _ackNewRuns()")
         body = _APP_JS[i:i + 1400]
-        assert ".closest('.btn-workspace-refresh, button[hx-post=\"/datasets/rescan\"]')" in body
+        assert (""".closest('.btn-workspace-refresh, button[hx-post="' + _smUrl('/datasets/rescan') + '"]')"""
+                in body)

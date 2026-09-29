@@ -18,6 +18,7 @@
  * Run: node tests/pulses_delete_together_selfcheck.cjs
  *      (driven by tests/test_pulse_delete_together.py)
  */
+require('./_sm_root_boot.cjs').install();
 const fs = require('fs');
 const path = require('path');
 const { JSDOM } = require('jsdom');

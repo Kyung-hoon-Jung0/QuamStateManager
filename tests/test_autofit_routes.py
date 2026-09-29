@@ -10,6 +10,7 @@ from pathlib import Path
 import pytest
 
 from quam_state_manager.web.app import create_app
+from tests._prefix import PREFIX
 
 
 @pytest.fixture
@@ -45,10 +46,10 @@ class TestPage:
         """docs/172: the entry exists only under SM_EXPERIMENTAL=1 now."""
         monkeypatch.setenv("SM_EXPERIMENTAL", "1")
         body = client.get("/").get_data(as_text=True)
-        assert 'href="/autofit"' in body
+        assert f'href="{PREFIX}/autofit"' in body
         assert "autofit-nav-badge" in body
         monkeypatch.delenv("SM_EXPERIMENTAL")
-        assert 'href="/autofit"' not in client.get("/").get_data(as_text=True)
+        assert f'href="{PREFIX}/autofit"' not in client.get("/").get_data(as_text=True)
 
 
 class TestOneButtonSimFlow:

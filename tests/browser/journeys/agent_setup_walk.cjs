@@ -5,11 +5,11 @@
  *   SM_CDP_PORT=9413 node agent_setup_walk.cjs 5113 OUTDIR WIDTH
  */
 'use strict';
-const { open, sleep } = require('./cdp.cjs');
+const { open, sleep, base, baseFrom, smPath, smUrl } = require('./cdp.cjs');
 const [SM, OUT, W] = [process.argv[2], process.argv[3], +process.argv[4] || 1600];
 
 (async () => {
-  const p = await open(`http://127.0.0.1:${SM}/agent/setup`, W, 900);
+  const p = await open(`${base(SM)}/agent/setup`, W, 900);
   await sleep(3000);
   const at = async (sel, re, nth = 0) => {
     const r = await p.ev(`(() => { const re = ${re || 'null'}; const es = [...document.querySelectorAll(${JSON.stringify(sel)})].filter(e => e.getBoundingClientRect().width > 0 && (!re || re.test(e.textContent || e.value || '')));

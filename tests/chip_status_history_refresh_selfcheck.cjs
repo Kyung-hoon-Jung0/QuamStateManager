@@ -20,6 +20,7 @@
  *      (driven by tests/test_history_drawer.py)
  */
 'use strict';
+require('./_sm_root_boot.cjs').install();
 
 const fs = require('fs');
 const path = require('path');

@@ -10,6 +10,7 @@
  * Run: node tests/diag_waits_for_flush_selfcheck.cjs   (needs jsdom)
  */
 
+require('./_sm_root_boot.cjs').install();
 const fs = require('fs');
 const path = require('path');
 let JSDOM;

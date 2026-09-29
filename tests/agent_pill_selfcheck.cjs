@@ -3,6 +3,7 @@
  * the reservation line, render() sets the state class + data attribute, a
  * live-wake event with a NEW agent_seq re-fetches and an unchanged one does
  * not, the safety refresh is force. Run: node tests/agent_pill_selfcheck.cjs */
+require('./_sm_root_boot.cjs').install();
 const fs = require('fs');
 const path = require('path');
 const vm = require('vm');

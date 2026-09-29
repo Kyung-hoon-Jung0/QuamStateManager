@@ -16,6 +16,7 @@ import pytest
 
 from quam_state_manager.web import routes as routes_mod
 from quam_state_manager.web.app import create_app
+from tests._prefix import PREFIX
 
 _STATE = {"qubits": {"qA1": {"id": "qA1", "f_01": 6.25e9}},
           "qubit_pairs": {}, "active_qubit_names": ["qA1"]}
@@ -142,7 +143,7 @@ class TestStageIntoOpenChip:
 class TestArchiveFallback:
     def test_no_chip_loaded_opens_archive(self, env):
         r = env["client"].post(f"/dataset/{env['uid_same']}/load-state")
-        assert r.headers.get("HX-Redirect") == "/qubits"
+        assert r.headers.get("HX-Redirect") == f"{PREFIX}/qubits"
         ctx = _active(env["app"])
         assert ctx is not None and ctx.get("origin") == "dataset_archive"
 
@@ -150,7 +151,7 @@ class TestArchiveFallback:
         c = env["client"]
         c.post("/load", data={"folder": str(env["chip"])})
         r = c.post(f"/dataset/{env['uid_same']}/load-state?mode=archive")
-        assert r.headers.get("HX-Redirect") == "/qubits"
+        assert r.headers.get("HX-Redirect") == f"{PREFIX}/qubits"
         ctx = _active(env["app"])
         assert ctx.get("origin") == "dataset_archive"
 
@@ -160,7 +161,7 @@ class TestArchiveFallback:
         c = env["client"]
         c.post(f"/dataset/{env['uid_same']}/load-state")      # archive open
         r = c.post(f"/dataset/{env['uid_other']}/load-state")
-        assert r.headers.get("HX-Redirect") == "/qubits"
+        assert r.headers.get("HX-Redirect") == f"{PREFIX}/qubits"
         assert _active(env["app"]).get("origin") == "dataset_archive"
 
 
@@ -192,7 +193,7 @@ class TestArchiveWayBack:
         if chip_first:
             c.post("/load", data={"folder": str(env["chip"])})
         r = c.post(f"/dataset/{env['uid_same']}/load-state?mode=archive")
-        assert r.headers.get("HX-Redirect") == "/qubits"   # contract unchanged
+        assert r.headers.get("HX-Redirect") == f"{PREFIX}/qubits"   # contract unchanged
         return c
 
     @pytest.mark.parametrize("url", ["/qubits", "/state/tray"])
@@ -202,8 +203,8 @@ class TestArchiveWayBack:
         body = c.get(url).get_data(as_text=True)
         # sync-ux 2026-09-25: the one status control words it "Archive · read-only"
         assert "Archive · read-only · run #1" in body
-        assert 'class="btn-sm outline tray-archive-back" hx-post="/load"' in body
-        vals = body.split('tray-archive-back" hx-post="/load"', 1)[1].split("hx-vals='", 1)[1].split("'", 1)[0]
+        assert f'class="btn-sm outline tray-archive-back" hx-post="{PREFIX}/load"' in body
+        vals = body.split(f'tray-archive-back" hx-post="{PREFIX}/load"', 1)[1].split("hx-vals='", 1)[1].split("'", 1)[0]
         assert json.loads(vals) == {"folder": str(env["chip"].resolve())}
         assert "Back to live_chip" in body
 
@@ -229,7 +230,7 @@ class TestArchiveWayBack:
         assert "matches the live chip" not in body
         assert 'data-sync-state="archive"' in body
         assert "frozen quam_state" in body
-        assert 'href="/dataset/' + env["uid_same"] + '"' in body     # back to the run
+        assert f'href="{PREFIX}/dataset/' + env["uid_same"] + '"' in body     # back to the run
         assert "state-review-archive-back" in body                   # back to the chip
 
     def test_no_chip_before_means_no_back_button_but_a_hint(self, env):

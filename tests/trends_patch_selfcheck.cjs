@@ -1,6 +1,7 @@
 /* RAM P2: a Trends toggle PATCHES the section (ChipTrends._apply) instead of
  * re-rendering every chart, and SnapTime builds one Intl formatter per zone.
  * Driven by tests/test_chip_trends_ram.py::test_client_patch_selfcheck. */
+require('./_sm_root_boot.cjs').install();
 const {JSDOM} = require('jsdom');
 const fs = require('fs');
 const assert = require('assert');

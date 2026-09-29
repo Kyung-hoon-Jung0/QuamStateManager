@@ -13,6 +13,7 @@
 // Drives the REAL bulk-edit.js + pair-edit.js (+ grid-virt.js) under jsdom.
 // Run: node tests/focus_return_selfcheck.cjs   (driven by test_focus_return.py)
 'use strict';
+require('./_sm_root_boot.cjs').install();
 
 const fs = require('fs');
 const path = require('path');

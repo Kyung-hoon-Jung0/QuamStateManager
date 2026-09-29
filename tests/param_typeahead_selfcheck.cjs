@@ -12,6 +12,7 @@
 // DOM after — because this file evaluates in <head> before the sidebar exists,
 // and a pre-built-DOM harness is exactly what hid the docs/149 dead binding.
 'use strict';
+require('./_sm_root_boot.cjs').install();
 
 const fs = require('fs');
 const path = require('path');

@@ -24,6 +24,7 @@
  * arguments (the review of this fix found that runner red on a clean tree).
  */
 'use strict';
+require('./_sm_root_boot.cjs').install();
 
 const fs = require('fs');
 const path = require('path');

@@ -7,9 +7,9 @@
  *   SM_CDP_PORT=9414 SM_PORT=5114 node pulses_big_timing.cjs [ROUNDS]
  */
 'use strict';
-const { open, sleep } = require('./cdp.cjs');
+const { open, sleep, base, baseFrom, smPath, smUrl } = require('./cdp.cjs');
 const PORT = process.env.SM_PORT || 5114;
-const BASE = `http://127.0.0.1:${PORT}`;
+const BASE = base(PORT);
 const ROUNDS = +(process.argv[2] || 3);
 
 async function waitFor(p, expr, ms = 120000) {
@@ -28,7 +28,7 @@ const ROWS = `document.querySelectorAll('tr[data-pulse-path]').length`;
   const p = await open(`${BASE}/`);
   for (let r = 0; r < ROUNDS; r++) {
     // a mutation makes the next list build cold: commit a field value
-    const first = await p.ev(`fetch('/pulses?rows=1&per_page=1').then(r=>r.text()).then(h=>(h.match(/data-pulse-path="([^"]+)"/)||[])[1]||'')`);
+    const first = await p.ev(`fetch('${smUrl(`/pulses?rows=1&per_page=1`)}').then(r=>r.text()).then(h=>(h.match(/data-pulse-path="([^"]+)"/)||[])[1]||'')`);
     let t0 = Date.now();
     await p.send('Page.navigate', { url: `${BASE}/pulses` });
     await waitFor(p, `document.readyState==='complete' && ${ROWS} > 0 ? 1 : 0`);
@@ -51,9 +51,9 @@ const ROWS = `document.querySelectorAll('tr[data-pulse-path]').length`;
     // a field commit, then the whole list rebuilt (cold index)
     if (first) {
       const v = (0.01 + r * 0.001).toFixed(4);
-      await p.ev(`(function(){var fd=new FormData(); fd.append('path', ${JSON.stringify(first)}); fd.append('dot_path', ${JSON.stringify(first)} + '.amplitude'); fd.append('mode','value'); fd.append('value','${v}'); return fetch('/pulse/edit',{method:'POST',body:fd,headers:{'HX-Request':'true'}}).then(r=>r.status)})()`);
+      await p.ev(`(function(){var fd=new FormData(); fd.append('path', ${JSON.stringify(first)}); fd.append('dot_path', ${JSON.stringify(first)} + '.amplitude'); fd.append('mode','value'); fd.append('value','${v}'); return fetch('${smUrl(`/pulse/edit`)}',{method:'POST',body:fd,headers:{'HX-Request':'true'}}).then(r=>r.status)})()`);
       t0 = Date.now();
-      await p.ev(`fetch('/pulses?rows=1&per_page=50').then(r=>r.text()).then(h=>h.length)`);
+      await p.ev(`fetch('${smUrl(`/pulses?rows=1&per_page=50`)}').then(r=>r.text()).then(h=>h.length)`);
       out.after_commit.push(Date.now() - t0);
     }
     t0 = Date.now();
@@ -64,7 +64,7 @@ const ROWS = `document.querySelectorAll('tr[data-pulse-path]').length`;
   const med = a => a.slice().sort((x, y) => x - y)[Math.floor(a.length / 2)];
   const res = {};
   for (const k of Object.keys(out)) res[k] = { runs: out[k], median: med(out[k]) };
-  res.rows_total = await p.ev(`fetch('/pulses?rows=1&per_page=1').then(r=>r.text()).then(h=>(h.match(/\\((\\d+) total\\)/)||[])[1]||'?')`);
+  res.rows_total = await p.ev(`fetch('${smUrl(`/pulses?rows=1&per_page=1`)}').then(r=>r.text()).then(h=>(h.match(/\\((\\d+) total\\)/)||[])[1]||'?')`);
   console.log(JSON.stringify(res));
   await p.close();
   process.exit(0);

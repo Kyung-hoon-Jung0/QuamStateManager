@@ -4,7 +4,7 @@
  *   SM_CDP_PORT=9413 node agent_journal_layout.cjs 5113 OUTDIR WIDTH
  */
 'use strict';
-const { open, sleep } = require('./cdp.cjs');
+const { open, sleep, base, baseFrom, smPath, smUrl } = require('./cdp.cjs');
 const [SM, OUT, W] = [process.argv[2], process.argv[3], +process.argv[4] || 1366];
 const MEASURE = `(() => {
   const sel = document.getElementById('jr-author'); const cs = sel && getComputedStyle(sel);
@@ -19,7 +19,7 @@ const MEASURE = `(() => {
 })()`;
 
 (async () => {
-  const p = await open(`http://127.0.0.1:${SM}/journal`, W, 900);
+  const p = await open(`${base(SM)}/journal`, W, 900);
   await sleep(2500);
   // every row "new since your last visit": its dot must not become a grid cell
   await p.ev(`Object.keys(localStorage).filter(k => k.startsWith('quam_journal_seen:')).forEach(k => localStorage.setItem(k, '1'))`);

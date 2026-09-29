@@ -22,6 +22,7 @@
  * Run: node tests/tree_keyboard_selfcheck.cjs   (driven by tests/test_tree_keyboard.py)
  */
 'use strict';
+require('./_sm_root_boot.cjs').install();
 const fs = require('fs');
 const path = require('path');
 let JSDOM;

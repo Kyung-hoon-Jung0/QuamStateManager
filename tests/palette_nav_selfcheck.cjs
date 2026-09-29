@@ -13,6 +13,7 @@
  * The swap is the event that means "the pane now shows this URL". Everything
  * below drives the REAL app.js through a real palette click.
  */
+require('./_sm_root_boot.cjs').install();
 const fs = require('fs');
 const path = require('path');
 const { JSDOM } = require('jsdom');

@@ -13,6 +13,7 @@
  *
  * Run:  node tests/bulk_search_selfcheck.cjs   (driven by test_live_edit_search_perf.py).
  */
+require('./_sm_root_boot.cjs').install();
 const fs = require('fs');
 const path = require('path');
 

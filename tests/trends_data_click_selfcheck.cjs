@@ -17,6 +17,8 @@
  * tests/test_trends_data_click.py). Exit 0 ok, 1 fail, 2 no jsdom.
  */
 'use strict';
+require('./_sm_root_boot.cjs').install();
+const PREFIX = process.env.SM_TEST_URL_PREFIX || '';   // docs/226: expected addresses live under this mode's URL prefix
 try { require('jsdom'); } catch (e) { console.error('jsdom not installed'); process.exit(2); }
 const H = require('./trends_view_harness.cjs');
 
@@ -42,10 +44,10 @@ function ok(c, m) { if (c) console.log('ok - ' + m); else { console.error('FAIL:
   ok(W.draws.length === 2 && W.draws.every((d) => (d.el.__handlers.plotly_click || []).length === 1),
      'one plotly_click handler per drawn chart (' + W.draws.map((d) => (d.el.__handlers.plotly_click || []).length) + ')');
 
-  const clicks = () => W.ajax.filter((a) => /^\/dataset\//.test(a.url));
+  const clicks = () => W.ajax.filter((a) => String(a.url).indexOf(PREFIX + '/dataset/') === 0);
   const click = (evt) => el.__handlers.plotly_click.forEach((fn) => fn(evt));
   click({ points: [{ curveNumber: 0, customdata: undefined }, { curveNumber: 3, customdata: 'kh:3270' }] });
-  ok(clicks().length === 1 && clicks()[0].verb === 'GET' && clicks()[0].url === '/dataset/kh:3270',
+  ok(clicks().length === 1 && clicks()[0].verb === 'GET' && clicks()[0].url === PREFIX + '/dataset/kh:3270',
      'a click opens the run the data point names, past the statistics point (' + JSON.stringify(clicks()) + ')');
   ok(clicks().length === 1 && clicks()[0].opts.target === '#inspector-pane' && clicks()[0].opts.source === '#inspector-pane',
      'in the inspector pane, never #table-pane (docs/204) (' + JSON.stringify(clicks()[0] && clicks()[0].opts) + ')');

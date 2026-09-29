@@ -2,6 +2,7 @@
  * number of rows it chose to list (<= 60). A 40-qubit /run said "60 value(s)
  * may change" when 80 would. Real agent.js under jsdom.
  * Run: node tests/agent_plan_count_selfcheck.cjs */
+require('./_sm_root_boot.cjs').install();
 const fs = require('fs');
 const path = require('path');
 const vm = require('vm');

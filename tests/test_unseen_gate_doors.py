@@ -38,6 +38,7 @@ import pytest
 
 from quam_state_manager.web import routes as routes_mod
 from quam_state_manager.web.app import create_app
+from tests._prefix import RE_PREFIX
 
 _WIRING = {"network": {"host": "1.1.1.1", "cluster_name": "C1"}}
 _ROOT = Path(__file__).resolve().parent.parent
@@ -103,7 +104,7 @@ class TestEveryDoorDeclaresWhatItShowed:
         _stage(env, "qubits.q1.f_01", "5.1e9")
         assert c.post("/save").status_code in (200, 204)   # → working_dirty branch
         html = c.get("/state/tray").data.decode()
-        m = re.search(r'<button[^>]*sync-control-act[^>]*hx-post="/state/apply-to-live"[^>]*>',
+        m = re.search(rf'<button[^>]*sync-control-act[^>]*hx-post="{RE_PREFIX}/state/apply-to-live"[^>]*>',
                       html)
         assert m, "the working_dirty Apply door did not render"
         btn = m.group(0)

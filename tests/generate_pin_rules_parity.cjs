@@ -9,6 +9,7 @@
 // Usage: node tests/generate_pin_rules_parity.cjs <cases.json>
 // Prints [{stale: [...], collide: [...], kinds: {"con/slot": kind|null}}] per case.
 'use strict';
+require('./_sm_root_boot.cjs').install();
 
 const fs = require('fs');
 const path = require('path');

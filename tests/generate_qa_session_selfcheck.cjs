@@ -59,6 +59,8 @@
 //
 // Run: node tests/generate_qa_session_selfcheck.cjs   (needs jsdom; exit 2 = skip)
 'use strict';
+require('./_sm_root_boot.cjs').install();
+const PREFIX = process.env.SM_TEST_URL_PREFIX || '';   // docs/226: expected addresses live under this mode's URL prefix
 
 const fs = require('fs');
 const path = require('path');
@@ -752,7 +754,7 @@ function toStep4(win, G, n) {
       'F8: Reset re-reads the same source (the loaded chip) — reconstructs: ' +
       JSON.stringify(recon().map(e => e.body)));
     ok(w.G.state.mode === 'regenerate' && w.G.state.sourcePath === 'D:\\wc\\key123' &&
-       w.G.state.spec.qubits.length === 5 && w.G.state.buildEndpoint === '/regenerate/build',
+       w.G.state.spec.qubits.length === 5 && w.G.state.buildEndpoint === PREFIX + '/regenerate/build',
       'F8: after Reset the wizard is the source chip again (mode ' + w.G.state.mode +
       ', qubits ' + w.G.state.spec.qubits.length + ')');
     ok($(w.win, 'regen-meta').textContent.indexOf('5 qubits') === 0 &&

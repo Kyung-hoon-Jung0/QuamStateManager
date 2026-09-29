@@ -4,6 +4,7 @@
  * context questions render with the detected answer selected and post the person's answers;
  * the test button shows the elapsed time and the answer verbatim.
  * Run: node tests/agent_setup_selfcheck.cjs */
+require('./_sm_root_boot.cjs').install();
 const fs = require('fs');
 const path = require('path');
 const vm = require('vm');

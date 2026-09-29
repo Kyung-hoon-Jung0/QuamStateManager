@@ -12,6 +12,7 @@
  * Run: node tests/tree_expand_all_busy_selfcheck.cjs   (driven by tests/test_tree_expand_all_busy.py)
  */
 'use strict';
+require('./_sm_root_boot.cjs').install();
 const fs = require('fs');
 const path = require('path');
 let JSDOM;

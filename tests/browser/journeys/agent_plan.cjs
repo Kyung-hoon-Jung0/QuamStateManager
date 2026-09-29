@@ -4,7 +4,7 @@
  *   SM_CDP_PORT=9413 node agent_plan.cjs 5113 OUTDIR WIDTH CALFOLDER NQ
  */
 'use strict';
-const { open, sleep } = require('./cdp.cjs');
+const { open, sleep, base, baseFrom, smPath, smUrl } = require('./cdp.cjs');
 const [SM, OUT, W, CAL, NQ] = [process.argv[2], process.argv[3], +process.argv[4], process.argv[5], +process.argv[6] || 30];
 
 async function xy(p, js) { const r = await p.ev(js); return r && r !== 'null' ? JSON.parse(r) : null; }
@@ -12,9 +12,9 @@ const byText = (sel, re) => `(() => { const e = [...document.querySelectorAll(${
   if (!e) return 'null'; e.scrollIntoView({block:'nearest'}); const b = e.getBoundingClientRect(); return JSON.stringify([b.x + b.width/2, b.y + b.height/2, e.disabled ? 1 : 0]); })()`;
 
 (async () => {
-  const p = await open(`http://127.0.0.1:${SM}/agent`, W, 900);
+  const p = await open(`${base(SM)}/agent`, W, 900);
   await sleep(2500);
-  console.log('settings', await p.ev(`fetch('/scheduler/settings', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({calibrations_folder: ${JSON.stringify(CAL)}})}).then(r => r.status)`));
+  console.log('settings', await p.ev(`fetch('${smUrl(`/scheduler/settings`)}', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({calibrations_folder: ${JSON.stringify(CAL)}})}).then(r => r.status)`));
   const line = '/run 05_power_rabi ' + Array.from({ length: NQ }, (_, i) => 'q' + (i + 1)).join(' ');
   const ta = await xy(p, `(() => { const t = document.querySelector('#agent-home .ag-input'); const b = t.getBoundingClientRect(); return JSON.stringify([b.x + 20, b.y + b.height/2]); })()`);
   await p.click(ta[0], ta[1]);

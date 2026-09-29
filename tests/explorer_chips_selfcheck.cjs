@@ -14,6 +14,7 @@
  * Run: node tests/explorer_chips_selfcheck.cjs  (driven by test_explorer_features.py)
  */
 'use strict';
+require('./_sm_root_boot.cjs').install();
 const fs = require('fs');
 const path = require('path');
 let JSDOM;

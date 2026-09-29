@@ -13,6 +13,7 @@ from pathlib import Path
 import pytest
 
 from quam_state_manager.web.app import create_app
+from tests._prefix import PREFIX
 
 # ---------------------------------------------------------------------------
 # Paths to real quam_state folders
@@ -409,7 +410,7 @@ class TestExplorer:
     def test_explorer_sidebar_link(self, client):
         resp = client.get("/")
         html = resp.data.decode()
-        assert 'href="/explorer"' in html
+        assert f'href="{PREFIX}/explorer"' in html
         assert "Explorer" in html
 
 
@@ -516,11 +517,11 @@ class TestResonators:
 
     def test_resonators_row_opens_qubit_inspector(self, loaded_client):
         html = loaded_client.get("/resonators").data.decode()
-        assert 'hx-get="/qubit/qA1"' in html
+        assert f'hx-get="{PREFIX}/qubit/qA1"' in html
 
     def test_resonators_nav_visible(self, loaded_client):
         html = loaded_client.get("/qubits").data.decode()
-        assert 'href="/resonators"' in html
+        assert f'href="{PREFIX}/resonators"' in html
 
 
 class TestFlux:
@@ -532,11 +533,11 @@ class TestFlux:
 
     def test_flux_row_opens_qubit_inspector(self, loaded_client):
         html = loaded_client.get("/flux").data.decode()
-        assert 'hx-get="/qubit/qA1"' in html
+        assert f'hx-get="{PREFIX}/qubit/qA1"' in html
 
     def test_flux_nav_visible_when_chip_has_z(self, loaded_client):
         html = loaded_client.get("/qubits").data.decode()
-        assert 'href="/flux"' in html
+        assert f'href="{PREFIX}/flux"' in html
 
 
 class TestCouplers:
@@ -548,11 +549,11 @@ class TestCouplers:
 
     def test_couplers_row_opens_pair_inspector(self, loaded_client):
         html = loaded_client.get("/couplers").data.decode()
-        assert 'hx-get="/pair/qA1-A2"' in html
+        assert f'hx-get="{PREFIX}/pair/qA1-A2"' in html
 
     def test_couplers_nav_visible_when_chip_has_coupler(self, loaded_client):
         html = loaded_client.get("/qubits").data.decode()
-        assert 'href="/couplers"' in html
+        assert f'href="{PREFIX}/couplers"' in html
 
 
 class TestChannelScopedNavHiding:
@@ -587,9 +588,9 @@ class TestChannelScopedNavHiding:
 
     def test_flux_and_couplers_hidden_resonators_shown(self, fixed_freq_client):
         html = fixed_freq_client.get("/qubits").data.decode()
-        assert 'href="/resonators"' in html
-        assert 'href="/flux"' not in html
-        assert 'href="/couplers"' not in html
+        assert f'href="{PREFIX}/resonators"' in html
+        assert f'href="{PREFIX}/flux"' not in html
+        assert f'href="{PREFIX}/couplers"' not in html
 
     def test_flux_route_still_reachable_but_empty(self, fixed_freq_client):
         # Direct navigation (e.g. a stale bookmark) never 500s — it just
@@ -882,7 +883,7 @@ class TestDiffRedirect:
     def test_hub_shaped_diff_get_still_redirects(self, loaded_client, synth_folder):
         resp = loaded_client.get(f"/diff?src=ws:{synth_folder}")
         assert resp.status_code == 302
-        assert resp.headers["Location"].startswith("/compare-hub")
+        assert resp.headers["Location"].startswith(f"{PREFIX}/compare-hub")
 
     def test_diff_post_translates_paths(self, loaded_client, synth_folder):
         resp = loaded_client.post("/diff", data={
@@ -902,19 +903,19 @@ class TestDiffRedirect:
             "path_a": str(synth_folder), "path_b": str(synth_folder),
         }, headers={"HX-Request": "true"})
         assert resp.status_code == 200
-        assert resp.headers["HX-Redirect"].startswith("/compare-hub?")
+        assert resp.headers["HX-Redirect"].startswith(f"{PREFIX}/compare-hub?")
 
     def test_diff_empty_post_redirects_with_moved_note(self, loaded_client):
         resp = loaded_client.post("/diff", data={"path_a": "", "path_b": ""})
         assert resp.status_code == 302
-        assert resp.headers["Location"] == "/compare-hub?from=diff"
+        assert resp.headers["Location"] == f"{PREFIX}/compare-hub?from=diff"
 
     def test_the_sidebar_compare_entry_opens_the_diff(self, client):
         """docs/84 moved the front door: Compare opens the diff workbench and
         the hub sits behind its "Advanced…" link."""
         html = client.get("/").data.decode()
-        assert 'href="/diff"' in html
-        assert 'href="/chip-compare"' not in html
+        assert f'href="{PREFIX}/diff"' in html
+        assert f'href="{PREFIX}/chip-compare"' not in html
 
     def test_nav_sync_script_loaded(self, client):
         html = client.get("/").data.decode()
@@ -1615,7 +1616,9 @@ class TestSidebarFeatures:
         assert '.sidebar-nav a[href]' in text
         assert 'querySelector("#ds-detail-root")' in text
         assert '_applySplitPreset("collapsed")' in text
-        assert 'href.indexOf("/datasets") === 0' in text
+        # docs/226 §3.2-3: under a mount prefix the anchor's href is
+        # "/sm/datasets", so the route compare strips it first
+        assert 'window.SM.path(href).indexOf("/datasets") === 0' in text
 
     def test_ndview_axis_title_shows_dim_name_when_metadata_lies(self):
         """r13 feedback ⑧: a lab node copy-pasted long_name='readout
@@ -2008,14 +2011,14 @@ class TestCompareRedirect:
         loc_obj = json.loads(resp.headers["HX-Location"])
         assert loc_obj["target"] == "#table-pane" and loc_obj["swap"] == "innerHTML"
         loc = loc_obj["path"]
-        assert loc.startswith("/diff?a=ws%3A") and "&b=ws%3A" in loc and loc.endswith("&tab=state")
+        assert loc.startswith(f"{PREFIX}/diff?a=ws%3A") and "&b=ws%3A" in loc and loc.endswith("&tab=state")
         assert "hint" not in loc   # manual basket (U1b)
         # docs/141 4y: three, four, five all open the diff (a..e), never the hub
         for n in (3, 4, 5):
             resp = client.post("/compare", data={"paths": folders[:n]},
                                headers={"HX-Request": "true"})
             loc = json.loads(resp.headers["HX-Location"])["path"]
-            assert loc.startswith("/diff?a=ws%3A") and "compare-hub" not in loc
+            assert loc.startswith(f"{PREFIX}/diff?a=ws%3A") and "compare-hub" not in loc
             assert all(f"&{slot}=ws%3A" in loc for slot in "bcde"[:n - 1])
             assert not any(f"&{slot}=" in loc for slot in "bcde"[n - 1:])
 
@@ -2029,7 +2032,7 @@ class TestCompareRedirect:
         assert "HX-Location" not in resp.headers and "HX-Redirect" not in resp.headers
         assert "at least two" in json.loads(resp.headers["HX-Trigger"])["sm:toast"]["message"]
         resp = client.post("/compare", data={"paths": "only_one"})
-        assert resp.status_code == 302 and resp.headers["Location"] == "/diff"
+        assert resp.status_code == 302 and resp.headers["Location"] == f"{PREFIX}/diff"
 
 
 class TestStatusToast:
@@ -2521,7 +2524,7 @@ class TestPendingChangesTray:
         # sync-ux 2026-09-25 (user decision: one status control + one sync panel): the staged control's action is the direct push
         # (a /save'd edit still counts as the user's unapplied edit; a saved
         # working state is pushed whole, never pull-merged)
-        assert 'hx-post="/state/apply-to-live"' in html and "doStateSync('apply')" not in html
+        assert f'hx-post="{PREFIX}/state/apply-to-live"' in html and "doStateSync('apply')" not in html
 
     def test_discard_returns_full_tray(self, synth_client, synth_qubit):
         synth_client.post("/qubit/qA1/edit",
@@ -2547,7 +2550,7 @@ class TestPendingChangesTray:
         assert resp.status_code == 200
         # sync-ux 2026-09-25 (user decision: one status control + one sync panel): the ✕ per edit lives in the panel and still targets the tray
         html = synth_client.get("/state/review").data.decode()
-        assert 'hx-post="/discard" hx-target="#pending-tray"' in html
+        assert f'hx-post="{PREFIX}/discard" hx-target="#pending-tray"' in html
 
     def test_discard_sends_hx_trigger(self, synth_client, synth_qubit):
         """Discard response includes HX-Trigger header with cellDiscarded event."""
@@ -2987,7 +2990,7 @@ class TestRescanIfStale:
 class TestParamHistory:
     def test_sidebar_link_present(self, loaded_client):
         html = loaded_client.get("/qubits").data.decode()
-        assert 'href="/param-history"' in html
+        assert f'href="{PREFIX}/param-history"' in html
         assert "Param History" in html
 
     def test_route_renders_with_loaded_state(self, loaded_client):
@@ -4566,8 +4569,8 @@ class TestConfigViewer:
         assert "No generated config cached" in html
         # The empty state carries its own inline Regenerate button now —
         # no round-trip to the (demoted) Config Viewer page.
-        assert 'hx-post="/config/regenerate"' in html
-        assert 'href="/config"' not in html
+        assert f'hx-post="{PREFIX}/config/regenerate"' in html
+        assert f'href="{PREFIX}/config"' not in html
 
     def test_qubit_waveform_constant(self, loaded_client):
         _seed_config_cache(loaded_client)
@@ -7051,7 +7054,7 @@ class TestRound13SidebarSearchBox:
         assert 'name="name"' in opening
         assert 'class="search-help-input"' in opening
         assert 'data-search-help="sidebar-search-help"' in opening
-        assert 'hx-get="/workspace/tree"' in opening
+        assert 'hx-get="{{ root }}/workspace/tree"' in opening
         assert 'hx-target="#sidebar-tree"' in opening
         assert "autoGrowNote(this)" in opening      # input-time auto-grow
         assert "renderFilterTags(this" in opening    # pill chips preserved
@@ -7505,8 +7508,8 @@ class TestSidebarIAr15:
     def test_trio_renames_are_display_only(self):
         base = self._base()
         # routes + page tokens unchanged
-        assert 'href="/scheduler"' in base and 'href="/fit-audit"' in base \
-               and 'href="/autofit"' in base
+        assert 'href="{{ root }}/scheduler"' in base and 'href="{{ root }}/fit-audit"' in base \
+               and 'href="{{ root }}/autofit"' in base
         assert "autofit-nav-badge" in base            # badge survived the rename
         # old labels gone from the nav
         for stale in (">Scheduler</a>", ">Fit Audit</a>", ">Autofit"):

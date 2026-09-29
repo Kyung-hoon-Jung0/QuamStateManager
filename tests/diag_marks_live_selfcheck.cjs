@@ -16,6 +16,8 @@
 //
 // Run: node tests/diag_marks_live_selfcheck.cjs   (needs jsdom; exit 2 = skip)
 'use strict';
+require('./_sm_root_boot.cjs').install();
+const PREFIX = process.env.SM_TEST_URL_PREFIX || '';   // docs/226: expected addresses live under this mode's URL prefix
 
 const fs = require('fs');
 const path = require('path');
@@ -51,7 +53,7 @@ function finding(jp, sev, ack) {
 (async function main() {
   const dom = new JSDOM(
     '<!DOCTYPE html><html><body>' +
-    '<nav id="sidebar"><a href="/explorer">Json Tree View</a><a href="/instrument">Wiring</a></nav>' +
+    '<nav id="sidebar"><a href="' + PREFIX + '/explorer">Json Tree View</a><a href="' + PREFIX + '/instrument">Wiring</a></nav>' +
     '<div id="table-pane"><div id="explorer-tree-state"></div><div id="explorer-tree-wiring"></div></div>' +
     '</body></html>',
     { runScripts: 'outside-only', pretendToBeVisual: true, url: 'http://localhost/explorer' });
@@ -63,7 +65,7 @@ function finding(jp, sev, ack) {
   win._delay = {};
   win._findingsReads = 0;
   win.fetch = function (url) {
-    if (String(url).indexOf('/diagnostics/findings.json') === 0) {
+    if (String(url).replace(PREFIX + '/', '/').indexOf('/diagnostics/findings.json') === 0) {
       const n = ++win._findingsReads;
       const body = JSON.parse(JSON.stringify(win._findings));
       const resp = { ok: true, status: 200, json: function () { return Promise.resolve(body); } };
@@ -93,7 +95,7 @@ function finding(jp, sev, ack) {
     const n = c.querySelector('.tree-node[data-path="' + p + '"]');
     return n && n.querySelector(':scope > .tree-row');
   }
-  const nav = doc.querySelector('#sidebar a[href="/explorer"]');
+  const nav = doc.querySelector('#sidebar a[href="' + PREFIX + '/explorer"]');
   function fire(name) {
     // htmx.trigger(document.body, name) dispatches a bubbling CustomEvent;
     // PaneState dispatches paneRestored on document.

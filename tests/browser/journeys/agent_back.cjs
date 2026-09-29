@@ -4,7 +4,7 @@
  *   SM_CDP_PORT=9413 node agent_back.cjs 5113 OUTDIR
  */
 'use strict';
-const { open, sleep } = require('./cdp.cjs');
+const { open, sleep, base, baseFrom, smPath, smUrl } = require('./cdp.cjs');
 const SM = process.argv[2] || '5113';
 const OUT = process.argv[3] || '.';
 
@@ -25,11 +25,11 @@ async function clickSel(p, sel) {
 }
 
 (async () => {
-  const p = await open(`http://127.0.0.1:${SM}/agent`, 1600, 900);
+  const p = await open(`${base(SM)}/agent`, 1600, 900);
   await sleep(2000);
   const log = (tag, v) => console.log(tag.padEnd(12), v);
   log('open', await p.ev(PROBE));
-  await clickSel(p, '#table-pane a[href="/journal"]');
+  await clickSel(p, '#table-pane a[href="' + smUrl('/journal') + '"]');
   await sleep(2000);
   log('->journal', await p.ev(PROBE));
   await p.ev('history.back()'); await sleep(2500);

@@ -19,6 +19,7 @@
  * Run: node tests/component_map_selfcheck.cjs   (driven by tests/test_component_map.py)
  */
 'use strict';
+require('./_sm_root_boot.cjs').install();
 
 const fs = require('fs');
 const path = require('path');

@@ -26,6 +26,7 @@ from pathlib import Path
 import pytest
 
 from quam_state_manager.web.app import create_app
+from tests._prefix import PREFIX
 
 _ROOT = Path(__file__).resolve().parent.parent
 _TPL = _ROOT / "quam_state_manager" / "web" / "templates" / "_param_history.html"
@@ -122,7 +123,7 @@ class TestExplicitEmpty:
 
     def test_reset_still_means_default(self, client):
         html = _get(client)
-        assert 'href="/param-history" hx-get="/param-history" hx-target="#param-history-root"' in html
+        assert f'href="{PREFIX}/param-history" hx-get="{PREFIX}/param-history" hx-target="#param-history-root"' in html
 
 
 class TestResultsOnlySwap:

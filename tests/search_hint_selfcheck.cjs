@@ -8,6 +8,7 @@
  *
  * Run: node tests/search_hint_selfcheck.cjs  (driven by tests/test_search_hint.py)
  */
+require('./_sm_root_boot.cjs').install();
 const fs = require('fs');
 const path = require('path');
 const { JSDOM } = require('jsdom');

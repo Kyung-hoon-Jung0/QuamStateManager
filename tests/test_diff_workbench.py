@@ -23,6 +23,7 @@ import pytest
 
 from quam_state_manager.core import json_diff
 from quam_state_manager.web.app import create_app
+from tests._prefix import PREFIX
 
 _WIRING = {"network": {"host": "1.1.1.1", "cluster_name": "C1"},
            "ports": {"mw_outputs": {"con1": {"1": {"2": {"band": 1}}}}}}
@@ -264,22 +265,22 @@ class TestOneFrontDoor:
         a, b = env["metas"][2].timestamp, env["metas"][0].timestamp
         r = _get(env, f"/diff/snapshots?ts_a={a}&ts_b={b}")
         target = r.headers["HX-Redirect"]
-        assert target.startswith("/diff?a=hist:")
+        assert target.startswith(f"{PREFIX}/diff?a=hist:")
         assert env["metas"][0].timestamp in target.split("&b=")[0], "oldest is A"
 
     def test_a_plain_browser_click_gets_a_real_redirect(self, env):
         r = env["client"].get(
             f"/diff/snapshots?ts_a={env['metas'][0].timestamp}"
             f"&ts_b={env['metas'][1].timestamp}")
-        assert r.status_code == 302 and r.headers["Location"].startswith("/diff?")
+        assert r.status_code == 302 and r.headers["Location"].startswith(f"{PREFIX}/diff?")
 
     def test_missing_timestamps_land_on_the_diff_anyway(self, env):
         r = _get(env, "/diff/snapshots")
-        assert r.headers["HX-Redirect"] == "/diff"
+        assert r.headers["HX-Redirect"] == f"{PREFIX}/diff"
 
     def test_unresolvable_runs_land_on_the_diff_anyway(self, env):
         r = _get(env, "/diff/runs?uids=nope:1,nope:2")
-        assert r.headers["HX-Redirect"] == "/diff"
+        assert r.headers["HX-Redirect"] == f"{PREFIX}/diff"
 
 
 class TestTheHubIsStillThere:
@@ -290,12 +291,12 @@ class TestTheHubIsStillThere:
         r = env["client"].post("/diff", data={"path_a": str(env["live"]),
                                               "path_b": str(env["live"])})
         assert r.status_code == 302
-        assert r.headers["Location"].startswith("/compare-hub?src=")
+        assert r.headers["Location"].startswith(f"{PREFIX}/compare-hub?src=")
 
     def test_a_hub_shaped_get_still_redirects(self, env):
         r = env["client"].get(f"/diff?src=ws:{env['live']}")
         assert r.status_code == 302
-        assert r.headers["Location"].startswith("/compare-hub?")
+        assert r.headers["Location"].startswith(f"{PREFIX}/compare-hub?")
 
     def test_the_diff_no_longer_links_to_it(self, env):
         # docs/141 4y: the hub is retired as a destination -- the workbench

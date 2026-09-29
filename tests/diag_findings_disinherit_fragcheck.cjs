@@ -20,6 +20,11 @@
  * driver (tests/test_diagnostics_refresh.py) writes.
  */
 'use strict';
+require('./_sm_root_boot.cjs').install();
+const PREFIX = process.env.SM_TEST_URL_PREFIX || '';   // docs/226: the rendered fixture's URLs live under it
+// app route of a request path: rendered attributes carry the prefix, JS literals do not
+// (the harness body has no hx-ext, so htmx's sm-root extension never runs here)
+const rel = (p) => (PREFIX && String(p).indexOf(PREFIX + '/') === 0 ? String(p).slice(PREFIX.length) : p);
 
 const fs = require('fs');
 const path = require('path');
@@ -56,7 +61,7 @@ const XPATH_SHIM =
 const META = (BASE.match(/<meta\s+name="htmx-config"[^>]*>/) || [''])[0];
 
 const server = http.createServer(function (req, res) {
-  const u = req.url.split('?')[0];
+  const u = rel(req.url.split('?')[0]);
   res.setHeader('Content-Type', 'text/html; charset=utf-8');
   if (u === '/config') res.end('<h2 id="cfg-view">Config Viewer</h2>');
   else if (u === '/bulk') res.end('<div id="bulk-ok">Live State Edit</div>');
@@ -80,7 +85,7 @@ async function run(port, frag) {
     '<script>' + XPATH_SHIM + '</scr' + 'ipt>' + META +
     '<script>' + HTMX_SRC + '</scr' + 'ipt>' +
     '</head><body><nav class="sidebar-nav">' +
-    '<a id="side-bulk" href="/bulk" hx-get="/bulk" hx-target="#table-pane" hx-push-url="true">Live State Edit</a>' +
+    '<a id="side-bulk" href="' + PREFIX + '/bulk" hx-get="' + PREFIX + '/bulk" hx-target="#table-pane" hx-push-url="true">Live State Edit</a>' +
     '</nav><main id="main"><div id="table-pane">' + frag + '</div></main></body></html>';
   const vc = new VirtualConsole();   // the fragment's inline handlers name app.js globals
   const dom = new JSDOM(html, { runScripts: 'dangerously', url: 'http://127.0.0.1:' + port + '/diagnostics',
@@ -92,7 +97,7 @@ async function run(port, frag) {
   });
   const targetErrors = [];
   w.document.body.addEventListener('htmx:targetError', function () { targetErrors.push(1); });
-  const link = w.document.querySelector('#diag-findings a[href="/config"]');
+  const link = w.document.querySelector('#diag-findings a[href="' + PREFIX + '/config"]');
   const out = { link: !!link, targetErrors: targetErrors };
   if (!link) return out;
   link.click();
@@ -114,7 +119,7 @@ server.listen(0, '127.0.0.1', async function () {
   const port = server.address().port;
   try {
     check('P0 the fragment carries the slot and a Config Viewer link inside it',
-          /id="diag-findings"/.test(FRAG) && /hx-get="\/config"/.test(FRAG));
+          /id="diag-findings"/.test(FRAG) && FRAG.indexOf('hx-get="' + PREFIX + '/config"') >= 0);
     // CONTROL: the slot without its hx-disinherit reproduces the reported loss.
     const stripped = FRAG.replace(/\s+hx-disinherit="[^"]*"/, '');
     check('P1 control preflight: stripping hx-disinherit changed the fragment', stripped !== FRAG);
@@ -127,7 +132,7 @@ server.listen(0, '127.0.0.1', async function () {
     const f = await run(port, FRAG);
     check('F1 the Config Viewer link keeps #table-pane', f.link && f.paneAfterLink === true, JSON.stringify(f));
     check('F2 ...and shows the /config response inside it', f.cfgInPane === true, JSON.stringify(f));
-    check('F3 ...and pushes /config like the sidebar link', f.url === '/config', JSON.stringify(f));
+    check('F3 ...and pushes /config like the sidebar link', f.url === PREFIX + '/config', JSON.stringify(f));
     check('F4 the sidebar still navigates afterwards (no htmx:targetError)',
           f.bulkShown === true && f.targetErrors.length === 0, JSON.stringify(f));
   } catch (e) {

@@ -5,6 +5,7 @@
  * SM holds now (the server reads it per poll). A Take live moves it without
  * any agent news; the tray's edit_seq moving (sm:wc-moved) must re-poll.
  * Run: node tests/agent_now_follow_selfcheck.cjs */
+require('./_sm_root_boot.cjs').install();
 const fs = require('fs');
 const path = require('path');
 const vm = require('vm');

@@ -3,6 +3,7 @@
  * kept showing it -- every door then recorded a plain "human" under a box that
  * named someone. The box now says so where it is typed. Real agent.js under jsdom.
  * Run: node tests/agent_actor_box_selfcheck.cjs */
+require('./_sm_root_boot.cjs').install();
 const fs = require('fs');
 const path = require('path');
 const vm = require('vm');

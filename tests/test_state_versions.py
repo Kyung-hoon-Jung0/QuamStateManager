@@ -21,6 +21,7 @@ from pathlib import Path
 import pytest
 
 from quam_state_manager.web.app import create_app
+from tests._prefix import PREFIX
 
 
 def _chip(folder: Path) -> Path:
@@ -66,7 +67,7 @@ class TestBookmarkMoved:
         from pathlib import Path
         import quam_state_manager
         page = client.get("/").get_data(as_text=True)
-        assert 'hx-post="/state/archive"' in page
+        assert f'hx-post="{PREFIX}/state/archive"' in page
         assert 'hx-target="#archive-status"' in page
         assert 'data-after-request="archiveDone"' in page
         assert 'name="tag"' in page and 'name="note"' in page
@@ -86,7 +87,7 @@ class TestBookmarkMoved:
         after paint, like the diagnostics and instances slots."""
         page = client.get("/").get_data(as_text=True)
         m = re.search(r'id="state-version-slot"[^>]*', page)
-        assert m and 'hx-get="/state/version"' in m.group(0)
+        assert m and f'hx-get="{PREFIX}/state/version"' in m.group(0)
         assert "load" in m.group(0)
 
     def test_the_panel_is_not_inside_the_swap_target(self, client):
@@ -1010,7 +1011,7 @@ class TestExpRow:
         assert "qubit_spectroscopy — open this run" in body
         assert '<span class="sv-run-name">qubit_spectroscopy</span>' in body
         # no dataset root registered for tmp ws → the bare-run-id fallback
-        assert 'hx-get="/dataset/by-run/42"' in body
+        assert f'hx-get="{PREFIX}/dataset/by-run/42"' in body
         assert 'hx-target="#inspector-pane"' in body
 
     def test_no_run_no_chip_never_a_guess(self, client):

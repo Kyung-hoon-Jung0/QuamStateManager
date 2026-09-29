@@ -32,6 +32,7 @@ import pytest
 
 from quam_state_manager.web import routes as routes_mod
 from quam_state_manager.web.app import create_app
+from tests._prefix import PREFIX
 
 _WIRING = {"network": {"host": "1.1.1.1", "cluster_name": "C1"}}
 
@@ -202,7 +203,7 @@ class TestDatasetLoadStateRoundtrip:
         # the OOB tray flips to the staged affordance in the SAME response
         assert 'data-working-dirty="1"' in html
         # sync-ux 2026-09-25 (user decision: one control + one panel): the control's staged state and its direct push
-        assert 'data-sync-state="staged"' in html and 'hx-post="/state/apply-to-live"' in html
+        assert 'data-sync-state="staged"' in html and f'hx-post="{PREFIX}/state/apply-to-live"' in html
         # the client bridge (grid refresh) rides this trigger
         assert "stateRestored" in r.headers.get("HX-Trigger", "")
         assert _working_off(env) == 0.079
@@ -224,7 +225,7 @@ class TestRevertLastApplyRoundtrip:
         assert r.status_code == 200
         html = r.data.decode()
         assert 'data-working-dirty="1"' in html
-        assert 'data-sync-state="staged"' in html and 'hx-post="/state/apply-to-live"' in html
+        assert 'data-sync-state="staged"' in html and f'hx-post="{PREFIX}/state/apply-to-live"' in html
         assert "stateRestored" in r.headers.get("HX-Trigger", "")
         assert _working_off(env) == 0.08 and _live_off(env) == 0.095
         r2 = c.post("/state/sync", data={"mode": "apply"})

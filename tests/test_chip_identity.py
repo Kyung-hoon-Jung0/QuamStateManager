@@ -23,6 +23,7 @@ from quam_state_manager.core.history import (
     extras_data_folder,
     identity_of,
 )
+from tests._prefix import PREFIX
 
 
 def _state(qubit="qA1", chip_name=None, data_folder=None, f01=5.0e9):
@@ -308,7 +309,7 @@ class TestChipNamePrompt:
         _app, c, _live = self._env(tmp_path)
         html = c.get("/qubits").data.decode()
         assert "chip-name-banner" in html
-        assert 'hx-post="/chip-name/set"' in html
+        assert f'hx-post="{PREFIX}/chip-name/set"' in html
 
     def test_named_chip_never_prompts(self, tmp_path):
         _app, c, _live = self._env(tmp_path, _state("qA1", chip_name="deviceC"))
@@ -331,7 +332,7 @@ class TestChipNamePrompt:
         # the NAME prompt is gone on the next render; the unreachable folder
         # staged above now surfaces the r10 FIXABLE dangling strip instead
         html = c.get("/qubits").data.decode()
-        assert 'hx-post="/chip-name/set"' not in html
+        assert f'hx-post="{PREFIX}/chip-name/set"' not in html
         assert "cnb-df-form" in html
 
     def test_decline_memo_survives_reactivation(self, tmp_path):
@@ -570,7 +571,7 @@ class TestDanglingBannerActions:
             monkeypatch=monkeypatch, storage=storage)
         assert ctx.get("qualibrate_project") == "alpha"
         html = c.get("/qubits").data.decode()
-        assert 'hx-post="/chip-data-folder/set"' in html
+        assert f'hx-post="{PREFIX}/chip-data-folder/set"' in html
         assert 'name="use"' in html
         assert storage.as_posix() in html
         assert "Browse" in html and "Clear" in html
@@ -586,7 +587,7 @@ class TestDanglingBannerActions:
         _app, c, _live, _ctx = _df_env(
             tmp_path, _state("qA1", data_folder="deviceC_lab3"))
         html = c.get("/qubits").data.decode()
-        assert 'hx-post="/chip-name/set"' in html
+        assert f'hx-post="{PREFIX}/chip-name/set"' in html
         assert "cnb-df-form" not in html
 
 
@@ -640,7 +641,7 @@ class TestDataFolderSuggest:
         _app, c, _live, _ctx = _df_env(
             tmp_path, _state("qA1"), monkeypatch=monkeypatch, storage=storage)
         html = c.get("/qubits").data.decode()
-        assert 'hx-post="/chip-name/set"' in html
+        assert f'hx-post="{PREFIX}/chip-name/set"' in html
         assert "cnb-suggest" not in html
 
     def test_no_candidates_no_banner(self, tmp_path):
@@ -801,9 +802,9 @@ class TestIdentityConfirm:
         html = c.get("/qubits").data.decode()
         assert "This chip appears to be" in html
         assert "deviceC" in html and "Is this correct?" in html
-        assert 'hx-post="/chip-identity/decline"' in html
+        assert f'hx-post="{PREFIX}/chip-identity/decline"' in html
         # the Yes form routes through the EXISTING validated path
-        assert 'hx-post="/chip-name/set"' in html
+        assert f'hx-post="{PREFIX}/chip-name/set"' in html
         r = c.post("/chip-name/set", data={"name": "deviceC",
                                            "data_folder": str(data_root)})
         assert r.status_code == 200
@@ -828,14 +829,14 @@ class TestIdentityConfirm:
         assert r.status_code == 200
         body = r.data.decode()
         assert "This chip appears to be" not in body
-        assert 'hx-post="/chip-name/set"' in body, \
+        assert f'hx-post="{PREFIX}/chip-name/set"' in body, \
             "the decline response IS the fill-in prompt"
         assert "Browse" in body, "manual path picking is offered"
         # survives a fresh re-activation
         c.post("/load", data={"folder": str(live)})
         html2 = c.get("/qubits").data.decode()
         assert "This chip appears to be" not in html2
-        assert 'hx-post="/chip-name/set"' in html2
+        assert f'hx-post="{PREFIX}/chip-name/set"' in html2
 
     def test_never_for_chips_without_history(self, tmp_path):
         from quam_state_manager.web.app import create_app
@@ -846,7 +847,7 @@ class TestIdentityConfirm:
         c.post("/load", data={"folder": str(live)})
         html = c.get("/qubits").data.decode()
         assert "This chip appears to be" not in html
-        assert 'hx-post="/chip-name/set"' in html   # plain prompt instead
+        assert f'hx-post="{PREFIX}/chip-name/set"' in html   # plain prompt instead
 
 
 class TestAuditR10Pins:

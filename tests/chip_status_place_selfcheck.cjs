@@ -42,6 +42,8 @@
  *      (driven by tests/test_chip_status.py)
  */
 'use strict';
+require('./_sm_root_boot.cjs').install();
+const PREFIX = process.env.SM_TEST_URL_PREFIX || '';   // docs/226: expected addresses live under this mode's URL prefix
 
 const fs = require('fs');
 const path = require('path');
@@ -331,7 +333,7 @@ function press(T, how, what) {
     await T.advance(1000);
     press(T, 'mouse', 't1');
     const r = T.rec();                          // no time has passed
-    ok(T.url() === '/topology?view=coherence' && r && r.url === '/topology?view=coherence'
+    ok(T.url() === PREFIX + '/topology?view=coherence' && r && r.url === PREFIX + '/topology?view=coherence'
        && r.view === 'coherence' && r.sel === T1SEL && r.jump === true && typeof r.top === 'number',
        'J1 a tile jump writes the record in the same call as its URL: the T1 PANEL, as a jump — ' + JSON.stringify(r));
     ok(T.win.history.state.htmx === true, 'J1 ...merged, htmx\'s {htmx:true} marker kept');
@@ -353,7 +355,7 @@ function press(T, how, what) {
     await T.advance(1000);
     press(T, 'tab', 'readout');
     const r = T.rec();
-    ok(T.url() === '/topology?view=readout' && r && r.view === 'readout' && r.jump === true && !r.sel,
+    ok(T.url() === PREFIX + '/topology?view=readout' && r && r.view === 'readout' && r.jump === true && !r.sel,
        'J2 a tab-bar press writes the record in the same call as its URL: the tab\'s section — ' + JSON.stringify(r));
   }
   // ── J4 / J5: the reader moved on; a starved debounce; F5 / hidden writes ──
@@ -389,7 +391,7 @@ function press(T, how, what) {
     const r = T.rec();
     ok(JSON.stringify(starved) === JSON.stringify(recJump),
        tag + ' setup: the debounced record was starved (still the jump\'s)');
-    ok(r && !r.jump && r.view === 'coherence' && r.sel === T2SEL && r.ds === 300 && r.url === '/topology?view=coherence',
+    ok(r && !r.jump && r.view === 'coherence' && r.sel === T2SEL && r.ds === 300 && r.url === PREFIX + '/topology?view=coherence',
        ({ J4: 'J4 F5 (pagehide)', J5: 'J5 hiding the tab (visibilitychange)',
           J4b: 'J4b F5 with a card over the line (the hit-test misses, the panel scan finds it)' })[tag]
        + ' writes the place at once: the T2 Ramsey PANEL, 300 px into it — ' + JSON.stringify(r));
@@ -399,7 +401,7 @@ function press(T, how, what) {
   }
   // ── R1: F5 on a jump's record lands the jump's target again ───────────────
   {
-    const rec = { url: '/topology?view=fidelity2q', view: 'fidelity2q', sel: IRBSEL, jump: true, top: 3 };
+    const rec = { url: PREFIX + '/topology?view=fidelity2q', view: 'fidelity2q', sel: IRBSEL, jump: true, top: 3 };
     const T = world({ url: '/topology?view=fidelity2q', chipView: 'fidelity2q', state: { htmx: true, smChipScroll: rec } });
     T.growUntil(14000);
     await T.advance(100);
@@ -415,7 +417,7 @@ function press(T, how, what) {
     const T0 = world({ url: '/topology?view=coherence', chipView: 'coherence' });
     const secY = T0.layout().m.get(T0.doc.querySelector(SEC.coherence)).y;
     const t2y0 = T0.layout().m.get(T0.doc.querySelector(T2SEL)).y;
-    const rec = { url: '/topology?view=coherence', view: 'coherence', d: t2y0 - secY + 300,
+    const rec = { url: PREFIX + '/topology?view=coherence', view: 'coherence', d: t2y0 - secY + 300,
                   sel: T2SEL, ds: 300, top: 1 };
     const T = world({ url: '/topology?view=coherence', chipView: 'coherence', state: { htmx: true, smChipScroll: rec } });
     await T.advance(100);
@@ -429,7 +431,7 @@ function press(T, how, what) {
   }
   // ── R3: the panel is gone: the section + its own offset ───────────────────
   {
-    const rec = { url: '/topology?view=coherence', view: 'coherence', d: 250,
+    const rec = { url: PREFIX + '/topology?view=coherence', view: 'coherence', d: 250,
                   sel: '.topo-section[data-density-panel="T9"]', ds: 40, top: 1 };
     const T = world({ url: '/topology?view=coherence', chipView: 'coherence', state: { htmx: true, smChipScroll: rec } });
     await T.advance(100);
@@ -442,7 +444,7 @@ function press(T, how, what) {
   }
   // ── R4: not an anchor shape: never used as a selector ─────────────────────
   {
-    const rec = { url: '/topology?view=coherence', view: 'coherence', d: 120, sel: '#table-pane', ds: 0, top: 1 };
+    const rec = { url: PREFIX + '/topology?view=coherence', view: 'coherence', d: 120, sel: '#table-pane', ds: 0, top: 1 };
     const T = world({ url: '/topology?view=coherence', chipView: 'coherence', state: { htmx: true, smChipScroll: rec } });
     await T.advance(100);
     ok(T.topOf(SEC.coherence) === -120 && T.errors().length === 0,
@@ -486,7 +488,7 @@ function press(T, how, what) {
         await B.advance(20000);
         const top = B.topOf(c[3]);
         const errs = A.errors().concat(B.errors());
-        ok(url === '/topology?view=' + c[2] && top === SM && B.lit() === c[2] && errs.length === 0,
+        ok(url === PREFIX + '/topology?view=' + c[2] && top === SM && B.lit() === c[2] && errs.length === 0,
            'M ' + prof[0] + ': ' + c[0] + ' -> ' + c[1] + ', F5 after ' + delay + ' ms lands on it — top '
            + top + ' (want ' + SM + '), tab ' + B.lit() + ', rec ' + JSON.stringify(st.smChipScroll)
            + (errs.length ? ' ERR ' + errs[0].slice(0, 200) : ''));

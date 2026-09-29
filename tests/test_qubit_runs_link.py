@@ -76,8 +76,8 @@ class TestTheLink:
         """
         actions = _actions_block(_text("_inspector_header.html"))
         assert "inspector_type in ('qubit', 'pair')" in actions
-        assert 'href="/datasets?q={{ inspector_label }}"' in actions
-        assert 'hx-get="/datasets?q={{ inspector_label }}"' in actions
+        assert 'href="{{ root }}/datasets?q={{ inspector_label }}"' in actions
+        assert 'hx-get="{{ root }}/datasets?q={{ inspector_label }}"' in actions
 
     def test_it_ships_the_bare_name_not_the_qubit_scope(self):
         """The whole design decision, in one assert.
@@ -93,8 +93,9 @@ class TestTheLink:
     def test_the_href_and_the_htmx_get_agree(self):
         """A middle-click must land where a left-click lands."""
         head = _text("_inspector_header.html")
-        hrefs = re.findall(r'href="(/datasets\?q=[^"]+)"', head)
-        gets = re.findall(r'hx-get="(/datasets\?q=[^"]+)"', head)
+        # docs/226: the template roots both attributes with {{ root }}
+        hrefs = re.findall(r'href="\{\{ root \}\}(/datasets\?q=[^"]+)"', head)
+        gets = re.findall(r'hx-get="\{\{ root \}\}(/datasets\?q=[^"]+)"', head)
         assert hrefs and hrefs == gets
 
     def test_the_grammar_still_treats_a_bare_token_as_exact(self):

@@ -29,11 +29,11 @@
 'use strict';
 const fs = require('fs');
 const path = require('path');
-const { open, sleep } = require('./cdp.cjs');
+const { open, sleep, base, baseFrom, smPath, smUrl } = require('./cdp.cjs');
 
 const argv = process.argv.slice(2);
 const arg = (n, d) => { const i = argv.indexOf('--' + n); return i >= 0 ? argv[i + 1] : d; };
-const BASE = arg('base', 'http://127.0.0.1:5099');
+const BASE = baseFrom(arg('base', null), 5099);
 const SHOTS = arg('shots', '');
 const SCAN = +arg('scan', 120);   // how many table rows to inspect for a usable A / C / D
 if (SHOTS) fs.mkdirSync(SHOTS, { recursive: true });
@@ -91,7 +91,7 @@ window.__t = {
     for (var k=0;k<400 && ids.length<n;k++){ [].forEach.call(document.querySelectorAll('#datasets-tbody tr.clickable-row'), function(r){ var id=r.getAttribute('data-id'); if(!seen[id]){ seen[id]=1; ids.push({id:id, exp:r.getAttribute('data-exp')}); } });
       sc.scrollTop += sc.clientHeight*0.7; await new Promise(function(z){setTimeout(z,60);}); }
     sc.scrollTop=0; ids=ids.slice(0,n);
-    for (var i=0;i<ids.length;i++){ var t=await (await fetch('/dataset/'+ids[i].id, {headers:{'HX-Request':'true'}})).text();
+    for (var i=0;i<ids.length;i++){ var t=await (await fetch('${smUrl(`/dataset/`)}'+ids[i].id, {headers:{'HX-Request':'true'}})).text();
       ids[i].inter = t.indexOf('data-ds-tab="interactive"')>=0; }
     return ids; })(); },
 };`;

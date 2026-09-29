@@ -12,6 +12,7 @@ import subprocess
 from pathlib import Path
 
 import pytest
+from tests._prefix import RE_PREFIX
 
 _ROOT = Path(__file__).resolve().parent.parent
 
@@ -79,7 +80,7 @@ class TestFigureBoxReserved:
         html = c.get(f"/dataset/{key}:51", headers={"HX-Request": "true"}).get_data(as_text=True)
         import re
         imgs = {m.group(1): m.group(0) for m in
-                re.finditer(r'<img src="/dataset/[^"]+/fig/([^"]+)"[^>]*>', html)}
+                re.finditer(rf'<img src="{RE_PREFIX}/dataset/[^"]+/fig/([^"]+)"[^>]*>', html)}
         assert set(imgs) == {"figures.amp", "figures.raw"}, list(imgs)
         assert 'width="1500" height="900"' in imgs["figures.amp"], imgs["figures.amp"]
         assert "width=" not in imgs["figures.raw"] and "height=" not in imgs["figures.raw"]

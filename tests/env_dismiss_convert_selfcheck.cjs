@@ -13,6 +13,7 @@
  * Run: node tests/env_dismiss_convert_selfcheck.cjs
  *      (driven by tests/test_env_schema_routes.py::test_env_dismiss_convert_selfcheck)
  */
+require('./_sm_root_boot.cjs').install();
 const fs = require('fs');
 const path = require('path');
 let JSDOM;

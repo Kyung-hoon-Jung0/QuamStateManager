@@ -15,6 +15,7 @@
  *    rides htmx:configRequest, and the same box over the LIST view.
  * Run: node tests/diff_panes_selfcheck.cjs   (driven by tests/test_diff_panes.py)
  */
+require('./_sm_root_boot.cjs').install();
 const fs = require('fs');
 const path = require('path');
 const { JSDOM } = require('jsdom');

@@ -4,6 +4,8 @@
  * doors; a "/run ..." line POSTs a plan, other text starts or continues the session; approve
  * sends the EDITED rows; the beforeunload guard fires only mid-turn; the float mount is compact.
  * Run: node tests/agent_panel_selfcheck.cjs */
+require('./_sm_root_boot.cjs').install();
+const PREFIX = process.env.SM_TEST_URL_PREFIX || '';   // docs/226: expected addresses live under this mode's URL prefix
 const fs = require('fs');
 const path = require('path');
 const vm = require('vm');
@@ -88,7 +90,7 @@ const tick = (ms) => new Promise(r => setTimeout(r, ms || 15));
   ok(/qubits\.q1\.xy\.operations\.x180\.amplitude/.test(plan.querySelector('.ag-may strong').getAttribute('title')) && /now 0\.12/.test(plan.querySelector('.ag-may').textContent), 'the may-change line carries the path and the value now');
   ok(plan.querySelector('.ag-mode select').value === 'ask-writes', 'the card shows the mode');
   const run = cards.querySelector('[data-card="run:r1"]');
-  ok(run && run.querySelector('a.ag-run').getAttribute('href') === '/dataset/by-run/77' && /1 write\(s\) applied to the chip/.test(run.textContent), 'a run card with the run link and its writes');
+  ok(run && run.querySelector('a.ag-run').getAttribute('href') === PREFIX + '/dataset/by-run/77' && /1 write\(s\) applied to the chip/.test(run.textContent), 'a run card with the run link and its writes');
   const ap = cards.querySelector('[data-card="approval:ap-1"]');
   ok(ap && ap.querySelector('.ag-approve') && ap.querySelector('input.ag-ap-new').value === '4320000000', 'an approval card with an editable proposed value');
   const nowCol = home.querySelector('.ag-now');
@@ -367,7 +369,7 @@ const tick = (ms) => new Promise(r => setTimeout(r, ms || 15));
   // fmtClock: another day carries its date
   const yd = new Date(Date.now() - 86400 * 1000);
   ok(/^\d\d-\d\d \d\d:\d\d$/.test(P.fmtClock(yd.getTime() / 1000)) && /^\d\d:\d\d$/.test(P.fmtClock(Date.now() / 1000)), 'a card from another day says which day');
-  ok(/Setup →/.test(nowCol.textContent) && nowCol.querySelector('a.ag-setup-link').getAttribute('href') === '/agent/setup', 'the now column links to the setup page');
+  ok(/Setup →/.test(nowCol.textContent) && nowCol.querySelector('a.ag-setup-link').getAttribute('href') === PREFIX + '/agent/setup', 'the now column links to the setup page');
 
   // docs/173 S8: the name picker in front of the keyboard writes the one actor key,
   // which the api() helper sends as X-SM-Actor

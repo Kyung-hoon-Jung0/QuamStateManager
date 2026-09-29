@@ -14,6 +14,7 @@ from pathlib import Path
 
 from quam_state_manager.web import routes
 from quam_state_manager.web.app import create_app
+from tests._prefix import PREFIX
 
 
 def _seed_run(root: Path, run_id: int, *, date="2026-05-28", hhmmss="010000",
@@ -224,7 +225,7 @@ class TestSidebarHighlightContract:
         # into the run's read-only archive. Users want the live chip they loaded
         # to stay the active editable context (the #1 complaint). Loading the
         # run's frozen state stays opt-in via the detail's "Load State" button.
-        assert 'hx-post="/workspace/select"' not in tree
+        assert f'hx-post="{PREFIX}/workspace/select"' not in tree
 
 
 # --------------------------------------------------------------------------

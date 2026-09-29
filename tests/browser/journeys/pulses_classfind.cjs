@@ -17,7 +17,7 @@
  *   SM_CDP_PORT=9626 SM_PORT=5326 SHOT_DIR=... MODE=b node pulses_classfind.cjs
  */
 'use strict';
-const { open, sleep } = require('./cdp.cjs');
+const { open, sleep, base, baseFrom, smPath, smUrl } = require('./cdp.cjs');
 const PORT = process.env.SM_PORT || 5326;
 const DIR = process.env.SHOT_DIR || '.';
 const MODE = process.env.MODE || 'b';
@@ -30,7 +30,7 @@ const MEASURE_ONLY = process.env.MEASURE_ONLY === '1';   // A/B: stop after the 
 const THEME = process.env.THEME || '';
 const ONLY_FAILED = process.env.ONLY_FAILED === '1';     // screenshots of the failed state only
 const TOUCHED = process.env.TOUCHED === '1';             // type an op name BEFORE naming the module                    // light | dark (quam_theme)
-const BASE = `http://127.0.0.1:${PORT}`;
+const BASE = base(PORT);
 require('fs').mkdirSync(DIR, { recursive: true });
 let bad = 0;
 const meas = {};

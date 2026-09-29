@@ -37,6 +37,55 @@ os.environ.setdefault("SM_DISABLE_ENV_WARMUP", "1")
 # clear this variable themselves.
 os.environ.setdefault("SM_DISABLE_HISTORY_VERIFY", "1")
 
+# URL-prefix mode (docs/226, spec §5.1). `SM_TEST_URL_PREFIX=/sm pytest tests/`
+# runs the WHOLE suite with SM mounted under /sm: every create_app() that does
+# not pass url_prefix reads SM_URL_PREFIX, so the 500-odd test_client() sites
+# go through the REAL PrefixMiddleware (tolerant strip included) without being
+# edited. Unset = root, exactly as before. The proxy knobs are cleared in both
+# modes so a developer shell that exports them cannot flip the suite; tests
+# that are ABOUT them set them explicitly (monkeypatch / create_app kwargs).
+_TEST_URL_PREFIX = os.environ.get("SM_TEST_URL_PREFIX", "")
+for _k in ("SM_URL_PREFIX", "SM_BEHIND_PROXY", "SM_FRAME_ANCESTORS"):
+    os.environ.pop(_k, None)
+if _TEST_URL_PREFIX:
+    os.environ["SM_URL_PREFIX"] = _TEST_URL_PREFIX
+
+
+def pytest_sessionstart(session):
+    """In prefix mode, refuse to run unless an app REALLY mounts under it.
+
+    Without this, a code base that ignores SM_URL_PREFIX (91c8aae, or a
+    regression that drops the env read) turns the /sm pass into a second root
+    pass that reports green -- the vacuous pin the whole mode exists to avoid.
+    """
+    if not _TEST_URL_PREFIX:
+        return
+    import shutil
+
+    from quam_state_manager.web.app import create_app
+
+    want = _TEST_URL_PREFIX.rstrip("/")
+    if not want.startswith("/"):
+        # measured: Git Bash hands `SM_TEST_URL_PREFIX=/sm` to python.exe as
+        # 'C:/Program Files/Git/sm' (MSYS path conversion)
+        raise pytest.UsageError(
+            f"SM_TEST_URL_PREFIX={_TEST_URL_PREFIX!r} is not a URL path like '/sm'"
+            + (" -- Git Bash rewrote it; run with MSYS_NO_PATHCONV=1"
+               if len(want) > 1 and want[1] == ":" else ""))
+    inst = tempfile.mkdtemp(prefix="sm_prefix_mode_probe_")
+    try:
+        app = create_app(testing=True, instance_path=inst)
+        got = app.config.get("SM_URL_PREFIX")
+        status = app.test_client().get(want + "/help").status_code
+    finally:
+        shutil.rmtree(inst, ignore_errors=True)
+    if got != want or status != 200:
+        raise pytest.UsageError(
+            f"SM_TEST_URL_PREFIX={_TEST_URL_PREFIX!r} but create_app() did not mount "
+            f"there (app.config['SM_URL_PREFIX']={got!r}, GET {want}/help -> {status}); "
+            "the prefix-mode run would silently test root. Is the url_prefix server "
+            "change (spec §1-2) in this checkout?")
+
 
 @pytest.fixture
 def tmp_path(tmp_path):

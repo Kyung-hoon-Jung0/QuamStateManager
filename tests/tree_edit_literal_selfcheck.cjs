@@ -8,6 +8,7 @@
  *     box is inline-flex so the chip widens it instead of overflowing.
  * Run: node tests/tree_edit_literal_selfcheck.cjs   (needs jsdom)
  */
+require('./_sm_root_boot.cjs').install();
 const fs = require('fs');
 const path = require('path');
 const { JSDOM } = require('jsdom');

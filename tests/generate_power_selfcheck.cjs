@@ -18,6 +18,7 @@
  *
  * Run:  node tests/generate_power_selfcheck.cjs   (driven by test_generate_power.py).
  */
+require('./_sm_root_boot.cjs').install();
 const fs = require('fs');
 const path = require('path');
 
