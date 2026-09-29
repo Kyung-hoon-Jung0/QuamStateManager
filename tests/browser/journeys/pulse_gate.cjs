@@ -22,7 +22,7 @@
  */
 'use strict';
 const fs = require('fs');
-const { open, sleep, base, baseFrom } = require('./cdp.cjs');
+const { open, sleep, base, baseFrom, smUrl } = require('./cdp.cjs');
 
 const PORT = +(process.env.PORT || 5363);
 const BASE = base(PORT);   // docs/226: SM_BASE_URL (proxy + prefix) wins
@@ -102,7 +102,7 @@ async function clickIn(p, rootSel, sel) {
     const a = await hoverRow(p, OP);
     check(a && !a.add && !a.del, 'T: no ＋/✕ on the pulse ' + J(a));
     check(a && a.note === NOTE && a.shown === '1', `T: the note shows on hover: "${a && a.note}"`);
-    check(a && a.href === '/pulses/goto?path=' + encodeURIComponent(OP), 'T: its link names the pulse ' + (a && a.href));
+    check(a && a.href === smUrl('/pulses/goto?path=' + encodeURIComponent(OP)), 'T: its link names the pulse ' + (a && a.href));   // docs/226: rooted
     await p.shot(`${DIR}/T1_tree_pulse_hover.png`);
     const b = await hoverRow(p, OPS);
     check(b && !b.add && !b.del && b.note === NOTE, 'T: the operations dict: no ＋/✕, the note ' + J(b));

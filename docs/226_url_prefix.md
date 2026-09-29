@@ -267,7 +267,32 @@ after ~25.1–25.3 s) all PASS unless stated:
 
 ### 5.3 Real-Chrome journeys behind nginx `/sm/`
 
-«JOURNEYS»
+`run_w9.sh nginx-strip-cfg` (SM `--url-prefix /sm` behind a stripping nginx,
+KRS 5Q chip copy, every journey opening `http://127.0.0.1:<proxy>/sm/…` with
+`cdp.cjs`'s guard throwing on any same-origin navigation outside the mount),
+and the same journeys at `root-control` on the same head as the control:
+
+| journey | behind nginx `/sm/` | root control |
+|---|---|---|
+| `smallui` (Live Edit edit → Undo → Back → reload, 25 checks) | 25/25 | — |
+| `zline` (27 checks) | 27/27 | — |
+| `agent_back` (Agent home → Journal → Back → Forward → Back → reload) | every step under `/sm/agent` / `/sm/journal`, reload whole | same at `/agent` |
+| `agent_setup_back` (Setup walk, pushState/Back) | whole, journal section restored | — |
+| `chip_status` (Chip Status jumps, map inspector, sub-items) | S2/S3/S5 pass (every sub-item scrolls into view, the map inspector opens and closes, 30 RB panels); S1/S4 FAIL: "trends has a clickable point" | **same two FAILs at root** — on this rig no Trends point is openable since `e258f3c6` (a point names the run that WROTE its value, and that run's folder is not under a loaded Datasets folder → "not openable here"); a main-side precondition, not the proxy |
+| `pulse_gate` (Json Tree guidance link → Pulses page → Back) | «PG» | — |
+| `pair_add_gate_pulses` (pair Add-gate note → Pulses flux rows → Back → reload) | «PAG» | — |
+| `ds_outside_fresh` (a run opened from outside the run list → Chip Status → Back) | «DSO» | — |
+| `pulses_delete_together` (a lab refusal's "Delete together" offer) | «PDT» | — |
+| `px_w9_probe` (landing env picker + Pulses open → Back → reload, network-audited) | «PROBE» | — |
+| `lab_field_edit` (three edit surfaces = POSTs through the proxy, Apply to live) | 19/20 in every cell (§5.2) | 18/20 |
+
+Two journey defects found on the way, both harness-side: `agent_back`'s
+`Runtime.evaluate('location.reload()')` can outlive its own execution context
+and never be answered (it hung 900 s behind nginx and completed at root by
+luck) — the reload is fire-and-forget now, in `agent_back.cjs` and the probe
+(`agent_plan.cjs` still has the pattern; not in this run); and the
+`lab_field_edit` "checking badge" observations are timing-bound (the badge is
+transient), which every cell shows under load, root included.
 
 ## 6. Open issues
 
