@@ -16,8 +16,14 @@
  *          no focus ring around the "rows" toolbar; keyboard focus (Tab)
  *          still draws it. Back to the saved choice afterwards.
  *
+ *   wheel  (w9 final-QA P1) a wheel 720 px up / down (or none) 100 ms after
+ *          an Overview tile jump landed, on a big chip whose panels arrive
+ *          in slices: the reader ends in the panel directly above / below
+ *          the target, exactly as on a fully built page -- see wheelCmd.
+ *
  * usage:
  *   SM_CDP_PORT=9605 node tests/browser/journeys/chip_place.cjs place new=5305,base=5306 <shot-dir>
+ *   SM_CDP_PORT=9605 node tests/browser/journeys/chip_place.cjs wheel new=5305,base=5306 <shot-dir>
  *   SM_CDP_PORT=9605 node tests/browser/journeys/chip_place.cjs ring new=5305 <shot-dir>
  * env: REPS (1), OTHER_REPS (REPS: reps for the 2nd+ server), OPENW (7000),
  *      SETTLE (20000), DELAYS (0,300,2000,12000), MODES (mouse,Enter,Space,tab),
@@ -233,10 +239,121 @@ async function ring() {
   return allOk;
 }
 
+/* wheel (w9 final-QA P1): a reader who scrolls right after an Overview tile
+   jump on a big chip, whose panels arrive in slices. Fresh tab, OPENW ms, a
+   real mouse click on the tile; the moment the target has landed (within
+   8 px of its landing line), wait WDELAY ms (100), then a real wheel of
+   WTICKS x 120 px (6: 720 px) up, down, or none. After the build (no
+   placeholder left) and SETTLE ms, what is under the reader's first line
+   (70 px below the pane top, under the sticky bar):
+     up    the panel directly above the target (or the one above that) --
+           or, where panels are shorter than the wheel (a 5-qubit chip),
+           the target exactly the wheel's distance down (+-12);
+     down  the target or the panel under it, the target at least 400 px
+           above its landing line;
+     none  the target still on its landing line (+-8).
+   Traced every 100 ms: the panel under the line may go from its placeholder
+   to the panel itself, never anywhere else (nothing jumps while slices land).
+   env: TILES (ro_ge,gate1q,t1,t2ramsey,irb), DIRS (up,down,none), REPS (3),
+        WDELAY (100), WTICKS (6), OPENW, SETTLE (8000), OUT */
+const LINE = `(function(){var pn=document.getElementById('table-pane'); var pr=pn.getBoundingClientRect();
+  var h=document.elementFromPoint(pr.left+pr.width/2, pr.top+70);
+  var ph=h&&h.closest?h.closest('.topo-rb-ph'):null, pnl=h&&h.closest?h.closest('.topo-section[data-density-panel]'):null;
+  var sec=h&&h.closest?h.closest('[data-topo-section]'):null;
+  return {key:ph?ph.getAttribute('data-rb-ph'):(pnl?pnl.getAttribute('data-density-panel'):null), ph:!!ph,
+          sec:sec?sec.getAttribute('data-topo-section'):null, tag:h?h.tagName+'.'+String(h.className||'').split(' ')[0]:null};})()`;
+const PANELS_AROUND = (sel) => `(function(){var t=document.querySelector(${JSON.stringify(sel)}); if(!t) return null;
+  var all=[].slice.call(document.querySelectorAll('.topo-dashboard .topo-section[data-density-panel], .topo-dashboard .topo-rb-ph'));
+  var above=[], below=[];
+  all.forEach(function(e){ var k=e.getAttribute('data-density-panel')||e.getAttribute('data-rb-ph');
+    if(e===t||t.contains(e)) return;
+    var pos=t.compareDocumentPosition(e); if(pos&Node.DOCUMENT_POSITION_PRECEDING) above.push(k); else if(pos&Node.DOCUMENT_POSITION_FOLLOWING) below.push(k); });
+  return {above:above.slice(-2).reverse(), below:below.slice(0,1), self:t.getAttribute('data-density-panel')};})()`;
+async function wheelCmd() {
+  const TILES = (process.env.TILES || 'ro_ge,gate1q,t1,t2ramsey,irb').split(',');
+  const DIRS = (process.env.DIRS || 'up,down,none').split(',');
+  const R = +(process.env.REPS || 3), WDELAY = +(process.env.WDELAY || 100), WTICKS = +(process.env.WTICKS || 6);
+  const WSETTLE = +(process.env.SETTLE || 8000);
+  const res = [];
+  for (let rep = 1; rep <= R; rep++) {
+    for (const tile of TILES) {
+      for (const dir of DIRS) {
+        for (const S of SERVERS) {
+          const p = await open(S.base + '/topology?view=overview');
+          const mark = p.events.length;
+          await sleep(OPENW);
+          const t = await tileInfo(p, tile);
+          if (!t || !t.view || !t.vis || !t.hit) { res.push({ server: S.label, tile, dir, ok: false, err: 'tile ' + JSON.stringify(t) }); await p.close(); continue; }
+          const sel = t.sel || TAB_SEL[t.view];
+          await p.click(t.x, t.y);
+          const t0 = Date.now();
+          let landed = null;
+          for (let i = 0; i < 300 && landed === null; i++) {
+            const w = await J(p, WHERE(sel));
+            if (w && w.top !== null && w.sm !== null && Math.abs(w.top - w.sm) <= 8) landed = { t: Date.now() - t0, sm: w.sm };
+            else await sleep(10);
+          }
+          const around = await J(p, `JSON.stringify(${PANELS_AROUND(sel)})`);
+          if (landed && dir !== 'none') {
+            await sleep(WDELAY);
+            const dy = dir === 'up' ? -120 : 120;
+            for (let i = 0; i < WTICKS; i++) await wheel(p, dy);
+          }
+          const settledAt = Date.now() - t0 + 400;   // the wheel's own smooth scroll has ended
+          const trace = [];
+          const ts = Date.now();
+          let fin = null;
+          for (;;) {
+            const s = await J(p, `JSON.stringify({l:${LINE}, ph:document.querySelectorAll('.topo-rb-ph').length, w:${WHERE(sel)}})`);
+            s.t = Date.now() - t0; trace.push(s);
+            if (s.ph === 0 && !fin) fin = Date.now();
+            if ((fin && Date.now() - fin >= WSETTLE) || Date.now() - ts > 30000) break;
+            await sleep(100);
+          }
+          const last = trace[trace.length - 1];
+          const w = last.w ? JSON.parse(last.w) : null;
+          // the line may pass from a placeholder to its own panel, never elsewhere
+          const keys = [];
+          trace.forEach((s) => { const k = s.l && s.l.key; if (s.t >= settledAt && k && keys[keys.length - 1] !== k) keys.push(k); });
+          const steady = keys.length <= 1;
+          const sm = landed ? landed.sm : 64;
+          let ok = !!landed && last.ph === 0 && steady && !!w;
+          // (a small chip's panels are shorter than the wheel: there it is
+          // the target exactly the wheel's distance down, as nothing moved)
+          if (ok && dir === 'up') ok = (!!around && around.above.indexOf(last.l.key) >= 0)
+            || Math.abs(w.top - (sm + 120 * WTICKS)) <= 12;
+          // (a wheel does not always scroll 120 px a tick -- over some panels
+          // base 91c8aae moves 600 px for 6 -- so: it moved at least 400 px)
+          if (ok && dir === 'down') ok = (last.l.key === around.self || (around.below[0] === last.l.key))
+            && sm - w.top >= 400;
+          if (ok && dir === 'none') ok = Math.abs(w.top - sm) <= 8;
+          const errs = p.errors(mark);
+          ok = ok && errs.length === 0;
+          const shot = path.join(SHOTS, `wheel_${S.label}_${tile}_${dir}_r${rep}.png`);
+          await p.shot(shot);
+          await p.close();
+          const r = { server: S.label, tile, dir, rep, ok, landed, around, line: last.l, keys, target_top: w && w.top, sm, errs, shot };
+          res.push(r);
+          log((ok ? 'PASS ' : 'FAIL ') + S.label.padEnd(5) + ' ' + tile.padEnd(9) + ' ' + dir.padEnd(4) + ' r' + rep + ' landed ' + (landed && landed.t)
+              + ' ms; under the line ' + JSON.stringify(last.l) + ' (above ' + JSON.stringify(around && around.above) + ') target at ' + (w && w.top)
+              + ' path ' + keys.join(' > ') + (errs.length ? ' JSERR ' + errs[0] : ''));
+          if (OUT) fs.writeFileSync(OUT, JSON.stringify(res, null, 1));
+        }
+      }
+    }
+  }
+  const sum = {};
+  res.forEach((r) => { const s = sum[r.server] || (sum[r.server] = { pass: 0, n: 0, fail: [] }); s.n++; if (r.ok) s.pass++; else s.fail.push(r.tile + ' ' + r.dir + ' r' + r.rep); });
+  console.log('SUMMARY ' + JSON.stringify(sum));
+  const first = sum[SERVERS[0].label];
+  return !!first && first.pass === first.n;
+}
+
 (async () => {
   let ok = false;
   if (CMD === 'place') ok = await place();
   else if (CMD === 'ring') ok = await ring();
-  else { console.error('usage: chip_place.cjs place|ring label=port[,label=port] <shot-dir>'); process.exit(2); }
+  else if (CMD === 'wheel') ok = await wheelCmd();
+  else { console.error('usage: chip_place.cjs place|ring|wheel label=port[,label=port] <shot-dir>'); process.exit(2); }
   process.exit(ok ? 0 : 1);
 })().catch((e) => { console.error(e); process.exit(1); });
