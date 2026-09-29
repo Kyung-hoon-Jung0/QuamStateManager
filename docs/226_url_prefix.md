@@ -1,0 +1,308 @@
+# docs/226 — Serving SM under a URL prefix, behind a reverse proxy
+
+2026-09-29, branch `feat/url-prefix` (base `91c8aae`, then `origin/main`
+`883bb87a` merged in), worktree `D:\work\statemanager-proxy`. **Not merged to
+main; never pushed.** Asked for by a colleague (Quarium Lab) who mounts SM on a
+platform that proxies it under a path such as `https://lab.example/sm/`; their
+report read v0.9.8, this lands on 1.0.x. Roles: A (server + CLI, `px/a`),
+B (templates, `px/b`), C1 (`app.js`, `px/c1`), C2 (`sm-root.js` + the other
+first-party JS, `px/c2`), D (the two-mode test suite, the golden, the leak
+lint, the proxy rig, `px/d`); the integrator merged the five, fixed what the
+merge exposed, merged main's w8/w9 waves and prefixed what they added.
+
+## 1. What
+
+SM can be served from a sub-path. One variable — the mount prefix, `''` at
+root — and every consumer of it is the identity at `''`:
+
+- the server knows it as `request.script_root` (a WSGI middleware sets
+  `SCRIPT_NAME`, so `url_for` is right for free) and prefixes the ~30 literal
+  app paths it emits itself through ONE helper, `routes._rooted`;
+- every template writes `{{ root }}` in front of every root-absolute app URL
+  (411 attribute literals, 29 JSON `url:` fields, 13 `fetch(`, 4 `htmx.ajax(`,
+  8 `{% set base_url %}` — mechanically rewritten, then linted);
+- the client learns it from `<html data-root="…">`, read once by
+  `web/static/sm-root.js`, the FIRST script of every full document, which
+  publishes `window.SM = {root, url(p), path(p)}` and — only under a prefix —
+  wraps the three request sinks (`fetch` for string/URL/Request inputs,
+  `history.pushState/replaceState`, and every htmx request through an htmx
+  EXTENSION named `sm-root`, which htmx runs after every DOM listener).
+  Reads that no wrapper can reach (`location.pathname === '/x'`,
+  `a.href = '/x'`, attribute selectors, JS-built markup) were hand-edited to
+  `window.SM.path(..)` / `window.SM.url(..)` — `app.js` through two guarded
+  helpers `_smUrl/_smPath`, the other files through `window.SM ? … : …`.
+
+Rejected on purpose (spec §0): `<base href>` (RFC 3986 — it cannot rewrite
+root-absolute paths, ~520 assertions break) and HTML post-processing
+middleware (it cannot reach JS-built URLs).
+
+**Root-mounted users see byte-identical behaviour.** With `SM_URL_PREFIX`
+and `SM_BEHIND_PROXY` unset: no middleware object is installed
+(`app.wsgi_app` is Flask's own bound method), the CSRF check is the same
+code, the CSP header string is `==` the old one, every server URL is the same
+bytes, `sm-root.js` returns before installing anything, and every rendered
+page is byte-identical to `origin/main` after three DECLARED deltas —
+`data-root=""` on `<html>`, the one `<script src=…/sm-root.js>` tag per
+document, and `window.SM.path(E)`/`window.SM.url(E)` → `E` in inline JS
+(spec §3.2 rule 3; identity at root by construction). Pinned by
+`tests/test_root_golden.py` against a base checkout (§5).
+
+## 2. How to run
+
+```
+qsm serve   --url-prefix /sm --behind-proxy          # browser UI, waitress
+qsm browser --url-prefix /sm --behind-proxy          # same + opens the browser
+qsm serve   --url-prefix /sm --behind-proxy --frame-ancestors "https://lab.example"
+```
+
+| flag / env | meaning | default |
+|---|---|---|
+| `--url-prefix TEXT` / `SM_URL_PREFIX` | the mount path, e.g. `/sm`. Normalised: `/sm/` → `/sm`, `//a//b/` → `/a/b`; must start with `/`; segments `[A-Za-z0-9._~-]+`; no `.`/`..`, `%`, `?`, `#`, space, control or non-ASCII; ≤ 200 chars. A bad value exits 2 with a one-line message | root |
+| `--behind-proxy` / `SM_BEHIND_PROXY` (`1/true/yes/on`; anything else but the false spellings is refused) | trust ONE hop of `X-Forwarded-For/Proto/Host/Port/Prefix` (Werkzeug `ProxyFix`, all five at 1). Never on by default | off |
+| `--frame-ancestors TEXT` / `SM_FRAME_ANCESTORS` | extra CSP `frame-ancestors` sources, space-separated, appended to `'self'` (`'none'` alone forbids even same-origin framing). `; , "` and quotes are refused (header-injection guard) | empty = today's CSP, byte-identical |
+
+Precedence: CLI flag > env var > default (typer `envvar=`). `create_app(url_prefix="")`
+means root; only `None` reads the env. The desktop window
+(`python -m quam_state_manager`) opens `http://127.0.0.1:{port}{prefix}`.
+
+**Config prefix vs header prefix.** `--url-prefix` is authoritative. With
+`--behind-proxy` and an `X-Forwarded-Prefix` that normalises to a DIFFERENT
+value, SM logs one warning per process and uses the configured one. Header
+only (no `--url-prefix`): honoured per request; an invalid or route-colliding
+header value is ignored with one warning. **Recommendation: always pass
+`--url-prefix` when a prefix exists** — it is correct whether or not the proxy
+strips the prefix and whether or not it sends the header, and it is the mode
+every render sees the same root in (§6, open issue 1).
+
+**Collision rule.** The prefix's first segment must not equal the first
+segment of any SM route (`route_first_segments(app)`, 81 segments at this
+head — 80 on the base plus w9's `landing`: `agent api bulk chip datasets diff
+explorer landing pulses qubits static …`).
+`--url-prefix /qubits` is refused at startup with the colliding route named.
+Reason: the tolerant strip (below) and the client's idempotency rule both read
+"already starts with the prefix" as "already prefixed".
+
+**The strip is tolerant.** `PrefixMiddleware` strips the prefix from
+`PATH_INFO` when it is there and leaves the path alone when it is not, so a
+stripping proxy (nginx `proxy_pass http://127.0.0.1:5050/;`, traefik
+`StripPrefix`), a non-stripping one (Caddy `handle /sm*`, k8s ingress
+defaults) and a loopback client that never heard of the prefix (the agent CLI
+via `agent_link`, `mcp.py`, `hook.py`, the desktop window's `_wait_for_server`)
+all land on the same route: `GET /qubits` and `GET /sm/qubits` both answer 200
+under `--url-prefix /sm`.
+
+**Windows Git Bash** rewrites a POSIX-looking value handed to a native
+program: `--url-prefix /sm` (and `SM_URL_PREFIX=/sm`) arrives as
+`C:/Program Files/Git/sm`, which SM refuses with its one-line error. Prefix
+such a command with `MSYS_NO_PATHCONV=1` (or run it from cmd/PowerShell).
+
+Proxy snippets the rig verified (§5.3; full templates in
+`D:\work\sm_qa_rigs\_tools\proxy\templates\`):
+
+```nginx
+# nginx, strips the prefix, no prefix header, Host preserved  ->  qsm serve --url-prefix /sm
+location /sm/ {
+    proxy_pass http://127.0.0.1:5050/;
+    proxy_set_header Host $http_host;
+    proxy_read_timeout 3600s;  proxy_send_timeout 3600s;
+    proxy_buffering off;       proxy_request_buffering off;
+    client_max_body_size 200m;
+}
+location = /sm { return 301 /sm/; }
+```
+
+```caddyfile
+# Caddy, does NOT strip, no header, Host preserved  ->  qsm serve --url-prefix /sm
+handle /sm* {
+    reverse_proxy 127.0.0.1:5050 {
+        flush_interval -1
+        transport http { response_header_timeout 3600s }
+    }
+}
+```
+
+## 3. Platform conditions (what the operator must provide)
+
+1. **SM does no authentication and binds `127.0.0.1`.** It is one process per
+   user; the platform's own login sits in front. Nothing in SM's file/env
+   model changed — every local-PC feature (`/browse`, `/mkdir`, conda probing,
+   the agent CLIs) is reachable to whoever the platform lets through.
+2. **`Host`**: either preserve it (nginx `proxy_set_header Host $http_host`;
+   Caddy's default), or rewrite it to the upstream AND send
+   `X-Forwarded-Host: <public host[:port]>` with `--behind-proxy` on. A proxy
+   that rewrites `Host` and sends no `X-Forwarded-Host` makes every non-GET a
+   403 — that is the same-origin CSRF check working as designed (A's pins:
+   the four cases). `--behind-proxy` trusts exactly one hop, so the proxy must
+   overwrite any `X-Forwarded-*` a client sends. (Found live: waitress scrubs
+   `X-Forwarded-*` by default; `qsm serve --behind-proxy` passes
+   `clear_untrusted_proxy_headers=False`, off it is the old call byte for byte.)
+3. **Read timeout ≥ 600 s, no buffering.** `/datasets/wait` is a 25 s long
+   poll on every page; a Generate/Re-generate build can hold a request ~600 s
+   and an agent run-node up to 3600 s. Set `proxy_read_timeout 3600s` (nginx)
+   / `response_header_timeout 3600s` (Caddy) and turn response buffering off
+   (`proxy_buffering off` / `flush_interval -1`). Verified to 25 s in the rig
+   (§5.3); the 600/3600 s holds are covered by config review only.
+4. **iframe embedding is opt-in.** The default CSP stays `frame-ancestors
+   'self'`; pass `--frame-ancestors https://their-host` to embed cross-origin.
+   Known non-feature: `/workbench`'s `frame-src` points at the VIEWER's
+   localhost either way (it embeds the user's own qualibrate).
+5. Both `/sm/x` and `/x` must reach SM only on loopback — the platform's
+   fallback for anything outside `/sm/` is its own 404, which is exactly what
+   the rig's proxies do so a leaked URL is loud.
+
+## 4. How it is built, by seam
+
+- **Server (A, `web/url_prefix.py`, `web/app.py`, `cli.py`, `main.py`,
+  `routes._rooted`)**: `normalize_prefix`, `parse_bool`,
+  `validate_frame_ancestors`, `route_first_segments`/`check_collision`,
+  `PrefixMiddleware`, `install(app, prefix, behind_proxy)` (installs nothing
+  at root; `ProxyFix` OUTSIDE the middleware when behind a proxy);
+  `create_app(url_prefix=, behind_proxy=, frame_ancestors=)`; Jinja global
+  `root` = `url_root()` (the request's `script_root`, else the configured
+  prefix for a background render under `app_context`, else `''`);
+  `_build_csp(frame_ancestors)` pinned string-equal to the old constants at
+  `""`; `_record_own_port` prefers `SM_BIND_PORT`; `chat_api._sm_url` hands the
+  spawned CLI `http://127.0.0.1:{port}{prefix}` when hosted; `SMLink.origin` is
+  the netloc (a prefixed base used to send `Origin: …/sm`, which CSRF
+  refused); `journal.render(md, root=)`. 72 pins in `tests/test_url_prefix.py`
+  incl. a server-literal lint over `web/*.py` + `core/journal.py`.
+- **Templates (B)**: the mechanical rewrite; `_sidebar_tree_entries.html`
+  imports `entry_rows` `with context` (a macro without context renders
+  `root` as `''` — silently wrong under a prefix, byte-identical at root);
+  `base.html`'s `href.indexOf("/datasets")` and `onChipPage()` compare
+  `window.SM.path(..)`; `<body … hx-ext="sm-root">` only under a prefix.
+  `tests/test_template_root_lint.py` (allow-list empty) — extended at
+  integration to see an attribute directly after a Jinja tag
+  (`{% if x %}hx-get="/…"`) and a single-quoted / conditional `{% set %}`, which
+  found four more sites (`_diagnostics_env.html`, `_fit_audit_digest.html`,
+  `_pulse_env_strip.html`, `_sidebar_tree_macros.html`) and `_datasets.html`'s
+  `_tab_base`.
+- **Client (C2 + C1)**: `sm-root.js` (Node-realm safe: only `window.*`),
+  `tests/sm_root_selfcheck.cjs` (82), `tests/prefix_hooks_selfcheck.cjs` (26,
+  the REAL htmx 2.0.4), `tests/prefix_sites_selfcheck.cjs` (30),
+  `tests/test_js_root_lint.py` (allow-list: 4 reviewed lines) and
+  `tests/app_prefix_selfcheck.cjs` (242 assertions, root and `/sm` on every
+  run). C2 verified the wrappers in real headless Chrome against an echo server
+  (20/20 under `/sm`, 20/20 at root).
+- **Tests (D)**: `tests/conftest.py` copies `SM_TEST_URL_PREFIX` into
+  `SM_URL_PREFIX` so the whole suite runs twice without touching 507
+  `test_client()` sites, and REFUSES to run in `/sm` mode on a checkout that
+  ignores it (else a vacuous second root pass); `tests/_prefix.py` (`P()`,
+  `PREFIX`, `RE_PREFIX`) — ~150 assertion lines converted; `tests/_sm_root_boot.cjs`
+  (`install()` as each jsdom harness's first statement: boots `sm-root.js` into
+  every window, moves the harness page URL under the prefix, renders
+  `{{ root }}` in templates read via `fs`); `tests/tools/render_pages.py` +
+  `tests/test_root_golden.py` (root byte-identity vs `SM_GOLDEN_BASE_DIR`) +
+  `tests/test_prefix_render_lint.py` (renders every GET route under `/sm` and
+  fails on any un-prefixed URL attribute, `url:` field, `fetch(` literal,
+  Location/HX-* header, `data-root`, missing `hx-ext`); 29 journeys +
+  `prefix_sweep.cjs` follow `SM_BASE_URL` through `tests/browser/journeys/cdp.cjs`;
+  the rig (`D:\work\sm_qa_rigs\_tools\proxy`: nginx 1.30.5 + Caddy 2.11.4,
+  signatures/checksums recorded in `VERSIONS.txt`).
+- **Integration**: header-only mode kept memoized HTML keyed without the
+  root, so a run-watch pre-render at `''` could be served to a proxied request
+  — `_TREE_HTML_MEMO`, `_FILTERED_TREE_MEMO` (routes.py) and
+  `trend_index.PARAMS_MEMO` (new `render_key=` kwarg) now key on it; the JSON
+  memos (`_ALL_VALUES_BODY`, `_LIVE_DIFF_BODY`, `_DATASETS_PAYLOAD`) carry no
+  URLs and are unchanged. The w8/w9 merge (883bb87a) added 7 template
+  attribute sites, the Json Tree's `/pulses/goto` link + payload
+  (`_pulse_gate_payload`, `pulses_page`, `lab_delete_pulses_url` rooted
+  server-side; core stays request-free), `setPageSize`'s `base_url` compare,
+  `landing-env.js`'s fetch spy, five jsdom harnesses and four journeys — all
+  prefixed and pinned; `/pulses/vids`' per-process boot token became a golden
+  normaliser (two renders of 883bb87a in two interpreters differ there).
+
+## 5. What was measured
+
+### 5.1 The suite in both modes (head `6e355ac7`, three size-balanced shards each, `cqt`)
+
+| mode | passed | failed | skipped | failures classified |
+|---|---|---|---|---|
+| root | «ROOT_PASSED» | «ROOT_FAILED» | «ROOT_SKIPPED» | «ROOT_CLASS» |
+| `SM_TEST_URL_PREFIX=/sm` | «SM_PASSED» | «SM_FAILED» | «SM_SKIPPED» | «SM_CLASS» |
+
+Root byte-identity golden vs a detached `883bb87a` checkout: **6 passed**
+(every render identical after the three declared deltas + the documented
+normalisers; the only new normaliser is `/pulses/vids`' per-process boot
+token). Rendered-output leak lint under `/sm`: «LEAK». Template lint: 0 hits,
+allow-list empty. JS lint: 0 hits outside the 4-line allow-list.
+Server-literal lint: 0 hits.
+
+`npm run selfcheck` (235 harnesses, run while six pytest shards and two rigs
+shared the CPU): root **234 passed / 1 failed** (`chip_jump`, a frame-pump
+timing pin); `/sm` **232 passed / 3 failed** (`chip_jump`, `autosync_merge`
+— a 2.5 s timer bound — and `liveedit_big_grid`, a per-frame layout pin).
+Alone on the same machine `chip_jump` and `autosync_merge` pass in both modes
+(the two C1 and D had already recorded as load flakes); `liveedit_big_grid`
+«LBG».
+
+### 5.2 Real proxies (`run_matrix.sh` → `run_matrix2.sh`, KRS 5Q chip copy, head `6e355ac7`)
+
+**A rig defect found on the way, in D's `run_matrix.sh`** (fixed as
+`run_matrix2.sh`, the original left as evidence): each cell `eval`s the
+previous cell's `export SM_URL_PREFIX=/sm` BEFORE the next cell's
+`proxy_rig.sh up`, and `serve_prefix.py` with no `--url-prefix` calls
+`create_app(url_prefix=None)`, which reads that env. Measured from the SM
+logs: the two `--behind-proxy` cells ran as `url_prefix='/sm'
+behind_proxy=True` (config + header, not header-only) and `root-control` ran
+as `url_prefix='/sm'` — its console named `/sm/pair/q2-3/edit`. D's matrix
+ran the cells in the same order, so D's "root-control" and header-only
+verdicts were the config-prefix mode wearing those names; the first cell of
+every run was clean. The fix moves the `unset` in front of `up`.
+
+Cells that ran in the mode their name says, self-checks (proxy `/` → 404
+"platform fallback", `/static/app.js` outside the mount → 404, `/sm/` → 200,
+`/sm` → 301, a same-origin CSRF POST passes, `/datasets/wait` long poll → 200
+after ~25.1–25.3 s) all PASS unless stated:
+
+| cell | SM mode | sweep (34 sidebar pages: open → reload → intact) | `lab_field_edit` (POSTs through the proxy) |
+|---|---|---|---|
+| `caddy-nostrip-cfg` | `--url-prefix /sm` | 34/34, 0 leaks, 0 ≥400, 0 JS errors, 0 sidebar hrefs outside; crawl: 2 NO-WAY-BACK — the "Edit state.json / wiring.json" badges, the same two D measured at root (a same-path hx swap the crawler cannot classify as a way back; a direct probe shows identical behaviour at root and `/sm`) | 19/20 — the transient "checking" badge missed under load (D: same, 20/20 on re-run) |
+| `nginx-strip-cfg` | `--url-prefix /sm` | «NSC_FULL» | 19/20 (badge) |
+| `nginx-strip-hdr` | `--behind-proxy` (header-only, verified from the log) | «NSH_FULL» | 19/20 (badge) |
+| `caddy-strip-hdr-hostrewrite` | `--behind-proxy`, Host rewritten + `X-Forwarded-Host` | «CSH_FULL» | «CSH_LAB» |
+| `root-control` | none | «RC_FULL» | «RC_LAB» |
+
+### 5.3 Real-Chrome journeys behind nginx `/sm/`
+
+«JOURNEYS»
+
+## 6. Open issues
+
+1. Header-only mode (`--behind-proxy` without `--url-prefix`) is supported
+   but second-class: every memoized HTML fragment is now keyed on the root,
+   yet a render made for a loopback request still carries `''`; the
+   recommendation stands — always pass `--url-prefix`.
+2. Proxy timeouts of 600 s (builds) / 3600 s (agent run-node): config review
+   only; 25 s (`/datasets/wait`) measured through every cell.
+3. `/workbench`'s `frame-src 'self' http://127.0.0.1:* http://localhost:*`
+   points at the viewer's machine under hosting — known, not addressed.
+4. Not verified: the pywebview window in a real GUI under a prefix (mocked),
+   `qsm serve --debug` (werkzeug reloader) under a prefix, IPv6 / specific-IP
+   binds for `_sm_url`'s loopback address, Linux.
+5. Journeys other than the ones in §5.3 were adapted to `SM_BASE_URL` and
+   syntax-checked, not run behind a proxy (each needs its own rig data).
+6. Caddy's cosign signature: Fulcio chain and Rekor not verified; nginx's key:
+   web of trust not checked (D).
+7. Questions only the colleague can answer (spec §7): does their proxy strip
+   the prefix and which `X-Forwarded-*` does it send; same origin or an iframe
+   from another origin; does it preserve `Host`; can the read timeout be
+   raised; which version will they re-test. The defaults above are correct
+   for every combination.
+
+## 7. Files
+
+`quam_state_manager/web/url_prefix.py` (new), `web/app.py`, `web/routes.py`
+(`_rooted`, `_pulse_gate_payload`, the memo keys), `cli.py`, `main.py`,
+`core/journal.py`, `core/trend_index.py` (`params_blob(render_key=)`),
+`web/chat_api.py`, `core/agent_link.py`, `web/static/sm-root.js` (new), every
+first-party `web/static/*.js`, every `web/templates/**`; tests:
+`test_url_prefix.py`, `test_template_root_lint.py`, `test_js_root_lint.py`,
+`test_prefix_render_lint.py`, `test_root_golden.py`, `test_app_prefix.py`,
+`tools/render_pages.py`, `_prefix.py`, `_sm_root_boot.cjs`,
+`sm_root_selfcheck.cjs`, `prefix_hooks_selfcheck.cjs`,
+`prefix_sites_selfcheck.cjs`, `app_prefix_selfcheck.cjs`,
+`sm_root_boot_selfcheck.cjs`, `golden/template_root_allow.txt`,
+`golden/js_root_allow.txt`, `golden/prefix_render_allow.txt`,
+`browser/journeys/cdp.cjs`, `browser/journeys/prefix_sweep.cjs`,
+`browser/proxy_stub.py`; rig: `D:\work\sm_qa_rigs\_tools\proxy\`.

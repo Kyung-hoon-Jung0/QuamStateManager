@@ -740,3 +740,41 @@ it calibrate — often overnight. SM stops competing with that and becomes its
 - On real **IQCC cloud hardware**, the chatbot brought up qA1 from
   time-of-flight through Ramsey, checking every fit before the next step
   (docs/173 S9).
+
+## Unreleased — serving SM under a URL prefix, behind a reverse proxy (docs/226)
+
+A colleague mounts SM on a platform that proxies it under a path
+(`https://lab.example/sm/`). SM now serves from a sub-path with ONE variable —
+the mount prefix, `''` at root — and every consumer is the identity at `''`.
+
+### How to run
+
+- `qsm serve --url-prefix /sm --behind-proxy` (also `qsm browser`), or the env
+  vars `SM_URL_PREFIX` / `SM_BEHIND_PROXY` / `SM_FRAME_ANCESTORS`; CLI flag >
+  env > default. A bad prefix exits 2 with one line; a prefix whose first
+  segment is one of SM's own routes is refused at startup.
+- `--behind-proxy` trusts ONE hop of `X-Forwarded-For/Proto/Host/Port/Prefix`
+  (never on by default); `--frame-ancestors` is the iframe opt-in (the CSP is
+  byte-identical without it).
+- The strip is tolerant: stripping and non-stripping proxies, with or without
+  `X-Forwarded-Prefix`, and loopback clients that never heard of the prefix
+  all reach the same routes.
+
+### Platform conditions
+
+SM does no authentication and binds `127.0.0.1` — the platform's login sits in
+front. Preserve `Host`, or rewrite it and send `X-Forwarded-Host` with
+`--behind-proxy` (otherwise every POST is the same-origin 403, by design).
+Proxy read timeout ≥ 600 s (3600 s for an agent run), response buffering off
+(`/datasets/wait` is a 25 s long poll on every page).
+
+### Root users see byte-identical behaviour
+
+No middleware object is installed, the CSP string is `==` the old one, every
+server URL is the same bytes, `sm-root.js` returns before installing anything,
+and every rendered page is byte-identical to the previous main after three
+declared deltas — pinned by `tests/test_root_golden.py` against a base
+checkout. The whole suite runs twice (`SM_TEST_URL_PREFIX=/sm`), a rendered-
+output leak lint renders every GET route under `/sm`, and a real nginx / Caddy
+matrix (four proxy shapes + a root control) walks every sidebar page in real
+Chrome with 0 requests outside the mount.
