@@ -26,6 +26,7 @@ from quam_state_manager.core import config_generator, project_env
 from quam_state_manager.core import qualibrate_config as qc
 from quam_state_manager.web import routes
 from quam_state_manager.web.app import create_app
+from tests._prefix import P
 
 
 def _write(path: Path, text: str) -> None:
@@ -139,7 +140,7 @@ class TestTheLanding:
         html = lab["c"].get("/landing/projects").get_data(as_text=True)
         row = _card_env(html, "alpha")
         assert "ENV_A" in row and "suggested &mdash; confirm" in row
-        assert 'hx-post="/qualibrate/project-env"' in row and ">Confirm<" in row
+        assert 'hx-post="' + P("/qualibrate/project-env") + '"' in row and ">Confirm<" in row   # docs/226: rooted
         assert 'id="landing-env-picker"' in html
         # rendering the cards discovers and probes NOTHING
         assert lab["seen"]["discover"] == 0 and lab["seen"]["probe"] == 0
