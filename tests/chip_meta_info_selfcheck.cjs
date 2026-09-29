@@ -174,6 +174,22 @@ const metaFetches = (win) => win._fetches.filter(function (u) { return /metric-m
   d = MI.describe({ ts: '20260101_110000_000', run: null, trigger: 'auto', first: false, leaves: 1,
                     value: 1.4e-5, appeared: true }, { snaps: META.snaps, cur: 1.4e-5, now: NOW });
   ok(/^First recorded: /.test(d.lines[0]), 'T5f: ...and "First recorded" when no run wrote it');
+  // 2026-09-29 (KRISS_CZ: "an IRB point says its run is a flux short
+  // distortion experiment"): the snapshot's run only SAVED a state carrying
+  // the value. The server's writer check names the real writer, or says the
+  // run only captured it -- never "measured"/"Written by" that run.
+  d = MI.describe({ ts: '20260101_120000_000', run: 31, trigger: 'experiment', first: false, leaves: 1,
+                    value: 2.0e-5, writer: { captured: true } }, { snaps: META.snaps, cur: 2.0e-5, now: NOW });
+  ok(/^Last changed: /.test(d.lines[0]) && !/Written by/.test(d.lines.join(' '))
+       && d.lines.some(function (l) { return /captured with run #31 · 06 Ramsey \(not the run that measured it\)/.test(l); })
+       && !/#31/.test(d.tag),
+     'W1: a captured-only value is "Last changed", names #31 only as the capturer, tile carries no run -- ' + JSON.stringify(d));
+  d = MI.describe({ ts: '20260101_120000_000', run: 31, trigger: 'experiment', first: false, leaves: 1,
+                    value: 2.0e-5, writer: { run: 12, short: '25 T1', uid: 'k:12' } },
+                  { snaps: META.snaps, cur: 2.0e-5, now: NOW });
+  ok(/^Last measured: /.test(d.lines[0]) && d.lines.indexOf('Written by: run #12 · 25 T1') >= 0
+       && /#12$/.test(d.tag) && !/#31/.test(d.lines.join(' ') + d.tag),
+     'W2: a found writer replaces the capturer everywhere, tile included -- ' + JSON.stringify(d));
   d = MI.describe(null, {});
   ok(d.tag === '\u2014' && /^No change of this value/.test(d.lines[0]), 'T6: no entry -> the honest empty answer');
   d = MI.describe(null, { updating: true });

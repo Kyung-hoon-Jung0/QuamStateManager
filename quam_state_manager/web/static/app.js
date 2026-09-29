@@ -19421,6 +19421,22 @@ function paramHistoryRenderDrawerChart(data, currentValue) {
     var contextLine = function(p) {
         var t = p.trigger || 'auto';
         var run = runOf(p), node = nodeOf(p);
+        // The server's writer check (2026-09-29): a run is named as the
+        // point's source only when it WROTE the value. An unchanged value was
+        // not written at this snapshot; a value no run can be shown to have
+        // written is only "captured" by the snapshot's run.
+        if (run != null && p.unchanged) {
+            return 'Unchanged here (snapshot after #' + run + (node ? ' ' + node : '') + ')';
+        }
+        if (run != null && p.writer && p.writer.captured) {
+            return 'Captured with #' + run + (node ? ' ' + node : '')
+                 + ' (not the run that measured it)';
+        }
+        if (p.writer && p.writer.run != null) {
+            return 'Experiment: #' + p.writer.run
+                 + (p.writer.node ? ' ' + p.writer.node : '')
+                 + (run != null ? ' <i style="opacity:0.7">(captured later with #' + run + ')</i>' : '');
+        }
         if (t === 'experiment') {
             // Prefer "#<run> <node name>" for experiment-driven snapshots
             var bits = [];
@@ -19445,7 +19461,7 @@ function paramHistoryRenderDrawerChart(data, currentValue) {
     // column the gate does not read.
     var clickHintLine = function(p) {
         if (!p.uid) return '';
-        var run = runOf(p);
+        var run = (p.writer && p.writer.run != null) ? p.writer.run : runOf(p);
         return '<i style="opacity:0.7">click → open dataset'
              + (run != null ? ' #' + run : '') + '</i>';
     };

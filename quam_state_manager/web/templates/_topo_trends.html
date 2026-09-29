@@ -92,6 +92,11 @@
        this fragment's own URL aborted the user's badge press and brought
        the old selection back). #}
     <p class="muted topo-trends-updating" data-trends-updating="1">History index updating ({{ snapshots }} snapshots)…</p>
+    {% elif writers_pending %}
+    {# value_writer: some points' writers are still being checked against the
+       run folders (a cold archive); the same re-fetch brings them in. Until
+       then those points name no run. #}
+    <p class="muted topo-trends-updating" data-trends-updating="1">Checking which run wrote each point…</p>
     {% endif %}
     {% if not charts %}
     <p class="muted">Pick a metric above.</p>

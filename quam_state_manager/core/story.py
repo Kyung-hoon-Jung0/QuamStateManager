@@ -408,6 +408,9 @@ _SHORT_BY_NODE = [
     ("t1_vs_flux", "T1/flux"), ("t2star_vs_flux", "T2*/flux"),
     ("echo_vs_flux", "Echo/flux"),
     ("ramsey_vs_coupler_flux", "Ramsey/coupler"), ("ramsey_vs_flux", "Ramsey/flux"),
+    # an e-f Ramsey writes T2ramsey_ef, not T2ramsey (value_writer reads
+    # this label to decide which runs measure which leaf)
+    ("ramsey_ef", "Ramsey ef"),
     # -- flux / distortion / delays
     ("cryoscope", "Cryoscope"),
     ("coupler_flux_long_distortion", "Coupler flux long"),

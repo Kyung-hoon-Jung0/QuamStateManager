@@ -71,12 +71,16 @@
         <span class="ph-change-when">{{ (g.timestamp or "") | ts_local(short=True) }}</span>
         {% if g.trigger %}<span class="history-trigger-badge history-trigger-{{ g.trigger }}">{{ g.trigger }}</span>{% endif %}
         {% if g.experiment %}
-          <span class="ph-change-exp" title="{{ g.experiment }}">{% if g.run_id is not none %}#{{ g.run_id }} {% endif %}{{ g.experiment }}</span>
+          {# The snapshot copied this run's SAVE, which carries everything
+             written before it (runs history never captured, edits) -- so the
+             group is "captured with" the run, never "made by" it
+             (2026-09-29; per value, the 🕘 timeline names the real writer). #}
+          <span class="ph-change-exp" title="This snapshot recorded the save of {% if g.run_id is not none %}run #{{ g.run_id }} {% endif %}{{ g.experiment }}. Values listed here may have been written before it -- open a parameter's timeline for the run that wrote it.">captured with {% if g.run_id is not none %}#{{ g.run_id }} {% endif %}{{ g.experiment }}</span>
         {% endif %}
         {% if g.uid %}
         <button type="button" class="btn-xs outline"
                 hx-get="{{ root }}/dataset/{{ g.uid }}" hx-target="#inspector-pane"
-                hx-swap="innerHTML" title="Open the run that made these changes">Data</button>
+                hx-swap="innerHTML" title="Open run #{{ g.run_id }}, whose save this snapshot recorded (it did not necessarily write every value below)">Data</button>
         {% endif %}
         <span class="muted ph-change-count">{{ '{:,}'.format(g.total) }} parameter{{ '' if g.total == 1 else 's' }}</span>
       </div>
