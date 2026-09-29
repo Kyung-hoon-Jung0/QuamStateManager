@@ -40,7 +40,9 @@ def _write_chip(folder: Path, state: dict, wiring: dict | None = None):
 def _seed_run(root: Path, run_id: int, name="08_qubit_spectroscopy",
               date="2026-07-29", hhmmss="010000",
               quam_state: dict | None = None,
-              quam_wiring: dict | None = None) -> Path:
+              quam_wiring: dict | None = None, patches=None) -> Path:
+    """*patches*: the node's own record of what it wrote -- a Data button is
+    offered only for a run shown to have WRITTEN the value (2026-09-29)."""
     run = root / date / f"#{run_id}_{name}_{hhmmss}"
     run.mkdir(parents=True)
     (run / "node.json").write_text(json.dumps({
@@ -49,6 +51,7 @@ def _seed_run(root: Path, run_id: int, name="08_qubit_spectroscopy",
                      "run_end": f"{date}T01:00:01"},
         "data": {"parameters": {"model": {"qubits": ["qA1"]}}, "outcomes": {}},
         "id": run_id, "parents": [], "created_at": f"{date}T01:00:00",
+        **({"patches": patches} if patches is not None else {}),
     }), encoding="utf-8")
     (run / "data.json").write_text("{}", encoding="utf-8")
     if quam_state is not None:
@@ -179,7 +182,7 @@ class TestFieldHistoryRoute:
     def test_data_button_only_for_registered_run(self, env):
         c = env["client"]
         data_root = env["tmp"] / "data"
-        run = _seed_run(data_root, 31)
+        run = _seed_run(data_root, 31, patches=[{"op": "replace", "path": "/quam/qubits/qA1/f_01", "value": 5.1e9}])
         c.post("/workspace/add", data={"folder": str(data_root)})
         _mutate_and_snap(env, _state(f01=5.0e9))
         _mutate_and_snap(env, _state(f01=5.1e9), trigger="experiment",
@@ -320,7 +323,8 @@ class TestUidDeepestRoot:
         from quam_state_manager.web import routes as routes_mod
         outer = tmp_path / "ws"
         chip_root = outer / "chipX"
-        _seed_run(chip_root, 61, quam_state=_state(f01=7.3e9), hhmmss="030000")
+        _seed_run(chip_root, 61, quam_state=_state(f01=7.3e9), hhmmss="030000",
+                  patches=[{"op": "replace", "path": "/quam/qubits/qA1/f_01", "value": 7.3e9}])
         live = tmp_path / "chips" / "live"
         _write_chip(live, _state())
         app = create_app(testing=True, instance_path=str(tmp_path / "_inst"))

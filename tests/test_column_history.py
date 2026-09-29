@@ -40,7 +40,11 @@ def _write_chip(folder: Path, state: dict, wiring: dict | None = None):
 
 
 def _seed_run(root: Path, run_id: int, state: dict, *, name="08_spec",
-              date="2026-12-30", hhmmss=None, wiring=None) -> Path:
+              date="2026-12-30", hhmmss=None, wiring=None, patches=None) -> Path:
+    """*patches*: the node's own record of what it wrote. A chip names (and
+    opens) a run only when that run is shown to have WRITTEN the value
+    (value_writer, 2026-09-29) -- the fixtures that assert a Data link give
+    their run that proof."""
     hhmmss = hhmmss or f"{run_id % 24:02d}0000"
     run = root / date / f"#{run_id}_{name}_{hhmmss}"
     run.mkdir(parents=True)
@@ -51,6 +55,7 @@ def _seed_run(root: Path, run_id: int, state: dict, *, name="08_spec",
         "data": {"parameters": {"model": {"qubits": ["qA1", "qA2"]}},
                  "outcomes": {}},
         "id": run_id, "parents": [], "created_at": f"{date}T01:00:00",
+        **({"patches": patches} if patches is not None else {}),
     }), encoding="utf-8")
     (run / "data.json").write_text("{}", encoding="utf-8")
     _write_chip(run / "quam_state", state, wiring)
@@ -211,7 +216,8 @@ class TestColumnHistoryChanges:
     def test_run_attributed_chip_carries_data_link(self, env):
         c = env["client"]
         data_root = env["tmp"] / "data_chg"
-        _seed_run(data_root, 31, _state(off_a=0.079, off_b=0.110))
+        _seed_run(data_root, 31, _state(off_a=0.079, off_b=0.110),
+                  patches=[{"op": "replace", "path": "/quam/qubits/qA1/z/joint_offset", "value": 0.079}])
         _seed_run(data_root, 32, _state(off_a=0.081, off_b=0.110))
         _seed_run(data_root, 33, _state(off_a=0.081, off_b=0.110))
         c.post("/workspace/add", data={"folder": str(data_root)})
@@ -240,9 +246,12 @@ class TestColumnHistoryChanges:
         to a later snapshot."""
         c = env["client"]
         data_root = env["tmp"] / "data_wide"
-        _seed_run(data_root, 51, _state(off_a=0.077, off_b=0.110))
+        _seed_run(data_root, 51, _state(off_a=0.077, off_b=0.110),
+                  patches=[{"op": "replace", "path": "/quam/qubits/qA1/z/joint_offset", "value": 0.077}])
         for rid in range(52, 59):                     # 52..58 keep the value
-            _seed_run(data_root, rid, _state(off_a=0.081, off_b=0.110))
+            _seed_run(data_root, rid, _state(off_a=0.081, off_b=0.110),
+                      patches=([{"op": "replace", "path": "/quam/qubits/qA1/z/joint_offset", "value": 0.081}]
+                               if rid == 52 else None))
         c.post("/workspace/add", data={"folder": str(data_root)})
         html = _post_column(c, _COL).data.decode()
         ch, byrun = html.split("ch-view-byrun")
@@ -260,7 +269,8 @@ class TestColumnHistoryChanges:
         c = env["client"]
         hm = env["app"].config["history_manager"]
         data_root = env["tmp"] / "data_trk"
-        run = _seed_run(data_root, 77, _state())
+        run = _seed_run(data_root, 77, _state(),
+                        patches=[{"op": "replace", "path": "/quam/qubits/qA1/f_01", "value": 5.2e9}])
         (run / "quam_state" / "state.json").unlink()   # runs tier can't serve it
         c.post("/workspace/add", data={"folder": str(data_root)})
         _write_chip(env["live"], _state(f01_a=5.1e9))

@@ -86,6 +86,8 @@ from quam_state_manager.core import activity as _activity
 from quam_state_manager.core import json_pieces as _json_pieces
 from quam_state_manager.core import trend_index as _trend_index
 from quam_state_manager.core import chip_trends_ram
+from quam_state_manager.core import value_writer as _value_writer
+from quam_state_manager.core.history import _VALUE_PATHS as _HIST_VALUE_PATHS
 from quam_state_manager.core.dataset import DatasetStore
 from quam_state_manager.core.differ import Differ
 from quam_state_manager.core import differ as _differ_mod
@@ -10534,6 +10536,8 @@ def bulk_column_history():
 
     rows_out: list[dict[str, Any]] = []
     uid_roots = _uid_roots()
+    _wc = _WriterCheck()
+    _wc.hint(path_map.values())
     for row_id in sorted(path_map, key=natural_key):
         dp = path_map[row_id]
         current = None
@@ -10600,9 +10604,26 @@ def bulk_column_history():
         # known value stays (a never-changed row still shows "this value
         # since {when}"); deeper history falls off the cap naturally.
         chips = []
-        for p in list(reversed(collapsed))[:CH_MAX_CHIPS]:
+        _rev = list(reversed(collapsed))
+        for _ci, p in enumerate(_rev[:CH_MAX_CHIPS]):
             ts = p["ts"]
+            # the run that WROTE this value, not the save that carried it
+            # (_WriterCheck, 2026-09-29); newest-first, so the previous
+            # change is the next entry
+            _ov = _wc.override(dp, p["value"], ts,
+                               _rev[_ci + 1]["ts"] if _ci + 1 < len(_rev) else None,
+                               p["run_id"], p["experiment"], p["folder"])
+            _cap = None
+            if _ov is not None and _ov.get("captured"):
+                p = dict(p, uid=None, folder=None)
+                _cap = "only"
+            elif _ov is not None:
+                _cap = {"run_id": p["run_id"], "experiment": p["experiment"]}
+                p = dict(p, run_id=_ov["run"], experiment=_ov["node"],
+                         uid=_ov["uid"], folder=None)
             chips.append({
+                "captured_only": _cap == "only",
+                "captured_by": _cap if isinstance(_cap, dict) else None,
                 "display": _fh_display_string(p["value"]),
                 "fill": _fh_fill_string(p["value"]),
                 # RAW value (not the display string) so the Δ chip reports the
@@ -10694,7 +10715,9 @@ def field_history():
     hist["history_path"] = hist_path
 
     roots = _uid_roots()
-    for pt in hist["points"]:
+    wc = _WriterCheck()
+    _pts = hist["points"]
+    for i, pt in enumerate(_pts):
         value = pt["value"]
         pt["fill"] = _fh_fill_string(value)
         pt["display"] = _fh_display_string(value)
@@ -10705,6 +10728,23 @@ def field_history():
                       if len(ts) >= 13 else ts)
         pt["uid"] = _uid_for_run_ref(pt.get("experiment_folder_path"),
                                      pt.get("run_id"), roots)
+        # The row's run must be the run that WROTE the value (2026-09-29),
+        # and Data must open that run -- never the run whose save merely
+        # carried it (_WriterCheck). Points are newest-first, so the
+        # previous change is the next row.
+        ov = wc.override(hist_path, value, ts,
+                         _pts[i + 1].get("timestamp") if i + 1 < len(_pts) else None,
+                         pt.get("run_id"), pt.get("experiment"),
+                         pt.get("experiment_folder_path"))
+        if ov is not None and ov.get("captured"):
+            pt["captured_only"] = True
+            pt["uid"] = None
+        elif ov is not None:
+            pt["captured_by"] = {"run_id": pt.get("run_id"),
+                                 "experiment": pt.get("experiment")}
+            pt["run_id"] = ov["run"]
+            pt["experiment"] = ov["node"]
+            pt["uid"] = ov["uid"]
     # Mini trend chart payload (docs/20 v2 Step 7): the change points as a
     # step series, finite numerics only (a text/list field simply gets no
     # chart). Oldest-first for plotting.
@@ -14033,7 +14073,14 @@ def _trend_series_curated(hm, path: Path, props: list[str], tbl=None) -> list[di
     for r in rows:
         pts = _trend_points(r.get("values") or [])
         if pts:
-            out.append({"metric": r["property"], "entity": r["qubit"], "points": pts})
+            row = {"metric": r["property"], "entity": r["qubit"], "points": pts}
+            # The concrete leaf the value lives at, for the per-point writer
+            # check (value_writer). A derived metric (a readout fidelity from
+            # a confusion matrix) has no scalar leaf and gets none.
+            _vp = _HIST_VALUE_PATHS.get(r["property"])
+            if _vp:
+                row["leaf"] = ".".join(("qubits", str(r["qubit"])) + tuple(_vp))
+            out.append(row)
     return out
 
 
@@ -14151,7 +14198,7 @@ def _trend_series_leaf(hm, path: Path, dot_path: str, qubits: list[str],
             pts = [(r[0], r[1] if _trend_is_num(r[1]) else None) for r in rows]
             if any(v is not None for _, v in pts):
                 ser = {"metric": label, "entity": e, "kind": kind,
-                       "points": pts}
+                       "points": pts, "leaf": dp}
                 held = {r[0]: r[6] for r in rows if len(r) > 6}
                 if held:
                     ser["held"] = held
@@ -14165,7 +14212,7 @@ def _trend_series_leaf(hm, path: Path, dot_path: str, qubits: list[str],
            if isinstance(r[1], (int, float))]
     if pts:
         out.append({"metric": dot_path, "entity": dot_path.split(".")[-1],
-                    "kind": "", "points": pts})
+                    "kind": "", "points": pts, "leaf": dot_path})
     return out
 
 
@@ -15142,6 +15189,11 @@ def _topology_trends_html(hm, path: Path, store, qubits: list[str],
     updating = tbl.index_updating()
     charted = {str(p[0]) for c in charts for s in c["series"] for p in s["points"]}
     snaps = _snapshot_provenance_map(hm, path, only=charted, tbl=tbl, volatile=volatile)
+    writers_pending = _trend_point_writers(charts, snaps, tbl)
+    if writers_pending and volatile is not None:
+        # a partial answer is served, never kept: the re-fetch the note
+        # below triggers must see the finished checks
+        volatile.append("writers")
     for c in charts:
         c["sig"] = _trend_chart_sig(c, snaps)
     return render_template("_topo_trends.html", charts=charts, curated=curated,
@@ -15149,8 +15201,171 @@ def _topology_trends_html(hm, path: Path, store, qubits: list[str],
                            metric_labels=metric_labels, pair_chips=pair_chips,
                            pair_chips_more=pair_chips_more,
                            trim_note=trim_note, index_updating=updating,
+                           writers_pending=writers_pending,
                            snaps=snaps,
                            snapshots=tbl.snapshot_count())
+
+
+def _trend_run_folder_resolver(roots: list[tuple[Path, str]]):
+    """A recorded run folder -> the folder on disk: as recorded, or the same
+    ``<date>/<run>`` under exactly one registered dataset root (a copied or
+    moved root -- the same rule as :func:`_snapshot_run_uid`)."""
+    memo: dict = {}
+
+    def resolve(folder: Any):
+        if not folder:
+            return None
+        key = str(folder)
+        if key in memo:
+            return memo[key]
+        hit = None
+        try:
+            rp = Path(key)
+            if rp.is_dir():
+                hit = rp
+            else:
+                cands = []
+                for root, _k in roots:
+                    q = root / rp.parent.name / rp.name
+                    if q.is_dir() and q not in cands:
+                        cands.append(q)
+                hit = cands[0] if len(cands) == 1 else None
+        except (OSError, ValueError):
+            hit = None
+        memo[key] = hit
+        return hit
+    return resolve
+
+
+class _WriterCheck:
+    """One request's view of :mod:`core.value_writer` -- the registered
+    dataset roots, the folder resolver and the uid memo built ONCE and shared
+    by every point the response names a run for.
+
+    :meth:`override` is the single rule every surface that maps a value to a
+    run applies (Trends points, Chip Status metric meta, the value-history
+    drawer, Column History): ``None`` when the recorded run did write it (or
+    nothing can be checked -- no run, a folder not on disk), ``{"run",
+    "short", "node", "uid"}`` when ANOTHER run wrote it, ``{"captured":
+    True}`` when no run can be shown to have written it. Wrong information is
+    the worst outcome (customer, 2026-09-29): a surface given ``captured``
+    names the recorded run only as "captured with run #N (not the run that
+    measured it)" and never opens it as if it were the measurement.
+    """
+
+    def __init__(self, budget_s: float | None = None):
+        # With a budget, a check not answered in time is finished in the
+        # background and reported as pending (self.pending); the page's own
+        # "updating" re-fetch picks it up.
+        import time as _t
+        self.deadline = (_t.monotonic() + budget_s) if budget_s is not None else None
+        self.pending = False
+        try:
+            self.roots = _uid_roots()
+        except Exception:  # noqa: BLE001
+            self.roots = []
+        self.resolve = _trend_run_folder_resolver(self.roots)
+        self.uid_memo: dict = {}
+
+    @staticmethod
+    def hint(leaves) -> None:
+        """Every leaf this response will ask about: one parse of a run's
+        state then answers all of them (value_writer.hint)."""
+        try:
+            _value_writer.hint([lf for lf in leaves if lf and "*" not in str(lf)])
+        except Exception:  # noqa: BLE001
+            pass
+
+    def override(self, leaf: str | None, value: Any, ts: Any, prev_ts: Any,
+                 run: Any, node: Any, folder: Any) -> dict | None:
+        if not leaf or "*" in str(leaf) or run is None or not folder or not ts:
+            return None
+        if value is None or isinstance(value, (dict, list)):
+            return None
+        args = (str(leaf), value, str(ts), {"run": run, "node": node, "folder": folder},
+                str(prev_ts) if prev_ts else None, self.resolve)
+        try:
+            a = (_value_writer.attribute_cached(*args) if self.deadline is None
+                 else _value_writer.attribute_by(self.deadline, *args))
+        except Exception:  # noqa: BLE001 - a provenance hint never 500s a page
+            logger.debug("value writer failed for %s @ %s", leaf, ts, exc_info=True)
+            return None
+        if a.get("verdict") == "pending":
+            self.pending = True
+            return {"pending": True}
+        if a.get("verdict") == "other":
+            return {"run": a["run"], "node": a.get("node") or "",
+                    "short": node_label(a.get("node") or ""),
+                    "uid": _snapshot_run_uid(a.get("folder"), a["run"],
+                                             self.roots, self.uid_memo)}
+        if a.get("verdict") == "captured":
+            return {"captured": True}
+        return None
+
+
+# How long one Trends / metric-metadata response spends checking writers
+# inline before handing the rest to the background worker (value_writer).
+_WRITER_BUDGET_S = 1.0
+
+
+def _trend_point_writers(charts: list[dict], snaps: dict, tbl) -> bool:
+    """Name the run that WROTE each charted value, not just the snapshot's run.
+
+    Customer, 2026-09-29 (a 5-qubit CZ chip): *"one IRB point says its run is a flux
+    short distortion experiment -- how can that be? T1 points also point to
+    runs that are not T1."* A point is a change point between two snapshots
+    and ``snaps`` names the run whose SAVE the snapshot copied; that save
+    carries every value written before it (runs the history never captured,
+    out-of-band edits), and an external snapshot linked to a run by content
+    hash names a run that started after the value was on disk. Measured on
+    the chip's own history: 157 of 219 run-bearing T1/T2/IRB change points
+    named a run that did not write the value.
+
+    The answer rides the SERIES as ``attr: {snapshot id: override}``
+    (:meth:`_WriterCheck.override`) -- only for points whose answer differs
+    from the snapshot's run, so a chip whose snapshots are all their own
+    writers ships nothing extra. The client names the writer (and the
+    capturer beneath it), or says "captured with run #N (not the run that
+    measured it)" and makes the point unclickable.
+    """
+    try:
+        rows = tbl.provenance_rows() if tbl is not None else []
+    except Exception:  # noqa: BLE001
+        rows = []
+    by_ts = {str(r.get("ts")): r for r in rows or [] if r.get("ts")}
+    if not by_ts or not snaps:
+        return False
+    wc = _WriterCheck(budget_s=_WRITER_BUDGET_S)
+    wc.hint(s.get("leaf") for c in charts for s in c.get("series") or [])
+    for c in charts:
+        for s in c.get("series") or []:
+            leaf = s.get("leaf")
+            if not leaf or "*" in leaf:
+                continue
+            held = s.get("held") or {}
+            attr: dict = {}
+            prev_ts = None
+            for p in s.get("points") or []:
+                ts, val = str(p[0]), p[1]
+                if ts in held:
+                    continue
+                if val is None:
+                    prev_ts = ts
+                    continue
+                row = by_ts.get(ts)
+                info = snaps.get(ts)
+                if row is not None and info is not None and info.get("run") is not None:
+                    ov = wc.override(leaf, val, ts, prev_ts, info.get("run"),
+                                     row.get("experiment"), row.get("folder"))
+                    if ov is not None:
+                        attr[ts] = ({"captured": True} if ov.get("captured") else
+                                    {"pending": True} if ov.get("pending") else
+                                    {"run": ov["run"], "short": ov["short"],
+                                     "uid": ov["uid"]})
+                prev_ts = ts
+            if attr:
+                s["attr"] = attr
+    return wc.pending
 
 
 def _trend_chart_sig(chart: dict, snaps: dict) -> str:
@@ -15284,6 +15499,47 @@ def topology_metric_meta():
         except Exception:  # noqa: BLE001 - unverified stays incomplete
             logger.debug("metric meta: truncated-index check failed", exc_info=True)
     stamps: set[str] = set()
+    wc = _WriterCheck(budget_s=_WRITER_BUDGET_S)
+    wc.hint(wanted)
+    _prov_by_ts: dict | None = None
+
+    def _writer(e: dict, plist: list[str]) -> None:
+        # The run a panel's "last changed by" names must be the run that
+        # WROTE the value (2026-09-29): the snapshot's run only saved a state
+        # that carried it. Checked on a scalar leaf that changed at the
+        # entry's time; a family leaf (T1, IRB) first. The snapshot's run is
+        # read from its META (the source of truth -- an enriched run may be
+        # missing from the index rows), exactly as the page's snaps map is.
+        nonlocal _prov_by_ts
+        if e.get("first") or e.get("gone"):
+            return
+        if _prov_by_ts is None:
+            try:
+                _prov_by_ts = {str(r.get("ts")): r for r in hm.snapshot_provenance(path)}
+            except Exception:  # noqa: BLE001
+                _prov_by_ts = {}
+        prov = _prov_by_ts.get(e["ts"]) or {}
+        run = prov.get("run_id") if prov.get("run_id") is not None else e.get("run")
+        if run is None:
+            return
+        cands = []
+        for dp in plist:
+            rows = series.get(dp) or []
+            if rows and str(rows[-1][0]) == e["ts"] and _trend_is_num(rows[-1][1]):
+                cands.append((0 if _value_writer.families_for(dp) else 1, dp, rows))
+        if not cands:
+            return
+        cands.sort(key=lambda t: t[0])
+        _, dp, rows = cands[0]
+        last = rows[-1]
+        prev = rows[-2][0] if len(rows) > 1 else None
+        ov = wc.override(dp, last[1], last[0], prev, run,
+                         prov.get("experiment") or last[4],
+                         prov.get("folder") or (last[5] if len(last) > 5 else None))
+        if ov is not None:
+            e["writer"] = ({"captured": True} if ov.get("captured") else
+                           {"pending": True} if ov.get("pending") else
+                           {"run": ov["run"], "short": ov["short"], "uid": ov["uid"]})
 
     def fold(group: dict) -> dict:
         out: dict = {}
@@ -15295,6 +15551,7 @@ def topology_metric_meta():
                 if e:
                     if e.get("ts"):
                         stamps.add(e["ts"])
+                        _writer(e, plist)
                     out.setdefault(key, {})[ent] = e
         return out
 
@@ -15314,7 +15571,9 @@ def topology_metric_meta():
         # the oldest snapshot the change-point index holds: an entry is
         # ``first`` ("unchanged since history began") only AT this snapshot
         "oldest": origin.get("oldest"),
-        "updating": bool(hm.leaf_index_updating(path)),
+        # ...or a writer check is still running in the background: the page
+        # asks again, exactly as for an index repair
+        "updating": bool(hm.leaf_index_updating(path)) or wc.pending,
         # the change-point index hit its caps on this chip: undated entries
         # carry ``incomplete`` and the page says the index is incomplete
         "incomplete_index": truncated,
@@ -30127,6 +30386,38 @@ def param_history_expand():
         p["uid"] = _pv.get("uid")
         p["run"] = _pv.get("run")
         p["node"] = _pv.get("node") or None
+    # Which run WROTE each value (2026-09-29, the Trends report's same rule):
+    # a point whose value did not change at its snapshot was not written by
+    # that snapshot's run at all, and a changed one is checked against the
+    # run folders (_WriterCheck). Neither opens a run that did not write it.
+    _vp = _HIST_VALUE_PATHS.get(prop)
+    _leaf = ".".join(("qubits", qubit) + tuple(_vp)) if _vp else None
+    try:
+        _rows = {str(r.get("ts")): r for r in hm.snapshot_provenance(Path(target_path))}
+    except Exception:  # noqa: BLE001
+        _rows = {}
+    _wc = _WriterCheck()
+    _prev_v: Any = object()
+    _prev_ts = None
+    for p in sorted(points, key=lambda q: str(q.get("timestamp") or "")):
+        ts = str(p.get("timestamp") or "")
+        v = p.get("value")
+        if p.get("run") is not None:
+            if _prev_ts is not None and v == _prev_v:
+                p["unchanged"] = True
+                p["uid"] = None
+            else:
+                ov = _wc.override(_leaf, v, ts, _prev_ts, p.get("run"),
+                                  (_rows.get(ts) or {}).get("experiment"),
+                                  (_rows.get(ts) or {}).get("folder"))
+                if ov is not None and ov.get("captured"):
+                    p["writer"] = {"captured": True}
+                    p["uid"] = None
+                elif ov is not None:
+                    p["writer"] = {"run": ov["run"], "short": ov["short"],
+                                   "node": ov["node"]}
+                    p["uid"] = ov["uid"]
+        _prev_v, _prev_ts = v, ts
 
     current_value = None
     if is_loaded:

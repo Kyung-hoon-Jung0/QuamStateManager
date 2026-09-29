@@ -269,6 +269,23 @@ window.ChipStatus.metaInfo = (function () {
         var run = prov && prov.run != null ? prov.run : (e.run != null ? e.run : null);
         var who = run != null ? ('run #' + run + (prov && prov.short ? ' \u00b7 ' + prov.short : ''))
                 : (prov && prov.why ? prov.why : (e.trigger ? e.trigger : ''));
+        // The server's writer check (routes._WriterCheck, 2026-09-29): the
+        // snapshot's run only SAVED a state carrying the value. Another run
+        // wrote it -> name that one; no run can be shown to -> say the run
+        // only captured it, and never call the value "measured" by it.
+        var w = e.writer || null, capOnly = false;
+        if (w && w.pending && run != null) {
+            who = 'checking which run wrote it\u2026';
+            run = null;
+            capOnly = true;
+        } else if (w && w.captured && run != null) {
+            who = 'captured with ' + who + ' (not the run that measured it)';
+            run = null;
+            capOnly = true;
+        } else if (w && w.run != null) {
+            run = w.run;
+            who = 'run #' + w.run + (w.short ? ' · ' + w.short : '');
+        }
         // the server compares EVERY leaf the panel reads (a whole confusion
         // matrix, a 2Q RB block) with its newest history value; the value
         // check also compares a single-leaf metric with the number on screen
@@ -299,7 +316,7 @@ window.ChipStatus.metaInfo = (function () {
             lines.push((e.appeared ? (run != null ? 'First measured: ' : 'First recorded: ')
                                    : (run != null ? 'Last measured: ' : 'Last changed: '))
                 + when(ms) + ' (' + ageLong(ms, now) + ')');
-            if (who) lines.push('Written by: ' + who);
+            if (who) lines.push(capOnly ? 'Not written by a run on record \u2014 ' + who : 'Written by: ' + who);
             tag = whenShort(ms) + (run != null ? ' \u00b7 #' + run : '');
         }
         if (hasHist) lines.push('Snapshot: ' + e.ts);
@@ -4171,17 +4188,22 @@ window.ChipStatus.mount = function (opts) {
             if (e.first) first++;
             else {
                 var pv0 = (d.snaps || {})[e.ts] || {};
-                if ((pv0.run != null ? pv0.run : e.run) != null) changed++; else recorded++;
+                // a run that only CAPTURED the value did not measure it
+                var capOnly = !!(e.writer && e.writer.captured);
+                if (!capOnly && (pv0.run != null ? pv0.run : e.run) != null) changed++; else recorded++;
             }
-            if (!newest || e.ts > newest.ts) newest = { ts: e.ts, id: id, run: e.run };
+            if (!newest || e.ts > newest.ts) newest = { ts: e.ts, id: id, run: e.run, writer: e.writer || null };
             if (!oldest || e.ts < oldest.ts) oldest = { ts: e.ts, id: id };
         });
         var parts = [];
         if (newest) {
             var pv = (d.snaps || {})[newest.ts] || {};
             var run = pv.run != null ? pv.run : newest.run;
-            parts.push('newest change ' + MI.when(MI.snapMs(newest.ts)) + ' (' + newest.id
-                + (run != null ? ', run #' + run + (pv.short ? ' ' + pv.short : '') : '') + ')');
+            var wr = newest.writer, rtxt = '';
+            if (wr && wr.run != null) rtxt = ', run #' + wr.run + (wr.short ? ' ' + wr.short : '');
+            else if (wr && wr.captured && run != null) rtxt = ', captured with run #' + run + ' (not the run that measured it)';
+            else if (run != null) rtxt = ', run #' + run + (pv.short ? ' ' + pv.short : '');
+            parts.push('newest change ' + MI.when(MI.snapMs(newest.ts)) + ' (' + newest.id + rtxt + ')');
             if (oldest && oldest.ts !== newest.ts) parts.push('oldest ' + MI.when(MI.snapMs(oldest.ts)) + ' (' + oldest.id + ')');
         }
         var cnt = [];
@@ -7118,6 +7140,22 @@ window.ChipTrends = (function () {
         }
         return info.why ? _esc(info.why) : '';
     }
+    /* A point whose value no run can be shown to have written: the
+       snapshot's run only SAVED a state that already carried it. Say so --
+       never the confident "#3087 · 20 Flux short" on an IRB point. */
+    function _capturedLine(info) {
+        if (!info || !info.run) return '';
+        return 'captured with run #' + _esc(info.run)
+             + (info.short ? ' · ' + _esc(info.short) : '')
+             + '<br><i style="opacity:.7">(not the run that measured it)</i>';
+    }
+    /* The writer was found among the runs BEFORE the snapshot's own run;
+       name the capturer too, so the snapshot id below still makes sense. */
+    function _capturerLine(info) {
+        if (!info || !info.run) return '';
+        return '<br><i style="opacity:.7">captured later with #' + _esc(info.run)
+             + (info.short ? ' · ' + _esc(info.short) : '') + '</i>';
+    }
     /* QA F-09: a run whose folder is not under a loaded Datasets folder (moved,
        copied, never added) keeps its number and loses the click -- and the
        hover now SAYS so; it used to show "#142 · 11 Rabi" with no hint and a
@@ -7139,14 +7177,14 @@ window.ChipTrends = (function () {
             var cd = evt.points[0].customdata;
             var sid = (cd && cd.length !== undefined && typeof cd !== 'string') ? cd[0] : cd;
             if (!sid) return;
-            var map = _snaps();
-            var info = map && map[String(sid)];
+            var uid = _pointUid(cd, sid);
             // No uid => the point is not clickable and the hover has already
             // said why (_hintLine names the unloaded run folder; a no-run point's
-            // provenance line is the why). Doing NOTHING is the contract: no
+            // provenance line is the why; a captured-only point names the run
+            // that did NOT write it). Doing NOTHING is the contract: no
             // navigation to a 404, no error.
-            if (!info || !info.uid) return;
-            var url = '/dataset/' + info.uid;
+            if (!uid) return;
+            var url = '/dataset/' + uid;
             if (window.htmx && window.htmx.ajax) {
                 // `source` is not optional: htmx reads the SOURCE element's
                 // hx-sync, and without one every dataset load shares body's
@@ -7168,6 +7206,15 @@ window.ChipTrends = (function () {
             }
         } catch (e) { /* a click must never break the chart */ }
     }
+    /* The dataset a point opens: its OWN writer's uid (customdata[3], set
+       per point by the trace builder -- null for a captured-only point), and
+       only for an older 3-slot customdata the snapshot map's. */
+    function _pointUid(cd, sid) {
+        if (cd && typeof cd !== 'string' && cd.length > 3) return cd[3] || null;
+        var map = _snaps();
+        var info = map && sid && map[String(sid)];
+        return (info && info.uid) || null;
+    }
     function _bindPointClicks(host) {
         if (!host || typeof host.on !== 'function') return;
         try {
@@ -7186,9 +7233,7 @@ window.ChipTrends = (function () {
                     if (!evt || !evt.points || !evt.points.length) return;
                     var cd = evt.points[0].customdata;
                     var sid = (cd && cd.length !== undefined && typeof cd !== 'string') ? cd[0] : cd;
-                    var map = _snaps();
-                    var info = map && sid && map[String(sid)];
-                    host.style.cursor = (info && info.uid) ? 'pointer' : '';
+                    host.style.cursor = (sid && _pointUid(cd, sid)) ? 'pointer' : '';
                 } catch (e) { /* cursor only */ }
             });
             host.on('plotly_unhover', function () {
@@ -7370,10 +7415,29 @@ window.ChipTrends = (function () {
                         // nothing), no run, and the time it was last SET.
                         var since = _iso(held[p[0]]);
                         return ['', 'unchanged since '
-                                + _esc(since ? String(since).replace('T', ' ') : held[p[0]]), ''];
+                                + _esc(since ? String(since).replace('T', ' ') : held[p[0]]), '', null];
                     }
                     var info = snaps && snaps[String(p[0])];
-                    return [p[0], _provLine(info), _hintLine(info)];
+                    // The run that WROTE this value, when it is not the run
+                    // whose save the snapshot copied (routes
+                    // ._trend_point_writers): the snapshot's run is the
+                    // CAPTURER, and naming it as the point's run was the
+                    // "IRB point says Flux short" report (2026-09-29).
+                    var ov = s.attr && s.attr[String(p[0])];
+                    if (ov) {
+                        if (ov.captured) {
+                            return [p[0], _capturedLine(info), '', null];
+                        }
+                        if (ov.pending) {
+                            // still being checked: name no run, open nothing
+                            return [p[0], '<i style="opacity:.7">checking which run'
+                                    + ' wrote this value…</i>', '', null];
+                        }
+                        return [p[0], _provLine(ov) + _capturerLine(info),
+                                _hintLine(ov), ov.uid || null];
+                    }
+                    return [p[0], _provLine(info), _hintLine(info),
+                            (info && info.uid) || null];
                 });
                 tr.hovertemplate =
                     '%{fullData.name}<br>%{x}<br>%{y}'

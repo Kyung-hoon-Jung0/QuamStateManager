@@ -52,7 +52,7 @@ def _write_chip(folder: Path, state: dict):
 
 
 def _seed_run(root: Path, run_id: int, name="03_resonator_spectroscopy_single",
-              date="2026-09-01", hhmmss="010000") -> Path:
+              date="2026-09-01", hhmmss="010000", patches=None) -> Path:
     run = root / date / f"#{run_id}_{name}_{hhmmss}"
     run.mkdir(parents=True)
     (run / "node.json").write_text(json.dumps({
@@ -61,6 +61,7 @@ def _seed_run(root: Path, run_id: int, name="03_resonator_spectroscopy_single",
                      "run_end": f"{date}T01:00:01"},
         "data": {"parameters": {"model": {"qubits": ["qA1"]}}, "outcomes": {}},
         "id": run_id, "parents": [], "created_at": f"{date}T01:00:00",
+        **({"patches": patches} if patches is not None else {}),
     }), encoding="utf-8")
     (run / "data.json").write_text("{}", encoding="utf-8")
     return run
@@ -568,13 +569,18 @@ class TestTheColumnControl:
             "a breakpoint override would beat the arithmetic and bring the bug back"
 
 
+# f_01 has no node-family vocabulary: the run proves it wrote the value by its
+# own patches -- a point opens only a run shown to have WRITTEN it (2026-09-29)
+_F01_PATCH = [{"op": "replace", "path": "/quam/qubits/qA1/f_01", "value": 6.1e9}]
+
+
 class TestTheParamHistoryDrawerUid:
     def test_the_drawer_ships_a_uid_not_a_bare_run_id(self, env):
         """The drawer's click has always built "/dataset/<run_id>", which
         _split_dataset_uid refuses — so it landed on the 404 panel every time.
         Same server-minted uid, one spelling of the click."""
         c, data_root = env["client"], env["tmp"] / "data"
-        run = _seed_run(data_root, 31)
+        run = _seed_run(data_root, 31, patches=_F01_PATCH)
         c.post("/workspace/add", data={"folder": str(data_root)})
         _snap(env, _state(f01=6.0e9))
         _snap(env, _state(f01=6.1e9), trigger="experiment",
@@ -606,7 +612,7 @@ class TestTheParamHistoryDrawerUid:
         """
         import sqlite3
         c, data_root = env["client"], env["tmp"] / "data"
-        run = _seed_run(data_root, 31)
+        run = _seed_run(data_root, 31, patches=_F01_PATCH)
         c.post("/workspace/add", data={"folder": str(data_root)})
         _snap(env, _state(f01=6.0e9))
         meta = _snap(env, _state(f01=6.1e9), trigger="experiment",
