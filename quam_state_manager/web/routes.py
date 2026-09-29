@@ -5985,6 +5985,13 @@ def _qualibrate_tray_badge() -> dict | None:
     )
     if not (st.get("active") or sm_scope or standalone):
         return None
+    # w9 final-QA P3: the env badge is judged against a PROJECT. With a chip
+    # open that is SM's own scope (none: the chip belongs to no project, the
+    # env is "global"); with NO chip open it is the project qualibrate names
+    # active -- the one whose landing card sits beside the badge. Judged
+    # against nothing, the badge read neutral "env KRISS_CZ" while that
+    # card said amber "suggested -- confirm" about the very same env.
+    env_project = sm_scope if ctx else st.get("active")
     return {"project": st["active"],
             # dangling only ever describes the ACTIVE project's state_path —
             # a scope-only badge (no active project) must not read as broken.
@@ -5996,7 +6003,7 @@ def _qualibrate_tray_badge() -> dict | None:
             "standalone_path": (ctx or {}).get("live_path") if standalone else None,
             # w9/labwarm: WHICH env SM runs the lab's code with, beside the
             # project it belongs to (two small file reads, stat-memoized)
-            "env": _active_env_badge(sm_scope)}
+            "env": _active_env_badge(env_project)}
 
 
 def _active_env_badge(project: str | None) -> dict:

@@ -80,6 +80,30 @@ vs base 10/15.
 journey `ds_outside_fresh.cjs`. 37 mutations: 36 red, 1 green explained
 (an unreachable `if (o.spec)` guard, kept).
 
+**Final-QA P1 fix (wheel up right after a jump).** The empty slots were 0 px,
+so on big30x a wheel UP within ~1 s of a tile jump skipped every unbuilt panel
+above the target and landed on Trends / the 2Q section; as the slots filled the
+target ended 77-165k px below. Now every slot holds a placeholder
+(`.topo-rb-ph[data-rb-ph=<panel key>]`) as tall as a measured panel of its kind
+(tile size + Show Meta Info + cell count), sized in the frame after the press;
+a builder with no panel yet (the lazy 2Q section above a metrics jump) builds
+its ONE panel nearest the target in that frame to measure it, and a lazy
+section builds from its end (nearest the target). Each slice keeps the
+reader's place (`_holdPlace`: a slot wholly above the reader's line gives its
+height change back to the scroll offset -- only when Chrome's own anchoring,
+which it applies synchronously in the same layout, moved nothing). Once the
+reader has moved the pane (wheel / key / touch / press, `readerInput`), the
+builder with the unbuilt panel nearest the view goes first, outwards from that
+panel. A place record taken over a placeholder names its panel. Measured in
+real Chrome on big30x (`chip_place.cjs wheel`, 3 reps x ro_ge / gate1q / T1 /
+T2 Ramsey / IRB x up / down / none): 45/45, each ending in the same panel as
+base 91c8aae (15/15); the unfixed integ JS 0/5 (Trends / 2Q). F5 exact place
+16/16. Click task (interleaved, 2 blocks x 5 tiles): 50-87 ms vs integ
+51-128 ms. 5Q: 8/8. Pins: `chip_rb_slices_selfcheck` S18 (the sample), S20
+(15 wheel cases + wrong estimates + the view-first order + Chrome's anchoring
+left alone), S21 (F5 over a placeholder); the model gained placeholders and an
+opt-in emulation of Chrome's anchoring. 10 mutations, all red (two were green first -- the view-first order inside one section and the "leave Chrome's anchoring alone" rule -- and got the pins that now catch them).
+
 **Open.** `.calc-sec > summary + *` in style.css is a universal sibling rule
 (a mid-host insertion 524 → 207 ms without it) — an app-wide candidate.
 TopbarHeight's MutationObserver and `syncSidebarNavActive`'s

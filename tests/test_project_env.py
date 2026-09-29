@@ -301,6 +301,37 @@ class TestOpening:
         assert 'class="project-env-badge project-env-badge-warn"' in html
         assert "(suggested — confirm)" in html
 
+    def test_with_no_chip_open_the_badge_says_what_the_active_projects_card_says(self, lab):
+        """w9 final-QA P3: before any chip is open, the landing showed the
+        active project's card as amber "suggested -- confirm" and, beside it,
+        a NEUTRAL "env ENV_A" badge: the badge was judged against SM's chip
+        scope, which is nothing yet. It is judged against the project
+        qualibrate names active now -- the same rule as that card."""
+        config_generator.set_selected_env(str(lab["inst"]), lab["A"])
+        with lab["app"].test_request_context("/"):
+            assert routes._active_ctx() is None                   # no chip open
+            b = routes._qualibrate_tray_badge()
+        assert b["project"] == "alpha" and b["env"]["project"] == "alpha"
+        assert b["env"]["state"] == "suggested"
+        cards = lab["c"].get("/landing/projects").get_data(as_text=True)
+        assert "landing-env-suggested" in _card_env(cards, "alpha")   # the card ...
+        html = lab["c"].get("/?landing=1").get_data(as_text=True)
+        assert 'data-env-state="suggested"' in html                   # ... and the badge
+        assert "project-env-badge project-env-badge-warn" in html
+        assert "(suggested — confirm)" in html
+        # confirmed: both say it is the project's own; another env: "not the project's"
+        project_env.remember(lab["inst"], "alpha", lab["A"])
+        html = lab["c"].get("/?landing=1").get_data(as_text=True)
+        assert 'data-env-state="remembered"' in html and "project-env-badge-warn" not in html
+        project_env.remember(lab["inst"], "alpha", lab["B"])
+        with lab["app"].test_request_context("/"):
+            assert routes._qualibrate_tray_badge()["env"]["state"] == "differs"
+        # a chip that belongs to no project, once open, is still "global"
+        lab["c"].post("/load", data={"folder": str(_chip(lab["tmp"] / "chips" / "lone", "qL1"))})
+        with lab["app"].test_request_context("/"):
+            assert routes._active_ctx() is not None
+            assert routes._qualibrate_tray_badge()["env"]["state"] == "global"
+
 
 # ------------------------------------------------------------ the picker JS
 def test_landing_env_selfcheck():

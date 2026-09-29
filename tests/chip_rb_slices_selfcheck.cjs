@@ -45,10 +45,18 @@
  *      Read. Fid. / Frequencies tab press builds that section's panels first;
  *      F5 inside the T2 Echo panel builds it at once and lands in it (and
  *      every frame painted after keeps it there)
- *  S18 one section slices at a time: the jump's own first, a lazy one after;
+ *  S18 one section slices at a time: the jump's own first, a lazy one after
+ *      (which measures ONE panel, its nearest to the target, in the frame
+ *      before the jump's own);
  *      a second jump that promotes the lazy one puts it first
  *  S19 the slices build outwards from the target (one below, one above):
  *      the panel right above an IRB jump's heading comes in the first slices
+ *  S20 (w9 final-QA P1) a reader who wheels 720 px up / down 100 ms after an
+ *      ro_ge / gate1q / T1 / T2 Ramsey / IRB jump landed ends in the section
+ *      a fully built page shows there, the target exactly 720 px from where
+ *      it landed once every panel and chart is in (no wheel: exactly where it
+ *      landed); panels taller / shorter than their placeholder never move
+ *      what the reader sees, and the panel they look at is built first
  *
  * Run: node tests/chip_rb_slices_selfcheck.cjs   (driven by tests/test_chip_status.py)
  */
@@ -317,6 +325,12 @@ const big = (o) => world(Object.assign({ topo: BIG, roOnMutation: true, roFrame:
     const Y = big({ url: '/topology?view=fidelity2q', chipView: 'fidelity2q', state: { htmx: true, smChipScroll: rec } });
     ok(!!Y.doc.querySelector(PSEL(k)) && built(Y).length <= 2,
        'S10 F5 on a place inside SRB cz_g7 builds that panel at once, not the section (' + built(Y).length + ')');
+    // (w9 final-QA P1) the placeholders above it are as tall as cz_g7 once
+    // it is measured; three panels above it are not, so the page does grow
+    // above it while they arrive
+    Y.G.panel[KEY('StandardRB', 'cz_g1')] = 777;
+    Y.G.panel[KEY('StandardRB', 'cz_g3')] = 431;
+    Y.G.panel[KEY('StandardRB', 'cz_g5')] = 912;
     // what each frame that follows a layout change paints (after its
     // ResizeObserver, as in Chrome): the panel never leaves its place
     const painted = [];
@@ -324,7 +338,7 @@ const big = (o) => world(Object.assign({ topo: BIG, roOnMutation: true, roFrame:
     await Y.advance(20);                        // the restore's frame
     await Y.advance(12000);
     const after = painted.slice(Math.max(0, painted.indexOf(-120)));
-    ok(painted[0] === -120 && built(Y).length === 20 && Y.topOf(PSEL(k)) === -120 && after.length > 3 && after.every((v) => v === -120),
+    ok(painted[0] === -120 && built(Y).length === 20 && Y.topOf(PSEL(k)) === -120 && after.length >= 4 && after.every((v) => v === -120),
        'S10 ...lands 120 px into it and every frame painted while the 7 panels above it arrive shows it there — '
        + painted[0] + ' -> ' + Y.topOf(PSEL(k)) + ' (' + after.length + ' frames: ' + JSON.stringify(after.filter((v) => v !== -120).slice(0, 3)) + ')');
   }
@@ -493,15 +507,19 @@ const big = (o) => world(Object.assign({ topo: BIG, roOnMutation: true, roFrame:
     const E = big({ url: '/topology?view=coherence', chipView: 'coherence', state: { htmx: true,
       smChipScroll: { url: '/topology?view=coherence', view: 'coherence', d: 900, sel: '.topo-section[data-density-panel="T2echo"]', ds: 50, top: 1 } } });
     const e0 = mkeys(E);
+    E.G.panel.T1 = 777;                         // above it, not the measured height: the page grows
+    E.G.panel.gate_fidelity_x90 = 431;
+    E.G.panel.ro_fidelity_e = 912;
     const ePainted = [];
     E.onPaint = function () { ePainted.push(E.topOf('.topo-section[data-density-panel="T2echo"]')); };
     await E.advance(20);
     await E.advance(12000);
     const eAfter = ePainted.slice(Math.max(0, ePainted.indexOf(-50)));
     ok(e0[0] === 'T2echo' && e0.length <= 2 && ePainted[0] === -50 && mkeys(E).length === 15
-       && E.topOf('.topo-section[data-density-panel="T2echo"]') === -50 && eAfter.length > 3 && eAfter.every((v) => v === -50),
+       && E.topOf('.topo-section[data-density-panel="T2echo"]') === -50 && eAfter.length >= 3 && eAfter.every((v) => v === -50),
        'S17 F5 on a place inside the T2 Echo panel builds it at once and lands 50 px into it, and it stays there — '
-       + JSON.stringify(e0) + ' ' + ePainted[0] + ' -> ' + E.topOf('.topo-section[data-density-panel="T2echo"]'));
+       + JSON.stringify(e0) + ' ' + ePainted[0] + ' -> ' + E.topOf('.topo-section[data-density-panel="T2echo"]')
+       + ' (' + eAfter.length + ' frames: ' + JSON.stringify(ePainted.slice(0, 8)) + ')');
   }
 
   // ── S18: one section slices at a time -- the jump's own first ────────────
@@ -525,6 +543,17 @@ const big = (o) => world(Object.assign({ topo: BIG, roOnMutation: true, roFrame:
     const Q = big({ state: { htmx: true } });
     await Q.advance(1000);
     press(Q, 'mouse', 't1');
+    // (w9 final-QA P1) the frame after the press, before the jump's own:
+    // the lazy 2Q section builds ONE panel to measure -- the one nearest
+    // the target, its last -- and nothing else is sliced yet
+    const q0 = built(Q).length;
+    await Q.advance(20);
+    const sample = built(Q);
+    ok(q0 === 0 && sample.length === 1 && sample[0] === KEY('InterleavedRB', 'cz_g9') && mcount(Q) <= 2
+       && Q.doc.querySelectorAll('#topo-2q-rb-panels .topo-rb-ph').length === 19
+       && Q.doc.querySelector('#topo-2q-rb-panels .topo-rb-ph').style.height === '600px',
+       'S18 the frame after a T1 press builds the lazy 2Q section\'s panel nearest the target, and sizes its 19 placeholders from it: '
+       + JSON.stringify(sample) + ' ' + (Q.doc.querySelector('#topo-2q-rb-panels .topo-rb-ph') || {}).outerHTML);
     const r = await track(Q, (m, q) => m === 15 && q === 20);
     ok(r.both === 0 && /^m+q+$/.test(r.seq),
        'S18 after a T1 press the metric section (the jump\'s own) slices first, then the 2Q section above it, never both in one frame: ' + r.seq);
@@ -551,6 +580,170 @@ const big = (o) => world(Object.assign({ topo: BIG, roOnMutation: true, roFrame:
     ok(early.indexOf(KEY('StandardRB', 'cz_g9')) >= 0 && early.indexOf(KEY('InterleavedRB', 'cz_g2')) >= 0,
        'S19 the first slices after an IRB jump build outwards: the SRB panel right above the IRB heading comes as early '
        + 'as the IRB panels under it (a reader scrolling up finds it) — ' + JSON.stringify(early));
+  }
+
+  // ── S20: a reader who scrolls right after a jump (w9 final-QA P1) ────────
+  // Real Chrome, big30x: a wheel UP within ~1 s of a tile jump skipped every
+  // unbuilt (0 px) slot above the target and landed on Trends / the 2Q
+  // section; as the slots filled, the target ended 77-165k px below. A slot
+  // now holds a placeholder as tall as a measured panel of its kind, each
+  // slice keeps the reader's place, and once the reader has moved, what they
+  // see is built first. The model: every panel 600 px unless G.panel says.
+  {
+    const PT = P.PANE_TOP;
+    const G1SEL = '.topo-section[data-density-panel="gate_fidelity_avg"]';
+    // what the reader's first line (the pane's top edge here) is in: the
+    // panel (or its placeholder: PH:) and the section, and how far into it
+    const atLine = (T) => {
+      const el = T.doc.elementFromPoint(500, PT);
+      const ph = el && el.closest && el.closest('.topo-rb-ph');
+      const pn = el && el.closest && el.closest('.topo-section[data-density-panel]');
+      const hd = el && el.closest && el.closest('[data-rb-heading], #topo-metric-panels > h3[data-group]');
+      const box = ph || pn || hd || el;
+      const sec = el && el.closest && el.closest('[data-topo-section]');
+      let rb = null;                            // a 2Q slot: the RB heading above it
+      if (box && sec && sec.getAttribute('data-topo-section') === '2qrb') {
+        for (let n = (box.parentNode && box.parentNode.classList.contains('topo-rb-slot')) ? box.parentNode : box; n; n = n.previousElementSibling) {
+          if (n.hasAttribute && n.hasAttribute('data-rb-heading')) { rb = n.getAttribute('data-rb-heading'); break; }
+        }
+      }
+      return { key: ph ? 'PH:' + ph.getAttribute('data-rb-ph') : (pn ? pn.getAttribute('data-density-panel') : (hd ? 'H' : null)),
+               panel: ph ? ph.getAttribute('data-rb-ph') : (pn ? pn.getAttribute('data-density-panel') : null),
+               sec: sec ? sec.getAttribute('data-topo-section') + (rb ? ':' + rb : '') : null,
+               into: box ? PT - box.getBoundingClientRect().top : null };
+    };
+    const mcount = (T) => T.doc.querySelectorAll('#topo-metric-panels .topo-section[data-density-panel], '
+      + '#topo-fidelity-1q-panels .topo-section[data-density-panel], #topo-fidelity-ro-panels .topo-section[data-density-panel]').length;
+    const phs = (T) => T.doc.querySelectorAll('.topo-rb-ph').length;
+    // tile, its target, the section right above it (what a fully built page shows 720 px up)
+    const CASES = [['ro_ge', ROSEL, 'fid1q'], ['gate1q', G1SEL, '2qrb:InterleavedRB'], ['t1', T1SEL, 'fidro'],
+                   ['t2ramsey', P.T2SEL, 'fidro'], ['irb', IRBSEL, '2qrb:StandardRB']];
+    for (const c of CASES) {
+      for (const dy of [-720, 720, 0]) {
+        const A = big({ state: { htmx: true } });
+        await A.advance(1000);
+        ok(!!A.tile(c[0]), 'S20 setup: the ' + c[0] + ' tile jumps');
+        press(A, 'mouse', c[0]);
+        await A.advance(420);                   // its smooth scroll has landed
+        const landed = A.topOf(c[1]);
+        await A.advance(100);
+        if (dy) {
+          A.pane.dispatchEvent(new A.win.Event('wheel', { bubbles: true }));   // the reader takes over
+          A.pane.scrollTop = A.box.st + dy;
+        }
+        const early = atLine(A);
+        await A.advance(20000);                 // every panel in, every chart drawn
+        const fin = atLine(A), top = A.topOf(c[1]);
+        const want = SM - dy;
+        const secOk = dy < 0 ? fin.sec === c[2] : true;
+        ok(landed === SM && top === want && secOk && phs(A) === 0 && built(A).length === 20 && (c[0] === 'irb' || mcount(A) === 15)
+           && A.errors().length === 0,
+           'S20 ' + c[0] + ': wheel ' + dy + ' px 100 ms after the jump landed -- the target ends ' + top + ' px down the pane (want '
+           + want + '), the reader in ' + JSON.stringify(fin) + (dy < 0 ? ' (want ' + c[2] + ')' : '')
+           + ' right after the wheel ' + JSON.stringify(early) + ', placeholders left ' + phs(A));
+      }
+    }
+
+    // estimates that are wrong: the reader's place still does not move, and
+    // what they look at is built first (before the jump's own section is done)
+    {
+      const B = big({ state: { htmx: true } });
+      await B.advance(1000);
+      press(B, 'mouse', 'gate1q');
+      await B.advance(520);
+      B.G.panel[KEY('InterleavedRB', 'cz_g8')] = 777;   // the one under the reader's line
+      B.G.panel[KEY('InterleavedRB', 'cz_g7')] = 431;   // wholly above it
+      B.G.panel[KEY('InterleavedRB', 'cz_g5')] = 912;
+      B.G.panel[KEY('InterleavedRB', 'cz_g9')] = 1013;  // below it
+      B.pane.dispatchEvent(new B.win.Event('wheel', { bubbles: true }));
+      B.pane.scrollTop = B.box.st - 720;
+      const at = atLine(B);
+      let seenAt = null, metricsThen = null, moved = [];
+      for (let t = 0; t < 20000; t += 4) {
+        await B.advance(4);
+        const now = atLine(B);
+        if (now.panel !== at.panel || Math.abs(now.into - at.into) > 0.5) moved.push(now);
+        if (seenAt === null && now.key === at.panel) { seenAt = t; metricsThen = mcount(B); }
+      }
+      ok(at.key === 'PH:' + KEY('InterleavedRB', 'cz_g8') && moved.length === 0 && atLine(B).key === at.panel
+         && phs(B) === 0,
+         'S20 panels above the reader that are taller / shorter than their placeholder never move what the reader sees: '
+         + JSON.stringify(at) + ' -> ' + JSON.stringify(atLine(B)) + (moved.length ? ', moved: ' + JSON.stringify(moved.slice(0, 3)) : ''));
+      ok(seenAt !== null && metricsThen < 15,
+         'S20 ...and the panel the reader looks at is built first -- before the jump\'s own (metric) section is done: at '
+         + seenAt + ' ms, ' + metricsThen + ' of 15 metric panels in');
+    }
+
+    // ...also INSIDE one section: after an IRB jump the slices go outwards
+    // (SRB cz_g9, IRB cz_g2, SRB cz_g8, ...); a reader who wheels 2,000 px
+    // up is in SRB cz_g6 -- seventh in that order -- and it is built next
+    {
+      const C = big({ state: { htmx: true } });
+      await C.advance(1000);
+      press(C, 'mouse', 'irb');
+      await C.advance(520);
+      const pressed = built(C).length;
+      C.pane.dispatchEvent(new C.win.Event('wheel', { bubbles: true }));
+      C.pane.scrollTop = C.box.st - 2000;
+      const at = atLine(C);
+      let n = null;
+      for (let t = 0; t < 5000 && n === null; t += 4) {
+        await C.advance(4);
+        if (atLine(C).key === at.panel) n = built(C).length;
+      }
+      ok(at.key === 'PH:' + KEY('StandardRB', 'cz_g6') && n !== null && n <= pressed + 3,
+         'S20 a reader 2,000 px above an IRB jump (' + JSON.stringify(at) + ') gets that panel in the first slice: '
+         + n + ' panels in when it arrived (' + pressed + ' from the press)');
+    }
+
+    // ...and where the browser's own scroll anchoring already moved the pane
+    // (Chrome keeps the first element wholly on screen -- here a panel built
+    // in the first slice -- when the panel the reader straddles grows), the
+    // hold does not undo it: that would put what the reader sees 200 px off,
+    // and cut short a wheel still animating
+    {
+      const N = big({ state: { htmx: true }, nativeAnchor: true, h: { panel: 300 } });
+      await N.advance(1000);
+      press(N, 'mouse', 'irb');
+      await N.advance(420);
+      await untilSlicing(N, built(N).length);
+      const first = built(N);
+      N.G.panel[KEY('StandardRB', 'cz_g7')] = 500;       // the one the reader will straddle
+      N.G.panel[KEY('StandardRB', 'cz_g6')] = 400;       // wholly above it, built in the same slice
+      N.pane.dispatchEvent(new N.win.Event('wheel', { bubbles: true }));
+      N.pane.scrollTop = N.box.st - 750;
+      const at = atLine(N), before = N.topOf(IRBSEL), anchored0 = N.anchored || 0;
+      await N.advance(15000);
+      ok(first.indexOf(KEY('StandardRB', 'cz_g8')) >= 0 && first.indexOf(KEY('StandardRB', 'cz_g7')) < 0
+         && at.key === 'PH:' + KEY('StandardRB', 'cz_g7') && (N.anchored || 0) > anchored0
+         && N.topOf(IRBSEL) === before && phs(N) === 0 && N.errors().length === 0,
+         'S20 the browser\'s anchoring moved the pane (' + ((N.anchored || 0) - anchored0) + 'x) when SRB cz_g7, under the reader\'s line '
+         + JSON.stringify(at) + ', grew by 200 px (cz_g6 above it by 100): the built SRB cz_g8 and the IRB heading stay where they were -- '
+         + before + ' -> ' + N.topOf(IRBSEL) + ' (first slice: ' + JSON.stringify(first) + ')');
+    }
+
+    // ── S21: F5 while the reader looks at a placeholder: the record names
+    // the panel it stands for, and the reload lands as far into that panel
+    {
+      const A = big({ state: { htmx: true } });
+      await A.advance(1000);
+      press(A, 'mouse', 'ro_ge');
+      await A.advance(520);
+      A.pane.dispatchEvent(new A.win.Event('wheel', { bubbles: true }));
+      A.pane.scrollTop = A.box.st - 720;
+      await A.advance(30);                      // no slice yet: it waits for the scroll to rest
+      const at = atLine(A);
+      A.win.dispatchEvent(new A.win.Event('pagehide'));                      // F5
+      const st = clone(A.win.history.state), url = A.url();
+      const want = '.topo-section[data-density-panel="gate_fidelity_x180"]';
+      const B = big({ url: url, chipView: (url.match(/view=([^&]*)/) || [])[1] || '', state: st });
+      await B.advance(15000);
+      ok(at.key === 'PH:gate_fidelity_x180' && st.smChipScroll && st.smChipScroll.sel === want
+         && st.smChipScroll.ds === Math.round(at.into) && B.topOf(want) === -Math.round(at.into) && phs(B) === 0
+         && A.errors().length === 0 && B.errors().length === 0,
+         'S21 F5 while the reader looks at a placeholder records its panel (' + JSON.stringify(st.smChipScroll) + ' at '
+         + JSON.stringify(at) + ') and the reload lands ' + B.topOf(want) + ' px into it');
+    }
   }
 
   // ── S12: a 5-qubit chain builds every panel in the press ─────────────────

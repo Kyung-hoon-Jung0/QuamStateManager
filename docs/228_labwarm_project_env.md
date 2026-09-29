@@ -70,7 +70,12 @@ remembered env; re-activating the chip that is already active does not. Sidebar 
 badge beside the ⚗ project badge (neutral = the project's own, amber = suggested / not
 the project's / none, red = interpreter gone); a sync repaints every card whose
 suggestion it moved and the badge out of band; a `/generate/select-env` elsewhere
-re-fetches the badge (`GET /sidebar/folder-badges`).
+re-fetches the badge (`GET /sidebar/folder-badges`). The badge is judged against a
+project: with a chip open, SM's own scope (none: `global`, the chip is in no project);
+with NO chip open, the project qualibrate names active — the one whose landing card
+sits beside it (final-QA P3: it read neutral "env KRISS_CZ" while that card said
+amber "suggested — confirm"; `_qualibrate_tray_badge`, pinned by
+`test_with_no_chip_open_the_badge_says_what_the_active_projects_card_says`).
 
 ## 3. Measured (implementer, real headless Chrome over CDP, interleaved A/B)
 
