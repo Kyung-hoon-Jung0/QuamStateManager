@@ -9,7 +9,7 @@
 {% include '_inspector_header.html' %}
 {% include '_pulse_create_choice.html' %}
 
-<form class="pulse-create-form pulse-copy-form" hx-post="/api/pulse/copy"
+<form class="pulse-create-form pulse-copy-form" hx-post="{{ root }}/api/pulse/copy"
       hx-target="#inspector-pane" hx-swap="innerHTML">
     <div class="pulse-create-row">
         <label for="pulse-copy-src">Pulse to copy</label>

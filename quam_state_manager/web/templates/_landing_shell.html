@@ -28,7 +28,7 @@
                 <code>{{ qualibrate_source.env_ignored }}</code> but no config was found there
                 &mdash; using the chosen location instead. Fix or unset the variable to let it apply.</p>
             {% endif %}
-            <form hx-post="/qualibrate/use-default-location" class="locate-use-form"
+            <form hx-post="{{ root }}/qualibrate/use-default-location" class="locate-use-form"
                   hx-confirm="Forget the chosen folder and go back to the default/env resolution?">
                 <button type="submit" class="btn-sm">Reset to default location</button>
             </form>
@@ -42,7 +42,7 @@
         <h2>Welcome to QUAM State Manager <span class="landing-head-q">— what's your project?</span></h2>
         <p class="muted landing-lead">QUAlibrate runs inside a project — open one to load its
             chip state and data folders in a single click.
-            <a href="/qualibrate" hx-get="/qualibrate" hx-target="#table-pane"
+            <a href="{{ root }}/qualibrate" hx-get="{{ root }}/qualibrate" hx-target="#table-pane"
                hx-push-url="true">Manage / doctor &rarr;</a></p>
     </div>
 
@@ -52,7 +52,7 @@
 
     {% if active_project %}
     {# docs/173 §1.2: no chip open -> one button for QUAlibrate's CURRENT project #}
-    <form method="post" action="/qualibrate/open" hx-post="/qualibrate/open" hx-target="#table-pane"
+    <form method="post" action="{{ root }}/qualibrate/open" hx-post="{{ root }}/qualibrate/open" hx-target="#table-pane"
           class="landing-current-project">
         <input type="hidden" name="project" value="{{ active_project }}">
         <button type="submit" class="btn-sm landing-current-btn"
@@ -62,14 +62,14 @@
     {% endif %}
 
     <div id="landing-cards"
-         hx-get="/landing/projects" hx-trigger="load" hx-swap="innerHTML">
+         hx-get="{{ root }}/landing/projects" hx-trigger="load" hx-swap="innerHTML">
         <p class="muted">loading projects&hellip;</p>
     </div>
 
     {% if resume_path %}
     <div class="landing-resume">
         <span class="muted">Last session:</span>
-        <form method="post" action="/load" hx-post="/load" hx-target="#table-pane"
+        <form method="post" action="{{ root }}/load" hx-post="{{ root }}/load" hx-target="#table-pane"
               class="landing-resume-form">
             <input type="hidden" name="folder" value="{{ resume_path }}">
             <button type="submit" class="btn-sm landing-resume-btn"
@@ -84,7 +84,7 @@
     <div class="landing-cta">
         <button class="btn-sm landing-cta-open" onclick="window.smOpenStateFolder &amp;&amp; window.smOpenStateFolder()"
                 title="Open a chip's quam_state folder (state.json + wiring.json)">&#128193; Open a state folder&hellip;</button>
-        <a class="btn-sm outline" href="/help" hx-get="/help" hx-target="#table-pane"
+        <a class="btn-sm outline" href="{{ root }}/help" hx-get="{{ root }}/help" hx-target="#table-pane"
            hx-push-url="true">&#63; How SM works &mdash; 2 min</a>
     </div>
     <div class="landing-standalone muted">
@@ -93,7 +93,7 @@
         {% if recent_paths %}
         <span class="landing-recents">Recent:
             {% for rp in recent_paths %}
-            <form method="post" action="/load" hx-post="/load" hx-target="#table-pane"
+            <form method="post" action="{{ root }}/load" hx-post="{{ root }}/load" hx-target="#table-pane"
                   class="landing-recent-form">
                 <input type="hidden" name="folder" value="{{ rp.path }}">
                 <button type="submit" class="landing-recent-btn" title="{{ rp.path }}">{{ rp.name }}</button>

@@ -15,7 +15,7 @@
      requests and Auto-Sync could not be armed OR disarmed from the UI at all.
      The submit reached the form un-prevented and was then cancelled by the
      docs/75 document-level armor, so even the native fallback was gone. #}
-  <form hx-post="/auto-sync/set" hx-target="#pending-tray" hx-swap="outerHTML"
+  <form hx-post="{{ root }}/auto-sync/set" hx-target="#pending-tray" hx-swap="outerHTML"
         data-after-request="autoSyncClose">
     <strong class="as-title">Auto-Sync</strong>
     {# sync-ux 2026-09-25 (user decision 3, 2026-09-25): when first armed, Auto-Sync TAKES
@@ -43,7 +43,7 @@
       <button type="submit" class="btn-sm">Save</button>
       {% if _as %}
       <button type="button" class="btn-sm outline"
-              hx-post="/auto-apply/disarm" hx-target="#pending-tray" hx-swap="outerHTML"
+              hx-post="{{ root }}/auto-apply/disarm" hx-target="#pending-tray" hx-swap="outerHTML"
               data-after-request="autoSyncClose">Turn off</button>
       {% endif %}
     </div>

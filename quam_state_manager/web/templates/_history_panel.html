@@ -5,7 +5,7 @@
     <button id="history-compare-btn" class="outline btn-sm" disabled
             onclick="compareSelectedSnapshots()">Compare Selected</button>
     <button class="outline btn-sm"
-            hx-post="/api/history/snapshot"
+            hx-post="{{ root }}/api/history/snapshot"
             hx-target="#history-content"
             hx-swap="innerHTML">Take Snapshot</button>
     {# Page size — defaults to a PAGE (50) instead of the old show-all, with
@@ -15,7 +15,7 @@
        hardcodes #table-pane and this panel swaps #history-content. #}
     <label class="muted history-page-size" style="margin-left:auto">Show
         <select name="per_page"
-                hx-get="/api/history?page=1"
+                hx-get="{{ root }}/api/history?page=1"
                 hx-target="#history-content" hx-swap="innerHTML"
                 title="Snapshots per page (All shows every snapshot)">
             {% for opt in [25, 50, 100] %}
@@ -55,14 +55,14 @@
     {% endif %}
     <div class="history-entry-actions">
         <button class="outline btn-sm"
-                hx-get="/api/history/{{ s.timestamp }}/diff"
+                hx-get="{{ root }}/api/history/{{ s.timestamp }}/diff"
                 hx-target="#history-detail-area"
                 hx-swap="innerHTML">View Changes</button>
         {# ADDITIVE Compare-hub deep link (docs/49 U1a — Compare Selected
            above stays verbatim). #}
         {% if hist_chip_key %}
         <button class="outline btn-sm"
-                hx-get="/diff?a=hist:{{ hist_chip_key | urlencode }}/{{ s.timestamp | urlencode }}&b=working:{{ active_path | urlencode }}&tab=state"
+                hx-get="{{ root }}/diff?a=hist:{{ hist_chip_key | urlencode }}/{{ s.timestamp | urlencode }}&b=working:{{ active_path | urlencode }}&tab=state"
                 hx-target="#table-pane" hx-sync="#table-pane:replace" hx-push-url="true"
                 title="Diff this snapshot against the current working state">&#8644; Compare&#8230;</button>
         {% endif %}
@@ -75,13 +75,13 @@
 <div class="history-pagination">
     {% if page > 1 %}
     <button class="outline btn-sm"
-            hx-get="/api/history?page={{ page - 1 }}&per_page={{ per_page }}"
+            hx-get="{{ root }}/api/history?page={{ page - 1 }}&per_page={{ per_page }}"
             hx-target="#history-content" hx-swap="innerHTML">&laquo; Prev</button>
     {% endif %}
     <span class="muted">Page {{ page }} / {{ total_pages }}</span>
     {% if page < total_pages %}
     <button class="outline btn-sm"
-            hx-get="/api/history?page={{ page + 1 }}&per_page={{ per_page }}"
+            hx-get="{{ root }}/api/history?page={{ page + 1 }}&per_page={{ per_page }}"
             hx-target="#history-content" hx-swap="innerHTML">Next &raquo;</button>
     {% endif %}
 </div>

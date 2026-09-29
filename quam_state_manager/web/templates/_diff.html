@@ -1,7 +1,7 @@
 {% from '_delta_macros.html' import delta_block %}
 <h2>2-Way Diff</h2>
 
-<form hx-post="/diff" hx-target="#table-pane" class="diff-form">
+<form hx-post="{{ root }}/diff" hx-target="#table-pane" class="diff-form">
     <div class="diff-inputs">
         <div class="diff-field">
             <label>State A</label>

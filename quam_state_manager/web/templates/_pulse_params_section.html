@@ -42,7 +42,7 @@
                       title="Resolves to {{ p.target_path }} (container value — edit at the target)">{{ p.raw }}</span>
                 {% endif %}
                 {% else %}
-                <form class="inline-edit pulse-edit-form" hx-post="/pulse/edit"
+                <form class="inline-edit pulse-edit-form" hx-post="{{ root }}/pulse/edit"
                       hx-target="#inspector-pane" hx-swap="innerHTML"{% if sec.synth_unknown_class %}
                       hx-indicator="next .pulse-lab-checking"{% endif %}>
                     <input type="hidden" name="path" value="{{ sec.path }}">
@@ -94,7 +94,7 @@
                 <span class="ptr-prev-link muted" title="Previously linked to {{ p.prev_link }}">was &rarr; <code>{{ p.prev_link }}</code></span>
                 <button type="button" class="ptr-act btn-sm outline ptr-relink-prev"
                         title="Restore the previous link"
-                        hx-post="/pulse/edit"
+                        hx-post="{{ root }}/pulse/edit"
                         hx-vals='{"path": {{ sec.path | tojson }}, "dot_path": {{ p.dot_path | tojson }}, "mode": "pointer", "value": {{ p.prev_link | tojson }}, "view_main": {{ main_path | tojson }}, "view_paths": {{ view_paths | tojson }}}'
                         hx-target="#inspector-pane" hx-swap="innerHTML">re-link</button>
                 {% endif %}
@@ -105,7 +105,7 @@
                     {% if p.resolved %}
                     <button type="button" class="ptr-act btn-sm outline"
                             title="Break the link — replace the pointer with the literal value {{ p.value }}"
-                            hx-post="/pulse/edit"
+                            hx-post="{{ root }}/pulse/edit"
                             hx-vals='{"path": {{ sec.path | tojson }}, "dot_path": {{ p.dot_path | tojson }}, "mode": "literal", "value": {{ p.value | tojson }}, "view_main": {{ main_path | tojson }}, "view_paths": {{ view_paths | tojson }}}'
                             hx-confirm="Replace the pointer with the literal value {{ p.value }}? {{ p.key }} will stop tracking {{ p.target_path }}."
                             hx-target="#inspector-pane" hx-swap="innerHTML">unlink</button>

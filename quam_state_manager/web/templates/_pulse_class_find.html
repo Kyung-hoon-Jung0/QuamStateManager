@@ -18,7 +18,7 @@
    data-classfind-state="{% if not env_card.selected or not env_card.selected_exists %}noenv{% elif _failed %}failed{% else %}ok{% endif %}">
   <span class="pulse-class-find-q">Don&#39;t see your pulse class?</span>
   {% if not env_card.selected or not env_card.selected_exists %}
-  <a href="/generate" hx-get="/generate" hx-target="#table-pane"
+  <a href="{{ root }}/generate" hx-get="{{ root }}/generate" hx-target="#table-pane"
      hx-sync="#table-pane:replace" hx-push-url="true"
      data-after-request="closeInspectorOnSuccess"
      class="pulse-class-find-link">Pick a Python environment first</a>

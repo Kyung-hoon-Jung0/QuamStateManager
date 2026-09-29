@@ -67,7 +67,7 @@
             {% if _prev and p.has and _prev.has %}{{ delta_chip(_prev.raw, p.raw, 'ch-chip-delta') }}{% endif %}
           </button>
           {% if p.uid %}
-          <button type="button" class="ch-chip-data" hx-get="/dataset/{{ p.uid }}"
+          <button type="button" class="ch-chip-data" hx-get="{{ root }}/dataset/{{ p.uid }}"
                   hx-target="#inspector-pane" hx-swap="innerHTML"
                   title="Open run #{{ p.run_id }}'s data in the inspector pane">Data</button>
           {% endif %}
@@ -97,7 +97,7 @@
       {% for r in runs %}
       <th class="ch-run">
         {% if r.uid %}
-        <a href="#" class="ch-run-open" hx-get="/dataset/{{ r.uid }}"
+        <a href="#" class="ch-run-open" hx-get="{{ root }}/dataset/{{ r.uid }}"
            hx-target="#inspector-pane" hx-swap="innerHTML"
            title="{{ r.experiment or '' }} — open run #{{ r.run_id }}'s data in the inspector pane">#{{ r.run_id }}</a>
         {% else %}<span title="{{ r.experiment or '' }}">#{{ r.run_id }}</span>{% endif %}

@@ -3,7 +3,7 @@
    #param-history-root, so the auto-backfill gate never fires on a verdict
    that does not exist yet. #}
 <div id="ph-alignment-slot" class="ph-alignment-slot ph-alignment-pending"
-     hx-get="/param-history/alignment?summary_total={{ summary_total }}"
+     hx-get="{{ root }}/param-history/alignment?summary_total={{ summary_total }}"
      hx-trigger="load delay:700ms" hx-swap="outerHTML">
   <p class="muted ph-alignment-progress" role="status">
     Checking which workspace runs belong to this chip…

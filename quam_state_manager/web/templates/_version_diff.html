@@ -12,8 +12,8 @@
     <div class="state-review-head-actions">
       {% if chip_key %}
       <a class="btn-sync outline version-diff-workbench"
-         href="/diff?a={{ ('hist:' ~ chip_key ~ '/' ~ ts) | urlencode }}&amp;b={{ ('working:' ~ path_str) | urlencode }}"
-         hx-get="/diff?a={{ ('hist:' ~ chip_key ~ '/' ~ ts) | urlencode }}&amp;b={{ ('working:' ~ path_str) | urlencode }}"
+         href="{{ root }}/diff?a={{ ('hist:' ~ chip_key ~ '/' ~ ts) | urlencode }}&amp;b={{ ('working:' ~ path_str) | urlencode }}"
+         hx-get="{{ root }}/diff?a={{ ('hist:' ~ chip_key ~ '/' ~ ts) | urlencode }}&amp;b={{ ('working:' ~ path_str) | urlencode }}"
          hx-target="#table-pane" hx-swap="innerHTML" hx-push-url="true"
          onclick="StateVersions.closeDiff(); StateVersions.close()"
          title="Open this comparison in the Diff workbench — tree view, every entry, ranked by |Δ%|.">Full view</a>

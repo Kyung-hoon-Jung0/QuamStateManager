@@ -74,7 +74,7 @@
                 title="Fill the edit field with this value, without staging it (press Enter there to stage)">Use</button>
         {% endif %}
         {% if pt.uid %}
-        <button type="button" class="fh-data" hx-get="/dataset/{{ pt.uid }}"
+        <button type="button" class="fh-data" hx-get="{{ root }}/dataset/{{ pt.uid }}"
                 hx-target="#inspector-pane" hx-swap="innerHTML"
                 title="Open run #{{ pt.run_id }}'s data in the inspector pane">Data</button>
         {% endif %}

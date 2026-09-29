@@ -79,7 +79,7 @@
                 <span class="jr-badge jr-out-{{ c.outcome or 'none' }}" title="the node's own outcome">{% if c.outcome == 'ok' %}✓ ok{% elif c.outcome == 'failed' %}✗ failed{% elif c.outcome == 'mixed' %}mixed{% else %}no outcome{% endif %}</span>
                 {% if c.gate %}<span class="jr-badge jr-gate-{{ c.gate.verdict }}" title="deterministic gate, anchored on the run's own saved state{% if c.gate.reason %} — {{ c.gate.reason }}{% endif %}">gate {{ c.gate.verdict }}</span>{% endif %}
             </span>
-            <a class="jr-run-link" href="/dataset/by-run/{{ c.run_id }}" hx-get="/dataset/by-run/{{ c.run_id }}" hx-target="#table-pane" hx-push-url="true" onclick="event.stopPropagation()">#{{ c.run_id }}</a>
+            <a class="jr-run-link" href="{{ root }}/dataset/by-run/{{ c.run_id }}" hx-get="{{ root }}/dataset/by-run/{{ c.run_id }}" hx-target="#table-pane" hx-push-url="true" onclick="event.stopPropagation()">#{{ c.run_id }}</a>
             <span class="jr-who-cell">
                 <span class="jr-author jr-author-{{ (c.author or 'unknown').split(':')[0] }}" title="{{ c.certainty }}">{{ c.author }}</span>
                 {% if c.plan_id %}<span class="jr-plan muted" title="plan">plan {{ c.plan_id }}</span>{% endif %}
@@ -99,8 +99,8 @@
             <div class="jr-sec"><b>Because</b>
                 {% if c.because %}<p class="jr-because">{{ c.because }}</p>{% else %}<p class="muted">not recorded</p>{% endif %}</div>
             {% if c.figure and c.uid %}
-            <div class="jr-sec jr-fig"><a href="/dataset/{{ c.uid }}" hx-get="/dataset/{{ c.uid }}" hx-target="#table-pane" hx-push-url="true">
-                <img src="/dataset/{{ c.uid }}/fig/{{ c.figure }}" alt="{{ c.figure }}" loading="lazy" class="jr-thumb"></a></div>
+            <div class="jr-sec jr-fig"><a href="{{ root }}/dataset/{{ c.uid }}" hx-get="{{ root }}/dataset/{{ c.uid }}" hx-target="#table-pane" hx-push-url="true">
+                <img src="{{ root }}/dataset/{{ c.uid }}/fig/{{ c.figure }}" alt="{{ c.figure }}" loading="lazy" class="jr-thumb"></a></div>
             {% endif %}
             {% if c.journal %}
             <div class="jr-sec"><b>Journal</b>

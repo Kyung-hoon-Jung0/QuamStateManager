@@ -44,7 +44,7 @@
     var current = null;
     function hydrate(folder, step) {
       say("Reading chip & reconstructing spec…");
-      fetch("/regenerate/reconstruct", {
+      fetch("{{ root }}/regenerate/reconstruct", {
         method: "POST", headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ folder: folder || null })
       }).then(function (r) { return r.json(); }).then(function (res) {
@@ -52,7 +52,7 @@
         if (!window.QuamGen || !QuamGen.hydrateFromSpec) { say("Wizard not ready — reload the page.", "regen-status-err"); return; }
         if (QuamGen.init) QuamGen.init();      // ensure mounted (idempotent)
         QuamGen.hydrateFromSpec(res.spec, {
-          mode: "regenerate", buildEndpoint: "/regenerate/build",
+          mode: "regenerate", buildEndpoint: "{{ root }}/regenerate/build",
           sourcePath: res.source_folder,
           sourceHash: res.source_hash,   // QA regenerate-r2-35
           sourceName: res.source_name,   // QA regenerate-r2-37

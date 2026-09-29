@@ -2,7 +2,7 @@
    /pulse/row?path= so a value change re-renders this row in place instead
    of re-fetching the whole 500-row table. Variable: r. #}
         <tr class="clickable-row" data-pulse-path="{{ r.path }}"
-            hx-get="/pulse/detail?path={{ r.path | urlencode }}"
+            hx-get="{{ root }}/pulse/detail?path={{ r.path | urlencode }}"
             hx-target="#inspector-pane" hx-swap="innerHTML"
             hx-indicator="#inspector-pane"
             title="{{ r.summary }}">

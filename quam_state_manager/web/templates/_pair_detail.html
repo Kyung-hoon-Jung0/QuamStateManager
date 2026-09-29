@@ -38,7 +38,7 @@
                         <em class="selfref-value">{{ p.raw }} <span class="tag-runtime">(runtime)</span></em>
                     {% elif p.editable %}
                         {% set _stored = _ukey | unit_hint %}
-                        <form class="inline-edit fh-host" hx-post="/pair/{{ pair_name }}/edit" hx-target="#inspector-pane" hx-swap="innerHTML"
+                        <form class="inline-edit fh-host" hx-post="{{ root }}/pair/{{ pair_name }}/edit" hx-target="#inspector-pane" hx-swap="innerHTML"
                               {# docs/183: NOT hx-vals='js:…' — htmx compiles those with
                                  new Function, which this app's CSP forbids, and htmx
                                  aborts the whole request while trying. One delegated
@@ -110,7 +110,7 @@
             Generated Config
             <small class="muted">— offline preview of <code>generate_config()</code></small>
         </summary>
-        <div hx-get="/pair/{{ pair_name }}/config"
+        <div hx-get="{{ root }}/pair/{{ pair_name }}/config"
              hx-trigger="toggle once from:closest details, configRegenerated from:body"
              hx-swap="innerHTML">
             <p class="muted">loading…</p>

@@ -21,7 +21,7 @@
             {% elif not fig.available %}<small class="muted">({{ fig.reason }})</small>{% endif %}
         </div>
         {% if fig.static %}
-        <img src="/dataset/{{ uid }}/fig/{{ fig.key }}" alt="{{ fig.title }}"
+        <img src="{{ root }}/dataset/{{ uid }}/fig/{{ fig.key }}" alt="{{ fig.title }}"
              loading="lazy" onclick="toggleFigureZoom(this)"
              style="width:100%;height:auto;cursor:zoom-in" title="Static figure — click to zoom">
         {% elif fig.available %}

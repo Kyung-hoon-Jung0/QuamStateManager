@@ -12,7 +12,7 @@
     folder{{ 's' if dataset_roots_ask.current | length != 1 }} — should its
     Datasets view use only the new path, or keep both?
   </span>
-  <form class="cnb-form" hx-post="/project-roots/confirm"
+  <form class="cnb-form" hx-post="{{ root }}/project-roots/confirm"
         hx-target="#dataset-roots-banner" hx-swap="outerHTML">
     <input type="hidden" name="project" value="{{ dataset_roots_ask.project }}">
     <button type="submit" name="choice" value="new_only" class="cnb-set"

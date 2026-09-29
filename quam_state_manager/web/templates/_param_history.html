@@ -45,7 +45,7 @@
   {% if is_loaded_chip %}
   <div class="ph-tabs">
     <button type="button" class="ph-tab active" aria-current="page">Trends</button>
-    <button type="button" class="ph-tab" hx-get="/param-history/changes"
+    <button type="button" class="ph-tab" hx-get="{{ root }}/param-history/changes"
             hx-target="#param-history-root" hx-swap="outerHTML"
             hx-push-url="true"
             title="Every numeric parameter's change points, newest first">Changes</button>
@@ -77,7 +77,7 @@
     <summary class="ph-drift-title">Live changes since baseline
       <small class="muted">— what the live chip changed (formerly the main-screen alarm)</small></summary>
     <div id="live-drift-panel"
-         hx-get="/state/drift/view?embed=1"
+         hx-get="{{ root }}/state/drift/view?embed=1"
          hx-trigger="load, liveDriftChanged from:body"
          hx-swap="innerHTML"></div>
   </details>
@@ -90,8 +90,8 @@
       {% for chip in active_chips %}
         {% set is_active = chip.key == active_chip_key %}
         {% set is_loaded = chip.key == loaded_chip_key %}
-        <a href="/param-history?chip_key={{ chip.key }}"
-           hx-get="/param-history?chip_key={{ chip.key }}"
+        <a href="{{ root }}/param-history?chip_key={{ chip.key }}"
+           hx-get="{{ root }}/param-history?chip_key={{ chip.key }}"
            hx-target="#param-history-root" hx-swap="outerHTML" hx-push-url="true"
            class="phf-chip phf-chip-chip{% if is_active %} active{% endif %}{% if is_loaded %} chip-loaded{% endif %}"
            title="{% if chip.workspace_only %}Workspace folder, no history yet{% else %}{{ chip.snapshot_count }} snapshots · latest {{ chip.latest_timestamp }}{% endif %}"
@@ -129,15 +129,15 @@
     {% if last_chip_swap.type == "swap_to_existing" %}
       Snapshots were routed to the existing chip <code>{{ last_chip_swap.to_key }}</code>
       (the loaded path is <code>{{ last_chip_swap.from_key }}</code> but its wiring/qubits match <code>{{ last_chip_swap.to_key }}</code>).
-      <a href="/param-history?chip_key={{ last_chip_swap.to_key }}"
-         hx-get="/param-history?chip_key={{ last_chip_swap.to_key }}"
+      <a href="{{ root }}/param-history?chip_key={{ last_chip_swap.to_key }}"
+         hx-get="{{ root }}/param-history?chip_key={{ last_chip_swap.to_key }}"
          hx-target="#param-history-root" hx-swap="outerHTML" hx-push-url="true"
          class="alignment-switch-link">View {{ last_chip_swap.to_key }} →</a>
     {% else %}
       A new chip directory <code>{{ last_chip_swap.to_key }}</code> was created
       (the loaded path is <code>{{ last_chip_swap.from_key }}</code> but the fingerprint differs).
-      <a href="/param-history?chip_key={{ last_chip_swap.to_key }}"
-         hx-get="/param-history?chip_key={{ last_chip_swap.to_key }}"
+      <a href="{{ root }}/param-history?chip_key={{ last_chip_swap.to_key }}"
+         hx-get="{{ root }}/param-history?chip_key={{ last_chip_swap.to_key }}"
          hx-target="#param-history-root" hx-swap="outerHTML" hx-push-url="true"
          class="alignment-switch-link">View {{ last_chip_swap.to_key }} →</a>
     {% endif %}
@@ -191,8 +191,8 @@
               · {{ chip.qubits|length }} qubits
             {% endif %}
           </span>
-          <a href="/param-history?chip_key={{ chip.key }}"
-             hx-get="/param-history?chip_key={{ chip.key }}"
+          <a href="{{ root }}/param-history?chip_key={{ chip.key }}"
+             hx-get="{{ root }}/param-history?chip_key={{ chip.key }}"
              hx-target="#param-history-root" hx-swap="outerHTML" hx-push-url="true"
              class="outline btn-sm archive-view">View history</a>
         </div>
@@ -208,7 +208,7 @@
      the first-visit import CTA, and a script that stamps the counts back on
      #param-history-root and re-arms the auto-backfill gate. #}
   <div id="ph-alignment-slot" class="ph-alignment-slot"
-       hx-get="/param-history/alignment?summary_total={{ summary.total }}"
+       hx-get="{{ root }}/param-history/alignment?summary_total={{ summary.total }}"
        hx-trigger="load" hx-swap="outerHTML"></div>
   {% elif is_loaded_chip and alignment %}
     {% set c = alignment.counts %}
@@ -223,8 +223,8 @@
         ✗ <strong>No experiments in this workspace match chip <code>{{ loaded_chip_key }}</code>.</strong>
         Workspace contains:
         {% for other_chip, entries in alignment.different_chip.items() %}
-          <a href="/param-history?chip_key={{ other_chip|replace(' ', '_') }}"
-             hx-get="/param-history?chip_key={{ other_chip|replace(' ', '_') }}"
+          <a href="{{ root }}/param-history?chip_key={{ other_chip|replace(' ', '_') }}"
+             hx-get="{{ root }}/param-history?chip_key={{ other_chip|replace(' ', '_') }}"
              hx-target="#param-history-root" hx-swap="outerHTML" hx-push-url="true"
              class="alignment-switch-link">{{ other_chip }} ({{ entries|length }})</a>{% if not loop.last %}, {% endif %}
         {% endfor %}
@@ -243,8 +243,8 @@
           {{ c.aligned }} of {{ c.total }} experiments are for <code>{{ loaded_chip_key }}</code>.
           {{ c.different_chip }} are for other chips:
           {% for other_chip, entries in alignment.different_chip.items() %}
-            <a href="/param-history?chip_key={{ other_chip|replace(' ', '_') }}"
-               hx-get="/param-history?chip_key={{ other_chip|replace(' ', '_') }}"
+            <a href="{{ root }}/param-history?chip_key={{ other_chip|replace(' ', '_') }}"
+               hx-get="{{ root }}/param-history?chip_key={{ other_chip|replace(' ', '_') }}"
                hx-target="#param-history-root" hx-swap="outerHTML" hx-push-url="true"
                class="alignment-switch-link">{{ other_chip }} ({{ entries|length }})</a>{% if not loop.last %}, {% endif %}
           {% endfor %}
@@ -256,7 +256,7 @@
       Viewing history for chip <code>{{ active_chip_key }}</code>
       &nbsp;·&nbsp; current load is <code>{{ loaded_chip_key }}</code>
       &nbsp;·&nbsp;
-      <a href="/param-history" hx-get="/param-history"
+      <a href="{{ root }}/param-history" hx-get="{{ root }}/param-history"
          hx-target="#param-history-root" hx-swap="outerHTML" hx-push-url="true"
          class="alignment-switch-link">Switch to current load</a>
     </div>
@@ -279,7 +279,7 @@
      click) and this form stay put, so the chips the user just set never
      re-render under them. Reset filters below still swaps the whole root. #}
   <form id="param-history-filters" class="param-history-filters"
-        hx-get="/param-history" hx-target="#param-history-results" hx-select="#param-history-results" hx-swap="outerHTML"
+        hx-get="{{ root }}/param-history" hx-target="#param-history-results" hx-select="#param-history-results" hx-swap="outerHTML"
         hx-push-url="true" hx-trigger="change delay:500ms" hx-sync="this:replace">
     {# code-review sweep (docs/158): a ?chip_key= view must keep filtering THAT
        chip — without this the filter request fell back to the loaded chip and
@@ -385,7 +385,7 @@
          response is reduced to just the results container and outerHTML-swapped
          over the whole #param-history-root -- deleting the header, tab strip,
          chip selector and the filter form itself until a full reload. #}
-      <a href="/param-history" hx-get="/param-history" hx-target="#param-history-root"
+      <a href="{{ root }}/param-history" hx-get="{{ root }}/param-history" hx-target="#param-history-root"
          hx-select="unset" hx-swap="outerHTML" hx-push-url="true"
          class="phf-chip" role="button" style="text-decoration:none">Reset filters</a>
       <button type="button" class="phf-backfill outline btn-sm"
@@ -404,7 +404,7 @@
   {% if index_error %}
   <div class="toast toast-warning" style="margin:0.5rem 0">
     <p style="margin:0">{{ index_error }}
-      <a href="/param-history" hx-get="/param-history" hx-target="#param-history-root"
+      <a href="{{ root }}/param-history" hx-get="{{ root }}/param-history" hx-target="#param-history-root"
          hx-swap="outerHTML" hx-sync="#param-history-root:replace">Reload</a></p>
   </div>
   {% endif %}

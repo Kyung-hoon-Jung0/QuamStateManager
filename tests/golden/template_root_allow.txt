@@ -1,0 +1,11 @@
+# tests/test_template_root_lint.py allow-list.
+#
+# Format: one entry per line, "relative/path/to/file.html:regex".
+# `regex` is matched (re.search) against the OFFENDING LINE's text; the entry
+# only suppresses a hit in that exact file. Blank lines and lines starting
+# with # are ignored.
+#
+# Target: EMPTY. Every root-absolute literal in quam_state_manager/web/templates
+# was mechanically rewritten to use the `{{ root }}` Jinja global (spec
+# prefix_spec.md §3.2); nothing needed an exception. Do not add an entry here
+# without a comment explaining why the literal cannot be rooted.

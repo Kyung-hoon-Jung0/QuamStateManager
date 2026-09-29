@@ -76,7 +76,7 @@ window.changeChipCompareRef = function(sel) {
     var paths = {{ paths_raw | tojson }};
     var qs = paths.map(function(p) { return "paths=" + encodeURIComponent(p); }).join("&");
     qs += "&ref=" + sel.value;
-    htmx.ajax("GET", "/chip-compare/topology?" + qs,
+    htmx.ajax("GET", "{{ root }}/chip-compare/topology?" + qs,
               {target: "#chip-compare-content", swap: "innerHTML"});
 };
 </script>

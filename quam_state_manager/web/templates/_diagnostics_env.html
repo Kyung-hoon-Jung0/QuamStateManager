@@ -11,14 +11,14 @@
        are withdrawn (_live_env_manifest) -- the card says so, and links. #}
     {% if not env_card.selected %}
       <span class="muted">— no python environment selected.
-        <a href="/generate" hx-get="/generate" hx-target="#table-pane"
+        <a href="{{ root }}/generate" hx-get="{{ root }}/generate" hx-target="#table-pane"
            hx-push-url="true">Pick one in Generate Config</a> to validate this
         state against its quam/quam-builder. No environment findings are
         listed until one is selected.</span>
     {% elif not env_card.selected_exists %}
       <span class="diag-env-err">selected interpreter
         <code>{{ env_card.selected }}</code> no longer exists —
-        <a href="/generate" hx-get="/generate" hx-target="#table-pane"
+        <a href="{{ root }}/generate" hx-get="{{ root }}/generate" hx-target="#table-pane"
            hx-sync="#table-pane:replace" hx-push-url="true">reselect the
         environment in Generate Config</a>. Environment findings are withdrawn
         until it is back.</span>
@@ -30,7 +30,7 @@
         {% if env_card.env_name %}<code class="diag-env-name" title="{{ env_card.env_path or env_card.selected }}">{{ env_card.env_name }}</code>{% endif %}
         {% for k in ("quam", "quam_builder") %}{% if env_card.versions.get(k) %}
           <code>{{ k }} {{ env_card.versions[k] }}</code>{% endif %}{% endfor %}
-        · <a href="/diagnostics" hx-get="/diagnostics" hx-target="#table-pane"
+        · <a href="{{ root }}/diagnostics" hx-get="{{ root }}/diagnostics" hx-target="#table-pane"
              hx-sync="#table-pane:replace">refresh findings</a>
       </span>
     {% else %}
@@ -51,7 +51,7 @@
     {# QA F-R: deep=1 -> /config/regenerate answers with a verdict line
        (_diagnostics_env_deep.html), not the Config Viewer's controls #}
     <button type="button" class="btn-sm outline"
-            hx-post="/config/regenerate" hx-vals='{"deep": "1"}' hx-target="#diag-env-deep"
+            hx-post="{{ root }}/config/regenerate" hx-vals='{"deep": "1"}' hx-target="#diag-env-deep"
             hx-swap="innerHTML" hx-indicator="#diag-env-deep-busy" hx-disabled-elt="this"
             title="The acid test: actually Quam.load() + generate_config() this state inside the selected environment">
       Validate deeply (Quam.load)
@@ -76,14 +76,14 @@
 <script>
   window.diagEnvProbe = window.diagEnvProbe || function (btn, force) {
     btn.disabled = true;
-    fetch("/diagnostics/env-probe", {
+    fetch("{{ root }}/diagnostics/env-probe", {
       method: "POST",
       headers: {"Content-Type": "application/x-www-form-urlencoded"},
       body: "force=" + force
     }).then(function (r) { return r.json(); }).then(function (d) {
       if (!d.ok) { window.showToast && window.showToast(d.error || "probe failed", "warning"); btn.disabled = false; return; }
       // ?poll=1: the finishing render announces diagnostics-changed (QA F-L)
-      if (window.htmx) htmx.ajax("GET", "/diagnostics/env-card?poll=1", {target: "#diag-env-card", swap: "outerHTML"});
+      if (window.htmx) htmx.ajax("GET", "{{ root }}/diagnostics/env-card?poll=1", {target: "#diag-env-card", swap: "outerHTML"});
     }).catch(function () { btn.disabled = false; });
   };
 </script>

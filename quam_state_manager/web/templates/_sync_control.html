@@ -57,7 +57,7 @@
     grid's applyEditsToLive routes the same way, off data-working-dirty) -#}
 <button type="button" class="sync-control-act btn-apply-live sync-arm"
         data-arm-label="Press again to write it to live"
-        hx-post="/state/apply-to-live" hx-target="#pending-tray" hx-swap="outerHTML"
+        hx-post="{{ root }}/state/apply-to-live" hx-target="#pending-tray" hx-swap="outerHTML"
         hx-trigger="armed" hx-disabled-elt="this"
         hx-vals='{"seen_changes": "{{ _n }}", "seen_sig": "{{ change_sig | default('') }}"}'
         data-after-request="clearUndo"

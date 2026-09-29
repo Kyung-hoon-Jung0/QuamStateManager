@@ -17,8 +17,8 @@
         ✗ <strong>No experiments in this workspace match chip <code>{{ loaded_chip_key }}</code>.</strong>
         Workspace contains:
         {% for other_chip, entries in alignment.different_chip.items() %}
-          <a href="/param-history?chip_key={{ other_chip|replace(' ', '_') }}"
-             hx-get="/param-history?chip_key={{ other_chip|replace(' ', '_') }}"
+          <a href="{{ root }}/param-history?chip_key={{ other_chip|replace(' ', '_') }}"
+             hx-get="{{ root }}/param-history?chip_key={{ other_chip|replace(' ', '_') }}"
              hx-target="#param-history-root" hx-swap="outerHTML" hx-push-url="true"
              class="alignment-switch-link">{{ other_chip }} ({{ entries|length }})</a>{% if not loop.last %}, {% endif %}
         {% endfor %}
@@ -37,8 +37,8 @@
           {{ c.aligned }} of {{ c.total }} experiments are for <code>{{ loaded_chip_key }}</code>.
           {{ c.different_chip }} are for other chips:
           {% for other_chip, entries in alignment.different_chip.items() %}
-            <a href="/param-history?chip_key={{ other_chip|replace(' ', '_') }}"
-               hx-get="/param-history?chip_key={{ other_chip|replace(' ', '_') }}"
+            <a href="{{ root }}/param-history?chip_key={{ other_chip|replace(' ', '_') }}"
+               hx-get="{{ root }}/param-history?chip_key={{ other_chip|replace(' ', '_') }}"
                hx-target="#param-history-root" hx-swap="outerHTML" hx-push-url="true"
                class="alignment-switch-link">{{ other_chip }} ({{ entries|length }})</a>{% if not loop.last %}, {% endif %}
           {% endfor %}

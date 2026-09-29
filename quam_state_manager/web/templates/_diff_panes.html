@@ -120,7 +120,7 @@
   {% for sl in slots %}{% if slot_refs[loop.index0] %}{% set _ = _qs.append(sl ~ '=' ~ (slot_refs[loop.index0] | urlencode)) %}{% endif %}{% endfor %}
   <div class="ph-changes-more">
     <button type="button" class="btn-sm outline"
-            hx-get="/diff?{{ _qs | join('&') }}&amp;tab={{ tab }}&amp;view=panes&amp;base={{ base }}&amp;rows={{ next_rows }}"
+            hx-get="{{ root }}/diff?{{ _qs | join('&') }}&amp;tab={{ tab }}&amp;view=panes&amp;base={{ base }}&amp;rows={{ next_rows }}"
             hx-target="#diff-root" hx-swap="outerHTML">
       Show {{ '{:,}'.format(more) }} more</button>
   </div>

@@ -10,7 +10,7 @@
                                  library may simply have moved. The user
                                  decides which side is right. #}
 <div id="diag-types-card" class="diag-env-card diag-types-card"
-     hx-get="/diagnostics/types-card"
+     hx-get="{{ root }}/diagnostics/types-card"
      hx-trigger="diagnostics-changed from:body delay:300ms"
      hx-swap="outerHTML">
   <div class="diag-env-head">

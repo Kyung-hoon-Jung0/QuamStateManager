@@ -20,7 +20,7 @@
     </p>
   </div>
 
-  <form class="diff-wb-pickers" hx-get="/diff" hx-target="#diff-root"
+  <form class="diff-wb-pickers" hx-get="{{ root }}/diff" hx-target="#diff-root"
         hx-swap="outerHTML" hx-push-url="true" hx-trigger="change">
     <input type="hidden" name="tab" value="{{ tab }}">
     <input type="hidden" name="view" value="{{ view }}">
@@ -107,7 +107,7 @@
   <div class="ph-tabs diff-wb-tabs">
     {% for t in tabs %}
     <button type="button" class="ph-tab{% if t == tab %} active{% endif %}"
-            hx-get="/diff?a={{ a_ref | urlencode }}&amp;b={{ b_ref | urlencode }}&amp;c={{ c_ref | urlencode }}&amp;d={{ d_ref | urlencode }}&amp;e={{ e_ref | urlencode }}&amp;tab={{ t }}&amp;view={{ view }}&amp;base={{ base }}"
+            hx-get="{{ root }}/diff?a={{ a_ref | urlencode }}&amp;b={{ b_ref | urlencode }}&amp;c={{ c_ref | urlencode }}&amp;d={{ d_ref | urlencode }}&amp;e={{ e_ref | urlencode }}&amp;tab={{ t }}&amp;view={{ view }}&amp;base={{ base }}"
             hx-target="#diff-root" hx-swap="outerHTML" hx-push-url="true">
       {{ {'state': 'state.json', 'wiring': 'wiring.json',
           'node': 'node.json', 'data': 'data', 'figures': 'figures'}[t] }}</button>
@@ -120,7 +120,7 @@
       {% else %}
       {% for v, label in (('tree', 'Tree'), ('list', 'List'), ('panes', 'Panes')) %}
       <button type="button" class="btn-xs{% if v != view %} outline{% endif %}"
-              hx-get="/diff?a={{ a_ref | urlencode }}&amp;b={{ b_ref | urlencode }}&amp;c={{ c_ref | urlencode }}&amp;d={{ d_ref | urlencode }}&amp;e={{ e_ref | urlencode }}&amp;tab={{ tab }}&amp;view={{ v }}&amp;base={{ base }}"
+              hx-get="{{ root }}/diff?a={{ a_ref | urlencode }}&amp;b={{ b_ref | urlencode }}&amp;c={{ c_ref | urlencode }}&amp;d={{ d_ref | urlencode }}&amp;e={{ e_ref | urlencode }}&amp;tab={{ tab }}&amp;view={{ v }}&amp;base={{ base }}"
               hx-target="#diff-root" hx-swap="outerHTML" hx-push-url="true"
               title="{{ {'tree': 'Nested, with context', 'list': 'Flat, biggest change first', 'panes': 'Side by side, one pane per source, differences against a baseline you pick'}[v] }}">{{ label }}</button>
       {% endfor %}
@@ -155,7 +155,7 @@
         {# docs/147: a positionally-paired row holds DIFFERENT figures --
            each cell names its own file so nothing pretends to match #}
         {% if row.mixed %}<div class="diff-fig-cellname"><code>{{ cn }}</code></div>{% endif %}
-        <img src="/diff/fig?ref={{ col.ref | urlencode }}&amp;name={{ cn | urlencode }}"
+        <img src="{{ root }}/diff/fig?ref={{ col.ref | urlencode }}&amp;name={{ cn | urlencode }}"
              alt="{{ col.slot | upper }} · {{ cn }}" loading="lazy" onclick="toggleFigureZoom(this)">
         {% else %}
         <div class="compare-figure-na">—</div>
@@ -271,7 +271,7 @@
       {% if more %}
       <div class="ph-changes-more">
         <button type="button" class="btn-sm outline"
-                hx-get="/diff?a={{ a_ref | urlencode }}&amp;b={{ b_ref | urlencode }}&amp;tab={{ tab }}&amp;view=list&amp;rows={{ next_rows }}"
+                hx-get="{{ root }}/diff?a={{ a_ref | urlencode }}&amp;b={{ b_ref | urlencode }}&amp;tab={{ tab }}&amp;view=list&amp;rows={{ next_rows }}"
                 hx-target="#diff-root" hx-swap="outerHTML">
           Show {{ '{:,}'.format(more) }} more</button>
       </div>

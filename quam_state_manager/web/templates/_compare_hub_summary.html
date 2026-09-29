@@ -33,7 +33,7 @@
 </div>
 {% if show_more %}
 <button type="button" class="btn-sm outline cmp-summary-more"
-        hx-get="/compare-hub/summary?{{ hub_qs }}"
+        hx-get="{{ root }}/compare-hub/summary?{{ hub_qs }}"
         hx-target="closest .cmp-tabpane" hx-swap="innerHTML">
   Show all entities (first {{ entities | length }} shown)</button>
 {% endif %}

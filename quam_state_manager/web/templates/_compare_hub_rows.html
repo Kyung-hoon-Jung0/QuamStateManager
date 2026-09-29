@@ -57,7 +57,7 @@
    the equal-rows toggle too, not just the lazy fragment (review finding). #}
 {% if group.counts.get('equal') and not show_eq and hub_qs %}
 <button type="button" class="btn-xs outline cmp-show-eq"
-        hx-get="/compare-hub/group?{{ hub_qs }}&amp;section={{ group.section | urlencode }}&amp;entity={{ group.entity | urlencode }}&amp;eq=1"
+        hx-get="{{ root }}/compare-hub/group?{{ hub_qs }}&amp;section={{ group.section | urlencode }}&amp;entity={{ group.entity | urlencode }}&amp;eq=1"
         hx-target="closest .cmp-group-body" hx-swap="innerHTML">
   Show {{ group.counts['equal'] }} equal rows</button>
 {% endif %}

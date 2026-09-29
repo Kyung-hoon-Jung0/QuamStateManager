@@ -39,11 +39,11 @@
       {% else %}
         <div class="toast toast-warning" role="alert">
           <p>No QM environment selected —
-            <a href="/generate" hx-get="/generate" hx-target="#table-pane" hx-sync="#table-pane:replace" hx-push-url="true">set one in Generate&nbsp;Config</a>
+            <a href="{{ root }}/generate" hx-get="{{ root }}/generate" hx-target="#table-pane" hx-sync="#table-pane:replace" hx-push-url="true">set one in Generate&nbsp;Config</a>
             to run the audit.</p>
         </div>
       {% endif %}
-      <form class="fa-srcform" hx-post="/fit-audit/source-root" hx-target="#fit-audit" hx-swap="outerHTML">
+      <form class="fa-srcform" hx-post="{{ root }}/fit-audit/source-root" hx-target="#fit-audit" hx-swap="outerHTML">
         <label style="margin:0">Analysis source&nbsp;root</label>
         <div class="path-input-group">
           <input type="text" id="fa-source-root" name="source_root" value="{{ source_root or '' }}"
@@ -72,7 +72,7 @@
       {% elif not env %}
         <button id="fa-run-btn" class="btn-sync primary" disabled title="Select a QM environment first">Run backlog audit</button>
       {% else %}
-        <button id="fa-run-btn" class="btn-sync primary" hx-post="/fit-audit/run"
+        <button id="fa-run-btn" class="btn-sync primary" hx-post="{{ root }}/fit-audit/run"
                 hx-target="#fit-audit-digest" hx-swap="innerHTML">Run backlog audit</button>
       {% endif %}
       <span class="muted">{{ n_targets }} auditable run{{ 's' if n_targets != 1 }} · runs in the background, come back anytime</span>
@@ -89,7 +89,7 @@
     </div>
   {% else %}
     <p class="muted" style="margin:.75rem 0">No auditable runs in the workspace yet — open a data folder in
-      <a href="/datasets" hx-get="/datasets" hx-target="#table-pane" hx-sync="#table-pane:replace" hx-push-url="true">Datasets</a>.
+      <a href="{{ root }}/datasets" hx-get="{{ root }}/datasets" hx-target="#table-pane" hx-sync="#table-pane:replace" hx-push-url="true">Datasets</a>.
       Phase-1 families:
       {% for f in families.values() %}<span class="fa-v fa-v-unverifiable">{{ f.label }}</span> {% endfor %}
     </p>

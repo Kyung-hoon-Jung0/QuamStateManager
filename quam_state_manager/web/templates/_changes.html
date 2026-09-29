@@ -29,7 +29,7 @@
             <td class="col-delta">{% if c.created or c.deleted %}<span class="muted">&ndash;</span>{% else %}{{ delta_cell(c.old_value, c.new_value) }}{% endif %}</td>
             <td>
                 <button class="outline btn-sm btn-discard"
-                        hx-post="/discard" hx-target="#changes-panel"
+                        hx-post="{{ root }}/discard" hx-target="#changes-panel"
                         hx-vals='{"index": "{{ loop.index0 }}"}'>Discard</button>
             </td>
         </tr>

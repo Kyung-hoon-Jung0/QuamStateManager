@@ -135,7 +135,7 @@
               before the press -- the server discards the unit either way -#}
           {% set _fb = (fsp_bundle_gids | default({})).get(r.gid) if r.gid else none %}
           <button type="button" class="sp-x-btn btn-discard"
-                  hx-post="/discard" hx-target="#pending-tray" hx-swap="outerHTML"
+                  hx-post="{{ root }}/discard" hx-target="#pending-tray" hx-swap="outerHTML"
                   hx-vals='{"index": "{{ r.index }}", "expect_path": {{ r.path | tojson }}}'
                   data-after-request="syncPanelRefresh"
                   aria-label="Discard pending change to {{ r.path }}{% if _fb and r.path in _fb.paths %} with its full-scale-power bundle{% endif %}"
@@ -190,7 +190,7 @@
     {% if working_dirty and not mixed and _nl == 0 %}
     <button type="button" class="sp-choice sp-choice-primary btn-sync primary sync-arm"
             data-arm-label="Press again to write the staged version to live"
-            hx-post="/state/apply-to-live" hx-target="#pending-tray" hx-swap="outerHTML" hx-trigger="armed"
+            hx-post="{{ root }}/state/apply-to-live" hx-target="#pending-tray" hx-swap="outerHTML" hx-trigger="armed"
             hx-vals='{"seen_changes": "{{ _nm }}", "seen_sig": "{{ change_sig }}"}'
             data-after-request="closeReviewAndClearUndo"
             onclick="SyncPanel.arm(this, event)">
@@ -210,14 +210,14 @@
     {% if _nm > 0 %}
     <button type="button" class="sp-choice btn-sync outline sync-arm sp-discard-all"
             data-arm-label="Press again to discard {{ _nm }} edit{{ 's' if _nm != 1 }}"
-            hx-post="/discard_all" hx-target="#pending-tray" hx-swap="outerHTML" hx-trigger="armed"
+            hx-post="{{ root }}/discard_all" hx-target="#pending-tray" hx-swap="outerHTML" hx-trigger="armed"
             data-after-request="syncPanelRefresh"
             onclick="SyncPanel.arm(this, event)">
       <span class="sp-choice-label">Discard my {{ _nm }} edit{{ 's' if _nm != 1 }}</span>
       <span class="sp-choice-what">Keeps what SM last synced; the live chip is not touched.</span>
       <span class="sp-lost">Lost: your {{ _nm }} edit{{ 's' if _nm != 1 }}; Ctrl+Shift+Z brings them back one by one.</span></button>
     <button type="button" class="sp-choice btn-sync outline btn-save"
-            hx-post="/save" hx-target="#pending-tray" hx-swap="outerHTML" hx-disabled-elt="this"
+            hx-post="{{ root }}/save" hx-target="#pending-tray" hx-swap="outerHTML" hx-disabled-elt="this"
             data-after-request="syncPanelRefresh">
       <span class="sp-choice-label">Save to working state</span>
       <span class="sp-choice-what">A durable draft on disk that survives a restart. The live chip is not touched.</span>
@@ -234,12 +234,12 @@
   {% elif _archive %}
   <div class="sp-choices">
     {% if _ai and _ai.return_path %}
-    <button class="btn-sync state-review-archive-back" type="button" hx-post="/load"
+    <button class="btn-sync state-review-archive-back" type="button" hx-post="{{ root }}/load"
             hx-vals='{{ {"folder": _ai.return_path} | tojson }}' hx-target="#table-pane" hx-swap="innerHTML"
             title="Leave this read-only archive and re-open {{ _ai.return_path }}">&larr; Back to {{ _ai.return_name }}</button>
     {% endif %}
     {% if _ai and _ai.uid %}
-    <a class="btn-sync outline state-review-archive-run" role="button" href="/dataset/{{ _ai.uid }}"
+    <a class="btn-sync outline state-review-archive-run" role="button" href="{{ root }}/dataset/{{ _ai.uid }}"
        title="Open this run's detail page">Back to run{% if _ai.run_label %} {{ _ai.run_label }}{% endif %}</a>
     {% endif %}
   </div>
@@ -259,7 +259,7 @@
     <div class="sp-hist-row">
       <span>&#8595; Take live at {{ take_live_backup.at }} dropped {{ take_live_backup.n }} edit{{ 's' if take_live_backup.n != 1 }}{% if take_live_backup.snapshot %} (backup version {{ take_live_backup.snapshot }}){% endif %}.</span>
       <button type="button" class="btn-sm outline sp-bring-back"
-              hx-post="/state/take-live/restore" hx-target="#pending-tray" hx-swap="outerHTML"
+              hx-post="{{ root }}/state/take-live/restore" hx-target="#pending-tray" hx-swap="outerHTML"
               data-after-request="syncPanelRefresh"
               title="Puts those edits back as unapplied edits on top of what you see now. The live chip is not written.">&#8630; Bring back</button>
     </div>
@@ -269,7 +269,7 @@
       <span>Last apply {{ (last_apply.at or '') | replace('T', ' ') }}</span>
       <button type="button" class="btn-sm outline tray-revert-apply sync-arm"
               data-arm-label="Press again to stage the pre-apply state"
-              hx-post="/state-history/{{ last_apply.pre_ts }}/stage?from=tray"
+              hx-post="{{ root }}/state-history/{{ last_apply.pre_ts }}/stage?from=tray"
               hx-target="#status-bar" hx-swap="innerHTML" hx-trigger="{% if auto_apply %}revertconfirmed{% else %}armed{% endif %}"
               data-after-request="syncPanelRefresh"
               onclick="{% if auto_apply %}revertSessionConfirm(this){% else %}SyncPanel.arm(this, event){% endif %}"

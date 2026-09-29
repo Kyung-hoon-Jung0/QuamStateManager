@@ -14,10 +14,10 @@
 
 <nav class="chain-tabs">
     <ul>
-        <li><a href="/resonators?per_page={{ per_page }}" hx-get="/resonators?per_page={{ per_page }}" hx-target="#table-pane"
+        <li><a href="{{ root }}/resonators?per_page={{ per_page }}" hx-get="{{ root }}/resonators?per_page={{ per_page }}" hx-target="#table-pane"
                class="{% if not active_chain %}active{% endif %}">All</a></li>
         {% for ch in chains %}
-        <li><a href="/resonators?chain={{ ch }}&per_page={{ per_page }}" hx-get="/resonators?chain={{ ch }}&per_page={{ per_page }}" hx-target="#table-pane"
+        <li><a href="{{ root }}/resonators?chain={{ ch }}&per_page={{ per_page }}" hx-get="{{ root }}/resonators?chain={{ ch }}&per_page={{ per_page }}" hx-target="#table-pane"
                class="{% if active_chain == ch %}active{% endif %}">Chain {{ ch }}</a></li>
         {% endfor %}
     </ul>
@@ -42,7 +42,7 @@
     <tbody>
     {% if qubits %}
     {% for q in qubits %}
-        <tr class="clickable-row{% if not q.is_active %} row-inactive{% endif %}" data-qubit-id="{{ q.id }}" hx-get="/qubit/{{ q.id }}" hx-target="#inspector-pane" hx-swap="innerHTML" hx-indicator="#inspector-pane">
+        <tr class="clickable-row{% if not q.is_active %} row-inactive{% endif %}" data-qubit-id="{{ q.id }}" hx-get="{{ root }}/qubit/{{ q.id }}" hx-target="#inspector-pane" hx-swap="innerHTML" hx-indicator="#inspector-pane">
             <td><strong>{{ q.id }}</strong></td>
             <td>{% if q.is_active %}<span class="cell-good" aria-label="Active" title="Listed in active_qubit_names">&#10003;</span>{% else %}<span class="muted" aria-label="Inactive" title="Not in active_qubit_names">off</span>{% endif %}</td>
             <td>{{ q.readout_frequency | qty('readout_frequency') }}</td>
@@ -61,7 +61,7 @@
     </tbody>
 </table>
 
-{% set base_url = "/resonators" %}
+{% set base_url = root ~ "/resonators" %}
 {% set extra_qs = ("&chain=" ~ active_chain) if active_chain else "" %}
 {% set storage_key = "quam_resonators_per_page" %}
 {% include "_pagination.html" %}

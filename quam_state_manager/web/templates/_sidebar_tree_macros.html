@@ -71,7 +71,7 @@
    is a known bounded gap rather than a claim. #}
 {% set _leafdir = node.entries and not node.children %}
 <details class="tree-dir{% if node.is_date %} tree-date{% endif %}{% if _leafdir %} tree-leafdir{% endif %}"
-         data-tpath="{{ node.tpath }}"{% if not node.is_date %} open{% endif %}{% if _lazy %} data-lazy-group="1" hx-get="/workspace/tree/group?capped=1" hx-vals='{"root": {{ root_path | string | tojson }}, "tpath": {{ node.tpath | string | tojson }}}' hx-trigger="toggle[this.open] once" hx-target="find ul.tree-entries" hx-swap="innerHTML"{% endif %}>
+         data-tpath="{{ node.tpath }}"{% if not node.is_date %} open{% endif %}{% if _lazy %} data-lazy-group="1" hx-get="{{ root }}/workspace/tree/group?capped=1" hx-vals='{"root": {{ root_path | string | tojson }}, "tpath": {{ node.tpath | string | tojson }}}' hx-trigger="toggle[this.open] once" hx-target="find ul.tree-entries" hx-swap="innerHTML"{% endif %}>
     <summary class="tree-date-label{% if not node.is_date %} tree-dirname{% endif %}">{{ node.name }} <small class="muted">({{ node.n_total }})</small></summary>
     {% for child in node.children %}{{ dir_node(root_path, child, name_filter) }}{% endfor %}
     {% if _lazy %}
@@ -82,7 +82,7 @@
     {% if node.entries | length > _cap %}
         <li class="tree-entry tree-show-more">
             <button type="button" class="tree-show-more-btn"
-                    hx-get="/workspace/tree/group"
+                    hx-get="{{ root }}/workspace/tree/group"
                     hx-vals='{"root": {{ root_path | string | tojson }}, "tpath": {{ node.tpath | string | tojson }}, "name": {{ (name_filter or "") | string | tojson }}}'
                     hx-target="closest ul" hx-swap="innerHTML"
                     title="Load the remaining {{ node.entries | length - _cap }} older entries in this group">

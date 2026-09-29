@@ -56,7 +56,7 @@
         <span class="applied-log-reverted" title="Already reverted">reverted</span>
       {% else %}
         <button type="button" class="outline btn-sm btn-al-revert"
-                hx-post="/auto-apply/revert"
+                hx-post="{{ root }}/auto-apply/revert"
                 hx-target="#pending-tray" hx-swap="outerHTML"
                 hx-vals='{"unit_id": "{{ r.id }}"}'
                 aria-label="Revert this applied change"

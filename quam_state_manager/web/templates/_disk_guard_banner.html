@@ -40,7 +40,7 @@
                 title="Delete only the caches SM rebuilds by itself — snapshots and unapplied edits are never touched">
             Clear {{ sz(disk.reclaimable_bytes) }} of cache</button>
         {% endif %}
-        <a class="btn-sm outline" href="/disk" hx-get="/disk" hx-target="#table-pane" hx-push-url="true"
+        <a class="btn-sm outline" href="{{ root }}/disk" hx-get="{{ root }}/disk" hx-target="#table-pane" hx-push-url="true"
            title="What is using the space, and what is safe to remove">What is using it?</a>
         <button type="button" class="btn-sm outline" onclick="window.diskGuardMute && diskGuardMute()"
                 title="Stop warning until it grows past this size">Not now</button>

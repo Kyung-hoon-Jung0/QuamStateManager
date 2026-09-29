@@ -17,13 +17,13 @@
   </div>
 
   <div class="ph-tabs">
-    <button type="button" class="ph-tab" hx-get="/param-history"
+    <button type="button" class="ph-tab" hx-get="{{ root }}/param-history"
             hx-target="#param-history-root" hx-swap="outerHTML"
             hx-push-url="true">Trends</button>
     <button type="button" class="ph-tab active" aria-current="page">Changes</button>
   </div>
 
-  <form class="ph-changes-bar" hx-get="/param-history/changes"
+  <form class="ph-changes-bar" hx-get="{{ root }}/param-history/changes"
         hx-target="#param-history-root" hx-swap="outerHTML"
         hx-trigger="submit, keyup changed delay:400ms from:find input[name=prefix]">
     <span class="tree-search-icon">&#128269;</span>
@@ -43,7 +43,7 @@
         filled the detached one (measured: 0 options after any swap) #}
     <datalist id="ph-param-paths" hx-preserve="true"></datalist>
     {% if prefix %}
-    <a class="btn-sm outline" role="button" href="/param-history/changes">Clear</a>
+    <a class="btn-sm outline" role="button" href="{{ root }}/param-history/changes">Clear</a>
     {% endif %}
     <span class="muted ph-changes-stat">
       {{ '{:,}'.format(stats.rows) }} recorded changes over
@@ -75,7 +75,7 @@
         {% endif %}
         {% if g.uid %}
         <button type="button" class="btn-xs outline"
-                hx-get="/dataset/{{ g.uid }}" hx-target="#inspector-pane"
+                hx-get="{{ root }}/dataset/{{ g.uid }}" hx-target="#inspector-pane"
                 hx-swap="innerHTML" title="Open the run that made these changes">Data</button>
         {% endif %}
         <span class="muted ph-change-count">{{ '{:,}'.format(g.total) }} parameter{{ '' if g.total == 1 else 's' }}</span>
@@ -86,7 +86,7 @@
           <tr>
             <td class="ph-change-path">
               <button type="button" class="ph-path-btn"
-                      hx-get="/field/history?path={{ r.path | urlencode }}"
+                      hx-get="{{ root }}/field/history?path={{ r.path | urlencode }}"
                       hx-target="#inspector-pane" hx-swap="innerHTML"
                       title="Open this parameter's full timeline">{{ r.path }}</button>
             </td>
@@ -105,7 +105,7 @@
       {% if g.total > g.shown %}
       <div class="ph-change-rest">
         <button type="button" class="btn-xs outline"
-                hx-get="/param-history/changes?at={{ g.timestamp }}{% if prefix %}&amp;prefix={{ prefix | urlencode }}{% endif %}"
+                hx-get="{{ root }}/param-history/changes?at={{ g.timestamp }}{% if prefix %}&amp;prefix={{ prefix | urlencode }}{% endif %}"
                 hx-target="#param-history-root" hx-swap="outerHTML">
           Show all {{ '{:,}'.format(g.total) }} from this snapshot</button>
         <span class="muted">&hellip; and {{ '{:,}'.format(g.total - g.shown) }} more</span>
@@ -118,14 +118,14 @@
   {% if at_ts %}
   <div class="ph-changes-more">
     <button type="button" class="btn-sm outline"
-            hx-get="/param-history/changes{% if prefix %}?prefix={{ prefix | urlencode }}{% endif %}"
+            hx-get="{{ root }}/param-history/changes{% if prefix %}?prefix={{ prefix | urlencode }}{% endif %}"
             hx-target="#param-history-root" hx-swap="outerHTML">
       &larr; Back to all changes</button>
   </div>
   {% elif has_more %}
   <div class="ph-changes-more">
     <button type="button" class="btn-sm outline"
-            hx-get="/param-history/changes?before={{ oldest_ts }}{% if prefix %}&amp;prefix={{ prefix | urlencode }}{% endif %}"
+            hx-get="{{ root }}/param-history/changes?before={{ oldest_ts }}{% if prefix %}&amp;prefix={{ prefix | urlencode }}{% endif %}"
             hx-target="#param-history-root" hx-swap="outerHTML">
       Load older changes</button>
   </div>
@@ -151,7 +151,7 @@
         var my = ++seq;
         if (q.length < 2) { var l0 = curList(); if (l0) l0.innerHTML = ''; return; }
         timer = setTimeout(function () {
-            fetch('/param-history/param-search?q=' + encodeURIComponent(q))
+            fetch('{{ root }}/param-history/param-search?q=' + encodeURIComponent(q))
                 .then(function (r) { return r.ok ? r.json() : null; })
                 .then(function (d) {
                     var list = curList();

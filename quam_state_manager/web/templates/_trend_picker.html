@@ -3,7 +3,7 @@
 
 {% set default_props = ["f_01", "T1", "T2ramsey", "gate_fidelity_avg"] %}
 
-<form id="trend-form" hx-post="/trend/chart" hx-target="#trend-chart-area" hx-swap="innerHTML" class="compare-controls">
+<form id="trend-form" hx-post="{{ root }}/trend/chart" hx-target="#trend-chart-area" hx-swap="innerHTML" class="compare-controls">
     {% for p in paths_raw %}
     <input type="hidden" name="paths" value="{{ p }}">
     {% endfor %}

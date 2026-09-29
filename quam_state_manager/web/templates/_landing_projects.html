@@ -26,7 +26,7 @@
                 title="doctor findings for this project — see Manage / doctor">⚠ {{ n_doctor }}</span>{% endif %}
         </div>
         <div class="landing-card-actions">
-            <form method="post" action="/qualibrate/open" hx-post="/qualibrate/open"
+            <form method="post" action="{{ root }}/qualibrate/open" hx-post="{{ root }}/qualibrate/open"
                   hx-target="#landing-open-err" hx-swap="innerHTML"
                   class="landing-card-open">
                 <input type="hidden" name="project" value="{{ p.name }}">
@@ -40,7 +40,7 @@
                a read-only TOML/effective-config popup, working even when the
                state_path dangles (that is exactly when you want to look). #}
             <button type="button" class="btn-sm landing-card-config"
-                    hx-get="/qualibrate/project-config/{{ p.name | urlencode }}"
+                    hx-get="{{ root }}/qualibrate/project-config/{{ p.name | urlencode }}"
                     hx-target="#landing-config-body" hx-swap="innerHTML"
                     onclick="var b=document.getElementById('landing-config-body');if(b)b.innerHTML='<p class=muted>loading&hellip;</p>';document.getElementById('landing-config-dialog').showModal()"
                     title="View this project's config (paths, ports) — read-only">Config</button>
