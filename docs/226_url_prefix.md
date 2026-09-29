@@ -107,6 +107,7 @@ location /sm/ {
     proxy_set_header Host $http_host;
     proxy_read_timeout 3600s;  proxy_send_timeout 3600s;
     proxy_buffering off;       proxy_request_buffering off;
+    proxy_buffer_size 64k;     proxy_buffers 8 64k;   proxy_busy_buffers_size 128k;   # SM's HX-Trigger headers (§3.6)
     client_max_body_size 200m;
 }
 location = /sm { return 301 /sm/; }
@@ -150,6 +151,19 @@ handle /sm* {
 5. Both `/sm/x` and `/x` must reach SM only on loopback — the platform's
    fallback for anything outside `/sm/` is its own 404, which is exactly what
    the rig's proxies do so a leaked URL is loud.
+6. **Response-header buffer ≥ 64 KB (nginx: `proxy_buffer_size 64k;
+   proxy_buffers 8 64k; proxy_busy_buffers_size 128k;`).** SM answers many
+   htmx requests with an `HX-Trigger` header that names every path the
+   answer touched (docs/122/144: an undo names its reverted paths, capped at
+   `_HEADER_PATCH_CAP` = 150 entries; measured: 1,123 bytes for a 2-path
+   batch on the synthetic chip, and past nginx's buffer for the KRS chip's
+   4-path batch, whose gate-macro subtree restores dozens of leaves). Found in
+   the rig: the Ctrl+Z after that 4-path "Delete together" batch answered **502 "upstream sent too big
+   header while reading response header from upstream"** behind nginx's
+   default 4–8 KB header buffer, while the same undo works at root and
+   behind Caddy (whose default header limit is larger). `proxy_buffer_size`
+   governs the header buffer even with `proxy_buffering off`, and nginx's
+   config test requires the two companions to agree with it.
 
 ## 4. How it is built, by seam
 
@@ -280,18 +294,33 @@ and the same journeys at `root-control` on the same head as the control:
 | `chip_status` (Chip Status jumps, map inspector, sub-items) | S2/S3/S5 pass (every sub-item scrolls into view, the map inspector opens and closes, 30 RB panels); S1/S4 FAIL: "trends has a clickable point" | **same two FAILs at root** — on this rig no Trends point is openable since `e258f3c6` (a point names the run that WROTE its value, and that run's folder is not under a loaded Datasets folder → "not openable here"); a main-side precondition, not the proxy |
 | `pulse_gate` (Json Tree guidance link → Pulses page → Back) | 30/30 after two harness fixes (the link expectation follows the prefix; the reload is fire-and-forget — the first run hung 900 s at `Page.reload` after 13 ok); root control 30/30 | — |
 | `pair_add_gate_pulses` (pair Add-gate note → Pulses flux rows → Back → reload) | 8/8 (the note + link → the Pulses page on the pair's flux rows → Back → the pair page whole → reload) | — |
-| `ds_outside_fresh` (a run opened from outside the run list → Chip Status → Back) | «DSO» | — |
-| `pulses_delete_together` (a lab refusal's "Delete together" offer) | «PDT» | — |
-| `px_w9_probe` (landing env picker + Pulses open → Back → reload, network-audited) | «PROBE» | — |
+| `ds_outside_fresh` (a run opened from outside the run list → Chip Status → Back) | its first two checks FAIL exactly as at root ("a Trends point opens its run FRESH", "the next table switch keeps that view" — the same Trends-point precondition as `chip_status` S1), then the run exceeded the 900 s bound before its remaining checks — open: the journey's later waits behind a proxy | 10/15: the same two FAILs + three `(fixture)` checks this rig's data cannot satisfy (D: the Datasets journeys need their own rig data); `back` to Chip Status whole |
+| `pulses_delete_together` (a lab refusal's "Delete together" offer, the batch, Ctrl+Z, Apply) | **71/71** once nginx's header buffer is raised (§3.6); with the default buffer the Ctrl+Z after the 4-path batch was a 502 and 3 checks fell with it | 71/71 |
+| `px_w9_probe` (landing env picker + Pulses open → Back → Forward → reload, every request audited) | **26/26**: the picker discovers 13 envs through the proxy; a row opens its inspector and pushes `/sm/pulses?pulse=…`; Back lands on `/sm/qubits` whole, Forward brings the rows back, reload whole — 0 requests outside the mount, 0 ≥ 400, 0 JS errors over 209 requests | (its two earlier FAIL sets were the probe's own — identical at root) |
 | `lab_field_edit` (three edit surfaces = POSTs through the proxy, Apply to live) | 19/20 in every cell (§5.2) | 18/20 |
 
-Two journey defects found on the way, both harness-side: `agent_back`'s
+**One backend death, not reproduced.** The first slot-B rig's SM (up since
+19:58, eight journeys served) stopped answering between 20:35:19 (a 200 to
+`/sm/param-history/backfill/status` from the Trends page, inside
+`ds_outside_fresh`) and 20:35:43 (the first 502, nginx: `connect() failed
+(10061)` — the port was gone), with **no Python traceback in `srv_px.log`**;
+the OS recorded a WHEA `LiveKernelEvent 124` at 20:06 and a `bad_module_info`
+BEX64 application fault at 20:49 — neither attributable to the process. The
+two journeys that then ran against the 502s were discarded. On a fresh rig
+with `PYTHONFAULTHANDLER=1` the same journey, then every other, ran with the
+backend probed (`GET /sm/help`) before and after each — 200 throughout, the
+death did not recur. Recorded as an open item (§6), not as a prefix finding.
+
+Three journey defects found on the way, all harness-side: `agent_back`'s
 `Runtime.evaluate('location.reload()')` can outlive its own execution context
 and never be answered (it hung 900 s behind nginx and completed at root by
 luck) — the reload is fire-and-forget now, in `agent_back.cjs` and the probe
 (`agent_plan.cjs` still has the pattern; not in this run); and the
 `lab_field_edit` "checking badge" observations are timing-bound (the badge is
-transient), which every cell shows under load, root included.
+transient), which every cell shows under load, root included; and my own
+`px_w9_probe` opened a Pulses row with a synthetic `.click()`, which real
+Chrome does not turn into the row's htmx request (the same three FAILs at
+root) — a real mouse click now.
 
 ## 6. Open issues
 
