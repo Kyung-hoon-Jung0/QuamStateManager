@@ -25737,7 +25737,11 @@ def _unfiltered_tree_html(ws: Any) -> str:
         active = _active_path()
     except Exception:  # noqa: BLE001 -- no app/ctx: nothing is pre-opened
         active = None
-    key = (v0, active)
+    # docs/226: the markup carries the mount prefix (`{{ root }}/workspace/...`),
+    # so the prefix is part of the key -- in header-only mode (--behind-proxy
+    # without --url-prefix) the run-watch pre-render sees '' while a proxied
+    # request sees '/sm'; one must never be served the other's links.
+    key = (v0, active, _rooted(""))
     memo = _TREE_HTML_MEMO.get(ws) if ws else None
     if memo and memo[0] == key:
         return memo[1]
@@ -25767,7 +25771,7 @@ def workspace_tree():
         # Small LRU keyed on (workspace version, query); any tree change
         # invalidates by key.
         fmemo = _FILTERED_TREE_MEMO.setdefault(ws, {})
-        fkey = (ws.version, name_filter)
+        fkey = (ws.version, name_filter, _rooted(""))   # docs/226: prefixed markup
         hit = fmemo.get(fkey)
         if hit is not None:
             fmemo.pop(fkey); fmemo[fkey] = hit    # LRU touch
@@ -32921,7 +32925,8 @@ def trends_param_diff():
 
     try:
         blob = _trend_index.params_blob(selection, experiment, qubit, window, render,
-                                        forbid_held=_trends_forbidden_locks())
+                                        forbid_held=_trends_forbidden_locks(),
+                                        render_key=_rooted(""))   # docs/226: rooted links inside
     except _ramcache.Warming:
         return render_template("_trends_params_warming.html",
                                url=_rooted("/trends/param-diff?" + _trends_query(

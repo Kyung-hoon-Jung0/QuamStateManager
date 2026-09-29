@@ -113,9 +113,25 @@ def code_lines(text: str):
         yield i, s
 
 
-def _normalised(lines: list[str], idx: int, receiver: str, text: str) -> bool:
+def _strip_helpers(lines: list[str]) -> frozenset[str]:
+    """Names of the file's own helpers whose body calls ``SM.path`` -- app.js's
+    ``_smPath(p)`` alias is one (C1, docs/226 §4.4). A value passed through
+    such a helper on the compared line is normalised, exactly as a direct
+    ``window.SM.path(..)`` would be."""
+    names = set()
+    for j, ln in enumerate(lines):
+        m = re.match(r"\s*function\s+([A-Za-z_$][\w$]*)\s*\(", ln)
+        if m and any("SM.path(" in b for b in lines[j:j + 6]):
+            names.add(m.group(1))
+    return frozenset(names)
+
+
+def _normalised(lines: list[str], idx: int, receiver: str, text: str,
+                helpers: frozenset[str] = frozenset()) -> bool:
     """Is `receiver` (on 0-based line idx) an SM.path-normalised value?"""
     if "SM.path(" in lines[idx]:
+        return True
+    if any(h + "(" in lines[idx] for h in helpers):
         return True
     if receiver.endswith("()"):                   # a helper: its body strips the prefix
         name = receiver[:-2]
@@ -141,6 +157,7 @@ def _normalised(lines: list[str], idx: int, receiver: str, text: str) -> bool:
 
 def scan(name: str, text: str) -> list[Hit]:
     raw = text.splitlines()
+    helpers = _strip_helpers(raw)
     hits: list[Hit] = []
     for i, s in code_lines(text):
         for rule, rx in SINK_RULES.items():
@@ -149,11 +166,11 @@ def scan(name: str, text: str) -> list[Hit]:
         for rule, rx in COMPARE_RULES.items():
             if not re.search(rx, s):
                 continue
-            if "SM.path(" in s:
+            if "SM.path(" in s or any(h + "(" in s for h in helpers):
                 continue
             m = _RECEIVER.get(rule)
             rec = m.search(s) if m else None
-            if rec and _normalised(raw, i - 1, rec.group(1), s):
+            if rec and _normalised(raw, i - 1, rec.group(1), s, helpers):
                 continue
             hits.append(Hit(name, i, rule, s))
     return hits

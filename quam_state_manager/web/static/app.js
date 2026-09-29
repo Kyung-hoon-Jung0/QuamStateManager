@@ -8,12 +8,10 @@
  * prefixed by sm-root.js's wrappers; only what those cannot reach goes
  * through here: location reads and navigations, selectors, attributes. */
 function _smUrl(p) {
-    var s = window.SM;
-    return (s && typeof s.url === 'function') ? s.url(p) : p;
+    return (window.SM && typeof window.SM.url === 'function') ? window.SM.url(p) : p;
 }
 function _smPath(p) {
-    var s = window.SM;
-    return (s && typeof s.path === 'function') ? s.path(p) : p;
+    return (window.SM && typeof window.SM.path === 'function') ? window.SM.path(p) : p;
 }
 /* ================================================================
  * UI_CONFIG — Design tokens for JavaScript-only consumers

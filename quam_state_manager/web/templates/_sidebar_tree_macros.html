@@ -38,7 +38,7 @@
            the open chip's working copy; read-only archive open is the
            secondary button / the no-chip fallback). #}
         <span class="tree-entry-click"
-              {% if entry.run_id is none %}hx-post="/workspace/select" hx-target="#table-pane"
+              {% if entry.run_id is none %}hx-post="{{ root }}/workspace/select" hx-target="#table-pane"
               hx-vals='{"path": {{ entry.quam_state_path | string | tojson }}}'{% endif %}
               data-folder-path="{{ entry.folder_path | string }}"
               {% if entry.run_id is not none %}data-run-id="{{ entry.run_id }}" data-uid="{{ ds_entry_uid(entry) }}"

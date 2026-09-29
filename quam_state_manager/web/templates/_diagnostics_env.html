@@ -3,7 +3,7 @@
    through the normal diagnostics list (domain "Environment match"); this card
    carries only the status line + actions. Self-polls while a probe runs. #}
 <div id="diag-env-card" class="diag-env-card"
-     {% if env_card.probing %}hx-get="/diagnostics/env-card?poll=1" hx-trigger="every 2s"
+     {% if env_card.probing %}hx-get="{{ root }}/diagnostics/env-card?poll=1" hx-trigger="every 2s"
      hx-swap="outerHTML"{% endif %}>
   <div class="diag-env-head">
     <strong>Environment match</strong>

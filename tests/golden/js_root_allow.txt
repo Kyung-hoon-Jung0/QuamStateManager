@@ -13,3 +13,7 @@ app.js:^\[/\^\\/[a-z]
 # app.js _captureSoft / _reapplySoft: `route` is a parameter; every caller passes
 # _routeOf(..) or _cur, both prefix-stripped with SM.path (spec 4.4, C1).
 app.js:\broute === '/(explorer|pulses)'
+
+# app.js Plotly fallback: spec 4.4 mandates `_smUrl('/static/plotly.min.js')` --
+# the literal IS routed through SM.url; the static-literal sink rule cannot see that.
+app.js:_smUrl\('/static/plotly\.min\.js'\)

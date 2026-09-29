@@ -151,7 +151,7 @@ class TestServerPreset:
         html = _text("_datasets.html")
         # QA F10 (review): the base is /collections on Collections -- the
         # rendered hrefs are pinned in test_collections_counts.py
-        assert "{% set _tab_base = '/collections' if is_collections else '/datasets' %}" in html
+        assert "{% set _tab_base = root ~ ('/collections' if is_collections else '/datasets') %}" in html
         assert '{{ _tab_base }}?date={{ d }}{% if search %}&q={{ search | urlencode }}{% endif %}' in html
         assert '{{ _tab_base }}{% if search %}?q={{ search | urlencode }}{% endif %}' in html
 

@@ -37,7 +37,10 @@ _ATTR_NAMES = (
 # (check name, compiled regex) -- each fires on a REMAINING violation, i.e.
 # the mechanical rewrite (or a later edit) failed to route it through `root`.
 _CHECKS: list[tuple[str, re.Pattern]] = [
-    ("a_bare_attr", re.compile(r'\s(?:%s)=(["\'])(/(?!/))' % _ATTR_NAMES)),
+    # `(?:\s|%\})`: an attribute that directly follows a Jinja tag
+    # (`{% if x %}hx-get="/..."`) is one too -- _diagnostics_env.html:6 hid
+    # behind the whitespace-only form (D's integration note, docs/226).
+    ("a_bare_attr", re.compile(r'(?:\s|%%\})(?:%s)=(["\'])(/(?!/))' % _ATTR_NAMES)),
     ("b_fetch", re.compile(r"fetch\(\s*['\"](/(?!/))")),
     ("b_htmx_ajax", re.compile(r"htmx\.ajax\([^,]+,\s*['\"](/(?!/))")),
     ("b_push_state", re.compile(r"pushState\([^,]+,[^,]+,\s*['\"](/(?!/))")),
@@ -45,7 +48,13 @@ _CHECKS: list[tuple[str, re.Pattern]] = [
     ("b_location", re.compile(r"location\.(?:href\s*=|assign\(|replace\()\s*['\"](/(?!/))")),
     ("b_window_open", re.compile(r"window\.open\(\s*['\"](/(?!/))")),
     ("c_json_field", re.compile(r'"(?:url|href|path|endpoint|buildEndpoint|action|redirect)"\s*:\s*"(/(?!/))')),
-    ("d_set_literal", re.compile(r'\{%-?\s*set\s+\w+\s*=\s*"(/(?!/))')),
+    # both quote styles, and a conditional expression whose branches are
+    # route literals (`{% set x = '/a' if c else '/b' %}` -- _datasets.html:262
+    # hid behind the double-quote-only form).
+    ("d_set_literal", re.compile(r'\{%-?\s*set\s+\w+\s*=\s*["\'](/(?!/))')),
+    # A `root ~ (...)` value is already rooted; a bare `'/'` is a path
+    # separator, not a route (route literals start `/[A-Za-z]`).
+    ("d_set_conditional", re.compile(r'\{%-?\s*set\s+\w+\s*=(?!\s*root\s*~)[^%]*?\bif\b[^%]*?\belse\s+["\'](/[A-Za-z])')),
     ("d_iframe_src", re.compile(r'<iframe[^>]*\ssrc="(/(?!/))')),
     ("f_double_root", re.compile(r"\{\{\s*root\s*\}\}\{\{")),
 ]

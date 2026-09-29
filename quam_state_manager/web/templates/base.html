@@ -2,7 +2,7 @@
 <!DOCTYPE html>
 <html lang="en" data-theme="dark" data-root="{{ root }}">
 <head>
-    {# sm-root.js MUST be the first script of every full document: it defines
+    {#- sm-root.js MUST be the first script of every full document: it defines
        window.SM before any other first-party script (including the theme
        boot below and htmx) can run. Identity at root (empty data-root). #}
     <script src="{{ asset_url('sm-root.js') }}"></script>
@@ -1786,7 +1786,7 @@
         var CHIP_PAGES = ["/topology", "/explorer", "/qubits", "/pairs", "/instrument",
                           "/resonators", "/flux", "/couplers"];
         function onChipPage() {
-            var p = location.pathname;
+            var p = window.SM.path(location.pathname);
             return CHIP_PAGES.some(function (c) { return p === c || p.indexOf(c + "/") === 0; });
         }
         function apply(state) {

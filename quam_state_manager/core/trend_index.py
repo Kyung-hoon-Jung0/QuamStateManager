@@ -628,14 +628,18 @@ def param_diff_data(parts: Sequence[tuple[str, ExperimentTrend]], qubit: str | N
 
 def params_blob(selection: Selection, experiment: str, qubit: str | None, window: str,
                 render: Callable[[dict], str], *,
-                forbid_held: Iterable[Any] = ()) -> ParamsBlob:
+                forbid_held: Iterable[Any] = (), render_key: Any = "") -> ParamsBlob:
     """The rendered Parameter Differences fragment for the current state.
-    ``render(data) -> html`` is the route's template call."""
+    ``render(data) -> html`` is the route's template call. ``render_key`` names
+    whatever the rendered HTML depends on BESIDES the data -- the route passes
+    the URL mount prefix (docs/226), so a fragment rendered for one prefix is
+    never served under another. ``""`` (the default) leaves the slot as before."""
     window = "all" if window == "all" else str(PARAM_WINDOW)
     forbid = _locks(selection, forbid_held)
     gens = [s.exp_gen.get(experiment, 0) for _fk, s in selection]
     trunc0 = [bool(getattr(s, "scan_truncated", False)) for _fk, s in selection]
-    slot = _slot(selection, experiment, qubit, window=window)
+    slot = (_slot(selection, experiment, qubit, window=window, render_key=render_key)
+            if render_key else _slot(selection, experiment, qubit, window=window))
 
     def compute() -> Keyed:
         parts, trunc = _parts(selection, experiment, forbid)

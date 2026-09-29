@@ -11,7 +11,7 @@
       class="visually-hidden">{{ snap.done }} of {{ snap.total }} audited — {{ snap.status }}</span>
 
 <div class="fa-digest"
-     {% if snap.status == 'running' %}hx-get="/fit-audit/status" hx-trigger="load delay:1200ms"
+     {% if snap.status == 'running' %}hx-get="{{ root }}/fit-audit/status" hx-trigger="load delay:1200ms"
        hx-target="#fit-audit-digest" hx-swap="innerHTML"{% endif %}>
 
   {% if snap.status == 'error' %}

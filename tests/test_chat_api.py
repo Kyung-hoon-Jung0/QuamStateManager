@@ -22,6 +22,7 @@ from quam_state_manager.core import agent_backend as ab
 from quam_state_manager.core import agent_session
 from quam_state_manager.web import chat_api
 from quam_state_manager.web.app import create_app
+from tests._prefix import PREFIX
 
 ROOT = Path(__file__).resolve().parent.parent
 FAKE = [sys.executable, str(ROOT / "tests" / "fake_agent_cli.py")]
@@ -412,7 +413,8 @@ class TestAsk:
         c.post("/api/agent/chat/start", json={"prompt": "x"})
         cfg = json.loads((inst / "agent_mcp" / f"{_name(c)}-claude.json").read_text(encoding="utf-8"))
         assert "SM_MCP_MODE" not in cfg["mcpServers"]["sm"]["env"]
-        assert cfg["mcpServers"]["sm"]["env"]["SM_URL"] == "http://localhost"
+        # docs/226: the spawned CLI is told the mount prefix too
+        assert cfg["mcpServers"]["sm"]["env"]["SM_URL"] == "http://localhost" + PREFIX
         assert cfg["mcpServers"]["sm"]["args"] == ["-m", "quam_state_manager.mcp"]
 
     def test_the_question_carries_the_ask_rules_and_the_driver_the_driving_rules(self, c, app):
