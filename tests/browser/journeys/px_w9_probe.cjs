@@ -49,7 +49,7 @@ function audit(p, mark, label) {
     audit(p, mark, 'landing picker');
     await p.ev(`(function(){ var c=document.querySelector('[data-env-close]'); if(c) c.click(); return 1; })()`);
     const mark2 = p.events.length;
-    await p.ev('location.reload()'); await sleep(1500);
+    await p.ev('setTimeout(function () { location.reload(); }, 0); 1'); await sleep(1500);   // fire-and-forget (docs/226)
     const again = await waitFor(p, `document.readyState==='complete' && document.querySelectorAll('.landing-card-env[data-project]').length ? 1 : 0`, 40000);
     check(!!again, 'landing: reload comes back whole');
     audit(p, mark2, 'landing reload');
@@ -76,7 +76,7 @@ function audit(p, mark, label) {
     check(!!backRows && typeof url2 === 'string' && url2.indexOf((P || '') + '/pulses') === 0, 'pulses: Back keeps the page under the mount with its rows', { rows: backRows, url: url2 });
     audit(p, mark2, 'pulses back');
     const mark3 = p.events.length;
-    await p.ev('location.reload()'); await sleep(1500);
+    await p.ev('setTimeout(function () { location.reload(); }, 0); 1'); await sleep(1500);   // fire-and-forget (docs/226)
     const rel = await waitFor(p, `document.readyState==='complete' && document.querySelectorAll('tr[data-pulse-path]').length ? JSON.stringify({rows: document.querySelectorAll('tr[data-pulse-path]').length, htmx: !!window.htmx, sidebar: !!document.querySelector('.sidebar-nav')}) : 0`, 60000);
     check(!!rel, 'pulses: reload comes back whole', rel && JSON.parse(rel));
     audit(p, mark3, 'pulses reload');

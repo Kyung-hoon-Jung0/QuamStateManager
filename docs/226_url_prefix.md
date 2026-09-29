@@ -1,7 +1,8 @@
 # docs/226 — Serving SM under a URL prefix, behind a reverse proxy
 
 2026-09-29, branch `feat/url-prefix` (base `91c8aae`, then `origin/main`
-`883bb87a` merged in), worktree `D:\work\statemanager-proxy`. **Not merged to
+`883bb87a` and `e258f3c6` merged in; head `fdb14b51`), worktree
+`D:\work\statemanager-proxy`. **Not merged to
 main; never pushed.** Asked for by a colleague (Quarium Lab) who mounts SM on a
 platform that proxies it under a path such as `https://lab.example/sm/`; their
 report read v0.9.8, this lands on 1.0.x. Roles: A (server + CLI, `px/a`),
@@ -214,14 +215,15 @@ handle /sm* {
 
 ## 5. What was measured
 
-### 5.1 The suite in both modes (head `6e355ac7`, three size-balanced shards each, `cqt`)
+### 5.1 The suite in both modes (head `fdb14b51`, three size-balanced shards each, `cqt`)
 
 | mode | passed | failed | skipped | failures classified |
 |---|---|---|---|---|
-| root | «ROOT_PASSED» | «ROOT_FAILED» | «ROOT_SKIPPED» | «ROOT_CLASS» |
-| `SM_TEST_URL_PREFIX=/sm` | «SM_PASSED» | «SM_FAILED» | «SM_SKIPPED» | «SM_CLASS» |
+| root | 12,094 | 7 | 255 | all 7 pass alone on HEAD and on the `e258f3c6` base (two live builds sharing the env, `test_cr_live_env`, `test_qdac_lf_combined`, `test_script_emitter_live`, `test_generate_config_fixes`; the scanner parallel-speedup and store-cache debounce timing bounds; the sidebar-filter race B and D recorded) — 0 deterministic; the run shared the CPU with the user's own SM session |
+| `SM_TEST_URL_PREFIX=/sm` | 12,098 | 6 | 252 | 4 pass alone (the scanner bound, a live build, `liveedit_big_grid`'s frame pin, and a landing pin that was root-hardcoded — converted to `P()`); **2 were real** and `/sm`-only: `test_pulses_virtual` caught the virtual Pulses rows carrying un-rooted links (RowMemo renders `_pulse_row.html` through `jinja_env.get_template().render()`, which runs no context processor) — fixed by passing `root=` at both direct renders and folding the root into the memo signature, pinned by a new server lint. After the fix: 0 deterministic |
 
-Root byte-identity golden vs a detached `883bb87a` checkout: **6 passed**
+Root byte-identity golden vs a detached `e258f3c6` checkout (and `883bb87a`
+before the last merge): **6 passed**
 (every render identical after the three declared deltas + the documented
 normalisers; the only new normaliser is `/pulses/vids`' per-process boot
 token). Rendered-output leak lint under `/sm`: «LEAK». Template lint: 0 hits,
@@ -236,7 +238,7 @@ Alone on the same machine `chip_jump` and `autosync_merge` pass in both modes
 (the two C1 and D had already recorded as load flakes); `liveedit_big_grid`
 «LBG».
 
-### 5.2 Real proxies (`run_matrix.sh` → `run_matrix2.sh`, KRS 5Q chip copy, head `6e355ac7`)
+### 5.2 Real proxies (`run_matrix.sh` → `run_matrix2.sh`, KRS 5Q chip copy, heads `6e355ac7` / `fdb14b51`)
 
 **A rig defect found on the way, in D's `run_matrix.sh`** (fixed as
 `run_matrix2.sh`, the original left as evidence): each cell `eval`s the
@@ -258,10 +260,10 @@ after ~25.1–25.3 s) all PASS unless stated:
 | cell | SM mode | sweep (34 sidebar pages: open → reload → intact) | `lab_field_edit` (POSTs through the proxy) |
 |---|---|---|---|
 | `caddy-nostrip-cfg` | `--url-prefix /sm` | 34/34, 0 leaks, 0 ≥400, 0 JS errors, 0 sidebar hrefs outside; crawl: 2 NO-WAY-BACK — the "Edit state.json / wiring.json" badges, the same two D measured at root (a same-path hx swap the crawler cannot classify as a way back; a direct probe shows identical behaviour at root and `/sm`) | 19/20 — the transient "checking" badge missed under load (D: same, 20/20 on re-run) |
-| `nginx-strip-cfg` | `--url-prefix /sm` | «NSC_FULL» | 19/20 (badge) |
-| `nginx-strip-hdr` | `--behind-proxy` (header-only, verified from the log) | «NSH_FULL» | 19/20 (badge) |
-| `caddy-strip-hdr-hostrewrite` | `--behind-proxy`, Host rewritten + `X-Forwarded-Host` | «CSH_FULL» | «CSH_LAB» |
-| `root-control` | none | «RC_FULL» | «RC_LAB» |
+| `nginx-strip-cfg` | `--url-prefix /sm` | 34/34, 0 leaks, 0 ≥400, 0 JS errors, 0 sidebar hrefs outside; crawl: the same 2 NO-WAY-BACK records as root | 19/20 (badge) |
+| `nginx-strip-hdr` | `--behind-proxy` (header-only, verified from the log) | 34/34, 0 leaks, 0 ≥400, 0 JS errors, 0 sidebar hrefs outside; crawl: the same 2 NO-WAY-BACK records as root; mode verified `url_prefix='' behind_proxy=True` | 19/20 (badge) |
+| `caddy-strip-hdr-hostrewrite` | `--behind-proxy`, Host rewritten + `X-Forwarded-Host` | 34/34, 0 leaks, 0 ≥400, 0 JS errors, 0 sidebar hrefs outside; crawl: the same 2 NO-WAY-BACK records as root; mode verified `url_prefix='' behind_proxy=True` | 19/20 (badge); the CSRF POST passes via `X-Forwarded-Host`; mode verified `url_prefix='' behind_proxy=True` |
+| `root-control` | none | 34/34, 0 failed, 0 ≥400, 0 JS errors (no prefix: nothing to leak); crawl: 2 NO-WAY-BACK — the baseline the proxy cells equal | 18/20 (the two badge observations, grid + tree); console clean; mode verified `url_prefix=''` — the contaminated run had failed its console check on `/sm/pair/q2-3/edit` |
 
 ### 5.3 Real-Chrome journeys behind nginx `/sm/`
 

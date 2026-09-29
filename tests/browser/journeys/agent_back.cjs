@@ -44,7 +44,9 @@ async function clickSel(p, sel) {
   await p.ev(`document.dispatchEvent(new CustomEvent('sm:agent-changed', {detail: {agent_seq: -99}}))`);
   await sleep(1500);
   log('wake polls', await p.ev('window.__polls'));
-  await p.ev('location.reload()'); await sleep(3000);
+  // fire-and-forget: a Runtime.evaluate of location.reload() can outlive its own
+  // execution context and never be answered (hung 900 s behind nginx, docs/226)
+  await p.ev('setTimeout(function () { location.reload(); }, 0); 1'); await sleep(3000);
   log('reload', await p.ev(PROBE));
   const e = p.errors(); if (e.length) console.log('ERRORS', e.join(' ## '));
   await p.close(); process.exit(0);
