@@ -16515,6 +16515,10 @@ def _pulse_vt_sig(row: dict) -> tuple:
         if isinstance(v, (list, tuple)):
             v = tuple((type(x).__name__, x) for x in v)
         out.append((k, type(v).__name__, v))
+    # docs/226: the text carries the mount prefix (`{{ root }}` in every row
+    # link), so a row rendered for one root is never served under another
+    # (header-only mode renders differ per request).
+    out.append(("__root__", "str", _rooted("")))
     return tuple(out)
 
 
@@ -16523,8 +16527,11 @@ def _pulse_vt_render(row: dict) -> tuple[str, str]:
     with the thumbnail left as a sized placeholder. A pure function of the row
     dict -- the template reads nothing else -- which is what lets
     :class:`RowMemo` carry it across rebuilds by content equality."""
+    # docs/226: a direct Jinja render sees no Flask context processor, so the
+    # template's `{{ root }}` would print '' -- the mount prefix is passed
+    # explicitly (and is part of the memo signature below).
     html = current_app.jinja_env.get_template("_pulse_row.html").render(
-        r=row, lazy_spark=True).strip()
+        r=row, lazy_spark=True, root=_rooted("")).strip()
     ver = hashlib.blake2b(html.encode("utf-8"), digest_size=8).hexdigest()
     return html, ver
 
@@ -16703,7 +16710,7 @@ def pulses_sparks():
     tmpl = current_app.jinja_env.get_template("_pulse_row.html")
     cells = {}
     for p, r in zip(want, rows):
-        cells[p] = [_pulse_vt_entry(by[p])[1], tmpl.render(r=r).strip()]
+        cells[p] = [_pulse_vt_entry(by[p])[1], tmpl.render(r=r, root=_rooted("")).strip()]
     # `gone`: asked for, not a pulse any more -- the client re-lists instead
     # of asking again (a path it keeps on screen would otherwise loop)
     return jsonify(ok=True, stamp=stamp, rows=cells, warming=unknown, gone=gone)

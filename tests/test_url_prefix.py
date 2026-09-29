@@ -590,3 +590,32 @@ def test_desktop_start_server_stamps_the_bound_port():
     fake = SimpleNamespace(config={}, run=MagicMock())
     _start_server(fake, 5331).join(timeout=5)
     assert fake.config["SM_BIND_PORT"] == 5331
+
+
+def test_a_direct_jinja_render_of_a_root_reading_template_passes_root():
+    """docs/226: `jinja_env.get_template(name).render(...)` runs NO Flask context
+    processor, so a template that reads `root` prints '' unless the call passes
+    `root=` itself. Found by the /sm suite: the virtual Pulses rows (RowMemo,
+    `/pulses/vrows`) carried un-rooted links while `/pulse/row` carried rooted
+    ones. Every such render site must name `root=` within its statement."""
+    import re
+    from pathlib import Path
+    web = Path(__file__).resolve().parent.parent / "quam_state_manager" / "web"
+    tdir = web / "templates"
+    bad = []
+    for py in sorted(web.glob("*.py")):
+        text = py.read_text(encoding="utf-8")
+        for m in re.finditer(r'get_template\("([^"]+)"\)((?:.|\n){0,400}?)(?=\n\S|\Z)', text):
+            name, tail = m.group(1), m.group(2)
+            tpl = tdir / name
+            if not tpl.exists():
+                continue
+            reads_root = re.search(r"\{\{\s*root\b|\broot\s*~", tpl.read_text(encoding="utf-8")) is not None
+            if not reads_root:
+                continue
+            # the render may be on this statement or on a later `tmpl.render(` in the tail
+            renders = re.findall(r"\.render\((?:[^()]|\([^()]*\))*\)", tail)
+            for call in renders:
+                if "root=" not in call:
+                    bad.append(f"{py.name}: get_template({name!r}) ... {call[:60]}")
+    assert not bad, "direct Jinja renders of a root-reading template without root= (docs/226):\n" + "\n".join(bad)
