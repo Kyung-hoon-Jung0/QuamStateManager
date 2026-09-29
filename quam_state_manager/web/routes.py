@@ -1796,6 +1796,7 @@ def _activate_quam(folder_path: str | Path, *, origin: str = "live") -> dict:
         except Exception:  # noqa: BLE001 — a hint never blocks activation
             pass
         _acquire_project_scope(current)
+        _select_scope_env(current)          # w9/labwarm
         # docs/20 v2: re-evaluate the first-open chip-name banner on every
         # activation (origin can flip live→archive; a staged name dismisses),
         # and adopt the chip's declared data folder(s) as workspace roots.
@@ -1816,6 +1817,7 @@ def _activate_quam(folder_path: str | Path, *, origin: str = "live") -> dict:
         # answers "already-fresh" and starts nothing.
         _maybe_warm_generated_config(current, current_app.instance_path)
         _prewarm_search_index(current)
+        _maybe_prewarm_lab_worker(current, current_app.instance_path)   # w9/labwarm
         return current
 
     # Slow path. Serialise builds for THIS folder so two threads don't
@@ -1874,6 +1876,7 @@ def _activate_quam(folder_path: str | Path, *, origin: str = "live") -> dict:
         # chip without its memo); every activation path converges on the
         # reverse index, so a lost memo self-heals.
         _acquire_project_scope(ctx)
+        _select_scope_env(ctx)              # w9/labwarm
         _maybe_identity_confirm(ctx)
         _maybe_chip_name_prompt(ctx)
         _adopt_extras_data_folders(ctx)
@@ -1917,6 +1920,7 @@ def _activate_quam(folder_path: str | Path, *, origin: str = "live") -> dict:
         # chip actually having one: every other chip pays nothing.
         _maybe_warm_generated_config(ctx, current_app.instance_path)
         _prewarm_search_index(ctx)
+        _maybe_prewarm_lab_worker(ctx, current_app.instance_path)   # w9/labwarm
         return ctx
 
 
@@ -2130,6 +2134,103 @@ def _maybe_warm_generated_config(ctx, inst) -> None:
             logger.debug("config warm decision failed", exc_info=True)
 
     threading.Thread(target=_decide, daemon=True).start()
+
+
+#: w9/labwarm: the pre-warm's in-process step (the class map, a store-lock
+#: walk) waits at most this long for a quiet server, then goes: what follows
+#: is a SUBPROCESS -- no GIL, no lock -- and every second it waits is a second
+#: the first check waits (measured on krs5: the chip-open page loads kept the
+#: server "busy" ~14 s under load, and a +15 s check found no worker yet).
+_LAB_PREWARM_QUIET_MAX_S = 3.0
+
+
+def _lab_prewarm_wait(stop) -> None:
+    """Block until no foreground request is in flight (``activity.busy``,
+    the one yield-to-foreground rule) and no live write is open
+    (``bg_gate``) -- or *stop()*, or the cap."""
+    deadline = time.monotonic() + _LAB_PREWARM_QUIET_MAX_S
+    while time.monotonic() < deadline:
+        if stop():
+            return
+        _bg_gate.wait_quiet(max_wait=1.0)
+        if not _activity.busy() and not _bg_gate.busy():
+            return
+        time.sleep(0.05)
+
+
+def _lab_prewarm_classes(store) -> list[str]:
+    """The classes a lab check on this chip would import -- empty when the
+    check would ask nothing (no LAB pulse class, no LAB gate). The same map
+    every edit door consults (``lab_watch.watch_for``, cached by structure),
+    plus the chip's root class, which the gate check loads the chip with."""
+    from quam_state_manager.core import lab_watch
+    from quam_state_manager.core.pointer_path import _walk
+    watch = lab_watch.watch_for(store)
+    if not watch or not (watch.lab_ops or watch.macros):
+        return []
+    out: set[str] = set()
+    with store._lock:
+        merged = store.merged
+        for op in watch.lab_ops:
+            ok, body = _walk(merged, op.split("."))
+            c = body.get("__class__") if ok and isinstance(body, dict) else None
+            if isinstance(c, str) and c:
+                out.add(c)
+        for rec in watch.macros.values():
+            c = (rec or {}).get("qclass")
+            if isinstance(c, str) and c:
+                out.add(c)
+        root = merged.get("__class__")
+        if isinstance(root, str) and "." in root:
+            out.add(root)
+    return sorted(out)
+
+
+def _maybe_prewarm_lab_worker(ctx, inst, *, reason: str = "chip-open") -> None:
+    """w9/labwarm: start the lab-code worker for the open chip, off the
+    request path -- only when the chip carries a lab class the pulse/gate
+    check would ask AND an env is selected. Everything (the env read, the
+    class map, the spawn) runs on a daemon thread after the server is quiet;
+    the request pays for starting a thread. A read-only archive never writes,
+    so it is never checked and never pre-warmed."""
+    store = (ctx or {}).get("store")
+    if store is None or not ctx.get("path"):
+        return
+    if (ctx.get("origin") or "live") != "live":
+        return
+    app = current_app._get_current_object()
+    # the house rule for background warms (see _maybe_warm_generated_config):
+    # the suite does not spawn subprocesses unless a pin asks for it
+    if app.config.get("TESTING") and not app.config.get("SM_LAB_PREWARM_IN_TESTS"):
+        return
+    starter = app.config.get("SM_LAB_PREWARM_STARTER")   # tests: record, never spawn
+
+    def _still_active() -> bool:
+        reg = app.config.get("contexts") or {}
+        return reg.get(app.config.get("active_context")) is ctx
+
+    def _decide():
+        from quam_state_manager.core import lab_waveform
+        try:
+            _lab_prewarm_wait(lambda: not _still_active())
+            if not _still_active():
+                return
+            python_path = config_generator.get_selected_env(inst)
+            if not python_path or not Path(python_path).is_file():
+                return
+            classes = _lab_prewarm_classes(store)
+            if not classes:
+                return
+            if starter is not None:
+                starter(python_path, classes, reason)
+                return
+            # no second wait: an env switch meanwhile supersedes it
+            # (retire_except), and the spawn itself holds nothing of ours
+            lab_waveform.prewarm(python_path, classes, start_thread=False)
+        except Exception:  # noqa: BLE001 -- a warm-up never breaks anything
+            logger.debug("lab worker pre-warm decision failed", exc_info=True)
+
+    threading.Thread(target=_decide, daemon=True, name="lab-prewarm-decide").start()
 
 
 def _attach_type_policy(ctx, inst=None) -> None:
@@ -3495,6 +3596,16 @@ def _rooted(path: str) -> str:
     paths; never apply it to a ``url_for`` result (that is already rooted)."""
     from quam_state_manager.web.app import url_root
     return url_root() + path
+
+
+def _pulse_gate_payload(known):
+    """``core.pulse_structure.tree_payload`` with its ONE URL rooted (docs/226):
+    the Json Tree builds its "Pulses page" link from ``goto``, so the payload a
+    route ships carries the mount prefix; core stays request-free."""
+    from quam_state_manager.core import pulse_structure as _ps
+    pl = _ps.tree_payload(known)
+    pl["goto"] = _rooted(pl["goto"])
+    return pl
 
 
 def _is_htmx() -> bool:
@@ -5434,11 +5545,86 @@ def _home_landing(config_exists, session):
 def landing_projects():
     """The landing's lazy project-cards fragment (docs/63) — the only place
     the landing pays the listing + doctor cost."""
+    listing = _qualibrate_listing()
     return render_template(
         "_landing_projects.html",
-        listing=_qualibrate_listing(),
+        listing=listing,
         last_project=_load_session().get("last_project"),
+        env_views=_project_env_views([p["name"] for p in listing.get("projects") or []]),
     )
+
+
+def _project_env_views(names) -> dict:
+    """``{project: project_env.view(...)}`` -- what each card's env row says.
+    Reads the memory file and stats each env: no discovery, no probe."""
+    from quam_state_manager.core import project_env
+    inst = current_app.instance_path
+    try:
+        selected = config_generator.get_selected_env(inst)
+    except Exception:  # noqa: BLE001
+        selected = None
+    out = {}
+    for n in names:
+        v = project_env.view(inst, n, selected)
+        # a stable DOM id per project (a name may hold any character): the
+        # rows a sync changes are swapped by it, out of band
+        v["dom_id"] = "lenv-" + hashlib.sha1(n.encode("utf-8")).hexdigest()[:12]
+        out[n] = v
+    return out
+
+
+@bp.route("/qualibrate/project-env", methods=["POST"])
+def qualibrate_project_env():
+    """Sync a project with an env (w9/labwarm): the user CONFIRMED the
+    suggested env (``how=confirmed``) or picked another one (``changed``).
+    Remembered per project (``core/project_env``); when that project is the
+    one open in SM, the env also becomes THE selected env right away (the
+    old env's lab worker retired, the open chip's started). Answers the
+    card's env row, plus the sidebar badge out of band."""
+    from quam_state_manager.core import project_env
+    name = (request.form.get("project") or "").strip()
+    raw = _unquote_path(request.form.get("python"))
+    how = "changed" if request.form.get("how") == "changed" else "confirmed"
+    if not name:
+        return render_template("_status.html", message="No project named.",
+                               level="error"), 400
+    names = [p["name"] for p in _qualibrate_listing().get("projects") or []]
+    if name not in names:
+        return render_template("_status.html",
+                               message=f"Unknown qualibrate project: {name!r}",
+                               level="error"), 404
+    python_path = config_generator.resolve_python_interpreter(raw) if raw else None
+    if not python_path:
+        return render_template(
+            "_status.html", level="error",
+            message=(f"No Python interpreter at: {raw or '(empty)'}. Point at the "
+                     "interpreter file or a venv folder.")), 400
+    inst = current_app.instance_path
+    project_env.remember(inst, name, python_path, how)
+    ctx = _active_ctx()
+    applied = False
+    if ctx and ctx.get("qualibrate_project") == name:
+        cur = config_generator.get_selected_env(inst)
+        if not cur or os.path.normcase(cur) != os.path.normcase(python_path):
+            _apply_selected_env(python_path)
+            applied = True
+    logger.info("project env: %s -> %s (%s%s)", name, python_path, how,
+                ", selected now" if applied else "")
+    views = _project_env_views(names)
+    row = render_template("_landing_project_env.html", p={"name": name},
+                          pe=views[name], env_saved=how)
+    # every OTHER card whose row this sync changed: a never-synced project's
+    # suggestion is "the env used most recently", which this sync just moved
+    # (the page must say what a cold reload says)
+    others = "".join(
+        f'<div class="landing-card-env" data-project="{escape(n)}" id="{v["dom_id"]}" '
+        f'hx-swap-oob="true">'
+        + render_template("_landing_project_env.html", p={"name": n}, pe=v)
+        + "</div>"
+        for n, v in views.items() if n != name and v["state"] == "suggested")
+    badge = render_template("_sidebar_folder_badge.html",
+                            qualibrate_tray=_qualibrate_tray_badge(), oob=True)
+    return row + others + badge
 
 
 @bp.route("/workbench")
@@ -5817,6 +6003,13 @@ def _qualibrate_tray_badge() -> dict | None:
     )
     if not (st.get("active") or sm_scope or standalone):
         return None
+    # w9 final-QA P3: the env badge is judged against a PROJECT. With a chip
+    # open that is SM's own scope (none: the chip belongs to no project, the
+    # env is "global"); with NO chip open it is the project qualibrate names
+    # active -- the one whose landing card sits beside the badge. Judged
+    # against nothing, the badge read neutral "env <name>" while that
+    # card said amber "suggested -- confirm" about the very same env.
+    env_project = sm_scope if ctx else st.get("active")
     return {"project": st["active"],
             # dangling only ever describes the ACTIVE project's state_path —
             # a scope-only badge (no active project) must not read as broken.
@@ -5825,7 +6018,36 @@ def _qualibrate_tray_badge() -> dict | None:
             "standalone": standalone,
             # The folder itself, so the chip can name what is being edited
             # rather than just asserting a category.
-            "standalone_path": (ctx or {}).get("live_path") if standalone else None}
+            "standalone_path": (ctx or {}).get("live_path") if standalone else None,
+            # w9/labwarm: WHICH env SM runs the lab's code with, beside the
+            # project it belongs to (two small file reads, stat-memoized)
+            "env": _active_env_badge(env_project)}
+
+
+def _active_env_badge(project: str | None) -> dict:
+    """The selected env as the sidebar shows it, relative to *project*'s
+    memory: ``remembered`` (the project's own env), ``suggested`` (the
+    project was never synced -- confirm it on the Projects page),
+    ``differs`` (the project remembers another env than the one selected
+    now, e.g. Generate Config picked another), ``global`` (no project scope),
+    ``none`` (no env selected at all)."""
+    from quam_state_manager.core import project_env
+    inst = current_app.instance_path
+    try:
+        active = config_generator.get_selected_env(inst)
+    except Exception:  # noqa: BLE001
+        active = None
+    if not active:
+        return {"state": "none", "label": "", "python": None, "project": project}
+    if not project:
+        state = "global"
+    else:
+        rem = project_env.remembered(inst, project)
+        state = ("suggested" if not rem
+                 else "remembered" if os.path.normcase(rem) == os.path.normcase(active)
+                 else "differs")
+    return {"state": state, "label": project_env.label(active), "python": active,
+            "project": project, "exists": os.path.isfile(active)}
 
 
 @bp.route("/api/qualibrate/projects")
@@ -6173,10 +6395,13 @@ def qualibrate_open_project():
                      "in qualibrate first (see the Doctor panel)."),
             level="error"), 409
 
+    env_changed = _select_project_env(name)
     try:
         opened = _activate_quam(state["native"])
     except (FileNotFoundError, ValueError, OSError) as e:
         return render_template("_status.html", message=str(e), level="error"), 400
+    if env_changed:
+        _bind_to_selected_env(opened, current_app.instance_path)
     _remember_load_path(state["native"])
 
     # a qualibrate project is a SCOPE on the context, not a new context type.
@@ -6222,6 +6447,85 @@ def qualibrate_open_project():
         resp.headers["HX-Redirect"] = url_for("main.qubits")
         return resp
     return redirect(url_for("main.qubits"))
+
+
+@bp.route("/sidebar/folder-badges")
+def sidebar_folder_badges():
+    """w9/labwarm: the sidebar's project + env badges, fresh -- fetched after
+    an env is selected outside the landing (Generate Config, the Runner), so
+    the badge never names the env that was active before (a cold reload and
+    the page must agree)."""
+    return render_template("_sidebar_folder_badge.html",
+                           qualibrate_tray=_qualibrate_tray_badge())
+
+
+def _select_scope_env(ctx) -> None:
+    """w9/labwarm: a chip opened any other way than the project's Open
+    (State Load, Resume, a workspace pick, switching back to it) whose
+    derived project scope was SYNCED with an env gets that env selected --
+    the same promise as the project's Open. A never-synced scope is left
+    alone here (a plain folder load does not adopt a suggestion); an
+    archive never selects anything. Only a change runs anything. The chip
+    that is ALREADY the active one re-activating (a topology refresh, the
+    same folder loaded again) is not an open: an env picked meanwhile in
+    Generate Config stays until the user actually opens something."""
+    if not ctx or (ctx.get("origin") or "live") != "live":
+        return
+    if _active_ctx() is ctx:
+        return
+    name = ctx.get("qualibrate_project")
+    if not name:
+        return
+    from quam_state_manager.core import project_env
+    inst = current_app.instance_path
+    try:
+        rem = project_env.remembered(inst, name)
+        if not rem or not os.path.isfile(rem):
+            return
+        cur = config_generator.get_selected_env(inst)
+        if not cur or os.path.normcase(cur) != os.path.normcase(rem):
+            _apply_selected_env(rem, rebind=False)
+            project_env.mark_used(inst, name, rem)
+            _bind_to_selected_env(ctx, inst)
+    except Exception:  # noqa: BLE001 -- an env never blocks opening a chip
+        logger.warning("scope env selection failed for %s", name, exc_info=True)
+
+
+def _bind_to_selected_env(ctx, inst) -> None:
+    """The chip being opened, bound to the env just selected: its type
+    policy and schema warm. (A cached chip's re-activation binds nothing on
+    its own; a fresh build binds again later -- cheap, single-flight.) The
+    lab-worker pre-warm needs nothing: it reads the env when it runs."""
+    _attach_type_policy(ctx, inst)
+    _warm_state_schema_async(ctx.get("store"), inst, live_folder=ctx.get("path"))
+
+
+def _select_project_env(name: str) -> bool:
+    """w9/labwarm: opening project *name* makes its env THE selected env --
+    the one it was synced with, or (never synced) the suggested one. Only a
+    CHANGE runs what a selection means (``_apply_selected_env``: probes, the
+    old lab worker retired); the same env again touches nothing, so a
+    project opened with its remembered env re-discovers and re-probes
+    nothing. Before ``_activate_quam``, so the chip's lab-worker pre-warm
+    and (a fresh build) type policy start with the right env; True when the
+    env changed -- the caller then binds the chip it opened (a cached chip's
+    re-activation binds nothing by itself)."""
+    from quam_state_manager.core import project_env
+    inst = current_app.instance_path
+    changed = False
+    try:
+        cur = config_generator.get_selected_env(inst)
+        view = project_env.view(inst, name, cur)
+        want = view.get("python")
+        if not want or not view.get("exists"):
+            return False    # nothing to select, or it vanished: the card says so
+        if not cur or os.path.normcase(cur) != os.path.normcase(want):
+            _apply_selected_env(want, rebind=False)
+            changed = True
+        project_env.mark_used(inst, name, want)
+    except Exception:  # noqa: BLE001 -- an env never blocks opening a project
+        logger.warning("project env selection failed for %s", name, exc_info=True)
+    return changed
 
 
 @bp.route("/load", methods=["POST"])
@@ -6368,6 +6672,16 @@ def explorer():
         state_json = _state_json_text(store)
     wiring_json = _wiring_json()
     template = "_explorer.html" if _is_htmx() else "explorer.html"
+    # w9/pulsegate: which rows are pulses (＋/✕ hidden, the Pulses page link
+    # shown) -- the structural part is the tree's own, the shape-discovered
+    # rows come from the Pulses page's index when it is warm (never built
+    # here: a cold index must not slow the tree; the write doors still check)
+    from quam_state_manager.core import pulse_structure as _ps
+    try:
+        _pidx = _pulse_index()
+        _known = _pidx.paths_if_warm() if _pidx is not None else None
+    except Exception:  # noqa: BLE001 -- the doors are the backstop
+        _known = None
     return render_template(
         template,
         **_ctx(page="explorer"),
@@ -6377,7 +6691,21 @@ def explorer():
         # The tree builds its rows client-side, so it gets the durable
         # read-only vocabulary rather than a second spelling of it.
         read_only_policy=json.dumps(readonly_policy()),
+        pulse_gate=json.dumps(_pulse_gate_payload(_known)),
     )
+
+
+@bp.route("/explorer/pulse-gate")
+def explorer_pulse_gate():
+    """w9/pulsegate: the tree payload's rows when /explorer rendered before the
+    Pulses index was warm (``rows_known`` false): asked once by the page,
+    after its render, so the walk never holds the tree up. The walk is the
+    index's own single-flight build (shared with the Pulses page)."""
+    from quam_state_manager.core import pulse_structure as _ps
+    pidx = _pulse_index()
+    if pidx is None:
+        return jsonify(_pulse_gate_payload(None))
+    return jsonify(_pulse_gate_payload(list(pidx.known_paths())))
 
 
 @bp.route("/explorer/model")
@@ -8906,6 +9234,11 @@ def qubit_edit(name: str):
         # with no twin stays ungrouped, so one undo still reverts it.
         gid = (modifier.new_group_id()
                if freq_sync and _freq_twin_path(target_path) else None)
+        # w9/pulsegate: same rule as /field/edit (these routes take any path)
+        _psc = _pulse_structure_change(modifier.store, "set", target_path, parsed)
+        if _psc is not None:
+            return render_template("_status.html", level="error",
+                                   message=_pulse_structure_payload(_psc)["error"]), 400
         # the inspector is an editing door like /field/edit: a value landing
         # in a lab pulse or gate is asked of the lab's own code first
         _lab_rel = _lab_hold(modifier.store, [target_path])
@@ -9221,8 +9554,45 @@ def field_lab_watch():
         except Exception:  # noqa: BLE001
             tgt = dp
         if watch.affected(tgt) or watch.affected(dp):
-            return jsonify(lab=True)
+            return jsonify(lab=True, worker=_lab_worker_state())
     return jsonify(lab=False)
+
+
+def _lab_worker_state() -> str:
+    """w9/labwarm: the selected env's lab worker -- ``ready`` / ``starting``
+    / ``cold`` / ``no-env`` (``lab_waveform.worker_state``). A check that
+    finds anything but ``ready`` pays the worker's start: the UI says
+    "Preparing your lab code... (first check after start)"."""
+    from quam_state_manager.core import lab_waveform
+    try:
+        python_path = config_generator.get_selected_env(current_app.instance_path)
+    except Exception:  # noqa: BLE001
+        python_path = None
+    return lab_waveform.worker_state(python_path)
+
+
+@bp.route("/api/lab/worker-status")
+def api_lab_worker_status():
+    """``{"state", "env", "prewarm"}`` for the selected env's lab worker --
+    polled by the "checking..." indicators while a lab check is in flight
+    (their text says "Preparing your lab code..." until the worker is
+    ready). Read-only, never spawns: a dict read and a few stats."""
+    from quam_state_manager.core import lab_waveform
+    try:
+        python_path = config_generator.get_selected_env(current_app.instance_path)
+    except Exception:  # noqa: BLE001
+        python_path = None
+    state = lab_waveform.worker_state(python_path)
+    out = {"state": state, "env": python_path}
+    log = dict(lab_waveform.PREWARM_LOG.get(python_path or "") or {})
+    if log:
+        now = time.monotonic()
+        pre = {"state": log.get("state")}
+        for k in ("t_request", "t_spawn", "t_ready"):
+            if isinstance(log.get(k), (int, float)):
+                pre[k.replace("t_", "") + "_ago_s"] = round(now - log[k], 3)
+        out["prewarm"] = pre
+    return jsonify(out)
 
 
 @bp.route("/field/edit", methods=["POST"])
@@ -9333,6 +9703,12 @@ def field_edit():
             # makes the two answers agree.
             raw_value = json.dumps(raw_value)
         parsed = _parse_for_target(modifier.store, target_path, raw_value)
+        # w9/pulsegate: a whole-object edit (the tree's JSON editor, a paste)
+        # that adds, removes or renames a pulse is the Pulses page's job; a
+        # value inside a pulse, or a re-link, passes untouched
+        _psc = _pulse_structure_change(modifier.store, "set", target_path, parsed)
+        if _psc is not None:
+            return _pulse_structure_refused(_psc)
         # A value landing in a LAB-class pulse (directly or through any number
         # of pointer hops) is asked of the class's own code first; refused =
         # nothing written, no tray entry (same door as /pulse/edit).
@@ -10872,6 +11248,11 @@ def field_create():
                     path=dot_path, expected=hint, got=type(parsed).__name__)
         else:
             parsed = _tp.parse_value(raw_value)
+        # w9/pulsegate: a new key that is a pulse (an operations entry, a gate
+        # slot, a pulse-class dict) is created on the Pulses page
+        _psc = _pulse_structure_change(modifier.store, "create", dot_path, parsed)
+        if _psc is not None:
+            return _pulse_structure_refused(_psc)
         # The ＋ is a create door: a key created inside a lab pulse (a
         # re-added field) or a whole new lab-class pulse / gate dict is asked
         # of the lab's own code like every other write (the verifier created
@@ -10933,6 +11314,11 @@ def field_delete():
     reason = _crud_policy_reason(modifier.store, dot_path, deleting=True)
     if reason is not None:
         return jsonify(ok=False, error=reason, error_kind="policy"), 400
+    # w9/pulsegate: a pulse (or an operations dict holding pulses) is deleted
+    # on the Pulses page -- refused before the lab check costs anything
+    _psc = _pulse_structure_change(modifier.store, "delete", dot_path, absent=True)
+    if _psc is not None:
+        return _pulse_structure_refused(_psc)
 
     dangling, _ = _count_refs_into(modifier.store, dot_path)
     # a removed field of a pulse a lab GATE plays falls back to the class
@@ -10948,7 +11334,8 @@ def field_delete():
             return jsonify(ok=False, lab_refused=True,
                            error=_lab_refusal_text(_lab[0]),
                            **({"lab_delete_also": _also,
-                               "lab_delete_label": _lab_delete_label(modifier.store, _also)}
+                               "lab_delete_label": _lab_delete_label(modifier.store, _also),
+                               **_lab_delete_pulses_link(modifier.store, dot_path, _also)}
                               if _also else {})), 400
         entry = modifier.delete_subtree(dot_path)
         _invalidate_engine_cache(ctx)
@@ -11014,9 +11401,213 @@ def schema_missing_keys():
 _BATCH_DELETE = object()
 
 
+# ----------------------------------------------------------------------
+# w9/pulsegate (user decision 2026-09-28): a pulse is added, deleted, renamed
+# or copied ONLY on the Pulses page. The generic write doors ask
+# core.pulse_structure whether a write changes WHICH pulses exist and refuse
+# it with the way there; a value write inside a pulse, a re-link, and a
+# non-pulse object coming or going with its pulses pass untouched. The Pulses
+# page's own flows never reach these doors (/api/pulse/*; its "Delete
+# together" has its own route, api_pulse_delete_together). Undo/redo, revert,
+# take-live, whole-state loads and history restore do not call them either.
+# ----------------------------------------------------------------------
+
+def _pulse_structure_change(store, op: str, path: str, value: Any = None,
+                            *, absent: bool = False):
+    """``pulse_structure.structural_change`` under the store lock; *absent*
+    means "no value" (a delete). None = the write may go ahead.
+
+    A check that fails is never a way round the rule, and never bricks an
+    ordinary edit: a write that could not change which pulses exist anyway
+    (:func:`_ps_candidate` -- a scalar over a scalar outside an operations
+    entry or a gate slot) goes ahead; any other is refused as unchecked."""
+    from quam_state_manager.core import pulse_structure as _ps
+    try:
+        with store._lock:
+            return _ps.structural_change(store.merged, op, path,
+                                         _ps.ABSENT if absent else value)
+    except Exception:  # noqa: BLE001
+        logger.warning("pulse-structure check failed for %s %s", op, path,
+                       exc_info=True)
+        try:
+            with store._lock:
+                could = _ps_candidate(store.merged, path, None if absent else value)
+        except Exception:  # noqa: BLE001
+            could = True
+        if not could:
+            return None
+        return _ps.Change(op=op, path=path, kind="pulse", added=[path])
+
+
+def _pulse_structure_payload(ch) -> dict:
+    """The refusal every generic door answers with: the reason, and the
+    Pulses page link that opens on the pulse (or its channel)."""
+    from quam_state_manager.core import pulse_structure as _ps
+    return {"ok": False, "error_kind": "pulse_structure",
+            "error": _ps.refusal_message(ch),
+            "pulses_page": _rooted(_ps.goto_url(ch.anchor)),
+            "pulse_paths": ch.paths[:20]}
+
+
+def _pulse_structure_refused(ch):
+    return jsonify(**_pulse_structure_payload(ch)), 409
+
+
+def _ps_candidate(merged: dict, target: str, raw) -> bool:
+    """Cheap pre-filter for a batch row: can this write change which pulses
+    exist at all? A scalar written over a scalar anywhere that is not an
+    ``operations`` entry / dict or a pair gate slot cannot (a 2,000-row grid
+    Apply-all must not pay the full check per cell)."""
+    from quam_state_manager.core.pulse_index import GATE_SLOTS
+    segs = target.split(".")
+    if segs[-1] == "operations" or (len(segs) >= 2 and segs[-2] == "operations"):
+        return True
+    if (len(segs) == 5 and segs[0] == "qubit_pairs" and segs[2] == "macros"
+            and segs[4] in GATE_SLOTS):
+        return True
+    if isinstance(raw, dict) or (isinstance(raw, str) and raw.lstrip().startswith("{")):
+        return True
+    cur: Any = merged
+    for s in segs:
+        if not isinstance(cur, dict) or s not in cur:
+            return False
+        cur = cur[s]
+    return isinstance(cur, dict)
+
+
+def _ps_live_at(pair, path: str):
+    """The live chip's raw value at *path* (state first, then wiring), or
+    ``pulse_structure.ABSENT``."""
+    from quam_state_manager.core import pulse_structure as _ps
+    segs = path.split(".")
+    for doc in (pair.state, pair.wiring):
+        if not isinstance(doc, dict) or segs[0] not in doc:
+            continue
+        cur: Any = doc
+        for s in segs:
+            if not isinstance(cur, dict) or s not in cur:
+                return _ps.ABSENT
+            cur = cur[s]
+        return cur
+    return _ps.ABSENT
+
+
+class _PulseLive:
+    """The live chip's documents for a batch that says ``"source": "live"``
+    (the Explorer live-diff's accept and Accept all, the sync review's
+    accept): TAKE LIVE, row by row, which stays unaffected -- but the claim is
+    checked, never trusted. A row passes only when the live chip itself holds
+    exactly that value at that path (a delete: when it has no such key); an
+    edited value, or live that moved on, is refused like any structural edit.
+    Read at most once per batch, and only when a row needs it."""
+
+    def __init__(self, ctx):
+        self.ctx = ctx
+        self._pair: Any = False
+
+    def holds(self, target: str, value) -> bool:
+        from quam_state_manager.core import pulse_structure as _ps
+        if self._pair is False:
+            self._pair = None
+            wc = self.ctx.get("working_copy") if self.ctx else None
+            if wc is not None:
+                try:
+                    self._pair = working_copy.read_live_shared(wc, attempts=4)
+                except Exception:  # noqa: BLE001 -- unverifiable: refused
+                    self._pair = None
+        if self._pair is None:
+            return False
+        live = _ps_live_at(self._pair, target)
+        if value is _ps.ABSENT:
+            return live is _ps.ABSENT
+        return live is not _ps.ABSENT and _ps.json_same(value, live)
+
+
+def _ps_row_refusal(store, dp: str, raw, allow_create: bool, live) -> dict | None:
+    """The refusal payload for ONE /field/edit-batch row, judged against the
+    store as it is NOW -- the write loop asks again before a row once an
+    earlier row of the same batch changed structure (a parent created, a
+    channel deleted and re-created), so a pulse is never waved through
+    because its parent did not exist yet. None = the row may go ahead."""
+    from quam_state_manager.core import pulse_structure as _ps
+    try:
+        if raw is _BATCH_DELETE:
+            target, value = dp, _ps.ABSENT
+            ch = _pulse_structure_change(store, "delete", dp, absent=True)
+        else:
+            target = _resolve_edit_path(store, dp)
+            with store._lock:
+                merged = store.merged
+                if not _ps_candidate(merged, target, raw):
+                    return None
+                exists = _path_present(merged, target)
+            if not exists and not allow_create:
+                return None                    # the row fails on its own
+            value = (_parse_for_target(store, target, raw)
+                     if isinstance(raw, str) else raw)
+            ch = _pulse_structure_change(store, "set" if exists else "create",
+                                         target, value)
+    except Exception:  # noqa: BLE001 -- the row loop reports a bad row
+        return None
+    if ch is None:
+        return None
+    if live is not None:
+        try:
+            if live.holds(target, value):
+                return None
+        except Exception:  # noqa: BLE001 -- unverifiable: refused
+            pass
+    return _pulse_structure_payload(ch)
+
+
+def _pulse_structure_rows(store, pairs, live) -> dict:
+    """``{row index: refusal payload}`` for the rows of an /field/edit-batch
+    that would add, remove or rename a pulse, each judged against the store
+    before the batch (see :func:`_ps_row_refusal` for the rows after one)."""
+    out: dict = {}
+    for n, (dp, raw, allow_create) in enumerate(pairs):
+        r = _ps_row_refusal(store, dp, raw, allow_create, live)
+        if r is not None:
+            out[n] = r
+    return out
+
+
+def _ps_moved_structure(entry) -> bool:
+    """Did an applied batch entry change what a later row of the same batch
+    would be judged against? A created or deleted key, a dict written or
+    replaced -- and a POINTER written or replaced: a later row's path is
+    resolved through pointers, so a link row 1 writes can send row 2 into an
+    ``operations`` dict (refute review, 2026-09-28)."""
+    old = getattr(entry, "old_value", None)
+    new = getattr(entry, "new_value", None)
+    return bool(getattr(entry, "created", False) or getattr(entry, "deleted", False)
+                or isinstance(old, dict) or isinstance(new, dict)
+                or is_pointer(old) or is_pointer(new))
+
+
+def _path_present(merged: dict, path: str) -> bool:
+    cur: Any = merged
+    for s in path.split("."):
+        if isinstance(cur, dict) and s in cur:
+            cur = cur[s]
+        else:
+            return False
+    return True
+
+
 @bp.route("/field/edit-batch", methods=["POST"])
 def field_edit_batch():
+    return _field_edit_batch_impl()
+
+
+def _field_edit_batch_impl(payload=None, *, pulse_door: bool = False):
     """Apply many edits atomically; report per-path success/failure.
+
+    w9/pulsegate: *payload* (a dict shaped like the JSON body) and
+    *pulse_door* are the Pulses page's own "Delete together"
+    (:func:`api_pulse_delete_together`) -- a server-side argument, never a
+    field a client can send. Every other caller is refused a row that adds,
+    removes or renames a pulse (:func:`_pulse_structure_rows`).
 
     Powers the Plotly popup's "Apply All" button. Accepts either:
       * form ``dot_path=<p1>&value=<v1>&dot_path=<p2>&value=<v2>...``
@@ -11045,7 +11636,8 @@ def field_edit_batch():
     if _lk is not None:
         return _lk
 
-    payload = request.get_json(silent=True)
+    if payload is None:
+        payload = request.get_json(silent=True)
     # Cross-chip guard (audit #1): the apply-fit popup stamps the run's chip token.
     _pj = payload if isinstance(payload, dict) else {}
     guard = _chip_mismatch_response(
@@ -11081,6 +11673,27 @@ def field_edit_batch():
         return jsonify(ok=False, error="No updates supplied"), 400
 
     independent = bool(_pj.get("independent"))
+
+    # w9/pulsegate: a row that adds, removes or renames a pulse is the Pulses
+    # page's job. Atomic: nothing is written (409, the rows named). An
+    # independent batch skips just those rows. Before every other gate -- it
+    # is the cheapest, and a refused row must not cost a lab check.
+    _ps_live = _PulseLive(ctx) if _pj.get("source") == "live" else None
+    _ps_skip: dict = ({} if pulse_door
+                      else _pulse_structure_rows(modifier.store, pairs, _ps_live))
+    _ps_late = None             # a row refused in the loop (after an earlier row)
+    if _ps_skip and not independent:
+        _first = _ps_skip[min(_ps_skip)]
+        return jsonify(
+            **_first, tray_html=_tray_html(),
+            results=[{"dot_path": dp, "applied": False,
+                      "error": (_ps_skip[n]["error"] if n in _ps_skip else
+                                "not written: another row of this batch adds, "
+                                "removes or renames a pulse"),
+                      **({"error_kind": "pulse_structure",
+                          "pulses_page": _ps_skip[n]["pulses_page"]}
+                         if n in _ps_skip else {})}
+                     for n, (dp, _v, _c) in enumerate(pairs)]), 409
 
     # docs/20 r12-B: an FSP edit never silently changes amplitudes — and
     # never commits before the compensation offer was seen. Batches without
@@ -11157,6 +11770,8 @@ def field_edit_batch():
         logger.warning("lab-class watch map failed", exc_info=True)
         _watch = None
     for _n, (_dp, _rv, _c) in enumerate(pairs if _watch else ()):
+        if _n in _ps_skip:          # independent mode: never written
+            continue
         try:
             if _rv is _BATCH_DELETE:
                 if _watch.touches(_dp):
@@ -11177,7 +11792,7 @@ def field_edit_batch():
         # with its by-name mirror ops leaves nothing dangling, and only the
         # whole batch's 'after' can show that
         for _n, (_dp, _rv, _c) in enumerate(pairs):
-            if _rv is _BATCH_DELETE and _n not in _lab_idx:
+            if _rv is _BATCH_DELETE and _n not in _lab_idx and _n not in _ps_skip:
                 _lab_writes.append((_dp, _LAB_DELETE))
                 _lab_idx.append(_n)
     # held from the check through the write (released after the lock block)
@@ -11205,7 +11820,9 @@ def field_edit_batch():
                 ok=False, lab_refused=True, error=_lab_msg,
                 tray_html=_tray_html(),
                 **({"lab_delete_also": _also,
-                    "lab_delete_label": _lab_delete_label(modifier.store, _also)}
+                    "lab_delete_label": _lab_delete_label(modifier.store, _also),
+                    **(_lab_delete_pulses_link(modifier.store, _dels[0], _also)
+                       if _dels and not pulse_door else {})}
                    if _also else {}),
                 lab_follow=(_lab_follow_payload(_one[0], _one[1], _lab_info)
                             if _one and len(pairs) == 1 else None),
@@ -11240,7 +11857,30 @@ def field_edit_batch():
             elif _batch_gid is None:
                 _batch_gid = modifier.new_group_id()
         ok_overall = True
+        _ps_moved = False
         for _row_n, (dot_path, raw_value, allow_create) in enumerate(pairs):
+            if _ps_moved and not pulse_door and _row_n not in _ps_skip:
+                # an earlier row changed structure: this one is judged again
+                # against what the batch has written so far
+                _psr = _ps_row_refusal(modifier.store, dot_path, raw_value,
+                                       allow_create, _ps_live)
+                if _psr is not None:
+                    results.append({"dot_path": dot_path, "applied": False,
+                                    "error_kind": "pulse_structure",
+                                    "error": _psr["error"],
+                                    "pulses_page": _psr["pulses_page"]})
+                    ok_overall = False
+                    _ps_late = _ps_late or _psr
+                    if not independent:
+                        break
+                    continue
+            if _row_n in _ps_skip:       # independent mode only (see above)
+                results.append({"dot_path": dot_path, "applied": False,
+                                "error_kind": "pulse_structure",
+                                "error": _ps_skip[_row_n]["error"],
+                                "pulses_page": _ps_skip[_row_n]["pulses_page"]})
+                ok_overall = False
+                continue
             if _row_n in _lab_skip:      # independent mode only (see above)
                 results.append({"dot_path": dot_path, "applied": False,
                                 "lab_refused": True, "error": _lab_msg})
@@ -11256,6 +11896,7 @@ def field_edit_batch():
                         raise ValueError(_cr)
                     entry = modifier.delete_subtree(dot_path, group_id=_batch_gid)
                     applied_entries.append(entry)
+                    _ps_moved = True
                     results.append({"dot_path": dot_path, "resolved_path": entry.dot_path,
                                     "applied": True, "deleted": True,
                                     "new_value": None, "display": ""})
@@ -11314,6 +11955,7 @@ def field_edit_batch():
                             f"or stage the version from State History)."
                         ) from ce
                 applied_entries.append(entry)
+                _ps_moved = _ps_moved or _ps_moved_structure(entry)
                 # Echo the COMMITTED value (type-coerced by set_value) + its display
                 # + the resolved write path, so the client re-renders the cell from
                 # the server's truth (never the typed string) and can match the
@@ -11344,6 +11986,8 @@ def field_edit_batch():
                 if r["applied"]:
                     r["applied"] = False
                     r["error"] = "rolled back due to other failure(s) in this batch"
+            if _ps_late is not None:     # w9/pulsegate: said like the pre-check
+                return jsonify(**_ps_late, tray_html=_tray_html(), results=results), 409
             return jsonify(
                 ok=False,
                 tray_html=_tray_html(),
@@ -12110,11 +12754,20 @@ def pair_gate_form(name: str):
                   if arch.get(v.get("arch", "flux"))}
     if _parametric_cz_evidence(store) is None:
         gate_types = {k: v for k, v in gate_types.items() if k != "cz_parametric"}
+    # w9/pulsegate: a flux gate type writes its flux pulses into the gate --
+    # new pulse objects, which are added on the Pulses page (pair_add_gate
+    # refuses them too). The form offers what creates no pulse (CR / Stark)
+    # and says where the rest is built.
+    flux_moved = any(v.get("arch", "flux") == "flux" for v in gate_types.values())
+    gate_types = {k: v for k, v in gate_types.items() if v.get("arch", "flux") != "flux"}
+    if not gate_types:
+        return render_template("_pair_add_gate_pulses.html", pair_name=name)
     parametric_qclass = _parametric_cz_qclass(store)
     return render_template(
         "_pair_add_gate.html",
         pair_name=name,
         gate_types=gate_types,
+        flux_moved=flux_moved,
         existing_gates=existing_gates,
         # The JSON preview in the form must show the class the SERVER will
         # write (chip-derived when possible), not a duplicated literal.
@@ -12214,6 +12867,19 @@ def pair_add_gate(name: str):
         cz_qclass=cr_semantics.gate_class_evidence(store.merged, "CZGate"),
         slot_qclasses=_slot_qclasses_for(store, gate_type))
     dot_path = f"qubit_pairs.{name}.macros.{gate_name}"
+    # w9/pulsegate: a gate whose slots hold pulses brings new pulse objects
+    # -- built on the Pulses page (+ New pulse: the Gaussian CZ builder writes
+    # the channel ops and links the slots), or by the lab's own gate script.
+    # A gate without pulses (CR / Stark) is created here as before.
+    _psc = _pulse_structure_change(store, "create", dot_path, template)
+    if _psc is not None:
+        return render_template(
+            "_status.html", level="error",
+            message=(f"{gate_type} writes its flux pulses into the gate "
+                     f"({', '.join(_psc.paths[:3])}) -- a new pulse. Pulses are "
+                     "added on the Pulses page: + New pulse -> \"Gaussian CZ from "
+                     "cz_flattop\" builds the gate with its channel ops, or use "
+                     "your lab's gate script.")), 409
     try:
         modifier.create_subtree(dot_path, template)
         _invalidate_engine_cache()
@@ -12273,6 +12939,11 @@ def pair_edit(name: str):
         # single Ctrl+Z reverts both atomically instead of leaving f_01≠RF.
         gid = (modifier.new_group_id()
                if freq_sync and _freq_twin_path(target_path) else None)
+        # w9/pulsegate: same rule as /field/edit (these routes take any path)
+        _psc = _pulse_structure_change(modifier.store, "set", target_path, parsed)
+        if _psc is not None:
+            return render_template("_status.html", level="error",
+                                   message=_pulse_structure_payload(_psc)["error"]), 400
         # the pair inspector shows gate pulses' fields as plain inputs (the
         # verifier typed flat_length=9 there): same lab check as /field/edit
         _lab_rel = _lab_hold(modifier.store, [target_path])
@@ -15473,7 +16144,13 @@ def pulse_row():
     path = (request.args.get("path") or "").strip()
     if not store or not pulse_index or not path:
         return "", 404
-    row = pulse_index.row(path)
+    vt = request.args.get("vt") == "1"
+    if vt:
+        # w9/pulsesall: the row and the stamp it was read at, together -- the
+        # virtual view orders every text it receives by that stamp
+        row, vt_stamp = _pulse_vt_row_stamp(store, pulse_index, path)
+    else:
+        row = pulse_index.row(path)
     if row is None:
         return "", 404
     # the page's active filter rides along: a row that no longer matches it
@@ -15481,7 +16158,15 @@ def pulse_row():
     if not _pulse_rows_filter([row], request.args.get("channel", ""),
                               (request.args.get("q") or "").strip(),
                               (request.args.get("owner") or "").strip()):
+        if vt:
+            resp = make_response("", 204)
+            resp.headers["X-Pulse-Stamp"] = vt_stamp
+            return resp
         return "", 204
+    # w9/pulsesall: the virtual All view keys its row model by the digest of
+    # the row's text (the same one /pulses/vids lists), so a patched row is
+    # not fetched again by the next structural refresh
+    vt_ver = _pulse_vt_entry(row)[1] if vt else None
     row = dict(row)
     from quam_state_manager.core.waveform_synth import sparkline_svg, synth_for_operation
     if row.get("is_alias"):
@@ -15492,7 +16177,322 @@ def pulse_row():
     else:
         row["spark_svg"] = pulse_index.sparkline(
             path, lambda p=path: sparkline_svg(synth_for_operation(store, p)))
-    return render_template("_pulse_row.html", r=row)
+    if vt_ver is None:
+        return render_template("_pulse_row.html", r=row)
+    resp = make_response(render_template("_pulse_row.html", r=row))
+    resp.headers["X-Pulse-Ver"] = vt_ver
+    resp.headers["X-Pulse-Stamp"] = vt_stamp
+    return resp
+
+
+# ---------------------------------------------------------------------------
+# w9/pulsesall: the virtual per-page "All" view
+# ---------------------------------------------------------------------------
+#
+# big30x (30 qubits, 69 pairs) has ~8,800 pulse rows. With per-page "All" the
+# page held all of them (656k DOM nodes), so every layout the page forced --
+# an inspector swap, a row patch, Split.js measuring its gutter -- walked the
+# whole table: 22 s per field commit, 5 s per Ctrl+Z, 14 s to open a pulse
+# (real Chrome, 91c8aae). And a structural change (create, delete, rename, a
+# pull) re-rendered all 8,800 rows with ~400 lab-drawn thumbnails: 7-11 s of
+# server time and 14 MB for one refresh.
+#
+# The virtual view ships each row's TEXT once (thumbnails are drawn lazily,
+# for the rows on screen), keyed by a digest of exactly that text, and the
+# client renders only the rows near the viewport. A change re-lists the
+# (path, digest) pairs of the active filter and fetches only the rows whose
+# digest moved.
+
+#: Libraries at least this big render "All" virtually. The 5Q chip (173 rows)
+#: stays below it, so its All view -- and every per-page 25/50/100 view on any
+#: chip -- renders exactly as before. Overridable (tests) through the app
+#: config key ``PULSES_VIRTUAL_MIN``.
+_PULSES_VT_MIN = 400
+_PULSE_VT_UIDS = itertools.count(1)
+
+
+def _pulses_vt_on(library_size: int, per_page: int) -> bool:
+    if per_page != 0:
+        return False
+    try:
+        floor = int(current_app.config.get("PULSES_VIRTUAL_MIN", _PULSES_VT_MIN))
+    except (TypeError, ValueError):
+        floor = _PULSES_VT_MIN
+    return library_size >= floor
+
+
+def _pulse_vt_memo():
+    """The per-chip-context :class:`RowMemo` of each row's text HTML + its
+    digest. Per CONTEXT, not per index: a working-copy replace (a pull, Take
+    live) builds a new store and so a new index, and every row it did not
+    change keeps its rendered text by content equality."""
+    from quam_state_manager.core.pulse_index import RowMemo
+    ctx = _active_ctx()
+    if ctx is None:
+        return RowMemo()
+    memo = ctx.get("pulse_vt_memo")
+    if memo is None:
+        memo = ctx["pulse_vt_memo"] = RowMemo()
+    return memo
+
+
+#: Every row key ``_pulse_row.html`` reads -- pinned against the template by
+#: tests/test_pulses_virtual.py. The virtual text is a pure function of THESE,
+#: so they are what :class:`RowMemo` compares to carry a rendered text across
+#: an index rebuild (the thumbnail keys are drawn lazily, never in the text).
+_PULSE_ROW_KEYS = ("path", "summary", "is_alias", "known", "owner", "channel",
+                   "op_name", "alias_target", "iq", "readout", "found", "location",
+                   "class_match", "unmodeled", "qclass", "class_short",
+                   "length_implausible", "length_stored", "length", "amplitude",
+                   "used_by")
+
+
+def _pulse_vt_sig(row: dict) -> tuple:
+    """What the virtual text is rendered FROM, type-strictly: Python calls
+    ``100 == 100.0`` and ``True == 1`` equal, the template prints them apart."""
+    out = []
+    for k in _PULSE_ROW_KEYS:
+        v = row.get(k)
+        if isinstance(v, (list, tuple)):
+            v = tuple((type(x).__name__, x) for x in v)
+        out.append((k, type(v).__name__, v))
+    return tuple(out)
+
+
+def _pulse_vt_render(row: dict) -> tuple[str, str]:
+    """(text HTML, digest) of one row in the virtual view: ``_pulse_row.html``
+    with the thumbnail left as a sized placeholder. A pure function of the row
+    dict -- the template reads nothing else -- which is what lets
+    :class:`RowMemo` carry it across rebuilds by content equality."""
+    html = current_app.jinja_env.get_template("_pulse_row.html").render(
+        r=row, lazy_spark=True).strip()
+    ver = hashlib.blake2b(html.encode("utf-8"), digest_size=8).hexdigest()
+    return html, ver
+
+
+def _pulse_vt_entry(row: dict) -> tuple[str, str]:
+    return _pulse_vt_memo().get("vt", row, _pulse_vt_render, sig=_pulse_vt_sig)
+
+
+#: this server process -- a stamp from another process never orders against ours
+_PULSE_VT_BOOT = uuid.uuid4().hex[:8]
+
+
+def _pulse_vt_stamp(store, pulse_index) -> str:
+    """What a text or a thumbnail was read AT: this process, this store object,
+    and the index's freshness token (mutation_seq, class knowledge, env
+    overlay, the count of cold builds -- a rebuild on an invalidate hint moves
+    nothing else). ``boot:uid:seq:gen:builds:overlay``. The client orders every
+    text by (seq, gen, builds) within one boot + store, and redraws the
+    thumbnails on screen when any of it moves (a thumbnail also reads
+    pointer-followed fields outside its row)."""
+    uid = getattr(store, "_pulses_vt_uid", None)
+    if uid is None:
+        uid = next(_PULSE_VT_UIDS)
+        try:
+            store._pulses_vt_uid = uid
+        except AttributeError:      # a store that refuses attributes
+            uid = "i%x" % id(store)
+    seq, gen, ov = pulse_index.stamp()
+    builds = pulse_index.stats.get("cold", 0)
+    return f"{_PULSE_VT_BOOT}:{uid}:{seq}:{gen}:{builds}:{ov:x}"
+
+
+def _pulse_vt_rows_stamp(store, pulse_index) -> tuple[list, str]:
+    """Every row and the stamp they were read at, as ONE observation. The rows
+    are brought current first (outside any hold of ours: a cold build hands
+    the lock over), then read again with the stamp under the store lock."""
+    pulse_index.rows()
+    with store._lock:
+        return pulse_index.rows(), _pulse_vt_stamp(store, pulse_index)
+
+
+def _pulse_vt_row_stamp(store, pulse_index, path: str):
+    """One row (or None) and its stamp, as one observation."""
+    pulse_index.row(path)
+    with store._lock:
+        return pulse_index.row(path), _pulse_vt_stamp(store, pulse_index)
+
+
+def _pulse_vt_empty_html(channel: str) -> str:
+    # the same row the rendered table shows (_pulse_rows.html)
+    return ('<tr><td colspan="9" class="muted" style="text-align:center;padding:2rem">'
+            'No pulses found' + (' on this channel' if channel else '')
+            + '.</td></tr>')
+
+
+def _pulse_vt_widest(rows: list, per_col: int = 2) -> list[str]:
+    """The rows with the longest text in each column (character counts: the
+    table's cells are monospace). The rendered table sized its columns to
+    ALL its rows; the virtual one renders ~50, so it lays these few out too
+    -- invisibly (``visibility: collapse``) -- before the widths are frozen,
+    or a long amplitude further down wraps onto two lines."""
+    cols: dict[int, list[tuple[int, str]]] = {}
+
+    def consider(col, n, path):
+        lst = cols.setdefault(col, [])
+        lst.append((n, path))
+        if len(lst) > 4 * per_col:
+            lst.sort(key=lambda t: -t[0])
+            del lst[per_col:]
+
+    for r in rows:
+        p = r["path"]
+        consider(1, len(str(r.get("owner") or "")), p)
+        consider(2, len(str(r.get("channel") or "")), p)
+        consider(3, len(str(r.get("op_name") or "")) + (6 if r.get("is_alias") else 0)
+                 + (3 if r.get("iq") else 0) + (3 if r.get("readout") else 0), p)
+        consider(4, len(str(r.get("class_short") or "")), p)
+        consider(6, len(str(r.get("length"))) + (2 if r.get("length_implausible") else 0), p)
+        amp = r.get("amplitude")
+        consider(7, len("%.4g" % amp) if isinstance(amp, (int, float)) else 1, p)
+        consider(8, len(str(len(r.get("used_by") or []))), p)
+    out: list[str] = []
+    for col in sorted(cols):
+        for _n, p in sorted(cols[col], key=lambda t: -t[0])[:per_col]:
+            if p not in out:
+                out.append(p)
+    return out
+
+
+def _pulse_vt_payload(store, pulse_index, rows: list, channel: str, *,
+                      want_html: bool, stamp: str) -> str:
+    """The virtual view's row model for *rows* (already filtered, in table
+    order) as JSON: ``[path, digest, html]`` per row, or ``[path, digest]``
+    when the client already holds the text (``vids=1``); ``wide`` names the
+    rows that size the columns (:func:`_pulse_vt_widest`)."""
+    memo = _pulse_vt_memo()
+    out = []
+    for r in rows:
+        html, ver = memo.get("vt", r, _pulse_vt_render, sig=_pulse_vt_sig)
+        out.append([r["path"], ver, html] if want_html else [r["path"], ver])
+    return json.dumps({"v": 1, "stamp": stamp,
+                       "n": len(rows), "rows": out, "wide": _pulse_vt_widest(rows),
+                       "empty": _pulse_vt_empty_html(channel)},
+                      separators=(",", ":"), ensure_ascii=False)
+
+
+@bp.route("/pulses/vids")
+def pulses_vids():
+    """The active filter's (path, digest) list -- what the virtual view
+    re-reads after a change, to fetch only the rows whose text moved."""
+    store = _store()
+    pulse_index = _pulse_index()
+    if not store or not pulse_index:
+        return jsonify(ok=False, error="no chip loaded"), 409
+    channel = request.args.get("channel", "")
+    raw, stamp = _pulse_vt_rows_stamp(store, pulse_index)
+    rows = _pulse_rows_filter(raw, channel,
+                              request.args.get("q", "").strip(),
+                              request.args.get("owner", "").strip())
+    resp = make_response(_pulse_vt_payload(store, pulse_index, rows, channel,
+                                           want_html=False, stamp=stamp))
+    resp.mimetype = "application/json"
+    return resp
+
+
+def _pulse_vt_paths_arg(cap: int) -> list[str]:
+    body = request.get_json(silent=True) or {}
+    paths = body.get("paths") if isinstance(body, dict) else None
+    if not isinstance(paths, list):
+        return []
+    return [p for p in paths if isinstance(p, str) and p][:cap]
+
+
+@bp.route("/pulses/vrows", methods=["POST"])
+def pulses_vrows():
+    """The text of the named rows, ``[path, digest, html]`` each; a path
+    that is no longer a pulse is listed under ``gone``."""
+    store = _store()
+    pulse_index = _pulse_index()
+    if not store or not pulse_index:
+        return jsonify(ok=False, error="no chip loaded"), 409
+    raw, stamp = _pulse_vt_rows_stamp(store, pulse_index)
+    by = {r["path"]: r for r in raw}
+    out, gone = [], []
+    for p in _pulse_vt_paths_arg(50000):
+        r = by.get(p)
+        if r is None:
+            gone.append(p)
+            continue
+        html, ver = _pulse_vt_entry(r)
+        out.append([p, ver, html])
+    return jsonify(ok=True, stamp=stamp, rows=out, gone=gone)
+
+
+@bp.route("/pulses/sparks", methods=["POST"])
+def pulses_sparks():
+    """The thumbnails of the rows on screen, drawn exactly as the rendered
+    table draws them: each answer is the row's full ``_pulse_row.html`` (the
+    client takes its waveform cell) with the digest of the row's text, so a
+    row whose text moved meanwhile is caught too. Lab-class rows are drawn
+    from RAM or the generated config and their own code is warmed in the
+    background, as for a rendered page."""
+    store = _store()
+    pulse_index = _pulse_index()
+    if not store or not pulse_index:
+        return jsonify(ok=False, error="no chip loaded"), 409
+    raw, stamp = _pulse_vt_rows_stamp(store, pulse_index)
+    by = {r["path"]: r for r in raw}
+    asked = _pulse_vt_paths_arg(400)
+    want = [p for p in asked if p in by]
+    gone = [p for p in asked if p not in by]
+    rows = [dict(by[p]) for p in want]
+    unknown = _pulse_draw_sparks(store, pulse_index, rows)
+    if unknown:
+        _warm_lab_sparks(store, unknown)
+    tmpl = current_app.jinja_env.get_template("_pulse_row.html")
+    cells = {}
+    for p, r in zip(want, rows):
+        cells[p] = [_pulse_vt_entry(by[p])[1], tmpl.render(r=r).strip()]
+    # `gone`: asked for, not a pulse any more -- the client re-lists instead
+    # of asking again (a path it keeps on screen would otherwise loop)
+    return jsonify(ok=True, stamp=stamp, rows=cells, warming=unknown, gone=gone)
+
+
+def _pulse_draw_sparks(store, pulse_index, rows) -> list[str]:
+    """Put ``spark_svg`` (+ the lab-drawn flags) on each of *rows* -- COPIES
+    of index rows -- and return the paths of the lab-class rows among them.
+
+    Sparklines for the visible page only, memoized per (op, mutation_seq) so
+    repeated search keystrokes / pagination over an unchanged chip never
+    re-synthesize. Aliases / unknown classes render "→ target" instead."""
+    from quam_state_manager.core.waveform_synth import sparkline_svg, synth_for_operation
+    unknown_paths: list[str] = []
+
+    def _spark_rows(rows) -> None:
+        for row in rows:
+            if "spark_svg" in row:
+                continue                       # drawn before a hand-over
+            _activity.checkpoint()
+            if row["is_alias"]:
+                row["spark_svg"] = None
+                continue
+            path = row["path"]
+            if not row["known"]:
+                # A class SM has no synthesizer for -- SNZ, GaussianNZ, a lab's own
+                # readout weights. Drawn from the lab's generated config, and marked
+                # as such in the markup so it never reads as one SM drew.
+                if path not in unknown_paths:
+                    _pulse_fallback_spark(store, path, row)
+                    unknown_paths.append(path)
+                continue
+            row["spark_svg"] = pulse_index.sparkline(
+                path, lambda p=path: sparkline_svg(synth_for_operation(store, p)))
+    # w8/locks: ONE hold of the store lock for the whole page of sparklines
+    # (handed to other requests every HANDOVER_EVERY_S), not the up to four
+    # short takes per row it used to be (index check, row read, sparkline
+    # store, the synth's own read: ~200 for a page of 50). Each short take
+    # waits for the current holder's next hand-over while a cold Live-Edit
+    # grid build or the lint runs; the page measured 9.6-9.7 s in real
+    # Chrome on big30x right after a structural pull. A chip that moves
+    # meanwhile stops the held pass; the rows it did not draw are drawn the
+    # ordinary way.
+    with _activity.yielding(store, foreground=True, main=True):
+        with store._lock:
+            _spark_rows(rows)
+    _spark_rows(rows)
+    return unknown_paths
 
 
 # ---------------------------------------------------------------------------
@@ -15710,51 +16710,41 @@ def pulses_page():
                          and r["channel"] in PAIR_PULSE_CHANNELS
                          for r in all_rows)
     has_found = any(r.get("found") for r in all_rows)
+    vt = _pulses_vt_on(len(all_rows), per_page)
     all_rows = _pulse_rows_filter(all_rows, channel, query, owner)
 
+    # w9 final QA (P3): an address that names the open pulse but no page (the
+    # Json Tree's /pulses/goto link, a shared F39 link) lands on the page that
+    # HOLDS that pulse's row -- q30 xy's 105th pulse used to open beside page 1
+    # of 3 with its row nowhere on screen. An explicit page= is the reader's
+    # own choice and always wins (the page's URL sync writes it whenever the
+    # open row is not on the page shown).
+    want_pulse = request.args.get("pulse", "").strip()
+    if want_pulse and not rows_only and per_page > 0 and "page" not in request.args:
+        for i, r in enumerate(all_rows):
+            if r["path"] == want_pulse:
+                page = i // per_page + 1
+                break
+
     page_rows, total, page, total_pages = _paginate(all_rows, page, per_page)
-    # the index's row dicts are shared across requests (docs/2xx pulses RAM):
-    # the spark keys below go on a copy
-    page_rows = [dict(r) for r in page_rows]
-
-    # Sparklines for the visible page only, memoized per (op, mutation_seq) so
-    # repeated search keystrokes / pagination over an unchanged chip never
-    # re-synthesize. Aliases / unknown classes render "→ target" instead.
-    from quam_state_manager.core.waveform_synth import sparkline_svg, synth_for_operation
+    vt_json = None
     unknown_paths: list[str] = []
-
-    def _spark_rows(rows) -> None:
-        for row in rows:
-            if "spark_svg" in row:
-                continue                       # drawn before a hand-over
-            _activity.checkpoint()
-            if row["is_alias"]:
-                row["spark_svg"] = None
-                continue
-            path = row["path"]
-            if not row["known"]:
-                # A class SM has no synthesizer for -- SNZ, GaussianNZ, a lab's own
-                # readout weights. Drawn from the lab's generated config, and marked
-                # as such in the markup so it never reads as one SM drew.
-                if path not in unknown_paths:
-                    _pulse_fallback_spark(store, path, row)
-                    unknown_paths.append(path)
-                continue
-            row["spark_svg"] = pulse_index.sparkline(
-                path, lambda p=path: sparkline_svg(synth_for_operation(store, p)))
-    # w8/locks: ONE hold of the store lock for the whole page of sparklines
-    # (handed to other requests every HANDOVER_EVERY_S), not the up to four
-    # short takes per row it used to be (index check, row read, sparkline
-    # store, the synth's own read: ~200 for a page of 50). Each short take
-    # waits for the current holder's next hand-over while a cold Live-Edit
-    # grid build or the lint runs; the page measured 9.6-9.7 s in real
-    # Chrome on big30x right after a structural pull. A chip that moves
-    # meanwhile stops the held pass; the rows it did not draw are drawn the
-    # ordinary way.
-    with _activity.yielding(store, foreground=True, main=True):
-        with store._lock:
-            _spark_rows(page_rows)
-    _spark_rows(page_rows)
+    if vt:
+        # w9/pulsesall: the rows travel as data; nothing is rendered or drawn
+        # here (the thumbnails are drawn for the rows on screen, lazily). The
+        # rows are re-read with their stamp as one observation.
+        raw, stamp = _pulse_vt_rows_stamp(store, pulse_index)
+        all_rows = _pulse_rows_filter(raw, channel, query, owner)
+        total = len(all_rows)
+        vt_json = _pulse_vt_payload(store, pulse_index, all_rows, channel,
+                                    want_html=request.args.get("vids") != "1",
+                                    stamp=stamp)
+        page_rows = []
+    else:
+        # the index's row dicts are shared across requests (docs/2xx pulses
+        # RAM): the spark keys go on a copy
+        page_rows = [dict(r) for r in page_rows]
+        unknown_paths = _pulse_draw_sparks(store, pulse_index, page_rows)
 
     if unknown_paths:
         # docs/218: draw the visible lab-class rows with their own code in the
@@ -15779,6 +16769,10 @@ def pulses_page():
             open_pulse, open_pulse_missing = "", open_pulse
     else:
         open_pulse = ""
+    # w9/pulsegate: the Json Tree's "Delete together" link -- the pulse opens
+    # on its delete step with the same offer (the path the tree refused)
+    open_together = (request.args.get("together", "").strip()
+                     if open_pulse else "")
     return render_template(
         template,
         **_ctx(
@@ -15789,6 +16783,7 @@ def pulses_page():
             open_create=(request.args.get("create") == "1"),
             open_pulse=open_pulse,
             open_pulse_missing=open_pulse_missing,
+            open_together=open_together,
             rows=page_rows,
             active_channel=channel,
             active_query=query,
@@ -15809,6 +16804,7 @@ def pulses_page():
             has_pair_flux=has_pair_flux,
             has_pair_drive=has_pair_drive,
             has_found=has_found,
+            vt_json=vt_json,
         ),
     )
 
@@ -15844,7 +16840,8 @@ def pulse_detail():
     paths = _view_paths_arg(requested)
     if paths and not path:
         path = paths[0]
-    return _render_pulse_detail(path, paths=paths or None, requested=requested)
+    return _render_pulse_detail(path, paths=paths or None, requested=requested,
+                                together=request.args.get("together", "").strip())
 
 
 _PULSE_VIEW_MAX = 4
@@ -15891,7 +16888,7 @@ def _pulse_section_role(path: str) -> str:
 
 def _render_pulse_detail(path: str, *, status_msg: str | None = None,
                          status_level: str = "success", paths: list[str] | None = None,
-                         requested: list[str] | None = None):
+                         requested: list[str] | None = None, together: str = ""):
     """Shared renderer for the pulse detail partial (GET + mutation responses).
 
     docs/141 4k: the inspector is a VIEW of one to four pulses -- the main
@@ -15985,6 +16982,7 @@ def _render_pulse_detail(path: str, *, status_msg: str | None = None,
         detail_json=detail_json,
         status_msg=status_msg,
         status_level=status_level,
+        open_together=together,
         **{k: v for k, v in main.items() if k not in ("index", "color", "role", "label", "plot", "params_json")},
     )
 
@@ -16132,6 +17130,9 @@ def _pulse_section_ctx(store, pulse_index, path: str):
                       else used_by_target)
     # a lab gate that plays this op BY NAME (verifier 3) -- not a pointer
     played_by_name = _lab_named_players(store, actual_path)
+    # w9/labwarm: the delete step says "Checking with your lab code..." beside
+    # its disabled button -- only when the delete is asked of the lab at all
+    delete_lab_check = _lab_delete_asks(store, path)
     # docs/189 (customer, on-site: "pulses 메뉴에서 snz 는 plotting이 안돼").
     # A lab may write its OWN pulse classes -- one customer chip's CZ flux pulse
     # is `quam_config.two_flux_gate.SNZTwoFluxPulse`, and four such classes cover
@@ -16192,6 +17193,13 @@ def _pulse_section_ctx(store, pulse_index, path: str):
         "used_by": used_by_target,
         "delete_used_by": delete_used_by,
         "played_by_name": played_by_name,
+        "delete_lab_check": delete_lab_check,
+        # w9/labwarm: the lab worker's state AT RENDER -- the first word the
+        # lab indicators say before their own status poll answers (a busy
+        # server answered that poll 1.2 s late on krs5: the step said
+        # "Checking..." first, then "Preparing..."); corrected by the poll
+        "lab_worker_state": (_lab_worker_state()
+                             if (delete_lab_check or unknown_class) else None),
         "synth_error": synth_error,
         # docs/189 -- the class is the lab's own and SM cannot synthesize it.
         "synth_unknown_class": unknown_class,
@@ -16557,7 +17565,7 @@ def _coerce_lab_overrides(store, path: str, overrides: dict) -> dict:
 
 
 def lab_drawings_for_paths(store, paths, *, spawn: bool, overrides=None,
-                           overrides_by_path=None):
+                           overrides_by_path=None, background: bool = False):
     """``{path: record}`` -- each pulse drawn by its OWN class's code in the
     selected env (``core/lab_waveform``). ONE function for the detail view,
     the edit refresh and the row sparklines, so they cannot draw the same
@@ -16584,8 +17592,11 @@ def lab_drawings_for_paths(store, paths, *, spawn: bool, overrides=None,
         items.append((qclass, params))
         owners.append(path)
     if items:
+        # background only when it is one (a stand-in draw that predates the
+        # keyword keeps working for every foreground caller)
+        kw = {"background": True} if background else {}
         for path, rec in zip(owners, lab_waveform.draw(python_path, items,
-                                                       spawn=spawn)):
+                                                       spawn=spawn, **kw)):
             out[path] = rec
     return out
 
@@ -18199,6 +19210,26 @@ def _lab_named_players(store, path: str) -> list[str]:
     return sorted(out)
 
 
+def _lab_delete_asks(store, path: str) -> bool:
+    """Would ``/api/pulse/delete`` of *path* be asked of the lab's own code?
+    The delete branch of :func:`_lab_write_refusal`: a lab gate the delete
+    reaches (``macros_for``), or a ``generate_config()`` question
+    (``_lab_cfg_scope``: a tracked chain, a gate or a by-name op it cuts).
+    A map lookup -- never a subprocess, never the env settings."""
+    from quam_state_manager.core import lab_watch
+    try:
+        watch = lab_watch.watch_for(store)
+    except Exception:  # noqa: BLE001 -- wording only
+        return False
+    if not watch or not isinstance(path, str) or not path:
+        return False
+    if watch.macros_for(path):
+        return True
+    cfg = {"cut": [], "gates": [], "orphans": {}, "rows": set(), "paths": []}
+    _lab_cfg_scope(watch, 0, path, _LAB_DELETE, cfg)
+    return bool(cfg["rows"])
+
+
 def _qclass_at(store, path: str):
     try:
         body = store.get_value(path)
@@ -19260,6 +20291,22 @@ def api_pulse_delete():
     return _lab_toast(_pulse_mutation_response(detail))
 
 
+def _lab_delete_pulses_link(store, main: str, also) -> dict:
+    """w9/pulsegate: when the set a lab refusal says must go together holds a
+    PULSE, that set is deleted on the Pulses page -- the Json Tree's offer
+    becomes a link to the same offer there (``lab_delete_pulses_url``,
+    opening the first pulse of the set with ``together=`` the refused path).
+    A set of gates and gate fields only stays the tree's own batch."""
+    from quam_state_manager.core import pulse_structure as _ps
+    paths = [main] + list(also or ())
+    if _delete_together_check(store, main, paths)[0]:
+        return {}             # not a set that route takes: the tree's own batch
+    for p in paths:
+        if _pulse_structure_change(store, "delete", p, absent=True) is not None:
+            return {"lab_delete_pulses_url": _rooted(_ps.goto_url(p, together=main))}
+    return {}
+
+
 def _lab_delete_label(store, also) -> str:
     """The offer's button text for *also* (``lab_delete_label`` on the Json
     Tree's refusal: its old "N ops" miscounted a gate field or a gate)."""
@@ -19289,12 +20336,24 @@ def _pulse_delete_refused(store, path: str, message: str, info: dict):
     """A lab refusal of a Pulses-page delete (docs/218 open issue, w8): the
     refusal in place, in the delete step it came from, with the one way
     through when there is one -- everything :func:`_lab_delete_also` says
-    must go with it, deleted in ONE /field/edit-batch (one Ctrl+Z) that the
-    same lab check asks again as a whole. The Json Tree offers the same set
-    (its /field/delete refusal carries it as ``lab_delete_also``).
+    must go with it, deleted in ONE batch (one Ctrl+Z) that the same lab
+    check asks again as a whole: ``/api/pulse/delete-together`` (w9: the
+    Pulses page's own door; the generic batch door refuses pulse deletes).
+    The Json Tree's refusal links to this same offer (``together=``).
 
     400, retargeted into the detail's ``#pulse-delete-result`` slot (app.js
     lets exactly this body swap there; any other 4xx stays a toast)."""
+    resp = make_response(_pulse_delete_refused_html(store, path, message, info), 400)
+    resp.headers["HX-Retarget"] = "#pulse-delete-result"
+    resp.headers["HX-Reswap"] = "innerHTML"
+    return resp
+
+
+def _pulse_delete_refused_html(store, path: str, message: str, info: dict,
+                               subject: str | None = None) -> str:
+    """The offer's markup (``_pulse_delete_refused.html``). *subject* names
+    the refused path's role when it is not the open pulse (the Json Tree's
+    delete, opened here through its link)."""
     from quam_state_manager.core import lab_watch
     also = _lab_delete_also(store, [path], info)
     try:
@@ -19339,14 +20398,200 @@ def _pulse_delete_refused(store, path: str, message: str, info: dict):
         else:
             kind, role = "op", cls
         rows.append({"path": p, "kind": kind, "role": role})
-    html = render_template(
+    return render_template(
         "_pulse_delete_refused.html", path=path,
         message=_lab_refusal_text(message), also=rows, together=together,
+        subject=subject,
         label=_together_label([r["kind"] for r in rows]) if rows else "")
-    resp = make_response(html, 400)
-    resp.headers["HX-Retarget"] = "#pulse-delete-result"
-    resp.headers["HX-Reswap"] = "innerHTML"
-    return resp
+
+
+def _delete_together_check(store, main: str, paths: list) -> tuple[list, bool]:
+    """``(outsiders, holds_a_pulse)`` for a "Delete together" set.
+
+    The set is what the lab refusal offers: the refused path and
+    :func:`_lab_delete_also` -- pulses (ops, gate slots), lab gates and fields
+    of a lab gate. Every path, the refused one included, must be one of
+    those: this route deletes pulses with what cannot stay without them; it
+    is not a second generic delete door. (A tree refusal of anything else --
+    a channel whose set holds a pulse -- gets no link:
+    :func:`_lab_delete_pulses_link`.)"""
+    from quam_state_manager.core import lab_watch
+    try:
+        gates = set(lab_watch.watch_for(store).macros)
+    except Exception:  # noqa: BLE001 -- no watch map: pulses only
+        gates = set()
+    outsiders: list = []
+    holds_pulse = False
+    for p in paths:
+        is_pulse = _pulse_structure_change(store, "delete", p, absent=True) is not None
+        holds_pulse = holds_pulse or is_pulse
+        if is_pulse:
+            continue
+        if p in gates or any(p.startswith(g_ + ".") for g_ in gates):
+            continue
+        outsiders.append(p)
+    return outsiders, holds_pulse
+
+
+@bp.route("/api/pulse/delete-together", methods=["POST"])
+def api_pulse_delete_together():
+    """The Pulses page's "Delete together with ..." (w8, docs/225 §4): the
+    refused pulse and everything the lab check says must go with it, in ONE
+    batch -- one Ctrl+Z restores all -- that the same lab check asks again as
+    a whole.
+
+    w9/pulsegate: its own route, so the generic batch door can refuse every
+    pulse delete while this one stays possible. The distinction is the ROUTE
+    (a server-side ``pulse_door`` argument), never a flag in the body; the
+    set is verified here (:func:`_delete_together_check`) so the route cannot
+    delete arbitrary paths. Everything after that is /field/edit-batch's own
+    code (chip gate, agent lock, lab check, atomic rollback, the answer's
+    shape -- ``lab_delete_also`` when the batch as a whole names more)."""
+    ctx = _active_ctx()
+    modifier = ctx.get("modifier") if ctx else None
+    if not modifier:
+        return jsonify(ok=False, error=_NO_CHIP_MSG), 400
+    pj = request.get_json(silent=True)
+    if not isinstance(pj, dict):
+        return jsonify(ok=False, error="A JSON body is required"), 400
+    main = _normalize_dot_path(str(pj.get("path") or "").strip())
+    raw = pj.get("paths")
+    paths = (list(dict.fromkeys(
+        _normalize_dot_path(p.strip()) for p in raw if isinstance(p, str) and p.strip()))
+        if isinstance(raw, list) else [])
+    if not main or main not in paths or len(paths) < 2:
+        return jsonify(ok=False, error=(
+            "A Delete together names the refused path and what must go with "
+            "it (two or more paths).")), 400
+    outsiders, holds_pulse = _delete_together_check(modifier.store, main, paths)
+    if outsiders:
+        return jsonify(ok=False, error=(
+            "Not part of a pulse's Delete together: " + ", ".join(outsiders[:5])
+            + (f" and {len(outsiders) - 5} more" if len(outsiders) > 5 else "")
+            + " -- only pulses, a lab gate and its fields go together here.")), 400
+    if not holds_pulse:
+        return jsonify(ok=False, error=(
+            "Nothing in this set is a pulse -- delete it where it lives "
+            "(Live edit - Json Tree view).")), 400
+    payload = {"updates": [{"dot_path": p, "delete": True} for p in paths],
+               "group": pj.get("group") or "new",
+               "expect_chip": pj.get("expect_chip") or "",
+               "force_chip": pj.get("force_chip")}
+    return _field_edit_batch_impl(payload, pulse_door=True)
+
+
+@bp.route("/api/pulse/delete-together/offer")
+def api_pulse_delete_together_offer():
+    """The offer for ``path`` (the Json Tree's refused delete, opened here
+    through its link): the same lab check, asked without writing anything,
+    rendered as the Pulses page's own offer. 200 with markup for
+    ``#pulse-delete-result``."""
+    store = _store()
+    if not store:
+        return render_template("_status.html", message="No state loaded",
+                               level="warning")
+    main = _normalize_dot_path(request.args.get("path", "").strip())
+    pulse = _normalize_dot_path(request.args.get("pulse", "").strip())
+    if not main:
+        return render_template("_status.html", message="path required",
+                               level="error"), 400
+    with store._lock:
+        present = _path_present(store.merged, main)
+    if not present:
+        return render_template(
+            "_status.html", level="info",
+            message=f"{main} is not on this chip any more -- nothing to delete.")
+    if "." not in main:
+        return render_template(
+            "_status.html", level="warning",
+            message="Top-level containers are not deleted here."), 400
+    from flask import g
+    info = g.lab_info = {"notes": []}
+    lab = _lab_write_refusal(store, [(main, _LAB_DELETE)], info=info)
+    if not lab:
+        return render_template(
+            "_status.html", level="info",
+            message=(f"{main} can be deleted on its own now -- nothing else "
+                     "has to go with it."))
+    subject = None if main == pulse else "the path you deleted in the Json Tree"
+    return _pulse_delete_refused_html(store, main, lab[0], info, subject=subject)
+
+
+def _pulse_tab_of(row: dict) -> str:
+    """The Pulses page's channel tab a row lives under ("" = none)."""
+    from quam_state_manager.core.pulse_index import GATE_SLOTS, PAIR_PULSE_CHANNELS
+    if row.get("found"):
+        return "found"
+    kind, chan = row.get("owner_kind"), row.get("channel")
+    if kind == "pair" and chan in GATE_SLOTS:
+        return "flux"
+    if kind == "pair" and chan in PAIR_PULSE_CHANNELS:
+        return "pair_drive"
+    if kind == "qubit" and chan in ("xy", "z", "resonator", "xy_detuned"):
+        return chan
+    return ""
+
+
+def _pulses_url_for(pulse_index, path: str, together: str = "") -> str:
+    """The Pulses page address for a Json Tree path: a pulse (or a field
+    inside one) opens that pulse, beside its owner's rows; an ``operations``
+    dict (or anything else holding pulses) shows its owner's rows on its
+    channel tab. ``together`` (a refused delete's path) opens the pulse's
+    delete step on the same offer."""
+    row = pulse_index.row(path) if path else None
+    if row is None and path:
+        segs = path.split(".")
+        for n in range(len(segs) - 1, 1, -1):
+            row = pulse_index.row(".".join(segs[:n]))
+            if row is not None:
+                break
+    params: list = []
+    if row is not None:
+        params = [("owner", row.get("owner")), ("channel", _pulse_tab_of(row)),
+                  ("pulse", row["path"])]
+        if together:
+            params.append(("together", together))
+    elif path:
+        prefix = path + "."
+        inside = [r for r in pulse_index.rows() if r["path"].startswith(prefix)]
+        if inside:
+            params.append(("owner", inside[0].get("owner")))
+            tabs = {_pulse_tab_of(r) for r in inside}
+            if len(tabs) == 1:
+                params.append(("channel", tabs.pop()))
+        else:
+            segs = path.split(".")
+            if len(segs) >= 2 and segs[0] in ("qubits", "qubit_pairs"):
+                params.append(("owner", segs[1]))
+                if segs[0] == "qubits" and len(segs) >= 3 and segs[2] in (
+                        "xy", "z", "resonator", "xy_detuned"):
+                    params.append(("channel", segs[2]))
+    params = [(k, v) for k, v in params if v]
+    return "/pulses" + ("?" + urlencode(params) if params else "")
+
+
+@bp.route("/pulses/goto")
+def pulses_goto():
+    """The Json Tree's "Pulses page" link (w9/pulsegate): resolves a tree path
+    to the Pulses page address on the SERVER (one rule, the page's own index).
+    ``json=1`` (the tree's click) answers ``{"url": ...}`` and the page
+    navigates its table pane there the app's own way; a plain GET (a new
+    tab) is redirected. Never ``HX-Location``: htmx would first snapshot the
+    whole tree into its history cache (over the storage quota on a large
+    chip)."""
+    store = _store()
+    pulse_index = _pulse_index()
+    path = _normalize_dot_path(request.args.get("path", "").strip())
+    together = _normalize_dot_path(request.args.get("together", "").strip())
+    url = _rooted("/pulses")
+    if store and pulse_index and path:
+        try:
+            url = _rooted(_pulses_url_for(pulse_index, path, together))
+        except Exception:  # noqa: BLE001 -- the page itself is still the way
+            logger.warning("pulses/goto %s failed", path, exc_info=True)
+    if request.args.get("json") == "1":
+        return jsonify(ok=True, url=url)
+    return redirect(url)
 
 
 @bp.route("/api/pulse/duplicate", methods=["POST"])
@@ -19777,6 +21022,10 @@ def _pulse_fallback_spark(store, path, row) -> None:
     row["spark_from_config"] = bool(row["spark_svg"])
 
 
+#: rows per background ask of the sparkline warm (see _warm_lab_sparks)
+_LAB_SPARK_CHUNK = 4
+
+
 def _warm_lab_sparks(store, paths) -> None:
     """Draw *paths* with their own class code in ONE background subprocess,
     so the next render of these rows has a current thumbnail. Single-flight
@@ -19805,9 +21054,17 @@ def _warm_lab_sparks(store, paths) -> None:
         _lab_spark_inflight.add(key)
 
     def _run():
+        # w9/labwarm: in CHUNKS, yielding the env's worker between them to any
+        # user check waiting for it -- one ask for a whole page of lab rows
+        # held a delete on big30x behind the page's thumbnails (43.8 s, the
+        # worker "ready" only 71 s after the open)
+        from quam_state_manager.core import lab_waveform
         try:
             with app.app_context():
-                lab_drawings_for_paths(store, todo, spawn=True)
+                for i in range(0, len(todo), _LAB_SPARK_CHUNK):
+                    lab_waveform.yield_to_foreground(python_path)
+                    lab_drawings_for_paths(store, todo[i:i + _LAB_SPARK_CHUNK],
+                                           spawn=True, background=True)
         except Exception:  # noqa: BLE001
             logger.debug("lab sparkline warm failed", exc_info=True)
         finally:
@@ -33199,10 +34456,22 @@ def generate_select_env():
                           "fail with 'produced no _result.json'. Pick the "
                           "env's bin/python instead."),
             }), 400
+    _apply_selected_env(python_path)
+    return jsonify({"ok": True, "selected": python_path})
+
+
+def _apply_selected_env(python_path: str, *, rebind: bool = True) -> None:
+    """Make *python_path* THE selected env (``config_generator``'s one
+    setting -- the lab worker, the class probe, the config warm and the
+    Generate Config default all read it) and run what a selection means.
+    Shared by Generate Config's picker and the project env (w9/labwarm).
+    *rebind* False: called from inside an activation, which binds the chip
+    it is publishing to the new env itself -- the one active until then is
+    not re-bound (that would warm a probe for a chip being left)."""
     config_generator.set_selected_env(current_app.instance_path, python_path)
     # The pulse-roster overlay belongs to the PREVIOUS env — clear it now; the
     # warm below re-applies the new env's roster when its probe lands.
-    from quam_state_manager.core import pulse_catalog
+    from quam_state_manager.core import lab_waveform, pulse_catalog
     pulse_catalog.apply_env_overlay(None)
     pulse_catalog.apply_chip_classes(None)      # docs/190 F47, same lifetime
     # Warm the capability manifest in the background so the review step's report
@@ -33212,15 +34481,18 @@ def generate_select_env():
         target=lambda: config_generator.probe_capabilities(python_path, inst),
         daemon=True,
     ).start()
+    # w9/labwarm: the old env's lab worker goes NOW (it would only have gone
+    # at the next check), and the open chip's is started for the new one
+    lab_waveform.retire_except(python_path, background=True)
     # Re-bind the active chip's type policy to the NEW env (stat-cached read —
     # likely cold for a fresh env → assignments-only until the warm lands),
     # then warm the schema manifest in the background (single-flight).
-    _ctx = _active_ctx()
+    _ctx = _active_ctx() if rebind else None
     if _ctx:
         _attach_type_policy(_ctx, inst)
         _warm_state_schema_async(_ctx.get("store"), inst,
                                  live_folder=_ctx.get("path"))
-    return jsonify({"ok": True, "selected": python_path})
+        _maybe_prewarm_lab_worker(_ctx, inst, reason="env-select")
 
 
 @bp.route("/generate/capabilities", methods=["POST"])

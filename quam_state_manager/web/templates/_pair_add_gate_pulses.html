@@ -1,0 +1,18 @@
+{# w9/pulsegate (user decision 2026-09-28): a pulse is added only on the Pulses
+   page. A flux CZ gate brings its flux pulses with it (the old templates wrote
+   them INLINE in the gate, on no channel -- the layout the Pulses page stopped
+   writing on 2026-09-27 because such a gate could not play), so on a flux pair
+   the Add-gate form gives way to the way that builds a gate WITH its channel
+   ops. Rendered by pair_gate_form when no gate type without pulses remains. #}
+<div class="add-gate-form-wrap add-gate-pulses-note">
+    <header class="add-gate-form-header">
+        <strong>Add gate to {{ pair_name }}</strong>
+        <button type="button"
+                class="add-gate-cancel"
+                hx-get="{{ root }}/pair/{{ pair_name }}/gate/new/cancel"
+                hx-target="#pair-add-gate-area"
+                hx-swap="outerHTML"
+                title="Cancel">×</button>
+    </header>
+    {% include '_pair_add_gate_pulses_note.html' %}
+</div>

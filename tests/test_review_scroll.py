@@ -54,8 +54,10 @@ class TestReviewScroll:
         # pinned header flex cluster exactly like the other two sync branches — it was
         # omitted from the display:contents rule (caught by the pre-commit audit), which
         # made its two buttons lay out as one inline blob. Pin all three.
-        i = _CSS.index("{ display: contents; }")
-        rule = _CSS[max(0, i - 200):i]
+        # the review-sync rule, not merely the first display:contents in the
+        # sheet (docs/227 added .topo-rb-slot { display: contents; } above it)
+        i = _CSS.index(".review-sync-clean:not([hidden]) { display: contents; }")
+        rule = _CSS[max(0, i - 200):i + 60]
         assert ".review-sync-edits" in rule
         assert ".review-sync-saved" in rule
         assert ".review-sync-clean" in rule

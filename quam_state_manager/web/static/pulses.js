@@ -122,6 +122,18 @@ window.PulsesPage = (function () {
         showSynthErr(root, sectionsOf(root).map(function (sc) {
             return sc.synthErr || '';
         }).filter(Boolean).join(' \u00b7 '));
+        // w9 final QA (P3): each section's own header carries the server's
+        // note from render time ("... preview unavailable for this class"),
+        // rendered while the lab drawing was still pending. The server drops
+        // it once a curve answered (routes: synth_error = None for a lab or
+        // config plot); so does the page when that curve lands here -- a red
+        // "unavailable" over the drawn waveform contradicts it.
+        sectionsOf(root).forEach(function (sc) {
+            if (!sc.el || !sc.el.classList || !sc.el.classList.contains('pulse-sec')) return;
+            if (!(sc.committedPlot && sc.committedPlot.ok) || sc.synthErr) return;
+            var note = sc.el.querySelector('.pulse-sec-head .pulse-synth-err');
+            if (note) note.hidden = true;
+        });
     }
 
     /* The waveform SM cannot compute, computed by the code that owns it.
@@ -913,9 +925,11 @@ window.PulsesPage = (function () {
        paths can only go WITH it -- the by-name mirror ops, the gate field
        that plays it by name, or the gate that cannot exist without it (the
        refusal lists exactly them; routes._lab_delete_also). One press
-       deletes that set in ONE /field/edit-batch: the door the Json Tree's
-       offer uses, the same lab check asked again as a whole (refused if the
-       batch still breaks the chip), one Ctrl+Z restores all. */
+       deletes that set in ONE batch, the same lab check asked again as a
+       whole (refused if the batch still breaks the chip), one Ctrl+Z
+       restores all. w9/pulsegate: through /api/pulse/delete-together, the
+       Pulses page's own door -- /field/edit-batch refuses pulse deletes. The
+       Json Tree's refusal links here (together=) instead of deleting. */
     function _toastHtml(text, level, reopen) {
         var d = document.createElement('div');
         d.className = 'toast toast-' + level;
@@ -957,10 +971,9 @@ window.PulsesPage = (function () {
         };
         btn.disabled = true;
         say('Checking the whole batch with your lab code…', 'busy');
-        var p = fetch('/field/edit-batch', {
+        var p = fetch('/api/pulse/delete-together', {
             method: 'POST', headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-                updates: paths.map(function (x) { return { dot_path: x, 'delete': true }; }),
+            body: JSON.stringify({ path: main, paths: paths,
                 group: 'new', expect_chip: String(window.__chipToken || '') })
         });
         var chain = p.then(function (r) {
@@ -1001,9 +1014,17 @@ window.PulsesPage = (function () {
                 return;
             }
             var n = paths.length - 1;
-            var name = String(main).split('.').pop();
+            // the Json Tree's offer (together=) names a path that is not
+            // the open pulse: the pulse is what Ctrl+Z re-opens
+            var shownPulse = (myRoot && myRoot.getAttribute('data-pulse-path')) || main;
+            var goes = paths.some(function (x) {
+                return shownPulse === x || String(shownPulse).indexOf(x + '.') === 0;
+            });
+            var reopen = goes ? shownPulse : main;
+            var name = String(reopen).split('.').pop();
             var pane = document.getElementById('inspector-pane');
-            var others = paths.slice(1, 5).join(', ') + (n > 4 ? ' and ' + (n - 4) + ' more' : '');
+            var rest = paths.filter(function (x) { return x !== reopen; });
+            var others = rest.slice(0, 4).join(', ') + (n > 4 ? ' and ' + (n - 4) + ' more' : '');
             // the pane still shows the pulse that is gone: it says what went
             // (the ordinary delete's "Deleted <name>" toast, so Ctrl+Z
             // re-opens the pulse -- app.js cellsReverted -- even when it went
@@ -1015,7 +1036,7 @@ window.PulsesPage = (function () {
                 pane.innerHTML = '';
                 pane.appendChild(_toastHtml('Deleted ' + name + ' together with ' + n
                     + (n === 1 ? ' other path (' : ' other paths (') + others
-                    + ') — one Ctrl+Z restores all', 'success', main));
+                    + ') — one Ctrl+Z restores all', 'success', reopen));
                 if (j.warning) pane.appendChild(_toastHtml(String(j.warning), 'warning'));
                 shown = true;
             }
@@ -1292,6 +1313,20 @@ window.PulsesPage = (function () {
             if (btn) btn.disabled = false;
             showSynthErr(root, 'the request failed');
         });
+    }
+
+    /* w9/labwarm: does the create about to be sent ask the lab's own code?
+       A class SM does not draw in-process (env_only: the env's or the chip's
+       own) is drawn by its class first; a pulse into a gate's empty slot is
+       asked of the gate. lab-check.js then says "Preparing your lab code..."
+       on the busy line while the worker is still starting. */
+    function createNeedsLab() {
+        var root = createRoot();
+        if (!root || !root._catalog) return false;
+        var sel = root.querySelector('#pulse-create-type');
+        var spec = sel ? root._catalog[sel.value] : null;
+        var kind = root.querySelector('input[name="target_kind"]:checked');
+        return !!((spec && spec.env_only) || (kind && kind.value === 'pair'));
     }
 
     function createTypeChanged(sel) {
@@ -2042,11 +2077,75 @@ window.PulsesPage = (function () {
     // events bubble to document anyway.
     // Opt the pulses table into the shared drag-resizable columns (B-columns).
     // Idempotent and cheap — safe to call after any swap that (re)renders it.
-    function enhancePulsesTable() {
+    function enhancePulsesTable(root) {
+        // w9/pulsesall: a virtual "All" table renders its first rows BEFORE
+        // the column widths are frozen below (they are measured off them)
+        if (window.PulsesVT) {
+            try { window.PulsesVT.init(root && root.querySelector ? root : document); }
+            catch (e) { if (window.console) console.error('PulsesVT.init', e); }
+        }
         if (window.enhanceColumnResize && document.getElementById('pulses-table')) {
             window.enhanceColumnResize('pulses-table', 'quam_pulses_col_widths');
         }
+        revealOpenPulse();
     }
+
+    /* w9 final QA (P3): a page opened ON a pulse (?pulse= -- the Json Tree's
+       link, a reload, a shared address) shows that pulse's row: the server
+       picked the page that holds it, and here it is scrolled into view and
+       marked as the keyboard's row, once per landing (a later rows refresh
+       never yanks the reader back to it). */
+    function revealOpenPulse() {
+        var ld = document.getElementById('pulse-open-loader');
+        var p = ld && !ld._pulseRevealed ? ld.getAttribute('data-open-pulse') : null;
+        var fromLoader = !!p;
+        // ...and the page-size picker's one ask (app.js setPageSize): the
+        // pulse open in the inspector, once, on the table it asked for
+        var once = window._pulsesRevealOnce;
+        window._pulsesRevealOnce = null;
+        if (!p && once && once.path && Date.now() - (once.at || 0) < 30000) p = once.path;
+        if (!p) return;
+        // one try per landing: a pulse this table does not show (another tab,
+        // a search) is not chased into a later refresh
+        if (fromLoader) ld._pulseRevealed = true;
+        if (!showRow(p, true)) return;
+        // the loader's own GET is still out: when the pulse lands, the
+        // inspector opens and the split gives the table less height (base.html
+        // initSplit) -- the row is brought back in view once more then
+        _revealArm = fromLoader ? { path: p, at: Date.now() } : null;
+    }
+    var _revealArm = null;
+    function showRow(p, mark) {
+        if (window.PulsesVT && window.PulsesVT.active()) return window.PulsesVT.reveal(p);
+        var wrap = document.getElementById('pulses-rows-wrap');
+        if (!wrap) return false;
+        var rows = wrap.querySelectorAll('tr.clickable-row[data-pulse-path]');
+        for (var i = 0; i < rows.length; i++) {
+            if (rows[i].getAttribute('data-pulse-path') !== p) continue;
+            if (mark) {
+                wrap.querySelectorAll('tr.clickable-row.row-selected').forEach(function (tr) {
+                    tr.classList.remove('row-selected');
+                });
+                rows[i].classList.add('row-selected');
+            }
+            if (rows[i].scrollIntoView) rows[i].scrollIntoView({ block: 'nearest' });
+            return true;
+        }
+        return false;
+    }
+    /* The inspector landed: when it is the pulse the address named and the
+       reader has not touched the page since, keep its row in view under the
+       new split. (Registered on document: base.html's initSplit listens on
+       body, so the split is already applied when this runs.) */
+    document.addEventListener('htmx:afterSwap', function (evt) {
+        var arm = _revealArm;
+        if (!arm || !evt.detail || !evt.detail.target || evt.detail.target.id !== 'inspector-pane') return;
+        _revealArm = null;
+        var root = document.getElementById('pulse-detail-root');
+        if (!root || root.getAttribute('data-pulse-path') !== arm.path) return;
+        if (Date.now() - arm.at > 15000 || (window.__lastUserAct || 0) > arm.at) return;
+        showRow(arm.path, false);
+    });
 
     // docs/190 F33: a refused commit (400) leaves the typed text in place so
     // the typo can be fixed where it was made -- but the field must SAY it was
@@ -2082,12 +2181,12 @@ window.PulsesPage = (function () {
             // it would silently strand a stale selection. Re-sync it to the (empty)
             // DOM so the compare bar/count match what the user sees.
             if (window.clearPulseSelection) window.clearPulseSelection();
-            enhancePulsesTable();
+            enhancePulsesTable(evt.detail.target);
         } else if (evt.detail.target.id === 'table-pane' ||
                    evt.detail.target.querySelector &&
                    evt.detail.target.querySelector('#pulses-table')) {
             // first navigation to /pulses (full table-pane swap)
-            enhancePulsesTable();
+            enhancePulsesTable(evt.detail.target);
         }
     });
     // server-rendered first paint (no swap fired)
@@ -2120,6 +2219,7 @@ window.PulsesPage = (function () {
         regenerateThenVerify: regenerateThenVerify,
         startLinkEdit: startLinkEdit,
         createTypeChanged: createTypeChanged,
+        createNeedsLab: createNeedsLab,
         createTargetKind: createTargetKind,
         createPairGates: createPairGates,
         createPairSelected: createPairSelected,

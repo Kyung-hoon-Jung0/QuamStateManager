@@ -49,6 +49,15 @@
  *      the intent, a click does not, and re-pressing the restored tab on a
  *      clamped run does not; a run opened into an EMPTY pane (after a close)
  *      is a fresh open -- Full View at the top, not the stale offset.
+ *   L. w9 uxpolish (user decision): only the run LIST switches runs (its
+ *      requests carry app.js _dsListNav's header -- the tree click, the
+ *      table's openDatasetDetail, dsNavRun's server neighbour). A run opened
+ *      from anywhere else (a Trends point, Param History / value-history /
+ *      Column History "Data", a Versions link) is a FRESH open even while
+ *      the pane holds a run deep on Interactive: Full View at the top, the
+ *      same run re-opened too; the next LIST switch keeps that view; an
+ *      outside request that never swapped leaves nothing behind. The wiring
+ *      pins: the list's three openers send the header, nothing else does.
  *
  * Run: node tests/ds_scroll_anchor_selfcheck.cjs
  */
@@ -591,6 +600,7 @@ const tpl = fs.readFileSync(path.join(__dirname, '..', 'quam_state_manager', 'we
     const src = [
         "var _DS_COMBINED_TABS = ['full', 'overview', 'results', 'figures'];",
         sl('var _dsScroll = {', '};'),
+        sl('var _DS_LIST_NAV_HEADER', "=== 'list');\n}"),   // w9: _dsFromList, read by the capture
         sl('function _dsShownTab(pane) {', '\n}'),
         sl('(function() {\n    function _dsPaneOf', '\n})();'),
         bs.slice(bs.indexOf('document.addEventListener')).replace(/\r/g, ''),
@@ -708,6 +718,7 @@ const tpl = fs.readFileSync(path.join(__dirname, '..', 'quam_state_manager', 'we
         'var htmx = undefined;',
         sl('var _dsSticky = {', '\n};'),
         sl('var _dsScroll = {', '};'),
+        sl('var _DS_LIST_NAV_HEADER', "=== 'list');\n}"),   // w9: _dsFromList, read by the capture
         sl('window.switchDatasetTab = function(tabName, linkEl) {', '\n};'),
         'var switchDatasetTab = window.switchDatasetTab;',   // app.js calls it bare
         sl('function _dsShownTab(pane) {', '\n}'),
@@ -742,14 +753,21 @@ const tpl = fs.readFileSync(path.join(__dirname, '..', 'quam_state_manager', 'we
               <div class="dataset-tab-content hidden" id="ds-tab-state">${o.state ? '<details open><summary data-h="24">state.json</summary><div data-h="2400"></div></details>' : ''}</div>
             </div>`;
         };
-        const ev = (name) => pane.dispatchEvent(new window.CustomEvent(name, { bubbles: true, detail: { target: pane } }));
-        const swap = (o) => {   // one htmx swap into the pane: beforeSwap -> new content -> afterSwap
-            ev('htmx:beforeSwap');
+        // w9 uxpolish: every swap below is a switch made in the run LIST, so its
+        // request carries the list's header (real htmx puts a request's headers
+        // on detail.requestConfig.headers); section L swaps without it
+        const LIST = window._dsListNav ? window._dsListNav() : null;
+        const ev = (name, hdrs) => pane.dispatchEvent(new window.CustomEvent(name, { bubbles: true,
+            detail: { target: pane, requestConfig: { path: '/dataset/x', headers: hdrs } } }));
+        const swap = (o, outside) => {   // one htmx swap into the pane: beforeSwap -> new content -> afterSwap
+            const h = outside ? { 'HX-Request': 'true' } : Object.assign({ 'HX-Request': 'true' }, LIST);
+            ev('htmx:beforeSwap', h);
             pane.innerHTML = html(o);
             if (scrollTop > maxTop()) pane.scrollTop = maxTop();
-            ev('htmx:afterSwap');
+            ev('htmx:afterSwap', h);
             flushScroll();
         };
+        ok(LIST && LIST['X-SM-DS-Nav'] === 'list', 'L: (fixture) app.js exposes the list header, got ' + JSON.stringify(LIST));
         const shown = () => { const a = pane.querySelector('.dataset-tabs a.active[data-ds-tab]'); return a ? a.getAttribute('data-ds-tab') : null; };
         const press = (t) => window.switchDatasetTab(t, pane.querySelector(`.dataset-tabs a[data-ds-tab="${t}"]`));   // the link's onclick
         const ifig = (n) => pane.querySelector(`.ds-interactive-fig[data-fig="${n}"]`);
@@ -831,7 +849,67 @@ const tpl = fs.readFileSync(path.join(__dirname, '..', 'quam_state_manager', 'we
         pane.innerHTML = '';
         swap(KB);                                  // the SAME run re-opened after the close
         ok(shown() === 'full' && pane.scrollTop === 0, 'K6: the same run re-opened after a close: Full View at the top, got ' + shown() + '@' + pane.scrollTop);
+
+        // ── L: a run opened from OUTSIDE the list is fresh (w9 uxpolish) ──
+        swap(KA);
+        readerAt('interactive', 'f3', 55);         // the reader deep on Interactive, in the list
+        swap(KB);
+        ok(shown() === 'interactive' && offIfig('f3') === 55, 'L: (fixture) a list switch keeps Interactive at 55 px into f3, got ' + shown());
+        swap(KA, true);                            // a Trends point / "Data" button opens KA
+        ok(shown() === 'full' && pane.scrollTop === 0,
+           'L1: a run opened from outside the list lands on Full View at the top, got ' + shown() + '@' + pane.scrollTop);
+        swap(KB);
+        ok(shown() === 'full' && pane.scrollTop === 0,
+           'L2: the next LIST switch keeps that view (Full View at the top), got ' + shown() + '@' + pane.scrollTop);
+        readerAt('interactive', 'f3', 55);
+        swap(KB, true);                            // the SAME run, opened from outside
+        ok(shown() === 'full' && pane.scrollTop === 0,
+           'L3: the run already shown, opened from outside: Full View at the top, got ' + shown() + '@' + pane.scrollTop);
+        readerAt('interactive', 'f3', 55);
+        // an outside request that never swapped (aborted by the pane's
+        // hx-sync:replace, or an error) leaves nothing for the next LIST switch
+        swap(KA);
+        ok(shown() === 'interactive' && offIfig('f3') === 55,
+           'L4: an outside open that never swapped leaves the list switch alone, got ' + shown() + '@' + offIfig('f3'));
+        swap(KC, true);                            // outside, onto a run WITHOUT Interactive
+        ok(shown() === 'full' && pane.scrollTop === 0, 'L5: outside onto a run without the tab: Full View at the top');
+        pane.scrollTop = 700; flushScroll();       // the reader reads on there...
+        swap(KA);
+        ok(shown() === 'full', 'L5: ...and the next list switch keeps what they read on (Full View), got ' + shown());
+        // a request whose headers htmx left only on detail.etc (the ajax context)
+        const ev2 = (name) => pane.dispatchEvent(new window.CustomEvent(name, { bubbles: true,
+            detail: { target: pane, etc: { headers: LIST } } }));
+        swap(KB); readerAt('interactive', 'f3', 55);
+        ev2('htmx:beforeSwap'); pane.innerHTML = html(KA); ev2('htmx:afterSwap'); flushScroll();
+        ok(shown() === 'interactive' && offIfig('f3') === 55, 'L6: the list header read off detail.etc keeps the place, got ' + shown());
     }
+}
+
+// ── L wiring: the list's three openers send the header; nothing else does ──
+{
+    const a = app.replace(/\r/g, '');
+    const dv = fs.readFileSync(path.join(__dirname, '..', 'quam_state_manager', 'web', 'static', 'dataset-virtual.js'), 'utf8').replace(/\r/g, '');
+    const cs = fs.readFileSync(path.join(__dirname, '..', 'quam_state_manager', 'web', 'static', 'chip-status.js'), 'utf8');
+    const treeClick = a.slice(a.indexOf("var el = evt.target.closest('.tree-entry-click[data-uid]');"), a.indexOf('/* Honest loading feedback for run loads'));
+    ok(/htmx\.ajax\('GET', '\/dataset\/' \+ uid,\s*\{source: target, target: target, swap: 'innerHTML',\s*headers: window\._dsListNav\(\)\}\)/.test(treeClick),
+       'L7: the sidebar run tree (click, ]/[ through next.click()) opens with the list header');
+    const nav = a.slice(a.indexOf('function serverNeighbor()'), a.indexOf('var entries = Array.prototype.filter.call('));
+    ok(/htmx\.ajax\('GET', '\/dataset\/' \+ d\.uid,\s*\{source: target, target: target, swap: 'innerHTML',\s*headers: window\._dsListNav\(\)\}\)/.test(nav),
+       "L7: ]/[ past the visible tree (the server neighbour) opens with the list header");
+    const odd = dv.slice(dv.indexOf('function openDatasetDetail(id) {'), dv.indexOf('function onTbodyChange('));
+    const dvCalls = odd.match(/htmx\.ajax\('GET', '\/dataset\/' \+ id, \{[^}]*\}\)/g) || [];
+    ok(dvCalls.length === 2 && dvCalls.every(c => /headers: listNav/.test(c)) && /var listNav = window\._dsListNav \? window\._dsListNav\(\) : undefined;/.test(odd),
+       'L7: the Datasets / Collections table (row click, j+Enter, its re-issue) opens with the list header, got ' + dvCalls.length);
+    ok((a.match(/_dsListNav\(\)/g) || []).length === 2 && (dv.match(/_dsListNav\(\)/g) || []).length === 1,
+       'L8: no other opener in app.js / dataset-virtual.js sends the list header');
+    ok(cs.indexOf('_dsListNav') < 0 && cs.indexOf('X-SM-DS-Nav') < 0, 'L8: Chip Status (its Trends points) never sends it');
+    const tdir = path.join(__dirname, '..', 'quam_state_manager', 'web', 'templates');
+    const withHdr = fs.readdirSync(tdir).filter(f => /\.html$/.test(f) && /X-SM-DS-Nav|_dsListNav/.test(fs.readFileSync(path.join(tdir, f), 'utf8')));
+    ok(withHdr.length === 0, 'L8: no template link sends it (Param History, value / Column History, Versions, fit audit), got ' + withHdr.join(','));
+    // the capture reads it for EVERY inspector swap, before the pinned-compare return
+    const capA = a.slice(a.indexOf("_dsScroll.fromRun = !!(pane && pane.querySelector('#ds-detail-root'));"), a.indexOf('if (window._pinnedRunId) return;',
+        a.indexOf("_dsScroll.fromRun = !!(pane && pane.querySelector('#ds-detail-root'));")));
+    ok(/_dsScroll\.fromList = _dsFromList\(evt\.detail\);/.test(capA), 'L9: fromList is read beside fromRun, before the pinned return');
 }
 
 console.log(`ds_scroll_anchor_selfcheck: ${asserts - fails}/${asserts} ok (${asserts} assertions)`);

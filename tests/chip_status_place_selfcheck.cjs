@@ -109,7 +109,9 @@ const SEC = { coherence: '#topo-metric-panels [data-group="coherence"]',
 const PANE_TOP = 100, PANE_H = 700, SM = 64;
 const BLOCKS = '[data-topo-section="overview"], [data-topo-section="health"], #sec-topology, '
   + '[data-topo-section="trends"], #sec-fidelity, [data-rb-heading], .topo-section[data-density-panel], '
-  + '#sec-fidelity-1q, #sec-readout, #topo-metric-panels > h3[data-group]';
+  + '#sec-fidelity-1q, #sec-readout, #topo-metric-panels > h3[data-group], '
+  // w9 final-QA P1: an unbuilt panel's placeholder is as tall as its style says
+  + '.topo-rb-ph';
 
 function world(opts) {
   opts = opts || {};
@@ -144,6 +146,7 @@ function world(opts) {
     if (el.tagName === 'H3') return G.h.header;
     const k = el.getAttribute('data-density-panel');
     if (k !== null) return G.panel[k] != null ? G.panel[k] : G.h.panel;
+    if (el.classList.contains('topo-rb-ph')) return parseFloat(el.style.height) || 0;
     return 0;
   }
   /* cached: jsdom's selector engine is the whole cost of this harness
@@ -160,7 +163,7 @@ function world(opts) {
       pr[1].forEach(function (name) {
         const f = pr[0][name];
         if (typeof f !== 'function') return;
-        pr[0][name] = function () { drop(); return f.apply(this, arguments); };
+        pr[0][name] = function () { pickAnchor(); drop(); return f.apply(this, arguments); };
       });
     });
   [[win.Element.prototype, 'innerHTML'], [win.Element.prototype, 'outerHTML'], [win.Node.prototype, 'textContent']]
@@ -169,10 +172,29 @@ function world(opts) {
       while (proto && !(d = Object.getOwnPropertyDescriptor(proto, pr[1]))) proto = Object.getPrototypeOf(proto);
       if (!d || !d.set) return;
       Object.defineProperty(proto, pr[1], { configurable: true, enumerable: d.enumerable, get: d.get,
-        set: function (v) { drop(); return d.set.call(this, v); } });
+        set: function (v) { pickAnchor(); drop(); return d.set.call(this, v); } });
     });
+  /* opts.nativeAnchor (w9 final-QA P1): the browser's CSS scroll anchoring
+     as Chrome does it -- measured in real Chrome: applied in the layout that
+     follows a DOM change (a forced one too), keeping the first element WHOLLY
+     on screen before the change where it was; none when that element was
+     removed. */
+  let anchor = null;
+  function pickAnchor() {
+    if (!opts.nativeAnchor || anchor || !box.st) return;
+    for (const [el, b] of layout().m) {
+      if (b.h > 0 && b.y >= box.st && b.y + b.h <= box.st + PANE_H) { anchor = { el: el, y: b.y }; return; }
+    }
+  }
   function layout() {
-    if (!cache) cache = layoutNow();
+    if (!cache) {
+      cache = layoutNow();
+      if (anchor) {
+        const a = anchor, b = cache.m.get(a.el);
+        anchor = null;
+        if (b && a.el.isConnected && b.y !== a.y) { T.anchored = (T.anchored || 0) + 1; setST(box.st + b.y - a.y, true); }
+      }
+    }
     return cache;
   }
   function layoutNow() {
@@ -250,7 +272,9 @@ function world(opts) {
   };
   Object.defineProperty(dash, 'offsetHeight', { configurable: true, get: () => layout().total });
   let lastTotal = -1;
-  new win.MutationObserver(drop).observe(dash, {
+  // opts.roOnMutation (w9 uxpolish): every DOM change is a layout change the
+  // dashboard's ResizeObserver sees (the 2Q panels arriving in slices)
+  new win.MutationObserver(function () { drop(); if (opts.roOnMutation) T.relayout(); }).observe(dash, {
     childList: true, subtree: true, attributes: true,
     attributeFilter: ['id', 'data-density-panel', 'data-rb-heading', 'data-group', 'data-topo-section'] });
   T.relayout = function () {
@@ -258,9 +282,14 @@ function world(opts) {
     const tot = layout().total;
     if (tot === lastTotal) return;
     lastTotal = tot;
-    win.setTimeout(function () {
+    const fire = function () {
       ros.forEach(function (o) { if (o.els.indexOf(dash) >= 0) o.cb([{ target: dash }]); });
-    }, 16);
+      if (T.onPaint) T.onPaint();   // what that frame paints (after its ResizeObserver)
+    };
+    // opts.roFrame: in the next frame, after its animation-frame callbacks and
+    // before its paint -- where Chrome delivers a ResizeObserver
+    if (opts.roFrame) win.requestAnimationFrame(fire);
+    else win.setTimeout(fire, 16);
   };
   T.G = G;
   T.pane = pane;
@@ -272,7 +301,8 @@ function world(opts) {
   win._plotlyRender = function () { return new win.Promise(function (r) { win.setTimeout(r, 300); }); };
   // the entry's state as a reload finds it, BEFORE the mount
   if (opts.state) win.history.replaceState(opts.state, '');
-  win.ChipStatus.mount({ topo: JSON.parse(JSON.stringify(CHAIN)), rawWiring: {}, defaultThresholds: {},
+  if (opts.before) opts.before(win);
+  win.ChipStatus.mount({ topo: JSON.parse(JSON.stringify(opts.topo || CHAIN)), rawWiring: {}, defaultThresholds: {},
                          diagFindings: [], metricMeta: {}, chipView: opts.chipView || '' });
   lastTotal = layout().total;
   T.rec = function () { return win.history.state && win.history.state.smChipScroll; };
@@ -326,7 +356,7 @@ function press(T, how, what) {
   }
 }
 
-(async function main() {
+async function main() {
   // ── J1: a tile jump writes its record in the same call as its URL ────────
   {
     const T = world({ state: { htmx: true } });
@@ -499,4 +529,10 @@ function press(T, how, what) {
   console.log(fails ? ('FAILED (' + fails + ')')
     : ('chip_status_place_selfcheck ok (' + asserts + ' assertions)'));
   process.exit(fails ? 1 : 0);
-})().catch(function (e) { console.error('FAIL: threw ' + (e && e.stack || e)); process.exit(1); });
+}
+// w9 uxpolish: tests/chip_rb_slices_selfcheck.cjs drives the same world
+module.exports = { world: world, press: press, clone: clone, node: node, SM: SM, PANE_TOP: PANE_TOP,
+                   T1SEL: T1SEL, T2SEL: T2SEL, IRBSEL: IRBSEL, ROSEL: ROSEL, SEC: SEC };
+if (require.main === module) {
+  main().catch(function (e) { console.error('FAIL: threw ' + (e && e.stack || e)); process.exit(1); });
+}

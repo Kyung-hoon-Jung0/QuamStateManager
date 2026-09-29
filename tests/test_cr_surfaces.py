@@ -133,7 +133,9 @@ def test_add_gate_form_arch_gated(chip):
     # assert on the OPTION values — the template's static preview JS always
     # contains every branch's literal text regardless of gating
     if chip["kind"] == "cz_reference":
-        assert 'value="cz_unipolar"' in html
+        # w9/pulsegate: a flux CZ gate brings its flux pulses -- built on the
+        # Pulses page; the form says where instead of offering it
+        assert 'value="cz_unipolar"' not in html and "Gaussian CZ" in html
         assert 'value="cr_gate"' not in html
     else:
         assert 'value="cr_gate"' in html

@@ -287,6 +287,30 @@ def _exc_where(exc: BaseException) -> str:
     return msg[:600]
 
 
+#: an item whose "qclass" starts with this only IMPORTS the named class (the
+#: warm worker's pre-warm, w9/labwarm): the same imports a check makes before
+#: it runs anything -- the lab's class, quam's ``Pulse`` and ``qm.qua`` --
+#: and nothing else. No dataclass is built, no waveform drawn, no chip loaded.
+IMPORT_PREFIX = "@import:"
+
+
+def _import_only(qclass: str) -> dict:
+    res = {"ok": False, "kind": "import", "error": None, "canonical": None,
+           "i": [], "q": None, "iq": False, "length": None, "dropped": [],
+           "warnings": []}
+    try:
+        cls = _import_class(qclass)
+        from quam.components.pulses import Pulse  # noqa: F401 -- _draw_one's import
+        from qm.qua import program  # noqa: F401 -- _check_macros' import
+    except BaseException as exc:  # noqa: BLE001 -- SystemExit from a lab import too
+        res["error"] = f"could not import {qclass}: {type(exc).__name__}: {exc}"
+        res["reason"] = "class-unavailable"
+        return res
+    res["canonical"] = f"{cls.__module__}.{cls.__qualname__}"
+    res["ok"] = True
+    return res
+
+
 def draw(items: list, max_samples: int = _MAX_SAMPLES) -> dict:
     out = []
     for it in items or []:
@@ -294,6 +318,9 @@ def draw(items: list, max_samples: int = _MAX_SAMPLES) -> dict:
         params = (it or {}).get("params") or {}
         if not isinstance(qclass, str) or not qclass:
             out.append({"ok": False, "error": "no class named"})
+            continue
+        if qclass.startswith(IMPORT_PREFIX):
+            out.append(_import_only(qclass[len(IMPORT_PREFIX):]))
             continue
         if qclass.startswith(MACRO_PREFIX):
             out.append(_check_macros(qclass[len(MACRO_PREFIX):],

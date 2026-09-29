@@ -9,6 +9,8 @@
  * pulse re-opened -> reload -> the page equals a cold render.
  * Then (unless NO_APPLY): one batch kept + Apply to live -> the caller runs
  * pulse_lab_check.py on a copy of the live chip.
+ * TREE=1: the Json Tree has no ✕ on the op (w9/pulsegate) and its link
+ * lands on it here.
  * UNAVAIL=1 adds the lab-worker-unavailable path: the refusal is got with a
  * working env, the env is then made unrunnable (ENV_FILE is the rig's
  * config_generator.json; restored after) and the press must go through with
@@ -281,8 +283,9 @@ async function runCase(p, name, path, q, expectTogether, expectLabel) {
     }
   }
 
-  // the Json Tree names the same set, by kind (TREE=1): its ✕ on the by-name
-  // op -> "Delete together with 1 gate field" -> one batch -> Ctrl+Z
+  // the Json Tree (TREE=1). w9/pulsegate: a pulse is deleted on the Pulses
+  // page only -- the tree's by-name op has no ✕, it says where, and its link
+  // lands on the pulse (the tree's lab offer for a gate: pulse_gate.cjs O)
   if (want('T') && process.env.TREE) {
     console.log('\n== T_json_tree');
     const T = await open(`${base(PORT)}/explorer`);
@@ -298,29 +301,19 @@ async function runCase(p, name, path, q, expectTogether, expectLabel) {
       const hov = await T.ev(`(function(){var b=window.__qaRow.getBoundingClientRect(); return [b.left+40,b.top+b.height/2]})()`);
       await T.send('Input.dispatchMouseEvent', { type: 'mouseMoved', x: hov[0], y: hov[1] });
       await sleep(300);
-      const del = await T.ev(`(function(){var d=window.__qaRow.querySelector('.tree-act-del'); if(!d) return null; var b=d.getBoundingClientRect(); return [b.left+b.width/2,b.top+b.height/2]})()`);
-      if (check(!!del, 'T: its ✕ is there on hover')) {
-        await T.click(del[0], del[1]);
-        await sleep(400);
-        const conf = await T.ev(`(function(){var d=window.__qaRow.querySelector('.tree-row-actions .tree-act-btn'); if(!d) return null; var b=d.getBoundingClientRect(); return [b.left+b.width/2,b.top+b.height/2]})()`);
-        if (conf) await T.click(conf[0], conf[1]);
-        const btn = await waitFor(T, `(function(){var b=window.__qaRow.querySelector('.tree-cascade-btn'); return b? b.textContent : 0})()`, 120000);
-        check(btn === 'Delete together with 1 gate field', `T: the refusal offers "${btn}" (the tree's old text said "1 op" for a gate field)`);
-        await T.shot(`${DIR}/T_tree_offer.png`);
-        if (btn) {
-          const before = await T.ev(PEEK([OP_T, SLOT_T]));
-          const cb = await T.ev(`(function(){var b=window.__qaRow.querySelector('.tree-cascade-btn').getBoundingClientRect(); return [b.left+b.width/2,b.top+b.height/2]})()`);
-          await T.click(cb[0], cb[1]);
-          const gone = await waitFor(T, `(function(){return ${PEEK([OP_T, SLOT_T])}.then(function(s){return s.split('<absent>').length===3?1:0})})()`, 120000);
-          check(!!gone, 'T: both went in one batch');
-          await sleep(800);
-          await pressZ(T);
-          const back = await waitFor(T, `(function(){return ${PEEK([OP_T, SLOT_T])}.then(function(s){return s===${J(before)}?1:0})})()`, 60000);
-          check(!!back, 'T: one Ctrl+Z restores both byte-equal');
-        }
+      const st = await T.ev(`(function(){var s=window.__qaRow.querySelector('.tree-row-actions'); var g=s&&s.querySelector('.tree-pulse-gate'); return {del:!!(s&&s.querySelector('.tree-act-del')), note:g?g.textContent:''}})()`);
+      check(!st.del && /Pulses are added, removed and renamed on the Pulses page/.test(st.note),
+        `T: no ✕ on the op -- the tree says where instead (${J(st)})`);
+      await T.shot(`${DIR}/T_tree_says_where.png`);
+      const a = await T.ev(`(function(){var a=window.__qaRow.querySelector('.tree-pulse-gate a'); if(!a) return null; var b=a.getBoundingClientRect(); return [b.left+b.width/2,b.top+b.height/2]})()`);
+      if (check(!!a, 'T: the link is there')) {
+        await T.click(a[0], a[1]);
+        const landed = await waitFor(T, `((window.SM?window.SM.path(location.pathname):location.pathname)==='/pulses' && document.querySelector('#pulse-detail-root[data-pulse-path=${J(OP_T)}]'))?1:0`, 120000);
+        check(!!landed, 'T: the link lands on the op on the Pulses page');
+        await T.shot(`${DIR}/T_landed.png`);
       }
     }
-    const terrs = T.errors(0).filter(m => !/status of 400 \(BAD REQUEST\)/.test(m));
+    const terrs = T.errors(0).filter(m => !/status of 40[09] \((BAD REQUEST|CONFLICT)\)/.test(m));
     check(terrs.length === 0, 'T: no page errors ' + J(terrs.slice(0, 3)));
     await T.close();
   }

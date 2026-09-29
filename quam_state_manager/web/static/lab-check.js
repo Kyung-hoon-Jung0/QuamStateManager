@@ -25,6 +25,50 @@
     var SHOW_AFTER_MS = 0;       // the watch answer IS the gate
     var REFUSED_LIFE_MS = 9000;
     var _lastRow = null;         // the row/cell the user last edited in
+    var CHECK_TEXT = "checking with your class's own code\u2026";
+
+    /* w9/labwarm: a lab check that waits on a worker still STARTING (its
+       imports: seconds, the first check after a server start) says so, and
+       says the ordinary line again the moment the worker is ready. The
+       server names the state (/field/lab-watch's "worker", then
+       GET /api/lab/worker-status, polled only while the text is shown). */
+    var PREP_TEXT = 'Preparing your lab code\u2026 (first check after start)';
+    var POLL_MS = 600;
+    var _lastState = null;       // the last state any answer named
+    function _preparing(st) { return !!st && st !== 'ready' && st !== 'no-env'; }
+    function _track(el, normal, state0) {
+        var t = { stopped: false, timer: null };
+        function apply(st) {
+            if (t.stopped) return;
+            var prep = _preparing(st);
+            var txt = prep ? PREP_TEXT : normal;
+            if (el.textContent !== txt) el.textContent = txt;
+            if (el.classList) el.classList.toggle('lab-check-preparing', prep);
+        }
+        function poll() {
+            if (t.stopped || !el.isConnected) return;
+            _orig.call(window, '/api/lab/worker-status', { cache: 'no-store' })
+                .then(function (r) { return r.json(); })
+                .then(function (j) {
+                    var st = j && j.state;
+                    if (st) _lastState = st;
+                    apply(st);
+                    if (!t.stopped && _preparing(st)) t.timer = setTimeout(poll, POLL_MS);
+                }, function () { /* the ordinary line stays */ });
+        }
+        // named by the caller (the lab-watch answer), else the last answer
+        // seen on this page, else what the server rendered into the element
+        var st0 = state0 !== undefined ? state0
+            : (_lastState || (el.getAttribute && el.getAttribute('data-lab-state')) || null);
+        apply(st0);
+        // a state the caller NAMED as ready needs no poll; anything else asks
+        if (state0 === undefined || _preparing(state0)) poll();
+        t.stop = function () {
+            t.stopped = true;
+            if (t.timer) clearTimeout(t.timer);
+        };
+        return t;
+    }
 
     function _rowOf(el) {
         if (!el || !el.closest) return null;
@@ -107,7 +151,7 @@
         b.className = 'lab-check-badge';
         b.setAttribute('role', 'status');
         b.setAttribute('aria-live', 'polite');
-        b.textContent = "checking with your class's own code\u2026";
+        b.textContent = CHECK_TEXT;
         document.body.appendChild(b);
         b._anchor = anchor;
         _place(b, anchor);
@@ -254,8 +298,10 @@
                 _warnBadge(badge || _badge(anchor), String(j.warning));
             }, function () { /* not JSON: nothing to say */ });
         }
+        function untrack() { if (badge && badge._track) { badge._track.stop(); badge._track = null; } }
         respP.then(function (r) {
             settled = true; resp = r;
+            untrack();
             if (r && r.status < 300) {
                 // this handler runs before the caller's (registered first), so
                 // the body is still unread -- a late probe answer reads the copy
@@ -269,17 +315,19 @@
             } else {
                 _settle(badge, r);
             }
-        }, function () { settled = true; _settle(badge, null); });
+        }, function () { settled = true; untrack(); _settle(badge, null); });
         _orig.call(window, '/field/lab-watch', {
             method: 'POST', headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ paths: paths.slice(0, 4000) })
         }).then(function (r) { return r.json(); }).then(function (j) {
             lab = !!(j && j.lab);
             if (!lab) return;
+            if (j.worker) _lastState = j.worker;
             if (settled) { warnIfLab(); return; }
             setTimeout(function () {
                 if (settled) return;
                 badge = _badge(anchor);
+                badge._track = _track(badge, CHECK_TEXT, j.worker);
             }, SHOW_AFTER_MS);
         }).catch(function () { /* no badge; the edit itself is untouched */ });
     }
@@ -294,6 +342,48 @@
         return /^\/field\/edit(-batch)?(\?|$)/.test(window.SM ? window.SM.path(url) : url);
     }
 
+    /* w9/labwarm: the Pulses page's own lab indicators (an htmx request's
+       indicator marked data-lab-indicator: the inline field commit, the
+       delete step's "Checking with your lab code...", the create form's busy
+       line) get the same "Preparing..." text while the worker starts. The
+       indicator is inside the requesting form or its next sibling (the
+       field form's hx-indicator="next ..."); the create form's only counts
+       when the create asks the lab (PulsesPage.createNeedsLab). */
+    function _labIndicatorFor(elt) {
+        if (!elt || !elt.querySelector) return null;
+        var ind = elt.querySelector('[data-lab-indicator]');
+        if (!ind) {
+            var nx = elt.nextElementSibling;
+            if (nx && nx.matches && nx.matches('[data-lab-indicator]')) ind = nx;
+        }
+        if (!ind) return null;
+        if (ind.getAttribute('data-lab-indicator') === 'create') {
+            var pp = window.PulsesPage;
+            if (!pp || typeof pp.createNeedsLab !== 'function' || !pp.createNeedsLab()) return null;
+        }
+        return ind;
+    }
+    try {
+        document.addEventListener('htmx:beforeRequest', function (e) {
+            var elt = e.detail && e.detail.elt;
+            var ind = _labIndicatorFor(elt);
+            if (!ind) return;
+            if (ind._labTrack) ind._labTrack.stop();
+            if (ind._labText == null) ind._labText = ind.textContent;
+            ind._labTrack = _track(ind, ind._labText);
+            elt._labInd = ind;
+        });
+        document.addEventListener('htmx:afterRequest', function (e) {
+            var elt = e.detail && e.detail.elt;
+            var ind = elt && elt._labInd;
+            if (!ind) return;
+            elt._labInd = null;
+            if (ind._labTrack) { ind._labTrack.stop(); ind._labTrack = null; }
+            if (ind._labText != null) ind.textContent = ind._labText;
+            if (ind.classList) ind.classList.remove('lab-check-preparing');
+        });
+    } catch (e) { /* no document (worker) */ }
+
     window.fetch = function (input, init) {
         var p = _orig.apply(this, arguments);
         try {
@@ -301,5 +391,7 @@
         } catch (e) { /* the badge is a courtesy, never a failure */ }
         return p;
     };
-    window.LabCheck = { _pathsOf: _pathsOf, _isEditPost: _isEditPost, _setBoth: _setBoth };
+    window.LabCheck = { _pathsOf: _pathsOf, _isEditPost: _isEditPost, _setBoth: _setBoth,
+                        _track: _track, _labIndicatorFor: _labIndicatorFor,
+                        PREP_TEXT: PREP_TEXT, CHECK_TEXT: CHECK_TEXT };
 })();

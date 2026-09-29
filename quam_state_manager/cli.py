@@ -525,6 +525,12 @@ def set_value(
         refusal = pointer_cell_refusal(store, dot_path, parsed)
         if refusal is not None:
             raise ValueError(refusal)
+        # w9/pulsegate: the same rule as /field/edit -- a whole-object value
+        # that adds, removes or renames a pulse is the Pulses page's job
+        from quam_state_manager.core import pulse_structure
+        change = pulse_structure.structural_change(store.merged, "set", target_path, parsed)
+        if change is not None:
+            raise ValueError(pulse_structure.refusal_message(change))
         entry = mod.set_value(target_path, parsed)
     except (KeyError, TypeError, ValueError, IndexError) as e:
         console.print(f"[red]Error:[/red] {e}")

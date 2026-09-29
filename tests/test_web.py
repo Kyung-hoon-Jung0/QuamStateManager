@@ -4282,14 +4282,14 @@ class TestAddGateFlow:
         assert "pair-add-gate-area" in html
 
     def test_gate_form_renders(self, loaded_client):
+        """w9/pulsegate: on a flux pair every gate type writes its flux pulses
+        into the gate -- new pulses, added on the Pulses page. The form says
+        where (the Gaussian CZ builder) instead of offering them."""
         html = loaded_client.get("/pair/qA1-A2/gate/new").data.decode()
         assert "Add gate to qA1-A2" in html
-        assert "cz_unipolar" in html
-        assert "cz_flattop" in html
-        assert 'name="gate_name"' in html
-        # cz_parametric is evidence-gated: this chip carries no
-        # ParametricCZGate macro, and recent quam-builder removed the class —
-        # offering it would write an unloadable state.json.
+        assert 'value="cz_unipolar"' not in html and 'value="cz_flattop"' not in html
+        assert 'name="gate_name"' not in html
+        assert "Gaussian CZ" in html and "/pulses?owner=qA1-A2&amp;channel=flux" in html
         assert "cz_parametric" not in html
 
     def test_gate_form_cancel(self, loaded_client):
@@ -4298,6 +4298,9 @@ class TestAddGateFlow:
         assert "Add gate" in html
 
     def test_create_cz_unipolar(self, loaded_client, synth_folder):
+        """w9/pulsegate: the gate's flux pulses would be new pulse objects --
+        refused with the way (a handcrafted POST; the form no longer offers
+        it), nothing written."""
         resp = loaded_client.post("/pair/qA1-A2/gate", data={
             "gate_name": "cz_v3",
             "gate_type": "cz_unipolar",
@@ -4308,14 +4311,12 @@ class TestAddGateFlow:
             "phase_shift_control": "0.0",
             "phase_shift_target": "0.0",
         })
-        assert resp.status_code == 200
-        # Re-rendered pair detail now shows the new gate section
+        assert resp.status_code == 409
         html = resp.data.decode()
-        assert "cz_v3" in html or "Cz V3" in html
-
-        # The actual store reflects the new macro
-        store_html = loaded_client.get("/pair/qA1-A2").data.decode()
-        assert "cz_v3_amplitude" in store_html or "cz_v3" in store_html
+        assert "Pulses page" in html and "Gaussian CZ" in html
+        store = self._store_of(loaded_client)
+        assert "cz_v3" not in store.merged["qubit_pairs"]["qA1-A2"]["macros"]
+        assert len(store.change_log) == 0
 
     _PARAMETRIC_FORM = {
         "gate_name": "cz_param_v1",
@@ -4353,43 +4354,27 @@ class TestAddGateFlow:
             "__class__": evidence_qclass,
             "flux_pulse_qubit": {"amplitude": 0.02, "length": 80},
         }
-        html = loaded_client.get("/pair/qA1-A2/gate/new").data.decode()
-        assert "cz_parametric" in html          # option offered again
+        # w9/pulsegate: with the evidence the class check passes -- and the
+        # gate is still refused: its flux pulse would be a new pulse object
         resp = loaded_client.post("/pair/qA1-A2/gate", data=self._PARAMETRIC_FORM)
-        assert resp.status_code == 200
-        macro = store.merged["qubit_pairs"]["qA1-A2"]["macros"]["cz_param_v1"]
-        assert macro["__class__"] == evidence_qclass   # verbatim reuse
-        assert macro["modulation_frequency"] == pytest.approx(3.0e8)
-        assert macro["flux_pulse_qubit"]["amplitude"] == pytest.approx(0.04)
-        assert macro["flux_pulse_qubit"]["length"] == 120
+        assert resp.status_code == 409 and b"Pulses page" in resp.data
+        assert "cz_param_v1" not in store.merged["qubit_pairs"]["qA1-A2"]["macros"]
 
-    def test_create_cz_flattop_uses_pointer_for_length(self, loaded_client):
-        loaded_client.post("/pair/qA1-A2/gate", data={
-            "gate_name": "cz_v4",
-            "gate_type": "cz_flattop",
-            "amplitude": "0.05",
-            "flat_length": "200",
-            "smoothing_length": "20",
-            "coupler_amplitude": "0.0",
-            "phase_shift_control": "0.0",
-            "phase_shift_target": "0.0",
-        })
-        # The created macro should have the inferred_total_length pointer in its flux_pulse_qubit.length
-        app = loaded_client.application
-        ctx_name = list(app.config["contexts"].keys())[0]
-        store = app.config["contexts"][ctx_name]["store"]
-        macros = store.merged["qubit_pairs"]["qA1-A2"]["macros"]
-        assert "cz_v4" in macros
-        assert macros["cz_v4"]["flux_pulse_qubit"]["length"] == "#./inferred_total_length"
-        assert macros["cz_v4"]["flux_pulse_qubit"]["flat_length"] == 200
+    def test_create_cz_flattop_uses_pointer_for_length(self):
+        """The template itself (still what a lab script could write): the
+        flux pulse's length is the gate's inferred_total_length pointer. The
+        route no longer writes it (w9/pulsegate: new pulses)."""
+        from quam_state_manager.web.routes import _build_gate_template
+        t = _build_gate_template("cz_flattop", {
+            "amplitude": 0.05, "flat_length": 200, "smoothing_length": 20,
+            "coupler_amplitude": 0.0, "phase_shift_control": 0.0,
+            "phase_shift_target": 0.0})
+        assert t["flux_pulse_qubit"]["length"] == "#./inferred_total_length"
+        assert t["flux_pulse_qubit"]["flat_length"] == 200
 
     def test_create_rejects_duplicate_name(self, loaded_client):
-        loaded_client.post("/pair/qA1-A2/gate", data={
-            "gate_name": "cz_v5", "gate_type": "cz_unipolar",
-            "amplitude": "0.05", "length": "100",
-            "coupler_amplitude": "0.0", "coupler_length": "100",
-            "phase_shift_control": "0.0", "phase_shift_target": "0.0",
-        })
+        self._store_of(loaded_client).merged["qubit_pairs"]["qA1-A2"]["macros"]["cz_v5"] = {
+            "__class__": "q.CZGate"}
         resp = loaded_client.post("/pair/qA1-A2/gate", data={
             "gate_name": "cz_v5", "gate_type": "cz_unipolar",
             "amplitude": "0.05", "length": "100",
@@ -4427,19 +4412,17 @@ class TestAddGateFlow:
         assert "Unknown gate type" in resp.data.decode()
 
     def test_created_gate_appears_in_pending_tray(self, loaded_client):
+        """w9/pulsegate: a refused flux gate leaves the tray as it was."""
         loaded_client.post("/pair/qA1-A2/gate", data={
             "gate_name": "cz_v6", "gate_type": "cz_unipolar",
             "amplitude": "0.05", "length": "100",
             "coupler_amplitude": "0.0", "coupler_length": "100",
             "phase_shift_control": "0.0", "phase_shift_target": "0.0",
         })
-        # The pending changes panel should show exactly one entry (the creation)
         app = loaded_client.application
         ctx_name = list(app.config["contexts"].keys())[0]
         store = app.config["contexts"][ctx_name]["store"]
-        assert len(store.change_log) == 1
-        assert store.change_log[0].created is True
-        assert "cz_v6" in store.change_log[0].dot_path
+        assert len(store.change_log) == 0
 
     def test_undo_removes_created_gate(self, loaded_client):
         loaded_client.post("/pair/qA1-A2/gate", data={

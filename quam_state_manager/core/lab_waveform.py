@@ -31,6 +31,7 @@ import logging
 import os
 import tempfile
 import threading
+import time
 from pathlib import Path
 from typing import Any
 
@@ -128,10 +129,17 @@ def cached(python_path: str, qclass: str, params: dict) -> dict | None:
 #: reused while it is provably drawing with the code on disk. Off => every miss
 #: is a cold subprocess, exactly as before.
 WARM = True
-WARM_IDLE_S = 600
+#: w9/labwarm: 10 min -> 60 min. A lab session is edit, run a node, look at
+#: the result, edit again -- ten minutes of looking cost the next edit a cold
+#: start (5-12 s krs5). The other retirements are unchanged: another env
+#: selected, a lab file edited (``fresh``), interpreter exit.
+WARM_IDLE_S = 3600
 _WARM_MARK = "@@SM-LABWF@@"
 _WORKERS: dict[str, "_Worker"] = {}
 _WORKERS_LOCK = threading.Lock()
+#: an item whose class starts with this only IMPORTS it (the pre-warm) -- the
+#: same string ``generator/run_pulse_waveform.IMPORT_PREFIX`` dispatches on
+IMPORT_PREFIX = "@import:"
 
 
 class _Worker:
@@ -177,6 +185,12 @@ class _Worker:
         self._idle: threading.Timer | None = None
         self.requests = 0
         self.timed_out = False
+        # w9/labwarm: False until the process has answered once (its imports
+        # are done); what the UI's "Preparing your lab code..." asks
+        self.ready = False
+        self.t_spawn = time.monotonic()
+        self.t_ready: float | None = None
+        self.prewarmed = False
 
     def _pump(self) -> None:
         try:
@@ -222,6 +236,9 @@ class _Worker:
         for f, rec in (parsed.get("sources") or {}).items():
             self.sources.setdefault(f, rec)
         self.requests += 1
+        if not self.ready:
+            self.ready = True
+            self.t_ready = time.monotonic()
         self._arm_idle()
         return parsed
 
@@ -269,14 +286,212 @@ import atexit  # noqa: E402
 atexit.register(shutdown_workers)
 
 
-def _run_warm(python_path: str, items: list[dict]) -> dict | None:
-    """``_run``'s answer from the warm worker, or None (caller runs cold).
-    Called under ``_env_lock(python_path)``: one request at a time per env."""
+def retire_except(python_path: str | None, *, background: bool = False) -> int:
+    """Kill every warm worker that is not *python_path*'s (another env was
+    selected), and stand down any pre-warm still waiting for another env.
+    Returns how many workers were retired. The workers leave ``_WORKERS``
+    at once either way (nothing asks them again); *background* True kills
+    them on a daemon thread -- a request (an env selected, a chip opened)
+    must never wait on ``Popen.wait`` (up to 5 s)."""
+    with _PREWARM_LOCK:
+        for key in list(_PREWARM):
+            if key != python_path:
+                _PREWARM.pop(key, None)       # its thread sees it and stops
+        for key in list(_PREWARM_MORE):
+            if key != python_path:
+                _PREWARM_MORE.pop(key, None)
     stale = []
     with _WORKERS_LOCK:
         for key in list(_WORKERS):
-            if key != python_path:          # another env selected: retire it
+            if key != python_path:
                 stale.append(_WORKERS.pop(key))
+    if stale and background:
+        threading.Thread(target=lambda: [w.kill() for w in stale], daemon=True,
+                         name="lab-waveform-retire").start()
+    else:
+        for w in stale:
+            w.kill()
+    return len(stale)
+
+
+# ---------------------------------------------------------------- pre-warm
+# w9/labwarm. The first lab check after a server start paid the worker's
+# spawn + imports (5-12 s krs5, ~12 s big30x) while the user watched a cell.
+# A chip that carries a lab class the check would ask, opened with an env
+# already selected, now starts that worker in the background: it IMPORTS the
+# chip's lab classes (the modules the chip-open class probe imports already)
+# and stops there -- nothing is built, drawn or loaded until a real check
+# asks. A pre-warm never runs while a foreground request is in flight (the
+# caller's *wait*), never takes the env lock from a check that holds it (a
+# check already on its way starts the worker itself), and a check that
+# arrives while the imports run waits for THAT worker instead of spawning a
+# second, cold one.
+
+_PREWARM: dict[str, object] = {}        # python_path -> the pending pre-warm's token
+_PREWARM_LOCK = threading.Lock()
+# python_path -> classes asked for while that env's pre-warm was in flight (a
+# chip switched to while the first chip's warm-up ran): imported after it
+_PREWARM_MORE: dict[str, set] = {}
+#: what the last pre-warm per env did -- for the UI's status and measurement
+PREWARM_LOG: dict[str, dict] = {}
+
+
+def prewarm(python_path: str | None, classes, *, wait=None,
+            start_thread: bool = True) -> bool:
+    """Start *python_path*'s warm worker in the background, importing
+    *classes*. True when a pre-warm was started (False: no env, WARM off,
+    no class, one already in flight for this env -- its classes are then
+    imported by that one, right after its own). A worker already running
+    for the env is asked to import *classes* too (another chip's classes;
+    an import already done answers in milliseconds). *wait(stop)* blocks
+    until the server is quiet (``stop()`` true = give up); None = no wait."""
+    classes = sorted({c for c in (classes or ()) if isinstance(c, str) and c})
+    if not WARM or not python_path or not classes:
+        return False
+    token = object()
+    with _PREWARM_LOCK:
+        if python_path in _PREWARM:
+            _PREWARM_MORE.setdefault(python_path, set()).update(classes)
+            return False
+        _PREWARM[python_path] = token
+    PREWARM_LOG[python_path] = {"state": "pending", "t_request": time.monotonic(),
+                                "classes": classes}
+    args = (python_path, classes, token, wait)
+    if start_thread:
+        threading.Thread(target=_prewarm_run, args=args, daemon=True,
+                         name="lab-waveform-prewarm").start()
+    else:
+        _prewarm_run(*args)
+    return True
+
+
+def _import_items(classes) -> list[dict]:
+    return [{"qclass": IMPORT_PREFIX + c, "params": {}} for c in classes]
+
+
+def _prewarm_more(python_path: str, w, done, log: dict) -> None:
+    """Import what another pre-warm asked for while this one ran (under the
+    env lock, on the same worker)."""
+    with _PREWARM_LOCK:
+        more = _PREWARM_MORE.pop(python_path, set())
+    more = sorted(set(more) - set(done))
+    if more and w.ask(_import_items(more), TIMEOUT_S) is not None:
+        log["more"] = more
+
+
+def _prewarm_current(python_path: str, token) -> bool:
+    with _PREWARM_LOCK:
+        return _PREWARM.get(python_path) is token
+
+
+def _prewarm_run(python_path: str, classes: list[str], token, wait) -> None:
+    log = PREWARM_LOG.setdefault(python_path, {})
+    try:
+        if wait is not None:
+            wait(lambda: not _prewarm_current(python_path, token))
+        if not _prewarm_current(python_path, token):
+            log["state"] = "superseded"
+            return
+        if not Path(python_path).is_file():
+            log["state"] = "no-env"
+            return
+        lk = _env_lock(python_path)
+        if not lk.acquire(blocking=False):
+            # a check holds the env: it starts (or already has) the worker
+            log["state"] = "check-running"
+            return
+        try:
+            if not _prewarm_current(python_path, token):
+                log["state"] = "superseded"
+                return
+            retire_except(python_path)
+            with _WORKERS_LOCK:
+                w = _WORKERS.get(python_path)
+            if w is not None and w.ready and w.fresh():
+                # another chip's classes may be new to it: import them now
+                # (an import already done answers in milliseconds)
+                parsed = w.ask(_import_items(classes), TIMEOUT_S)
+                if parsed is None:
+                    _retire(python_path, w)
+                    log["state"] = "failed"
+                    return
+                log["state"] = "already-ready"
+                _prewarm_more(python_path, w, classes, log)
+                return
+            if w is not None:
+                _retire(python_path, w)
+            try:
+                w = _Worker(python_path)
+            except Exception:  # noqa: BLE001 -- a pre-warm that cannot start is no loss
+                logger.debug("lab worker pre-warm failed to start", exc_info=True)
+                log["state"] = "spawn-failed"
+                return
+            w.prewarmed = True
+            with _WORKERS_LOCK:
+                _WORKERS[python_path] = w
+            log.update(state="importing", t_spawn=w.t_spawn)
+            parsed = w.ask(_import_items(classes), TIMEOUT_S)
+            if parsed is None:
+                _retire(python_path, w)
+                log["state"] = "failed"
+                if w.timed_out:
+                    # a check that waited behind these imports is told now,
+                    # not made to wait TIMEOUT_S a second time (_run_warm)
+                    log["timed_out_at"] = time.monotonic()
+                return
+            log.update(state="ready", t_ready=w.t_ready,
+                       imported=[bool(it.get("ok")) for it in parsed.get("items") or []])
+            _prewarm_more(python_path, w, classes, log)
+        finally:
+            lk.release()
+    except Exception:  # noqa: BLE001 -- background work never raises
+        logger.debug("lab worker pre-warm failed", exc_info=True)
+        log["state"] = "error"
+    finally:
+        left = None
+        with _PREWARM_LOCK:
+            if _PREWARM.get(python_path) is token:
+                del _PREWARM[python_path]
+                # asked for after _prewarm_more had looked: one more round
+                # (a worker that failed takes its extras with it)
+                left = _PREWARM_MORE.pop(python_path, None)
+        if left and log.get("state") in ("ready", "already-ready"):
+            prewarm(python_path, left, start_thread=False)
+
+
+def worker_state(python_path: str | None) -> str:
+    """``"ready"`` (a check is answered by a warm worker now), ``"starting"``
+    (the worker is importing -- a check waits for it), ``"cold"`` (the next
+    check starts one), ``"no-env"``. Cheap: a dict read and, for a live
+    worker, the stat-only ``fresh`` test."""
+    if not python_path:
+        return "no-env"
+    with _WORKERS_LOCK:
+        w = _WORKERS.get(python_path)
+    if w is None:
+        return "cold"
+    if not w.fresh():
+        return "cold"                 # the next check kills it and starts anew
+    return "ready" if w.ready else "starting"
+
+
+#: per thread: when the running ``draw`` began waiting for the env lock
+_TL = threading.local()
+
+
+def _run_warm(python_path: str, items: list[dict]) -> dict | None:
+    """``_run``'s answer from the warm worker, or None (caller runs cold).
+    Called under ``_env_lock(python_path)``: one request at a time per env.
+    A pre-warm whose imports timed out while this caller waited for that
+    lock answers it with the timeout (``_TL.waited_since``), instead of a
+    second full ``TIMEOUT_S`` on a fresh worker."""
+    waited_since = getattr(_TL, "waited_since", None)
+    t_out = (PREWARM_LOG.get(python_path) or {}).get("timed_out_at")
+    if waited_since is not None and t_out is not None and t_out >= waited_since:
+        return {"ok": False, "error": _timeout_text(), "items": [], "sources": {}}
+    retire_except(python_path)              # another env selected: retire it
+    stale = []
+    with _WORKERS_LOCK:
         w = _WORKERS.get(python_path)
         if w is not None and not w.fresh():
             stale.append(_WORKERS.pop(python_path))
@@ -355,15 +570,48 @@ def _run_cold(python_path: str, items: list[dict]) -> dict:
     return out
 
 
+#: w9/labwarm: python_path -> foreground draws waiting for the env lock. A
+#: BACKGROUND batch (the Pulses list's sparkline warm) yields between its
+#: chunks while this is non-zero, so a user's check never waits behind a
+#: whole page of thumbnails being drawn.
+_FG: dict[str, int] = {}
+_FG_LOCK = threading.Lock()
+
+
+def _fg_add(python_path: str, n: int) -> None:
+    with _FG_LOCK:
+        v = _FG.get(python_path, 0) + n
+        if v > 0:
+            _FG[python_path] = v
+        else:
+            _FG.pop(python_path, None)
+
+
+def yield_to_foreground(python_path: str | None, max_s: float = 120.0) -> float:
+    """For a BACKGROUND batch, before it takes the env lock for its next
+    chunk: wait while a foreground draw is waiting for that lock (bounded).
+    Returns the seconds waited."""
+    t0 = time.monotonic()
+    if not python_path:
+        return 0.0
+    while time.monotonic() - t0 < max_s:
+        with _FG_LOCK:
+            if not _FG.get(python_path):
+                break
+        time.sleep(0.02)
+    return time.monotonic() - t0
+
+
 def draw(python_path: str | None, items: list[tuple[str, dict]], *,
-         spawn: bool = True) -> list[dict]:
+         spawn: bool = True, background: bool = False) -> list[dict]:
     """Drawings for ``[(qclass, params), ...]`` in the same order.
 
     Every entry is ``{"ok", "error", "i", "q", "iq", "kind", "length",
     "canonical", "dropped", "warnings", "cached"}``. Hits are served from RAM;
     the misses of one call share ONE subprocess. With ``spawn=False`` a miss
     answers ``{"ok": False, "reason": "not-drawn"}`` (a list render may never
-    wait on a subprocess).
+    wait on a subprocess). *background*: a batch nobody waits on (it does not
+    count as a foreground waiter; see :func:`yield_to_foreground`).
     """
     if not python_path:
         return [{"ok": False, "reason": "no-env",
@@ -384,7 +632,17 @@ def draw(python_path: str | None, items: list[tuple[str, dict]], *,
                           "error": "not drawn yet"}
         return results  # type: ignore[return-value]
 
-    with _env_lock(python_path):
+    _TL.waited_since = time.monotonic()
+    lock = _env_lock(python_path)
+    if background:
+        lock.acquire()
+    else:
+        _fg_add(python_path, 1)
+        try:
+            lock.acquire()
+        finally:
+            _fg_add(python_path, -1)
+    try:
         # a concurrent request may have drawn these while we waited
         for n in todo:
             hit = cached(python_path, *items[n])
@@ -423,6 +681,8 @@ def draw(python_path: str | None, items: list[tuple[str, dict]], *,
                                      lambda r=rec: Keyed(r, token),
                                      sizeof=_sizeof)
                     results[n] = {**value, "cached": False}
+    finally:
+        lock.release()
     return results  # type: ignore[return-value]
 
 

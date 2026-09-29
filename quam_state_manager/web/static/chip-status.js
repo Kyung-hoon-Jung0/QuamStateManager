@@ -487,6 +487,28 @@ window.ChipStatus.jumpGuard = (function () {
     };
 })();
 
+/* ReaderInput (w9 final-QA P1) -- when the READER last moved the pane
+   themselves: a wheel, a touch, a key or a press on it (a scrollbar drag or
+   track click fires only the press). A big chip's panels arrive in slices
+   after a jump; once the reader has moved, the slices build what they are
+   looking at first. The Enter / Space that made a jump is not the reader
+   moving (the tile marks it, as for the jump guard); a press on a tile or a
+   tab comes before the jump it makes, so `since(the jump)` is false for it. */
+window.ChipStatus.readerInput = (function () {
+    var at = 0, armedPane = null;
+    function on(ev) { if (ev && ev._csJumpKey) return; at = Date.now(); }
+    return {
+        arm: function (pane) {
+            if (!pane || armedPane === pane) return;
+            armedPane = pane;
+            ['wheel', 'touchstart', 'keydown', 'pointerdown'].forEach(function (t) {
+                pane.addEventListener(t, on, { passive: true });
+            });
+        },
+        since: function (t) { return at > t; }
+    };
+})();
+
 /* PaneResume (QA chipstatus-r2-01, review) -- a refresh of THIS page keeps the
    reader's place. An edit, a Ctrl+Z or a Take live re-renders the whole pane
    through GET /topology (the page's one render path), and the fresh mount came
@@ -623,7 +645,34 @@ window.ChipStatus.liveDiff = (function () {
         if (p[0] === 'wiring' && (p[1] === 'qubits' || p[1] === 'qubit_pairs') && p[2]) return p[2];
         return null;
     }
-    function decorate() {
+    /* w9 uxpolish: `root` is a batch of 2Q panels the idle builder made after
+       the page (not yet in it): nothing there carries a mark, so it is only
+       marked -- with the marks the rest of the page already has. */
+    function decorate(root) {
+        if (!root) _unmark();
+        Object.keys(byEntity).forEach(function (id) {
+            var n = byEntity[id];
+            var _e = (window.CSS && CSS.escape) ? CSS.escape(id) : id;
+            // docs/120 item 11: `data-hero-*` joins the selector. These
+            // attributes were the CARD diagram's, so with the cards deleted
+            // this marker would have matched nothing on the page and the
+            // "changed vs live" highlight would have quietly stopped appearing
+            // — a feature lost to a deletion rather than to a decision.
+            (root || document).querySelectorAll(
+                '[data-qubit="' + _e + '"], [data-pair="' + _e + '"], '
+                + '[data-hero-qubit="' + _e + '"], [data-hero-pair="' + _e + '"]'
+            ).forEach(function (el) {
+                var target = el.closest('.topo-node-card') || el;
+                target.classList.add('topo-changed');
+                if (target.hasAttribute('data-livediff-line')) return;   // matched twice
+                var line = n + ' field(s) changed vs live — "Review changes" shows before/after';
+                var base = target.getAttribute('title') || '';
+                target.setAttribute('title', (base ? base + '\n' : '') + line);
+                target.setAttribute('data-livediff-line', line);
+            });
+        });
+    }
+    function _unmark() {
         var prev = document.querySelectorAll('.topo-changed');
         for (var i = 0; i < prev.length; i++) prev[i].classList.remove('topo-changed');
         // QA chipstatus-r2-02: the tooltip line used to be appended once and
@@ -639,27 +688,6 @@ window.ChipStatus.liveDiff = (function () {
             else lined[j].removeAttribute('title');
             lined[j].removeAttribute('data-livediff-line');
         }
-        Object.keys(byEntity).forEach(function (id) {
-            var n = byEntity[id];
-            var _e = (window.CSS && CSS.escape) ? CSS.escape(id) : id;
-            // docs/120 item 11: `data-hero-*` joins the selector. These
-            // attributes were the CARD diagram's, so with the cards deleted
-            // this marker would have matched nothing on the page and the
-            // "changed vs live" highlight would have quietly stopped appearing
-            // — a feature lost to a deletion rather than to a decision.
-            document.querySelectorAll(
-                '[data-qubit="' + _e + '"], [data-pair="' + _e + '"], '
-                + '[data-hero-qubit="' + _e + '"], [data-hero-pair="' + _e + '"]'
-            ).forEach(function (el) {
-                var target = el.closest('.topo-node-card') || el;
-                target.classList.add('topo-changed');
-                if (target.hasAttribute('data-livediff-line')) return;   // matched twice
-                var line = n + ' field(s) changed vs live — "Review changes" shows before/after';
-                var base = target.getAttribute('title') || '';
-                target.setAttribute('title', (base ? base + '\n' : '') + line);
-                target.setAttribute('data-livediff-line', line);
-            });
-        });
     }
     // QA chipstatus-r2-02: a sequence token, so a slow fetch that read live
     // mid-apply can never land after (and over) the one that read it settled.
@@ -3300,7 +3328,10 @@ window.ChipStatus.mount = function (opts) {
         });
     }
 
-    function _renderChartSpecsProgressively(specs) {
+    // `hold` (optional): while it says true the batches wait -- the 2Q idle
+    // builder is still putting panels in (w9 uxpolish), and `specs` grows
+    // until it is done, in the order the panels were built.
+    function _renderChartSpecsProgressively(specs, hold) {
         var i = 0, BATCH = 3, drawn = [];
         function pump() {
             // RAM P2: Trends goes first. While a Trends open or toggle is in
@@ -3313,6 +3344,11 @@ window.ChipStatus.mount = function (opts) {
                 setTimeout(pump, 40);
                 return;
             }
+            // w9 uxpolish: a batch of charts is a 0.6-0.9 s task on a 30-qubit
+            // chip; the 2Q panels' small slices go first, then the charts --
+            // this pump's and every other one of this page (the metrics')
+            if ((hold && hold()) || _rbBusy()) { setTimeout(pump, 40); return; }
+            if (!specs.length) return;
             var end = Math.min(i + BATCH, specs.length);
             for (; i < end; i++) {
                 var s = specs[i];
@@ -3357,7 +3393,13 @@ window.ChipStatus.mount = function (opts) {
                 });
             }
         }
-        if (!specs.length) return;
+        if (!specs.length && !hold) return;
+        _renderStart(pump, hold);
+    }
+    function _renderStart(pump, hold) {
+        // w9 uxpolish: loading Plotly is a 0.6 s task of its own -- not while
+        // the 2Q slices run either
+        if ((hold && hold()) || _rbBusy()) { setTimeout(function () { _renderStart(pump, hold); }, 40); return; }
         // QA F-02/F-06: _plotlyRender waits for Plotly, so on a page where it
         // is not loaded yet the pump only QUEUED promise chains, and they all
         // ran in one microtask flush once it arrived -- measured: 19 charts in
@@ -3375,7 +3417,7 @@ window.ChipStatus.mount = function (opts) {
     // Section 5: Gate Fidelity — 2Q RB (pair-based panels)
     // ══════════════════════════════════════════════════════════════════
 
-    function build2QRBPanels() {
+    function build2QRBPanels(opt) {
         var container = document.getElementById('topo-2q-rb-panels');
         if (!container) return;
 
@@ -3451,14 +3493,17 @@ window.ChipStatus.mount = function (opts) {
         })();
         var hasPairGrid = Object.keys(pairGridPositions).length > 0;
 
-        var stops = dCfg.colorScale;
-
-        // Pass 1: accumulate HTML + render specs, then ONE innerHTML write below
-        // (per-panel `+=` re-serialized the growing DOM each panel = the freeze).
+        // Pass 1: the page's headings and panels, in order. A panel's HTML and
+        // chart spec come from its make() (w9 uxpolish: on a big chip they are
+        // made panel by panel, the one a jump goes to first -- see below).
         // docs/141 4o: the first block of the Fidelity section (the wrapper's
         // <h3> says Fidelity); this is its sub-heading.
         var html = ['<h4 class="topo-section-title topo-fidelity-subtitle" style="margin-top:0.5rem;font-size:1.05em">2Q Gate Fidelity \u2014 RB</h4>'];
         var specs = [];
+        var blocks = [];     // {h: a heading's HTML} | {p: a panel's index}
+        var panels = [];     // {key, rbType, cells, built, make() -> {html, spec}}
+        var gridCells = hasPairGrid
+            ? topo.edges.filter(function(e) { return pairGridPositions[e.pair_id]; }).length : 0;
 
         // ── Render panels per RB type, then per gate ────────────────
         ['StandardRB', 'InterleavedRB'].forEach(function(rbType) {
@@ -3470,9 +3515,9 @@ window.ChipStatus.mount = function (opts) {
             // Standard RB number read as a GATE fidelity, but it is 1 - EPC
             // per CLIFFORD (docs/138). Say which, in the popup's own words.
             var rbKind = rbType === 'StandardRB' ? 'per Clifford' : 'per gate';
-            html.push('<h5 class="topo-section-title" data-rb-heading="' + rbType + '" style="margin-top:0.8rem;font-size:1em">' + rbLabel
+            blocks.push({ h: '<h5 class="topo-section-title" data-rb-heading="' + rbType + '" style="margin-top:0.8rem;font-size:1em">' + rbLabel
                 + ' <span class="topo-popup-kind topo-rb-kind">' + rbKind
-                + (rbType === 'StandardRB' ? ' (1 \u2212 EPC)' : ' (1 \u2212 EPG)') + '</span></h5>');
+                + (rbType === 'StandardRB' ? ' (1 \u2212 EPC)' : ' (1 \u2212 EPG)') + '</span></h5>' });
 
             var gateNames = Object.keys(gates).sort(function(a, b) {
                 return gates[b].length - gates[a].length;  // most results first
@@ -3491,6 +3536,11 @@ window.ChipStatus.mount = function (opts) {
                 var agg = computeAggregates(_physCz);
                 if (agg.count === 0) return;
 
+                blocks.push({ p: panels.length });
+                panels.push({ key: '2q:' + rbType + ':' + gateName, rbType: rbType, built: false,
+                              cells: hasPairGrid ? gridCells : pairs.length, make: function () {
+                // (body unchanged, made when the panel is built: the palette is the one on screen then)
+                var stops = dCfg.colorScale;
                 var range = agg.max - agg.min || 1;
                 // QA F-19b: ONE scale position per value, shared by the tile and
                 // its bar. A lone value has no place on a chip-relative ramp: the
@@ -3577,7 +3627,6 @@ window.ChipStatus.mount = function (opts) {
                 sectionHtml += '<div class="topo-metric-bar-chart" id="' + chartId + '"></div>';
                 sectionHtml += '</div>'; // close panel-row
                 sectionHtml += '</div>'; // close section
-                html.push(sectionHtml);
 
                 // Defer the bar chart: data is pure JS, but height needs the
                 // grid's offsetHeight, only measurable after the single write.
@@ -3587,7 +3636,7 @@ window.ChipStatus.mount = function (opts) {
                 });
                 var displayVals = sorted.map(function(p) { return p.value * 100; });
 
-                specs.push({
+                return { html: sectionHtml, spec: {
                     chartId: chartId,
                     data: [{
                         y: sorted.map(function(p) { return p.pair_id; }),
@@ -3614,26 +3663,429 @@ window.ChipStatus.mount = function (opts) {
                         base.height = Math.min(640, Math.max(160, sorted.length * 26));
                         return base;
                     }
+                } };
+                } });
+            });
+        });
+
+        // ── Click: pair cell → inspector ─────────────────────────────
+        _cellClicks(container, 'pair');
+
+        var totalCells = panels.reduce(function (s, p) { return s + p.cells; }, 0);
+        if (!opt || totalCells <= RB_SYNC_ALL_CELLS) {
+            // Every panel now, in ONE DOM write (per-panel `+=` re-serialized
+            // the growing DOM each panel = the freeze): a small chip, or a
+            // caller that measures the whole section right after (a refresh's
+            // resumed place, a section-relative record).
+            blocks.forEach(function (b) {
+                if (b.h) { html.push(b.h); return; }
+                var o = panels[b.p].make();
+                panels[b.p].built = true;
+                html.push(o.html);
+                specs.push(o.spec);
+            });
+            container.innerHTML = html.join('');
+            window.ChipStatus.density.applyAll(container);
+            _metaAfterBuild([container]);
+            _renderChartSpecsProgressively(specs);
+            if (window._recolorTopology) window._recolorTopology();   // repaint the new cells with the active palette
+            if (window.ChipStatus && window.ChipStatus.liveDiff) window.ChipStatus.liveDiff.decorate();
+            return;
+        }
+        _sliceStart('2qrb', [{ el: container, html: html, blocks: blocks }], panels, specs, opt);
+    }
+
+    /* w9 uxpolish -- a big chip builds the panel a jump goes to FIRST (the
+       2Q RB section and the metric panels, one builder for both).
+       Measured in real Chrome on big30x (96 2Q panels, 69 pairs each; 19
+       metric panels x 30 qubits): an Overview tile or tab press that needed
+       those sections was a 0.7-1.1 s task -- ~0.3 s making the panels and
+       0.5-0.8 s laying out ~7,000 cells at once -- before the jump could even
+       start. Now the headings go in at once with an empty slot per panel;
+       the jump's target and the ones under it (~130 cells) are made in the
+       press's own task; the rest follow in
+       small slices, one per frame in the idle time after it, once the jump's
+       smooth scroll has come to rest (a slice that grows the page mid-scroll
+       would make the jump guard re-land it instantly): outwards from the
+       target, one below and one above, nearest first. Every panel ends up
+       exactly what the one-shot build makes (same markup, same order), and
+       the charts wait until the last panel is in, then draw in build order.
+       Panels that grow above the reader are what the jump guard (re-land on
+       growth while the jump is live) and the browser's scroll anchoring are
+       for. opt: {prio: selector | null, lazy, wait, keep} -- see
+       _ensureSectionBuilt.
+       The slots are display:contents wrappers that STAY (a panel goes INTO
+       its slot): a panel put in among the host's own children restyled all
+       of them -- measured in real Chrome, with 96 panels up, one insertion in
+       the middle of the host cost 207-630 ms of style recalc (the following
+       siblings, and a universal sibling rule, `.calc-sec > summary + *`,
+       invalidating the host's whole subtree), one inside a wrapper 4-5 ms.
+       w9 final-QA P1: a slot is never an empty 0 px box. It holds a
+       placeholder (.topo-rb-ph) as tall as a built panel of its kind, so the
+       page has its final geometry from the first frame: a reader who wheeled
+       UP right after a jump used to skip every empty slot above the target
+       and land on Trends (real Chrome, big30x: the target then ended
+       77-165k px below them once the slots filled). Whatever the reader
+       does next, each slice keeps the place they see (_sliceStart's hold)
+       and, once they have moved the pane themselves, builds the panels
+       nearest to what they see first. */
+    var RB_SYNC_ALL_CELLS = 300;   // at or under this many cells every panel is built at once (a 5-qubit chip: tens to ~100)
+    var RB_SLICE_CELLS = 130;      // a slice: about this many cells, 4 panels at most
+    var RB_PRESS_PANELS = 2;       // the press's own chunk: the target and the one under it (a big panel fills the pane)
+    var _slicers = [];             // the slice builders of this mount (the 2Q RB section, the metric panels)
+    var _phLast = 0;               // the last panel height measured on this page, any builder (a builder's first guess)
+    var _sliceEpoch = 0;           // when the last jump / restore / reach started or re-aimed a builder
+    window.ChipStatus.readerInput.arm(_scrollPane());
+    // the reader has moved the pane themselves since the last jump
+    function _readerMoved() { return window.ChipStatus.readerInput.since(_sliceEpoch); }
+    function _rbBusy() {
+        for (var i = 0; i < _slicers.length; i++) if (!_slicers[i].done && !_slicers[i].dead) return true;
+        return false;
+    }
+    // whose turn it is to slice: the first running builder that was started
+    // for its own target, else the first running lazy one -- once the READER
+    // has moved the pane, the one with an unbuilt panel nearest to what they see
+    function _sliceTurn(st) {
+        var best = null, bestD = Infinity, near = _readerMoved();
+        for (var i = 0; i < _slicers.length; i++) {
+            var s = _slicers[i];
+            if (s.done || s.dead) continue;
+            if (near) {
+                var n = s.near();
+                if (!best || n.d < bestD) { bestD = n.d; best = s; }
+            } else if (!best || (best.lazy && !s.lazy)) best = s;
+        }
+        return best === st;
+    }
+    // the reader's first visible line in the pane: under the sticky tab bar
+    // when it is pinned there, else the pane's own top edge
+    function _readLine(pane) {
+        var top = pane.getBoundingClientRect().top;
+        var bar = document.querySelector('.topo-dashboard .topo-subnav');
+        if (bar) {
+            var r = bar.getBoundingClientRect();
+            if (r.height > 0 && r.top <= top + 1 && r.bottom > top) return r.bottom;
+        }
+        return top;
+    }
+    // what a placeholder's height is guessed from: the panel's tile size,
+    // Show Meta Info and cell count (every panel of one builder shares a grid)
+    function _phSig(p) {
+        return window.ChipStatus.density.get(p.key) + '|'
+            + (window.ChipStatus.metaInfo.isOn(p.key) ? 1 : 0) + '|' + p.cells;
+    }
+    /* Keep the reader's place while slots change height (fn changes them).
+       A slot wholly above the reader's first visible line pushes what they
+       see down (or pulls it up) by exactly its change; the scroll offset
+       takes that back. The browser's own scroll anchoring does this for most
+       changes, but not when its anchor was the very placeholder a panel
+       replaced (a removed anchor adjusts nothing) or nothing on screen could
+       anchor, and the jump guard only while a jump is live. Only when the
+       browser moved nothing is the offset written, and then a slot the line
+       crosses keeps its top where it is: the reader stays as far into it as
+       they were. Nothing is written at all when every placeholder was as
+       tall as its panel. */
+    function _holdPlace(fn) {
+        var pane = _scrollPane();
+        var st0 = pane ? pane.scrollTop : 0;
+        if (!pane || !(st0 > 0)) { fn(); return; }
+        var line = _readLine(pane), before = [];
+        _slicers.forEach(function (s) {
+            if (s.done || s.dead) return;       // a finished builder's slots do not change
+            s.slots.forEach(function (slot) {
+                var b = slot && slot.firstElementChild;
+                if (!b) return;
+                var r = b.getBoundingClientRect();
+                if (r.bottom <= line + 0.5) before.push([slot, r.height]);
+            });
+        });
+        fn();
+        if (!before.length) return;
+        // the browser's own anchoring ran in that layout (Chrome applies it
+        // synchronously, measured) and moved the pane: its anchor is the
+        // first element wholly on screen -- real content the reader sees --
+        // so it is right, and a write of ours would only cut short a wheel
+        // or scrollbar scroll still animating
+        if (Math.abs(pane.scrollTop - st0) >= 0.5) return;
+        var d = 0;
+        before.forEach(function (x) {
+            var b = x[0].firstElementChild;
+            d += (b ? b.getBoundingClientRect().height : 0) - x[1];
+        });
+        if (Math.abs(d) < 0.5) return;
+        var want = st0 + d;
+        if (Math.abs(pane.scrollTop - want) >= 1) pane.scrollTop = want;
+    }
+    // every running builder's placeholders get their heights, in the next
+    // frame (before a jump's own frame measures its target: it was asked
+    // for first), from every panel built so far. A builder with no panel yet
+    // (the lazy 2Q section above a metrics jump) builds ONE here, the one
+    // nearest the target: its kind is measured, not guessed from another
+    // grid (a 2Q panel guessed from a metric one was 1.2k px short on big30x,
+    // and a reader who wheeled up into it ended that much off base), and it
+    // is the panel that reader reaches first. Not in the press: the press
+    // stays the target's own chunk.
+    var _phSizeAsked = false;
+    function _phSizeSoon() {
+        if (_phSizeAsked) return;
+        _phSizeAsked = true;
+        (window.requestAnimationFrame || function (f) { return setTimeout(f, 16); })(function () {
+            _phSizeAsked = false;
+            var live = _slicers.filter(function (s) { return !s.done && !s.dead; });
+            if (!live.length) return;
+            _holdPlace(function () {
+                live.forEach(function (s) { s.sample(); });
+                live.forEach(function (s) { s.measure(); });
+                live.forEach(function (s) { if (!s.done) s.size(); });
+            });
+        });
+    }
+    function _slicerOf(name) {
+        for (var i = 0; i < _slicers.length; i++) {
+            var s = _slicers[i];
+            if (s.name === name && !s.done && !s.dead) return s;
+        }
+        return null;
+    }
+    // ONE delegated click per host for its cells (w9 uxpolish: the panels
+    // arrive in slices on a big chip, and ~7,000 per-cell listeners were a
+    // cost of their own). A property, not an attribute: a history snapshot
+    // brings the markup back, never the listener.
+    function _cellClicks(host, kind) {
+        if (!host || host._cellClickBound) return;
+        host._cellClickBound = true;
+        var sel = kind === 'pair' ? '.heatmap-cell[data-pair]' : '.heatmap-cell[data-qubit]';
+        host.addEventListener('click', function (ev) {
+            var cell = ev.target && ev.target.closest ? ev.target.closest(sel) : null;
+            if (!cell || !host.contains(cell)) return;
+            var id = cell.getAttribute(kind === 'pair' ? 'data-pair' : 'data-qubit');
+            if (id) htmx.ajax('GET', (kind === 'pair' ? '/pair/' : '/qubit/') + id,
+                              {source: '#inspector-pane', target: '#inspector-pane', swap: 'innerHTML'});
+        });
+    }
+    // hosts: [{el, html: [markup before the blocks], blocks: [{h} | {p}]}];
+    // panels: [{key, rbType?, group?, cells, built, make() -> {html, spec|null}}]
+    function _sliceStart(name, hosts, panels, specs, opt) {
+        // each slot holds its panel's placeholder until the panel goes in
+        // (its height is set once a panel of its kind has been measured)
+        hosts.forEach(function (ho) {
+            ho.blocks.forEach(function (b) {
+                ho.html.push(b.h || ('<div class="topo-rb-slot" data-rb-slot="' + b.p + '"><div class="topo-rb-ph" data-rb-ph="'
+                                     + _esc(panels[b.p].key) + '" aria-hidden="true"></div></div>'));
+            });
+            ho.el.innerHTML = ho.html.join('');
+        });
+        var slots = [];                  // panel index -> its slot (display:contents: its box is its one child's)
+        hosts.forEach(function (ho) {
+            Array.prototype.forEach.call(ho.el.querySelectorAll('[data-rb-slot]'), function (el) {
+                slots[+el.getAttribute('data-rb-slot')] = el;
+            });
+        });
+        _sliceEpoch = Date.now();
+        var st = { name: name, lazy: !!opt.lazy, done: false, dead: false, order: [], pos: 0, left: panels.length, cancel: null };
+        _slicers.push(st);
+        st.slots = slots;
+        // ── the placeholders' heights: a panel of the same kind measured
+        // (tile size, Show Meta Info, cell count), else the last panel this
+        // builder measured, else the last one on the page ─────────────────
+        var est = {}, estAny = 0;
+        st.measure = function (ks) {            // the built panels' heights (ks: these; none given: all)
+            if (!ks) { ks = []; for (var i = 0; i < panels.length; i++) if (panels[i].built) ks.push(i); }
+            ks.forEach(function (k) {
+                var el = slots[k] && slots[k].firstElementChild;
+                var h = (el && !el.classList.contains('topo-rb-ph')) ? el.getBoundingClientRect().height : 0;
+                if (h > 0) { est[_phSig(panels[k])] = h; estAny = h; _phLast = h; }
+            });
+        };
+        st.size = function () {                 // every placeholder that tall
+            for (var k = 0; k < panels.length; k++) {
+                var ph = !panels[k].built && slots[k] && slots[k].firstElementChild;
+                if (!ph) continue;
+                var h = est[_phSig(panels[k])] || estAny || _phLast;
+                if (!(h > 0) || ph._phH === h) continue;
+                ph._phH = h;
+                ph.setAttribute('style', 'height:' + h + 'px');
+            }
+        };
+        // the unbuilt panel nearest to what the reader sees (0: on screen)
+        st.near = function () {
+            var pane = _scrollPane(), best = -1, bestD = Infinity;
+            if (!pane) return { k: -1, d: Infinity };
+            var pr = pane.getBoundingClientRect();
+            for (var k = 0; k < panels.length; k++) {
+                var ph = !panels[k].built && slots[k] && slots[k].firstElementChild;
+                if (!ph) continue;
+                var r = ph.getBoundingClientRect();
+                var d = r.bottom < pr.top ? pr.top - r.bottom : (r.top > pr.bottom ? r.top - pr.bottom : 0);
+                if (d < bestD) { bestD = d; best = k; }
+            }
+            return { k: best, d: bestD };
+        };
+        // the panel a selector names: an RB heading's first panel, a panel by
+        // its key, a metric group's (or fidelity section's) first panel
+        function indexFor(sel) {
+            var s = String(sel || ''), m, k, want = null;
+            if ((m = /data-rb-heading="([^"]*)"/.exec(s))) want = function (p) { return p.rbType === m[1]; };
+            else if ((m = /data-density-panel="([^"]*)"/.exec(s))) want = function (p) { return p.key === m[1]; };
+            else if ((m = /data-group="([^"]*)"/.exec(s))) want = function (p) { return p.group === m[1]; };
+            else if (/#sec-fidelity-1q\b/.test(s)) want = function (p) { return p.group === 'fid1q'; };
+            else if (/#sec-readout\b/.test(s)) want = function (p) { return p.group === 'fidro'; };
+            if (want) { for (k = 0; k < panels.length; k++) if (want(panels[k])) return k; }
+            return 0;
+        }
+        // this panel and the one under it, then outwards from it, one above
+        // and one below, nearest first: a reader who scrolls either way from
+        // the target right after the jump finds panels there (below-first
+        // left ~1 s of empty headings above an IRB jump, real Chrome)
+        function startAt(k) {
+            var o = [k], a;
+            for (a = 1; k + a < panels.length || k - a >= 0; a++) {
+                if (k + a < panels.length) o.push(k + a);
+                if (k - a >= 0) o.push(k - a);
+            }
+            st.order = o; st.pos = 0;
+        }
+        function nextChunk(most) {
+            var ks = [], cells = 0;
+            while (st.pos < st.order.length && ks.length < (most || 4) && cells < RB_SLICE_CELLS) {
+                var k = st.order[st.pos++];
+                if (panels[k].built) continue;
+                ks.push(k); cells += panels[k].cells;
+            }
+            return ks;
+        }
+        // make these panels, set them up off the page (sizes, Show Meta Info,
+        // changed-vs-live marks), then each into its slot, in place of its
+        // placeholder -- keeping the reader's place (_holdPlace), except in
+        // the press that started this builder (`bare`: the reader is where
+        // they pressed, not below these new slots, and a hold would force a
+        // layout of the whole page inside the press; the next frame sizes
+        // the placeholders, _phSizeSoon)
+        function build(ks, bare) {
+            if (!ks.length) return;
+            if (!bare) {
+                _holdPlace(function () {
+                    build(ks, true);
+                    st.measure(ks);             // a kind measured for the first time re-sizes its placeholders
+                    _slicers.forEach(function (s) { if (!s.done && !s.dead) s.size(); });
                 });
+                return;
+            }
+            var outs = ks.map(function (k) { panels[k].built = true; return panels[k].make(); });
+            var tmp = document.createElement('div');
+            tmp.innerHTML = outs.map(function (o) { return o.html; }).join('');
+            // the one-shot build ends by repainting every cell through
+            // _recolorTopology; these cells get the same paint here, off the
+            // page (on the page, that repaint restyled all ~6,600 cells: a
+            // 210 ms task when the last slice was in, measured)
+            Array.prototype.forEach.call(tmp.querySelectorAll('.heatmap-cell[data-metric]'), _paintCell);
+            window.ChipStatus.density.applyAll(tmp);
+            _metaAfterBuild([tmp]);
+            if (window.ChipStatus.liveDiff) window.ChipStatus.liveDiff.decorate(tmp);
+            var els = Array.prototype.slice.call(tmp.children);
+            ks.forEach(function (k, j) {
+                var slot = slots[k];
+                if (!slot) return;
+                if (slot.firstElementChild) slot.replaceChild(els[j], slot.firstElementChild);
+                else slot.appendChild(els[j]);
             });
-        });
-
-        // ── Click handlers: pair cell → inspector ────────────────────
-        // Single DOM write, then re-query click handlers, then render charts.
-        container.innerHTML = html.join('');
-        window.ChipStatus.density.applyAll(container);
-        _metaAfterBuild([container]);
-
-        container.querySelectorAll('.heatmap-cell[data-pair]').forEach(function(cell) {
-            cell.addEventListener('click', function() {
-                var pid = cell.getAttribute('data-pair');
-                if (pid) htmx.ajax('GET', '/pair/' + pid, {source: '#inspector-pane', target: '#inspector-pane', swap: 'innerHTML'});
+            outs.forEach(function (o) { if (o.spec) specs.push(o.spec); });
+            st.left -= ks.length;
+            if (!st.left) st.done = true;
+        }
+        function stop() {
+            st.dead = true;
+            if (st.cancel) { st.cancel(); st.cancel = null; }
+        }
+        function slice() {
+            st.cancel = null;
+            if (st.done || st.dead) return;
+            if (!hosts[0].el.isConnected) { stop(); return; }   // the page went away
+            // RAM P2: Trends goes first (a slice is small, but the rule is one)
+            if (window.ChipTrends && window.ChipTrends.busy && window.ChipTrends.busy()) { later(40); return; }
+            // one slicer at a time (two in one frame doubled its cost): the
+            // jump's own section first, the lazy 2Q section above it after
+            if (!_sliceTurn(st)) { later(40); return; }
+            // w9 final-QA P1: once the reader has moved the pane themselves,
+            // what they see first (outwards from the unbuilt panel nearest it)
+            if (_readerMoved()) { var n = st.near(); if (n.k >= 0) startAt(n.k); }
+            build(nextChunk());
+            if (!st.done) later();
+        }
+        // one slice per frame, in the idle time after it (a timer where there is no idle callback)
+        function later(ms) {
+            if (st.dead) return;
+            if (ms) { var t = setTimeout(slice, ms); st.cancel = function () { clearTimeout(t); }; return; }
+            var raf = window.requestAnimationFrame || function (f) { return setTimeout(f, 16); };
+            var h = null, f = raf(function () {
+                f = null;
+                if (st.dead) return;
+                if (window.requestIdleCallback) {
+                    h = window.requestIdleCallback(slice, { timeout: 120 });
+                    st.cancel = function () { window.cancelIdleCallback(h); };
+                } else {
+                    h = setTimeout(slice, 0);
+                    st.cancel = function () { clearTimeout(h); };
+                }
             });
-        });
-
-        _renderChartSpecsProgressively(specs);
-        if (window._recolorTopology) window._recolorTopology();   // repaint the new cells with the active palette
-        if (window.ChipStatus && window.ChipStatus.liveDiff) window.ChipStatus.liveDiff.decorate();
+            st.cancel = function () { if (f !== null && window.cancelAnimationFrame) window.cancelAnimationFrame(f); };
+        }
+        // a jump: the slices start once the pane has not scrolled for 150 ms
+        // (its smooth scroll came to rest), 1.5 s at the most
+        function whenQuiet(fn) {
+            var pane = _scrollPane(), t0 = Date.now(), last = t0;
+            function on() { last = Date.now(); }
+            if (pane) pane.addEventListener('scroll', on, { passive: true });
+            var t = null;
+            (function check() {
+                t = null;
+                var now = Date.now();
+                if (st.dead || now - last >= 150 || now - t0 >= 1500) {
+                    if (pane) pane.removeEventListener('scroll', on);
+                    st.cancel = null;
+                    if (!st.dead) fn();
+                    return;
+                }
+                t = setTimeout(check, 50);
+                st.cancel = function () { clearTimeout(t); if (pane) pane.removeEventListener('scroll', on); };
+            })();
+        }
+        st.promote = function (sel) {           // another jump / restore while the slices run
+            if (st.done || st.dead) return;
+            st.lazy = false;                    // its section is the reader's target now: it goes first
+            _sliceEpoch = Date.now();
+            startAt(indexFor(sel));
+            build(nextChunk(RB_PRESS_PANELS));
+        };
+        st.sample = function () {               // one panel of its own to measure (_phSizeSoon)
+            for (var k = 0; k < panels.length; k++) if (panels[k].built) return;
+            build(nextChunk(1), true);
+        };
+        st.flush = function () {                // a caller that needs every panel now
+            if (st.done || st.dead) return;
+            var ks = [];
+            for (var k = 0; k < panels.length; k++) if (!panels[k].built) ks.push(k);
+            if (st.cancel) { st.cancel(); st.cancel = null; }
+            build(ks);
+        };
+        window.ChipStatus._onLeave(document.querySelector('.topo-dashboard'), function _rbTeardown() { stop(); });
+        _renderChartSpecsProgressively(specs, function () { return !st.done && !st.dead; });
+        // a lazy section is above its target (the 2Q section above a metrics
+        // jump): its panels come from the END, nearest the target -- where a
+        // reader scrolling up from the target reaches it first
+        startAt(opt.lazy ? panels.length - 1 : indexFor(opt.prio));
+        if (!opt.lazy) build(nextChunk(RB_PRESS_PANELS), true);
+        _phSizeSoon();
+        if (!st.done) {
+            if (opt.wait) whenQuiet(function () { later(); });
+            else later();
+        }
+    }
+    function _rbAgain(name, opt) {
+        var b = _slicerOf(name);
+        if (!b) return;
+        if (!opt) b.flush();
+        else if (!opt.lazy && !opt.keep) b.promote(opt.prio);
     }
 
     // ══════════════════════════════════════════════════════════════════
@@ -3956,7 +4408,7 @@ window.ChipStatus.mount = function (opts) {
     // Section 6: Per-Metric Detail Panels (grid + bar chart each)
     // ══════════════════════════════════════════════════════════════════
 
-    function buildMetricPanels() {
+    function buildMetricPanels(opt) {
         var container = document.getElementById('topo-metric-panels');
         if (!container) return;
 
@@ -4023,10 +4475,14 @@ window.ChipStatus.mount = function (opts) {
         var fid1qHost = document.getElementById('topo-fidelity-1q-panels');
         var fidRoHost = document.getElementById('topo-fidelity-ro-panels');
         var fid1qHtml = [], fidRoHtml = [];
+        // w9 uxpolish: the page order as blocks per host -- a heading / note
+        // (h) or a panel (p), whose markup + chart spec its make() returns
+        // (a big chip builds them in slices, see _sliceStart)
+        var cBlocks = [], f1Blocks = [], frBlocks = [], panels = [];
         var sink = function (def) {
-            if (fid1qHost && def.group === 'fid1q') return fid1qHtml;
-            if (fidRoHost && def.group === 'fidro') return fidRoHtml;
-            return html;
+            if (fid1qHost && def.group === 'fid1q') return f1Blocks;
+            if (fidRoHost && def.group === 'fidro') return frBlocks;
+            return cBlocks;
         };
 
         PANEL_DEFS.forEach(function(def) {
@@ -4046,11 +4502,11 @@ window.ChipStatus.mount = function (opts) {
                 // old skip: coherence/frequency panels absent from a chip
                 // are not a question anyone asked.
                 if (def.group === 'fid1q' || def.group === 'fidro') {
-                    sink(def).push('<div class="topo-section topo-metric-empty" data-group="'
+                    sink(def).push({ h: '<div class="topo-section topo-metric-empty" data-group="'
                         + def.group + '"><h4 class="topo-metric-panel-title">' + def.title
                         + '</h4><p class="muted" style="margin:0.2rem 0 0.8rem">no values on this chip yet'
                         + (def.source ? ' \u2014 fills from <code>' + def.source + '</code> once a run writes it' : '')
-                        + '</p></div>');
+                        + '</p></div>' });
                 }
                 return;
             }
@@ -4061,10 +4517,13 @@ window.ChipStatus.mount = function (opts) {
                 prevGroup = def.group;
                 var groupLabel = {coherence:'Coherence', frequency:'Frequencies', calibration:'Calibration'}[def.group];
                 if (groupLabel) {
-                    html.push('<h3 class="topo-section-title" data-group="' + def.group + '" style="margin-top:1.5rem">' + groupLabel + '</h3>');
+                    cBlocks.push({ h: '<h3 class="topo-section-title" data-group="' + def.group + '" style="margin-top:1.5rem">' + groupLabel + '</h3>' });
                 }
             }
 
+            sink(def).push({ p: panels.length });
+            panels.push({ key: def.key, group: def.group, built: false, cells: topo.nodes.length, make: function () {
+            // (body unchanged, made when the panel is built: the palette is the one on screen then)
             var secId = 'mp-' + def.key.replace(/[^a-zA-Z0-9]/g, '-');
             var stops = dCfg.colorScale;
             var range = agg.max - agg.min || 1;
@@ -4152,7 +4611,6 @@ window.ChipStatus.mount = function (opts) {
             sectionHtml += '<div class="topo-metric-bar-chart" id="' + chartId + '"></div>';
             sectionHtml += '</div>'; // close panel-row
             sectionHtml += '</div>'; // close section
-            sink(def).push(sectionHtml);
 
             // ── Render bar chart (compact + annotated) ───────────────
             // Gated: an unphysical fit is excluded from the bars too (no −473µs bar).
@@ -4160,6 +4618,7 @@ window.ChipStatus.mount = function (opts) {
                 .filter(function(n) { return _mv(n, def.key) != null; })
                 .sort(function(a, b) { return (_mv(b, def.key) || 0) - (_mv(a, def.key) || 0); });
 
+            var spec = null;
             if (sorted.length > 0) {
                 var barColors = sorted.map(function(n) {
                     // QA F-19b: a lone value sits mid-scale -- the colour
@@ -4184,7 +4643,7 @@ window.ChipStatus.mount = function (opts) {
                 // Value annotations on each bar
                 var barText = displayVals.map(function(v) { return fmtBarLabel(v, def.key); });
 
-                specs.push({
+                spec = {
                     chartId: chartId,
                     data: [{
                         y: sorted.map(function(n) { return n.id; }),
@@ -4209,27 +4668,38 @@ window.ChipStatus.mount = function (opts) {
                         base.height = Math.min(640, Math.max(160, sorted.length * 26));
                         return base;
                     }
-                });
+                };
             }
+            return { html: sectionHtml, spec: spec };
+            } });
         });
 
-        // Single DOM write per host, then re-query click handlers, then render charts.
+        var hosts = [container].concat(fid1qHost ? [fid1qHost] : []).concat(fidRoHost ? [fidRoHost] : []);
+        hosts.forEach(function (h) { _cellClicks(h, 'qubit'); });   // qubit cell -> inspector
+        var plan = [{ el: container, html: html, blocks: cBlocks }]
+            .concat(fid1qHost ? [{ el: fid1qHost, html: fid1qHtml, blocks: f1Blocks }] : [])
+            .concat(fidRoHost ? [{ el: fidRoHost, html: fidRoHtml, blocks: frBlocks }] : []);
+        var totalCells = panels.reduce(function (t, p) { return t + p.cells; }, 0);
+        if (opt && totalCells > RB_SYNC_ALL_CELLS) { _sliceStart('metrics', plan, panels, specs, opt); return; }
+
+        // Single DOM write per host, then render charts (a small chip, or a
+        // caller that measures the whole section right after).
+        plan.forEach(function (ho) {
+            ho.blocks.forEach(function (b) {
+                if (b.h) { ho.html.push(b.h); return; }
+                var o = panels[b.p].make();
+                panels[b.p].built = true;
+                ho.html.push(o.html);
+                if (o.spec) specs.push(o.spec);
+            });
+        });
         container.innerHTML = html.join('');
         if (fid1qHost) fid1qHost.innerHTML = fid1qHtml.join('');
         if (fidRoHost) fidRoHost.innerHTML = fidRoHtml.join('');
         window.ChipStatus.density.applyAll(container);
         if (fid1qHost) window.ChipStatus.density.applyAll(fid1qHost);
         if (fidRoHost) window.ChipStatus.density.applyAll(fidRoHost);
-        var hosts = [container].concat(fid1qHost ? [fid1qHost] : []).concat(fidRoHost ? [fidRoHost] : []);
         _metaAfterBuild(hosts);
-        var eachCell = function (sel, fn) { hosts.forEach(function (h) { h.querySelectorAll(sel).forEach(fn); }); };
-
-        eachCell('.heatmap-cell[data-qubit]', function(cell) {
-            cell.addEventListener('click', function() {
-                var qid = cell.getAttribute('data-qubit');
-                if (qid) htmx.ajax('GET', '/qubit/' + qid, {source: '#inspector-pane', target: '#inspector-pane', swap: 'innerHTML'});
-            });
-        });
 
         _renderChartSpecsProgressively(specs);
         if (window._recolorTopology) window._recolorTopology();   // repaint the new cells with the active palette
@@ -4423,13 +4893,32 @@ window.ChipStatus.mount = function (opts) {
         });
     }
 
-    function _ensureSectionBuilt(key) {
-        if (Array.isArray(key)) { key.forEach(_ensureSectionBuilt); return; }
+    /* w9 uxpolish: `how` says what the caller needs of the 2Q RB section or
+       the metric panels NOW (a big chip builds them in slices, _sliceStart):
+         null / absent   every panel, in this call (and a running slice build
+                         finishes now) -- the resumed refresh and a record
+                         relative to a section's top measure the whole section;
+         {prio: sel}     the panel `sel` names (a panel, an RB heading's, a
+                         metric group's or fidelity section's first) and the
+                         ones under it, in this call; null sel = the top panel;
+         {lazy: true}    no panel in this call (the target is further down);
+         {wait: true}    the slices wait until the jump's smooth scroll rests;
+         {keep: true}    a build already running keeps its order (the lazy
+                         observer: the pane passing the section on its way). */
+    function _ensureSectionBuilt(key, how) {
+        if (Array.isArray(key)) { key.forEach(function (k) { _ensureSectionBuilt(k); }); return; }
+        var opt = (how && typeof how === 'object') ? how : null;
+        // docs/148: the 1Q / readout sections' panels come from the metrics
+        // build (w9 uxpolish: their own panels first, when it is sliced)
+        if (key === 'fid1q' || key === 'fidro') {
+            _ensureSectionBuilt('metrics', opt && Object.assign({}, opt,
+                { prio: opt.prio || (key === 'fid1q' ? '#sec-fidelity-1q' : '#sec-readout') }));
+            return;
+        }
+        if ((key === '2qrb' || key === 'metrics') && _chipSectionBuilt[key]) { _rbAgain(key, opt); return; }
         if (!key || _chipSectionBuilt[key]) return;
-        else if (key === '2qrb') { _chipSectionBuilt[key] = true; build2QRBPanels(); }
-        else if (key === 'metrics') { _chipSectionBuilt[key] = true; buildMetricPanels(); }
-        // docs/148: the 1Q / readout sections' panels come from the metrics build
-        else if (key === 'fid1q' || key === 'fidro') { _ensureSectionBuilt('metrics'); }
+        else if (key === '2qrb') { _chipSectionBuilt[key] = true; build2QRBPanels(opt); }
+        else if (key === 'metrics') { _chipSectionBuilt[key] = true; buildMetricPanels(opt); }
         // Trends fetches its own data (the history index is not cheap enough to
         // ride the page render), so building it means asking for it once.
         else if (key === 'trends') {
@@ -4533,13 +5022,22 @@ window.ChipStatus.mount = function (opts) {
         if (scroll !== false) _jump.note(view);
         _setActiveTab(view);
         _suppressSpyUntil = Date.now() + 800;     // don't let the spy fight the jump
-        _ensureSectionBuilt(spec.build);
-        if (scroll === false) return;
+        // w9 uxpolish: the 2Q section's top panel in this press, the rest in
+        // slices once the jump has come to rest (a restore -- scroll false --
+        // has already said what it needs, _restoreChipScroll)
         // QA F-02: every 'metrics' view sits BELOW the lazy 2Q RB host, which
         // the smooth scroll passes (within the observer's margin) and builds
         // mid-flight: ~2.5k px landed above the measured target and a 1Q jump
-        // ended on the 2Q panels. Build it now, before the target is measured.
-        if (spec.build === 'metrics') _ensureSectionBuilt('2qrb');
+        // ended on the 2Q panels. Start it now, before the target is measured
+        // -- w9 uxpolish: with no panel in this press (it is all above the
+        // target); its slices grow the page after the jump rests, and the
+        // jump guard re-lands the target on that growth, as for Trends. And
+        // BEFORE the metrics are built: their charts then wait for the slices
+        // (they drew their first batch inside this press). A restore (scroll
+        // false) has said what it needs already (_restoreChipScroll).
+        if (scroll !== false && spec.build === 'metrics') _ensureSectionBuilt('2qrb', { lazy: true, wait: true });
+        _ensureSectionBuilt(spec.build, scroll === false ? { lazy: true } : { prio: spec.sel, wait: true });
+        if (scroll === false) return;
         requestAnimationFrame(function() {        // let a just-built section lay out
             var el = document.querySelector(spec.sel);
             _jumpBaseH = _dashH();                // what the smooth jump measured against
@@ -4570,8 +5068,11 @@ window.ChipStatus.mount = function (opts) {
         _jump.note(jv);
         _setActiveTab(view);
         _suppressSpyUntil = Date.now() + 800;
-        _ensureSectionBuilt(spec.build);
-        if (spec.build === 'metrics') _ensureSectionBuilt('2qrb');
+        // w9 uxpolish: the panel the tile names is made in this press
+        // w9 uxpolish: the panel the tile names is made in this press (the 2Q
+        // section above a metrics panel first, lazily: see setChipStatusView)
+        if (spec.build === 'metrics') _ensureSectionBuilt('2qrb', { lazy: true, wait: true });
+        _ensureSectionBuilt(spec.build, { prio: sel || spec.sel, wait: true });
         requestAnimationFrame(function () {
             var el = document.querySelector(_jumpSelOf(jv));
             _jumpBaseH = _dashH();
@@ -4588,7 +5089,8 @@ window.ChipStatus.mount = function (opts) {
         }
         var io = new IntersectionObserver(function(entries) {
             entries.forEach(function(e) {
-                if (e.isIntersecting) _ensureSectionBuilt(e.target.getAttribute('data-topo-section'));
+                // w9 uxpolish: the pane passing by keeps a running 2Q build's order
+                if (e.isIntersecting) _ensureSectionBuilt(e.target.getAttribute('data-topo-section'), { prio: null, keep: true });
             });
         }, { root: _scrollPane(), rootMargin: '400px 0px 400px 0px' });
         // Tear it down on nav-away. ChipStatus.mount runs on every /topology
@@ -4750,12 +5252,15 @@ window.ChipStatus.mount = function (opts) {
            fallback when neither is on the page any more. */
     var _placeIntent = null;     // {jv, rec}: a jump / restore the guard is still landing
     var _lastRec = null;         // the record last written on this entry
-    var PLACE_ANCHORS = '.topo-section[data-density-panel], [data-rb-heading]';
+    // w9 final-QA P1: an unbuilt panel's placeholder stands for its panel --
+    // a restore builds that panel at once and lands as far into it
+    var PLACE_ANCHORS = '.topo-section[data-density-panel], [data-rb-heading], .topo-rb-ph[data-rb-ph]';
     var PLACE_SEL_RE = /^(?:\.topo-section\[data-density-panel="[^"\\]*"\]|\[data-rb-heading="[^"\\]*"\])$/;
     function _placeSelOf(el) {
         var k = el.getAttribute('data-rb-heading'), s = null;
         if (k !== null) s = '[data-rb-heading="' + k + '"]';
         else if ((k = el.getAttribute('data-density-panel')) !== null) s = '.topo-section[data-density-panel="' + k + '"]';
+        else if ((k = el.getAttribute('data-rb-ph')) !== null) s = '.topo-section[data-density-panel="' + k + '"]';
         return (s && PLACE_SEL_RE.test(s)) ? s : null;
     }
     function _placeFind(sel) {
@@ -4865,8 +5370,18 @@ window.ChipStatus.mount = function (opts) {
             return;
         }
         var spec = TAB_SPEC[hs.view];
+        // w9 uxpolish: a record that names a panel (or a jump) needs that
+        // panel now, the rest can come in slices (the guard re-lands on their
+        // growth); a record relative to a section's top needs all of it. A
+        // metrics view has the whole 2Q section above it (lazily, first: the
+        // metrics' charts then wait for its slices, see setChipStatusView).
+        // (No wait: a restore lands at once, not by a smooth scroll; its own
+        // section slices first, below the target first.)
+        if (spec.build === 'metrics') _ensureSectionBuilt('2qrb', { lazy: true });
+        if (spec.build === '2qrb' || spec.build === 'metrics') {
+            _ensureSectionBuilt(spec.build, (hs.jump || hs.sel) ? { prio: hs.sel || spec.sel } : null);
+        }
         window.setChipStatusView(hs.view, null, false);
-        if (spec.build === 'metrics') _ensureSectionBuilt('2qrb');
         var jv = hs.sel ? ('sel:' + hs.view + ':' + hs.sel) : hs.view;
         _placeIntent = { jv: jv, rec: hs };
         if (hs.jump) {

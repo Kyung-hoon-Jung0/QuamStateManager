@@ -12,6 +12,7 @@
                     hx-swap="outerHTML"
                     title="Cancel">×</button>
         </header>
+        {% if flux_moved %}{% include '_pair_add_gate_pulses_note.html' %}{% endif %}
 
         <div class="add-gate-row">
             <label for="add-gate-name">Gate name</label>

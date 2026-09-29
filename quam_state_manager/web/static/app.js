@@ -286,6 +286,14 @@ function _debounce(key, fn, delay) {
 window.setPageSize = function(selectEl, baseUrl, extraQs, storageKey) {
     var val = selectEl.value;
     try { localStorage.setItem(storageKey, val); } catch(e) {}
+    // w9 final QA (P3): on the Pulses page the pulse open in the inspector
+    // stays in view across the size change (pulses.js revealOpenPulse reads
+    // this once, when the new table lands) -- switching to All used to leave
+    // it far below the fold of the virtual list
+    if (_smPath(baseUrl) === '/pulses') {   // docs/226: base_url arrives rooted
+        var det = document.querySelector('#inspector-pane #pulse-detail-root[data-pulse-path]');
+        window._pulsesRevealOnce = det ? { path: det.getAttribute('data-pulse-path'), at: Date.now() } : null;
+    }
     if (window.htmx) {
         htmx.ajax('GET', baseUrl + '?page=1&per_page=' + val + extraQs, {target: '#table-pane', swap: 'innerHTML'});
     }
@@ -1332,6 +1340,15 @@ window.showWaveformPlot = function(btn) {
         var dir = asc ? 'desc' : 'asc';
         th.classList.add('sort-' + dir);
 
+        // w9/pulsesall: the virtual Pulses "All" view holds ~50 of its rows in
+        // the DOM -- it sorts its model with the same keys and comparator
+        if (tbody.hasAttribute('data-pulses-virtual') && window.PulsesVT) {
+            window.PulsesVT.sort(table, col, isNum, dir);
+            table.setAttribute('data-sorted-col', String(col));
+            table.setAttribute('data-sorted-dir', dir);
+            return;
+        }
+
         var rows = Array.from(tbody.querySelectorAll('tr'));
         rows.sort(function(a, b) {
             // docs/109: a cell may carry data-sort — a display-independent sort
@@ -1428,6 +1445,14 @@ window.showWaveformPlot = function(btn) {
         if (active && (active.tagName === 'INPUT' || active.tagName === 'TEXTAREA' || active.tagName === 'SELECT')) return;
 
         if (evt.key !== 'ArrowUp' && evt.key !== 'ArrowDown' && evt.key !== 'Enter') return;
+
+        // w9/pulsesall: the virtual Pulses "All" view moves through its MODEL
+        // (every row, not the ~50 rendered), scrolling the next one in
+        if (window.PulsesVT && window.PulsesVT.active()
+                && tablePane.querySelector('tbody[data-pulses-virtual]')) {
+            if (window.PulsesVT.key(evt.key)) evt.preventDefault();
+            return;
+        }
 
         var rows = Array.from(tablePane.querySelectorAll('tr.clickable-row'));
         if (!rows.length) return;
@@ -2561,7 +2586,8 @@ document.addEventListener('click', function(evt) {
         // rejects this promise (htmx 2 p.onabort) -- the abort is intended and
         // still fires htmx:sendAbort; only the unhandled rejection goes.
         var p = htmx.ajax('GET', '/dataset/' + uid,
-                  {source: target, target: target, swap: 'innerHTML'});
+                  {source: target, target: target, swap: 'innerHTML',
+                   headers: window._dsListNav()});   // w9 uxpolish: a list switch
         if (p && typeof p.catch === 'function') p.catch(function() {});
     }
 });
@@ -2640,7 +2666,8 @@ window.dsNavRun = function(dir, btn) {
                 var target = host;
                 _dsMarkSlowLoad(target, d.run_id);
                 htmx.ajax('GET', '/dataset/' + d.uid,
-                          {source: target, target: target, swap: 'innerHTML'})
+                          {source: target, target: target, swap: 'innerHTML',
+                           headers: window._dsListNav()})   // w9 uxpolish: a list switch
                     .then(function() { _dsSyncFullPageUrl(target); }, function() {});   // F20: an hx-sync abort is not an error
             }).catch(function() {});
     }
@@ -4725,6 +4752,88 @@ window.livePushExtrasLine = function (typedPaths) {
             .catch(function () { return "failed"; });
     }
     window._followOnExplorer = followOnExplorer;
+    /* w9 final QA (P2): htmx.ajax with no `source` issues from document.body,
+       and htmx keeps ONE request per element with the `last` queue -- so the
+       /state/tray GET this poll sends and the inspector's /pulse/detail GET
+       shared a lane, and the second tray GET (onSyncSig, same poll) REPLACED
+       the queued detail GET: the row followed the other window's edit, the
+       open inspector kept the old value forever. Each background refresh gets
+       a lane of its own: a hidden body-level element no response ever swaps
+       (a queued request re-issued against a swapped-out source dies on htmx's
+       isConnected guard -- the docs/141 UndoQueue lesson), inside body so the
+       HX-Trigger events it raises still bubble to the listeners on body. Not
+       #inspector-pane either: its hx-sync="this:replace" would ABORT this
+       window's own commit in flight. */
+    function _syncLane(id) {
+        var s = document.getElementById(id);
+        if (!s) {
+            s = document.createElement("div");
+            s.id = id;
+            s.hidden = true;
+            s.style.display = "none";
+            document.body.appendChild(s);
+        }
+        return s;
+    }
+    window._syncLane = _syncLane;
+    function _trayRefresh() {
+        return window.htmx.ajax("GET", "/state/tray",
+                                { source: _syncLane("tray-refresh-src"),
+                                  target: "#pending-tray", swap: "outerHTML" });
+    }
+    /* The open pulse inspector follows a foreign edit the same way the grid and
+       the tree do: only while nobody is using it (a keystroke or click in the
+       last two seconds, focus inside it, a rename/duplicate/delete step open,
+       a typed value not yet committed), retried every 2 s until then -- a
+       reader who scrolled the table as the edit arrived used to keep the old
+       value forever too. A pane that has since re-rendered (a commit, another
+       pulse) is already fresh and is left alone. */
+    var _inspFollowTimer = null;
+    function _inspectorInUse(insp) {
+        if ((Date.now() - (window.__lastUserAct || 0)) < 2000) return true;
+        var a = document.activeElement;
+        if (a && a !== document.body && insp.contains(a)) return true;
+        if (insp.querySelector(".pulse-rename-form:not([hidden]), .pulse-duplicate-form:not([hidden]),"
+                               + " .pulse-delete-confirm:not([hidden])")) return true;
+        return Array.prototype.some.call(insp.querySelectorAll("input[data-param][data-committed]"),
+            function (i) { return i.value !== i.getAttribute("data-committed"); });
+    }
+    function followOnInspector(path, root) {
+        if (_inspFollowTimer) { clearTimeout(_inspFollowTimer); _inspFollowTimer = null; }
+        var insp = document.getElementById("inspector-pane");
+        var cur = insp && insp.querySelector("#pulse-detail-root");
+        if (!window.htmx || !cur || cur !== root || cur.getAttribute("data-pulse-path") !== path) return "gone";
+        if (_inspectorInUse(insp)) {
+            _inspFollowTimer = setTimeout(function () { followOnInspector(path, root); }, 2000);
+            return "deferred";
+        }
+        window.htmx.ajax("GET", "/pulse/detail?path=" + encodeURIComponent(path),
+                         { source: _syncLane("insp-follow-src"), target: "#inspector-pane",
+                           swap: "innerHTML",
+                           // names the request at landing (htmx 2.0.4's beforeSwap
+                           // detail carries no source element)
+                           headers: { "X-SM-Follow-Pulse": encodeURIComponent(path) } });
+        return "sent";
+    }
+    window._followOnInspector = followOnInspector;
+    /* ...and it lands only where it still belongs: the pane shows that pulse
+       and nobody started using it while the GET was out (then it waits, and
+       asks again). Capture phase: decided before the plot teardown reads
+       shouldSwap. */
+    document.addEventListener("htmx:beforeSwap", function (evt) {
+        var rc = evt.detail && evt.detail.requestConfig;
+        var tag = rc && rc.headers && rc.headers["X-SM-Follow-Pulse"];
+        if (!tag) return;
+        var path = decodeURIComponent(tag);
+        var insp = document.getElementById("inspector-pane");
+        var cur = insp && insp.querySelector("#pulse-detail-root");
+        if (!cur || cur.getAttribute("data-pulse-path") !== path) {
+            evt.detail.shouldSwap = false;
+        } else if (_inspectorInUse(insp)) {
+            evt.detail.shouldSwap = false;
+            _inspFollowTimer = setTimeout(function () { followOnInspector(path, cur); }, 2000);
+        }
+    }, true);
     /* ...and the one entry point for "the working copy moved under this
        screen": the grids and the tree, each through its own refresher. */
     window._followValuesOnScreen = function () {
@@ -4751,8 +4860,7 @@ window.livePushExtrasLine = function (typedPaths) {
         var done = function () { _foreignRefreshing = false; };
         var after = function () { done(); if (foreign) window._followValuesOnScreen(); };
         try {
-            var p = window.htmx.ajax("GET", "/state/tray",
-                                     { target: "#pending-tray", swap: "outerHTML" });
+            var p = _trayRefresh();
             if (p && p.then) p.then(after, done); else after();
         } catch (e) { done(); }
         // the values on screen: the pulses table patches its own rows, the
@@ -4764,23 +4872,13 @@ window.livePushExtrasLine = function (typedPaths) {
         // change too (debounced there, so it coalesces with a local one).
         try { if (window._diagChanged) window._diagChanged(); } catch (e) {}
         try {
+            // Only for a window that is genuinely LOOKING: never take the pane
+            // away from someone who is using it (followOnInspector waits for
+            // them); the tray refresh above already told them the chip moved.
             var insp = document.getElementById("inspector-pane");
             var root = insp && insp.querySelector("#pulse-detail-root");
             var path = root && root.getAttribute("data-pulse-path");
-            // Only for a window that is genuinely LOOKING: never take the pane
-            // away from someone who is using it. Anything typed or clicked in
-            // the last two seconds means this window has a user in it, and the
-            // tray refresh above already told them the chip moved.
-            var busy = (Date.now() - (window.__lastUserAct || 0)) < 2000;
-            var a = document.activeElement;
-            var inside = insp && a && insp.contains(a);
-            var open = insp && insp.querySelector(
-                ".pulse-rename-form:not([hidden]), .pulse-duplicate-form:not([hidden]),"
-                + " .pulse-delete-confirm:not([hidden])");
-            if (path && !busy && !inside && !open) {
-                window.htmx.ajax("GET", "/pulse/detail?path=" + encodeURIComponent(path),
-                                 { target: "#inspector-pane", swap: "innerHTML" });
-            }
+            if (path) followOnInspector(path, root);
         } catch (e) {}
     }
     /* The poll's own decision, as a function a test can drive: the FIRST
@@ -4831,8 +4929,7 @@ window.livePushExtrasLine = function (typedPaths) {
         _pillRefreshing = true;
         var done = function () { _pillRefreshing = false; };
         try {
-            var p = window.htmx.ajax("GET", "/state/tray",
-                                     { target: "#pending-tray", swap: "outerHTML" });
+            var p = _trayRefresh();
             if (p && p.then) p.then(done, done); else done();
         } catch (e) { done(); }
         return true;
@@ -4864,8 +4961,7 @@ window.livePushExtrasLine = function (typedPaths) {
             if (window.SyncPanel && window.SyncPanel.isOpen()) window.SyncPanel.refresh();
         };
         try {
-            var p = window.htmx.ajax("GET", "/state/tray",
-                                     { target: "#pending-tray", swap: "outerHTML" });
+            var p = _trayRefresh();
             if (p && p.then) p.then(done, done); else done();
         } catch (e) { done(); }
         return true;
@@ -10355,6 +10451,13 @@ window.clearDetailPanelSearch = function(btnEl) {
                 if (!d.ok) {
                     b.disabled = false;
                     el.firstChild.textContent = "✗ " + (d.error || "not deleted") + " ";
+                    // w9/pulsegate: the widened set holds a pulse -- the way on
+                    if (d.lab_delete_pulses_url || d.pulses_page) {
+                        b.remove();
+                        _appendPulsesLink(el, d.lab_delete_pulses_url || d.pulses_page,
+                            d.lab_delete_pulses_url ? "Delete together on the Pulses page"
+                                                    : "Open the Pulses page");
+                    }
                     return;
                 }
                 if (d.tray_html) { _swapPendingTray(d.tray_html); window._restoreTrayState && window._restoreTrayState(); }
@@ -10983,7 +11086,11 @@ window.clearDetailPanelSearch = function(btnEl) {
             })
             .then(function(r) { return r.json(); })
             .then(function(data) {
-                if (!data.ok) { err.hidden = false; err.textContent = data.error || "Edit rejected"; save.disabled = false; return; }
+                if (!data.ok) {
+                    err.hidden = false; err.textContent = data.error || "Edit rejected";
+                    if (data.pulses_page) _appendPulsesLink(err, data.pulses_page, "Open the Pulses page");
+                    save.disabled = false; return;
+                }
                 close();
                 var fresh = _rebuildNode(node, parsed);
                 if (fresh) {
@@ -11339,6 +11446,120 @@ window.clearDetailPanelSearch = function(btnEl) {
         } else { done(_copyClipboardFallback(txt)); }
     }
 
+    /* w9/pulsegate (user decision 2026-09-28): a pulse is added, deleted,
+       renamed or copied ONLY on the Pulses page -- it checks what the pulse
+       is used by and asks the lab's own code. The tree keeps every VALUE edit
+       inside a pulse; on a pulse object and on an `operations` dict (a new
+       key there IS a new pulse) it offers no ＋/✕ and says where instead.
+       The rule is the server's (core.pulse_structure), shipped as
+       window._treePulseGate: the structural part (an `operations` entry, a
+       pair gate slot) plus the rows the Pulses page found by shape. No
+       payload (a dataset tree, a harness) = no opinion; the write doors
+       refuse either way. */
+    function _pgIsPulse(segs, value, pg) {
+        var n = segs.length;
+        if (n >= 2 && segs[n - 2] === "operations") return true;
+        // a pair gate slot holding a pulse OBJECT (an inline dict); one
+        // holding a pointer is a link to a pulse on its channel -- filling,
+        // re-pointing or emptying it is a re-link (value undefined: an
+        // ancestor, which only a dict can be)
+        if (n === 5 && segs[0] === "qubit_pairs" && segs[2] === "macros"
+            && (pg.gate_slots || []).indexOf(segs[4]) >= 0
+            && (value === undefined || (value !== null && typeof value === "object"
+                                         && !Array.isArray(value)))) return true;
+        return !!pg._rowSet[segs.join(".")];
+    }
+    function _pulseGateKind(path, value) {
+        var pg = window._treePulseGate;
+        if (!pg || !path) return null;
+        if (!pg._rowSet) {
+            pg._rowSet = {};
+            (pg.rows || []).forEach(function (p) { pg._rowSet[p] = 1; });
+        }
+        var segs = String(path).split(".");
+        if (segs.length < 2 || (pg.skip_tops || []).indexOf(segs[0]) >= 0) return null;
+        // a row the Pulses page found by shape is one, wherever it sits (the
+        // discovery looks inside an unclassed entry or gate slot)
+        if (pg._rowSet[segs.join(".")]) return "pulse";
+        for (var i = 2; i < segs.length; i++) {       // inside a pulse: a field
+            if (_pgIsPulse(segs.slice(0, i), undefined, pg)) return null;
+        }
+        if (_pgIsPulse(segs, value, pg)) return "pulse";
+        if (segs[segs.length - 1] === "operations" && value !== null
+            && typeof value === "object" && !Array.isArray(value)) return "ops";
+        return null;
+    }
+    window._pulseGateKind = _pulseGateKind;
+    /* The page renders with the Pulses index's rows only when that index is
+       warm (the tree never waits on a whole-chip walk). Cold, the rows the
+       path alone cannot tell (shape-discovered pulses outside `operations`)
+       are asked for once, after the render; a row hovered before they came
+       had its actions built without them -- dropped, so the next hover
+       rebuilds them. A page re-rendered meanwhile ignores the answer. */
+    window._pulseGateFill = function () {
+        var pg = window._treePulseGate;
+        if (!pg || pg.rows_known || pg._filling) return null;
+        pg._filling = true;
+        return fetch("/explorer/pulse-gate", { cache: "no-store" })
+            .then(function (r) { return r.ok ? r.json() : null; })
+            .then(function (d) {
+                if (!d || !d.rows_known || window._treePulseGate !== pg) return;
+                pg.rows = d.rows || [];
+                pg.rows_known = true;
+                delete pg._rowSet;
+                pg.rows.forEach(function (p) {
+                    document.querySelectorAll('.tree-node[data-path="' + _cssAttrVal(p)
+                        + '"] > .tree-row > .tree-row-actions').forEach(function (s) { s.remove(); });
+                });
+            })
+            .catch(function () { /* the write doors still refuse */ })
+            .then(function () { pg._filling = false; });
+    };
+    function _pulsesPageLink(url, text) {
+        var a = document.createElement("a");
+        a.className = "tree-pulses-link";
+        a.href = _smUrl(url);          // a plain navigation (new tab / middle click), docs/226
+        a.textContent = text;
+        a.onclick = function (e) {
+            e.stopPropagation();
+            // a new tab / window keeps the browser's own way (a plain GET
+            // redirects); a click stays in the app: the server names the
+            // Pulses page address, and the table pane navigates there the
+            // app's own way (_navigateTablePane: the address is pushed AFTER
+            // the swap). htmx's HX-Location would first snapshot the whole
+            // tree into its history cache -- measured on a 30-qubit chip:
+            // over the storage quota, htmx:historyCacheError, and the time.
+            if (e.ctrlKey || e.metaKey || e.shiftKey || e.button === 1) return;
+            if (!window._navigateTablePane) return;
+            e.preventDefault();
+            fetch(url + (url.indexOf("?") >= 0 ? "&" : "?") + "json=1", { cache: "no-store" })
+                .then(function (r) { return r.ok ? r.json() : null; })
+                .then(function (d) {
+                    if (d && typeof d.url === "string" && _smPath(d.url).indexOf("/pulses") === 0) {
+                        window._navigateTablePane(d.url);
+                    } else {
+                        window.location.href = _smUrl(url);
+                    }
+                })
+                .catch(function () { window.location.href = _smUrl(url); });
+        };
+        return a;
+    }
+    function _appendPulsesLink(el, url, text) {
+        if (!el || !url || el.querySelector(".tree-pulses-link")) return;
+        el.appendChild(document.createTextNode(" "));
+        el.appendChild(_pulsesPageLink(url, text));
+    }
+    function _pulsesPageNote(path) {
+        var pg = window._treePulseGate || {};
+        var s = document.createElement("span");
+        s.className = "tree-pulse-gate";
+        s.appendChild(document.createTextNode("Pulses are added, removed and renamed on the "));
+        s.appendChild(_pulsesPageLink((pg.goto || "/pulses/goto") + "?path="
+                                      + encodeURIComponent(path), "Pulses page"));
+        return s;
+    }
+
     function _buildRowActions(container, node, row) {
         var m = node._meta, v = node._value;
         var parent = _parentInfo(node);
@@ -11365,7 +11586,9 @@ window.clearDetailPanelSearch = function(btnEl) {
             "tree-act-copy", function (b) { _copyKeyValue(node, b); }));
 
         if (!inList && !identity) {          // elements/identity: value-edit + copy only
-            if (isDict) {
+            // w9/pulsegate: a pulse / an operations dict -- no ＋/✕, the way
+            var pgKind = _pulseGateKind(m.path, v);
+            if (isDict && !pgKind) {
                 span.appendChild(_mkBtn("＋", "Add a key under " + (m.key || "root"),
                     "tree-act-add", function () { _openAddKey(container, node); }));
             }
@@ -11373,10 +11596,11 @@ window.clearDetailPanelSearch = function(btnEl) {
                 span.appendChild(_mkBtn("⚙", "Expected type of " + m.key,
                     "tree-act-type", function (b) { _openTypePicker(node, row, b); }));
             }
-            if (!topLevel) {
+            if (!topLevel && !pgKind) {
                 span.appendChild(_mkBtn("✕", "Delete " + m.key,
                     "tree-act-del", function () { _confirmDelete(container, node, row, span); }));
             }
+            if (pgKind) span.appendChild(_pulsesPageNote(m.path));
         }
         if (span.children.length) row.appendChild(span);
         // docs/141 4w: the ? (Config Manual) sits RIGHT of the action group, and
@@ -11492,6 +11716,7 @@ window.clearDetailPanelSearch = function(btnEl) {
                 if (!d.ok) {
                     err.textContent = d.error || "create failed";
                     if (d.chip_mismatch) _appendReloadBtn(err);
+                    if (d.pulses_page) _appendPulsesLink(err, d.pulses_page, "Open the Pulses page");
                     return;
                 }
                 // pull the committed value (server truth) and rebuild this node
@@ -11565,8 +11790,16 @@ window.clearDetailPanelSearch = function(btnEl) {
                 if (!d.ok) {
                     var _ec = _showEditError(row, d.error);
                     if (d.chip_mismatch) _appendReloadBtn(_ec);
+                    if (d.pulses_page) _appendPulsesLink(_ec, d.pulses_page, "Open the Pulses page");
                     if (Array.isArray(d.lab_delete_also) && d.lab_delete_also.length) {
-                        _appendCascadeBtn(_ec, m.path, d.lab_delete_also, d.lab_delete_label);
+                        // w9/pulsegate: a set holding a pulse goes on the
+                        // Pulses page -- the same offer there, one click away
+                        if (d.lab_delete_pulses_url) {
+                            _appendPulsesLink(_ec, d.lab_delete_pulses_url,
+                                (d.lab_delete_label || "Delete together") + " on the Pulses page");
+                        } else {
+                            _appendCascadeBtn(_ec, m.path, d.lab_delete_also, d.lab_delete_label);
+                        }
                     }
                     actionsSpan.remove(); return;
                 }
@@ -14329,7 +14562,12 @@ window.PlotHost = (function () {
  * The exception is a pane PaneState is about to PARK — those plots are meant to
  * come back alive, and purging them would hand the user a corpse on return. */
 function _plotSwapTeardown(evt) {
-    var t = evt && evt.target;
+    // w9 final QA (P3): the element the swap REPLACES, not the one the event
+    // fires on. htmx 2.0.4 raises beforeSwap on the ORIGINAL target even when
+    // the response is retargeted (HX-Retarget), so a lab-refused pulse delete
+    // -- hx-target #inspector-pane, retargeted into #pulse-delete-result --
+    // purged the inspector's waveform plot and nothing ever drew it again.
+    var t = (evt && evt.detail && evt.detail.target) || (evt && evt.target);
     if (!t || !t.querySelectorAll) return;
     if (evt.detail && evt.detail.shouldSwap === false) return;
     if (t.id === 'table-pane' && window.PaneState && window.PaneState.isKeepRoute
@@ -16057,7 +16295,9 @@ window.reviewAccept = function (btn) {
     btn.disabled = true; btn.textContent = '…';
     fetch('/field/edit-batch', {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ updates: [{ dot_path: dotPath, value: input.value, create: isAdded }] })
+        // w9/pulsegate: take live (an EDITED value is checked like any edit)
+        body: JSON.stringify({ updates: [{ dot_path: dotPath, value: input.value, create: isAdded }],
+                               source: "live" })
     }).then(function (r) { return r.json(); }).then(function (d) {
         var row = btn.closest('.review-row, tr');
         if (d && d.ok) {
@@ -17873,7 +18113,33 @@ var _dsSticky = {
 //                inspector, the first open) is a FRESH open, not a switch
 var _dsScroll = { intent: null, userMoved: true, pin: null, recaptured: false,
                   landedTab: undefined,   // the tab the last restore showed
-                  picked: null, fromRun: undefined };
+                  picked: null, fromRun: undefined,
+                  fromList: undefined };  // see _dsListNav below
+
+// w9 uxpolish (user decision 2026-09-28): only the Datasets run LIST switches
+// runs -- the sidebar run tree, the Datasets / Collections table, ]/[ and
+// j+Enter (all of which end in the tree's click handler, the table's
+// openDatasetDetail or dsNavRun's server neighbour). They keep the reader's
+// tab and place (queue item 6, docs/221 sections 4/8). A run opened from
+// anywhere ELSE -- a Chip Status or Datasets Trends point, Param History
+// "Data", the value-history drawer / Column History "Data", a Versions run
+// link, a fit-audit row, the detail's parent-run link, a search result -- is
+// a FRESH open: Full View at the top, as when the pane showed no run. The
+// list marks its OWN requests with this header, so a new opener anywhere is
+// fresh by default; a flag set beside the request would outlive one that
+// was aborted (the pane's hx-sync:replace) or failed, and mislabel the next.
+var _DS_LIST_NAV_HEADER = 'X-SM-DS-Nav';
+window._dsListNav = function() {
+    var h = {};
+    h[_DS_LIST_NAV_HEADER] = 'list';
+    return h;
+};
+// did THIS swap's request come from the run list?
+function _dsFromList(detail) {
+    var rc = detail && detail.requestConfig;
+    var h = (rc && rc.headers) || (detail && detail.etc && detail.etc.headers) || null;
+    return !!(h && h[_DS_LIST_NAV_HEADER] === 'list');
+}
 
 // The tab a dataset detail is SHOWING (its active link), and that tab's
 // content element. Read from the DOM, not window._dsActiveTab, which a fresh
@@ -17975,6 +18241,7 @@ document.addEventListener('htmx:beforeSwap', function(evt) {
     // Read before anything returns: the afterSwap below needs it for EVERY
     // swap into the pane (a stale value would call a close + reopen a switch).
     _dsScroll.fromRun = !!(pane && pane.querySelector('#ds-detail-root'));
+    _dsScroll.fromList = _dsFromList(evt.detail);   // w9 uxpolish: same rule
     if (window._pinnedRunId) return;
     if (!pane) return;
     if (_dsScroll.pin) { _dsScroll.pin.stop(); _dsScroll.pin = null; }
@@ -18212,6 +18479,11 @@ document.addEventListener('htmx:afterSwap', function(evt) {
     var fromRun = _dsScroll.fromRun;
     _dsScroll.fromRun = undefined;
     if (fromRun === false) freshOpen = true;
+    // w9 uxpolish: a run opened from OUTSIDE the run list (see _dsListNav) is
+    // a fresh open too, whatever the pane showed before it
+    var fromList = _dsScroll.fromList;
+    _dsScroll.fromList = undefined;
+    if (fromList === false) freshOpen = true;
     var root = pane.querySelector('#ds-detail-root');
     if (!root) return;
 
@@ -21313,7 +21585,9 @@ document.addEventListener('click', function(evt) {
         _liveFetchJson("/field/edit-batch", {
             method: "POST",
             headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ updates: [u] })
+            // w9/pulsegate: TAKE LIVE -- the server checks the value IS the
+            // live chip's before a pulse may come or go through this door
+            body: JSON.stringify({ updates: [u], source: "live" })
         }).then(function (res) {
             var d = res.data;
             if (!res.ok || !d) {
@@ -21374,7 +21648,8 @@ document.addEventListener('click', function(evt) {
         _liveFetchJson("/field/edit-batch", {
             method: "POST",
             headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ updates: [{ dot_path: dotPath, value: liveValue }] })
+            body: JSON.stringify({ updates: [{ dot_path: dotPath, value: liveValue }],
+                                   source: "live" })   // w9/pulsegate: take live
         }).then(function (res) {
             var d = res.data;
             if (!res.ok || !d) {
@@ -21674,7 +21949,7 @@ document.addEventListener('click', function(evt) {
         _liveFetchJson("/field/edit-batch", {
             method: "POST",
             headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ updates: updates, independent: true })
+            body: JSON.stringify({ updates: updates, independent: true, source: "live" })
         }).then(function (res) {
             var d = res.data;
             if (!res.ok && !(d && d.results)) {
@@ -22111,6 +22386,12 @@ document.addEventListener("pulses-rows-changed", function (evt) {
     if (!d || !Array.isArray(d.paths)) return;
     var wrap = document.getElementById("pulses-rows-wrap");
     if (!wrap) return;
+    // w9/pulsesall: the virtual "All" view patches its model (a row off
+    // screen is still a row of the table, not a missing one)
+    if (window.PulsesVT && window.PulsesVT.active()) {
+        window.PulsesVT.rowsChanged(d.paths);
+        return;
+    }
     var structural = function () { if (window.htmx) window.htmx.trigger(document.body, "pulses-changed"); };
     var filt = _pulsesActiveFilter();
     var seen = {}, missing = false;
@@ -22177,7 +22458,16 @@ function _pulsesSyncUrl(push) {
     // chip reloaded (or shared, or Back'd) as page 1 with no way to tell.
     var info = document.querySelector("#pulses-rows-wrap [data-current-page]");
     var cur = info ? (info.getAttribute("data-current-page") || "") : "";
-    if (cur && cur !== "1") parts.push("page=" + cur);
+    // w9 final QA (P3): with no page= the server opens the page that holds
+    // ?pulse=, so page 1 is written out whenever the open pulse's row is NOT
+    // on it -- a reload keeps the page the reader chose.
+    var det0 = document.querySelector("#inspector-pane #pulse-detail-root[data-pulse-path]");
+    var open0 = det0 ? (det0.getAttribute("data-pulse-path") || "") : "";
+    var paged = !document.querySelector("#pulses-rows-wrap tbody[data-pulses-virtual]");
+    var offPage = !!(open0 && paged && !Array.prototype.some.call(
+        document.querySelectorAll("#pulses-rows-wrap tr[data-pulse-path]"),
+        function (tr) { return tr.getAttribute("data-pulse-path") === open0; }));
+    if (cur && (cur !== "1" || offPage)) parts.push("page=" + cur);
     // The page-size <select> in _pagination.html carries NO name attribute, so
     // the old select[name='per_page'] lookup never matched and every rows /
     // inspector swap dropped per_page from the URL ("All" -> open a pulse ->
@@ -22286,6 +22576,18 @@ var _pulseSelection = [];   // paths of selected pulses (max 5)
 var _PULSE_MAX_COMPARE = 4;   // docs/141 4k: the view holds up to four sections
 
 window.pulseSelChanged = function (clicked) {
+    // w9/pulsesall: the virtual "All" view keeps the selection in its model
+    // (a checked row scrolled out of the DOM is still checked)
+    if (window.PulsesVT && window.PulsesVT.active()) {
+        var res = window.PulsesVT.check(clicked, _PULSE_MAX_COMPARE);
+        _pulseSelection = res.paths;
+        if (res.over && window.showToast) window.showToast("A view holds up to " + _PULSE_MAX_COMPARE + " pulses", "warning");
+        var vbar = document.getElementById("pulse-compare-bar");
+        var vcount = document.getElementById("pulse-compare-count");
+        if (vbar) vbar.hidden = _pulseSelection.length < 2;
+        if (vcount) vcount.textContent = _pulseSelection.length;
+        return;
+    }
     _pulseSelection = [];
     document.querySelectorAll(".pulse-sel-chk:checked").forEach(function (cb) {
         _pulseSelection.push(cb.getAttribute("data-path"));
@@ -22315,6 +22617,7 @@ window.clearPulseSelection = function () {
     document.querySelectorAll(".pulse-sel-chk:checked").forEach(function (cb) {
         cb.checked = false;
     });
+    if (window.PulsesVT) window.PulsesVT.clearChecked();
     _pulseSelection = [];
     var bar = document.getElementById("pulse-compare-bar");
     if (bar) bar.hidden = true;
@@ -22418,6 +22721,11 @@ document.addEventListener("htmx:configRequest", function (evt) {
     delete evt.detail.parameters["q"];
     delete evt.detail.parameters["channel"];
     delete evt.detail.parameters["owner"];
+    // w9/pulsesall: the virtual "All" view already holds every row's text --
+    // it asks for the (path, digest) list only and fetches just what moved
+    if (window.PulsesVT && window.PulsesVT.hasModel() && /[?&]per_page=0(&|$)/.test(path)) {
+        evt.detail.path = _setQueryParam(path, "vids", "1");
+    }
     // Keep the browser URL in sync so a later full re-fetch / reload preserves both.
     if (window._pulsesSyncUrl) window._pulsesSyncUrl();
 });

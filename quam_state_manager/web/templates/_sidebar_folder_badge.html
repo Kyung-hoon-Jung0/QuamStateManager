@@ -4,6 +4,7 @@
     the active project's state_path dangles, amber = QUAlibrate writes a
     different chip), never a sync signal -- the status control carries the one
     sync-relevant case as its "⚗ elsewhere" marker. -#}
+<div id="sidebar-folder-badges-slot"{% if oob is defined and oob %} hx-swap-oob="true"{% endif %}>
 {%- if qualibrate_tray is defined and qualibrate_tray -%}
 <div class="sidebar-folder-badges">
 {%- if qualibrate_tray.standalone %}
@@ -17,5 +18,15 @@
    title="{% if qualibrate_tray.dangling %}QUAlibrate active project — its state_path does not exist (see Projects &rarr; Doctor){% elif qualibrate_tray.match == false %}QUAlibrate writes to a different chip than the one open in SM — click to review projects{% elif qualibrate_tray.match %}QUAlibrate active project — same chip as loaded in SM{% elif qualibrate_tray.project %}QUAlibrate active project — click to manage projects{% else %}SM project scope — qualibrate has no active project set{% endif %}">
     <span aria-hidden="true">&#9879;</span>&nbsp;{{ qualibrate_tray.sm_scope or qualibrate_tray.project }}{% if qualibrate_tray.sm_scope and qualibrate_tray.project and qualibrate_tray.sm_scope != qualibrate_tray.project %}&nbsp;<span class="qualibrate-tray-active-note">(qualibrate: {{ qualibrate_tray.project }})</span>{% endif %}</a>
 {%- endif %}
+{#- w9/labwarm: WHICH Python environment SM runs the lab's code with (the
+    lab check, the class probe, generate_config) -- relative to the project:
+    its own (remembered), suggested (never confirmed), or not this project's. -#}
+{%- set _env = qualibrate_tray.env if qualibrate_tray.env is defined else None %}
+{%- if _env %}
+<a href="{{ root }}/?landing=1" class="project-env-badge{% if _env.state in ('suggested', 'differs', 'none') %} project-env-badge-warn{% endif %}{% if _env.python and _env.exists is defined and not _env.exists %} project-env-badge-danger{% endif %}"
+   data-env-state="{{ _env.state }}"
+   title="{% if _env.state == 'none' %}No Python environment is selected — your lab's classes cannot be checked. Choose one on the Projects page.{% else %}Python environment in use: {{ _env.python }}{% if _env.state == 'remembered' %} — remembered for {{ _env.project }}{% elif _env.state == 'suggested' %} — suggested for {{ _env.project }}, not confirmed yet: confirm or change it on the Projects page{% elif _env.state == 'differs' %} — {{ _env.project }} remembers another environment; open the Projects page to switch{% endif %}{% endif %}">{% if _env.state == 'none' %}no env{% else %}env&nbsp;{{ _env.label }}{% if _env.state == 'suggested' %}&nbsp;<span class="project-env-note">(suggested — confirm)</span>{% elif _env.state == 'differs' %}&nbsp;<span class="project-env-note">(not the project&#39;s)</span>{% endif %}{% endif %}</a>
+{%- endif %}
 </div>
 {%- endif -%}
+</div>

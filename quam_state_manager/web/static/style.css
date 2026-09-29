@@ -2079,17 +2079,22 @@ details.tree-branch-active > summary {
 .sidebar-tree-toolbar .toolbar-label {
     font-size: var(--tree-entry-time-font); color: var(--pico-muted-color);
 }
-/* w8 chipplace: the toolbar is a [role=group], and Pico rings a whole group
-   while any button in it has :focus -- which a mouse click gives the button in
-   Chrome -- so pressing "Full names" left a ring around the entire "rows"
-   toolbar until the next click elsewhere or a reload. The ring stays for the
-   keyboard (:focus-visible), not for the mouse. The :has(button:focus)
-   argument is what outranks Pico's own :has() rule (0,3,1 > 0,3,0). */
-.sidebar-tree-toolbar[role=group]:has(button:focus) {
+/* w8 chipplace + w9 uxpolish: Pico rings a WHOLE [role=group] while any
+   button in it has :focus -- which a mouse click gives the button in Chrome --
+   so pressing "Full names" (Datasets rows toolbar), Table/Flat View, a
+   Figures-per-row count, Changes/Summary, a Compare context / strictness, a
+   quick-filter chip or a sidebar tool left a ring around the entire group
+   until the next click elsewhere or a reload. ONE rule for every group: when
+   the focused member is a button focused WITHOUT :focus-visible (a mouse or
+   touch press), the group has no ring; keyboard focus (:focus-visible) never
+   matches it, so Pico's own ring stays. The member list is Pico's own
+   (button, [type=submit], [type=button], [role=button]); specificity 0,4,0
+   (:is() takes [type=submit], then :focus, :not(:focus-visible), and the
+   [role=group] itself) outranks Pico's 0,3,0 wherever the two meet. A browser
+   without :focus-visible drops the whole rule and keeps Pico's ring. */
+[role=group]:has(:is(button, [type=submit], [type=button], [role=button]):focus:not(:focus-visible)),
+[role=search]:has(:is(button, [type=submit], [type=button], [role=button]):focus:not(:focus-visible)) {
     --pico-group-box-shadow: 0 0 0 transparent;
-}
-.sidebar-tree-toolbar[role=group]:has(button:focus-visible) {
-    --pico-group-box-shadow: var(--pico-group-box-shadow-focus-with-button);
 }
 .tree-density-btn {
     background: none; border: 1px solid var(--pico-muted-border-color);
@@ -2596,6 +2601,46 @@ body.pageheader-collapsed .pageheader-toggle { transform: rotate(180deg); }
 .landing-card-open .btn-sm { width: auto; margin: 0; }
 .landing-card-actions { display: flex; gap: 0.4rem; align-items: center; }
 .landing-card-actions .btn-sm { width: auto; margin: 0; }
+/* w9/labwarm: each project's Python environment -- a row on the card, and
+   one inline (non-modal) picker under the cards. */
+.landing-card-env { display: flex; flex-wrap: wrap; align-items: center; gap: 0.3rem;
+    font-size: 0.8em; min-height: 1.6rem; }
+.landing-card-env code { font-size: 0.95em; padding: 0 0.25rem; }
+.landing-card-env .btn-sm { width: auto; margin: 0; padding: 0.05rem 0.45rem; font-size: 0.95em; }
+.landing-env-suggested { color: var(--color-warning-text, #b45309); font-style: italic; }
+.landing-env-missing { color: var(--cell-bad-color, #d62728); }
+.landing-env-ok { color: #16a34a; }
+.landing-env-saved { font-style: italic; }
+.landing-env-picker { border: 1px solid var(--pico-muted-border-color); border-radius: 8px;
+    padding: 0.55rem 0.7rem; margin: 0 0 1rem; background: var(--pico-card-background-color); }
+.landing-env-picker-head { display: flex; flex-wrap: wrap; align-items: baseline; gap: 0.5rem; }
+.landing-env-picker-note { font-size: 0.8em; }
+.landing-env-picker-tools { margin-left: auto; display: flex; gap: 0.3rem; }
+.landing-env-picker-tools .btn-sm { width: auto; margin: 0; }
+.landing-env-loading { margin: 0.4rem 0; font-size: 0.85em; }
+.landing-env-list { display: flex; flex-direction: column; margin: 0.35rem 0; }
+.landing-env-row { display: grid; grid-template-columns: minmax(7rem, auto) auto 1fr auto auto;
+    align-items: center; gap: 0.5rem; padding: 0.22rem 0.3rem; font-size: 0.82em;
+    border-bottom: 1px solid var(--pico-muted-border-color); }
+.landing-env-row:last-child { border-bottom: 0; }
+.landing-env-row.selected { background: color-mix(in srgb, var(--pico-primary) 8%, transparent); }
+.landing-env-name { font-weight: 600; }
+.landing-env-kind { font-size: 0.85em; border: 1px solid var(--pico-muted-border-color);
+    border-radius: 0.8rem; padding: 0 0.4rem; }
+.landing-env-row:not(:has(.landing-env-kind)) .landing-env-path { grid-column: 2 / 4; }
+.landing-env-path { font-family: var(--font-mono); color: var(--pico-muted-color);
+    overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
+.landing-env-status[data-state="ok"] { color: #16a34a; }
+.landing-env-status[data-state="bad"] { color: var(--cell-bad-color, #d62728); }
+.landing-env-status[data-state="checking"] { color: var(--pico-muted-color); font-style: italic; }
+.landing-env-row .btn-sm { width: auto; margin: 0; padding: 0.05rem 0.5rem; }
+.landing-env-custom { display: flex; flex-wrap: wrap; align-items: center; gap: 0.4rem; font-size: 0.85em; }
+.landing-env-custom input { flex: 1 1 18rem; margin: 0; padding: 0.2rem 0.45rem; height: auto; font-size: 0.95em; }
+.landing-env-custom .btn-sm { width: auto; margin: 0; }
+@media (max-width: 640px) {
+    .landing-env-row { grid-template-columns: 1fr auto; }
+    .landing-env-path, .landing-env-kind { grid-column: 1 / -1; }
+}
 /* r8 feedback: per-project config popup (paths + ports, read-only). */
 .landing-config-dialog {
     max-width: 46rem; width: min(92vw, 46rem); padding: 1rem 1.1rem;
@@ -2835,6 +2880,10 @@ table.data-table th {
 }
 /* 2026-09-27: a lab-class pulse edit waits on the class's own code (seconds) */
 .pulse-lab-checking { font-size: 0.82em; font-family: var(--font-ui); font-style: italic; }
+/* w9/labwarm: the delete step's "Checking with your lab code..." beside the
+   disabled Delete button (htmx shows it only while the press is in flight) */
+.pulse-delete-checking { font-size: 0.82em; font-family: var(--font-ui); font-style: italic;
+    margin: 0 0.5rem; align-self: center; white-space: nowrap; flex: 0 0 auto; }
 table.data-table td {
     padding: var(--data-table-td-pad-v) var(--data-table-td-pad-h);
     font-family: var(--font-mono); font-size: var(--data-table-font);
@@ -4813,6 +4862,11 @@ html.topbar-hidden .topo-dashboard .topo-section-title[data-group] { scroll-marg
 }
 #topo-density-slider { width: 88px; margin: 0; vertical-align: middle; }
 .topo-section { }
+/* w9 uxpolish: a 2Q RB panel's slot on a big chip (chip-status.js _rbStart).
+   The panel goes INTO it later; the slot itself makes no box, so the page
+   lays out as if the panel were the host's own child -- and an insertion
+   restyles only the slot, not every panel beside it. */
+.topo-rb-slot { display: contents; }
 .topo-section-title { font-size: var(--topo-section-title-size); font-weight: 600; margin: 0 0 0.5rem 0; color: var(--pico-color); }
 .topo-section-subtitle { font-size: var(--topo-section-subtitle-size); color: var(--pico-muted-color); font-weight: 400; margin-left: 0.5rem; }
 
@@ -5622,6 +5676,17 @@ input.tree-edit-input {
 .tree-row:hover .tree-act-btn { opacity: 0.7; }
 .tree-act-btn:hover { opacity: 1 !important; color: var(--pico-color); }
 .tree-act-del:hover { color: var(--color-error-text) !important; }
+/* w9/pulsegate: on a pulse or an operations dict the ＋/✕ give way to where
+   pulses are added, removed and renamed -- hover-revealed like the icons. */
+.tree-pulse-gate {
+    font-size: 0.8em; color: var(--pico-muted-color); white-space: nowrap;
+    opacity: 0; transition: opacity 0.12s;
+}
+.tree-row:hover .tree-pulse-gate, .tree-row:focus .tree-pulse-gate { opacity: 1; }
+/* one line: a link split over two lines in the narrow error chip has a gap
+   in its box -- a click there landed on the chip (which closes) */
+.tree-pulses-link { color: var(--pico-primary); text-decoration: underline; cursor: pointer;
+                    white-space: nowrap; }
 /* jsontree-r2-31: the hover tools are controls, not content — keep their
    glyphs (⧉ ⚙ ✕ ✎ ?) out of a drag selection and out of Ctrl+C. */
 .tree-row-actions, .tree-json-edit-btn, .key-help-btn.tree-help { -webkit-user-select: none; user-select: none; }
@@ -10554,6 +10619,18 @@ tr.bulk-row-pinned > th, tr.bulk-row-pinned > td { background: color-mix(in srgb
 .pulse-spark { color: var(--pico-muted-color); display: block; }
 .pulse-spark .spark-q { opacity: 0.45; }
 .pulse-spark-cell { min-width: 96px; }
+/* w9/pulsesall: the virtual "All" view draws thumbnails lazily; the
+   placeholder holds the sparkline's box (sparkline_svg: 90x24) so neither the
+   row height nor the frozen column width moves when one lands. */
+.pulse-spark-pending { display: block; width: 90px; height: 24px; }
+/* its spacer rows: pure height, no cell padding or border */
+#pulses-table tr.pulse-vpad > td { padding: 0 !important; border: 0 !important; }
+/* the rows that size the virtual table's columns (pulses-vt.js renderSizer):
+   counted by the column widths, never shown */
+#pulses-table tbody.pulse-vsizer > tr { visibility: collapse; }
+/* the view keeps the first visible row in place itself (pulses-vt.js) --
+   the browser's own scroll anchoring would correct the same shift twice */
+#table-pane:has(tbody[data-pulses-virtual]) { overflow-anchor: none; }
 /* A waveform the LAB's own code drew (docs/195): SM has no synthesizer
    for this class, so the curve is read out of the generated config. It
    is dashed so it never reads as one SM drew itself -- the provenance
@@ -13955,6 +14032,19 @@ html.topbar-hidden #pending-tray > :not(.state-status-badge):not(.auto-sync-wrap
 .topbar .wb-link { white-space: nowrap; margin-left: .35rem; }
 .sidebar-folder-badges { display: flex; flex-wrap: wrap; gap: .3rem; margin-top: .4rem; }
 .sidebar-folder-badges .qualibrate-tray-badge { font-size: .74em; margin: 0; }
+/* w9/labwarm: the Python environment SM runs the lab's code with, beside the
+   project badge -- neutral when it is the project's own, amber when only
+   suggested / not the project's / none, red when the interpreter is gone. */
+.sidebar-folder-badges .project-env-badge { display: inline-flex; align-items: center; gap: .1rem;
+    font-size: .74em; padding: .12rem .5rem; border: 1px solid var(--pico-muted-border-color);
+    border-radius: 1rem; color: var(--color-text-muted, var(--pico-muted-color));
+    text-decoration: none; white-space: nowrap; max-width: 100%; overflow: hidden; text-overflow: ellipsis; }
+.sidebar-folder-badges .project-env-badge:hover { border-color: var(--pico-primary); color: var(--pico-primary); }
+.sidebar-folder-badges .project-env-badge-warn { border-color: var(--cell-ok-color, #ff7f0e);
+    color: var(--cell-ok-color, #ff7f0e); }
+.sidebar-folder-badges .project-env-badge-danger { border-color: var(--cell-bad-color, #d62728);
+    color: var(--cell-bad-color, #d62728); }
+.project-env-note { font-style: italic; }
 
 /* ---- the panel: a popover under the control, never a modal ---- */
 .state-review-overlay.sync-panel-overlay {

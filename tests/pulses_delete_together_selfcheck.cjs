@@ -2,8 +2,10 @@
  * open issue). Loads the REAL app.js and pulses.js into one window.
  *   1. the lab refusal body swaps into #pulse-delete-result -- only that body,
  *      only a 400, and only into the detail whose own delete form sent it
- *   2. the press posts ONE /field/edit-batch: every listed path as a delete
- *      row, group "new" (one Ctrl+Z), the page's chip token
+ *   2. the press posts ONE batch to /api/pulse/delete-together (w9: the
+ *      Pulses page's own door -- /field/edit-batch refuses pulse deletes):
+ *      the refused path and every listed path, group "new" (one Ctrl+Z), the
+ *      page's chip token
  *   3. a Ctrl+Z pressed while the batch is still being checked waits for it
  *      (UndoQueue.holdWhile) and then undoes IT
  *   4. success: the pane says what went (a "Deleted <name>" toast naming the
@@ -170,12 +172,12 @@ function freshRefusal(together) {
         const btn = freshRefusal([SLOT, OP]);
         window.PulsesPage.deleteTogether(btn);
         const f = fetches[fetches.length - 1];
-        ok(f && f.url === '/field/edit-batch' && String(f.opts.method).toUpperCase() === 'POST',
-           '2: the press posts to /field/edit-batch');
+        ok(f && f.url === '/api/pulse/delete-together' && String(f.opts.method).toUpperCase() === 'POST',
+           '2: the press posts to the Pulses page own door, /api/pulse/delete-together');
         const body = JSON.parse(f.opts.body);
-        ok(JSON.stringify(body.updates) === JSON.stringify([
-            { dot_path: SLOT, 'delete': true }, { dot_path: OP, 'delete': true }]),
-           '2: every listed path rides as a delete row, the pulse first');
+        ok(body.path === SLOT && JSON.stringify(body.paths) === JSON.stringify([SLOT, OP])
+           && body.updates === undefined,
+           '2: the refused path and every listed path ride along, the pulse first');
         ok(body.group === 'new' && body.expect_chip === 'chipA',
            '2: one Ctrl+Z group, and the page\'s chip token');
         ok(btn.disabled === true, '2: the button is disabled while the check runs');

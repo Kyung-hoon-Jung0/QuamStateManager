@@ -133,7 +133,10 @@
 </div>
 {% endif %}
 
-<div class="pulse-delete-confirm" hidden>
+{# w9/pulsegate: the Json Tree's "Delete together" link opens here with
+   together=<the path it refused> -- the delete step open, the same offer
+   loaded into #pulse-delete-result (asked of the lab again, nothing written) #}
+<div class="pulse-delete-confirm"{% if not open_together %} hidden{% endif %}>
     {% if alias_chain %}
     <p>This deletes the alias <code>{{ op_name }}</code> only — the target
         <code>{{ actual_path.rsplit('.', 1)[-1] }}</code> stays.</p>
@@ -156,12 +159,19 @@
         <input type="hidden" name="path" value="{{ path }}">
         <input type="hidden" name="force" value="1">
         <button class="btn-sm pulse-confirm-delete" type="submit">Delete {{ op_name }}</button>
+        {% if delete_lab_check %}{# w9/labwarm: the press waits on the lab's own
+           check (its gates' apply(), the chip's generate_config()) -- say so
+           beside the disabled button; lab-check.js swaps in "Preparing your
+           lab code..." while the worker is still starting #}<span class="htmx-indicator muted pulse-delete-checking" role="status" data-lab-indicator data-lab-state="{{ lab_worker_state or '' }}">Checking with your lab code&hellip;</span>{% endif %}
         <button class="btn-sm outline" type="button"
                 onclick="PulsesPage.cancelDelete(this)">Cancel</button>
     </form>
     {# a lab refusal of this delete lands here (HX-Retarget), with the
        "Delete together with ..." offer when something must go with it #}
-    <div id="pulse-delete-result" class="pulse-delete-result"></div>
+    <div id="pulse-delete-result" class="pulse-delete-result">{% if open_together %}<p class="muted pulse-together-loading"
+        hx-get="{{ root }}/api/pulse/delete-together/offer?path={{ open_together | urlencode }}&amp;pulse={{ path | urlencode }}"
+        hx-trigger="load" hx-swap="outerHTML">Asking your lab code what has to go together with
+        <code>{{ open_together }}</code>&hellip;</p>{% endif %}</div>
 </div>
 
 <div class="pulse-plot-bar">

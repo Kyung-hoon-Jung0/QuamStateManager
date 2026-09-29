@@ -246,6 +246,11 @@ _NORMALISERS = [
     (re.compile(r"(?<!\d)\d{4}-\d{2}-\d{2}_\d{6}(?!\d)"), "FILESTAMP"),  # report download name
     (re.compile(r"\b\d{2}:\d{2}:\d{2}\b"), "HH:MM:SS"),       # "checked 19:46:37"
     (re.compile(r'("\w*_ms"\s*:\s*)[\d.]+'), r"\1X"),        # "scan_ms": 0.3
+    # /pulses/vids|vrows|sparks "stamp": "<boot>:<uid>:..." -- `_PULSE_VT_BOOT`
+    # is uuid4()[:8] per PROCESS (the client orders texts within one boot), so
+    # two renders of the SAME commit in two interpreters differ here (w9,
+    # docs/227). Measured: the only /pulses/vids difference on 883bb87a vs itself.
+    (re.compile(r'("stamp"\s*:\s*")[0-9a-f]{8}:'), r"\1BOOT:"),
 ]
 
 
