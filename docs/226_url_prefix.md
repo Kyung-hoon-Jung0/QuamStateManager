@@ -240,7 +240,10 @@ Root byte-identity golden vs a detached `e258f3c6` checkout (and `883bb87a`
 before the last merge): **6 passed**
 (every render identical after the three declared deltas + the documented
 normalisers; the only new normaliser is `/pulses/vids`' per-process boot
-token). Rendered-output leak lint under `/sm`: «LEAK». Template lint: 0 hits,
+token). Rendered-output leak lint under `/sm`: 0 hits in both full-suite runs (every
+GET route rendered under `/sm`); it cannot see a POST door, which is why the
+RowMemo defect surfaced through `test_pulses_virtual` in `/sm` mode instead,
+and a server lint for direct Jinja renders now stands beside it. Template lint: 0 hits,
 allow-list empty. JS lint: 0 hits outside the 4-line allow-list.
 Server-literal lint: 0 hits.
 
