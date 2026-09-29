@@ -5989,7 +5989,7 @@ def _qualibrate_tray_badge() -> dict | None:
     # open that is SM's own scope (none: the chip belongs to no project, the
     # env is "global"); with NO chip open it is the project qualibrate names
     # active -- the one whose landing card sits beside the badge. Judged
-    # against nothing, the badge read neutral "env KRISS_CZ" while that
+    # against nothing, the badge read neutral "env <name>" while that
     # card said amber "suggested -- confirm" about the very same env.
     env_project = sm_scope if ctx else st.get("active")
     return {"project": st["active"],
