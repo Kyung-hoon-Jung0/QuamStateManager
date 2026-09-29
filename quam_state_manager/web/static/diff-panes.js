@@ -83,7 +83,7 @@
         }
         try {
             var u = new URL(window.location.href);
-            if (u.pathname !== '/diff') return;
+            if ((window.SM ? window.SM.path(u.pathname) : u.pathname) !== '/diff') return;   // docs/226
             u.searchParams.set('base', String(base));
             window.history.replaceState(window.history.state, '', u.pathname + u.search);
         } catch (e) { /* a detached test realm has no URL to keep */ }
@@ -385,7 +385,8 @@
     // its button was rendered with.
     document.addEventListener('htmx:configRequest', function (ev) {
         var d = ev.detail || {};
-        if (!d.path || d.path.indexOf('/diff') !== 0 || !d.elt) return;
+        // docs/226: a template's hx-get arrives prefixed ('/sm/diff?..')
+        if (!d.path || (window.SM ? window.SM.path(d.path) : d.path).indexOf('/diff') !== 0 || !d.elt) return;
         var root = document.getElementById('diff-root');
         if (!root || !root.contains(d.elt)) return;
         var base = root.getAttribute('data-base');

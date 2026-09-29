@@ -8920,7 +8920,8 @@
             _draftRetired = true;
             try { sessionStorage.removeItem(DRAFT_KEY); } catch (e) {}
           }
-          window.location.href = res.redirect;
+          // the server roots it (url_for); SM.url is idempotent -- docs/226
+          window.location.href = window.SM ? window.SM.url(res.redirect) : res.redirect;
         } else {
           showMessage(res.error || "Could not load the generated config.", "error");
         }
@@ -9002,7 +9003,8 @@
         [["config.json", "json"], ["config.py", "py"]].forEach(function (pair) {
           var a = document.createElement("a");
           a.className = "outline gen-config-export-btn";
-          a.href = "/generate/export-config?" + qp + "&format=" + pair[1];
+          var href = "/generate/export-config?" + qp + "&format=" + pair[1];
+          a.href = window.SM ? window.SM.url(href) : href;   // docs/226
           a.setAttribute("download", "");
           a.textContent = "↓ " + pair[0];
           exp.appendChild(a);

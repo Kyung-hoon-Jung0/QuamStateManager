@@ -236,7 +236,10 @@
         window._bulkDynColsCfgBound = true;
         document.addEventListener('htmx:configRequest', function (evt) {
             var p = evt.detail && evt.detail.path;
-            if (typeof p !== 'string' || p.split('?')[0] !== '/bulk') return;
+            if (typeof p !== 'string') return;
+            // docs/226: a template's hx-get arrives prefixed ('/sm/bulk?..')
+            var base = p.split('?')[0];
+            if ((window.SM ? window.SM.path(base) : base) !== '/bulk') return;
             var keys = _dynHidden();
             evt.detail.path = _bulkSetQueryParam(p, 'dynhide', keys.length ? keys.join(',') : '');
             if (evt.detail.parameters) delete evt.detail.parameters['dynhide'];

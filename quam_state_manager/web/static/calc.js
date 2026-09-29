@@ -366,7 +366,10 @@
     function winUrl(trigger) {
         var el = (trigger && trigger.dataset && trigger.dataset.calcWindowUrl)
             ? trigger : document.querySelector('[data-calc-window-url]');
-        var url = (el && el.dataset.calcWindowUrl) || WIN_URL_FALLBACK;
+        // the template's data-calc-window-url is already rooted; the fallback
+        // is rooted here, at call time (docs/226)
+        var url = (el && el.dataset.calcWindowUrl)
+            || (window.SM ? window.SM.url(WIN_URL_FALLBACK) : WIN_URL_FALLBACK);
         // the OPENING page's theme, even when it was forced by ?theme= and
         // never persisted — the window should look like the page it came from
         var theme = document.documentElement.getAttribute('data-theme');

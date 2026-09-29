@@ -165,7 +165,13 @@ window.AgentPanel = (function () {
   function observer() { try { return localStorage.getItem("quam_agent_observer") === "1"; } catch (e) { return false; } }
   function setObserver(on) { try { localStorage.setItem("quam_agent_observer", on ? "1" : "0"); } catch (e) { /* ignore */ } S.observer = !!on; renderAll(true); }
   function pathLabel(p) { var parts = String(p || "").split("."); return parts[parts.length - 1]; }
-  function runLink(rid) { return rid ? '<a class="ag-run" href="/dataset/by-run/' + rid + '" hx-get="/dataset/by-run/' + rid + '" hx-target="#table-pane" hx-push-url="true">#' + rid + "</a>" : ""; }
+  // an app route under the URL prefix SM is mounted at (docs/226; identity at root)
+  function smUrl(p) { return window.SM ? window.SM.url(p) : p; }
+  function runLink(rid) {
+    if (!rid) return "";
+    var u = smUrl("/dataset/by-run/" + rid);
+    return '<a class="ag-run" href="' + u + '" hx-get="' + u + '" hx-target="#table-pane" hx-push-url="true">#' + rid + "</a>";
+  }
   function simBadge(on) { return on ? ' <span class="ag-sim" title="Dry run was ON in the Experiment Runner settings: the node ran against the simulator; its values are never applied to the chip">simulated</span>' : ""; }
 
   // ------------------------------------------------------------- cards
@@ -482,7 +488,7 @@ window.AgentPanel = (function () {
       }
     }
     if (p.pre_ts) {
-      acts += ' <a class="btn-sm ag-revert" href="/state-history" hx-get="/state-history" hx-target="#table-pane" hx-push-url="true" title="the chip as it was right before this plan started (State History → restore)">state before this plan</a>';
+      acts += ' <a class="btn-sm ag-revert" href="' + smUrl("/state-history") + '" hx-get="' + smUrl("/state-history") + '" hx-target="#table-pane" hx-push-url="true" title="the chip as it was right before this plan started (State History → restore)">state before this plan</a>';
     }
     var html = head + '<div class="ag-steps">' + rows + "</div>" +
       '<details class="ag-may-wrap"' + (p.status === "draft" ? " open" : "") + "><summary>values that may change" + (mayN ? " (" + mayCount + ")" : "") + "</summary>" + mayHtml + "</details>" +
@@ -630,8 +636,8 @@ window.AgentPanel = (function () {
       if (alive) acts.push('<button type="button" class="btn-sm" onclick="AgentPanel.endSession()">End session</button>');
     }
     acts.push('<label class="ag-observer" title="observer: this window shows but never starts, stops or approves (an accident guard, not a permission)"><input type="checkbox" ' + (S.observer ? "checked" : "") + ' onchange="AgentPanel.setObserver(this.checked)"> observer' + (S.observer ? ' <span class="ag-observing">— observing</span>' : "") + "</label>");
-    acts.push('<span class="ag-now-links"><a href="/journal" hx-get="/journal" hx-target="#table-pane" hx-push-url="true">Calibration log →</a>' +
-      ' · <a class="ag-setup-link" href="/agent/setup" hx-get="/agent/setup" hx-target="#table-pane" hx-push-url="true" title="connect Claude / Codex to SM, the journal folder, the lab context file">Setup →</a></span>');
+    acts.push('<span class="ag-now-links"><a href="' + smUrl("/journal") + '" hx-get="' + smUrl("/journal") + '" hx-target="#table-pane" hx-push-url="true">Calibration log →</a>' +
+      ' · <a class="ag-setup-link" href="' + smUrl("/agent/setup") + '" hx-get="' + smUrl("/agent/setup") + '" hx-target="#table-pane" hx-push-url="true" title="connect Claude / Codex to SM, the journal folder, the lab context file">Setup →</a></span>');
     var runHtml = d.running ? "▶ <code>" + esc(d.running.node || d.running.tool || "") + "</code> " + esc(fmtAgo(d.running.since)) +
       (d.running.typical_s ? ' <span class="muted">usually ~' + Math.round(d.running.typical_s / 60) + "m</span>" : "") : "";
     if (!host.__agParts) {
@@ -1083,7 +1089,7 @@ window.AgentPanel = (function () {
     var line = '<span class="ag-wire-cli"><b>' + esc(name) + "</b> " + bits.join(" \u00b7 ");
     if (!reg.mcp) {
       line += ' <span class="ag-wire-warn">not registered as an MCP server</span>'
-            + ' <a class="ag-wire-fix" href="/agent/setup" hx-get="/agent/setup" hx-target="#table-pane" hx-push-url="true">Connect \u2192</a>';
+            + ' <a class="ag-wire-fix" href="' + smUrl("/agent/setup") + '" hx-get="' + smUrl("/agent/setup") + '" hx-target="#table-pane" hx-push-url="true">Connect \u2192</a>';
     } else if (t && t.ok) {
       // past tense, and the title says why it is past tense
       line += ' \u00b7 <span class="ag-wire-tested" title="a real read-only call from SM to this CLI succeeded then — not a live login check">answered SM'

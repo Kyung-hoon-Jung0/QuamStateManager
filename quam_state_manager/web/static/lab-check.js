@@ -289,7 +289,9 @@
         var m = String((init && init.method) || (input && input.method) || 'GET').toUpperCase();
         if (m !== 'POST') return false;
         url = url.replace(/^https?:\/\/[^/]+/, '');
-        return /^\/field\/edit(-batch)?(\?|$)/.test(url);
+        // docs/226: a caller may already carry the mount prefix (a template's
+        // fetch('{{ root }}/field/edit-batch'), a Request's absolute url)
+        return /^\/field\/edit(-batch)?(\?|$)/.test(window.SM ? window.SM.path(url) : url);
     }
 
     window.fetch = function (input, init) {

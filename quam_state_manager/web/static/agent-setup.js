@@ -103,9 +103,10 @@ window.AgentSetup = (function () {
       parts.push(sec("connect-" + k, "2. Connect " + k + " to SM", isDone, lines.join("")));
     });
     // 3. run environment
+    var schedUrl = window.SM ? window.SM.url("/scheduler") : "/scheduler";   // docs/226
     parts.push(sec("env", "3. Run environment", !!d.calibrations_folder,
       "<p>calibrations folder: " + (d.calibrations_folder ? "<code>" + esc(d.calibrations_folder) + "</code>" : '<span class="ag-err">not set</span>') +
-      ' <span class="muted">(Experiment Runner settings hold it: env, calibrations folder, Dry run, timeout — <a href="/scheduler" hx-get="/scheduler" hx-target="#table-pane" hx-push-url="true">open</a>)</span></p>'));
+      ' <span class="muted">(Experiment Runner settings hold it: env, calibrations folder, Dry run, timeout — <a href="' + schedUrl + '" hx-get="' + schedUrl + '" hx-target="#table-pane" hx-push-url="true">open</a>)</span></p>'));
     // 3b. hardware -- dry run. The value is the Runner's global_simulate as the
     // server read it; OFF wears ● (runs touch the OPX) and the card never folds.
     var dry = d.global_simulate !== false;

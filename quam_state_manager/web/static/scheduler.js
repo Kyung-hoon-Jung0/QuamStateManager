@@ -323,7 +323,10 @@
     if (act === "dup") return self.queueAction("duplicate", { id: it.id });
     if (act === "params") return self.openParamEditor(it);
     if (act === "result") {
-      if (it.result_ref && it.result_ref.uid) window.location.href = "/dataset/" + it.result_ref.uid;
+      if (it.result_ref && it.result_ref.uid) {
+        var u = "/dataset/" + it.result_ref.uid;
+        window.location.href = window.SM ? window.SM.url(u) : u;   // docs/226
+      }
       return;
     }
     if (act === "up") return self.moveItem(idx, -1);

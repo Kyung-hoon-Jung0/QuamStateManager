@@ -1145,7 +1145,8 @@ window.PulsesPage = (function () {
                     var html = res.text && res.text.indexOf('<') >= 0
                         ? res.text : esc(plain || 'regenerate failed');
                     if (/no (python )?env|select(ed)? (an? )?env|choose environment/i.test(plain)) {
-                        html += ' <a class="btn-sm" href="/generate">Choose environment →</a>';
+                        html += ' <a class="btn-sm" href="' + (window.SM ? window.SM.url('/generate') : '/generate')
+                              + '">Choose environment →</a>';   // docs/226
                     }
                     verifyNote(root, html, 'warn');
                     // the failure re-renders _config_status.html, whose 'Last good'
