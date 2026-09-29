@@ -3489,6 +3489,14 @@ def _replay_updates(modifier, updates: dict) -> dict:
     return {"applied": applied, "failed": failed}
 
 
+def _rooted(path: str) -> str:
+    """App-root-absolute path -> request path under the mount prefix
+    (docs/226). Identity at root. The ONE server-side prefixer for literal app
+    paths; never apply it to a ``url_for`` result (that is already rooted)."""
+    from quam_state_manager.web.app import url_root
+    return url_root() + path
+
+
 def _is_htmx() -> bool:
     """True for HTMX partial requests — but NOT for history restores.
 
@@ -12812,8 +12820,8 @@ def state_history_stage(timestamp: str):
             "_sh_confirm.html",
             message=("You have unsaved edits in the working state. Loading this "
                      "snapshot will replace them."),
-            action_url=(f"/state-history/{timestamp}/stage?force=1"
-                        + ("&from=tray" if _from_tray else "")),
+            action_url=_rooted(f"/state-history/{timestamp}/stage?force=1"
+                               + ("&from=tray" if _from_tray else "")),
             action_label="Replace working state anyway",
             confirm="Discard your unsaved edits in the working state and load this snapshot?",
             **({"target": "#status-bar"} if _from_tray else {}),
@@ -12908,7 +12916,7 @@ def state_history_restore_live(timestamp: str):
             "_sh_confirm.html",
             message=("You have unsaved edits in the working state. Restoring this "
                      "snapshot to live will discard them."),
-            action_url=f"/state-history/{timestamp}/restore-live?force_pending=1",
+            action_url=_rooted(f"/state-history/{timestamp}/restore-live?force_pending=1"),
             action_label="Discard edits and continue",
             confirm="Discard your unsaved edits and continue restoring this snapshot?",
         ), 409
@@ -12932,8 +12940,8 @@ def state_history_restore_live(timestamp: str):
             message=(f"This snapshot's wiring does not match the loaded chip "
                      f"({alignment}). Loading it as the working state to review the "
                      "diff first is safer than a direct restore."),
-            action_url=(f"/state-history/{timestamp}/restore-live"
-                        "?force_pending=1&force_align=1"),
+            action_url=_rooted(f"/state-history/{timestamp}/restore-live"
+                               "?force_pending=1&force_align=1"),
             action_label="Restore to live anyway",
             confirm="The wiring topology differs — overwrite the live chip regardless?",
         ), 409
@@ -24313,6 +24321,7 @@ def _hub_redirect(url: str):
     by htmx and swapped into the pane instead of navigating (A7); plain
     browser requests get a real redirect.
     """
+    url = _rooted(url)
     if _is_htmx():
         resp = make_response()
         resp.headers["HX-Redirect"] = url
@@ -24329,6 +24338,7 @@ def _pane_redirect(url: str):
     ``#table-pane`` and push it, so the sidebar DOM (ticks, open groups,
     scroll) is never touched. Plain browser requests still get a redirect.
     """
+    url = _rooted(url)
     if _is_htmx():
         resp = make_response()
         resp.headers["HX-Location"] = json.dumps(
@@ -24991,7 +25001,7 @@ def diff_versions():
         return render_template(
             template, **_ctx(page="diff", error=msg, cols=[], rows=[],
                              total=0, dropped_cols=0, chip_key=chip_key,
-                             hub_url="/compare-hub"))
+                             hub_url=_rooted("/compare-hub")))
 
     asked_chip = (request.args.get("chip_key") or "").strip()
     if asked_chip and chip_key and asked_chip != chip_key:
@@ -25029,8 +25039,8 @@ def diff_versions():
         "kind_legacy": (kind_for(meta_by_ts[ts])[1] if ts in meta_by_ts else False),
         "label": getattr(meta_by_ts.get(ts), "label", "") or "",
     } for ts in ts_list]
-    hub_url = "/compare-hub?" + urlencode(
-        [("src", f"hist:{chip_key}/{ts}") for ts in ts_list])
+    hub_url = _rooted("/compare-hub?" + urlencode(
+        [("src", f"hist:{chip_key}/{ts}") for ts in ts_list]))
     template = ("_version_compare.html" if _is_htmx()
                 else "version_compare.html")
     return render_template(
@@ -26667,7 +26677,7 @@ def compare():
             resp.headers["HX-Reswap"] = "none"      # keep the pane; the sidebar shows the count
             resp.headers["HX-Trigger"] = json.dumps({"sm:toast": {"message": msg, "level": "warning"}})
             return resp
-        return redirect("/diff")
+        return redirect(_rooted("/diff"))
     # OLDEST FIRST (customer, 2026-09-11), by the runs' own dates. A path this
     # SM cannot resolve to a run keeps its place at the end rather than being
     # dated by guesswork.
@@ -32361,12 +32371,12 @@ def dataset_load_state(uid):
         actx["archive_return"] = back
         actx["archive_uid"] = uid
         resp = make_response()
-        resp.headers["HX-Redirect"] = "/qubits"
+        resp.headers["HX-Redirect"] = url_for("main.qubits")
         return resp
 
     # ---- stage into the ACTIVE chip's working copy ----
     _pre_leaves = _leaf_snapshot(ctx)   # docs/144: name what the load changes
-    base_url = f"/dataset/{uid}/load-state"
+    base_url = _rooted(f"/dataset/{uid}/load-state")
     chip_label = _chip_display_name(Path(ctx["path"]))
     apply_req = request.values.get("apply") == "1"   # docs/108 one-click
     apply_qs = "&apply=1" if apply_req else ""
@@ -32833,8 +32843,8 @@ def trends_data():
                                folders=sel, experiment=experiment, qubit=qubit or "")
     return render_template(
         "_trends_data.html", experiment=experiment, qubit=qubit,
-        series_url="/trends/series?" + _trends_query(sel, experiment, qubit),
-        params_url="/trends/param-diff?" + _trends_query(sel, experiment, qubit),
+        series_url=_rooted("/trends/series?" + _trends_query(sel, experiment, qubit)),
+        params_url=_rooted("/trends/param-diff?" + _trends_query(sel, experiment, qubit)),
         param_window=_trend_index.PARAM_WINDOW)
 
 
@@ -32906,16 +32916,16 @@ def trends_param_diff():
     def render(data: dict) -> str:
         return render_template(
             "_trends_param_diff.html", d=data,
-            all_url="/trends/param-diff?" + _trends_query(sel, experiment, qubit, window="all"),
-            recent_url="/trends/param-diff?" + _trends_query(sel, experiment, qubit))
+            all_url=_rooted("/trends/param-diff?" + _trends_query(sel, experiment, qubit, window="all")),
+            recent_url=_rooted("/trends/param-diff?" + _trends_query(sel, experiment, qubit)))
 
     try:
         blob = _trend_index.params_blob(selection, experiment, qubit, window, render,
                                         forbid_held=_trends_forbidden_locks())
     except _ramcache.Warming:
         return render_template("_trends_params_warming.html",
-                               url="/trends/param-diff?" + _trends_query(
-                                   sel, experiment, qubit, window=window))
+                               url=_rooted("/trends/param-diff?" + _trends_query(
+                                   sel, experiment, qubit, window=window)))
     body = blob.html.encode("utf-8")
     if "gzip" in request.headers.get("Accept-Encoding", "") and len(body) > 16384:
         resp = make_response(gzip.compress(body, compresslevel=5))

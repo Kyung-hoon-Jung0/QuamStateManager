@@ -1855,7 +1855,8 @@ def _chat_card(e: dict) -> dict | None:
     if h == "Text":
         txt = e.get("text") or ""
         try:
-            html = journal_mod.render(txt)
+            from quam_state_manager.web.app import url_root as _url_root   # docs/226
+            html = journal_mod.render(txt, root=_url_root())
         except Exception:  # noqa: BLE001
             html = None
         return {**base, "kind": "answer", "text": txt, "html": html}

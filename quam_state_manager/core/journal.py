@@ -249,12 +249,13 @@ _TIME = re.compile(r"^\*\*(\d{2}:\d{2}:\d{2})\*\*")
 _ENTRY_KIND = re.compile(r"^\*\*\d{2}:\d{2}:\d{2}\*\*\s+`([A-Za-z_][\w:.-]*)`")   # docs/173 S8: the author token
 
 
-def _inline(s: str) -> str:
-    """Escape, then re-introduce the few inline forms we allow."""
+def _inline(s: str, root: str = "") -> str:
+    """Escape, then re-introduce the few inline forms we allow. ``root`` is
+    the URL mount prefix (docs/226) for the in-app links; ``''`` at root."""
     out = []
     pos = 0
     for m in _INLINE_CODE.finditer(s):
-        out.append(_inline_text(s[pos:m.start()]))
+        out.append(_inline_text(s[pos:m.start()], root))
         code = m.group(1)
         if _PATH.match(code.strip()):
             p = html.escape(code.strip())
@@ -262,35 +263,53 @@ def _inline(s: str) -> str:
         else:
             out.append(f"<code>{html.escape(code)}</code>")
         pos = m.end()
-    out.append(_inline_text(s[pos:]))
+    out.append(_inline_text(s[pos:], root))
     return "".join(out)
 
 
-def _inline_text(s: str) -> str:
+def _inline_text(s: str, root: str = "") -> str:
     s = html.escape(s, quote=True)
-    s = _LINK.sub(lambda m: f'<a href="{m.group(2)}" rel="noopener">{m.group(1)}</a>', s)
+    # docs/226: a root-absolute link is an in-app link -> under the mount
+    # prefix (an absolute http(s):// one is left alone). Identity at root.
+    s = _LINK.sub(lambda m: f'<a href="{_rooted_href(m.group(2), root)}" rel="noopener">{m.group(1)}</a>', s)
     s = _WIKI.sub(lambda m: f'<span class="jr-wiki">{m.group(2) or m.group(1)}</span>', s)
     s = _BOLD.sub(r"<strong>\1</strong>", s)
     s = _ITALIC.sub(r"<em>\1</em>", s)
     # review R9: a #N inside a link's href (e.g. [z](/a?x=#123)) was turned into a
     # NESTED <a>. Run the #run linker only on the segments OUTSIDE the anchors _LINK built.
-    return "".join(part if k % 2 else _RUN.sub(_run_link, part)
+    return "".join(part if k % 2 else _RUN.sub(lambda m: _run_link(m, root), part)
                    for k, part in enumerate(_ANCHOR.split(s)))
 
 
 _ANCHOR = re.compile(r"(<a\b[^>]*?>.*?</a>)", re.DOTALL)
 
 
-def _run_link(m: "re.Match") -> str:
-    return (f'<a class="jr-run" href="/dataset/by-run/{m.group(1)}" '
-            f'hx-get="/dataset/by-run/{m.group(1)}" hx-target="#table-pane" '
+def _rooted_href(href: str, root: str) -> str:
+    """``/x`` -> ``<root>/x`` (``root`` escaped for the attribute); anything
+    else -- and a link already under ``root`` (idempotent, like the client's
+    ``SM.url``) -- unchanged. Identity at ``root=''``."""
+    if root and href.startswith("/") and not href.startswith("//"):
+        r = html.escape(root, quote=True)
+        if href == r or href.startswith((r + "/", r + "?", r + "#")):
+            return href
+        return r + href
+    return href
+
+
+def _run_link(m: "re.Match", root: str = "") -> str:
+    r = html.escape(root, quote=True) if root else ""
+    return (f'<a class="jr-run" href="{r}/dataset/by-run/{m.group(1)}" '
+            f'hx-get="{r}/dataset/by-run/{m.group(1)}" hx-target="#table-pane" '
             f'hx-push-url="true">#{m.group(1)}</a>')
 
 
-def render(md: str) -> str:
+def render(md: str, root: str = "") -> str:
     """Markdown subset -> HTML. Headings, bullets (nested by indent), ordered
     lists, fenced code, blockquotes, pipe tables, rules, paragraphs; inline
-    code / bold / italic / links / wikilinks; ``#run`` and path tokens."""
+    code / bold / italic / links / wikilinks; ``#run`` and path tokens.
+
+    ``root`` is the URL mount prefix (docs/226; ``request.script_root``) the
+    in-app links carry. ``''`` (root) renders exactly what it always did."""
     out: list[str] = []
     lines = md.splitlines()
     i = 0
@@ -303,7 +322,7 @@ def render(md: str) -> str:
 
     def flush_para():
         if para:
-            out.append("<p>" + _inline(" ".join(para)) + "</p>")
+            out.append("<p>" + _inline(" ".join(para), root) + "</p>")
             para.clear()
 
     while i < len(lines):
@@ -323,7 +342,7 @@ def render(md: str) -> str:
         if m:
             flush_para(); close_lists()
             n = len(m.group(1))
-            out.append(f"<h{n}>{_inline(m.group(2))}</h{n}>")
+            out.append(f"<h{n}>{_inline(m.group(2), root)}</h{n}>")
             i += 1; continue
         if re.match(r"^(-{3,}|\*{3,})$", stripped):
             flush_para(); close_lists(); out.append("<hr>"); i += 1; continue
@@ -334,9 +353,9 @@ def render(md: str) -> str:
             i += 2
             while i < len(lines) and lines[i].strip().startswith("|"):
                 rows.append([c.strip() for c in lines[i].strip().strip("|").split("|")]); i += 1
-            out.append("<table><thead><tr>" + "".join(f"<th>{_inline(c)}</th>" for c in head) + "</tr></thead><tbody>")
+            out.append("<table><thead><tr>" + "".join(f"<th>{_inline(c, root)}</th>" for c in head) + "</tr></thead><tbody>")
             for r in rows:
-                out.append("<tr>" + "".join(f"<td>{_inline(c)}</td>" for c in r) + "</tr>")
+                out.append("<tr>" + "".join(f"<td>{_inline(c, root)}</td>" for c in r) + "</tr>")
             out.append("</tbody></table>")
             continue
         m = re.match(r"^(\s*)([-*+]|\d+[.)])\s+(.*)$", line)
@@ -359,18 +378,18 @@ def render(md: str) -> str:
                 cls = f' class="jr-entry" data-time="{tm.group(1)}"'
                 if author:
                     cls += f' data-author="{author}"'      # docs/173 S8: by_claude / by_codex / human / unknown / sm
-            out.append(f"<li{cls}>{_inline(body)}</li>")
+            out.append(f"<li{cls}>{_inline(body, root)}</li>")
             i += 1; continue
         if stripped.startswith(">"):
             flush_para(); close_lists()
-            out.append("<blockquote>" + _inline(stripped.lstrip("> ")) + "</blockquote>")
+            out.append("<blockquote>" + _inline(stripped.lstrip("> "), root) + "</blockquote>")
             i += 1; continue
         if not stripped:
             flush_para(); close_lists(); i += 1; continue
         if list_stack and line.startswith(" "):
             # continuation of the previous bullet
             if out and out[-1].endswith("</li>"):
-                out[-1] = out[-1][:-5] + "<br>" + _inline(stripped) + "</li>"
+                out[-1] = out[-1][:-5] + "<br>" + _inline(stripped, root) + "</li>"
             i += 1; continue
         close_lists()
         para.append(stripped)

@@ -138,6 +138,13 @@ def _start_server(app: Flask, port: int) -> threading.Thread:
     because the reloader spawns a child process that breaks PyInstaller
     and pywebview.
     """
+    # docs/226: the port actually bound (the instance registry and the agent
+    # CLIs read it instead of a request's Host).
+    try:
+        app.config["SM_BIND_PORT"] = port
+        app.config["SM_BIND_HOST"] = "127.0.0.1"
+    except Exception:  # noqa: BLE001 -- a config that refuses keys must not stop the window
+        logger.debug("could not record the bind port", exc_info=True)
     thread = threading.Thread(
         target=lambda: app.run(
             host="127.0.0.1",
@@ -150,6 +157,17 @@ def _start_server(app: Flask, port: int) -> threading.Thread:
     )
     thread.start()
     return thread
+
+
+def _url_prefix_of(app) -> str:
+    """The app's configured mount prefix (docs/226; ``''`` at root). The desktop
+    window opens the page under it, so every URL it follows is the one a
+    browser behind the proxy would see."""
+    try:
+        prefix = app.config.get("SM_URL_PREFIX")
+    except Exception:  # noqa: BLE001
+        return ""
+    return prefix if isinstance(prefix, str) else ""
 
 
 def main() -> None:
@@ -205,7 +223,7 @@ def main() -> None:
 
     window = webview.create_window(
         WINDOW_TITLE,
-        url=f"http://127.0.0.1:{port}",
+        url=f"http://127.0.0.1:{port}{_url_prefix_of(app)}",
         width=DEFAULT_WIDTH,
         height=DEFAULT_HEIGHT,
         min_size=(MIN_WIDTH, MIN_HEIGHT),

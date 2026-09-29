@@ -107,8 +107,18 @@ class SMLink:
         self.timeout = timeout
         self.agent_id = agent_id            # X-SM-Agent: SM stamps the actor from this
 
+    @property
+    def origin(self) -> str:
+        """scheme://host[:port] of the base -- an Origin never carries a path,
+        so a prefixed base (``http://127.0.0.1:5050/sm``, docs/226) must not
+        send one the CSRF guard would reject. Identity for a root base."""
+        parts = urllib.parse.urlsplit(self.base)
+        if parts.scheme and parts.netloc:
+            return f"{parts.scheme}://{parts.netloc}"
+        return self.base
+
     def _headers(self, extra: dict | None = None) -> dict:
-        h = {"Origin": self.base, "Accept": "application/json", "User-Agent": "sm-agent-link",
+        h = {"Origin": self.origin, "Accept": "application/json", "User-Agent": "sm-agent-link",
              "X-SM-Agent": self.agent_id}
         if extra:
             h.update(extra)
