@@ -714,6 +714,26 @@ window.PulsesVT = (function () {
         return true;
     }
 
+    /* w9 final QA (P3): the open pulse an address named (?pulse=, the Json
+       Tree's link) is brought on screen once the model is built -- it was
+       row 104 of 105, below the fold, with nothing saying where it was. The
+       row becomes the keyboard's row (Enter/arrows go on from it) and is
+       scrolled in the way the arrow keys scroll one ('nearest': a row already
+       on screen does not move the table). */
+    function reveal(p) {
+        if (!active() || !st.pos.has(p)) return false;
+        var prev = st.sel !== null ? st.rendered.get(st.sel) : null;
+        if (prev) prev.classList.remove('row-selected');
+        st.sel = p;
+        scrollToIndex(st.pos.get(p));
+        var tr = st.rendered.get(p);
+        if (tr) {
+            tr.classList.add('row-selected');
+            if (tr.scrollIntoView) { tr.scrollIntoView({ block: 'nearest' }); render(false); }
+        }
+        return true;
+    }
+
     // ── the compare selection (app.js's pulseSelChanged hands it here) ──
     function check(el, cap) {
         var p = el && el.getAttribute ? el.getAttribute('data-path') : null;
@@ -1011,6 +1031,7 @@ window.PulsesVT = (function () {
         rowsChanged: rowsChanged,
         sort: sort,
         key: key,
+        reveal: reveal,
         check: check,
         checkedPaths: checkedPaths,
         clearChecked: clearChecked,

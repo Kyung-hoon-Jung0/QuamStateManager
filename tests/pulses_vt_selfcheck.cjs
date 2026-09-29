@@ -492,6 +492,31 @@ function viewportCovered() {
     ok(!VT._state().pos.has(tO), 'O: a newer 204 does');
     server.rowHook = null;
 
+    // ---- P: the open pulse an address named is brought on screen (w9 final QA P3) -----------------
+    await scrollTo(0);
+    const stP = VT._state();
+    const far = stP.view[stP.view.length - 3];
+    ok(rendered().indexOf(far) < 0, 'P: premise -- the named row is far off screen (not rendered)');
+    ok(VT.reveal(far) === true, 'P: reveal() takes a row of the model');
+    await flush();
+    const trP = tbodyOf().querySelector('tr[data-pulse-path="' + far.replace(/"/g, '\\"') + '"]');
+    const bP = trP && trP.getBoundingClientRect();
+    ok(trP && bP.top >= PANE_TOP && bP.bottom <= PANE_TOP + PANE_H,
+       'P: the row is rendered INSIDE the viewport (' + (bP ? bP.top + '..' + bP.bottom : 'not rendered') + ')');
+    ok(trP && trP.classList.contains('row-selected') && VT._state().sel === far,
+       'P: ...marked as the keyboard\'s row');
+    ok(viewportCovered(), 'P: no blank band after the jump');
+    const onScreenP = rendered().find((p) => {
+        const t = tbodyOf().querySelector('tr[data-pulse-path="' + p.replace(/"/g, '\\"') + '"]');
+        const b = t.getBoundingClientRect();
+        return b.top >= PANE_TOP + 60 && b.bottom <= PANE_TOP + PANE_H - 60;
+    });
+    const topBefore = pane.scrollTop;
+    VT.reveal(onScreenP);
+    await flush();
+    ok(pane.scrollTop === topBefore, 'P: a row already on screen does not move the table');
+    ok(!VT.reveal('qubits.nope.xy.operations.gone'), 'P: a path the model does not hold answers false');
+
     // ---- K: htmx's history restore puts back a dead snapshot: re-fetched ---------------------
     const ajaxCalls = [];
     window.htmx.ajax = (verb, url, opts) => { ajaxCalls.push([verb, url, opts && opts.source && opts.source.id]); return Promise.resolve(); };

@@ -16695,6 +16695,19 @@ def pulses_page():
     vt = _pulses_vt_on(len(all_rows), per_page)
     all_rows = _pulse_rows_filter(all_rows, channel, query, owner)
 
+    # w9 final QA (P3): an address that names the open pulse but no page (the
+    # Json Tree's /pulses/goto link, a shared F39 link) lands on the page that
+    # HOLDS that pulse's row -- q30 xy's 105th pulse used to open beside page 1
+    # of 3 with its row nowhere on screen. An explicit page= is the reader's
+    # own choice and always wins (the page's URL sync writes it whenever the
+    # open row is not on the page shown).
+    want_pulse = request.args.get("pulse", "").strip()
+    if want_pulse and not rows_only and per_page > 0 and "page" not in request.args:
+        for i, r in enumerate(all_rows):
+            if r["path"] == want_pulse:
+                page = i // per_page + 1
+                break
+
     page_rows, total, page, total_pages = _paginate(all_rows, page, per_page)
     vt_json = None
     unknown_paths: list[str] = []
