@@ -1,15 +1,16 @@
 # docs/226 — Serving SM under a URL prefix, behind a reverse proxy
 
-2026-09-29, branch `feat/url-prefix` (base `91c8aae`, then `origin/main`
-`883bb87a` and `e258f3c6` merged in; head `fdb14b51`), worktree
-`D:\work\statemanager-proxy`. **Not merged to
-main; never pushed.** Asked for by a colleague (Quarium Lab) who mounts SM on a
-platform that proxies it under a path such as `https://lab.example/sm/`; their
-report read v0.9.8, this lands on 1.0.x. Roles: A (server + CLI, `px/a`),
-B (templates, `px/b`), C1 (`app.js`, `px/c1`), C2 (`sm-root.js` + the other
-first-party JS, `px/c2`), D (the two-mode test suite, the golden, the leak
-lint, the proxy rig, `px/d`); the integrator merged the five, fixed what the
-merge exposed, merged main's w8/w9 waves and prefixed what they added.
+2026-09-29, branch `feat/url-prefix` (base `91c8aae`, with `origin/main`
+`883bb87a` and `e258f3c6` merged in). **Not merged to main.** Asked for by a
+colleague who mounts SM on a platform that proxies it under a path such as
+`https://lab.example/sm/`; their report read v0.9.8, this lands on 1.0.x.
+
+> **Operators (and any AI agent setting this up): read §2 (how to run, proxy
+> snippets) and §3 (platform conditions) — that is everything needed to deploy.**
+> §6 lists what was not verified. §4–§5 are implementation and test records.
+>
+> Install: `uv pip install "git+https://github.com/Kyung-hoon-Jung0/QuamStateManager@feat/url-prefix"`
+> (or `pip install` the same URL), then `qsm serve --url-prefix /sm --behind-proxy`.
 
 ## 1. What
 
@@ -97,8 +98,7 @@ program: `--url-prefix /sm` (and `SM_URL_PREFIX=/sm`) arrives as
 `C:/Program Files/Git/sm`, which SM refuses with its one-line error. Prefix
 such a command with `MSYS_NO_PATHCONV=1` (or run it from cmd/PowerShell).
 
-Proxy snippets the rig verified (§5.3; full templates in
-`D:\work\sm_qa_rigs\_tools\proxy\templates\`):
+Proxy snippets verified against real nginx 1.30.5 and Caddy 2.11.4 (§5.3):
 
 ```nginx
 # nginx, strips the prefix, no prefix header, Host preserved  ->  qsm serve --url-prefix /sm
@@ -156,7 +156,7 @@ handle /sm* {
    htmx requests with an `HX-Trigger` header that names every path the
    answer touched (docs/122/144: an undo names its reverted paths, capped at
    `_HEADER_PATCH_CAP` = 150 entries; measured: 1,123 bytes for a 2-path
-   batch on the synthetic chip, and past nginx's buffer for the KRS chip's
+   batch on the synthetic chip, and past nginx's buffer for a real 5-qubit lab chip's
    4-path batch, whose gate-macro subtree restores dozens of leaves). Found in
    the rig: the Ctrl+Z after that 4-path "Delete together" batch answered **502 "upstream sent too big
    header while reading response header from upstream"** behind nginx's
@@ -212,7 +212,7 @@ handle /sm* {
   fails on any un-prefixed URL attribute, `url:` field, `fetch(` literal,
   Location/HX-* header, `data-root`, missing `hx-ext`); 29 journeys +
   `prefix_sweep.cjs` follow `SM_BASE_URL` through `tests/browser/journeys/cdp.cjs`;
-  the rig (`D:\work\sm_qa_rigs\_tools\proxy`: nginx 1.30.5 + Caddy 2.11.4,
+  the rig (local, not in the repo: nginx 1.30.5 + Caddy 2.11.4,
   signatures/checksums recorded in `VERSIONS.txt`).
 - **Integration**: header-only mode kept memoized HTML keyed without the
   root, so a run-watch pre-render at `''` could be served to a proxied request
@@ -254,7 +254,7 @@ timing pin); `/sm` **232 passed / 3 failed** (`chip_jump`, `autosync_merge`
 Alone on the same machine `chip_jump` and `autosync_merge` pass in both modes
 (the two C1 and D had already recorded as load flakes); `liveedit_big_grid` fails its per-frame layout pin about one run in six on HEAD **and** on the base alike (3 repeats × 2 modes each: HEAD 5/6, `e258f3c6` 5/6) — a timing pin, not a regression.
 
-### 5.2 Real proxies (`run_matrix.sh` → `run_matrix2.sh`, KRS 5Q chip copy, heads `6e355ac7` / `fdb14b51`)
+### 5.2 Real proxies (`run_matrix.sh` → `run_matrix2.sh`, a copy of a real 5-qubit lab chip, heads `6e355ac7` / `fdb14b51`)
 
 **A rig defect found on the way, in D's `run_matrix.sh`** (fixed as
 `run_matrix2.sh`, the original left as evidence): each cell `eval`s the
@@ -284,7 +284,7 @@ after ~25.1–25.3 s) all PASS unless stated:
 ### 5.3 Real-Chrome journeys behind nginx `/sm/`
 
 `run_w9.sh nginx-strip-cfg` (SM `--url-prefix /sm` behind a stripping nginx,
-KRS 5Q chip copy, every journey opening `http://127.0.0.1:<proxy>/sm/…` with
+a copy of a real 5-qubit lab chip, every journey opening `http://127.0.0.1:<proxy>/sm/…` with
 `cdp.cjs`'s guard throwing on any same-origin navigation outside the mount),
 and the same journeys at `root-control` on the same head as the control:
 
@@ -363,4 +363,4 @@ first-party `web/static/*.js`, every `web/templates/**`; tests:
 `sm_root_boot_selfcheck.cjs`, `golden/template_root_allow.txt`,
 `golden/js_root_allow.txt`, `golden/prefix_render_allow.txt`,
 `browser/journeys/cdp.cjs`, `browser/journeys/prefix_sweep.cjs`,
-`browser/proxy_stub.py`; rig: `D:\work\sm_qa_rigs\_tools\proxy\`.
+`browser/proxy_stub.py`; the proxy rig itself is local to the developer machine, not in the repo.
