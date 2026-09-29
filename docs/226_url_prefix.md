@@ -235,8 +235,7 @@ shared the CPU): root **234 passed / 1 failed** (`chip_jump`, a frame-pump
 timing pin); `/sm` **232 passed / 3 failed** (`chip_jump`, `autosync_merge`
 — a 2.5 s timer bound — and `liveedit_big_grid`, a per-frame layout pin).
 Alone on the same machine `chip_jump` and `autosync_merge` pass in both modes
-(the two C1 and D had already recorded as load flakes); `liveedit_big_grid`
-«LBG».
+(the two C1 and D had already recorded as load flakes); `liveedit_big_grid` fails its per-frame layout pin about one run in six on HEAD **and** on the base alike (3 repeats × 2 modes each: HEAD 5/6, `e258f3c6` 5/6) — a timing pin, not a regression.
 
 ### 5.2 Real proxies (`run_matrix.sh` → `run_matrix2.sh`, KRS 5Q chip copy, heads `6e355ac7` / `fdb14b51`)
 
@@ -279,8 +278,8 @@ and the same journeys at `root-control` on the same head as the control:
 | `agent_back` (Agent home → Journal → Back → Forward → Back → reload) | every step under `/sm/agent` / `/sm/journal`, reload whole | same at `/agent` |
 | `agent_setup_back` (Setup walk, pushState/Back) | whole, journal section restored | — |
 | `chip_status` (Chip Status jumps, map inspector, sub-items) | S2/S3/S5 pass (every sub-item scrolls into view, the map inspector opens and closes, 30 RB panels); S1/S4 FAIL: "trends has a clickable point" | **same two FAILs at root** — on this rig no Trends point is openable since `e258f3c6` (a point names the run that WROTE its value, and that run's folder is not under a loaded Datasets folder → "not openable here"); a main-side precondition, not the proxy |
-| `pulse_gate` (Json Tree guidance link → Pulses page → Back) | «PG» | — |
-| `pair_add_gate_pulses` (pair Add-gate note → Pulses flux rows → Back → reload) | «PAG» | — |
+| `pulse_gate` (Json Tree guidance link → Pulses page → Back) | 30/30 after two harness fixes (the link expectation follows the prefix; the reload is fire-and-forget — the first run hung 900 s at `Page.reload` after 13 ok); root control 30/30 | — |
+| `pair_add_gate_pulses` (pair Add-gate note → Pulses flux rows → Back → reload) | 8/8 (the note + link → the Pulses page on the pair's flux rows → Back → the pair page whole → reload) | — |
 | `ds_outside_fresh` (a run opened from outside the run list → Chip Status → Back) | «DSO» | — |
 | `pulses_delete_together` (a lab refusal's "Delete together" offer) | «PDT» | — |
 | `px_w9_probe` (landing env picker + Pulses open → Back → reload, network-audited) | «PROBE» | — |

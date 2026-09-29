@@ -140,8 +140,9 @@ async function clickIn(p, rootSel, sel) {
     check(a2 && a2.note === NOTE && !a2.del, 'L: ...whole: the pulse row still says where, still no ✕');
     await p.shot(`${DIR}/L2_back_in_tree.png`);
     // reload
-    await p.send('Page.reload', {});
-    await sleep(800);
+    // fire-and-forget: a CDP reload can outlive the context that answers it (hung 900 s behind nginx, docs/226)
+    await p.ev('setTimeout(function () { location.reload(); }, 0); 1');
+    await sleep(1500);
     await waitFor(p, `document.readyState==='complete' && document.querySelector('#explorer-tree-state .tree-node')?1:0`, 120000);
     check(await reveal(p, OP), 'L: after reload the tree reveals the pulse');
     const a3 = await hoverRow(p, OP);
