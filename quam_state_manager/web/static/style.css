@@ -14303,3 +14303,35 @@ html.sm-in-frame .topbar .wb-link { display: none; }
     color: var(--color-error-text);
     border-color: var(--color-error-border);
 }
+
+/* docs/235: Json-tree multi-edit (TreeMulti in app.js) -- one floating panel,
+   the selected rows tinted wherever they are on screen */
+.tree-row.tree-row-multi { background: color-mix(in srgb, var(--pico-primary) 16%, transparent);
+    box-shadow: inset 3px 0 0 var(--pico-primary); }
+.tree-multi { position: fixed; right: 1rem; bottom: 1rem; z-index: 150; width: min(620px, calc(100vw - 2rem));
+    max-height: 60vh; display: flex; flex-direction: column; gap: .4rem; padding: .6rem .75rem;
+    background: var(--pico-card-background-color); color: var(--pico-color);
+    border: 1px solid var(--pico-muted-border-color); border-radius: 8px; box-shadow: 0 6px 24px rgba(0,0,0,.35);
+    font-size: .85rem; }
+.tree-multi[hidden] { display: none; }
+.tree-multi-head { display: flex; align-items: baseline; gap: .5rem; }
+.tree-multi-count { flex: 1 1 auto; font-size: .8rem; }
+.tree-multi-close { width: auto; margin: 0; padding: 0 .45rem; }
+.tree-multi-pat { display: flex; align-items: center; gap: .4rem; margin: 0; }
+.tree-multi-pat > span { flex: 0 0 auto; font-size: .78rem; }
+.tree-multi-pattern, .tree-multi-value { margin: 0 !important; padding: .2rem .4rem !important; height: auto !important;
+    font-family: var(--pico-font-family-monospace, monospace); font-size: .8rem !important; }
+.tree-multi-list { overflow-y: auto; min-height: 2rem; border-top: 1px solid var(--pico-muted-border-color);
+    border-bottom: 1px solid var(--pico-muted-border-color); padding: .2rem 0; }
+.tree-multi-row { display: grid; grid-template-columns: minmax(4rem, max-content) minmax(0, 1fr) auto minmax(0, 1fr) auto;
+    align-items: baseline; gap: .45rem; padding: .08rem .2rem; font-family: var(--pico-font-family-monospace, monospace);
+    font-size: .78rem; white-space: nowrap; }
+.tree-multi-row > span { overflow: hidden; text-overflow: ellipsis; }
+.tree-multi-ent { font-weight: 700; }
+.tree-multi-new { color: var(--pico-primary); font-weight: 600; }
+.tree-multi-skip { opacity: .6; }
+.tree-multi-why { grid-column: 3 / -1; font-style: italic; }
+.tree-multi-foot { display: flex; align-items: center; gap: .4rem; flex-wrap: wrap; }
+.tree-multi-value { flex: 1 1 14rem; }
+.tree-multi-apply { width: auto; margin: 0; }
+.tree-multi-msg { flex: 1 1 100%; font-size: .78rem; }

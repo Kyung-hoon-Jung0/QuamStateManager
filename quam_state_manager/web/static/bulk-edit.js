@@ -2521,7 +2521,7 @@
         var el = _selHintEl(); if (!el) return;
         var n = _selCells().length;
         el.textContent = n
-            ? (n + ' cell' + (n === 1 ? '' : 's') + ' selected — Ctrl+D fills from the anchor · Esc clears · or scale them:')
+            ? (n + ' cell' + (n === 1 ? '' : 's') + ' selected — Ctrl+Shift+↑/↓ extends · Ctrl+D fills from the anchor · Esc clears · or scale them:')
             : '';
         if (el.parentNode && el.parentNode.id === 'bulk-sel-dock') el.parentNode.hidden = !n;   // QA F7
         var t = table();
@@ -3724,6 +3724,29 @@
                     // native Tab proceeds out of the grid.
                     var tnext = _tabMove(cell, e.shiftKey ? -1 : 1);
                     if (tnext) { e.preventDefault(); tnext.focus(); tnext.select && tnext.select(); }
+                    return;
+                }
+                // docs/234 (customer 2026-09-30): Ctrl+Shift+Up/Down extends
+                // the same-column selection from the keyboard (Windows' own
+                // extend chord), one row per press. The range always runs
+                // from the ANCHOR to the moving cell, so pressing back toward
+                // the anchor shrinks it again -- the Shift+click contract.
+                if ((e.ctrlKey || e.metaKey) && e.shiftKey
+                        && (e.key === 'ArrowUp' || e.key === 'ArrowDown')) {
+                    e.preventDefault();
+                    var here = cell.closest('td');
+                    // a caret OUTSIDE the current selection starts a new one
+                    // there (Excel: moving the cursor collapses the selection)
+                    if (!_selAnchor || !here.classList.contains('bulk-sel')) {
+                        _selectRange(here, here);          // start at the cell the caret is in
+                    }
+                    var nextCell = _gridMove(cell, e.key === 'ArrowUp' ? -1 : 1, 0);
+                    if (!nextCell) return;                 // the column's edge
+                    var nextTd = nextCell.closest('td');
+                    if (_selectRange(_selAnchor, nextTd)) {
+                        nextCell.focus();
+                        nextCell.select && nextCell.select();
+                    }
                     return;
                 }
                 var dir = { ArrowUp: [-1, 0], ArrowDown: [1, 0] }[e.key];
