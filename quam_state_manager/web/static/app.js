@@ -500,6 +500,11 @@ document.addEventListener('htmx:sendError', function(evt) {
 // pending changes. (The per-grid beforeunload guards cover cells the user typed
 // but hasn't POSTed yet; this covers the committed-but-unsaved change_log.)
 window.addEventListener('beforeunload', function (ev) {
+    // docs/237: the top bar's Reload reloads the PAGE on purpose, and the
+    // server keeps the change log across it (the popup said so) -- no prompt
+    // for that one. Typed-but-unposted cells keep their own guards (bulk-edit /
+    // pair-edit): that text really would be lost.
+    if (window.__smIntentionalReload) return;
     var tray = document.getElementById('pending-tray');
     var n = tray ? parseInt(tray.getAttribute('data-change-count') || '0', 10) : 0;
     if (n > 0) { ev.preventDefault(); ev.returnValue = ''; return ''; }
@@ -8945,6 +8950,7 @@ window.sidebarKwSync = function() {
         ch.classList.toggle('active', on);
         ch.setAttribute('aria-pressed', on ? 'true' : 'false');
     });
+    if (window.SidebarKwFold) host.querySelectorAll('.sb-kw-fold').forEach(window.SidebarKwFold.markMore);
 };
 window.sidebarKwToggle = function(kw) {
     var host = document.getElementById('sidebar-kw');
@@ -8963,18 +8969,120 @@ window.sidebarKwToggle = function(kw) {
     if (window.htmx) htmx.trigger(input, 'input');
     else input.dispatchEvent(new Event('input', {bubbles: true}));
 };
+/* docs/236 (customer 2026-10-01): every chip row -- the open chip's qubits,
+ * its pairs, the keywords -- is ONE line. Chips that do not fit are hidden
+ * (.sb-kw-over) behind the row's trailing "…". Hovering "…" (or clicking it:
+ * keyboard, touch) opens the whole row as an overlay above the experiment
+ * list, so nothing below moves; the mouse leaving the open row folds it again
+ * -- after picking chips or not. A hidden chip that is selected lights the
+ * "…" so a folded row never hides a live filter. The fold is measured, so it
+ * follows the sidebar's width (a ResizeObserver refits on every change). */
+window.SidebarKwFold = (function() {
+    var CLOSE_MS = 280;
+    function folds() { return Array.prototype.slice.call(document.querySelectorAll('#sidebar-kw .sb-kw-fold')); }
+    function chipsOf(g) { return Array.prototype.slice.call(g.querySelectorAll('.sb-kw-chip:not(.sb-kw-more)')); }
+    function moreOf(g) { return g.querySelector('.sb-kw-more'); }
+    function markMore(g) {
+        var more = moreOf(g);
+        if (!more) return;
+        var over = chipsOf(g).filter(function(c) { return c.classList.contains('sb-kw-over'); });
+        var hiddenOn = over.filter(function(c) { return c.classList.contains('active'); });
+        more.classList.toggle('sb-kw-more-on', hiddenOn.length > 0);
+        more.hidden = !over.length && !g.classList.contains('sb-kw-open');
+        more.title = hiddenOn.length
+            ? hiddenOn.map(function(c) { return c.textContent; }).join(', ') + ' selected (hidden) — hover to see all'
+            : (over.length ? over.length + ' more — hover to see all' : '');
+    }
+    // one line: hide what does not fit before the "…"
+    function fit(g) {
+        if (g.classList.contains('sb-kw-open')) { markMore(g); return; }
+        var chips = chipsOf(g), more = moreOf(g);
+        chips.forEach(function(c) { c.classList.remove('sb-kw-over'); });
+        if (more) more.hidden = false;
+        var box = g.getBoundingClientRect();
+        if (!box.width || !chips.length) return;     // not laid out (collapsed sidebar)
+        var top0 = chips[0].getBoundingClientRect().top;
+        var overflow = chips.some(function(c) { return c.getBoundingClientRect().top > top0 + 2; });
+        if (!overflow) { if (more) more.hidden = true; markMore(g); return; }
+        // hide from the end until "…" sits on the first line
+        for (var i = chips.length - 1; i >= 1; i--) {
+            if (more && more.getBoundingClientRect().top <= top0 + 2) break;
+            chips[i].classList.add('sb-kw-over');
+        }
+        markMore(g);
+    }
+    function fitAll() { folds().forEach(fit); }
+    var _timers = [];
+    function timerOf(g) { for (var i = 0; i < _timers.length; i++) if (_timers[i][0] === g) return _timers[i]; var t = [g, 0]; _timers.push(t); return t; }
+    function cancel(g) { var t = timerOf(g); clearTimeout(t[1]); t[1] = 0; }
+    function open(g) {
+        if (!g) return;
+        cancel(g);
+        if (g.classList.contains('sb-kw-open')) return;
+        folds().forEach(function(o) { if (o !== g) close(o); });
+        // the open row leaves the flow: its slot keeps the one-line height so
+        // the experiment list below never moves
+        var slot = g.parentElement;
+        if (slot) slot.style.height = slot.getBoundingClientRect().height + 'px';
+        g.classList.add('sb-kw-open');
+        chipsOf(g).forEach(function(c) { c.classList.remove('sb-kw-over'); });
+        var more = moreOf(g);
+        if (more) { more.setAttribute('aria-expanded', 'true'); more.hidden = false; }
+        markMore(g);
+    }
+    function close(g) {
+        if (!g) return;
+        cancel(g);
+        if (!g.classList.contains('sb-kw-open')) return;
+        g.classList.remove('sb-kw-open');
+        if (g.parentElement) g.parentElement.style.height = '';
+        var more = moreOf(g);
+        if (more) more.setAttribute('aria-expanded', 'false');
+        fit(g);
+    }
+    function closeSoon(g) {
+        var t = timerOf(g);
+        clearTimeout(t[1]);
+        t[1] = setTimeout(function() { t[1] = 0; close(g); }, CLOSE_MS);
+    }
+    document.addEventListener('mouseover', function(e) {
+        var more = e.target && e.target.closest ? e.target.closest('#sidebar-kw .sb-kw-more') : null;
+        if (more) { open(more.closest('.sb-kw-fold')); return; }
+        var g = e.target && e.target.closest ? e.target.closest('#sidebar-kw .sb-kw-fold.sb-kw-open') : null;
+        if (g) cancel(g);                              // back inside before the fold fired
+    });
+    document.addEventListener('mouseout', function(e) {
+        var g = e.target && e.target.closest ? e.target.closest('#sidebar-kw .sb-kw-fold.sb-kw-open') : null;
+        if (!g) return;
+        var to = e.relatedTarget;
+        if (to && g.contains(to)) return;             // moving between its own chips
+        closeSoon(g);
+    });
+    document.addEventListener('keydown', function(e) {
+        if (e.key !== 'Escape') return;
+        var g = e.target && e.target.closest ? e.target.closest('#sidebar-kw .sb-kw-fold.sb-kw-open') : null;
+        if (g) close(g);
+    });
+    function boot() {
+        fitAll();
+        var host = document.getElementById('sidebar-kw');
+        if (host && window.ResizeObserver) {
+            try { new ResizeObserver(function() { fitAll(); }).observe(host); } catch (err) {}
+        }
+        try { if (document.fonts && document.fonts.ready) document.fonts.ready.then(fitAll); } catch (err) {}
+    }
+    if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', boot); else boot();
+    return { fit: fit, fitAll: fitAll, open: open, close: close, markMore: markMore, CLOSE_MS: CLOSE_MS };
+})();
 (function() {
     document.addEventListener('click', function(e) {
         var t = e.target && e.target.closest ? e.target.closest('.sb-kw-chip') : null;
         if (!t) return;
         e.preventDefault();
         if (t.classList.contains('sb-kw-more')) {
-            var extra = document.getElementById(t.getAttribute('aria-controls') || 'sidebar-kw-extra');
-            if (!extra) return;
-            extra.hidden = !extra.hidden;
-            t.setAttribute('aria-expanded', extra.hidden ? 'false' : 'true');
-            t.classList.toggle('active', !extra.hidden);
-            try { localStorage.setItem('quam_sidebar_kw_more', extra.hidden ? '0' : '1'); } catch (err) {}
+            // keyboard / touch: the click toggles what the hover does
+            var g = t.closest('.sb-kw-fold');
+            if (g) { if (g.classList.contains('sb-kw-open')) window.SidebarKwFold.close(g); else window.SidebarKwFold.open(g); }
             return;
         }
         window.sidebarKwToggle(t.getAttribute('data-kw'));
@@ -8982,18 +9090,7 @@ window.sidebarKwToggle = function(kw) {
     document.addEventListener('input', function(e) {
         if (e.target && e.target.id === 'sidebar-filter-input') window.sidebarKwSync();
     });
-    function boot() {
-        var more = document.getElementById('sidebar-kw-more');
-        var extra = document.getElementById('sidebar-kw-extra');
-        var remembered = null;
-        try { remembered = localStorage.getItem('quam_sidebar_kw_more'); } catch (err) {}
-        if (more && extra && remembered === '1') {
-            extra.hidden = false;
-            more.setAttribute('aria-expanded', 'true');
-            more.classList.add('active');
-        }
-        window.sidebarKwSync();
-    }
+    function boot() { window.sidebarKwSync(); }
     if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', boot); else boot();
 })();
 
@@ -25935,3 +26032,146 @@ window.diskGuardLimit = function (gb) {
         diskGuardRefresh();
     }).catch(function (e) { diskGuardMsg('Could not save: ' + e, true); });
 };
+
+/* ── Reload (docs/237) ────────────────────────────────────────────────────
+ *
+ * Customers, 2026-10-01: "sometimes SM renders right only after a reload".
+ * The top bar's ↻ asks WHAT to reload, then POSTs /app/reload and reloads the
+ * page:
+ *   - State only  -- the open chip's views are rebuilt from its files and the
+ *                    live pair is re-checked;
+ *   - State + env -- also the Python env is re-inspected (forced capability
+ *                    probe, lab worker restarted).
+ * Unapplied edits are never lost: with edits pending the server keeps them
+ * (no re-read) and the note says so after the page comes back. The note rides
+ * sessionStorage across the reload; a failed reload says why and reloads
+ * nothing.
+ */
+window.SmReload = (function () {
+    'use strict';
+    var NOTE_KEY = 'sm_reload_note';
+    function btn() { return document.getElementById('topbar-reload'); }
+    function pending() {
+        var t = document.getElementById('pending-tray');
+        var n = t ? parseInt(t.getAttribute('data-change-count') || '0', 10) : 0;
+        return isNaN(n) ? 0 : n;
+    }
+    function el(tag, cls, txt) {
+        var e = document.createElement(tag);
+        if (cls) e.className = cls;
+        if (txt != null) e.textContent = txt;
+        return e;
+    }
+    function opt(mode, title, sub) {
+        var b = el('button', 'sm-reload-opt');
+        b.type = 'button';
+        b.setAttribute('data-mode', mode);
+        b.appendChild(el('b', null, title));
+        b.appendChild(el('small', null, sub));
+        return b;
+    }
+    function pop() {
+        var p = document.getElementById('sm-reload-pop');
+        if (p) return p;
+        p = el('div', 'sm-reload-pop');
+        p.id = 'sm-reload-pop';
+        p.setAttribute('role', 'dialog');
+        p.setAttribute('aria-label', 'Reload');
+        p.hidden = true;
+        p.appendChild(el('strong', null, 'Reload'));
+        p.appendChild(opt('state', 'State only', 'Re-read this chip and redraw the page'));
+        p.appendChild(opt('both', 'State + env', 'Also re-inspect the Python env (packages, lab worker)'));
+        p.appendChild(el('p', 'sm-reload-note'));
+        p.appendChild(el('p', 'sm-reload-msg'));
+        p.addEventListener('click', function (e) {
+            var o = e.target.closest && e.target.closest('.sm-reload-opt');
+            if (o) run(o.getAttribute('data-mode'));
+        });
+        document.body.appendChild(p);
+        return p;
+    }
+    function place(p) {
+        var b = btn();
+        if (!b) return;
+        var r = b.getBoundingClientRect();
+        var w = p.offsetWidth || 300;
+        p.style.top = Math.round(r.bottom + 6) + 'px';
+        p.style.left = Math.round(Math.max(8, Math.min(r.left, window.innerWidth - w - 8))) + 'px';
+    }
+    function open() {
+        var p = pop();
+        var n = pending();
+        p.querySelector('.sm-reload-note').textContent = n
+            ? n + ' unapplied edit' + (n === 1 ? '' : 's') + ' will be kept (the chip files are not re-read while edits are pending).'
+            : '';
+        p.querySelector('.sm-reload-msg').textContent = '';
+        p.querySelectorAll('.sm-reload-opt').forEach(function (o) { o.disabled = false; });
+        p.hidden = false;
+        place(p);
+        var b = btn(); if (b) b.setAttribute('aria-expanded', 'true');
+        var first = p.querySelector('.sm-reload-opt');
+        if (first) first.focus();
+    }
+    function close() {
+        var p = document.getElementById('sm-reload-pop');
+        if (p) p.hidden = true;
+        var b = btn(); if (b) b.setAttribute('aria-expanded', 'false');
+    }
+    function run(mode) {
+        var p = pop();
+        var msg = p.querySelector('.sm-reload-msg');
+        p.querySelectorAll('.sm-reload-opt').forEach(function (o) { o.disabled = true; });
+        msg.textContent = mode === 'both' ? 'Reloading the chip and the env…' : 'Reloading the chip…';
+        var body = new URLSearchParams();
+        body.append('mode', mode === 'both' ? 'both' : 'state');
+        return window.fetch('/app/reload', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/x-www-form-urlencoded', 'HX-Request': 'true' },
+            body: body.toString()
+        }).then(function (r) { return r.json().catch(function () { return { ok: false, error: 'HTTP ' + r.status }; }); })
+          .then(function (d) {
+            if (!d || !d.ok) {
+                msg.textContent = 'Nothing reloaded — ' + ((d && d.error) || 'the server did not answer');
+                p.querySelectorAll('.sm-reload-opt').forEach(function (o) { o.disabled = false; });
+                return d;
+            }
+            var note = d.mode === 'both' ? 'Reloaded the chip and the env' : 'Reloaded the chip';
+            if (d.kept_edits) note += ' — ' + d.kept_edits + ' unapplied edit' + (d.kept_edits === 1 ? '' : 's') + ' kept';
+            if (d.mode === 'both' && !d.env) note += ' (no Python env selected)';
+            try { sessionStorage.setItem(NOTE_KEY, note); } catch (e) { /* the page still reloads */ }
+            window.SmReload._reloadPage();
+            return d;
+        }, function () {
+            msg.textContent = 'Nothing reloaded — could not reach SM';
+            p.querySelectorAll('.sm-reload-opt').forEach(function (o) { o.disabled = false; });
+        });
+    }
+    document.addEventListener('click', function (e) {
+        var b = e.target && e.target.closest ? e.target.closest('#topbar-reload') : null;
+        if (b) {
+            e.preventDefault();
+            var p = document.getElementById('sm-reload-pop');
+            if (p && !p.hidden) close(); else open();
+            return;
+        }
+        var p2 = document.getElementById('sm-reload-pop');
+        if (p2 && !p2.hidden && !(e.target.closest && e.target.closest('#sm-reload-pop'))) close();
+    });
+    document.addEventListener('keydown', function (e) {
+        if (e.key !== 'Escape') return;
+        var p = document.getElementById('sm-reload-pop');
+        if (p && !p.hidden) { close(); var b = btn(); if (b) b.focus(); }
+    });
+    window.addEventListener('resize', function () {
+        var p = document.getElementById('sm-reload-pop');
+        if (p && !p.hidden) place(p);
+    });
+    function boot() {
+        var note = null;
+        try { note = sessionStorage.getItem(NOTE_KEY); sessionStorage.removeItem(NOTE_KEY); } catch (e) { note = null; }
+        if (note && window.showToast) window.showToast(note, 'success');
+    }
+    if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', boot); else boot();
+    return { open: open, close: close, run: run,
+             _reloadPage: function () { window.__smIntentionalReload = true; location.reload(); } };
+})();

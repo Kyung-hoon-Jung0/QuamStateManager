@@ -27624,6 +27624,68 @@ def workspace_refresh():
     return _unfiltered_tree_html(ws)
 
 
+@bp.route("/app/reload", methods=["POST"])
+def app_reload():
+    """The top bar's Reload (docs/237, customers 2026-10-01: "sometimes SM
+    renders right only after a reload").
+
+    ``mode=state``: every derived view of the open chip is rebuilt from its
+    working files through THE shared entrypoint
+    (:func:`_rebuild_after_working_copy_replaced`), the live pair is re-checked
+    at once (the throttle dropped), and the client then reloads the page.
+    Unapplied edits live only in memory -- a re-read would drop them, so with
+    edits pending the files are NOT re-read: only the caches are, and the
+    answer says the edits were kept. The flags the entrypoint resets
+    (working state saved-not-applied, a staged base, live drift) describe
+    FILES this reload does not change, so they are carried across.
+
+    ``mode=both`` also re-inspects the selected Python env: the capability
+    probe is forced (an install into the env shows), the env's lab worker is
+    retired and started again, and the chip's type policy + schema warm are
+    re-bound -- the same steps as selecting the env, forced.
+    """
+    mode = "both" if request.form.get("mode") == "both" else "state"
+    ctx = _active_ctx()
+    report: dict = {"ok": True, "mode": mode, "chip": False, "reread": False,
+                    "kept_edits": 0, "env": None}
+    if ctx and ctx.get("type") == "quam" and ctx.get("store") is not None:
+        report["chip"] = True
+        pending = len(ctx["modifier"].get_change_log()) if ctx.get("modifier") else 0
+        try:
+            with _active_wc_lock(ctx):
+                if pending:
+                    report["kept_edits"] = pending
+                    _invalidate_engine_cache()
+                else:
+                    keep = {k: ctx.get(k) for k in ("working_dirty", "staged_base")}
+                    _rebuild_after_working_copy_replaced(ctx)
+                    for k, v in keep.items():
+                        if v:
+                            ctx[k] = v
+                    report["reread"] = True
+        except (OSError, ValueError) as exc:
+            return jsonify(ok=False, error=f"Could not re-read the chip: {exc}"), 500
+        ctx.pop("_live_hash_checked_at", None)     # re-check the live pair now
+        _refresh_live_diverged(ctx)
+    if mode == "both":
+        inst = current_app.instance_path
+        python = config_generator.get_selected_env(inst)
+        report["env"] = python
+        if python:
+            from quam_state_manager.core import lab_waveform
+            threading.Thread(
+                target=lambda: config_generator.probe_capabilities(python, inst, force=True),
+                daemon=True,
+            ).start()
+            lab_waveform.retire_except(None, background=True)
+            if ctx and ctx.get("type") == "quam":
+                _attach_type_policy(ctx, inst)
+                _warm_state_schema_async(ctx.get("store"), inst, live_folder=ctx.get("path"))
+                _maybe_prewarm_lab_worker(ctx, inst, reason="reload")
+    logger.info("reload: %s", report)
+    return jsonify(report)
+
+
 @bp.route("/workspace/select", methods=["POST"])
 def workspace_select():
     path = request.form.get("path", "").strip()

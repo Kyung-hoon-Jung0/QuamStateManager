@@ -1,6 +1,7 @@
 """Customer feedback 2026-09-08: keyword chips under the sidebar experiment
-filter -- the open chip's qubits and pairs always, six everyday keywords by
-default, the rest behind "…"; one click adds the token, a second removes it.
+filter -- the open chip's qubits and pairs, the keywords; one click adds the
+token, a second removes it. docs/236 (customer 2026-10-01): each row is ONE
+foldable line ending in "…" (hover opens, leaving folds).
 The behaviour is pinned by ``tests/sidebar_kw_selfcheck.cjs`` against the
 REAL app.js; the markup by the page tests here."""
 from __future__ import annotations
@@ -38,7 +39,7 @@ def _chip(tmp_path):
 
 
 def _chips(html: str, group: str) -> list[str]:
-    seg = re.search(r'<div class="sb-kw-group %s"[^>]*>(.*?)</div>' % re.escape(group), html, re.S)
+    seg = re.search(r'<div class="sb-kw-group %s sb-kw-fold"[^>]*>(.*?)</div>' % re.escape(group), html, re.S)
     assert seg, f"group {group} missing"
     return re.findall(r'data-kw="([^"]+)"', seg.group(1))
 
@@ -53,25 +54,31 @@ class TestTheChips:
         store = QuamStore(str(chip))
         assert _chips(html, "sb-kw-qubits") == list(store.qubit_names), "one chip per qubit, in the store's order"
         assert _chips(html, "sb-kw-pairs") == list(store.qubit_pair_names), "one chip per pair"
+        # docs/236: every row folds to one line behind its own trailing "…"
+        for g in ("sb-kw-qubits", "sb-kw-pairs", "sb-kw-words"):
+            seg = re.search(r'<div class="sb-kw-slot"><div class="sb-kw-group %s sb-kw-fold"[^>]*>(.*?)</div></div>' % g, html, re.S)
+            assert seg, g + " is not a foldable row in its slot"
+            assert re.search(r'class="sb-kw-chip sb-kw-more"[^>]*aria-expanded="false"', seg.group(1)), g + " has no trailing …"
         assert 'data-for="sidebar-filter-input"' in html
 
-    def test_the_six_everyday_words_show_and_the_rest_hide_behind_more(self, tmp_path):
+    def test_the_keywords_are_one_row_everyday_words_first(self, tmp_path):
+        """docs/236: the separate 'extra' group is gone -- the keywords are ONE
+        foldable row, the six everyday words first (they show when the sidebar
+        is wide enough), the rest after them, 'failed' last."""
         c = create_app(testing=True, instance_path=str(tmp_path / "inst")).test_client()
         html = c.get("/").get_data(as_text=True)
-        assert _chips(html, "sb-kw-words") == _DEFAULT_WORDS
-        assert re.search(r'id="sidebar-kw-more"[^>]*aria-expanded="false"[^>]*aria-controls="sidebar-kw-extra"', html)
-        extra = re.search(r'<div class="sb-kw-group sb-kw-extra" id="sidebar-kw-extra" hidden>(.*?)</div>', html, re.S)
-        assert extra, "the extra group is rendered hidden"
-        words = re.findall(r'data-kw="([^"]+)"', extra.group(1))
+        words = _chips(html, "sb-kw-words")
+        assert words[:6] == _DEFAULT_WORDS
         for w in ("time_of_flight", "spec", "readout", "cz", "twpa", "status:error"):
             assert w in words, w
-        assert ">failed</button>" in extra.group(1), "the scoped status:error chip reads 'failed'"
+        assert words[-1] == "status:error" and ">failed</button>" in html
+        assert 'id="sidebar-kw-extra"' not in html, "the old extra group is back"
 
     def test_without_a_chip_there_are_no_qubit_chips_but_the_words_stay(self, tmp_path):
         c = create_app(testing=True, instance_path=str(tmp_path / "inst")).test_client()
         html = c.get("/").get_data(as_text=True)
         assert 'class="sb-kw-group sb-kw-qubits"' not in html and 'class="sb-kw-group sb-kw-pairs"' not in html
-        assert _chips(html, "sb-kw-words") == _DEFAULT_WORDS
+        assert _chips(html, "sb-kw-words")[:6] == _DEFAULT_WORDS
 
     def test_the_chips_live_outside_the_swapped_tree(self, tmp_path):
         """The tree (#sidebar-tree) is re-rendered on every filter keystroke; the

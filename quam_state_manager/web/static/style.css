@@ -1556,6 +1556,20 @@ body.sidebar-resizing { cursor: col-resize; user-select: none; }
     border-color: color-mix(in srgb, var(--pico-primary) 45%, transparent);
     background: color-mix(in srgb, var(--pico-primary) 8%, transparent); }
 .sb-kw-more { font-weight: 700; letter-spacing: .1em; padding: .08rem .45rem; }
+/* docs/236 (customer 2026-10-01): one line per row. The SLOT holds the row's
+   place in the sidebar; the open row floats above the list as a card (the
+   experiment list never moves), and folds back when the mouse leaves it */
+.sb-kw-slot { position: relative; }
+.sb-kw-slot + .sb-kw-slot { padding-top: .2rem; border-top: 1px dashed color-mix(in srgb, var(--pico-muted-border-color) 60%, transparent); }
+.sb-kw-fold { overflow: hidden; }
+.sb-kw-fold .sb-kw-chip.sb-kw-over { display: none; }
+.sb-kw-fold.sb-kw-open { position: absolute; left: -.35rem; right: -.35rem; top: -.3rem; z-index: 40;
+    padding: .3rem .35rem; max-height: 55vh; overflow-y: auto;
+    background: var(--pico-card-background-color); border: 1px solid var(--pico-muted-border-color);
+    border-radius: 8px; box-shadow: 0 6px 20px rgba(0,0,0,.35); }
+.sb-kw-more.sb-kw-more-on { color: var(--pico-primary); border-color: color-mix(in srgb, var(--pico-primary) 45%, transparent);
+    background: color-mix(in srgb, var(--pico-primary) 8%, transparent); }
+.sb-kw-fold.sb-kw-open .sb-kw-more { order: 99; }
 .filter-tag {
     display: inline-flex; align-items: center; gap: 0.15rem;
     font-size: 0.75em; font-family: var(--font-mono);
@@ -14335,3 +14349,31 @@ html.sm-in-frame .topbar .wb-link { display: none; }
 .tree-multi-value { flex: 1 1 14rem; }
 .tree-multi-apply { width: auto; margin: 0; }
 .tree-multi-msg { flex: 1 1 100%; font-size: .78rem; }
+
+/* docs/237: the top bar's Reload -- a quiet text button beside the ⌗ link;
+   "Reload" reads "Re" wherever the title reads "SM" (same ladder step) */
+.topbar .topbar-reload { width: auto; margin: 0 0 0 .35rem; padding: .1rem .5rem; font-size: .85rem; line-height: 1.4;
+    background: transparent; color: var(--pico-muted-color); border: 1px solid var(--pico-muted-border-color);
+    border-radius: 999px; white-space: nowrap; cursor: pointer; }
+.topbar .topbar-reload:hover, .topbar .topbar-reload:focus-visible,
+.topbar .topbar-reload[aria-expanded="true"] { color: var(--pico-color); border-color: var(--pico-muted-color); }
+.topbar .topbar-reload .rl-short { display: none; }
+.topbar.tb-fit-5 .topbar-reload .rl-long { display: none; }
+.topbar.tb-fit-5 .topbar-reload .rl-short { display: inline; }
+@media (max-width: 1000px) {
+    .topbar .topbar-reload .rl-long { display: none; }
+    .topbar .topbar-reload .rl-short { display: inline; }
+}
+.sm-reload-pop { position: fixed; z-index: 300; width: 19rem; padding: .6rem .7rem; display: flex; flex-direction: column; gap: .45rem;
+    background: var(--pico-card-background-color); color: var(--pico-color);
+    border: 1px solid var(--pico-muted-border-color); border-radius: 8px; box-shadow: 0 6px 22px rgba(0,0,0,.35); font-size: .85rem; }
+.sm-reload-pop[hidden] { display: none; }
+.sm-reload-pop strong { font-size: .9rem; }
+.sm-reload-pop .sm-reload-opt { width: 100%; margin: 0; text-align: left; padding: .4rem .55rem; display: flex; flex-direction: column; gap: .1rem;
+    background: transparent; color: var(--pico-color); border: 1px solid var(--pico-muted-border-color); border-radius: 6px; cursor: pointer; }
+.sm-reload-pop .sm-reload-opt:hover, .sm-reload-pop .sm-reload-opt:focus-visible { border-color: var(--pico-primary);
+    background: color-mix(in srgb, var(--pico-primary) 8%, transparent); }
+.sm-reload-pop .sm-reload-opt b { font-weight: 700; }
+.sm-reload-pop .sm-reload-opt small { color: var(--pico-muted-color); font-size: .78rem; }
+.sm-reload-pop .sm-reload-note { font-size: .78rem; color: var(--pico-muted-color); margin: 0; }
+.sm-reload-pop .sm-reload-msg { font-size: .8rem; margin: 0; }

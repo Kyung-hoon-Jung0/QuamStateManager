@@ -2,8 +2,10 @@
  * filter, in the REAL app.js under jsdom: one click ADDS the token to the
  * box (AND with what is typed), a second click REMOVES it, typing keeps the
  * chips lit in sync (case-insensitive), the tree refetch is triggered
- * through the box's own hx-trigger, and "…" reveals the extra keywords and
- * remembers it.
+ * through the box's own hx-trigger. docs/236 (customer 2026-10-01): every row
+ * is ONE line with a trailing "…"; hovering "…" opens the row, the mouse
+ * leaving it folds it (after a short delay); a click toggles (keyboard,
+ * touch); a selected chip folded away lights the "…".
  *
  * Run: node tests/sidebar_kw_selfcheck.cjs  (driven by tests/test_sidebar_kw.py)
  */
@@ -48,11 +50,13 @@ function chip(kw, extra) { return '<button type="button" class="sb-kw-chip' + (e
 doc.body.innerHTML =
     '<textarea id="sidebar-filter-input"></textarea><div class="filter-tags" id="filter-tags"></div>'
     + '<div class="sb-kw" id="sidebar-kw" data-for="sidebar-filter-input">'
-    + '<div class="sb-kw-group sb-kw-qubits">' + chip('q1') + chip('q2') + chip('q10') + '</div>'
-    + '<div class="sb-kw-group sb-kw-pairs">' + chip('q1-q2') + '</div>'
-    + '<div class="sb-kw-group sb-kw-words">' + chip('res') + chip('rabi') + chip('ramsey')
-    + '<button type="button" class="sb-kw-chip sb-kw-more" id="sidebar-kw-more" aria-expanded="false" aria-controls="sidebar-kw-extra">…</button></div>'
-    + '<div class="sb-kw-group sb-kw-extra" id="sidebar-kw-extra" hidden>' + chip('spec') + chip('T1') + chip('status:error') + '</div>'
+    + '<div class="sb-kw-slot"><div class="sb-kw-group sb-kw-qubits sb-kw-fold">' + chip('q1') + chip('q2') + chip('q10')
+    + '<button type="button" class="sb-kw-chip sb-kw-more" aria-expanded="false">…</button></div></div>'
+    + '<div class="sb-kw-slot"><div class="sb-kw-group sb-kw-pairs sb-kw-fold">' + chip('q1-q2')
+    + '<button type="button" class="sb-kw-chip sb-kw-more" aria-expanded="false">…</button></div></div>'
+    + '<div class="sb-kw-slot"><div class="sb-kw-group sb-kw-words sb-kw-fold">' + chip('res') + chip('rabi') + chip('ramsey')
+    + chip('spec') + chip('T1') + chip('status:error')
+    + '<button type="button" class="sb-kw-chip sb-kw-more" id="sidebar-kw-more" aria-expanded="false">…</button></div></div>'
     + '</div>';
 
 window.eval(fs.readFileSync(
@@ -92,24 +96,50 @@ input.dispatchEvent(new window.Event('input', { bubbles: true }));
 ok(C('T1').classList.contains('active'), 'a typed t1 lights the T1 chip (the chip side is case-folded too)');
 click(C('T1'));
 ok(input.value === 'q1 q1-q2', 'clicking T1 removes the typed t1');
-// 5. "…" reveals the extra keywords and remembers it; an extra chip works like any other
-const more = doc.getElementById('sidebar-kw-more'), extra = doc.getElementById('sidebar-kw-extra');
-ok(extra.hidden === true, '(fixture) the extra group starts hidden');
-click(more);
-ok(extra.hidden === false && more.getAttribute('aria-expanded') === 'true' && store.quam_sidebar_kw_more === '1', '… reveals the extra keywords and remembers it');
+// 5. docs/236: the fold. jsdom has no layout, so the fold's hidden set is set by
+// hand where layout would put it (fit() needs a real width).
+const words = doc.querySelector('.sb-kw-words'), more = doc.getElementById('sidebar-kw-more');
+const F = window.SidebarKwFold;
+ok(!!F && typeof F.open === 'function', 'the fold module is there');
+const over = ['spec', 'T1', 'status:error'];
+over.forEach((k) => C(k).classList.add('sb-kw-over'));
+function hover(el) { el.dispatchEvent(new window.MouseEvent('mouseover', { bubbles: true })); }
+function leave(el, to) { el.dispatchEvent(new window.MouseEvent('mouseout', { bubbles: true, relatedTarget: to || null })); }
+hover(more);
+ok(words.classList.contains('sb-kw-open') && more.getAttribute('aria-expanded') === 'true'
+   && over.every((k) => !C(k).classList.contains('sb-kw-over')), 'hovering "…" opens the row: every folded chip shows');
 click(C('status:error'));
-ok(input.value === 'q1 q1-q2 status:error' && C('status:error').classList.contains('active'), 'a scoped chip (failed = status:error) adds its token');
-click(more);
-ok(extra.hidden === true && more.getAttribute('aria-expanded') === 'false' && store.quam_sidebar_kw_more === '0', '… folds them again');
-// 6. the remembered choice re-opens the group on the next page load (boot)
-store.quam_sidebar_kw_more = '1'; extra.hidden = true; more.setAttribute('aria-expanded', 'false');
-doc.dispatchEvent(new window.Event('DOMContentLoaded'));
-window.sidebarKwSync();
-ok(true, '(boot re-run is covered by the module boot on load; sync keeps the lit set)');
-ok(lit() === 'q1 q1-q2 status:error', 'sync after boot keeps the lit chips matching the box');
+ok(input.value === 'q1 q1-q2 status:error' && C('status:error').classList.contains('active'),
+   'a chip picked from the open row adds its token (failed = status:error)');
+leave(C('status:error'), C('T1'));
+ok(words.classList.contains('sb-kw-open'), 'moving between its own chips keeps it open');
+leave(C('T1'), doc.body);
+ok(words.classList.contains('sb-kw-open'), 'leaving does not fold at once (a short grace, so a slip back in keeps it)');
+setTimeout(() => {
+    ok(!words.classList.contains('sb-kw-open') && more.getAttribute('aria-expanded') === 'false',
+       'the mouse leaving the open row folds it');
+    // the fold re-hides what does not fit (layout-less here: re-mark by hand) and
+    // a SELECTED chip folded away lights "…"
+    over.forEach((k) => C(k).classList.add('sb-kw-over'));
+    window.sidebarKwSync();
+    ok(more.classList.contains('sb-kw-more-on') && /status:error selected/.test(more.title),
+       'a selected chip folded away lights "…" and names it');
+    // a click toggles (keyboard / touch)
+    click(more);
+    ok(words.classList.contains('sb-kw-open'), 'a click on "…" opens the row');
+    click(more);
+    ok(!words.classList.contains('sb-kw-open'), 'a second click folds it');
+    // only one row is open at a time
+    const qmore = doc.querySelector('.sb-kw-qubits .sb-kw-more');
+    hover(qmore); hover(more);
+    ok(words.classList.contains('sb-kw-open') && !doc.querySelector('.sb-kw-qubits').classList.contains('sb-kw-open'),
+       'opening one row folds the other');
+    F.close(words);
+    ok(lit() === 'q1 q1-q2 status:error', 'the fold never touches the lit set');
 // 7. clearing the box unlights everything
 input.value = '';
 input.dispatchEvent(new window.Event('input', { bubbles: true }));
 ok(lit() === '', 'an empty box lights no chip');
-
+ok(!more.classList.contains('sb-kw-more-on'), 'and "…" goes quiet with it');
 process.exit(fails ? 1 : 0);
+}, (window.SidebarKwFold && window.SidebarKwFold.CLOSE_MS || 280) + 120);
