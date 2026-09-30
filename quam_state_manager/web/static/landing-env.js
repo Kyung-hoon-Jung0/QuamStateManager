@@ -43,11 +43,13 @@
     }
 
     function openFormFor(project) {
-        var forms = document.querySelectorAll('form[hx-post="/qualibrate/open"]');
-        for (var i = 0; i < forms.length; i++) {
-            var inp = forms[i].querySelector('input[name="project"]');
-            var from = forms[i].querySelector('input[name="from"]');
-            if (inp && inp.value === project && from && from.value === 'landing') return forms[i];
+        // by the landing's own marker, never by URL: under a URL prefix the
+        // form posts to <prefix>/qualibrate/open (docs/226)
+        var marks = document.querySelectorAll('form input[name="from"][value="landing"]');
+        for (var i = 0; i < marks.length; i++) {
+            var form = marks[i].form;
+            var inp = form && form.querySelector('input[name="project"]');
+            if (inp && inp.value === project) return form;
         }
         return null;
     }

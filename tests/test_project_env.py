@@ -238,7 +238,7 @@ class TestOpening:
     def test_another_surface_is_sent_to_the_landing_picker(self, lab):
         r = lab["c"].post("/qualibrate/open", data={"project": "beta"},
                           headers={"HX-Request": "true"})
-        assert r.headers.get("HX-Redirect") == "/?landing=1&choose_env=beta"
+        assert r.headers.get("HX-Redirect") == P("/?landing=1&choose_env=beta")
 
     def test_a_picked_env_rides_along_and_opens(self, lab):
         config_generator.set_selected_env(str(lab["inst"]), lab["A"])

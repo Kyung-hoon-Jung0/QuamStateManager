@@ -43,7 +43,7 @@ const HTML = '<!doctype html><body>' +
   '<button type="button" data-env-change="alpha" data-env-current="C:\\envs\\A\\python.exe" data-env-state="remembered">Change…</button></div></div>' +
   '<div class="landing-card"><div class="landing-card-env" data-project="beta">env <code>A</code> suggested' +
   '<button type="button" data-env-change="beta" data-env-current="C:\\envs\\A\\python.exe" data-env-state="suggested">Change…</button></div>' +
-  '<form class="landing-card-open" hx-post="/qualibrate/open"><input type="hidden" name="project" value="beta">' +
+  '<form class="landing-card-open" hx-post="/sm/qualibrate/open"><input type="hidden" name="project" value="beta">' +
   '<input type="hidden" name="from" value="landing"><button type="submit">Open</button></form></div>' +
   '<section id="landing-env-picker" DEFAULT><strong><span data-env-project></span></strong>' +
   '<button data-env-rescan>Rescan</button>' +
