@@ -1,7 +1,7 @@
 # docs/226 — Serving SM under a URL prefix, behind a reverse proxy
 
 2026-09-29, branch `feat/url-prefix` (base `91c8aae`, with `origin/main`
-`883bb87a` and `e258f3c6` merged in). **Not merged to main.** Asked for by a
+`883bb87a`, `e258f3c6` and `7816b126` merged in). **Not merged to main.** Asked for by a
 colleague who mounts SM on a platform that proxies it under a path such as
 `https://lab.example/sm/`; their report read v0.9.8, this lands on 1.0.x.
 
