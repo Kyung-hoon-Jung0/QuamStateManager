@@ -218,12 +218,14 @@ class TestRound15ChromeHiding:
         assert "background: var(--pico-card-background-color" in slot and "border: 1px solid" in slot, (
             "The floating cluster needs an opaque card background + border."
         )
-        # inside the tray, ONLY the badge and the Auto-Sync pill show (the
-        # user confirmed the pill should float too) — and the pill's popup
-        # host must not be hidden with the other slot children, or every click
-        # on the floating pill would be swallowed.
+        # inside the tray, the badge, the Auto-Sync pill AND the sync control
+        # (its Apply / Take live / Pull & apply action, docs/231 -- the older
+        # rule without :not(.sync-control) out-specified the one showing it,
+        # so a collapsed bar had no Apply) show -- and the pill's popup host
+        # must not be hidden with the other slot children, or every click on
+        # the floating pill would be swallowed.
         assert ("html.topbar-hidden #pending-tray > :not(.state-status-badge)"
-                ":not(.auto-sync-wrap) { display: none; }") in css
+                ":not(.auto-sync-wrap):not(.sync-control) { display: none; }") in css
         assert ("html.topbar-hidden #topbar-tray-slot > :not(#pending-tray)"
                 ":not(#auto-sync-pop-host) { display: none; }") in css
         # docs/187 (3): the wrapper moved into `_auto_sync_pill.html`, which

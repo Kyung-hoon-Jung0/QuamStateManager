@@ -144,12 +144,13 @@ class TestArming:
         While auto-apply is ON that is false, and a false explanation is worse
         than none."""
         c = env["client"]
+        # wording compacted in docs/231; the invariant is unchanged
         off = c.get("/state/tray").data.decode()
-        assert "until you press" in off
+        assert "until Apply to live" in off
         c.post("/auto-apply/arm")
         on = c.get("/state/tray").data.decode()
-        assert "until you press" not in on
-        assert "Auto-Sync is ON" in on             # renamed, docs/120 item 8
+        assert "until Apply to live" not in on
+        assert "Auto-Sync ON" in on                # renamed, docs/120 item 8
 
     def test_gate_route_reports_without_blocking(self, env):
         body = env["client"].get("/auto-apply/gate").get_json()

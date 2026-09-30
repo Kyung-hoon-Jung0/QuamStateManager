@@ -11,7 +11,7 @@
 {% if instance_peers and compact is defined and compact %}
 {#- sync-ux 2026-09-25 (default 3): the one-row top bar carries a marker, not a strip -#}
 <span class="sync-marker sync-marker-peers" role="status"
-      title="{{ active_name or 'This chip' }} is also open in {% if instance_peers|length == 1 %}another State Manager ({{ instance_peers[0].label }}){% else %}{{ instance_peers|length }} other State Managers ({{ instance_peers|map(attribute='label')|join(', ') }}){% endif %}. Edits there and here overwrite each other, because both share one working copy · 다른 State Manager 창에서도 이 칩이 열려 있습니다">&#10697;&nbsp;{{ instance_peers|length + 1 }}</span>
+      title="{{ active_name or 'This chip' }} is also open in {% if instance_peers|length == 1 %}another State Manager ({{ instance_peers[0].label }}){% else %}{{ instance_peers|length }} other State Managers ({{ instance_peers|map(attribute='label')|join(', ') }}){% endif %}. Edits there and here overwrite each other (one shared working copy)">&#10697;&nbsp;{{ instance_peers|length + 1 }}</span>
 {% elif instance_peers %}
 <div class="topo-change-banner multi-instance-banner" id="multi-instance-banner" role="alert">
     <span class="topo-change-banner-text">

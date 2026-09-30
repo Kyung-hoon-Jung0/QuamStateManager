@@ -903,7 +903,12 @@ html.topbar-hidden #pending-tray {
     display: inline-flex; align-items: center; gap: .3rem; margin: 0; padding: 0;
     background: transparent; border: 0; box-shadow: none;
 }
-html.topbar-hidden #pending-tray > :not(.state-status-badge):not(.auto-sync-wrap) { display: none; }
+/* docs/231 (customer 2026-09-30): the sync control -- the status AND its one
+   action (Apply N / Take live / Pull & apply) -- floats too. This rule used to
+   hide it: the later `#pending-tray > .sync-control { display: inline-flex }`
+   (sync-ux) is LESS specific than this one's two :not()s, so with the bar
+   collapsed only the Auto pill was left and an unapplied edit had no Apply. */
+html.topbar-hidden #pending-tray > :not(.state-status-badge):not(.auto-sync-wrap):not(.sync-control) { display: none; }
 html.topbar-hidden #pending-tray > .state-status-badge,
 html.topbar-hidden #pending-tray > .auto-sync-wrap {
     display: inline-flex; margin: 0; box-shadow: 0 2px 8px rgba(0,0,0,.25);
@@ -10393,7 +10398,13 @@ tr.bulk-row-pinned > th, tr.bulk-row-pinned > td { background: color-mix(in srgb
 .bulk-pair-divider-label { font-weight: 700; font-size: 0.95rem; white-space: nowrap; }
 .bulk-pair-divider-label small { font-weight: 400; }
 .bulk-pair-tools { display: inline-flex; align-items: center; gap: 0.5rem; margin-left: auto; flex-wrap: wrap; }
-.bulk-pair-table-wrap { max-height: calc(100vh - 240px); }
+/* Customer 2026-09-30 (docs/230): this used to cap the pair wrap at
+   calc(100vh - 240px). docs/141 4q made every grid wrap overflow:visible (one
+   scroller, #table-pane), and this later, equal-specificity rule kept the cap:
+   a chip with more pairs than fit spilled its rows out of the wrap, and the
+   next grid (TWPAs, docs 2026-09-10) was laid right over them. The wrap is a
+   frame now, never a box: no height of its own. */
+.bulk-pair-table-wrap { max-height: none; }
 /* Read-only cells (runtime self-refs, list/confusion badges, blanks for absent
    columns): muted, no edit affordance, but still selectable/searchable. */
 .bulk-cell-ro {
@@ -14164,6 +14175,43 @@ td.cell-live-stale .cell-live-now {
     .topbar .app-title::after { content: "SM"; font-size: .95rem; }
     .agent-pill-text { display: none; }
 }
+/* docs/231 (customer 2026-09-30): the ladder above is keyed on the WINDOW
+   width, but what has to fit is the CONTENT -- a long "Live chip changed · 42
+   values" pill, the L text size, a narrow Sync-Qualibrate frame. The row is
+   nowrap and its items used to shrink below their own text (min-width:0 from
+   the older wrapping bar), so the title painted over the ⌗ link and the pill.
+   Items now keep their content width, and TopbarFit (app.js) walks the SAME
+   ladder by measurement, one step at a time, while the row overflows. The
+   media queries above stay as the no-script baseline; a fit class only ever
+   hides MORE. */
+.topbar > nav > ul:first-child > li { flex-shrink: 0; }
+.topbar.tb-fit-1 .wb-link-text, .topbar.tb-fit-1 .agent-pill-res { display: none; }
+.topbar.tb-fit-2 .agent-pill-mode { display: none !important; }
+.topbar.tb-fit-2 .auto-apply-pill .aa-long, .topbar.tb-fit-2 .state-version-chip .state-version-id,
+.topbar.tb-fit-2 .state-version-chip .state-version-none { display: none; }
+.topbar.tb-fit-2 { --search-box-width: 200px; }
+.topbar.tb-fit-3 .app-title { font-size: .9rem; }
+.topbar.tb-fit-3 { --search-box-width: 150px; }
+.topbar.tb-fit-4 .sync-control .state-status-name { display: none; }
+.topbar.tb-fit-5 .app-title { font-size: 0; }
+.topbar.tb-fit-5 .app-title::after { content: "SM"; font-size: .95rem; }
+.topbar.tb-fit-5 .agent-pill-text { display: none; }
+/* past the media ladder: only a frame narrower than ~1000 px at the L text size
+   gets here (measured: 35 px short at 900 px) */
+.topbar.tb-fit-6 { --search-box-width: 110px; }
+.topbar.tb-fit-6 .search-box { min-width: 5rem; }
+.topbar.tb-fit-7 .state-version-wrap { display: none; }
+.topbar.tb-fit-8 .diag-badge-word { display: none; }
+.topbar.tb-fit-9 .search-box { flex: 0 0 2.6rem; min-width: 2.6rem; }
+.topbar.tb-fit-10 #agent-pill { display: none; }
+/* the floor: a frame too narrow for one row (the Sync-Qualibrate Split pane at
+   the L size) gets TWO rows rather than items painted over each other */
+.topbar.tb-fit-11 > nav { flex-wrap: wrap; justify-content: flex-start; row-gap: .15rem; }
+/* both groups' items wrap as ONE row set (else the search box took a third row) */
+.topbar.tb-fit-11 > nav > ul { display: contents; }
+.topbar.tb-fit-11 > nav > ul.topbar-right > li:first-child { margin-left: auto; }
+/* inside the Sync-Qualibrate frame the ⌗ link opens the frame you are in */
+html.sm-in-frame .topbar .wb-link { display: none; }
 .sp-live-input { width: 100%; margin: 0 !important; padding: .02rem .2rem !important; height: auto !important;
     font-size: inherit !important; color: #38bdf8; background: transparent !important;
     border: 1px solid transparent !important; border-radius: 4px; box-shadow: none !important; }

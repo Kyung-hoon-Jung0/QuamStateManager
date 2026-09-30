@@ -28,17 +28,17 @@
              {% if not _as or _as.pull %}checked{% endif %}
              onchange="AutoSync.syncNested()">
       <span>&#8595; Take live changes automatically
-        <small class="muted">your unapplied edits stay on top of them · 라이브 변경 자동으로 받기</small></span></label>
+        <small class="muted">your unapplied edits stay on top</small></span></label>
     <label class="as-row as-row-sub">
       <input type="checkbox" name="pull_replace" value="1" id="as-pull-replace"
              {% if _as and _as.pull_replace %}checked{% endif %}>
       <span class="as-danger">&hellip;even over my unapplied edits (live wins)
-        <small class="muted">Lost each time the live chip changes: your unapplied edits, not recoverable with Ctrl+Z · 내 미적용 수정이 매번 사라짐</small></span></label>
+        <small class="muted">each live change discards your unapplied edits (no Ctrl+Z)</small></span></label>
     <label class="as-row">
       <input type="checkbox" name="push" value="1" id="as-push"
              {% if _as and _as.push %}checked{% endif %}>
       <span>&#8593; Write my edits to the live chip automatically
-        <small class="muted">every Enter writes; if the live chip changed meanwhile it merges when take is on, otherwise stops and asks · 내 수정 자동 기록</small></span></label>
+        <small class="muted">each Enter writes; a live change meanwhile is merged (if Take is on) or stops and asks</small></span></label>
     <div class="as-actions">
       <button type="submit" class="btn-sm">Save</button>
       {% if _as %}

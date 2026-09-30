@@ -21,6 +21,9 @@
     <script>
       window.__chipToken = {{ (chip_token if chip_token is defined else '')|tojson }};
       window.__activePath = {{ (active_path if active_path is defined and active_path else '')|tojson }};
+      // docs/231: framed by Sync-Qualibrate (/workbench) -> its own ⌗ link is redundant
+      try { if (window.self !== window.top) document.documentElement.classList.add('sm-in-frame'); } catch (e) { document.documentElement.classList.add('sm-in-frame'); }
+      window.__activeDataPath = {{ (active_dataset_path if active_dataset_path is defined and active_dataset_path else '')|tojson }};
     </script>
     <link rel="stylesheet" href="{{ url_for('static', filename='pico.min.css') }}">
     {# Stylesheet up top so CSS downloads in parallel with the scripts. #}
@@ -885,6 +888,7 @@
                     // Size the filter textarea to its (possibly prefilled) value on load.
                     var fi = document.getElementById('sidebar-filter-input');
                     if (fi && window.autoGrowNote) autoGrowNote(fi);
+                    if (fi) fi.addEventListener('input', function() { window.__sbFilterKeyAt = Date.now(); });
                     // r16 ⑦ D-D: browsers RESTORE textarea values across reloads —
                     // the tree then rendered filtered with NO visible chips (chips
                     // draw only oninput), which read as "my folders disappeared".
@@ -925,8 +929,14 @@
                         // mid-search — defer the whole tick while the filter box
                         // is focused. lastV does not advance, so the next idle
                         // tick performs the catch-up render.
+                        // docs/231 (customer 2026-09-30): "focused" alone froze the
+                        // tree for as long as the caret sat in the box -- a click
+                        // into it (or on its keyword chips) and no new run ever
+                        // showed. Defer only while actually TYPING (a keystroke
+                        // in the last 5 s).
                         var _fi = document.getElementById('sidebar-filter-input');
-                        if (_fi && document.activeElement === _fi) return;
+                        if (_fi && document.activeElement === _fi
+                                && (Date.now() - (window.__sbFilterKeyAt || 0)) < 5000) return;
                         _treePolling = true;
                         _pollN++;
                         // 10 s abort (r13 audit D5): a hung socket used to pin
@@ -1428,6 +1438,17 @@
             if (_lp && window.__activePath) {
                 _lp.value = window.__activePath;
                 localStorage.setItem("quam_load_path", window.__activePath);
+            }
+        } catch (e) {}
+        // docs/231 (customer 2026-09-30): the same for the Dataset Load box --
+        // with a project open it shows THAT project's data folder, never the
+        // last path typed in this browser (another project's). No project
+        // scope -> the remembered path stays, as before.
+        try {
+            var _wp = document.getElementById("workspace-path-input");
+            if (_wp && window.__activeDataPath) {
+                _wp.value = window.__activeDataPath;
+                localStorage.setItem("quam_workspace_path", window.__activeDataPath);
             }
         } catch (e) {}
     });

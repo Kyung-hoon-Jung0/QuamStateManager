@@ -2650,7 +2650,7 @@ def _agent_edit_lock_refusal(ctx: dict | None):
     if request.headers.get("X-SM-Agent"):
         return None
     return jsonify(ok=False, agent_lock=lock, error="agent_running",
-                   message=f"Agent가 {lock.get('node')}를 돌리는 중 — 편집이 잠겼습니다. Stop을 누르면 편집할 수 있습니다."), 409
+                   message=f"The Agent is running {lock.get('node')}; editing is locked. Press Stop to edit."), 409
 
 
 def _archive_write_blocked(ctx: dict | None = None):
@@ -4672,6 +4672,31 @@ def chip_name_banner():
     return render_template("_chip_name_banner.html", **_ctx())
 
 
+def _scope_storage_path(ctx: dict | None) -> str:
+    """The project scope's storage (data) folder, or "" -- only when it exists.
+
+    Read once per scope and kept on the context (``_scope_storage``): a full
+    page render must not re-read the project TOMLs (RAM P5). An explicit
+    project open re-derives it (``_acquire_project_scope`` drops the memo), so
+    a storage edited in QUAlibrate is picked up by re-opening the project."""
+    scope = (ctx or {}).get("qualibrate_project")
+    if not scope:
+        return ""
+    memo = ctx.get("_scope_storage")
+    if memo and memo[0] == scope:
+        return memo[1]
+    native = ""
+    try:
+        from quam_state_manager.core import qualibrate_config
+        st = qualibrate_config.project_storage(scope)
+        if st.get("exists") and st.get("native"):
+            native = st["native"]
+    except Exception:  # noqa: BLE001 -- a hint, never a render failure
+        native = ""
+    ctx["_scope_storage"] = (scope, native)
+    return native
+
+
 def _ctx(**extra: Any) -> dict[str, Any]:
     """Base template context shared by all pages."""
     # Self-heal a missed live change (throttled ground-truth hash) so the
@@ -4748,6 +4773,10 @@ def _ctx(**extra: Any) -> dict[str, Any]:
         # under (explicitly opened, or reverse-matched from its live folder).
         # None ⇒ every consumer renders exactly the pre-lens behavior.
         "project_scope": (_active_ctx() or {}).get("qualibrate_project"),
+        # customer 2026-09-30 (docs/231): the sidebar's Dataset Load box shows
+        # the open project's data folder, not the last path typed in this
+        # browser -- the same sync the State Load box has for the chip.
+        "active_dataset_path": _scope_storage_path(_active_ctx()),
         "live_diverged": bool(_ctx_obj("live_diverged")),
         "live_drift_count": (_active_ctx() or {}).get("live_drift_count"),
         # docs/117: base.html includes the tray directly, so a FULL page render
@@ -5903,6 +5932,7 @@ def _acquire_project_scope(ctx: dict | None, *, explicit: str | None = None) -> 
         return
     if explicit is not None:
         ctx["qualibrate_project"] = explicit
+        ctx.pop("_scope_storage", None)     # re-read the data folder (docs/231)
         # Unconditional (it self-dedups): a RE-open of an already-scoped
         # project must still refresh the landing highlight — gating on the
         # ctx memo left last_project pointing at whatever was derived since.
@@ -37446,7 +37476,7 @@ def _scheduler_lock_guard():
     if _alk and request.method != "GET" and request.endpoint in _SCHEDULER_MUTATOR_ENDPOINTS:
         resp = make_response(jsonify({
             "error": "agent_running", "agent_lock": _alk,
-            "message": f"Agent가 {_alk.get('node')}를 돌리는 중 — 편집이 잠겼습니다. Stop을 누르면 편집할 수 있습니다.",
+            "message": f"The Agent is running {_alk.get('node')}; editing is locked. Press Stop to edit.",
         }), 409)
         resp.headers["HX-Reswap"] = "none"
         resp.headers["HX-Trigger"] = "schedulerLocked"

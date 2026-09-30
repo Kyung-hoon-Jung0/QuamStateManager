@@ -533,7 +533,7 @@ class TestTheConflictTrayShowsTheSession:
 
     def test_it_does_not_claim_a_disarm_that_did_not_happen(self, env):
         html = self._conflict(env, pull=True)       # merges, stays armed
-        assert "has been turned" not in html, (
+        assert "Auto-Sync is off" not in html, (
             "the tray told the user Auto-Sync was off while it was still on")
         assert "still on" in html
 
@@ -824,11 +824,11 @@ class TestAStagedPayloadIsNotMerged:
         assert "autoApplyDisarm" in r.headers.get("HX-Trigger", "")
         assert _sess(env) is None
         html = r.data.decode()
-        assert "has been turned" in html, "it did not say the session was off"
+        assert "Auto-Sync is off" in html, "it did not say the session was off"
 
     def test_and_never_claims_to_be_resolving_it(self, env):
         html = self._staged_conflict(env).data.decode()
-        assert "still on and is resolving" not in html, (
+        assert "is resolving this itself" not in html, (
             "the tray claimed a merge was running above the branch that "
             "withholds that button from the human")
 
@@ -850,7 +850,7 @@ class TestAStagedPayloadIsNotMerged:
         r = c.post("/state/apply-to-live")
         assert "autoSyncMerge" in r.headers.get("HX-Trigger", "")
         assert _sess(env) is not None
-        assert "still on and is resolving" in r.data.decode()
+        assert "is resolving this itself" in r.data.decode()
 
 
 class TestTheServerReportsEveryKindOfLoss:

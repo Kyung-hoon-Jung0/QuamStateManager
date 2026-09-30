@@ -3766,7 +3766,7 @@ window.SyncStale = (function () {
         }
         sub.textContent = "live now " + v;
         sub.title = "The live chip holds " + v + " for " + p + "; this cell shows an older value. "
-            + "The sync status in the top bar offers ↓ Take live · 라이브 칩 값이 다릅니다";
+            + "The sync status in the top bar offers ↓ Take live";
     }
     function unmark(td) {
         td.classList.remove("cell-live-stale");
@@ -24699,6 +24699,104 @@ window.TopbarHold = (function () {
         start();
     }
     return { release: release, held: function () { return _hold; } };
+})();
+
+/* ── the top bar fits its CONTENT, not the window (docs/231) ──────────────
+ *
+ * Customer, 2026-09-30: in the Sync-Qualibrate frame, with the L text size
+ * and a "Live chip changed · 42 values" pill, the title "QUAM State Manager"
+ * was painted over the ⌗ link and the pill. The left group is one nowrap row
+ * (sync-ux 2026-09-25) whose width ladder -- what gives way first -- is
+ * written as @media queries on the WINDOW width. What has to fit is the
+ * content, and the content varies (pill text, project name, text size,
+ * a frame narrower than the window's own breakpoints assume). Measured in real
+ * Chrome at 1150 and 1600 px: 41-58 px of overlap.
+ *
+ * Items no longer shrink below their content (style.css), so an overcommitted
+ * row now overflows instead of overlapping, and this walks the SAME ladder by
+ * measurement: level k adds `tb-fit-1..k` to .topbar, one step at a time,
+ * until nothing overflows (or the ladder is exhausted). Each pass starts from
+ * level 0, so a window made wider (or a pill made shorter) gives space back.
+ * Classes only ever hide MORE than the media queries do, so the no-script
+ * baseline is unchanged.
+ *
+ * Overflow is read from the items' own boxes (the right edge of the last
+ * visible <li> against its row's content edge), never scrollWidth: an open
+ * popover inside the row must not count as the row being too wide.
+ *
+ * No loop: the observer watches childList/characterData under the bar and
+ * the <html> font-size/class attributes; the fit writes CLASSES on .topbar
+ * itself, which it does not observe.
+ */
+window.TopbarFit = (function () {
+    'use strict';
+    var MAX = 11;          // 1..5 = the media ladder; 6..10 = past it; 11 = wrap (the floor)
+    function bar() { return document.querySelector('.topbar'); }
+    function rowOverflow(ul) {
+        var r = ul.getBoundingClientRect();
+        if (!r.width) return 0;
+        var cs = window.getComputedStyle(ul);
+        var bw = (cs.borderRightStyle && cs.borderRightStyle !== 'none') ? (parseFloat(cs.borderRightWidth) || 0) : 0;
+        var edge = r.right - (parseFloat(cs.paddingRight) || 0) - bw;
+        var far = r.left;
+        var lis = ul.children;
+        for (var i = 0; i < lis.length; i++) {
+            var k = lis[i].getBoundingClientRect();
+            if (k.width > 0 && k.height > 0 && k.right > far) far = k.right;
+        }
+        return far - edge;
+    }
+    function overflowing(tb) {
+        var rows = tb.querySelectorAll(':scope > nav > ul');
+        for (var i = 0; i < rows.length; i++) {
+            if (rowOverflow(rows[i]) > 0.5) return true;
+        }
+        return false;
+    }
+    var api = { level: 0, overflowing: overflowing };
+    function fit() {
+        var tb = bar();
+        if (!tb) return 0;
+        if (document.documentElement.classList.contains('topbar-hidden')) return api.level;
+        var level = 0;
+        for (var n = 1; n <= MAX; n++) tb.classList.remove('tb-fit-' + n);
+        while (level < MAX && api.overflowing(tb)) {
+            level++;
+            tb.classList.add('tb-fit-' + level);
+        }
+        api.level = level;
+        tb.setAttribute('data-fit', String(level));
+        return level;
+    }
+    var _soon = 0;
+    function fitSoon() {
+        if (_soon) return;
+        var raf = window.requestAnimationFrame || function (f) { return setTimeout(f, 16); };
+        _soon = raf(function () { _soon = 0; fit(); }) || 1;
+    }
+    function start() {
+        fit();
+        window.addEventListener('resize', fitSoon);
+        document.addEventListener('htmx:afterSettle', fitSoon);
+        if (window.MutationObserver) {
+            try {
+                var tb = bar();
+                if (tb) new MutationObserver(fitSoon).observe(tb, { childList: true, subtree: true, characterData: true });
+                new MutationObserver(fitSoon).observe(document.documentElement,
+                    { attributes: true, attributeFilter: ['data-font-size', 'class'] });
+            } catch (e) { /* older engine: resize / swaps still refit */ }
+        }
+        // web fonts landing late change every width
+        try { if (document.fonts && document.fonts.ready) document.fonts.ready.then(fitSoon); } catch (e) {}
+    }
+    if (document.readyState === 'loading') {
+        document.addEventListener('DOMContentLoaded', start);
+    } else {
+        start();
+    }
+    api.fit = fit;
+    api.fitSoon = fitSoon;
+    return api;
 })();
 
 /* ── hx-on without eval (docs/120 item 27) ────────────────────────────────
