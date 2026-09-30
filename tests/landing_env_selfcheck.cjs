@@ -8,10 +8,16 @@
  *      until its probe says the QM stack is there; a missing stack keeps it
  *      disabled and says what is missing; the env in use is marked;
  *   3. Use posts /qualibrate/project-env through htmx (project, python,
- *      how=changed) into THAT card's env row, and closes the picker;
+ *      how=changed) into THAT card's env row; the picker STAYS on screen
+ *      (customer 2026-09-30: it is the landing's env list, above the cards);
  *   4. a typed path is probed, and the RESOLVED interpreter is what is saved;
- *   5. a slow answer for a picker that was closed / re-opened never renders;
- *   6. Escape closes it;
+ *   5. a slow answer for a picker re-targeted to another project never renders;
+ *   6. Escape drops a pending required-open (its note), never the picker;
+ *   8. customer 2026-09-30: the picker boots on screen for the default project;
+ *      an Open refused for want of an env (sm-env-required, or ?choose_env=
+ *      from another surface) shows the picker for THAT project with the
+ *      reason, and the pick re-submits that project's landing Open form;
+ *      a merely SUGGESTED env is not "In use" -- it still says Use this.
  *   7. an env selected ELSEWHERE (POST /generate/select-env from Generate
  *      Config / the Runner) re-fetches the sidebar badge slot, so it never
  *      names the previous env; a refused selection does not; the caller gets
@@ -33,17 +39,22 @@ async function until(f, ms) { const t0 = Date.now(); while (!f() && Date.now() -
 const HTML = '<!doctype html><body>' +
   '<div id="sidebar-folder-badges-slot"><a class="project-env-badge">env A</a></div>' +
   '<div class="landing-card"><div class="landing-card-env" data-project="alpha">env <code>A</code>' +
-  '<button type="button" data-env-change="alpha" data-env-current="C:\\envs\\A\\python.exe">Change…</button></div></div>' +
-  '<div class="landing-card"><div class="landing-card-env" data-project="beta">env <em>none</em>' +
-  '<button type="button" data-env-change="beta" data-env-current="">Choose…</button></div></div>' +
-  '<section id="landing-env-picker" hidden><strong><span data-env-project></span></strong>' +
-  '<button data-env-rescan>Rescan</button><button data-env-close>x</button>' +
+  '<button type="button" data-env-change="alpha" data-env-current="C:\\envs\\A\\python.exe" data-env-state="remembered">Change…</button></div></div>' +
+  '<div class="landing-card"><div class="landing-card-env" data-project="beta">env <code>A</code> suggested' +
+  '<button type="button" data-env-change="beta" data-env-current="C:\\envs\\A\\python.exe" data-env-state="suggested">Change…</button></div>' +
+  '<form class="landing-card-open" hx-post="/qualibrate/open"><input type="hidden" name="project" value="beta">' +
+  '<input type="hidden" name="from" value="landing"><button type="submit">Open</button></form></div>' +
+  '<section id="landing-env-picker" DEFAULT><strong><span data-env-project></span></strong>' +
+  '<button data-env-rescan>Rescan</button>' +
+  '<p data-env-required hidden></p>' +
   '<p data-env-loading>Discovering environments…</p><div data-env-list></div>' +
   '<input data-env-custom><button data-env-use>Use</button><span data-env-custom-status></span></section></body>';
 
 function world(opts) {
   opts = opts || {};
-  const dom = new JSDOM(HTML, { runScripts: 'outside-only', pretendToBeVisual: true, url: 'http://127.0.0.1/' });
+  const html = HTML.replace('DEFAULT', opts.dflt ? 'data-env-default="' + opts.dflt + '"' : '');
+  const dom = new JSDOM(html, { runScripts: 'outside-only', pretendToBeVisual: true,
+                               url: 'http://127.0.0.1/' + (opts.query || '') });
   const w = dom.window;
   const log = [];
   const hold = {};
@@ -79,8 +90,13 @@ function world(opts) {
   };
   const posts = [];
   w.htmx = { ajax: function (verb, url, o) { posts.push({ verb, url, o }); return Promise.resolve(); } };
+  const submits = [];
+  w.document.addEventListener('submit', function (e) {
+    e.preventDefault();
+    submits.push(e.target.querySelector('input[name="project"]').value);
+  });
   w.eval(SRC);
-  return { w, d: w.document, log, posts, hold };
+  return { w, d: w.document, log, posts, hold, submits };
 }
 function click(W, sel) { W.d.querySelector(sel).dispatchEvent(new W.w.MouseEvent('click', { bubbles: true })); }
 
@@ -116,7 +132,9 @@ function click(W, sel) { W.d.querySelector(sel).dispatchEvent(new W.w.MouseEvent
        && p.o.target === W.d.querySelector('.landing-card-env[data-project="alpha"]') && p.o.swap === 'innerHTML',
        'Use posts the pick into THAT card\'s env row through htmx');
     await tick(10);
-    ok(pk.hidden, 'the picker closes after the pick');
+    ok(!pk.hidden && W.d.querySelector('[data-env-project]').textContent === 'alpha',
+       'the picker stays on screen after the pick');
+    ok(W.submits.length === 0, 'a plain pick opens nothing');
   }
   // 4: a typed path
   {
@@ -133,17 +151,50 @@ function click(W, sel) { W.d.querySelector(sel).dispatchEvent(new W.w.MouseEvent
     const W = world({ slowEnvs: true });
     click(W, '[data-env-change="alpha"]');
     await until(() => W.hold.envs);
-    click(W, '[data-env-close]');
-    W.hold.envs();
+    const first = W.hold.envs; W.hold.envs = null;
+    click(W, '[data-env-change="beta"]');
+    first();
     await tick(30);
-    ok(W.d.querySelectorAll('.landing-env-row').length === 0, 'an answer for a closed picker never renders');
+    ok(W.d.querySelectorAll('.landing-env-row').length === 0, 'an answer for a re-targeted picker never renders');
   }
-  // 6: Escape
+  // 6: Escape drops a pending required-open, never the picker
   {
     const W = world();
-    click(W, '[data-env-change="alpha"]');
+    W.w.LandingEnv.openRequired('beta', 'Choose the Python environment for beta first.');
+    const note = W.d.querySelector('[data-env-required]');
+    ok(!note.hidden, 'the required note is shown');
     W.d.dispatchEvent(new W.w.KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
-    ok(W.d.getElementById('landing-env-picker').hidden, 'Escape closes the picker');
+    ok(note.hidden && !W.d.getElementById('landing-env-picker').hidden,
+       'Escape drops the pending open; the picker stays');
+  }
+  // 8: boot, required-open, suggested
+  {
+    const W = world({ dflt: 'alpha' });
+    await until(() => W.d.querySelectorAll('.landing-env-row').length === 3);
+    ok(W.d.querySelector('[data-env-project]').textContent === 'alpha' && W.log[0] === '/generate/envs',
+       'the picker boots on screen for the default project');
+    // an Open of beta refused in place: the server fires sm-env-required
+    W.d.querySelector('.landing-card-open').dispatchEvent(new W.w.CustomEvent('sm-env-required',
+      { bubbles: true, detail: { project: 'beta', message: 'Choose the Python environment for beta first.' } }));
+    const note = W.d.querySelector('[data-env-required]');
+    ok(W.d.querySelector('[data-env-project]').textContent === 'beta' && !note.hidden
+       && /beta first/.test(note.textContent), 'a refused Open shows the picker for THAT project, with the reason');
+    await until(() => { const r = W.d.querySelectorAll('.landing-env-row'); return r.length === 3 && !r[0].querySelector('button').disabled; });
+    const rows = W.d.querySelectorAll('.landing-env-row');
+    ok(rows[0].querySelector('button').textContent === 'Use this (suggested)' && rows[0].classList.contains('selected'),
+       'a SUGGESTED env is marked but still says Use this (it is not chosen yet)');
+    rows[0].querySelector('button').dispatchEvent(new W.w.MouseEvent('click', { bubbles: true }));
+    await until(() => W.submits.length);
+    ok(W.posts[0] && W.posts[0].o.values.project === 'beta' && W.posts[0].o.values.python === 'C:\\envs\\A\\python.exe',
+       'the pick saves beta\'s env');
+    ok(W.submits.join() === 'beta', 'then re-submits beta\'s landing Open form');
+    ok(note.hidden, 'the required note is gone after the pick');
+  }
+  {
+    const W = world({ dflt: 'alpha', query: '?landing=1&choose_env=beta' });
+    await tick(20);
+    ok(W.d.querySelector('[data-env-project]').textContent === 'beta'
+       && !W.d.querySelector('[data-env-required]').hidden, '?choose_env= boots the required picker for that project');
   }
   // 7: an env selected elsewhere refreshes the badge
   {

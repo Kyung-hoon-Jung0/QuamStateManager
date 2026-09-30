@@ -3,7 +3,7 @@
  *
  * Each project card carries an env row (_landing_project_env.html): the env
  * the project was synced with, or the suggested one with a Confirm button.
- * "Change..." / "Choose..." opens ONE inline picker under the cards -- the
+ * "Change..." / "Choose..." retargets ONE inline picker above the cards -- the
  * same discovery Generate Config uses (GET /generate/envs: conda envs +
  * uv/venv found through the qualibrate projects; GET /generate/probe per env;
  * a typed interpreter or venv folder). Nothing here is fetched until the user
@@ -20,6 +20,8 @@
 
     var _seq = 0;            // a newer open / rescan supersedes older answers
     var _project = null;
+    var _pendingOpen = null; // customer 2026-09-30: an Open refused for want of
+                             // an env; re-submitted once the pick is saved
 
     function picker() { return document.getElementById('landing-env-picker'); }
     function q(root, sel) { return root ? root.querySelector(sel) : null; }
@@ -32,11 +34,22 @@
         return null;
     }
 
+    /* The picker stays on screen (customer 2026-09-30); "close" only drops
+       a pending required-open and its note. */
     function close() {
-        var pk = picker();
-        if (pk) pk.hidden = true;
-        _project = null;
-        _seq++;
+        _pendingOpen = null;
+        var note = q(picker(), '[data-env-required]');
+        if (note) { note.hidden = true; note.textContent = ''; }
+    }
+
+    function openFormFor(project) {
+        var forms = document.querySelectorAll('form[hx-post="/qualibrate/open"]');
+        for (var i = 0; i < forms.length; i++) {
+            var inp = forms[i].querySelector('input[name="project"]');
+            var from = forms[i].querySelector('input[name="from"]');
+            if (inp && inp.value === project && from && from.value === 'landing') return forms[i];
+        }
+        return null;
     }
 
     function pick(python) {
@@ -45,7 +58,18 @@
         if (!project || !target || !python) return;
         var status = q(picker(), '[data-env-custom-status]');
         if (status) status.textContent = 'saving…';
-        var done = function () { close(); };
+        var done = function () {
+            var pk = picker();
+            if (pk) pk.setAttribute('data-env-current', python);
+            if (status) status.textContent = '';
+            var again = _pendingOpen === project ? openFormFor(project) : null;
+            close();
+            if (again) {
+                if (again.requestSubmit) again.requestSubmit(); else again.submit();
+            } else {
+                open(project, python, null, { noScroll: true });   // re-mark the row in use
+            }
+        };
         if (window.htmx && htmx.ajax) {
             htmx.ajax('POST', '/qualibrate/project-env', {
                 target: target, swap: 'innerHTML',
@@ -101,6 +125,9 @@
             row.setAttribute('role', 'option');
             row.setAttribute('data-python', env.python);
             var isCur = current && env.python && env.python.toLowerCase() === current.toLowerCase();
+            // a merely SUGGESTED env is not chosen yet: its button must still
+            // say "Use this" and save it (customer 2026-09-30)
+            var chosen = isCur && (pk.getAttribute('data-env-state') === 'remembered');
             if (isCur) { row.classList.add('selected'); row.setAttribute('aria-selected', 'true'); }
             var name = document.createElement('span'); name.className = 'landing-env-name'; name.textContent = env.name;
             row.appendChild(name);
@@ -114,8 +141,8 @@
             st.setAttribute('data-state', 'checking'); st.textContent = 'checking…';
             row.appendChild(st);
             var btn = document.createElement('button');
-            btn.type = 'button'; btn.className = 'btn-sm' + (isCur ? ' outline' : '');
-            btn.textContent = isCur ? 'In use' : 'Use this';
+            btn.type = 'button'; btn.className = 'btn-sm' + (chosen ? ' outline' : '');
+            btn.textContent = chosen ? 'In use' : (isCur ? 'Use this (suggested)' : 'Use this');
             btn.disabled = true;           // until its probe says the QM stack is there
             btn.addEventListener('click', function () { pick(env.python); });
             row.appendChild(btn);
@@ -143,19 +170,66 @@
             });
     }
 
-    function open(project, current, anchor) {
+    function open(project, current, anchor, opts) {
         var pk = picker();
         if (!pk) return;
+        opts = opts || {};
+        if (!opts.keepPending) close();
         _project = project;
         pk.setAttribute('data-env-current', current || '');
+        var chg = rowFor(project);
+        chg = chg && chg.querySelector('[data-env-change]');
+        var st0 = (chg && chg.getAttribute('data-env-state')) || 'none';
+        if (opts.state) st0 = opts.state;
+        pk.setAttribute('data-env-state', st0);
         var nm = q(pk, '[data-env-project]');
         if (nm) nm.textContent = project;
         var st = q(pk, '[data-env-custom-status]');
         if (st) st.textContent = '';
         pk.hidden = false;
-        try { pk.scrollIntoView({ block: 'nearest' }); } catch (e) { /* old engine */ }
+        if (!opts.noScroll) {
+            try { pk.scrollIntoView({ block: 'nearest' }); } catch (e) { /* old engine */ }
+        }
         load(false);
     }
+
+    /* Opening *project* was refused for want of an env: show the picker for
+       it with the reason; the pick re-submits the open. */
+    function openRequired(project, message) {
+        var chg = rowFor(project);
+        chg = chg && chg.querySelector('[data-env-change]');
+        open(project, chg ? chg.getAttribute('data-env-current') : '', null, { keepPending: true, noScroll: true });
+        _pendingOpen = project;
+        var note = q(picker(), '[data-env-required]');
+        if (note) {
+            note.textContent = (message || ('Choose the Python environment for ' + project + ' first.')) +
+                ' The project opens as soon as you pick one.';
+            note.hidden = false;
+        }
+        try { picker().scrollIntoView({ block: 'start' }); } catch (e) { /* old engine */ }
+    }
+
+    /* The picker is on screen from the start, for the default project (or
+       the one a refused open elsewhere sent here via ?choose_env=). */
+    function boot() {
+        var pk = picker();
+        if (!pk || pk.getAttribute('data-env-booted')) return;
+        pk.setAttribute('data-env-booted', '1');
+        var want = null;
+        try { want = new URLSearchParams(location.search).get('choose_env'); } catch (e) { want = null; }
+        if (want && rowFor(want)) { openRequired(want); return; }
+        var def = pk.getAttribute('data-env-default');
+        if (!def || !rowFor(def)) return;
+        var chg = rowFor(def).querySelector('[data-env-change]');
+        open(def, chg ? chg.getAttribute('data-env-current') : '', null, { noScroll: true });
+    }
+    document.addEventListener('htmx:afterSettle', boot);
+    if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', boot);
+    else boot();
+    document.addEventListener('sm-env-required', function (e) {
+        var d = (e && e.detail) || {};
+        if (d.project) openRequired(d.project, d.message);
+    });
 
     function useCustom() {
         var pk = picker();
@@ -191,7 +265,7 @@
     document.addEventListener('keydown', function (e) {
         var pk = picker();
         if (!pk || pk.hidden) return;
-        if (e.key === 'Escape') { close(); return; }
+        if (e.key === 'Escape' && _pendingOpen) { close(); return; }
         if (e.key === 'Enter' && e.target && e.target.matches && e.target.matches('[data-env-custom]')) {
             e.preventDefault(); useCustom();
         }
@@ -233,5 +307,6 @@
     }
 
     window.LandingEnv = { open: open, close: close, pick: pick, _load: load,
+                          openRequired: openRequired, _boot: boot,
                           _refreshBadge: refreshBadge };
 })();

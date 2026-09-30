@@ -209,14 +209,57 @@ class TestOpening:
         assert lab["seen"]["caps"] == caps
         assert lab["seen"]["discover"] == 0 and lab["seen"]["probe"] == 0
 
-    def test_a_never_synced_project_opens_with_the_suggestion_unconfirmed(self, lab):
+    def test_a_never_synced_project_does_not_open(self, lab):
+        """Customer 2026-09-30: a project used to open with the SUGGESTED env
+        (the one used most recently) without asking. It now opens only with
+        an env the user chose for it -- nothing is activated or selected."""
         project_env.remember(lab["inst"], "alpha", lab["A"])
         config_generator.set_selected_env(str(lab["inst"]), lab["B"])
-        lab["c"].post("/qualibrate/open", data={"project": "beta"})
-        assert os.path.normcase(_selected(lab)) == os.path.normcase(lab["A"])
-        assert project_env.remembered(lab["inst"], "beta") is None       # not confirmed
+        r = lab["c"].post("/qualibrate/open", data={"project": "beta"})
+        assert r.status_code == 302 and "choose_env=beta" in r.headers["Location"]
+        assert os.path.normcase(_selected(lab)) == os.path.normcase(lab["B"])
+        assert lab["seen"]["apply"] == []
+        with lab["app"].test_request_context("/"):
+            assert routes._active_ctx() is None                      # no chip opened
+        assert project_env.remembered(lab["inst"], "beta") is None
         row = _card_env(lab["c"].get("/landing/projects").get_data(as_text=True), "beta")
         assert "suggested" in row
+
+    def test_the_landing_is_answered_in_place(self, lab):
+        r = lab["c"].post("/qualibrate/open", data={"project": "beta", "from": "landing"},
+                          headers={"HX-Request": "true"})
+        assert r.status_code == 200 and r.headers.get("HX-Reswap") == "none"
+        trig = json.loads(r.headers["HX-Trigger"])["sm-env-required"]
+        assert trig["project"] == "beta" and "beta" in trig["message"]
+        with lab["app"].test_request_context("/"):
+            assert routes._active_ctx() is None
+
+    def test_another_surface_is_sent_to_the_landing_picker(self, lab):
+        r = lab["c"].post("/qualibrate/open", data={"project": "beta"},
+                          headers={"HX-Request": "true"})
+        assert r.headers.get("HX-Redirect") == "/?landing=1&choose_env=beta"
+
+    def test_a_picked_env_rides_along_and_opens(self, lab):
+        config_generator.set_selected_env(str(lab["inst"]), lab["A"])
+        r = lab["c"].post("/qualibrate/open", data={"project": "beta", "python": lab["B"]})
+        assert r.status_code == 302 and r.headers["Location"].endswith("/qubits")
+        assert project_env.remembered(lab["inst"], "beta") == lab["B"]
+        assert os.path.normcase(_selected(lab)) == os.path.normcase(lab["B"])
+
+    def test_a_vanished_remembered_env_does_not_open(self, lab):
+        gone = str(lab["tmp"] / "envs" / "GONE" / "python.exe")
+        project_env.remember(lab["inst"], "alpha", gone)
+        r = lab["c"].post("/qualibrate/open", data={"project": "alpha", "from": "landing"},
+                          headers={"HX-Request": "true"})
+        assert "no longer exists" in json.loads(r.headers["HX-Trigger"])["sm-env-required"]["message"]
+        with lab["app"].test_request_context("/"):
+            assert routes._active_ctx() is None
+
+    def test_a_state_load_needs_no_env(self, lab):
+        r = lab["c"].post("/load", data={"folder": str(lab["tmp"] / "chips" / "b")})
+        assert r.status_code in (200, 302)
+        with lab["app"].test_request_context("/"):
+            assert routes._active_ctx() is not None
 
     def test_a_vanished_env_is_not_selected_and_the_card_says_so(self, lab):
         gone = str(lab["tmp"] / "envs" / "GONE" / "python.exe")
@@ -250,7 +293,7 @@ class TestOpening:
                             lambda ctx, inst: bound.append(ctx.get("path")) or real(ctx, inst))
         project_env.remember(lab["inst"], "alpha", lab["A"])
         lab["c"].post("/qualibrate/open", data={"project": "alpha"})
-        lab["c"].post("/qualibrate/open", data={"project": "beta"})
+        lab["c"].post("/qualibrate/open", data={"project": "beta", "python": lab["A"]})
         lab["c"].post("/qualibrate/project-env",          # alpha is not open
                       data={"project": "alpha", "python": lab["B"], "how": "changed"})
         bound.clear()
@@ -293,7 +336,9 @@ class TestOpening:
         with lab["app"].test_request_context("/"):
             b = routes._qualibrate_tray_badge()
         assert b["env"]["state"] == "remembered" and b["env"]["label"] == "ENV_A"
-        lab["c"].post("/qualibrate/open", data={"project": "beta"})
+        # a never-synced project no longer OPENS (customer 2026-09-30); its
+        # folder viewed through State Load still carries its scope
+        lab["c"].post("/load", data={"folder": str(lab["tmp"] / "chips" / "b")})
         with lab["app"].test_request_context("/"):
             b = routes._qualibrate_tray_badge()
         assert b["env"]["state"] == "suggested"

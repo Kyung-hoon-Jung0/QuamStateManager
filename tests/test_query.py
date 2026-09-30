@@ -1006,3 +1006,51 @@ class TestNotFoundListsIdsNaturally:
         with pytest.raises(KeyError) as exc:
             self._engine(tmp_path).get_pair("qZZ-ZZ")
         assert ("['q1-2', 'q2-3', 'q9-10', 'q10-11']") in str(exc.value)
+
+
+# ---------------------------------------------------------------------------
+# Operation ALIASES (customer report 2026-09-30): a QUAM operations map stores
+# ``"readout": "#./readout_square"`` -- a sibling pointer, not a dict. Chip
+# Status (/topology, /api/topology) called ``.get`` on that string and 500'd,
+# which also broke the Qubits page's chip map. Every reader must follow the
+# alias to the pulse it names (the value QUAM itself uses), never crash.
+# ---------------------------------------------------------------------------
+
+
+class TestOperationAliases:
+    @staticmethod
+    def _aliased(folder: Path) -> QueryEngine:
+        p = folder / "state.json"
+        state = json.loads(p.read_text(encoding="utf-8"))
+        q = state["qubits"]["qA1"]
+        ops = q["resonator"]["operations"]
+        ops["readout_square"] = ops.pop("readout")
+        ops["readout"] = "#./readout_square"
+        xy = q["xy"]["operations"]
+        xy["x180_Custom"] = xy.pop("x180_DragCosine")
+        xy["x180_DragCosine"] = "#./x180_Custom"          # an alias one hop on
+        xy["saturation"] = "#./nowhere"                    # a dangling alias
+        p.write_text(json.dumps(state), encoding="utf-8")
+        return QueryEngine(QuamStore(folder))
+
+    def test_topology_follows_the_alias(self, synthetic_folder):
+        node = {n["id"]: n for n in self._aliased(synthetic_folder).get_topology()["nodes"]}["qA1"]
+        assert node["readout_amplitude"] == 0.042 and node["readout_length"] == 1000
+        assert node["x180_amplitude"] == 0.115
+        assert node["saturation_amplitude"] is None        # dangling: blank, not a crash
+
+    def test_get_qubit_and_wiring_map_follow_it_too(self, synthetic_folder):
+        eng = self._aliased(synthetic_folder)
+        q = eng.get_qubit("qA1")
+        assert q["readout_amplitude"] == 0.042 and q["x180_amplitude"] == 0.115
+        eng.get_wiring_map()                                # used to raise too
+
+    def test_an_alias_cycle_is_blank(self, synthetic_folder):
+        p = synthetic_folder / "state.json"
+        state = json.loads(p.read_text(encoding="utf-8"))
+        ops = state["qubits"]["qA1"]["resonator"]["operations"]
+        ops["readout"] = "#./ro_b"
+        ops["ro_b"] = "#./readout"
+        p.write_text(json.dumps(state), encoding="utf-8")
+        node = QueryEngine(QuamStore(synthetic_folder)).get_topology()["nodes"][0]
+        assert node["readout_amplitude"] is None

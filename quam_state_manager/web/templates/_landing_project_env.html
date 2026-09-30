@@ -21,7 +21,7 @@
 <span class="landing-env-ok" title="Remembered for this project — opening it selects this environment; nothing is re-discovered or re-probed">&#10003;</span>
 {%- endif %}
 <button type="button" class="btn-sm outline landing-env-change"
-        data-env-change="{{ p.name }}" data-env-current="{{ pe.python or '' }}"
+        data-env-change="{{ p.name }}" data-env-current="{{ pe.python or '' }}" data-env-state="{{ pe.state if pe.exists else 'none' }}"
         title="Pick the Python environment {{ p.name }} runs with (conda, uv/venv, or a path)">{{ 'Choose…' if pe.state == 'none' else 'Change…' }}</button>
 {%- if env_saved %}
 <span class="landing-env-saved muted" role="status">{{ 'confirmed' if env_saved == 'confirmed' else 'saved' }}</span>
