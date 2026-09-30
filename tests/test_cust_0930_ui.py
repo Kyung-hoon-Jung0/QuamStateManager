@@ -200,3 +200,22 @@ def test_the_sidebar_poll_pauses_only_while_typing():
     assert "window.__sbFilterKeyAt = Date.now()" in base
     assert re.search(r"document\.activeElement === _fi\s*&& \(Date\.now\(\) - \(window\.__sbFilterKeyAt \|\| 0\)\) < 5000\) return;",
                      base), "the poll may pause on focus alone again"
+
+
+# ------------------- docs/233: the before->after chip never outlives the mark
+def test_the_chip_only_shows_on_a_modified_cell():
+    rules = dict(_css_rules(CSS.read_text(encoding="utf-8")))
+    assert re.search(r"display\s*:\s*block",
+                     rules.get(".bulk-td.bulk-ba-show:has(.bulk-cell-modified) .bulk-ba", "")), \
+        "the chip may show on a cell that is no longer modified (Auto-Sync applied it)"
+    assert ".bulk-td.bulk-ba-show .bulk-ba" not in rules, "an unguarded show rule is back"
+
+
+@pytest.mark.skipif(shutil.which("node") is None, reason="node not on PATH")
+@pytest.mark.parametrize("name", ["bulk_markup_selfcheck.cjs", "pending_markers_selfcheck.cjs"])
+def test_chip_selfchecks(name):
+    r = subprocess.run(["node", str(ROOT / "tests" / name)], capture_output=True, text=True,
+                       encoding="utf-8", cwd=str(ROOT), timeout=180)
+    if "Cannot find module 'jsdom'" in (r.stderr or ""):
+        pytest.skip("jsdom not installed")
+    assert r.returncode == 0 and "FAIL" not in (r.stdout + r.stderr), r.stdout[-2000:] + r.stderr[-2000:]

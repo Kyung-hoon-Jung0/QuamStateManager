@@ -1874,6 +1874,11 @@
     function _hoverBA(e, show) {
         var td = e.target.closest && e.target.closest('.bulk-td');
         if (!td) return;
+        // docs/233 (customer 2026-09-30): leaving ALWAYS hides. The hide
+        // used to be gated on the cell still being modified -- with Auto-Sync
+        // the edit is applied (and unmarked) while the pointer is still on the
+        // cell, the mouseout returned early, and the chip stayed forever.
+        if (!show) { td.classList.remove('bulk-ba-show'); return; }
         var cell = td.querySelector('.bulk-cell');
         if (!cell || !cell.classList.contains('bulk-cell-modified')) return;
         if (show) _ensureBA(td, cell);

@@ -10381,7 +10381,9 @@ tr.bulk-row-pinned > th, tr.bulk-row-pinned > td { background: color-mix(in srgb
 /* On dark (the default), define the popover edge with a brighter border since a
    dark drop-shadow is invisible. */
 [data-theme="dark"] .bulk-ba { border-color: var(--pico-contrast); box-shadow: 0 2px 10px rgba(0,0,0,0.6); }
-.bulk-td.bulk-ba-show .bulk-ba { display: block; }
+/* docs/233: only a MODIFIED cell has a before->after -- whatever path unmarks
+   it (Apply, Auto-Sync, Undo, a sync) the chip goes with the mark */
+.bulk-td.bulk-ba-show:has(.bulk-cell-modified) .bulk-ba { display: block; }
 .bulk-ba-old { color: var(--pico-muted-color); }
 .bulk-ba-new { color: var(--color-error-text); font-weight: 600; }
 

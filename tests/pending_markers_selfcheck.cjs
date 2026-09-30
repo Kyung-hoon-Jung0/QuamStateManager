@@ -19,7 +19,7 @@ function ok(c, m) { if (!c) { console.error('FAIL: ' + m); fails++; } else { con
 
 const dom = new JSDOM('<!doctype html><html><body>'
     + '<div id="pending-tray" data-change-count="2"></div>'
-    + '<table><tr><td class="bulk-td">'
+    + '<table><tr><td class="bulk-td bulk-ba-show">'
     + '<input class="bulk-cell bulk-cell-modified" data-dot-path="qubits.q1.T1" data-baseline="1e-05" value="2e-05">'
     + '<span class="bulk-ba-old">1e-05</span></td>'
     + '<td class="bulk-td"><input class="bulk-cell bulk-cell-modified dirty" data-dot-path="qubits.q1.T2" value="3e-05"></td>'
@@ -69,6 +69,10 @@ ok(d.querySelectorAll('input.dirty').length === 2,
 const cell1 = d.querySelector('input[data-dot-path="qubits.q1.T1"]');
 ok(!cell1.hasAttribute('data-baseline'), 'the before/after baseline is retired');
 ok(d.querySelector('.bulk-ba-old').textContent === '', 'the Δ old-value line empties');
+// docs/233 (customer 2026-09-30): a chip SHOWN when the apply lands (the pointer
+// was on the cell -- Auto-Sync applies at once) must go with the mark, or it
+// stays on screen with an empty "before" forever
+ok(!d.querySelector('td.bulk-ba-show'), 'a shown before/after chip is hidden with the mark');
 
 // 3. a conflict tray (no count attr) never clears
 cell1.classList.add('bulk-cell-modified');

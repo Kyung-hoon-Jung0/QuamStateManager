@@ -19913,6 +19913,7 @@ window.PendingMarkers = (function () {
             var td = c.closest('.bulk-td');
             var old = td && td.querySelector('.bulk-ba-old');
             if (old) old.textContent = '';
+            if (td) td.classList.remove('bulk-ba-show');       // docs/233
         });
         document.querySelectorAll('.tree-row-pending').forEach(function (r) {
             r.classList.remove('tree-row-pending');
@@ -19934,6 +19935,7 @@ window.PendingMarkers = (function () {
                 var td = c.closest('.bulk-td');
                 var old = td && td.querySelector('.bulk-ba-old');
                 if (old) old.textContent = '';
+                if (td) td.classList.remove('bulk-ba-show');   // docs/233: no chip for an unmarked cell
             });
         });
     }
