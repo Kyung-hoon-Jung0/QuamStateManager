@@ -180,3 +180,21 @@ def _isolate_env_discovery_cache():
     config_generator.reset_env_discovery_cache()
     yield
     config_generator.reset_env_discovery_cache()
+
+
+@pytest.fixture
+def any_project_env_chosen(monkeypatch):
+    """Opening a qualibrate project needs an env the user chose for it
+    (customer 2026-09-30, /qualibrate/open). Tests about the project SCOPE,
+    listing or landing -- not about envs -- opt in here: every project counts
+    as synced with this interpreter, and selecting it touches nothing (no
+    probe, no lab worker). The env gate itself is pinned in
+    tests/test_project_env.py without this fixture."""
+    import sys
+
+    from quam_state_manager.core import project_env
+    from quam_state_manager.web import routes
+
+    monkeypatch.setattr(project_env, "remembered",
+                        lambda inst, project: sys.executable if project else None)
+    monkeypatch.setattr(routes, "_select_project_env", lambda name: False)

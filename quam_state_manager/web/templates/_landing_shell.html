@@ -55,6 +55,7 @@
     <form method="post" action="{{ root }}/qualibrate/open" hx-post="{{ root }}/qualibrate/open" hx-target="#table-pane"
           class="landing-current-project">
         <input type="hidden" name="project" value="{{ active_project }}">
+        <input type="hidden" name="from" value="landing">
         <button type="submit" class="btn-sm landing-current-btn"
                 title="load the chip QUAlibrate's active project points at, then the Agent home opens">
             Open QUAlibrate's current project: {{ active_project }}</button>

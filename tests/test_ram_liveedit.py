@@ -474,6 +474,7 @@ def _subnav_views(app):
     return v(full), v(lite), full.get("config_exists"), lite.get("config_exists")
 
 
+@pytest.mark.usefixtures("any_project_env_chosen")   # opening needs a chosen env
 def test_the_submenu_equals_the_full_listing_and_reads_no_toml(tmp_path, monkeypatch):
     from tests.test_qualibrate_routes import _tree
     from quam_state_manager.core import qualibrate_config as QC

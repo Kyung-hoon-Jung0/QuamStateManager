@@ -6397,6 +6397,29 @@ def qualibrate_open_project():
                      "in qualibrate first (see the Doctor panel)."),
             level="error"), 409
 
+    # Customer feedback 2026-09-30: a PROJECT opens only with an env the user
+    # chose for it. It used to open silently with the "suggested" one (the
+    # env used most recently by any project), so a lab could run its whole
+    # session in the wrong conda env without ever being asked. A picked env
+    # rides along as ``python`` (the landing picker's "Use & open");
+    # otherwise the project needs a remembered env that still exists. A plain
+    # State Load (/load) stays env-free -- only viewing a state.
+    from quam_state_manager.core import project_env
+    inst = current_app.instance_path
+    picked = _unquote_path(request.form.get("python"))
+    if picked:
+        python_path = config_generator.resolve_python_interpreter(picked)
+        if not python_path:
+            return render_template(
+                "_status.html", level="error",
+                message=(f"No Python interpreter at: {picked}. Point at the "
+                         "interpreter file or a venv folder.")), 400
+        project_env.remember(inst, name, python_path, "changed")
+    else:
+        rem = project_env.remembered(inst, name)
+        if not rem or not os.path.isfile(rem):
+            return _env_required_response(name, rem)
+
     env_changed = _select_project_env(name)
     try:
         opened = _activate_quam(state["native"])
@@ -6500,6 +6523,29 @@ def _bind_to_selected_env(ctx, inst) -> None:
     lab-worker pre-warm needs nothing: it reads the env when it runs."""
     _attach_type_policy(ctx, inst)
     _warm_state_schema_async(ctx.get("store"), inst, live_folder=ctx.get("path"))
+
+
+def _env_required_response(name: str, missing: str | None):
+    """/qualibrate/open refused: project *name* has no chosen env (or the
+    remembered one is gone). The landing handles it in place -- a 200 that
+    swaps nothing and fires ``sm-env-required``, so landing-env.js opens the
+    picker for that project and re-submits the open after the pick. Any
+    other surface (sidebar Projects, the Config Manager page, a plain form
+    post) is sent to the landing with the picker already open there."""
+    msg = (f"Choose the Python environment for {name} first"
+           + (f" -- {missing} no longer exists." if missing else "."))
+    if _is_htmx() and request.form.get("from") == "landing":
+        resp = make_response("")
+        resp.headers["HX-Reswap"] = "none"
+        resp.headers["HX-Trigger"] = json.dumps(
+            {"sm-env-required": {"project": name, "message": msg}})
+        return resp
+    target = url_for("main.home", landing=1, choose_env=name)
+    if _is_htmx():
+        resp = make_response("")
+        resp.headers["HX-Redirect"] = target
+        return resp
+    return redirect(target)
 
 
 def _select_project_env(name: str) -> bool:

@@ -16,6 +16,10 @@ from pathlib import Path
 
 import pytest
 
+# /qualibrate/open needs a chosen env (customer 2026-09-30); this file is
+# about scope/listing, not envs -- see tests/conftest.py.
+pytestmark = pytest.mark.usefixtures("any_project_env_chosen")
+
 from quam_state_manager.web.app import create_app
 from tests._prefix import PREFIX
 

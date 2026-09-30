@@ -180,22 +180,22 @@ class QueryEngine:
         result["xy_RF_frequency"] = _resolve(self.store, xy.get("RF_frequency"), base + ("xy", "RF_frequency"))
         result["xy_intermediate_frequency"] = _resolve(self.store, xy.get("intermediate_frequency"), base + ("xy", "intermediate_frequency"))
 
-        x180 = _get_nested(xy, "operations", "x180_DragCosine") or {}
+        x180 = _op_dict(xy, "x180_DragCosine")
         result["x180_amplitude"] = _resolve(self.store, x180.get("amplitude"), base + ("xy", "operations", "x180_DragCosine", "amplitude"))
         result["x180_length"] = _resolve(self.store, x180.get("length"), base + ("xy", "operations", "x180_DragCosine", "length"))
         result["x180_alpha"] = _resolve(self.store, x180.get("alpha"), base + ("xy", "operations", "x180_DragCosine", "alpha"))
 
-        x90 = _get_nested(xy, "operations", "x90_DragCosine") or {}
+        x90 = _op_dict(xy, "x90_DragCosine")
         result["x90_amplitude"] = _resolve(self.store, x90.get("amplitude"), base + ("xy", "operations", "x90_DragCosine", "amplitude"))
 
-        sat = _get_nested(xy, "operations", "saturation") or {}
+        sat = _op_dict(xy, "saturation")
         result["saturation_amplitude"] = sat.get("amplitude")
 
         rr = q.get("resonator") or {}
         result["readout_frequency"] = _resolve(self.store, rr.get("f_01"), base + ("resonator", "f_01"))
         result["readout_RF_frequency"] = _resolve(self.store, rr.get("RF_frequency"), base + ("resonator", "RF_frequency"))
 
-        ro = _get_nested(rr, "operations", "readout") or {}
+        ro = _op_dict(rr, "readout")
         result["readout_amplitude"] = ro.get("amplitude")
         result["readout_length"] = ro.get("length")
         result["readout_threshold"] = ro.get("threshold")
@@ -696,11 +696,11 @@ class QueryEngine:
             # falls back only when the key is missing, not when it's None; a
             # null z used to AttributeError → 500 the whole topology.
             xy = q.get("xy") or {}
-            x180 = _get_nested(xy, "operations", "x180_DragCosine") or {}
-            x90 = _get_nested(xy, "operations", "x90_DragCosine") or {}
-            sat = _get_nested(xy, "operations", "saturation") or {}
+            x180 = _op_dict(xy, "x180_DragCosine")
+            x90 = _op_dict(xy, "x90_DragCosine")
+            sat = _op_dict(xy, "saturation")
             rr = q.get("resonator") or {}
-            ro = _get_nested(rr, "operations", "readout") or {}
+            ro = _op_dict(rr, "readout")
 
             z = q.get("z") or {}
             gf = q.get("gate_fidelity") or {}
@@ -1048,10 +1048,10 @@ class QueryEngine:
             # subsequent .get() on None crashed the whole diagram → blank rack.
             q = (root.get("qubits") or {}).get(qname) or {}
             xy = q.get("xy") or {}
-            x180 = _get_nested(xy, "operations", "x180_DragCosine") or {}
-            sat = _get_nested(xy, "operations", "saturation") or {}
+            x180 = _op_dict(xy, "x180_DragCosine")
+            sat = _op_dict(xy, "saturation")
             rr = q.get("resonator") or {}
-            ro = _get_nested(rr, "operations", "readout") or {}
+            ro = _op_dict(rr, "readout")
             z = q.get("z") or {}
 
             xy_ref = _get_nested(qw, "xy", "opx_output")
@@ -1836,6 +1836,30 @@ def _pair_qubit_ref(store: QuamStore, raw: Any, path_tuple: tuple[str, ...]) -> 
     if isinstance(raw, str) and "/" in raw:
         return raw.split("/")[-1]
     return raw
+
+
+def _op_dict(channel: Any, name: str) -> dict:
+    """The operation *name* of a channel as a dict, following aliases.
+
+    A QUAM operations map stores aliases as sibling pointers --
+    ``"readout": "#./readout_square"``, ``"x180": "#./x180_DragCosine"``
+    (``#./`` = relative to the operations dict itself). Every reader that did
+    ``_get_nested(ch, "operations", name) or {}`` then ``.get(..)`` crashed
+    on such an alias (a str) -- a readout alias took Chip Status down with a
+    500 (customer report 2026-09-30). Follows ``#./`` siblings for up to 8
+    hops; anything else (absolute pointer, dangling, cycle, non-dict) is
+    ``{}`` -- blank fields, never a crash and never a guessed value.
+    """
+    ops = channel.get("operations") if isinstance(channel, dict) else None
+    if not isinstance(ops, dict):
+        return {}
+    val = ops.get(name)
+    for _ in range(8):
+        if isinstance(val, str) and val.startswith("#./"):
+            val = ops.get(val[3:])
+            continue
+        break
+    return val if isinstance(val, dict) else {}
 
 
 def _get_nested(obj: Any, *keys: str) -> Any:
