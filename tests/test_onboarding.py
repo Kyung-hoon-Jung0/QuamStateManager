@@ -82,10 +82,11 @@ class TestTrayTeaching:
         assert client.post("/load", data={"folder": str(live)}).status_code in (200, 302)
         html = client.get("/state/tray").data.decode("utf-8")
         assert "tray-teach" not in html          # the band never renders
-        assert "How this works" in html          # ...but the words survive,
-        assert "state-status-badge" in html      # inside the badge's title
-        i = html.index("state-status-badge")
-        assert "How this works" in html[i - 2000:i + 2000]
+        assert "state-status-badge" in html      # ...but the teaching survives
+        i = html.index("state-status-badge")     # inside the badge's title
+        # docs/231 compacted the wording ("How this works: ..." -> one line);
+        # what it must still TEACH: edits are private until Apply to live
+        assert "private working copy until Apply to live" in html[i - 2000:i + 2000]
         assert "Apply to live" in html
         assert "Revert last apply" in html       # still says it is reversible
 

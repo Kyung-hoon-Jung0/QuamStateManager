@@ -3781,7 +3781,7 @@ window.SyncStale = (function () {
         }
         sub.textContent = "live now " + v;
         sub.title = "The live chip holds " + v + " for " + p + "; this cell shows an older value. "
-            + "The sync status in the top bar offers ↓ Take live · 라이브 칩 값이 다릅니다";
+            + "The sync status in the top bar offers ↓ Take live";
     }
     function unmark(td) {
         td.classList.remove("cell-live-stale");
@@ -6396,9 +6396,14 @@ window.PhysAmp = (function () {
             ['Live State Edit — the Qubits grid', ''],
             ['Tab / Shift+Tab', 'hop between edit cells'],
             ['Shift+click / Ctrl+click', 'select a range / toggle cells in ONE column'],
+            ['Ctrl+Shift+↑ / ↓', 'extend the selection one row (same column)'],
             ['Ctrl+D', 'fill selection from the anchor cell'],
             ['Ctrl+V (multi-line)', 'paste a column downward'],
             ['Ctrl+Enter', 'Apply all (when armed)'],
+            ['Json tree (Live edit)', ''],
+            ['Ctrl+D', 'select this field, then the same field of the next entity'],
+            ['Ctrl+Shift+L', 'select that field in every entity'],
+            ['Ctrl+H', 'multi-edit by path pattern (* = any one level)'],
             ['Datasets', ''],
             ['j / k', 'move through runs'],
             ['Enter / Space', 'open / select the active run'],
@@ -11964,6 +11969,11 @@ window.clearDetailPanelSearch = function(btnEl) {
     // The tree's own value formatter, for in-place leaf patches after a sync
     // pull (LiveSurfacePatch) — one formatting rule, not a second copy.
     window._treeFormatValue = _formatValue;
+    // docs/235: the Json-tree multi-edit (TreeMulti, below) paints and judges
+    // leaves with the SAME helpers the single-value editor uses
+    window._paintTreeLeaf = _paintTreeLeaf;
+    window._treePolicyReadOnly = _policyReadOnly;
+    window._treeIsPointer = _isPointer;
     window.renderJsonTree = function(containerId, data, options) {
         var container = document.getElementById(containerId);
         if (!container) return;
@@ -12158,6 +12168,443 @@ window.clearDetailPanelSearch = function(btnEl) {
             if (c) _searchTree(c, query);
         }, 200);
     };
+})();
+
+/* ── Json tree multi-edit: Ctrl+D · Ctrl+Shift+L · Ctrl+H (docs/235) ─────
+ *
+ * Customer 2026-09-30: "VS Code 처럼 다중선택 + 일괄적용" on the Json tree.
+ * Not a text editor's feature copied letter for letter -- the tree is data:
+ *
+ *  - Ctrl+D on a leaf selects it; each further Ctrl+D adds the SAME field of
+ *    the next entity (qA1 ... amplitude -> qA2 ... amplitude), in natural
+ *    order. Ctrl+Shift+L selects every one. The entity segment is found from
+ *    the data: the outermost level whose siblings (at least two) all carry
+ *    the rest of the path.
+ *  - Ctrl+H opens the same panel on a PATH PATTERN (`*` = one segment), e.g.
+ *    qubits.*.xy.operations.x180_DragCosine.amplitude. No text find/replace:
+ *    rewriting digits inside values is how a number becomes a string or a
+ *    pointer stops pointing.
+ *
+ * One panel applies one input to every selected field: an absolute value, or
+ * arithmetic on numbers (*1.1 /2 +5e6 -1e6 +10%), previewed per row BEFORE
+ * anything is written, then ONE atomic /field/edit-batch -- one Review group,
+ * one Ctrl+Z. Rows the single editor would treat specially are left out, each
+ * with its reason: pointers (edit the target), read-only fields, the FSP
+ * field (its amplitude-compensation offer is per field), and -- for
+ * arithmetic -- anything that is not a number.
+ *
+ * Data-driven (container._treeData), so fields in collapsed branches are
+ * selected too; rows on screen carry a tint.
+ */
+window.TreeMulti = (function () {
+    'use strict';
+    var st = null;      // {tree, pattern, occ:[paths], sel:[paths], last}
+
+    function segsOf(p) { return String(p).split('.'); }
+    function isObj(v) { return v !== null && typeof v === 'object'; }
+    function childKeys(v) {
+        if (Array.isArray(v)) return v.map(function (_, i) { return String(i); });
+        return isObj(v) ? Object.keys(v) : [];
+    }
+    function child(v, k) {
+        if (Array.isArray(v)) return /^[0-9]+$/.test(k) ? v[Number(k)] : undefined;
+        return isObj(v) ? v[k] : undefined;
+    }
+    function getPath(root, segs) {
+        var cur = root;
+        for (var i = 0; i < segs.length; i++) {
+            if (!isObj(cur)) return undefined;
+            cur = child(cur, segs[i]);
+        }
+        return cur;
+    }
+    function isLeaf(v) { return v === null || !isObj(v); }
+    function natCmp(a, b) {
+        return String(a).localeCompare(String(b), undefined, { numeric: true, sensitivity: 'base' });
+    }
+
+    // the path with its ENTITY segment replaced by '*': the outermost level
+    // where at least two siblings carry the rest of the path as a leaf
+    function generalize(root, path) {
+        var segs = segsOf(path);
+        for (var i = 0; i < segs.length - 1; i++) {
+            var parent = getPath(root, segs.slice(0, i));
+            var keys = childKeys(parent);
+            if (keys.length < 2) continue;
+            var rest = segs.slice(i + 1), n = 0;
+            for (var k = 0; k < keys.length && n < 2; k++) {
+                var v = getPath(child(parent, keys[k]), rest);
+                if (v !== undefined && isLeaf(v)) n++;
+            }
+            if (n >= 2) {
+                var g = segs.slice(); g[i] = '*';
+                return g.join('.');
+            }
+        }
+        return path;
+    }
+
+    // every LEAF path matching a pattern (`*` = exactly one segment), natural order
+    function expand(root, pattern) {
+        var segs = segsOf(pattern), out = [];
+        (function walk(v, i, acc) {
+            if (i === segs.length) { if (v !== undefined && isLeaf(v)) out.push(acc.join('.')); return; }
+            if (!isObj(v)) return;
+            var s = segs[i];
+            if (s === '*') {
+                childKeys(v).sort(natCmp).forEach(function (k) { walk(child(v, k), i + 1, acc.concat(k)); });
+            } else {
+                var c = child(v, s);
+                if (c !== undefined) walk(c, i + 1, acc.concat(s));
+            }
+        })(root, 0, []);
+        return out;
+    }
+
+    function valueAt(tree, path) { return getPath(tree._treeData, segsOf(path)); }
+
+    // why a field is left out, or null
+    function skipReason(tree, path, value, arith) {
+        if (window._treeIsPointer && window._treeIsPointer(value)) return 'pointer — edit its target';
+        var ro = window._treePolicyReadOnly && window._treePolicyReadOnly(path);
+        if (ro) return ro;
+        if (/(^|\.)full_scale_power_dbm$/.test(path)) return 'FSP — use its own editor (amplitude offer)';
+        if (arith && typeof value !== 'number') return 'not a number';
+        return null;
+    }
+
+    // "*1.1" "/2" "+5e6" "-1e6" "+10%" -> fn(x), or null for an absolute value
+    var ARITH = /^\s*([*/+-])\s*([0-9.]+(?:e[+-]?[0-9]+)?)\s*(%?)\s*$/i;
+    function arithOf(txt) {
+        var m = ARITH.exec(txt || '');
+        if (!m) return null;
+        var k = parseFloat(m[2]);
+        if (!isFinite(k)) return null;
+        var pct = !!m[3], op = m[1];
+        if (pct && (op === '*' || op === '/')) return null;
+        return function (x) {
+            if (pct) return x * (1 + (op === '-' ? -k : k) / 100);
+            if (op === '*') return x * k;
+            if (op === '/') return k === 0 ? NaN : x / k;
+            if (op === '+') return x + k;
+            return x - k;
+        };
+    }
+    // a computed number as the text the server's parse_value reads back as
+    // the same number: 15 significant digits (float noise dropped), plain
+    function numText(x, wasInt) {
+        if (!isFinite(x)) return null;
+        var r = Number(x.toPrecision(15));
+        if (wasInt && Math.abs(r - Math.round(r)) < 1e-9) r = Math.round(r);
+        return String(r);
+    }
+
+    // ── panel ────────────────────────────────────────────────────────────
+    function el(tag, cls, txt) {
+        var e = document.createElement(tag);
+        if (cls) e.className = cls;
+        if (txt != null) e.textContent = txt;
+        return e;
+    }
+    function panel() {
+        var p = document.getElementById('tree-multi');
+        if (p) return p;
+        p = el('div', 'tree-multi');
+        p.id = 'tree-multi';
+        p.setAttribute('role', 'dialog');
+        p.setAttribute('aria-label', 'Edit several fields at once');
+        p.hidden = true;
+        var head = el('div', 'tree-multi-head');
+        head.appendChild(el('strong', 'tree-multi-title', 'Multi-edit'));
+        head.appendChild(el('span', 'tree-multi-count muted'));
+        var x = el('button', 'btn-xs outline tree-multi-close', '×');
+        x.type = 'button'; x.title = 'Close (Esc)'; x.setAttribute('aria-label', 'Close');
+        x.addEventListener('click', function () { clear(); });
+        head.appendChild(x);
+        p.appendChild(head);
+        var pr = el('label', 'tree-multi-pat');
+        pr.appendChild(el('span', 'muted', 'Path'));
+        var pat = el('input', 'tree-multi-pattern');
+        pat.type = 'text'; pat.spellcheck = false; pat.autocomplete = 'off';
+        pat.placeholder = 'qubits.*.xy.operations.x180_DragCosine.amplitude   (* = any one level)';
+        pat.addEventListener('input', function () { setPattern(pat.value.trim(), true); });
+        pr.appendChild(pat);
+        p.appendChild(pr);
+        p.appendChild(el('div', 'tree-multi-list'));
+        var foot = el('div', 'tree-multi-foot');
+        var inp = el('input', 'tree-multi-value');
+        inp.type = 'text'; inp.spellcheck = false; inp.autocomplete = 'off';
+        inp.placeholder = 'new value, or *1.1  /2  +5e6  -1e6  +10%';
+        inp.addEventListener('input', preview);
+        inp.addEventListener('keydown', function (e) {
+            if (e.key === 'Enter') { e.preventDefault(); apply(); }
+        });
+        foot.appendChild(inp);
+        var go = el('button', 'btn-sm tree-multi-apply', 'Apply');
+        go.type = 'button'; go.disabled = true;
+        go.addEventListener('click', apply);
+        foot.appendChild(go);
+        foot.appendChild(el('span', 'tree-multi-msg muted'));
+        p.appendChild(foot);
+        document.body.appendChild(p);
+        return p;
+    }
+    function q(sel) { return panel().querySelector(sel); }
+
+    function paintMarks() {
+        watch();
+        document.querySelectorAll('.tree-row.tree-row-multi').forEach(function (r) { r.classList.remove('tree-row-multi'); });
+        if (!st) return;
+        st.sel.forEach(function (p) {
+            var nd = null;
+            try { nd = st.tree.querySelector('.tree-node[data-path="' + (window.CSS && CSS.escape ? CSS.escape(p) : p) + '"]'); } catch (e) {}
+            var row = nd && nd.querySelector(':scope > .tree-row');
+            if (row) row.classList.add('tree-row-multi');
+        });
+    }
+
+    function rows() {
+        var txt = q('.tree-multi-value').value;
+        var fn = arithOf(txt);
+        return st.sel.map(function (p) {
+            var v = valueAt(st.tree, p);
+            var why = skipReason(st.tree, p, v, !!fn);
+            var nv = null;
+            if (!why && txt.trim() !== '') {
+                if (fn) {
+                    nv = numText(fn(v), Number.isInteger(v));
+                    if (nv === null) why = 'result is not a number';
+                } else {
+                    nv = txt.trim();
+                }
+            }
+            return { path: p, value: v, next: nv, skip: why };
+        });
+    }
+
+    function render() {
+        var p = panel();
+        var list = q('.tree-multi-list');
+        list.innerHTML = '';
+        var fmt = window._treeFormatValue || String;
+        var rs = rows();
+        var star = segsOf(st.pattern).indexOf('*');
+        rs.forEach(function (r) {
+            var li = el('div', 'tree-multi-row' + (r.skip ? ' tree-multi-skip' : ''));
+            var name = segsOf(r.path);
+            li.appendChild(el('span', 'tree-multi-ent', star >= 0 ? name[star] : r.path));
+            li.appendChild(el('span', 'tree-multi-old', fmt(r.value)));
+            if (r.skip) li.appendChild(el('span', 'tree-multi-why muted', r.skip));
+            else if (r.next !== null) {
+                li.appendChild(el('span', 'tree-multi-arrow', '→'));
+                li.appendChild(el('span', 'tree-multi-new', fmt(isNaN(Number(r.next)) ? r.next : Number(r.next))));
+                if (window.ValueDelta && typeof r.value === 'number') {
+                    var d = el('span', 'tree-multi-delta');
+                    try { window.ValueDelta.paint(d, String(r.value), r.next); } catch (e) {}
+                    li.appendChild(d);
+                }
+            }
+            li.title = r.path;
+            list.appendChild(li);
+        });
+        var live = rs.filter(function (r) { return !r.skip; }).length;
+        q('.tree-multi-count').textContent = st.sel.length + ' field' + (st.sel.length === 1 ? '' : 's')
+            + (st.sel.length < st.occ.length ? ' of ' + st.occ.length + ' (Ctrl+D adds the next, Ctrl+Shift+L all)' : '')
+            + (live < st.sel.length ? ' · ' + (st.sel.length - live) + ' left out' : '');
+        var ready = rs.some(function (r) { return !r.skip && r.next !== null; });
+        q('.tree-multi-apply').disabled = !ready;
+        q('.tree-multi-apply').textContent = ready
+            ? 'Apply to ' + rs.filter(function (r) { return !r.skip && r.next !== null; }).length : 'Apply';
+        p.hidden = false;
+        paintMarks();
+    }
+    function preview() { if (st) render(); }
+
+    function setPattern(pattern, fromInput) {
+        var tree = (st && st.tree) || activeTree();
+        if (!tree || !tree._treeData) return;
+        var occ = pattern ? expand(tree._treeData, pattern) : [];
+        st = { tree: tree, pattern: pattern, occ: occ, sel: occ.slice(), last: occ.length - 1 };
+        if (!fromInput) q('.tree-multi-pattern').value = pattern;
+        q('.tree-multi-msg').textContent = pattern && !occ.length ? 'no field matches' : '';
+        render();
+    }
+
+    function activeTree() {
+        var a = document.activeElement;
+        var t = a && a.closest && a.closest('.json-tree');
+        if (t && t._crudEnabled) return t;
+        var all = document.querySelectorAll('.json-tree');
+        for (var i = 0; i < all.length; i++) {
+            if (all[i]._crudEnabled && all[i].offsetParent) return all[i];
+        }
+        return null;
+    }
+    var _lastNode = null;       // the row last clicked (a mouse user's "cursor")
+    document.addEventListener('mousedown', function (e) {
+        var nd = e.target && e.target.closest && e.target.closest('.json-tree .tree-node');
+        if (nd) _lastNode = nd;
+    }, true);
+    function focusedLeaf() {
+        var a = document.activeElement;
+        var nd = a && a.closest && a.closest('.tree-node');
+        if (!nd && _lastNode && _lastNode.isConnected
+                && (!a || a === document.body || (a.closest && a.closest('.json-tree')))) nd = _lastNode;
+        var tree = nd && nd.closest('.json-tree');
+        if (!nd || !tree || !tree._crudEnabled) return null;
+        var p = nd.getAttribute('data-path');
+        var v = p != null ? getPath(tree._treeData, segsOf(p)) : undefined;
+        return (p && v !== undefined && isLeaf(v)) ? { tree: tree, path: p } : null;
+    }
+
+    // Ctrl+D: this leaf, then the same field of the next entity
+    function addNext() {
+        var f = focusedLeaf();
+        if (!st || !f || st.tree !== f.tree || st.occ.indexOf(f.path) < 0 || st.pattern === f.path) {
+            if (!f) return false;
+            var pat = generalize(f.tree._treeData, f.path);
+            var occ = expand(f.tree._treeData, pat);
+            st = { tree: f.tree, pattern: pat, occ: occ, sel: [f.path], last: occ.indexOf(f.path) };
+            q('.tree-multi-pattern').value = pat;
+            q('.tree-multi-msg').textContent = pat === f.path ? 'this field has no counterpart in another entity' : '';
+            render();
+            return true;
+        }
+        for (var i = 1; i <= st.occ.length; i++) {
+            var cand = st.occ[(st.last + i) % st.occ.length];
+            if (st.sel.indexOf(cand) < 0) {
+                st.sel.push(cand);
+                st.last = st.occ.indexOf(cand);
+                render();
+                return true;
+            }
+        }
+        q('.tree-multi-msg').textContent = 'all ' + st.occ.length + ' selected';
+        return true;
+    }
+    function selectAll() {
+        var f = focusedLeaf();
+        if (!st && f) addNext();
+        if (!st) return false;
+        st.sel = st.occ.slice();
+        render();
+        return true;
+    }
+    function openPattern() {
+        var f = focusedLeaf();
+        var tree = (f && f.tree) || (st && st.tree) || activeTree();
+        if (!tree) return false;
+        if (!st) {
+            var pat = f ? generalize(tree._treeData, f.path) : '';
+            st = { tree: tree, pattern: pat, occ: [], sel: [], last: -1 };
+            setPattern(pat);
+        } else {
+            render();
+        }
+        var pi = q('.tree-multi-pattern');
+        pi.focus(); pi.select();
+        return true;
+    }
+
+    function clear() {
+        st = null;
+        var p = document.getElementById('tree-multi');
+        if (p) {
+            p.hidden = true;
+            p.querySelector('.tree-multi-value').value = '';
+            p.querySelector('.tree-multi-msg').textContent = '';
+        }
+        paintMarks();
+    }
+
+    function apply() {
+        if (!st) return;
+        var rs = rows().filter(function (r) { return !r.skip && r.next !== null; });
+        if (!rs.length) return;
+        var go = q('.tree-multi-apply');
+        go.disabled = true;
+        var msg = q('.tree-multi-msg');
+        msg.textContent = 'applying…';
+        var tree = st.tree;
+        window.fetch('/field/edit-batch', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                updates: rs.map(function (r) { return { dot_path: r.path, value: r.next }; }),
+                group: 'new',
+                expect_chip: window.__chipToken || ''
+            })
+        }).then(function (r) { return r.json(); }).then(function (d) {
+            if (d && d.tray_html && window._swapPendingTray) {
+                window._swapPendingTray(d.tray_html);
+                if (window._restoreTrayState) window._restoreTrayState();
+            }
+            var res = (d && Array.isArray(d.results)) ? d.results : [];
+            if (!d || !d.ok) {
+                var bad = res.filter(function (r) { return r && r.error && !/^rolled back/.test(r.error); })[0];
+                msg.textContent = 'nothing written — ' + ((bad && (bad.dot_path + ': ' + bad.error))
+                    || (d && d.error) || 'the server refused the batch');
+                go.disabled = false;
+                return;
+            }
+            res.forEach(function (r) {
+                if (r && r.applied && window._paintTreeLeaf) {
+                    window._paintTreeLeaf(tree, r.dot_path, r.new_value);
+                    if (r.resolved_path && r.resolved_path !== r.dot_path) {
+                        window._paintTreeLeaf(tree, r.resolved_path, r.new_value);
+                    }
+                }
+            });
+            var n = res.filter(function (r) { return r && r.applied; }).length;
+            if (window.showToast) window.showToast(n + ' field' + (n === 1 ? '' : 's') + ' changed — Ctrl+Z undoes them together', 'success');
+            clear();
+        }).catch(function () {
+            msg.textContent = 'could not reach the server — nothing written';
+            go.disabled = false;
+        });
+    }
+
+    // keys: only inside an editable tree (or this panel), never elsewhere --
+    // Ctrl+D / Ctrl+H stay the browser's on every other surface
+    document.addEventListener('keydown', function (e) {
+        var inPanel = e.target && e.target.closest && e.target.closest('#tree-multi');
+        if (e.key === 'Escape' && st && (inPanel || focusedLeaf())) { clear(); return; }
+        if (!(e.ctrlKey || e.metaKey) || e.altKey) return;
+        var k = (e.key || '').toLowerCase();
+        if (k !== 'd' && k !== 'h' && k !== 'l') return;
+        var inTree = !!focusedLeaf() || !!(e.target && e.target.closest && e.target.closest('.json-tree'));
+        if (!inTree && !inPanel) return;
+        var done = false;
+        if (k === 'd' && !e.shiftKey) done = addNext();
+        else if (k === 'l' && e.shiftKey) done = selectAll();
+        else if (k === 'h' && !e.shiftKey) done = openPattern();
+        if (done) e.preventDefault();
+    }, true);
+
+    // rows built later (a branch expanded) carry the tint too -- watched on
+    // the selected tree only, and only while there is a selection
+    var _mo = null, _moTree = null;
+    function watch() {
+        if (!window.MutationObserver) return;
+        var t = st && st.tree;
+        if (t === _moTree) return;
+        if (_mo) { _mo.disconnect(); _mo = null; }
+        _moTree = t;
+        if (!t) return;
+        try {
+            _mo = new MutationObserver(function (recs) {
+                for (var i = 0; i < recs.length; i++) {
+                    if (recs[i].addedNodes && recs[i].addedNodes.length) { paintMarks(); return; }
+                }
+            });
+            _mo.observe(t, { childList: true, subtree: true });
+        } catch (e) { _mo = null; }
+    }
+
+    return { generalize: generalize, expand: expand, arithOf: arithOf, numText: numText,
+             addNext: addNext, selectAll: selectAll, openPattern: openPattern,
+             setPattern: setPattern, clear: clear, apply: apply,
+             state: function () { return st; } };
 })();
 
 /* ------------------------------------------------------------------ */
@@ -19931,6 +20378,7 @@ window.PendingMarkers = (function () {
             var td = c.closest('.bulk-td');
             var old = td && td.querySelector('.bulk-ba-old');
             if (old) old.textContent = '';
+            if (td) td.classList.remove('bulk-ba-show');       // docs/233
         });
         document.querySelectorAll('.tree-row-pending').forEach(function (r) {
             r.classList.remove('tree-row-pending');
@@ -19952,6 +20400,7 @@ window.PendingMarkers = (function () {
                 var td = c.closest('.bulk-td');
                 var old = td && td.querySelector('.bulk-ba-old');
                 if (old) old.textContent = '';
+                if (td) td.classList.remove('bulk-ba-show');   // docs/233: no chip for an unmarked cell
             });
         });
     }
@@ -24718,6 +25167,104 @@ window.TopbarHold = (function () {
         start();
     }
     return { release: release, held: function () { return _hold; } };
+})();
+
+/* ── the top bar fits its CONTENT, not the window (docs/231) ──────────────
+ *
+ * Customer, 2026-09-30: in the Sync-Qualibrate frame, with the L text size
+ * and a "Live chip changed · 42 values" pill, the title "QUAM State Manager"
+ * was painted over the ⌗ link and the pill. The left group is one nowrap row
+ * (sync-ux 2026-09-25) whose width ladder -- what gives way first -- is
+ * written as @media queries on the WINDOW width. What has to fit is the
+ * content, and the content varies (pill text, project name, text size,
+ * a frame narrower than the window's own breakpoints assume). Measured in real
+ * Chrome at 1150 and 1600 px: 41-58 px of overlap.
+ *
+ * Items no longer shrink below their content (style.css), so an overcommitted
+ * row now overflows instead of overlapping, and this walks the SAME ladder by
+ * measurement: level k adds `tb-fit-1..k` to .topbar, one step at a time,
+ * until nothing overflows (or the ladder is exhausted). Each pass starts from
+ * level 0, so a window made wider (or a pill made shorter) gives space back.
+ * Classes only ever hide MORE than the media queries do, so the no-script
+ * baseline is unchanged.
+ *
+ * Overflow is read from the items' own boxes (the right edge of the last
+ * visible <li> against its row's content edge), never scrollWidth: an open
+ * popover inside the row must not count as the row being too wide.
+ *
+ * No loop: the observer watches childList/characterData under the bar and
+ * the <html> font-size/class attributes; the fit writes CLASSES on .topbar
+ * itself, which it does not observe.
+ */
+window.TopbarFit = (function () {
+    'use strict';
+    var MAX = 11;          // 1..5 = the media ladder; 6..10 = past it; 11 = wrap (the floor)
+    function bar() { return document.querySelector('.topbar'); }
+    function rowOverflow(ul) {
+        var r = ul.getBoundingClientRect();
+        if (!r.width) return 0;
+        var cs = window.getComputedStyle(ul);
+        var bw = (cs.borderRightStyle && cs.borderRightStyle !== 'none') ? (parseFloat(cs.borderRightWidth) || 0) : 0;
+        var edge = r.right - (parseFloat(cs.paddingRight) || 0) - bw;
+        var far = r.left;
+        var lis = ul.children;
+        for (var i = 0; i < lis.length; i++) {
+            var k = lis[i].getBoundingClientRect();
+            if (k.width > 0 && k.height > 0 && k.right > far) far = k.right;
+        }
+        return far - edge;
+    }
+    function overflowing(tb) {
+        var rows = tb.querySelectorAll(':scope > nav > ul');
+        for (var i = 0; i < rows.length; i++) {
+            if (rowOverflow(rows[i]) > 0.5) return true;
+        }
+        return false;
+    }
+    var api = { level: 0, overflowing: overflowing };
+    function fit() {
+        var tb = bar();
+        if (!tb) return 0;
+        if (document.documentElement.classList.contains('topbar-hidden')) return api.level;
+        var level = 0;
+        for (var n = 1; n <= MAX; n++) tb.classList.remove('tb-fit-' + n);
+        while (level < MAX && api.overflowing(tb)) {
+            level++;
+            tb.classList.add('tb-fit-' + level);
+        }
+        api.level = level;
+        tb.setAttribute('data-fit', String(level));
+        return level;
+    }
+    var _soon = 0;
+    function fitSoon() {
+        if (_soon) return;
+        var raf = window.requestAnimationFrame || function (f) { return setTimeout(f, 16); };
+        _soon = raf(function () { _soon = 0; fit(); }) || 1;
+    }
+    function start() {
+        fit();
+        window.addEventListener('resize', fitSoon);
+        document.addEventListener('htmx:afterSettle', fitSoon);
+        if (window.MutationObserver) {
+            try {
+                var tb = bar();
+                if (tb) new MutationObserver(fitSoon).observe(tb, { childList: true, subtree: true, characterData: true });
+                new MutationObserver(fitSoon).observe(document.documentElement,
+                    { attributes: true, attributeFilter: ['data-font-size', 'class'] });
+            } catch (e) { /* older engine: resize / swaps still refit */ }
+        }
+        // web fonts landing late change every width
+        try { if (document.fonts && document.fonts.ready) document.fonts.ready.then(fitSoon); } catch (e) {}
+    }
+    if (document.readyState === 'loading') {
+        document.addEventListener('DOMContentLoaded', start);
+    } else {
+        start();
+    }
+    api.fit = fit;
+    api.fitSoon = fitSoon;
+    return api;
 })();
 
 /* ── hx-on without eval (docs/120 item 27) ────────────────────────────────

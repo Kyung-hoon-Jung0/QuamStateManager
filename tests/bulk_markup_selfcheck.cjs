@@ -108,6 +108,13 @@ function qubitGrid() {
   mouse(win, mod, 'mouseover');
   ok(tdMod.querySelectorAll('.bulk-ba').length === 1, 'a second hover re-uses the chip (never a duplicate)');
   mouse(win, mod, 'mouseout');
+  // docs/233 (customer 2026-09-30): Auto-Sync applies -- and UNMARKS -- the
+  // cell while the pointer is still on it; leaving must still hide the chip
+  mouse(win, mod, 'mouseover');
+  mod.classList.remove('bulk-cell-modified');
+  mouse(win, mod, 'mouseout');
+  ok(!tdMod.classList.contains('bulk-ba-show'), 'a cell unmarked under the pointer still loses its chip on mouseout');
+  mod.classList.add('bulk-cell-modified');
 
   const plain = doc.querySelector('[data-col-key="amp"] .bulk-cell');
   mouse(win, plain, 'mouseover');
@@ -170,6 +177,10 @@ function pairGrid() {
   mouse(win, mod, 'mouseout');
   mouse(win, mod, 'mouseover');
   ok(td.querySelectorAll('.bulk-ba').length === 1, 'pair grid: no duplicate on a second hover');
+  mod.classList.remove('bulk-cell-modified');          // docs/233: Auto-Sync unmarked it under the pointer
+  mouse(win, mod, 'mouseout');
+  ok(!td.classList.contains('bulk-ba-show'), 'pair grid: a cell unmarked under the pointer still loses its chip');
+  mod.classList.add('bulk-cell-modified');
   const plain = doc.querySelector('[data-col-key="det"] .bulk-cell');
   mouse(win, plain, 'mouseover');
   ok(plain.closest('.bulk-td').querySelectorAll('.bulk-ba').length === 0, 'pair grid: an unmodified cell gets no chip');

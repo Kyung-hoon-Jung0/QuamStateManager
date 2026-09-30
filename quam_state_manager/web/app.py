@@ -307,10 +307,38 @@ def default_instance_path() -> str | None:
     if getattr(sys, "frozen", False):
         return _user_data_dir()
     pkg_root = Path(__file__).resolve().parent.parent      # quam_state_manager/
-    repo_marker = pkg_root.parent / "pyproject.toml"
-    if repo_marker.exists():
+    if is_sm_checkout(pkg_root.parent / "pyproject.toml"):
         return None                                        # repo / editable dev
-    return _user_data_dir()
+    user = _user_data_dir()
+    # docs/232: an earlier SM in THIS env may have mistaken another package's
+    # pyproject.toml for a checkout and kept its state in <env>/var -- carry
+    # it over once (a single stat when there is nothing to move)
+    try:
+        from quam_state_manager.core import instance_migrate
+        instance_migrate.migrate_env_local(user)
+    except Exception:  # noqa: BLE001 -- never block startup
+        logging.getLogger(__name__).warning("instance move failed", exc_info=True)
+    return user
+
+
+def is_sm_checkout(pyproject: Path) -> bool:
+    """True only for SM's OWN ``pyproject.toml`` (docs/232).
+
+    Any ``pyproject.toml`` beside the package used to mean "repo checkout".
+    ``site-packages`` is not a checkout, yet a wheel can drop one there --
+    ``dash-bootstrap-components`` does, and the customer's conda env then
+    kept SM's state in ``<env>/var`` instead of the per-user folder."""
+    try:
+        text = Path(pyproject).read_text(encoding="utf-8")
+    except (OSError, UnicodeDecodeError):
+        return False
+    try:
+        import tomllib
+        name = (tomllib.loads(text).get("project") or {}).get("name") or ""
+    except Exception:  # noqa: BLE001 -- unparsable: read the [project] name by hand
+        m = re.search(r"""(?ms)^\[project\].*?^name\s*=\s*["']([^"']+)["']""", text)
+        name = m.group(1) if m else ""
+    return re.sub(r"[-_.]+", "-", name).lower() == "quam-state-manager"
 
 
 def _purge_test_leftovers(instance_path: str) -> None:

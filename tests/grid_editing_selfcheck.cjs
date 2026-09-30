@@ -103,6 +103,41 @@ function world(nRows, opts) {
   ok(win.BulkEdit._ge.selCells().length === 0, 'cross-column ranges are refused');
 }
 
+// ── docs/234: Ctrl+Shift+Up/Down extends the selection from the keyboard ─────
+{
+  const win = world(6);
+  const doc = win.document;
+  const cells = doc.querySelectorAll('td[data-col-key="amp"] .bulk-cell');
+  const kd = (el, key, mods) => {
+    const e = new win.KeyboardEvent('keydown', Object.assign({ key: key, bubbles: true, cancelable: true }, mods));
+    el.dispatchEvent(e);
+    return e;
+  };
+  cells[1].focus();
+  let e = kd(cells[1], 'ArrowDown', { ctrlKey: true, shiftKey: true });
+  ok(e.defaultPrevented, 'Ctrl+Shift+Down is taken by the grid (not the input)');
+  ok(win.BulkEdit._ge.selCells().length === 2 && doc.activeElement === cells[2],
+     'one press: the start cell + the one below, caret moved down');
+  kd(cells[2], 'ArrowDown', { ctrlKey: true, shiftKey: true });
+  kd(cells[3], 'ArrowDown', { ctrlKey: true, shiftKey: true });
+  const sel = win.BulkEdit._ge.selCells();
+  ok(sel.length === 4 && sel.every((td) => td.getAttribute('data-col-key') === 'amp'),
+     'three presses: four cells, all in the start column');
+  kd(cells[4], 'ArrowUp', { ctrlKey: true, shiftKey: true });
+  ok(win.BulkEdit._ge.selCells().length === 3 && doc.activeElement === cells[3],
+     'Ctrl+Shift+Up shrinks back toward the anchor');
+  cells[1].value = '0.7';
+  ok(win.BulkEdit._ge.fill() === 2 && cells[3].value === '0.7', 'Ctrl+D fills the keyboard selection');
+  // a plain arrow still just moves (no selection change)
+  const before = win.BulkEdit._ge.selCells().length;
+  kd(cells[3], 'ArrowDown', {});
+  ok(win.BulkEdit._ge.selCells().length === before, 'a plain Down arrow never selects');
+  // at the column edge nothing breaks
+  cells[5].focus();
+  kd(cells[5], 'ArrowDown', { ctrlKey: true, shiftKey: true });
+  ok(win.BulkEdit._ge.selCells().length === 1, 'at the last row the chord selects just the start cell');
+}
+
 // ── paste a column ──────────────────────────────────────────────────────────
 {
   const win = world(4);
