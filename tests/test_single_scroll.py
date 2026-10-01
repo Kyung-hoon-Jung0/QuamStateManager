@@ -119,7 +119,7 @@ class TestOneScroller:
         assert read < detach, \
             "the pane's scroll offsets must be read while it still has children"
         i = app.index("p.scrollLeft = e.scrollX || 0;")
-        j = app.index("paneRestored")
+        j = app.index("new CustomEvent('paneRestored'")   # the DISPATCH, not a listener
         assert i < j, "scrollLeft must be restored BEFORE the event the grid listens to"
         assert "document.addEventListener('paneRestored'" in JS, \
             "bulk-edit.js re-derives the bars when its pane comes back"

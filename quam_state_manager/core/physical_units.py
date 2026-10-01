@@ -77,8 +77,11 @@ def amp_annotation(merged: dict, amp_path: str, amp_value: Any,
         if amp_value == 0:
             return None            # no output — a fabricated "-inf dBm" helps no one
         dbm = float(fsp) + 20.0 * math.log10(abs(float(amp_value)))
+        # fsp_path (docs/238): WHERE the FSP lives, so a grid can follow an
+        # FSP edit to every amplitude on that port without asking twice
         return {"kind": "mw", "fsp": float(fsp), "dbm": dbm,
-                "text": f"{dbm:.1f} dBm"}
+                "text": f"{dbm:.1f} dBm",
+                "fsp_path": ft.get("resolved_path") or ""}
     # Not an MW port — LF (flux) if the channel's port resolves under
     # ports.analog_outputs; the amplitude is then literally volts.
     try:

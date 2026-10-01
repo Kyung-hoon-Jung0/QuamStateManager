@@ -6237,16 +6237,51 @@ window.PhysAmp = (function () {
                                b.getAttribute('data-phys-unit') === unit());
         });
     }
-    document.addEventListener('input', function (e) {
-        var t = e.target;
-        if (!t || !t.classList || !t.classList.contains('bulk-cell')) return;
+    // The FSP a cell's power reads: its port's FSP cell when that cell is on
+    // this page (its CURRENT text -- typed, pasted, repainted), else the FSP
+    // the server last named. One port, one number, whichever box shows it.
+    function _esc(s) { return (window.CSS && CSS.escape) ? CSS.escape(s) : s; }
+    function _fspOf(t) {
+        var fp = t.getAttribute('data-phys-fsp-path');
+        if (fp) {
+            var src = document.querySelector('input.bulk-cell[data-resolved="' + _esc(fp) + '"]');
+            if (src) {
+                var f = parseFloat(String(src.value).replace(/,/g, ''));
+                if (isFinite(f)) return f;
+            }
+        }
+        return parseFloat(t.getAttribute('data-phys-fsp'));
+    }
+    function _isFspCell(t) {
+        var r = t.getAttribute('data-resolved') || '';
+        return /\.full_scale_power_dbm$/.test(r);
+    }
+    // every amplitude cell whose power reads THIS FSP cell
+    function recomputeDependents(fspCell) {
+        var r = fspCell.getAttribute('data-resolved');
+        if (!r) return;
+        document.querySelectorAll('input.bulk-cell[data-phys-fsp-path="' + _esc(r) + '"]')
+            .forEach(recompute);
+    }
+    // The ONE recompute: the cell's CURRENT text with its port's FSP. Every
+    // path that changes either number ends here (typing, a grid repaint, and
+    // the server refresh below) so the sub-line can never read two moments.
+    function recompute(t) {
         var kind = t.getAttribute('data-phys-kind');
         if (!kind) return;
         var td = t.closest('td'); if (!td) return;
-        var el = td.querySelector('.bulk-phys'); if (!el) return;
+        var el = td.querySelector('.bulk-phys');
+        if (!el) {
+            // a cell rendered blank (amp 0, or no chain then) gets its line
+            // the moment it has something true to say
+            el = document.createElement('span');
+            el.className = 'bulk-phys';
+            el.setAttribute('aria-hidden', 'true');
+            td.appendChild(el);
+        }
         var v = parseFloat(String(t.value).replace(/,/g, ''));
         if (kind === 'mw') {
-            var fsp = parseFloat(t.getAttribute('data-phys-fsp'));
+            var fsp = _fspOf(t);
             if (isFinite(v) && isFinite(fsp) && v !== 0) {
                 paint(el, fsp + 20 * Math.log10(Math.abs(v)));
             } else {
@@ -6259,7 +6294,97 @@ window.PhysAmp = (function () {
                    : Number((v * 1e3).toPrecision(3)) + ' mV')
                 : '';
         }
+    }
+    document.addEventListener('input', function (e) {
+        var t = e.target;
+        if (!t || !t.classList || !t.classList.contains('bulk-cell')) return;
+        if (_isFspCell(t)) { recomputeDependents(t); return; }
+        recompute(t);
     }, true);
+    // An FSP box that changes WITHOUT an input event (Escape restoring it,
+    // a revert, a linked sibling mirrored) is caught when focus leaves it.
+    document.addEventListener('focusout', function (e) {
+        var t = e.target;
+        if (t && t.classList && t.classList.contains('bulk-cell') && _isFspCell(t)) {
+            setTimeout(function () { recomputeDependents(t); }, 0);
+        }
+    }, true);
+    // docs/238: the OTHER number. A cell's dBm also reads its port's FSP, and
+    // an FSP edit, a Json-tree or VS Code edit that reached the chip, or an
+    // Auto-Sync pull moves the chip without this cell's input ever firing.
+    // After every working-copy move (wc-moved.js, the one such signal) ask the
+    // server what each amplitude cell's chain reads NOW and recompute from it.
+    // A cell the user is mid-edit on keeps its text; only its FSP follows.
+    var _refreshSeq = 0;
+    function _ampCells(root) {
+        var out = [];
+        (root || document).querySelectorAll('input.bulk-cell[data-dot-path$=".amplitude"]')
+            .forEach(function (t) { out.push(t); });
+        return out;
+    }
+    function _setKind(t, ann) {
+        if (!ann) {
+            t.removeAttribute('data-phys-kind');
+            t.removeAttribute('data-phys-fsp');
+            t.removeAttribute('data-phys-fsp-path');
+            var td = t.closest('td');
+            var el = td && td.querySelector('.bulk-phys');
+            if (el) el.parentNode.removeChild(el);
+            return;
+        }
+        t.setAttribute('data-phys-kind', ann.kind);
+        if (ann.kind === 'mw') {
+            if (ann.fsp_path) t.setAttribute('data-phys-fsp-path', ann.fsp_path);
+            var f = String(ann.fsp);
+            if (t.getAttribute('data-phys-fsp') !== f) {
+                t.setAttribute('data-phys-fsp', f);
+                if (t.title) {
+                    t.title = t.title.replace(/P = FSP [^ ]+ dBm/, 'P = FSP ' + f + ' dBm');
+                }
+            }
+        } else {
+            t.removeAttribute('data-phys-fsp');
+            t.removeAttribute('data-phys-fsp-path');
+        }
+    }
+    function refresh() {
+        var cells = _ampCells(document);
+        if (!cells.length || !window.fetch) return Promise.resolve(null);
+        var paths = [];
+        cells.forEach(function (t) {
+            var p = t.getAttribute('data-dot-path');
+            if (paths.indexOf(p) < 0) paths.push(p);
+        });
+        var my = ++_refreshSeq;
+        return fetch('/bulk/phys', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ paths: paths, chip: window.__bulkChipKey || '' })
+        }).then(function (r) { return r.ok ? r.json() : null; })
+          .then(function (d) {
+            if (!d || !d.ok || my !== _refreshSeq) return null;   // a newer ask wins
+            var phys = d.phys || {};
+            _ampCells(document).forEach(function (t) {
+                var p = t.getAttribute('data-dot-path');
+                if (!Object.prototype.hasOwnProperty.call(phys, p)) return;
+                var ann = phys[p];
+                // The line is always the BOX's number with the port's FSP:
+                // a box the grid has not repainted yet never gets a power
+                // computed from a value it does not show.
+                _setKind(t, ann);
+                if (ann) recompute(t);
+            });
+            return d;
+        }).catch(function () { return null; });
+    }
+    var _refreshTimer = null;
+    function scheduleRefresh() {
+        if (_refreshTimer) clearTimeout(_refreshTimer);
+        _refreshTimer = setTimeout(function () { _refreshTimer = null; refresh(); }, 80);
+    }
+    document.addEventListener('sm:wc-moved', scheduleRefresh);
+    // a parked pane brought back by PaneState was drawn before the move
+    document.addEventListener('paneRestored', scheduleRefresh);
     // Fresh server fragments arrive in canonical dBm — reformat to the
     // viewer's unit on every swap (and once at load). The gate also matches
     // .phys-unit-label (audit): a P(·) column whose every row failed to
@@ -6293,7 +6418,8 @@ window.PhysAmp = (function () {
         });
     }
     return { unit: unit, setUnit: setUnit, applyAll: applyAll, paintWithin: paintWithin,
-             fmt: fmt, vrms: vrms };
+             fmt: fmt, vrms: vrms, recompute: recompute, refresh: refresh,
+             recomputeDependents: recomputeDependents };
 })();
 
 

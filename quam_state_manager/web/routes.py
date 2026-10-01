@@ -7908,6 +7908,56 @@ def _bulk_frag_body_locked(template, ctxv, q_ent, p_ent, x_ent, ctx):
     return _frag_splice(fc, html, pieces)
 
 
+@bp.route("/bulk/phys", methods=["POST"])
+def bulk_phys():
+    """docs/238 -- the physical-output sub-lines of the Live-Edit grid, NOW.
+
+    A cell's dBm reads TWO values: its own amplitude and its port's
+    ``full_scale_power_dbm``. The grid recomputed it only when the cell's own
+    input fired, from the FSP the page was rendered with, so an FSP edit, a
+    Json-tree / VS Code edit that reached the chip, or an Auto-Sync pull left
+    the sub-line naming a power the instrument no longer outputs. The client
+    asks here after every working-copy move (``sm:wc-moved``) with the dot
+    paths of the amplitude cells it shows; each answer is the SAME
+    ``physical_units.amp_annotation`` the cold render uses (its FSP and the
+    path that FSP lives at), and the client recomputes from the box's text.
+    ``null`` means "blank" (amp 0, text, an unresolved chain) -- never
+    invented. Read-only."""
+    from quam_state_manager.core import physical_units
+    from quam_state_manager.core.pointer_path import resolve_field_target
+    store = _store()
+    if not store:
+        return jsonify({"ok": False, "error": "no chip loaded"}), 409
+    body = request.get_json(silent=True) or {}
+    want_chip = body.get("chip")
+    if want_chip:
+        ident = _active_chip_identity()
+        have_chip = ident["name"] if ident else None
+        have_tok = _bulk_chip_gate_token()
+        if want_chip not in ((have_chip or ""), (have_tok or "")):
+            return jsonify({"ok": False, "error": "a different chip is open"}), 409
+    paths = body.get("paths")
+    if not isinstance(paths, list):
+        return jsonify({"ok": False, "error": "paths must be a list"}), 400
+    out: dict[str, Any] = {}
+    with store._lock:
+        merged = store.merged
+        for dp in paths[:5000]:
+            if not isinstance(dp, str) or not dp.endswith(".amplitude"):
+                continue
+            try:
+                ft = resolve_field_target(merged, dp)
+            except Exception:
+                ft = {}
+            if not ft.get("resolvable"):
+                out[dp] = None
+                continue
+            val = ft.get("resolved_value")
+            out[dp] = physical_units.amp_annotation(
+                merged, ft.get("resolved_path") or dp, val)
+    return jsonify({"ok": True, "phys": out})
+
+
 @bp.route("/bulk/cells")
 def bulk_cells():
     """docs/141 §4n — fill server-cold columns of the Live-Edit qubit grid.
