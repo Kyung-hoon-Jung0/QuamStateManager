@@ -16294,8 +16294,48 @@ def _pulse_is_renamable(path: str) -> bool:
     return bool(row and row.get("found") and row.get("renamable"))
 
 
+# docs/240: `flux_pulse_target` is the SNZ (both-movers) gate's second line.
+# It was missing here while GATE_SLOTS and _PULSE_PATH_RES already had it, so
+# opening the target slot showed the target alone, and opening the control
+# slot drew both -- one gate, two pictures depending on the row clicked.
 _PAIR_MACRO_PULSE_RE = re.compile(
-    r"^(qubit_pairs\.[^.]+\.macros\.[^.]+)\.(flux_pulse_qubit|coupler_flux_pulse)$")
+    r"^(qubit_pairs\.[^.]+\.macros\.[^.]+)\.(flux_pulse_qubit|coupler_flux_pulse|flux_pulse_target)$")
+
+# A pointer into one pair-macro slot: `#/qubit_pairs/<p>/macros/<m>/<slot>/<field>`.
+_PAIR_SLOT_PTR_RE = re.compile(
+    r"^#/(qubit_pairs/[^/]+/macros/[^/]+/(?:flux_pulse_qubit|coupler_flux_pulse|flux_pulse_target))/[^/]+$")
+
+
+def _pulse_mirror_source(store, path: str) -> str | None:
+    """The pair-macro slot a channel operation MIRRORS, or None.
+
+    docs/240: some labs also register each CZ flux pulse under the qubit's
+    `z.operations` (`cz_SNZ_flux_pulse_qA1_qA2`), every field a pointer into
+    one pair-macro slot. Opened from that row, the pulse is the same physical
+    event as the slot, so its companions are the slot's. Proven, never
+    guessed: the AMPLITUDE must point into the slot, and every absolute
+    pointer among its fields must point into that SAME slot. A pulse with its
+    own amplitude (a literal 0.5 beside pointed timings) is not a mirror, and
+    neither is one whose fields point into two slots."""
+    if _PAIR_MACRO_PULSE_RE.match(path or "") or ".operations." not in (path or ""):
+        return None
+    try:
+        node = store.get_value(path)
+    except Exception:
+        return None
+    if not isinstance(node, dict):
+        return None
+    amp = node.get("amplitude")
+    m = _PAIR_SLOT_PTR_RE.match(amp) if isinstance(amp, str) else None
+    if not m:
+        return None
+    slot = m.group(1)
+    for v in node.values():
+        if isinstance(v, str) and v.startswith("#/"):
+            mm = _PAIR_SLOT_PTR_RE.match(v)
+            if not mm or mm.group(1) != slot:
+                return None
+    return slot.replace("/", ".")
 
 
 def _pulse_component_overlays(store, path: str) -> list[dict]:
@@ -16308,8 +16348,16 @@ def _pulse_component_overlays(store, path: str) -> list[dict]:
     auto-drawn. Every entry is a real synth (or its honest error) — nothing is
     invented for a missing sibling."""
     m = _PAIR_MACRO_PULSE_RE.match(path or "")
+    skip = {path}
     if not m:
-        return []
+        # docs/240: a channel operation that provably mirrors a pair-macro
+        # slot gets the slot's companions; the slot itself is this pulse
+        # again and is not drawn twice
+        src = _pulse_mirror_source(store, path)
+        m = _PAIR_MACRO_PULSE_RE.match(src or "")
+        if not m:
+            return []
+        skip.add(src)
     from quam_state_manager.core.waveform_synth import synth_for_operation
     component = m.group(1)
     try:
@@ -16321,7 +16369,7 @@ def _pulse_component_overlays(store, path: str) -> list[dict]:
     out = []
     for key, val in node.items():
         sib = f"{component}.{key}"
-        if sib == path or not isinstance(val, dict) or not _is_pulse_path(sib):
+        if sib in skip or not isinstance(val, dict) or not _is_pulse_path(sib):
             continue
         payload = synth_for_operation(store, sib)
         out.append({
@@ -17240,11 +17288,27 @@ def _view_paths_arg(raw) -> list[str]:
     return [p for p in _view_paths_split(raw) if _is_pulse_path(p)][:_PULSE_VIEW_MAX]
 
 
+def _macro_has_target(path: str) -> bool:
+    """Whether the pair macro owning *path* carries a real SNZ target line."""
+    store = _store()
+    if store is None:
+        return False
+    try:
+        return isinstance(store.get_value(path.rsplit(".", 1)[0] + ".flux_pulse_target"), dict)
+    except Exception:
+        return False
+
+
 def _pulse_section_role(path: str) -> str:
     leaf = path.rsplit(".", 1)[-1]
     if _PAIR_MACRO_PULSE_RE.match(path):
         if "coupler" in leaf:
             return "coupler"
+        if leaf == "flux_pulse_target":
+            return "target"
+        if leaf == "flux_pulse_qubit" and _macro_has_target(path):
+            # docs/240: beside a target line this is the CONTROL's line
+            return "control"
         if "qubit" in leaf or "flux" in leaf:
             return "qubit"
         return "macro"
