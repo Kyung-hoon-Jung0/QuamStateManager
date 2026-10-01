@@ -5675,12 +5675,15 @@
         setPopValue(bucket, col, input.value, group, rid);
         popBucketPrune(group, rid);
       }
-      // As-you-type inline validation (debounced per cell; keystroke storms
-      // collapse to one run). Read-only decoration — the heavier LO / power
-      // recomputes stay on the change handler.
+      // As-you-type: re-derive every finding this value feeds (debounced per
+      // cell; keystroke storms collapse to one run) — the cell's own flag,
+      // its coupled cells' flags and the conflict panel, the same derivation
+      // the commit runs (docs/239). A cell re-rendered before the timer fires
+      // was already re-derived by that render.
       clearTimeout(input._valTimer);
       input._valTimer = setTimeout(function () {
-        validateCellInline(input, group, rid, col);
+        if (!input.isConnected) return;
+        refreshEditFindings(group, col, input.value, true);
       }, VALIDATE_DEBOUNCE_MS);
     });
     // Compact value-fit + comma input. Numeric cells become comma-aware + auto-grow
@@ -5723,13 +5726,6 @@
         markPopulateTouched(group, rid, col.field);   // populate-protect (docs/72)
         popBucketPrune(group, rid);
       }
-      // Only an RF edit re-derives the LOs, so a hand-typed LO sticks.
-      if (col.field === loRfField(group)) recomputeLOs();
-      // A band / LO edit changes what the build writes on the port — re-run
-      // the band findings without re-solving (QA r2-07).
-      else if (col.field === "band" || col.field === "LO_frequency") {
-        recomputeLOs({ noApply: true });
-      }
       // A qubit frequency edit may re-orient CZ pairs (higher f = control).
       if (col.field === "RF_freq" && group === "qubit") czOrientAfterFreqEdit();
       // Multiplexed readout shares one MW-FEM port — sync FSP across the group.
@@ -5748,16 +5744,14 @@
         } else if (group === "pulses") {
           recomputeXyPower(rid);
         }
-      } else if (col.field === "readout_amplitude" && group === "resonator") {
-        // Manual mode: a readout-amp edit can push the feedline's coherent
-        // sum past full scale — re-derive the (sum-only) power findings.
-        recomputeAllPowerFindings();
-        renderAllConflicts();
       }
-      // Commit-time inline validation, immediately (blur is authoritative —
-      // don't leave a pending debounce timer racing the refreshed display).
+      // Commit-time re-derivation, immediately (blur is authoritative —
+      // don't leave a pending debounce timer racing the refreshed display):
+      // the LO / band / feedline findings and EVERY cell's flag, so a coupled
+      // cell's warning clears when this edit fixed it (docs/239). Only an RF
+      // edit re-solves the LOs, so a hand-typed LO sticks.
       clearTimeout(input._valTimer);
-      validateCellInline(input, group, rid, col);
+      refreshEditFindings(group, col, input.value, false);
     });
     return input;
   }
@@ -6248,14 +6242,15 @@
   }
 
   // -- step 6: inline as-you-type cell validation ----------------------
-  // Layering rule: the INLINE layer flags per-cell, single-cell-derivable
-  // facts IMMEDIATELY (debounced 'input' events); the conflict PANEL keeps
-  // the cross-cell/port-level findings (LO solver + recomputeAllPowerFindings)
-  // at blur/commit time. The inline validator is read-only — it never writes
-  // _powerWarnings, panel entries, or the spec. The one deliberate overlap is
-  // the feedline Σ|amp| > 1 clip (the customer wants it the moment it's
-  // typed): short-form on the typed cell here, port-keyed panel entry on
-  // commit.
+  // Layering rule: the INLINE layer flags per-cell facts on the cell; the
+  // conflict PANEL carries the cross-cell/port-level findings (LO solver +
+  // recomputeAllPowerFindings). BOTH are re-derived on the debounced 'input'
+  // of any value they depend on and again on commit (refreshEditFindings,
+  // docs/239 — the panel used to wait for blur, and a coupled cell's flag
+  // for an unrelated re-render). validateCellValue itself is read-only — it
+  // never writes _powerWarnings, panel entries, or the spec. The feedline
+  // Σ|amp| > 1 clip shows in both: short-form on the bank's cells, a
+  // port-keyed panel entry.
   //
   // VALIDATE_RANGES mirrors core/diagnostics.py MW_OUTPUT_FREQ_RANGE_HZ /
   // MW_INPUT_FREQ_RANGE_HZ and core/spec_constraints.py
@@ -6519,8 +6514,42 @@
     return [];
   }
 
+  // Warnings follow edits (docs/239). ONE re-derivation for everything a
+  // populate edit can change, called by the cell's debounced 'input' (live)
+  // AND by its commit — so a warning appears on the keystroke that breaks
+  // its condition and clears on the keystroke that restores it, whichever
+  // coupled field the user fixes it through:
+  //  - LO family (port IF window / span / band / demod hole, LO-cell and
+  //    band-cell flags, the LO map): an RF (TWPA pump) edit re-solves the
+  //    port LOs exactly as its commit does (regenerate stays fill-only-empty,
+  //    docs/72); an LO or band edit re-derives without re-solving, so a
+  //    hand-typed LO sticks (QA r2-07). Text that is not a number yet never
+  //    re-solves (its commit puts the old value back, QA r2-19).
+  //  - Feedline Σ|amp| (manual power mode): a readout amp re-derives the
+  //    bank's panel CLIP; every bank member's cell flag follows below.
+  //  - FSP: a typed FSP re-displays the amp cells it converts (dBm / V_pk)
+  //    before they are re-validated; the commit already did that itself.
+  //  - Every cell flag: validateAllPopCells — a coupled cell (the LO cell of
+  //    a fixed RF, a sibling readout amp) is re-judged, not only the typed one.
+  function refreshEditFindings(group, col, raw, live) {
+    var f = col.field;
+    if (f === loRfField(group)) {
+      recomputeLOs(live && popRawUnparseable(col, raw) ? { noApply: true } : null);
+    } else if (f === "band" || f === "LO_frequency") {
+      recomputeLOs({ noApply: true });
+    }
+    if (live && f === "full_scale_power_dbm") refreshAmpCells();
+    if (f === "readout_amplitude" && group === "resonator" &&
+        state.powerMode !== "absolute") {
+      recomputeAllPowerFindings();
+      renderAllConflicts();
+    }
+    validateAllPopCells();
+  }
+
   // Re-validate every populate cell (step entry, draft restore, unit toggle,
-  // power-mode flip, LO rewrite, bulk fill). O(cells), pure reads — cheap.
+  // power-mode flip, LO rewrite, bulk fill, any populate edit). O(cells),
+  // pure reads — cheap.
   function validateAllPopCells() {
     document.querySelectorAll(".gen-pop-in[data-rid][data-field]")
       .forEach(function (input) {

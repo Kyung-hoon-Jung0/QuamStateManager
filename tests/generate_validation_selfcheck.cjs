@@ -1,10 +1,10 @@
 // Behavioral check for the populate step's INLINE as-you-type validation
 // (generate.js validateCellValue / validateCellInline / validateAllPopCells).
 //
-// The layering contract under test: the inline layer flags per-cell,
-// single-cell-derivable facts IMMEDIATELY on 'input' (debounced), while the
-// conflict panel keeps the cross-cell findings at commit time; the inline
-// validator never writes panel entries. The customer requirement pinned here:
+// The layering contract under test: the inline layer flags per-cell facts
+// IMMEDIATELY on 'input' (debounced); the conflict panel carries the
+// cross-cell findings and, since docs/239, is re-derived on the same
+// keystroke (tests/generate_warn_follow_selfcheck.cjs pins that side). The customer requirement pinned here:
 // "if a user types 15.3 GHz, SM should warn right away" — unit-aware, on the
 // keystroke, not on blur.
 //
@@ -121,8 +121,9 @@ function panelText(win) {
 (async function main() {
 
   // D1: the headline case — 15.3 typed in GHz mode flags the cell on the
-  // KEYSTROKE (no blur), with the hardware-reach message; and the inline
-  // layer writes NOTHING to the conflict panel.
+  // KEYSTROKE (no blur), with the hardware-reach message; the conflict
+  // panel follows the same keystroke (docs/239 — it used to wait for blur)
+  // and empties again on the keystroke that fixes it.
   {
     const win = makeWorld();
     const G = buildWizard(win);
@@ -135,12 +136,15 @@ function panelText(win) {
     ok(c.title.indexOf('hardware reach') >= 0, 'D1: title names hardware reach');
     const flag = c.parentNode.querySelector('.gen-cell-flag');
     ok(!!flag && flag.classList.contains('err'), 'D1: ⚠ icon rendered in the td');
-    ok(panelText(win) === panelBefore, 'D1: inline layer wrote nothing to the panel');
+    ok(panelBefore === '' && /Nyquist band/.test(panelText(win)),
+      'D1: the panel names the out-of-band RF on the keystroke (got "' +
+      panelText(win) + '")');
     // Fixing the value clears the decoration.
     typeOnly(win, c, '5.1');
     await tick();
     ok(flagged(c) === null, 'D1: valid value clears the flag');
     ok(!c.parentNode.querySelector('.gen-cell-flag'), 'D1: ⚠ icon removed');
+    ok(panelText(win) === '', 'D1: the panel empties on the fixing keystroke');
   }
 
   // D2: unit-awareness — the same digits mean different base values per unit.
