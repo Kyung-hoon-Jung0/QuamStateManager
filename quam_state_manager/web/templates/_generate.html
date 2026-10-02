@@ -311,6 +311,9 @@
       <p class="muted">Auto-allocate channels for every qubit and coupler
         line. To override one, type <code>con/slot/port</code> in its Pin
         field &mdash; blank means the allocator chooses.</p>
+      {# docs/242 — readout feedlines as cards: a pool of unassigned qubits,
+         one card per feedline (output chosen, input by neighbor/crossing). #}
+      <div id="gen-readout-pool" class="gen-readout-pool" hidden></div>
       {# Back / Next sit on this row (not the global footer) so the keyboard
          flow is Auto-allocate -> Enter -> Tab -> Back -> Tab -> Next. #}
       <div class="gen-allocate-row">

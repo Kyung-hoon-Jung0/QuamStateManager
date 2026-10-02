@@ -560,6 +560,13 @@ def validate_spec(spec) -> list[str]:
     # One MW-FEM readout in/out pair multiplexes at most 8 resonators. The
     # wizard clamps its mux input, but a stale draft / hand-crafted spec can
     # still carry an over-full group — block it before the build.
+    # docs/242: a qubit left in the wizard's readout POOL has no feedline;
+    # run_build would multiplex every such line onto one unnamed group.
+    for i, ln in enumerate(lines):
+        if isinstance(ln, dict) and ln.get("line") == "resonator" and ln.get("pool"):
+            errors.append(
+                f"lines[{i}]: {ln.get('element')!r} readout is not on a feedline "
+                "(still unassigned in step 5) — assign it to a feedline")
     feedline_counts: dict = {}
     for ln in lines:
         if isinstance(ln, dict) and ln.get("line") == "resonator" and ln.get("group"):

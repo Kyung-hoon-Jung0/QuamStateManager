@@ -8441,6 +8441,69 @@ button.recents-item:focus {
     color: var(--color-warning-text);
 }
 .gen-wiring-ok { font-size: 0.84em; color: var(--color-success-text); }
+/* docs/242 — step-5 readout feedlines: pool + one card per feedline.
+   Chips are <button>s: Pico re-points --pico-color to the inverse colour inside
+   a button, so text uses --pico-code-color (readable in both themes). */
+.gen-readout-pool { margin: 0.6rem 0 0.9rem; font-size: 0.86em; }
+.gen-ro-head { display: flex; align-items: center; gap: 0.4rem 0.8rem; flex-wrap: wrap; margin-bottom: 0.35rem; }
+.gen-ro-hint { font-size: 0.92em; }
+.gen-ro-tools { margin-left: auto; display: inline-flex; align-items: center; gap: 0.4rem; flex-wrap: wrap; }
+.gen-ro-seg { display: inline-flex; }
+.gen-ro-seg .gen-ro-mode { margin: 0; border-radius: 0; background: transparent; width: auto;
+    color: var(--pico-code-color); border: 1px solid var(--pico-muted-border-color); }
+.gen-ro-seg .gen-ro-mode:first-child { border-radius: 0.3rem 0 0 0.3rem; }
+.gen-ro-seg .gen-ro-mode:last-child { border-radius: 0 0.3rem 0.3rem 0; border-left: 0; }
+.gen-ro-seg .gen-ro-mode.is-on { background: var(--color-accent); border-color: var(--color-accent); color: #fff; }
+.gen-ro-tools .btn-xs { margin: 0; }
+.gen-ro-pool {
+    display: flex; flex-wrap: wrap; align-items: center; gap: 0.3rem;
+    padding: 0.4rem 0.5rem; border: 1px dashed var(--pico-muted-border-color);
+    border-radius: 0.4rem; min-height: 2.3rem; margin-bottom: 0.5rem;
+}
+.gen-ro-pool-label { margin-right: 0.3rem; color: var(--pico-muted-color); }
+.gen-ro-pool-empty { font-size: 0.92em; }
+.gen-ro-feeds { display: grid; grid-template-columns: repeat(auto-fill, minmax(17.5rem, 1fr)); gap: 0.5rem; }
+.gen-ro-card {
+    border: 1px solid var(--pico-muted-border-color); border-radius: 0.4rem;
+    padding: 0.35rem 0.5rem 0.3rem; cursor: pointer; min-width: 0;
+}
+.gen-ro-card.has-err { border-color: var(--color-error-border); }
+.gen-ro-pool.is-over, .gen-ro-card.is-over { outline: 2px solid var(--color-accent); outline-offset: 1px; }
+.gen-ro-card-head { display: flex; align-items: center; gap: 0.4rem; }
+.gen-ro-num {
+    display: inline-flex; align-items: center; justify-content: center;
+    min-width: 1.25rem; height: 1.25rem; border-radius: 0.25rem; font-size: 0.85em;
+    background: var(--pico-code-background-color); font-family: var(--font-mono);
+}
+.gen-ro-name { font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.gen-ro-count { font-size: 0.9em; }
+.gen-ro-card-head .gen-ro-here { margin: 0 0 0 auto; }
+.gen-ro-ports { display: flex; align-items: center; gap: 0.25rem; margin: 0.3rem 0; }
+.gen-ro-ports select {
+    margin: 0; padding: 0.1rem 1.3rem 0.1rem 0.3rem; height: auto;
+    font-size: 0.92em; width: auto; min-width: 0; flex: 0 1 auto;
+    background-position: center right 0.3rem; background-size: 0.8rem auto;
+}
+.gen-ro-arrow { color: var(--pico-muted-color); }
+.gen-ro-chips { display: flex; flex-wrap: wrap; gap: 0.25rem; min-height: 1.6rem; }
+.gen-ro-chip {
+    margin: 0; padding: 0.05rem 0.45rem; width: auto; height: auto; min-height: 0;
+    font-size: 0.92em; line-height: 1.35;
+    font-family: var(--font-mono); border-radius: 0.7rem; cursor: grab;
+    background: var(--pico-code-background-color); color: var(--pico-code-color);
+    border: 1px solid var(--pico-muted-border-color);
+}
+.gen-ro-chip.is-sel { background: var(--color-accent); border-color: var(--color-accent); color: #fff; }
+.gen-ro-alloc { font-size: 0.88em; margin-top: 0.2rem; font-family: var(--font-mono); }
+.gen-ro-err { font-size: 0.88em; color: var(--color-error-text); }
+.gen-ro-new { display: flex; align-items: center; gap: 0.4rem; border-style: dashed; justify-content: center; }
+.gen-ro-new .gen-ro-newbtn { margin: 0; }
+.gen-ro-note { min-height: 1.2em; margin-top: 0.3rem; font-size: 0.92em; }
+.gen-ro-ghost {
+    position: fixed; z-index: 10000; pointer-events: none; padding: 0.1rem 0.5rem;
+    border-radius: 0.7rem; background: var(--color-accent); color: #fff;
+    font-family: var(--font-mono); font-size: 0.8rem;
+}
 .iw-port.iw-port-invalid circle {
     stroke: #d0342c !important; stroke-width: 3 !important;
     stroke-dasharray: 4 3 !important;

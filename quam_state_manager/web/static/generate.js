@@ -326,6 +326,13 @@
     // problem for the CURRENT topology blocks; the rail's forward jumps stay
     // free (docs/134), and a never-allocated chip keeps the single-tone path.
     5: function () {
+      var pooledG = pooledQubits();
+      if (pooledG.length) {
+        return pooledG.length + " qubit" + (pooledG.length === 1 ? " is" : "s are") +
+          " not on a readout feedline (" + pooledG.slice(0, 6).join(", ") +
+          (pooledG.length > 6 ? ", …" : "") + ") — assign " +
+          (pooledG.length === 1 ? "it" : "them") + " before continuing.";
+      }
       var sig = topoSig();
       if (_allocLastErr && _allocLastErr.sig === allocFailSig()) {
         return "Wiring allocation failed for this chip (" + _allocLastErr.msg +
@@ -3019,9 +3026,11 @@
     // channel pins keyed by (element, line type).
     var pinned = {};
     var groupOf = {};
+    var pooled = {};   // docs/242: qubits the user put back in the readout pool
     state.spec.lines.forEach(function (ln) {
       if (ln.channel) pinned[ln.element + "|" + ln.line] = ln.channel;
       if (ln.line === "resonator" && ln.group) groupOf[ln.element] = ln.group;
+      if (ln.line === "resonator" && ln.pool) pooled[ln.element] = true;
     });
     // QA review of regenerate-r2-12: a line the step-3 rack cannot carry right
     // now (no LF-FEM: flux / coupler; no MW-FEM: readout / drive / CR / ZZ /
@@ -3118,12 +3127,18 @@
         // the shared-LO premise; with one LO per port the transposed pairing
         // is legal when the bands agree — a real chip runs it. The pairing is
         // kept so auto-allocations do not move.)
-        var loPair = (fnum % 2 === 1) ? { out_port: 8, in_port: 2 }
-                                      : { out_port: 1, in_port: 1 };
-        var rch = (state.wiringTouched && pinned[q + "|resonator"])
-          ? pinned[q + "|resonator"]
-          : { kind: "mw_fem", out_port: loPair.out_port, in_port: loPair.in_port };
-        lines.push({ element: q, line: "resonator", group: group, channel: rch });
+        // docs/242: the input follows the chip-wide neighbor/crossing choice
+        // (neighbor = the coupled input, the historical default).
+        var loOut = (fnum % 2 === 1) ? 8 : 1;
+        var loPair = { out_port: loOut, in_port: inPortFor(loOut, readoutMode()) };
+        if (state.wiringTouched && pooled[q]) {
+          lines.push({ element: q, line: "resonator", pool: true, channel: null });
+        } else {
+          var rch = (state.wiringTouched && pinned[q + "|resonator"])
+            ? pinned[q + "|resonator"]
+            : { kind: "mw_fem", out_port: loPair.out_port, in_port: loPair.in_port };
+          lines.push({ element: q, line: "resonator", group: group, channel: rch });
+        }
       }
       if (wantDrive) {
         lines.push({ element: q, line: "drive", channel: pinned[q + "|drive"] || null });
@@ -3233,7 +3248,7 @@
   // when a Generate pin's input is exactly the LO partner the wizard derived.
   function keptReadoutInput(prev) {
     if (!prev || prev.in_port == null || !channelToPin(prev)) return null;
-    if (state.mode !== "regenerate" && prev.in_port === loPairedInput(prev.out_port)) return null;
+    if (state.mode !== "regenerate" && prev.in_port === inPortFor(prev.out_port, readoutMode())) return null;
     return prev.in_port;
   }
 
@@ -3255,7 +3270,7 @@
       // output's LO partner; an output with no input partner leaves it free.
       var rch = { kind: "mw_fem", con: con, slot: slot, out_port: port };
       var inp = keptReadoutInput(prev);
-      if (inp == null) inp = loPairedInput(port);
+      if (inp == null) inp = inPortFor(port, readoutMode());
       if (inp != null) rch.in_port = inp;
       return rch;
     }
@@ -3467,6 +3482,7 @@
       keep = { idx: ae.closest("tr").dataset.idx, value: ae.value,
                s: ae.selectionStart, e: ae.selectionEnd, prev: ae.__wizPrev };
     }
+    renderReadoutPool();   // docs/242: every wiring repaint reaches the cards
     if (!state.spec.lines.length) {
       host.innerHTML = '<p class="muted">Add qubits in step 4 first.</p>';
       return;
@@ -3494,7 +3510,8 @@
       else if (staleIdx[idx]) why = staleIdx[idx];
       // a partial (LO-safe) channel shows its ports as the placeholder, not "//8"
       var lead = ln.line === "resonator" && ln.group ? feedLead[ln.group] : null;
-      var ph = (!pin && lead && lead !== ln.element) ? "auto · " + lead + "'s feedline"
+      var ph = ln.pool ? "unassigned — Readout feedlines"
+        : (!pin && lead && lead !== ln.element) ? "auto · " + lead + "'s feedline"
         : (!pin && ln.channel && ln.channel.out_port != null)
         ? "auto · out " + ln.channel.out_port +
           (ln.channel.in_port != null ? " / in " + ln.channel.in_port : "")
@@ -3976,7 +3993,9 @@
                : '<p class="muted">' + busyHtml("Finding a Python environment") +
                  '<br><small>the first usable env from step 1 is selected ' +
                  'automatically</small></p>')
-            : '<p class="muted">Run Auto-allocate to see the wiring diagram.</p>';
+            : pooledQubits().length
+              ? '<p class="muted">Assign every qubit to a readout feedline to see the wiring.</p>'
+              : '<p class="muted">Run Auto-allocate to see the wiring diagram.</p>';
       renderWiringIssues(null);   // no allocation, no "✓ Wiring valid" (QA F7)
       return;
     }
@@ -4745,8 +4764,616 @@
     document.removeEventListener("keydown", onWireDragKey);
   }
 
+  // -- step 5: readout feedlines (docs/242) ------------------------------
+  // The rack diagram is a fine place to SEE a feedline, and a poor place to
+  // BUILD one: five qubits share one port circle as 15 px sub-dots, so
+  // matching 20-50 qubits to the bench meant one precise drag per qubit. This
+  // panel edits the same truth (each resonator line's `group` + `channel`)
+  // as cards: select qubits (click / Shift / Ctrl, or keyboard), then click a
+  // feedline, press its number, or drag. A feedline's OUTPUT is chosen on the
+  // card; its INPUT follows from the output by the neighbor/crossing rule.
+  //
+  // QM docs (Guides/opx1000_fems.md): the MW-FEM couples "Out 1 & In 1" and
+  // "Out 8 & In 2" (band rule only), and under "Optimized Readout" recommends
+  // "Playing from Output 1 & Reading from Input 2" / "Playing from Output 8 &
+  // Reading from Input 1". So for Out 1 / Out 8: neighbor = the coupled input,
+  // crossing = the other one. Out 2-7 are coupled to another OUTPUT, so the
+  // rule names no input there -- the card offers In 1 / In 2 directly.
+  //
+  // A qubit can sit in the POOL (no feedline): its resonator line carries
+  // `pool: true` and no group/channel. Nothing allocates or builds while the
+  // pool is non-empty (runAutoAllocate, the step-5 Next guard and
+  // config_generator.validate_spec all refuse), because run_build would
+  // otherwise multiplex every pooled qubit onto one unnamed feedline.
+
+  var RO_POOL = "__pool__", RO_NEW = "__new__";
+  var _roSel = Object.create(null);   // qid -> true (UI only)
+  var _roAnchor = null;               // { box, qid } for Shift-click ranges
+  var _roDrag = null;
+  var _roNote = "";                   // one-line answer under the panel
+
+  function roNat(a, b) {
+    return String(a).localeCompare(String(b), undefined, { numeric: true, sensitivity: "base" });
+  }
+
+  // "neighbor" | "crossing": the chip-wide default for feedlines on Out 1 / 8.
+  function readoutMode() {
+    return state.spec.readout_input === "crossing" ? "crossing" : "neighbor";
+  }
+
+  // The input a feedline on output `out` reads from under `mode`; null when
+  // the output has no coupled input (Out 2-7) -- the rule does not apply.
+  function inPortFor(out, mode) {
+    var n = loPairedInput(out);
+    if (n == null) return null;
+    return mode === "crossing" ? (n === 1 ? 2 : 1) : n;
+  }
+
+  // What a channel's input IS relative to its output: "neighbor",
+  // "crossing", "manual" (Out 2-7, or an input the rule cannot name), or null.
+  function inModeOf(ch) {
+    if (!ch || ch.out_port == null || ch.in_port == null) return null;
+    var n = loPairedInput(ch.out_port);
+    if (n == null) return "manual";
+    return ch.in_port === n ? "neighbor" : "crossing";
+  }
+
+  function roLines() {
+    return state.spec.lines.filter(function (ln) { return ln.line === "resonator"; });
+  }
+
+  // { feeds: [{name, members, channel}], pool: [qid] } -- feedlines, members
+  // and pool in natural order.
+  function readoutModel() {
+    var feeds = [], byName = Object.create(null), pool = [];
+    roLines().forEach(function (ln) {
+      if (ln.pool) { pool.push(ln.element); return; }
+      var name = ln.group !== undefined && ln.group !== null ? ln.group : "__solo__" + ln.element;
+      var f = byName[name];
+      if (!f) {
+        // run_build pins a feedline to its FIRST member's channel
+        f = byName[name] = { name: name, members: [], channel: ln.channel || null };
+        feeds.push(f);
+      }
+      f.members.push(ln.element);
+    });
+    feeds.forEach(function (f) { f.members.sort(roNat); });
+    // Cards (and their 1-9 keys) are ordered by NAME, never by spec order: a
+    // move must not renumber the card the user is aiming at.
+    feeds.sort(function (a, b) { return roNat(a.name, b.name); });
+    pool.sort(roNat);
+    return { feeds: feeds, pool: pool };
+  }
+
+  function pooledQubits() { return readoutModel().pool; }
+
+  function roClone(ch) { return ch ? JSON.parse(JSON.stringify(ch)) : null; }
+
+  // The channel a NEW feedline starts with: deriveLines' LO-safe default
+  // (alternating Out 8 / Out 1, FEM left to the allocator), input by mode.
+  function roDefaultChannel(fnum) {
+    var out = (fnum % 2 === 1) ? 8 : 1;
+    return { kind: "mw_fem", out_port: out, in_port: inPortFor(out, readoutMode()) };
+  }
+
+  function roUndo() {
+    var snap = {};
+    roLines().forEach(function (ln) {
+      snap[ln.element] = wizSnapKeys(ln, ["channel", "group", "pool"]);
+    });
+    var mode = state.spec.readout_input, touched = state.wiringTouched;
+    return function () {
+      roLines().forEach(function (ln) {
+        if (snap[ln.element]) wizPutKeys(ln, ["channel", "group", "pool"], snap[ln.element]);
+      });
+      if (mode === undefined) delete state.spec.readout_input;
+      else state.spec.readout_input = mode;
+      state.wiringTouched = touched;
+      roAfterEdit();
+    };
+  }
+
+  // Every readout edit: record undo, mark the wiring the user's, repaint,
+  // re-allocate (or say why it cannot).
+  function roEdit(label, fn) {
+    _roNote = "";   // the caller says what happened, if anything
+    var restore = roUndo();
+    var changed = fn();
+    if (changed === false) return false;
+    _wizPushRestore(label, restore);
+    state.wiringTouched = true;
+    regenMarkEdited(null);
+    roAfterEdit();
+    return true;
+  }
+
+  function roAfterEdit() {
+    renderWiringTable();     // repaints this panel too
+    if (pooledQubits().length) {
+      runAutoAllocate(true); // the pool guard drops the stale picture + says why
+      return;
+    }
+    renderWiringDiagram();
+    if (_allocInFlight) { _allocRerun = true; return; }
+    if (typeof fetch === "function" && state.env) runAutoAllocate(true);
+  }
+
+  // Move qubits to a feedline (by name), the pool, or a new feedline.
+  // Returns false (nothing done) with _roNote saying why.
+  function assignReadout(qids, target) {
+    qids = (qids || []).filter(function (q) { return !!specLine(q, "resonator"); });
+    if (!qids.length) { _roNote = "Select qubits first."; renderReadoutPool(); return false; }
+    var model = readoutModel();
+    var feed = null, name = target;
+    if (target !== RO_POOL && target !== RO_NEW) {
+      feed = model.feeds.filter(function (f) { return f.name === target; })[0];
+      if (!feed) return false;
+      var staying = feed.members.filter(function (q) { return qids.indexOf(q) < 0; });
+      if (staying.length + qids.length > MUX_MAX) {
+        _roNote = target + " holds at most " + MUX_MAX + " qubits (it has " +
+          feed.members.length + ").";
+        renderReadoutPool();
+        return false;
+      }
+    }
+    if (target === RO_NEW && qids.length > MUX_MAX) {
+      _roNote = "A feedline holds at most " + MUX_MAX + " qubits.";
+      renderReadoutPool();
+      return false;
+    }
+    var ok = roEdit(target === RO_POOL ? "unassign readout" : "assign readout", function () {
+      var ch = null;
+      if (target === RO_NEW) {
+        name = freshFeedlineGroup();
+        var left = model.feeds.filter(function (f) {
+          return f.members.some(function (q) { return qids.indexOf(q) < 0; });
+        }).length;
+        ch = roDefaultChannel(left + 1);
+      } else if (feed) {
+        ch = feed.channel;
+      }
+      qids.forEach(function (q) {
+        var ln = specLine(q, "resonator");
+        if (target === RO_POOL) {
+          ln.pool = true; delete ln.group; ln.channel = null;
+        } else {
+          delete ln.pool; ln.group = name; ln.channel = roClone(ch);
+        }
+      });
+    });
+    if (ok) {
+      _roNote = qids.length + " qubit" + (qids.length === 1 ? "" : "s") + " → " +
+        (target === RO_POOL ? "unassigned" : name) + ".";
+      _roSel = Object.create(null);
+      renderReadoutPool();
+    }
+    return ok;
+  }
+
+  function roFeedLines(name) {
+    return roLines().filter(function (ln) { return !ln.pool && ln.group === name; });
+  }
+
+  // Set a feedline's output: fem = {con, slot} or null (allocator picks the
+  // FEM). The input keeps its neighbor/crossing relation when the new output
+  // has one; otherwise it keeps its number.
+  function setFeedlineOutput(name, fem, out) {
+    var lines = roFeedLines(name);
+    if (!lines.length) return false;
+    var old = lines[0].channel || {};
+    var mode = inModeOf(old);
+    var inp = (mode === "neighbor" || mode === "crossing") ? inPortFor(out, mode) : null;
+    if (inp == null) inp = old.in_port != null ? old.in_port : inPortFor(out, readoutMode());
+    if (inp == null) inp = 1;
+    var ch = { kind: "mw_fem" };
+    if (fem) { ch.con = fem.con; ch.slot = fem.slot; }
+    ch.out_port = out;
+    ch.in_port = inp;
+    return roEdit("feedline output", function () {
+      lines.forEach(function (ln) { ln.channel = roClone(ch); });
+    });
+  }
+
+  // value: "neighbor" | "crossing" | 1 | 2
+  function setFeedlineInput(name, value) {
+    var lines = roFeedLines(name);
+    if (!lines.length) return false;
+    var ch = roClone(lines[0].channel) || { kind: "mw_fem", out_port: 8 };
+    var inp = (value === "neighbor" || value === "crossing")
+      ? inPortFor(ch.out_port, value) : parseInt(value, 10);
+    if (inp !== 1 && inp !== 2) return false;
+    ch.in_port = inp;
+    return roEdit("feedline input", function () {
+      lines.forEach(function (ln) { ln.channel = roClone(ch); });
+    });
+  }
+
+  // The chip-wide button: every feedline on Out 1 / Out 8 follows `mode`;
+  // feedlines on Out 2-7 keep their input (the rule names none there).
+  function setAllReadoutInputs(mode) {
+    var kept = 0;
+    var ok = roEdit("readout inputs: " + mode, function () {
+      state.spec.readout_input = mode;
+      readoutModel().feeds.forEach(function (f) {
+        var ch = roClone(f.channel) || roDefaultChannel(1);
+        var inp = inPortFor(ch.out_port, mode);
+        if (inp == null) { kept++; return; }
+        ch.in_port = inp;
+        roFeedLines(f.name).forEach(function (ln) { ln.channel = roClone(ch); });
+      });
+    });
+    _roNote = "Inputs: " + mode + (kept ? " · " + kept + " feedline" + (kept === 1 ? "" : "s") +
+      " on Out 2–7 kept " + (kept === 1 ? "its" : "their") + " input" : "") + ".";
+    renderReadoutPool();
+    return ok;
+  }
+
+  // Pool -> feedlines: top up existing feedlines to the step-4 "Per
+  // feedline" size, then open new ones, in natural qubit order.
+  function fillReadoutFromPool() {
+    var model = readoutModel();
+    if (!model.pool.length) return false;
+    var per = clampMux((document.getElementById("gen-mux-size") || {}).value || state.muxSize);
+    return roEdit("fill feedlines", function () {
+      var queue = model.pool.slice();
+      var count = model.feeds.length;
+      model.feeds.forEach(function (f) {
+        while (queue.length && f.members.length < per) {
+          var q = queue.shift(), ln = specLine(q, "resonator");
+          delete ln.pool; ln.group = f.name; ln.channel = roClone(f.channel);
+          f.members.push(q);
+        }
+      });
+      while (queue.length) {
+        count++;
+        var nm = freshFeedlineGroup(), ch = roDefaultChannel(count);
+        queue.splice(0, per).forEach(function (q) {
+          var ln = specLine(q, "resonator");
+          delete ln.pool; ln.group = nm; ln.channel = roClone(ch);
+        });
+      }
+    });
+  }
+
+  function unassignAllReadout() {
+    var lines = roLines().filter(function (ln) { return !ln.pool; });
+    if (!lines.length) return false;
+    return roEdit("unassign all readout", function () {
+      lines.forEach(function (ln) { ln.pool = true; delete ln.group; ln.channel = null; });
+    });
+  }
+
+  // Two feedlines on one FEM cannot share an output or an input. Only
+  // decidable for feedlines whose FEM is chosen; auto-FEM ones are spread
+  // by the allocator. -> { name: message }
+  function readoutClashes(feeds) {
+    var seen = Object.create(null), out = Object.create(null);
+    feeds.forEach(function (f) {
+      var ch = f.channel;
+      if (!ch || ch.con == null || ch.slot == null) return;
+      [["out", ch.out_port, "Out"], ["in", ch.in_port, "In"]].forEach(function (p) {
+        if (p[1] == null) return;
+        var k = ch.con + "/" + ch.slot + "/" + p[0] + p[1];
+        if (seen[k]) {
+          out[f.name] = out[f.name] || (p[2] + " " + p[1] + " of con" + ch.con +
+            " slot " + ch.slot + " is also " + seen[k] + "'s.");
+          out[seen[k]] = out[seen[k]] || (p[2] + " " + p[1] + " of con" + ch.con +
+            " slot " + ch.slot + " is also " + f.name + "'s.");
+        } else seen[k] = f.name;
+      });
+    });
+    return out;
+  }
+
+  function mwFems() {
+    var list = [];
+    (state.spec.instruments.controllers || []).forEach(function (c) {
+      (c.fems || []).forEach(function (f) {
+        if (f.fem === "mw") list.push({ con: c.con, slot: f.slot });
+      });
+    });
+    return list;
+  }
+
+  // "con1 slot2 · Out 8 → In 1" from the allocation, or null.
+  function roAllocText(f) {
+    var rr = (allocEntry(f.members[0]) || {}).rr;
+    if (!rr) return null;
+    var o = rr.filter(function (x) { return (x.io_type || "output") === "output"; })[0];
+    var i = rr.filter(function (x) { return x.io_type === "input"; })[0];
+    if (!o) return null;
+    return "con" + o.con + " slot " + o.slot + " · Out " + o.port +
+      (i ? " → In " + i.port + (String(i.slot) !== String(o.slot) ? " (slot " + i.slot + ")" : "") : "");
+  }
+
+  function roChip(q) {
+    return '<button type="button" class="gen-ro-chip' + (_roSel[q] ? " is-sel" : "") +
+      '" data-q="' + escapeAttr(q) + '" aria-pressed="' + (_roSel[q] ? "true" : "false") +
+      '">' + escapeAttr(q) + "</button>";
+  }
+
+  function roOpt(v, label, sel, dis, title) {
+    return '<option value="' + escapeAttr(v) + '"' + (sel ? " selected" : "") +
+      (dis ? " disabled" : "") + (title ? ' title="' + escapeAttr(title) + '"' : "") +
+      ">" + escapeAttr(label) + "</option>";
+  }
+
+  function renderReadoutPool() {
+    var host = document.getElementById("gen-readout-pool");
+    if (!host) return;
+    var lines = roLines();
+    if (!lines.length) { host.innerHTML = ""; host.hidden = true; return; }
+    host.hidden = false;
+    var model = readoutModel();
+    var alive = Object.create(null);
+    lines.forEach(function (ln) { alive[ln.element] = true; });
+    Object.keys(_roSel).forEach(function (q) { if (!alive[q]) delete _roSel[q]; });
+    var nSel = Object.keys(_roSel).length;
+    var mode = readoutMode();
+    var fems = mwFems();
+    var clash = readoutClashes(model.feeds);
+    var NOTE_23 = "Out 2–7 are coupled to another output, not an input " +
+      "(QM: Out1–In1, Out8–In2), so neighbor/crossing does not apply — pick the input.";
+
+    var cards = model.feeds.map(function (f, idx) {
+      var ch = f.channel || {};
+      var femKey = (ch.con != null && ch.slot != null) ? ch.con + "/" + ch.slot : "";
+      var femSel = '<select class="gen-ro-fem" aria-label="' + escapeAttr(f.name + " FEM") + '">' +
+        roOpt("", "auto FEM", !femKey) +
+        fems.map(function (m) {
+          var k = m.con + "/" + m.slot;
+          return roOpt(k, "con" + m.con + " slot " + m.slot, k === femKey);
+        }).join("") +
+        (femKey && !fems.some(function (m) { return m.con + "/" + m.slot === femKey; })
+          ? roOpt(femKey, "con" + ch.con + " slot " + ch.slot + " (no MW-FEM)", true) : "") +
+        "</select>";
+      var out = ch.out_port != null ? ch.out_port : null;
+      var outSel = '<select class="gen-ro-out" aria-label="' + escapeAttr(f.name + " output") + '">' +
+        (out == null ? roOpt("", "auto", true) : "") +
+        [1, 2, 3, 4, 5, 6, 7, 8].map(function (p) { return roOpt(String(p), "Out " + p, p === out); }).join("") +
+        "</select>";
+      var inp = ch.in_port != null ? ch.in_port : null;
+      var nb = out != null ? loPairedInput(out) : null;
+      var inSel = '<select class="gen-ro-in" aria-label="' + escapeAttr(f.name + " input") + '"' +
+        (out != null && nb == null ? ' title="' + escapeAttr(NOTE_23) + '"' : "") + ">" +
+        (inp == null ? roOpt("", "auto", true) : "") +
+        [1, 2].map(function (p) {
+          var tag = nb == null ? "" : (p === nb ? " · neighbor" : " · crossing");
+          return roOpt(String(p), "In " + p + tag, p === inp);
+        }).join("") + "</select>";
+      var at = roAllocText(f);
+      var err = clash[f.name] ||
+        (f.members.length > MUX_MAX ? "More than " + MUX_MAX + " qubits on one feedline." : "");
+      return '<div class="gen-ro-card' + (err ? " has-err" : "") + '" data-ro-target="' +
+        escapeAttr(f.name) + '">' +
+        '<div class="gen-ro-card-head">' +
+        '<span class="gen-ro-num" title="Press ' + (idx + 1) + ' to move the selection here">' +
+        (idx < 9 ? idx + 1 : "") + "</span>" +
+        '<span class="gen-ro-name">' + escapeAttr(f.name) + "</span>" +
+        '<span class="gen-ro-count muted">' + f.members.length + "/" + MUX_MAX + "</span>" +
+        '<button type="button" class="btn-xs outline gen-ro-here"' + (nSel ? "" : " disabled") +
+        ' title="Move the selected qubits here">Move here</button></div>' +
+        '<div class="gen-ro-ports">' + femSel + outSel + '<span class="gen-ro-arrow">→</span>' + inSel + "</div>" +
+        '<div class="gen-ro-chips">' + f.members.map(roChip).join("") + "</div>" +
+        '<div class="gen-ro-alloc muted">' + (at ? "→ " + escapeAttr(at)
+          : (_allocInFlight ? "allocating…" : "&nbsp;")) + "</div>" +
+        (err ? '<div class="gen-ro-err">' + escapeAttr(err) + "</div>" : "") +
+        "</div>";
+    }).join("");
+
+    host.innerHTML =
+      '<div class="gen-ro-head"><strong>Readout feedlines</strong>' +
+      '<span class="muted gen-ro-hint">Select qubits (click, Shift/Ctrl-click), then click a ' +
+      "feedline, press its number, or drag. 0 = unassign.</span>" +
+      '<span class="gen-ro-tools"><span class="muted">Inputs</span>' +
+      '<span class="gen-ro-seg" aria-label="Readout inputs for Out 1 / Out 8">' +
+      '<button type="button" class="btn-xs gen-ro-mode' + (mode === "neighbor" ? " is-on" : "") +
+      '" data-mode="neighbor" aria-pressed="' + (mode === "neighbor") +
+      '" title="Out 1 → In 1, Out 8 → In 2 (the coupled pairs)">Neighbor</button>' +
+      '<button type="button" class="btn-xs gen-ro-mode' + (mode === "crossing" ? " is-on" : "") +
+      '" data-mode="crossing" aria-pressed="' + (mode === "crossing") +
+      '" title="Out 1 → In 2, Out 8 → In 1 (QM: optimized readout)">Crossing</button></span>' +
+      '<button type="button" class="btn-xs outline gen-ro-fill"' + (model.pool.length ? "" : " disabled") +
+      ' title="Fill feedlines up to the step-4 size, in qubit order">Fill from pool</button>' +
+      '<button type="button" class="btn-xs outline gen-ro-clear"' + (model.feeds.length ? "" : " disabled") +
+      ">Unassign all</button></span></div>" +
+      '<div class="gen-ro-pool" data-ro-target="' + RO_POOL + '">' +
+      '<span class="gen-ro-pool-label">Unassigned <b>' + model.pool.length + "</b></span>" +
+      (model.pool.length ? model.pool.map(roChip).join("")
+        : '<span class="muted gen-ro-pool-empty">every qubit is on a feedline</span>') +
+      "</div>" +
+      '<div class="gen-ro-feeds">' + cards +
+      '<div class="gen-ro-card gen-ro-new" data-ro-target="' + RO_NEW + '">' +
+      '<button type="button" class="btn-xs outline gen-ro-newbtn"' + (nSel ? "" : " disabled") +
+      ">+ New feedline</button>" +
+      '<span class="muted">from the selection</span></div></div>' +
+      '<div class="gen-ro-note muted" aria-live="polite">' +
+      [nSel ? nSel + " selected" : "", escapeAttr(_roNote)].filter(Boolean).join(" · ") + "</div>";
+  }
+
+  function roSelected() {
+    return Object.keys(_roSel).sort(roNat);
+  }
+
+  function roBoxOf(el) {
+    var box = el && el.closest && el.closest("[data-ro-target]");
+    return box ? box.getAttribute("data-ro-target") : null;
+  }
+
+  function roChipsIn(host, box) {
+    var el = host.querySelector('[data-ro-target="' + box + '"]');
+    return el ? Array.prototype.map.call(el.querySelectorAll(".gen-ro-chip"),
+      function (c) { return c.getAttribute("data-q"); }) : [];
+  }
+
+  function roClickChip(host, chip, ev) {
+    var q = chip.getAttribute("data-q"), box = roBoxOf(chip);
+    if (ev.shiftKey && _roAnchor && _roAnchor.box === box) {
+      var order = roChipsIn(host, box);
+      var a = order.indexOf(_roAnchor.qid), b = order.indexOf(q);
+      if (a >= 0 && b >= 0) {
+        if (!(ev.ctrlKey || ev.metaKey)) _roSel = Object.create(null);
+        order.slice(Math.min(a, b), Math.max(a, b) + 1).forEach(function (x) { _roSel[x] = true; });
+      }
+    } else if (ev.ctrlKey || ev.metaKey) {
+      if (_roSel[q]) delete _roSel[q]; else _roSel[q] = true;
+      _roAnchor = { box: box, qid: q };
+    } else {
+      var only = _roSel[q] && Object.keys(_roSel).length === 1;
+      _roSel = Object.create(null);
+      if (!only) _roSel[q] = true;
+      _roAnchor = { box: box, qid: q };
+    }
+    _roNote = "";
+    renderReadoutPool();
+    var again = host.querySelector('.gen-ro-chip[data-q="' + q + '"]');
+    if (again) again.focus();
+  }
+
+  function bindReadoutPool() {
+    var host = document.getElementById("gen-readout-pool");
+    if (!host || host.__roBound) return;
+    host.__roBound = true;
+    host.addEventListener("click", function (ev) {
+      if (_roDrag && _roDrag.moved) return;
+      var t = ev.target;
+      var chip = t.closest && t.closest(".gen-ro-chip");
+      if (chip) { roClickChip(host, chip, ev); return; }
+      var mode = t.closest && t.closest(".gen-ro-mode");
+      if (mode) { setAllReadoutInputs(mode.getAttribute("data-mode")); return; }
+      if (t.closest && t.closest(".gen-ro-fill")) { fillReadoutFromPool(); return; }
+      if (t.closest && t.closest(".gen-ro-clear")) { unassignAllReadout(); return; }
+      if (t.closest && t.closest("select")) return;
+      var box = roBoxOf(t);
+      if (box && Object.keys(_roSel).length) assignReadout(roSelected(), box);
+    });
+    // The card selects are structural edits with their own undo entry: keep
+    // the wizard's generic field-undo from recording them a second time.
+    host.addEventListener("change", function (ev) {
+      var sel = ev.target;
+      if (!sel || sel.tagName !== "SELECT") return;
+      ev.stopPropagation();
+      var name = roBoxOf(sel);
+      var lines = roFeedLines(name);
+      if (!lines.length) return;
+      var ch = lines[0].channel || {};
+      if (sel.classList.contains("gen-ro-fem") || sel.classList.contains("gen-ro-out")) {
+        var femV = host.querySelector('[data-ro-target="' + name + '"] .gen-ro-fem');
+        var outV = host.querySelector('[data-ro-target="' + name + '"] .gen-ro-out');
+        var fk = femV ? femV.value : "";
+        var fem = fk ? { con: parseInt(fk.split("/")[0], 10), slot: parseInt(fk.split("/")[1], 10) } : null;
+        var out = outV && outV.value ? parseInt(outV.value, 10)
+          : (ch.out_port != null ? ch.out_port : 8);
+        setFeedlineOutput(name, fem, out);
+      } else if (sel.classList.contains("gen-ro-in")) {
+        setFeedlineInput(name, sel.value);
+      }
+    });
+    host.addEventListener("keydown", function (ev) {
+      var t = ev.target;
+      if (t && (t.tagName === "SELECT" || t.tagName === "INPUT")) return;
+      if (ev.ctrlKey || ev.metaKey || ev.altKey) {
+        if ((ev.ctrlKey || ev.metaKey) && (ev.key === "a" || ev.key === "A")) {
+          var box = roBoxOf(t);
+          if (!box) return;
+          roChipsIn(host, box).forEach(function (q) { _roSel[q] = true; });
+          ev.preventDefault();
+          renderReadoutPool();
+        }
+        return;
+      }
+      if (ev.key === "Escape" && Object.keys(_roSel).length) {
+        _roSel = Object.create(null); _roNote = "";
+        ev.preventDefault(); ev.stopPropagation();
+        renderReadoutPool();
+        return;
+      }
+      if (!Object.keys(_roSel).length) return;
+      var target = null;
+      if (/^[1-9]$/.test(ev.key)) {
+        var f = readoutModel().feeds[parseInt(ev.key, 10) - 1];
+        if (f) target = f.name;
+      } else if (ev.key === "0" || ev.key === "Delete" || ev.key === "Backspace") {
+        target = RO_POOL;
+      } else if (ev.key === "n" || ev.key === "N") {
+        target = RO_NEW;
+      }
+      if (target === null) return;
+      ev.preventDefault();
+      assignReadout(roSelected(), target);
+      var first = host.querySelector(".gen-ro-chip");
+      if (first) first.focus();
+    });
+    host.addEventListener("mousedown", function (ev) {
+      var chip = ev.target.closest && ev.target.closest(".gen-ro-chip");
+      if (!chip || ev.button !== 0) return;
+      _roDrag = { q: chip.getAttribute("data-q"), x: ev.clientX, y: ev.clientY,
+                  moved: false, ghost: null, over: null };
+      document.addEventListener("mousemove", roDragMove);
+      document.addEventListener("mouseup", roDragEnd);
+    });
+  }
+
+  function roDragMove(ev) {
+    var d = _roDrag;
+    if (!d) return;
+    if (!d.moved) {
+      if (Math.abs(ev.clientX - d.x) + Math.abs(ev.clientY - d.y) < 5) return;
+      d.moved = true;
+      if (!_roSel[d.q]) { _roSel = Object.create(null); _roSel[d.q] = true; renderReadoutPool(); }
+      d.qids = roSelected();
+      var g = document.createElement("div");
+      g.className = "gen-ro-ghost";
+      g.textContent = d.qids.length === 1 ? d.qids[0] : d.qids[0] + " +" + (d.qids.length - 1);
+      document.body.appendChild(g);
+      d.ghost = g;
+    }
+    var z = uiZoom();
+    d.ghost.style.left = ((ev.clientX + 12) / z) + "px";
+    d.ghost.style.top = ((ev.clientY + 10) / z) + "px";
+    var el = document.elementFromPoint(ev.clientX, ev.clientY);
+    var box = el && el.closest ? el.closest("#gen-readout-pool [data-ro-target]") : null;
+    if (box !== d.over) {
+      if (d.over) d.over.classList.remove("is-over");
+      if (box) box.classList.add("is-over");
+      d.over = box;
+    }
+  }
+
+  function roDragEnd() {
+    var d = _roDrag;
+    document.removeEventListener("mousemove", roDragMove);
+    document.removeEventListener("mouseup", roDragEnd);
+    if (!d) return;
+    if (d.ghost && d.ghost.parentNode) d.ghost.parentNode.removeChild(d.ghost);
+    if (d.over) d.over.classList.remove("is-over");
+    var target = d.over ? d.over.getAttribute("data-ro-target") : null;
+    // the click that follows this mouseup must not re-select
+    setTimeout(function () { _roDrag = null; }, 0);
+    if (d.moved && target) assignReadout(d.qids, target);
+  }
+
+  // Review step: one line per feedline -- what to cable on the bench.
+  function readoutReviewText() {
+    var model = readoutModel();
+    if (!model.feeds.length && !model.pool.length) return null;
+    var parts = model.feeds.map(function (f) {
+      var ch = f.channel || {};
+      var at = roAllocText(f);
+      var where = at || ((ch.con != null ? "con" + ch.con + " slot " + ch.slot : "auto FEM") +
+        (ch.out_port != null ? " · Out " + ch.out_port : "") +
+        (ch.in_port != null ? " → In " + ch.in_port : ""));
+      var m = inModeOf(ch);
+      return f.name + " (" + f.members.join(", ") + "): " + where +
+        (m === "neighbor" || m === "crossing" ? " · " + m : "");
+    });
+    if (model.pool.length) parts.push("⚠ unassigned: " + model.pool.join(", "));
+    return parts.join("; ");
+  }
+
   function enterWiringStep() {
     deriveLines();
+    bindReadoutPool();
     renderWiringTable();
     renderQdacCabling();
     renderWiringDiagram();
@@ -4806,8 +5433,12 @@
       (sp.qubit_pairs || []).map(function (p) {
         return (p || []).slice().sort().join("-");
       }).sort(),
+      // docs/242: a resonator's FEEDLINE is allocator input too -- moving a
+      // qubit between two auto feedlines changes no channel, only the group.
       (sp.lines || []).map(function (ln) {
-        return [pairNorm[ln.element] || ln.element, ln.line, ln.channel || null];
+        var row = [pairNorm[ln.element] || ln.element, ln.line, ln.channel || null];
+        if (ln.line === "resonator") row.push(ln.pool ? "__pool__" : (ln.group || null));
+        return row;
       }).sort(),
       (sp.instruments && sp.instruments.controllers) || [],
       sp.pair_gate || null,
@@ -4875,6 +5506,22 @@
   function runAutoAllocate(auto) {
     var btn = document.getElementById("gen-allocate-btn");
     var status = document.getElementById("gen-allocate-status");
+    // docs/242: a pooled qubit has no feedline -- run_build would multiplex
+    // every one of them onto one unnamed line. Say so; nothing to allocate.
+    var pooledNow = pooledQubits();
+    if (pooledNow.length) {
+      if (state.allocation) {
+        state.allocation = null;
+        _allocTopoSig = null;
+        _allocSpecSig = null;
+      }
+      if (status) status.textContent = "✗ " + pooledNow.length + " qubit" +
+        (pooledNow.length === 1 ? " is" : "s are") + " not on a feedline — assign " +
+        (pooledNow.length === 1 ? "it" : "them") + " under Readout feedlines.";
+      renderWiringTable();     // the Auto-allocated column drops the old ports
+      renderWiringDiagram();
+      return;
+    }
     if (!state.env) {
       // Answer AT the button too — #gen-message can be scrolled out of view,
       // which made this press look completely dead (docs/134).
@@ -8632,6 +9279,8 @@
         sp.qubit_pairs.length + " / " + sp.twpas.length],
       ["Control lines", linesSummary],
     ];
+    var roReview = readoutReviewText();   // docs/242: what to cable, per feedline
+    if (roReview) rows.push(["Readout feedlines", roReview]);
     var qdacQubits = Object.keys((sp.qdac && sp.qdac.qubits) || {});
     if (qdacQubits.length) {
       var qdAddr = sp.qdac.communication_type === "USB"
@@ -11458,6 +12107,22 @@
       // step-5 wiring rules — the harness reads the ISSUE MESSAGES, which is
       // the text renderWiringIssues puts on screen (tests/nat_order_client)
       validateWiring: validateWiring,
+      // docs/242 readout-feedline panel seams
+      readoutModel: readoutModel,
+      inPortFor: inPortFor,
+      inModeOf: inModeOf,
+      assignReadout: assignReadout,
+      setFeedlineOutput: setFeedlineOutput,
+      setFeedlineInput: setFeedlineInput,
+      setAllReadoutInputs: setAllReadoutInputs,
+      fillReadoutFromPool: fillReadoutFromPool,
+      unassignAllReadout: unassignAllReadout,
+      readoutClashes: readoutClashes,
+      readoutReviewText: readoutReviewText,
+      renderReadoutPool: renderReadoutPool,
+      bindReadoutPool: bindReadoutPool,
+      topoSig: topoSig,
+      stepGuard5: function () { return stepGuards[5](); },
       state: state
     }
   };
