@@ -13,6 +13,19 @@
 
   // The spec assembled by the wizard — the contract in
   // docs/27_config_generator.md. Steps mutate this; step 8 submits it.
+  // docs/242: a NEW chip's readout inputs default to crossing (Out1->In2,
+  // Out8->In1), QM's recommended readout pairing ("For achieving the highest
+  // readout SNR ... Playing from Output 1 & Reading from Input 2 / Playing
+  // from Output 8 & Reading from Input 1", docs Guides/opx1000_fems.md).
+  // Deliberately NOT in freshSpec(): applyDraft and the Re-generate hydrate
+  // fill absent keys from freshSpec(), and an existing draft or source chip
+  // without the field must keep reading as neighbor (its cabling is fixed).
+  function newChipSpec() {
+    var sp = freshSpec();
+    sp.readout_input = "crossing";
+    return sp;
+  }
+
   function freshSpec() {
     return {
       network: { host: "", cluster_name: "", port: null },
@@ -36,7 +49,7 @@
 
   var state = {
     step: 1,
-    spec: freshSpec(),
+    spec: newChipSpec(),
     env: null,            // selected interpreter path
     allocation: null,     // last /generate/allocate result, keyed by element
     pairsTouched: false,  // user hand-edited pairs -> stop auto-filling them
@@ -11262,7 +11275,7 @@
       try { sessionStorage.removeItem(DRAFT_KEY); } catch (e) {}
     }
     state.step = 1;
-    state.spec = freshSpec();
+    state.spec = newChipSpec();
     // QA F4: env: KEEP the current selection (the docs/134 hydrateFromSpec
     // rule). It is a machine-wide choice the server keeps saved, not wizard
     // content — nulling it left the row highlighted while Next refused
@@ -11351,7 +11364,7 @@
               "heldChipArch", "heldPins", "pairGate", "muxSize", "pairsTouched",
               "wiringTouched", "allocation", "autoPresetRows", "crPortMode",
               "regenTouched", "regenFilled"] },
-    5: { spec: ["lines"], st: ["allocation", "wiringTouched", "heldPins"] },
+    5: { spec: ["lines", "readout_input"], st: ["allocation", "wiringTouched", "heldPins"] },
     6: { spec: ["populate", "qdac"], st: ["autoPresetRows", "regenTouched", "regenFilled"] },
     7: { spec: [], st: ["outputPath", "scriptsEnabled", "scriptsPath", "_scriptsPathTouched"] }
   };
@@ -11437,6 +11450,7 @@
       state.heldPins = {};
       state.allocation = null;
       state.wiringTouched = false;
+      state.spec.readout_input = "crossing";   // docs/242: the new-chip default
     } else if (step === 6) {
       // keep only what step 4 decided: board placement, CZ orientation
       var old = state.spec.populate || {}, pop = {};
@@ -11524,7 +11538,7 @@
       applyDraft(draft);
     } else {
       state.step = 1;
-      state.spec = freshSpec();
+      state.spec = newChipSpec();
       state.heldPins = {};   // a fresh spec holds nothing of an earlier one
       state.env = null;
       state.allocation = null;

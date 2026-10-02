@@ -108,13 +108,15 @@ run('R1', () => {
 // R2
 run('R2', () => {
   const w = world(10, 5);
-  ok(JSON.stringify(rline(w.state, 'q1').channel) === JSON.stringify({ kind: 'mw_fem', out_port: 8, in_port: 2 }),
-     'R2 default feedline1 is Out8/In2 (neighbor): ' + JSON.stringify(rline(w.state, 'q1').channel));
-  ok(rline(w.state, 'q6').channel.in_port === 1, 'R2 default feedline2 is Out1/In1');
-  w.state.spec.readout_input = 'crossing';
+  // a NEW chip defaults to crossing (QM's recommended readout pairing)
+  ok(w.state.spec.readout_input === 'crossing', 'R2 a new chip defaults to crossing');
+  ok(JSON.stringify(rline(w.state, 'q1').channel) === JSON.stringify({ kind: 'mw_fem', out_port: 8, in_port: 1 }),
+     'R2 default feedline1 is Out8/In1 (crossing): ' + JSON.stringify(rline(w.state, 'q1').channel));
+  ok(rline(w.state, 'q6').channel.in_port === 2, 'R2 default feedline2 is Out1/In2');
+  w.state.spec.readout_input = 'neighbor';
   w.T.deriveLines();
-  ok(rline(w.state, 'q1').channel.in_port === 1, 'R2 crossing: Out8 -> In1');
-  ok(rline(w.state, 'q6').channel.in_port === 2, 'R2 crossing: Out1 -> In2');
+  ok(rline(w.state, 'q1').channel.in_port === 2, 'R2 neighbor: Out8 -> In2');
+  ok(rline(w.state, 'q6').channel.in_port === 1, 'R2 neighbor: Out1 -> In1');
 });
 
 // R3 + R8
@@ -211,6 +213,8 @@ run('R9', () => {
 run('R10', () => {
   const w = world(10, 5);
   const doc = w.doc, win = w.win;
+  w.state.spec.readout_input = 'neighbor';   // this pin is about neighbor mechanics
+  w.T.deriveLines();
   w.T.bindReadoutPool();
   w.T.renderReadoutPool();
   const host = doc.getElementById('gen-readout-pool');
@@ -251,6 +255,8 @@ run('R10', () => {
 run('R11', () => {
   const w = world(10, 5);
   const T = w.T;
+  w.state.spec.readout_input = 'neighbor';   // this pin is about neighbor mechanics
+  T.deriveLines();
   T.setFeedlineOutput('feedline1', { con: 1, slot: 1 }, 8);   // In 2 (neighbor)
   T.setFeedlineOutput('feedline2', { con: 1, slot: 1 }, 1);   // In 1
   ok(Object.keys(T.readoutClashes(T.readoutModel().feeds)).length === 0, 'R11 Out8/In2 + Out1/In1: no clash');
@@ -299,6 +305,43 @@ run('R14b', () => {
   w.T.fillReadoutFromPool();
   ok(JSON.stringify(feeds(w.T)) === JSON.stringify(['feedline1:q1,q2,q3,q4,q5', 'feedline2:q6,q7,q8,q9,q10']),
      'R14b fill tops up the short feedline before opening a new one: ' + feeds(w.T));
+});
+
+// R20 (docs/242, user decision 2026-10-02): crossing is the NEW-chip default
+// only. A draft or a Re-generate source without the field keeps neighbor --
+// its cabling already exists -- and Reset step on Wiring goes back to crossing.
+run('R20', () => {
+  // an older draft (no readout_input) restored on page load
+  const dom = new JSDOM(
+    '<!DOCTYPE html><html><body><div id="table-pane">' + HTML + '</div></body></html>',
+    { runScripts: 'outside-only', pretendToBeVisual: true, url: 'http://localhost/' });
+  const win = dom.window;
+  win.NumberInput = { fit() {}, attach() {}, format() {}, strip(s) { return String(s == null ? '' : s).replace(/,/g, ''); } };
+  win.armPlainResize = function () {}; win.renderInstrumentWiring = function () {};
+  win.confirm = function () { return true; }; win.showToast = function () {};
+  win.fetch = function () { return new win.Promise(function () {}); };
+  win.sessionStorage.setItem('quam_generate_draft', JSON.stringify({ v: 2, step: 2,
+    spec: { network: { host: 'h', cluster_name: 'c', port: null },
+            instruments: { controllers: [], opx_plus: [], octaves: [] },
+            qubits: ['q1'], qubit_pairs: [], twpas: [], lines: [], populate: {}, pair_gate: 'cz_tunable' } }));
+  new win.Function(GEN_JS).call(win);
+  win.QuamGen.init();
+  ok(win.QuamGen.state.spec.qubits.join() === 'q1', 'R20 fixture: the draft was restored');
+  ok(win.QuamGen.state.spec.readout_input !== 'crossing', 'R20 an older draft keeps neighbor: ' + win.QuamGen.state.spec.readout_input);
+  // a Re-generate source without the field
+  const w = world(4, 4);
+  w.G.hydrateFromSpec({ network: { host: 'h', cluster_name: 'c', port: null },
+    instruments: { controllers: [{ con: 1, fems: [{ slot: 1, fem: 'mw' }] }], opx_plus: [], octaves: [] },
+    qubits: ['qA1', 'qA2'], qubit_pairs: [], twpas: [], lines: [], populate: {}, pair_gate: 'cz_tunable' },
+    { mode: 'regenerate', sourcePath: 'D:/chips/src' });
+  ok(w.state.spec.readout_input !== 'crossing', 'R20 a Re-generate source keeps neighbor: ' + w.state.spec.readout_input);
+  // Reset step on Wiring: back to the new-chip default
+  const v = world(10, 5);
+  v.G.init();                                  // binds the header buttons
+  v.state.spec.readout_input = 'neighbor';
+  v.G.goToStep(5);
+  v.doc.getElementById('gen-reset-step').dispatchEvent(new v.win.MouseEvent('click', { bubbles: true }));
+  ok(v.state.spec.readout_input === 'crossing', 'R20 Reset step on Wiring goes back to crossing');
 });
 
 if (fails) {

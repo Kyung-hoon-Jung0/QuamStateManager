@@ -46,8 +46,13 @@ What follows from this:
   can still put it elsewhere (R2 warns).
 - **How the code encoded this before.** `mw_fem.lo_peer` and the wizard's
   `MW_LO_PAIRS` already held the coupling table. `deriveLines` paired Out 8
-  with In 2 and Out 1 with In 1, i.e. neighbor. That stays the default, so no
-  existing allocation moves.
+  with In 2 and Out 1 with In 1, i.e. neighbor.
+- **The default (user decision, 2026-10-02): crossing for a NEW chip**, QM's
+  recommended readout pairing. It is set where a brand-new spec is made
+  (`newChipSpec`), deliberately not in `freshSpec()`. A restored draft and the
+  Re-generate hydrate fill absent keys from `freshSpec()`, so a draft or source
+  chip without the field keeps neighbor; its cabling already exists. Reset
+  step on Wiring goes back to crossing.
 
 ## Today's pain, reproduced
 
@@ -147,7 +152,7 @@ card.
 - Review gains a "Readout feedlines" row: each feedline's members, then
   con/slot, Out, In and neighbor/crossing, taken from the allocation.
 - Unchanged:
-  - auto-allocation (default neighbor, Out 8 / Out 1 alternation);
+  - auto-allocation (Out 8 / Out 1 alternation; the input follows the mode);
   - CSV import, typed pins, rack drags (the panel re-renders from what they
     write);
   - regen hydration and drafts.
@@ -202,11 +207,15 @@ themes at 1150 px.
   goes red. "Fill ignores size" was green at first, because the fixture only
   filled from an empty chip. R14b now tops up a short feedline.
 
-## Open questions for the user
+## Decisions (user, 2026-10-02)
 
-- **The physical meaning of neighbor/crossing.** It is derived from the
-  coupling table, not the panel layout (the docs have no panel drawing). Out 1
-  neighbor = In 1 matches the request; Out 8 neighbor = In 2 is the coupled
-  input. Confirm this matches the bench.
-- **The default stays neighbor**, so existing allocations do not move. QM
-  recommends crossing for SNR. Should new chips default to crossing?
+- **Neighbor/crossing.** Out 1 neighbor = In 1 and Out 8 neighbor = In 2 (the
+  coupled input). Confirmed to match the bench cabling.
+- **New chips default to crossing.** Older drafts and Re-generate sources keep
+  neighbor. Pinned by R20 (an older draft, a Re-generate source, Reset step);
+  all 4 of its mutations went red.
+
+## Open
+
+- The docs also say "If using both inputs, ensure the downconverters'
+  frequencies differ by at least 10 MHz." This panel does not check that yet.
