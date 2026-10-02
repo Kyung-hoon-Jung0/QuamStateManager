@@ -14440,3 +14440,80 @@ html.sm-in-frame .topbar .wb-link { display: none; }
 .sm-reload-pop .sm-reload-opt small { color: var(--pico-muted-color); font-size: .78rem; }
 .sm-reload-pop .sm-reload-note { font-size: .78rem; color: var(--pico-muted-color); margin: 0; }
 .sm-reload-pop .sm-reload-msg { font-size: .8rem; margin: 0; }
+
+/* ── docs/243: tick rows of a run's quam_state, apply only those ───────────
+   The box is the sidebar run box's language (docs/161/165): square, soft
+   SM-blue border, faint ghost tick that comes up on hover, solid blue when
+   ticked -- sized down to a tree row. Half-filled = part of it is ticked. */
+.ds-pickable input.ds-pick {
+    appearance: none; -webkit-appearance: none;
+    width: 16px; height: 16px; margin: 0 0.4rem 0 0; flex-shrink: 0; cursor: pointer;
+    vertical-align: -3px; position: relative;
+    border: 1.5px solid color-mix(in srgb, var(--pico-primary) 45%, var(--pico-muted-border-color));
+    border-radius: 4px; background: color-mix(in srgb, var(--pico-primary) 6%, transparent);
+    transition: border-color .12s, background .12s, box-shadow .12s;
+}
+.ds-pickable .tree-row:hover > input.ds-pick,
+.ds-pickable input.ds-pick:hover { border-color: var(--pico-primary); }
+.ds-pickable input.ds-pick:focus-visible {
+    outline: none; box-shadow: 0 0 0 3px color-mix(in srgb, var(--pico-primary) 30%, transparent);
+}
+.ds-pickable input.ds-pick::after {
+    content: ""; position: absolute; left: 4.4px; top: 1.2px; width: 4.5px; height: 8.5px;
+    border: solid var(--pico-muted-color); border-width: 0 2px 2px 0; transform: rotate(45deg);
+    opacity: 0; transition: opacity .12s;
+}
+/* the ghost tick shows on hover only: in a dense tree an always-on ghost
+   reads as ticked (real-Chrome review) */
+.ds-pickable .tree-row:hover > input.ds-pick::after { opacity: 0.55; }
+.ds-pickable input.ds-pick:checked { background: var(--pico-primary); border-color: var(--pico-primary); }
+.ds-pickable input.ds-pick:checked::after { border-color: #fff; opacity: 1; }
+.ds-pickable input.ds-pick:indeterminate {
+    background: color-mix(in srgb, var(--pico-primary) 35%, transparent); border-color: var(--pico-primary);
+}
+.ds-pickable input.ds-pick:indeterminate::after {
+    left: 3px; top: 6px; width: 7px; height: 0; border-width: 0 0 2px 0; transform: none;
+    border-color: #fff; opacity: 1;
+}
+.ds-pickable .tree-node.ds-picked > .tree-row { background: color-mix(in srgb, var(--pico-primary) 9%, transparent); }
+
+.ds-pick-bar {
+    display: flex; flex-wrap: wrap; align-items: center; gap: 0.4rem;
+    margin: 0.25rem 0 0.35rem; padding: 0.3rem 0.5rem; border-radius: 6px;
+    border: 1px dashed color-mix(in srgb, var(--pico-primary) 35%, var(--pico-muted-border-color));
+    position: sticky; top: 0; z-index: 3; background: var(--pico-background-color);
+}
+.ds-pick-bar.has-pick { border-style: solid; border-color: color-mix(in srgb, var(--pico-primary) 60%, transparent); }
+.ds-pick-bar .ds-pick-count { font-size: 0.82rem; color: var(--pico-muted-color); margin-right: auto; }
+.ds-pick-bar.has-pick .ds-pick-count { color: var(--pico-color); font-weight: 600; }
+.ds-pick-bar button { margin: 0; }
+
+.ds-pick-modal {
+    position: fixed; inset: 0; z-index: 2000; display: flex; align-items: flex-start; justify-content: center;
+    padding: 6vh 16px; background: rgba(0, 0, 0, 0.45);
+}
+.ds-pick-card {
+    width: min(1100px, 100%); max-height: 86vh; display: flex; flex-direction: column;
+    background: var(--pico-card-background-color, var(--pico-background-color));
+    border: 1px solid var(--pico-muted-border-color); border-radius: 10px; padding: 1rem 1.1rem;
+    box-shadow: 0 12px 40px rgba(0, 0, 0, 0.35);
+}
+.ds-pick-card h4 { margin: 0 0 0.3rem; }
+.ds-pick-sum { margin: 0 0 0.5rem; font-size: 0.85rem; }
+.ds-pick-warn { display: block; margin: 0 0 0.5rem; padding: 0.35rem 0.5rem; border-radius: 6px; font-size: 0.85rem;
+    background: color-mix(in srgb, #e0a800 16%, transparent); border: 1px solid color-mix(in srgb, #e0a800 55%, transparent); }
+.ds-pick-table-wrap { overflow: auto; flex: 1 1 auto; border: 1px solid var(--pico-muted-border-color); border-radius: 6px; }
+.ds-pick-table { width: 100%; margin: 0; font-size: 0.8rem; }
+.ds-pick-table th { position: sticky; top: 0; background: var(--pico-background-color); z-index: 1; }
+.ds-pick-table td, .ds-pick-table th { padding: 0.25rem 0.45rem; vertical-align: top; }
+.ds-pick-table td code { font-size: 0.78rem; white-space: pre-wrap; word-break: break-all; background: none; padding: 0; }
+.ds-pick-path { font-family: var(--pico-font-family-monospace); word-break: break-all; }
+.ds-pick-tag { font-size: 0.72rem; padding: 0.05rem 0.4rem; border-radius: 999px; border: 1px solid var(--pico-muted-border-color); white-space: nowrap; }
+.ds-pick-tag-change { border-color: var(--pico-primary); color: var(--pico-primary); }
+.ds-pick-tag-new { border-color: #2e9d5b; color: #2e9d5b; }
+.ds-pick-tag-skip { border-color: #c4572f; color: #c4572f; }
+.ds-pick-skip td { opacity: 0.75; }
+.ds-pick-showsame { display: block; margin: 0.4rem 0 0; font-size: 0.82rem; }
+.ds-pick-err { color: var(--pico-del-color); margin: 0.4rem 0 0; font-size: 0.85rem; }
+.ds-pick-actions { display: flex; gap: 0.5rem; justify-content: flex-end; margin-top: 0.6rem; }
+.ds-pick-actions button { margin: 0; }

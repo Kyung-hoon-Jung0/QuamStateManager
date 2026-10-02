@@ -536,6 +536,12 @@
                     // built ~15k–30k DOM nodes and stalled the tab ~1–2s + slowed the
                     // whole panel. Render shallow; the user expands on demand.
                     renderJsonTree(cid, data, {defaultDepth: 1, valueClick: 'copy'});
+                    // docs/243: tick rows of the run's quam_state to bring only
+                    // them into the open chip (the snapshot stays read-only)
+                    if ((which === 'state' || which === 'wiring') && window.DsPick) {
+                        window.DsPick.attach(el, {uid: runId, file: which,
+                            searchInput: tab.querySelector('[id$="ds-state-search"]')});
+                    }
                 })
                 .catch(function(e){
                     el.innerHTML = '<p style="color:var(--pico-del-color);padding:.5rem">Error loading ' + which + '.json: ' + e + '</p>';

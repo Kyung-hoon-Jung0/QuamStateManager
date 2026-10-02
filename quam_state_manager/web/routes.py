@@ -33937,6 +33937,138 @@ def dataset_json_file(uid):
         return jsonify({"error": str(exc)}), 500
 
 
+@bp.route("/dataset/<uid>/apply-selected/preview", methods=["POST"])
+def dataset_apply_selected_preview(uid):
+    """docs/243 -- what "Apply selected to chip" would write, row by row.
+
+    Customer ask: take only PART of a run's state into the open chip (e.g. the
+    exponential-filter taps of a few qubits) -- the run's snapshot stays
+    read-only, the open chip's working copy is what changes, through the same
+    /field/edit-batch door every other edit uses (one Review group, one
+    Ctrl+Z, the live chip untouched until Apply).
+
+    Body: ``{"file": "state"|"wiring", "paths": [dot paths]}``. A selected
+    container stands for everything under it; it is flattened to LEAVES, where
+    a list is one leaf (``exponential_filter`` is ``[[a, tau], ...]`` -- one
+    value, never written element by element). Each row is judged against the
+    open chip's working copy:
+
+    * ``same`` -- nothing to write (exact compare, ``differ.compare_equal``);
+    * ``change`` -- written; ``target`` names where when the open chip holds a
+      pointer there (the value lands on what it points at, which other fields
+      may share -- said, never silent);
+    * ``new`` -- the field is absent in the open chip but its parent exists:
+      created;
+    * ``skip`` -- not written, with the reason: a reference (pointer) that
+      differs, a read-only field, or a parent the open chip does not have.
+    """
+    from quam_state_manager.core import differ
+    from quam_state_manager.core.pointer_path import _walk
+    from quam_state_manager.core.pointer_resolver import is_pointer
+    resolved = _resolve_run(uid)
+    if not resolved:
+        return jsonify(ok=False, error="Run not found"), 404
+    ds, run_id, _ = resolved
+    body = request.get_json(silent=True) or {}
+    which = body.get("file") or "state"
+    paths = body.get("paths")
+    if which not in ("state", "wiring") or not isinstance(paths, list) or not paths:
+        return jsonify(ok=False, error="file must be state|wiring and paths a non-empty list"), 400
+    qs = ds.get_quam_state_path(run_id)
+    if not qs or not (qs / f"{which}.json").exists():
+        return jsonify(ok=False, error=f"No {which}.json in this run"), 404
+    ctx = _active_ctx()
+    store = ctx.get("store") if ctx and ctx.get("type") == "quam" else None
+    if store is None:
+        return jsonify(ok=False, error=_NO_CHIP_MSG), 409
+    if (ctx.get("origin") or "live") != "live":
+        return jsonify(ok=False, error="The open chip is a read-only archive -- open your chip to apply into it"), 409
+    snap = safe_io.read_json(qs / f"{which}.json")
+
+    # flatten the selection to leaves (a list is one leaf); a selected path
+    # covered by another selected path is not visited twice
+    sel = sorted({str(p) for p in paths if isinstance(p, str) and p})
+    sel = [p for p in sel if not any(p.startswith(q + ".") for q in sel if q != p)]
+    leaves: list[tuple[str, Any]] = []
+    missing: list[str] = []
+    _CAP = 20000
+
+    def _flat(path: str, v: Any) -> None:
+        if len(leaves) >= _CAP:
+            return
+        if isinstance(v, dict) and v:
+            for k, cv in v.items():
+                _flat(f"{path}.{k}", cv)
+        else:
+            leaves.append((path, v))
+    for p in sel:
+        found, v = _walk(snap, p.split("."))
+        if not found:
+            missing.append(p)
+            continue
+        _flat(p, v)
+
+    rows = []
+    with store._lock:
+        merged = store.merged
+        for path, new in leaves:
+            row: dict[str, Any] = {"path": path, "new": new}
+            found, cur = _walk(merged, path.split("."))
+            row["old"] = cur if found else None
+            if not found:
+                pfound, parent = _walk(merged, path.split(".")[:-1])
+                if pfound and isinstance(parent, dict):
+                    row["status"] = "new"
+                else:
+                    row["status"] = "skip"
+                    row["reason"] = ("the open chip holds a reference (pointer) above it"
+                                     if pfound and is_pointer(parent)
+                                     else "its parent does not exist in the open chip")
+                rows.append(row)
+                continue
+            if differ.compare_equal(cur, new, tolerance=None) and type(cur) is type(new):
+                row["status"] = "same"
+                rows.append(row)
+                continue
+            if is_pointer(new):
+                row["status"] = "skip"
+                row["reason"] = ("a reference (pointer) differs -- change it in "
+                                 "Live edit - Json Tree view")
+                rows.append(row)
+                continue
+            target = path
+            if is_pointer(cur):
+                try:
+                    target = _resolve_edit_path(store, path)
+                except Exception:  # noqa: BLE001
+                    target = path
+            ro = _editability_reason(store, target)
+            if ro is not None:
+                row["status"] = "skip"
+                row["reason"] = ro
+                rows.append(row)
+                continue
+            row["status"] = "change"
+            if target != path:
+                row["target"] = target
+            rows.append(row)
+
+    # the run vs the open chip: same chip, or say so
+    from quam_state_manager.core import history as _hist
+    try:
+        alignment = _hist.align(_hist.fingerprint_of(ctx["path"]), _hist.fingerprint_of(qs))
+    except Exception:  # noqa: BLE001
+        alignment = _hist.ALIGN_UNKNOWN
+    counts: dict[str, int] = {}
+    for r in rows:
+        counts[r["status"]] = counts.get(r["status"], 0) + 1
+    return jsonify(ok=True, rows=rows, counts=counts, missing=missing,
+                   capped=len(leaves) >= _CAP,
+                   chip=_chip_display_name(Path(ctx["path"])),
+                   same_chip=(alignment == _hist.ALIGN_ALIGNED),
+                   chip_unknown=(alignment == _hist.ALIGN_UNKNOWN))
+
+
 @bp.route("/dataset/<uid>/prev-state-diff")
 def dataset_prev_state_diff(uid):
     """Diff this run's quam_state against an earlier run's (item 5).

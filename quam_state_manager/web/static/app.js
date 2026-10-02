@@ -10363,6 +10363,7 @@ window.clearDetailPanelSearch = function(btnEl) {
             rendered[i].classList.remove("tree-highlight", "tree-search-hidden");
         }
         if (!q) {
+            container._searchMatches = null;   // docs/243: Select matches reads this
             _treeSearchResults(container, null);
             container._searchShowAllQ = undefined;   // clearing the box forgets "show all"
             _expandToDepth(container, 1);
@@ -10399,6 +10400,7 @@ window.clearDetailPanelSearch = function(btnEl) {
             }
         }
 
+        container._searchMatches = matchPaths;   // docs/243: Select matches reads this
         if (matchPaths.size === 0) {
             for (var h = 0; h < rendered.length; h++) {
                 rendered[h].classList.add("tree-search-hidden");
@@ -26300,4 +26302,389 @@ window.SmReload = (function () {
     if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', boot); else boot();
     return { open: open, close: close, run: run,
              _reloadPage: function () { window.__smIntentionalReload = true; location.reload(); } };
+})();
+
+/* ── DsPick: apply PART of a run's state to the open chip (docs/243) ───────
+ *
+ * Customer 2026-10-02: "데이터의 state에서 exponential filter tap 들을 일부만
+ * 현재 chip에 가져오고 싶다". The run's snapshot stays read-only; what changes
+ * is the OPEN chip's working copy, through the one /field/edit-batch door
+ * (one Review group, one Ctrl+Z, the live chip untouched until Apply).
+ *
+ *  - Every row of the run's state.json / wiring.json tree carries a tick box.
+ *    Ticking a container ticks everything under it (q4 -> all of q4;
+ *    exponential_filter -> every tap). Unticking one child of a ticked
+ *    container keeps its siblings ticked. A box half-filled = some of it.
+ *  - "Select matches" ticks what the tree search found (the shallowest hits).
+ *  - "Apply selected to chip" asks the server for the rows
+ *    (/dataset/<uid>/apply-selected/preview), shows old -> new with its delta,
+ *    and on confirm posts ONE atomic /field/edit-batch.
+ *  - "Copy JSON" copies the selection (one pick: its value; several: a
+ *    {path: value} map).
+ *
+ * The selection is a set of PATHS over the tree's own data
+ * (container._treeData), so branches never expanded are selected too.
+ */
+window.DsPick = (function () {
+    'use strict';
+
+    function isObj(v) { return v !== null && typeof v === 'object'; }
+    function childKeys(v) {
+        if (Array.isArray(v)) return v.map(function (_, i) { return String(i); });
+        return isObj(v) ? Object.keys(v) : [];
+    }
+    function valueAt(root, path) {
+        if (path === '') return root;
+        var segs = String(path).split('.'), cur = root;
+        for (var i = 0; i < segs.length; i++) {
+            if (Array.isArray(cur)) {
+                if (!/^[0-9]+$/.test(segs[i])) return undefined;
+                cur = cur[Number(segs[i])];
+            } else if (isObj(cur)) {
+                if (!Object.prototype.hasOwnProperty.call(cur, segs[i])) return undefined;
+                cur = cur[segs[i]];
+            } else {
+                return undefined;
+            }
+        }
+        return cur;
+    }
+    function parentOf(p) { var i = p.lastIndexOf('.'); return i < 0 ? '' : p.slice(0, i); }
+    function isUnder(p, anc) { return anc === '' || p === anc || p.indexOf(anc + '.') === 0; }
+
+    // ---- the selection model (pure; pinned directly by the selfcheck) ----
+    function covered(sel, path) {
+        var p = path;
+        while (true) {
+            if (sel.has(p)) return true;
+            if (p === '') return false;
+            p = parentOf(p);
+        }
+    }
+    function partial(sel, path) {
+        if (covered(sel, path)) return false;
+        var pre = path + '.';
+        var it = sel.values();
+        for (var r = it.next(); !r.done; r = it.next()) {
+            if (r.value.indexOf(pre) === 0) return true;
+        }
+        return false;
+    }
+    function select(sel, path) {
+        // a pick covers everything under it: drop what it now covers
+        Array.from(sel).forEach(function (q) { if (q !== path && isUnder(q, path)) sel.delete(q); });
+        sel.add(path);
+    }
+    function unselect(sel, data, path) {
+        Array.from(sel).forEach(function (q) { if (isUnder(q, path)) sel.delete(q); });
+        // an ancestor still covers it: split that ancestor down to `path`,
+        // keeping every sibling on the way
+        var anc = null, p = path;
+        while (p !== '') {
+            p = parentOf(p);
+            if (sel.has(p)) { anc = p; break; }
+            if (p === '') break;
+        }
+        if (anc === null) return;
+        sel.delete(anc);
+        var cur = anc;
+        while (cur !== path) {
+            var rest = path.slice(cur === '' ? 0 : cur.length + 1);
+            var next = (cur === '' ? '' : cur + '.') + rest.split('.')[0];
+            childKeys(valueAt(data, cur)).forEach(function (k) {
+                var c = (cur === '' ? '' : cur + '.') + k;
+                if (c !== next) sel.add(c);
+            });
+            cur = next;
+        }
+    }
+    // the shallowest search hits (a hit under another hit is already covered)
+    function shallowest(paths) {
+        var arr = Array.from(paths || []).filter(function (p) { return p !== ''; }).sort();
+        var out = [];
+        arr.forEach(function (p) {
+            if (!out.some(function (q) { return isUnder(p, q); })) out.push(p);
+        });
+        return out;
+    }
+
+    // ---- the tree surface ----
+    function sync(container) {
+        var sel = container._pick;
+        container.querySelectorAll('.tree-node[data-path] > .tree-row > input.ds-pick').forEach(function (cb) {
+            var p = cb.parentNode.parentNode.getAttribute('data-path');
+            var on = covered(sel, p);
+            cb.checked = on;
+            cb.indeterminate = !on && partial(sel, p);
+            cb.parentNode.parentNode.classList.toggle('ds-picked', on);
+        });
+        var bar = container._pickBar;
+        if (bar) bar._render();
+    }
+    function decorate(container) {
+        container.querySelectorAll('.tree-node[data-path] > .tree-row').forEach(function (row) {
+            if (row.querySelector(':scope > input.ds-pick')) return;
+            var p = row.parentNode.getAttribute('data-path');
+            if (p === '') return;
+            var cb = document.createElement('input');
+            cb.type = 'checkbox';
+            cb.className = 'ds-pick';
+            cb.tabIndex = 0;
+            cb.title = 'Tick to bring this (and everything under it) into the open chip';
+            cb.setAttribute('aria-label', 'Select ' + p);
+            row.insertBefore(cb, row.firstChild);
+        });
+    }
+    function onTick(container, cb) {
+        var p = cb.parentNode.parentNode.getAttribute('data-path');
+        if (covered(container._pick, p)) unselect(container._pick, container._treeData, p);
+        else select(container._pick, p);
+        sync(container);
+    }
+
+    function selectionJson(container) {
+        var sel = Array.from(container._pick).sort();
+        if (sel.length === 1) return JSON.stringify(valueAt(container._treeData, sel[0]), null, 2);
+        var out = {};
+        sel.forEach(function (p) { out[p] = valueAt(container._treeData, p); });
+        return JSON.stringify(out, null, 2);
+    }
+
+    // ---- the action bar (one per tree container, above it) ----
+    function makeBar(container, opts) {
+        var bar = document.createElement('div');
+        bar.className = 'ds-pick-bar';
+        bar.innerHTML =
+            '<span class="ds-pick-count">Tick rows to bring them into the open chip</span>' +
+            '<button type="button" class="btn-xs outline ds-pick-matches">Select matches</button>' +
+            '<button type="button" class="btn-xs ds-pick-apply" disabled>Apply selected to chip</button>' +
+            '<button type="button" class="btn-xs outline ds-pick-copy" disabled>Copy JSON</button>' +
+            '<button type="button" class="btn-xs outline secondary ds-pick-clear" disabled>Clear</button>';
+        bar._render = function () {
+            var n = container._pick.size;
+            var m = shallowest(container._searchMatches).length;
+            bar.querySelector('.ds-pick-count').textContent = n
+                ? n + (n === 1 ? ' selected' : ' selected')
+                : 'Tick rows to bring them into the open chip';
+            var mb = bar.querySelector('.ds-pick-matches');
+            mb.disabled = !m;
+            mb.textContent = m ? 'Select matches (' + m + ')' : 'Select matches';
+            mb.title = m ? 'Tick every row the search found' : 'Search first, then tick every match at once';
+            bar.querySelector('.ds-pick-apply').disabled = !n;
+            bar.querySelector('.ds-pick-copy').disabled = !n;
+            bar.querySelector('.ds-pick-clear').disabled = !n;
+            bar.classList.toggle('has-pick', !!n);
+        };
+        bar.addEventListener('click', function (e) {
+            var b = e.target.closest('button');
+            if (!b || b.disabled) return;
+            if (b.classList.contains('ds-pick-matches')) {
+                shallowest(container._searchMatches).forEach(function (p) { select(container._pick, p); });
+                sync(container);
+            } else if (b.classList.contains('ds-pick-clear')) {
+                container._pick.clear();
+                sync(container);
+            } else if (b.classList.contains('ds-pick-copy')) {
+                var txt = selectionJson(container);
+                if (window.copyWithFeedback) window.copyWithFeedback(txt, b);
+                else if (navigator.clipboard) navigator.clipboard.writeText(txt);
+            } else if (b.classList.contains('ds-pick-apply')) {
+                preview(container, opts);
+            }
+        });
+        container.parentNode.insertBefore(bar, container);
+        container._pickBar = bar;
+        // the bar belongs to its tree: shown only while the tree is
+        bar._follow = function () { bar.hidden = container.style.display === 'none'; };
+        bar._follow();
+        new MutationObserver(bar._follow).observe(container, { attributes: true, attributeFilter: ['style'] });
+        bar._render();
+        return bar;
+    }
+
+    // ---- preview + apply ----
+    function esc(s) {
+        return String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+    }
+    function show(v) {
+        if (v === undefined) return '';
+        var s = (typeof v === 'string') ? v : JSON.stringify(v);
+        return s.length > 160 ? s.slice(0, 157) + '…' : s;
+    }
+    function closeModal() {
+        var m = document.getElementById('ds-pick-modal');
+        if (m) m.parentNode.removeChild(m);
+        document.removeEventListener('keydown', onEsc, true);
+    }
+    function onEsc(e) { if (e.key === 'Escape') { e.stopPropagation(); closeModal(); } }
+
+    function preview(container, opts) {
+        var paths = Array.from(container._pick).sort();
+        return fetch('/dataset/' + encodeURIComponent(opts.uid) + '/apply-selected/preview', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ file: opts.file, paths: paths })
+        }).then(function (r) { return r.json(); })
+          .then(function (d) { openModal(container, opts, d); return d; })
+          .catch(function (e) {
+              if (window.showToast) window.showToast('Could not prepare the preview: ' + e, 'error');
+          });
+    }
+
+    function openModal(container, opts, d) {
+        closeModal();
+        var m = document.createElement('div');
+        m.id = 'ds-pick-modal';
+        m.className = 'modal ds-pick-modal';
+        m.setAttribute('role', 'dialog');
+        m.setAttribute('aria-modal', 'true');
+        if (!d || !d.ok) {
+            m.innerHTML = '<div class="ds-pick-card"><h4>Apply selected to chip</h4><p class="ds-pick-err">' +
+                esc((d && d.error) || 'The preview failed.') + '</p>' +
+                '<div class="ds-pick-actions"><button type="button" class="btn-sm outline ds-pick-cancel">Close</button></div></div>';
+            document.body.appendChild(m);
+            m.querySelector('.ds-pick-cancel').onclick = closeModal;
+            document.addEventListener('keydown', onEsc, true);
+            return;
+        }
+        var rows = d.rows || [];
+        var writes = rows.filter(function (r) { return r.status === 'change' || r.status === 'new'; });
+        var c = d.counts || {};
+        var html = '<div class="ds-pick-card">' +
+            '<h4>Apply selected to chip <span class="muted">→ ' + esc(d.chip || 'open chip') + '</span></h4>' +
+            '<p class="muted ds-pick-sum">' + writes.length + ' to write' +
+            (c.same ? ' · ' + c.same + ' already equal' : '') +
+            (c.skip ? ' · ' + c.skip + ' skipped' : '') +
+            '. Goes into the working state (Review, then Apply); Ctrl+Z undoes it.</p>';
+        if (!d.same_chip) {
+            html += '<label class="ds-pick-warn"><input type="checkbox" class="ds-pick-ack"> ' +
+                (d.chip_unknown ? 'This run\'s chip could not be verified against the open chip.'
+                                : 'This run looks like a DIFFERENT chip than the open one.') +
+                ' Apply anyway</label>';
+        }
+        if (d.capped) html += '<p class="ds-pick-warn">Only the first 20,000 fields are shown and applied — select less.</p>';
+        html += '<div class="ds-pick-table-wrap"><table class="ds-pick-table"><thead><tr>' +
+            '<th>Field</th><th>Open chip</th><th>This run</th><th>Δ</th><th></th></tr></thead><tbody>';
+        var order = { change: 0, 'new': 1, skip: 2, same: 3 };
+        rows.slice().sort(function (a, b) { return order[a.status] - order[b.status] || (a.path < b.path ? -1 : 1); })
+            .forEach(function (r) {
+                var delta = (r.status === 'change' && window.ValueDelta) ? window.ValueDelta.chipHtml(r.old, r.new) : '';
+                var tag = r.status === 'change' ? 'write' : r.status === 'new' ? 'new' :
+                          r.status === 'same' ? 'equal' : 'skip';
+                html += '<tr class="ds-pick-r ds-pick-' + r.status + '"' + (r.status === 'same' ? ' hidden' : '') + '>' +
+                    '<td class="ds-pick-path" title="' + esc(r.path) + '">' + esc(r.path) +
+                    (r.target ? '<div class="muted ds-pick-target">writes → ' + esc(r.target) + ' (shared by a pointer)</div>' : '') +
+                    (r.reason ? '<div class="muted">' + esc(r.reason) + '</div>' : '') + '</td>' +
+                    '<td><code>' + esc(show(r.old)) + '</code></td>' +
+                    '<td><code>' + esc(show(r['new'])) + '</code></td>' +
+                    '<td>' + delta + '</td>' +
+                    '<td><span class="ds-pick-tag ds-pick-tag-' + r.status + '">' + tag + '</span></td></tr>';
+            });
+        html += '</tbody></table></div>';
+        if (c.same) html += '<label class="ds-pick-showsame"><input type="checkbox" class="ds-pick-same"> Show ' + c.same + ' already equal</label>';
+        html += '<p class="ds-pick-err" hidden></p>' +
+            '<div class="ds-pick-actions">' +
+            '<button type="button" class="btn-sm ds-pick-go"' + (writes.length ? '' : ' disabled') + '>' +
+            (writes.length ? 'Apply ' + writes.length + ' to working state' : 'Nothing to write') + '</button>' +
+            '<button type="button" class="btn-sm outline ds-pick-cancel">Cancel</button></div></div>';
+        m.innerHTML = html;
+        document.body.appendChild(m);
+        document.addEventListener('keydown', onEsc, true);
+        m.addEventListener('click', function (e) { if (e.target === m) closeModal(); });
+        m.querySelector('.ds-pick-cancel').onclick = closeModal;
+        var same = m.querySelector('.ds-pick-same');
+        if (same) same.onchange = function () {
+            m.querySelectorAll('.ds-pick-r.ds-pick-same').forEach(function (tr) { tr.hidden = !same.checked; });
+        };
+        var go = m.querySelector('.ds-pick-go');
+        var ack = m.querySelector('.ds-pick-ack');
+        function gate() { go.disabled = !writes.length || (ack && !ack.checked); }
+        if (ack) ack.onchange = gate;
+        gate();
+        go.onclick = function () {
+            if (go.disabled) return;
+            go.disabled = true;
+            apply(container, opts, writes, m);
+        };
+        go.focus();
+    }
+
+    function apply(container, opts, writes, m) {
+        var updates = writes.map(function (r) {
+            return { dot_path: r.path, value: r['new'], create: r.status === 'new' };
+        });
+        return fetch('/field/edit-batch', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ updates: updates, group: 'new',
+                                   expect_chip: window.__chipToken || '' })
+        }).then(function (r) { return r.json().then(function (d) { return { status: r.status, d: d }; }); })
+          .then(function (res) {
+              var d = res.d || {};
+              if (d.tray_html && window._swapPendingTray) window._swapPendingTray(d.tray_html);
+              if (!d.ok) {
+                  var bad = (d.results || []).filter(function (x) { return x && x.applied === false && x.error; })[0];
+                  var err = m.querySelector('.ds-pick-err');
+                  err.hidden = false;
+                  err.textContent = 'Nothing was written: ' + (bad ? bad.dot_path + ' — ' + bad.error : (d.error || ('HTTP ' + res.status)));
+                  m.querySelector('.ds-pick-go').disabled = false;
+                  return d;
+              }
+              closeModal();
+              if (window.showToast) {
+                  window.showToast('Staged ' + updates.length + ' value' + (updates.length === 1 ? '' : 's') +
+                      ' from this run into ' + (opts.chipLabel || 'the open chip') +
+                      ' — review in the tray, Ctrl+Z undoes', 'success');
+              }
+              document.dispatchEvent(new CustomEvent('quam:state-changed'));
+              return d;
+          })
+          .catch(function (e) {
+              var err = m.querySelector('.ds-pick-err');
+              if (err) { err.hidden = false; err.textContent = 'Request failed: ' + e; }
+              var g = m.querySelector('.ds-pick-go'); if (g) g.disabled = false;
+          });
+    }
+
+    // ---- wiring ----
+    function attach(container, opts) {
+        if (!container || container._pick) return;
+        container._pick = new Set();
+        container.classList.add('ds-pickable');
+        container.addEventListener('click', function (e) {
+            var cb = e.target;
+            if (!cb || !cb.classList || !cb.classList.contains('ds-pick')) return;
+            e.stopPropagation();     // a tick never expands/collapses or copies the row
+            onTick(container, cb);
+        }, true);
+        container.addEventListener('keydown', function (e) {
+            var cb = e.target;
+            if (cb && cb.classList && cb.classList.contains('ds-pick') && (e.key === ' ' || e.key === 'Enter')) {
+                e.preventDefault(); e.stopPropagation(); onTick(container, cb);
+            }
+        }, true);
+        var pend = false;
+        var mo = new MutationObserver(function () {
+            if (pend) return;
+            pend = true;
+            (window.requestAnimationFrame || setTimeout)(function () {
+                pend = false;
+                decorate(container);
+                sync(container);
+            });
+        });
+        mo.observe(container, { childList: true, subtree: true });
+        makeBar(container, opts);
+        decorate(container);
+        sync(container);
+        // the search fills container._searchMatches; the bar's count follows it
+        var s = opts.searchInput;
+        if (s) s.addEventListener('input', function () {
+            setTimeout(function () { if (container._pickBar) container._pickBar._render(); }, 260);
+        });
+    }
+
+    return { attach: attach, sync: sync,
+             _model: { covered: covered, partial: partial, select: select, unselect: unselect,
+                       shallowest: shallowest, valueAt: valueAt } };
 })();
