@@ -434,6 +434,13 @@
       var n = document.getElementById(id);
       if (n) n.textContent = nextLabel;
     });
+    var rs = document.getElementById("gen-reset-step");
+    if (rs) {
+      rs.disabled = !(STEP_OWNS && STEP_OWNS[state.step]);
+      rs.title = (STEP_OWNS && STEP_OWNS[state.step])
+        ? "Reset only this step (" + STEP_NAMES[state.step] + "); other steps and the environment are kept"
+        : "Nothing on this step to reset";
+    }
     ["gen-progress", "gen-progress-top"].forEach(function (id) {
       var p = document.getElementById(id);
       if (p) p.textContent = "Step " + state.step + " of " + STEP_COUNT;
@@ -10667,6 +10674,7 @@
     if (mux) mux.value = 6;
     setChassisCount(5);   // re-seed 5 OPX1000 chassis (also renders the grid)
     setQubitCount(0);     // clears qubits / pairs / TWPAs and re-renders
+    _regenStepBase = null;         // docs/241: a plain wizard resets to fresh
     goToStep(1);
     _previewPanelParked = false;   // QA r2-10: the old preview never comes back
     if (wasRegen) {
@@ -10676,6 +10684,172 @@
       if (rr) rr.dispatchEvent(new CustomEvent("quamgen:reset",
         { bubbles: true, detail: { sourcePath: prevSource } }));
     }
+  }
+
+  // docs/241: "Reset step" -- the customer ask was that Reset should not take
+  // the whole wizard back to the Environment page. It resets ONLY the step on
+  // screen and stays there; every other step, and the env, are untouched.
+  // What each step OWNS (snapshotted for Ctrl+Z, restored to the baseline):
+  var STEP_NAMES = { 1: "Environment", 2: "Network", 3: "Chassis", 4: "Qubits",
+                     5: "Wiring", 6: "Populate", 7: "Output", 8: "Review" };
+  var STEP_OWNS = {
+    2: { spec: ["network"], st: [] },
+    3: { spec: ["instruments"], st: ["allocation"] },
+    // the qubit set carries everything keyed by qubit id with it
+    4: { spec: ["qubits", "qubit_pairs", "twpas", "qdac", "pair_gate", "populate",
+                "lines", "cr_port_mode"],
+         st: ["naming", "namesTouched", "qubitFlux", "couplerFlux", "chipArch",
+              "heldChipArch", "heldPins", "pairGate", "muxSize", "pairsTouched",
+              "wiringTouched", "allocation", "autoPresetRows", "crPortMode",
+              "regenTouched", "regenFilled"] },
+    5: { spec: ["lines"], st: ["allocation", "wiringTouched", "heldPins"] },
+    6: { spec: ["populate", "qdac"], st: ["autoPresetRows", "regenTouched", "regenFilled"] },
+    7: { spec: [], st: ["outputPath", "scriptsEnabled", "scriptsPath", "_scriptsPathTouched"] }
+  };
+  // QDAC cells the Populate step edits; channel / trigger / bias-tee are the
+  // qubit's step-4 flux-source assignment and stay.
+  var QDAC_POP_FIELDS = ["dc_offset", "dwell", "slew_rate", "output_range",
+                         "output_filter", "settle_time"];
+  // Re-generate: a step resets to what the SOURCE CHIP gave it, captured when
+  // the page hydrated -- never to an empty wizard.
+  var _regenStepBase = null;
+
+  function _clone(v) { return v === undefined ? undefined : JSON.parse(JSON.stringify(v)); }
+  function stepSnapshot(step) {
+    var own = STEP_OWNS[step], snap = { spec: {}, st: {} };
+    if (!own) return null;
+    own.spec.forEach(function (k) { snap.spec[k] = _clone(state.spec[k]); });
+    own.st.forEach(function (k) { snap.st[k] = _clone(state[k]); });
+    return snap;
+  }
+  function stepRestore(step, snap) {
+    var own = STEP_OWNS[step];
+    // into the SAME state.spec object: an undo entry is only valid while
+    // state.spec is the spec it was taken from
+    own.spec.forEach(function (k) {
+      if (snap.spec[k] === undefined) delete state.spec[k];
+      else state.spec[k] = _clone(snap.spec[k]);
+    });
+    own.st.forEach(function (k) { state[k] = _clone(snap.st[k]); });
+  }
+  function repaintAfterStepReset(step) {
+    if (step === 3 || step === 4 || step === 5) resetAllocRuntime();
+    repaintFromState();
+    var cc = document.getElementById("gen-chassis-count");
+    if (cc) cc.value = ((state.spec.instruments || {}).controllers || []).length;
+    var archSel = document.getElementById("gen-chip-arch");
+    if (archSel && state.chipArch) archSel.value = state.chipArch;
+    renderChassis();
+    renderQubitsStep();
+    saveDraft();
+    showMessage(null);
+    render();
+  }
+  function stepResettable(step) {
+    return !!STEP_OWNS[step];
+  }
+
+  // The fresh-wizard value of one step (plain Generate).
+  function resetStepToFresh(step) {
+    var fresh = freshSpec();
+    if (step === 2) {
+      state.spec.network = fresh.network;
+    } else if (step === 3) {
+      state.spec.instruments = fresh.instruments;
+      state.allocation = null;
+      setChassisCount(5);          // the wizard's own starting rack
+    } else if (step === 4) {
+      state.naming = { preset: "one_based", prefix: "q", start: 1 };
+      state.namesTouched = false;
+      state.pairsTouched = false;
+      state.wiringTouched = false;
+      state.qubitFlux = true;
+      state.couplerFlux = true;
+      state.chipArch = "flux_tunable_coupler";
+      state.heldChipArch = null;
+      state.heldPins = {};
+      state.pairGate = "cz_tunable";
+      state.spec.pair_gate = fresh.pair_gate;
+      state.muxSize = 6;
+      state.allocation = null;
+      state.autoPresetRows = null;
+      state.spec.twpas = [];
+      state.spec.qdac = fresh.qdac;
+      var qc = document.getElementById("gen-qubit-count");
+      if (qc) qc.value = 0;
+      var mux = document.getElementById("gen-mux-size");
+      if (mux) mux.value = 6;
+      setQubitCount(0);            // drops the qubits, pairs and their populate
+    } else if (step === 5) {
+      (state.spec.lines || []).forEach(function (ln) {
+        delete ln.channel;
+        delete ln.group;
+      });
+      state.heldPins = {};
+      state.allocation = null;
+      state.wiringTouched = false;
+    } else if (step === 6) {
+      // keep only what step 4 decided: board placement, CZ orientation
+      var old = state.spec.populate || {}, pop = {};
+      Object.keys(old.qubit || {}).forEach(function (q) {
+        var gl = (old.qubit[q] || {}).grid_location;
+        if (gl != null) (pop.qubit = pop.qubit || {})[q] = { grid_location: gl };
+      });
+      Object.keys(old.pairs || {}).forEach(function (pid) {
+        var b = old.pairs[pid] || {};
+        if ("cz_order" in b) (pop.pairs = pop.pairs || {})[pid] = { cz_order: b.cz_order };
+      });
+      state.spec.populate = pop;
+      var qq = (state.spec.qdac && state.spec.qdac.qubits) || {};
+      Object.keys(qq).forEach(function (q) {
+        QDAC_POP_FIELDS.forEach(function (f) { delete qq[q][f]; });
+      });
+      if (state.crPortMode === "shared_xy") seedSharedCrShapes();
+      state.autoPresetRows = null;   // the fresh-chip defaults prefill again
+    } else if (step === 7) {
+      state.outputPath = "";
+      state.scriptsEnabled = true;
+      state.scriptsPath = "";
+      state._scriptsPathTouched = false;
+      try {
+        localStorage.removeItem("quam_gen_output_path");
+        localStorage.removeItem("quam_gen_scripts_path");
+      } catch (e) {}
+      ["gen-output-path", "gen-scripts-path"].forEach(function (id) {
+        var el = document.getElementById(id);
+        if (el) el.value = "";
+      });
+    }
+  }
+
+  function resetStep() {
+    var step = state.step;
+    if (!stepResettable(step)) return;
+    captureDomFields();
+    var name = STEP_NAMES[step] || ("step " + step);
+    var regen = state.mode === "regenerate" && _regenStepBase;
+    if (!window.confirm(regen
+        ? "Reset the " + name + " step to the source chip's values? Other steps are kept."
+        : "Reset the " + name + " step? Other steps and the environment are kept.")) {
+      return;
+    }
+    var before = stepSnapshot(step);
+    if (regen) {
+      stepRestore(step, _regenStepBase[step]);
+      regenMarkEdited(null);
+    } else {
+      resetStepToFresh(step);
+    }
+    _wizPushRestore("reset " + name, function () {
+      stepRestore(step, before);
+      repaintAfterStepReset(step);
+    });
+    repaintAfterStepReset(step);
+    if (window.showToast) window.showToast("Reset " + name + " (Ctrl+Z undoes)", "success");
+  }
+  function captureRegenStepBase() {
+    _regenStepBase = {};
+    Object.keys(STEP_OWNS).forEach(function (s) { _regenStepBase[s] = stepSnapshot(Number(s)); });
   }
 
   function init() {
@@ -10750,6 +10924,8 @@
 
     var reset = document.getElementById("gen-reset");
     if (reset) reset.addEventListener("click", resetWizard);
+    var resetSt = document.getElementById("gen-reset-step");
+    if (resetSt) resetSt.addEventListener("click", resetStep);
 
     r.querySelectorAll("#gen-steps li").forEach(function (li) {
       li.addEventListener("click", function () {
@@ -11161,6 +11337,8 @@
     _previewPanelParked = false;   // QA r2-10: the old chip's preview stays gone
     // QA F6: the leave guard's clean baseline — exactly what is on screen now.
     if (state.mode === "regenerate") regenMarkClean();
+    // docs/241: what "Reset step" goes back to on this page
+    if (state.mode === "regenerate") captureRegenStepBase();
   }
 
   window.QuamGen = {
