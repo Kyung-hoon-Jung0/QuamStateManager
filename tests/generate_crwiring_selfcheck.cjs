@@ -53,6 +53,9 @@ function makeWorld() {
 const win = makeWorld();
 const T = win.QuamGen._test;
 const state = T.state;
+// the F6 pins below were written for neighbor inputs (Out8->In2, Out1->In1);
+// new chips default to crossing since docs/242, so the mode is stated
+state.spec.readout_input = 'neighbor';
 
 // --- pinToChannel: CR/ZZ are MW drive tones ---------------------------------
 ok(T.pinToChannel('1/2/3', 'cross_resonance').kind === 'mw_fem',

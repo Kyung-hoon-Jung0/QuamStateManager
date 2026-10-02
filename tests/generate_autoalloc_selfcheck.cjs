@@ -496,6 +496,9 @@ function statusText(win) {
     ]);
     const G = buildWizard(win);
     G.state.env = 'C:/envs/test/python.exe';
+    // these F6 pins were written for neighbor inputs (Out8->In2); new chips
+    // default to crossing since docs/242, so the mode is stated explicitly
+    G.state.spec.readout_input = 'neighbor';
     G.goToStep(5);
     await settle();
     ok(allocCalls(log).length === 1, 'A20: entry allocation');
