@@ -1,0 +1,24 @@
+{#- docs/263: the project's time zone -- ABOVE the env picker, for the same
+    project the env picker shows (a card's Change... retargets both).
+    tz_views = {project: project_time.view()} (state picked | default |
+    suggested | none). The clock status (OS zone, NTP) is fetched AFTER the
+    page renders (project-time.js), never on this render. A pick that differs
+    from this PC's zone asks first; every pick ends with the watch check. -#}
+<section id="landing-tz" class="landing-tz" data-tz-default="{{ tz_project }}" aria-label="Time zone picker">
+    <script type="application/json" data-tz-views>{{ (tz_views or {}) | tojson }}</script>
+    <div class="landing-tz-head">
+        <strong>Time zone for <span data-tz-project>{{ tz_project }}</span></strong>
+        <span class="landing-tz-current" data-tz-current></span>
+        <span class="landing-tz-state" data-tz-state></span>
+        <button type="button" class="btn-sm outline" data-tz-change
+                title="Pick the zone this project's times are shown in">Change&hellip;</button>
+        <span class="landing-tz-clock muted" data-tz-clock role="status"></span>
+    </div>
+    <p class="muted landing-tz-note" data-tz-note hidden></p>
+    <div class="landing-tz-search" data-tz-search hidden>
+        <input type="search" data-tz-input autocomplete="off" spellcheck="false"
+               placeholder="Search a city, region or offset (Seoul, New_York, UTC-7)"
+               aria-label="Search time zones">
+        <div class="landing-tz-list" data-tz-list role="listbox" aria-label="Time zones"></div>
+    </div>
+</section>

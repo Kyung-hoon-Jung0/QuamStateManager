@@ -105,6 +105,10 @@ class RunWatcher:
         self._stop = threading.Event()
         self._thread: threading.Thread | None = None
         self._listeners: list = []
+        # docs/263: per root, when this poll and the one before it looked --
+        # the bound that makes "SM saw this run arrive" evidence of its time
+        self._polled_at: dict[str, float] = {}
+        self._gap: dict[str, float] = {}
 
     def add_listener(self, fn) -> None:
         """``fn(changed_roots)`` is called on the watcher's thread after a
@@ -144,10 +148,18 @@ class RunWatcher:
                 if r in self._roots and r not in self._sigs:
                     self._sigs[r] = sig
 
+    def poll_gap(self, root: str) -> float | None:
+        """Seconds between the latest look at *root* and the look before it
+        (docs/263), or None when *root* has not been looked at twice. A run
+        folder first seen by the latest look appeared within this gap."""
+        with self._cond:
+            return self._gap.get(str(root))
+
     # ── the poll ──────────────────────────────────────────────────────
     def poll_once(self) -> bool:
         """Take every root's signature; bump the tick if any changed. Returns
         whether it did. Never raises."""
+        import time
         with self._cond:
             roots = self._roots
         changed = False
@@ -158,7 +170,17 @@ class RunWatcher:
             except Exception:            # a signature_fn that raises is a bug, not a run
                 logger.exception("run watcher: signature failed for %s", root)
                 sig = None
+            now = time.time()
             with self._cond:
+                if sig is None:
+                    # an unreadable look is no look: the next good one is
+                    # bounded by the last GOOD one, never by this failure
+                    pass
+                else:
+                    prev_at = self._polled_at.get(root)
+                    if prev_at is not None:
+                        self._gap[root] = now - prev_at
+                    self._polled_at[root] = now
                 if root not in self._sigs:
                     self._sigs[root] = sig          # first sight: baseline only
                 elif self._sigs[root] != sig:

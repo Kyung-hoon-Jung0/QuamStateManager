@@ -2664,6 +2664,59 @@ body.pageheader-collapsed .pageheader-toggle { transform: rotate(180deg); }
     .landing-env-row { grid-template-columns: 1fr auto; }
     .landing-env-path, .landing-env-kind { grid-column: 1 / -1; }
 }
+/* docs/263: the project's time zone -- above the env picker, same frame. */
+.landing-tz { border: 1px solid var(--pico-muted-border-color); border-radius: 8px;
+    padding: 0.5rem 0.7rem; margin: 0 0 0.6rem; background: var(--pico-card-background-color); }
+.landing-tz-head { display: flex; flex-wrap: wrap; align-items: baseline; gap: 0.5rem; }
+.landing-tz-head .btn-sm { width: auto; margin: 0; padding: 0.05rem 0.5rem; }
+.landing-tz-current { font-family: var(--font-mono); font-size: 0.85em; }
+.landing-tz-state { font-size: 0.78em; color: var(--pico-muted-color); font-style: italic; }
+.landing-tz-state[data-state="picked"] { color: #16a34a; font-style: normal; }
+.landing-tz-clock { margin-left: auto; font-size: 0.78em; }
+.landing-tz-note { margin: 0.3rem 0 0; font-size: 0.8em; }
+.landing-tz-search { margin-top: 0.4rem; }
+.landing-tz-search input { margin: 0 0 0.3rem; padding: 0.2rem 0.45rem; height: auto; font-size: 0.85em; }
+.landing-tz-list { display: flex; flex-direction: column; max-height: 14rem; overflow-y: auto; }
+.landing-tz-row { display: grid; grid-template-columns: 1fr auto 3.2rem auto; align-items: center; gap: 0.6rem;
+    width: 100%; margin: 0; padding: 0.18rem 0.35rem; font-size: 0.82em; text-align: left;
+    background: none; color: var(--pico-color); border: 0; border-bottom: 1px solid var(--pico-muted-border-color);
+    border-radius: 0; cursor: pointer; }
+.landing-tz-row:hover, .landing-tz-row:focus-visible { background: color-mix(in srgb, var(--pico-primary) 10%, transparent); }
+.landing-tz-row.selected { background: color-mix(in srgb, var(--pico-primary) 8%, transparent); font-weight: 600; }
+.landing-tz-off { font-family: var(--font-mono); }
+.landing-tz-now { font-family: var(--font-mono); text-align: right; }
+.landing-tz-tag { font-style: italic; }
+.landing-card-facts { flex-wrap: wrap; }
+.landing-card-tz { white-space: nowrap; }
+/* the two clock dialogs (PC zone + watch check; the run-clock question) */
+.pt-dialog > .pt-card { max-width: 34rem; width: min(92vw, 34rem); margin: 1rem; padding: 0.9rem 1.1rem;
+    border: 1px solid var(--pico-muted-border-color); border-radius: 10px;
+    background: var(--pico-background-color); color: var(--pico-color); }
+.pt-title { font-size: 1.02rem; margin: 0 0 0.45rem; }
+.pt-text, .pt-question, .pt-now, .pt-ntp { margin: 0 0 0.45rem; font-size: 0.88rem; }
+.pt-question { font-weight: 600; }
+.pt-now { font-family: var(--font-mono); font-size: 1rem; }
+.pt-ntp[data-ntp="off"] { color: var(--color-warning-text, #b45309); }
+.pt-advice { border-left: 3px solid var(--color-warning-text, #b45309); padding-left: 0.5rem; }
+.pt-small { font-size: 0.78rem; margin-top: 0.4rem; }
+.pt-examples { margin: 0 0 0.45rem 1.1rem; padding: 0; font-size: 0.8rem; font-family: var(--font-mono); }
+.pt-actions { display: flex; flex-wrap: wrap; gap: 0.4rem; margin-top: 0.3rem; }
+.pt-actions .btn-sm { width: auto; margin: 0; }
+.pt-later { margin-left: auto !important; }
+/* a run's time: the corrected label and the recorded original beside it */
+.ts-run-corrected { font-size: 0.75em; padding: 0 0.35rem; border-radius: 0.6rem;
+    border: 1px solid var(--color-warning-text, #b45309); color: var(--color-warning-text, #b45309); }
+.ts-run-orig { font-size: 0.8em; }
+/* the Settings line that replaced the per-browser zone select */
+.settings-tz { flex-wrap: wrap; align-items: baseline; }
+.settings-tz #tz-note { flex-basis: 100%; }
+.settings-tz-current { font-family: var(--font-mono); font-size: 0.85em; }
+.settings-tz-change { width: auto; text-decoration: none; }
+/* the ONE run-clock line on Diagnostics */
+.diag-clock-line { display: flex; align-items: baseline; gap: 0.4rem; margin: 0.3rem 0 0.6rem;
+    font-size: 0.85em; color: var(--pico-muted-color); }
+.diag-clock-warning { color: var(--color-warning-text, #b45309); }
+.diag-clock-line .btn-sm { width: auto; margin: 0; padding: 0.02rem 0.45rem; }
 /* r8 feedback: per-project config popup (paths + ports, read-only). */
 .landing-config-dialog {
     max-width: 46rem; width: min(92vw, 46rem); padding: 1rem 1.1rem;

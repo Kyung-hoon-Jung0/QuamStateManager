@@ -49,6 +49,10 @@ dependencies = [
     # tomllib exists from 3.11) — without it every ~/.qualibrate read
     # silently degrades.
     "tomli>=2.0; python_version < '3.11'",
+    # docs/263: the project time zone reads IANA zones through zoneinfo, and
+    # Windows has no system zone database -- without tzdata the server only
+    # checks a zone's SHAPE and shows no offset (the browser still does).
+    "tzdata; sys_platform == 'win32'",
 ]
 
 [project.optional-dependencies]

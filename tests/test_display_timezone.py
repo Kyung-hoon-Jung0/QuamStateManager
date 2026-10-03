@@ -84,7 +84,11 @@ class TestNothingStoredMoves:
     def test_the_settings_control_says_what_it_does_not_change(self):
         base = (_ROOT / "quam_state_manager" / "web" / "templates"
                 / "base.html").read_text(encoding="utf-8")
-        assert 'id="tz-select"' in base
+        # docs/263: ONE zone -- the per-browser select merged into the
+        # project's zone (picked on the Projects landing); Settings only
+        # shows it and links there. It still says it changes nothing stored.
+        assert 'id="tz-select"' not in base
+        assert 'id="tz-current"' in base and 'href="/?landing=1"' in base
         assert "display only" in base.lower(), \
             "the label must say it changes nothing stored"
         assert "UTC" in base

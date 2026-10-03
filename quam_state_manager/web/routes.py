@@ -4924,6 +4924,9 @@ def _ctx(**extra: Any) -> dict[str, Any]:
         # under (explicitly opened, or reverse-matched from its live folder).
         # None ⇒ every consumer renders exactly the pre-lens behavior.
         "project_scope": (_active_ctx() or {}).get("qualibrate_project"),
+        # docs/263: the ONE display zone (the project's), stamped on <html>
+        # for SnapTime -- the Settings zone merged into it
+        "display_zone": _display_zone(),
         # customer 2026-09-30 (docs/231): the sidebar's Dataset Load box shows
         # the open project's data folder, not the last path typed in this
         # browser -- the same sync the State Load box has for the chip.
@@ -5736,6 +5739,8 @@ def landing_projects():
         listing=listing,
         last_project=_load_session().get("last_project"),
         env_views=_project_env_views([p["name"] for p in listing.get("projects") or []]),
+        # docs/263: each project's time zone (one memoized file read)
+        tz_views=_project_tz_views([p["name"] for p in listing.get("projects") or []]),
     )
 
 
@@ -5810,6 +5815,325 @@ def qualibrate_project_env():
     badge = render_template("_sidebar_folder_badge.html",
                             qualibrate_tray=_qualibrate_tray_badge(), oob=True)
     return row + others + badge
+
+
+# ----------------------------------------------------------------------
+# docs/263: the project's time zone, and the run clock.
+#
+# One zone per QUAlibrate project (core/project_time), picked on the landing
+# above the env picker, shown on every page (base.html's data-sm-zone, read
+# by SnapTime). The run clock: what SM saw ARRIVE (core/run_arrivals) and
+# archives written in place give witnesses; a skew >= 30 min is asked ONCE
+# per project, below that it is one Diagnostics line.
+# ----------------------------------------------------------------------
+
+
+def _pt_listing_names() -> list[str]:
+    return [p["name"] for p in _qualibrate_listing().get("projects") or []]
+
+
+def _pt_project_arg(source) -> str | None:
+    """The project a request names (validated against the listing), else
+    the open chip's project scope."""
+    name = (source.get("project") or "").strip()
+    if name:
+        return name if name in _pt_listing_names() else None
+    return (_active_ctx() or {}).get("qualibrate_project")
+
+
+def _project_tz_views(names) -> dict:
+    """``{project: project_time.view(...)}`` for the landing cards and the
+    zone picker -- one memoized file read, no clock probe."""
+    from quam_state_manager.core import project_time
+    inst = current_app.instance_path
+    out = {}
+    try:
+        recs = project_time.load(inst)["projects"]
+    except Exception:  # noqa: BLE001
+        recs = {}
+    for n in names:
+        try:
+            v = project_time.view(inst, n)
+            # the one quiet note: runs recorded in another offset than shown
+            v["note"] = project_time.zone_note(
+                v["zone"], ((recs.get(n) or {}).get("clock") or {}).get("run_offsets") or {})
+            out[n] = v
+        except Exception:  # noqa: BLE001 -- a zone never breaks the landing
+            logger.warning("project zone view failed for %s", n, exc_info=True)
+    return out
+
+
+def _display_zone() -> dict | None:
+    """The ONE zone a full page renders in (base.html ``data-sm-zone``)."""
+    from quam_state_manager.core import project_time
+    try:
+        return project_time.display_zone(current_app.instance_path,
+                                         (_active_ctx() or {}).get("qualibrate_project"))
+    except Exception:  # noqa: BLE001 -- a zone never breaks a page
+        logger.warning("display zone failed", exc_info=True)
+        return None
+
+
+@bp.route("/project-time/clock")
+def project_time_clock():
+    """This PC's clock as SM sees it: the OS zone, NTP sync (clock_health,
+    or "unknown" without it) and the server's now. Fetched asynchronously
+    by the landing's zone picker -- never on a page render."""
+    from quam_state_manager.core import project_time
+    st = project_time.clock_status(force=request.args.get("refresh") == "1")
+    st["ntp_text"] = project_time.ntp_text(st)
+    resp = jsonify(st)
+    resp.headers["Cache-Control"] = "no-store"
+    return resp
+
+
+@bp.route("/project-time/zone", methods=["POST"])
+def project_time_zone():
+    """Save the zone picked for a project. ``os_answer`` carries the answer
+    to "the PC is UTC-7, you chose UTC+9" when the picker had to ask
+    (``view`` = view in the chosen zone; ``pc_wrong`` = the PC's zone is
+    wrong). Answers the project's view + the zone pages should now render."""
+    from quam_state_manager.core import project_time
+    name = (request.form.get("project") or "").strip()
+    zone = (request.form.get("zone") or "").strip()
+    if not name or name not in _pt_listing_names():
+        return jsonify(ok=False, error=f"Unknown qualibrate project: {name!r}"), 404
+    if not project_time.valid_zone(zone):
+        return jsonify(ok=False, error=f"Not a time zone: {zone!r}"), 400
+    os_answer = (request.form.get("os_answer") or "").strip()
+    os_check = None
+    if os_answer:
+        if os_answer not in project_time.OS_ANSWERS:
+            return jsonify(ok=False, error="os_answer must be view or pc_wrong"), 400
+        os_check = {"answer": os_answer,
+                    "os_offset": (request.form.get("os_offset") or None),
+                    "os_iana": (request.form.get("os_iana") or None)}
+    v = project_time.set_zone(current_app.instance_path, name, zone,
+                              how="picked", os_check=os_check)
+    logger.info("project zone: %s -> %s%s", name, zone,
+                f" (pc check: {os_answer})" if os_answer else "")
+    return jsonify(ok=True, view=v, display=_display_zone())
+
+
+@bp.route("/project-time/watch", methods=["POST"])
+def project_time_watch():
+    """The watch check's answer (does "now HH:MM" match your watch?)."""
+    from quam_state_manager.core import project_time
+    name = (request.form.get("project") or "").strip()
+    if not name or name not in _pt_listing_names():
+        return jsonify(ok=False, error=f"Unknown qualibrate project: {name!r}"), 404
+    answer = (request.form.get("answer") or "").strip()
+    if answer not in project_time.WATCH_ANSWERS:
+        return jsonify(ok=False, error="answer must be matches or differs"), 400
+    ntp = request.form.get("ntp_synced")
+    v = project_time.record_watch(
+        current_app.instance_path, name, answer,
+        shown=request.form.get("shown"), zone=request.form.get("zone"),
+        ntp_synced={"true": True, "false": False}.get((ntp or "").lower()))
+    return jsonify(ok=True, view=v)
+
+
+# store-generation memo for the archive measurement (offsets + in-place)
+_PT_ARCHIVE_MEMO: dict[str, tuple] = {}
+_PT_SAMPLE = 60          # newest runs per root the in-place test reads (one stat each)
+_PT_WITNESS_N = 20       # in-place witnesses kept per root
+_PT_OFFSET_N = 300       # newest runs per root whose offsets vote
+
+
+def _project_root_keys(project: str) -> set:
+    try:
+        roots = _load_project_roots().get(project) or []
+    except Exception:  # noqa: BLE001
+        roots = []
+    return {path_match.fs_key(r) for r in roots}
+
+
+def _measure_store_clock(store) -> dict:
+    """One store's run offsets + in-place verdict + in-place witnesses,
+    memoized on the store's generation (run count, newest id)."""
+    from quam_state_manager.core import project_time, run_arrivals, timefmt
+    with store._scan_lock:
+        runs = list(store.runs.values())
+    newest_id = max((r.run_id for r in runs), default=-1)
+    key = str(store.folder_path)
+    sig = (len(runs), newest_id)
+    hit = _PT_ARCHIVE_MEMO.get(key)
+    if hit is not None and hit[0] == sig:
+        return hit[1]
+    runs.sort(key=lambda r: r.run_id, reverse=True)
+    offsets: Counter = Counter()
+    for r in runs[:_PT_OFFSET_N]:
+        off = project_time._node_offset({"metadata": {"run_end": r.run_end}})
+        if off:
+            offsets[off] += 1
+    samples, cand = [], []
+    for r in runs[:_PT_SAMPLE]:
+        node = {"metadata": {"run_end": r.run_end}}
+        us, q = timefmt.run_instant(node)
+        if us is None or q != "offset":
+            continue
+        try:
+            mt = int(os.stat(r.folder_path).st_mtime_ns // 1000)
+        except OSError:
+            continue
+        samples.append((us, mt))
+        cand.append((r, node, mt))
+    verdict = project_time.classify_archive(samples)
+    verdict["root"] = key
+    witnesses = []
+    if verdict["in_place"]:
+        for r, node, mt in cand[:_PT_WITNESS_N]:
+            w = project_time.make_witness(
+                node, run_arrivals.run_key(key, r.folder_path), src="in_place",
+                folder_mtime_utc_us=mt)
+            if w is not None:
+                witnesses.append(w)
+    out = {"offsets": dict(offsets), "verdict": verdict, "witnesses": witnesses}
+    if len(_PT_ARCHIVE_MEMO) > 64:
+        _PT_ARCHIVE_MEMO.clear()
+    _PT_ARCHIVE_MEMO[key] = (sig, out)
+    return out
+
+
+def _measure_project_clock(project: str) -> None:
+    """Fold the open project's archives into its clock record: the offsets
+    its runs record (the quiet note) and, for a root written in place, its
+    folder-time witnesses. Only the project's own roots; best effort."""
+    from quam_state_manager.core import project_time
+    inst = current_app.instance_path
+    keys = _project_root_keys(project)
+    scoped = (_active_ctx() or {}).get("qualibrate_project") == project
+    try:
+        stores = _active_dataset_stores(fast=True, rescan=False)
+    except Exception:  # noqa: BLE001
+        return
+    offsets: Counter = Counter()
+    witnesses: list = []
+    best = None
+    for f in stores:
+        path = f.get("path")
+        if not path:
+            continue
+        mine = path_match.fs_key(path) in keys if keys else scoped
+        if not mine:
+            continue
+        try:
+            m = _measure_store_clock(f["store"])
+        except Exception:  # noqa: BLE001
+            logger.warning("run clock measurement failed for %s", path, exc_info=True)
+            continue
+        offsets.update(m["offsets"])
+        witnesses.extend(m["witnesses"])
+        if best is None or (m["verdict"]["n"] or 0) > (best["n"] or 0):
+            best = m["verdict"]
+    if offsets:
+        project_time.note_run_offsets(inst, project, dict(offsets))
+    if best is not None:
+        project_time.note_archive(inst, project, best)
+    if witnesses:
+        project_time.add_witnesses(inst, project, witnesses)
+
+
+@bp.route("/project-time/status")
+def project_time_status():
+    """The open project's zone + run-clock verdict, fetched asynchronously by
+    every page (after load, and when a run lands): ``clock.auto_ask`` makes
+    the page put the skew question up -- once per project and skew."""
+    from quam_state_manager.core import project_time
+    project = _pt_project_arg(request.args)
+    if not project:
+        return jsonify(project=None)
+    if request.args.get("measure", "1") != "0":
+        try:
+            _measure_project_clock(project)
+        except Exception:  # noqa: BLE001 -- a measurement never fails the poll
+            logger.warning("run clock measurement failed", exc_info=True)
+    inst = current_app.instance_path
+    v = project_time.view(inst, project)
+    cv = project_time.clock_view(inst, project)
+    resp = jsonify(project=project, zone=v, clock=cv,
+                   note=project_time.zone_note(v["zone"], cv["run_offsets"]),
+                   line=project_time.diagnostics_line(inst, project, v["zone"]))
+    resp.headers["Cache-Control"] = "no-store"
+    return resp
+
+
+@bp.route("/project-time/skew-shown", methods=["POST"])
+def project_time_skew_shown():
+    """The skew question is on screen: it does not pop up by itself again
+    for the same skew (it stays reachable from Diagnostics)."""
+    from quam_state_manager.core import project_time
+    project = _pt_project_arg(request.form)
+    try:
+        skew = float(request.form.get("skew_s") or "")
+    except ValueError:
+        return jsonify(ok=False, error="skew_s required"), 400
+    if not project:
+        return jsonify(ok=False, error="no project"), 404
+    project_time.mark_shown(current_app.instance_path, project, skew)
+    return jsonify(ok=True)
+
+
+@bp.route("/project-time/skew-answer", methods=["POST"])
+def project_time_skew_answer():
+    """The answer to the skew question. 409 when the measured skew moved
+    since the question was put (the page then asks the new one)."""
+    from quam_state_manager.core import project_time
+    project = _pt_project_arg(request.form)
+    if not project:
+        return jsonify(ok=False, error="no project"), 404
+    choice = (request.form.get("choice") or "").strip()
+    if choice not in project_time.CHOICES:
+        return jsonify(ok=False, error="choice must be experiment_pc, this_pc or ignore"), 400
+    try:
+        skew = float(request.form.get("skew_s") or "")
+    except ValueError:
+        return jsonify(ok=False, error="skew_s required"), 400
+    try:
+        cv = project_time.answer_skew(current_app.instance_path, project, choice, skew)
+    except ValueError as e:
+        return jsonify(ok=False, error=str(e), changed=True), 409
+    logger.info("run clock: %s answered %s for skew %.0f s", project, choice, skew)
+    return jsonify(ok=True, clock=cv)
+
+
+def _run_clock_view(run: dict) -> dict | None:
+    """docs/263: a run's time for the viewer: the instant (shown in the
+    viewer's zone), what the run's own clock recorded (the tooltip), and --
+    only after the person said the experiment PC's clock is wrong -- the
+    corrected instant, labelled, with the recorded one kept."""
+    from quam_state_manager.core import project_time, timefmt
+    node = {"metadata": {"run_end": run.get("run_end")}}
+    us, q = timefmt.run_instant(node, run.get("folder_path"))
+    if us is None:
+        return None
+    off = project_time._node_offset(node)
+    if q == "offset" and isinstance(run.get("run_end"), str):
+        rec = run["run_end"].replace("T", " ")[:19]
+        rec_off = project_time.offset_text(off)
+    else:
+        rec = f"{run.get('date', '')} {run.get('time', '')}".strip()
+        rec_off = ""
+    out = {"utc": project_time._iso_us(us), "recorded": rec, "recorded_off": rec_off,
+           "quality": q, "corrected": None, "header": None}
+    project = (_active_ctx() or {}).get("qualibrate_project")
+    shown_us = us
+    if project:
+        answers = project_time.clock_view(current_app.instance_path, project)["answers"]
+        c = project_time.correction_for(answers, us)
+        if c is not None:
+            sign = "-" if c["delta_s"] < 0 else "+"
+            out["corrected"] = {"utc": project_time._iso_us(c["corrected_us"]),
+                                "by": sign + project_time.skew_text(c["delta_s"])}
+            shown_us = c["corrected_us"]
+    # the header's compact line, in the page's ONE zone when one is set (the
+    # header is plain text, so the server renders it; no zone -> the folder
+    # clock, as before)
+    zone = (_display_zone() or {}).get("zone")
+    if zone:
+        d = datetime.fromtimestamp(shown_us / 1e6, tz=timezone.utc)
+        out["header"] = timefmt.local_text(d, zone=zone) + (" corrected" if out["corrected"] else "")
+    return out
 
 
 @bp.route("/workbench")
@@ -6605,6 +6929,13 @@ def qualibrate_open_project():
             return _env_required_response(name, rem)
 
     env_changed = _select_project_env(name)
+    # docs/263: a project with no zone of its own keeps the one it was
+    # offered (the zone set most recently for any project)
+    try:
+        from quam_state_manager.core import project_time
+        project_time.ensure_default(inst, name)
+    except Exception:  # noqa: BLE001 -- a zone never blocks opening a project
+        logger.warning("project zone default failed for %s", name, exc_info=True)
     try:
         opened = _activate_quam(state["native"])
     except (FileNotFoundError, ValueError, OSError) as e:
@@ -13522,7 +13853,7 @@ def chip_status_report():
         has_chip=True,
         chip_name=_chip_display_name(path) if path else "chip",
         folder=str(path or ""),
-        generated=__import__("quam_state_manager.core.timefmt", fromlist=["local_text"]).local_text(),   # docs/244: with its offset
+        generated=__import__("quam_state_manager.core.timefmt", fromlist=["local_text"]).local_text(zone=(_display_zone() or {}).get("zone")),   # docs/244: with its offset
         qubits=qubits,
         pairs=pairs,
         resonators=[q for q in qubits if q.get("has_resonator")],
@@ -33540,6 +33871,11 @@ def _run_watcher():
     if w is None:
         w = run_watch.RunWatcher()
         app.config["run_watcher"] = w
+        # docs/263: note every run SM sees ARRIVE (bounded by the watcher's
+        # previous look) -- registered BEFORE the ingest kick, so the pass
+        # that kick starts finds the arrival already noted
+        arr = _run_arrivals(app)
+        w.add_listener(lambda moved, _w=w, _a=arr: _a.on_tick(moved, _w.poll_gap))
         # design ram_design.md §3 "Run-watch tick": the store rescan and the
         # Trends index append happen HERE, off the request path, so the first
         # Trends request after a run lands is served from RAM (P3's
@@ -33548,6 +33884,16 @@ def _run_watcher():
     if not w.running:
         w.start()
     return w
+
+
+def _run_arrivals(app):
+    """The one arrival log per app (docs/263, ``core/run_arrivals``)."""
+    from quam_state_manager.core import run_arrivals
+    a = app.config.get("run_arrivals")
+    if a is None:
+        a = run_arrivals.Arrivals()
+        app.config["run_arrivals"] = a
+    return a
 
 
 def _run_ingest(app):
@@ -33633,7 +33979,37 @@ def _ingest_after_steps(app) -> list:
         with app.app_context():
             _alignment_jobs().refresh(hm, Path(ctx["path"]), ws, progress=yield_between)
 
-    return [workspace_sidebar, datasets_payload, alignment]
+    def run_clock(roots: list[str]) -> None:
+        # docs/263: every arrival whose node.json is now readable becomes a
+        # live witness of the run clock, filed under the project that owns
+        # its root (recorded project roots first, else the open project)
+        arr = app.config.get("run_arrivals")
+        if arr is None:
+            return
+        done = arr.complete()
+        if not done:
+            return
+        from quam_state_manager.core import project_time
+        with app.app_context():
+            by_project: dict[str, list] = {}
+            owners = {}
+            try:
+                for proj, rs in _load_project_roots().items():
+                    for r in rs:
+                        owners[path_match.fs_key(r)] = proj
+            except Exception:  # noqa: BLE001
+                owners = {}
+            name = app.config.get("active_context")
+            ctx = (app.config.get("contexts") or {}).get(name) if name else None
+            fallback = (ctx or {}).get("qualibrate_project")
+            for d in done:
+                proj = owners.get(path_match.fs_key(d["root"])) or fallback
+                if proj:
+                    by_project.setdefault(proj, []).append(d["witness"])
+            for proj, ws in by_project.items():
+                project_time.add_witnesses(app.instance_path, proj, ws)
+
+    return [workspace_sidebar, datasets_payload, alignment, run_clock]
 
 
 @bp.route("/datasets/wait")
@@ -33662,6 +34038,11 @@ def datasets_wait():
         # which is the one folder a watcher most wants to be watching.
         active = _active_dataset_stores(fast=True, rescan=False)
         w.set_roots([f["path"] for f in active if f.get("path")])
+        # docs/263: what is there now, so the first run that lands after
+        # this is an arrival (a root's first look is never one)
+        _arr = _run_arrivals(current_app._get_current_object())
+        _arr.baseline(w.roots)
+        _arr.forget(w.roots)
     except Exception:
         logger.exception("datasets/wait: could not resolve the active data folders")
     # docs/191 P01: the Agent pill sits in the topbar of EVERY page and this
@@ -34092,7 +34473,9 @@ def dataset_detail(uid):
                            uid=uid, folder_key=uid.split(":")[0],
                            run_chip_token=chip_token, run_chip_name=chip_name,
                            folder_label=folder_label, folder_path=str(ds.folder_path),
-                           file_health=file_health)
+                           file_health=file_health,
+                           # docs/263: the run's instant for the viewer's zone
+                           run_clock=_run_clock_view(run))
 
 
 @bp.route("/dataset/<uid>/fig/<name>")
@@ -37395,6 +37778,9 @@ def diagnostics_view():
             has_config=bool(store.generated_config),
             env_card=_env_card_state(store),
             types_card=_types_card_state(_active_ctx()),
+            # docs/263: the ONE run-clock info line (stored verdict only;
+            # the measurement runs in the async /project-time/status)
+            clock_line=_clock_diag_line(),
             # The config-reference findings were linted against the cached
             # generated config, which may predate the latest edits — surface
             # that so a stale config doesn't pass off old findings as current
@@ -37403,6 +37789,19 @@ def diagnostics_view():
             config_needs_save=_config_needs_save(store),
         ),
     )
+
+
+def _clock_diag_line() -> dict | None:
+    from quam_state_manager.core import project_time
+    project = (_active_ctx() or {}).get("qualibrate_project")
+    if not project:
+        return None
+    try:
+        zone = project_time.view(current_app.instance_path, project)["zone"]
+        return project_time.diagnostics_line(current_app.instance_path, project, zone)
+    except Exception:  # noqa: BLE001 -- a clock line never breaks Diagnostics
+        logger.warning("clock diagnostics line failed", exc_info=True)
+        return None
 
 
 @bp.route("/diagnostics/env-probe", methods=["POST"])

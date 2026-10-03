@@ -16,6 +16,8 @@
    REQUIRES a chosen env (/qualibrate/open): an Open without one lands here
    with a "required" note and re-submits after the pick (landing-env.js). #}
 {% set _env_default = last_project if (last_project and (listing.projects | selectattr("name", "equalto", last_project) | list)) else ((listing.projects | selectattr("active") | map(attribute="name") | first) or listing.projects[0].name) %}
+{% set tz_project = _env_default %}
+{% include '_landing_project_tz.html' %}
 <section id="landing-env-picker" class="landing-env-picker" data-env-default="{{ _env_default }}" aria-label="Python environment picker">
     <div class="landing-env-picker-head">
         <strong>Python environment for <span data-env-project></span></strong>
@@ -52,6 +54,11 @@
                 {{ '✓' if p.storage.exists else '✗' }}</span>
             {% if n_doctor %}<span class="landing-card-doctor"
                 title="doctor findings for this project — see Manage / doctor">⚠ {{ n_doctor }}</span>{% endif %}
+            {# docs/263: the zone this project's times are shown in #}
+            {% set tv = (tz_views or {}).get(p.name) %}
+            <span class="landing-card-tz" data-tz-card="{{ p.name }}"
+                  title="{{ ('Times shown in ' ~ tv.zone ~ (' (default from the last project)' if tv.state in ('default', 'suggested') else '')) if tv and tv.zone else 'No time zone set: the zone of this PC' }}">tz
+                {%- if tv and tv.zone %} {{ tv.zone.split('/')[-1].replace('_', ' ') }}{% if tv.offset_text %} {{ tv.offset_text }}{% endif %}{% else %} this PC{% endif %}</span>
         </div>
         {# w9/labwarm: the environment this project runs the lab's code with.
            Remembered per project; opening the project selects it. #}

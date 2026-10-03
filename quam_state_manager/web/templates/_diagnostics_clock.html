@@ -1,0 +1,10 @@
+{#- docs/263: the ONE run-clock line. clock_line = project_time.diagnostics_line():
+    {"level": info|warning, "text", "ask"}. A skew under 30 min is never
+    asked -- it is this line only. An unanswered skew of 30 min or more keeps
+    its question reachable here ("Answer..."), so it pops up by itself once. -#}
+<p class="diag-clock-line diag-clock-{{ clock_line.level }}" role="status" data-clock-line>
+    <span class="diag-clock-icon" aria-hidden="true">&#128339;</span>
+    <span class="diag-clock-text">{{ clock_line.text }}</span>
+    {% if clock_line.ask %}<button type="button" class="btn-sm outline diag-clock-answer"
+        data-clock-ask-open title="Which clock is wrong? SM asks once per project">Answer&hellip;</button>{% endif %}
+</p>

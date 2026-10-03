@@ -1,6 +1,9 @@
 {% from '_icons.html' import icon_gear, icon_calculator, icon_help, icon_printer %}
 <!DOCTYPE html>
-<html lang="en" data-theme="dark">
+{#- docs/263: the ONE display zone -- the open project's (or the zone set
+    most recently), read by SnapTime. Absent = nothing set anywhere: the
+    browser's own zone (or a pre-docs/263 per-browser choice). -#}
+<html lang="en" data-theme="dark"{% if display_zone is defined and display_zone and display_zone.zone %} data-sm-zone="{{ display_zone.zone }}" data-sm-zone-state="{{ display_zone.state }}"{% endif %}{% if project_scope is defined and project_scope %} data-sm-project="{{ project_scope }}"{% endif %}>
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
@@ -75,6 +78,9 @@
     {# w9/labwarm: the Projects landing's per-project environment picker
        (delegated; nothing runs until a card's Change... is pressed) #}
     <script src="{{ asset_url('landing-env.js') }}"></script>
+    {# docs/263: the project time zone (landing picker, PC-zone + watch
+       checks), the run-clock question, run times in the viewer's zone #}
+    <script src="{{ asset_url('project-time.js') }}"></script>
     {# w7 final-QA P2/P3a: `sm:wc-moved` -- the one "the working copy this
        window shows moved" signal (read off the tray's edit_seq) for surfaces
        outside the Live-Edit patch path: Z-line distortion, the Agent card. #}
@@ -1052,27 +1058,17 @@
         <button onclick="toggleColorblindMode()" class="settings-opt" id="colorblind-toggle">Colorblind mode</button>
         </div>
         </div>
-        {# The charts used to draw UTC digits unconverted while the rows beside
-           them localized, so one page showed two bases -- which is what the
-           report "it is unclear what basis Trends uses" was about. Stored times are
-           UTC and stay UTC; this only decides what a time READS as. #}
+        {# docs/263: ONE zone. The per-browser choice that lived here merged
+           into the project's zone (picked on the Projects landing, above the
+           env picker); this line only says which zone is in use. Stored
+           times are UTC and stay UTC -- the zone only decides how they read. #}
         <div class="settings-group">
         <small class="settings-label">Time zone <span class="muted">(display only)</span></small>
-        <div class="settings-options">
-        <select id="tz-select" class="settings-opt" onchange="setDisplayZone(this.value)"
-                title="Snapshot times are stored in UTC. This changes only how they are shown.">
-            <option value="">This browser</option>
-            <option value="UTC">UTC</option>
-            <option value="Asia/Seoul">Asia/Seoul</option>
-            <option value="Asia/Tokyo">Asia/Tokyo</option>
-            <option value="Asia/Shanghai">Asia/Shanghai</option>
-            <option value="Asia/Jerusalem">Asia/Jerusalem</option>
-            <option value="Europe/London">Europe/London</option>
-            <option value="Europe/Paris">Europe/Paris</option>
-            <option value="America/New_York">America/New_York</option>
-            <option value="America/Chicago">America/Chicago</option>
-            <option value="America/Los_Angeles">America/Los_Angeles</option>
-        </select>
+        <div class="settings-options settings-tz">
+        <span class="settings-tz-current" id="tz-current"
+              title="Set per QUAlibrate project. Stored times are UTC; this changes only how they are shown.">{% if display_zone is defined and display_zone and display_zone.zone %}{{ display_zone.zone }}{% if display_zone.offset_text %} ({{ display_zone.offset_text }}){% endif %}{% else %}This PC{% endif %}</span>
+        <a class="settings-opt settings-tz-change" href="/?landing=1"
+           title="The time zone is set per project, above the environment picker">Change on Projects</a>
         <small class="muted" id="tz-note"></small>
         </div>
         </div>

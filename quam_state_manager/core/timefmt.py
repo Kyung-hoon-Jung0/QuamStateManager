@@ -222,9 +222,17 @@ def offset_label(d: datetime) -> str:
     return f"UTC{sign}{h}" + (f":{m:02d}" if m else "")
 
 
-def local_text(d: datetime | None = None) -> str:
-    """``YYYY-MM-DD HH:MM:SS (UTC+9)`` in THIS machine's zone -- for pages no
-    script will localize (the printable report). The same form the browser
-    shows (SnapTime.display), so a printout and the screen agree."""
-    d = (d or datetime.now(timezone.utc)).astimezone()
+def local_text(d: datetime | None = None, zone: str | None = None) -> str:
+    """``YYYY-MM-DD HH:MM:SS (UTC+9)`` in the project's display zone (docs/263;
+    an IANA name), else THIS machine's zone -- for pages no script will
+    localize (the printable report). The same form the browser shows
+    (SnapTime.display), so a printout and the screen agree."""
+    tz = None
+    if zone:
+        try:
+            from zoneinfo import ZoneInfo
+            tz = ZoneInfo(zone)
+        except Exception:  # noqa: BLE001 -- no tzdata / not a zone: the machine's
+            tz = None
+    d = (d or datetime.now(timezone.utc)).astimezone(tz)
     return d.strftime("%Y-%m-%d %H:%M:%S") + f" ({offset_label(d)})"

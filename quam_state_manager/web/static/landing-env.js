@@ -184,6 +184,10 @@
         pk.setAttribute('data-env-state', st0);
         var nm = q(pk, '[data-env-project]');
         if (nm) nm.textContent = project;
+        // docs/263: the time-zone picker above follows the same project
+        try {
+            document.dispatchEvent(new CustomEvent('sm-landing-project', { detail: { project: project } }));
+        } catch (e) { /* an old engine: the zone picker keeps its own default */ }
         var st = q(pk, '[data-env-custom-status]');
         if (st) st.textContent = '';
         pk.hidden = false;

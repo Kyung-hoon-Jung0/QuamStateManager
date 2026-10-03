@@ -792,15 +792,27 @@ document.addEventListener('htmx:afterSwap', function (e) {
     var KEY = 'quam_tz';
     var RE = /^(\d{4})(\d{2})(\d{2})_(\d{2})(\d{2})(\d{2})/;
 
+    /* docs/263: ONE zone. The open project's zone (picked on the Projects
+       landing, stored per project on the server) is stamped on <html> as
+       data-sm-zone and wins. Only a page with no zone set anywhere falls
+       back to the per-browser choice this used to be (quam_tz), and then to
+       the browser's own zone -- so an old choice is never lost before the
+       first project zone replaces it. */
     function zone() {
+        var el = document.documentElement;
+        if (el && el.hasAttribute && el.hasAttribute('data-sm-zone'))
+            return el.getAttribute('data-sm-zone') || '';
         try { return window.localStorage.getItem(KEY) || ''; }
         catch (e) { return ''; }          /* private window / blocked storage */
     }
+    /* This PAGE's zone (a project zone just saved, before the next full
+       render stamps it). Persisting is the server's job (/project-time/zone);
+       nothing here writes browser storage any more. */
     function setZone(z) {
-        try {
-            if (z) window.localStorage.setItem(KEY, z);
-            else window.localStorage.removeItem(KEY);
-        } catch (e) { /* the preference simply does not persist */ }
+        var el = document.documentElement;
+        if (!el || !el.setAttribute) return;
+        if (z) el.setAttribute('data-sm-zone', z);
+        else el.removeAttribute('data-sm-zone');
     }
 
     /* The stamp as a real instant. Refuses to guess: an id that does not parse
@@ -956,9 +968,11 @@ function applyLocalTimes(root) {
 }
 window.applyLocalTimes = applyLocalTimes;
 
-/* The Settings time-zone control. Display only: a change re-renders what is on
-   screen and touches nothing on disk. Every chart re-reads SnapTime as it
-   draws, so the re-render is the whole of the propagation. */
+/* A zone change on THIS page (docs/263: the project zone just saved on the
+   landing -- the Settings select it once served merged into that). Display
+   only: it re-renders what is on screen and touches nothing on disk. Every
+   chart re-reads SnapTime as it draws, so the re-render is the whole of the
+   propagation. */
 function setDisplayZone(z) {
     if (!window.SnapTime) return;
     window.SnapTime.setZone(z || '');
@@ -993,8 +1007,15 @@ function syncZoneNote() {
         }
         sel.value = z;
     }
+    var proj = document.documentElement && document.documentElement.getAttribute
+        ? document.documentElement.getAttribute('data-sm-project') : '';
     if (note) note.textContent = 'Showing times in ' + window.SnapTime.label()
-                               + '. Stored as UTC.';
+                               + (proj ? ' (project ' + proj + ')' : '') + '. Stored as UTC.';
+    var cur = document.getElementById('tz-current');
+    if (cur && window.SnapTime.zone()) {
+        cur.textContent = window.SnapTime.zone() + ' ('
+            + window.SnapTime.offsetLabel(new Date()) + ')';
+    }
 }
 window.syncZoneNote = syncZoneNote;
 if (document.readyState === 'loading')

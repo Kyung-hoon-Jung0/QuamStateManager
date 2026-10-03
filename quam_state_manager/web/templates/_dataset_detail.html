@@ -10,7 +10,10 @@
    truncate with "…" and reveal the full list on hover. Prefer pairs for 2Q
    runs; fall back to single qubits otherwise. #}
 {% set inspector_qubits = (run.qubit_pairs if run.qubit_pairs else run.qubits) | join(', ') %}
-{% set inspector_sub = run.date ~ " " ~ run.time ~ ((" | " ~ "%.1f" | format(run.duration_s) ~ "s") if run.duration_s else "") %}
+{# docs/263: the run's instant in the page's zone when one is set (the same
+   instant as the date row below); else the folder clock, as before #}
+{% set _run_when = run_clock.header if (run_clock is defined and run_clock and run_clock.header) else (run.date ~ " " ~ run.time) %}
+{% set inspector_sub = _run_when ~ ((" | " ~ "%.1f" | format(run.duration_s) ~ "s") if run.duration_s else "") %}
 {% include '_inspector_header.html' %}
 
 {# Which registered data folder this run belongs to (P2) — leaf name shown,
@@ -263,7 +266,16 @@
                         <span class="outcome-badge {% if run.status == 'finished' %}outcome-ok{% else %}outcome-fail{% endif %}">{{ run.status }}</span>
                     </td></tr>
                 <tr><td class="col-prop"><code>qubits</code></td><td class="col-val">{{ (run.qubit_pairs if run.qubit_pairs else run.qubits) | join(', ') if (run.qubit_pairs or run.qubits) else 'N/A' }}</td></tr>
+                {# docs/263: the run's INSTANT, in the viewer's zone; the run's own
+                   recorded clock rides in the tooltip, and a correction (only
+                   after the person said the experiment PC's clock is wrong) is
+                   labelled with the recorded time kept beside it. Without an
+                   instant: the folder's wall clock, as before. #}
+                {% if run_clock is defined and run_clock %}
+                <tr><td class="col-prop"><code>date</code></td><td class="col-val"><span class="ts-run" data-utc="{{ run_clock.utc }}" data-recorded="{{ run_clock.recorded }}" data-recorded-off="{{ run_clock.recorded_off }}" data-quality="{{ run_clock.quality }}"{% if run_clock.corrected %} data-corrected-utc="{{ run_clock.corrected.utc }}" data-corrected-by="{{ run_clock.corrected.by }}"{% endif %} title="recorded {{ run_clock.recorded }}{% if run_clock.recorded_off %} ({{ run_clock.recorded_off }}){% endif %}">{{ run_clock.recorded }}{% if run_clock.recorded_off %} ({{ run_clock.recorded_off }}){% endif %}</span></td></tr>
+                {% else %}
                 <tr><td class="col-prop"><code>date</code></td><td class="col-val" title="As the acquisition PC wrote it (its local clock) — SM does not convert time zones">{{ run.date }} {{ run.time }} <small class="muted">(acquisition-PC local)</small></td></tr>
+                {% endif %}
                 {% if run.duration_s %}
                 <tr><td class="col-prop"><code>duration</code></td><td class="col-val">{{ "%.1f" | format(run.duration_s) }}s</td></tr>
                 {% endif %}
