@@ -302,3 +302,13 @@ are as of origin/main 4bde3837.
   `_shared.json` at `Path(scope).parent`, which for a `tmp_path` scope is the
   session's shared basetemp. It reproduces with those two files alone, and
   neither file nor `scheduler.py` is touched here.
+
+## Follow-up at integration: the agent-facing edits
+
+The three edits this fix could not make (another fix owned those files) were applied at integration:
+- `agent_api._run_view`: a failed run's top-level `how` is now the run's own `failure.how`. It used to be the contention advice for one class and nothing for the rest.
+- `agent_api._run_adapter`: passes `chip_name`, so an interrupted run is journaled.
+- `mcp.py` `run_node`: the description now says never to retry on `hardware_contention` or `host_unreachable`, and that `failure.how` says what to tell the person.
+
+**Pin:** `test_an_unreachable_host_is_not_called_contention_at_the_top_level_either`. Dropping either `agent_api` edit turns it red (2/2).
+

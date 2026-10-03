@@ -1500,7 +1500,8 @@ def _run_adapter():
         instance_path=inst, chip=chip, scope=scope, live_folder=live, working_folder=str(wc.working_folder),
         settings=settings, human_recent=human_recent, list_runs=list_runs, stage=stage, journal=journal,
         wake=wake, set_lock=set_lock, notify=notify,
-        queue_state=queue_state, own_runner_alive=lambda: scheduler.is_running(scope), live_diverged=live_diverged)
+        queue_state=queue_state, own_runner_alive=lambda: scheduler.is_running(scope), live_diverged=live_diverged,
+        chip_name=name)
 
 
 def _run_view(m: dict) -> dict:
@@ -1510,8 +1511,10 @@ def _run_view(m: dict) -> dict:
            "simulated": bool(m.get("simulated")), "result": res}
     if m.get("status") in ("starting", "running"):
         out["how"] = f"still running; call run_wait with key {m.get('key')}"
-    elif res.get("classification") == "hardware_contention":
-        out["how"] = "the OPX is held elsewhere (hardware contention): do NOT retry; tell the human"
+    elif (res.get("failure") or {}).get("how"):
+        # docs/249: the run's own failure text says what failed and whether to retry (host
+        # unreachable is not contention; contention is not a node error)
+        out["how"] = res["failure"]["how"]
     elif res.get("approval"):
         out["how"] = f"{len(res.get('writes') or [])} write(s) wait for the human's approval ({res.get('why_held')}); " \
                      "do not re-run this node on these targets until it is decided"

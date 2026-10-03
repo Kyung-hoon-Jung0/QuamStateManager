@@ -638,6 +638,21 @@ class TestRun:
         r = _run(c, timeout_s=1, wait_s=15).get_json()
         assert r["result"]["classification"] == "timeout" and "timed out after 1s" in r["result"]["error"]
 
+    def test_an_unreachable_host_is_not_called_contention_at_the_top_level_either(self, c, inst, monkeypatch):
+        # docs/249: the agent reads the top-level `how` first -- it must carry the run's own failure advice
+        fr = FakeRun(fail="QmServerDetectionError: Failed to detect to QuantumMachines server, failed to connect "
+                          "to a cluster. Tried connecting to 127.0.0.1:1.")
+        monkeypatch.setattr(scheduler, "_run_item", fr)
+        from quam_state_manager.core import agent_runs as _ar
+        orig, seen = _ar.RunAdapter, []
+        monkeypatch.setattr(_ar, "RunAdapter", lambda **k: (seen.append(k), orig(**k))[1])
+        _arm(c)
+        r = _run(c).get_json()
+        assert r["result"]["classification"] == "host_unreachable"
+        # the adapter carries the journal's chip NAME, so an interrupted run can be journaled (docs/249 A-14)
+        assert seen and seen[0].get("chip_name") == c.get("/api/agent/chip").get_json()["name"]
+        assert r["how"] == r["result"]["failure"]["how"] and "held elsewhere" not in r["how"]
+
     def test_hardware_contention_is_named_and_not_retried(self, c, inst, monkeypatch):
         # docs/249: the real contention words (qualang_tools qm_session's own give-up), not a connect failure
         fr = FakeRun(fail="TimeoutError: While waiting for QOP to free, reached timeout: 100s")

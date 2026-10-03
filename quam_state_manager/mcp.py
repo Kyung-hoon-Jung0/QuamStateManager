@@ -450,7 +450,7 @@ TOOLS: dict[str, tuple[dict, Any]] = {
                     "(a refusal comes back as data with `refused` and `how`), runs the node on a scratch copy "
                     "of the state, and puts what it wrote through the door -- applied at once in auto mode, "
                     "parked for the human's approval otherwise. Blocks up to wait_s; if still running, call "
-                    "run_wait with the key. Never retry on hardware_contention.",
+                    "run_wait with the key. Never retry on hardware_contention or host_unreachable; the result's failure.how says what to tell the human.",
                     node={"type": "string", "required": True, "description": "node name or file stem, e.g. 05_power_rabi"},
                     targets={"type": "array", "items": {"type": "string"}, "required": True},
                     reason={"type": "string", "required": True, "description": "WHY now -- goes into the human's journal"},
