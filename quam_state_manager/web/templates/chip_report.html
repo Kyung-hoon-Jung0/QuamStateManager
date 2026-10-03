@@ -253,7 +253,7 @@
     {# Readout fidelity is DERIVED from the confusion matrices, and only the
        topology derives it (query._assignment_fidelity / _cm_diag). An absent
        block names the leaf it fills from rather than not existing — docs/148,
-       the customer's own "왜 GEF는 없는거니". #}
+       the customer's own "why is there no GEF". #}
     {% set _ge_any = topo_nodes.values() | map(attribute='assignment_fidelity') | select('number') | list %}
     {% set _gef_any = topo_nodes.values() | map(attribute='assignment_fidelity_gef') | select('number') | list %}
     <h2>Readout fidelity ({{ resonators | length }})</h2>

@@ -59,8 +59,8 @@
         window.addEventListener('blur', function () { if (dragging) endDrag(); });
         return true;
     }
-    /* docs/165 (user): "크기 조절을 할수있으면 좋겠다 -- 마우스로 edge에
-       가져갔을 때". CSS `resize: both` gives ONE grip, in the bottom-right
+    /* docs/165 (user): "it would be nice to resize it -- when the mouse is brought
+       to an edge". CSS `resize: both` gives ONE grip, in the bottom-right
        corner, and only two of the three windows even had it. This gives all
        three every edge and every corner: the cursor changes as the pointer
        crosses the border band, and a drag from there resizes.

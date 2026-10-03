@@ -1,8 +1,8 @@
 """The parameter vocabulary the sidebar typeahead completes from.
 
-Customer, 2026-09-10: "사람은 m, mu, mul, mult, multi... 이렇게 순차적으로
-타이핑하잖아? youtube나 vscode에서 자동완성 후보군 보여주는 것처럼 즉각적으로
-m을 치면 m으로 시작하는 parameter들이 쭉 아래로 팝업되게 할수있어?"
+Customer, 2026-09-10: "People type m, mu, mul, mult, multi... one letter at a
+time, right? Like YouTube or VS Code show completion candidates instantly,
+can typing m pop up every parameter starting with m right below?"
 
 MEASURED, on the customer's own archive (1,755 runs, 210 distinct keys): the
 whole vocabulary -- every key, every distinct value, every count -- is 12 KB of

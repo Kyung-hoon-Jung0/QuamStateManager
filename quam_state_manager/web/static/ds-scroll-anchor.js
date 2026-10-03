@@ -1,6 +1,6 @@
 /* Datasets run detail: keep the reader's place EXACTLY across run switches.
  *
- * Queue item 6 (customer, 2026-09-25: "조금씩 밀림" -- every run switch moved
+ * Queue item 6 (customer, 2026-09-25: "it slips a little" -- every run switch moved
  * the detail a little, so every run needed re-scrolling). Measured in real
  * Chrome on the KH rig, 32 consecutive switches, three mechanisms:
  *

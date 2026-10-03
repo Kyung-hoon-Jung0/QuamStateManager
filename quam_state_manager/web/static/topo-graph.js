@@ -435,7 +435,7 @@ window.TopoGraph = (function () {
    * These used to live inside renderLayout, so only the component-page maps
    * had them. The Chip Status hero draws its own SVG and therefore had no
    * frequency chevrons at all — and the customer asked for ONE convention
-   * across SM ("qubit components 페이지에서도 마찬가지인데"), so the drawing
+   * across SM ("the same goes for the qubit components page"), so the drawing
    * moved out here and both callers use it. The chevron half is lifted
    * verbatim; the component map's output is byte-identical (pinned).
    *

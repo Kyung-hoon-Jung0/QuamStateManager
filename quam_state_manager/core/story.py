@@ -16,7 +16,7 @@ Onto that spine the story attaches:
     and does not drift as the chip moves on; cached per (run, GATES_REV).
   * the author: certain when SM ran the node (``agent_runs/index.jsonl``),
     inferred from a hook event in the window, claimed by a person
-    ("이건 내가 돌렸어요"), else ``unknown`` -- never ``qualibrate`` by default,
+    ("I ran this one"), else ``unknown`` -- never ``qualibrate`` by default,
     because a terminal `python node.py` looks the same from here.
 
 Write cards come from the undo journal: every applied unit, each entry with
@@ -205,7 +205,7 @@ _KEEP = object()
 
 
 def claim_run(instance_path, chip: str, run_id: int, *, author: str, note=_KEEP) -> dict:
-    """A person says "이건 내가 돌렸어요" (or corrects the author).
+    """A person says "I ran this one" (or corrects the author).
 
     A correction REPLACES the record, so an omitted ``note`` used to delete the
     note the last claim left -- a person fixing a misspelt name lost the sentence

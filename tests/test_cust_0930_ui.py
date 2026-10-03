@@ -219,3 +219,24 @@ def test_chip_selfchecks(name):
     if "Cannot find module 'jsdom'" in (r.stderr or ""):
         pytest.skip("jsdom not installed")
     assert r.returncode == 0 and "FAIL" not in (r.stdout + r.stderr), r.stdout[-2000:] + r.stderr[-2000:]
+
+
+def test_the_shipped_package_carries_no_hangul_at_all():
+    """2026-10-03 (user): QSM is English all the way down -- comments,
+    docstrings, templates and stylesheets included, not only on-screen text.
+    The customer quotes that explained a change were translated in place.
+    A non-English word list that is DATA (tag_vocab's Korean filler words)
+    is written as unicode escapes, so it works the same and the source stays
+    English."""
+    vendor = ("plotly", "htmx", "split", "pico", ".min.")
+    found = []
+    for p in sorted(PKG.rglob("*")):
+        if not p.is_file() or p.suffix.lower() not in (
+                ".py", ".js", ".html", ".css", ".json", ".md", ".txt", ".toml"):
+            continue
+        if any(v in p.name.lower() for v in vendor):
+            continue
+        for n, line in enumerate(p.read_text(encoding="utf-8", errors="replace").splitlines(), 1):
+            if HANGUL.search(line):
+                found.append(f"{p.relative_to(PKG)}:{n}: {line.strip()[:80]}")
+    assert not found, "Hangul in the shipped package:\n" + "\n".join(found[:20])

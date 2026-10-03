@@ -2036,7 +2036,7 @@ def _warm_generated_config_async(ctx, inst) -> str:
     """Generate this chip's config in the background, when it is the only way
     to draw one of its pulses (docs/189).
 
-    The customer's question was exactly right: *"이거 미리할수는 없나?"*. The
+    The customer's question was exactly right: *"can't this be done in advance?"*. The
     subprocess costs ~13 s on their 5Q chip and the result is cached in RAM, so
     paying it ONCE while they are still looking at the chip list beats paying it
     the moment they click the pulse they wanted to see.
@@ -5400,8 +5400,8 @@ def calc_window():
 
 # ── what SM has actually wired up, and what it cannot know ────────────────
 #
-# Customer, on site: "지금은, agent를 눌러도 어떻게 이게 MCP처럼 작동하지? 하는
-# 의문이 생겨. 직관적이지 않거든."
+# Customer, on site: "Right now, even after pressing Agent, you wonder how this works like an MCP.
+# It is not intuitive."
 #
 # The honest answer is the registration itself -- SM registers itself as an MCP
 # server in the CLI's own config, and a hook reports each run back -- so that is
@@ -7692,7 +7692,7 @@ def bulk_edit():
     # are silently ignored (the chip may have changed under a saved set).
     _dyn_hidden = {k for k in (request.args.get("dynhide") or "").split(",") if k}
     modified = _modified_map()
-    # Customer, 2026-09-10: "live state edit에서도 wiring.json 할수있게."
+    # Customer, 2026-09-10: "let Live State Edit do wiring.json too."
     # The two badges beside the title pick which DOCUMENT this page edits.
     # wiring.json has no qubits/pairs grid of its own -- its collections are
     # discovered like every other one, so the switch is which set of grids
@@ -15867,8 +15867,8 @@ def state_versions_panel():
         chip_key = ""
     ver = _state_version_now(ctx)
     limit = min(_int_arg("limit", 40, minimum=1), _STATE_VERSIONS_CAP)
-    # docs/132 — the changes-only filter (default ON: "유저는 diff가 없는건
-    # 관심없거든"). A row is hidden iff its capture-time diff_summary is a
+    # docs/132 — the changes-only filter (default ON: "users do not care about
+    # rows with no diff"). A row is hidden iff its capture-time diff_summary is a
     # true zero AND nothing marks it as individually meaningful: pinned rows,
     # EXP rows (their zeros mean NOT-COMPUTED on backfilled ones), the
     # current row, and labeled/noted bookmarks always show. Filtered BEFORE
@@ -17209,7 +17209,7 @@ def pulses_page():
             active_query=query,
             active_owner=owner,
             # docs/166: the chip map, at a smaller cell than a component page's
-            # (the customer asked for "살짝 축소된 크기"), and clickable.
+            # (the customer asked for "a slightly smaller size"), and clickable.
             cmap_highlight="",
             # compact -- the component pages' map is a page's subject, this one
             # is a control sitting above a 500-row table
@@ -17569,7 +17569,7 @@ def _pulse_section_ctx(store, pulse_index, path: str):
     # w9/labwarm: the delete step says "Checking with your lab code..." beside
     # its disabled button -- only when the delete is asked of the lab at all
     delete_lab_check = _lab_delete_asks(store, path)
-    # docs/189 (customer, on-site: "pulses 메뉴에서 snz 는 plotting이 안돼").
+    # docs/189 (customer, on-site: "SNZ does not plot in the Pulses menu").
     # A lab may write its OWN pulse classes -- one customer chip's CZ flux pulse
     # is `quam_config.two_flux_gate.SNZTwoFluxPulse`, and four such classes cover
     # 30 pulse objects on it. `waveform_synth` mirrors quam's classes only, so
@@ -26061,8 +26061,8 @@ _DIFF_SLOTS = "abcde"
 def _run_age_key(run: dict | None, fallback: int):
     """Sort key that puts the OLDEST run first.
 
-    Customer, 2026-09-11: "column 순서를 old run > new run으로 항상 정렬해서
-    보여줄것." Age is the run's own ``(date, time, run_id)``; a run that cannot
+    Customer, 2026-09-11: "always order the columns old run > new run
+    when showing them." Age is the run's own ``(date, time, run_id)``; a run that cannot
     be dated keeps its position at the END, because "SM could not resolve it"
     is not evidence that it is old.
     """
@@ -26819,8 +26819,8 @@ _SIDEBAR_RUNSET_SCOPES = ("tag", "note")
 # means one thing on both search boxes.
 #
 # And ``key>=value`` is a RANGE, because picking one value from a list is only
-# an answer while the list is short. Customer, on site: "amp같은 경우는 value도
-# 많고 범위도 많기 때문에 까다로워." Measured on their archive: 121 of 210 keys
+# an answer while the list is short. Customer, on site: "something like amp has many values
+# and many ranges, so it is tricky." Measured on their archive: 121 of 210 keys
 # carry exactly ONE value, ~78 carry 2-12, and 11 carry more than 12 --
 # frequency_span_in_mhz 31, num_shots 30, max_wait_time_in_ns 21, load_data_id
 # 20, min/max_amp_factor 19 each. Those eleven are exactly the keys the report
@@ -27640,8 +27640,8 @@ def workspace_tag_vocab():
 # ── SM's own folder, and when to say something about it ────────────────────
 #
 # Customer, 2026-09-11, after a machine-wide temp audit turned up 28.79 GB:
-# "이거 자동으로 정리하게 하거나, 최소한 유저에게 일정 용량되면(20GB정도?)
-#  알려줘서 삭제하든 옮기든 알려주자."
+# "make it clean itself up, or at least tell the user at some size (about 20 GB?)
+#  so they can delete or move it."
 #
 # Measured before building: that 28.79 GB was browser-automation profiles, not
 # SM -- the live instance on the same machine was 0.19 GB. But nothing in SM
@@ -30078,7 +30078,7 @@ def param_history():
         _sanitize_name as _hist_sanitize, chip_name_for as _chip_name_for)
     legacy_chip_key = _hist_sanitize(_chip_name_for(loaded_path))
 
-    # docs/158 (customer: "None이면 말그대로 선택하지 않게"): an EMPTY selection
+    # docs/158 (customer: "None should literally mean nothing selected"): an EMPTY selection
     # is a selection. The filter form always carries the parameter (a hidden
     # empty value per row), so "None" arrives as ``props=`` / ``qubits=`` —
     # only the ABSENCE of the parameter means the default view (a fresh
@@ -32517,7 +32517,7 @@ def _datasets_view(view_mode: str):
 # ======================================================================
 # docs/132 — near-real-time run→version ingest (EXP rows)
 #
-# The Versions panel must answer "언제 어떤 실험이 state를 바꿨나": when a
+# The Versions panel must answer "when did which experiment change the state": when a
 # NEW run lands in a watched dataset folder, its quam_state copy is ingested
 # into the chip's snapshot store as an EXP version (kind="exp", run fields
 # stamped), near-real-time. Detection is ENQUEUE-ONLY inside surfaces that

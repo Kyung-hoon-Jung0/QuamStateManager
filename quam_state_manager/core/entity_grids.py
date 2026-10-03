@@ -1,8 +1,8 @@
 """Which collections a chip actually HAS, so a grid exists for each of them.
 
-Customer, 2026-09-10: "live state edit이 twpa를 지원하지 않네? json tree view는
-당연히 잘 보이거든? 지금은 없지만 나중에 qdac도 그렇고.. 이거 adaptive하게
-해서 display하게 할수는 없니?"
+Customer, 2026-09-10: "Live State Edit does not support TWPAs? The Json Tree View
+shows them fine. Not now, but QDAC later too... could it be made adaptive
+so it displays them?"
 
 Live State Edit had exactly two grids, one per HARDCODED collection: ``qubits``
 and ``qubit_pairs``. Their chip also carries ``twpas``, so a TWPA pump's

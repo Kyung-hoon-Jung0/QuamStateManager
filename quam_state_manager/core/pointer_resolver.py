@@ -157,8 +157,8 @@ def pointer_target_name(
 
     A pair's ``control``/``target`` is a pointer to a whole qubit *dict*, so
     every value-rendering surface printed ``[19 items]`` for it — the customer
-    report that opens docs/120: "live edit에서는 control, target이 뭔지 cell에
-    명시가 안됨", forcing a trip to the Json Tree View to learn which qubit a
+    report that opens docs/120: "Live Edit does not show in the cell which qubit
+    is the control and which the target", forcing a trip to the Json Tree View to learn which qubit a
     pair couples.
 
     The resolver hands back the resolved VALUE, which by construction cannot

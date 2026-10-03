@@ -55,7 +55,7 @@
     // grid is the intersection: exactly the cells that ALREADY hold that value.
     // For a filter that is right; for an EDITOR it is a dead end, and it is the
     // customer's own report — searching `amplified` showed only the qubits
-    // already set to it, so "이거를 사용자가 SM에서 입력을 실제로 할수가없었음".
+    // already set to it, so "the user could not actually enter this in SM".
     // The search keeps its meaning (silently widening it would break "show me
     // the qubits whose T1 is 12"); the way out is offered instead, in the same
     // shape as the neighbouring hidden-column chip.
@@ -1982,8 +1982,8 @@
     // One band edit changes the verdict at BOTH ends of the pair, and on the
     // frequency cells judged against it. So the whole group is re-judged --
     // four cells, already on the page, nothing fetched and no diagnostics run.
-    // (The report: "conflict된 것을 수정하면 그때는 그것만 access해서 상태를
-    // 업데이트하자.")
+    // (The report: "when a conflicted value is fixed, touch only that one and
+    // update the state.")
     function _validateBandGroup(cell) {
         var cells = _loCellsIn(cell.getAttribute('data-lo-group'));
         if (!cells.length) return _validateBand(cell);

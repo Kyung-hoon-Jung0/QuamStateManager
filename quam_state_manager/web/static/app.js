@@ -885,7 +885,7 @@ document.addEventListener('htmx:afterSwap', function (e) {
 
     /* docs/244: the ONE display form of an absolute time, everywhere.
      * The viewer's zone (or the one chosen in Settings) WITH its offset,
-     * digits only -- never the browser locale's words ("오후 7:55", "PM").
+     * digits only -- never the browser locale's words ("PM" in English, its counterpart in Korean).
      *   long:  2026-09-30 19:55:46 (UTC+9)
      *   short: 09-30 19:55            (a chip; the title carries the long form)
      * `d` is a Date (an instant) or anything `instant()` reads. */
@@ -2861,8 +2861,8 @@ document.addEventListener('keydown', function(evt) {
 });
 
 /* Left / Right collapse and expand the folder, the way every file tree does.
- * Customer feedback 2026-09-16: "위/아래로 실험은 잘 넘어가는데, 왼쪽/오른쪽으로
- * 상위 폴더를 접고 펴고 할 수 있으면 좋겠다."
+ * Customer feedback 2026-09-16: "Up/down moves between experiments fine; it would be nice if left/right
+ * could fold and unfold the parent folders."
  *
  * Up/Down above move between RUNS and are gated on a detail being open (the
  * arrows must keep scrolling the page otherwise). Collapsing a folder is not
@@ -12416,7 +12416,7 @@ window.clearDetailPanelSearch = function(btnEl) {
 
 /* ── Json tree multi-edit: Ctrl+D · Ctrl+Shift+L · Ctrl+H (docs/235) ─────
  *
- * Customer 2026-09-30: "VS Code 처럼 다중선택 + 일괄적용" on the Json tree.
+ * Customer 2026-09-30: "multi-select + apply to all, like VS Code" on the Json tree.
  * Not a text editor's feature copied letter for letter -- the tree is data:
  *
  *  - Ctrl+D on a leaf selects it; each further Ctrl+D adds the SAME field of
@@ -20718,7 +20718,7 @@ window.PendingMarkers = (function () {
         // docs/158: a Param History FILTER change is an in-page refinement
         // (the grid renders from SQLite in ~0.2 s, docs/142) and swaps only
         // the results — the page-load popup flashing over it on every chip
-        // click was half of the customer's "SM이 흔들린다". Same answer on
+        // click was half of the customer's "SM shakes". Same answer on
         // both events (before/after), so the pending counter stays paired.
         var elt = detail && detail.elt;
         if (elt && elt.closest && elt.closest('#param-history-filters')) return false;
@@ -23694,8 +23694,8 @@ window.FieldHistory = (function () {
 
     /* docs/186 — put a previous value back.
      *
-     * Customer: "지난 history를 보면서 이전 값으로 되돌릴 수있는 UI가 있어야
-     * 한다 ... 그게 진짜 이것의 순기능." The applied log's ✕ undoes the LAST
+     * Customer: "there must be a UI to go back to an earlier value while looking at the history
+     * ... that is the real purpose of this." The applied log's ✕ undoes the LAST
      * write, one step, this session only; this is the other thing, and the
      * one the panel exists for.
      *
@@ -26129,7 +26129,7 @@ document.addEventListener('DOMContentLoaded', function() {
 
 /* ── SM storage guard (customer, 2026-09-11) ────────────────────────────────
  *
- * "최소한 유저에게 일정 용량되면(20GB정도?) 알려줘서 삭제하든 옮기든 알려주자."
+ * "at least tell the user at some size (about 20 GB?) so they can delete or move it."
  *
  * The three verbs the banner and the /disk page share. Reclaim deletes ONLY the
  * folders the server classifies as rebuildable — the server refuses anything
@@ -26347,8 +26347,8 @@ window.SmReload = (function () {
 
 /* ── DsPick: apply PART of a run's state to the open chip (docs/243) ───────
  *
- * Customer 2026-10-02: "데이터의 state에서 exponential filter tap 들을 일부만
- * 현재 chip에 가져오고 싶다". The run's snapshot stays read-only; what changes
+ * Customer 2026-10-02: "from a run's state, bring only some of the exponential filter taps
+ * into the current chip". The run's snapshot stays read-only; what changes
  * is the OPEN chip's working copy, through the one /field/edit-batch door
  * (one Review group, one Ctrl+Z, the live chip untouched until Apply).
  *

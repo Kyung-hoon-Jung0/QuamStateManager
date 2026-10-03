@@ -267,7 +267,7 @@
         }
     }
 
-    /* ── size (docs/141 4aj, user: "calculator는 크기 조절이 안되고 있어") ──
+    /* ── size (docs/141 4aj, user: "the calculator cannot be resized") ──
        The window is `resize: both` in CSS; this is the memory. Same contract
        as the Config Manual's (manual.js): only a size the USER set is stored,
        so opening on a smaller screen — where restore clamps to the viewport —

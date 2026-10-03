@@ -2241,8 +2241,8 @@ window.PulsesPage = (function () {
     };
 })();
 
-/* docs/166 (customer): "pulses 메뉴를 열면 너무 많은 pulse 리스트가 있다 ... chip
- * component처럼 ... 마우스로 클릭하면 그 qubit 혹은 pair의 pulse list만 나오게".
+/* docs/166 (customer): "opening the Pulses menu shows far too many pulses ... like the chip
+ * component pages ... clicking should show only that qubit's or pair's pulse list".
  *
  * The chip map above the table is the SAME drawing the component pages use
  * (`_component_map.html` -> ComponentMap -> TopoGraph.renderLayout), so there

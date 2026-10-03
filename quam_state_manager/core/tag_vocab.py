@@ -2,10 +2,10 @@
 
 Customer, on-site (2026-09-11):
 
-    "우리 검색어 창에 지금 타이핑을 하면 저절로 뜨는데... 이거! 제발 data tag랑
-     note에 사용자가 기재한 단어들도 넣어달라고 함!!!! 다만, 검색 pop up할때
-     뜨는건 run 번호: tag 이름 (혹은 note) 이렇게 뜨도록. note는 내용이 다
-     담기게 하는게 아니고 그냥 note (검색어 ...) 그냥 이렇게 compact하게."
+    "Typing in our search box pops suggestions up by itself... please also add
+     the words users wrote in data tags and notes!!!! But in the search pop-up
+     show it as run number: tag name (or note). A note should not carry its
+     whole content -- just note (search term ...), compact like that."
 
 The grammar could already find them — ``tag:flagged`` and ``note:todo`` have
 been in the search help for a long time. What was missing is that **you have to
@@ -39,8 +39,8 @@ from pathlib import Path
 from typing import Any, Iterable
 
 # A note is prose. Only its WORDS are vocabulary — the customer was explicit
-# that the popup must not carry the note's content ("note는 내용이 다 담기게
-# 하는게 아니고"), and a whole note in a suggestion row would be unreadable
+# that the popup must not carry the note's content ("a note should not carry
+# its whole content"), and a whole note in a suggestion row would be unreadable
 # anyway.
 _WORD = re.compile(r"[^\W_]{2,}", re.UNICODE)
 
@@ -55,7 +55,7 @@ MAX_WORDS_PER_NOTE = 40  # distinct words taken from one note
 # tiny: this is not a stop-word list, it is the three or four fillers that
 # showed up as noise. Anything domain-specific stays in.
 _SKIP = {"the", "and", "for", "with", "this", "that", "was", "not", "but",
-         "이것", "그리고"}
+         "\uc774\uac83", "\uadf8\ub9ac\uace0"}   # Korean filler words ("this", "and"): data, not UI text
 
 
 def note_words(text: Any, limit: int = MAX_WORDS_PER_NOTE) -> list[str]:

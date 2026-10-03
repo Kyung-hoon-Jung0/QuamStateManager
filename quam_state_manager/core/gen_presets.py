@@ -173,8 +173,8 @@ def slugify(name: str) -> str:
     """Filesystem-safe slug: NFC, lowercase, runs of non-alphanumerics → ``-``.
 
     Letters and digits of ANY script survive (QA generate-r2-15: an
-    ASCII-only slug refused "표준 설정" outright and stored "QA 프리셋" and
-    "QA 두번째" in one file). ``\\w`` minus ``_`` never matches a separator,
+    ASCII-only slug refused an all-Hangul name outright and stored "QA <Hangul>" and
+    "QA <other Hangul>" in one file). ``\\w`` minus ``_`` never matches a separator,
     ``.``, ``:``, a quote, a wildcard or NUL, so traversal stays
     unconstructible. Raises ``ValueError`` when nothing survives (the same
     intent as /mkdir's name sanitization).
@@ -189,7 +189,7 @@ def slugify(name: str) -> str:
 
 def _ascii_slug(name: str) -> str:
     """The pre-r2-15 slug (ASCII letters/digits only), or "" — where a preset
-    saved under a mixed name ("한국어 chip" → ``chip.json``) already lives."""
+    saved under a mixed name ("<Hangul> chip" → ``chip.json``) already lives."""
     slug = re.sub(r"[^a-z0-9]+", "-", str(name).lower()).strip("-")
     return slug[:60].strip("-")
 

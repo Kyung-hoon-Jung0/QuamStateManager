@@ -1117,7 +1117,7 @@ html.topbar-hidden .topbar-reveal { display: block; }
     border-radius: 10px;
     box-shadow: 0 8px 28px rgba(0,0,0,0.26), 0 0 0 1px color-mix(in srgb, var(--pico-primary) 12%, transparent);
 }
-/* docs/141 4aj (user: "모서리가 끊겨있어"): each window's header is a sticky
+/* docs/141 4aj (user: "the corners are broken"): each window's header is a sticky
    child with its own opaque background, painted OVER the parent's rounded top
    corners -- so the frame read as broken at both of them. The panel's own
    overflow is what usually clips a child to the radius, and only two of the
@@ -1279,7 +1279,7 @@ html.topbar-hidden .topbar-reveal { display: block; }
 .calc-close:hover { background: var(--pico-muted-border-color); color: var(--pico-contrast); }
 
 .calc-body { flex: 1 1 auto; overflow-y: auto; padding: 0.3rem 0.5rem 0.5rem; }
-/* docs/141 4aj (user: "너무 밋밋해서 전혀 구분이 안가"): a hairline between
+/* docs/141 4aj (user: "too flat, nothing tells them apart"): a hairline between
    sections was not a boundary -- each section is now a CARD (border, radius,
    its own surface) whose header is a real title bar, tinted SM-blue while
    open so which one you are in is visible at a glance.
@@ -1368,7 +1368,7 @@ html.topbar-hidden .topbar-reveal { display: block; }
 }
 .calc-popover .calc-expr:focus { border-color: var(--pico-primary); outline: none; box-shadow: none; }
 .calc-expr-eq { color: var(--pico-muted-color); }
-/* docs/156 (user feedback: "SM 창 내부에서만 floating"): the calculator as its
+/* docs/156 (user feedback: "floating only inside the SM window"): the calculator as its
    OWN browser window (/calc-window, opened by the popover's ↗). Same markup
    (the _calc_body.html partial), but here it is the whole document, so the OS
    window frame replaces the popover's: no border/shadow/radius, no resize
@@ -3232,8 +3232,8 @@ th.sortable.sort-desc::after { content: '\25BC'; opacity: 0.8; }
 }
 .exp-filter-toggle:hover { color: var(--pico-primary); border-color: var(--pico-primary); }
 /* The Sort toggle carries a little more weight than its Experiments twin, and
-   a faint SM-blue ground (customer, 2026-09-11: "진짜 조금만 살짝 크기를 키우고
-   ... 블루칼라로 살짝만 포인트"). The band it opens is folded by default now, so
+   a faint SM-blue ground (customer, 2026-09-11: "just make it a tiny bit bigger
+   ... with just a light touch of blue"). The band it opens is folded by default now, so
    this button IS the way back -- docs/152 is the round where a control folded
    behind something too quiet went unfound. A tint and a blue caret, not a
    filled button: it sits in a toolbar beside date pills and must not shout. */
@@ -4407,7 +4407,7 @@ html.topbar-hidden .topo-subnav {
 .cm-role-dot { fill: var(--pico-card-background-color, #fff);
     stroke: var(--pico-muted-border-color); stroke-width: 1; }
 /* M wears the SAME neutral style as C and T — the accent version shouted
-   over the map (user, 2026-08-20: "M이 너무 눈에 띈다"). */
+   over the map (user, 2026-08-20: "the M stands out too much"). */
 .cm-role-txt { fill: var(--pico-muted-color); font-weight: 700;
     pointer-events: none; user-select: none; }
 .topo-hero-node { cursor: pointer; }
@@ -5957,7 +5957,7 @@ html.tree-copy-active .json-tree { padding-bottom: 5rem; }
    The banners take their natural height; .datasets-scroll flex-grows into the
    rest and scrolls internally. min-height:0 lets it shrink; if the banners are
    very tall it bottoms out and #table-pane scrolls as a fallback. */
-/* ONE scroller (customer, 2026-09-11 — "단 하나의 global scrolling").
+/* ONE scroller (customer, 2026-09-11 — "one single global scroll").
    #table-pane scrolls; this page takes its natural height inside it. Before
    this, .datasets-page was height:100% of the pane and the table box got
    whatever the banners left — measured at 158 px on a 1000 px viewport, with a
@@ -12275,8 +12275,8 @@ body.scheduler-active #pending-tray { opacity: .5; pointer-events: none; }
 /* docs/186: was `nowrap`, which is what forced the row wider than the panel
    once a second button joined Use. Two buttons and a delta wrap instead. */
 .fh-act { white-space: normal; text-align: right; }
-/* docs/186 — Revert is the PRIMARY action of this panel ("그게 진짜 이것의
-   순기능"), so it carries the accent while Use and Data stay quiet. Same size
+/* docs/186 — Revert is the PRIMARY action of this panel ("that is the real
+   purpose of this"), so it carries the accent while Use and Data stay quiet. Same size
    and shape as its neighbours: a taller button would push the row's height
    and the panel is already dense. */
 .fh-revert {
@@ -12615,7 +12615,7 @@ form.inline-edit.fh-host:focus-within .field-hist-btn,
     background: color-mix(in srgb, var(--pico-primary) 14%, transparent); }
 
 /* ── state.json | wiring.json, beside the Live State Edit title ─────── */
-/* Customer, 2026-09-10: "badge 형태로 ... 깔끔하게 살짝 SM 블루 boundary로."
+/* Customer, 2026-09-10: "as a badge ... clean, with a light SM-blue border."
    A thin shared boundary, one segment lit — the same reading as the Table/Flat
    segmented control beside it, at badge weight rather than button weight. */
 /* flex:0 0 auto -- .bulk-toolbar-title is a flex row and a bare inline-flex
@@ -12633,7 +12633,7 @@ form.inline-edit.fh-host:focus-within .field-hist-btn,
     border-left: 1px solid color-mix(in srgb, var(--pico-primary) 30%, transparent); }
 .bulk-docbadge:hover { color: var(--pico-primary);
     background: color-mix(in srgb, var(--pico-primary) 8%, transparent); }
-/* "살짝 SM 블루" — a tint and blue text, not a solid block. Deliberately the
+/* "a light SM blue" — a tint and blue text, not a solid block. Deliberately the
    same expression the Table/Flat control beside it uses, so two controls in one
    row read as one language rather than competing for attention. */
 .bulk-docbadge.active { color: var(--pico-primary); font-weight: 600;
@@ -13066,7 +13066,7 @@ html.sidebar-is-collapsed:not(.topbar-hidden) .topbar > nav > ul > li.topbar-too
 /* Tight (customer, 2026-08-22): the first cut's padding + 11rem max made
    the chip crowd the Diff / Pull buttons beside it. */
 /* Corner radius = the SAME token Diff/Pull inherit from Pico (customer,
-   2026-08-22 r3: "diff와 pull하고 sync를 맞추게") — synced by construction,
+   2026-08-22 r3: "diff, pull, and bring it in sync") — synced by construction,
    not by a copied number. */
 .sv-run { display: inline-flex; flex-direction: column; align-items: center;
     text-align: center;
@@ -13444,7 +13444,7 @@ td.vc-cell-takeable:focus-within .vc-take,
    request if longer), then .ws-done flashes a ✓ — a press is ALWAYS seen. */
 .btn-workspace-refresh { position: relative; }
 .btn-workspace-refresh .ws-refresh-ico { display: inline-block; line-height: 1; }
-/* Round 3 (user: "체크표시가 뜰 때까지 아무런 표시가 없다"): rotating the ↻
+/* Round 3 (user: "nothing shows until the check mark appears"): rotating the ↻
    GLYPH is imperceptible — it is nearly circular, so spinning it about its
    own center moves only the tiny arrowhead. The in-flight state now swaps it
    for a real ring spinner (one lit quadrant orbiting), unmistakable at 14px.
@@ -13510,7 +13510,7 @@ tr.dp-row[hidden] { display: none; }
    the tree toolbar's box, so the two read as one control. */
 .diff-panes-tools { flex-wrap: wrap; }
 .diff-panes-tools .tree-search-icon { font-size: 0.9em; color: var(--pico-muted-color); flex-shrink: 0; }
-/* docs/141 4aj (user: "돋보기가 내부 글자랑 겹친다"): Pico gives EVERY
+/* docs/141 4aj (user: "the magnifier overlaps the text inside"): Pico gives EVERY
    input[type=search] its own magnifier as a background image plus a
    padding-inline-start that reserves room for it. A box that also carries the
    app's own 🔍 span therefore drew TWO -- and because a compact padding
@@ -13726,8 +13726,8 @@ table.diff-wb-list tbody > tr[hidden] { display: none; }
    without :has() the feed falls back to the capped height below and the pane scrolls */
 #table-pane:has(> .agent-home) { display: flex; flex-direction: column; overflow: hidden; }
 .ag-dryrun-note { margin: 0 0 .3rem; font-size: .9em; flex: 0 0 auto; }
-/* The wiring strip (customer: "codex/claude login 이라는 게 agent누르면 바로
-   상단에 compact하게 깔끔하게 SM스타일로"). Modelled on .pulse-env-strip, which
+/* The wiring strip (customer: "the codex/claude login should appear right
+   at the top when Agent is pressed, compact and clean, SM style"). Modelled on .pulse-env-strip, which
    is the closest existing intent — "did discovery work, and against what" — so
    the two read as one house style. `flex: 0 0 auto` because #table-pane:has(>
    .agent-home) is a flex column and the strip must not be squeezed. */

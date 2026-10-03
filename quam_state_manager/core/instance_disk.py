@@ -3,8 +3,8 @@
 Customer, 2026-09-11, after a machine-wide temp audit found 28.79 GB under one
 scratch folder:
 
-  "우리 SM이 엄청나게 캐시를 계속 쌓아두나봐. 이거 자동으로 정리하게 하거나,
-   최소한 유저에게 일정 용량되면(20GB정도?) 알려줘서 삭제하든 옮기든 알려주자."
+  "SM seems to keep piling up a huge cache. Make it clean itself up, or
+   at least tell the user at some size (about 20 GB?) so they can delete or move it."
 
 MEASURED first, because the answer changed what to build. That 28.79 GB was
 browser-automation Chrome profiles from the assistant's own verification runs,

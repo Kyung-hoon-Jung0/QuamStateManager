@@ -2,9 +2,9 @@
 
 Customer, on-site (2026-09-11):
 
-    "제발 동일한 컨택스트의 키워드는 live edit에서 같이 검색되게 해주세요!!
-     예를 들어, ro, readout 만 입력해도 resonator 도 당연히 함께 나와야하는데,
-     지금은 resonator를 입력하면 readout이 검색 안되고 그 vice versa 임."
+    "Please make keywords of the same context match together in Live Edit!!
+     For example, typing just ro or readout should obviously bring up resonator too,
+     but now typing resonator does not find readout, and vice versa."
 
 They are right, and the chip itself is the evidence. On the reporting lab's
 5Q chip a qubit's readout object is literally named ``resonator``, its pulses

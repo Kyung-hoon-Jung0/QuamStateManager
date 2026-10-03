@@ -79,7 +79,7 @@ def get(instance_path, chip: str, approval_id: str) -> dict | None:
 def decide(instance_path, chip: str, approval_id: str, *, status: str, who: str, note: str | None = None,
            writes: list[dict] | None = None) -> dict | None:
     """approve / reject. ``writes`` lets the human EDIT the rows before
-    approving (docs/173 §3.3 "행 편집 가능")."""
+    approving (docs/173 §3.3 "rows editable")."""
     if status not in ("approved", "rejected"):
         raise ValueError("status must be approved or rejected")
     # The lock spans read -> change -> write: an atomic write stops a CORRUPT

@@ -1052,7 +1052,7 @@
         </div>
         {# The charts used to draw UTC digits unconverted while the rows beside
            them localized, so one page showed two bases -- which is what the
-           report "Trends가 어떤 기준인지 모호하다" was about. Stored times are
+           report "it is unclear what basis Trends uses" was about. Stored times are
            UTC and stay UTC; this only decides what a time READS as. #}
         <div class="settings-group">
         <small class="settings-label">Time zone <span class="muted">(display only)</span></small>
@@ -1179,8 +1179,8 @@
         <button type="button" class="agent-close" onclick="toggleAgentPanel()" title="Close" aria-label="Close">&times;</button>
         </span>
         </div>
-        {# The sidebar Agent button opens this float on any page, and "agent를
-           누르면" means both doors — so the same strip renders here, compact
+        {# The sidebar Agent button opens this float on any page, and "pressing
+           Agent" means both doors — so the same strip renders here, compact
            (no versions, no Test: there is no room). It is rendered from the
            SHELL, so it is present on every page the float can open over; the
            registration facts are hydrated by agent.js like the rest. #}
@@ -1204,7 +1204,7 @@
         <div class="calc-header" id="calc-header">
         <strong class="calc-title">Calculator</strong>
         <span class="calc-header-tools">
-        {# docs/156 (user feedback: "SM 창 내부에서만 floating"): open the same
+        {# docs/156 (user feedback: "floating only inside the SM window"): open the same
            calculator as its OWN browser window — movable across monitors,
            above other apps, outliving every navigation of this page. calc.js
            hides this under the desktop shell (pywebview), where window.open

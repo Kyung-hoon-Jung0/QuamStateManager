@@ -1027,7 +1027,7 @@ window.AgentPanel = (function () {
 
   /* ── the wiring strip ───────────────────────────────────────────────────
    *
-   * "어떻게 이게 MCP처럼 작동하지?" — the mechanism is the answer, so the strip
+   * "how does this work like an MCP?" — the mechanism is the answer, so the strip
    * states it: SM registers itself as an MCP server in the CLI's own config,
    * and a hook reports each run back.
    *

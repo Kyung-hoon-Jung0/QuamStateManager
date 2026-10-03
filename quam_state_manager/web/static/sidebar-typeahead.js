@@ -1,8 +1,8 @@
 /* Typeahead for a search box — a suggestion list under the caret's token.
  *
- * Customer, 2026-09-10: "사람은 m, mu, mul, mult, multi... 이렇게 순차적으로
- * 타이핑하잖아? youtube나 vscode에서 자동완성 후보군 보여주는 것처럼 즉각적으로
- * m을 치면 m으로 시작하는 parameter들이 쭉 아래로 팝업되게 할수있어?"
+ * Customer, 2026-09-10: "People type m, mu, mul, mult, multi... one letter at a
+ * time, right? Like YouTube or VS Code show completion candidates instantly,
+ * can typing m pop up every parameter starting with m right below?"
  *
  * Two stages, because ONE stage would suggest something that finds nothing.
  * A bare param name is routed to free text by the server's parser and matches
@@ -126,9 +126,9 @@ window.Typeahead = (function () {
 
     /* ── a typo still finds the key ────────────────────────────────────
      *
-     * Customer, 2026-09-10: "특히 파라미터를 입력하면 사실 많은 사람들이
-     * multiplzed...뭐 이런식으로 오타 나잖아? 이렇게 오타로 해도 vscode나
-     * 유투브는 알아서 비슷한거 유사한거 리스팅을 해주던데?"
+     * Customer, 2026-09-10: "Especially when typing a parameter, many people actually
+     * make typos like multiplzed..., right? Even with a typo like that, VS Code or
+     * YouTube list the similar ones by themselves."
      *
      * The customer's own example settles the algorithm. `multiplzed` is NOT a
      * subsequence of `multiplexed` -- there is no `z` in the target -- so any
@@ -227,7 +227,7 @@ window.Typeahead = (function () {
         return p;
     }
 
-    /* Prefix hits first, then the rest by substring — "m을 치면 m으로 시작하는"
+    /* Prefix hits first, then the rest by substring — "typing m, the ones starting with m"
        is the ask, and a substring-only rank would bury `multiplexed` under
        every key that merely contains an m. `fuzz` is a THIRD bin, never mixed
        into the first two: a guess must not be able to look like a match. */
@@ -723,8 +723,8 @@ window.SidebarTypeahead = (function () {
 
         /* A RANGE, previewed before it is run.
          *
-         * Customer, on site: "amp같은 경우는 value도 많고 범위도 많기 때문에
-         * 까다로워." Picking one value from a list is only an answer while the
+         * Customer, on site: "something like amp has many values and many ranges,
+         * so it is tricky." Picking one value from a list is only an answer while the
          * list is short; on the eleven keys with more than twelve values it is
          * not. So the operator gets a first row that says what it will select,
          * counted from the vocabulary already in the browser -- still no
@@ -803,10 +803,10 @@ window.SidebarTypeahead = (function () {
 
 /* ── the words a PERSON typed: tags and notes (docs/182) ─────────────────
  *
- * Customer, on-site: "제발 data tag랑 note에 사용자가 기재한 단어들도
- * 넣어달라고 함!!!! 다만, 검색 pop up할때 뜨는건 run 번호: tag 이름 (혹은
- * note) 이렇게 뜨도록. note는 내용이 다 담기게 하는게 아니고 그냥 note
- * (검색어 ...) 그냥 이렇게 compact하게."
+ * Customer, on-site: "please also add the words users wrote in data tags and
+ * notes!!!! But in the search pop-up show it as run number: tag name (or
+ * note). A note should not carry its whole content -- just note
+ * (search term ...), compact like that."
  *
  * The grammar could always find these — `tag:` and `note:` are in the search
  * help — but you had to already know the word. Every other vocabulary the box
@@ -945,9 +945,9 @@ window.__paramVocabInsert = function (key, value, op) {
 
 /* ── consumer 2: Live State Edit — the chip's own column names ───────────
  *
- * Customer, 2026-09-10: "live edit 하고 json tree view에서 -- 이게 진짜 SM의
- * 가치인데 -- 사람이 ampl까지만 치면 amplitude에 관련된 json key들이 모두 다
- * 뜰수있게 만들수있겠어?"
+ * Customer, 2026-09-10: "in Live Edit and the Json Tree View -- this is the real value of
+ * SM -- can typing just ampl bring up every json key related to amplitude
+ * at once?"
  *
  * No new data and no request: the column names are the <th>s already on the
  * page, for every grid on it (qubits, pairs, and each discovered collection).
