@@ -414,3 +414,218 @@ removed. `rQ\shots`, `rQ\ev` and `rQ\tools` are kept as evidence.
   toast says so.
 - **The session stays armed after the plan ended** (seen in shot 09). That is
   C-20 / D-06, the arming cluster.
+
+## Reconciled with docs/253
+
+docs/253 (arming is scoped to a plan) landed beside this fix on
+`integ/batch3`. The rule now: a person's Start on a plan card is the only
+arming, and it covers that plan's pending steps, exactly as the card shows
+them, for the plan's driving agent. `agent_grant.same_terms` already called
+`run_terms.key`, so there was one comparison. This section is what changed to
+make the two fixes one model (branch `fix/approvals-x-arming`).
+
+### The order of the refusals
+
+1. **The request check comes first** (coordinator's decision). A malformed
+   request gets 400 before any arming gate:
+   - empty targets;
+   - an SM-owned param;
+   - a target of the wrong kind;
+   - a replay of another node's run.
+
+   The arming pin `test_a_node_outside_the_plan_is_refused_under_its_plan_id`
+   had used a pair on a qubit node as its "off-plan" case, which is now 400.
+   It uses a *well-formed* off-plan request instead: another node,
+   `06_ramsey`. That also makes it the pin for "the grant compares the node":
+   with the node comparison removed, the run went through (mutation 15 below).
+2. **Then the grant** (`not_in_plan`, `not_the_driver`, `no_start_token`).
+3. **Then `check_gates`.**
+4. **Then, in ask-all, the approval.**
+
+### ask-all keeps its meaning under plan-scoped arming
+
+Start arms the plan. Each step's run still files a run request that needs the
+person's Allow, and the allowed request is spent by exactly that step's run.
+The code already did this; the step is now part of the binding:
+
+- **The step is part of the binding.** `approvals.run_differences(...,
+  step=)` reports `{"field": "step"}` when an approval filed for step *i* is
+  pressed for another step. The card says "plan P · step i", and a plan may
+  hold two steps with the same node, targets and params. `run_node` passes
+  the step the grant matched.
+- **The dedupe includes the step.** "The same ask twice is one request" holds
+  per step. Two steps with the same terms are two requests, each with its own
+  card and its own Allow.
+- **A plan's run requests end with its arming.** `agent_grant.ON_END` gained
+  a listener, `approvals.expire_plan_runs`. When a plan's grant ends, for any
+  reason (finished, failed, cancelled, stopped, restart, the driver gone), its
+  pending and allowed-but-unspent run requests become `expired`, with the
+  reason in `note`.
+  - **Why:** before this, a cancelled plan's run request still offered
+    "Allow run" and counted in the pill's "waiting", for a run that could no
+    longer happen.
+  - **What stays:** writes approvals stay pending, because those values exist
+    and are the person's to apply. A spent Allow stays `approved` with its
+    `used_by_run`.
+  - **Cross-plan use:** an approval therefore never crosses into the next
+    plan (it expired), and `plan_id` in the binding says so besides.
+
+### C-04: Allow tells the plan's driver only
+
+- **When the driver is told.** `_tell_agent(chip, msg, plan_id)` sends the
+  exact call only when all of these hold:
+  - the chip is armed;
+  - the grant's plan is the request's plan;
+  - its driver is SM's in-app session, and that session is open.
+
+  The batch3 version told the open conversation whenever the driver was not a
+  terminal agent, including when nothing was armed.
+- **When it is not told.** The answer then carries `told_note`, and the toast
+  shows it:
+  - "the plan is driven by by_claude in a terminal (bridge PID n), which runs
+    it with approval ap-…";
+  - "its plan is not armed now, so no agent runs it";
+  - "SM's in-app session that drives the plan is not open; approval ap-…
+    waits for it".
+- **The message** names `approval_id`, `plan_id` and `step` beside the
+  params. That is the call the grant covers and the approval binds.
+
+### Leftover "press Arm"
+
+- `agent_runs.check_gates`' `no_start_token` text now says "a person's click
+  on a plan card. Propose this run with plan_propose; when a person presses
+  Start, call run_node with its plan_id and step".
+- `GATES` lists `not_in_plan` and `not_the_driver`.
+- docs/249's interrupted-run line ends "the session was disarmed -- running
+  again takes a person's Start on a plan". It used to say "a person arms it
+  again"; docs/249 keeps its measured quote, with a note.
+
+### Tests on batch3 that still used the old Arm
+
+These were fixed to the new model:
+
+- **`test_agent_guardrails.py::test_the_window_still_presses`.** The window
+  proof still lets the person through; the route then answers 409
+  `arm_is_per_plan`.
+- **`test_run_failure_class.py::test_a_live_orphan_is_named_as_one`.** The
+  run names its armed plan.
+- **`test_chat_api.py::test_allow_run_tells_the_open_conversation`.** It now
+  covers three cases:
+  - nothing armed: not told, `told_note`;
+  - a request with no plan: not told;
+  - a person's plan started into the open Codex conversation: told, the same
+    thread resumed.
+
+### Pins
+
+- **`tests/test_approval_is_what_was_seen.py`, now 35 tests,** rewritten to
+  plan → Start → the driver's step run → `awaiting_approval` → Allow → run.
+  New tests:
+  - two steps with the same terms are two requests;
+  - a plan's run requests end with its arming;
+  - writes approvals outlive it;
+  - the gate says Start, not Arm;
+  - `GATES`.
+- **`tests/test_arming_scope.py`:**
+  - the off-plan pin (above);
+  - `told_note` for a terminal driver;
+  - new `test_allow_run_tells_the_in_app_driver_the_exact_call_and_the_plan_finishes`
+    (fake Codex in-app driver: a request of another plan is not told; the
+    driver is told the exact call; one run; plan done; disarmed; the spent
+    Allow stays approved).
+- **`tests/agent_params_selfcheck.cjs`** (17 assertions): the toast shows
+  `told_note`.
+
+**Mutation sweep: 16/16 red.** Each piece was reverted alone, its pins run,
+then restored:
+
+1. the step binding;
+2. `run_node` passing the step;
+3. the dedupe's step;
+4. `_tell_agent` back to batch3's "any non-terminal";
+5. `_tell_agent`'s plan check;
+6. `told_note` dropped;
+7. `told_note`'s terminal branch;
+8. the expiry listener;
+9. expiry taking writes;
+10. expiry taking a spent Allow;
+11. expiry leaving an unspent Allow;
+12. the gate text;
+13. `GATES`;
+14. the docs/249 line;
+15. the grant ignoring the node (the reworked arming pin);
+16. the JS `told_note`.
+
+The first pass had two flaws, both fixed and re-swept red:
+
+- **Mutation 4 was vacuous.** The plan check masked it. The chat pin gained
+  a request with no plan, nothing armed.
+- **Mutation 11 was a syntax error,** not a semantic change. It was redone.
+
+**Agent test files:** 31 files (`agent_runs`, approvals, `arming_scope`,
+guardrails, `mcp_bridge*`, `chat_api`, `agent_panel`, `agent_api`,
+`run_failure_class`, and the rest of the agent set): **755 passed, 0
+failed**. All 11 `tests/agent_*selfcheck.cjs` files are green.
+
+### Real Chrome: one ask-all plan, end to end, real in-app Claude
+
+**Setup:**
+
+- Rig `D:\work\sm_qa_rigs\agent\rY` (`make_rig.py`), served on port 5115
+  from `D:\work\sm-reconcile`, with a sandbox `USERPROFILE` / `HOME` /
+  `CODEX_HOME`.
+- `/scheduler/effective-config` named `rY\chip`; its network is
+  `127.0.0.1:1`. Dry run was ON.
+- Headless Chrome ran on CDP 9435. Every press was a real mouse click, with
+  `elementFromPoint` confirming the target.
+- Evidence: `rY\ev\walk.jsonl` and `rY\ev\walk.out`; screenshots in
+  `rY\shots\`.
+
+**The walk:**
+
+1. The person typed `/run 03_resonator_spectroscopy_single qA1
+   load_data_id=1` into the composer and sent it. The card was a draft in
+   mode ask-all, and the step row showed `load_data_id=1`
+   (`01_plan_card_ask_all.png`).
+2. Start was clicked. The strip read "armed: /run 03_resonator_… · in-app
+   claude". The real Claude called `run_node` for step 0 and was held:
+   request `ap-531cc0e110` (step 0). The step row read **run request waiting
+   for Allow**, and Claude told the person it was waiting for that approval
+   (`02_step_waits_for_allow.png`).
+3. Allow run was clicked. The toast read "run allowed — the agent was told to
+   run it". The step row read "allowed by human:tester — the agent runs it
+   next" (`03_allowed_driver_told.png`).
+4. Claude called `run_node {"node": …, "params": {"load_data_id": 1},
+   "approval_id": "ap-531cc0e110", "plan_id": …}`.
+   - **The run:** run #2 (offline replay), with exactly one agent run under
+     the plan, params `{load_data_id: 1}`.
+   - **The plan:** **done 1/1** 16 s after Allow.
+   - **The request:** `approved`, `used_by_run 20261003-214341-2eda02`.
+5. The arming ended with the plan:
+   - the strip read **not armed**;
+   - `last_grant.why` read "plan `/run …` finished" (`04_plan_done_not_armed.png`);
+   - the journal, in order: STARTED (armed for this plan only, driven by SM's
+     in-app claude session), asked to run (`load_data_id=1`), human:tester
+     allowed the run (`load_data_id=1`), ran → #2, disarmed: plan … finished.
+6. **Open → away → Back → reload:** the same 11 cards each time, 0 console
+   errors (`05_after_back_reload.png`).
+   - That check ran in a fresh tab that accepts any `beforeunload` prompt.
+     None appeared.
+   - The walk's own tab hung on its navigation after End session. That is
+     the headless `beforeunload` case docs/253 already records, so it was
+     not counted.
+7. **Live chip unchanged:** `state.json` `c352387204b5f18a…`, `wiring.json`
+   `92316ec9c1544eee…`.
+8. **Clean-up:** the server, Chrome and the CLI were stopped. The rig's chip,
+   calibrations, data, inst, sandbox home and profile were deleted;
+   `shots`, `ev` and `tools` are kept.
+
+### What this resolves from "Not done here" above
+
+- **"A plan Start is also an approval."** Done by docs/253's grant (the step
+  must match the card exactly), through the same `run_terms` comparison.
+- **"An approved run request does not expire."** It now expires with its
+  plan's arming. Within a running plan it stays spendable by its own step
+  only.
+- **"The session stays armed after the plan ended."** docs/253; seen ending
+  here (step 5).

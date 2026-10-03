@@ -196,6 +196,16 @@ def plan_ended(instance_path, key: str, plan: dict) -> dict | None:
     return end(instance_path, key, why=why, plan_id=plan.get("id"))
 
 
+def _expire_run_requests(instance_path, key: str, grant: dict, why: str) -> None:
+    """docs/254: the plan's run requests end with its arming (``approvals.expire_plan_runs``)."""
+    if grant and grant.get("plan_id"):
+        from quam_state_manager.core import approvals
+        approvals.expire_plan_runs(instance_path, key, grant["plan_id"], why)
+
+
+ON_END.append(_expire_run_requests)
+
+
 # ------------------------------------------------------------------ is it still good?
 
 def _armer_gone(g: dict) -> bool:

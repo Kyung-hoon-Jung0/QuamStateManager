@@ -107,6 +107,30 @@ def decide(instance_path, chip: str, approval_id: str, *, status: str, who: str,
     return rec
 
 
+def expire_plan_runs(instance_path, chip: str, plan_id: str | None, why: str) -> list[str]:
+    """docs/254 x docs/253: a run request belongs to a step of an ARMED plan. When that
+    plan's arming ends (it finished, failed, was cancelled or stopped, SM restarted ...),
+    nothing can spend its requests any more -- a card still offering "Allow run" would
+    promise a run that cannot happen. Pending and allowed-but-unspent run requests of
+    the plan expire, with the reason on the record. Writes approvals stay: those values
+    exist and remain the person's to apply."""
+    if not plan_id:
+        return []
+    out: list[str] = []
+    with safe_io.path_lock(path_for(instance_path, chip)):
+        rows = load(instance_path, chip)
+        for r in rows:
+            if r.get("kind") == "run" and r.get("plan_id") == plan_id and (
+                    r.get("status") == "pending" or (r.get("status") == "approved" and not r.get("used_by_run"))):
+                r["status"] = "expired"
+                r["expired_at"] = time.time()
+                r["note"] = f"expired: its plan's arming ended ({why})"[:300]
+                out.append(r.get("id"))
+        if out:
+            _save(instance_path, chip, rows)
+    return out
+
+
 def mark_used(instance_path, chip: str, approval_id: str, run_key: str) -> dict | None:
     """review R1-M2: an approved RUN request is consumed by the run it allowed."""
     # The lock spans read -> change -> write: an atomic write stops a CORRUPT
@@ -124,18 +148,20 @@ def mark_used(instance_path, chip: str, approval_id: str, run_key: str) -> dict 
 
 
 def find_pending_run(instance_path, chip: str, *, node: str, targets: list, params: dict | None,
-                     plan_id: str | None = None) -> dict | None:
+                     plan_id: str | None = None, step: int | None = None) -> dict | None:
     """review R1-M2: the same ask twice is one request. "The same" is
     ``run_terms.key`` -- the one reading the approval check uses (docs/254):
-    ``{"a": True}`` and ``{"a": 1}`` were one request under ``==``."""
+    ``{"a": True}`` and ``{"a": 1}`` were one request under ``==`` -- plus the
+    plan step it was asked for: two steps with the same terms are two runs, so
+    two requests (docs/254, reconciled with docs/253)."""
     return _find_pending_run(pending(instance_path, chip), node=node, targets=targets, params=params,
-                             plan_id=plan_id)
+                             plan_id=plan_id, step=step)
 
 
-def _find_pending_run(rows, *, node, targets, params, plan_id) -> dict | None:
+def _find_pending_run(rows, *, node, targets, params, plan_id, step=None) -> dict | None:
     want = run_terms.key(node, targets, params, plan_id)
     for r in rows:
-        if r.get("status") == "pending" and r.get("kind") == "run" and run_terms.key(
+        if r.get("status") == "pending" and r.get("kind") == "run" and r.get("step") == step and run_terms.key(
                 r.get("node"), r.get("targets"), r.get("params"), r.get("plan_id")) == want:
             return r
     return None
@@ -149,7 +175,7 @@ def file_run_request(instance_path, chip: str, *, node: str, targets: list, para
     the file lock, so two asks at once file one request."""
     with safe_io.path_lock(path_for(instance_path, chip)):
         rows = load(instance_path, chip)
-        hit = _find_pending_run(rows, node=node, targets=targets, params=params, plan_id=plan_id)
+        hit = _find_pending_run(rows, node=node, targets=targets, params=params, plan_id=plan_id, step=step)
         if hit is not None:
             return hit, False
         rec = _new(kind="run", chip=chip, node=node, targets=targets, writes=None, reason=reason,
@@ -161,13 +187,20 @@ def file_run_request(instance_path, chip: str, *, node: str, targets: list, para
 
 
 def run_differences(ap: dict, *, node: str, targets: list, params: dict | None,
-                    plan_id: str | None = None) -> list[dict]:
+                    plan_id: str | None = None, step: int | None = None) -> list[dict]:
     """D-05 (docs/254): what separates the run this approval allowed from the
-    run asked for now. Empty = the approval covers it."""
-    return run_terms.differences(
+    run asked for now. Empty = the approval covers it.
+
+    A request filed for a plan STEP is spent by that step's run only
+    (reconciled with docs/253: the card shows "plan P · step i", and a plan may
+    hold two steps with the same terms)."""
+    out = run_terms.differences(
         {"node": ap.get("node"), "targets": ap.get("targets"), "params": ap.get("params"),
          "plan_id": ap.get("plan_id")},
         {"node": node, "targets": targets, "params": params, "plan_id": plan_id})
+    if ap.get("step") is not None and step != ap.get("step"):
+        out.append({"field": "step", "allowed": ap.get("step"), "asked": step})
+    return out
 
 
 def summary(rec: dict) -> dict:

@@ -106,8 +106,10 @@ class TestTheWindowsProof:
 
     def test_the_window_still_presses(self, app, c):
         _window(c)
+        # docs/253: the session-wide Arm is gone -- the gate lets the person through and the route
+        # itself answers that arming is per plan (a refused window would be 403 no_window_proof)
         r = c.post("/api/agent/session/arm", json={}, headers=KIM)
-        assert r.status_code == 200 and r.get_json()["session"]["armed"] is True
+        assert r.status_code == 409 and r.get_json()["refused"] == "arm_is_per_plan", r.get_json()
         assert c.post("/api/agent/limits", json={"max_writes_per_plan": 20}, headers=KIM).status_code == 200
         # the gate let them through; the route answers for itself
         assert c.post("/api/agent/approvals/nope/approve", json={}, headers=KIM).status_code == 404

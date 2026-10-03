@@ -91,6 +91,13 @@ const txt = (el) => (el ? el.textContent.replace(/\s+/g, ' ') : '');
   const last = toasts[toasts.length - 1] || {};
   ok(/no agent conversation is open/.test(last.m) && /ap-run2/.test(last.m) && last.level === 'warning',
      'not told: says so, names the approval: ' + last.m);
+  // docs/254 x docs/253: the server names who runs it (the plan's terminal driver) -- the toast says that
+  approveAnswer = { ok: true, agent_told: false, told_note: 'the plan is driven by by_claude in a terminal, which runs it with approval ap-run1' };
+  P.approve('ap-run1', card('approval:ap-run1').querySelector('.ag-approve'));
+  await tick(40);
+  const named = toasts[toasts.length - 1] || {};
+  ok(/driven by by_claude in a terminal/.test(named.m) && !/no agent conversation/.test(named.m) && named.level === 'warning',
+     'not told, driver known: the toast names the driver: ' + named.m);
   ok(calls.some(c => /ap-run1\/approve$/.test(c.url) && c.body && !c.body.writes), 'a run request posts no writes');
   console.log(`\n${passes} passed, ${fails} failed`);
   process.exit(fails ? 1 : 0);

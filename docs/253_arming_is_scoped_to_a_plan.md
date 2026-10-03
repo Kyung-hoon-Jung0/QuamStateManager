@@ -228,7 +228,8 @@ This branch owns the grant-level story, and the two meet like this:
   it. If the arming process is gone, it also closes the plan the dead process
   left `running`, so that plan never blocks the next Start.
 - docs/249's line says "a person arms it again". In this model that means
-  presses Start on a plan. Reword it at integration.
+  presses Start on a plan. Reworded at integration (docs/254, "Reconciled
+  with docs/253").
 
 ## Overnight: the envelope, and the hook points left for later
 
@@ -271,10 +272,9 @@ Not built here, with their hook points:
 
 ## Not done here
 
-- **`agent_runs.check_gates`' own `no_start_token` text** still says "press
-  Arm". `run_node` never shows it: every uncovered run's refusal is replaced
-  by the specific one above. It sits in `agent_runs.py`, which docs/249 owns.
-  `GATES` does not list `not_in_plan` / `not_the_driver` for the same reason.
+- **`agent_runs.check_gates`' own `no_start_token` text** said "press Arm",
+  and `GATES` did not list `not_in_plan` / `not_the_driver`. Both were fixed
+  at integration (docs/254, "Reconciled with docs/253").
 - **The MCP tool descriptions** (`mcp.py`) do not mention the plan scope.
   The refusals do. The p1a branch is editing `mcp.py`.
 - **Identity.** A caller can still claim a person (`X-SM-Actor` without

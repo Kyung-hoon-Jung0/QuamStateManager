@@ -8,6 +8,11 @@ SM-owned param, a target of the wrong kind and a replay of another node's
 run are refused before any gate; a person's Allow tells the agent the exact
 call; each agent applies and undoes only its own rows.
 
+Reconciled with docs/253 (arming is scoped to a plan): every run here goes
+plan -> a person's Start -> the driver's step run -> (ask-all) a run request
+-> Allow -> the run. Start arms the plan; ask-all still asks per step; the
+allowed request is spent by exactly that step's run.
+
 Fixtures are test_agent_runs's: the real chassis, the real routes, only the
 node subprocess is a fake that edits the scratch state.
 """
@@ -18,7 +23,7 @@ import json
 
 import pytest
 
-from quam_state_manager.core import agent_session, approvals, limits, run_terms
+from quam_state_manager.core import approvals, run_terms
 from quam_state_manager.web import agent_api as aa
 from tests.test_agent_runs import (  # noqa: F401 -- fixtures by import
     AGENT, HUMAN, NODE_SRC, _arm, _chip, _journal, _run, app, c, cal, fake_run, inst, synth_folder)
@@ -40,11 +45,28 @@ def custom_param(node):
 '''
 
 
-def _ask_all(c, inst):
-    chip = _chip(c)
-    _arm(c)
-    agent_session.save(str(inst), chip, mode="ask-all", backend="claude", owner="human")
-    return chip
+def _plan(c, steps, mode="ask-all"):
+    """A terminal agent (the pins' AGENT) proposes these steps of 05_power_rabi on qA1
+    (each step dict may override node / targets / params), a person sets the mode and
+    presses Start. The grant covers exactly these steps, for this agent (docs/253)."""
+    body = {"title": "the approvals' plan",
+            "steps": [dict({"node": "05_power_rabi", "targets": ["qA1"]}, **st) for st in steps]}
+    r = c.post("/api/agent/plans", json=body, headers=AGENT)
+    assert r.status_code == 200, r.get_json()
+    pid = r.get_json()["plan"]["id"]
+    if mode:
+        assert c.post(f"/api/agent/plans/{pid}/mode", json={"mode": mode}, headers=HUMAN).status_code == 200
+    d = c.post(f"/api/agent/plans/{pid}/start", json={}, headers=HUMAN).get_json()
+    assert d["ok"], d
+    return pid
+
+
+def _ask(c, pid, i, params):
+    """The driver runs step i as the card shows it; ask-all files its run request."""
+    r = _run(c, plan_id=pid, step=i, params=params).get_json()
+    assert r.get("refused") == "awaiting_approval" and r["needs"] == "run", r
+    assert r["approval"]["step"] == i and r["approval"]["plan_id"] == pid
+    return r["approval"]["id"]
 
 
 def _allow(c, aid):
@@ -93,60 +115,116 @@ class TestRunTerms:
 
 class TestAnAllowCoversExactlyOneRun:
     def test_an_allow_for_one_params_set_is_never_spent_on_another(self, c, inst, fake_run):
-        """D-05: a person allowed `{load_data_id: 9}`; the agent spent it on `{num_shots: 100000}`."""
-        _ask_all(c, inst)
-        r = _run(c, params={"num_averages": 9}).get_json()
-        assert r["refused"] == "awaiting_approval"
-        aid = r["approval"]["id"]
+        """D-05: a person allowed `{load_data_id: 9}`; the agent spent it on `{num_shots: 100000}`.
+        Under docs/253 both runs are steps of the armed plan, so the grant covers each -- the
+        approval is what tells them apart."""
+        pid = _plan(c, [{"params": {"num_averages": 9}}, {"params": {"num_shots": 100000}}])
+        aid = _ask(c, pid, 0, {"num_averages": 9})
+        assert fake_run.calls == [], "Start armed the plan; ask-all still waits for the person's Allow"
         _allow(c, aid)
-        r = _run(c, approval_id=aid, params={"num_shots": 100000}).get_json()
+        r = _run(c, plan_id=pid, step=1, approval_id=aid, params={"num_shots": 100000}).get_json()
         assert r.get("refused") == "awaiting_approval", r
         assert fake_run.calls == [], "nothing ran on an approval for another run"
         assert approvals.get(str(inst), _chip(c), aid)["params"] == {"num_averages": 9}
         fields = {d["field"] for d in r["differs"]}
-        assert fields == {"params.num_averages", "params.num_shots"}
+        assert fields == {"params.num_averages", "params.num_shots", "step"}
         assert r["not_covered_by"]["id"] == aid and r["approval"]["id"] != aid
-        assert r["approval"]["params"] == {"num_shots": 100000}, "what was asked is its own request"
+        assert r["approval"]["params"] == {"num_shots": 100000} and r["approval"]["step"] == 1, \
+            "what was asked is its own request, on its own step"
         rec = approvals.get(str(inst), _chip(c), aid)
         assert rec["status"] == "approved" and not rec.get("used_by_run"), "the allowed one stays unspent"
+        # off the card altogether: the grant refuses it first, and no request is filed for it
+        n = len(approvals.load(str(inst), _chip(c)))
+        r = _run(c, plan_id=pid, step=0, approval_id=aid, params={"num_shots": 5})
+        assert r.status_code == 409 and r.get_json()["refused"] == "not_in_plan"
+        assert len(approvals.load(str(inst), _chip(c))) == n
         # the exact run the person allowed still runs, once
-        r = _run(c, approval_id=aid, params={"num_averages": 9.0}).get_json()
+        r = _run(c, plan_id=pid, step=0, approval_id=aid, params={"num_averages": 9.0}).get_json()
         assert r["ok"] and r["status"] == "done", r
         assert fake_run.calls[0]["param_overrides"] == {"num_averages": 9.0}
         assert approvals.get(str(inst), _chip(c), aid)["used_by_run"] == r["key"]
 
-    def test_a_dropped_param_or_another_plan_is_another_run(self, c, inst, fake_run):
-        _ask_all(c, inst)
-        aid = _run(c, params={"num_averages": 9}).get_json()["approval"]["id"]
+    def test_another_step_a_dropped_param_or_another_plan_is_another_run(self, c, inst, fake_run):
+        pid = _plan(c, [{"params": {"num_averages": 9}}, {"params": {"num_averages": 9}}, {},
+                        {"params": {"num_averages": True}}])
+        aid = _ask(c, pid, 0, {"num_averages": 9})
         _allow(c, aid)
-        r = _run(c, approval_id=aid).get_json()                       # params dropped
+        # the same terms on ANOTHER step: the card said "step 0", so step 1 asks for itself
+        r = _run(c, plan_id=pid, step=1, approval_id=aid, params={"num_averages": 9}).get_json()
         assert r.get("refused") == "awaiting_approval", r
-        assert r["differs"][0]["field"] == "params.num_averages"
-        r = _run(c, approval_id=aid, params={"num_averages": 9}, plan_id="pl-other").get_json()
-        assert r["refused"] == "awaiting_approval" and {d["field"] for d in r["differs"]} == {"plan_id"}
-        r = _run(c, approval_id=aid, params={"num_averages": True}).get_json()
-        assert r["refused"] == "awaiting_approval", "True is not 9 and not 1"
+        assert r["differs"] == [{"field": "step", "allowed": 0, "asked": 1}] and r["approval"]["step"] == 1
+        r = _run(c, plan_id=pid, step=2, approval_id=aid).get_json()                     # params dropped
+        assert r.get("refused") == "awaiting_approval", r
+        assert {d["field"] for d in r["differs"]} == {"params.num_averages", "step"}
+        r = _run(c, plan_id=pid, step=3, approval_id=aid, params={"num_averages": True}).get_json()
+        assert r["refused"] == "awaiting_approval" and "params.num_averages" in {d["field"] for d in r["differs"]}, \
+            "True is not 9 and not 1"
         assert fake_run.calls == []
+        # another plan: an approval never crosses into the next plan, even for the same terms --
+        # the first plan's end expired it, and the binding names the plan besides
+        assert run_terms.differences({"node": "n", "targets": ["qA1"], "params": {}, "plan_id": pid},
+                                     {"node": "n", "targets": ["qA1"], "params": {}, "plan_id": "pl-next"}) == [
+            {"field": "plan_id", "allowed": pid, "asked": "pl-next"}]
+        assert c.post(f"/api/agent/plans/{pid}/cancel", json={}, headers=HUMAN).status_code == 200
+        pid2 = _plan(c, [{"params": {"num_averages": 9}}])
+        r = _run(c, plan_id=pid2, step=0, approval_id=aid, params={"num_averages": 9}).get_json()
+        assert r.get("refused") == "awaiting_approval" and "not yet used" in r["how"], r
+        assert approvals.get(str(inst), _chip(c), aid)["status"] == "expired"
+        assert fake_run.calls == []
+
+    def test_two_steps_with_the_same_terms_are_two_requests(self, c, inst, fake_run):
+        """"The same ask twice is one request" -- for the same STEP. Two steps that run the same
+        terms are two runs, each with its own card ("plan · step i") and its own Allow."""
+        pid = _plan(c, [{"params": {"num_averages": 9}}] * 2)
+        a0 = _ask(c, pid, 0, {"num_averages": 9})
+        assert _ask(c, pid, 0, {"num_averages": 9}) == a0, "step 0 asked twice: one request"
+        a1 = _ask(c, pid, 1, {"num_averages": 9})
+        assert a1 != a0
+        assert [a["step"] for a in approvals.pending(str(inst), _chip(c))] == [0, 1]
+
+    def test_a_plans_run_requests_end_with_its_arming(self, c, inst, fake_run):
+        """docs/253 ended the grant with the plan; a card still offering "Allow run" for a step
+        of a plan that can no longer run would promise a run that cannot happen."""
+        pid = _plan(c, [{"params": {"num_averages": 9}}, {"params": {"num_averages": 7}}])
+        a0 = _ask(c, pid, 0, {"num_averages": 9})
+        a1 = _ask(c, pid, 1, {"num_averages": 7})
+        _allow(c, a0)                                    # allowed, never spent
+        assert {a["id"] for a in c.get("/api/agent/approvals").get_json()["pending"]} == {a1}
+        assert c.post(f"/api/agent/plans/{pid}/cancel", json={}, headers=HUMAN).status_code == 200
+        recs = {a["id"]: a for a in approvals.load(str(inst), _chip(c))}
+        assert recs[a0]["status"] == "expired" and recs[a1]["status"] == "expired", recs
+        assert "cancelled" in recs[a1]["note"]
+        assert c.get("/api/agent/approvals").get_json()["waiting"] == 0
+        assert c.post(f"/api/agent/approvals/{a1}/approve", json={}, headers=HUMAN).status_code == 404
+        assert fake_run.calls == []
+
+    def test_a_plans_writes_approvals_outlive_its_arming(self, c, inst, fake_run):
+        """Only RUN requests expire: values a run produced stay the person's to apply."""
+        pid = _plan(c, [{}], mode="ask-writes")
+        r = _run(c, plan_id=pid, step=0).get_json()
+        wid = r["result"]["approval"]["id"]
+        assert c.get(f"/api/agent/plans/{pid}").get_json()["plan"]["status"] == "done"
+        assert approvals.get(str(inst), _chip(c), wid)["status"] == "pending"
 
     def test_a_spent_approval_and_a_held_chain_say_so_in_the_mode_they_are_in(self, c, inst, fake_run):
         """Measured on the rig: a second press of a spent approval was answered "(mode ask-writes)"
         while the chip was in ask-all."""
-        _ask_all(c, inst)
-        aid = _run(c, params={"num_averages": 9}).get_json()["approval"]["id"]
+        pid = _plan(c, [{"params": {"num_averages": 9}}] * 3)
+        aid = _ask(c, pid, 0, {"num_averages": 9})
         _allow(c, aid)
-        r = _run(c, approval_id=aid, params={"num_averages": 9}).get_json()
+        r = _run(c, plan_id=pid, step=0, approval_id=aid, params={"num_averages": 9}).get_json()
         assert r["ok"] and r["result"]["approval"], "ask-all: the writes wait too"
-        r = _run(c, approval_id=aid, params={"num_averages": 9}).get_json()
+        r = _run(c, plan_id=pid, step=1, approval_id=aid, params={"num_averages": 9}).get_json()
         assert r["refused"] == "awaiting_approval" and r["needs"] == "writes" and "(mode ask-all)" in r["how"], r
-        wid = approvals.pending(str(inst), _chip(c))[0]["id"]
+        wid = [a for a in approvals.pending(str(inst), _chip(c)) if a["kind"] == "writes"][0]["id"]
         assert c.post(f"/api/agent/approvals/{wid}/reject", json={}, headers=HUMAN).status_code == 200
-        r = _run(c, approval_id=aid, params={"num_averages": 9}).get_json()
+        r = _run(c, plan_id=pid, step=1, approval_id=aid, params={"num_averages": 9}).get_json()
         assert r["refused"] == "awaiting_approval" and "not yet used" in r["how"], "consumed by the one run"
         assert len(fake_run.calls) == 1
 
     def test_the_approval_card_and_the_recent_list_carry_the_params(self, c, inst, fake_run):
-        _ask_all(c, inst)
-        aid = _run(c, params={"num_averages": 9}).get_json()["approval"]["id"]
+        pid = _plan(c, [{"params": {"num_averages": 9}}])
+        aid = _ask(c, pid, 0, {"num_averages": 9})
         card = c.get("/api/agent/chat/cards").get_json()["live"]["approvals"][0]
         assert card["id"] == aid and card["params"] == {"num_averages": 9}
         _allow(c, aid)
@@ -154,8 +232,8 @@ class TestAnAllowCoversExactlyOneRun:
         assert recent[-1]["params"] == {"num_averages": 9} and recent[-1]["decided_by"] == "human:kyunghoon"
 
     def test_the_run_card_carries_its_params(self, c, inst, fake_run):
-        _arm(c)
-        r = _run(c, params={"num_averages": 3}).get_json()
+        pid = _plan(c, [{"params": {"num_averages": 3}}], mode="ask-writes")
+        r = _run(c, plan_id=pid, step=0, params={"num_averages": 3}).get_json()
         assert r["params"] == {"num_averages": 3}
         runs = c.get("/api/agent/chat/cards").get_json()["live"]["runs"]
         assert runs[-1]["params"] == {"num_averages": 3}
@@ -166,21 +244,22 @@ class TestAnAllowCoversExactlyOneRun:
 class TestAllowTellsTheExactCall:
     def test_allow_run_tells_the_agent_the_exact_arguments(self, c, inst, fake_run, monkeypatch):
         told = []
-        monkeypatch.setattr(aa, "_tell_agent", lambda chip, msg: told.append(msg) or True)
-        _ask_all(c, inst)
-        aid = _run(c, params={"num_averages": 9}).get_json()["approval"]["id"]
+        monkeypatch.setattr(aa, "_tell_agent", lambda chip, msg, plan_id=None: told.append((msg, plan_id)) or True)
+        pid = _plan(c, [{"params": {"num_averages": 9}}])
+        aid = _ask(c, pid, 0, {"num_averages": 9})
         d = _allow(c, aid)
         assert d["agent_told"] is True and len(told) == 1
-        call = json.loads(told[0].split("(and your reason): ", 1)[1].rsplit(". The approval covers", 1)[0])
+        assert told[0][1] == pid, "told for the plan the request belongs to"
+        call = json.loads(told[0][0].split("(and your reason): ", 1)[1].rsplit(". The approval covers", 1)[0])
         assert call == {"node": "05_power_rabi", "targets": ["qA1"], "params": {"num_averages": 9},
-                        "approval_id": aid}
+                        "approval_id": aid, "plan_id": pid, "step": 0}
         # and that call, as told, runs
         r = _run(c, **call).get_json()
         assert r["ok"] and r["status"] == "done", r
 
     def test_the_journal_names_who_allowed_what(self, c, inst, fake_run):
-        _ask_all(c, inst)
-        aid = _run(c, params={"num_averages": 9}).get_json()["approval"]["id"]
+        pid = _plan(c, [{"params": {"num_averages": 9}}])
+        aid = _ask(c, pid, 0, {"num_averages": 9})
         _allow(c, aid)
         j = _journal(c, inst)
         assert "asked to run `05_power_rabi` on qA1 (num_averages=9)" in j
@@ -211,7 +290,7 @@ class TestAllowTellsTheExactCall:
 
 class TestThePlanStepSaysWhatItWaitsOn:
     def test_a_run_request_shows_on_its_step_until_the_run_takes_it(self, c, inst, fake_run, monkeypatch):
-        monkeypatch.setattr(aa, "_tell_agent", lambda chip, msg: True)
+        monkeypatch.setattr(aa, "_tell_agent", lambda chip, msg, plan_id=None: True)
         from quam_state_manager.web import chat_api
         monkeypatch.setattr(chat_api, "session_open", lambda cur: True)
         monkeypatch.setattr(chat_api, "_manager", lambda: type("M", (), {"get": lambda s, k: None,
@@ -258,13 +337,17 @@ class TestTheRequestIsWhatACardCanShow:
 
     def test_a_qubit_for_a_pair_node_and_a_pair_for_a_qubit_node(self, c, inst, cal, fake_run):
         (cal / "31_cz_chevron.py").write_text(PAIR_NODE_SRC, encoding="utf-8")
-        _arm(c)
         r = _run(c, node="31_cz_chevron", targets=["qA1"])
         assert r.status_code == 400 and r.get_json()["refused"] == "wrong_target_kind" and r.get_json()["wrong"] == ["qA1"]
         r = _run(c, targets=["qA1-A2"])
         assert r.status_code == 400 and r.get_json()["refused"] == "wrong_target_kind"
+        # the request check comes FIRST: under an armed plan a malformed request is still 400, never a gate
+        pid = _plan(c, [{"node": "31_cz_chevron", "targets": ["qA1-A2"]}], mode="ask-writes")
+        for kw in ({"node": "31_cz_chevron", "targets": ["qA1"]}, {"targets": ["qA1-A2"]}):
+            r = _run(c, plan_id=pid, step=0, **kw)
+            assert r.status_code == 400 and r.get_json()["refused"] == "wrong_target_kind", (kw, r.get_json())
         assert fake_run.calls == []
-        assert _run(c, node="31_cz_chevron", targets=["qA1-A2"]).get_json()["ok"]
+        assert _run(c, plan_id=pid, step=0, node="31_cz_chevron", targets=["qA1-A2"]).get_json()["ok"]
 
     def test_a_replay_of_another_nodes_run_is_refused(self, c, inst, fake_run, monkeypatch):
         runs = {9: {"run_id": 9, "experiment_name": "03_resonator_spectroscopy"},
@@ -280,13 +363,13 @@ class TestTheRequestIsWhatACardCanShow:
             def list_runs(self, **kw):
                 return []
         monkeypatch.setattr(aa, "_ds", lambda: DS())
-        _arm(c)
-        r = _run(c, params={"load_data_id": 9})
+        pid = _plan(c, [{"params": {"load_data_id": 10}}], mode="ask-writes")
+        r = _run(c, plan_id=pid, step=0, params={"load_data_id": 9})
         assert r.status_code == 400 and r.get_json()["refused"] == "replay_other_node"
         assert r.get_json()["run_experiment"] == "03_resonator_spectroscopy"
-        assert _run(c, params={"load_data_id": "nine"}).get_json()["refused"] == "bad_load_data_id"
+        assert _run(c, plan_id=pid, step=0, params={"load_data_id": "nine"}).get_json()["refused"] == "bad_load_data_id"
         assert fake_run.calls == []
-        assert _run(c, params={"load_data_id": 10}).get_json()["ok"], "its own run replays"
+        assert _run(c, plan_id=pid, step=0, params={"load_data_id": 10}).get_json()["ok"], "its own run replays"
 
     def test_node_not_found_lists_every_node_and_the_closest(self, c, inst, cal, fake_run):
         """A-20: the refusal listed 40 of 187 names."""
@@ -371,9 +454,7 @@ class TestEachAgentPressesForItsOwnRows:
         assert d["reverted"] == ["qubits.qA1.T1"] and d["pending"] == 0
 
     def test_an_agent_run_whose_door_meets_another_agents_rows_parks_its_writes(self, c, inst, fake_run):
-        chip = _chip(c)
-        _arm(c)
-        limits.save(str(inst), chip, {"mode": "auto"})
+        _arm(c, mode="auto")                     # docs/253: the mode is the plan's, set before Start
         self._stage(c, "qubits.qA1.T1", "3e-6", CODEX)
         r = _run(c).get_json()
         res = r["result"]
@@ -448,3 +529,24 @@ class TestTheBridgeSaysWhoseRowsTheyWere:
         mcp.t_tray({})
         assert mcp.t_apply_to_live({})["applied"] is True
         assert mcp.t_apply_to_live({})["note"] == "nothing staged"
+
+
+# ------------------------------------------------------------------ the words, after docs/253
+
+class TestTheGateSaysStartNotArm:
+    def test_the_token_gate_points_at_start_on_a_plan(self):
+        """There is no Arm any more (docs/253): the gate's own text named a button that is gone."""
+        from quam_state_manager.core import agent_runs
+
+        class _Node:
+            name, kind, has_hook, targets_name = "05_power_rabi", "node", True, "qubits"
+        r = agent_runs.check_gates(agent_runs.RunRequest(node="05_power_rabi", targets=["qA1"]), session=None,
+                                   lim={}, settings={"env_python": "py", "calibrations_folder": "cal"}, pending=[],
+                                   human=None, queue_state={}, own_running=False, run_active=None,
+                                   node_info=_Node(), available=[])
+        assert r["refused"] == "no_start_token"
+        assert "Arm" not in r["how"] and "plan_propose" in r["how"] and "Start" in r["how"], r["how"]
+
+    def test_the_gate_vocabulary_names_run_nodes_plan_refusals(self):
+        from quam_state_manager.core import agent_runs
+        assert {"not_in_plan", "not_the_driver"} <= set(agent_runs.GATES)

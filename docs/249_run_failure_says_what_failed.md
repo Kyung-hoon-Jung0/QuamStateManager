@@ -208,6 +208,9 @@ instance. Before every `run_node`, the network was asserted to be
     `01_time_of_flight_mw_fem` on qA1 interrupted: SM restarted while this run
     was in flight; its node process (PID 28992) was still running … nothing
     was applied; the session was disarmed -- a person arms it again";
+    - Since docs/253 there is no Arm: the line now ends "the session was
+      disarmed -- running again takes a person's Start on a plan" (reworded
+      at integration, docs/254).
   - a finished run's top-level `how` was the host_unreachable sentence.
   - Without the shim, the journal line is skipped, because no name reaches the
     meta.

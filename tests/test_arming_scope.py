@@ -187,11 +187,16 @@ class TestTheGrantEndsWithThePlan:
         j = _journal(c, inst)
         assert "disarmed" in j and "failed" in j.split("disarmed", 1)[1].splitlines()[0], j
 
-    def test_a_node_outside_the_plan_is_refused_under_its_plan_id(self, c, inst, fake_run):
-        """D-06: plan_id accepted nodes that are not in the plan."""
+    def test_a_node_outside_the_plan_is_refused_under_its_plan_id(self, c, inst, cal, fake_run):
+        """D-06: plan_id accepted nodes that are not in the plan.
+
+        Each request is WELL-FORMED and only off the plan: a malformed one (a pair
+        on a qubit node) is refused 400 by the request check before any arming gate
+        (docs/254), which is not what this pin is about."""
+        (cal / "06_ramsey.py").write_text(NODE_SRC.replace("05_power_rabi", "06_ramsey"), encoding="utf-8")
         pid = _run_plan(c, "/run 05_power_rabi qA1 num_shots=200")
         h = _in_app(c, inst)
-        for kw in ({"targets": ["qA1-A2"], "params": {"num_shots": 200}}, {"params": {"num_shots": 9999}}, {"params": {}}):
+        for kw in ({"node": "06_ramsey", "params": {"num_shots": 200}}, {"params": {"num_shots": 9999}}, {"params": {}}):
             r = _run(c, h, plan_id=pid, step=0, **kw)
             body = r.get_json()
             assert r.status_code == 409 and body["refused"] == "not_in_plan", (kw, body)
@@ -454,6 +459,45 @@ class TestToldOnlyTheDriver:
                            reason="r", why_held="mode ask-all", actor="by_claude", plan_id=pid, params={})
         d = c.post(f"/api/agent/approvals/{ap['id']}/approve", json={}, headers=HUMAN).get_json()
         assert d["ok"] and d["agent_told"] is False, d
+        assert "by_claude in a terminal" in d["told_note"] and ap["id"] in d["told_note"], \
+            "the person reads who runs it (docs/254)"
+
+    def test_allow_run_tells_the_in_app_driver_the_exact_call_and_the_plan_finishes(self, c, inst, fake_run,
+                                                                                    monkeypatch):
+        """docs/254 x docs/253, C-04: an ask-all plan the in-app session drives. Start arms the plan;
+        the step's run still files a run request; Allow tells THE DRIVER the exact call (the approval
+        id + the params); that call runs once, and the plan's end disarms."""
+        monkeypatch.setenv("FAKE_ECHO_STDIN", "1")
+        limits.save(str(inst), _key(c), {"mode": "ask-all"})
+        pid = c.post("/api/agent/plans", json={"run_line": "/run 05_power_rabi qA1 num_shots=200"},
+                     headers=HUMAN).get_json()["plan"]["id"]
+        d = c.post(f"/api/agent/plans/{pid}/start", json={"backend": "codex"}, headers=HUMAN).get_json()
+        assert d["ok"] and d["plan"]["mode"] == "ask-all", d
+        h = _in_app(c, inst)
+        r = _run(c, h, plan_id=pid, step=0, params={"num_shots": 200}).get_json()
+        assert r["refused"] == "awaiting_approval" and r["needs"] == "run" and r["approval"]["step"] == 0, r
+        aid = r["approval"]["id"]
+        assert fake_run.calls == [], "Start armed the plan; ask-all still waits for the person's Allow"
+        # a request of ANOTHER plan (not the armed one): the driver is never told to run it
+        from quam_state_manager.core import approvals
+        other = approvals.add(str(inst), _key(c), kind="run", node="05_power_rabi", targets=["qA1"], writes=None,
+                              reason="r", why_held="mode ask-all", actor="by_claude", plan_id="pl-not-armed",
+                              params={"num_shots": 200})
+        d = c.post(f"/api/agent/approvals/{other['id']}/approve", json={}, headers=HUMAN).get_json()
+        assert d["ok"] and d["agent_told"] is False and "not armed" in d["told_note"], d
+        d = c.post(f"/api/agent/approvals/{aid}/approve", json={}, headers=HUMAN).get_json()
+        assert d["ok"] and d["agent_told"] is True and "told_note" not in d, d
+        said = f'"approval_id": "{aid}"'
+        assert _wait(lambda: any(said in (e.get("text") or "") for e in
+                                 c.get("/api/agent/chat/events?after=0").get_json()["events"]
+                                 if e["hook_event_name"] == "Text")), "the driver was told the exact call"
+        r = _run(c, h, plan_id=pid, step=0, params={"num_shots": 200}, approval_id=aid).get_json()
+        assert r["ok"] and r["result"]["status"] == "done", r
+        assert len(fake_run.calls) == 1
+        assert _wait(lambda: c.get(f"/api/agent/plans/{pid}").get_json()["plan"]["status"] == "done")
+        assert not _armed(c), "the plan finished: the grant ended with it"
+        rec = approvals.get(str(inst), _key(c), aid)
+        assert rec["status"] == "approved" and rec["used_by_run"] == r["key"], "a spent Allow stays what it was"
 
 
 class TestTheBridgeSaysWhoseItIs:

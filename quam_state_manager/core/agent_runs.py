@@ -34,7 +34,9 @@ logger = logging.getLogger(__name__)
 
 GATES = ("chip_mismatch", "no_env", "no_calibrations_folder", "node_not_found", "not_a_node",
          "stopped_by_human", "past_stop_by", "no_start_token", "run_active", "queue_not_empty", "awaiting_approval",
-         "human_active", "orphan_running", "stale_live", "simulate_on_in_auto")
+         "human_active", "orphan_running", "stale_live", "simulate_on_in_auto",
+         # docs/253: run_node's own refusals at the token gate when the run is not the armed plan's
+         "not_in_plan", "not_the_driver")
 CLASSES = ("ok", "host_unreachable", "hardware_contention", "node_error", "timeout", "cancelled", "skipped",
            "unattributed", "interrupted")
 DEFAULT_WAIT_S = 240.0
@@ -212,8 +214,8 @@ def check_gates(req: RunRequest, *, session: dict | None, lim: dict, settings: d
                 "how": "the lab's stop time for tonight has passed; summarize and stop"}
     if not (session or {}).get("start_token"):
         return {"refused": "no_start_token",
-                "how": "rule 0: hardware starts only by a human click. Ask the human to press Arm on this session "
-                       "in the SM window (Agent home / the pill), then call run_node again"}
+                "how": "rule 0: hardware starts only by a person's click on a plan card. Propose this run with "
+                       "plan_propose; when a person presses Start, call run_node with its plan_id and step"}
     if run_active:
         return {"refused": "run_active", "run": {k: run_active.get(k) for k in ("key", "node", "targets", "since")},
                 "how": "one node at a time on one chip; call run_wait on that key"}
@@ -661,7 +663,7 @@ class Registry:
         targets = " ".join(m.get("targets") or []) or "(node defaults)"
         line = f"✗ ran `{m.get('node')}` on {targets} interrupted: {err}; nothing was applied"
         if disarmed:
-            line += "; the session was disarmed -- a person arms it again"
+            line += "; the session was disarmed -- running again takes a person's Start on a plan"
         name = m.get("chip_name")
         if name:
             try:

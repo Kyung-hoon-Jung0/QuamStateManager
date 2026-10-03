@@ -517,19 +517,37 @@ class TestCodexConversationStaysOpen:
         assert chat_api.session_open(None) is False
 
     def test_allow_run_tells_the_open_conversation(self, c, app, inst, monkeypatch):
+        """C-04, reconciled with docs/253 (docs/254): the open conversation is told when it DRIVES
+        the armed plan the request belongs to -- between Codex turns too (same thread, resumed)."""
         from quam_state_manager.core import approvals
         monkeypatch.setenv("FAKE_ECHO_STDIN", "1")
         c.post("/api/agent/chat/start", json={"prompt": "hello", "backend": "codex"})
         assert _wait(lambda: any(t.endswith("hello") for t in _texts(c)))
         assert _wait(lambda: not c.get("/api/agent/chat/status").get_json()["session"]["alive"])
-        ap = approvals.add(str(inst), _chip(c), kind="run", node="05_power_rabi", targets=["q1"], writes=None,
-                           reason="r", why_held="mode ask-all", actor="by_codex", plan_id="pl-1")
+        # nothing armed: an Allow tells nobody, and says so
+        ap0 = approvals.add(str(inst), _chip(c), kind="run", node="05_power_rabi", targets=["q1"], writes=None,
+                            reason="r", why_held="mode ask-all", actor="by_codex", plan_id="pl-1")
+        r = c.post(f"/api/agent/approvals/{ap0['id']}/approve", json={}).get_json()
+        assert r["ok"] and r["agent_told"] is False and "not armed" in r["told_note"], r
+        # ...and a request that names no plan at all (one filed before arming was per plan)
+        ap00 = approvals.add(str(inst), _chip(c), kind="run", node="05_power_rabi", targets=["q1"], writes=None,
+                             reason="r", why_held="mode ask-all", actor="by_codex", plan_id=None)
+        r = c.post(f"/api/agent/approvals/{ap00['id']}/approve", json={}).get_json()
+        assert r["ok"] and r["agent_told"] is False, r
+        # a person's plan, Start: the open conversation drives it
+        pid = c.post("/api/agent/plans", json={"title": "t", "steps": [{"node": "05_power_rabi", "targets": ["qA1"]}]}
+                     ).get_json()["plan"]["id"]
+        assert c.post(f"/api/agent/plans/{pid}/start", json={"backend": "codex"}).get_json()["ok"]
+        assert _wait(lambda: any(f"plan {pid}" in t for t in _texts(c)))
+        assert _wait(lambda: not c.get("/api/agent/chat/status").get_json()["session"]["alive"])
+        ap = approvals.add(str(inst), _chip(c), kind="run", node="05_power_rabi", targets=["qA1"], writes=None,
+                           reason="r", why_held="mode ask-all", actor="by_codex", plan_id=pid)
         r = c.post(f"/api/agent/approvals/{ap['id']}/approve", json={}).get_json()
-        assert r["ok"] and r["agent_told"] is True
-        assert _wait(lambda: any("allowed the run of 05_power_rabi" in t for t in _texts(c))), \
+        assert r["ok"] and r["agent_told"] is True, r
+        assert _wait(lambda: any("allowed the run of 05_power_rabi" in t and ap["id"] in t for t in _texts(c))), \
             "the fake echoes the message it was resumed with"
         inits = [e for e in _events(c) if e["hook_event_name"] == "Init"]
-        assert [i["session_id"] for i in inits] == ["thread-fresh", "thread-fresh"], "same thread, resumed"
+        assert {i["session_id"] for i in inits} == {"thread-fresh"} and len(inits) == 3, "same thread, resumed"
 
 
 # ---------------------------------------------------------------- replay

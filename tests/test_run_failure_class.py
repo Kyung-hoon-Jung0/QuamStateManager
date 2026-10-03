@@ -33,7 +33,7 @@ import pytest
 from quam_state_manager.core import agent_runs, agent_session, limits, scheduler
 from quam_state_manager.core import journal as journal_mod
 from tests.test_agent_runs import (  # noqa: F401  (fixtures are used by name)
-    AGENT, FakeRun, _arm, _chip, _journal, _run, _wait, app, c, cal, inst, synth_folder,
+    AGENT, FakeRun, _arm, _armed_plan, _chip, _journal, _run, _wait, app, c, cal, inst, synth_folder,
 )
 
 # ------------------------------------------------------------------ the texts
@@ -282,8 +282,9 @@ class TestLeftoverRows:
         fr = FakeRun()
         monkeypatch.setattr(scheduler, "_run_item", fr)
         _arm(c)
+        # docs/253: the run names the plan its Start armed (unnamed, the token gate answers first)
         r = c.post("/api/agent/run-node", json={"node": "05_power_rabi", "targets": ["qA1"], "reason": "x",
-                                                "wait_s": 5}, headers=AGENT)
+                                                "wait_s": 5, "plan_id": _armed_plan(c)}, headers=AGENT)
         body = r.get_json()
         assert r.status_code == 409 and body["refused"] == "orphan_running", body
         assert body["worker_pid"] == sleeper.pid and "still running" in body["how"]
@@ -353,7 +354,7 @@ class TestInterrupted:
         assert s["start_token"] is None and s["run_key"] is None and s["claimed_by_tool"] is None
         j = journal_mod.read(str(inst), "labchip", _today())
         line = ("✗ ran `11_power_rabi` on qB2 interrupted: SM restarted while this run was in flight; nothing was "
-                "applied; the session was disarmed -- a person arms it again")
+                "applied; the session was disarmed -- running again takes a person's Start on a plan")
         assert line in j
         assert _wait(lambda: notified)
         ev, payload = notified[0]

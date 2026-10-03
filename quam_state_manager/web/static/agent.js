@@ -1080,7 +1080,7 @@ window.AgentPanel = (function () {
       else if (a.kind !== "run") toast("written to the chip");
       // C-04 (docs/254): the agent that asked has to hear it, or the plan waits -- say which
       else if (r.body.agent_told) toast("run allowed — the agent was told to run it");
-      else toast("run allowed — no agent conversation is open in SM; the agent that asked runs it with approval " + id, "warning");
+      else toast("run allowed — " + (r.body.told_note || ("no agent conversation is open in SM; the agent that asked runs it with approval " + id)), "warning");
       poll(true);
     });
   }

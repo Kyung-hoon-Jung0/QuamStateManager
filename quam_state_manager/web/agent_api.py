@@ -1860,7 +1860,7 @@ def run_node():
                                how="approval_id must name an APPROVED, not yet used, run request for this node and "
                                    "these targets"), 409
             differs = approvals.run_differences(ap, node=node_info.name, targets=targets, params=params,
-                                                plan_id=req.plan_id)
+                                                plan_id=req.plan_id, step=req.step)
             if differs:                          # D-05 (docs/254): any difference is a new approval
                 return _approval_mismatch(inst, chip, name, node_info.name, req, plan, ap, differs)
         try:
@@ -2072,7 +2072,9 @@ def approvals_decide(aid: str, verb: str):
         journal_mod.append(inst, _chip_name(), f"{actor} allowed the run of `{rec.get('node')}` on "
                                                f"{' '.join(rec.get('targets') or [])} ({run_terms.params_text(rec.get('params'))})",
                            kind="sm")
-        out["agent_told"] = _tell_agent(chip, _allow_run_message(rec, actor))
+        out["agent_told"] = _tell_agent(chip, _allow_run_message(rec, actor), plan_id=rec.get("plan_id"))
+        if not out["agent_told"]:
+            out["told_note"] = _not_told_note(rec)
     else:
         journal_mod.append(inst, _chip_name(), f"rejected {rec.get('kind')} from `{rec.get('node')}`"
                                        + (f": {data.get('note')}" if data.get("note") else ""), kind="sm")
@@ -2118,15 +2120,19 @@ def _edited_text(rec: dict) -> str:
     return "; edited before writing: " + ", ".join(edits[:4]) + more
 
 
-def _tell_agent(chip_key: str, msg: str) -> bool:
+def _tell_agent(chip_key: str, msg: str, plan_id: str | None = None) -> bool:
     """C-04 (docs/247): an ask-all "Allow run" used to be recorded and nothing else, so the in-app
     agent -- which had been told to wait -- never heard it and the plan sat at RUNNING 0/1. The
-    chip's open in-app conversation is told; a terminal agent reads `approvals` itself."""
+    chip's open in-app conversation is told when it DRIVES the armed plan the request belongs to
+    (docs/253 D-09, docs/254); a terminal driver reads `approvals` itself, and a plan no longer
+    armed is run by nobody."""
     try:
         from quam_state_manager.web import chat_api
         g = (_session() or {}).get("grant") or {}
-        if (g.get("driver") or {}).get("kind") == "terminal":
-            return False                         # docs/253 (D-09): the plan's driver is a terminal agent, not this one
+        if (g.get("driver") or {}).get("kind") != "app":
+            return False                         # docs/253 (D-09): no grant, or a terminal agent drives it
+        if plan_id and g.get("plan_id") != plan_id:
+            return False                         # docs/254: the armed plan is another one -- its run would be refused
         mgr = chat_api._manager()
         cur = mgr.get(chip_key)
         if not chat_api.session_open(cur):
@@ -2135,6 +2141,19 @@ def _tell_agent(chip_key: str, msg: str) -> bool:
     except Exception:  # noqa: BLE001
         logger.debug("tell agent failed", exc_info=True)
         return False
+
+
+def _not_told_note(rec: dict) -> str:
+    """What the person reads when Allow reached no agent (docs/254): who will run it, or that nobody can."""
+    from quam_state_manager.core import agent_grant
+    g = (_session() or {}).get("grant") or {}
+    aid = rec.get("id")
+    if not g or (rec.get("plan_id") and g.get("plan_id") != rec.get("plan_id")):
+        return f"its plan is not armed now, so no agent runs it (approval {aid})"
+    d = g.get("driver") or {}
+    if d.get("kind") == "terminal":
+        return f"the plan is driven by {agent_grant.describe(d)}, which runs it with approval {aid}"
+    return f"SM's in-app session that drives the plan is not open; approval {aid} waits for it"
 
 
 @agent_bp.route("/undo-mine", methods=["POST"])
