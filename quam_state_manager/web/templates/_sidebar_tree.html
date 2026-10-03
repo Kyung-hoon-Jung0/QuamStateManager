@@ -41,13 +41,29 @@
       50,000-directory bound &mdash; some runs may be missing (a symlink may
       point at a very large tree)</small></p>
     {% endif %}
+    {# docs/267: runs whose node.json is not read yet were neither matched nor
+       rejected -- say how many (above the matches, where it is seen) and
+       never "no match" while any remain. While the background scan runs,
+       the note refetches the tree in the filter box's own hx-sync group (so
+       it can never land over a newer keystroke) until nothing is pending. #}
+    {% set _pend = (tree_pending or {}).get(root_path, 0) %}
+    {% if name_filter and _pend %}
+    {% if root_path in (tree_pending_live or ()) %}
+    <p class="muted tree-pending-note" data-pending="{{ _pend }}"
+       hx-get="/workspace/tree" hx-trigger="load delay:2s"
+       hx-target="#sidebar-tree" hx-swap="innerHTML"
+       hx-include="#sidebar-filter-input" hx-sync="#sidebar-filter-input:replace"><small>&#8987; {{ "{:,}".format(_pend) }} run{{ "" if _pend == 1 else "s" }} still being scanned &mdash; results may grow</small></p>
+    {% else %}
+    <p class="muted tree-pending-note" data-pending="{{ _pend }}"><small>&#9888; {{ "{:,}".format(_pend) }} run{{ "" if _pend == 1 else "s" }} not read yet &mdash; results may be incomplete</small></p>
+    {% endif %}
+    {% endif %}
     {% for node in (nested or {}).get(root_path, []) %}
     {{ dir_node(root_path, node, name_filter or "") }}
     {% endfor %}
     {# QA datasets-r2-10: a filter that matches nothing here keeps the root
        (and its x) and says so, instead of the whole tree turning into
        "No workspace roots added yet." #}
-    {% if name_filter and not date_groups %}
+    {% if name_filter and not date_groups and not _pend %}
     <p class="muted tree-nomatch-note"><small>No runs in this folder match &ldquo;{{ name_filter }}&rdquo;.</small></p>
     {% endif %}
     {# QA datasets-r2-11: an empty root (a storage folder before its first

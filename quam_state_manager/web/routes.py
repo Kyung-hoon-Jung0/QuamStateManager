@@ -27970,7 +27970,7 @@ def _resolve_runset_conds(conds: list[dict]) -> dict:
     return out
 
 
-def _filter_tree(tree: dict, text: str) -> dict:
+def _filter_tree(tree: dict, text: str, pending_out: dict | None = None) -> dict:
     """Filter workspace tree entries by a scoped query.
 
     Supports free-text tokens plus ``key:value`` scopes (name/exp/e, date/d,
@@ -27978,15 +27978,59 @@ def _filter_tree(tree: dict, text: str) -> dict:
     Datasets-page search. Boolean structure is the shared grammar
     (``core.search_query``): space = AND, a standalone ``|`` = OR between its
     neighbours (``rabi | ramsey``).
+
+    docs/267: a listing-first add publishes STUB entries (``needs_parse``)
+    whose status/qubits/params are empty and whose name/date come from the
+    folder path. A stub is never judged. Up to
+    ``scanner.FILTER_INLINE_PARSE_MAX`` of them (likely matches first, then
+    newest) are parsed inline and judged on their node.json; the rest are
+    left out of the result and counted into ``pending_out`` as
+    ``{root: n}``, so the caller says "still being scanned" -- never "no
+    match". A tree with no stubs takes exactly the old path.
     """
+    from quam_state_manager.core import scanner as _scanner
     from quam_state_manager.core.scanner import DateGroup
 
     conds = _parse_tree_query(text)
     if not conds:
         return tree
     runsets = _resolve_runset_conds(conds)
+    stubs: list = []
+    stub_roots: set = set()
+    for root_path, date_groups in tree.items():
+        for dg in date_groups:
+            for e in dg.entries:
+                if getattr(e, "needs_parse", False):
+                    stubs.append(e)
+                    stub_roots.add(root_path)
+    parsed: dict = {}
+    if stubs:
+        # A stub's folder-derived name/date/id usually agree with node.json,
+        # so the stubs that already look like matches are read first; ties go
+        # to the newest run, which the tree shows first. A run whose parse
+        # failed maps to None and stays counted as unread.
+        stubs.sort(key=lambda e: (not _entry_matches(e, conds, runsets),
+                                  e.run_id is None, -(e.run_id or 0)))
+        batch = stubs[:max(0, _scanner.FILTER_INLINE_PARSE_MAX)]
+        parsed = {id(s): p for s, p in zip(batch, _scanner.parse_stubs(batch),
+                                               strict=True)}
     result: dict = {}
     for root_path, date_groups in tree.items():
+        if root_path in stub_roots:
+            known, n_pending = [], 0
+            for dg in date_groups:
+                for e in dg.entries:
+                    if getattr(e, "needs_parse", False):
+                        p = parsed.get(id(e))
+                        if p is None:
+                            n_pending += 1
+                            continue
+                        e = p
+                    known.append(e)
+            # node.json's created_at can move a run to another date group
+            date_groups = _scanner._group_by_date(known)
+            if n_pending and pending_out is not None:
+                pending_out[root_path] = n_pending
         filtered_groups = []
         for dg in date_groups:
             matched = [e for e in dg.entries if _entry_matches(e, conds, runsets)]
@@ -27997,15 +28041,40 @@ def _filter_tree(tree: dict, text: str) -> dict:
     return result
 
 
-def _filtered_render_tree(full: dict, text: str) -> dict:
+def _filtered_render_tree(full: dict, text: str,
+                          pending_out: dict | None = None) -> dict:
     """QA datasets-r2-10: the FILTERED tree with every workspace root kept
     (no match -> ``[]``). ``_filter_tree`` drops a root that has no matching
     run, so a filter matching nothing rendered "No workspace roots added
     yet." and took every root's header and x with it (it read as "my folders
     are gone"). A filter narrows runs; it never makes a folder look removed.
     """
-    ft = _filter_tree(full, text)
+    ft = _filter_tree(full, text, pending_out)
     return {r: ft.get(r, []) for r in (full or {})}
+
+
+def _filtered_tree_ctx(ws, name_filter: str) -> dict:
+    """docs/267: template context of a FILTERED sidebar tree -- one function
+    for ``/workspace/tree`` and ``/workspace/refresh``.
+
+    ``tree_pending`` = ``{root: runs not read yet}`` (see ``_filter_tree``);
+    the template then says "still being scanned" instead of "no match".
+    ``tree_pending_live`` = the roots whose note refetches itself: hydration
+    is still running, or the version moved while this request read an older
+    snapshot (hydration published mid-request). Neither -- a hydration that
+    failed and left stubs -- gets the note without a refetch loop."""
+    v0 = ws.version if ws else None
+    pending: dict = {}
+    tree = _filtered_render_tree(ws.tree if ws else {}, name_filter, pending)
+    live: set = set()
+    if pending and ws is not None:
+        hydrating = ws.hydrating_roots()
+        moved = ws.version != v0
+        live = {r for r in pending if moved or r in hydrating}
+    ctx = _tree_render_ctx(tree)
+    ctx.update(tree_pending=pending, tree_pending_live=live,
+               name_filter=name_filter)
+    return ctx
 
 
 # docs/126 #20 — per-workspace memo for the UNFILTERED nested render model.
@@ -28254,8 +28323,7 @@ def workspace_tree():
             fmemo.pop(fkey); fmemo[fkey] = hit    # LRU touch
             return hit
         html = render_template("_sidebar_tree.html",
-                               **_tree_render_ctx(_filtered_render_tree(ws.tree, name_filter)),
-                               name_filter=name_filter)
+                               **_filtered_tree_ctx(ws, name_filter))
         fmemo[fkey] = html
         while len(fmemo) > 32:
             fmemo.pop(next(iter(fmemo)))
@@ -28522,11 +28590,9 @@ def workspace_refresh():
     # then vanished again.
     name_filter = request.form.get("name", "").strip() \
         or request.args.get("name", "").strip()
-    tree = ws.tree if ws else {}
     if name_filter:
-        tree = _filtered_render_tree(tree, name_filter)
         return render_template("_sidebar_tree.html",
-                               **_tree_render_ctx(tree), name_filter=name_filter)
+                               **_filtered_tree_ctx(ws, name_filter))
     # docs/126 r3: a no-change rescan keeps the version, so the memoized
     # unfiltered HTML is still valid — the Refresh round-trip pays only the
     # scan itself, not a 450 KB re-render of an identical tree.

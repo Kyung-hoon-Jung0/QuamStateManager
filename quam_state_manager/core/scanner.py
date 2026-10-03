@@ -1344,6 +1344,43 @@ def _incremental_rescan(root: Path, old_entries: list[ExperimentEntry],
     return kept + list(fresh.values())
 
 
+# docs/267: how many listing-only (stub) entries ONE sidebar filter request may
+# parse inline before it answers. A stub's status/qubits/params are empty and
+# its name/date come from the folder path, so matching it is not an answer;
+# reading all of them inline cost 1-4.6 s per keystroke at 5,000 pending runs.
+# A small folder (the common add) is resolved whole and answered exactly; past
+# the cap the remainder is reported as pending, never as "no match". A COUNT,
+# not a wall-clock budget: which runs a request resolves must not depend on
+# machine load (that dependence is the flake this replaced).
+FILTER_INLINE_PARSE_MAX = 32
+
+
+def parse_stubs(stubs: list[ExperimentEntry]) -> list[ExperimentEntry | None]:
+    """docs/267: parse node.json for *stubs*, in order -- the sidebar filter's
+    bounded inline read (the caller picks which stubs and how many).
+
+    Returns NEW entries and publishes nothing: the stubs, ``tree``, the path
+    index and ``version`` stay untouched. Hydration and rescans own
+    publication, and an older reader may still hold this snapshot after they
+    have published. A run whose parse RAISES (a node.json of an unexpected
+    shape) comes back as ``None`` -- still unread -- because this runs inside
+    a keystroke's request, which must not fail on one bad run."""
+    if not stubs:
+        return []
+
+    def _one(s: ExperimentEntry) -> ExperimentEntry | None:
+        try:
+            return _parse_experiment_folder(s.quam_state_path)
+        except Exception:  # noqa: BLE001 -- see the docstring
+            logger.warning("filter-time parse of %s failed; it stays unread",
+                           s.quam_state_path, exc_info=True)
+            return None
+
+    workers = min(_SCAN_PARSE_WORKERS, len(stubs))
+    with ThreadPoolExecutor(max_workers=workers) as ex:
+        return list(ex.map(_one, stubs))
+
+
 def _stub_entry(quam_state_path: Path) -> ExperimentEntry:
     """A listing-only entry from FOLDER NAMES alone (docs/142) -- no file
     content is read. run_id / experiment name / time come from the
