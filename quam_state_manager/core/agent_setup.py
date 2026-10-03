@@ -37,6 +37,8 @@ CTX_END = "<!-- sm:lab-context:end -->"
 # terminal agent run `python <node>.py` past run_node's gates, or rewrite state.json with a one-liner.
 ALLOW_RULES = ("mcp__quam-state-manager__*",)
 LEGACY_ALLOW_RULES = ("mcp__quam-state-manager__*", "Bash(python *)", "Bash(python3 *)")
+# SM MCP calls already report activity through X-SM-Agent on the HTTP door.
+# Including them here would record each call twice.
 HOOK_MATCHER = "Bash|Edit|Write|MultiEdit"
 
 
@@ -165,10 +167,11 @@ def hook_command(python: str | None = None, instance: str | None = None, backend
 
 
 def mcp_server_spec(python: str | None = None, repo: str | None = None, instance: str | None = None,
-                    chip: str | None = None) -> dict:
-    """The stdio server entry both CLIs get. No SM_URL: the bridge finds the
-    running window through the instance registry (two windows, two chips --
-    the SM_CHIP pin decides)."""
+                    chip: str | None = None, url: str | None = None) -> dict:
+    """The stdio entry both CLIs get; pins are explicit opt-ins.
+
+    Default entries discover windows; a URL pin lasts only for this launch.
+    """
     env = {"PYTHONUTF8": "1"}
     if repo:
         env["PYTHONPATH"] = str(repo)
@@ -176,6 +179,8 @@ def mcp_server_spec(python: str | None = None, repo: str | None = None, instance
         env["SM_INSTANCE"] = str(instance)
     if chip:
         env["SM_CHIP"] = chip
+    if url:
+        env["SM_URL"] = url.rstrip("/")
     if getattr(sys, "frozen", False):
         return {"type": "stdio", "command": sys.executable, "args": ["--mcp"], "env": env}
     return {"type": "stdio", "command": python or sys.executable, "args": ["-m", "quam_state_manager.mcp"], "env": env}

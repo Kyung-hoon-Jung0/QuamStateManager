@@ -31,6 +31,13 @@ from pathlib import Path
 #: agent event only when it carries the key SM keeps in its instance dir.
 HOOK_KEY_HEADER = "X-SM-Hook-Key"
 
+# Both names are installed today: the in-app session and terminal Setup.
+SM_MCP_SERVERS = ("sm", "quam-state-manager")
+
+
+def is_sm_mcp_tool(name: str) -> bool:
+    return isinstance(name, str) and name.startswith(tuple(f"mcp__{s}__" for s in SM_MCP_SERVERS))
+
 
 def hook_key_path(instance_path) -> Path:
     return Path(instance_path) / "agent_link" / "hook.key"

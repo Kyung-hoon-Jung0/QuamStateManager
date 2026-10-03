@@ -921,8 +921,9 @@ def _wake() -> None:
 def _relevant(session_events: list[dict]) -> bool:
     """A Claude Code session that never touched SM or a calibration node is
     someone's paper-writing session: it must not light the strip."""
+    from quam_state_manager.core.agent_link import is_sm_mcp_tool
     for e in session_events:
-        if (e.get("tool_name") or "").startswith("mcp__sm"):
+        if is_sm_mcp_tool(e.get("tool_name") or ""):
             return True
         if e.get("tool_name") == "Bash" and _node_of(e.get("summary") or ""):
             return True

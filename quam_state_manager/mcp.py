@@ -26,12 +26,13 @@ the paths -- when a human edited something in the window the agent never
 saw (docs/120's gate), instead of forcing.
 
 Protocol surface: initialize, notifications/initialized, ping, tools/list,
-tools/call. Newline-delimited JSON on stdio.
+tools/call. 25 tools. Newline-delimited JSON on stdio.
 """
 
 from __future__ import annotations
 
 import json
+import math
 import os
 import re
 import sys
@@ -74,7 +75,7 @@ def _pin_match(chip: dict) -> bool:
     or declared name, opened later, is refused."""
     global _pin_key
     key = chip.get("chip_key")
-    if _CHIP_PIN == key:
+    if _CHIP_PIN in (key, chip.get("pin")):
         return True
     by_name = _CHIP_PIN in (chip.get("declared_name"), chip.get("name"))
     if not by_name:
@@ -116,7 +117,29 @@ def _sm() -> agent_link.SMLink:
     global _link
     if _link is not None and _link.alive():
         return _link
-    _link = agent_link.connect()
+    windows = []
+    for url in dict.fromkeys(agent_link.candidate_urls()):
+        link = agent_link.SMLink(url, agent_id=_agent_id)
+        try:
+            code, facts = link.get("/api/agent/chip")
+        except (OSError, ValueError):
+            continue
+        if code == 200 and isinstance(facts, dict):
+            windows.append((link, facts))
+    matches = windows
+    if _CHIP_PIN:
+        matches = [(link, facts) for link, facts in windows
+                   if facts.get("loaded") and (
+                       _CHIP_PIN in (facts.get("pin"), facts.get("chip_key")) or
+                       (_CHIP_PIN in (facts.get("declared_name"), facts.get("name")) and
+                        (_pin_key is None or facts.get("chip_key") == _pin_key)))]
+    if len(matches) > 1 or (windows and not matches):
+        raise WindowChoiceError({
+            "refused": "ambiguous_window" if len(matches) > 1 else "chip_mismatch",
+            "windows": [{"url": link.base, "chip": facts} for link, facts in windows],
+            "how": "Set env SM_URL to a window URL and/or SM_CHIP to its chip pin. "
+                   "No window was selected; sm_status can list the windows."})
+    _link = matches[0][0] if matches else None
     if _link is not None:
         _link.agent_id = _agent_id
     if _link is None:
@@ -128,6 +151,12 @@ def _sm() -> agent_link.SMLink:
 
 class ToolError(Exception):
     pass
+
+
+class WindowChoiceError(ToolError):
+    def __init__(self, facts: dict):
+        self.facts = facts
+        super().__init__(json.dumps(facts))
 
 
 def _ok(code: int, body: Any, *, expect=(200,)) -> Any:
@@ -145,7 +174,11 @@ def t_sm_status(_a: dict) -> Any:
     """The open chip -- and the notes pinned on it (B-01, docs/252), which no
     tool used to return, so a "do not touch" note was invisible to the next
     agent. An older SM without ``/api/agent/notes`` leaves them out."""
-    facts = _chip_facts()
+    try:
+        facts = _chip_facts()
+    except WindowChoiceError as exc:
+        return exc.facts
+    facts = {**facts, "url": getattr(_link, "base", None)}
     if isinstance(facts, dict) and facts.get("loaded"):
         try:
             code, body = _sm().get("/api/agent/notes")
@@ -376,7 +409,27 @@ def t_families(_a: dict) -> Any:
 
 
 def t_family_manual(a: dict) -> Any:
-    return _ok(*_sm().get(f"/api/agent/manual/{a['family']}"))
+    manual = _ok(*_sm().get(f"/api/agent/manual/{a['family']}"))
+    outline, case_id, section = a.get("outline", False), a.get("case_id"), a.get("section")
+    if not isinstance(outline, bool) or (case_id is not None and not isinstance(case_id, str)):
+        raise ToolError("outline must be boolean; case_id must be a string")
+    sections = ("physics", "rules", "closure_rules", "signal_map")
+    if section is not None and section not in sections:
+        raise ToolError(f"section must be one of {', '.join(sections)}")
+    if sum((outline, case_id is not None, section is not None)) > 1:
+        raise ToolError("Choose only one of outline, case_id, section")
+    if outline:
+        return {"family": manual["family"],
+                "cases": [{"id": c["id"], "title": c.get("name")} for c in manual.get("cases") or []],
+                "sections": [s for s in sections if manual.get(s) is not None]}
+    if case_id is not None:
+        case = next((c for c in manual.get("cases") or [] if c["id"] == case_id), None)
+        if case is None:
+            raise ToolError(f"No case {case_id!r}; request outline first")
+        return {"family": manual["family"], "case": case}
+    if section is not None:
+        return {"family": manual["family"], section: manual.get(section)}
+    return manual
 
 
 def t_journal_append(a: dict) -> Any:
@@ -527,7 +580,10 @@ TOOLS: dict[str, tuple[dict, Any]] = {
                      run_id={"type": "integer", "required": True}), t_check_fit),
     "families": (_s("The calibration families SM knows (node name -> family) and which have a case manual."), t_families),
     "family_manual": (_s("The lab's case manual for a family: each figure shape's geometry, what it means, what to do. "
-                         "Qualitative by construction.", family={"type": "string", "required": True}), t_family_manual),
+                         "Qualitative by construction. Full response can be ~55 KB; use outline=true for case ids "
+                         "and titles, then case_id or section for one part.",
+                         family={"type": "string", "required": True}, outline={"type": "boolean"},
+                         case_id={"type": "string"}, section={"type": "string", "enum": ["physics", "rules", "closure_rules", "signal_map"]}), t_family_manual),
     "journal_append": (_s("Write to the calibration journal SM renders for the human (a plain .md in their folder). "
                           "Call it BEFORE running a node and AFTER deciding: text = what you did/are doing, "
                           "reason = WHY (what you saw, what you expect). Link the run and the paths you touched.",
@@ -575,11 +631,29 @@ def _respond(msg_id, result=None, error=None) -> None:
     sys.stdout.flush()
 
 
-def handle(msg: dict) -> None:
-    method = msg.get("method")
+def handle(msg: Any) -> None:
+    if not isinstance(msg, dict) or msg.get("jsonrpc") != "2.0" or not isinstance(msg.get("method"), str):
+        _respond(None, error={"code": -32600, "message": "Invalid Request"})
+        return
     mid = msg.get("id")
-    params = msg.get("params") or {}
+    if "id" in msg and not (mid is None or isinstance(mid, str) or
+                            (type(mid) in (int, float) and (type(mid) is int or math.isfinite(mid)))):
+        _respond(None, error={"code": -32600, "message": "Invalid request id"})
+        return
+    method = msg.get("method")
+    if method.startswith("notifications/") and "id" in msg:
+        _respond(mid, error={"code": -32600, "message": "Notifications must not have an id"})
+        return
+    if "id" not in msg:
+        return                         # notifications never execute tools or receive replies
+    params = msg.get("params", {})
+    if not isinstance(params, dict):
+        _respond(mid, error={"code": -32602, "message": "params must be an object"})
+        return
     if method == "initialize":
+        if not isinstance(params.get("clientInfo", {}), dict) or not isinstance(params.get("protocolVersion", PROTOCOL), str):
+            _respond(mid, error={"code": -32602, "message": "Invalid initialize params"})
+            return
         _learn_client(params)
         _respond(mid, {"protocolVersion": params.get("protocolVersion") or PROTOCOL,
                        "capabilities": {"tools": {"listChanged": False}},
@@ -602,7 +676,10 @@ def handle(msg: dict) -> None:
         _respond(mid, {"tools": [{"name": n, **spec} for n, (spec, _) in _visible_tools().items()]})
     elif method == "tools/call":
         name = params.get("name")
-        args = params.get("arguments") or {}
+        args = params.get("arguments", {})
+        if not isinstance(name, str) or not name or not isinstance(args, dict):
+            _respond(mid, error={"code": -32602, "message": "tools/call needs a name and object arguments"})
+            return
         if name not in _visible_tools():
             if name in TOOLS:
                 _respond(mid, {"content": [{"type": "text", "text": f"{name} is not available in a read-only session"}],
@@ -611,10 +688,16 @@ def handle(msg: dict) -> None:
             _respond(mid, error={"code": -32601, "message": f"unknown tool {name!r}"})
             return
         try:
+            # Re-discover once per call: a second window may have opened since the last call.
+            global _link
+            if isinstance(_link, agent_link.SMLink):
+                _link = None
+            if name != "sm_status":
+                _sm()
             if _CHIP_PIN and name != "sm_status":
                 _chip_facts()                    # review R4-1: the pin guards EVERY tool, not four
             result = TOOLS[name][1](args)
-            if isinstance(result, dict) and "chip" not in result and _chip:
+            if isinstance(result, dict) and "chip" not in result and "refused" not in result and _chip:
                 result = {"chip": _chip, **result}
             text = json.dumps(result, indent=1, default=str)
             _respond(mid, {"content": [{"type": "text", "text": text}], "isError": False})
@@ -624,7 +707,7 @@ def handle(msg: dict) -> None:
             _respond(mid, {"content": [{"type": "text", "text": f"bad arguments: {exc!r}"}], "isError": True})
         except Exception as exc:  # noqa: BLE001 -- a tool crash must not kill the server
             _respond(mid, {"content": [{"type": "text", "text": f"tool failed: {exc!r}"}], "isError": True})
-    elif mid is not None:
+    else:
         _respond(mid, error={"code": -32601, "message": f"method not found: {method}"})
 
 
@@ -632,21 +715,32 @@ def main() -> None:
     os.environ.setdefault("PYTHONUTF8", "1")
     stdin = sys.stdin.buffer
     while True:
-        line = stdin.readline()
+        line = stdin.readline(_MAX_LINE_BYTES + 1)
         if not line:
             break
+        if len(line) > _MAX_LINE_BYTES:
+            while not line.endswith(b"\n"):
+                line = stdin.readline(_MAX_LINE_BYTES + 1)
+                if not line:
+                    break
+            _respond(None, error={"code": -32600, "message": "Request line exceeds 1 MiB"})
+            continue
         line = line.strip()
         if not line:
             continue
         try:
-            msg = json.loads(line.decode("utf-8"))
-        except ValueError:
+            msg = json.loads(line.decode("utf-8"), parse_constant=_invalid_constant)
+        except (ValueError, RecursionError):
+            _respond(None, error={"code": -32700, "message": "Parse error"})
             continue
-        if isinstance(msg, list):
-            for m in msg:
-                handle(m)
-        elif isinstance(msg, dict):
-            handle(msg)
+        handle(msg)
+
+
+_MAX_LINE_BYTES = 1024 * 1024
+
+
+def _invalid_constant(value: str):
+    raise ValueError(f"Invalid JSON constant: {value}")
 
 
 if __name__ == "__main__":

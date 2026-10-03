@@ -99,6 +99,7 @@ window.AgentSetup = (function () {
         // docs/247: an older SM also allow-listed `python` there -- the door run_node exists to guard
         if (d.calibrations_folder && c.allow_python && c.allow_python.length) lines.push('<p class="ag-err">' + esc(c.allow_python.join(", ")) + " is allowed in the calibrations folder: a terminal agent can run <code>python &lt;node&gt;.py</code> past SM's gates. Disconnect removes it if SM wrote it; otherwise remove it from <code>.claude\\settings.local.json</code>.</p>");
       }
+      lines.push('<label><input type="checkbox" id="as-pin-' + k + '"> Pin this window and chip <span class="muted">(port may change after restart)</span></label>');
       lines.push('<div class="as-acts"><button type="button" class="btn-sm" onclick="AgentSetup.preview(\'' + k + '\')">Preview what SM would write</button> ' +
         (isDone ? '<button type="button" class="btn-sm" onclick="AgentSetup.disconnect(\'' + k + '\')">Disconnect (remove SM\'s entries)</button>' : "") + "</div>");
       lines.push('<div id="as-prev-' + k + '"></div>');
@@ -190,10 +191,13 @@ window.AgentSetup = (function () {
   }
 
   function preview(k) {
-    api("POST", "/api/agent/setup/connect", { backend: k }).then(function (r) {
+    var box = document.getElementById("as-pin-" + k);
+    var pinned = !!(box && box.checked);
+    api("POST", "/api/agent/setup/connect", { backend: k, pinned: pinned }).then(function (r) {
       var host = document.getElementById("as-prev-" + k);
       if (!host) return;
       if (r.status !== 200) { host.innerHTML = '<p class="ag-err">' + esc(r.body.error || "failed") + "</p>"; return; }
+      S.previews[k] = { pinned: pinned, expected_pin: r.body.pin };
       var pv = r.body.previews || {};
       var html = Object.keys(pv).map(function (name) {
         var p = pv[name];
@@ -204,7 +208,8 @@ window.AgentSetup = (function () {
     });
   }
   function connect(k) {
-    api("POST", "/api/agent/setup/connect", { backend: k, apply: true }).then(function (r) {
+    var pin = S.previews[k] || {};
+    api("POST", "/api/agent/setup/connect", { backend: k, apply: true, pinned: !!pin.pinned, expected_pin: pin.expected_pin }).then(function (r) {
       var host = document.getElementById("as-prev-" + k);
       if (r.status !== 200) { if (host) host.innerHTML = '<p class="ag-err">' + esc(r.body.error || "failed") + "</p>"; return; }
       var w = r.body.writes || {};

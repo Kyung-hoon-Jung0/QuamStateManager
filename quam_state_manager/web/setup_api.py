@@ -160,9 +160,10 @@ def _custom_instance(inst) -> bool:
         return True
 
 
-def _spec(chip: str | None = None) -> dict:
+def _spec(chip: str | None = None, url: str | None = None) -> dict:
     inst = current_app.instance_path
-    return st.mcp_server_spec(_python(), _repo_root(), instance=str(inst) if _custom_instance(inst) else None, chip=chip)
+    return st.mcp_server_spec(_python(), _repo_root(), instance=str(inst) if _custom_instance(inst) else None,
+                              chip=chip, url=url)
 
 
 @setup_bp.route("/connect", methods=["POST"])
@@ -177,8 +178,19 @@ def connect():
     home = _home()
     inst = current_app.instance_path
     cal = _cal_folder()
-    spec = _spec(chip=data.get("chip") or None)
-    out: dict = {"ok": True, "backend": backend, "applied": apply, "previews": {}, "writes": {}}
+    chip, url = data.get("chip") or None, None
+    if data.get("pinned") is True:
+        # Same facts as /api/agent/chip, without an HTTP round trip to ourselves.
+        facts = aa.chip().get_json()
+        chip = facts.get("pin") if facts.get("loaded") else None
+        if not chip:
+            return _err("Open a chip before writing a pinned entry.")
+        if data.get("expected_pin") and data["expected_pin"] != chip:
+            return _err("The open chip changed. Preview the pinned entry again.", 409)
+        url = request.host_url.rstrip("/")
+    spec = _spec(chip=chip, url=url)
+    out: dict = {"ok": True, "backend": backend, "applied": apply, "previews": {}, "writes": {},
+                 "pin": chip if url else None}
     want_hooks = data.get("hooks", True)
     want_allow = data.get("allow", True)
     if backend == "claude":
