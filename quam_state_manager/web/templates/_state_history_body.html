@@ -2,6 +2,7 @@
    Rendered standalone via /state-history?body=1 for the stateRestored
    auto-refresh, and included by _state_history.html for the full page. #}
 {% from '_snapshot_zero_label.html' import zero_diff_label %}
+{% from '_snapshot_source.html' import source_badge %}
 {% if snapshots %}
 <div class="sh-toolbar">
     <button id="sh-compare-btn" class="outline btn-sm" disabled
@@ -21,6 +22,8 @@
         {# Project lens (docs/63): which qualibrate project the chip was scoped
            to when this snapshot was captured. Display-only — never filters. #}
         {% if s.project %}<span class="sh-project-badge" title="Captured while scoped to qualibrate project &quot;{{ s.project }}&quot;">&#9879; {{ s.project }}</span>{% endif %}
+        {# docs/250: which folder recorded this row, when it is not this one #}
+        {{ source_badge(snapshot_source(s, active_path), 'sh-src') }}
         {% if s.pinned %}<span class="sh-pin-badge" title="Pinned (kept regardless of retention)">&#128204;</span>{% endif %}
         {% if s.diff_summary.total > 0 %}
         <span class="diff-badge diff-added">+{{ s.diff_summary.added }}</span>

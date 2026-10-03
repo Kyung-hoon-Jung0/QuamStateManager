@@ -1,4 +1,17 @@
 {% from '_delta_macros.html' import delta_chip, delta_pct %}
+{% from '_snapshot_source.html' import source_badge %}
+{# docs/250: rows another folder with this chip name recorded WHILE this
+   folder had its own history are not part of this folder's timeline (they
+   made fake change points). They are left out — and counted, never silently. #}
+{% macro other_folders_note(hist) -%}
+{%- if hist.parallel_hidden -%}
+<p class="fh-other-note" title="{% for f in hist.other_folders %}{{ f.folder }} ({{ f.snapshots }}){% if not loop.last %}; {% endif %}{% endfor %}">
+  {{ hist.parallel_hidden }} snapshot{{ 's' if hist.parallel_hidden != 1 }} from {{ 'other folders' if hist.other_folders | length > 1 else 'another folder' }} with this chip name
+  ({% for f in hist.other_folders %}{{ f.label or f.folder }}{% if not loop.last %}, {% endif %}{% endfor %})
+  {{ 'is' if hist.parallel_hidden == 1 else 'are' }} not part of this folder's timeline.
+</p>
+{%- endif -%}
+{%- endmacro %}
 {# Per-field value-history panel (the 🕘 button on Live-Edit cells and
    inspector rows). Injected into the FieldHistory floating container by
    app.js — which htmx.process()es it so the Data buttons' hx-get works.
@@ -30,6 +43,7 @@
   {% if hist.total_snapshots == 0 %}this chip has no Param History snapshots yet.
   {% else %}none of the {{ hist.scanned }} scanned snapshot{{ 's' if hist.scanned != 1 }} carried it.{% endif %}
 </p>
+{{ other_folders_note(hist) }}
 {% else %}
 <table class="fh-table">
   <thead><tr><th>Value</th><th>Since</th><th>Set by</th><th></th></tr></thead>
@@ -44,7 +58,7 @@
          (against the value it replaced, the row below). `fh-revert-delta` is
          what reverting to it would do NOW — the one the customer asked for,
          rendered beside the button it belongs to. #}
-      <td class="fh-val" title="{{ pt.fill }}"><code>{{ pt.display }}</code>{% if pt.is_current %} <span class="fh-now">current</span>{% endif %}{% if _prev %}{{ delta_chip(_prev.value, pt.value, 'fh-delta') }}{% endif %}</td>
+      <td class="fh-val" title="{{ pt.fill }}"><code>{{ pt.display }}</code>{% if pt.is_current %} <span class="fh-now">current</span>{% endif %}{% if _prev %}{{ delta_chip(_prev.value, pt.value, 'fh-delta') }}{% endif %}{{ source_badge(pt.source, 'fh-srcfolder') }}</td>
       <td class="fh-ts">{{ (pt.timestamp or pt.ts or "") | ts_local(short=True) }}</td>
       <td class="fh-src">
         {# The run named here WROTE the value (routes._WriterCheck,
@@ -54,8 +68,10 @@
         <span class="fh-exp fh-captured" title="No run can be shown to have written this value: {% if pt.run_id is not none %}run #{{ pt.run_id }} {% endif %}{{ pt.experiment }} only saved a state that already carried it.">captured with {% if pt.run_id is not none %}#{{ pt.run_id }} {% endif %}{{ pt.experiment }} <i class="muted">(not the run that measured it)</i></span>
         {% elif pt.experiment %}
         <span class="fh-exp" title="{% if pt.run_id is not none %}run #{{ pt.run_id }} — {% endif %}{{ pt.experiment }}{% if pt.captured_by %} (captured later with #{{ pt.captured_by.run_id }} {{ pt.captured_by.experiment }}){% endif %}">{% if pt.run_id is not none %}#{{ pt.run_id }} {% endif %}{{ pt.experiment }}</span>
+        {# docs/250: "of the live folder" was claimed for every row; a row
+           another folder with this chip name recorded now says whose it is #}
         {% else %}<span class="fh-trig"
-              title="Not from an experiment — a {{ pt.trigger or 'unknown' }} snapshot of the live folder">{{ pt.trigger or '—' }}</span>{% endif %}
+              title="Not from an experiment — a {{ pt.trigger or 'unknown' }} snapshot of {% if pt.source and pt.source.kind == 'other' %}another folder ({{ pt.source.folder }}){% elif pt.source and pt.source.kind == 'unknown' %}a folder that is not recorded{% else %}this folder{% endif %}">{{ pt.trigger or '—' }}</span>{% endif %}
       </td>
       <td class="fh-act">
         {# `pt.fill` is "" for a point whose value was not set (routes
@@ -93,4 +109,5 @@
   &middot; {{ hist.scanned }} of {{ hist.total_snapshots }} snapshot{{ 's' if hist.total_snapshots != 1 }}
   ({{ hist.source }}){% if hist.runs_merged %} &middot; {{ hist.runs_merged }} live run value{{ 's' if hist.runs_merged != 1 }}{% endif %}{% if hist.truncated %} &middot; older history not shown{% endif %}
 </p>
+{{ other_folders_note(hist) }}
 {% endif %}

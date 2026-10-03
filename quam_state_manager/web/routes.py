@@ -15969,7 +15969,14 @@ def state_versions_panel():
             hidden_unchanged += 1
             continue
         visible.append((m, knd, knd_legacy))
+    # docs/250: one chip identity can span folders -- each row names the
+    # folder that recorded it when that is not this one
+    try:
+        srcs = hm.snapshot_sources(path, snaps)
+    except Exception:  # noqa: BLE001 -- a label never breaks the list
+        srcs = {}
     rows = [{
+        "source": srcs.get(m.timestamp),
         "ts": m.timestamp,
         "trigger": m.trigger,
         "kind": knd,
@@ -15992,10 +15999,16 @@ def state_versions_panel():
     # (key | old → new, the docs/76 Δ); bigger diffs state their size and
     # point at Compare. The tick-two flow stays for any other pairing.
     quick = None
-    if len(rows) >= 2:
+    # docs/250: "what just changed?" is asked of THIS folder -- rows another
+    # folder with the same chip name recorded alongside it are skipped
+    mine = [i for i, r in enumerate(rows)
+            if (r["source"] or {}).get("lineage") != "parallel"]
+    if len(mine) >= 2:
+        b_i, a_i = mine[0], mine[1]
         try:
-            entries = hm.diff_snapshots(path, rows[1]["ts"], rows[0]["ts"])
-            quick = {"a_ts": rows[1]["ts"], "b_ts": rows[0]["ts"],
+            entries = hm.diff_snapshots(path, rows[a_i]["ts"], rows[b_i]["ts"])
+            quick = {"a_ts": rows[a_i]["ts"], "b_ts": rows[b_i]["ts"],
+                     "a_ord": a_i + 1, "b_ord": b_i + 1,
                      "n": len(entries),
                      "entries": entries if 0 < len(entries) <= 50 else None}
         except Exception:  # noqa: BLE001 — the list must render regardless

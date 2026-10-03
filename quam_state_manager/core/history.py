@@ -18,7 +18,9 @@ import re
 import shutil
 import sqlite3
 import copy
+import sys
 import threading
+import unicodedata
 import time
 import zlib
 from collections import OrderedDict
@@ -974,6 +976,94 @@ def kind_for(meta: "SnapshotMeta") -> tuple[str, bool]:
     return _LEGACY_KIND_FOR_TRIGGER.get(meta.trigger, "manual"), True
 
 
+# ── Which FOLDER a snapshot came from (docs/250) ─────────────────────────
+#
+# One history dir per chip IDENTITY (the ladder in resolve_chip_dir) is a
+# deliberate choice: the same chip opened from a new folder keeps one
+# continuous history. But two folders that carry the same identity at the
+# same time (a copied folder, a run's quam_state opened as an archive) then
+# write into ONE dir, and every "newest value" a surface computed over that
+# dir answered with whichever folder wrote last -- named as if it were the
+# folder on screen (B-03: the 🕘 popover and the Versions panel of folder A
+# showed folder B's newest f_01 and B's backups as A's).
+#
+# The fix keeps the one dir and classifies each snapshot RELATIVE TO THE
+# FOLDER BEING SHOWN:
+#   kind     this    recorded from this very folder (incl. its working copy's
+#                    take-live backup, which is captured from a temp folder)
+#            run     an ingested experiment run -- the RUN is its provenance,
+#                    as it always was (copied-state runs are not flagged, by
+#                    the user's decision recorded in the state-tracking hub)
+#            other   recorded from a DIFFERENT folder with the same identity
+#            unknown no folder can be shown (no source recorded, or a pruned
+#                    snapshot whose index row survived without its meta)
+#   lineage  own / run            -- this folder's history
+#            earlier             -- another folder's snapshot OLDER than this
+#                                   folder's first own snapshot (or this folder
+#                                   has none yet): the identity-continuous
+#                                   predecessor -- kept, LABELLED with its folder
+#            parallel            -- another folder's snapshot recorded while
+#                                   this folder had its own history: never part
+#                                   of this folder's "newest" answers
+SOURCE_THIS = "this"
+SOURCE_RUN = "run"
+SOURCE_OTHER = "other"
+SOURCE_UNKNOWN = "unknown"
+LINEAGE_OWN = "own"
+LINEAGE_RUN = "run"
+LINEAGE_EARLIER = "earlier"
+LINEAGE_PARALLEL = "parallel"
+
+_SRC_WSL_MNT_RE = re.compile(r"^/mnt/([A-Za-z])(?=/|$)")
+_SRC_WIN_DRIVE_RE = re.compile(r"^([A-Za-z]):(?=[\\/]|$)")
+_TAKELIVE_SUFFIX = ".takelive_backup"
+
+
+def _source_key(raw: Any) -> str | None:
+    """Comparison key of a RECORDED folder path -- no filesystem access.
+
+    Recorded ``source_path`` values were resolved at capture time, so string
+    identity is the right test; a stat per snapshot would cost one network
+    round trip per row on a share. Folds the per-OS spelling the way
+    ``path_match.fs_key`` does (NFC; case only where the default filesystem
+    is case-insensitive) and maps the other dialect of the SAME machine
+    (``/mnt/d/...`` <-> ``D:\\...``) so a WSL-era row of this very folder is
+    not misnamed as another folder."""
+    if not isinstance(raw, str) or not raw.strip():
+        return None
+    s = raw.strip()
+    if os.name == "nt":
+        m = _SRC_WSL_MNT_RE.match(s)
+        if m:
+            s = f"{m.group(1)}:" + s[m.end():]
+        s = s.replace("/", "\\")
+    else:
+        m = _SRC_WIN_DRIVE_RE.match(s)
+        if m:
+            s = f"/mnt/{m.group(1).lower()}" + s[m.end():].replace("\\", "/")
+    s = unicodedata.normalize("NFC", s).rstrip("\\/")
+    if os.name == "nt" or sys.platform == "darwin":
+        s = s.lower()
+    return s or None
+
+
+_GENERIC_SOURCE_DIRS = frozenset({"quam_state", "quam_states", "state", "states"})
+
+
+def source_folder_label(folder: str | None) -> str | None:
+    """Short display name of a source folder: its own name, or
+    ``<parent>/<name>`` when the name is a generic container
+    (``labB/quam_state``). Display only -- the full path rides the title."""
+    if not folder:
+        return None
+    parts = [p for p in re.split(r"[\\/]+", str(folder)) if p]
+    if not parts:
+        return None
+    if parts[-1].lower() in _GENERIC_SOURCE_DIRS and len(parts) >= 2:
+        return f"{parts[-2]}/{parts[-1]}"
+    return parts[-1]
+
+
 # Sentinel for annotate_snapshot's ``note``: "argument not provided" so a label-
 # only edit leaves an existing note untouched (distinct from note=None = clear it).
 _KEEP_NOTE: Any = object()
@@ -1252,6 +1342,11 @@ class HistoryManager:
         self._identity_cache: dict[str, tuple[float, float, ChipIdentity]] = {}
         self._chip_dir_memo: dict[str, tuple[Any, tuple]] = {}
         self._alias_cache: tuple[int, dict] | None = None
+        # docs/250: recorded source path -> (owner key, display path) | None,
+        # and per shown folder the classified rows keyed on the snapshot
+        # LIST OBJECT (the _content_ts_cache lifetime rule).
+        self._source_owner_memo: dict[str, tuple[str, str] | None] = {}
+        self._sources_cache: dict[str, tuple[object, dict, str | None]] = {}
 
     def snapshot_ts_for_current_content(
             self, quam_state_path: str | Path) -> str | None:
@@ -1281,13 +1376,200 @@ class HistoryManager:
         key = str(path)
         cached = self._content_ts_cache.get(key)
         if cached is None or cached[0] is not snaps:
+            # docs/250: content recorded from THIS folder's lineage wins over
+            # the same content recorded from a parallel folder with the same
+            # chip name -- the version chip names this folder's version when
+            # it has one, and another folder's only when nothing else matches
+            # (the Versions row then carries that folder's label).
+            srcs = self.snapshot_sources(path, snaps)
             mapping: dict[str, str] = {}
+            mine: dict[str, str] = {}
             for meta in reversed(snaps):
                 if meta.state_hash:
                     mapping[meta.state_hash] = meta.timestamp
+                    if (srcs.get(meta.timestamp) or {}).get(
+                            "lineage") != LINEAGE_PARALLEL:
+                        mine[meta.state_hash] = meta.timestamp
+            mapping.update(mine)
             cached = (snaps, mapping)
             self._content_ts_cache[key] = cached
         return cached[1].get(h)
+
+    # ------------------------------------------------------------------
+    # Snapshot sources (docs/250) -- see the module note above SOURCE_THIS
+    # ------------------------------------------------------------------
+
+    _TAKELIVE_RE = re.compile(
+        r"^(?P<ws>.*[\\/]working_state)[\\/](?P<key>[^\\/]+)"
+        + re.escape(_TAKELIVE_SUFFIX) + r"(?:[\\/]|$)")
+
+    def _source_owner(self, raw: Any) -> tuple[str, str] | None:
+        """``(comparison key, display path)`` of the folder a recorded path
+        STANDS FOR, or None when no folder can be shown.
+
+        An ordinary folder stands for itself. A take-live backup is captured
+        from ``<instance>/working_state/<wc>.takelive_backup/<chip>/quam_state``
+        -- a temporary copy of THAT working copy's content -- so it stands for
+        the ``live_folder`` the working copy's own meta sidecar records (the
+        recorded instance first, then this one, for a moved instance). An
+        unreadable sidecar is None: a backup of SOME working copy, which one
+        cannot be shown."""
+        k = _source_key(raw)
+        if k is None:
+            return None
+        memo = self._source_owner_memo
+        if k in memo:
+            return memo[k]
+        out: tuple[str, str] | None = (k, str(raw).strip())
+        m = self._TAKELIVE_RE.match(str(raw).strip())
+        if m:
+            out = None
+            wc_meta = f"{m.group('key')}.meta.json"
+            for cand in (Path(m.group("ws")) / wc_meta,
+                         self._root.parent / "working_state" / wc_meta):
+                try:
+                    live = json.loads(cand.read_text(encoding="utf-8")).get(
+                        "live_folder")
+                except (OSError, ValueError, AttributeError):
+                    continue
+                lk = _source_key(live)
+                if lk is not None:
+                    out = (lk, str(live))
+                    break
+        with self._lock:
+            if len(memo) > 4096:
+                memo.clear()
+            memo[k] = out
+        return out
+
+    def _folder_key(self, quam_state_path: str | Path) -> str | None:
+        """Comparison key of the folder being SHOWN (resolved once, then the
+        same no-I/O rule as the recorded side)."""
+        p = Path(quam_state_path)
+        try:
+            p = p.resolve()
+        except (OSError, ValueError):
+            pass
+        owner = self._source_owner(str(p))
+        return owner[0] if owner else None
+
+    @staticmethod
+    def _source_entry(kind: str, folder: str | None, lineage: str) -> dict:
+        return {"kind": kind, "folder": folder or None,
+                "label": (source_folder_label(folder)
+                          if kind in (SOURCE_OTHER, SOURCE_RUN) else None),
+                "lineage": lineage}
+
+    @staticmethod
+    def _lineage_of(kind: str, ts: str, first_own: str | None) -> str:
+        if kind == SOURCE_THIS:
+            return LINEAGE_OWN
+        if kind == SOURCE_RUN:
+            return LINEAGE_RUN
+        # another folder's (or an unprovable) row: a predecessor only when it
+        # was recorded before this folder's own history began
+        if first_own is None or str(ts) < first_own:
+            return LINEAGE_EARLIER
+        return LINEAGE_PARALLEL
+
+    def _classify_source(self, meta: "SnapshotMeta",
+                         p_key: str | None) -> tuple[str, str | None]:
+        if meta.trigger == "experiment":
+            # An ingested run: the run folder is the provenance every surface
+            # already names (and pre-v2 backfills recorded the LOADED chip as
+            # source_path, so that field is not evidence for these rows).
+            return SOURCE_RUN, (meta.experiment_folder_path
+                                or meta.source_path or None)
+        owner = self._source_owner(meta.source_path)
+        if owner is None:
+            return SOURCE_UNKNOWN, None
+        if p_key is not None and owner[0] == p_key:
+            return SOURCE_THIS, owner[1]
+        return SOURCE_OTHER, owner[1]
+
+    def _sources_and_cut(
+        self, quam_state_path: str | Path,
+        snapshots: "list[SnapshotMeta] | None" = None,
+    ) -> tuple[dict[str, dict], str | None]:
+        """``({ts: source entry}, first own ts)`` for the folder being shown.
+
+        Cached against the snapshot LIST OBJECT (the content-ts cache's
+        lifetime rule), so a capture, prune or annotation recomputes it."""
+        path = Path(quam_state_path)
+        snaps = self.list_snapshots(path) if snapshots is None else snapshots
+        ck = str(path)
+        cached = self._sources_cache.get(ck)
+        if cached is not None and cached[0] is snaps:
+            return cached[1], cached[2]
+        p_key = self._folder_key(path)
+        classified: list[tuple[str, str, str | None]] = []
+        first_own: str | None = None
+        for m in snaps:
+            kind, folder = self._classify_source(m, p_key)
+            if kind == SOURCE_THIS and (first_own is None
+                                        or m.timestamp < first_own):
+                first_own = m.timestamp
+            classified.append((m.timestamp, kind, folder))
+        out = {ts: self._source_entry(kind, folder,
+                                      self._lineage_of(kind, ts, first_own))
+               for ts, kind, folder in classified}
+        self._sources_cache[ck] = (snaps, out, first_own)
+        return out, first_own
+
+    def snapshot_sources(
+        self, quam_state_path: str | Path,
+        snapshots: "list[SnapshotMeta] | None" = None,
+    ) -> dict[str, dict]:
+        """``{timestamp: {"kind", "folder", "label", "lineage"}}`` for every
+        snapshot of this chip, RELATIVE TO the folder *quam_state_path*
+        (docs/250). ``kind`` says where the row came from (this folder / a
+        run / another folder / unknown); ``lineage`` says whether it belongs
+        to this folder's timeline (own / run / earlier) or ran alongside it
+        in another folder (parallel)."""
+        return self._sources_and_cut(quam_state_path, snapshots)[0]
+
+    def snapshot_source(self, meta: "SnapshotMeta",
+                        quam_state_path: str | Path) -> dict:
+        """One row's source entry (the template global's backing)."""
+        srcs, first_own = self._sources_and_cut(quam_state_path)
+        ent = srcs.get(getattr(meta, "timestamp", None))
+        if ent is not None:
+            return ent
+        kind, folder = self._classify_source(
+            meta, self._folder_key(quam_state_path))
+        return self._source_entry(
+            kind, folder, self._lineage_of(kind, meta.timestamp, first_own))
+
+    def other_folder_summary(
+        self, quam_state_path: str | Path,
+        snapshots: "list[SnapshotMeta] | None" = None,
+    ) -> list[dict]:
+        """The PARALLEL folders behind this chip's history: one
+        ``{"folder", "label", "snapshots"}`` per other folder whose rows were
+        recorded while this folder had its own history -- what a surface
+        names when it leaves them out of this folder's timeline."""
+        srcs, _ = self._sources_and_cut(quam_state_path, snapshots)
+        by: dict[str, dict] = {}
+        for ent in srcs.values():
+            if ent["lineage"] != LINEAGE_PARALLEL:
+                continue
+            f = ent["folder"] or ""
+            row = by.setdefault(f, {"folder": ent["folder"],
+                                    "label": ent["label"], "snapshots": 0})
+            row["snapshots"] += 1
+        return sorted(by.values(), key=lambda r: -r["snapshots"])
+
+    def _row_source(self, srcs: dict[str, dict], first_own: str | None,
+                    ts: str, trigger: Any, folder: Any) -> dict:
+        """Source entry of a series row -- a snapshot's own entry, or (an
+        index row whose snapshot meta is gone) the most that can be shown:
+        a run row stays a run; anything else is source-unknown."""
+        ent = srcs.get(ts)
+        if ent is not None:
+            return ent
+        kind = SOURCE_RUN if trigger == "experiment" else SOURCE_UNKNOWN
+        return self._source_entry(kind, folder if kind == SOURCE_RUN else None,
+                                  self._lineage_of(kind, ts, first_own))
 
     def _known_hashes_for_chip(self, hist_dir: Path) -> set[str]:
         """Return the set of state_hashes already present in a chip dir.
@@ -2244,9 +2526,18 @@ class HistoryManager:
             prev_snapshots = self._list_snapshots_in_dir(hist_dir)
             # prev_snapshots is newest-first; the one we just created is at [0]
             # so the prior snapshot (if any) is the first one whose ts != current
+            # -- and (docs/250) one from THIS folder's lineage: a row another
+            # folder with the same chip name recorded in the meantime is not
+            # what this folder changed from, and its diff would be stamped
+            # into this row's "N changes" (and the changes-only filter).
             prior = None
+            try:
+                _srcs = self.snapshot_sources(path, prev_snapshots)
+            except Exception:  # noqa: BLE001 -- never block a capture on a label
+                _srcs = {}
             for s in prev_snapshots:
-                if s.timestamp != ts:
+                if s.timestamp != ts and (_srcs.get(s.timestamp) or {}).get(
+                        "lineage") != LINEAGE_PARALLEL:
                     prior = s
                     break
 
@@ -2933,20 +3224,59 @@ class HistoryManager:
     # ------------------------------------------------------------------
 
     def _baseline_file(self, quam_state_path: Path) -> Path:
-        """Sidecar holding this chip's live-tracking baseline. A FILE inside
+        """Sidecar holding this FOLDER's live-tracking baseline. A FILE inside
         the chip's history dir (alongside ``_hashes.json``); dir-only scans
-        (list/prune) skip it, so it never looks like a snapshot."""
-        return self._history_dir(quam_state_path) / _BASELINE_SIDECAR
+        (list/prune) skip it, so it never looks like a snapshot.
+
+        docs/250: one per folder (``_baseline.<folder digest>.json``). It was
+        one per chip DIR, so two folders with the same chip name shared it:
+        whichever applied last re-seeded it, and the other's "N parameters
+        changed on the live chip since baseline" then counted the difference
+        between the two FOLDERS as changes to its live chip (measured: A's
+        State History said f_01 changed 5.12 -> 5.08 on A's live chip; 5.12
+        was B's value, A's live never held it)."""
+        key = self._folder_key(quam_state_path) or str(quam_state_path)
+        digest = hashlib.sha1(key.encode("utf-8")).hexdigest()[:12]
+        return self._history_dir(quam_state_path) / f"_baseline.{digest}.json"
+
+    def _legacy_baseline_adoptable(self, quam_state_path: str | Path) -> bool:
+        """The pre-docs/250 per-CHIP ``_baseline.json`` names no folder. It is
+        read as this folder's only when the chip's history shows no other
+        folder ever wrote into this dir: at least one row recorded from this
+        folder, none from another folder and none whose folder is unknown.
+        Otherwise this folder starts a fresh baseline (an honest restart beats
+        another folder's content counted as this chip's live changes)."""
+        try:
+            kinds = {e["kind"] for e in
+                     self.snapshot_sources(quam_state_path).values()}
+        except Exception:  # noqa: BLE001
+            return False
+        return SOURCE_THIS in kinds and not (kinds & {SOURCE_OTHER, SOURCE_UNKNOWN})
 
     def get_live_baseline(self, quam_state_path: str | Path) -> dict | None:
-        """Return this chip's persisted baseline, or ``None`` if none set.
+        """Return this folder's persisted baseline, or ``None`` if none set.
 
         Shape: ``{captured_utc, state_hash, state, wiring}`` (full content, so
         the drift diff never depends on a snapshot surviving prune/dedup/swap).
         ``None`` on a missing / unreadable / malformed sidecar — the caller
-        re-establishes one from the current live.
+        re-establishes one from the current live. A pre-docs/250 per-chip
+        sidecar is adopted only under :meth:`_legacy_baseline_adoptable`.
         """
-        p = self._baseline_file(Path(quam_state_path))
+        path = Path(quam_state_path)
+        data = self._read_baseline_file(self._baseline_file(path))
+        if data is not None:
+            return data
+        legacy = self._history_dir(path) / _BASELINE_SIDECAR
+        try:
+            legacy.stat()
+        except OSError:
+            return None
+        if not self._legacy_baseline_adoptable(path):
+            return None
+        return self._read_baseline_file(legacy)
+
+    def _read_baseline_file(self, p: Path) -> dict | None:
+        """Parse one baseline sidecar (stat-keyed cache)."""
         with self._lock:
             # mtime+size-keyed parse cache. The baseline sidecar is written ONLY
             # by this process (set_live_baseline's atomic replace — no external
@@ -2993,6 +3323,8 @@ class HistoryManager:
         record = {
             "captured_utc": captured_utc or datetime.now(timezone.utc).isoformat(),
             "state_hash": state_hash,
+            # docs/250: whose baseline this is (the file name is a digest)
+            "source_path": str(path),
             "state": state,
             "wiring": wiring,
         }
@@ -3023,6 +3355,13 @@ class HistoryManager:
         pinned). Purely cosmetic — never creates a snapshot.
         """
         snaps = self.list_snapshots(quam_state_path)
+        # docs/250: the marker is this FOLDER's -- another folder with the same
+        # chip name keeps its own baseline row, so neither matching nor
+        # releasing reaches a row this folder did not record
+        srcs = self.snapshot_sources(quam_state_path, snaps)
+        snaps = [s for s in snaps
+                 if (srcs.get(s.timestamp) or {}).get("kind") in (SOURCE_THIS,
+                                                                   SOURCE_RUN)]
         match = next((s for s in snaps if s.state_hash == state_hash), None)
         for s in snaps:
             if (s.label == LIVE_BASELINE_LABEL
@@ -3218,10 +3557,20 @@ class HistoryManager:
         path = Path(quam_state_path)
         snapshots = self.list_snapshots(path)          # newest-first, cached
         meta_by_ts = {m.timestamp: m for m in snapshots}
+        # docs/250: which folder each row came from, relative to THIS folder.
+        # Rows another folder with the same chip name recorded while this one
+        # had its own history are not this folder's timeline: interleaving
+        # them made fake change points (A's value -> B's -> A's) and put B's
+        # newest value on top of A's popover. They are left out and COUNTED
+        # (``other_folders``) -- never silently.
+        srcs, first_own = self._sources_and_cut(path, snapshots)
+        mine = [m for m in snapshots
+                if srcs[m.timestamp]["lineage"] != LINEAGE_PARALLEL]
         out: dict[str, Any] = {
             "dot_path": dot_path, "points": [],
             "total_snapshots": len(snapshots), "scanned": 0,
             "truncated": False, "source": "scan", "runs_merged": 0,
+            "parallel_hidden": 0, "other_folders": [],
         }
 
         # (ts, value, trigger, run_id, experiment, folder) oldest-first
@@ -3254,12 +3603,35 @@ class HistoryManager:
             leaf_rows = self.leaf_field_series(path, dot_path)
             if leaf_rows:
                 out["source"] = "leaf-index"
-                out["scanned"] = len(snapshots)
+                out["scanned"] = len(mine)
                 series = [tuple(r) for r in leaf_rows]
         if not series:
             out["source"] = "scan"
+            # the scan budget is spent on THIS folder's timeline only
             series, out["scanned"], out["truncated"] = self._scan_field_series(
-                path, snapshots, dot_path, scan_limit)
+                path, mine, dot_path, scan_limit)
+
+        # docs/250: every row carries its source as a 7th slot; a parallel
+        # folder's row leaves the timeline here and is counted instead.
+        kept: list[tuple] = []
+        hidden: dict[str, dict] = {}
+        for r in series:
+            r = tuple(r)[:6]
+            ent = self._row_source(srcs, first_own, r[0], r[2], r[5])
+            if ent["lineage"] == LINEAGE_PARALLEL:
+                h = hidden.setdefault(ent["folder"] or "", {
+                    "folder": ent["folder"], "label": ent["label"],
+                    "snapshots": 0})
+                h["snapshots"] += 1
+                continue
+            kept.append(r + (ent,))
+        if hidden:
+            if out["source"] == "index":
+                out["scanned"] = len(kept)
+            out["parallel_hidden"] = sum(h["snapshots"] for h in hidden.values())
+            out["other_folders"] = sorted(hidden.values(),
+                                          key=lambda h: -h["snapshots"])
+        series = kept
 
         if extra_series:
             out["runs_merged"] = len(extra_series)
@@ -3269,7 +3641,9 @@ class HistoryManager:
             # (its meta already knows the folder) and the direct run row
             # dedups away when values agree.
             merged = ([(r, 0) for r in series]
-                      + [(tuple(r), 1) for r in extra_series])
+                      + [(tuple(r)[:6] + (self._source_entry(
+                          SOURCE_RUN, tuple(r)[5], LINEAGE_RUN),), 1)
+                         for r in extra_series])
             merged.sort(key=lambda t: (t[0][0], t[1]))
             series = [r for r, _rank in merged]
 
@@ -3291,7 +3665,7 @@ class HistoryManager:
             points = points[:max_points]
             out["truncated"] = True
 
-        for ts, value, trigger, run_id, experiment, folder in points:
+        for ts, value, trigger, run_id, experiment, folder, src in points:
             meta = meta_by_ts.get(ts)
             out["points"].append({
                 "timestamp": ts,
@@ -3305,6 +3679,10 @@ class HistoryManager:
                 # lose the meta → no data link)
                 "experiment_folder_path": folder or (
                     meta.experiment_folder_path if meta else None),
+                # docs/250: WHERE this row was recorded, relative to the folder
+                # being shown -- "other"/"unknown" rows are labelled, never
+                # presented as this folder's
+                "source": src,
             })
         return out
 
@@ -3392,6 +3770,11 @@ class HistoryManager:
         out: dict[str, list[tuple]] = {row: [] for row in path_map}
         if not path_map:
             return out
+        # docs/250: field_history's rule -- a parallel folder's rows are not
+        # this folder's column history (they made fake change points)
+        srcs, first_own = self._sources_and_cut(path, snapshots)
+        snapshots = [m for m in snapshots
+                     if srcs[m.timestamp]["lineage"] != LINEAGE_PARALLEL]
 
         # Index fastpath: one column = one suffix; rows are entity names.
         props = {self._tracked_property_for(dp) for dp in path_map.values()}
@@ -3420,6 +3803,9 @@ class HistoryManager:
                 for row, ent in entity_by_row.items():
                     row_by_entity.setdefault(ent, []).append(row)
                 for ts, ent, value, trigger, run_id, exp in rows:
+                    if self._row_source(srcs, first_own, ts, trigger, None)[
+                            "lineage"] == LINEAGE_PARALLEL:
+                        continue
                     meta = meta_by_ts.get(ts)
                     folder = meta.experiment_folder_path if meta else None
                     for row in row_by_entity.get(ent, ()):

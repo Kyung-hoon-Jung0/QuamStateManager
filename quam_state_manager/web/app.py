@@ -565,6 +565,20 @@ def create_app(*, testing: bool = False, instance_path: str | None = None) -> Fl
     # history surface so no template invents a second reading.
     from quam_state_manager.core.history import kind_for as _kind_for
     app.jinja_env.globals["kind_for"] = _kind_for
+
+    # `snapshot_source` (docs/250) — which folder recorded a SnapshotMeta row,
+    # relative to the folder on screen ("this" / "run" / "other" / "unknown").
+    # One chip identity can span folders; a row from another folder must say
+    # so wherever a template lists snapshot metas. A failure renders no badge.
+    def _snapshot_source(meta, path):
+        if not path:
+            return None
+        try:
+            return app.config["history_manager"].snapshot_source(meta, path)
+        except Exception:  # noqa: BLE001 -- a label never breaks a render
+            return None
+
+    app.jinja_env.globals["snapshot_source"] = _snapshot_source
     # `json_attr_safe` — may this value ride a data-value JSON attribute for
     # the per-value take? json.dumps emits bare NaN/Infinity (not JSON), so a
     # non-finite float renders an unparseable attribute and a ✓ that can

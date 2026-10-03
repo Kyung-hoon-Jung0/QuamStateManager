@@ -1,0 +1,15 @@
+{# docs/250 — WHERE a history row was recorded, relative to the folder on
+   screen. One chip identity keeps ONE history across folders (the identity
+   ladder: the same chip opened from a new folder stays continuous), so a row
+   can come from another folder that carries the same chip name. That row says
+   so, and a row whose folder cannot be shown says THAT, instead of reading as
+   this folder's. Rows recorded from this folder, and run rows (named by their
+   run elsewhere on the row), render nothing. `src` is one entry of
+   HistoryManager.snapshot_sources. #}
+{% macro source_badge(src, cls='') -%}
+{%- if src and src.kind == 'other' -%}
+<span class="snap-src {{ cls }}" title="Recorded from another folder with the same chip name: {{ src.folder }}{% if src.lineage == 'earlier' %} — before this folder's own history began{% else %} — while this folder had its own history{% endif %}">from {{ src.label or src.folder }}</span>
+{%- elif src and src.kind == 'unknown' -%}
+<span class="snap-src snap-src-unknown {{ cls }}" title="No source folder is recorded for this row, so it cannot be shown to come from this folder">source unknown</span>
+{%- endif -%}
+{%- endmacro %}

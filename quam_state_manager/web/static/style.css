@@ -12313,6 +12313,11 @@ body.scheduler-active #pending-tray { opacity: .5; pointer-events: none; }
 .fh-use:hover { border-color: var(--pico-primary); color: var(--pico-primary); }
 .fh-data:hover { border-color: var(--pico-primary); color: var(--pico-primary); }
 .fh-foot { margin: .3rem 0 0; font-size: .66rem; color: var(--color-text-muted); }
+/* docs/250: the recording folder rides its own line under the value (the
+   widest cell; the narrow one-line "Set by" cell clipped it to "from la...") */
+.fh-val .fh-srcfolder { display: block; width: max-content; max-width: 100%;
+    margin-top: .15rem; font-size: .62rem; }
+.fh-other-note { margin: .3rem 0 0; font-size: .66rem; color: var(--color-text-muted); }
 
 /* inspector-row button — INSIDE the edit box (search-icon pattern), never a
    separate element beside it. .fh-host scopes this to the qubit/pair detail
@@ -13162,6 +13167,15 @@ td.vc-cell-takeable:focus-within .vc-take,
     letter-spacing: 0.04em; opacity: 0.75; }
 .sv-now { font-size: 0.66rem; color: var(--pico-primary); }
 .sv-label { font-weight: 600; }
+/* docs/250 -- a history row recorded from ANOTHER folder with the same chip
+   name (or from a folder that is not recorded) says so. Muted outline pill,
+   the project badge's family: a provenance note, not a warning. */
+.snap-src { font-size: 0.66rem; color: var(--pico-muted-color);
+    border: 1px solid var(--pico-muted-border-color, var(--pico-form-element-border-color));
+    border-radius: 999px; padding: 0 0.4rem; white-space: nowrap;
+    max-width: 16rem; overflow: hidden; text-overflow: ellipsis;
+    display: inline-block; vertical-align: middle; }
+.snap-src-unknown { border-style: dashed; }
 .sv-exp, .sv-note { font-size: 0.72rem; }
 /* Compact per the customer: NOT right-pinned. The actions follow the date
    directly (they are what the row is reached for), and .sv-meta takes the

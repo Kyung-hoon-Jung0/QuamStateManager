@@ -1,4 +1,5 @@
 {% from '_snapshot_zero_label.html' import zero_diff_label %}
+{% from '_snapshot_source.html' import source_badge %}
 <div id="history-list">
 {% if snapshots | length > 0 %}
 <div class="history-toolbar">
@@ -38,6 +39,8 @@
         <span class="history-entry-time">{{ s.timestamp | ts_local }}</span>
         {% set _k = kind_for(s) %}<span class="sv-kind sv-kind-{{ _k[0] }}{% if _k[1] %} sv-kind-legacy{% endif %}" title="{% if _k[0] == 'exp' %}A run produced this state{% elif _k[0] == 'backup' %}Protective copy taken right before a write{% else %}A deliberate user change{% endif %}{% if _k[1] %} (recorded before kinds existed; likely reading){% endif %}">{{ {'exp': 'EXP', 'manual': 'MANUAL', 'backup': 'BACKUP'}[_k[0]] }}</span>
         <span class="history-trigger-badge history-trigger-{{ s.trigger }}">{{ s.trigger }}</span>
+        {# docs/250: which folder recorded this row, when it is not this one #}
+        {{ source_badge(snapshot_source(s, active_path), 'hp-src') }}
         {% if s.diff_summary.total > 0 %}
         <span class="diff-badge diff-added" title="Added">+{{ s.diff_summary.added }}</span>
         <span class="diff-badge diff-removed" title="Removed">-{{ s.diff_summary.removed }}</span>
