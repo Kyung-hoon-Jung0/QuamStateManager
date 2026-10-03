@@ -56,10 +56,10 @@ class TestEveryBoxUsesIt:
     """A template that writes its own placeholder is the drift this stops."""
 
     # Not search boxes: narrow PICKERS over a short list of names (which sort
-    # key, which experiment class), whose own aria-label already says what they
-    # pick. Exempt by id, so a new box cannot inherit the exemption by copying
-    # a placeholder string.
-    PICKERS = {"sort-key-filter", "sort-param-filter", "sched-lib-filter"}
+    # key, which experiment class, which IANA time zone -- docs/263), whose own
+    # aria-label already says what they pick. Exempt by id, so a new box cannot
+    # inherit the exemption by copying a placeholder string.
+    PICKERS = {"sort-key-filter", "sort-param-filter", "sched-lib-filter", "landing-tz-filter"}
     ALLOWED = {"= e.g. 0.5*10^(-25/20)"}
 
     def test_no_template_hand_writes_a_search_placeholder(self):
