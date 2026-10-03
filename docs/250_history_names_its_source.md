@@ -202,3 +202,15 @@ events. 21/21 checks, 0 console errors:
   this fix keep their counts.
 - **State-tracking hub:** its SM events should record the folder of the write
   door, so the ledger can answer "this folder's newest" the way this fix does.
+
+## Follow-up at integration: the agent's versions name their folder
+
+`/api/agent/versions` (the MCP `versions` tool) read the same rows with nothing saying whose they were. Each row now carries `source` (this / run / other / unknown, with the folder label and lineage), and the response adds `other_folders`. The tool description says that a row from another folder with the same chip name is not this folder's history.
+
+**Decisions** (made by the coordinator under the project's provenance rule):
+- A bookmark taken while an archive is open stays as it is: labelled, and kept out of the open folder's timeline.
+- Parallel rows stay out of value timelines, with their count stated.
+- A chip whose history already mixes folders starts a fresh drift baseline once.
+
+**Pin:** `test_the_agents_versions_name_their_folder`; reverting the endpoint turns it red.
+

@@ -498,7 +498,7 @@ TOOLS: dict[str, tuple[dict, Any]] = {
     "apply_to_live": (_s("Write the staged tray to the live state.json/wiring.json through SM's one door. "
                          "Refuses if a human edited something in the SM window you have not seen; never forces."),
                       t_apply_to_live),
-    "versions": (_s("Recent state snapshots (versions) of the open chip: when, what triggered them, which run.",
+    "versions": (_s("Recent state snapshots (versions) of the open chip: when, what triggered them, which run. Each row's source says which folder recorded it (this / run / other / unknown): a row from another folder with the same chip name is not this folder's history.",
                     n={"type": "integer"}), t_versions),
     "field_history": (_s("Change-point history of ONE dotted path across snapshots and runs.",
                          path={"type": "string", "required": True}), t_field_history),

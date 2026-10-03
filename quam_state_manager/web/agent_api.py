@@ -299,17 +299,24 @@ def versions():
     if not path:
         return _err("no chip loaded", 409)
     n = max(1, min(int(request.args.get("n") or 30), 500))
+    hm = r._history()
     try:
-        snaps = r._history().list_snapshots(path)
+        snaps = hm.list_snapshots(path)
     except Exception as exc:  # noqa: BLE001
         return _err(f"history unavailable: {exc}", 500)
+    try:   # docs/250 (B-03): which folder recorded each version -- never another folder's row as this one's
+        srcs, others = hm.snapshot_sources(path, snaps), hm.other_folder_summary(path, snaps)
+    except Exception:  # noqa: BLE001
+        srcs, others = {}, []
     rows = []
     for s in list(snaps)[:n]:
         rows.append({"timestamp": s.timestamp, "trigger": s.trigger, "kind": getattr(s, "kind", None),
                      "label": getattr(s, "label", None), "pinned": getattr(s, "pinned", False),
                      "run_id": s.run_id, "experiment": s.experiment_name,
-                     "diff": _jsonable(s.diff_summary)})
-    return jsonify(ok=True, count=len(rows), versions=rows)
+                     "diff": _jsonable(s.diff_summary),
+                     "source": srcs.get(s.timestamp) or {"kind": "unknown", "folder": None,
+                                                         "label": None, "lineage": "unknown"}})
+    return jsonify(ok=True, count=len(rows), versions=rows, other_folders=others)
 
 
 @agent_bp.route("/field-history")

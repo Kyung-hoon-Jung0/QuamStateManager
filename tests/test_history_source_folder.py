@@ -304,6 +304,15 @@ class TestTheSurfaces:
         assert [p["value"] for p in pts] == [5.01e9, 5.0e9]
         assert body["history"]["parallel_hidden"] == 2
 
+    def test_the_agents_versions_name_their_folder(self, app_two):
+        # docs/250 at integration: /api/agent/versions read the same rows with nothing saying whose
+        body = app_two["client"].get("/api/agent/versions?n=10").get_json()
+        kinds = [v["source"]["kind"] for v in body["versions"]]
+        assert kinds.count("other") == 2 and kinds.count("this") == 2, kinds
+        assert all(v["source"]["label"] == "labB/quam_state"
+                   for v in body["versions"] if v["source"]["kind"] == "other")
+        assert body["other_folders"], "the other folder is summarized for the agent"
+
     def test_live_drift_counts_this_folders_changes_only(self, app_two):
         """The State History banner "N parameters changed on the live chip
         since baseline": B's apply re-seeded the ONE per-chip baseline with
