@@ -334,32 +334,13 @@ def _same_node(a: str | None, b: str | None, resolve: Callable[[str], str | None
         return False
 
 
-def _canon(v):
-    """A param value as two runs are compared: an integral float is its int
-    (the node's parameter model reads them as one value), a bool is never a
-    number and a string never one, lists keep their order. The same rule as
-    docs/254's ``run_terms.canon`` -- when both are merged this module calls
-    that one (CLAUDE.md: two modules implementing one model share a function)."""
-    if v is None or isinstance(v, (bool, str, int)):
-        return v
-    if isinstance(v, float):
-        return int(v) if math.isfinite(v) and v.is_integer() and abs(v) < 2 ** 53 else v
-    if isinstance(v, dict):
-        return {str(k): _canon(x) for k, x in v.items()}
-    if isinstance(v, (list, tuple)):
-        return [_canon(x) for x in v]
-    return str(v)
-
-
 def same_terms(a_targets, a_params, b_targets, b_params) -> bool:
-    """Is it the same run (beside its node)? Targets are a SET -- order does
-    not change what runs; params compare canonically (``True`` is not ``1``,
+    """Is it the same run (beside its node)? ONE comparison with docs/254's approvals
+    (CLAUDE.md: two modules implementing one model call one shared function):
+    ``run_terms`` -- targets are a SET, params canonical (``True`` is not ``1``,
     ``"100"`` is not ``100``, ``100.0`` is ``100``)."""
-    ta = {str(t) for t in a_targets or []}
-    tb = {str(t) for t in b_targets or []}
-    pa = json.dumps(_canon(dict(a_params or {})), sort_keys=True)
-    pb = json.dumps(_canon(dict(b_params or {})), sort_keys=True)
-    return ta == tb and pa == pb
+    from quam_state_manager.core import run_terms
+    return run_terms.key(None, a_targets, a_params) == run_terms.key(None, b_targets, b_params)
 
 
 def _step_view(s: dict) -> dict:
