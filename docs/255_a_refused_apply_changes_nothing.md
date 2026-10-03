@@ -245,3 +245,10 @@ Console: 0 JS exceptions, 0 console errors, 0 log errors. Chrome logged 2
 interventions ("Blocked attempt to show a 'beforeunload' confirmation panel for a
 frame that never had a user gesture") for the automated back/reload; the journey
 reports them apart rather than dropping them.
+
+## Follow-up at integration: the write-failure take-back is verbatim too
+
+`agent_api._take_back_saved` (a live write that fails after the save) now writes each old value with `coerce=False`. Before, an int field widened by a float came back as `5000000000.0`.
+
+**Pin:** `tests/test_takeback_verbatim.py`. Dropping `coerce=False` turns it red.
+

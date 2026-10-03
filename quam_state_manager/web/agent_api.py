@@ -1414,7 +1414,9 @@ def _take_back_saved(r, ctx, staged: list, before: dict) -> str | None:
     try:
         with store._lock:
             for e in reversed(staged):
-                inv = mod.set_value(e.dot_path, e.old_value, _defer_hooks=True,
+                # docs/255 P3: the old value goes back VERBATIM -- a coercing write turned an
+                # int field widened by a float back into 7126044234.0, which then reached live
+                inv = mod.set_value(e.dot_path, e.old_value, _defer_hooks=True, coerce=False,
                                     group_id=f"{e.group_id}:takeback")
                 inv.actor = getattr(e, "actor", "human")
             store._clear_pointer_cache()
