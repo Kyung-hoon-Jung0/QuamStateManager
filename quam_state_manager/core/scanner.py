@@ -1672,7 +1672,11 @@ def _make_standalone_entry(quam_state_path: Path) -> ExperimentEntry:
 
     try:
         mtime = (quam_state_path / "state.json").stat().st_mtime
-        ts = datetime.fromtimestamp(mtime).isoformat()
+        # docs/262: an mtime IS an instant -- keep this machine's offset in
+        # the string, so no reader has to guess the zone of a naive one
+        # (``timefmt.to_utc`` reads a naive ISO as UTC; the history key read
+        # it as local). The digits are unchanged.
+        ts = datetime.fromtimestamp(mtime).astimezone().isoformat()
     except OSError:
         ts = ""
 

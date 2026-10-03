@@ -30,7 +30,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
-from quam_state_manager.core import dir_sample, leaf_index, safe_io
+from quam_state_manager.core import dir_sample, leaf_index, run_time, safe_io
 from quam_state_manager.core.differ import DiffEntry, Differ
 from quam_state_manager.core.loader import QuamStore, natural_key
 from quam_state_manager.core.query import (
@@ -482,6 +482,9 @@ def _ts_stamp() -> str:
 # root on Windows where backslash is a separator) must be rejected pre-join.
 # history_seq_for re-resolves the identity ladder at most this often (docs/132).
 _HIST_SEQ_RESOLVE_TTL_S = 10.0
+
+# docs/262: _run_key_slot found every collision key of a second taken.
+_KEY_SLOTS_FULL = object()
 
 _HIST_TS_RE = re.compile(r"^\d{8}_\d{6}(_\d{1,6})?$")
 
@@ -6378,6 +6381,10 @@ class HistoryManager:
             }
         except Exception:
             pass
+        # docs/262: WHICH run each stored stamp holds (the index answers it in
+        # one query), so a key already taken by ANOTHER run in the same UTC
+        # second is a collision to step around, never "already ingested".
+        index_runs = self._index_run_slots(conn)
 
         ingested = 0
         skipped_duplicate = 0
@@ -6408,8 +6415,19 @@ class HistoryManager:
 
         try:
             for i, entry in enumerate(entries):
-                ts = self._entry_timestamp(entry)
-                if ts in existing_ts:
+                base_ts = self._entry_timestamp(entry)
+                ts = self._run_key_slot(target_dir, base_ts, entry,
+                                        existing_ts, index_runs)
+                if ts is None:
+                    # this run is already stored (under its key or a
+                    # collision key) -- the normal re-ingest no-op
+                    _tick(i)
+                    continue
+                if ts is _KEY_SLOTS_FULL:
+                    _record_failure(
+                        base_ts, entry,
+                        f"{run_time.COLLISION_MAX + 1} other runs already "
+                        f"hold this second's key {base_ts}")
                     _tick(i)
                     continue
 
@@ -6540,6 +6558,8 @@ class HistoryManager:
                 except Exception:
                     logger.warning("Could not index backfilled snapshot %s", ts, exc_info=True)
                 existing_ts.add(ts)
+                index_runs[ts] = (getattr(entry, "run_id", None), exp_name,
+                                  str(run_folder) if run_folder else None)
                 if content_hash is not None:
                     self._known_hashes_for_chip(target_dir).add(content_hash)
                 ingested += 1
@@ -6680,11 +6700,11 @@ class HistoryManager:
         if force_renamed:
             entries.extend(scan["renamed"])
 
-        entries.sort(key=lambda e: (
-            getattr(e, "date_str", "") or "",
-            getattr(e, "run_id", 0) or 0,
-            getattr(e, "timestamp", "") or "",
-        ))
+        # docs/262: ingest in INSTANT order (the key's own order), so runs of
+        # two archives in different zones interleave correctly and the leaf
+        # index sees them in order (an out-of-order ingest marks it dirty).
+        entries.sort(key=lambda e: (self._entry_timestamp(e),
+                                    getattr(e, "run_id", 0) or 0))
 
         # Cumulative total across all chip groups so the UI's progress bar
         # climbs continuously instead of resetting per group.
@@ -6721,10 +6741,7 @@ class HistoryManager:
         progress_cursor = len(entries)
         for chip_label, chip_entries in scan["different_chip"].items():
             chip_entries_sorted = sorted(chip_entries, key=lambda e: (
-                getattr(e, "date_str", "") or "",
-                getattr(e, "run_id", 0) or 0,
-                getattr(e, "timestamp", "") or "",
-            ))
+                self._entry_timestamp(e), getattr(e, "run_id", 0) or 0))
             # Route through the identity ladder using a representative
             # entry's quam_state (an extras-named sibling chip lands in its
             # name-keyed dir, not chip_name_for's collapsed parent name).
@@ -6781,42 +6798,158 @@ class HistoryManager:
         }
 
     @staticmethod
-    def _entry_timestamp(entry: Any) -> str:
-        """Build a SnapshotMeta-compatible timestamp from an ExperimentEntry.
+    def _index_run_slots(conn: sqlite3.Connection) -> dict[str, tuple]:
+        """``{stamp: (run_id, experiment, folder)}`` for every run row the
+        index holds -- curated rows for run id + name, the leaf table for the
+        run folder. One pass each; never raises (an unreadable index answers
+        nothing, and the dir check in :meth:`_run_key_slot` still holds)."""
+        out: dict[str, tuple] = {}
+        try:
+            for ts, rid, exp in conn.execute(
+                    "SELECT timestamp, MAX(run_id), MAX(experiment) "
+                    "FROM param_history GROUP BY timestamp"):
+                out[ts] = (rid, exp, None)
+        except sqlite3.Error:
+            pass
+        try:
+            for ts, rid, exp, folder in conn.execute(
+                    "SELECT ts, run_id, experiment, folder FROM leaf_snaps"):
+                old = out.get(ts) or (None, None, None)
+                out[ts] = (old[0] if old[0] is not None else rid,
+                           old[1] if old[1] is not None else exp, folder)
+        except sqlite3.Error:
+            pass
+        return out
 
-        Format ``YYYYMMDD_HHMMSS_NNN`` where NNN is the zero-padded run_id mod 1000
-        to ensure uniqueness when two runs share the same HHMMSS bucket.
-        Reads ``date_str`` (e.g. ``"2026-04-30"``) and the time portion of ISO
-        ``timestamp`` (e.g. ``"2026-04-30T12:00:00"``).
+    @staticmethod
+    def _same_run_holder(holder: tuple | None, meta: dict | None,
+                         entry: Any) -> bool:
+        """Is the snapshot under a stamp THIS run (docs/262)?
+
+        [derived] Identity is the run id, the experiment name and the run
+        folder's last two components (``<date dir>/<#N_name_HHMMSS>``) --
+        never the full path: the same run reached through two spellings of
+        its archive root (a mapped drive and its UNC path, a copy) is one
+        run, and a full-path test would re-copy it on every backfill. Any
+        part the holder does not record is not compared. A holder that
+        records nothing at all (a pre-provenance row) is taken as this run:
+        the pre-docs/262 behaviour, which never re-ingested over it."""
+        def tail(folder: Any) -> str | None:
+            if not folder:
+                return None
+            f = Path(str(folder).replace("\\", "/"))
+            return f"{f.parent.name}/{f.name}".casefold()
+
+        if meta is not None:
+            h_rid = meta.get("run_id")
+            h_exp = meta.get("experiment_name")
+            h_tail = tail(meta.get("experiment_folder_path"))
+        elif holder is not None:
+            h_rid, h_exp, h_folder = holder
+            h_tail = tail(h_folder)
+        else:
+            return True
+        e_rid = getattr(entry, "run_id", None)
+        e_exp = getattr(entry, "experiment_name", None)
+        e_tail = tail(getattr(entry, "folder_path", None))
+        compared = False
+        for h, e in ((h_rid, e_rid), (h_exp, e_exp), (h_tail, e_tail)):
+            if h is None or e is None:
+                continue
+            compared = True
+            if h != e:
+                return False
+        return True if compared else (h_rid is None and h_exp is None
+                                      and h_tail is None)
+
+    def _run_key_slot(self, target_dir: Path, base_ts: str, entry: Any,
+                      existing_ts: set[str], index_runs: dict[str, tuple]):
+        """The stamp this run is (or will be) stored under (docs/262).
+
+        ``None`` -- the run is already stored under ``base_ts`` or one of its
+        collision keys. Otherwise the first free one of ``base_ts``,
+        ``base_ts + "01"``, ... (``run_time.collision_key``): a stamp is
+        taken when the index has rows for it OR a snapshot dir with a
+        ``meta.json`` exists. ``_KEY_SLOTS_FULL`` when every slot holds
+        another run.
+
+        Before docs/262 a taken stamp was always "already ingested": a
+        second run in the same UTC second with the same ``run_id % 1000``
+        was silently dropped, and a dir with no index rows (a state with no
+        tracked property) was re-written and then DELETED by the dedup
+        branch below.
         """
+        for k in range(run_time.COLLISION_MAX + 1):
+            cand = base_ts if k == 0 else run_time.collision_key(base_ts, k)
+            holder = index_runs.get(cand)
+            if cand in existing_ts or holder is not None:
+                # the index knows the stamp: it answers WHICH run, no file I/O
+                # (a re-backfill of thousands of runs stays read-free)
+                if self._same_run_holder(holder, None, entry):
+                    return None
+                continue
+            # unknown to the index: a dir may still hold it (no tracked
+            # property, or its index write has not landed yet)
+            meta_p = target_dir / cand / "meta.json"
+            if not meta_p.exists():
+                return cand
+            try:
+                meta = json.loads(meta_p.read_text(encoding="utf-8"))
+            except (OSError, ValueError):
+                meta = {}
+            if self._same_run_holder(None, meta if isinstance(meta, dict) else {},
+                                     entry):
+                return None
+        return _KEY_SLOTS_FULL
+
+    @staticmethod
+    def _entry_timestamp(entry: Any) -> str:
+        """The Param History key of one run (docs/262): ``YYYYMMDD_HHMMSS_NNN``,
+        the UTC second of the run's INSTANT, NNN = run id mod 1000.
+
+        The instant is :func:`run_time.resolve` -- ``timefmt.run_instant``
+        (docs/256) over the run's own ``created_at`` / ``metadata.run_end``
+        (``entry.timestamp`` / ``entry.run_end``), then its ``node.json``,
+        then the folder clock in the archive's offset. The ONE reading every
+        path uses: the backfill (scanner entries), the near-real-time ingest
+        (``routes._exp_entry_for_run``) and the runs tier
+        (``routes._run_ts_stamp``) key the same run identically.
+
+        Before docs/262 this cut the ISO string to HH:MM:SS, dropped its
+        offset and read the digits in THIS machine's zone: a -04:00 archive
+        landed 13 h early on a +09:00 server. An aware ``created_at`` read
+        on a machine in its own zone gives the very same key as before, so
+        that history needs no re-key (``migrate_history_rekey_v4`` moves
+        the rest).
+
+        Entry duck type: ``timestamp`` (raw created_at), optional
+        ``run_end``, ``folder_path``, ``run_id``, ``date_str``.
+        """
+        run_id = getattr(entry, "run_id", 0) or 0
+        utc_us, _quality = run_time.resolve(
+            getattr(entry, "timestamp", None) or None,
+            getattr(entry, "run_end", None),
+            getattr(entry, "folder_path", None) or None)
+        if utc_us is not None:
+            return run_time.snapshot_key(utc_us, run_id)
+        return HistoryManager._undated_entry_stamp(entry)
+
+    @staticmethod
+    def _undated_entry_stamp(entry: Any) -> str:
+        """No instant at all (no created_at, run_end, node.json or folder
+        clock): the pre-docs/262 fallback, kept so such an entry keeps the key
+        it always had -- its date dir at local midnight, else the epoch."""
         date = (getattr(entry, "date_str", "") or "").replace("-", "")
-        ts_iso = getattr(entry, "timestamp", "") or ""
-        time_str = ""
-        if "T" in ts_iso:
-            time_str = ts_iso.split("T", 1)[1][:8].replace(":", "")
         if not date:
             date = "19700101"
-        if not time_str:
-            time_str = "000000"
-        time_str = (time_str + "000000")[:6]  # pad if missing seconds
         run_id = getattr(entry, "run_id", 0) or 0
-        suffix = f"{run_id % 1000:03d}"
-        # LOCAL → UTC (docs/132 review, critical): run folders carry local
-        # wall-clock (qualibrate's convention) while every captured snapshot
-        # is stamped UTC (_ts_stamp) — mixing the two in one lexically-sorted
-        # namespace floated a fresh EXP row hours "into the future" on any
-        # non-UTC machine (panel mis-ordered, ts_local displaying the wrong
-        # time, ordinals lying). Interpreting the run stamp as this machine's
-        # local time is the honest reading — the run was produced here.
-        # Previously-ingested rows keyed under the old local-time string are
-        # safe: a re-ingest under the UTC key content-hash-dedups.
         try:
-            naive = datetime.strptime(f"{date}_{time_str}", "%Y%m%d_%H%M%S")
+            naive = datetime.strptime(f"{date}_000000", "%Y%m%d_%H%M%S")
             stamp = naive.astimezone().astimezone(
                 timezone.utc).strftime("%Y%m%d_%H%M%S")
         except ValueError:
-            stamp = f"{date}_{time_str}"
-        return f"{stamp}_{suffix}"
+            stamp = f"{date}_000000"
+        return f"{stamp}_{run_id % 1000:03d}"
 
 
 # ----------------------------------------------------------------------

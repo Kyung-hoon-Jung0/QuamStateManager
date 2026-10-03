@@ -18,12 +18,14 @@ import threading
 import time as _time
 from collections import OrderedDict, deque
 from concurrent.futures import ThreadPoolExecutor
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace as _dc_replace
 from datetime import datetime
 from pathlib import Path
 from typing import Any
 
 from quam_state_manager.core import dir_sample
+from quam_state_manager.core import run_time as _run_time
+from quam_state_manager.core import timefmt as _timefmt
 from quam_state_manager.core import safe_io
 from quam_state_manager.core import units
 from quam_state_manager.core.loader import natural_key
@@ -52,7 +54,9 @@ _COLD_SCAN_BUDGET_S = 3.0
 # meaning changes (a mismatch reads as a miss: one cold scan, then flat).
 # v2 (F21): key_metric no longer carries a raw "nan" -- a v1 cache would
 # re-serve it on every warm start.
-_STORE_CACHE_V = 2
+# v3 (docs/262): every run carries its raw ``created_at`` and its resolved
+# instant -- a v2 row has neither, and would serve the folder clock.
+_STORE_CACHE_V = 3
 # A scan that changed something writes the cache this long after the LAST
 # such scan -- a burst of landing runs is one write, not one per run.
 # The persisted index is only an accelerator (docs/171): losing 30 s on a
@@ -145,6 +149,16 @@ class RunInfo:
     run_end: str | None = None
     run_duration_s: float | None = None
     status: str = ""
+    # docs/262: node.json's raw ``created_at`` and the run's INSTANT --
+    # ``timefmt.run_instant`` over created_at / run_end / the folder clock in
+    # the archive's offset (``DatasetStore._settle_instants``). UTC epoch
+    # microseconds, or None when nothing dates the run; ``instant_q`` is the
+    # evidence quality (offset / archive_offset / assumed_local / none).
+    # ``date`` / ``time`` stay the acquisition PC's wall clock (the folder
+    # name) -- what the Date/Time columns and the detail header show.
+    created_at: str | None = None
+    instant_us: int | None = None
+    instant_q: str = ""
 
     # From data.json
     fit_results: dict[str, Any] = field(default_factory=dict)
@@ -246,6 +260,10 @@ def _compact_row(run: "RunInfo") -> dict:
         "tags": run.tags,
         "status": run.status,
         "dur": run.run_duration_s,
+        # docs/262: the run's instant (UTC epoch ms) -- the When column and its
+        # sort read this, never the folder digits in the browser's zone
+        "t": (run.instant_us // 1000) if run.instant_us is not None else None,
+        "tq": run.instant_q,
         "note": run.note,
         "parent": run.parent_id,
         "hs": run.has_quam_state,
@@ -447,6 +465,12 @@ class DatasetStore:
         self.dates: list[str] = []
         self.experiment_types: list[str] = []
         self._run_ids_sorted: list[int] = []  # ascending; rebuilt in _scan
+        # docs/262: this archive's majority explicit offset (the vote of
+        # ``timefmt.archive_offset_hint`` over every run), which dates the
+        # runs whose own evidence is naive. ``_settle_instants`` keeps it.
+        self._offset_hint: str | None = None
+        self._settled_gen = -1
+        self._published_gen = -1
         # LRU-bounded cache of parsed data.json content, keyed by run_id.
         # Bounded so a workspace with thousands of runs doesn't pin multi-GB
         # of JSON in memory (red-team Phase 2 finding §3.2). Guarded by
@@ -739,6 +763,12 @@ class DatasetStore:
         description = (metadata.get("description") or "").strip()
         run_start = metadata.get("run_start")
         run_end = metadata.get("run_end")
+        created_at = node_data.get("created_at")
+        if not isinstance(created_at, str):
+            created_at = None
+        instant_us, instant_q = _timefmt.run_instant(
+            _timefmt.node_times(created_at, run_end), run_entry,
+            offset_hint=self._offset_hint)
         parents = node_data.get("parents", [])
         parent_id = parents[0] if parents else None
 
@@ -761,6 +791,9 @@ class DatasetStore:
             run_end=run_end,
             run_duration_s=_calc_duration(run_start, run_end),
             status=metadata.get("status", ""),
+            created_at=created_at,
+            instant_us=instant_us,
+            instant_q=instant_q,
             fit_results=fit_results,
             figure_names=figure_names,
             has_ds_raw=(run_entry / "ds_raw.h5").exists(),
@@ -1083,6 +1116,8 @@ class DatasetStore:
             self._date_fp = fresh_date_fp
             self.dates = sorted(dates_set, reverse=True)
             self.experiment_types = sorted(experiments_set, key=natural_key)
+        # docs/262: date every run against the archive's own offset.
+        self._settle_instants(complete=not truncated)
         # Sorted run-id index for O(log n) previous/next-run lookups (the
         # prev-state diff). Rebuilt here whenever self.runs changes.
         self._run_ids_sorted = sorted(self.runs.keys())
@@ -1106,6 +1141,50 @@ class DatasetStore:
                 len(self.dates),
             )
         return truncated
+
+    def _settle_instants(self, *, complete: bool) -> None:
+        """docs/262: every run's instant against the archive's own offset.
+
+        A run's aware ``created_at`` (or ``run_end``) dates it by itself; one
+        whose evidence is naive -- or only its folder name -- is read in the
+        archive's majority offset (``timefmt.archive_offset_hint`` over every
+        run here), else the machine zone (``assumed_local``). The vote can
+        move as runs land, so the naive runs are re-dated whenever it does;
+        each re-dated run is a replaced RunInfo (copy-on-write, counted in
+        ``generation``/``exp_gen``) so every RAM consumer -- the trend index
+        included -- sees the change. A complete walk publishes the vote for
+        the history paths (:func:`run_time.publish_root_hint`), so the Param
+        History key and this table date a naive run alike. Runs under
+        ``_scan_lock`` (the caller's).
+        """
+        if self._settled_gen == self.generation and (
+                not complete or self._published_gen == self.generation):
+            return                       # nothing changed since the last vote
+        hint = _timefmt.archive_offset_hint(
+            _timefmt.node_times(r.created_at, r.run_end)
+            for r in self.runs.values())
+        if complete:
+            _run_time.publish_root_hint(self.folder_path, hint)
+        if hint != self._offset_hint:
+            self._offset_hint = hint
+            stamp = None
+            for rid, r in list(self.runs.items()):
+                if r.instant_q == "offset":
+                    continue
+                us, q = _timefmt.run_instant(
+                    _timefmt.node_times(r.created_at, r.run_end),
+                    r.folder_path, offset_hint=hint)
+                if us == r.instant_us and q == r.instant_q:
+                    continue
+                if stamp is None:
+                    stamp = self._stamp()
+                new = _dc_replace(r, instant_us=us, instant_q=q)
+                new.last_parsed = stamp
+                self.runs[rid] = new
+                self._note_run_change(rid, r, new)
+        self._settled_gen = self.generation
+        if complete:
+            self._published_gen = self.generation
 
     # ------------------------------------------------------------------
     # docs/171: the persisted store -- the docs/142 A' shape for the run table
@@ -1808,6 +1887,10 @@ class DatasetStore:
             "parent_id": run.parent_id,
             "run_start": run.run_start,
             "run_end": run.run_end,
+            # docs/262: the run's instant (UTC epoch us) + evidence quality
+            "created_at": run.created_at,
+            "instant_us": run.instant_us,
+            "instant_q": run.instant_q,
             "duration_s": run.run_duration_s,
             "status": run.status,
             "fit_results": self._resolve_fit_refs(run),

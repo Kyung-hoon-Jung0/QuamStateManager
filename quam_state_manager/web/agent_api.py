@@ -797,10 +797,13 @@ def _newest_run_since(ts: float | None) -> int | None:
     ds = _ds()
     if not ds:
         return None
+    from quam_state_manager.core import story
     try:
         for row in ds.list_runs()[:5]:
-            when = datetime.strptime(f"{row.get('date')} {row.get('time')}", "%Y-%m-%d %H:%M:%S").timestamp()
-            if when >= ts - 5:
+            # docs/262: the run's instant vs the hook's epoch, not the folder digits
+            # read in this machine's zone (13 h off for a -04:00 lab on a +09:00 SM)
+            when = story.run_epoch(row, ds)
+            if when is not None and when >= ts - 5:
                 return int(row["run_id"])
     except Exception:  # noqa: BLE001
         return None
@@ -1092,9 +1095,10 @@ def _human_ran_recently(now: float, agent_runs: dict, ev: list[dict]) -> dict | 
     except Exception:  # noqa: BLE001
         mine = []
     for row in rows:
-        try:
-            when = datetime.strptime(f"{row.get('date')} {row.get('time')}", "%Y-%m-%d %H:%M:%S").timestamp()
-        except (TypeError, ValueError):
+        # docs/262: the run's instant vs ``now`` and the hook stamps; the returned
+        # ``ts`` is that instant too (the run adapter compares it with time.time())
+        when = story.run_epoch(row, ds)
+        if when is None:
             continue
         if now - when > _HUMAN_RECENT_S:
             continue
@@ -1693,7 +1697,9 @@ def _run_adapter():
             except Exception:  # noqa: BLE001
                 pass
             try:
-                return ds.list_runs()[:60]
+                # docs/262: each row carries the run's instant -- the engine's
+                # attribution window is a time.time() epoch
+                return story.with_instants(ds.list_runs()[:60], ds)
             except Exception:  # noqa: BLE001
                 return []
 

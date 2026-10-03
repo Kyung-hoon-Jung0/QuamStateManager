@@ -168,6 +168,26 @@ def run_witnesses(node_json: Any, folder_mtime_utc_us: int | None = None,
             "skew_s": skew_s, "skew_class": skew_class}
 
 
+def node_times(created_at: Any = None, run_end: Any = None) -> dict:
+    """The two node.json fields :func:`run_instant` reads, in node.json's shape.
+
+    Callers that hold a run's raw ``created_at`` / ``metadata.run_end``
+    strings (a scanner entry, a dataset RunInfo) hand them over through this
+    one constructor, so every path asks :func:`run_instant` the same question
+    (docs/262)."""
+    return {"created_at": created_at, "metadata": {"run_end": run_end}}
+
+
+def utc_stamp(utc_us: int) -> str:
+    """``YYYYMMDD_HHMMSS`` of the UTC second that contains *utc_us*.
+
+    [derived] Floor, never round: a run saved at 12:00:00.9 belongs to the
+    second 12:00:00, the second a folder or an ISO string without fractions
+    names. Integer arithmetic, so no float epoch conversion loses a second
+    (docs/262)."""
+    return (_EPOCH + timedelta(microseconds=int(utc_us))).strftime("%Y%m%d_%H%M%S")
+
+
 def to_utc(ts: Any) -> datetime | None:
     """The instant *ts* names, as an aware UTC datetime, or ``None``."""
     if ts is None or isinstance(ts, bool):

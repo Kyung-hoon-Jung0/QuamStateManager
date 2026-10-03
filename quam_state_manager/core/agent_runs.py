@@ -1100,9 +1100,11 @@ def _attribute(adapter: RunAdapter, node_name: str, window_start: float, *, poll
             # one rule for "this run folder is that node's" (docs/254: the replay check uses it too)
             if not run_terms.same_node(row.get("experiment_name"), node_name):
                 continue
-            try:
-                when = datetime.strptime(f"{row.get('date')} {row.get('time')}", "%Y-%m-%d %H:%M:%S").timestamp()
-            except (TypeError, ValueError):
+            # docs/262: the run's INSTANT (the adapter's rows carry it, story.with_instants)
+            # against the time.time() window -- never the folder digits read in this
+            # machine's zone, which put a -04:00 lab's fresh run 13 h early on a +09:00 SM.
+            when = story.run_epoch(row)
+            if when is None:
                 continue
             if when < window_start - 5:
                 continue

@@ -29,12 +29,14 @@ import hashlib
 import json
 import logging
 import re
+from collections.abc import Mapping
 from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Any, Callable
 
 from quam_state_manager.core.loader import natural_key
 from quam_state_manager.core import journal as journal_mod
+from quam_state_manager.core import run_time
 
 logger = logging.getLogger(__name__)
 
@@ -96,18 +98,99 @@ def _targets_in(entry: dict, targets: list[str]) -> bool:
 
 # --------------------------------------------------------------- run side
 
-def _epoch(iso: str | None, day: str | None = None, hms: str | None = None) -> float | None:
-    if iso:
+# docs/262: a run's time is read ONE way -- ``run_time`` (timefmt.run_instant,
+# docs/256). The folder digits (``date`` + ``time``) are the acquisition PC's
+# wall clock: read in the SERVER's zone they were 13 h off for a -04:00
+# archive on a +09:00 machine, against hook stamps, journal lines and undo
+# units that are all true epochs. Every helper below answers in epoch
+# seconds / UTC microseconds of the run's INSTANT.
+
+def _run_info(ds: Any, run_id: Any) -> Any:
+    """The store's ``RunInfo`` behind a row dict (it carries the instant the
+    DatasetStore resolved, archive offset included), or ``None``."""
+    runs = getattr(ds, "runs", None) if ds is not None else None
+    if not isinstance(runs, Mapping) or run_id is None:
+        return None
+    try:
+        return runs.get(int(run_id))
+    except (TypeError, ValueError):
+        return None
+
+
+def _clock_folder(day: Any, hms: Any) -> str | None:
+    """``<YYYY-MM-DD>/_<HHMMSS>``: a row's folder clock in the run-folder shape
+    ``timefmt`` reads, for a row that carries ``date``/``time`` but no folder."""
+    if not isinstance(day, str) or not isinstance(hms, str):
+        return None
+    digits = hms.replace(":", "")
+    return f"{day}/_{digits}" if len(digits) == 6 and digits.isdigit() else None
+
+
+def row_instant(run: Any, ds: Any = None) -> tuple[int | None, str]:
+    """``(utc_us, quality)`` of a run however the caller holds it (docs/262):
+
+    * a ``RunInfo`` (any non-mapping) -> :func:`run_time.instant_of`;
+    * a row dict whose ``run_id`` the store ``ds`` knows -> that RunInfo;
+    * a row that already carries ``instant_us`` (:func:`with_instants`);
+    * else :func:`run_time.resolve` over the row's ``created_at`` /
+      ``run_end`` / ``folder_path``; a row with only ``date`` + ``time``
+      reads that folder clock in the machine zone (``assumed_local``) --
+      [derived] with no folder there is no archive to take an offset from,
+      which is the run_instant rule's own last rung.
+    """
+    if not isinstance(run, Mapping):
+        return run_time.instant_of(run)
+    info = _run_info(ds, run.get("run_id"))
+    if info is not None:
+        return run_time.instant_of(info)
+    if "instant_us" in run:
         try:
-            return datetime.fromisoformat(iso).timestamp()
-        except (ValueError, OSError, OverflowError):
-            pass                                        # docs/191 A02
-    if day and hms:
-        try:
-            return datetime.strptime(f"{day} {hms}", "%Y-%m-%d %H:%M:%S").timestamp()
-        except (ValueError, OSError, OverflowError):
-            return None                                 # docs/191 A02
-    return None
+            v = run["instant_us"]
+            return (int(v), str(run.get("instant_q") or "offset")) if v is not None \
+                else (None, str(run.get("instant_q") or "none"))
+        except (TypeError, ValueError):
+            pass
+    folder = run.get("folder_path")
+    if folder:
+        return run_time.resolve(run.get("created_at"), run.get("run_end"), folder)
+    return run_time.resolve(run.get("created_at"), run.get("run_end"),
+                            _clock_folder(run.get("date"), run.get("time")),
+                            offset_hint=None, read_node=False)
+
+
+def run_epoch(run: Any, ds: Any = None) -> float | None:
+    """Epoch seconds of the run's instant (:func:`row_instant`), or ``None``."""
+    utc_us, _q = row_instant(run, ds)
+    return None if utc_us is None else utc_us / 1_000_000
+
+
+def _iso_epoch(text: Any) -> float | None:
+    """Epoch seconds of ONE node.json ISO field (``run_start``/``run_end``):
+    :func:`run_time.iso_instant` -- an offset decides, a naive one is read in
+    the machine zone (what ``datetime.fromisoformat(..).timestamp()`` did)."""
+    utc_us, _q = run_time.iso_instant(text)
+    return None if utc_us is None else utc_us / 1_000_000
+
+
+def start_epoch(run: Any, ds: Any = None) -> float | None:
+    """When the run STARTED, for the windows that care about the start (the
+    journal attach window ``[run_start-60s, run_end+300s]``, the claim line):
+    its own ``run_start``, else the run's instant. [derived] the fallback
+    used to be the folder digits read in the server's zone; the instant is
+    the same clock every other surface dates the run by (docs/262)."""
+    rs = run.get("run_start") if isinstance(run, Mapping) else getattr(run, "run_start", None)
+    start = _iso_epoch(rs)
+    return start if start is not None else run_epoch(run, ds)
+
+
+def with_instants(rows: list[dict], ds: Any) -> list[dict]:
+    """``ds.list_runs()`` rows + ``instant_us`` / ``instant_q`` from the store,
+    for a consumer that only receives the rows (the agent run engine)."""
+    out = []
+    for row in rows or []:
+        utc_us, q = row_instant(row, ds)
+        out.append({**row, "instant_us": utc_us, "instant_q": q})
+    return out
 
 
 def _outcome(outcomes: dict | None) -> str | None:
@@ -546,8 +629,11 @@ def build_day(instance_path, chip: str, day: str, *, ds, hm=None, active_path=No
     for row in sorted(rows, key=lambda r: (r.get("time") or "")):
         run = ds.get_run(int(row["run_id"])) or dict(row)
         rid = int(run["run_id"])
-        start = _epoch(run.get("run_start"), run.get("date"), run.get("time"))
-        end = _epoch(run.get("run_end")) or start
+        # docs/262: instants, not the folder digits in the server's zone -- the
+        # window is compared with journal ``ts``/hook ``ts`` and the card ``ts``
+        # is sorted with undo-unit epochs. ``time`` (shown) stays the folder clock.
+        start = start_epoch(run, ds)
+        end = _iso_epoch(run.get("run_end")) or start
         author, certainty, ar = _author_of(run, start, end, agent_runs=agent_runs, events=events, claims=claims)
         attached = [e for e in entries if e.get("run_id") == rid]
         targets = list(run.get("qubits") or []) + list(run.get("qubit_pairs") or [])

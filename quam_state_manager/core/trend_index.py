@@ -51,14 +51,12 @@ reduced.
 """
 from __future__ import annotations
 
-import calendar
 import gzip
 import hashlib
 import json
 import secrets
 import threading
 import weakref
-from datetime import datetime
 from typing import Any, Callable, Iterable, Sequence
 
 from quam_state_manager.core.dataset import trend_point
@@ -69,7 +67,9 @@ from quam_state_manager.core.ramcache import Keyed, KeyedMemo
 
 #: Bumped whenever the payload's shape or content rules change, so an entry
 #: built by older code can never be served (it is part of every key).
-PAYLOAD_VER = 1
+#: 2 (docs/262): ``runs[i][1]`` is the run's true instant, no longer the
+#: folder clock's digits encoded as UTC.
+PAYLOAD_VER = 2
 
 #: Parameter Differences shows the newest this-many runs unless asked for all.
 PARAM_WINDOW = 20
@@ -180,7 +180,7 @@ class ExperimentTrend:
             self.run_ids.append(r.run_id)
             self.dates.append(r.date)
             self.times.append(r.time)
-            self.t_ms.append(run_instant_ms(r.date, r.time))
+            self.t_ms.append(run_instant_ms(r))
             self.qubits.append(frozenset(r.qubits or ()))
             self.figs.append(tuple(r.figure_names or ()))
             self.params.append(r.parameters if isinstance(r.parameters, dict) else {})
@@ -215,31 +215,26 @@ class ExperimentTrend:
         return 512 + n * 360 + slots * 8 + len(self.series) * 160 + len(self.incomplete) * 120
 
 
-def run_instant_ms(date: Any, time: Any) -> int | None:
-    """The run's instant as its folders name it (date dir + HHMMSS), in ms,
-    or ``None`` when either part does not parse -- such a run is counted as
-    undated and never placed at an invented position.
+def run_instant_ms(run: Any) -> int | None:
+    """The run's INSTANT in UTC epoch ms (docs/262), or ``None`` when nothing
+    dates it -- such a run is counted as undated and never placed at an
+    invented position.
 
-    The folder clock carries no zone: it is the acquisition host's wall
-    clock. The ms value encodes those digits as if they were UTC, and a
-    Plotly date axis renders a ms value as UTC digits -- so the axis shows
-    exactly the clock the folder names. No zone is guessed (the same refusal
-    as ChipTrends._iso).
+    ``RunInfo.instant_us``: ``timefmt.run_instant`` over the run's
+    ``created_at`` (its offset kept), else ``run_end``, else the folder clock
+    in the archive's offset -- resolved once by the run's DatasetStore. The
+    client draws it in the viewer's zone (``SnapTime.axisValue``), the zone
+    every other time on screen uses (docs/244).
+
+    Before docs/262 this encoded the folder digits AS IF UTC so the axis
+    showed the acquisition PC's wall clock: a -04:00 run sat four hours off
+    its real instant, and two folders from different zones interleaved
+    wrongly.
     """
-    if not isinstance(date, str) or not isinstance(time, str):
+    utc_us = getattr(run, "instant_us", None)
+    if utc_us is None:
         return None
-    if len(date) != 10 or date[4] != "-" or date[7] != "-":
-        return None
-    if len(time) != 8 or time[2] != ":" or time[5] != ":":
-        return None
-    parts = (date[0:4], date[5:7], date[8:10], time[0:2], time[3:5], time[6:8])
-    if not all(p.isdigit() and p.isascii() for p in parts):
-        return None
-    try:
-        dt = datetime(*(int(p) for p in parts))
-    except ValueError:
-        return None
-    return calendar.timegm(dt.timetuple()) * 1000
+    return int(utc_us) // 1000
 
 
 # ---------------------------------------------------------------------------
@@ -402,9 +397,10 @@ def data_version(selection: Selection, experiment: str, qubit: str | None) -> st
 
 def _rows(parts: Sequence[tuple[str, ExperimentTrend]], qubit: str | None,
           merged: bool) -> list[tuple[int, int]]:
-    """(part, run) pairs in display order -- the old builder's order exactly:
-    one folder -> run id; a same-chip merge -> (date, time, run id), ties in
-    folder order (a stable sort over the folder-by-folder concatenation)."""
+    """(part, run) pairs in display order: one folder -> run id; a same-chip
+    merge -> the runs' INSTANTS (docs/262; undated first, as an empty date
+    string sorted first), then run id, ties in folder order (a stable sort
+    over the folder-by-folder concatenation)."""
     rows: list[tuple[int, int]] = []
     for pi, (_fk, idx) in enumerate(parts):
         for ri in range(len(idx.run_ids)):
@@ -412,9 +408,10 @@ def _rows(parts: Sequence[tuple[str, ExperimentTrend]], qubit: str | None,
                 continue
             rows.append((pi, ri))
     if merged:
-        rows.sort(key=lambda pr: (parts[pr[0]][1].dates[pr[1]] or "",
-                                  parts[pr[0]][1].times[pr[1]] or "",
-                                  parts[pr[0]][1].run_ids[pr[1]]))
+        def _at(pr):
+            t = parts[pr[0]][1].t_ms[pr[1]]
+            return (t is not None, t or 0, parts[pr[0]][1].run_ids[pr[1]])
+        rows.sort(key=_at)
     return rows
 
 

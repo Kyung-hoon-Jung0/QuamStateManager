@@ -865,6 +865,25 @@ def create_app(*, testing: bool = False, instance_path: str | None = None) -> Fl
             "v3 index-attribution migration failed", exc_info=True,
         )
 
+    #   v4: every experiment snapshot at its run's INSTANT (docs/262). A
+    #       snapshot keyed from a foreign-zone archive's digits read in this
+    #       machine's zone moves to the key the ingest now gives that run.
+    #       Journaled + revertible (core/history_rekey.py); deferred while
+    #       another SM process has this instance open.
+    try:
+        from quam_state_manager.core.history_rekey import migrate_history_rekey_v4
+        _v4 = migrate_history_rekey_v4(app.instance_path)
+        if _v4.get("status") in ("migrated", "partial") and any(
+                isinstance(c, dict) and c.get("moves")
+                for c in (_v4.get("chips") or {}).values()):
+            app.config["history_rekeyed_v4"] = _v4
+    except Exception:
+        import logging
+        logging.getLogger(__name__).warning(
+            "v4 history re-key failed (journaled; resumes next start)",
+            exc_info=True,
+        )
+
     app.config["workspace"] = Workspace()
     # docs/142: persistent per-root listing cache -- a session re-opening a
     # 5,000-run archive paints the sidebar from this instead of re-walking

@@ -41,6 +41,7 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, Callable, Iterable
 
+from quam_state_manager.core import run_time
 from quam_state_manager.core.story import _short_family
 
 logger = logging.getLogger(__name__)
@@ -48,6 +49,7 @@ logger = logging.getLogger(__name__)
 # A snapshot timestamp is UTC (history._now_ts); a run records its own end
 # time with a zone. Two clocks, so a small slack either way.
 _CLOCK_SLACK = timedelta(seconds=120)
+_EPOCH = datetime(1970, 1, 1, tzinfo=timezone.utc)
 # node.json reads (~14 KB each) the search spends before giving up when
 # nothing bounds it (a value's FIRST appearance has no earlier change point).
 _SEARCH_CAP = 400
@@ -118,15 +120,15 @@ def _parse_ts(ts: str) -> datetime | None:
 
 
 def _parse_iso(s: Any) -> datetime | None:
-    if not s:
-        return None
-    try:
-        d = datetime.fromisoformat(str(s).replace("Z", "+00:00"))
-    except ValueError:
-        return None
-    if d.tzinfo is None:
+    """A node.json ``run_end`` as an aware UTC datetime -- PROVENANCE, so only
+    an instant the text itself proves. Read the one way every surface reads a
+    run's time (``run_time.iso_instant``, docs/262), accepting only quality
+    ``offset``: a zone-less clock (which the run_instant rule would read as
+    ``assumed_local``) cannot be compared honestly, and stays ``None``."""
+    utc_us, quality = run_time.iso_instant(s)
+    if utc_us is None or quality != "offset":
         return None            # a zone-less clock cannot be compared honestly
-    return d.astimezone(timezone.utc)
+    return _EPOCH + timedelta(microseconds=utc_us)
 
 
 def _walk(doc: Any, segs: list[str]) -> tuple[bool, Any]:

@@ -24,11 +24,11 @@ import logging
 import threading
 import time
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, Callable
 
-from quam_state_manager.core import node_scan, safe_io, scheduler
+from quam_state_manager.core import node_scan, run_time, safe_io, scheduler
 from quam_state_manager.core.autofit import action_space
 from quam_state_manager.core.autofit.engine import StepRunResult
 from quam_state_manager.core.autofit.families import normalize_node_name
@@ -268,13 +268,17 @@ def _attr(run, key, default=None):
     return getattr(run, key, default)
 
 
+_EPOCH = datetime(1970, 1, 1, tzinfo=timezone.utc)
+
+
 def _parse_ts(value) -> datetime | None:
-    if not value:
+    """A node.json ``run_start`` as an aware UTC datetime, read the run_instant
+    way (docs/256/262, :func:`run_time.iso_instant`): an offset decides; a
+    naive one is read in THIS machine's zone. [derived] The scheduler runs the
+    node on this machine, so a zone-less ``run_start`` is this machine's wall
+    clock -- reading it as UTC (as this did) put it hours away from the
+    ``window_start = now(UTC)`` it is compared with, off by the zone offset."""
+    utc_us, _q = run_time.iso_instant(value)
+    if utc_us is None:
         return None
-    try:
-        dt = datetime.fromisoformat(str(value))
-        if dt.tzinfo is None:
-            dt = dt.replace(tzinfo=timezone.utc)
-        return dt.astimezone(timezone.utc)
-    except ValueError:
-        return None
+    return _EPOCH + timedelta(microseconds=utc_us)

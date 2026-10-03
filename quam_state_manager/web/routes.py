@@ -10789,29 +10789,38 @@ def _trim_run_caches() -> None:
 
 
 def _run_ts_stamp(run: Any) -> str:
-    """RunInfo → the ingested-snapshot timestamp format
-    (``YYYYMMDD_HHMMSS_NNN``, ``_entry_timestamp`` parity — the dedup key
-    against already-ingested snapshot rows).
+    """RunInfo -> its Param History stamp (``YYYYMMDD_HHMMSS_NNN``): the dedup
+    key against already-ingested snapshot rows and the runs tier's position
+    among them.
 
-    LOCAL → UTC like ``_entry_timestamp`` (docs/132 review): run folders
-    carry local wall-clock while captured snapshots are stamped UTC — one
-    lexically-sorted namespace must speak one clock or fresh EXP rows float
-    hours "into the future" on any non-UTC machine.
+    docs/262: the UTC second of the run's INSTANT (``RunInfo.instant_us``,
+    resolved by its DatasetStore through ``timefmt.run_instant``), the very
+    key ``HistoryManager._entry_timestamp`` gives the same run -- no longer
+    the folder digits read in this server's zone, which put a -04:00
+    archive's runs 13 h early on a +09:00 machine.
     """
-    folder = Path(getattr(run, "folder_path", "") or "")
-    m = re.search(r"_(\d{6})$", folder.name)
-    hhmmss = m.group(1) if m else "000000"
-    date = folder.parent.name.replace("-", "")
-    if not re.match(r"^\d{8}$", date):
-        date = "19700101"
-    rid = getattr(run, "run_id", 0) or 0
-    try:
-        naive = datetime.strptime(f"{date}_{hhmmss}", "%Y%m%d_%H%M%S")
-        stamp = naive.astimezone().astimezone(
-            timezone.utc).strftime("%Y%m%d_%H%M%S")
-    except ValueError:
-        stamp = f"{date}_{hhmmss}"
-    return f"{stamp}_{rid % 1000:03d}"
+    from quam_state_manager.core import run_time
+    utc_us, _q = run_time.instant_of(run)
+    if utc_us is not None:
+        return run_time.snapshot_key(utc_us, getattr(run, "run_id", 0))
+    from types import SimpleNamespace
+    from quam_state_manager.core.history import HistoryManager
+    return HistoryManager._undated_entry_stamp(SimpleNamespace(
+        date_str=getattr(run, "date", "") or "",
+        run_id=getattr(run, "run_id", 0)))
+
+
+def _run_recency(run: Any) -> tuple:
+    """Newest-last sort key for dataset runs from ANY number of folders.
+
+    docs/262: the run's instant (``RunInfo.instant_us``) -- two archives in
+    different zones order by when each run really happened, which their
+    folder names' wall clocks cannot say. A run nothing dates (no instant)
+    sorts before every dated one, then by its folder clock, as an empty
+    date string did."""
+    utc_us = getattr(run, "instant_us", None)
+    return (utc_us is not None, utc_us or 0,
+            getattr(run, "date", "") or "", getattr(run, "time", "") or "")
 
 
 # RAM P8 (ram_design.md §1.4 "Runs-tier candidate index"): every workspace
@@ -26830,21 +26839,34 @@ def _run_age_key(run: dict | None, fallback: int):
     """Sort key that puts the OLDEST run first.
 
     Customer, 2026-09-11: "always order the columns old run > new run
-    when showing them." Age is the run's own ``(date, time, run_id)``; a run that cannot
-    be dated keeps its position at the END, because "SM could not resolve it"
-    is not evidence that it is old.
+    when showing them." Age is the run's INSTANT (docs/262: ``instant_us``
+    when the dataset store resolved it, else ``run_time.resolve`` over its
+    ``created_at`` / ``run_end`` / folder), then its run id -- two archives
+    in different zones order by when each run really happened, not by their
+    folders' wall clocks. A run that cannot be dated keeps its position at
+    the END, because "SM could not resolve it" is not evidence that it is
+    old.
     """
+    from quam_state_manager.core import run_time
     if not run:
-        return (1, "", "", 0, fallback)
-    date = str(run.get("date") or "")
-    time = str(run.get("time") or "")
+        return (1, 0, 0, fallback)
     try:
         rid = int(run.get("run_id") or 0)
     except (TypeError, ValueError):
         rid = 0
-    if not date and not rid:
-        return (1, "", "", 0, fallback)
-    return (0, date, time, rid, fallback)
+    utc_us = run.get("instant_us")
+    if utc_us is None:
+        utc_us, _q = run_time.resolve(run.get("created_at"), run.get("run_end"),
+                                      run.get("folder_path"), read_node=False,
+                                      scan_root=False)
+    if utc_us is None and run.get("date"):
+        # only a wall clock to go on (a bare ``date`` / ``time``): the same
+        # run_instant reading of a naive clock (machine zone, assumed_local)
+        utc_us, _q = run_time.resolve(
+            f"{run.get('date')}T{run.get('time') or '00:00:00'}", read_node=False)
+    if utc_us is None:
+        return (1, 0, rid, fallback)
+    return (0, utc_us, rid, fallback)
 _DIFF_MAX_SOURCES = 5
 _DIFF_LIST_PAGE = 300      # ranked rows per list page
 # One diff is one flatten of two documents (20-45 ms measured on real chips).
@@ -29165,9 +29187,9 @@ def _oldest_first(paths: list[str]) -> list[str]:
     def _key(p: str, i: int):
         e = by_path.get(str(p)) or by_path.get(str(Path(p).parent))
         if e is None:
-            return (1, "", "", 0, i)
-        return _run_age_key({"date": getattr(e, "date_str", "") or "",
-                             "time": getattr(e, "timestamp", "") or "",
+            return (1, 0, 0, i)
+        return _run_age_key({"created_at": getattr(e, "timestamp", "") or None,
+                             "folder_path": getattr(e, "folder_path", None),
                              "run_id": getattr(e, "run_id", None)}, i)
 
     return [p for _k, p in sorted(((_key(p, i), p) for i, p in enumerate(paths)),
@@ -29688,11 +29710,21 @@ def _entry_snapshot_parts(entry) -> tuple[str, str]:
     return (date_part, time_part)
 
 
-def _entry_recency_key(entry) -> tuple[str, str, int]:
-    """Sort key ordering workspace entries oldest → newest."""
-    date_part, time_part = _entry_snapshot_parts(entry)
-    return (date_part, time_part,
-            entry.run_id if entry.run_id is not None else -1)
+def _entry_recency_key(entry) -> tuple:
+    """Sort key ordering workspace entries oldest → newest.
+
+    docs/262: by the run's INSTANT (``run_time.resolve`` over the entry's
+    ``created_at`` / folder -- the Param History key's reading), so "the
+    newest run" of a chip whose runs come from two archives in different
+    zones is the one that really ran last. ``_entry_snapshot_parts`` stays
+    the DISPLAY string (the acquisition PC's wall clock, docs/244). An entry
+    nothing dates sorts oldest, as an empty date string did before."""
+    from quam_state_manager.core import run_time
+    utc_us, _q = run_time.resolve(getattr(entry, "timestamp", None) or None, None,
+                                  getattr(entry, "folder_path", None),
+                                  read_node=False, scan_root=False)
+    rid = entry.run_id if entry.run_id is not None else -1
+    return (0, 0, rid) if utc_us is None else (1, utc_us, rid)
 
 
 # ---------------------------------------------------------------------------
@@ -33087,8 +33119,12 @@ def _datasets_payload_compute(active: list[dict], is_collections: bool,
     if is_collections:   # QA F10: only the categories the collection holds
         cat_map = {k: v & experiments_set for k, v in cat_map.items() if v & experiments_set}
 
-    # Newest-first by run timestamp — run_id isn't comparable across folders.
-    rows.sort(key=lambda r: (r.get("date") or "", r.get("time") or "", r.get("id") or 0),
+    # Newest-first by the run's INSTANT (docs/262, compact row "t") -- run_id
+    # isn't comparable across folders, and neither are two folders' wall
+    # clocks when their archives were recorded in different zones.
+    rows.sort(key=lambda r: (r.get("t") is not None, r.get("t") or 0,
+                             r.get("date") or "", r.get("time") or "",
+                             r.get("id") or 0),
               reverse=True)
 
     all_tags = sorted(tags_set, key=natural_key)
@@ -33343,22 +33379,24 @@ def _exp_ingest_state(app=None) -> dict:
 
 
 def _exp_entry_for_run(run: Any) -> Any:
-    """A duck-typed ingest entry from a RunInfo — timestamp-parity with
-    ``_entry_timestamp`` (the same key ``_run_ts_stamp`` derives), so the
-    near-real-time path and the backfill dedup against each other."""
+    """A duck-typed ingest entry from a RunInfo.
+
+    docs/262: it carries the run's OWN evidence -- node.json's raw
+    ``created_at`` and ``metadata.run_end`` -- exactly what a scanner entry
+    hands the backfill, so ``HistoryManager._entry_timestamp`` reads both
+    through ``run_time.resolve`` and the near-real-time path and the backfill
+    give one run one key. (It used to fabricate a naive ISO from the folder
+    digits, a different input from the backfill's.)"""
     from types import SimpleNamespace
     folder = Path(getattr(run, "folder_path", "") or "")
-    date_str = folder.parent.name          # YYYY-MM-DD date dir
-    m = re.search(r"_(\d{6})$", folder.name)
-    hhmmss = m.group(1) if m else "000000"
-    iso_time = f"{hhmmss[0:2]}:{hhmmss[2:4]}:{hhmmss[4:6]}"
     return SimpleNamespace(
         quam_state_path=folder / "quam_state",
         run_id=getattr(run, "run_id", None),
         experiment_name=getattr(run, "experiment_name", None),
         folder_path=folder,
-        date_str=date_str,
-        timestamp=f"{date_str}T{iso_time}",
+        date_str=folder.parent.name,          # YYYY-MM-DD date dir
+        timestamp=getattr(run, "created_at", None) or "",
+        run_end=getattr(run, "run_end", None),
     )
 
 
@@ -33528,7 +33566,7 @@ def _perform_divergence_scan() -> None:
             continue
         # Newest few only — a live-write edge means "just now"; older runs
         # are the backfill's job.
-        runs.sort(key=lambda r: (r.date or "", r.time or ""), reverse=True)
+        runs.sort(key=_run_recency, reverse=True)
         cands.extend(r for r in runs[:5]
                      if getattr(r, "has_quam_state", False))
     if cands:
@@ -34307,7 +34345,7 @@ def note_readdress():
 def datasets_poll():
     """New-run poll across ALL active folders.
 
-    Returns the globally-latest run by ``(date, time)`` plus a folder-aware
+    Returns the globally-latest run by its instant (docs/262) plus a folder-aware
     ``uid``. The client tracks "seen" by uid, so a mere change in WHICH folder
     is active never fires a popup — only a genuinely newer run does. (This is
     the multi-folder fix for the spurious "New Experiment Run" popup.)
@@ -34327,15 +34365,27 @@ def datasets_poll():
     since_date = (request.args.get("since_date") or "").strip()
     since_time = (request.args.get("since_time") or "").strip()
     since = (since_date, since_time) if (since_date and since_time) else None
+    # docs/262: a client that knows the acknowledged run's INSTANT sends it
+    # (``since_t``, UTC epoch ms) -- the comparison then holds across folders
+    # recorded in different zones. The folder-clock pair stays accepted.
+    since_t = None
+    try:
+        if (request.args.get("since_t") or "").strip():
+            since_t = int(request.args.get("since_t"))
+    except ValueError:
+        since_t = None
     new_count = 0
 
-    latest_key: tuple[str, str] | None = None
+    latest_key: tuple | None = None
     latest_uid: str | None = None
     latest_run = None
     for fol in active:
         for run in fol["store"].runs_snapshot():
-            key = (run.date or "", run.time or "")
-            if since is not None and key > since:
+            key = _run_recency(run)
+            if since_t is not None:
+                if run.instant_us is not None and run.instant_us // 1000 > since_t:
+                    new_count += 1
+            elif since is not None and (run.date or "", run.time or "") > since:
                 new_count += 1
             if latest_key is None or key > latest_key:
                 latest_key = key
@@ -34350,8 +34400,11 @@ def datasets_poll():
         "qubits": latest_run.qubits or [],
         "time": latest_run.time or "",
         "date": latest_run.date or "",
+        # docs/262: the run's instant (UTC epoch ms) -- the client's stamp
+        "t": (latest_run.instant_us // 1000
+              if latest_run.instant_us is not None else None),
     }
-    if since is not None:
+    if since is not None or since_t is not None:
         payload["new_count"] = new_count
     return jsonify(payload)
 
@@ -39040,14 +39093,14 @@ def _latest_run_info() -> tuple[Any, dict] | None:
 
     The ref dict is ``{uid, run_id, name}`` — what the scheduler attributes
     to its item; the RunInfo is what the docs/132 EXP ingest needs."""
-    latest_key: tuple[str, str] | None = None
+    latest_key: tuple | None = None
     out = None
     for fol in _active_dataset_stores():
         store = fol["store"]
         with store._scan_lock:               # snapshot — avoid racing a worker rescan
             runs = list(store.runs.values())
         for run in runs:
-            key = (run.date or "", run.time or "")
+            key = _run_recency(run)          # docs/262: the instant decides
             if latest_key is None or key > latest_key:
                 latest_key = key
                 out = (run, {"uid": _dataset_uid(fol["key"], run.run_id),
@@ -39695,7 +39748,7 @@ def _autofit_start_real(inst, p, data, auditor):
                     logger.exception("autofit dataset rescan failed")
                 with st._scan_lock:
                     out.extend(st.runs.values())
-            out.sort(key=lambda r: (r.date or "", r.time or ""), reverse=True)
+            out.sort(key=_run_recency, reverse=True)
             return out
 
     handle = ChipHandle(store=ctx["store"], modifier=ctx["modifier"],

@@ -315,11 +315,13 @@ def _away_block(rec: dict | None, cap: int = 12) -> str:
         rows = ds.list_runs()[:200]
     except Exception:  # noqa: BLE001
         return ""
+    from quam_state_manager.core import story
     fresh = []
     for row in rows:
-        try:
-            when = datetime.strptime(f"{row.get('date')} {row.get('time')}", "%Y-%m-%d %H:%M:%S").timestamp()
-        except (TypeError, ValueError):
+        # docs/262: the run's instant vs the session's epoch, not the folder digits
+        # read in this machine's zone; the "since HH:MM" below stays as printed
+        when = story.run_epoch(row, ds)
+        if when is None:
             continue
         if when > since:
             fresh.append(f"#{row.get('run_id')} {row.get('experiment_name')} {' '.join(row.get('qubits') or [])} "

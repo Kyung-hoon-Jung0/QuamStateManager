@@ -171,15 +171,21 @@ def journal_claim():
 
 
 def _run_when(run_id: int):
-    """The run's own timestamp (for placing its claim line), or None -> now()."""
+    """The run's own timestamp (for placing its claim line), or None -> now().
+
+    The journal files every line by the SERVER's wall clock (``journal.append``
+    stamps ``datetime.now()``), so the claim keeps that convention -- but of the
+    run's true START instant (``story.start_epoch``: its ``run_start``, else
+    the run's instant, docs/262), never the folder digits re-read as if they
+    were this machine's clock."""
     try:
         from quam_state_manager.web import routes as r
         ds = r._dataset_store()
         run = ds.get_run(int(run_id)) if ds is not None else None
         if not run:
             return None
-        ep = story._epoch(run.get("run_start"), run.get("date"), run.get("time"))
-        return datetime.fromtimestamp(ep) if ep else None
+        ep = story.start_epoch(run, ds)
+        return datetime.fromtimestamp(ep) if ep is not None else None
     except Exception:  # noqa: BLE001
         return None
 

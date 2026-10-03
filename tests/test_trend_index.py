@@ -16,7 +16,6 @@ Pinned three ways:
 """
 from __future__ import annotations
 
-import calendar
 import copy
 import json
 import math
@@ -123,8 +122,12 @@ class TestPayload:
         p = served([("kk", store)], A)
         rid, t, uid = p["runs"][0]
         r = store.runs[rid]
-        want = calendar.timegm(datetime.strptime(f"{r.date} {r.time}", "%Y-%m-%d %H:%M:%S")
-                               .timetuple()) * 1000
+        # docs/262: the run's INSTANT. These fixture runs carry no created_at
+        # and no run_end, so the folder clock is read in the machine zone
+        # (``assumed_local``) -- no longer its digits encoded as UTC.
+        want = int(datetime.strptime(f"{r.date} {r.time}", "%Y-%m-%d %H:%M:%S")
+                   .astimezone().timestamp()) * 1000
+        assert r.instant_q == "assumed_local"
         assert t == want and uid == f"kk:{rid}"
         assert [x[0] for x in p["runs"]] == sorted(x[0] for x in p["runs"])
         assert p["n_runs"] == len(p["runs"]) == sum(1 for r in store.runs.values()
@@ -278,8 +281,10 @@ class TestStaleness:
             assert mismatches(sel, exps=(A,)) == [], sel
         merged = served([("k1", s1), ("k2", s2)], A)
         keys = [(s1 if uid.startswith("k1") else s2).runs[rid] for rid, _t, uid in merged["runs"]]
-        assert [(r.date, r.time, r.run_id) for r in keys] == \
-               sorted((r.date, r.time, r.run_id) for r in keys)
+        # docs/262: a same-chip merge orders by the runs' INSTANTS (undated
+        # first), not by the folders' wall-clock digits
+        assert [(r.instant_us is not None, r.instant_us or 0, r.run_id) for r in keys] == \
+               sorted((r.instant_us is not None, r.instant_us or 0, r.run_id) for r in keys)
         assert {uid for *_x, uid in merged["runs"]} >= {"k1:4", "k2:4"}
 
 

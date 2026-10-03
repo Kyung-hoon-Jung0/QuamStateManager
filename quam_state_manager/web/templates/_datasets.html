@@ -47,7 +47,9 @@
         {# docs/126 ⑥ — the times' basis, stated where they are read: SM shows
            the run folders' own timestamps verbatim (the acquisition PC's
            local clock) and never converts them. #}
-        <small class="muted ds-tz-note" title="Run dates and times are read from the run folders exactly as the acquisition PC wrote them (its local clock). SM does not convert time zones.">&#128336; acquisition&#8209;PC local time</small>
+        {# docs/262: the When column is the exception -- each run's INSTANT
+           (its created_at offset kept), shown in the viewer's zone. #}
+        <small class="muted ds-tz-note" title="Date, Time and the date tabs are the run folders' own clock, exactly as the acquisition PC wrote it (its local time). The When column is each run's instant, shown in your time zone.">&#128336; acquisition&#8209;PC local time</small>
         {# docs/170: the render's own scan is bounded, so on a fresh process
            the table can show the newest dates before the whole archive is
            indexed. Say so; dataset-virtual.js hides this on the first delta

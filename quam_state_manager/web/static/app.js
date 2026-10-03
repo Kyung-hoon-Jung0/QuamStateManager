@@ -18259,10 +18259,11 @@ window.trendUseSingleFolder = function() {
  *     trend index): one chart slot per series, the first EAGER drawn one per
  *     task, the rest as they scroll into view (QA F6, docs/125: one Plotly
  *     render per task, a stale fragment's queue never draws into the next);
- *   - x is the run's REAL instant (its folder date + time, ms, drawn as the
- *     folder's own clock); runs whose instant does not parse are counted and
- *     said, never placed; hover names the run; a click opens it in the
- *     inspector (QA F19); lines only above LINES_ABOVE points;
+ *   - x is the run's REAL instant (docs/262: UTC ms from the run's own
+ *     created_at offset, drawn in the viewer's zone like every other time on
+ *     screen, docs/244); runs nothing dates are counted and said, never
+ *     placed; hover names the run; a click opens it in the inspector (QA
+ *     F19); lines only above LINES_ABOVE points;
  *   - "Figure timeline" is built only when opened: per figure, the newest
  *     FIG_PAGE runs that HAVE that figure, then "show older";
  *   - Parameter Differences is fetched after the first chart, stamped with
@@ -18279,13 +18280,18 @@ window.DatasetTrends = (function () {
     function part(root, role) { return root.querySelector('[data-role="' + role + '"]'); }
     function fmtInt(n) { try { return Number(n).toLocaleString('en-US'); } catch (e) { return String(n); } }
     function plural(n, one, many) { return fmtInt(n) + ' ' + (n === 1 ? one : (many || one + 's')); }
-    /* the folder's own clock: t_ms encodes its digits as UTC */
+    /* docs/262: t is the run's INSTANT (UTC ms); shown in the viewer's zone
+       with its offset -- the one form (docs/244) */
     function fmtInstant(t) {
         if (t === null || t === undefined) return 'undated';
-        var d = new Date(t);
-        function p(x) { return (x < 10 ? '0' : '') + x; }
-        return d.getUTCFullYear() + '-' + p(d.getUTCMonth() + 1) + '-' + p(d.getUTCDate()) + ' '
-            + p(d.getUTCHours()) + ':' + p(d.getUTCMinutes()) + ':' + p(d.getUTCSeconds());
+        if (window.SnapTime) return window.SnapTime.display(t);
+        return new Date(t).toISOString();
+    }
+    /* a Plotly date axis renders an instant as UTC: hand it the viewer-zone
+       wall clock instead (SnapTime.axisValue), as the field-history chart does */
+    function axisX(t) {
+        var v = window.SnapTime ? window.SnapTime.axisValue(t) : null;
+        return v || t;
     }
     /* a plotted point: a finite number, or a bool flag (charted as a
        true/false axis, as it always was -- dataset.trend_point) */
@@ -18296,6 +18302,16 @@ window.DatasetTrends = (function () {
         var st = { root: root, data: null, boxes: [], queue: [], pumping: false, tries: 0,
                    paramsAsked: false };
         root._dtState = st;
+        /* docs/262: the axis is the viewer's zone, so a zone change in
+           Settings redraws it (the same event the other charts follow) */
+        var onZone = function () {
+            if (!root.isConnected) {
+                document.removeEventListener('sm:timezone-changed', onZone);
+                return;
+            }
+            if (st.data) render(st);
+        };
+        document.addEventListener('sm:timezone-changed', onZone);
         var reload = part(root, 'reload');
         if (reload) reload.addEventListener('click', function () {
             if (typeof window.loadTrendData === 'function') window.loadTrendData();
@@ -18348,7 +18364,10 @@ window.DatasetTrends = (function () {
         if (d.n_runs && d.undated === d.n_runs) {
             bits.push('No run carries a date/time that parses, so the charts are in run order.');
         } else {
-            bits.push('x = each run’s date and time as its folder names it.');
+            /* docs/262: the run's instant (created_at, its offset kept), drawn
+               in the viewer's zone -- no longer the folder's wall clock */
+            bits.push('x = when each run saved its state, in '
+                + (window.SnapTime ? window.SnapTime.label() : 'your time zone') + '.');
             if (d.undated) bits.push(plural(d.undated, 'run') + ' whose date/time does not parse '
                 + (d.undated === 1 ? 'is' : 'are') + ' not placed on the time axis.');
         }
@@ -18378,7 +18397,7 @@ window.DatasetTrends = (function () {
             var r = d.runs[i];
             if (!allUndated && (r[1] === null || r[1] === undefined)) continue;
             rows.push(i);
-            xs.push(allUndated ? '#' + r[0] : r[1]);
+            xs.push(allUndated ? '#' + r[0] : axisX(r[1]));
             texts.push('#' + r[0]);
             uids.push(r[2] || null);
         }
@@ -19768,15 +19787,25 @@ document.addEventListener('htmx:afterSwap', function(evt) {
         if (t) _ackNewRuns();
     }, true);
 
+    /* docs/262: a run's stamp is its INSTANT (UTC ms) when the server sends
+       one -- a number, so "newer" holds across folders recorded in different
+       zones; else its folder clock "date time", as before. */
+    function _runStamp(data) {
+        return (typeof data.t === 'number') ? data.t
+            : ((data.date || '') + ' ' + (data.time || '')).trim();
+    }
+    function _sinceQuery(stamp) {
+        if (typeof stamp === 'number') return '?since_t=' + encodeURIComponent(String(stamp));
+        if (!stamp) return '';
+        var p = stamp.split(' ');
+        return '?since_date=' + encodeURIComponent(p[0] || '')
+             + '&since_time=' + encodeURIComponent(p[1] || '');
+    }
+
     function pollForNewRuns() {
         if (_inFlight) { _wakeAgain = true; return; }
         _inFlight = true;
-        var _q = '';
-        if (_ackStamp) {
-            var _p = _ackStamp.split(' ');
-            _q = '?since_date=' + encodeURIComponent(_p[0] || '')
-               + '&since_time=' + encodeURIComponent(_p[1] || '');
-        }
+        var _q = _sinceQuery(_ackStamp);
         _fetchWithTimeout('/datasets/poll' + _q, POLL_FETCH_TIMEOUT_MS)
             .then(function(r) {
                 if (!r.ok) throw new Error("HTTP " + r.status);
@@ -19791,7 +19820,9 @@ document.addEventListener('htmx:afterSwap', function(evt) {
                     _schedule(POLL_SECS * 1000);
                     return;
                 }
-                var stamp = ((data.date || '') + ' ' + (data.time || '')).trim();
+                var stamp = _runStamp(data);
+                if (_lastSeenStamp !== null && typeof stamp !== typeof _lastSeenStamp)
+                    _lastSeenStamp = _ackStamp = stamp;     // spelling changed: re-baseline
                 // First poll: record baseline, don't popup.
                 if (_lastSeenUid === null) {
                     _lastSeenUid = data.uid;

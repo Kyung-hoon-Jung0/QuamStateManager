@@ -50,8 +50,12 @@ async function view(body, opts) {
     const d = W.draws[0];
     const tr = dataTraceOf(d);
     ok(d.layout.xaxis.type === 'date', 'A: the x axis is a date axis (' + d.layout.xaxis.type + ')');
-    ok(JSON.stringify(tr.x) === JSON.stringify(p.runs.filter((r) => r[1] !== null).map((r) => r[1])),
-       'A: x = each dated run\'s own instant, in order');
+    // docs/262: the instant drawn in the viewer's zone (SnapTime.axisValue) --
+    // raw ms would be drawn by Plotly as UTC digits (run_instant_client_selfcheck
+    // pins the concrete zone)
+    ok(JSON.stringify(tr.x) === JSON.stringify(p.runs.filter((r) => r[1] !== null)
+                                                .map((r) => W.w.SnapTime.axisValue(r[1]))),
+       'A: x = each dated run\'s own instant, in order, in the viewer zone');
     ok(tr.y.length === 7 && tr.y.indexOf(4) < 0, 'A: the undated run is not placed (its value 4 is not drawn)');
     ok(/1 run whose date\/time does not parse is not placed on the time axis/.test(text(root.querySelector('[data-role="notes"]'))),
        'A: and the note counts it (' + text(root.querySelector('[data-role="notes"]')) + ')');

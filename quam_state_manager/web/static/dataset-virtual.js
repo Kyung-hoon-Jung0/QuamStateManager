@@ -531,10 +531,23 @@
 
     // ── value formatters ────────────────────────────────────────────────────
     function _runDate(row) {
-        // Build a Date from "2026-03-03" + "02:10:48" (local). null if unparseable.
-        if (!row.date) return null;
-        var d = new Date(row.date + 'T' + (row.time || '00:00:00'));
+        // docs/262: the run's INSTANT -- `t`, UTC epoch ms, resolved by the
+        // server (timefmt.run_instant: created_at with its offset, else the
+        // folder clock in the archive's offset). The folder digits read in
+        // THIS browser's zone were 13 h off for a -04:00 archive viewed at
+        // +09:00. A row without `t` (nothing dated it) has no When.
+        if (typeof row.t !== 'number') return null;
+        var d = new Date(row.t);
         return isNaN(d.getTime()) ? null : d;
+    }
+    function _whenTitle(row) {
+        // The instant in the viewer's zone with its offset (docs/244's one
+        // form), then the acquisition PC's own wall clock the folder names.
+        var d = _runDate(row), acq = ((row.date || '') + ' ' + (row.time || '')).trim();
+        if (!d) return acq ? acq + ' (acquisition PC clock)' : '';
+        var shown = window.SnapTime ? window.SnapTime.display(d) : d.toISOString();
+        if (row.tq === 'assumed_local') shown += ' · zone assumed';
+        return shown + (acq ? ' · acquisition PC clock ' + acq : '');
     }
     function fmtRelative(row) {
         var d = _runDate(row);
@@ -545,6 +558,9 @@
         if (sec < 86400) return Math.round(sec / 3600) + 'h ago';
         if (sec < 7 * 86400) return Math.round(sec / 86400) + 'd ago';
         if (sec < 60 * 86400) return Math.round(sec / (7 * 86400)) + 'w ago';
+        // the day in the viewer's chosen zone (docs/244), not the browser's
+        var v = window.SnapTime ? window.SnapTime.axisValue(d) : null;
+        if (v) return (+v.slice(5, 7)) + '/' + (+v.slice(8, 10));
         return (d.getMonth() + 1) + '/' + d.getDate();
     }
     function fmtDuration(s) {
@@ -610,7 +626,7 @@
         {key: 'metric', label: 'Key Metric', on: true, w: 96, sortKey: 'metric', type: 'num', cls: 'col-metric',
          render: function (r) { return (r.metric == null || r.metric === '') ? '-' : escapeHtml(r.metric); }},
         {key: 'when', label: 'When', on: true, w: 88, sortKey: 'when', type: 'num',
-         render: function (r) { return '<span title="' + escapeHtml((r.date || '') + ' ' + (r.time || '')) + '">' + escapeHtml(fmtRelative(r)) + '</span>'; }},
+         render: function (r) { return '<span title="' + escapeHtml(_whenTitle(r)) + '">' + escapeHtml(fmtRelative(r)) + '</span>'; }},
         {key: 'tags', label: 'Tags', on: true, w: 180, cls: 'col-tags',
          render: function (r) { return tagsCell(r); }},
         {key: 'duration', label: 'Duration', on: false, w: 84, sortKey: 'dur', type: 'num',
@@ -1792,9 +1808,18 @@
     // (the render is bounded now and the delta poll indexes the rest, newest
     // dates first) -- it lands silently, never announced or flashed as if an
     // experiment had just finished.
-    function _stampOf(row) { return (row.date || '') + ' ' + (row.time || ''); }
+    // docs/262: the run's INSTANT (`t`, UTC ms), so a run from a folder
+    // recorded in another zone is "new" by when it happened, not by its folder
+    // digits. A row without `t` (an older server) reads its folder clock in
+    // the browser's zone, as this always did; no clock at all is the oldest.
+    function _stampOf(row) {
+        if (typeof row.t === 'number') return row.t;
+        if (!row.date) return -Infinity;
+        var ms = new Date(row.date + 'T' + (row.time || '00:00:00')).getTime();
+        return isNaN(ms) ? -Infinity : ms;
+    }
     function _newestStamp() {
-        var best = '';
+        var best = -Infinity;
         for (var i = 0; i < state.rows.length; i++) {
             var r = state.rows[i];
             if (!r) continue;
@@ -1808,7 +1833,7 @@
         var changed = false;
         var newUids = [];          // genuinely-new runs (insert, not in-place update)
         var updated = data.updated || [];
-        var newestBefore = updated.length ? _newestStamp() : '';
+        var newestBefore = updated.length ? _newestStamp() : -Infinity;
         var headDelta = 0;         // QA F2 (review): the title's "(N runs" follows
         for (var i = 0; i < updated.length; i++) {
             var row = updated[i];
@@ -1918,7 +1943,7 @@
 
     function _noteHeldArrivals(data) {
         var updated = (data && data.updated) || [];
-        var newest = updated.length ? _newestStamp() : '';
+        var newest = updated.length ? _newestStamp() : -Infinity;
         for (var i = 0; i < updated.length; i++) {
             var uid = (updated[i].f || '') + ':' + updated[i].id;
             if ((!state.rowsById || !state.rowsById.has(uid)) &&
