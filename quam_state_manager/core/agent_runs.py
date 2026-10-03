@@ -35,16 +35,78 @@ logger = logging.getLogger(__name__)
 GATES = ("chip_mismatch", "no_env", "no_calibrations_folder", "node_not_found", "not_a_node",
          "stopped_by_human", "past_stop_by", "no_start_token", "run_active", "queue_not_empty", "awaiting_approval",
          "human_active", "orphan_running", "stale_live", "simulate_on_in_auto")
-CLASSES = ("ok", "hardware_contention", "node_error", "timeout", "cancelled", "skipped", "unattributed")
+CLASSES = ("ok", "host_unreachable", "hardware_contention", "node_error", "timeout", "cancelled", "skipped",
+           "unattributed", "interrupted")
 DEFAULT_WAIT_S = 240.0
 MAX_WRITES = 4000
-# the OPX/qm signatures a node prints when the instrument is held by someone
-# else -- a first cut from the qm client's own messages; a hit is never retried
-_HARDWARE_RE = re.compile(
-    r"(failed to connect to (?:qm|the qm|quantum machines)|connection refused|could not connect to (?:qop|the qop|host)"
+
+# docs/249: what a failed run's text SAYS, read in a fixed order -- contention
+# first (its own give-up is a TimeoutError), then reachability, then timeouts.
+# Every literal below is quoted from the client source that prints it, so a
+# class is a reading of the run's own words, never a guess about the hardware.
+#
+# hardware_contention -- another quantum machine holds the hardware:
+#   qualang_tools/multi_user/multi_user_tools.py (qm_session, which opens with
+#   close_other_machines=False and waits while the QOP answers "busy"):
+#     msg = "cannot be used because it isn't shareable in other QM."   (QOP2)
+#     msg_opx1000 = "Resources already locked"                         (QOP3)
+#     raise TimeoutError(f"While waiting for QOP to free, reached timeout: {timeout}s")
+#   qm/exceptions.py AnotherJobIsRunning: "Another job is running on the QM. Halt it first"
+#   (the remaining alternatives are the pre-docs/249 contention wording, kept)
+_CONTENTION_RE = re.compile(
+    r"(isn't shareable in other QM|Resources already locked|While waiting for QOP to free"
     r"|another (?:job|program|qm) is (?:already )?(?:running|open)|qm is closed|quantum machine .* closed"
-    r"|job queue is full|opx .* busy|controller .* in use|resource .* in use|grpc.*(?:unavailable|deadline exceeded)"
-    r"|timed out waiting for (?:the )?(?:opx|job|qm))", re.I)
+    r"|job queue is full|opx .* busy|controller .* in use|resources? .* in use)", re.I)
+# qm_session logs this when it starts waiting, and "Opening QM" once the QOP
+# frees; a wait that never opened is contention even when SM's own time limit
+# is what ended the run
+_BUSY_WAIT = "QOP is busy. Waiting for it to free up"
+_BUSY_OPENED = "Opening QM"
+# host_unreachable -- the node never reached a QM server at all:
+#   qm/api/server_detector.py (qm-qua 1.2.6 .. 1.4.1, every env on this machine):
+#     "Failed to detect to QuantumMachines server, failed to connect to {cluster_str}. "
+#     "Tried connecting to {targets}."   -- logged with "Errors:\n{host}:{port}: {why}"
+#   quam_builder .../qpu/base_quam.py connect():
+#     raise ConnectionError(f"Failed to connect to Quantum Machines Manager: {e}")
+#   qm/api/base_api.py (a gRPC error other than DEADLINE_EXCEEDED, i.e. the link dropped):
+#     "Encountered connection error from QOP: details: {details}, status:  {status_code}"
+#   plus the socket-level causes (refused / name not resolved / no route), and the
+#   pre-docs/249 connect wording that used to be filed under contention
+_UNREACHABLE_RE = re.compile(
+    r"(Failed to detect to QuantumMachines server|Failed to connect to Quantum Machines Manager"
+    r"|failed to connect to (?:qm|the qm|quantum machines)|could not connect to (?:qop|the qop|host)"
+    r"|Encountered connection error from QOP|StatusCode\.UNAVAILABLE|grpc.*unavailable"
+    r"|connection refused|actively refused|WinError 1006[015]|WinError 10051|Errno 111\b"
+    r"|getaddrinfo failed|Name or service not known|nodename nor servname|Temporary failure in name resolution"
+    r"|No route to host|Network is unreachable|Failed to establish a new connection"
+    r"|httpx\.Connect(?:Error|Timeout)|httpcore\.Connect(?:Error|Timeout))", re.I)
+# timeout -- something answered too slowly:
+#   qm/api/base_api.py timeout_error_message(): "A timeout of {timeout} seconds was reached. ..."
+#   qm/api/v2/job_api/job_api.py: "Job {id} did not reach any state of {state} within {timeout} seconds"
+#   SM's own: scheduler "timed out after {n}s", run_node "timed out after {n}s (run_node timeout_s)"
+_TIMEOUT_RE = re.compile(
+    r"(timed out after \d+|A timeout of [\d.]+ seconds was reached|did not reach any state of .* within"
+    r"|deadline exceeded|DEADLINE_EXCEEDED|timed out waiting for (?:the )?(?:opx|job|qm))", re.I)
+# the run failed while CONNECTING (before any program reached the hardware), not mid-run
+_CONNECT_PHASE_RE = re.compile(
+    r"(Failed to detect to QuantumMachines server|Failed to connect to Quantum Machines Manager"
+    r"|failed to connect to (?:qm|the qm|quantum machines)|could not connect to (?:qop|the qop|host)"
+    r"|connection refused|actively refused|getaddrinfo failed|Name or service not known|nodename nor servname"
+    r"|Temporary failure in name resolution|Failed to establish a new connection)", re.I)
+_TRIED_RE = re.compile(r"Tried connecting to (\S+?)\.?(?:\s|$)")
+_CLUSTER_RE = re.compile(r"failed to connect to cluster '([^']*)'")
+_URL_HOST_RE = re.compile(r"host='([^']+)',\s*port=(\d+)")
+# the per-target reason the qm detector logs, newest wording first
+_CAUSES = (
+    (re.compile(r"actively refused|connection refused|WinError 10061|Errno 111\b", re.I), "connection refused"),
+    (re.compile(r"getaddrinfo failed|Name or service not known|nodename nor servname|name resolution"
+                r"|Errno 11001|Errno -[23]\b", re.I), "the host name did not resolve"),
+    (re.compile(r"No route to host|Network is unreachable|WinError 1005[01]|WinError 10065", re.I),
+     "no network route to the host"),
+    (re.compile(r"WinError 10060|timed out|ConnectTimeout", re.I), "no answer, timed out"),
+    (re.compile(r"Server disconnected|RemoteProtocolError|status code [45]\d\d", re.I),
+     "something answered there, but not a QM server"),
+)
 
 
 # ------------------------------------------------------------------ model
@@ -82,6 +144,7 @@ class RunAdapter:
     queue_state: Callable[[], dict]
     own_runner_alive: Callable[[], bool]
     live_diverged: Callable[[], Any] | None = None       # review R1-M5: the chip moved outside SM?
+    chip_name: str | None = None                          # docs/249: the journal's name, kept in the run's meta
 
 
 # ------------------------------------------------------------------ pure
@@ -151,10 +214,23 @@ def check_gates(req: RunRequest, *, session: dict | None, lim: dict, settings: d
     if run_active:
         return {"refused": "run_active", "run": {k: run_active.get(k) for k in ("key", "node", "targets", "since")},
                 "how": "one node at a time on one chip; call run_wait on that key"}
+    # docs/249 (D-13/A-14): SM's OWN row from a run whose driver died with a previous SM process is
+    # never a person's row. Still driving the OPX -> name it as the orphan it is; provably dead -> it
+    # does not block (the run sweeps it out of the queue before it queues its own row)
+    left = leftover_rows(queue_state, own_running=own_running)
+    if left["orphan"]:
+        o = left["orphan"][0]
+        return {"refused": "orphan_running", "worker_pid": o.get("worker_pid"), "current": o.get("id"),
+                "row": {"name": o.get("name"), "label": o.get("label"), "status": o.get("status"),
+                        "run_key": o.get("run_key")},
+                "how": f"`{o.get('name')}` from before SM restarted is still running (its node process, PID "
+                       f"{o.get('worker_pid')}, is alive) and may be driving the OPX; SM will not collect what it "
+                       "writes. Wait until it ends -- this clears itself then -- or ask the human to stop it"}
+    dead_ids = {it.get("id") for it in left["dead"]}
     # review R1-C1: the chassis runs its queue FIFO -- a person's queued rows, or a leftover from a
     # previous life, would run FIRST under the click that authorized only the agent's node
     rows = [it for it in (queue_state.get("queue") or [])
-            if it.get("enabled", True) and it.get("status") in ("queued", "running")]
+            if it.get("enabled", True) and it.get("status") in ("queued", "running") and it.get("id") not in dead_ids]
     if rows:
         return {"refused": "queue_not_empty",
                 "rows": [{"name": it.get("name"), "label": it.get("label"), "status": it.get("status")} for it in rows[:10]],
@@ -204,6 +280,85 @@ def check_gates(req: RunRequest, *, session: dict | None, lim: dict, settings: d
                 "how": "Dry run is ON in Experiment Runner settings: in auto mode a plan would report calibrated "
                        "values that never touched hardware. A human turns Dry run off, or runs in ask-writes"}
     return None
+
+
+def _own_row_run(it: dict) -> tuple[str, Path] | None:
+    """``(run key, meta.json)`` when a queue row is one of run_node's own
+    (its ``state_path`` is ``<instance>/agent_runs/<key>/quam_state``, which
+    only :func:`make_scratch` creates), else None."""
+    sp = it.get("state_path")
+    if not sp:
+        return None
+    p = Path(str(sp))
+    if p.name != "quam_state" or p.parent.parent.name != "agent_runs" or not p.parent.name:
+        return None
+    return p.parent.name, p.parent / "meta.json"
+
+
+def _driver_gone(meta_path: Path) -> bool:
+    """True when the run's own record says no driver owns it any more: the
+    meta is not ``starting``/``running`` (a restart marks it ``interrupted``),
+    or it is missing. A meta another live process is still driving reads
+    ``running`` and is never treated as gone."""
+    try:
+        d = json.loads(meta_path.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return True
+    return not (isinstance(d, dict) and d.get("status") in ("starting", "running"))
+
+
+def leftover_rows(queue_state: dict, *, own_running: bool) -> dict:
+    """SM's own queue rows left behind by a run whose driver is gone (docs/249,
+    D-13): ``{"dead": [...], "orphan": [...]}``.
+
+    *dead*: queued, or "running" with its node process provably gone -- it can
+    never finish, and a later Start would RUN it first (``start()`` re-queues a
+    stale running row). *orphan*: "running" while the persisted worker PID is
+    still alive -- the node may still be driving the OPX. A person's rows, a
+    row whose run is still driven, anything while this process's runner is
+    live or another live SM window owns the run: never here."""
+    out: dict = {"dead": [], "orphan": []}
+    if own_running:
+        return out
+    from quam_state_manager.core import scheduler
+    if scheduler.foreign_owner(queue_state) is not None:
+        return out
+    run = queue_state.get("run") or {}
+    wp = run.get("worker_pid")
+    for it in queue_state.get("queue") or []:
+        if it.get("status") not in ("queued", "running"):
+            continue
+        own = _own_row_run(it)
+        if own is None or not _driver_gone(own[1]):
+            continue
+        row = {**it, "run_key": own[0]}
+        if it.get("status") == "running" and run.get("current_id") in (None, it.get("id")) \
+                and agent_session.pid_alive(wp):
+            out["orphan"].append({**row, "worker_pid": wp})
+        else:
+            out["dead"].append(row)
+    return out
+
+
+def sweep_leftover_rows(scope: str) -> list[dict]:
+    """Remove SM's own dead rows (:func:`leftover_rows`) from the queue, under
+    the queue lock, re-deciding there. Returns what was removed. An orphan --
+    a live node process -- is never touched."""
+    from quam_state_manager.core import scheduler
+    with scheduler._QLOCK:
+        st = scheduler.load_queue(scope)
+        dead = leftover_rows(st, own_running=scheduler.is_running(scope))["dead"]
+        if not dead:
+            return []
+        ids = {d.get("id") for d in dead}
+        st["queue"] = [it for it in st.get("queue") or [] if it.get("id") not in ids]
+        run = st.get("run") or {}
+        if run.get("status") == "running" and run.get("current_id") in ids | {None}:
+            # the run claim of a dead process over a row that is gone: what _reconcile_orphaned does
+            run.update({"status": "idle", "current_id": None, "worker_pid": None, "owner_pid": None,
+                        "owner_port": None, "message": "interrupted (worker stopped or app restarted)"})
+        scheduler.save_queue(scope, st)
+    return dead
 
 
 def make_scratch(instance_path, key: str, working_folder: str) -> tuple[Path, Path]:
@@ -266,7 +421,15 @@ def _both_nan(x, y) -> bool:
         return False
 
 
+def _busy_wait_unresolved(text: str) -> bool:
+    i = text.rfind(_BUSY_WAIT)
+    return i >= 0 and text.find(_BUSY_OPENED, i) < 0
+
+
 def classify(status: str, error: str | None, log_tail: str) -> str:
+    """The run's failure class, read from its own words (docs/249). Order is
+    the contract: contention (incl. its own TimeoutError) > host_unreachable >
+    timeout > node_error."""
     text = f"{error or ''}\n{log_tail or ''}"
     if status == "done":
         return "ok"
@@ -274,11 +437,103 @@ def classify(status: str, error: str | None, log_tail: str) -> str:
         return "cancelled"
     if status == "skipped":
         return "skipped"
-    if _HARDWARE_RE.search(text):
+    if _CONTENTION_RE.search(text) or _busy_wait_unresolved(text):
         return "hardware_contention"
-    if error and "timed out" in error:
+    if _UNREACHABLE_RE.search(text):
+        return "host_unreachable"
+    if _TIMEOUT_RE.search(text) or (error and "timed out" in error):
         return "timeout"
     return "node_error"
+
+
+def unreachable_detail(error: str | None, log_tail: str) -> dict:
+    """Where the node tried to connect and why it failed, as far as the run's
+    own text says -- ``{"target", "cluster", "cause"}``, each None when the
+    text does not say (never invented)."""
+    text = f"{error or ''}\n{log_tail or ''}"
+    target = cluster = cause = None
+    m = None
+    for m in _TRIED_RE.finditer(text):
+        pass
+    if m is not None:
+        target = m.group(1).rstrip(".")
+    else:
+        u = _URL_HOST_RE.search(text)
+        if u:
+            target = f"{u.group(1)}:{u.group(2)}"
+    c = _CLUSTER_RE.search(text)
+    if c:
+        cluster = c.group(1)
+    # the detector's own per-target line ("<host>:<port>: <why>") is the most
+    # precise reason; otherwise any socket-level cause anywhere in the text
+    scope = text
+    if target:
+        first = target.split(",")[0]
+        lines = [ln for ln in text.splitlines() if ln.strip().startswith(first + ":")]
+        if lines:
+            scope = "\n".join(lines)
+    for rx, why in _CAUSES:
+        if rx.search(scope):
+            cause = why
+            break
+    if cause is None and scope is not text:
+        for rx, why in _CAUSES:
+            if rx.search(text):
+                cause = why
+                break
+    return {"target": target, "cluster": cluster, "cause": cause}
+
+
+def failure_info(cls: str | None, error: str | None, log_tail: str) -> dict | None:
+    """What failed and what to do about it, in words a person and an agent can
+    act on (docs/249) -- ``{"what", "how", "retry"}`` (+ ``target``/``cluster``/
+    ``cause`` for an unreachable host) -- or None when the class needs no advice.
+    ``retry``: "no" (it fails the same way until a person acts), "after_check"
+    (only once someone knows why), "after_it_ends" (the hardware is someone
+    else's for now)."""
+    if cls == "host_unreachable":
+        d = unreachable_detail(error, log_tail)
+        where = d["target"] or "the configured host"
+        why = f" ({d['cause']})" if d["cause"] else ""
+        clu = f", cluster '{d['cluster']}'" if d["cluster"] else ""
+        text = f"{error or ''}\n{log_tail or ''}"
+        if _CONNECT_PHASE_RE.search(text):
+            if d["target"] or d["cause"]:
+                what = f"QM host unreachable at {where}{why}"
+            else:
+                # the text names neither where nor why (a credentials file, a cloud client's own error):
+                # quote it rather than claim an address
+                first = str(error or "").strip().splitlines()[0][:200] if str(error or "").strip() else ""
+                what = f"could not connect to the QM server: {first}" if first else "could not connect to the QM server"
+            how = (f"the node could not reach the QM server at {where}{clu}{why}, so it never reached the "
+                   "hardware and nothing was applied. Check the network and the chip's network config (host, port, "
+                   "cluster_name). Do NOT retry until that is fixed -- it fails the same way; tell the human")
+        else:
+            what = f"lost the connection to the QM server{' at ' + d['target'] if d['target'] else ''}{why}"
+            how = (f"the connection to the QM server dropped while the node ran{why}; nothing was applied. Check "
+                   "the network and that the QM server is up. Do NOT retry until it answers again; tell the human")
+        return {"what": what, "how": how, "retry": "no", **d}
+    if cls == "hardware_contention":
+        text = f"{error or ''}\n{log_tail or ''}"
+        waited = re.search(r"reached timeout: (\d+)", text)
+        what = "the hardware is busy: another quantum machine or job holds what this node needs"
+        if waited:
+            what += f" (waited {waited.group(1)}s for it to free)"
+        how = ("the OPX is held elsewhere (another quantum machine, another user or session) -- hardware "
+               "contention: do NOT retry now; tell the human, who decides when the hardware is free")
+        return {"what": what, "how": how, "retry": "after_it_ends"}
+    if cls == "timeout":
+        first = str(error or "").strip().splitlines()[0][:200] if str(error or "").strip() else ""
+        what = first if first.lower().startswith("timed out") else (f"timed out: {first}" if first else "timed out")
+        how = ("the run hit a time limit; nothing was applied. Read the log tail for where it stalled before "
+               "running it again, and tell the human if it repeats")
+        return {"what": what, "how": how, "retry": "after_check"}
+    if cls == "interrupted":
+        what = str(error or "SM restarted while this run was in flight")
+        how = ("SM restarted while this run was in flight; SM did not collect what it wrote, so nothing was "
+               "applied. Tell the human; run it again only after they confirm the hardware is idle")
+        return {"what": what, "how": how, "retry": "after_check"}
+    return None
 
 
 def resized_lists(writes: list[dict]) -> set[str]:
@@ -318,6 +573,17 @@ def limits_hold(lim: dict, fam: str | None, writes: list[dict], plan_writes_so_f
 
 # --------------------------------------------------------------- registry
 
+def interrupted_error(m: dict) -> str:
+    """The honest sentence for a run a restart cut off (docs/249, A-14): its
+    node process may have outlived SM and still be driving the OPX."""
+    err = "SM restarted while this run was in flight"
+    wp = m.get("worker_pid")
+    if wp and agent_session.pid_alive(wp):
+        err += (f"; its node process (PID {wp}) was still running at the restart and may still be driving the "
+                "OPX -- SM will not collect what it writes")
+    return err
+
+
 class Registry:
     """Every run_node this process started, by key; ``instance/agent_runs/<key>/meta.json``
     mirrors it so a restart can still answer run_wait honestly."""
@@ -348,11 +614,13 @@ class Registry:
         metas.sort(key=lambda m: float(m.get("since") or 0))
         for m in metas[-keep:]:
             if m.get("status") in ("starting", "running"):
+                err = interrupted_error(m)
                 m["status"] = "interrupted"
                 m["ended"] = m.get("ended") or time.time()
-                m["result"] = {"classification": "node_error", "status": "failed", "applied": False,
-                               "error": "SM restarted while this run was in flight", "writes": []}
-                self._write_meta(m)
+                m["result"] = {"classification": "interrupted", "status": "failed", "applied": False,
+                               "error": err, "writes": [], "failure": failure_info("interrupted", err, "")}
+                self._write_meta(m)                     # written FIRST: the next restart never repeats what follows
+                self._announce_interrupted(m, err)
                 if m.get("plan_id"):
                     try:
                         from quam_state_manager.core import agent_plans
@@ -368,6 +636,48 @@ class Registry:
                     except Exception:  # noqa: BLE001
                         logger.debug("plan interrupt failed", exc_info=True)
             self.runs[m["key"]] = m
+
+    def _announce_interrupted(self, m: dict, err: str) -> None:
+        """docs/249 (A-14): a run a restart cut off is said ONCE -- the session
+        that was armed for it is disarmed (its run_key still names this run and
+        nobody re-armed since it started), one journal line, one
+        ``agent_failure`` webhook. Called only right after the meta was
+        rewritten as ``interrupted``, so a second restart never repeats it."""
+        inst, chip, key = self.instance_path, m.get("chip"), m.get("key")
+        disarmed = False
+        try:
+            rec = agent_session.load(inst, chip) if chip else None
+            if rec is not None and rec.get("run_key") == key:
+                fields = {"run_key": None, "claimed_by_tool": None, "worker_pid": None}
+                if rec.get("start_token") and float(rec.get("armed_at") or 0) <= float(m.get("since") or 0):
+                    fields["start_token"] = None
+                    disarmed = True
+                agent_session.save(inst, chip, **fields)
+        except Exception:  # noqa: BLE001
+            logger.debug("interrupted-run session release failed", exc_info=True)
+        targets = " ".join(m.get("targets") or []) or "(node defaults)"
+        line = f"✗ ran `{m.get('node')}` on {targets} interrupted: {err}; nothing was applied"
+        if disarmed:
+            line += "; the session was disarmed -- a person arms it again"
+        name = m.get("chip_name")
+        if name:
+            try:
+                from quam_state_manager.core import journal as journal_mod
+                journal_mod.append(inst, name, line, kind="sm")
+            except Exception:  # noqa: BLE001
+                logger.debug("interrupted-run journal line failed", exc_info=True)
+        else:
+            logger.info("interrupted run %s: no chip name in its record, journal line skipped", key)
+        if chip:
+            payload = {"node": m.get("node"), "targets": m.get("targets"), "error": err, "run_key": key,
+                       "classification": "interrupted", "what": err, "disarmed": disarmed}
+
+            def _post():
+                try:
+                    limits_mod.notify(inst, chip, "agent_failure", payload)
+                except Exception:  # noqa: BLE001
+                    logger.debug("interrupted-run webhook failed", exc_info=True)
+            threading.Thread(target=_post, name=f"sm-run-interrupted-{key}", daemon=True).start()
 
     def active_for(self, chip: str) -> dict | None:
         with self._cv:
@@ -402,8 +712,10 @@ class Registry:
             p = Path(self.instance_path) / "agent_runs" / key / "meta.json"
             d = json.loads(p.read_text(encoding="utf-8"))
             if isinstance(d, dict) and d.get("status") in ("starting", "running"):
+                err = interrupted_error(d)
                 d["status"] = "interrupted"
-                d["result"] = {"classification": "node_error", "error": "SM restarted while this run was in flight"}
+                d["result"] = {"classification": "interrupted", "error": err,
+                               "failure": failure_info("interrupted", err, "")}
             return d if isinstance(d, dict) else None
         except (OSError, ValueError):
             return None
@@ -426,7 +738,8 @@ class Registry:
         meta = {"key": key, "chip": adapter.chip, "node": node_info.name, "file": node_info.file,
                 "targets": list(req.targets), "params": dict(req.params or {}), "reason": req.reason,
                 "plan_id": req.plan_id, "actor": req.actor, "session_id": req.session_id,
-                "status": "starting", "since": time.time(), "result": None, "item_id": None}
+                "status": "starting", "since": time.time(), "result": None, "item_id": None,
+                "chip_name": adapter.chip_name, "scope": adapter.scope}
         with self._cv:
             # review R1-M3: the gate's answer and this registration are one step under the lock
             for m in self.runs.values():
@@ -463,6 +776,15 @@ class Registry:
             adapter.set_lock({"key": key, "node": node_info.name, "since": window_start, "actor": req.actor,
                               "targets": list(req.targets)})
             live, before = make_scratch(inst, key, adapter.working_folder)
+            try:
+                swept = sweep_leftover_rows(scope)       # docs/249 (D-13): SM's own dead rows never run first
+            except Exception:  # noqa: BLE001
+                logger.debug("leftover row sweep failed", exc_info=True)
+                swept = []
+            if swept:
+                names = ", ".join(f"`{d.get('name')}`" for d in swept[:5])
+                adapter.journal(f"removed {len(swept)} leftover row(s) from the run queue ({names}): SM's own, from "
+                                "run(s) whose driver ended with a previous SM process", kind="sm")
             item = scheduler.add_item(scope, {
                 "file": node_info.file, "name": node_info.name, "kind": node_info.kind,
                 "has_hook": node_info.has_hook, "targets_name": node_info.targets_name,
@@ -497,6 +819,8 @@ class Registry:
                 if wp and session is not None and (session.get("worker_pid") != wp):
                     session["worker_pid"] = wp
                     agent_session.save(inst, chip, worker_pid=wp)
+                if wp and meta.get("worker_pid") != wp:
+                    self._set(meta, worker_pid=wp)      # docs/249: a restart can tell a live orphan from a dead one
                 if it is None:
                     status, error = "failed", "the queue item vanished"
                     break
@@ -535,9 +859,14 @@ class Registry:
                 status = "cancelled" if "stopped" in cancelled_why else "failed"
                 error = cancelled_why
             cls = classify(status, error, log_tail)
-            if cancelled_why and "timed out" in cancelled_why:
+            if cancelled_why and "timed out" in cancelled_why and cls != "hardware_contention":
+                # docs/249: SM's own limit ended it -- unless the node was still waiting for a busy QOP,
+                # which is the honest cause of the wait
                 cls = "timeout"
             result.update(status=status, error=error, classification=cls, log_tail=log_tail[-2000:])
+            fail = failure_info(cls, error, log_tail) if status != "done" else None
+            if fail:
+                result["failure"] = fail
             # ---- what the node wrote
             writes, truncated = diff_states(before, live)
             result["writes"] = writes
@@ -587,6 +916,9 @@ class Registry:
                 line = f"✗ {head} {status}" + (f": {str(error)[:200]}" if error else "")
                 if result["classification"] == "hardware_contention":
                     line += " — hardware contention (the OPX is held elsewhere); not retried"
+                elif result["classification"] == "host_unreachable":
+                    line += f" — {(result.get('failure') or {}).get('what') or 'QM host unreachable'}; " \
+                            "check the network / host config; not retried"
             adapter.journal(line, kind="agent", reason=None, run_id=rid,
                             paths=[w["path"] for w in writes[:20]])
             self._plan_step(req, chip, node_info, status="done" if status == "done" else
@@ -598,7 +930,8 @@ class Registry:
             self._plan_end_restore(req, chip, lim)
             if status != "done":
                 adapter.notify("agent_failure", {"node": node_info.name, "targets": req.targets, "error": error,
-                                                 "classification": result["classification"]})
+                                                 "classification": result["classification"],
+                                                 "what": (result.get("failure") or {}).get("what")})
             elif result.get("approval"):
                 adapter.notify("needs_human", {"node": node_info.name, "approval": result["approval"],
                                                "why": result.get("why_held")})

@@ -509,10 +509,12 @@ window.AgentPanel = (function () {
         res.writes.slice(0, 40).map(function (w) { return "<tr><td title=\"" + esc(w.path) + "\">" + esc(w.path) + "</td><td>" + esc(fmtNum(w.old)) + " → " + esc(fmtNum(w.new)) + "</td></tr>"; }).join("") +
         (res.writes.length > 40 ? "<tr><td colspan=2 class=muted>… " + (res.writes.length - 40) + " more</td></tr>" : "") + "</table></div></details>";
     }
+    // docs/249: what failed, in plain words, above the run's raw error ("QM host unreachable at 127.0.0.1:1")
+    var what = res.failure && res.failure.what ? '<div class="ag-err ag-what"><strong>' + esc(String(res.failure.what).slice(0, 200)) + "</strong></div>" : "";
     var err = res.error ? '<div class="ag-err">' + esc(String(res.error).slice(0, 300)) + "</div>" : "";
     var how = r.how ? '<div class="muted ag-how">' + esc(r.how) + "</div>" : "";
     var log = res.log_tail ? '<details class="ag-log"><summary>log tail</summary><pre>' + esc(res.log_tail.slice(-1500)) + "</pre></details>" : "";
-    setHtml(el, row(r.since, '<div class="ag-run-line">' + line + "</div>" + err + writes + how + log), force);
+    setHtml(el, row(r.since, '<div class="ag-run-line">' + line + "</div>" + what + err + writes + how + log), force);
   }
 
   function renderApproval(m, a, force) {

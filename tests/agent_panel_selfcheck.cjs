@@ -413,6 +413,16 @@ const tick = (ms) => new Promise(r => setTimeout(r, ms || 15));
   const pl3 = cards.querySelector('[data-card="plan:pl-3"]');
   ok(pl3 && /stopping — finishes the current run/.test(pl3.textContent) && pl3.querySelector('.ag-stop-now') && !pl3.querySelector('.ag-stop:not(.ag-stop-now)') && /\/run typed by human:kyunghoon/.test(pl3.textContent), 'a stopping plan offers only Stop now, and names who typed /run');
   ok(pl3.querySelector('.ag-st-interrupted') && pl3.querySelector('.ag-steps .ag-sim'), 'an interrupted step and its simulated flag render');
+  // docs/249: a failed run says WHAT failed in plain words, above its raw error
+  feed.live.runs.push({ key: 'r3', node: '01_tof', targets: ['q1'], status: 'ended', since: now - 2, result: { status: 'failed', classification: 'host_unreachable',
+    error: 'ConnectionError: Failed to connect to Quantum Machines Manager: ... Tried connecting to 127.0.0.1:1.',
+    failure: { what: 'QM host unreachable at 127.0.0.1:1 (connection refused)', retry: 'no' }, writes: [] } });
+  await P.poll(true); await tick();
+  const r3 = cards.querySelector('[data-card="run:r3"]');
+  const r3what = r3 && r3.querySelector('.ag-what');
+  ok(r3what && r3what.textContent === 'QM host unreachable at 127.0.0.1:1 (connection refused)' &&
+     r3what.compareDocumentPosition(r3.querySelector('div.ag-err:not(.ag-what)')) & 4 /* FOLLOWING */, 'a failed run names what failed above its raw error');
+  ok(!cards.querySelector('[data-card="run:r2"] .ag-what'), 'a run that did not fail carries no failure line');
   // R2-12: the feed follows new cards only when the reader is at the bottom
   const host = cards;
   Object.defineProperty(host, 'scrollHeight', { configurable: true, get: () => 1000 });

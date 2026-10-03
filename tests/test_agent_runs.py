@@ -215,8 +215,11 @@ class TestPure:
         assert agent_runs.classify("done", None, "") == "ok"
         assert agent_runs.classify("cancelled", "cancelled by user", "") == "cancelled"
         assert agent_runs.classify("skipped", "dry", "") == "skipped"
-        assert agent_runs.classify("failed", "boom", "Traceback ...\nFailed to connect to QM at 10.0.0.1") == "hardware_contention"
-        assert agent_runs.classify("failed", "Error: connection refused", "") == "hardware_contention"
+        # docs/249: a host that cannot be reached is not a busy OPX (test_run_failure_class has the full table)
+        assert agent_runs.classify("failed", "boom", "Traceback ...\nFailed to connect to QM at 10.0.0.1") == "host_unreachable"
+        assert agent_runs.classify("failed", "Error: connection refused", "") == "host_unreachable"
+        assert agent_runs.classify("failed", "TimeoutError: While waiting for QOP to free, reached timeout: 100s", "") \
+            == "hardware_contention"
         assert agent_runs.classify("failed", "timed out after 10s", "") == "timeout"
         assert agent_runs.classify("failed", "ValueError: fit", "") == "node_error"
 
@@ -636,11 +639,13 @@ class TestRun:
         assert r["result"]["classification"] == "timeout" and "timed out after 1s" in r["result"]["error"]
 
     def test_hardware_contention_is_named_and_not_retried(self, c, inst, monkeypatch):
-        fr = FakeRun(fail="qm.QmQuaException: Failed to connect to QM at 10.1.1.1:80")
+        # docs/249: the real contention words (qualang_tools qm_session's own give-up), not a connect failure
+        fr = FakeRun(fail="TimeoutError: While waiting for QOP to free, reached timeout: 100s")
         monkeypatch.setattr(scheduler, "_run_item", fr)
         _arm(c)
         r = _run(c).get_json()
         assert r["result"]["classification"] == "hardware_contention" and "do NOT retry" in r["how"]
+        assert "do NOT retry" in r["result"]["failure"]["how"] and "waited 100s" in r["result"]["failure"]["what"]
         assert "hardware contention" in _journal(c, inst)
         rec = json.loads((Path(str(inst)) / "agent_runs" / "index.jsonl").read_text(encoding="utf-8").splitlines()[-1])
         assert rec["classification"] == "hardware_contention" and rec["outcome"] == "failed"
