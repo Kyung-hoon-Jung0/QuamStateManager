@@ -1,6 +1,18 @@
 """SM as an MCP server for a terminal agent (docs/172).
 
+SM's Agent Setup page writes the client config for you. By hand (B-10,
+docs/252): ``run_node`` can block for up to ~28 min (``_WAIT_CAP_S``), and both
+CLIs give up on an MCP tool long before that -- Codex after 300 s -- while SM
+keeps running the node. Raise the client's tool timeout to 30 min:
+
     claude mcp add sm -- python -m quam_state_manager.mcp
+        # and start claude with MCP_TOOL_TIMEOUT=1800000 (milliseconds)
+
+    # Codex: ~/.codex/config.toml
+    [mcp_servers.sm]
+    command = "python"
+    args = ["-m", "quam_state_manager.mcp"]
+    tool_timeout_sec = 1800
 
 A stdio JSON-RPC server, stdlib only (the customer env has no ``mcp``
 package), that is a THIN CLIENT of the running State Manager window: every
@@ -130,7 +142,18 @@ def _ok(code: int, body: Any, *, expect=(200,)) -> Any:
 # ------------------------------------------------------------------ tools
 
 def t_sm_status(_a: dict) -> Any:
-    return _chip_facts()
+    """The open chip -- and the notes pinned on it (B-01, docs/252), which no
+    tool used to return, so a "do not touch" note was invisible to the next
+    agent. An older SM without ``/api/agent/notes`` leaves them out."""
+    facts = _chip_facts()
+    if isinstance(facts, dict) and facts.get("loaded"):
+        try:
+            code, body = _sm().get("/api/agent/notes")
+            if code == 200 and isinstance(body, dict):
+                facts = {**facts, "notes": body.get("notes") or []}
+        except Exception:  # noqa: BLE001 -- the status never fails on the notes
+            pass
+    return facts
 
 
 def t_take_live(_a: dict) -> Any:
@@ -403,8 +426,9 @@ def t_undo_mine(_a: dict) -> Any:
 
 
 def t_note_set(a: dict) -> Any:
-    return _ok(*_sm().post_json("/api/agent/note", {"subject": a["subject"], "text": a["text"],
-                                                    "author": "claude-code"}))
+    # B-04 (docs/252): no author here -- SM signs the note with this bridge's
+    # X-SM-Agent (by_claude / by_codex), the name the client gave in initialize
+    return _ok(*_sm().post_json("/api/agent/note", {"subject": a["subject"], "text": a["text"]}))
 
 
 def _s(desc: str, **props) -> dict:
@@ -425,10 +449,12 @@ def _visible_tools() -> dict:
 
 TOOLS: dict[str, tuple[dict, Any]] = {
     "sm_status": (_s("What chip is open in the State Manager, its qubits/pairs, how many edits are staged, "
-                     "whether the live files drifted, and what the agent hook says is running now. `pin` is the value "
+                     "whether the live files drifted, what the agent hook says is running now, and the `notes` people "
+                     "and agents pinned on the chip (read them before changing a value). `pin` is the value "
                      "SM_CHIP should hold to tie this bridge to this chip."), t_sm_status),
     "state_get": (_s("Read one value (raw + pointer-resolved) or list a subtree's keys of the open state.json/wiring.json. "
-                     "Path is dotted: qubits.q1.xy.operations.x180.amplitude. Empty path = top-level keys.",
+                     "Path is dotted: qubits.q1.xy.operations.x180.amplitude. Empty path = top-level keys. "
+                     "`notes` = the notes pinned on that path, the qubit/pair above it, or anything under it.",
                      path={"type": "string", "required": True}), t_state_get),
     "state_search": (_s("Search every leaf of the open state by key/value text (space = AND, | = OR).",
                         query={"type": "string", "required": True}, limit={"type": "integer"}), t_state_search),
@@ -498,7 +524,8 @@ TOOLS: dict[str, tuple[dict, Any]] = {
                        t_journal_append),
     "journal_read": (_s("Read today's (or a given day's) journal for the open chip.",
                         date={"type": "string", "description": "YYYY-MM-DD"}), t_journal_read),
-    "note_set": (_s("Pin a note on a qubit, pair or dotted path (shown on its row in SM), e.g. why a value was left alone.",
+    "note_set": (_s("Pin a note on a qubit, pair or dotted path (shown on its row in SM, and to every agent in "
+                    "sm_status / state_get), e.g. why a value was left alone. Signed with your client's name.",
                     subject={"type": "string", "required": True}, text={"type": "string", "required": True}),
                  t_note_set),
 }
@@ -550,7 +577,11 @@ def handle(msg: dict) -> None:
                                         "state_edit; write with apply_to_live; keep the human's journal with "
                                         "journal_append (reason required) before every node you run. After a "
                                         "node wrote state.json itself, call take_live before reading again; "
-                                        "run check_fit on every finished run.")})
+                                        "run check_fit on every finished run. Never edit state.json or "
+                                        "wiring.json directly, and never run `python <node>.py` yourself: "
+                                        "nodes run only through run_node, after a plan the human started. "
+                                        "sm_status and state_get carry the notes people pinned on the chip "
+                                        "-- read them before you change a value.")})
     elif method == "notifications/initialized" or (method or "").startswith("notifications/"):
         return
     elif method == "ping":

@@ -29,8 +29,10 @@ from pathlib import Path
 _LOCK = threading.Lock()
 # docs/173 S8: a journal line names its AUTHOR. by_claude/by_codex = the agent
 # that ran it (from the backend); hook = a terminal agent SM could not name;
-# unknown = a run nobody claimed; human = a person; sm = SM's own bookkeeping.
-KINDS = ("agent", "hook", "human", "sm", "by_claude", "by_codex", "unknown")
+# unknown = a run nobody claimed; human = a person; sm = SM's own bookkeeping;
+# unverified = a caller SM cannot vouch for -- no agent header and no person's
+# window behind the request (docs/252, A-09).
+KINDS = ("agent", "hook", "human", "sm", "by_claude", "by_codex", "unknown", "unverified")
 _AUTHOR_KINDS = ("by_claude", "by_codex", "human", "unknown")
 
 
@@ -80,6 +82,95 @@ def set_root(instance_path, folder: str | None) -> Path:
         cfg["root"] = ""
     _write_settings(instance_path, cfg)
     return root(instance_path)
+
+
+def _same_folder(a: Path, b: Path) -> bool:
+    try:
+        return Path(a).resolve() == Path(b).resolve()
+    except OSError:
+        return str(a) == str(b)
+
+
+def _blocks(text: str) -> list[str]:
+    """A day file as its entries: a top-level line starts a block, indented and
+    blank lines continue it; the ``# chip -- day`` title is not an entry."""
+    out: list[str] = []
+    for line in text.splitlines(keepends=True):
+        if line.startswith("# ") and not out:
+            continue
+        if out and (not line.strip() or line[:1] in (" ", "\t")):
+            out[-1] += line
+        elif line.strip():
+            out.append(line)
+    return out
+
+
+def carry_over(src: Path, dst: Path) -> dict[str, list[str]]:
+    """Bring every chip's day files from journal folder ``src`` into ``dst``
+    (D-08 / C-15: a moved journal used to leave them behind, and the
+    Calibration log read as an empty history). Copy, never move: ``src`` is a
+    person's folder too. A day ``dst`` already has gets only the entries it is
+    missing, appended -- never rewritten, because a vault file may hold a
+    person's own words -- so moving back and forth duplicates nothing.
+    Returns ``{chip: [days carried]}``."""
+    import shutil
+    carried: dict[str, list[str]] = {}
+    try:
+        chip_dirs = sorted(d for d in Path(src).iterdir() if d.is_dir())
+    except OSError:
+        return carried
+    for d in chip_dirs:
+        if _same_folder(d, dst):
+            continue                                  # the new folder sits inside the old one
+        days = sorted(f for f in d.glob("*.md") if _DAY_RE.fullmatch(f.stem))
+        for f in days:
+            target = Path(dst) / d.name / f.name
+            try:
+                with _LOCK:
+                    target.parent.mkdir(parents=True, exist_ok=True)
+                    if not target.exists():
+                        shutil.copy2(f, target)
+                    else:
+                        have = target.read_text(encoding="utf-8")
+                        missing = [b for b in _blocks(f.read_text(encoding="utf-8"))
+                                   if b.strip() and b.strip() not in have]
+                        if not missing:
+                            continue
+                        with open(target, "a", encoding="utf-8", newline="\n") as fh:
+                            if have and not have.endswith("\n"):
+                                fh.write("\n")
+                            fh.write("".join(b if b.endswith("\n") else b + "\n" for b in missing))
+            except OSError:
+                continue
+            carried.setdefault(d.name, []).append(f.stem)
+    return carried
+
+
+def move_root(instance_path, folder: str | None, *, who: str, chip: str | None = None) -> dict:
+    """Point the journal at ``folder`` (blank = the default) AND keep its
+    history: the day files come along (:func:`carry_over`), and the move is
+    journaled in BOTH folders -- the old one says where the log went, the new
+    one where it came from -- for every chip carried and the open one. The
+    one function both doors call (``/api/agent/journal/root`` and Setup)."""
+    old = root(instance_path)
+    new = set_root(instance_path, folder)            # raises before anything moves
+    if _same_folder(old, new):
+        return {"root": new, "moved": False, "carried": {}}
+    carried = carry_over(old, new)
+    chips = {c: c for c in carried}                  # folder name -> the name a line is filed under
+    if chip:
+        chips[_safe_key(chip)] = chip
+    for key, c in sorted(chips.items()):
+        n = len(carried.get(key, []))
+        try:
+            append(instance_path, c, f"journal folder moved to {new} by {who} -- "
+                   f"{n} day file(s) of this chip carried over", kind="sm", root_dir=old)
+        except (OSError, ValueError):
+            pass                                      # the old folder may be gone; the new one still says
+        append(instance_path, c, f"journal folder moved here from {old} by {who} -- "
+               f"{n} day file(s) of this chip carried over", kind="sm")
+    return {"root": new, "moved": True, "from": old, "carried": carried,
+            "days": sum(len(v) for v in carried.values())}
 
 
 def set_claude_says(instance_path, on: bool) -> bool:
@@ -178,8 +269,11 @@ def _defuse(line: str) -> str:
 
 def append(instance_path, chip: str, text: str, *, kind: str = "agent",
            reason: str | None = None, run_id: int | None = None,
-           paths: list[str] | None = None, when: datetime | None = None) -> dict:
-    """Append one entry as a markdown bullet. Returns what was written."""
+           paths: list[str] | None = None, when: datetime | None = None,
+           root_dir: Path | None = None) -> dict:
+    """Append one entry as a markdown bullet. Returns what was written.
+    ``root_dir`` writes into a journal folder other than the configured one
+    (the old folder of a move, :func:`move_root`)."""
     if kind not in KINDS:
         kind = "agent"
     when = when or datetime.now()
@@ -197,6 +291,8 @@ def append(instance_path, chip: str, text: str, *, kind: str = "agent",
         body.append("  - because: " + reason.strip().replace("\n", " "))
     entry = "\n".join(body) + "\n"
     f = day_file(instance_path, chip, when.strftime("%Y-%m-%d"))
+    if root_dir is not None:
+        f = Path(root_dir) / f.parent.name / f.name
     with _LOCK:
         f.parent.mkdir(parents=True, exist_ok=True)
         fresh = not f.exists() or f.stat().st_size == 0

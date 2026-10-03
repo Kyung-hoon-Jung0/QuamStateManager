@@ -27,6 +27,42 @@ import urllib.parse
 import urllib.request
 from pathlib import Path
 
+#: The header the hook proves itself with (docs/252, A-09): SM records an
+#: agent event only when it carries the key SM keeps in its instance dir.
+HOOK_KEY_HEADER = "X-SM-Hook-Key"
+
+
+def hook_key_path(instance_path) -> Path:
+    return Path(instance_path) / "agent_link" / "hook.key"
+
+
+def read_hook_key(instance_path) -> str | None:
+    """The instance's hook key, or None. Read on every use: two SM windows on
+    one instance dir share the file, so neither caches a key the other may
+    have just written."""
+    try:
+        k = hook_key_path(instance_path).read_text(encoding="utf-8").strip()
+    except OSError:
+        return None
+    return k or None
+
+
+def ensure_hook_key(instance_path) -> str:
+    """The key, made once per instance dir (never rotated: a hook that fired
+    during a restart must still be believed). Written whole by replace, so a
+    reader never sees half a key; two windows racing at first start leave one
+    of their keys, and both read that one from then on."""
+    k = read_hook_key(instance_path)
+    if k:
+        return k
+    import secrets
+    p = hook_key_path(instance_path)
+    p.parent.mkdir(parents=True, exist_ok=True)
+    tmp = p.with_name(f"hook.key.{os.getpid()}.tmp")
+    tmp.write_text(secrets.token_hex(32), encoding="utf-8")
+    os.replace(tmp, p)
+    return read_hook_key(instance_path) or ""
+
 
 def instance_dir() -> Path:
     """Where SM keeps its instance data, resolved the way SM resolves it.
@@ -106,10 +142,11 @@ class SMLink:
         self.base = base_url.rstrip("/")
         self.timeout = timeout
         self.agent_id = agent_id            # X-SM-Agent: SM stamps the actor from this
+        self.extra_headers: dict = {}       # the hook's key (docs/252)
 
     def _headers(self, extra: dict | None = None) -> dict:
         h = {"Origin": self.base, "Accept": "application/json", "User-Agent": "sm-agent-link",
-             "X-SM-Agent": self.agent_id}
+             "X-SM-Agent": self.agent_id, **self.extra_headers}
         if extra:
             h.update(extra)
         return h
@@ -162,10 +199,16 @@ def _decode(raw: bytes, ctype: str):
 def fire_event(instance_path: Path | None, rec: dict, timeout: float = 0.3) -> bool:
     """The hook's one POST: newest live window, no liveness probe (that GET
     re-checks the live hash -- too heavy for every tool call), a short
-    timeout. False means SM was not there; the jsonl on disk is the record."""
+    timeout. False means SM was not there; the jsonl on disk is the record.
+    The POST carries the instance's hook key (docs/252): without it SM records
+    nothing, because anyone can POST an event."""
+    key = read_hook_key(instance_path or instance_dir())
     for url in candidate_urls(instance_path)[:1]:
         try:
-            code, _ = SMLink(url, timeout=timeout, agent_id="hook").post_json("/api/agent/event", rec)
+            link = SMLink(url, timeout=timeout, agent_id="hook")
+            if key:
+                link.extra_headers[HOOK_KEY_HEADER] = key
+            code, _ = link.post_json("/api/agent/event", rec)
             return code == 200
         except (urllib.error.URLError, OSError, ValueError):
             return False

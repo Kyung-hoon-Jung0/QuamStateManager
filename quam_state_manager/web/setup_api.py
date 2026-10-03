@@ -270,17 +270,19 @@ def journal_setup():
     root = str(data.get("root") or "").strip()
     if not root:
         return _err("root required (the suggested folder is beside the data folder)")
+    chip = aa._chip_name() if _r()._active_path() else None
     try:
         Path(root).mkdir(parents=True, exist_ok=True)
-        p = journal_mod.set_root(inst, root)
-    except OSError as exc:
+        # docs/252 (D-08 / C-15): the same move as /api/agent/journal/root -- the day
+        # files come along, and both folders say where the log went
+        moved = journal_mod.move_root(inst, root, who=_r()._request_actor(), chip=chip)
+        p = moved["root"]
+    except (OSError, ValueError) as exc:
         return _err(f"cannot use {root}: {exc}")
     if "claude_says" in data:
         journal_mod.set_claude_says(inst, bool(data.get("claude_says")))
-    chip = aa._chip_name() if _r()._active_path() else None
-    if chip:
-        journal_mod.append(inst, chip, f"journal folder set to {p} by {_r()._request_actor()}", kind="sm")
-    return jsonify(ok=True, root=str(p), claude_says=journal_mod.settings(inst).get("claude_says"))
+    return jsonify(ok=True, root=str(p), claude_says=journal_mod.settings(inst).get("claude_says"),
+                   carried=moved.get("carried") or {})
 
 
 @setup_bp.route("/context", methods=["GET"])

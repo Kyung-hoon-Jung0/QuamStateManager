@@ -213,7 +213,10 @@ _MAX_SUBTREE_CHARS = 60_000
 def state_get():
     """One value (raw + pointer-resolved) or a bounded subtree. Every answer
     says whether the live files have moved outside SM (a node's own write),
-    because the working copy never adopts that by itself on this path."""
+    because the working copy never adopts that by itself on this path -- and
+    carries the notes people and agents pinned on that path or the entity
+    above it (B-01, docs/252: "do not touch, fridge warming" must be read
+    before the value is changed)."""
     r = _r()
     store = r._store()
     if not store:
@@ -223,7 +226,8 @@ def state_get():
     path = (request.args.get("path") or "").strip().strip(".")
     if not path:
         keys = sorted(k for k in store.merged.keys())
-        return jsonify(ok=True, path="", kind="container", keys=keys, live_diverged=diverged, stale_since=stale_since)
+        return jsonify(ok=True, path="", kind="container", keys=keys, live_diverged=diverged, stale_since=stale_since,
+                       notes=_notes_touching(None))
     try:
         raw = store.get_value(path)
     except (KeyError, IndexError, TypeError, ValueError):
@@ -234,9 +238,11 @@ def state_get():
         if len(text) > _MAX_SUBTREE_CHARS:
             return jsonify(ok=True, path=path, kind="container", keys=[str(k) for k in keys],
                            truncated=True, size_chars=len(text), live_diverged=diverged, stale_since=stale_since,
-                           hint="ask for a deeper path; this subtree is too large to return whole")
+                           hint="ask for a deeper path; this subtree is too large to return whole",
+                           notes=_notes_touching(path))
         return jsonify(ok=True, path=path, kind="container", keys=[str(k) for k in keys],
-                       value=_jsonable(raw), live_diverged=diverged, stale_since=stale_since)
+                       value=_jsonable(raw), live_diverged=diverged, stale_since=stale_since,
+                       notes=_notes_touching(path))
     resolved = raw
     if isinstance(raw, str) and raw.startswith("#"):
         try:
@@ -250,7 +256,8 @@ def state_get():
     return jsonify(ok=True, path=path, kind="leaf", value=_jsonable(raw),
                    resolved=_jsonable(resolved), source_file=src,
                    is_pointer=isinstance(raw, str) and raw.startswith("#"),
-                   live_diverged=diverged, stale_since=stale_since)
+                   live_diverged=diverged, stale_since=stale_since,
+                   notes=_notes_touching(path))
 
 
 @agent_bp.route("/tray")
@@ -479,6 +486,61 @@ def check_fit(run_id: int):
 
 # ------------------------------------------------------------------ notes
 
+def _note_subject(store, subject: str) -> str:
+    """A bare qubit / pair name is the entity's dot path (B-01, docs/252): an
+    agent pinned ``qA4``, which no grid row matched and no read could find.
+    A dot path, or a name the chip does not have, is kept as written."""
+    s = str(subject or "").strip()
+    if not s or "." in s or store is None:
+        return s
+    if s in set(store.qubit_names):
+        return f"qubits.{s}"
+    if s in set(store.qubit_pair_names):
+        return f"qubit_pairs.{s}"
+    return s
+
+
+def _notes_touching(path: str | None) -> list[dict]:
+    """The notes pinned on the open chip that concern ``path`` -- on it, on an
+    entity above it, or under it (``entity_notes.touches``); every note for no
+    path. B-01: a "do not touch, fridge warming" note an agent pinned was
+    readable by no tool, and the next agent said there were no notes."""
+    r = _r()
+    live = r._active_path()
+    if not live:
+        return []
+    try:
+        from quam_state_manager.core import entity_notes
+        store = r._store()
+        raw = entity_notes.load(current_app.instance_path, live)
+        merged = store.merged if store is not None and isinstance(store.merged, dict) else None
+        items = entity_notes.classify(merged, raw)
+    except Exception:  # noqa: BLE001 -- a note read never fails a state read
+        logger.debug("notes read failed", exc_info=True)
+        return []
+    want = str(path or "").strip().strip(".")
+    out = []
+    for subject, rec in items.items():
+        addr = _note_subject(store, subject)                 # a bare-name note written before the fix
+        if want and not entity_notes.touches([addr], [want]):
+            continue
+        out.append({"subject": subject, "text": rec.get("text"), "author": rec.get("author") or None,
+                    "updated_at": rec.get("updated_at"), "hand_tuned": bool(rec.get("hand_tuned")),
+                    **({"orphan": rec["orphan"]} if "orphan" in rec and addr == subject else {})})
+    out.sort(key=lambda x: natural_key(x["subject"]))
+    return out
+
+
+@agent_bp.route("/notes")
+def notes_get():
+    """Every note on the open chip, or those touching ``?path=``."""
+    if not _r()._active_path():
+        return _err("no chip loaded", 409)
+    path = (request.args.get("path") or "").strip()
+    notes = _notes_touching(path or None)
+    return jsonify(ok=True, path=path or None, count=len(notes), notes=notes)
+
+
 @agent_bp.route("/note", methods=["POST"])
 def note_set():
     r = _r()
@@ -486,16 +548,24 @@ def note_set():
     if not path:
         return _err("no chip loaded", 409)
     data = request.get_json(silent=True) or request.form.to_dict()
-    subject = str(data.get("subject") or "").strip()
+    subject = _note_subject(r._store(), str(data.get("subject") or "").strip())
     text = str(data.get("text") or "")
     if not subject:
         return _err("subject required (a qubit, pair, or dot path)")
     from quam_state_manager.core import entity_notes
+    from quam_state_manager.web import callers
+    # B-04 (docs/252): the author is the CALLER -- by_claude / by_codex from the
+    # bridge's header, a person from their window -- never the payload's word
+    # (every client used to be recorded as "claude-code").
+    agent = bool((request.headers.get("X-SM-Agent") or "").strip())
+    author = r._request_actor() if (agent or callers.from_person()) else "unverified"
     try:
-        rec = entity_notes.save(current_app.instance_path, path, subject, text,
-                                author=str(data.get("author") or "claude-code"))
+        rec = entity_notes.save(current_app.instance_path, path, subject, text, author=author,
+                                chip_token=r._active_chip_token() or "")
     except entity_notes.NoteConflict as exc:
         return _err("note changed underneath you", 409, stored=_jsonable(exc.stored))
+    except ValueError as exc:
+        return _err(str(exc))
     return jsonify(ok=True, note=_jsonable(rec))
 
 
@@ -528,16 +598,27 @@ def journal_append():
     be the human."""
     data = request.get_json(silent=True) or request.form.to_dict()
     kind = str(data.get("kind") or "agent")
+    needs_reason = kind == "agent"
     if request.headers.get("X-SM-Agent"):
-        if kind == "human":
-            kind = "agent"
-    elif kind == "agent":
-        kind = "human"
+        # docs/252 (A-09): an agent's line is signed with the agent's own name,
+        # whatever kind it asked for -- never `sm` (SM's bookkeeping, "armed by
+        # human:Kim"), `human`, or the other CLI. Only the bridge's bookkeeping
+        # of its own acts (`sm`: "applied 2 edits") needs no reason.
+        needs_reason = kind != "sm"
+        actor = _r()._request_actor()
+        kind = actor if actor in journal_mod.KINDS else "agent"
+    else:
+        from quam_state_manager.web import callers
+        needs_reason = False
+        if not callers.from_person():
+            kind = "unverified"           # no agent header and no person's window: SM cannot say who
+        elif kind == "agent":
+            kind = "human"
     text = str(data.get("text") or "").strip()
     reason = data.get("reason")
     if not text:
         return _err("text required")
-    if kind == "agent" and not (reason and str(reason).strip()):
+    if needs_reason and not (reason and str(reason).strip()):
         return _err("reason required: say WHY (what you saw, what you changed, what you expect)")
     run_id = data.get("run_id")
     try:
@@ -557,9 +638,14 @@ def journal_append():
 @agent_bp.route("/journal/root", methods=["GET", "POST"])
 def journal_root():
     if request.method == "POST":
+        # docs/252 (D-08 / C-15): a person's press only (callers.PERSON_ONLY); the
+        # day files come along and the move is journaled in both folders
         data = request.get_json(silent=True) or request.form.to_dict()
+        r = _r()
         try:
-            root = journal_mod.set_root(current_app.instance_path, data.get("root"))
+            moved = journal_mod.move_root(current_app.instance_path, data.get("root"), who=r._request_actor(),
+                                          chip=_chip_name() if r._active_path() else None)
+            root = moved["root"]
         except (OSError, ValueError) as exc:
             # docs/191 H06: a NUL in the path raises ValueError from the OS
             # call, not OSError, and answered 500 -- the same uncaught-kind
@@ -569,7 +655,8 @@ def journal_root():
             v = data.get("agent_says", data.get("claude_says"))
             journal_mod.set_agent_says(current_app.instance_path, str(v).lower() in ("1", "true", "on"))
         st = journal_mod.settings(current_app.instance_path)
-        return jsonify(ok=True, root=str(root), agent_says=st["agent_says"], claude_says=st["agent_says"])
+        return jsonify(ok=True, root=str(root), agent_says=st["agent_says"], claude_says=st["agent_says"],
+                       carried=moved.get("carried") or {})
     st = journal_mod.settings(current_app.instance_path)
     return jsonify(ok=True, root=str(journal_mod.root(current_app.instance_path)),
                    default=str(Path(current_app.instance_path) / "journal"),
@@ -775,6 +862,10 @@ def _notify(event: str, payload: dict) -> None:
         logger.debug("notify failed", exc_info=True)
 
 
+#: Fields only SM's own in-process chat recorder writes (chat_api._record).
+_CHAT_ONLY_FIELDS = ("origin", "n", "ask_id", "readonly", "owner", "chip", "who")
+
+
 @agent_bp.route("/event", methods=["POST"])
 def event_post():
     """One hook event. The script has already appended it to disk; here it
@@ -782,6 +873,12 @@ def event_post():
     data = request.get_json(silent=True)
     if not isinstance(data, dict):
         return _err("json object required")
+    # docs/252 (A-09): the hook proved itself (callers.HOOK_ONLY). What it
+    # cannot carry is the in-process marks SM puts on its OWN chat events -- an
+    # `origin` would put the record into the Agent panel's feed as the agent's
+    # words, and its `chip` would be trusted as the journal's chip.
+    for k in _CHAT_ONLY_FIELDS:
+        data.pop(k, None)
     data.setdefault("ts", time.time())
     with _events_lock:
         _events().append(data)

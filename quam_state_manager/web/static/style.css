@@ -13955,6 +13955,12 @@ table.diff-wb-list tbody > tr[hidden] { display: none; }
 .as-q { margin: .3rem 0; } .as-q input, .as-q textarea { margin: 0; }
 .as-answer { font-size: .9em; white-space: pre-wrap; }
 .as-ctx-local, .as-jroot { font-size: .9em; }
+/* docs/252 -- Setup's Limits section: the person's guardrails, edited in the window */
+.as-limits { display: grid; grid-template-columns: repeat(auto-fill, minmax(17rem, 1fr)); gap: .35rem .9rem; font-size: .9em; }
+.as-limits label { display: flex; flex-wrap: wrap; gap: .35rem; align-items: center; margin: 0; }
+.as-limits input, .as-limits select { width: auto; min-width: 5rem; max-width: 100%; margin: 0; padding: .15rem .4rem; height: auto; font-size: inherit; }
+.as-limits select { padding-right: 2rem; }            /* room for Pico's arrow */
+.as-limits #as-lim-hook, .as-limits #as-lim-delta { flex: 1 1 10rem; }
 .as-jroot input { display: inline-block; width: min(28rem, 100%); margin: 0; }
 /* QA agents round: at bottom 1rem the toast sat ON the composer's Send button
    for its 5 s and took the click (measured: elementFromPoint(Send) = the toast

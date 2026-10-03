@@ -29,6 +29,7 @@ const BUSY_ERR = "Can't change global_simulate while the scheduler is running â€
 let settingsPersisted = true, settingsBusy = false, settingsDown = false;
 const calls = [];
 let savedCtx = null;
+let limitsNow = { mode: 'ask-writes', max_writes_per_plan: 200, human_recent_min: 30, stop_by: '', webhook_url: '', max_delta: { ramsey: 2000000 } }, limitsRefuse = null;
 function S_reset() { const st = window.AgentSetup && window.AgentSetup._state; if (st) st.answers = {}; }
 global.fetch = window.fetch = function (url, opts) {
   const body = opts && opts.body ? JSON.parse(opts.body) : null;
@@ -47,6 +48,11 @@ global.fetch = window.fetch = function (url, opts) {
   else if (/\/setup\/connect/.test(url)) resp = { ok: true, applied: true, writes: { mcp: { file: 'H/.claude.json', backup: 'H/.claude.json.sm-backup-1' } } };
   else if (/\/setup\/context$/.test(url) && (!opts || opts.method === 'GET')) resp = { ok: true, facts: { n_qubits: 20, n_pairs: 30, bias_modes: { opx: 9 }, nodes: ['05_power_rabi'] }, questions: [{ id: 'tunable', kind: 'choice', options: ['flux-tunable', 'fixed-frequency', 'mixed'], question: 'Are the qubits flux-tunable?', detected: 'mixed', why: 'x' }, { id: 'notes', kind: 'text', question: 'Anything else?', detected: '' }], saved: savedCtx || undefined };
   else if (/\/setup\/context$/.test(url)) resp = { ok: true, applied: !!body.apply, block: 'B', previews: { claude: { file: 'D:/lab/cal/CLAUDE.local.md', exists: false, before: '', after: 'a\nb\n', changed: true }, codex: { file: 'D:/lab/cal/AGENTS.md', exists: true, before: 'lab\n', after: 'lab\n\nB', changed: true, moves_from: 'D:/lab/cal/AGENTS.local.md' } }, writes: {} };
+  else if (/\/api\/agent\/limits$/.test(url) && method === 'POST') {
+    if (limitsRefuse) { code = 403; resp = { ok: false, refused: 'no_window_proof', error: limitsRefuse }; }
+    else { limitsNow = Object.assign({}, limitsNow, { mode: body.mode, max_writes_per_plan: +body.max_writes_per_plan, human_recent_min: +body.human_recent_min, stop_by: body.stop_by, webhook_url: body.webhook_url, max_delta: JSON.parse(body.max_delta) }); resp = { ok: true, limits: limitsNow }; }
+  }
+  else if (/\/api\/agent\/limits$/.test(url)) resp = { ok: true, chip: 'arbel', limits: limitsNow, modes: ['auto', 'ask-writes', 'ask-all'] };
   else if (/\/setup\/test/.test(url)) resp = { ok: true, backend: 'claude', elapsed_s: 12.3, done: true, failed: false, answer: 'PJ_10082026 is open: 20 qubits.', tools: ['mcp__sm__sm_status'] };
   return Promise.resolve({ status: code, json: function () { return Promise.resolve(resp); } });
 };
@@ -202,6 +208,32 @@ const tick = (ms) => new Promise(r => setTimeout(r, ms || 15));
   await tick(30);
   const ctxSec2 = document.getElementById('as-context');
   ok(!!ctxSec2 && !/Codex never reads/.test(ctxSec2.textContent) && /âœ“/.test(ctxSec2.querySelector('summary').textContent), 'B-02: nothing unread -> no warning, section done');
+  // docs/252: the limits are the person's, edited here (no other surface could change them)
+  ok(!document.getElementById('as-limits'), 'no chip open -> no Limits section');
+  status.chip = 'arbel';
+  A.load();
+  await tick(40);
+  const limSec = document.getElementById('as-limits');
+  ok(!!limSec && /7\. Limits for arbel/.test(limSec.querySelector('summary').textContent), 'a chip open -> 7. Limits for <chip>');
+  ok(document.getElementById('as-lim-mode').value === 'ask-writes' && document.getElementById('as-lim-maxw').value === '200'
+     && document.getElementById('as-lim-recent').value === '30' && document.getElementById('as-lim-delta').value === '{"ramsey":2000000}',
+     'the form starts from the saved limits');
+  document.getElementById('as-lim-maxw').value = '50';
+  document.getElementById('as-lim-hook').value = 'https://hooks.example/x';
+  A.saveLimits();
+  await tick(40);
+  const post = calls.filter(c => /\/api\/agent\/limits$/.test(c.url) && c.method === 'POST').pop();
+  ok(post && post.body.max_writes_per_plan === '50' && post.body.webhook_url === 'https://hooks.example/x'
+     && post.body.mode === 'ask-writes' && post.body.max_delta === '{"ramsey":2000000}', 'Save posts every field as typed');
+  ok(/Saved/.test(document.getElementById('as-lim-msg').textContent) && document.getElementById('as-lim-maxw').value === '50'
+     && document.getElementById('as-limits').open, 'saved -> the section stays open and says so, over the saved values');
+  limitsRefuse = 'changing the limits needs a press in the SM window. If SM was restarted, reload the page and press again.';
+  document.getElementById('as-lim-recent').value = '0';
+  A.saveLimits();
+  await tick(40);
+  ok(/Not saved: changing the limits needs a press in the SM window/.test(document.getElementById('as-lim-msg').textContent),
+     "a refusal is said beside the button, in the server's words");
+  limitsRefuse = null;
   console.log(`\n${passes} passed, ${fails} failed`);
   process.exit(fails ? 1 : 0);
 })();

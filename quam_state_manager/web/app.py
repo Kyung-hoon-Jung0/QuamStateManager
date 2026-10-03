@@ -932,5 +932,9 @@ def create_app(*, testing: bool = False, instance_path: str | None = None) -> Fl
     from quam_state_manager.web.setup_api import setup_bp, page_bp
     app.register_blueprint(setup_bp)
     app.register_blueprint(page_bp)
+    # docs/252: who is calling -- a person's window (cookie), SM's hook (key);
+    # registered after the CSRF guard, so a cross-origin POST is refused as that
+    from quam_state_manager.web import callers
+    callers.init_app(app)
 
     return app

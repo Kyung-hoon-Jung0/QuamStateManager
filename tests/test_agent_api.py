@@ -134,8 +134,16 @@ class TestWithAChip:
         assert loaded_client.get("/api/agent/run/1").status_code == 409
 
     def test_a_note_lands_in_the_entity_notes_store(self, loaded_client):
-        r = loaded_client.post("/api/agent/note", json={"subject": "qA1", "text": "left alone: T1 outlier"}, headers=_H)
-        assert r.status_code == 200 and r.get_json()["note"]["author"] == "claude-code"
+        """B-04 (docs/252): the author is the caller, never the payload -- it used to
+        read "claude-code" for every client, Codex and a person included."""
+        r = loaded_client.post("/api/agent/note", json={"subject": "qA1", "text": "left alone: T1 outlier",
+                                                         "author": "claude-code"}, headers=_H)
+        assert r.status_code == 200 and r.get_json()["note"]["author"] == "human"
+        r = loaded_client.post("/api/agent/note", json={"subject": "qA1", "text": "fridge warming",
+                                                         "author": "human:Kim"},
+                               headers={**_H, "X-SM-Agent": "codex"})
+        assert r.get_json()["note"]["author"] == "by_codex"
+        assert r.get_json()["note"]["subject"] == "qubits.qA1", "a bare name is the qubit's dot path"
 
 
 class TestJournalDoor:

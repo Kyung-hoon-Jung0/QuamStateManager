@@ -120,14 +120,50 @@ def validate(patch: dict) -> dict:
     return out
 
 
+def _shown(key: str, v) -> str:
+    """A limit's value as a journal line may carry it. A webhook URL often
+    embeds its own secret (a Slack/Teams token in the path), and the journal
+    is a markdown file in a person's vault: only its scheme and host go in."""
+    if key == "webhook_url":
+        if not v:
+            return "(none)"
+        from urllib.parse import urlsplit
+        try:
+            u = urlsplit(str(v))
+            host = u.hostname or ""
+            port = f":{u.port}" if u.port else ""
+        except ValueError:
+            return "(set)"
+        return f"{u.scheme}://{host}{port}/..." if u.scheme and host else "(set)"   # never the user:token@ part
+    if v in ("", None, [], {}):
+        return "(none)"
+    if isinstance(v, (dict, list)):
+        return json.dumps(v, separators=(",", ":"), sort_keys=True)
+    return str(v)
+
+
+def describe_patch(patch: dict) -> str:
+    """``mode -> auto, human_recent_min -> 0`` -- what a request ASKED for, the
+    keys SM knows only, redacted like the journal (docs/252: the line an
+    agent's refused attempt leaves)."""
+    if not isinstance(patch, dict):
+        return ""
+    return ", ".join(f"{k} -> {_shown(k, patch[k])}" for k in DEFAULTS if k in patch)
+
+
 def save(instance_path, chip: str, patch: dict, *, who: str = "human", journal_chip: str | None = None) -> dict:
-    """Merge a validated patch, journal a mode change with who, return the whole.
+    """Merge a validated patch, journal every change with who/old/new, return the whole.
 
     ``chip`` is the machine KEY the gates read (agent_api._chip_key); the
-    journal is for people, so a mode change is written under ``journal_chip``
+    journal is for people, so a change is written under ``journal_chip``
     (the display name) when given. On-site 2026-09-07: the route saved under
     the display name while run_node loaded under the key, so a lowered
-    human_recent_min never reached the gate."""
+    human_recent_min never reached the gate.
+
+    docs/252 (D-07): only a MODE change used to be journaled, so lowering
+    ``human_recent_min`` to 0 or pointing the webhook elsewhere left no trace.
+    The mode keeps its own line (its wording is what people search for); every
+    other changed limit goes on one line beside it."""
     clean = validate(patch)
     p = path_for(instance_path, chip)
     p.parent.mkdir(parents=True, exist_ok=True)
@@ -137,16 +173,22 @@ def save(instance_path, chip: str, patch: dict, *, who: str = "human", journal_c
     # threads). Two windows, one process: see safe_io.path_lock.
     with safe_io.path_lock(p):
         cur = load(instance_path, chip)
-        before_mode = cur["mode"]
+        before = json.loads(json.dumps(cur))
         cur.update(clean)
     # safe_io's temp file is THIS writer's alone. A fixed `<file>.tmp` is
     # shared by two concurrent writers: their bytes interleave and the
     # mixture is replaced into place, which the reader then swallows as an
     # empty store (agent_plans._save has the measurement).
         safe_io.atomic_write_json(p, cur)
-    if "mode" in clean and clean["mode"] != before_mode:
-        journal_mod.append(instance_path, journal_chip or chip,
-                           f"mode {before_mode} -> {clean['mode']} (set by {who})", kind="sm")
+    jchip = journal_chip or chip
+    if "mode" in clean and clean["mode"] != before["mode"]:
+        journal_mod.append(instance_path, jchip,
+                           f"mode {before['mode']} -> {clean['mode']} (set by {who})", kind="sm")
+    changed = [k for k in DEFAULTS if k != "mode" and k in clean and clean[k] != before.get(k)]
+    if changed:
+        journal_mod.append(instance_path, jchip, "limits " + "; ".join(
+            f"{k} {_shown(k, before.get(k))} -> {_shown(k, clean[k])}" for k in changed)
+            + f" (set by {who})", kind="sm")
     return cur
 
 

@@ -144,13 +144,40 @@ window.AgentSetup = (function () {
          section ("the time it took and the answer, verbatim"), so while there
          is one on screen the section stays open. */
       !!S.lastTest));
+    // 7. limits -- the PERSON's (docs/252): SM refuses an agent's request to change them, and
+    // a request from outside this window; every change is journaled with who, old and new
+    if (d.chip && S.limits && S.limits.limits) {
+      var lim = S.limits.limits, modes = S.limits.modes || ["auto", "ask-writes", "ask-all"];
+      var v = function (x) { return esc(x === undefined || x === null ? "" : String(x)); };
+      var delta = lim.max_delta && Object.keys(lim.max_delta).length ? JSON.stringify(lim.max_delta) : "";
+      parts.push(sec("limits", "7. Limits for " + d.chip, true,
+        '<p class="muted">What SM enforces on the agent, whatever it is told. Only a person changes these, here; '
+        + "each change goes into the journal with who, old and new.</p>"
+        + '<div class="as-limits">'
+        + '<label>Default mode <select id="as-lim-mode">' + modes.map(function (m) { return '<option value="' + esc(m) + '"' + (m === lim.mode ? " selected" : "") + ">" + esc(m) + "</option>"; }).join("") + "</select></label>"
+        + '<label>Max writes per plan <input id="as-lim-maxw" type="number" min="0" value="' + v(lim.max_writes_per_plan) + '"> <span class="muted">0 = no cap</span></label>'
+        + '<label>Refuse a run within <input id="as-lim-recent" type="number" min="0" value="' + v(lim.human_recent_min) + '"> min of a person\'s run</label>'
+        + '<label>Stop by <input id="as-lim-stop" type="text" placeholder="HH:MM" value="' + v(lim.stop_by) + '"></label>'
+        + '<label>Webhook <input id="as-lim-hook" type="text" placeholder="https://..." value="' + v(lim.webhook_url) + '"></label>'
+        + '<label>Max |&Delta;| per family <input id="as-lim-delta" type="text" placeholder=\'{"ramsey": 2e6}\' value="' + v(delta) + '"></label>'
+        + '</div><div class="as-acts"><button type="button" class="btn-sm" onclick="AgentSetup.saveLimits()">Save limits</button></div>'
+        + '<div id="as-lim-msg"></div>', !!S.limitsMsg));
+    }
     root.innerHTML = parts.join("");
+    var lm = document.getElementById("as-lim-msg");
+    if (lm && S.limitsMsg) lm.innerHTML = S.limitsMsg;
     if (window.htmx) { try { window.htmx.process(root); } catch (e) { /* ignore */ } }
   }
 
+  function loadLimits() {
+    return api("GET", "/api/agent/limits").then(function (r) {
+      S.limits = r.status === 200 && r.body && r.body.limits ? r.body : null;
+    });
+  }
   function load() {
+    var lims = loadLimits();
     return api("GET", "/api/agent/setup").then(function (r) {
-      if (r.status === 200) { S.data = r.body; render(); return; }
+      if (r.status === 200) { S.data = r.body; return lims.then(render, render); }
       // Say so in the page rather than leaving it empty.
       var root = S.root || document.getElementById("agent-setup-root");
       if (root) {
@@ -303,6 +330,23 @@ window.AgentSetup = (function () {
       host.innerHTML = html.join("");
     });
   }
+  function saveLimits() {
+    var g = function (id) { return String((document.getElementById(id) || {}).value || "").trim(); };
+    var body = { mode: g("as-lim-mode"), max_writes_per_plan: g("as-lim-maxw"), human_recent_min: g("as-lim-recent"),
+                 stop_by: g("as-lim-stop"), webhook_url: g("as-lim-hook"), max_delta: g("as-lim-delta") || "{}" };
+    var msg = document.getElementById("as-lim-msg");
+    api("POST", "/api/agent/limits", body).then(function (r) {
+      var b = r.body || {};
+      if (r.status !== 200 || b.ok === false) {
+        S.limitsMsg = '<p class="ag-err" role="alert">Not saved: ' + esc(b.error || ("HTTP " + r.status)) + "</p>";
+        if (msg) msg.innerHTML = S.limitsMsg;
+        return;
+      }
+      S.limits = { limits: b.limits, modes: (S.limits || {}).modes };
+      S.limitsMsg = '<p class="muted">Saved; any change is in the journal.</p>';
+      render();
+    });
+  }
   function answer(el) { S.answers[el.getAttribute("data-q")] = el.value; }
   function ctxBody(apply) {
     var targets = [];
@@ -357,5 +401,5 @@ window.AgentSetup = (function () {
 
   return { init: init, load: load, preview: preview, connect: connect, disconnect: disconnect, journal: journal,
            loadContext: loadContext, answer: answer, previewContext: previewContext, writeContext: writeContext,
-           test: test, dryRun: dryRun, diffLines: diffLines, _state: S };
+           test: test, dryRun: dryRun, saveLimits: saveLimits, diffLines: diffLines, _state: S };
 })();
