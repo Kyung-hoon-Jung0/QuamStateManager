@@ -98,6 +98,16 @@ def _chip_key() -> str:
         return _chip_name()
 
 
+def _declared_chip_name(store) -> str | None:
+    """``extras.chip_name`` -- the name a lab DECLARED for this chip (the top
+    of the chip-identity ladder, docs/20 v2), or None."""
+    try:
+        v = ((store.state or {}).get("extras") or {}).get("chip_name")
+    except Exception:  # noqa: BLE001
+        return None
+    return str(v).strip() or None if isinstance(v, str) else None
+
+
 def _lock_for(kind: str) -> threading.Lock:
     """One lock per (kind, chip) for check-then-act routes (review R3-3 / R1-M3)."""
     locks = current_app.config.setdefault("agent_locks", {})
@@ -181,6 +191,8 @@ def chip():
     return jsonify(ok=True, loaded=True, sm_version=_version(),
                    path=r._active_path(), name=_chip_name(), chip_key=_chip_key(),
                    chip_token=r._active_chip_token() or "",
+                   # docs/246 A-06: the declared identity, and what SM_CHIP should be
+                   declared_name=_declared_chip_name(store), pin=_chip_key(),
                    qubits=list(store.qubit_names), pairs=list(store.qubit_pair_names),
                    pending=r._change_count(),
                    live_diverged=diverged,
@@ -246,6 +258,7 @@ def tray():
     """The staged, not-yet-applied edits -- what the human sees in Review,
     each with who staged it."""
     r = _r()
+    ctx0 = r._active_ctx()
     mod = r._modifier()
     if not mod:
         return _err("no chip loaded", 409)
@@ -253,7 +266,18 @@ def tray():
     rows = [{"index": i, "path": c.dot_path, "old": _jsonable(c.old_value), "new": _jsonable(c.new_value),
              "source": c.source_file, "created": c.created, "deleted": c.deleted,
              "group": c.group_id, "actor": getattr(c, "actor", "human")} for i, c in enumerate(log)]
+    # docs/246 A-07: the picture is OF a chip. The bridge declares this key,
+    # token and set signature back at apply, so a chip switched in between
+    # is refused instead of applying the other chip's tray.
+    sig = r._change_log_sig_of(log)
+    key, token = _chip_key(), r._active_chip_token() or ""
+    if r._active_ctx() is not ctx0:
+        # a /load landed between reading the log and naming its chip: the
+        # rows and the key would describe two chips
+        return _err("the open chip changed while the tray was read -- read it again", 409,
+                    conflict="chip_switched")
     return jsonify(ok=True, count=len(rows), seen_changes=len(rows), entries=rows,
+                   seen_sig=sig, chip_key=key, chip_token=token,
                    agent_count=sum(1 for x in rows if str(x["actor"]).startswith("by_")),
                    human_count=sum(1 for x in rows if str(x["actor"]).startswith("human")),
                    live_diverged=_live_flag())
@@ -1348,9 +1372,18 @@ def _stage_writes(app, live: str, writes: list[dict], gid: str, actor: str, plan
         headers["X-SM-Actor"] = _ascii_actor(str(who).split(":", 1)[1])
     if plan_id:
         headers["X-SM-Plan"] = str(plan_id)
+    # docs/246 A-07: the door applies the ACTIVE chip; these writes were staged
+    # on `ctx`. The check above can be overtaken by a /load before the door
+    # runs -- naming the chip makes the door itself refuse the other one.
+    door = {"seen_changes": str(n)}
+    try:
+        from quam_state_manager.core import working_copy as wc_mod
+        door["expect_chip_key"] = wc_mod.key_for(ctx["path"])
+    except Exception:  # noqa: BLE001 -- no key: the door's count gate as before
+        logger.debug("key_for failed", exc_info=True)
     try:
         with app.test_request_context("/state/apply-to-live", method="POST",
-                                      data={"seen_changes": str(n)}, headers=headers):
+                                      data=door, headers=headers):
             resp = r.state_apply_to_live()
     except Exception as exc:  # noqa: BLE001
         logger.exception("agent apply failed")

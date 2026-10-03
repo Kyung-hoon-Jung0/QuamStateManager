@@ -9769,13 +9769,24 @@ def field_edit():
         # never commits before the user saw the compensation offer. Without
         # an ack the plan comes back 409; the popup then applies FSP+amps in
         # ONE /field/edit-batch (fsp_ack=comp) or FSP alone (fsp_ack=solo).
-        if request.form.get("fsp_ack") not in ("comp", "solo"):
+        _fsp_ack = request.form.get("fsp_ack")
+        if _fsp_ack not in ("comp", "solo"):
             plan = _fsp_plan_for(modifier.store, target_path, raw_value)
             if plan is not None:
                 return jsonify(
                     ok=False, fsp_compensation=plan,
                     error=("This edit changes a port's full-scale power — "
                            "confirm the amplitude compensation first")), 409
+        elif _fsp_ack == "comp":
+            # docs/246 A-03: "comp" here used to only skip the 409, so the FSP
+            # landed ALONE (the MCP bridge and the history panel's revert both
+            # answer the offer on this door). It now commits exactly what the
+            # popup's comp path commits: FSP + every compensated amplitude in
+            # ONE /field/edit-batch call (one gid, one Ctrl+Z).
+            plan = _fsp_plan_for(modifier.store, target_path, raw_value)
+            if plan is not None:
+                return _field_edit_batch_impl(
+                    _fsp_comp_payload(dot_path, raw_value, plan))
         # r14 ⑩: a field stored as TEXT that reads like a number ("0.13") is
         # un-fixable through the legacy coercer (old-type-preserving — typing
         # 0.14 quietly stayed text, forever). Never silent, never blocked:
@@ -9863,6 +9874,37 @@ def field_edit():
                        stored=committed, stored_kind=_kind_of(committed), **_wkw)
     except Exception:  # noqa: BLE001 — echo is a bonus, never a failure
         return jsonify(ok=True, tray_html=_tray_html(), **_wkw)
+
+
+def fsp_comp_updates(plan: dict) -> list[dict]:
+    """The compensated-amplitude rows of an FSP plan, as batch updates -- the
+    server twin of app.js ``window._fspCompUpdates`` for a caller that shows
+    no popup (so no per-row override): every ``plan.amps`` row at its
+    ``new`` value. Skipped rows (pointers, non-numbers) are never written,
+    exactly as on the popup's path.
+
+    The value goes as TEXT, as the popup sends it (``String(v)``): a string
+    is parsed against the target's type expectation (``_parse_for_target``)
+    and a raw number is not, so a number here would take a different door
+    than the browser's. ``repr`` of a float is its shortest round-trip
+    spelling, so the number parsed back is exactly the one JS's
+    ``String(v)`` gives."""
+    return [{"dot_path": a["path"], "value": repr(a["new"]) if isinstance(a["new"], float) else str(a["new"])}
+            for a in (plan or {}).get("amps") or [] if a.get("path")]
+
+
+def _fsp_comp_payload(dot_path: str, raw_value, plan: dict) -> dict:
+    """The /field/edit-batch body the FSP popup's comp button sends, built
+    from a /field/edit request (docs/246 A-03): the FSP row first, then the
+    compensated amps, ``fsp_ack=comp``, and the request's own chip token /
+    type-fix answer carried over."""
+    return {
+        "updates": [{"dot_path": dot_path, "value": raw_value}] + fsp_comp_updates(plan),
+        "fsp_ack": "comp",
+        "type_fix": request.form.get("type_fix") or None,
+        "expect_chip": request.form.get("expect_chip", ""),
+        "force_chip": request.form.get("force_chip") in ("1", "true", "True"),
+    }
 
 
 def _fsp_plan_for(store, target_path: str, raw_value) -> dict | None:
@@ -12161,6 +12203,13 @@ def _field_edit_batch_impl(payload=None, *, pulse_door: bool = False):
                     modifier.store.search_index.update_entry(entry.dot_path, entry.new_value)
 
     if applied_entries:
+        # docs/246: who staged it, as /field/edit stamps it -- a batch row
+        # used to fall back to "human", so an agent's FSP+amps bundle read as
+        # a person's in the tray, and the agent's own undo refused it
+        _actor = _request_actor()
+        for _e in applied_entries:
+            if hasattr(_e, "actor"):
+                _e.actor = _actor
         _invalidate_engine_cache(ctx)
     _lab_notes = [n for n in (_lab_info.get("notes") or []) if n]
     return jsonify(ok=ok_overall, tray_html=_tray_html(), results=results,
@@ -21808,6 +21857,54 @@ def _undo_count() -> int:
     return max(1, min(k, _UNDO_BURST_MAX))
 
 
+def _agent_undo_refusal(store) -> dict | None:
+    """What an AGENT's undo (``X-SM-Agent``) may not touch (docs/246).
+
+    Ctrl+Z is a person's key: it pops whatever group is on top, and with an
+    empty tray it walks the cross-save journal, which since docs/160 WRITES
+    THE LIVE CHIP. Pressed by an agent that meant "undo my edit", that
+    reverted a person's applied value on the instrument with no apply press
+    (A-04) and removed a person's staged row (A-05). The agent's undo is
+    therefore its own rows only -- the same rule as /api/agent/undo-mine:
+
+    * empty tray, or a staged journal step on top -> refused ``journal``
+      (that is applied history; only a person walks it);
+    * a top group holding any row a person staged -> refused ``human_group``;
+    * otherwise None: the top group is the agent's own and is undone.
+
+    Callers hold ``store._lock``."""
+    if store is None:
+        return None
+    log = store.change_log or []
+    if not log:
+        return {"refused": "journal", "paths": [],
+                "message": ("the tray is empty -- an agent's undo never walks the "
+                            "applied history (that would write the live chip). "
+                            "Ask the person to Ctrl+Z in the SM window if an "
+                            "applied value must go back.")}
+    gid = log[-1].group_id
+    if isinstance(gid, str) and gid.startswith(undo_journal.GID_PREFIX):
+        return {"refused": "journal", "paths": [log[-1].dot_path],
+                "message": ("the top of the tray is a staged step of the applied "
+                            "history (a person's Ctrl+Z) -- an agent never undoes it.")}
+    group = [log[-1]] if gid is None else []
+    if gid is not None:
+        for e in reversed(log):
+            if e.group_id != gid:
+                break
+            group.append(e)
+    human = [e for e in group
+             if not str(getattr(e, "actor", "human")).startswith("by_")]
+    if human:
+        return {"refused": "human_group",
+                "paths": [e.dot_path for e in human][:20],
+                "actor": str(getattr(human[0], "actor", "human")),
+                "message": ("the newest staged edit is a person's -- an agent never "
+                            "undoes it. Use undo_mine for your own rows, or ask the "
+                            "person in the SM window.")}
+    return None
+
+
 @bp.route("/undo", methods=["POST"])
 def undo():
     modifier = _modifier()
@@ -21853,15 +21950,23 @@ def undo():
 
     all_entries: list = []
     groups = 0
-    n_req = _undo_count()
+    _agent = bool(request.headers.get("X-SM-Agent"))
+    # docs/246 A-04/A-05: an agent's press is one group, never a burst
+    n_req = 1 if _agent else _undo_count()
     stopped = None          # None | "journal" | "error" | "exhausted"
     err_text = ""
     _journal_now = False    # docs/160: the journal step runs OUTSIDE the burst lock
+    _agent_refusal = None
     # ONE lock around the whole burst (review of eaa0f05): k pops as one
     # critical section, so a foreign write cannot land between two of them
     # and be undone as if it were the user's own.
     _burst_lock = store._lock if store is not None else contextlib.nullcontext()
     with _burst_lock:
+      # docs/246 A-04/A-05: checked under the same lock as the pop, so a
+      # person's edit landing between the check and the undo cannot be taken
+      _agent_refusal = _agent_undo_refusal(store) if _agent else None
+      if _agent_refusal is not None:
+          n_req = 0
       for _ in range(n_req):
         # docs/107 routing: an ordinary group on top undoes exactly as before;
         # an EMPTY log — or a ``jrn:`` staged step already on top — walks
@@ -21900,6 +22005,8 @@ def undo():
         _redo_push_group(ctx, store, entries)   # docs/107: Ctrl+Shift+Z target
         all_entries.extend(entries)
         groups += 1
+    if _agent_refusal is not None:
+        return jsonify(ok=False, **_agent_refusal), 409
     if _journal_now:
         # docs/160 (review C1): a live journal step takes the BUILD lock (the
         # apply door); every wholesale-replace path takes the build lock and
@@ -22511,6 +22618,13 @@ def redo():
     guard = _chip_mismatch_html(request.values.get("expect_chip", ""), False)
     if guard is not None:
         return guard
+    if request.headers.get("X-SM-Agent"):
+        # docs/246: redo un-stages a person's journal step or walks the
+        # applied history FORWARD onto the live chip -- a person's key. An
+        # agent re-stages its own value with state_edit instead.
+        return jsonify(ok=False, refused="redo",
+                       message="an agent never redoes; stage the value again with "
+                               "state_edit"), 409
     _journal_sync(ctx)      # docs/160 C
 
     top_gid = store.change_log[-1].group_id if store.change_log else None
@@ -24413,6 +24527,32 @@ def _edit_seq() -> str:
     return seq
 
 
+def _apply_chip_refusal(ctx):
+    """409 when the apply names a chip other than the one open (docs/246 A-07).
+
+    ``expect_chip_key`` is the working-copy key (``<folder>-<path hash>``) the
+    caller's seen_changes were read on -- exact, one per chip folder, so two
+    fridges with the same folder name, or copies with the same fingerprint,
+    are still told apart. ``expect_chip`` is the fingerprint token every edit
+    door already checks (:func:`_chip_mismatch_response`). Neither sent =>
+    None, byte-identical to before (the window's own Apply sends neither)."""
+    want_key = (request.values.get("expect_chip_key") or "").strip()
+    if want_key:
+        try:
+            have_key = working_copy.key_for(ctx["path"])
+        except Exception:  # noqa: BLE001
+            have_key = None
+        if have_key != want_key:
+            now = (_active_chip_identity() or {}).get("name") or "another chip"
+            return jsonify(
+                ok=False, conflict="chip_mismatch", chip_mismatch=True,
+                loaded_chip=now, loaded_chip_key=have_key, expected_chip_key=want_key,
+                message=(f"Not applied: '{now}' ({have_key}) is open now, not the chip "
+                         f"these edits were seen on ({want_key}). Nothing was written.")), 409
+    return _chip_mismatch_response(request.values.get("expect_chip", ""), False,
+                                   action="apply")
+
+
 def _unseen_edit_refusal(ctx) -> dict | None:
     """Refuse an apply that would write edits the presser never saw.
 
@@ -25241,6 +25381,13 @@ def state_apply_to_live():
     blocked = _archive_write_blocked(ctx)   # guard the CAPTURED ctx (TOCTOU)
     if blocked is not None:
         return blocked
+    # docs/246 A-07: a press means what the presser saw, ON WHICH CHIP. The
+    # count/sig gate below compares change logs; two chips can hold the same
+    # number of edits (even the same paths). A caller that declares the chip
+    # its seen_changes were read on is refused when another chip is open.
+    _chip_ref = _apply_chip_refusal(ctx)
+    if _chip_ref is not None:
+        return _chip_ref
     # docs/120 item 22 — the other door onto the live chip gets the same gate.
     _unseen = _unseen_edit_refusal(ctx)
     if _unseen is not None:

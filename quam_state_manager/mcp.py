@@ -35,19 +35,58 @@ _link: agent_link.SMLink | None = None
 # see. The tray count the agent last SAW (via tray / state_edit / undo) is
 # what apply_to_live declares -- never a fresh read the agent never looked at.
 _seen: int | None = None
+# docs/246 A-07: what the agent saw is a picture OF A CHIP. The tray read that
+# set _seen also records which chip (working-copy key + fingerprint token) and
+# which change set (signature); apply_to_live declares exactly these, never a
+# fresh read of whatever chip SM has open at press time.
+_seen_key: str | None = None
+_seen_token: str | None = None
+_seen_sig: str | None = None
+_seen_paths: list = []
 _chip: str | None = None       # the chip SM last said it had open -- stamped on every answer
 _CHIP_PIN = (os.environ.get("SM_CHIP") or "").strip() or None   # docs/173 S5: one bridge, one chip
+# docs/246 A-06: the chip_key the pin first matched. A pin by NAME (the display
+# name SM's own in-app session writes, or extras.chip_name) can match two
+# fridges; once it has matched one, the bridge stays on THAT one.
+_pin_key: str | None = None
+
+
+def _pin_match(chip: dict) -> bool:
+    """Does the open chip satisfy SM_CHIP (docs/246 A-06)?
+
+    The pin is checked against the chip's IDENTITY, not its folder name:
+    the chip_key (``<parent>-<path hash>``, exact) or the declared
+    ``extras.chip_name``. The display name is still accepted -- it is what an
+    existing pin, and SM's own in-app session, hold -- but every NAME match
+    latches the chip_key it matched, so a second fridge with the same folder
+    or declared name, opened later, is refused."""
+    global _pin_key
+    key = chip.get("chip_key")
+    if _CHIP_PIN == key:
+        return True
+    by_name = _CHIP_PIN in (chip.get("declared_name"), chip.get("name"))
+    if not by_name:
+        return False
+    if _pin_key is None:
+        _pin_key = key
+        return True
+    return key == _pin_key
 
 
 def _chip_facts() -> dict:
     global _chip
     chip = _ok(*_sm().get("/api/agent/chip"))
     _chip = chip.get("name") if chip.get("loaded") else None
-    if _CHIP_PIN and chip.get("loaded") and chip.get("name") != _CHIP_PIN:
-        raise ToolError(json.dumps({"refused": "chip_mismatch", "open": chip.get("name"), "pinned": _CHIP_PIN,
-                                    "how": f"this bridge was made for {_CHIP_PIN}; SM has {chip.get('name')} open. "
-                                           "Every tool is refused until that chip is open in SM (two fridges, "
-                                           "two bridges -- never one bridge across both)"}))
+    if _CHIP_PIN and chip.get("loaded") and not _pin_match(chip):
+        open_id = chip.get("declared_name") or chip.get("name")
+        raise ToolError(json.dumps({
+            "refused": "chip_mismatch", "open": open_id, "open_chip_key": chip.get("chip_key"),
+            "pinned": _CHIP_PIN, **({"pinned_chip_key": _pin_key} if _pin_key else {}),
+            "pin_for_open_chip": chip.get("pin") or chip.get("chip_key"),
+            "how": f"this bridge was made for {_CHIP_PIN}; SM has {open_id} ({chip.get('chip_key')}) open. "
+                   "Every tool is refused until that chip is open in SM (two fridges, two bridges -- "
+                   "never one bridge across both). A pin is matched against the chip's identity: "
+                   "its chip_key, or the extras.chip_name it declares."}))
     return chip
 
 
@@ -149,23 +188,48 @@ def t_state_edit(a: dict) -> Any:
             "type_fix": a.get("type_fix"), "fsp_ack": a.get("fsp_ack")}
     code, body = sm.post_form("/field/edit", form)
     if code == 409:
-        return {"staged": False, "needs_answer": True, "offer": body,
-                "how": "call state_edit again with type_fix='convert'|'keep' or fsp_ack='comp'|'solo' as the offer names"}
+        if isinstance(body, dict) and (body.get("fsp_compensation") or body.get("type_fix")):
+            return {"staged": False, "needs_answer": True, "offer": body,
+                    "how": "call state_edit again with type_fix='convert'|'keep' or fsp_ack='comp'|'solo' "
+                           "as the offer names"}
+        # D-11: any other 409 (the run lock, a chip switch, a pulse-structure
+        # refusal) is a refusal, not a question an ack could answer
+        return {"staged": False, "refused": body,
+                "how": "nothing was staged; read the refusal -- no ack answers it"}
     if code != 200:
         _ok(code, body)
     tray = _tray_seen()
-    entry = tray["entries"][-1] if tray["entries"] else None
-    if entry:
+    gid = body.get("group_id") if isinstance(body, dict) else None
+    if gid is not None:
+        # an FSP compensation bundle (A-03): the FSP and every amplitude, one gid
+        entries = [e for e in tray["entries"] if e.get("group") == gid]
+    else:
+        entries = tray["entries"][-1:]
+    for entry in entries:
         _journal("agent", f"staged `{entry['path']}` {entry['old']} -> {entry['new']}",
                  reason=a.get("reason") or "(no reason given)", paths=[entry["path"]])
-    return {"staged": True, "pending": tray["count"], "entry": entry,
-            "note": "staged in SM's Review tray; nothing reached the chip. Call apply_to_live to write."}
+    out = {"staged": True, "pending": tray["count"], "entry": entries[0] if entries else None,
+           "note": "staged in SM's Review tray; nothing reached the chip. Call apply_to_live to write."}
+    if len(entries) > 1:
+        out["entries"] = entries
+        out["note"] = (f"staged {len(entries)} edits as ONE group (the FSP and its compensated amplitudes); "
+                       "nothing reached the chip. Call apply_to_live to write.")
+    return out
 
 
 def _tray_seen() -> Any:
-    global _seen
+    global _seen, _seen_key, _seen_token, _seen_sig, _seen_paths
     tray = _ok(*_sm().get("/api/agent/tray"))
     _seen = int(tray.get("seen_changes") or 0)
+    _seen_sig = tray.get("seen_sig") or None
+    _seen_paths = [e.get("path") for e in tray.get("entries") or []]
+    if "chip_key" in tray or "chip_token" in tray:
+        _seen_key = tray.get("chip_key") or None
+        _seen_token = tray.get("chip_token") or None
+    else:                       # an older SM: the chip read right beside the tray
+        facts = _chip_facts()
+        _seen_key = facts.get("chip_key") or None
+        _seen_token = facts.get("chip_token") or None
     return tray
 
 
@@ -174,8 +238,16 @@ def t_tray(_a: dict) -> Any:
 
 
 def t_undo(_a: dict) -> Any:
+    """Undo the agent's own newest staged group. SM refuses (409) a person's
+    group and an empty tray (the journal walk writes the live chip) for any
+    request carrying X-SM-Agent (docs/246 A-04/A-05)."""
     sm = _sm()
     code, body = sm.post_form("/undo", {})
+    if code == 409 and isinstance(body, dict) and body.get("refused"):
+        tray = _tray_seen()
+        return {"undone": False, "refused": body, "pending": tray.get("count"),
+                "how": "nothing was undone. undo_mine undoes only your own rows; a person's edit or an "
+                       "applied value is the person's to take back in the SM window."}
     _ok(code, body, expect=(200, 204))
     return _tray_seen()
 
@@ -196,18 +268,29 @@ def t_apply_to_live(_a: dict) -> Any:
         _seen = 0
         return {"applied": False, "note": "nothing staged"}
     declared = _seen
-    try:
-        tray_before = _ok(*sm.get("/api/agent/tray")).get("entries") or []
-    except ToolError:
-        tray_before = []
-    code, body = sm.post_form("/state/apply-to-live",
-                              {"seen_changes": declared, "expect_chip": chip.get("chip_token") or None})
+    if _seen_key and chip.get("chip_key") and chip.get("chip_key") != _seen_key:
+        # A-07: the chip the agent looked at is not the one open now
+        _seen = None
+        return {"applied": False,
+                "refused": {"conflict": "chip_mismatch", "seen_on": _seen_key, "open": chip.get("chip_key")},
+                "how": "another chip is open in SM than the one whose tray you saw. Nothing was written. "
+                       "Call tray to look at THIS chip's tray before pressing anything."}
+    tray_before = list(_seen_paths)
+    form = {"seen_changes": declared, "expect_chip": _seen_token, "expect_chip_key": _seen_key}
+    if _seen_sig:
+        form["seen_sig"] = _seen_sig
+    code, body = sm.post_form("/state/apply-to-live", form)
     if code == 409:
         _seen = None                        # the picture changed; look again before pressing
         if isinstance(body, dict) and body.get("conflict") == "stale_live":
             return {"applied": False, "refused": body,
                     "how": "nothing was written: the live files changed since SM last synced. "
                            "undo, take_live, re-stage -- or ask the human to merge in the SM window."}
+        if isinstance(body, dict) and (body.get("conflict") == "chip_mismatch" or body.get("chip_mismatch")):
+            # A-07: SM has another chip open than the one this tray was read on
+            return {"applied": False, "refused": body,
+                    "how": "nothing was written: SM has another chip open than the one whose tray you saw. "
+                           "Call sm_status and tray to look at the chip that is open now before pressing."}
         return {"applied": False, "refused": body,
                 "how": "a human edited the chip in the SM window since you last looked (paths above). "
                        "Call tray to read the full list, then apply_to_live again if you accept ALL of it, "
@@ -223,7 +306,7 @@ def t_apply_to_live(_a: dict) -> Any:
         return {"applied": False, "note": "SM did not clear the tray -- it refused in a way this bridge "
                                           "cannot read; look at the SM window", "pending": after.get("pending")}
     _seen = 0
-    paths = [e["path"] for e in (tray_before or [])]
+    paths = list(tray_before)
     _journal("sm", f"applied {len(paths)} edit(s) to the chip", paths=paths)
     return {"applied": True, "pending_after": after.get("pending"), "live_diverged": after.get("live_diverged"),
             "declared_seen": declared, "wrote": paths}
@@ -312,7 +395,10 @@ def t_approvals(_a: dict) -> Any:
 def t_undo_mine(_a: dict) -> Any:
     global _seen
     res = _ok(*_sm().post_json("/api/agent/undo-mine", {}))
-    _seen = int(res.get("pending") or 0)
+    try:
+        _tray_seen()            # the new picture, with its chip and signature
+    except ToolError:
+        _seen = None            # a count with no chip behind it is not a picture: look again
     return res
 
 
@@ -339,7 +425,8 @@ def _visible_tools() -> dict:
 
 TOOLS: dict[str, tuple[dict, Any]] = {
     "sm_status": (_s("What chip is open in the State Manager, its qubits/pairs, how many edits are staged, "
-                     "whether the live files drifted, and what the agent hook says is running now."), t_sm_status),
+                     "whether the live files drifted, and what the agent hook says is running now. `pin` is the value "
+                     "SM_CHIP should hold to tie this bridge to this chip."), t_sm_status),
     "state_get": (_s("Read one value (raw + pointer-resolved) or list a subtree's keys of the open state.json/wiring.json. "
                      "Path is dotted: qubits.q1.xy.operations.x180.amplitude. Empty path = top-level keys.",
                      path={"type": "string", "required": True}), t_state_get),
@@ -356,7 +443,8 @@ TOOLS: dict[str, tuple[dict, Any]] = {
     "take_live": (_s("Pull the chip's live state.json/wiring.json into SM after a node wrote them. Only with an "
                      "EMPTY tray; refuses otherwise. sm_status / state_get say live_diverged when this is needed."),
                   t_take_live),
-    "undo": (_s("Undo the most recent staged group (the same Ctrl+Z the human has)."), t_undo),
+    "undo": (_s("Undo the most recent staged group IF it is your own. A person's staged edit and an "
+                "already-applied value are refused (they are the person's to take back)."), t_undo),
     "undo_mine": (_s("Undo YOUR OWN staged groups from the top of the tray, stopping at the first human entry."), t_undo_mine),
     "run_node": (_s("Run a calibration node through SM (the ONLY way to run hardware): SM checks the gates "
                     "(a refusal comes back as data with `refused` and `how`), runs the node on a scratch copy "

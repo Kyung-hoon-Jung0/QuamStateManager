@@ -60,6 +60,11 @@ def link(monkeypatch):
     monkeypatch.setattr(mcp, "_link", fl)
     monkeypatch.setattr(mcp, "_seen", None)
     monkeypatch.setattr(mcp, "_chip", None)
+    # docs/246: the picture the bridge saw is module state too -- never let one
+    # test's chip leak into the next
+    for k, v in {"_seen_key": None, "_seen_token": None, "_seen_sig": None, "_seen_paths": [],
+                 "_pin_key": None}.items():
+        monkeypatch.setattr(mcp, k, v)
     return fl
 
 
@@ -168,10 +173,17 @@ class TestAnswersCarryTheChip:
         assert agent_link.SMLink("http://127.0.0.1:1", agent_id="hook")._headers()["X-SM-Agent"] == "hook"
 
     def test_a_409_offer_is_handed_back_not_answered(self, link):
-        link.answers[("POST", "/field/edit")] = (409, {"error": "numeric text", "type_fix_offer": True})
+        # the server's real offer key is `type_fix` (routes.field_edit)
+        link.answers[("POST", "/field/edit")] = (409, {"error": "numeric text", "type_fix": {"proposed": "int"}})
         r = mcp.t_state_edit({"path": "a", "value": "007"})
-        assert r["staged"] is False and r["needs_answer"] is True and r["offer"]["type_fix_offer"]
+        assert r["staged"] is False and r["needs_answer"] is True and r["offer"]["type_fix"]
         assert not any(c[1] == "/api/agent/tray" for c in link.calls)
+
+    def test_a_409_that_is_not_an_offer_is_a_refusal_not_a_question(self, link):
+        """D-11: the run lock / a chip switch is not answered by an ack."""
+        link.answers[("POST", "/field/edit")] = (409, {"ok": False, "error": "a node is running"})
+        r = mcp.t_state_edit({"path": "a", "value": 1})
+        assert r["staged"] is False and "needs_answer" not in r and r["refused"]["error"] == "a node is running"
 
     def test_never_force(self, link):
         import inspect
