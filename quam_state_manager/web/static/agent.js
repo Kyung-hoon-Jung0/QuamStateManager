@@ -908,7 +908,15 @@ window.AgentPanel = (function () {
     } else if (sessionOpen()) {
       p = api("POST", "/api/agent/chat/send", { text: text });
     } else {
-      p = api("POST", "/api/agent/chat/start", { prompt: text, backend: backend });
+      var body = { prompt: text, backend: backend };
+      var live = S.session && S.session.session;
+      // C-29: a conversation a person STOPPED keeps its context -- the next message resumes it,
+      // and SM prepends what changed on the chip meanwhile. After End session, or once SM has
+      // restarted, it is a new conversation, and the person is told so instead of finding out
+      // from the answers.
+      if (live && !live.ended && live.session_id && live.backend === backend) body.resume = "last";
+      else if (live || (S.session && S.session.file && S.session.file.session_id)) toast("New conversation: the agent does not remember the earlier one.", "info");
+      p = api("POST", "/api/agent/chat/start", body);
     }
     p.then(function (r) {
       var ok = r.status === 200;

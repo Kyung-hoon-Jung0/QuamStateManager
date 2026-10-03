@@ -156,6 +156,41 @@ const tick = (ms) => new Promise(r => setTimeout(r, ms || 15));
   await P.poll(true); await tick();
   ok(P.sessionOpen() === false, 'an ended conversation is not open');
   ok(!/End session/.test(home.querySelector('.ag-now').textContent), 'an ended conversation offers no End session');
+  // C-29: after End session the next task is a NEW conversation, and the person is told so
+  // (the same CLI the composer sends to, so only `ended` can be what decides it)
+  feed.session = { alive: false, ended: 123, one_turn_per_process: false, session_id: 'sess-1', backend: 'claude' };
+  await P.poll(true); await tick();
+  const c29Toasts = [];
+  const prevToast = window.showToast;
+  window.showToast = function (m) { c29Toasts.push(String(m)); };
+  { const isel = home.querySelector('.ag-intent'); isel.value = 'task'; P.setIntent('task', isel); }
+  ta.value = 'begin again';
+  calls.length = 0;
+  P.submit({ preventDefault() {}, target: ta });
+  await tick(30);
+  ok(calls[0].url === '/api/agent/chat/start' && calls[0].body.resume === undefined
+     && c29Toasts.some(t => /New conversation/.test(t)), 'C-29: after End the next task starts fresh and says so: ' + JSON.stringify(c29Toasts));
+  // a conversation a person STOPPED (process killed, not ended) is resumed with its context
+  feed.session = { alive: false, ended: null, one_turn_per_process: false, session_id: 'sess-1', backend: 'claude' };
+  await P.poll(true); await tick();
+  ok(P.sessionOpen() === false, 'precondition: a stopped Claude conversation has no live process');
+  { const isel = home.querySelector('.ag-intent'); isel.value = 'task'; P.setIntent('task', isel); }
+  ta.value = 'carry on';
+  calls.length = 0; c29Toasts.length = 0;
+  P.submit({ preventDefault() {}, target: ta });
+  await tick(30);
+  ok(calls[0].url === '/api/agent/chat/start' && calls[0].body.resume === 'last' && calls[0].body.prompt === 'carry on'
+     && !c29Toasts.length, 'C-29: after Stop the next task resumes the same conversation');
+  // a different CLI cannot resume another one's conversation
+  feed.session = { alive: false, ended: null, one_turn_per_process: false, session_id: 'sess-1', backend: 'codex' };
+  await P.poll(true); await tick();
+  { const isel = home.querySelector('.ag-intent'); isel.value = 'task'; P.setIntent('task', isel); }
+  ta.value = 'other cli';
+  calls.length = 0;
+  P.submit({ preventDefault() {}, target: ta });
+  await tick(30);
+  ok(calls[0].url === '/api/agent/chat/start' && calls[0].body.resume === undefined, 'C-29: never resume a conversation of another CLI');
+  window.showToast = prevToast;
   feed.session = null;
   await P.poll(true); await tick();
 

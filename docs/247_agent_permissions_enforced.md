@@ -203,6 +203,17 @@ Every file Setup writes now goes through `_write_keeping_newlines`: a CRLF file 
 
 **Pins:** W12 + a new stop-card assertion in `agent_panel_selfcheck.cjs`; 2/2 mutations red.
 
+## Follow-up: a stopped conversation keeps its context; a new one says so (C-29)
+
+After a person's Stop, the Claude process is gone. The next message then went to `/chat/start` with no `resume`, so the agent silently forgot the conversation. The server could already resume (`resume: "last"`), and it prepends what changed on the chip meanwhile; the composer just never asked for it.
+
+The composer now does two things:
+- **After Stop:** if the stopped conversation belongs to the CLI the composer sends to and was not ended, it starts with `resume: "last"`.
+- **After End session, after an SM restart, or for another CLI:** it starts fresh and says "New conversation: the agent does not remember the earlier one."
+
+**Pins:** 3 assertions in `agent_panel_selfcheck.cjs`; 4/4 mutations red.
+- The first sweep caught a vacuous pin: the End case passed only because of a backend mismatch. It now uses the same CLI, so only `ended` can decide it.
+
 ## Open
 
 - SM's MCP bridge already returns `instructions` (the read/stage/apply path). They do not yet say "never edit state.json directly, never run `python <node>.py`", the rule the file carries. Codex 0.159.2 surfaces them once the server is loaded, so adding that rule there is a cheap second channel (`mcp.py`, after the bridge-safety merge).
