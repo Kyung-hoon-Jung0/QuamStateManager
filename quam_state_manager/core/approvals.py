@@ -18,7 +18,7 @@ import time
 import uuid
 from pathlib import Path
 
-from quam_state_manager.core import safe_io
+from quam_state_manager.core import run_terms, safe_io
 from quam_state_manager.core import journal as journal_mod
 
 KINDS = ("writes", "run")
@@ -52,16 +52,22 @@ def pending(instance_path, chip: str) -> list[dict]:
     return [r for r in load(instance_path, chip) if r.get("status") == "pending"]
 
 
-def add(instance_path, chip: str, *, kind: str, node: str | None, targets: list | None, writes: list[dict] | None,
-        reason: str | None, why_held: str, actor: str, plan_id: str | None = None, run_key: str | None = None,
-        run_id: int | None = None, params: dict | None = None) -> dict:
+def _new(*, kind, chip, node, targets, writes, reason, why_held, actor, plan_id, run_key, run_id, params,
+         step) -> dict:
     if kind not in KINDS:
         raise ValueError(f"kind must be one of {KINDS}")
-    rec = {"id": "ap-" + uuid.uuid4().hex[:10], "kind": kind, "status": "pending", "chip": chip,
-           "node": node, "targets": list(targets or []), "params": dict(params or {}),
-           "writes": [dict(w) for w in (writes or [])], "reason": reason, "why_held": why_held,
-           "actor": actor, "plan_id": plan_id, "run_key": run_key, "run_id": run_id,
-           "created": time.time(), "decided_by": None, "decided_at": None, "note": None}
+    return {"id": "ap-" + uuid.uuid4().hex[:10], "kind": kind, "status": "pending", "chip": chip,
+            "node": node, "targets": list(targets or []), "params": dict(params or {}),
+            "writes": [dict(w) for w in (writes or [])], "reason": reason, "why_held": why_held,
+            "actor": actor, "plan_id": plan_id, "step": step, "run_key": run_key, "run_id": run_id,
+            "created": time.time(), "decided_by": None, "decided_at": None, "note": None}
+
+
+def add(instance_path, chip: str, *, kind: str, node: str | None, targets: list | None, writes: list[dict] | None,
+        reason: str | None, why_held: str, actor: str, plan_id: str | None = None, run_key: str | None = None,
+        run_id: int | None = None, params: dict | None = None, step: int | None = None) -> dict:
+    rec = _new(kind=kind, chip=chip, node=node, targets=targets, writes=writes, reason=reason, why_held=why_held,
+               actor=actor, plan_id=plan_id, run_key=run_key, run_id=run_id, params=params, step=step)
     # The lock spans read -> change -> write: an atomic write stops a CORRUPT
     # file, not two cycles erasing one another. This store gates a write to
     # the chip, so a lost decision is not a cosmetic loss.
@@ -117,17 +123,57 @@ def mark_used(instance_path, chip: str, approval_id: str, run_key: str) -> dict 
     return rec
 
 
-def find_pending_run(instance_path, chip: str, *, node: str, targets: list, params: dict | None) -> dict | None:
-    """review R1-M2: the same ask twice is one request."""
-    want = (node, list(targets or []), dict(params or {}))
-    for r in pending(instance_path, chip):
-        if r.get("kind") == "run" and (r.get("node"), list(r.get("targets") or []), dict(r.get("params") or {})) == want:
+def find_pending_run(instance_path, chip: str, *, node: str, targets: list, params: dict | None,
+                     plan_id: str | None = None) -> dict | None:
+    """review R1-M2: the same ask twice is one request. "The same" is
+    ``run_terms.key`` -- the one reading the approval check uses (docs/254):
+    ``{"a": True}`` and ``{"a": 1}`` were one request under ``==``."""
+    return _find_pending_run(pending(instance_path, chip), node=node, targets=targets, params=params,
+                             plan_id=plan_id)
+
+
+def _find_pending_run(rows, *, node, targets, params, plan_id) -> dict | None:
+    want = run_terms.key(node, targets, params, plan_id)
+    for r in rows:
+        if r.get("status") == "pending" and r.get("kind") == "run" and run_terms.key(
+                r.get("node"), r.get("targets"), r.get("params"), r.get("plan_id")) == want:
             return r
     return None
 
 
+def file_run_request(instance_path, chip: str, *, node: str, targets: list, params: dict | None, reason: str | None,
+                     actor: str, plan_id: str | None = None, step: int | None = None,
+                     why_held: str = "mode ask-all") -> tuple[dict, bool]:
+    """An ask-all run request: the pending one for exactly this run, or a new
+    one. ``(record, created)``. The lookup and the append are one step under
+    the file lock, so two asks at once file one request."""
+    with safe_io.path_lock(path_for(instance_path, chip)):
+        rows = load(instance_path, chip)
+        hit = _find_pending_run(rows, node=node, targets=targets, params=params, plan_id=plan_id)
+        if hit is not None:
+            return hit, False
+        rec = _new(kind="run", chip=chip, node=node, targets=targets, writes=None, reason=reason,
+                   why_held=why_held, actor=actor, plan_id=plan_id, run_key=None, run_id=None, params=params,
+                   step=step)
+        rows.append(rec)
+        _save(instance_path, chip, rows)
+    return rec, True
+
+
+def run_differences(ap: dict, *, node: str, targets: list, params: dict | None,
+                    plan_id: str | None = None) -> list[dict]:
+    """D-05 (docs/254): what separates the run this approval allowed from the
+    run asked for now. Empty = the approval covers it."""
+    return run_terms.differences(
+        {"node": ap.get("node"), "targets": ap.get("targets"), "params": ap.get("params"),
+         "plan_id": ap.get("plan_id")},
+        {"node": node, "targets": targets, "params": params, "plan_id": plan_id})
+
+
 def summary(rec: dict) -> dict:
     return {"id": rec.get("id"), "kind": rec.get("kind"), "node": rec.get("node"), "targets": rec.get("targets"),
+            "params": rec.get("params") or {},
             "n_writes": len(rec.get("writes") or []), "why_held": rec.get("why_held"), "reason": rec.get("reason"),
             "actor": rec.get("actor"), "created": rec.get("created"), "run_id": rec.get("run_id"),
-            "plan_id": rec.get("plan_id"), "status": rec.get("status"), "used_by_run": rec.get("used_by_run")}
+            "plan_id": rec.get("plan_id"), "step": rec.get("step"), "status": rec.get("status"),
+            "decided_by": rec.get("decided_by"), "used_by_run": rec.get("used_by_run")}

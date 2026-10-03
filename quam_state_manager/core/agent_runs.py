@@ -193,9 +193,12 @@ def check_gates(req: RunRequest, *, session: dict | None, lim: dict, settings: d
     if not settings.get("calibrations_folder"):
         return {"refused": "no_calibrations_folder", "how": "set the calibrations folder in Experiment Runner settings"}
     if node_info is None:
-        names = sorted({i.name for i in available})[:40]
-        return {"refused": "node_not_found", "node": req.node, "available": names,
-                "how": "name a node from `available` (the calibrations folder's own files)"}
+        # A-20 (docs/254): every name, not the first 40 of 187, and the closest ones first
+        from quam_state_manager.core import run_terms
+        names, close = run_terms.available_names(available, req.node)
+        return {"refused": "node_not_found", "node": req.node, "available": names, "closest": close,
+                "how": "name a node from `available` (the calibrations folder's own files)"
+                       + (f"; closest: {', '.join(close)}" if close else "")}
     if getattr(node_info, "kind", None) != "node" or not getattr(node_info, "has_hook", False):
         return {"refused": "not_a_node", "node": node_info.name, "kind": getattr(node_info, "kind", None),
                 "how": "SM runs nodes with the custom_param hook (targets and simulate are set through it); "
@@ -254,7 +257,7 @@ def check_gates(req: RunRequest, *, session: dict | None, lim: dict, settings: d
     if blocking:
         return {"refused": "awaiting_approval", "needs": "writes", "approvals": blocking,
                 "how": "writes from an earlier run on these targets wait for the human; the chain on those targets "
-                       "stops here (mode ask-writes). Run other targets, or tell the human"}
+                       f"stops here (mode {mode}). Run other targets, or tell the human"}
     if human is not None:
         return {"refused": "human_active", "run": human, "window_min": lim.get("human_recent_min"),
                 "how": "a person (or a session SM cannot see) ran a node on this chip minutes ago; "
@@ -1046,7 +1049,7 @@ def _attribute(adapter: RunAdapter, node_name: str, window_start: float, *, poll
     window -- exact provenance, like autofit's (docs/78 §7b-B2); a bounded
     re-poll while the writeback lands. ``list_runs() is None`` = no dataset
     store for this chip at all: nothing to poll for."""
-    want = _norm(node_name)
+    from quam_state_manager.core import run_terms
     deadline = time.monotonic() + poll_s
     while True:
         try:
@@ -1057,8 +1060,8 @@ def _attribute(adapter: RunAdapter, node_name: str, window_start: float, *, poll
         if rows is None:
             return None
         for row in rows:
-            name = _norm(row.get("experiment_name") or "")
-            if not name.startswith(want):
+            # one rule for "this run folder is that node's" (docs/254: the replay check uses it too)
+            if not run_terms.same_node(row.get("experiment_name"), node_name):
                 continue
             try:
                 when = datetime.strptime(f"{row.get('date')} {row.get('time')}", "%Y-%m-%d %H:%M:%S").timestamp()

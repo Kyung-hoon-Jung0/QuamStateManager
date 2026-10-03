@@ -13908,6 +13908,12 @@ table.diff-wb-list tbody > tr[hidden] { display: none; }
 .ag-steps { display: flex; flex-direction: column; gap: .1rem; margin: .3rem 0; font-size: .92em; }
 .ag-step { display: flex; flex-wrap: wrap; align-items: center; gap: .15rem .45rem; }
 .ag-step-why { font-size: .92em; }
+/* docs/254: a run's params on every card and step -- what an approval covers */
+.ag-params { display: inline-flex; flex-wrap: wrap; gap: .2rem; font-size: .9em; }
+.ag-params code { font-size: .92em; padding: 0 .3em; white-space: nowrap; }
+.ag-params-none { color: var(--pico-muted-color); font-style: italic; }
+.ag-step-req { font-size: .85em; color: var(--pico-muted-color); }
+.ag-step-req.ag-st-waiting { font-weight: 600; }
 .ag-may-wrap { margin: .2rem 0; font-size: .92em; } .ag-may-wrap > summary { color: var(--pico-muted-color); cursor: pointer; padding: 0; margin: 0; }
 .ag-may { margin: .15rem 0 .15rem .9rem; padding: 0; } .ag-may li { margin: .05rem 0; list-style: none; }
 .ag-may-none { margin: .1rem 0; }

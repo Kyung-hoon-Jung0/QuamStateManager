@@ -278,7 +278,7 @@ def t_undo(_a: dict) -> Any:
 def t_apply_to_live(_a: dict) -> Any:
     """Push the tray to the chip. Declares what the agent has seen so a human
     edit made in the window since is refused, never silently included."""
-    global _seen
+    global _seen, _seen_paths
     sm = _sm()
     if _seen is None:
         return {"applied": False, "note": "call tray first -- apply writes only what you have seen"}
@@ -288,7 +288,13 @@ def t_apply_to_live(_a: dict) -> Any:
                 "how": "the chip's live files moved outside SM (a node wrote them?). Nothing was written. "
                        "If the tray holds only your edits: undo, take_live, re-stage. Otherwise ask the human."}
     if int(chip.get("pending") or 0) == 0:
-        _seen = 0
+        gone = list(_seen_paths or [])
+        _seen, _seen_paths = 0, []
+        if gone:
+            # docs/254 A-08: the rows this agent saw left the tray by someone else's press
+            return {"applied": False, "note": "the tray is empty now: the rows you saw were applied or removed by "
+                                              "another press, not by you. Read state_get for what the chip holds.",
+                    "seen": gone}
         return {"applied": False, "note": "nothing staged"}
     declared = _seen
     if _seen_key and chip.get("chip_key") and chip.get("chip_key") != _seen_key:
@@ -309,6 +315,11 @@ def t_apply_to_live(_a: dict) -> Any:
             return {"applied": False, "refused": body,
                     "how": "nothing was written: the live files changed since SM last synced. "
                            "undo, take_live, re-stage -- or ask the human to merge in the SM window."}
+        if isinstance(body, dict) and body.get("conflict") == "agent_groups":
+            # docs/254 A-08: another agent's rows are that agent's to apply
+            return {"applied": False, "refused": body,
+                    "how": "nothing was written: the tray holds rows another agent staged (actors above). An agent "
+                           "applies only its own rows. undo_mine yours, or wait for that agent or a person."}
         if isinstance(body, dict) and (body.get("conflict") == "chip_mismatch" or body.get("chip_mismatch")):
             # A-07: SM has another chip open than the one this tray was read on
             return {"applied": False, "refused": body,
@@ -328,7 +339,7 @@ def t_apply_to_live(_a: dict) -> Any:
         _seen = None
         return {"applied": False, "note": "SM did not clear the tray -- it refused in a way this bridge "
                                           "cannot read; look at the SM window", "pending": after.get("pending")}
-    _seen = 0
+    _seen, _seen_paths = 0, []
     paths = list(tray_before)
     _journal("sm", f"applied {len(paths)} edit(s) to the chip", paths=paths)
     return {"applied": True, "pending_after": after.get("pending"), "live_diverged": after.get("live_diverged"),
@@ -482,7 +493,8 @@ TOOLS: dict[str, tuple[dict, Any]] = {
                     reason={"type": "string", "required": True, "description": "WHY now -- goes into the human's journal"},
                     params={"type": "object", "description": "node parameter overrides (never simulate/targets)"},
                     timeout_s={"type": "number"}, wait_s={"type": "number"},
-                    approval_id={"type": "string", "description": "an APPROVED run request id (mode ask-all)"},
+                    approval_id={"type": "string", "description": "an APPROVED run request id (mode ask-all); it "
+                                 "covers exactly the node, targets and params the person allowed"},
                     plan_id={"type": "string"}, step={"type": "integer", "description": "the plan step this run is"}), t_run_node),
     "plan_propose": (_s("Propose a PLAN CARD for the human: steps of {node, targets, params?, why}. Nothing runs "
                         "until a person presses Start on the card; then you are told to go and call run_node "

@@ -21883,7 +21883,19 @@ def _undo_count() -> int:
     return max(1, min(k, _UNDO_BURST_MAX))
 
 
-def _agent_undo_refusal(store) -> dict | None:
+def _owns_row(presser: str, entry) -> bool:
+    """Whose staged row is whose (docs/254 A-08). A person's press (Apply,
+    Ctrl+Z) speaks for every row, as it always did. An agent's press owns
+    only rows staged under its OWN actor: ``by_claude`` never applies or
+    undoes a ``by_codex`` row (two agents used to apply each other's rows and
+    both were told they succeeded). The actor is the identity SM records --
+    two sessions of one CLI share it, so they share their rows."""
+    if not str(presser or "").startswith("by_"):
+        return True
+    return str(getattr(entry, "actor", "human")) == presser
+
+
+def _agent_undo_refusal(store, presser: str | None = None) -> dict | None:
     """What an AGENT's undo (``X-SM-Agent``) may not touch (docs/246).
 
     Ctrl+Z is a person's key: it pops whatever group is on top, and with an
@@ -21921,6 +21933,14 @@ def _agent_undo_refusal(store) -> dict | None:
             group.append(e)
     human = [e for e in group
              if not str(getattr(e, "actor", "human")).startswith("by_")]
+    other = [e for e in group if presser and not human and not _owns_row(presser, e)]
+    if other:
+        # docs/254 A-08: another agent's group is not this agent's to take back
+        return {"refused": "agent_group",
+                "paths": [e.dot_path for e in other][:20],
+                "actor": str(getattr(other[0], "actor", "")),
+                "message": (f"the newest staged edit is {str(getattr(other[0], 'actor', 'by_another agent'))[3:]}'s -- "
+                            "an agent undoes only its own rows. Use undo_mine, or leave it to that agent or the person.")}
     if human:
         return {"refused": "human_group",
                 "paths": [e.dot_path for e in human][:20],
@@ -21990,7 +22010,7 @@ def undo():
     with _burst_lock:
       # docs/246 A-04/A-05: checked under the same lock as the pop, so a
       # person's edit landing between the check and the undo cannot be taken
-      _agent_refusal = _agent_undo_refusal(store) if _agent else None
+      _agent_refusal = _agent_undo_refusal(store, _request_actor()) if _agent else None
       if _agent_refusal is not None:
           n_req = 0
       for _ in range(n_req):
@@ -25427,6 +25447,15 @@ def state_apply_to_live():
             return jsonify(ok=False, conflict="human_groups", paths=_hum[:50],
                            message="the tray holds a person's staged edits; an agent never applies them -- "
                                    "ask the human to apply or discard in the SM window"), 409
+        # docs/254 A-08: ...nor another agent's -- each agent presses for its own rows
+        _me = _request_actor()
+        _oth = [c for c in ctx["store"].change_log if not _owns_row(_me, c)]
+        if _oth:
+            _who = sorted({str(getattr(c, "actor", "")) for c in _oth})
+            _named = ", ".join(w[3:] if w.startswith("by_") else w for w in _who)
+            return jsonify(ok=False, conflict="agent_groups", paths=[c.dot_path for c in _oth][:50], actors=_who,
+                           message=f"the tray holds rows staged by {_named}; an agent applies only its "
+                                   "own rows -- that agent applies them, or a person does in the SM window"), 409
         _lk = _agent_edit_lock_refusal(ctx)
     else:
         _lk = _agent_edit_lock_refusal(ctx)

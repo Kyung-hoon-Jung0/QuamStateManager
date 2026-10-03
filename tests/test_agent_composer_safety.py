@@ -174,7 +174,8 @@ class TestTheAnswerTheServerAlreadySentIsShown:
         putting the answer in the response."""
         api = (_ROOT / "quam_state_manager" / "web" / "agent_api.py").read_text(encoding="utf-8")
         assert "known=sorted(known" in api
-        assert "available=sorted(" in api
+        # docs/254 (A-20): every node name, through the one helper the gate uses too
+        assert "available=names" in api and "run_terms.available_names(" in api
 
     def test_the_message_is_not_a_python_repr(self):
         from quam_state_manager.web.agent_api import _unknown_targets_msg

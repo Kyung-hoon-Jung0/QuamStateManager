@@ -1611,6 +1611,7 @@ def _run_adapter():
 def _run_view(m: dict) -> dict:
     res = m.get("result") or {}
     out = {"key": m.get("key"), "status": m.get("status"), "node": m.get("node"), "targets": m.get("targets"),
+           "params": m.get("params") or {},
            "since": m.get("since"), "ended": m.get("ended"), "actor": m.get("actor"), "plan_id": m.get("plan_id"),
            "simulated": bool(m.get("simulated")), "result": res}
     if m.get("status") in ("starting", "running"):
@@ -1627,6 +1628,75 @@ def _run_view(m: dict) -> dict:
     elif res.get("apply_error"):
         out["how"] = f"applied: no ({res.get('apply_error')})"
     return out
+
+
+def _no_targets_refusal():
+    """A-13 / D-12 (docs/254): ``targets=[]`` passed every gate -- the per-target
+    approval gate keys on targets, so writes waiting on q1 did not stop a run
+    that the node's own defaults pointed at q1 -- and the node then ran on
+    those defaults, which no card showed. The plan door (docs/191 B01) and the
+    ``/run`` line (docs/247 C-08) already require a target; this is the third
+    door, held to the same rule."""
+    st = _r()._store()
+    known = sorted(set(st.qubit_names) | set(st.qubit_pair_names), key=natural_key) if st else []
+    return _err("targets required: name the qubits or pairs this node runs on (an empty list would run the node "
+                "on its own defaults, which no card shows)", 400, refused="no_targets", known=known[:80])
+
+
+def _request_refusal(node_info, targets: list, params: dict, store) -> dict | None:
+    """The run as a card will show it, checked before any gate (docs/254):
+    SM-owned params, a target of the wrong kind, a replay of another node's
+    run. A node SM cannot run at all is the gates' to name."""
+    from quam_state_manager.core import run_terms
+    if node_info is None or getattr(node_info, "kind", None) != "node" or not getattr(node_info, "has_hook", False):
+        return None
+
+    def get_run(rid: int):
+        ds = _ds()
+        if ds is None:
+            return None
+        try:
+            ds.rescan_if_stale()
+        except Exception:  # noqa: BLE001
+            pass
+        return ds.get_run(rid)
+    return run_terms.request_refusal(node_info, targets, params,
+                                     qubits=list(store.qubit_names) if store else [],
+                                     pairs=list(store.qubit_pair_names) if store else [], get_run=get_run)
+
+
+def _file_run_request(inst, chip, name, node_name, req, plan) -> dict:
+    """File (or find) the ask-all request for exactly this run; journal it once."""
+    from quam_state_manager.core import agent_plans, approvals, run_terms
+    step = req.step
+    if step is None and plan and plan.get("status") in ("running", "stopping"):
+        st = agent_plans.step_for(plan, step=None, node=node_name, targets=req.targets)
+        step = st.get("i") if st else None
+    ap, created = approvals.file_run_request(inst, chip, node=node_name, targets=req.targets, params=req.params,
+                                             reason=req.reason, actor=req.actor, plan_id=req.plan_id, step=step)
+    if created:
+        journal_mod.append(inst, name, f"asked to run `{node_name}` on {' '.join(req.targets)} "
+                                       f"({run_terms.params_text(req.params)}) -- waiting for approval (mode ask-all)",
+                           kind="agent", reason=req.reason)
+        _bump()
+        _wake()
+    return ap
+
+
+def _approval_mismatch(inst, chip, name, node_name, req, plan, ap, differs):
+    """D-05 (docs/254): the approval covers the run the person saw, not this one.
+    The allowed approval stays unused (it still covers exactly that run); what
+    was asked becomes its own request, on its own card."""
+    from quam_state_manager.core import approvals
+    new = _file_run_request(inst, chip, name, node_name, req, plan)
+    said = "; ".join(f"{d['field']}: allowed {json.dumps(d['allowed'], default=str)}, "
+                     f"asked {json.dumps(d['asked'], default=str)}" for d in differs[:6])
+    return jsonify(ok=False, refused="awaiting_approval", needs="run", approval=approvals.summary(new),
+                   not_covered_by=approvals.summary(ap), differs=differs,
+                   how=f"approval {ap.get('id')} allowed a different run ({said}). An approval covers exactly the "
+                       f"node, targets and params the person saw; SM filed request {new.get('id')} for what you "
+                       f"asked. Call run_node again with approval_id={new.get('id')} once the human allows it, or "
+                       f"with exactly what {ap.get('id')} allowed."), 409
 
 
 @agent_bp.route("/run-node", methods=["POST"])
@@ -1655,6 +1725,8 @@ def run_node():
     actor = r._request_actor()
     if not actor.startswith("by_"):
         return _err("run_node is the agent's door; a person runs nodes from the QUAlibrate GUI", 403)
+    if not targets:
+        return _no_targets_refusal()             # A-13 / D-12 (docs/254)
     store = r._store()
     known = set(store.qubit_names) | set(store.qubit_pair_names)
     bad = [t for t in targets if t not in known]
@@ -1666,6 +1738,9 @@ def run_node():
     settings = adapter.settings()
     with _SCAN_LOCK:                             # review R1 minor: two run_node calls raced the scan cache write
         node_info, available = agent_runs.resolve_node(settings.get("calibrations_folder"), node, instance_path=inst)
+    bad_req = _request_refusal(node_info, targets, params, store)     # docs/254: the run the card will show
+    if bad_req is not None:
+        return jsonify(ok=False, **bad_req), 400
     session = agent_session.load(inst, chip)
     lim = limits.load(inst, chip)
     try:
@@ -1688,26 +1763,22 @@ def run_node():
                                          live_diverged=adapter.live_diverged())
         if refusal is not None:
             if refusal.pop("file_request", False) and node_info is not None:
-                ap = approvals.find_pending_run(inst, chip, node=node_info.name, targets=targets, params=params)
-                if ap is None:                   # review R1-M2: the same ask twice is one request
-                    ap = approvals.add(inst, chip, kind="run", node=node_info.name, targets=targets, writes=None,
-                                       reason=reason, why_held="mode ask-all", actor=actor, plan_id=req.plan_id,
-                                       params=params)
-                    journal_mod.append(inst, name, f"asked to run `{node_info.name}` on {' '.join(targets)} -- waiting "
-                                                   f"for approval (mode ask-all)", kind="agent", reason=reason)
-                    _bump()
-                    _wake()
+                # review R1-M2: the same ask twice is one request -- "the same" is run_terms (docs/254)
+                ap = _file_run_request(inst, chip, name, node_info.name, req, plan)
                 refusal["approval"] = approvals.summary(ap)
             return jsonify(ok=False, **refusal), 409
         mode = agent_runs.run_mode(plan if plan and plan.get("status") in ("running", "stopping") else None, session, lim)
         ap = None
         if mode == "ask-all":
             ap = approvals.get(inst, chip, req.approval_id or "")
-            if (not ap or ap.get("status") != "approved" or ap.get("kind") != "run" or ap.get("used_by_run")
-                    or ap.get("node") != node_info.name or list(ap.get("targets") or []) != targets):
+            if not ap or ap.get("status") != "approved" or ap.get("kind") != "run" or ap.get("used_by_run"):
                 return jsonify(ok=False, refused="awaiting_approval", needs="run",
                                how="approval_id must name an APPROVED, not yet used, run request for this node and "
                                    "these targets"), 409
+            differs = approvals.run_differences(ap, node=node_info.name, targets=targets, params=params,
+                                                plan_id=req.plan_id)
+            if differs:                          # D-05 (docs/254): any difference is a new approval
+                return _approval_mismatch(inst, chip, name, node_info.name, req, plan, ap, differs)
         try:
             meta = reg.start(req, adapter, node_info=node_info, session=session, lim=lim)
         except RuntimeError:
@@ -1890,22 +1961,60 @@ def approvals_decide(aid: str, verb: str):
     if verb == "approve" and rec.get("kind") == "writes":
         res = out["stage"]
         rid = rec.get("run_id")
-        journal_mod.append(inst, _chip_name(), f"approved {res.get('staged', 0)} write(s) from `{rec.get('node')}`"
-                                       + (f" #{rid}" if rid else "") + f" -- {'applied' if res.get('applied') else 'NOT applied: ' + str(res.get('error'))}",
+        # C-30 (docs/254): the line names who approved, and every value the person changed before writing
+        journal_mod.append(inst, _chip_name(), f"{actor} approved {res.get('staged', 0)} write(s) from `{rec.get('node')}`"
+                                       + (f" #{rid}" if rid else "") + f" -- {'applied' if res.get('applied') else 'NOT applied: ' + str(res.get('error'))}"
+                                       + _edited_text(rec),
                            kind="sm", run_id=rid, paths=[w.get("path") for w in (rec.get("writes") or [])[:20]])
     elif verb == "approve":
-        journal_mod.append(inst, _chip_name(), f"approved the run of `{rec.get('node')}` on {' '.join(rec.get('targets') or [])}",
+        from quam_state_manager.core import run_terms
+        journal_mod.append(inst, _chip_name(), f"{actor} allowed the run of `{rec.get('node')}` on "
+                                               f"{' '.join(rec.get('targets') or [])} ({run_terms.params_text(rec.get('params'))})",
                            kind="sm")
-        out["agent_told"] = _tell_agent(chip, (
-            f"The human ({actor}) allowed the run of {rec.get('node')} on {' '.join(rec.get('targets') or [])} "
-            f"(approval {aid}). Call run_node again now with the same node, targets and params"
-            + (f", plan_id={rec.get('plan_id')}" if rec.get("plan_id") else "") + "."))
+        out["agent_told"] = _tell_agent(chip, _allow_run_message(rec, actor))
     else:
         journal_mod.append(inst, _chip_name(), f"rejected {rec.get('kind')} from `{rec.get('node')}`"
                                        + (f": {data.get('note')}" if data.get("note") else ""), kind="sm")
     _bump()
     _wake()
     return jsonify(**out)
+
+
+def _allow_run_message(rec: dict, actor: str) -> str:
+    """C-04 (docs/254): the message names the exact call -- approval_id and the
+    params spelled out -- because the approval now covers exactly that run
+    (D-05) and "the same params" from memory was one paraphrase away from a
+    new request and a stalled plan."""
+    call = {"node": rec.get("node"), "targets": list(rec.get("targets") or []), "params": rec.get("params") or {},
+            "approval_id": rec.get("id")}
+    if rec.get("plan_id"):
+        call["plan_id"] = rec.get("plan_id")
+    if rec.get("step") is not None:
+        call["step"] = rec.get("step")
+    return (f"The human ({actor}) allowed the run of {rec.get('node')} on {' '.join(rec.get('targets') or [])} "
+            f"(approval {rec.get('id')}). Call run_node now with exactly these arguments (and your reason): "
+            f"{json.dumps(call, default=str)}. The approval covers this node, these targets and these params only; "
+            "anything else is a new request.")
+
+
+def _edited_text(rec: dict) -> str:
+    """'; edited before writing: <path> proposed 5 -> written 4' for each value
+    the person changed on the card, '' when none (C-30)."""
+    from quam_state_manager.core import run_terms
+    orig = rec.get("writes_original")
+    if not isinstance(orig, list):
+        return ""
+    before = {str(w.get("path")): w.get("new") for w in orig}
+    edits = []
+    for w in rec.get("writes") or []:
+        pth = str(w.get("path"))
+        if pth in before and json.dumps(run_terms.canon(before[pth]), sort_keys=True, default=str) != \
+                json.dumps(run_terms.canon(w.get("new")), sort_keys=True, default=str):
+            edits.append(f"`{pth}` proposed {_jsonable(before[pth])} -> written {_jsonable(w.get('new'))}")
+    if not edits:
+        return ""
+    more = f" and {len(edits) - 4} more" if len(edits) > 4 else ""
+    return "; edited before writing: " + ", ".join(edits[:4]) + more
 
 
 def _tell_agent(chip_key: str, msg: str) -> bool:
@@ -1935,10 +2044,11 @@ def undo_mine():
     store = mod.store
     reverted: list[str] = []
     stopped_at = None
+    me = r._request_actor()
     with store._lock:
         while store.change_log:
             top = store.change_log[-1]
-            if not str(getattr(top, "actor", "human")).startswith("by_"):
+            if not r._owns_row(me, top):         # A-08 (docs/254): another agent's row is not mine either
                 stopped_at = {"path": top.dot_path, "actor": getattr(top, "actor", "human")}
                 break
             for e in mod.undo_group():
@@ -2042,6 +2152,10 @@ def _plan_view(rec: dict, *, with_may_change: bool = False) -> dict:
     from quam_state_manager.core import agent_plans
     out = dict(rec)
     out["counts"] = agent_plans.counts(rec)
+    try:
+        _step_requests(out)
+    except Exception:  # noqa: BLE001
+        logger.debug("step requests failed", exc_info=True)
     if with_may_change:
         try:
             out["may_change"], out["may_change_total"] = _may_change(rec.get("steps") or [])
@@ -2049,6 +2163,36 @@ def _plan_view(rec: dict, *, with_may_change: bool = False) -> dict:
             logger.debug("may_change failed", exc_info=True)
             out["may_change"], out["may_change_total"] = [], 0
     return out
+
+
+def _step_requests(view: dict) -> None:
+    """Each plan step a run request (mode ask-all) was filed for carries it as
+    ``request``: waiting for a person, or allowed and not yet run. Without it
+    the card read RUNNING 0/1 while the plan waited on a person (C-04)."""
+    from quam_state_manager.core import approvals
+    if view.get("status") not in ("running", "stopping") or not view.get("id"):
+        return
+    try:
+        rows = [a for a in approvals.load(current_app.instance_path, view.get("chip") or _chip_key())
+                if a.get("kind") == "run" and a.get("plan_id") == view["id"] and not a.get("used_by_run")
+                and a.get("status") in ("pending", "approved")]
+    except Exception:  # noqa: BLE001
+        return
+    if not rows:
+        return
+    steps = []
+    for s in view.get("steps") or []:
+        s2 = dict(s)
+        if s.get("status") == "pending":
+            hit = next((a for a in reversed(rows) if a.get("step") == s.get("i")), None)
+            if hit is None:
+                hit = next((a for a in reversed(rows) if a.get("step") is None and a.get("node") == s.get("node")
+                            and sorted(a.get("targets") or []) == sorted(s.get("targets") or [])), None)
+            if hit is not None:
+                s2["request"] = {"id": hit.get("id"), "status": hit.get("status"),
+                                 "decided_by": hit.get("decided_by"), "params": hit.get("params") or {}}
+        steps.append(s2)
+    view["steps"] = steps
 
 
 def _may_change(steps: list[dict], cap: int = 60) -> tuple[list[dict], int]:
@@ -2219,7 +2363,7 @@ def plan_get(pid: str):
 def plans_add():
     """A plan CARD: from the agent (plan_propose: title + steps + why) or
     from a person's deterministic ``/run`` line. Nothing starts here."""
-    from quam_state_manager.core import agent_plans, agent_runs, agent_session, limits
+    from quam_state_manager.core import agent_plans, agent_runs, agent_session, limits, run_terms
     r = _r()
     if not r._active_path():
         return _err("open a chip first", 409)
@@ -2244,10 +2388,13 @@ def plans_add():
         with _SCAN_LOCK:
             info, avail = agent_runs.resolve_node(folder, parsed["node"], instance_path=inst)
         if info is None:
-            return _err(f"no node called {parsed['node']} in the calibrations folder", 400,
-                        available=sorted({i.name for i in avail},
-                                         key=natural_key)[:40])
+            names, close = run_terms.available_names(avail, parsed["node"])
+            return _err(f"no node called {parsed['node']} in the calibrations folder"
+                        + (f" (closest: {', '.join(close)})" if close else ""), 400, available=names, closest=close)
         parsed["node"] = info.name
+        bad_req = _request_refusal(info, parsed["targets"], parsed["params"], store)   # docs/254
+        if bad_req is not None:
+            return jsonify(ok=False, error=bad_req["how"], **bad_req), 400
         steps = [{"node": parsed["node"], "targets": parsed["targets"], "params": parsed["params"],
                   "why": "typed as /run (no model involved)"}]
         title = f"/run {parsed['node']} {' '.join(parsed['targets'])}"
@@ -2257,13 +2404,17 @@ def plans_add():
         title = str(data.get("title") or "").strip() or "plan"
         source = "agent" if actor.startswith("by_") else "human"
         try:
-            agent_plans.normalize_steps(steps)
+            norm = agent_plans.normalize_steps(steps)
         except ValueError as exc:
             return _err(str(exc))
-        bad = sorted({t for s in steps for t in (s.get("targets") or []) if t not in known},
+        # the normalized targets: a "q1,q2" string was checked letter by letter
+        bad = sorted({t for s in norm for t in s["targets"] if t not in known},
                      key=natural_key)
         if bad:
             return _err(_unknown_targets_msg(bad), 400, known=sorted(known, key=natural_key)[:80])
+        refusal = _plan_steps_refusal(inst, norm, steps, store)            # docs/254: the card shows runnable steps
+        if refusal is not None:
+            return refusal
     session = agent_session.load(inst, chip)
     mode = (session or {}).get("mode") or limits.load(inst, chip).get("mode")
     rec = agent_plans.add(inst, chip, title=title, steps=steps, mode=mode, created_by=actor, source=source,
@@ -2276,6 +2427,33 @@ def plans_add():
     return jsonify(ok=True, plan=_plan_view(rec, with_may_change=True),
                    how="the card is on the human's screen; nothing runs until a person presses Start. "
                        "When told to go, call run_node step by step with plan_id and step.")
+
+
+def _plan_steps_refusal(inst, norm: list[dict], steps: list, store):
+    """Every step of a proposed plan names a node SM can run, with params a
+    card can show (P3, docs/254: an unknown node was accepted onto a card and
+    failed only after Start). The step keeps the folder's own spelling."""
+    from quam_state_manager.core import agent_runs, run_terms, scheduler
+    try:
+        folder = scheduler.load_settings(_r()._sched_inst()).get("calibrations_folder")
+    except Exception:  # noqa: BLE001
+        folder = None
+    if not folder:
+        return None                                  # no folder yet: run_node's own gate names it later
+    for s, raw in zip(norm, steps):
+        with _SCAN_LOCK:
+            info, avail = agent_runs.resolve_node(folder, s["node"], instance_path=inst)
+        if info is None:
+            names, close = run_terms.available_names(avail, s["node"])
+            return _err(f"step {s['i']}: no node called {s['node']} in the calibrations folder"
+                        + (f" (closest: {', '.join(close)})" if close else ""), 400,
+                        refused="node_not_found", step=s["i"], available=names, closest=close)
+        why = _request_refusal(info, s["targets"], s["params"], store)
+        if why is not None:
+            return jsonify(ok=False, error=f"step {s['i']}: {why['how']}", step=s["i"], **why), 400
+        if isinstance(raw, dict):
+            raw["node"] = info.name
+    return None
 
 
 @agent_bp.route("/plans/<pid>/mode", methods=["POST"])
@@ -2419,7 +2597,11 @@ def plan_cancel(pid: str):
     if not r._active_path():
         return _err("open a chip first", 409)
     inst, chip = current_app.instance_path, _chip_key()
-    rec = agent_plans.stop(inst, chip, pid, who=r._request_actor(), how="cancelled")
+    with _lock_for("plan"):                      # docs/254: the status read and the stop are one step
+        was = agent_plans.get(inst, chip, pid)
+        if was is not None and was.get("status") not in ("draft", "running", "stopping"):
+            return _err(f"plan is {was.get('status')}; there is nothing to cancel", 409, plan=_plan_view(was))
+        rec = agent_plans.stop(inst, chip, pid, who=r._request_actor(), how="cancelled")
     if rec is None:
         return _err("unknown plan", 404)
     journal_mod.append(inst, _chip_name(), f"plan `{rec.get('title')}` cancelled by {r._request_actor()}", kind="sm")

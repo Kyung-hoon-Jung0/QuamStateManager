@@ -167,6 +167,21 @@ window.AgentPanel = (function () {
   function setObserver(on) { try { localStorage.setItem("quam_agent_observer", on ? "1" : "0"); } catch (e) { /* ignore */ } S.observer = !!on; renderAll(true); }
   function pathLabel(p) { var parts = String(p || "").split("."); return parts[parts.length - 1]; }
   function runLink(rid) { return rid ? '<a class="ag-run" href="/dataset/by-run/' + rid + '" hx-get="/dataset/by-run/' + rid + '" hx-target="#table-pane" hx-push-url="true">#' + rid + "</a>" : ""; }
+  /* docs/254 (D-05/D-15): a run IS its node, its targets and its params, and an
+     approval covers exactly those -- so every card and plan step says all three.
+     Values are shown as sent (JSON), never reformatted: "100000", not "100 k".
+     No overrides reads "node defaults", so the person sees that too. */
+  function paramVal(v, cap) {
+    var t = typeof v === "string" ? v : JSON.stringify(v);
+    return cap && t.length > cap ? t.slice(0, cap - 1) + "…" : t;
+  }
+  function paramsHtml(p) {
+    var keys = p && typeof p === "object" ? Object.keys(p).sort() : [];
+    if (!keys.length) return ' <span class="ag-params ag-params-none" title="no parameter overrides: the node runs with its own defaults">node defaults</span>';
+    var full = keys.map(function (k) { return k + "=" + paramVal(p[k]); }).join("  ");
+    return ' <span class="ag-params" title="' + esc("params: " + full) + '">' +
+      keys.map(function (k) { return "<code>" + esc(k + "=" + paramVal(p[k], 40)) + "</code>"; }).join(" ") + "</span>";
+  }
   function simBadge(on) { return on ? ' <span class="ag-sim" title="Dry run was ON in the Experiment Runner settings: the node ran against the simulator; its values are never applied to the chip">simulated</span>' : ""; }
 
   // ------------------------------------------------------------- cards
@@ -443,8 +458,11 @@ window.AgentPanel = (function () {
     var mayCount = mayN > may.length ? mayN + ", first " + may.length + " shown" : String(mayN);
     // compact step rows: glyph · node · targets · run · writes · why (a div, not a table)
     var rows = (p.steps || []).map(function (s) {
+      var rq = s.request ? (s.request.status === "approved"
+        ? ' <span class="ag-step-req" title="' + esc("run request " + s.request.id) + '">allowed' + (s.request.decided_by ? " by " + esc(s.request.decided_by) : "") + " — the agent runs it next</span>"
+        : ' <span class="ag-step-req ag-st-waiting" title="' + esc("run request " + s.request.id) + '">run request waiting for Allow</span>') : "";
       return '<div class="ag-step">' + stepBadge(s) + " <code>" + esc(s.node) + "</code>" + simBadge(s.simulated) +
-        ' <span class="ag-step-t">' + esc((s.targets || []).join(" ")) + "</span>" +
+        ' <span class="ag-step-t">' + esc((s.targets || []).join(" ")) + "</span>" + paramsHtml(s.params) + rq +
         (s.run_id ? " " + runLink(s.run_id) : "") + (s.classification && s.classification !== "ok" ? ' <span class="ag-err">' + esc(s.classification) + "</span>" : "") +
         (s.n_writes ? ' <span class="ag-step-w">' + s.n_writes + (s.applied ? " applied" : (s.approval ? " waiting" : "")) + "</span>" : "") +
         (s.why ? ' <span class="muted ag-step-why">' + esc(s.why) + "</span>" : "") + "</div>";
@@ -499,7 +517,7 @@ window.AgentPanel = (function () {
     var st = r.status;
     var stTxt = st === "ended" ? (res.status || "ended") : st;
     var line = '<span class="ag-step-st ag-st-' + esc(stTxt) + '">' + esc(stTxt) + "</span>" +
-      " <strong><code>" + esc(r.node) + "</code></strong> " + esc((r.targets || []).join(" ")) +
+      " <strong><code>" + esc(r.node) + "</code></strong> " + esc((r.targets || []).join(" ")) + paramsHtml(r.params) +
       simBadge(res.simulated || r.simulated) +
       (res.classification && res.classification !== "ok" ? ' <span class="ag-err">' + esc(res.classification) + "</span>" : "") +
       (res.run_id ? " " + runLink(res.run_id) : "") + ' <span class="muted">' + esc(fmtClock(r.since)) + "</span>";
@@ -538,9 +556,11 @@ window.AgentPanel = (function () {
     var acts = S.observer ? '<span class="muted">observing</span>' :
       '<button type="button" class="btn-sm ag-approve" onclick="AgentPanel.approve(\'' + esc(a.id) + '\', this)">' + (isRun ? "Allow run" : "Write to chip") + "</button> " +
       '<button type="button" class="btn-sm ag-reject" onclick="AgentPanel.reject(\'' + esc(a.id) + '\')">Reject</button>';
+    var pl = a.plan_id && S.plans[a.plan_id];
+    var where = a.plan_id ? ' <span class="muted ag-ap-plan">plan ' + esc(pl ? pl.title : a.plan_id) + (a.step !== undefined && a.step !== null ? " · step " + esc(a.step) : "") + "</span>" : "";
     var html = '<div class="ag-ap-head"><span class="ag-plan-st ag-st-waiting">' + (isRun ? "run request" : "approval") + "</span> <strong><code>" + esc(a.node || "") + "</code></strong> " + esc((a.targets || []).join(" ")) +
-      (a.run_id ? " " + runLink(a.run_id) : "") + ' <span class="muted">' + esc(a.why_held || "") + " · " + esc(fmtClock(a.created)) + "</span></div>" +
-      (isRun ? '<p class="muted ag-ap-note">the agent asks to RUN this node on these targets (mode ask-all); nothing runs before Allow</p>' :
+      paramsHtml(a.params) + (a.run_id ? " " + runLink(a.run_id) : "") + where + ' <span class="muted">' + esc(a.why_held || "") + " · " + esc(fmtClock(a.created)) + "</span></div>" +
+      (isRun ? '<p class="muted ag-ap-note">the agent asks to RUN this node on these targets with these params (mode ask-all); nothing runs before Allow, and Allow covers exactly this run</p>' :
         '<div class="ag-tbl"><table class="ag-ap-rows"><thead><tr><th>value</th><th>now</th><th>proposed (editable)</th></tr></thead><tbody>' + rows + "</tbody></table></div>") +
       (a.reason ? '<p class="ag-because">because: ' + esc(a.reason) + "</p>" : "") + '<div class="ag-ap-acts">' + acts + "</div>";
     setHtml(el, row(a.created, html), force);
@@ -1006,7 +1026,7 @@ window.AgentPanel = (function () {
     var card = btn && btn.closest(".ag-card");
     var a = S.approvals[id] || {};
     var writes = null;
-    if (card && a.writes) {
+    if (card && a.kind !== "run" && a.writes) {          // a run request has no values to send (docs/254)
       writes = a.writes.map(function (w, i) {
         var inp = card.querySelector('.ag-ap-new[data-i="' + i + '"]');
         var v = w.new;
@@ -1022,7 +1042,10 @@ window.AgentPanel = (function () {
       // review R2-2: "written" only when the door said applied; a refusal keeps the card and says why
       var applied = r.status === 200 && r.body && r.body.ok !== false;
       if (!applied) toast(errText(r, "not applied"), "error");
-      else toast(a.kind === "run" ? "run allowed" : "written to the chip");
+      else if (a.kind !== "run") toast("written to the chip");
+      // C-04 (docs/254): the agent that asked has to hear it, or the plan waits -- say which
+      else if (r.body.agent_told) toast("run allowed — the agent was told to run it");
+      else toast("run allowed — no agent conversation is open in SM; the agent that asked runs it with approval " + id, "warning");
       poll(true);
     });
   }
