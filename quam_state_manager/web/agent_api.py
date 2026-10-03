@@ -34,6 +34,7 @@ from flask import Blueprint, current_app, jsonify, request
 
 from quam_state_manager.core import journal as journal_mod
 from quam_state_manager.core.loader import natural_key
+from quam_state_manager.core.pointer_path import resolve_field_target
 
 def _unknown_targets_msg(bad: list) -> str:
     """"unknown targets ['q0']" was a Python list repr, brackets and quotes
@@ -228,8 +229,14 @@ def state_get():
         keys = sorted(k for k in store.merged.keys())
         return jsonify(ok=True, path="", kind="container", keys=keys, live_diverged=diverged, stale_since=stale_since,
                        notes=_notes_touching(None))
+    target = resolve_field_target(store.merged, path)
+    pointer_meta = {"is_pointer": target["is_pointer"],
+                    "resolved_path": target["resolved_path"] if target["resolvable"] else None}
     try:
-        raw = store.get_value(path)
+        # The first candidate is the requested leaf before its own pointer
+        # hops, after following any aliases crossed on the way to that leaf.
+        raw_path = target["candidates"][0]["path"] if target["resolvable"] else path
+        raw = store.get_value(raw_path)
     except (KeyError, IndexError, TypeError, ValueError):
         return _err(f"no such path: {path}", 404)
     if isinstance(raw, (dict, list)):
@@ -237,25 +244,27 @@ def state_get():
         keys = list(raw.keys()) if isinstance(raw, dict) else list(range(len(raw)))
         if len(text) > _MAX_SUBTREE_CHARS:
             return jsonify(ok=True, path=path, kind="container", keys=[str(k) for k in keys],
+                           **pointer_meta,
                            truncated=True, size_chars=len(text), live_diverged=diverged, stale_since=stale_since,
                            hint="ask for a deeper path; this subtree is too large to return whole",
                            notes=_notes_touching(path))
         return jsonify(ok=True, path=path, kind="container", keys=[str(k) for k in keys],
+                       **pointer_meta,
                        value=_jsonable(raw), live_diverged=diverged, stale_since=stale_since,
                        notes=_notes_touching(path))
     resolved = raw
-    if isinstance(raw, str) and raw.startswith("#"):
+    if target["is_pointer"]:
         try:
             resolved = store.resolve_value(path)
         except Exception:  # noqa: BLE001
             resolved = raw
     try:
-        src = store.source_file_for(path)
+        src = store.source_file_for(raw_path)
     except Exception:  # noqa: BLE001
         src = None
     return jsonify(ok=True, path=path, kind="leaf", value=_jsonable(raw),
                    resolved=_jsonable(resolved), source_file=src,
-                   is_pointer=isinstance(raw, str) and raw.startswith("#"),
+                   **pointer_meta,
                    live_diverged=diverged, stale_since=stale_since,
                    notes=_notes_touching(path))
 

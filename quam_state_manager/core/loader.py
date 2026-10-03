@@ -25,6 +25,7 @@ from pathlib import Path
 from typing import Any
 
 from quam_state_manager.core import safe_io
+from quam_state_manager.core.pointer_path import resolve_field_target
 from quam_state_manager.core.pointer_resolver import (
     PointerCache,
     is_pointer,
@@ -582,11 +583,25 @@ class QuamStore:
         return current
 
     def resolve_value(self, dot_path: str) -> Any:
-        """Like :meth:`get_value`, but if the raw value is a pointer, resolve it."""
+        """Read through leaf and intermediate pointers using the grids' semantics.
+
+        Missing runtime properties, dangling pointers and cycles keep their raw
+        text with a warning. Missing paths still raise ``KeyError``.
+        """
+        target = resolve_field_target(self.merged, dot_path)
+        if target["resolvable"]:
+            # The edit follower reports scalars only; read containers at the
+            # final path rather than interpreting its None as a JSON null.
+            return self.get_value(target["resolved_path"])
         raw = self.get_value(dot_path)
         if is_pointer(raw) and not is_self_ref(raw):
-            path_tuple = tuple(dot_path.split("."))
-            return self.resolve_pointer(raw, path_tuple)
+            # The legacy resolver also crosses pointers inside an absolute
+            # target path, which the edit follower's raw target walk cannot.
+            resolved = self.resolve_pointer(raw, tuple(dot_path.split(".")))
+            if not is_pointer(resolved):
+                return resolved
+        if target["is_pointer"]:
+            logger.warning("Unresolvable pointer at %s (dangling, runtime property or cycle)", dot_path)
         return raw
 
     def resolve_pointer(self, pointer: str, current_path: tuple[str, ...]) -> Any:
