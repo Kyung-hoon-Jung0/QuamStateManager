@@ -201,7 +201,8 @@ def test_bad_state_is_kept_as_error_and_next_run_uses_good_head(tmp_path, damage
     result = hub_build.build(root, out)
     rows = events(out)
     assert result["events"] == 3 and result["errors"] == 1
-    assert rows[1]["status"] == "error" and rows[1]["error"] and rows[1]["n_changes"] == 0
+    # the node's own status survives; the missing/corrupt state is recorded in `error`
+    assert rows[1]["status"] == "finished" and rows[1]["error"] and rows[1]["n_changes"] == 0
     assert rows[2]["base_hash"] == rows[0]["state_hash"]
     assert hub_build.build(root, out)["added"] == 0
     with HubStore(out) as store:
@@ -311,3 +312,102 @@ def test_error_checkpoint_keeps_successful_head_and_replays_past_it(tmp_path):
         assert store.state_at(3) == {"v": 3}
         with pytest.raises(ValueError, match="no saved state"):
             store.state_at(2)
+
+
+# --- review pins (docs/270 "Review") -------------------------------------------------
+
+def _review_archive(root):
+    """Nested values, a long array, a pointer, an identical repeat, an error run, a revert."""
+    base = {"q": {"f": 1.0, "arr": list(range(17)), "p": "#/q/f"}, "flag": True, "e": {}}
+    docs = [base,
+            {**base, "q": {**base["q"], "f": 2.0}},
+            {**base, "q": {**base["q"], "f": 2.0}},          # byte-identical repeat of run 2
+            None,                                             # missing saved state
+            base,                                             # reverts to run 1
+            {"q": {"f": 1, "arr": list(range(1, 18)), "p": "#/q/arr"}, "flag": False, "e": []}]
+    folders = []
+    for rid, doc in enumerate(docs, 1):
+        folder = run(root, rid, doc if doc is not None else {"gone": 1})
+        if doc is None:
+            (folder / "quam_state" / "state.json").unlink()
+        folders.append(folder)
+    return folders
+
+
+def _ledger_dump(out):
+    with HubStore(out, checkpoint_interval=2) as store:
+        q = store.conn.execute
+        return (
+            [tuple(r) for r in q("SELECT * FROM events ORDER BY eid")],
+            [tuple(r) for r in q("SELECT p.path,c.eid,c.op,c.num,c.txt,c.old_num,c.old_txt,c.proven "
+                                 "FROM changes c JOIN paths p USING(pid) ORDER BY c.eid,p.path")],
+            [tuple(r) for r in q("SELECT eid,hash FROM checkpoints ORDER BY eid")],
+            sorted(r[0] for r in q("SELECT hash FROM blobs")),
+        )
+
+
+def test_resumed_build_equals_one_shot_build_row_for_row(tmp_path):
+    # A resume rebuilds the head from the ledger. Every resume point must give
+    # exactly the rows, base hashes, flags and checkpoints of an uninterrupted build.
+    root = tmp_path / "archive"
+    _review_archive(root)
+    hub_build.build(root, tmp_path / "once", checkpoint_interval=2)
+    while hub_build.build(root, tmp_path / "resumed", limit=1, checkpoint_interval=2)["added"]:
+        pass
+    once, resumed = _ledger_dump(tmp_path / "once"), _ledger_dump(tmp_path / "resumed")
+    with HubStore(tmp_path / "once", checkpoint_interval=2) as store:
+        shape = [(r["n_changes"], r["flags"] & REVERTS_TO_EARLIER, r["base_hash"] == r["state_hash"])
+                 for r in store.conn.execute("SELECT * FROM events ORDER BY ord")]
+    # repeat = zero-change against its own hash; the revert is flagged; the error keeps the head
+    assert shape[2] == (0, 0, True) and shape[4][1] == REVERTS_TO_EARLIER and len(once[0]) == 6
+    assert resumed == once
+
+
+def test_change_rows_alone_reproduce_every_saved_state(tmp_path):
+    # History surfaces read change rows, not checkpoints: folding the rows from
+    # genesis, ignoring checkpoints, must give every successful run's saved state.
+    root = tmp_path / "archive"
+    folders = _review_archive(root)
+    hub_build.build(root, tmp_path / "ledger", checkpoint_interval=2)
+    flat = {}
+    with HubStore(tmp_path / "ledger", checkpoint_interval=2) as store:
+        assert store.conn.execute("SELECT COUNT(*) FROM checkpoints").fetchone()[0] == 3
+        for event in store.conn.execute("SELECT eid,error FROM events ORDER BY ord").fetchall():
+            for row in store.conn.execute("SELECT p.path,c.op,c.num,c.txt FROM changes c JOIN paths p USING(pid) "
+                                          "WHERE eid=?", (event["eid"],)):
+                if row["op"] == OPS["gone"]:
+                    flat.pop(row["path"])
+                else:
+                    flat[row["path"]] = json.loads(row["txt"]) if row["txt"] is not None else row["num"]
+            if event["error"]:
+                continue
+            expected = rules.flatten(hub_build.read_doc(folders[event["eid"] - 1]))
+            assert flat.keys() == expected.keys()
+            assert all(rules.same(flat[k], expected[k]) for k in expected), event["eid"]
+
+
+def test_newest_run_without_saved_state_is_deferred_not_committed(tmp_path):
+    # A live archive's newest folder can exist before its run has saved quam_state
+    # (node.json says "running"). Committing it would freeze an error event forever
+    # (locations are never revisited) and move its changes onto the NEXT run.
+    root, out = tmp_path / "archive", tmp_path / "ledger"
+    run(root, 1, {"v": 1})
+    inflight = run(root, 2, {"v": 2}, node_extra={"metadata": {"status": "running", "name": "scan"}})
+    state = inflight / "quam_state" / "state.json"
+    saved = state.read_bytes()
+    state.unlink()
+    report = hub_build.build(root, out)
+    assert report["added"] == 1 and report["deferred"] == 1 and len(events(out)) == 1
+    state.write_bytes(saved)                      # the run finishes and saves
+    run(root, 3, {"v": 2})
+    hub_build.build(root, out)
+    rows = events(out)
+    assert [(r["run_id"], r["n_changes"], r["error"]) for r in rows] == [(1, 1, None), (2, 1, None), (3, 0, None)]
+    # A stateless run that is no longer the newest is final: it becomes an error event.
+    crashed = run(root, 4, {"v": 9})
+    (crashed / "quam_state" / "state.json").unlink()
+    assert hub_build.build(root, out)["deferred"] == 1
+    run(root, 5, {"v": 3})
+    hub_build.build(root, out)
+    rows = events(out)
+    assert [(r["run_id"], r["n_changes"], bool(r["error"])) for r in rows][3:] == [(4, 0, True), (5, 1, False)]

@@ -161,7 +161,7 @@ def build(root: str | Path, out: str | Path, *, limit: int | None = None,
     started = time.perf_counter()
     root = Path(root).resolve()
     runs, hint = enumerate_runs(root)
-    added = duplicates = errors = zero = 0
+    added = duplicates = errors = zero = deferred = 0
     with HubStore(out, checkpoint_interval=checkpoint_interval) as store:
         root_id = store.register_root(root, hint)
         key = store.conn.execute("SELECT folder_key FROM roots WHERE root_id=?", (root_id,)).fetchone()[0]
@@ -177,7 +177,7 @@ def build(root: str | Path, out: str | Path, *, limit: int | None = None,
         if head:
             head_key = store.conn.execute("SELECT folder_key FROM roots WHERE root_id=?", (head["root_id"],)).fetchone()[0]
             last_order = (head["t_utc_us"], head_key, head["run_id"], head["experiment"])
-        for run in runs:
+        for index, run in enumerate(runs):
             rel = run.folder.relative_to(root).as_posix()
             if store.conn.execute("SELECT 1 FROM locations WHERE root_id=? AND rel_path=?", (root_id, rel)).fetchone():
                 continue
@@ -199,6 +199,14 @@ def build(root: str | Path, out: str | Path, *, limit: int | None = None,
                     store.set_meta(f"watermark:{root_id}", json_bytes(
                         {"eid": known[0], "t_utc_us": run.instant, "rel_path": rel}).decode("utf-8"))
                 duplicates += 1
+                continue
+            if error is not None and index == len(runs) - 1:
+                # The newest discovered folder may still be in flight: node.json
+                # written, quam_state not yet saved. A committed location is never
+                # revisited, so recording it now would freeze an error event and move
+                # its changes onto the next run. Leave it for a build that also sees a
+                # later run; only then is a stateless run final (review, docs/270).
+                deferred += 1
                 continue
             order = (run.instant, key, run.run_id, run.experiment)
             if last_order is not None and order < last_order:
@@ -244,7 +252,10 @@ def build(root: str | Path, out: str | Path, *, limit: int | None = None,
             ordinal += 1
             event = dict(kind="run", t_utc_us=run.instant, t_src=src or str(run.folder), t_quality=run.quality,
                          ord=ordinal, root_id=root_id, rel_path=rel, run_id=run.run_id, experiment=run.experiment,
-                         status="error" if error else meta.get("status"),
+                         # The node's own status is a fact about the run; a "finished"
+                         # run that saved no state stays "finished" (review, docs/270).
+                         # Why the ledger has no state for it lives in `error`.
+                         status=meta.get("status"),
                          run_start_us=run_time.resolve(meta.get("run_start"), offset_hint=hint, read_node=False)[0],
                          run_end_us=run_time.resolve(meta.get("run_end"), offset_hint=hint, read_node=False)[0],
                          parents=json_bytes(run.node.get("parents", [])).decode("utf-8"),
@@ -268,7 +279,7 @@ def build(root: str | Path, out: str | Path, *, limit: int | None = None,
         totals = dict(events=store.conn.execute("SELECT COUNT(*) FROM events").fetchone()[0],
                       change_rows=store.conn.execute("SELECT COUNT(*) FROM changes").fetchone()[0])
         store.conn.execute("PRAGMA wal_checkpoint(TRUNCATE)")
-    return dict(discovered=len(runs), added=added, extra_locations=duplicates, errors=errors,
+    return dict(discovered=len(runs), added=added, extra_locations=duplicates, errors=errors, deferred=deferred,
                 raw_zero_change=zero, offset_hint=hint, seconds=round(time.perf_counter() - started, 3), **totals)
 
 
