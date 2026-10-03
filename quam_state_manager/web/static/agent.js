@@ -29,7 +29,8 @@ window.AgentPanel = (function () {
     plans: {}, runs: {}, approvals: {}, mounts: [], timer: null, inflight: false, observer: false,
     seenCards: {}, lastPoll: 0, unreachable: false,
     intentTouched: false,                          // docs/247: the person chose Ask / Task by hand
-    deciding: {}                                   // approval id -> "approve" | "reject" while its press is in flight
+    deciding: {},                                  // approval id -> "approve" | "reject" while its press is in flight
+    envelope: {}                                   // docs/261: plan id -> the envelope its Start would approve (shown first)
   };
   var PRESETS = [
     ["1Q bringup", "1Q bringup on <targets>: resonator spectroscopy -> qubit spectroscopy -> power rabi -> ramsey. Propose the plan with plan_propose (one step per node and target) and wait for Start."],
@@ -461,6 +462,17 @@ window.AgentPanel = (function () {
     var title = st + (st === "interrupted" ? " (SM restarted while it ran)" : "");
     return '<span class="ag-step-st ag-st-' + esc(st) + '" title="' + esc(title) + '">' + txt + "</span>";
   }
+  /* docs/261: what the stop-loss read from a step -- a fit the node itself marked failed (the
+     run finished, so nothing else on the row says it), and a step skipped because its target
+     was halted (the reason rides the title). */
+  function stepGateHtml(s) {
+    var out = "";
+    var g = s.gate || {};
+    var fit = Object.keys(g).filter(function (t) { return g[t] && g[t].v === "fail" && /^fit:/.test(g[t].why || ""); });
+    if (fit.length) out += ' <span class="ag-err ag-step-gate" title="' + esc(fit.map(function (t) { return g[t].why; }).join("; ")) + '">fit failed: ' + esc(fit.join(" ")) + "</span>";
+    if (s.status === "skipped" && s.halted) out += ' <span class="muted ag-step-gate" title="' + esc(s.error || "") + '">' + esc(s.halted) + " halted</span>";
+    return out;
+  }
   var PLAN_STATUS_TEXT = { draft: "draft", running: "running", stopping: "stopping — finishes the current run", done: "done", failed: "failed",
                            stopped: "stopped", cancelled: "cancelled", skipped: "skipped — nothing ran" };
   function renderPlan(m, p, force) {
@@ -479,6 +491,7 @@ window.AgentPanel = (function () {
       return '<div class="ag-step">' + stepBadge(s) + " <code>" + esc(s.node) + "</code>" + simBadge(s.simulated) +
         ' <span class="ag-step-t">' + esc((s.targets || []).join(" ")) + "</span>" + paramsHtml(s.params) + rq +
         (s.run_id ? " " + runLink(s.run_id) : "") + (s.classification && s.classification !== "ok" ? ' <span class="ag-err">' + esc(s.classification) + "</span>" : "") +
+        stepGateHtml(s) +
         (s.n_writes ? ' <span class="ag-step-w">' + s.n_writes + (s.applied ? " applied" : (s.approval ? " waiting" : "")) + "</span>" : "") +
         (s.why ? ' <span class="muted ag-step-why">' + esc(s.why) + "</span>" : "") + "</div>";
     }).join("");
@@ -506,8 +519,11 @@ window.AgentPanel = (function () {
         ["auto", "ask-writes", "ask-all"].map(function (x) { return '<option value="' + x + '"' + (x === mode ? " selected" : "") + ">" + x + "</option>"; }).join("") + "</select></label>"
       : '<span class="muted ag-mode-ro">mode ' + esc(mode) + "</span>";
     var acts = "";
+    var envHtml = "";
     if (!S.observer) {
-      if (p.status === "draft") {
+      if (p.status === "draft" && S.envelope[p.id]) {
+        envHtml = envelopeHtml(p, S.envelope[p.id]);           // docs/261: the envelope first, its Start inside it
+      } else if (p.status === "draft") {
         acts = '<button type="button" class="btn-sm ag-start" onclick="AgentPanel.startPlan(\'' + esc(p.id) + '\')">Start — ' + (mayN ? mayN + " value(s) may change" : "values may change") + "</button> " +
           '<button type="button" class="btn-sm ag-cancel" onclick="AgentPanel.cancelPlan(\'' + esc(p.id) + '\')">Cancel</button>';
       } else if (p.status === "running") {
@@ -522,8 +538,47 @@ window.AgentPanel = (function () {
     }
     var html = head + '<div class="ag-steps">' + rows + "</div>" +
       '<details class="ag-may-wrap"' + (p.status === "draft" ? " open" : "") + "><summary>values that may change" + (mayN ? " (" + mayCount + ")" : "") + "</summary>" + mayHtml + "</details>" +
-      prog + '<div class="ag-plan-acts">' + modeSel + " " + acts + "</div>";
+      prog + (envHtml || '<div class="ag-plan-acts">' + modeSel + " " + acts + "</div>");
     setHtml(el, row(p.created, html), force);
+  }
+
+  /* docs/261: the overnight envelope. A person approves ONE envelope before leaving -- the plan,
+     mode auto, stop_by, max writes, max |Δ| and the stop-loss -- not every write. The card says
+     every value it approves, the deadline in the viewer's own zone, and the steps, before the
+     Start that arms it; the Start sends back what it showed (the server refuses a changed one). */
+  function absTime(ts) {
+    if (!ts) return "";
+    var d = new Date(ts * 1000);
+    return window.SnapTime && window.SnapTime.display ? window.SnapTime.display(d) : d.toISOString().replace("T", " ").slice(0, 19) + " (UTC)";
+  }
+  function inTime(ts) {
+    var s = Math.round(ts - Date.now() / 1000);
+    if (s <= 0) return "";
+    var h = Math.floor(s / 3600), mi = Math.floor((s % 3600) / 60);
+    return " (in " + (h ? h + " h " : "") + mi + " min)";
+  }
+  function envelopeHtml(p, e) {
+    var lines = (e.lines || []).map(function (ln) {
+      return '<dt>' + esc(ln.label) + '</dt><dd data-env="' + esc(ln.key || "") + '">' + esc(ln.text) +
+        (ln.at ? ' <span class="muted ag-env-at">· ' + esc(absTime(ln.at)) + esc(inTime(ln.at)) + "</span>" : "") + "</dd>";
+    }).join("");
+    var warn = (e.warnings || []).map(function (w) { return '<p class="ag-err ag-env-warn">' + esc(w) + "</p>"; }).join("");
+    var steps = (e.steps || []).map(function (st) {
+      return "<li><code>" + esc(st.node) + "</code> " + esc((st.targets || []).join(" ")) + paramsHtml(st.params) + "</li>";
+    }).join("");
+    // no role="group": Pico lays a group out as an inline-flex row (measured: every part side by side)
+    return '<div class="ag-envelope" aria-label="the envelope this Start approves">' +
+      '<p class="ag-env-head"><strong>Approve the envelope</strong> <span class="muted">— mode ' + esc(e.mode || "") +
+      ": inside it, writes that pass the gates apply without asking; outside it, a write is held for you and its target stops</span></p>" +
+      '<dl class="ag-env-dl">' + lines + "</dl>" + warn +
+      '<details class="ag-env-steps" open><summary>' + (e.steps || []).length + " step(s), exactly as the card shows them</summary><ol>" + steps + "</ol></details>" +
+      '<div class="ag-plan-acts"><button type="button" class="btn-sm ag-start ag-env-ok" onclick="AgentPanel.confirmStart(\'' + esc(p.id) + '\')">Start — approve this envelope</button> ' +
+      '<button type="button" class="btn-sm outline ag-env-back" onclick="AgentPanel.closeEnvelope(\'' + esc(p.id) + '\')">Back</button></div></div>';
+  }
+  function repaintPlan(id) {
+    var p = S.plans[id];
+    if (!p) return;
+    S.mounts.forEach(function (m) { renderPlan(m, p, true); });
   }
 
   function renderRun(m, r, force) {
@@ -688,6 +743,7 @@ window.AgentPanel = (function () {
     }
     acts.push('<label class="ag-observer" title="observer: this window shows but never starts, stops or approves (an accident guard, not a permission)"><input type="checkbox" ' + (S.observer ? "checked" : "") + ' onchange="AgentPanel.setObserver(this.checked)"> observer' + (S.observer ? ' <span class="ag-observing">— observing</span>' : "") + "</label>");
     acts.push('<span class="ag-now-links"><a href="/journal" hx-get="/journal" hx-target="#table-pane" hx-push-url="true">Calibration log →</a>' +
+      ' · <a class="ag-summary-link" href="/agent/summary" hx-get="/agent/summary" hx-target="#table-pane" hx-push-url="true" title="the last plan since its Start: applied, held, failed, halted, and why it ended">Night summary →</a>' +
       ' · <a class="ag-setup-link" href="/agent/setup" hx-get="/agent/setup" hx-target="#table-pane" hx-push-url="true" title="connect Claude / Codex to SM, the journal folder, the lab context file">Setup →</a></span>');
     var runHtml = d.running ? "▶ <code>" + esc(d.running.node || d.running.tool || "") + "</code> " + esc(fmtAgo(d.running.since)) +
       (d.running.typical_s ? ' <span class="muted">usually ~' + Math.round(d.running.typical_s / 60) + "m</span>" : "") : "";
@@ -1030,7 +1086,36 @@ window.AgentPanel = (function () {
   }
   function startPlan(id) {
     if (S.observer) return;
-    api("POST", "/api/agent/plans/" + id + "/start", {}).then(function (r) {
+    var p = S.plans[id] || {};
+    var mode = p.mode || (S.now && S.now.mode) || "ask-writes";
+    if (mode === "auto") { openEnvelope(id); return; }          // docs/261: the envelope first
+    doStart(id, null);
+  }
+  function openEnvelope(id) {
+    api("GET", "/api/agent/plans/" + id + "/envelope").then(function (r) {
+      if (r.status !== 200 || !r.body || !r.body.envelope) { toast(errText(r, "could not read the envelope"), "error"); return; }
+      S.envelope[id] = r.body;
+      repaintPlan(id);
+    });
+  }
+  function confirmStart(id) {
+    if (S.observer) return;
+    var e = S.envelope[id];
+    doStart(id, e ? e.envelope : null);
+  }
+  function closeEnvelope(id) { delete S.envelope[id]; repaintPlan(id); }
+  function doStart(id, env) {
+    api("POST", "/api/agent/plans/" + id + "/start", env ? { envelope: env } : {}).then(function (r) {
+      if (r.status === 409 && r.body && r.body.refused === "envelope_changed" && r.body.envelope) {
+        // the limits moved since the card showed them: show the new envelope, never arm the old one
+        var cur = S.envelope[id] || {};
+        S.envelope[id] = Object.assign({}, cur, { envelope: r.body.envelope.values, lines: r.body.envelope.lines,
+                                                  warnings: r.body.envelope.warnings, deadline: r.body.envelope.deadline });
+        toast("the limits changed since the card showed them — read the envelope again", "error");
+        repaintPlan(id);
+        return;
+      }
+      delete S.envelope[id];
       // docs/253: say WHO runs it -- a terminal agent's plan is not run by SM's in-app agent
       if (r.status !== 200) toast(errText(r, "could not start"), "error");
       else toast("started — " + (r.body && r.body.driver ? driverText(r.body.driver).replace(/^driven by /, "") + " runs it" : "the agent is running the plan"));
@@ -1497,6 +1582,7 @@ window.AgentPanel = (function () {
   if (document.readyState === "loading") document.addEventListener("DOMContentLoaded", init); else init();
 
   return { mount: mount, poll: poll, submit: submit, key: key, preset: preset, startPlan: startPlan, cancelPlan: cancelPlan,
+           confirmStart: confirmStart, closeEnvelope: closeEnvelope,
            setIntent: setIntent, sessionOpen: sessionOpen,
            wireHelp: wireHelp, wirePaint: wirePaint, wireLoad: wireLoad, _wire: WIRE,
            shortVersion: shortVersion,

@@ -220,45 +220,57 @@ def invalid_why(instance_path, key: str, rec: dict | None, *, app_open: Callable
     """Why the armed grant no longer holds, or None while it does (or when
     nothing is armed). ``app_open(secret)`` answers for SM's own in-app
     session in THIS process."""
+    return _invalid(instance_path, key, rec, app_open=app_open)[0]
+
+
+def _invalid(instance_path, key: str, rec: dict | None, *,
+             app_open: Callable[[str | None], bool]) -> tuple[str | None, str | None]:
+    """``(why, code)`` -- docs/261: the code says which END it is (past_stop_by / restart /
+    driver_gone / None), so the plan_done reason and the morning summary never parse the words."""
     if not rec or not rec.get("start_token"):
-        return None
+        return None, None
     g = rec.get("grant")
     if not g:
-        return "an arming with no plan behind it (from before arming was per plan) was withdrawn"
+        return "an arming with no plan behind it (from before arming was per plan) was withdrawn", None
     mine = g.get("sm_pid") == os.getpid()
     if _armer_gone(g):
-        return RESTART_WHY
+        return RESTART_WHY, "restart"
     from quam_state_manager.core import agent_plans
     plan = agent_plans.get(instance_path, key, g.get("plan_id") or "")
     if plan is None:
-        return f"its plan {g.get('plan_id')} is gone"
+        return f"its plan {g.get('plan_id')} is gone", None
     if plan.get("status") in ENDED:
         why = f"plan `{plan.get('title')}` {_ENDED_WORD.get(plan['status'], plan['status'])}"
         return why + (f" by {plan['ended_by']}" if plan.get("ended_by") and plan["status"] in ("stopped", "cancelled")
-                      else "")
+                      else ""), None
     from quam_state_manager.core import limits as limits_mod
     try:
         lim = limits_mod.load(instance_path, key)
         since = rec.get("armed_at") or g.get("at")
         if since and limits_mod.past_stop_by(lim, datetime.now(), since=since):
-            return f"{STOP_BY_WHY} ({lim.get('stop_by')}) was reached during plan `{g.get('title')}`"
+            return f"{STOP_BY_WHY} ({lim.get('stop_by')}) was reached during plan `{g.get('title')}`", "past_stop_by"
     except Exception:  # noqa: BLE001
         logger.debug("stop_by check failed", exc_info=True)
     d = g.get("driver") or {}
     if d.get("kind") == "app" and mine and not app_open(d.get("id")):
-        return f"SM's in-app {d.get('backend') or 'agent'} session that drove plan `{g.get('title')}` is gone"
+        return (f"SM's in-app {d.get('backend') or 'agent'} session that drove plan `{g.get('title')}` is gone",
+                "driver_gone")
     if d.get("kind") == "terminal" and not terminal_alive(d):
         return (f"{d.get('actor') or 'the agent'} that drove plan `{g.get('title')}` is gone "
-                f"(its SM bridge, PID {d.get('pid')}, exited)")
-    return None
+                f"(its SM bridge, PID {d.get('pid')}, exited)"), "driver_gone"
+    return None, None
 
 
-def close_plan(instance_path, key: str, grant: dict | None, *, why: str, restarted: bool) -> None:
+def close_plan(instance_path, key: str, grant: dict | None, *, why: str, restarted: bool,
+               code: str | None = None) -> None:
     """A grant that ended for a reason OTHER than its plan ending leaves no
     plan "running" with nobody allowed to run it. A run SM is still driving
     in this process finishes and reports (the plan closes at "stopping" ->
     "stopped"); after a restart nothing will report, so a step left running
-    is failed as interrupted."""
+    is failed as interrupted.
+
+    docs/261: ``code`` is why SM closes it, said on the plan FIRST -- failing the interrupted step
+    can end the plan by itself, and its plan_done must still read "restart", not "failed"."""
     if not grant or not grant.get("plan_id"):
         return
     from quam_state_manager.core import agent_plans
@@ -266,12 +278,14 @@ def close_plan(instance_path, key: str, grant: dict | None, *, why: str, restart
     rec = agent_plans.get(instance_path, key, pid)
     if rec is None or rec.get("status") not in ("running", "stopping"):
         return
+    if code:
+        agent_plans.mark_end(instance_path, key, pid, code=code, why=why)
     if restarted:
         for s in rec.get("steps") or []:
             if s.get("status") == "running":
                 agent_plans.step_update(instance_path, key, pid, s["i"], status="failed",
                                         error="interrupted: SM restarted while this step ran", ended=time.time())
-    agent_plans.stop(instance_path, key, pid, who="SM", how=why, after_run=not restarted)
+    agent_plans.stop(instance_path, key, pid, who="SM", how=why, after_run=not restarted, code=code)
 
 
 def reconcile(instance_path, key: str, *, app_open: Callable[[str | None], bool], name: str | None = None) -> str | None:
@@ -287,15 +301,14 @@ def reconcile(instance_path, key: str, *, app_open: Callable[[str | None], bool]
         g = rec["grant"]
         end(instance_path, key, why="", journal=False)
         if _armer_gone(g):
-            close_plan(instance_path, key, g, why="SM restarted", restarted=True)
+            close_plan(instance_path, key, g, why="SM restarted", restarted=True, code="restart")
         return None
-    why = invalid_why(instance_path, key, rec, app_open=app_open)
+    why, code = _invalid(instance_path, key, rec, app_open=app_open)
     if not why:
         return None
-    code = "past_stop_by" if why.startswith(STOP_BY_WHY) else ("restart" if why.startswith(RESTART_WHY) else None)
     g = end(instance_path, key, why=why, token=rec.get("start_token"), name=name, code=code)
     if g is not None:
-        close_plan(instance_path, key, g, why=why, restarted=code == "restart")
+        close_plan(instance_path, key, g, why=why, restarted=code == "restart", code=code)
     return why
 
 
@@ -386,6 +399,11 @@ def covers(rec: dict | None, plan: dict | None, *, plan_id: str | None, driver: 
         if why and last.get("code") == "past_stop_by":
             return {"refused": "past_stop_by", "plan_id": plan_id, "plan_status": st,
                     "how": f"{why}; its arming ended there. Summarize and stop"}, None
+        if why and last.get("code") == "stop_loss":
+            # docs/261: too many gate fails in the plan -- SM halted it; nothing more of it runs
+            return {"refused": "stop_loss", "plan_id": plan_id, "plan_status": st,
+                    "how": f"{why}; its arming ended there and nothing more of it runs. Summarize what ran, what "
+                           "was applied and what failed, and stop -- a person looks at it"}, None
         return {"refused": "no_start_token", "plan_id": plan_id, "plan_status": st,
                 "how": f"plan `{title}` is {st} and not armed" + (f" ({why})" if why else "")
                        + ": stop and tell the human. Anything more is a new plan a person starts"}, None
@@ -393,6 +411,16 @@ def covers(rec: dict | None, plan: dict | None, *, plan_id: str | None, driver: 
         return {"refused": "not_the_driver", "plan_id": plan_id, "driver": public(g.get("driver")),
                 "how": f"plan `{title}` is driven by {describe(g.get('driver'))}; exactly one agent drives a plan. "
                        "Do not run its steps -- tell the human"}, None
+    halted = plan.get("halted") or {}
+    hit = [t for t in (targets or []) if t in halted]
+    if hit:
+        # docs/261: a target the plan's stop-loss halted takes no further step under this plan
+        first = (halted.get(hit[0]) or {}).get("why") or "stop-loss"
+        return {"refused": "target_halted", "plan_id": plan_id, "targets": hit,
+                "halted": {t: (halted.get(t) or {}).get("why") for t in hit},
+                "how": f"{', '.join(hit)} was halted by plan `{title}`'s stop-loss ({first}); its remaining steps "
+                       "are skipped and nothing more runs on it under this plan. Run the other targets' pending "
+                       "steps; a person decides about it in the morning"}, None
     pending = [s for s in plan.get("steps") or [] if s.get("status") == "pending"]
     want_t = list(targets or [])
     want_p = dict(params or {})

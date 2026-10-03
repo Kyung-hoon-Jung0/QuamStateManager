@@ -13961,6 +13961,45 @@ table.diff-wb-list tbody > tr[hidden] { display: none; }
 .jr-entry[data-author="human"] > code:first-of-type, .jr-entry[data-author^="human:"] > code:first-of-type { color: color-mix(in srgb, #2e7d32 55%, var(--pico-color)); }
 .jr-entry[data-author="unknown"] > code:first-of-type { color: var(--pico-muted-color); }
 /* docs/173 S7 -- the Agent setup page */
+/* docs/261: the overnight envelope on an auto plan's card, and the night summary page */
+.ag-envelope { display: block; border: 1px solid color-mix(in srgb, var(--ag-accent, #d98c00) 55%, var(--pico-muted-border-color));
+  border-radius: .45rem; padding: .45rem .65rem; margin-top: .35rem; }
+.ag-env-head { margin: 0 0 .25rem; font-size: .92em; }
+.ag-env-dl, .ns-env-dl { display: grid; grid-template-columns: max-content minmax(0, 1fr); gap: .1rem .7rem; margin: .2rem 0; font-size: .9em; }
+.ag-env-dl dt, .ns-env-dl dt { font-weight: 600; color: var(--pico-muted-color); }
+.ag-env-dl dd, .ns-env-dl dd { margin: 0; overflow-wrap: anywhere; }
+.ag-env-warn { margin: .2rem 0; font-size: .9em; font-weight: 600; }
+.ag-env-steps { font-size: .9em; margin: .2rem 0; } .ag-env-steps > summary { color: var(--pico-muted-color); cursor: pointer; }
+.ag-env-steps ol { margin: .1rem 0 .1rem 1.2rem; padding: 0; } .ag-env-steps li { margin: .05rem 0; }
+.agent-summary { max-width: 64rem; }
+.agent-summary .ns-head { display: flex; align-items: baseline; justify-content: space-between; gap: .6rem; flex-wrap: wrap; }
+.agent-summary .ns-head h2 { margin: .2rem 0; }
+.agent-summary .ns-msg:empty { display: none; }
+.agent-summary .ns-msg { margin: .2rem 0; font-size: .92em; }
+.agent-summary .ns-plan, .agent-summary .ns-end, .agent-summary .ns-counts { margin: .15rem 0; }
+.agent-summary .ns-counts { font-size: .92em; color: var(--pico-muted-color); }
+.agent-summary .ns-env { margin: .3rem 0; font-size: .92em; } .agent-summary .ns-env > summary { cursor: pointer; color: var(--pico-muted-color); }
+.agent-summary .ns-sec { border-top: 1px solid var(--pico-muted-border-color); margin-top: .55rem; padding-top: .3rem; }
+.agent-summary .ns-sec h3 { font-size: 1rem; margin: .1rem 0 .3rem; }
+.agent-summary .ns-item { padding: .3rem 0; border-bottom: 1px dashed var(--pico-muted-border-color); }
+.agent-summary .ns-item:last-child { border-bottom: 0; }
+.agent-summary .ns-line { font-size: .94em; overflow-wrap: anywhere; }
+.agent-summary .ns-tbl table { font-size: .86em; margin: .2rem 0; }
+.agent-summary .ns-tbl td, .agent-summary .ns-tbl th { padding: .12rem .45rem; vertical-align: top; }
+.agent-summary .ns-tbl td code { white-space: normal; overflow-wrap: anywhere; }
+.agent-summary .ns-acts { display: flex; flex-wrap: wrap; gap: .4rem; align-items: center; justify-content: flex-end; }
+.agent-summary .ns-acts button { width: auto; margin: 0; }
+.agent-summary .ns-empty { margin: .1rem 0; font-size: .92em; }
+.agent-summary .ns-reason { margin-right: .25rem; }
+.agent-summary .ns-r-finished { color: color-mix(in srgb, #2e7d32 55%, var(--pico-color)); }
+.agent-summary .ns-r-failed, .agent-summary .ns-r-stop-loss { color: var(--pico-del-color, #b00020); }
+.agent-summary .ns-r-stop-by, .agent-summary .ns-r-restart, .agent-summary .ns-r-stopped,
+.agent-summary .ns-r-cancelled, .agent-summary .ns-r-driver-gone { color: color-mix(in srgb, var(--ag-accent, #d98c00) 60%, var(--pico-color)); }
+.agent-summary .ns-others { margin-top: .6rem; font-size: .9em; }
+@media (max-width: 640px) {
+  .ag-env-dl, .agent-summary .ns-env-dl { grid-template-columns: minmax(0, 1fr); }
+  .agent-summary .ns-tbl { overflow-x: auto; }
+}
 .agent-setup { max-width: 62rem; }
 .as-sec { border: 1px solid var(--pico-muted-border-color); border-radius: .5rem; padding: .6rem .9rem; margin: .6rem 0; }
 .as-sec > summary { cursor: pointer; font-weight: 600; }

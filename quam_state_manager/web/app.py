@@ -895,6 +895,17 @@ def create_app(*, testing: bool = False, instance_path: str | None = None) -> Fl
         agent_grant.sweep(app.instance_path)
     except Exception:  # noqa: BLE001
         logging.getLogger(__name__).warning("agent grant sweep failed", exc_info=True)
+    # docs/261: ... and a grant this process armed ends at its stop_by even when nobody reads the
+    # chip all night (the plan_done alert goes out then, not when someone opens SM in the morning).
+    # Off in the test suite unless a test asks for it (SM_GRANT_WATCH_S).
+    try:
+        _watch_s = os.environ.get("SM_GRANT_WATCH_S")
+        _every = float(_watch_s) if _watch_s else (
+            30.0 if not testing and os.environ.get("SM_DISABLE_ENV_WARMUP") != "1" else 0.0)
+        from quam_state_manager.web import agent_api as _agent_api
+        _agent_api.start_grant_watch(app, _every)
+    except Exception:  # noqa: BLE001
+        logging.getLogger(__name__).warning("agent grant watch failed to start", exc_info=True)
 
     # Runner state moved from the instance dir into per-chip scopes (docs/80
     # Part 4). Adopt any pre-scope queue ONCE, at startup, so which scope

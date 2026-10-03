@@ -36,7 +36,9 @@ GATES = ("chip_mismatch", "no_env", "no_calibrations_folder", "node_not_found", 
          "stopped_by_human", "past_stop_by", "no_start_token", "run_active", "queue_not_empty", "awaiting_approval",
          "human_active", "orphan_running", "stale_live", "simulate_on_in_auto",
          # docs/253: run_node's own refusals at the token gate when the run is not the armed plan's
-         "not_in_plan", "not_the_driver")
+         "not_in_plan", "not_the_driver",
+         # docs/261: the plan's stop-loss halted this target / the whole plan
+         "target_halted", "stop_loss")
 CLASSES = ("ok", "host_unreachable", "hardware_contention", "node_error", "timeout", "cancelled", "skipped",
            "unattributed", "interrupted")
 DEFAULT_WAIT_S = 240.0
@@ -631,13 +633,16 @@ class Registry:
                         from quam_state_manager.core import agent_plans
                         rec = agent_plans.get(self.instance_path, m.get("chip"), m["plan_id"])
                         if rec is not None and rec.get("status") in ("running", "stopping"):
+                            # docs/261: why first -- failing the step can end the plan by itself
+                            agent_plans.mark_end(self.instance_path, m.get("chip"), m["plan_id"], code="restart",
+                                                 why="interrupted by an SM restart")
                             st = agent_plans.step_for(rec, step=None, node=m.get("node"), targets=m.get("targets"))
                             if st is not None:
                                 agent_plans.step_update(self.instance_path, m.get("chip"), m["plan_id"], st["i"],
                                                         status="failed", error="SM restarted while this step ran",
                                                         ended=time.time())
                             agent_plans.stop(self.instance_path, m.get("chip"), m["plan_id"], who="sm",
-                                             how="interrupted by an SM restart")
+                                             how="interrupted by an SM restart", code="restart")
                     except Exception:  # noqa: BLE001
                         logger.debug("plan interrupt failed", exc_info=True)
             self.runs[m["key"]] = m
@@ -926,20 +931,42 @@ class Registry:
                             "check the network / host config; not retried"
             adapter.journal(line, kind="agent", reason=None, run_id=rid,
                             paths=[w["path"] for w in writes[:20]])
+            # docs/261: what this run says about each of its targets -- the stop-loss counts these
+            from quam_state_manager.core import agent_overnight
+            gate = agent_overnight.gate_verdicts(result, list(req.targets))
             self._plan_step(req, chip, node_info, status="done" if status == "done" else
                             ("cancelled" if status == "cancelled" else ("skipped" if status == "skipped" else "failed")),
                             run_key=key, run_id=result.get("run_id"), outcome=status,
                             classification=result["classification"], n_writes=len(writes),
                             applied=result.get("applied"), approval=(result.get("approval") or {}).get("id"),
-                            error=str(error)[:300] if error else None, ended=time.time())
+                            error=str(error)[:300] if error else None, ended=time.time(), gate=gate)
+            halt = {"halted": {}, "plan_halt": None}
+            if req.plan_id and gate:
+                try:
+                    halt = agent_overnight.after_step(inst, chip, req.plan_id, name=adapter.chip_name)
+                except Exception:  # noqa: BLE001
+                    logger.warning("stop-loss check failed", exc_info=True)
+            if halt.get("halted") or halt.get("plan_halt"):
+                result["stop_loss"] = halt
             self._plan_end_restore(req, chip, lim)
+            link = agent_overnight.link_for(req.plan_id)
             if status != "done":
-                adapter.notify("agent_failure", {"node": node_info.name, "targets": req.targets, "error": error,
-                                                 "classification": result["classification"],
-                                                 "what": (result.get("failure") or {}).get("what")})
+                # docs/261 (D-14): a person's Stop (cancelled) and a skipped item are not failures -- the
+                # plan's own end says them, once, in plan_done
+                if result["classification"] in agent_overnight.FAIL_CLASSES:
+                    adapter.notify("agent_failure", {"node": node_info.name, "targets": req.targets,
+                                                     "error": str(error)[:300] if error else error,
+                                                     "classification": result["classification"],
+                                                     "what": (result.get("failure") or {}).get("what"),
+                                                     "plan_id": req.plan_id, "step": req.step,
+                                                     "halted_targets": sorted(halt.get("halted") or {}),
+                                                     "plan_halted": bool(halt.get("plan_halt")), "link": link})
             elif result.get("approval"):
-                adapter.notify("needs_human", {"node": node_info.name, "approval": result["approval"],
-                                               "why": result.get("why_held")})
+                adapter.notify("needs_human", {"what": "held_write", "node": node_info.name,
+                                               "approval": result["approval"], "why": result.get("why_held"),
+                                               "run_id": result.get("run_id"), "plan_id": req.plan_id,
+                                               "step": req.step, "halted_targets": sorted(halt.get("halted") or {}),
+                                               "link": link})
         except Exception as exc:  # noqa: BLE001
             logger.exception("run_node driver crashed")
             result.update(status="failed", classification="node_error", error=f"driver error: {exc}")
@@ -976,6 +1003,11 @@ class Registry:
             why = f"mode {mode}"
         else:
             why = limits_hold(lim, fam, writes, self.plan_writes.get(plan_key, 0))
+            if why is None:
+                # docs/261: inside the envelope only writes that PASS the gates apply -- a value the node
+                # wrote from a fit it marked failed is held for a person
+                from quam_state_manager.core import agent_overnight
+                why = agent_overnight.fit_hold(result.get("run"), writes)
         if result.get("simulated"):
             # review R1-M8: a value from a simulated run is never a calibration
             why = "DRY RUN values (simulate ON in the run environment)" + (f"; {why}" if why else "")
@@ -983,7 +1015,8 @@ class Registry:
         if why:
             ap = approvals.add(inst, chip, kind="writes", node=node_info.name, targets=req.targets, writes=writes,
                                reason=req.reason, why_held=why, actor=req.actor, plan_id=req.plan_id,
-                               run_key=meta["key"], run_id=result.get("run_id"), params=req.params)
+                               run_key=meta["key"], run_id=result.get("run_id"), params=req.params,
+                               step=req.step)          # docs/261: the held write names its plan step
             result["approval"] = approvals.summary(ap)
             result["why_held"] = why
             return
@@ -992,6 +1025,8 @@ class Registry:
         result["applied"] = bool(out.get("applied"))
         result["unstaged"] = out.get("unstaged") or []
         result["apply_error"] = out.get("error")
+        if out.get("pre_apply_ts"):
+            result["pre_apply_ts"] = out["pre_apply_ts"]     # docs/261: the version the apply can be put back to
         if result["applied"]:
             self.plan_writes[plan_key] = self.plan_writes.get(plan_key, 0) + len(writes)
         elif out.get("saved_in_working_copy"):
@@ -1001,7 +1036,7 @@ class Registry:
             ap = approvals.add(inst, chip, kind="writes", node=node_info.name, targets=req.targets, writes=writes,
                                reason=req.reason, why_held=f"apply refused: {out.get('error')}", actor=req.actor,
                                plan_id=req.plan_id, run_key=meta["key"], run_id=result.get("run_id"),
-                               params=req.params)
+                               params=req.params, step=req.step)
             result["approval"] = approvals.summary(ap)
             result["why_held"] = f"apply refused: {out.get('error')}"
 

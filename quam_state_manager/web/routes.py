@@ -5663,6 +5663,27 @@ def agent_page():
                                                agent_wiring=_agent_wiring()))
 
 
+@bp.route("/agent/summary")
+def agent_summary_page():
+    """docs/261: the night summary -- since the newest plan's Start (or ``?plan=``): what it
+    applied (each with its undo), what it holds for a person (approve / reject here), what
+    failed and why, the targets its stop-loss halted, and why and when it ended. Rendered from
+    SM's records on disk, so it reads the same after a restart."""
+    chip_open = bool(_active_path() and (_active_ctx() or {}).get("type") == "quam")
+    if not chip_open:
+        if _is_htmx():
+            return render_template("_status.html", level="info",
+                                   message="Open a chip first — the summary is the open chip's.")
+        return redirect(url_for("main.home", landing=1))
+    from quam_state_manager.web import agent_api as _aa
+    data = _aa.summary_data(request.args.get("plan") or None)
+    if _is_htmx():
+        return render_template("_agent_summary.html", summary=data)
+    config_exists = bool(qualibrate_config.tray_status().get("config_exists"))
+    return render_template("base.html", **_ctx(page="agent_summary", landing_config_exists=config_exists,
+                                               summary=data))
+
+
 def _home_landing(config_exists, session):
     """The Projects landing half of home() (split out so /agent can share the
     chip-open branch without duplicating the landing)."""

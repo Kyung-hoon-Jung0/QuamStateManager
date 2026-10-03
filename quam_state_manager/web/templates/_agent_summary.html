@@ -1,0 +1,124 @@
+{# docs/261: the night summary -- one started plan, since its Start: what it applied (each with
+   its undo), what it holds for a person (approve / reject here), what failed and why, the
+   targets its stop-loss halted, and why and when it ended. Rendered from SM's records on disk
+   (plans, approvals, run records, the undo journal), so a restart changes nothing here.
+   Times are .ts-local spans: the viewer's zone with its UTC offset (docs/244). #}
+{% set s = summary or {} %}
+{% set p = s.plan %}
+{% macro val(x) %}{% if x is none %}<span class="muted">not set</span>{% elif x is mapping or (x is iterable and x is not string) %}<code>{{ x | tojson }}</code>{% else %}{{ x }}{% endif %}{% endmacro %}
+{% macro rows(ws, more, show_now) %}
+<div class="ag-tbl ns-tbl"><table>
+  <thead><tr><th>value</th><th>old</th><th>new</th>{% if show_now %}<th>now</th>{% endif %}</tr></thead>
+  <tbody>
+  {% for w in ws %}<tr><td title="{{ w.path }}"><code>{{ w.path }}</code></td><td>{{ val(w.old) }}</td><td>{{ val(w.new) }}</td>{% if show_now %}<td>{% if w.now_known %}{{ val(w.now) }}{% else %}<span class="muted">?</span>{% endif %}</td>{% endif %}</tr>{% endfor %}
+  {% if more %}<tr><td colspan="{{ 4 if show_now else 3 }}" class="muted">+{{ more }} more</td></tr>{% endif %}
+  </tbody></table></div>
+{% endmacro %}
+<div id="agent-summary" class="agent-summary" data-plan="{{ p.id if p else '' }}">
+  <div class="table-header-row ns-head">
+    <h2>Night summary{% if p %} <span class="muted">— since {{ p.started_at | ts_local }}</span>{% endif %}</h2>
+    <a class="ns-back" href="/agent" hx-get="/agent" hx-target="#table-pane" hx-push-url="true">← Agent</a>
+  </div>
+  <p class="ns-msg muted" role="status" aria-live="polite"></p>
+  {% if not p %}
+  <p class="muted ns-none">No plan has been started on this chip yet. A night begins with Start on a plan card.</p>
+  {% else %}
+  {% set c = s.counts or {} %}
+  {% set env = p.envelope or {} %}
+  <p class="ns-plan"><strong>{{ p.title }}</strong>
+    <span class="muted">· mode {{ p.mode }} · started by {{ p.started_by or "?" }}</span>
+    {% if p.pre_ts %}· <a href="/state-history" hx-get="/state-history" hx-target="#table-pane" hx-push-url="true"
+       title="the chip as it was right before this plan started (State History → restore)">state before this plan</a>{% endif %}</p>
+  <p class="ns-end">
+    {% if s.end %}
+    <span class="ag-plan-st ns-reason ns-r-{{ s.end.reason | replace('_', '-') }}">{{ s.end.reason }}</span>
+    ended {{ s.end.at | ts_local }} — {{ s.end.why }}{% if s.end.deadline %} <span class="muted">(stop time {{ s.end.deadline | ts_local }})</span>{% endif %}
+    {% else %}
+    <span class="ag-plan-st ag-st-running">{{ p.status }}</span>
+    {% if env.deadline %}until {{ env.deadline | ts_local }} (stop_by {{ env.stop_by }}){% else %}no stop time{% endif %}
+    {% endif %}
+  </p>
+  <p class="ns-counts">applied <strong>{{ c.applied or 0 }}</strong> write(s) in {{ c.applied_runs or 0 }} run(s)
+    · held <strong>{{ c.held or 0 }}</strong> · failed {{ c.failed or 0 }} step(s) · gate fails {{ c.gate_fails or 0 }}
+    · {{ c.done or 0 }}/{{ c.steps or 0 }} steps done{% if c.skipped %} · skipped {{ c.skipped }}{% endif %}{% if c.cancelled %} · cancelled {{ c.cancelled }}{% endif %}</p>
+  {% if env.lines %}
+  <details class="ns-env"><summary>the envelope approved at Start</summary>
+    <dl class="ns-env-dl">{% for ln in env.lines %}<dt>{{ ln.label }}</dt><dd>{{ ln.text }}{% if ln.at %} <span class="muted">· {{ ln.at | ts_local }}</span>{% endif %}</dd>{% endfor %}</dl>
+  </details>
+  {% endif %}
+
+  {% set n_wait = s.held | selectattr('status', 'equalto', 'pending') | list | length %}
+  <section class="ns-sec ns-held-sec"><h3>Held for you <span class="muted ns-held-n">({{ n_wait }} waiting{% if s.held | length > n_wait %}, {{ s.held | length - n_wait }} decided{% endif %})</span></h3>
+  {% for h in s.held %}
+    {% set pending = h.status == 'pending' %}
+    <div class="ns-item ns-held" data-ap="{{ h.id }}">
+      <div class="ns-line"><span class="ag-plan-st {{ 'ag-st-waiting' if pending else '' }}">{{ 'run request' if h.kind == 'run' else ('held' if pending else h.status) }}</span>
+        <code>{{ h.node }}</code> {{ (h.targets or []) | join(' ') }}{% if h.run_id %} · #{{ h.run_id }}{% endif %}{% if h.step is not none %} · step {{ h.step }}{% endif %}
+        <span class="muted">· {{ h.why }} · {{ h.created | ts_local(short=True) }}</span></div>
+      {% if h.kind == 'writes' %}{{ rows(h.writes, h.more, True) }}{% endif %}
+      <div class="ns-acts">
+      {% if pending %}
+        <button type="button" class="btn-sm ns-approve" data-ns-act="approve" data-id="{{ h.id }}">{{ 'Allow run' if h.kind == 'run' else 'Write to chip' }}</button>
+        <button type="button" class="btn-sm outline ns-reject" data-ns-act="reject" data-id="{{ h.id }}">Reject</button>
+      {% else %}
+        <span class="muted">{{ h.status }}{% if h.decided_by %} by {{ h.decided_by }}{% endif %}{% if h.decided_at %} · {{ h.decided_at | ts_local(short=True) }}{% endif %}</span>
+      {% endif %}
+      </div>
+    </div>
+  {% else %}
+    <p class="muted ns-empty">Nothing waits for you.</p>
+  {% endfor %}
+  </section>
+
+  <section class="ns-sec ns-applied-sec"><h3>Applied <span class="muted">({{ s.applied | length }} run(s))</span></h3>
+  {% for a in s.applied %}
+    <div class="ns-item ns-applied" data-run="{{ a.run_key }}">
+      <div class="ns-line"><span class="ag-plan-st ag-st-done">applied</span>
+        <code>{{ a.node }}</code> {{ (a.targets or []) | join(' ') }}{% if a.run_id %} · #{{ a.run_id }}{% endif %} · step {{ a.step }}
+        <span class="muted">· {{ a.n_writes }} write(s) · {{ a.at | ts_local(short=True) }}</span></div>
+      {{ rows(a.writes, a.more, True) }}
+      <div class="ns-acts">
+      {% if a.undo.state == 'available' %}
+        <button type="button" class="btn-sm outline ns-undo" data-ns-act="undo"
+                hx-post="/auto-apply/revert" hx-target="#pending-tray" hx-swap="outerHTML"
+                hx-vals='{"unit_id": "{{ a.undo.unit_id }}"}'
+                title="Stage the old values in the review tray (compare-and-swap: refused if a value moved since). Apply writes them to the chip.">Undo</button>
+      {% elif a.undo.state == 'reverted' %}<span class="muted">reverted</span>
+      {% elif a.undo.state == 'undone' %}<span class="muted" title="undone with Ctrl+Z">undone</span>
+      {% elif a.undo.state == 'changed' %}<span class="muted" title="a later write moved a value; an undo would overwrite it">changed since — no undo</span>
+      {% else %}<span class="muted" title="no undo record for this apply (an older SM, or another window's journal)">no undo record</span>{% endif %}
+      {% if a.pre_apply_ts %}<span class="muted ns-pre" title="the chip's version taken right before this apply">· version before: {{ a.pre_apply_ts | ts_local(short=True) }}</span>{% endif %}
+      </div>
+    </div>
+  {% else %}
+    <p class="muted ns-empty">Nothing was applied.</p>
+  {% endfor %}
+  </section>
+
+  <section class="ns-sec ns-fail-sec"><h3>Failed <span class="muted">({{ s.failures | length }})</span></h3>
+  {% if s.failures %}
+  <div class="ag-tbl ns-tbl"><table>
+    <thead><tr><th>when</th><th>step</th><th>target</th><th>class</th><th>what</th></tr></thead>
+    <tbody>{% for f in s.failures %}<tr>
+      <td>{{ f.at | ts_local(short=True) }}</td><td><code>{{ f.node }}</code> · {{ f.step }}{% if f.run_id %} · #{{ f.run_id }}{% endif %}</td>
+      <td>{{ f.target }}</td><td class="ag-err">{{ f.class }}</td><td>{{ f.what or f.why }}</td></tr>{% endfor %}</tbody>
+  </table></div>
+  {% else %}<p class="muted ns-empty">No gate failed.</p>{% endif %}
+  </section>
+
+  <section class="ns-sec ns-halt-sec"><h3>Halted targets <span class="muted">({{ s.halted | length }})</span></h3>
+  {% if s.halted %}
+  <div class="ag-tbl ns-tbl"><table>
+    <thead><tr><th>target</th><th>when</th><th>why</th><th>steps skipped</th></tr></thead>
+    <tbody>{% for h in s.halted %}<tr><td><strong>{{ h.target }}</strong></td><td>{{ h.at | ts_local(short=True) }}</td><td>{{ h.why }}</td><td>{{ h.skipped }}</td></tr>{% endfor %}</tbody>
+  </table></div>
+  {% else %}<p class="muted ns-empty">No target was halted.</p>{% endif %}
+  </section>
+  {% endif %}
+
+  {% set others = (s.plans or []) | rejectattr('id', 'equalto', p.id if p else '') | list %}
+  {% if others %}
+  <p class="ns-others muted">Other plans:
+    {% for o in others %}<a href="/agent/summary?plan={{ o.id }}" hx-get="/agent/summary?plan={{ o.id }}" hx-target="#table-pane" hx-push-url="true">{{ o.title }}</a> <span>({{ o.status }}, {{ o.started_at | ts_local(short=True) }})</span>{% if not loop.last %} · {% endif %}{% endfor %}</p>
+  {% endif %}
+</div>

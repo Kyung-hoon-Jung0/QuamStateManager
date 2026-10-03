@@ -29,6 +29,25 @@ from quam_state_manager.core import safe_io
 STATUSES = ("draft", "running", "stopping", "done", "failed", "stopped", "cancelled", "skipped")
 STEP_STATUSES = ("pending", "running", "done", "failed", "skipped", "cancelled")
 MAX_STEPS = 60
+ENDED = ("done", "failed", "stopped", "cancelled", "skipped")
+
+# docs/261: called ONCE per STARTED plan that reached an end -- whatever ended it (its own last step,
+# a person's Stop or Cancel, SM closing it at stop_by / a restart / stop-loss), after the record that
+# says so was saved: ``cb(instance_path, chip, plan)``. The plan's end, not the arming's: a grant can
+# end while the plan's last step still runs ("stopping"), and a person's Stop ends the grant without
+# agent_grant.ON_END. The plan_done webhook and the run-request expiry hang here.
+ON_PLAN_END: list = []
+
+
+def _announce(instance_path, chip: str, rec: dict) -> None:
+    if not rec or not rec.get("started_at"):
+        return                                     # a draft cancelled before any Start never ran
+    for cb in list(ON_PLAN_END):
+        try:
+            cb(instance_path, chip, rec)
+        except Exception:  # noqa: BLE001
+            import logging
+            logging.getLogger(__name__).warning("plan end listener failed", exc_info=True)
 
 
 def path_for(instance_path, chip: str) -> Path:
@@ -164,6 +183,22 @@ def update(instance_path, chip: str, plan_id: str, **fields) -> dict | None:
     return rec
 
 
+def mark_end(instance_path, chip: str, plan_id: str, *, code: str | None, why: str) -> dict | None:
+    """docs/261: say WHY SM is closing a still-open plan (``end_code`` + ``end_why`` + ``end_at``),
+    before the close itself -- a step failed as interrupted can end the plan on its own, and the
+    plan_done reason must then still be the restart, not "failed". The first hand to say why wins."""
+    if not code:
+        return None
+    with _lock_for(instance_path, chip):
+        rows = _load(instance_path, chip)
+        rec = next((r for r in rows if r.get("id") == plan_id), None)
+        if rec is None or rec.get("status") not in ("running", "stopping") or rec.get("end_code"):
+            return rec
+        rec.update(end_code=code, end_why=str(why or "")[:400], end_at=time.time())
+        _save(instance_path, chip, rows)
+    return rec
+
+
 def running(instance_path, chip: str) -> dict | None:
     return next((r for r in reversed(load(instance_path, chip)) if r.get("status") == "running"), None)
 
@@ -202,7 +237,44 @@ def step_update(instance_path, chip: str, plan_id: str, step_i: int, **fields) -
         _save(instance_path, chip, rows)
     if was in ("running", "stopping") and rec.get("status") not in ("running", "stopping"):
         _ended(instance_path, chip, rec)
+        _announce(instance_path, chip, rec)
     return rec
+
+
+def halt_targets(instance_path, chip: str, plan_id: str, halts: dict, *, at: float | None = None
+                 ) -> tuple[dict | None, bool]:
+    """docs/261: stop-loss halted these targets (``{target: why}``) of a RUNNING plan. Each is
+    recorded on the plan (``halted``), and every PENDING step that touches it is skipped with the
+    reason -- a step is run as the person saw it or not at all, so a step on [qA1, qA2] with qA1
+    halted is skipped whole. The other targets' steps stay pending. Returns ``(plan, ended)``:
+    when nothing is left pending the plan ends here, with ``end_code`` stop_loss."""
+    at = at or time.time()
+    with _lock_for(instance_path, chip):
+        rows = _load(instance_path, chip)
+        rec = next((r for r in rows if r.get("id") == plan_id), None)
+        if rec is None or rec.get("status") != "running":
+            return rec, False
+        h = rec.setdefault("halted", {})
+        for t, why in (halts or {}).items():
+            if t in h:
+                continue
+            skipped = []
+            for s in rec.get("steps") or []:
+                if s.get("status") == "pending" and t in (s.get("targets") or []):
+                    s.update(status="skipped", halted=t, ended=at, error=f"target {t} halted: {why}"[:300])
+                    skipped.append(s.get("i"))
+            h[t] = {"why": str(why)[:400], "at": at, "skipped": skipped}
+        _derive(rec)
+        ended = rec.get("status") not in ("running", "stopping")
+        if ended and not rec.get("end_code"):
+            rec["end_code"] = "stop_loss"
+            rec["end_why"] = "stop-loss: every target left in the plan was halted"
+            rec["end_at"] = at
+        _save(instance_path, chip, rows)
+    if ended:
+        _ended(instance_path, chip, rec)
+        _announce(instance_path, chip, rec)
+    return rec, ended
 
 
 def _ended(instance_path, chip: str, rec: dict) -> None:
@@ -250,11 +322,15 @@ def counts(rec: dict) -> dict:
     return out
 
 
-def stop(instance_path, chip: str, plan_id: str, *, who: str, how: str, after_run: bool | None = None) -> dict | None:
+def stop(instance_path, chip: str, plan_id: str, *, who: str, how: str, after_run: bool | None = None,
+         code: str | None = None) -> dict | None:
     """Close a plan by a person's (or SM's) hand. ``after_run`` (default: the
     words "stop after this run") lets a step still running finish and report:
     the plan sits at "stopping" until it does. The arming is the CALLER's to
-    end (docs/253) -- it says so in its own journal line."""
+    end (docs/253) -- it says so in its own journal line.
+
+    docs/261: ``code`` (stop_loss / past_stop_by / restart / driver_gone) is WHY SM closed it, kept
+    as ``end_code`` unless an earlier hand already said why."""
     if after_run is None:
         after_run = how == "stop after this run"
     with _lock_for(instance_path, chip):
@@ -262,6 +338,11 @@ def stop(instance_path, chip: str, plan_id: str, *, who: str, how: str, after_ru
         rec = next((r for r in rows if r.get("id") == plan_id), None)
         if rec is None:
             return None
+        was = rec.get("status")
+        if code and was in ("running", "stopping") and not rec.get("end_code"):
+            rec["end_code"] = code
+            rec["end_why"] = how
+            rec["end_at"] = time.time()
         if rec.get("status") in ("running", "stopping", "draft"):
             running_step = any(s.get("status") == "running" for s in rec.get("steps") or [])
             if how == "cancelled":
@@ -279,6 +360,8 @@ def stop(instance_path, chip: str, plan_id: str, *, who: str, how: str, after_ru
                     s["status"] = "cancelled"
             rec["summary"] = counts(rec)
         _save(instance_path, chip, rows)
+    if was in ("running", "stopping") and rec.get("status") in ENDED:
+        _announce(instance_path, chip, rec)          # docs/261: Stop / Cancel / SM's close are plan ends too
     return rec
 
 
@@ -337,3 +420,12 @@ def _coerce(v: str):
     except ValueError:
         return v
     return f if math.isfinite(f) else v
+
+
+def _overnight_plan_end(instance_path, chip: str, rec: dict) -> None:
+    """docs/261: the plan_done webhook and the plan's run-request expiry (agent_overnight)."""
+    from quam_state_manager.core import agent_overnight
+    agent_overnight.plan_ended(instance_path, chip, rec)
+
+
+ON_PLAN_END.append(_overnight_plan_end)

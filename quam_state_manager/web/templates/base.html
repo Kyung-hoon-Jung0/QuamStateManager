@@ -101,6 +101,8 @@
     <script src="{{ asset_url('live-wake.js') }}"></script>
     <script src="{{ asset_url('agent-pill.js') }}"></script>
     <script src="{{ asset_url('agent.js') }}"></script>
+    {# docs/261: the night summary's buttons (approve / reject / undo) -- core, a few lines #}
+    <script src="{{ asset_url('agent-summary.js') }}"></script>
     {% set bundle_files = {
         'grid': ['grid-virt.js', 'bulk-edit.js', 'pair-edit.js', 'all-values.js', 'notes.js'],
         'pulses': ['pulses.js', 'pulses-vt.js'],
@@ -685,7 +687,7 @@
                     {# customer feedback 2026-09-08: the Agent is a page, right above the
                        Calibration log (it used to be a tool-row button floating a panel). #}
                     <li><a href="/agent" hx-get="/agent" hx-target="#table-pane" hx-sync="#table-pane:replace" hx-push-url="true"
-                           id="nav-agent" {% if page == 'agent_home' %}class="active"{% endif %}>Agent</a></li>
+                           id="nav-agent" {% if page in ('agent_home', 'agent_summary') %}class="active"{% endif %}>Agent</a></li>
                     {# docs/173: the story of the chip -- every run, whoever ran it.
                        One click (top level); State History and Param History are its
                        detail views (customer feedback 2026-09-08: both beneath it). #}
@@ -1246,6 +1248,8 @@
                     {% include '_agent_home.html' %}
                     {% elif page == 'agent_setup' %}
                     {% include '_agent_setup.html' %}
+                    {% elif page == 'agent_summary' %}
+                    {% include '_agent_summary.html' %}
                     {% elif page == 'home' %}
                     {% if landing_config_exists %}
                     {% include '_landing_shell.html' %}

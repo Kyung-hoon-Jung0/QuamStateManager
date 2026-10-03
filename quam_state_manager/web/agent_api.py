@@ -21,6 +21,7 @@ from __future__ import annotations
 
 import collections
 import json
+import os
 import logging
 import re
 import threading
@@ -1002,6 +1003,67 @@ def _reconcile_grant() -> str | None:
     return why
 
 
+def watch_grants_once(app) -> list[str]:
+    """docs/261: the lazy half of the arming lifecycle (``reconcile``) runs on every read -- but a
+    night with nobody reading (the laptop closed, the agent between steps) would notice 06:00 only
+    in the morning, and the plan_done alert with it. This pass reconciles every grant THIS process
+    armed (another live window's grant is that window's), whoever has a chip open. Returns the
+    keys whose grant ended."""
+    from quam_state_manager.core import agent_grant, agent_session
+    from quam_state_manager.web import chat_api
+    inst = app.instance_path
+    out: list[str] = []
+    try:
+        files = sorted(agent_session._dir(inst).glob("*.json"))
+    except OSError:
+        return out
+    for f in files:
+        rec = agent_session.read_record(f)
+        if not isinstance(rec, dict) or not rec.get("start_token"):
+            continue
+        g = rec.get("grant") or {}
+        if not g or g.get("sm_pid") != os.getpid() or g.get("sm_boot") != agent_grant.BOOT:
+            continue
+        key = str(rec.get("chip") or f.stem)
+
+        def app_open(secret, _key=key):
+            mgr = app.config.get("agent_chat")
+            cur = mgr.get(_key) if mgr is not None and secret else None
+            return bool(cur is not None and getattr(cur, "secret", None) == secret and chat_api.session_open(cur))
+        try:
+            with app.app_context():
+                why = agent_grant.reconcile(inst, key, app_open=app_open, name=g.get("name"))
+        except Exception:  # noqa: BLE001
+            logger.warning("grant watch failed for %s", key, exc_info=True)
+            continue
+        if why:
+            out.append(key)
+            try:
+                with app.app_context():
+                    _bump()
+                    _wake()
+            except Exception:  # noqa: BLE001
+                logger.debug("grant watch wake failed", exc_info=True)
+    return out
+
+
+def start_grant_watch(app, every_s: float) -> threading.Thread | None:
+    """Run :func:`watch_grants_once` every ``every_s`` seconds on a daemon thread (0 = off)."""
+    if not every_s or every_s <= 0:
+        return None
+
+    def loop():
+        while True:
+            time.sleep(every_s)
+            try:
+                watch_grants_once(app)
+            except Exception:  # noqa: BLE001
+                logger.warning("grant watch pass failed", exc_info=True)
+    t = threading.Thread(target=loop, name="sm-grant-watch", daemon=True)
+    t.start()
+    return t
+
+
 def _end_grant(why: str, *, driver_kind: str | None = None, after_run: bool = True) -> dict | None:
     """End the open chip's grant by a person's hand (Disarm, End session,
     Cancel): no journal line of its own -- the caller's line says it -- and a
@@ -1585,6 +1647,8 @@ def _stage_writes(app, live: str, writes: list[dict], gid: str, actor: str, plan
         return out
     if r._change_count() == 0 and not ctx.get("live_diverged"):
         out["applied"] = True
+        # docs/261: the door took a pre-apply version first; the summary names it beside the undo
+        out["pre_apply_ts"] = (ctx.get("last_apply") or {}).get("pre_ts")
     else:
         out["error"] = "SM did not clear the tray"
     return out
@@ -1747,6 +1811,9 @@ def _file_run_request(inst, chip, name, node_name, req, plan) -> dict:
         journal_mod.append(inst, name, f"asked to run `{node_name}` on {' '.join(req.targets)} "
                                        f"({run_terms.params_text(req.params)}) -- waiting for approval (mode ask-all)",
                            kind="agent", reason=req.reason)
+        # docs/261 (D-14): an armed plan now waits for a person -- the phone hears it
+        from quam_state_manager.core import agent_overnight
+        agent_overnight.needs_human_run_request(inst, chip, ap, plan)
         _bump()
         _wake()
     return ap
@@ -1846,6 +1913,8 @@ def run_node():
                                          live_diverged=adapter.live_diverged())
         if refusal is not None and refusal.get("refused") == "no_start_token" and cover is not None:
             refusal = dict(cover)
+        if refusal is not None and refusal.get("refused") == "target_halted":
+            _journal_halted_refusal(inst, name, node_info.name if node_info is not None else node, req, refusal)
         if refusal is not None:
             if refusal.pop("file_request", False) and node_info is not None:
                 # review R1-M2: the same ask twice is one request -- "the same" is run_terms (docs/254)
@@ -1883,6 +1952,23 @@ def run_node():
 
 
 _SCAN_LOCK = threading.Lock()
+_HALTED_SAID: set = set()
+
+
+def _journal_halted_refusal(inst, name, node_name, req, refusal) -> None:
+    """docs/261: a step on a target the plan's stop-loss halted is refused, with one journal line
+    per (plan, step, node, targets) -- an agent asking again does not repeat it."""
+    k = (req.plan_id, req.step, node_name, tuple(sorted(req.targets)))
+    if k in _HALTED_SAID:
+        return
+    _HALTED_SAID.add(k)
+    why = "; ".join(f"{t}: {w}" for t, w in (refusal.get("halted") or {}).items())
+    try:
+        journal_mod.append(inst, name, f"refused `{node_name}` on {' '.join(req.targets)}: "
+                                       f"{', '.join(refusal.get('targets') or [])} halted by the plan's stop-loss "
+                                       f"({why[:240]})", kind="sm")
+    except Exception:  # noqa: BLE001
+        logger.debug("halted refusal journal line failed", exc_info=True)
 
 
 def _grant_covers(session, plan, req, node_info, driver, settings) -> tuple[dict | None, int | None]:
@@ -2660,9 +2746,23 @@ def _plan_start_locked(pid, actor, inst, chip, name):
     if agent_plans.running(inst, chip):
         return _err("another plan is running on this chip", 409)
     data = request.get_json(silent=True) or {}
-    mode = rec.get("mode") or limits.load(inst, chip).get("mode")
+    lim = limits.load(inst, chip)
+    mode = rec.get("mode") or lim.get("mode")
     if mode not in limits.MODES:
         return _err(f"mode must be one of {list(limits.MODES)}")
+    # docs/261: the overnight envelope. The card showed it before this press; a Start that carries
+    # what it showed arms exactly that -- limits changed in between are a new look, never a silent swap
+    from quam_state_manager.core import agent_overnight
+    env = agent_overnight.envelope(lim, mode=mode, dry_run=_dry_run_on())
+    seen = data.get("envelope")
+    if isinstance(seen, dict):
+        differs = agent_overnight.envelope_differences(seen, env["values"])
+        if differs:
+            return _err("the envelope changed since the card showed it ("
+                        + "; ".join(f"{d['field']}: shown {json.dumps(d['seen'], default=str)}, now "
+                                    f"{json.dumps(d['now'], default=str)}" for d in differs[:6])
+                        + "): look at it again, then Start", 409, refused="envelope_changed", differs=differs,
+                        envelope=env)
     # review R1-M4: the mode is the PLAN's -- never written into the chip's Limits
     # the snapshot the plan can be reverted to
     pre_ts = None
@@ -2689,11 +2789,13 @@ def _plan_start_locked(pid, actor, inst, chip, name):
     prop = rec.get("proposer") or {}
     if prop.get("kind") == "terminal" and agent_grant.terminal_alive(prop):
         driver = {k: prop.get(k) for k in ("kind", "id", "actor", "pid")}
-        agent_grant.arm_plan(inst, chip, plan=rec, actor=actor, driver=driver, name=name, mode=mode)
-        rec = agent_plans.update(inst, chip, pid, status="running", started_by=actor, started_at=time.time(),
-                                 pre_ts=pre_ts, mode=mode, driver=agent_grant.public(driver))
+        g = agent_grant.arm_plan(inst, chip, plan=rec, actor=actor, driver=driver, name=name, mode=mode)
+        rec = agent_plans.update(inst, chip, pid, status="running", started_by=actor, started_at=g["at"],
+                                 pre_ts=pre_ts, mode=mode, driver=agent_grant.public(driver),
+                                 envelope=_envelope_at(lim, mode, g["at"]))
         journal_mod.append(inst, name, f"plan `{rec['title']}` STARTED by {actor} (mode {mode}{snap}) -- armed for "
-                                       f"this plan only, driven by {agent_grant.describe(driver)}", kind="sm")
+                                       f"this plan only, driven by {agent_grant.describe(driver)}"
+                                       + _envelope_line(rec), kind="sm")
         _bump()
         _wake()
         return jsonify(ok=True, plan=_plan_view(rec, with_may_change=True), session_started=False, pre_ts=pre_ts,
@@ -2715,7 +2817,8 @@ def _plan_start_locked(pid, actor, inst, chip, name):
 
     def _undo_start(why):
         # review R1 minor: a Start the agent never heard leaves no armed session and no running plan
-        agent_plans.update(inst, chip, pid, status="draft", started_by=None, started_at=None, pre_ts=None, driver=None)
+        agent_plans.update(inst, chip, pid, status="draft", started_by=None, started_at=None, pre_ts=None, driver=None,
+                           envelope=None)
         agent_session.save(inst, chip, start_token=None, plan_id=None, grant=None, armed_by=None, armed_at=None,
                            mode=limits.load(inst, chip).get("mode"))
         return _err(f"could not tell the agent: {why}", 502)
@@ -2732,9 +2835,10 @@ def _plan_start_locked(pid, actor, inst, chip, name):
         return _err(f"could not tell the agent: {exc}", 502)
     # armed BEFORE the agent hears it: its first run_node may arrive before this request returns
     driver = {"kind": "app", "id": secret, "actor": "by_" + backend, "backend": backend}
-    agent_grant.arm_plan(inst, chip, plan=rec, actor=actor, driver=driver, name=name, mode=mode)
-    rec = agent_plans.update(inst, chip, pid, status="running", started_by=actor, started_at=time.time(),
-                             pre_ts=pre_ts, mode=mode, driver=agent_grant.public(driver))
+    g = agent_grant.arm_plan(inst, chip, plan=rec, actor=actor, driver=driver, name=name, mode=mode)
+    rec = agent_plans.update(inst, chip, pid, status="running", started_by=actor, started_at=g["at"],
+                             pre_ts=pre_ts, mode=mode, driver=agent_grant.public(driver),
+                             envelope=_envelope_at(lim, mode, g["at"]))
     try:
         if b is None:
             res = mgr.send(chip, msg)
@@ -2749,11 +2853,88 @@ def _plan_start_locked(pid, actor, inst, chip, name):
     tail = f" -- armed for this plan only, driven by {agent_grant.describe(driver)}"
     if handoff:
         tail += (f"; {agent_grant.describe(handoff)}, which proposed it, has exited")
-    journal_mod.append(inst, name, f"plan `{rec['title']}` STARTED by {actor} (mode {mode}{snap})" + tail, kind="sm")
+    journal_mod.append(inst, name, f"plan `{rec['title']}` STARTED by {actor} (mode {mode}{snap})" + tail
+                       + _envelope_line(rec), kind="sm")
     _bump()
     _wake()
     return jsonify(ok=True, plan=_plan_view(rec, with_may_change=True), session_started=started, pre_ts=pre_ts,
                    driver=agent_grant.public(driver))
+
+
+def _dry_run_on() -> bool | None:
+    """The Runner's Dry run for the open chip (an auto plan is refused at every step while it is on)."""
+    try:
+        from quam_state_manager.core import scheduler
+        return bool(scheduler.load_settings(_r()._sched_inst()).get("global_simulate", True))
+    except Exception:  # noqa: BLE001
+        return None
+
+
+def _envelope_at(lim: dict, mode: str, since: float) -> dict:
+    """docs/261: the envelope the Start approved, as the plan keeps it (the deadline counted from
+    the Start click itself -- the same instant the grant's stop_by is counted from)."""
+    from quam_state_manager.core import agent_overnight
+    return agent_overnight.envelope_record(agent_overnight.envelope(lim, mode=mode, since=since))
+
+
+def _envelope_line(rec: dict) -> str:
+    """The envelope on the STARTED journal line, for an auto plan (the overnight case)."""
+    env = rec.get("envelope") or {}
+    if rec.get("mode") != "auto" or not env:
+        return ""
+    from quam_state_manager.core import agent_overnight
+    md = env.get("max_delta") or {}
+    return ("; envelope: stop_by " + (env.get("stop_by") or "none")
+            + f", max_writes_per_plan {env.get('max_writes_per_plan')}"
+            + ", max_delta " + ("; ".join(f"{k} {agent_overnight._num(v)}" for k, v in md.items()) or "none")
+            + f", stop-loss {env.get('stoploss_target')} per target / {env.get('stoploss_plan')} per plan")
+
+
+@agent_bp.route("/plans/<pid>/envelope", methods=["GET"])
+def plan_envelope(pid: str):
+    """docs/261: what a Start on this plan would approve -- the envelope's values (sent back with
+    the Start, so a press arms what it showed), the deadline its stop_by means from now, the
+    plan's steps, and a warning when the Runner would refuse every run of it."""
+    from quam_state_manager.core import agent_overnight, agent_plans, limits
+    r = _r()
+    if not r._active_path():
+        return _err("open a chip first", 409)
+    inst, chip = current_app.instance_path, _chip_key()
+    rec = agent_plans.get(inst, chip, pid)
+    if rec is None:
+        return _err("unknown plan", 404)
+    lim = limits.load(inst, chip)
+    mode = rec.get("mode") or lim.get("mode")
+    env = agent_overnight.envelope(lim, mode=mode, dry_run=_dry_run_on())
+    steps = [{"i": s.get("i"), "node": s.get("node"), "targets": s.get("targets"), "params": s.get("params") or {}}
+             for s in rec.get("steps") or []]
+    return jsonify(ok=True, plan_id=pid, title=rec.get("title"), status=rec.get("status"), mode=mode,
+                   envelope=env["values"], deadline=env["deadline"], lines=env["lines"], warnings=env["warnings"],
+                   webhook=env["webhook"], steps=steps)
+
+
+@agent_bp.route("/summary", methods=["GET"])
+def summary_json():
+    """docs/261: the morning summary of one started plan, read from SM's records on disk."""
+    r = _r()
+    if not r._active_path():
+        return jsonify(ok=True, plan=None, plans=[])
+    return jsonify(ok=True, **_jsonable(summary_data(request.args.get("plan") or None)))
+
+
+def summary_data(plan_id: str | None) -> dict:
+    """The morning summary for the open chip (the JSON door and the page both read this)."""
+    from quam_state_manager.core import agent_overnight
+    r = _r()
+    ctx = r._active_ctx() or {}
+    store = ctx.get("store")
+
+    def current(path: str):
+        target = r._resolve_edit_path(store, str(path)) or str(path)
+        return store.get_value(target)
+    _reconcile_grant()                              # never summarize a grant that ended as still running
+    return agent_overnight.summary(current_app.instance_path, _chip_key(), plan_id=plan_id,
+                                   live_folder=ctx.get("path"), current=current if store is not None else None)
 
 
 @agent_bp.route("/plans/<pid>/cancel", methods=["POST"])

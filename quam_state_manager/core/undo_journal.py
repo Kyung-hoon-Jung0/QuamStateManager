@@ -132,6 +132,12 @@ def make_unit(entries: list[ChangeEntry], ts: float | None = None,
     }
     if meta:
         unit["meta"] = dict(meta)
+    # docs/261: the group the unit came from (a segment is one group: segment_change_log), so a
+    # record that knows its group -- an agent run's ``agent:<run key>`` -- finds its undo unit.
+    # Additive: an older sidecar has no gid and simply finds nothing.
+    gid = getattr(entries[0], "group_id", None) if entries else None
+    if isinstance(gid, str) and gid:
+        unit["gid"] = gid
     return unit
 
 
