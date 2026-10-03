@@ -525,6 +525,55 @@ def questions(facts: dict) -> list[dict]:
     return q
 
 
+def saved_answers(instance_path, cal_folder: str | Path | None) -> dict:
+    """The answers the lab gave last time, so the form starts from them and writing the context again
+    (which B-02's notice asks for) never drops a note -- measured on the rig: "Never retry hardware"
+    vanished from both files on a re-write, because the form started from the detected values only.
+
+    SM's own record first, when it was written for this same folder. Otherwise what can be read back
+    from a block already in one of the context files: the notes and the choice lines it wrote."""
+    if not cal_folder:
+        return {}
+    rec = load_record(instance_path).get("context") or {}
+    same = rec.get("folder") and os.path.normcase(os.path.abspath(str(rec["folder"]))) == \
+        os.path.normcase(os.path.abspath(str(cal_folder)))
+    if same and isinstance(rec.get("answers"), dict) and rec["answers"]:
+        return dict(rec["answers"])
+    for p in (context_path(cal_folder, "claude", True), context_path(cal_folder, "claude", False),
+              context_path(cal_folder, "codex"), Path(cal_folder) / CODEX_UNREAD_FILE):
+        try:
+            m = _CTX_BLOCK.search(p.read_text(encoding="utf-8"))
+        except OSError:
+            continue
+        if m:
+            return _answers_from_block(m.group(0))
+    return {}
+
+
+def _answers_from_block(block: str) -> dict:
+    out: dict = {}
+    lines = block.splitlines()
+    for i, ln in enumerate(lines):
+        if ln.startswith("- Qubits: ") and "; coupling: " in ln:
+            v = ln.split("; coupling: ", 1)[1].strip()
+            if v and v != "?":
+                out["coupler"] = v
+        elif ln.startswith("- Purcell filter: ") and "; SQUID: " in ln:
+            a, b = ln[len("- Purcell filter: "):].split("; SQUID: ", 1)
+            out["purcell"], out["squid"] = a.strip(), b.strip()
+        elif ln.startswith("- Data folder: ") and "direct reads: " in ln:
+            out["data_read"] = "yes" if ln.rsplit("direct reads: ", 1)[1].startswith("allowed") else "no"
+        elif ln == "Notes from the lab:":
+            notes = []
+            for nl in lines[i + 1:]:
+                if not nl.startswith("  "):
+                    break
+                notes.append(nl[2:])
+            if notes:
+                out["notes"] = "\n".join(notes)
+    return out
+
+
 def context_block(facts: dict, answers: dict, *, chip: str | None = None, data_folder: str | None = None) -> str:
     lines = [CTX_START,
              f"# Lab context for the calibration agent (written by QUAM State Manager on {datetime.now().strftime('%Y-%m-%d')})",

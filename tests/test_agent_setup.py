@@ -759,3 +759,45 @@ class TestConnectDisconnectLeavesTheFileAsItWas:
         p.write_bytes(b'{\n  "numStartups": 3\n}\n')
         st._write_json(p, {"numStartups": 3, "mcpServers": {}})
         assert b"\r\n" not in p.read_bytes()
+
+
+class TestRewritingTheContextKeepsTheLabsAnswers:
+    """Measured on the rig: writing the lab context again (B-02's notice asks for it) dropped
+    "Never retry hardware" from both files -- the form started from SM's detected values only."""
+
+    ANS = {"tunable": "flux-tunable", "coupler": "fixed coupling", "purcell": "yes", "squid": "asymmetric",
+           "data_read": "yes", "notes": "QA rig: the host is unreachable.\nNever retry hardware."}
+
+    def test_the_record_for_this_folder_comes_first(self, tmp_path):
+        cal = tmp_path / "cal"
+        cal.mkdir()
+        st.save_record(tmp_path / "inst", {"context": {"folder": str(cal), "answers": dict(self.ANS)}})
+        assert st.saved_answers(tmp_path / "inst", cal) == self.ANS
+        assert st.saved_answers(tmp_path / "inst", None) == {}
+
+    def test_otherwise_the_block_already_in_a_file_is_read_back(self, tmp_path):
+        cal = tmp_path / "cal"
+        cal.mkdir()
+        facts = st.detect_facts({"qubits": {"q1": {}}, "qubit_pairs": {}})
+        block = st.context_block(facts, self.ANS, chip="X", data_folder="D:/data")
+        (cal / "AGENTS.local.md").write_text("lab text\n\n" + block, encoding="utf-8")
+        # a record for ANOTHER folder never answers for this one
+        st.save_record(tmp_path / "inst", {"context": {"folder": str(tmp_path / "other"), "answers": {"notes": "no"}}})
+        got = st.saved_answers(tmp_path / "inst", cal)
+        assert got == {"coupler": "fixed coupling", "purcell": "yes", "squid": "asymmetric", "data_read": "yes",
+                       "notes": "QA rig: the host is unreachable.\nNever retry hardware."}
+        # and the block rebuilt from what was read back carries the same lines
+        again = st.context_block(facts, dict(got, tunable="flux-tunable"), chip="X", data_folder="D:/data")
+        assert again.split("\n")[3:] == block.split("\n")[3:]
+
+    def test_nothing_saved_is_nothing(self, tmp_path):
+        cal = tmp_path / "cal"
+        cal.mkdir()
+        assert st.saved_answers(tmp_path / "inst", cal) == {}
+
+    def test_the_route_hands_the_saved_answers_to_the_form(self, c):
+        answers = dict(self.ANS)
+        d = c.post("/api/agent/setup/context", json={"answers": answers, "apply": True, "targets": ["claude"]}).get_json()
+        assert d["applied"]
+        g = c.get("/api/agent/setup/context").get_json()
+        assert g["saved"]["notes"] == answers["notes"] and g["saved"]["purcell"] == "yes"

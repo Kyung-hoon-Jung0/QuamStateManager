@@ -283,8 +283,11 @@ window.AgentSetup = (function () {
       S.context = r.body;
       var f = r.body.facts || {};
       var html = ['<p class="muted">SM sees: ' + f.n_qubits + " qubits, " + f.n_pairs + " pairs; bias sources " + esc(JSON.stringify(f.bias_modes || {})) + (f.nodes && f.nodes.length ? "; " + f.nodes.length + " node files" : "") + ". It cannot see what follows — please confirm.</p>"];
+      // what the lab answered last time comes before what SM detects: writing the context again
+      // must never drop a note the lab wrote (measured: "Never retry hardware" vanished on a re-write)
+      var saved = r.body.saved || {};
       (r.body.questions || []).forEach(function (q) {
-        S.answers[q.id] = S.answers[q.id] !== undefined ? S.answers[q.id] : q.detected;
+        S.answers[q.id] = S.answers[q.id] !== undefined ? S.answers[q.id] : (saved[q.id] !== undefined ? saved[q.id] : q.detected);
         html.push('<div class="as-q"><label>' + esc(q.question) + (q.why ? ' <span class="muted" title="' + esc(q.why) + '">(why?)</span>' : "") + "</label>");
         if (q.kind === "choice") {
           html.push('<select data-q="' + esc(q.id) + '" onchange="AgentSetup.answer(this)">' + q.options.map(function (o) { return '<option value="' + esc(o) + '"' + (o === S.answers[q.id] ? " selected" : "") + ">" + esc(o) + (o === q.detected ? " (detected)" : "") + "</option>"; }).join("") + "</select>");

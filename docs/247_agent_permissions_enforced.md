@@ -214,6 +214,19 @@ The composer now does two things:
 **Pins:** 3 assertions in `agent_panel_selfcheck.cjs`; 4/4 mutations red.
 - The first sweep caught a vacuous pin: the End case passed only because of a backend mismatch. It now uses the same CLI, so only `ended` can decide it.
 
+## Follow-up at integration: a re-write keeps what the lab answered (found in real Chrome)
+
+The integration journey on rig rC pressed through Setup section 5 the way B-02's notice asks: show the questions, preview, write. The form started from SM's detected values only, so the write dropped the lab's note "QA rig: the QM host is intentionally unreachable. Never retry hardware." from both `CLAUDE.local.md` and the new `AGENTS.md`. The preview showed it as a removed line, which is easy to miss.
+
+**Fix:** `GET /api/agent/setup/context` now returns `saved`, and the form starts from it (before the detected values).
+- `saved` is SM's own record of the last answers, when that record was written for this same calibrations folder.
+- Otherwise the answers are read back from a block already in any context file (`CLAUDE(.local).md`, `AGENTS.md`, `AGENTS.local.md`): the notes and the coupling / Purcell / SQUID / data-read lines.
+
+**Pins:**
+- `TestRewritingTheContextKeepsTheLabsAnswers` (4): another folder's record never answers, and the block rebuilt from what was read back is line-identical.
+- One selfcheck assertion.
+- 4/4 mutations red.
+
 ## Open
 
 - SM's MCP bridge already returns `instructions` (the read/stage/apply path). They do not yet say "never edit state.json directly, never run `python <node>.py`", the rule the file carries. Codex 0.159.2 surfaces them once the server is loaded, so adding that rule there is a cheap second channel (`mcp.py`, after the bridge-safety merge).

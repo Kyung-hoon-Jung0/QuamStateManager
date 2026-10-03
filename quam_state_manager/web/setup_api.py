@@ -300,7 +300,8 @@ def context_get():
             nodes = []
     facts = st.detect_facts(store.state, store.wiring, nodes)
     return jsonify(ok=True, facts=facts, questions=st.questions(facts), calibrations_folder=cal,
-                   data_folder=_data_folder(), written=st.context_written(cal), chip=aa._chip_name())
+                   data_folder=_data_folder(), written=st.context_written(cal), chip=aa._chip_name(),
+                   saved=st.saved_answers(current_app.instance_path, cal))
 
 
 @setup_bp.route("/context", methods=["POST"])
