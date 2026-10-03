@@ -185,3 +185,10 @@ restored. 26 of 26 went red:
 | D-11 framing | `test_a_409_that_is_not_an_offer_is_a_refusal_not_a_question` |
 | chip refusal wording / blind `undo_mine` count | `test_a_server_chip_refusal_is_said_as_a_chip_switch`, `test_undo_mine_without_a_new_picture_must_look_again` |
 | bridge undo refusal as data / bundle journaling | `test_a_server_refusal_is_returned_as_data`, `test_a_comp_answer_returns_and_journals_every_row_of_its_group` |
+
+## Follow-up at integration: the in-app session pins the key too
+
+Fix F and this fix were merged together, so SM's own in-app session (`chat_api._build_backend`) now pins `SM_CHIP` to the open chip's KEY. Before, it pinned the display name, which latched on first match. The key also names the session's MCP config file (`agent_mcp/<key>-<cli>.json`), so two folders that share a display name never share one.
+
+**Pins:** `TestAsk` (2 tests) assert `SM_CHIP == chip_key != display name`; the mutation back to the name turns both red.
+

@@ -268,11 +268,15 @@ def _build_backend(name: str, *, readonly: bool, chip: str, mode: str, cwd: str 
     setup = _setup().get(name) or {}
     exe = str(setup.get("exe") or name)
     model = model or setup.get("model") or None
-    mj = Path(current_app.instance_path) / "agent_mcp" / f"{_safe(chip)}-{name}{'-ro' if readonly else ''}.json"
-    ab.write_mcp_config(mj, ab.mcp_config(sys.executable, _repo_root(), _sm_url(), readonly=readonly, chip=chip))
+    # docs/246 A-06: the bridge's SM_CHIP pin is the open chip's KEY (one per folder), not its display
+    # name -- a second folder called the same would otherwise pass the in-app session's own pin. The key
+    # also names the MCP config file, so two such folders never share one.
+    pin = aa._chip_key()
+    mj = Path(current_app.instance_path) / "agent_mcp" / f"{_safe(pin)}-{name}{'-ro' if readonly else ''}.json"
+    ab.write_mcp_config(mj, ab.mcp_config(sys.executable, _repo_root(), _sm_url(), readonly=readonly, chip=pin))
     rules = agent_chat.ASK_RULES if readonly else agent_chat.DEFAULT_RULES
     b = cls(exe, mj, cwd=cwd, model=model, system_prompt=rules + _facts(chip, mode, cwd), readonly=readonly,
-            sm_url=_sm_url(), repo=_repo_root(), python=sys.executable, chip=chip)
+            sm_url=_sm_url(), repo=_repo_root(), python=sys.executable, chip=pin)
     why = b.preflight()
     if why:
         raise ValueError(why)

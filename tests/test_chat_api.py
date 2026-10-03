@@ -98,7 +98,7 @@ def _chip(c):
 
 
 def _name(c):
-    """The chip's NAME (the journal, the SM_CHIP pin, the system prompt)."""
+    """The chip's NAME (the journal, the system prompt). The SM_CHIP pin is the KEY (docs/246)."""
     return c.get("/api/agent/chat/status").get_json()["chip"]
 
 
@@ -400,10 +400,11 @@ class TestAsk:
         assert a and a["answer"] == "answer 1: what is q1 f_01?" and a["failed"] is False
         assert a["tools"] == [{"tool": "mcp__sm__sm_status", "summary": '{"q": "what is q1 f_01?"}', "failed": False}]
         # the read-only MCP config + read-only allow list
-        mj = inst / "agent_mcp" / f"{_name(c)}-claude-ro.json"
+        # docs/246 A-06: pinned by the chip KEY (one per folder), never the display name
+        mj = inst / "agent_mcp" / f"{_chip(c)}-claude-ro.json"
         cfg = json.loads(mj.read_text(encoding="utf-8"))
         assert cfg["mcpServers"]["sm"]["env"]["SM_MCP_MODE"] == "readonly"
-        assert cfg["mcpServers"]["sm"]["env"]["SM_CHIP"] == _name(c)
+        assert cfg["mcpServers"]["sm"]["env"]["SM_CHIP"] == _chip(c) != _name(c)
         # the driving door is untouched: no session, no chat events, nothing on disk, nothing in the journal
         assert c.get("/api/agent/chat/status").get_json()["session"] is None
         assert _events(c) == []
@@ -413,8 +414,9 @@ class TestAsk:
 
     def test_the_driving_config_is_not_read_only(self, c, inst):
         c.post("/api/agent/chat/start", json={"prompt": "x"})
-        cfg = json.loads((inst / "agent_mcp" / f"{_name(c)}-claude.json").read_text(encoding="utf-8"))
+        cfg = json.loads((inst / "agent_mcp" / f"{_chip(c)}-claude.json").read_text(encoding="utf-8"))
         assert "SM_MCP_MODE" not in cfg["mcpServers"]["sm"]["env"]
+        assert cfg["mcpServers"]["sm"]["env"]["SM_CHIP"] == _chip(c)
         assert cfg["mcpServers"]["sm"]["env"]["SM_URL"] == "http://localhost"
         assert cfg["mcpServers"]["sm"]["args"] == ["-m", "quam_state_manager.mcp"]
 
