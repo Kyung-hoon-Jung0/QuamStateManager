@@ -32,11 +32,71 @@ function check(name, cond, detail) {
   asserts++;
   if (!cond) { failures++; console.error('FAIL  ' + name + (detail ? ' — ' + detail : '')); }
 }
-const sleep = ms => new Promise(r => setTimeout(r, ms));
+// docs/268: elapsed test time must not depend on how often a loaded CPU lets
+// Node run. Both realms share this clock; callbacks run at their due time,
+// including retries scheduled by earlier callbacks during the same advance.
+// setImmediate yields to jsdom/Promise microtasks without waiting on a timer.
+const settle = () => new Promise(resolve => setImmediate(resolve));
+function controlledTime(w) {
+  let now = 0, nextId = 1;
+  const timers = new Map(), restore = [];
+  const epoch = 1700000000000;
+  function replace(object, key, value) {
+    const descriptor = Object.getOwnPropertyDescriptor(object, key);
+    Object.defineProperty(object, key, { configurable: true, writable: true, value });
+    restore.push(() => {
+      if (descriptor) Object.defineProperty(object, key, descriptor);
+      else delete object[key];
+    });
+  }
+  for (const realm of [globalThis, w]) {
+    replace(realm, 'setTimeout', (callback, delay, ...args) => {
+      if (typeof callback !== 'function') throw new TypeError('Expected a timer callback');
+      const id = nextId++;
+      timers.set(id, { at: now + Math.max(1, Number(delay) || 0),
+                       run: () => callback.apply(realm, args) });
+      return id;
+    });
+    replace(realm, 'clearTimeout', id => timers.delete(id));
+    replace(realm.Date, 'now', () => epoch + now);
+    replace(realm.performance, 'now', () => now);
+  }
+  return {
+    async advance(ms) {
+      const target = now + ms;
+      await settle();
+      let callbacks = 0;
+      while (true) {
+        let next;
+        for (const [id, timer] of timers) {
+          if (timer.at <= target && (!next || timer.at < next.timer.at)) {
+            next = { id, timer };
+          }
+        }
+        if (!next) break;
+        if (++callbacks > 10000) throw new Error('Timer callback loop did not yield');
+        now = next.timer.at;
+        timers.delete(next.id);
+        next.timer.run();
+        await settle();
+      }
+      now = target;
+    },
+    close() {
+      timers.clear();
+      for (const undo of restore.reverse()) undo();
+    },
+  };
+}
+
+let closeWorld;
 
 function world() {
+  if (closeWorld) closeWorld();
   const dom = new JSDOM(HTML, { runScripts: 'outside-only', url: 'http://localhost/' });
   const w = dom.window;
+  const clock = controlledTime(w);
+  closeWorld = () => { clock.close(); dom.window.close(); };
   const state = { sync: [], toasts: [] };
   w.htmx = { ajax: function () { return new Promise(function () {}); },
              trigger: function () {} };
@@ -46,7 +106,7 @@ function world() {
   w.showToast = function (m, l) { state.toasts.push({ m: String(m), l: l }); };
   w.eval(fs.readFileSync(SRC, 'utf8'));
   w.document.dispatchEvent(new w.Event('DOMContentLoaded'));
-  return { w: w, state: state };
+  return { w: w, state: state, clock: clock };
 }
 
 function fire(w, name, detail) {
@@ -54,12 +114,13 @@ function fire(w, name, detail) {
 }
 
 (async function () {
+  try {
   /* ── A. the merge signal presses the door ───────────────────────────── */
   {
-    const { w, state } = world();
+    const { w, state, clock } = world();
     w._applyInFlight = false;
     fire(w, 'autoSyncMerge', { tries: 1, chip: 'CHIP-A' });
-    await sleep(30);
+    await clock.advance(30);
     check('A1 a free latch presses the merge door at once', state.sync.length === 1,
           JSON.stringify(state.sync));
     check('A2 …through doStateSync in apply mode',
@@ -73,14 +134,14 @@ function fire(w, name, detail) {
 
   /* ── B. it WAITS for the shared latch, then presses ─────────────────── */
   {
-    const { w, state } = world();
+    const { w, state, clock } = world();
     w._applyInFlight = true;                 // a flush is still settling
     fire(w, 'autoSyncMerge', { tries: 1, chip: 'CHIP-B' });
-    await sleep(200);
+    await clock.advance(200);
     check('B1 a held latch defers the press', state.sync.length === 0,
           'pressed while another write was in flight: ' + JSON.stringify(state.sync));
     w._applyInFlight = false;                // the flush finished
-    await sleep(200);
+    await clock.advance(200);
     check('B2 …and it presses once the latch clears', state.sync.length === 1,
           JSON.stringify(state.sync));
     check('B3 …still with the signal-named chip',
@@ -89,16 +150,16 @@ function fire(w, name, detail) {
 
   /* ── C. the wait is BOUNDED (the pin that passed with an unbounded one) */
   {
-    const { w, state } = world();
+    const { w, state, clock } = world();
     w._applyInFlight = true;                 // never clears
     fire(w, 'autoSyncMerge', { tries: 1, chip: 'CHIP-C' });
     // 40 tries x 50ms ~= 2s. Well past it, the attempt must be abandoned --
     // and must NOT have pressed, since the latch is still held.
-    await sleep(2600);
+    await clock.advance(2600);
     check('C1 an unclearable latch never presses', state.sync.length === 0,
           JSON.stringify(state.sync));
     w._applyInFlight = false;
-    await sleep(300);
+    await clock.advance(300);
     check('C2 …and it has GIVEN UP rather than pressing 2.5s late',
           state.sync.length === 0,
           'a timer was still alive after the bound: ' + JSON.stringify(state.sync));
@@ -110,10 +171,10 @@ function fire(w, name, detail) {
     // server has already spent one of its three tries, and the tray is still
     // saying Auto-Sync is resolving this. Leaving that on screen while nothing
     // happens is the class of defect docs/187 exists to fix.
-    const { w, state } = world();
+    const { w, state, clock } = world();
     w._applyInFlight = true;                 // never clears
     fire(w, 'autoSyncMerge', { tries: 1, chip: 'CHIP-G' });
-    await sleep(2600);
+    await clock.advance(2600);
     check('C3 abandoning the merge tells the user', state.toasts.length === 1,
           JSON.stringify(state.toasts));
     const m = (state.toasts[0] || {}).m || '';
@@ -123,10 +184,10 @@ function fire(w, name, detail) {
 
   /* ── D. a merge signal with no chip still works (nothing to pin) ────── */
   {
-    const { w, state } = world();
+    const { w, state, clock } = world();
     w._applyInFlight = false;
     fire(w, 'autoSyncMerge', {});
-    await sleep(30);
+    await clock.advance(30);
     check('D1 a signal naming no chip still presses', state.sync.length === 1,
           JSON.stringify(state.sync));
     check('D2 …and sends no token rather than a bogus one',
@@ -135,14 +196,14 @@ function fire(w, name, detail) {
 
   /* ── E. the replace-pull warning ────────────────────────────────────── */
   {
-    const { w, state } = world();
+    const { w, state, clock } = world();
     fire(w, 'autoSyncPulled', { replaced: false, count: 0 });
-    await sleep(20);
+    await clock.advance(20);
     check('E1 a pull that replaced nothing says nothing', state.toasts.length === 0,
           JSON.stringify(state.toasts));
 
     fire(w, 'autoSyncPulled', { replaced: true, count: 3 });
-    await sleep(20);
+    await clock.advance(20);
     check('E2 a replace warns', state.toasts.length === 1, JSON.stringify(state.toasts));
     const m = (state.toasts[0] || {}).m || '';
     check('E3 …naming how many were lost', /\b3 unapplied edits\b/.test(m), m);
@@ -156,9 +217,9 @@ function fire(w, name, detail) {
 
   /* ── F. singular/plural, because a count of 1 is the common case ────── */
   {
-    const { w, state } = world();
+    const { w, state, clock } = world();
     fire(w, 'autoSyncPulled', { replaced: true, count: 1 });
-    await sleep(20);
+    await clock.advance(20);
     const m = (state.toasts[0] || {}).m || '';
     check('F1 one edit reads as singular', /\b1 unapplied edit\b/.test(m)
           && !/1 unapplied edits/.test(m), m);
@@ -166,9 +227,9 @@ function fire(w, name, detail) {
 
   /* ── G. a replace with no count still says something true ──────────── */
   {
-    const { w, state } = world();
+    const { w, state, clock } = world();
     fire(w, 'autoSyncPulled', { replaced: true });
-    await sleep(20);
+    await clock.advance(20);
     const m = (state.toasts[0] || {}).m || '';
     check('G1 a countless replace still warns', state.toasts.length === 1, m);
     check('G2 …without claiming a number it does not have',
@@ -180,9 +241,9 @@ function fire(w, name, detail) {
     // change-log edits AND a saved-but-unapplied working state: saying
     // "1 unapplied edit" would understate a loss, which is worse than not
     // counting at all.
-    const { w, state } = world();
+    const { w, state, clock } = world();
     fire(w, 'autoSyncPulled', { replaced: true, count: 1, saved: true });
-    await sleep(20);
+    await clock.advance(20);
     const m = (state.toasts[0] || {}).m || '';
     check('H1 a count beside other lost work is not presented as the whole loss',
           /other unapplied work/.test(m), m);
@@ -191,18 +252,18 @@ function fire(w, name, detail) {
   {
     // typed grid cells only this browser can see: the server's count is 0 and
     // a bare "0" or a bogus "1" would both be lies.
-    const { w, state } = world();
+    const { w, state, clock } = world();
     fire(w, 'autoSyncPulled', { replaced: true, count: 0, dom: true });
-    await sleep(20);
+    await clock.advance(20);
     const m = (state.toasts[0] || {}).m || '';
     check('H3 dom-only work is described without inventing a number',
           /your unapplied work/.test(m) && !/\b0 unapplied/.test(m), m);
   }
   {
     // a re-apply stash is a third kind the first cut ignored entirely
-    const { w, state } = world();
+    const { w, state, clock } = world();
     fire(w, 'autoSyncPulled', { replaced: true, count: 2, stash: 3 });
-    await sleep(20);
+    await clock.advance(20);
     const m = (state.toasts[0] || {}).m || '';
     check('H4 a stash counts as other lost work too',
           /other unapplied work/.test(m), m);
@@ -210,9 +271,9 @@ function fire(w, name, detail) {
   {
     // the clean case must stay clean: a count that IS the whole loss reads
     // as exactly that, with no hedging tacked on.
-    const { w, state } = world();
+    const { w, state, clock } = world();
     fire(w, 'autoSyncPulled', { replaced: true, count: 4 });
-    await sleep(20);
+    await clock.advance(20);
     const m = (state.toasts[0] || {}).m || '';
     check('H5 a complete count is stated plainly',
           /4 unapplied edits/.test(m) && !/other unapplied work/.test(m), m);
@@ -220,7 +281,11 @@ function fire(w, name, detail) {
 
   if (failures) {
     console.error(failures + ' FAILED of ' + asserts);
-    process.exit(1);
+    process.exitCode = 1;
+    return;
   }
   console.log('all checks passed (' + asserts + ' assertions)');
-})();
+  } finally {
+    if (closeWorld) closeWorld();
+  }
+})().catch(error => { console.error(error); process.exitCode = 1; });
