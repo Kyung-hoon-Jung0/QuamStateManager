@@ -1623,6 +1623,17 @@ def _run_item(instance_path, item: dict, settings: dict, runner: dict) -> dict:
         cfg_file = (settings.get("effective_config") or {}).get("config_file")
         if cfg_file:
             argv += ["--config-file", cfg_file]
+        if item.get("state_path"):
+            # docs/245 (D-01): an item with its OWN state path is an agent's per-run
+            # scratch. Its isolation must never hang on the cached effective_config
+            # above (empty until someone presses "Read config"): --isolate makes the
+            # subprocess pin the framework's save to the scratch from the env's own
+            # config resolution, or refuse the run -- and propose only the node's
+            # recorded writes (D-02). A person's item (no own state path) runs
+            # against the chip itself, the Runner's documented contract.
+            argv += ["--isolate"]
+            if (item.get("param_overrides") or {}).get("load_data_id") is not None:
+                argv += ["--replay"]
 
         # Cancel can fire during the (hundreds-of-ms on a 9p mount) pre-spawn prep
         # above — re-classify, splice, mkdtemp, temp copy. Check right before launch

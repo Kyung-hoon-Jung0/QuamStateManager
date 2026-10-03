@@ -177,7 +177,8 @@ def run_report_config() -> dict:
 # ---------------------------------------------------------------------------
 
 def run_target(target: str, state_path: str | None, config_file: str | None,
-               baseline_out: str | None = None) -> None:
+               baseline_out: str | None = None, *, isolate: bool = False,
+               replay: bool = False) -> None:
     """Execute a prepared node/graph ``.py`` (already overridden) via runpy.
 
     Pins the chip + config via the env so the experiment loads/saves the
@@ -196,9 +197,35 @@ def run_target(target: str, state_path: str | None, config_file: str | None,
 
     if not target or not Path(target).exists():
         raise FileNotFoundError(f"target not found: {target!r}")
+    # docs/173 S9 (found on a real customer env): a node's plot action calls
+    # plt.show(), and the customer env's default matplotlib backend is the
+    # INTERACTIVE tkagg (tkinter present) -- so a headless Scheduler subprocess
+    # blocks forever on a GUI window that never opens. Force a non-interactive
+    # backend; an operator override wins. docs/245: this must come FIRST -- the
+    # isolation pin below imports qualibrate, which imports matplotlib, and the
+    # backend is chosen at that import (found on the rig: a replay hung in
+    # tkinter's mainloop when this line still sat after the pin).
+    os.environ.setdefault("MPLBACKEND", "Agg")
     if state_path:
         os.environ["QUAM_STATE_PATH"] = str(state_path)
-    if config_file:
+    if isolate:
+        # docs/245 (D-01): an isolated run (an agent's per-run scratch) is ALWAYS
+        # pinned to its scratch -- never conditional on a cached Runner setting.
+        # The pinned config is generated from the config this env would resolve
+        # (the passed --config-file, else QUALIBRATE_CONFIG_FILE / ~/.qualibrate)
+        # and re-read through qualibrate's own resolver; anything short of "the
+        # framework's state path IS the scratch" refuses the run before the node
+        # file is imported.
+        _ISOLATION_REPORT.clear()
+        if not state_path:
+            raise RuntimeError("isolation refused: an isolated run needs --state-path (its scratch)")
+        pinned, why = _pin_config_strict(config_file, str(state_path))
+        if pinned is None:
+            raise RuntimeError(f"isolation refused: {why}")
+        os.environ["QUALIBRATE_CONFIG_FILE"] = str(pinned)
+    elif config_file:
+        # (a person's Runner run: it writes the chip, by contract -- docs/245 keeps
+        # this branch unchanged)
         # docs/174 amended II (found on a real customer's cloud chain): the qualibrate
         # config's ``[quam] state_path`` wins over the QUAM_STATE_PATH env for the
         # framework's own machine save, so a node whose config points at the LIVE
@@ -211,12 +238,6 @@ def run_target(target: str, state_path: str | None, config_file: str | None,
         # stands.
         eff_config = _config_pinned_to_scratch(config_file, state_path) if state_path else config_file
         os.environ["QUALIBRATE_CONFIG_FILE"] = str(eff_config)
-    # docs/173 S9 (found on a real customer env): a node's plot action calls
-    # plt.show(), and the customer env's default matplotlib backend is the
-    # INTERACTIVE tkagg (tkinter present) -- so a headless Scheduler subprocess
-    # blocks forever on a GUI window that never opens. Force a non-interactive
-    # backend before the node imports matplotlib; an operator override wins.
-    os.environ.setdefault("MPLBACKEND", "Agg")
     # docs/174 (amended): capture the state's top-level keys BEFORE the node runs,
     # while the scratch is still the byte-for-byte make_scratch copy of the chip.
     # ``machine.save()`` later materializes EVERY field the quam class declares,
@@ -225,9 +246,44 @@ def run_target(target: str, state_path: str | None, config_file: str | None,
     # class). Knowing the original roots lets _persist strip exactly those, so the
     # scratch SM reads back is the chip + the node's real writes and nothing else.
     original_roots = _state_root_keys(state_path) if state_path else None
+    if isolate:
+        # docs/245 (D-02): keep the scratch's pre-run bytes and watch what the node
+        # itself changes (its record_state_updates blocks, its machine since it was
+        # loaded), so the proposal is the node's writes -- never a whole machine the
+        # node swapped in (an offline replay's load_from_id) or reserialized.
+        original_files = _snapshot_files(str(state_path))
+        recorder = _UpdateRecorder()
+        recorder.install()
+        try:
+            ns = runpy.run_path(str(target), run_name="__main__")
+        except SystemExit as exc:
+            recorder.uninstall()
+            if exc.code in (0, None):
+                # main() counts sys.exit(0) as a success: keep what the node did
+                # (runpy's namespace is lost; the recorder saw the node)
+                _ISOLATION_REPORT.update(_persist_isolated(
+                    None, str(state_path), original_roots, original_files, recorder,
+                    replay=replay))
+            else:
+                _restore_files(str(state_path), original_files)
+            raise
+        except BaseException:
+            # a node that died after its own save must not leave a reserialized or
+            # swapped machine in the scratch for SM to read as "its writes"
+            _restore_files(str(state_path), original_files)
+            raise
+        finally:
+            recorder.uninstall()
+        _ISOLATION_REPORT.update(_persist_isolated(
+            ns, str(state_path), original_roots, original_files, recorder, replay=replay))
+        return
     ns = runpy.run_path(str(target), run_name="__main__")
     if state_path:
         _persist_node_state(ns, str(state_path), original_roots)
+
+
+# docs/245: what the isolated run proposed and why (copied into _result.json)
+_ISOLATION_REPORT: dict = {}
 
 
 def _config_pinned_to_scratch(config_file: str, state_path: str) -> str:
@@ -257,6 +313,487 @@ def _config_pinned_to_scratch(config_file: str, state_path: str) -> str:
     except Exception as exc:  # noqa: BLE001
         sys.stderr.write(f"[run_experiment] config repoint skipped: {type(exc).__name__}: {exc}\n")
         return config_file
+
+
+_SCRATCH_CONFIG_NAME = "qualibrate_config.scratch.toml"
+
+
+def _resolve_env_config_path() -> Path:
+    """The qualibrate config file this env resolves on its own
+    (QUALIBRATE_CONFIG_FILE, else ~/.qualibrate/config.toml), via
+    qualibrate_config's own resolver."""
+    from qualibrate_config.resolvers import get_qualibrate_config_path
+    return Path(get_qualibrate_config_path())
+
+
+def _framework_state_path(config_path) -> str | None:
+    """The state path the qualibrate FRAMEWORK saves the machine to under this
+    config -- qualibrate's own resolver, where ``[quam] state_path`` wins over the
+    QUAM_STATE_PATH env (measured on qualibrate 1.5.1). Falls back to the raw
+    merged ``[quam] state_path`` when the typed resolver is not importable."""
+    try:
+        from qualibrate_config.resolvers import get_qualibrate_config
+        from qualibrate.core.config.resolvers import get_quam_state_path
+    except ImportError:
+        from qualibrate_config.file import read_config_file
+        raw = read_config_file(Path(config_path), solve_references=True) or {}
+        sp = (raw.get("quam") or {}).get("state_path")
+        return None if sp is None else str(sp)
+    sp = get_quam_state_path(get_qualibrate_config(Path(config_path)))
+    return None if sp is None else str(sp)
+
+
+def _same_path(a, b) -> bool:
+    import os
+    norm = lambda p: os.path.normcase(os.path.normpath(os.path.abspath(str(p))))  # noqa: E731
+    return norm(a) == norm(b)
+
+
+def _pin_config_strict(config_file: str | None, state_path: str):
+    """docs/245 (D-01): write a qualibrate config whose framework state path is
+    *state_path* and PROVE it. Returns ``(path, None)`` or ``(None, reason)``.
+
+    Source: *config_file* when the Runner verified one, else the config this env
+    resolves itself. The copy is the project-MERGED config (qualibrate_config's own
+    reader applies ``projects/<p>/config.toml``; at the new location that overlay
+    is absent, so nothing is applied twice), so storage/library settings living in
+    a project overlay survive the move next to the scratch -- a copy of the root
+    file alone would drop them. ``[quam] state_path`` is set to the scratch, and
+    the copy re-read through qualibrate's own resolver must name the scratch."""
+    try:
+        src = Path(config_file) if config_file else _resolve_env_config_path()
+    except Exception as exc:  # noqa: BLE001
+        return None, f"the env's qualibrate config could not be resolved ({type(exc).__name__}: {exc})"
+    if not src.is_file():
+        return None, f"no qualibrate config file at {src}, so the node's own save cannot be pinned to the scratch"
+    dst = Path(state_path).parent / _SCRATCH_CONFIG_NAME
+    try:
+        from qualibrate_config.file import read_config_file
+        import tomli_w
+    except ImportError:
+        # no qualibrate_config/tomli_w: the docs/174 line-wise rewrite of the root
+        # file; the resolver check below still has the last word.
+        out = _config_pinned_to_scratch(str(src), state_path)
+        if out == str(src):
+            return None, f"could not repoint [quam] state_path in {src}"
+        dst = Path(out)
+    else:
+        try:
+            merged = read_config_file(src, solve_references=False) or {}
+            quam = merged.get("quam")
+            if not isinstance(quam, dict):
+                quam = merged["quam"] = {}
+            quam["state_path"] = str(state_path).replace("\\", "/")
+            dst.write_text(tomli_w.dumps(merged), encoding="utf-8")
+        except Exception as exc:  # noqa: BLE001
+            return None, f"could not write the pinned config ({type(exc).__name__}: {exc})"
+    try:
+        got = _framework_state_path(dst)
+    except Exception as exc:  # noqa: BLE001
+        return None, f"the pinned config does not resolve ({type(exc).__name__}: {exc})"
+    if got is None or not _same_path(got, state_path):
+        return None, (f"the pinned config resolves the framework state path to {got!r}, "
+                      f"not the scratch {state_path!r}")
+    try:
+        from qualibrate.core.config.resolvers import invalidate_settings_cache
+        invalidate_settings_cache()
+    except Exception:  # noqa: BLE001
+        pass
+    return str(dst), None
+
+
+# ---------------------------------------------------------------------------
+# docs/245 (D-02): an isolated run's writes are what the node itself changed on
+# its machine -- never the whole machine it happens to hold when it saves
+# ---------------------------------------------------------------------------
+
+class _Deleted:
+    """A key the node removed from its machine (a write that deletes)."""
+
+    def __repr__(self) -> str:
+        return "<deleted>"
+
+
+_DELETED = _Deleted()
+
+
+def _snapshot_files(state_path: str) -> dict:
+    """The scratch's pre-run bytes per file (state.json / wiring.json)."""
+    out = {}
+    for name in ("state.json", "wiring.json"):
+        try:
+            out[name] = (Path(state_path) / name).read_bytes()
+        except OSError:
+            out[name] = None
+    return out
+
+
+def _restore_files(state_path: str, original_files: dict) -> None:
+    for name, data in (original_files or {}).items():
+        if data is None:
+            continue
+        try:
+            (Path(state_path) / name).write_bytes(data)
+        except OSError as exc:
+            sys.stderr.write(f"[run_experiment] could not restore {name}: {exc}\n")
+
+
+def _merged_files(blobs: dict) -> dict:
+    """state.json + wiring.json merged (SM's own layout), from bytes per file."""
+    out: dict = {}
+    for name in ("state.json", "wiring.json"):
+        data = (blobs or {}).get(name)
+        if data is None:
+            continue
+        try:
+            d = json.loads(data.decode("utf-8") if isinstance(data, bytes) else data)
+        except (ValueError, UnicodeDecodeError):
+            continue
+        if isinstance(d, dict):
+            out.update(d)
+    return out
+
+
+def _machine_dict(machine):
+    """A DEEP copy of the machine's serialized form (``to_dict`` may hand back
+    the machine's own mutable leaves, which a later in-place change would then
+    rewrite on both sides of the diff)."""
+    import copy
+    if machine is None or not hasattr(machine, "to_dict"):
+        return None
+    try:
+        d = machine.to_dict(include_defaults=True)
+    except TypeError:
+        d = machine.to_dict()
+    try:
+        return copy.deepcopy(d)
+    except Exception:  # noqa: BLE001
+        return d
+
+
+def _ptr_escape(seg) -> str:
+    return str(seg).replace("~", "~0").replace("/", "~1")
+
+
+def _differs(a, b) -> bool:
+    if type(a) is not type(b):
+        return True
+    if isinstance(a, float) and a != a and b != b:   # NaN stays NaN: not a write
+        return False
+    try:
+        return bool(a != b)
+    except Exception:  # noqa: BLE001 -- e.g. numpy arrays: elementwise !=
+        try:
+            import numpy as np
+            return not np.array_equal(a, b)
+        except Exception:  # noqa: BLE001
+            return True
+
+
+def _leaf_delta(pre, post, path: str, out: dict) -> None:
+    """``out[pointer] = new`` for every leaf that differs between two machine
+    dicts; ``out[pointer] = _DELETED`` for a key *post* no longer has (a pulse
+    replaced by another class drops the old class's fields -- leaving them would
+    make the merged dict unloadable). A list that changed length is one write of
+    the whole list (SM's route_writes names a resized list and holds it)."""
+    if isinstance(pre, dict) and isinstance(post, dict):
+        for k, v in post.items():
+            sub = f"{path}/{_ptr_escape(k)}"
+            if k not in pre:
+                out[sub] = v
+            else:
+                _leaf_delta(pre[k], v, sub, out)
+        for k in pre:
+            if k not in post:
+                out[f"{path}/{_ptr_escape(k)}"] = _DELETED
+        return
+    if isinstance(pre, list) and isinstance(post, list) and len(pre) == len(post):
+        for i, (x, y) in enumerate(zip(pre, post)):
+            _leaf_delta(x, y, f"{path}/{i}", out)
+        return
+    if _differs(pre, post):
+        out[path] = post
+
+
+class _UpdateRecorder:
+    """Watches one isolated run's ``QualibrationNode`` for the two things that
+    say what the node itself changed:
+
+    * every ``record_state_updates`` block -- the machine dict before vs after is
+      the node's DECLARED update. (With ``interactive_only=True``, the default, a
+      non-interactive run applies the change and records nothing; with
+      ``interactive_only=False`` qualibrate reverts the simple replaces and records
+      them in ``node.state_updates`` instead, which ``_persist_isolated`` folds in.)
+    * every assignment to ``node.machine`` (the constructor's ``machine=Quam.load()``
+      and an offline replay's ``load_from_id`` both go through the property
+      setter) -- the machine dict at its LAST assignment is the baseline the
+      node's own changes are measured from, so a replay's swapped-in stored
+      snapshot is never one of them.
+
+    Best-effort: without qualibrate nothing is installed (``installed`` False)."""
+
+    def __init__(self):
+        self.blocks = 0
+        self.writes: dict = {}
+        self.node = None
+        self.base = None          # machine dict at its last assignment
+        self.base_id = None       # id() of that machine object
+        self.assignments = 0
+        self.installed = False
+        self._patches: list = []  # (cls, name, had_own, original)
+
+    def _patch(self, cls, name: str, new) -> None:
+        had_own = name in cls.__dict__
+        self._patches.append((cls, name, had_own, cls.__dict__.get(name)))
+        setattr(cls, name, new)
+
+    def install(self) -> None:
+        import contextlib
+        import inspect
+        try:
+            from qualibrate.core.qualibration_node import QualibrationNode
+        except Exception:  # noqa: BLE001
+            return
+        rec = self
+        orig_block = inspect.getattr_static(QualibrationNode, "record_state_updates", None)
+        if callable(orig_block) and not isinstance(orig_block, (staticmethod, classmethod)):
+            @contextlib.contextmanager
+            def record_state_updates(node_self, *args, **kwargs):
+                rec.node = node_self
+                pre = _machine_dict(getattr(node_self, "machine", None))
+                with orig_block(node_self, *args, **kwargs):
+                    yield
+                post = _machine_dict(getattr(node_self, "machine", None))
+                rec.blocks += 1
+                if pre is not None and post is not None:
+                    _leaf_delta(pre, post, "", rec.writes)
+
+            record_state_updates.__doc__ = getattr(orig_block, "__doc__", None)
+            self._patch(QualibrationNode, "record_state_updates", record_state_updates)
+        prop = inspect.getattr_static(QualibrationNode, "machine", None)
+        if isinstance(prop, property) and prop.fset is not None:
+            def _set_machine(node_self, value):
+                prop.fset(node_self, value)
+                try:
+                    rec.node = node_self
+                    rec.base = _machine_dict(value)
+                    rec.base_id = id(value) if rec.base is not None else None
+                    rec.assignments += 1
+                except Exception:  # noqa: BLE001 -- never break the node's own assignment
+                    rec.base = rec.base_id = None
+
+            self._patch(QualibrationNode, "machine",
+                        property(prop.fget, _set_machine, prop.fdel, prop.__doc__))
+        self.installed = bool(self._patches)
+
+    def uninstall(self) -> None:
+        while self._patches:
+            cls, name, had_own, original = self._patches.pop()
+            if had_own:
+                setattr(cls, name, original)
+            else:
+                try:
+                    delattr(cls, name)
+                except AttributeError:
+                    pass
+
+    def since_load(self, machine) -> dict | None:
+        """The node's changes to *machine* since it was last assigned, or None
+        when that machine's assignment was not observed."""
+        if machine is None or self.base is None or self.base_id != id(machine):
+            return None
+        post = _machine_dict(machine)
+        if post is None:
+            return None
+        out: dict = {}
+        _leaf_delta(self.base, post, "", out)
+        return out
+
+
+def _json_safe(o):
+    if hasattr(o, "item"):
+        try:
+            return o.item()
+        except Exception:  # noqa: BLE001
+            pass
+    if hasattr(o, "tolist"):
+        return o.tolist()
+    return str(o)
+
+
+def _apply_pointer_writes(state_path: str, writes: dict) -> tuple[int, list]:
+    """Write ``{"/a/b/c": value}`` (``_DELETED`` removes the key) onto the
+    scratch's JSON files (the merged state+wiring layout SM diffs). A top-level
+    key goes to whichever file already holds it, else state.json. Returns
+    ``(n_applied, [(pointer, why_skipped)])``."""
+    files = {}
+    for name in ("state.json", "wiring.json"):
+        try:
+            d = json.loads((Path(state_path) / name).read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            d = None
+        if isinstance(d, dict):
+            files[name] = d
+    if "state.json" not in files:
+        return 0, [(k, "scratch state.json unreadable") for k in writes]
+    dirty, applied, skipped = set(), 0, []
+    for ptr, val in writes.items():
+        parts = [s.replace("~1", "/").replace("~0", "~") for s in ptr.split("/")[1:]]
+        if not parts:
+            skipped.append((ptr, "the root itself"))
+            continue
+        delete = val is _DELETED
+        name = next((n for n, d in files.items() if parts[0] in d), "state.json")
+        obj = files[name]
+        try:
+            for seg in parts[:-1]:
+                if isinstance(obj, list):
+                    obj = obj[int(seg)]
+                elif isinstance(obj, dict):
+                    if delete and seg not in obj:
+                        obj = None          # nothing there to delete
+                        break
+                    obj = obj.setdefault(seg, {})
+                else:
+                    raise TypeError(f"{type(obj).__name__} is not a container")
+            leaf = parts[-1]
+            if delete:
+                if isinstance(obj, dict) and leaf in obj:
+                    del obj[leaf]
+                    dirty.add(name)
+                applied += 1                # a key the file never had is already absent
+                continue
+            if isinstance(obj, list):
+                obj[int(leaf)] = val
+            elif isinstance(obj, dict):
+                obj[leaf] = val
+            else:
+                raise TypeError(f"{type(obj).__name__} is not a container")
+            dirty.add(name)
+            applied += 1
+        except Exception as exc:  # noqa: BLE001
+            skipped.append((ptr, f"{type(exc).__name__}: {exc}"))
+    for name in dirty:
+        (Path(state_path) / name).write_text(
+            json.dumps(files[name], indent=4, default=_json_safe), encoding="utf-8")
+    return applied, skipped
+
+
+def _recorded_state_updates(node) -> dict:
+    """``node.state_updates`` (the interactive_only=False style) as ``{ptr: new}``."""
+    out = {}
+    try:
+        updates = dict(getattr(node, "state_updates", {}) or {})
+    except Exception:  # noqa: BLE001
+        return out
+    for key, rec in updates.items():
+        if not isinstance(rec, dict) or "new" not in rec:
+            continue
+        ref = str(rec.get("key") or key)
+        out["/" + ref.lstrip("#").lstrip("/")] = rec["new"]
+    return out
+
+
+def _is_replay(node, replay: bool) -> bool:
+    if replay:
+        return True
+    params = getattr(node, "parameters", None)
+    return getattr(params, "load_data_id", None) is not None
+
+
+def _covered(ptr: str, writes: dict) -> bool:
+    if ptr in writes:
+        return True
+    return any(ptr.startswith(w + "/") for w in writes)
+
+
+def _log_isolation(msg: str) -> None:
+    sys.stderr.write(f"[run_experiment] isolation: {msg}\n")
+
+
+def _persist_isolated(ns, state_path: str, original_roots, original_files: dict,
+                      recorder: "_UpdateRecorder", *, replay: bool = False) -> dict:
+    """docs/245 (D-02): an isolated run's scratch becomes its pre-run bytes plus the
+    node's OWN writes, and nothing else. Returns a report (also logged).
+
+    The node's own save (pinned to the scratch since D-01) reserializes the machine
+    it holds: after an offline replay's ``load_from_id`` that is the STORED run's
+    whole snapshot (that day's network, data folder, every other qubit); after any
+    run it also carries serializer defaults. So the pre-run bytes are restored and
+    one source of writes is applied on top, in this order:
+
+    1. ``record_state_updates`` blocks (+ ``node.state_updates``) -- the node's
+       declared update. A change the node made to its machine OUTSIDE every block
+       (measurement scaffolding) is not proposed; it is listed in the log.
+    2. no block: the node's machine changes since that machine was last assigned
+       (a node like 17d/15e writes ``node.machine.x = ...`` directly) -- every
+       change it made, never the replay's swapped-in snapshot.
+    3. neither observable (qualibrate not importable / the machine was not set
+       through ``node.machine``): a normal run falls back to the docs/173 S9
+       ``machine.save()`` + phantom-root strip (its machine came from this
+       scratch); a replay proposes NOTHING, loudly -- its machine is another run's.
+
+    Any change the node's own save left in the scratch that is not proposed is
+    counted in the log, so a write that bypassed ``node.machine`` is never dropped
+    silently."""
+    report = {"source": None, "blocks": recorder.blocks, "proposed": 0,
+              "replay": False, "not_proposed": [], "skipped": []}
+    try:
+        node = (ns.get("node") if isinstance(ns, dict) else None) or recorder.node
+        machine = getattr(node, "machine", None)
+        is_replay = _is_replay(node, replay)
+        report["replay"] = is_replay
+        since_load = recorder.since_load(machine)
+        declared = dict(recorder.writes)
+        declared.update(_recorded_state_updates(node))
+        # what the node's own save(s) left in the scratch, for the disclosure below
+        footprint: dict = {}
+        _leaf_delta(_merged_files(original_files),
+                    _merged_files(_snapshot_files(state_path)), "", footprint)
+        if recorder.blocks or declared:
+            writes, source = declared, "record_state_updates"
+            outside = [p for p in (since_load or {}) if not _covered(p, writes)]
+            if outside:
+                _log_isolation(f"{len(outside)} change(s) the node made to its machine OUTSIDE its "
+                               f"record_state_updates block(s) are NOT proposed: "
+                               + ", ".join(outside[:8]) + (" ..." if len(outside) > 8 else ""))
+            report["not_proposed"] = outside[:50]
+        elif since_load is not None:
+            writes, source = since_load, "machine_since_load"
+            _log_isolation("the node opened no record_state_updates block: proposing every change it "
+                           f"made to its machine since it was loaded ({len(writes)})")
+        elif not is_replay:
+            report["source"] = "machine_save"
+            _log_isolation("the node's machine was not observed: falling back to saving the machine "
+                           "it holds (docs/173 S9; loaded from this scratch, so its changes are its own)")
+            _persist_node_state(ns if isinstance(ns, dict) else {"node": node},
+                                state_path, original_roots)
+            return report
+        else:
+            writes, source = {}, "none"
+            _log_isolation("an offline replay whose machine changes could not be observed (no "
+                           "record_state_updates block, no observed load): proposing NOTHING -- the "
+                           "machine it holds is the stored run's, not this run's writes")
+        report["source"] = source
+        _restore_files(state_path, original_files)
+        applied, skipped = _apply_pointer_writes(state_path, writes)
+        report["proposed"], report["skipped"] = applied, [p for p, _ in skipped][:50]
+        dropped = [p for p in footprint if not _covered(p, writes)]
+        _log_isolation(f"proposing {applied} write(s) from {source} "
+                       f"({recorder.blocks} block(s), replay={is_replay})")
+        if dropped:
+            _log_isolation(f"the node's own save rewrote {len(dropped)} other leaf(s) of the scratch "
+                           "(serializer defaults, a replay's stored snapshot, or a write that bypassed "
+                           "node.machine); discarded, NOT proposed: "
+                           + ", ".join(dropped[:8]) + (" ..." if len(dropped) > 8 else ""))
+        for ptr, why in skipped[:20]:
+            _log_isolation(f"write skipped {ptr}: {why}")
+    except Exception as exc:  # noqa: BLE001
+        sys.stderr.write(f"[run_experiment] state capture skipped: {type(exc).__name__}: {exc}\n")
+        report["source"] = "error"
+        # never leave a reserialized / swapped machine behind as "the node's writes"
+        _restore_files(state_path, original_files)
+    return report
 
 
 def _state_root_keys(state_path: str) -> set | None:
@@ -459,6 +996,12 @@ def main(argv=None) -> int:
     parser.add_argument("--baseline-out", help="dir to write the serializer-normalized "
                         "pre-node baseline into, for SM's leaf diff (run mode; docs/174)")
     parser.add_argument("--config-file", help="QUALIBRATE_CONFIG_FILE for the run (run mode)")
+    parser.add_argument("--isolate", action="store_true",
+                        help="--state-path is a per-run scratch: pin the framework's save there "
+                             "or refuse, and leave only the node's recorded writes in it "
+                             "(run mode; docs/245)")
+    parser.add_argument("--replay", action="store_true",
+                        help="the run is an offline replay (load_data_id) (run mode; docs/245)")
     args = parser.parse_args(argv)
 
     out_dir = Path(args.out)
@@ -488,7 +1031,8 @@ def main(argv=None) -> int:
                 raise ValueError("--folder is required for scan mode")
             result.update(run_scan(args.folder))
         elif args.mode == "run":
-            run_target(args.target, args.state_path, args.config_file, args.baseline_out)
+            run_target(args.target, args.state_path, args.config_file, args.baseline_out,
+                       isolate=args.isolate, replay=args.replay)
         result["status"] = "ok"
     except SystemExit as exc:
         # A node that calls sys.exit() is not a crash; exit code 0/None = success.
@@ -502,6 +1046,8 @@ def main(argv=None) -> int:
         result["error"] = f"{type(exc).__name__}: {exc}"
         result["traceback"] = traceback.format_exc()
     finally:
+        if _ISOLATION_REPORT:
+            result["isolation"] = dict(_ISOLATION_REPORT)
         # Always write _result.json (even on SystemExit / KeyboardInterrupt) so
         # the parent classifies the run instead of seeing 'no _result.json'.
         result_path = out_dir / RESULT_FILENAME
