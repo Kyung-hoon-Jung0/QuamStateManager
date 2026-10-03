@@ -28,6 +28,7 @@
      {% if auto_apply is defined and auto_apply %}data-auto-apply="1"
      data-auto-since="{{ auto_apply.armed_at | default(0) }}"{% endif %}
      {% if oob is defined and oob %}hx-swap-oob="outerHTML:#pending-tray"{% endif %}>
+{% if tray_recovery_notice is defined %}{% set _recovery_notice = tray_recovery_notice() %}{% if _recovery_notice %}<div role="alert" class="status-error">{{ _recovery_notice }}</div>{% endif %}{% endif %}
 {% if live_readonly %}<span class="tray-ro-lock" title="The LIVE folder does not appear writable (read-only share?). Edits save to the working copy, but Apply to live will fail until the folder is writable.">&#128274;&nbsp;<span class="tray-ro-text">read-only</span></span>{% endif %}
 {% set _archive = (chip_origin is defined and chip_origin == 'dataset_archive') %}
 {# sync-ux 2026-09-25 (user decision 2026-09-25): ONE status control in a one-row top bar.

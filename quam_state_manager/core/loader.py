@@ -88,6 +88,14 @@ class ChangeEntry:
     # MCP bridge. The tray shows it; a human's Apply names the agent's share.
     actor: str = "human"
 
+    def __setattr__(self, name, value):
+        object.__setattr__(self, name, value)
+        # The web layer stamps actor after Modifier returns. Keep that stamp
+        # (and any later row metadata change) in the pending-tray checkpoint.
+        callback = self.__dict__.get("_pending_changed")
+        if callback is not None and not name.startswith("_"):
+            callback()
+
 
 @dataclass
 class PointerWarning:

@@ -1173,6 +1173,10 @@ def _evict_oldest_quam() -> None:
     for k in list(_quam_cache.keys()):          # oldest → newest
         if not _quam_ctx_dirty(_quam_cache[k]):
             victim = _quam_cache.pop(k, None)
+            if victim is not None:
+                # A request retaining an evicted context must not create a
+                # checkpoint that resurrects models rejected by unpark.
+                victim["_pending_tray_retired"] = True
             # RAM P10: a pristine store survives its slot (chip_park) --
             # re-opening it re-validates against the files' bytes.
             try:
@@ -1878,6 +1882,8 @@ def _activate_quam(folder_path: str | Path, *, origin: str = "live") -> dict:
             # docs/107: fresh builds (restart, LRU rehydrate) reload the
             # cross-save undo journal from its sidecar; cursor starts at tip.
             _journal_reset(ctx)
+            from quam_state_manager.core import pending_tray
+            pending_tray.attach(ctx)
         # Project lens (docs/63): fresh builds (first load, LRU-eviction
         # rehydrates, restarts) derive their scope here — BEFORE publication
         # (a concurrent /datasets render must never observe an active scoped
@@ -9177,6 +9183,30 @@ def _undo_next_preview(ctx, changes) -> dict | None:
     return {"path": a.get("path"), "what": what, "n": len(ents), "live": live}
 
 
+@bp.app_context_processor
+def _tray_recovery_context():
+    # Consume only when the tray actually renders, including full-page loads.
+    return {"tray_recovery_notice": lambda: (_active_ctx() or {}).pop(
+        "_tray_recovery_notice", "")}
+
+
+@bp.after_app_request
+def _checkpoint_pending_tray_flags(response):
+    # Actor stamps and staged_base/dirty/stash flags may be set AFTER a log
+    # mutation. Finish the checkpoint before acknowledging a mutating request.
+    if request.method not in ("GET", "HEAD", "OPTIONS"):
+        from quam_state_manager.core import pending_tray
+        seen = set()
+        for ctx in current_app.config.get("contexts", {}).values():
+            store = ctx.get("store")
+            if (id(store) not in seen and store is not None
+                    and isinstance(store.change_log, pending_tray.PendingLog)
+                    and store.change_log):
+                seen.add(id(store))
+                pending_tray.checkpoint(ctx)
+    return response
+
+
 def _render_tray(*, oob: bool) -> str:
     """Render ``#pending-tray`` — the single tray renderer for both direct
     target swaps and OOB swaps.
@@ -12561,7 +12591,8 @@ def _field_edit_batch_impl(payload=None, *, pulse_door: bool = False):
     # and never a journal step's. Anything else gets a fresh gid.
     _grp = _pj.get("group")
 
-    with _lab_released(_lab_rel), modifier.store._lock:
+    from quam_state_manager.core import pending_tray
+    with _lab_released(_lab_rel), modifier.store._lock, pending_tray.batch(modifier.store):
         if isinstance(_grp, str) and _grp:
             _log = modifier.store.change_log
             _top = _log[-1].group_id if _log else None
@@ -12721,14 +12752,14 @@ def _field_edit_batch_impl(payload=None, *, pulse_door: bool = False):
                         continue   # (delete_subtree maintains the index itself)
                     modifier.store.search_index.update_entry(entry.dot_path, entry.new_value)
 
+            # docs/246: name who staged each row, then checkpoint the complete
+            # batch with its actor metadata while still holding the lock.
+            _actor = _request_actor()
+            for _e in applied_entries:
+                if hasattr(_e, "actor"):
+                    _e.actor = _actor
+
     if applied_entries:
-        # docs/246: who staged it, as /field/edit stamps it -- a batch row
-        # used to fall back to "human", so an agent's FSP+amps bundle read as
-        # a person's in the tray, and the agent's own undo refused it
-        _actor = _request_actor()
-        for _e in applied_entries:
-            if hasattr(_e, "actor"):
-                _e.actor = _actor
         _invalidate_engine_cache(ctx)
     _lab_notes = [n for n in (_lab_info.get("notes") or []) if n]
     return jsonify(ok=ok_overall, tray_html=_tray_html(), results=results,
