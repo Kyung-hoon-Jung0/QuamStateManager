@@ -139,8 +139,10 @@ const css = fs.readFileSync(path.join(__dirname, '..', 'quam_state_manager', 'we
     'static', 'style.css'), 'utf8');
 ok(/#diagnostics-banner-slot\.diag-banner-overlay\s*\{[^}]*height:\s*0/.test(css),
     'the overlay slot takes no layout height');
-ok(/#diagnostics-banner-slot\.diag-banner-overlay > \.diag-error-banner\s*\{[^}]*position:\s*fixed/.test(css),
-    'the overlaid banner is out of the flow (fixed)');
+// docs/251: out of the flow, but over the very box it takes in the flow (not
+// the bottom-left corner, where it covered the Agent composer and Setup's buttons)
+ok(/#diagnostics-banner-slot\.diag-banner-overlay > \.diag-error-banner\s*\{[^}]*position:\s*absolute/.test(css),
+    'the overlaid banner is out of the flow (absolute, over its own in-flow box)');
 
 // docking: the overlay moves into the flow only when nothing can shift under the pointer
 function overlaySlot() {

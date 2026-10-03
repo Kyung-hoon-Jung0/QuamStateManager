@@ -5313,21 +5313,30 @@ a.topo-health-tile:hover { background: var(--pico-card-sectioning-background-col
    Merged at integration (fix/qa2-dg-nav x fix/qa2-ds-table). */
 html.diag-page-live #diagnostics-banner-slot { display: none; }
 /* The late banner never moves the page under the pointer (app.js
-   _diagBannerSlotSwapped). Reserved: an invisible same-size placeholder holds
-   the space until the banner replaces it. Unreserved: the banner floats at
-   the bottom-left (the slot takes no height; the toast sink is bottom-right)
-   until app.js docks it into the flow at a moment nothing can move under the
-   pointer. */
+   _diagBannerSlotSwapped / _diagJoinFlow). Reserved: an invisible same-size
+   placeholder holds the space until the banner replaces it. Unreserved: the
+   slot takes no height and the banner floats over EXACTLY the box it will take
+   in the flow, so joining the flow moves the banner by 0 px -- which is what
+   lets a pointer resting on it be a safe moment to dock (docs/251; it used to
+   float at the bottom-left, over the Agent composer and Setup's buttons, C-13).
+   The slot is its own block formatting context so the banner's margins stay
+   inside it in BOTH modes: in the flow they would otherwise collapse with a
+   neighbour's, and the floating box (top = slot top + margin) would sit a
+   margin lower than the docked one. Same margins + left/right 0 = same width,
+   so the same wrap and the same height. */
+#diagnostics-banner-slot { display: flow-root; position: relative; }
 .diag-banner-placeholder {
     visibility: hidden; animation: none; box-sizing: border-box;
     padding-top: 0; padding-bottom: 0;
 }
 #diagnostics-banner-slot.diag-banner-overlay { height: 0; }
 #diagnostics-banner-slot.diag-banner-overlay > .diag-error-banner {
-    position: fixed; left: 1rem; bottom: 1rem; margin: 0;
-    max-width: min(760px, calc(100vw - 2rem)); z-index: 60;
+    position: absolute; top: 0; left: 0; right: 0; z-index: 60;
     box-shadow: 0 6px 20px rgba(0, 0, 0, 0.28);
 }
+/* never appear under a resting pointer: held (and not hit-testable) until the
+   pointer is outside its box */
+#diagnostics-banner-slot[data-held] > .diag-error-banner { visibility: hidden; }
 
 /* Live-drift banner — the accumulating "N params changed on the live chip"
    notice. Info (cyan) accent to set it apart from the amber out-of-band

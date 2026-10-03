@@ -16838,15 +16838,42 @@ function _closePlotPopupIfDone() {
      - a banner the slot had RESERVED space for (base.html's inline script puts
        a same-size placeholder there when this tab last saw a banner) renders
        in the flow -- the placeholder and the banner trade places, no shift;
-     - an UNRESERVED banner floats as a bottom-left overlay (slot class
-       diag-banner-overlay, zero layout height) and DOCKS into the flow at the
-       first moment a shift cannot move anything under the pointer: the main
-       pane is being replaced anyway (#table-pane swap), the pointer is over
-       the head block the slot closes (nothing there moves), or the tab is
-       hidden. Docking remembers the size, so the next load reserves it.
+     - an UNRESERVED banner floats (slot class diag-banner-overlay, zero layout
+       height) EXACTLY over the box it will take in the flow -- same top, same
+       margins, same width, hence the same height (style.css) -- and joins the
+       flow at the first moment that is MEASURED to move nothing under the
+       pointer (_diagJoinFlow). Docking remembers the size, so the next load
+       reserves it.
+   docs/251 (C-13): it used to float at the bottom-left and dock only when the
+   main pane was swapped, the pointer reached the head block or the tab was
+   hidden -- a user working inside one page (the Agent chat, Agent setup, a
+   grid) never produced one of those, so it sat on the Agent composer's select,
+   the plan-mode selects and Setup's Test buttons until dismissed. Now every
+   pointer move / press / key / scroll while it floats is a trial (one per
+   frame, throttled): join the flow; if the element under the pointer moved,
+   scroll the scroller it sits in by exactly that much when the scroller has
+   the room; re-measure; same element, same place => keep, anything else =>
+   put everything back in the same task, before a frame is painted. Pointer on
+   the banner itself (it does not move), the head block, a fixed panel or a
+   bottom-anchored bar (the Agent composer) => nothing moves => it docks.
+   A floating banner never APPEARS under a resting pointer either: while the
+   pointer is inside its box it is held invisible (slot data-held), shown as
+   soon as the pointer is elsewhere.
+   Unconditional moments stay: the main pane is replaced, the tab is hidden,
+   the pointer left the window.
    The remembered size lives in sessionStorage (per tab, a layout hint only;
    absent or unreadable => overlay, never a shift). */
 var DIAG_BANNER_H_KEY = 'quam_diag_banner_h';
+var _diagPtr = null;          // last pointer {x, y, t}; 'out' once it left the window; null = never seen
+var _diagFloating = false;    // a banner is floating, waiting to join the flow
+var _diagTrialPending = false, _diagTrialAt = 0, _diagMissTarget = null;
+var _diagSelfScroll = null;   // a scroller a failed trial put back: its echo scroll event is not news
+function _diagRemember(b) {
+    var h = b ? b.offsetHeight : 0;
+    if (h > 0) {
+        try { sessionStorage.setItem(DIAG_BANNER_H_KEY, String(h)); } catch (e) {}
+    }
+}
 function _diagBannerSlotSwapped(slot) {
     var b = slot.querySelector('.diag-error-banner');
     var dismissed = false;
@@ -16858,44 +16885,197 @@ function _diagBannerSlotSwapped(slot) {
     var shown = !!(b && !b.hidden && !dismissed);
     var reserved = slot.getAttribute('data-reserved') === '1';
     slot.removeAttribute('data-reserved');
+    slot.removeAttribute('data-held');
     if (!shown) {
         slot.classList.remove('diag-banner-overlay');
         slot.removeAttribute('data-mode');
+        _diagFloating = false;
         try { sessionStorage.removeItem(DIAG_BANNER_H_KEY); } catch (e) {}
         return;
     }
     var mode = (reserved || slot.getAttribute('data-mode') === 'flow') ? 'flow' : 'overlay';
     slot.setAttribute('data-mode', mode);
     slot.classList.toggle('diag-banner-overlay', mode === 'overlay');
-    // only an in-flow banner's height is what a reservation must hold (the
-    // floating one wraps at its own narrower width)
-    var h = mode === 'flow' ? b.offsetHeight : 0;
-    if (h > 0) {
-        try { sessionStorage.setItem(DIAG_BANNER_H_KEY, String(h)); } catch (e) {}
-    }
+    _diagFloating = mode === 'overlay';
+    // the floating banner has the in-flow width, so its height is the
+    // reservation either way
+    _diagRemember(b);
+    if (!_diagFloating) return;
+    _diagMissTarget = null;
+    // held invisible for the first measurement: what the pointer is on is the
+    // page, not a banner that has not been seen yet
+    slot.setAttribute('data-held', '1');
+    if (!_diagJoinFlow(slot, _diagPtr === 'out')) _diagHoldCheck(slot);
 }
-function _diagBannerDock() {
+function _diagCommitFlow(slot) {
+    slot.classList.remove('diag-banner-overlay');
+    slot.removeAttribute('data-held');
+    slot.setAttribute('data-mode', 'flow');
+    _diagFloating = false;
+    _diagRemember(slot.querySelector('.diag-error-banner'));
+}
+// Show a held banner once the pointer is not inside its box.
+function _diagHoldCheck(slot) {
+    if (!slot.hasAttribute('data-held')) return;
+    var b = slot.querySelector('.diag-error-banner');
+    var p = _diagPtr;
+    if (b && p && p !== 'out') {
+        var r = b.getBoundingClientRect();
+        if (p.x >= r.left && p.x <= r.right && p.y >= r.top && p.y <= r.bottom) return;
+    }
+    slot.removeAttribute('data-held');
+}
+// The scroll containers between `el` and the layout, OUTERMOST first (the
+// outermost one that can absorb the shift keeps the most content still).
+function _diagScrollChain(el, skip) {
+    var out = [];
+    for (var n = el; n && n.nodeType === 1 && n !== document.body && n !== document.documentElement; n = n.parentElement) {
+        if (n.classList && n.classList.contains('app-layout')) break;
+        if (skip && n === skip) return [];
+        if (n.scrollHeight > n.clientHeight + 1) {
+            var oy = '';
+            try { oy = getComputedStyle(n).overflowY; } catch (e) {}
+            if (oy === 'auto' || oy === 'scroll' || oy === 'overlay') out.unshift(n);
+        }
+    }
+    return out;
+}
+// Join the flow. Returns true when nothing under the pointer moved; then (or
+// with `force`) the slot stays in the flow, otherwise it is put back as it was.
+// `skip`: a subtree whose scrollers must not be scrolled (a pane whose content
+// was just replaced -- scrolling it would hide the top of a fresh page).
+function _diagJoinFlow(slot, force, skip) {
+    var p = _diagPtr;
+    var hit = null;
+    if (p && p !== 'out' && typeof document.elementFromPoint === 'function') {
+        hit = document.elementFromPoint(p.x, p.y);
+    }
+    if (!hit) {
+        // pointer gone from the window: nothing can move under it
+        if (force || p === 'out') { _diagCommitFlow(slot); return true; }
+        return false;
+    }
+    var r0 = hit.getBoundingClientRect();
+    var chain = _diagScrollChain(hit, skip);
+    var tops = chain.map(function (s) { return s.getBoundingClientRect().top; });
+    var held = slot.hasAttribute('data-held');
+    slot.classList.remove('diag-banner-overlay');
+    slot.removeAttribute('data-held');
+    var r1 = hit.getBoundingClientRect();
+    var dy = r1.top - r0.top, comp = null;
+    if (dy >= 1 && Math.abs(r1.left - r0.left) < 1) {
+        for (var i = 0; i < chain.length; i++) {
+            var s = chain[i], sr = s.getBoundingClientRect();
+            var ds = sr.top - tops[i];
+            // it moved exactly like the element, has the room, and the pointer
+            // is still inside it (else the banner itself would now be there)
+            if (Math.abs(ds - dy) < 1 && p.y >= sr.top
+                    && s.scrollHeight - s.clientHeight - s.scrollTop >= ds - 1) {
+                comp = { el: s, top: s.scrollTop };
+                s.scrollTop = comp.top + ds;
+                break;
+            }
+        }
+    }
+    var r2 = hit.getBoundingClientRect();
+    var still = document.elementFromPoint(p.x, p.y) === hit && (
+        (Math.abs(r2.top - r0.top) < 1 && Math.abs(r2.left - r0.left) < 1)
+        // the pointer is on the scrolled container itself: its content held still
+        || (comp !== null && comp.el === hit));
+    if (still || force) { _diagCommitFlow(slot); return still; }
+    if (comp) {
+        comp.el.scrollTop = comp.top;
+        _diagSelfScroll = { el: comp.el, top: comp.el.scrollTop };
+    }
+    slot.classList.add('diag-banner-overlay');
+    if (held) slot.setAttribute('data-held', '1');
+    return false;
+}
+function _diagBannerTry(now) {
+    if (!_diagFloating || _diagTrialPending) return;
+    _diagTrialPending = true;
+    var wait = now ? 0 : Math.max(0, 120 - (Date.now() - _diagTrialAt));
+    setTimeout(function () {
+        requestAnimationFrame(function () {
+            _diagTrialPending = false;
+            _diagTrialAt = Date.now();
+            var slot = document.getElementById('diagnostics-banner-slot');
+            if (!slot || slot.getAttribute('data-mode') !== 'overlay') { _diagFloating = false; return; }
+            var b = slot.querySelector('.diag-error-banner');
+            if (!b || b.hidden) {
+                // dismissed while it floated: nothing left to place
+                slot.classList.remove('diag-banner-overlay');
+                slot.removeAttribute('data-held');
+                slot.removeAttribute('data-mode');
+                _diagFloating = false;
+                return;
+            }
+            if (_diagJoinFlow(slot, false)) return;
+            _diagHoldCheck(slot);
+            if (_diagPtr && _diagPtr !== 'out') _diagMissTarget = _diagPtr.t || null;
+        });
+    }, wait);
+}
+// An unconditional moment (pane replaced, tab hidden): dock, still keeping the
+// pointer's own scroller steady when it can (a sidebar click that swapped the
+// main pane must not slide the sidebar under the pointer).
+function _diagBannerDock(skip) {
     var slot = document.getElementById('diagnostics-banner-slot');
     if (!slot || slot.getAttribute('data-mode') !== 'overlay') return;
-    slot.classList.remove('diag-banner-overlay');
-    slot.setAttribute('data-mode', 'flow');
-    var b = slot.querySelector('.diag-error-banner');
-    var h = b ? b.offsetHeight : 0;
-    if (h > 0) {
-        try { sessionStorage.setItem(DIAG_BANNER_H_KEY, String(h)); } catch (e) {}
-    }
+    _diagJoinFlow(slot, true, skip);
 }
 window._diagBannerSlotSwapped = _diagBannerSlotSwapped;
 window._diagBannerDock = _diagBannerDock;
+window._diagJoinFlow = _diagJoinFlow;
 document.addEventListener('htmx:afterSwap', function (evt) {
     var t = evt.detail && evt.detail.target;
     if (t && t.id === 'diagnostics-banner-slot') _diagBannerSlotSwapped(t);
-    else if (t && t.id === 'table-pane') _diagBannerDock();
+    else if (t && t.id === 'table-pane') _diagBannerDock(t);
 });
-document.addEventListener('pointerover', function (evt) {
+function _diagPointer(evt) {
+    _diagPtr = { x: evt.clientX, y: evt.clientY, t: evt.target };
+    if (!_diagFloating) return;
     var t = evt.target;
-    if (t && t.closest && t.closest('.shell-head')
-            && !t.closest('#diagnostics-banner-slot')) _diagBannerDock();
+    // the head block above the slot never moves when the slot grows
+    if (t && t.closest && t.closest('.shell-head') && !t.closest('#diagnostics-banner-slot')) {
+        _diagBannerDock();
+        return;
+    }
+    // a pointer still resting on the element the last trial could not keep
+    // still is not worth another layout (unless a held banner waits for it
+    // to move off); a press always is
+    if (evt.type !== 'pointerdown' && t && t === _diagMissTarget) {
+        var slot = document.getElementById('diagnostics-banner-slot');
+        if (!slot || !slot.hasAttribute('data-held')) return;
+    }
+    _diagBannerTry(evt.type === 'pointerdown');
+}
+['pointermove', 'pointerover', 'pointerdown'].forEach(function (type) {
+    document.addEventListener(type, _diagPointer, { capture: true, passive: true });
+});
+document.addEventListener('pointerout', function (evt) {
+    // left the window (an iframe also reports no relatedTarget: not "out")
+    if (evt.relatedTarget || (evt.target && evt.target.tagName === 'IFRAME')) return;
+    _diagPtr = 'out';
+    if (_diagFloating) _diagBannerDock();
+}, true);
+// a key press may be the user starting to work with the pointer at rest;
+// typing on, over the same element a trial already measured, is not news
+document.addEventListener('keydown', function () {
+    if (_diagFloating && !_diagMissTarget) _diagBannerTry(false);
+}, { capture: true, passive: true });
+// a scroll moves new content under a resting pointer: worth a fresh trial
+['wheel', 'scroll'].forEach(function (type) {
+    document.addEventListener(type, function (evt) {
+        if (!_diagFloating) return;
+        var e = _diagSelfScroll;
+        if (type === 'scroll' && e && evt.target === e.el && e.el.scrollTop === e.top) {
+            _diagSelfScroll = null;
+            return;
+        }
+        _diagMissTarget = null;
+        _diagBannerTry(false);
+    }, { capture: true, passive: true });
 });
 document.addEventListener('visibilitychange', function () {
     if (document.visibilityState === 'hidden') _diagBannerDock();
