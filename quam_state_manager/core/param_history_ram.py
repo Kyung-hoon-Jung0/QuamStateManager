@@ -42,7 +42,11 @@ from typing import Any
 logger = logging.getLogger(__name__)
 
 _CONN_LOCK = threading.Lock()
-# index path -> (file identity, connection, per-connection lock), LRU order.
+# index path -> (file identity, connection, per-connection lock, generation,
+#                last checkpointed data_version), LRU order.
+# Remove entries under _CONN_LOCK, then release it before taking an entry
+# lock to close. Every execute AND close holds that entry's lock. Never
+# acquire one of these locks while holding the other.
 # Bounded: each entry is an OPEN file handle on a chip's index.sqlite, and on
 # Windows an open handle keeps that file (and its dir) from being removed --
 # only the few chips somebody is looking at hold one.
@@ -153,6 +157,15 @@ def _retry_done(key: str) -> None:
         _RETRY_N.pop(key, None)
 
 
+def _close_entry(ent: tuple) -> None:
+    """Close a retired entry after its reader finishes, outside _CONN_LOCK."""
+    with ent[2]:
+        try:
+            ent[1].close()
+        except sqlite3.Error:
+            pass
+
+
 def data_version(index_path: Path) -> tuple:
     """``(file identity, connection generation, PRAGMA data_version)`` of *index_path*, or a
     constant "absent" marker. Opens (or reopens, when the file was replaced)
@@ -161,13 +174,11 @@ def data_version(index_path: Path) -> tuple:
     ident = _file_identity(index_path)
     if ident is None:
         return ("absent",)
+    retired = []
     with _CONN_LOCK:
         ent = _CONNS.get(key)
         if ent is not None and ent[0] != ident:
-            try:
-                ent[1].close()
-            except sqlite3.Error:
-                pass
+            retired.append(_CONNS.pop(key))
             ent = None
         if ent is None:
             conn = None
@@ -183,20 +194,19 @@ def data_version(index_path: Path) -> tuple:
                     break
                 except sqlite3.Error:
                     conn = None
-            if conn is None:
-                return ("unreadable", ident)
-            ent = (ident, conn, threading.Lock(), next(_CONN_GEN), [None])
-            _CONNS[key] = ent
-            while len(_CONNS) > _CONNS_MAX:
-                _k, (_i, old_conn, old_lk, _g, _s) = _CONNS.popitem(last=False)
-                with old_lk:
-                    try:
-                        old_conn.close()
-                    except sqlite3.Error:
-                        pass
+            if conn is not None:
+                ent = (ident, conn, threading.Lock(), next(_CONN_GEN), [None])
+                _CONNS[key] = ent
+                while len(_CONNS) > _CONNS_MAX:
+                    retired.append(_CONNS.popitem(last=False)[1])
         else:
             _CONNS.move_to_end(key)
+    for old_ent in retired:
+        _close_entry(old_ent)
+    if ent is None:
+        return ("unreadable", ident)
     ident0, conn, lk, gen, seen = ent
+    failed = False
     with lk:
         try:
             dv = conn.execute("PRAGMA data_version").fetchone()[0]
@@ -206,14 +216,13 @@ def data_version(index_path: Path) -> tuple:
                 if given_back:
                     seen[0] = dv         # busy: keep the old value -- the next read retries
         except sqlite3.Error:
-            with _CONN_LOCK:
-                if _CONNS.get(key) is ent:
-                    _CONNS.pop(key, None)
-            try:
-                conn.close()
-            except sqlite3.Error:
-                pass
-            return ("unreadable", ident)
+            failed = True
+    if failed:
+        with _CONN_LOCK:
+            if _CONNS.get(key) is ent:
+                _CONNS.pop(key, None)
+        _close_entry(ent)
+        return ("unreadable", ident)
     if given_back:
         _retry_done(key)
     else:
@@ -270,11 +279,8 @@ def close_all() -> None:
     with _CONN_LOCK:
         ents = list(_CONNS.values())
         _CONNS.clear()
-    for _i, conn, _l, _g, _s in ents:
-        try:
-            conn.close()
-        except sqlite3.Error:
-            pass
+    for ent in ents:
+        _close_entry(ent)
 
 
 # ── the parameter typeahead (/param-history/param-search) ─────────────────
