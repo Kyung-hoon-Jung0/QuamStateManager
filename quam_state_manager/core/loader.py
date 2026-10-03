@@ -32,6 +32,8 @@ from quam_state_manager.core.pointer_resolver import (
     is_self_ref,
     resolve_pointer,
 )
+from quam_state_manager.core.state_merge import _deep_merge as _deep_merge
+from quam_state_manager.core.state_merge import merge_state_wiring as _pure_merge_state_wiring
 
 logger = logging.getLogger(__name__)
 
@@ -115,38 +117,14 @@ def merge_state_wiring(state: dict, wiring: dict) -> dict:
     wiring. Neither input is mutated. One function so a caller holding the two
     dicts in memory (the snapshot capture, RAM P8) builds exactly the root a
     ``QuamStore`` loaded from the same files would."""
-    merged = {**state}
     for key, value in wiring.items():
-        existing = merged.get(key, _SENTINEL)
-        if existing is _SENTINEL:
-            merged[key] = value
-        elif isinstance(existing, dict) and isinstance(value, dict):
-            merged[key] = _deep_merge(existing, value)
-        else:
+        existing = state.get(key, _SENTINEL)
+        if existing is not _SENTINEL and not (isinstance(existing, dict) and isinstance(value, dict)):
             logger.warning(
                 "Key %r exists in both state.json and wiring.json; wiring "
                 "value will shadow state value", key,
             )
-            merged[key] = value
-    return merged
-
-
-def _deep_merge(a: dict, b: dict) -> dict:
-    """Recursively merge *b* into a shallow copy of *a*.
-
-    Dict+dict values recurse so neither side's keys are lost; any other
-    collision is resolved in favour of *b* (wiring shadows state — the
-    documented precedence). Used by :meth:`QuamStore._merge` only on a
-    top-level key present in both state and wiring.
-    """
-    out = dict(a)
-    for k, v in b.items():
-        cur = out.get(k, _SENTINEL)
-        if cur is not _SENTINEL and isinstance(cur, dict) and isinstance(v, dict):
-            out[k] = _deep_merge(cur, v)
-        else:
-            out[k] = v
-    return out
+    return _pure_merge_state_wiring(state, wiring)
 
 
 class QuamStore:
