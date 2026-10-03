@@ -108,7 +108,9 @@ class TestTheMergeReplacesTheDisarm:
         _write_chip(env["live"], _state(f01=7.7e9))
         c.post("/state/apply-to-live")
         ctx = _ctx(env)
-        assert ctx.get("working_dirty") or ctx.get("pending_reapply"), (
+        # docs/255: it survives IN THE TRAY (a refused push changes nothing),
+        # which is exactly what the merge's pull-and-replay takes from
+        assert [e.dot_path for e in ctx["store"].change_log], (
             "the user's edit must survive the conflict to be re-applied")
 
     def test_and_the_merge_lands_both_values(self, env):

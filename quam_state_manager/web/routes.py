@@ -3150,6 +3150,143 @@ def _journal_mark_landed(ctx, units: list[dict]) -> None:
         logger.warning("undo journal landed-mark failed", exc_info=True)
 
 
+# ----------------------------------------------------------------------
+# docs/255: a refused live-write press changes nothing
+# ----------------------------------------------------------------------
+# Both live-write doors (/state/apply-to-live and _sync_pull_apply_to_live)
+# SAVE the tray into the working copy before they write the chip -- the write
+# copies the working files. When the chip then refuses the write (it moved
+# since the sync point), the press used to stand half-done: the tray empty,
+# the edits saved in the working copy, a journal unit recorded for a write
+# that never happened, and -- for a machine caller reading the tray -- a
+# working copy that differed from live with nothing on screen saying so
+# (A-11, D-04). The common refusal is now decided BEFORE the save
+# (_apply_preflight); the rare one only visible after it (a write racing the
+# press) is put back here. The journal is committed only once the push is
+# decided, so a refusal has nothing to take out of it.
+
+
+def _press_begin(ctx) -> dict:
+    """What a live-write press changes in SM before it knows whether the chip
+    accepts it, captured BEFORE the re-apply stash and the save: the dirty
+    flag and the re-apply stash (+ its originals). :func:`_press_save` adds
+    the save's own facts."""
+    return {"dirty": bool(ctx.get("working_dirty")),
+            "reapply": copy.deepcopy(ctx.get("pending_reapply")),
+            "has_orig": "pending_reapply_orig" in ctx,
+            "reapply_orig": copy.deepcopy(ctx.get("pending_reapply_orig")),
+            "saved": False}
+
+
+def _press_save(ctx, press: dict) -> None:
+    """``saver.save()`` for a live-write press, under the working copy's build
+    lock (as both doors always took it), recording what the save replaces:
+    the working pair's exact bytes + stat fingerprint, and the change log it
+    clears with the store's mutation counter. Raises what the save raises."""
+    store, wc = ctx["store"], ctx["working_copy"]
+    with _active_wc_lock(ctx):
+        try:
+            snap = working_copy.read_working_bytes(wc)
+        except (OSError, ValueError):
+            snap = None     # nothing to put back: a refusal then keeps the save
+        with store._lock:
+            press["log"] = list(store.change_log)
+            press["seq"] = store.mutation_seq
+            press["docs"] = (id(store.merged), id(store.state), id(store.wiring))
+        ctx["saver"].save()
+        press["saved"] = True
+        press["bytes"] = snap
+        try:
+            press["saved_fp"] = working_copy.working_fingerprint(wc)
+        except OSError:
+            press["saved_fp"] = None
+
+
+def _press_undo(ctx, press: dict) -> bool:
+    """Put back what a REFUSED press changed in SM: the working pair (bytes and
+    mtimes), the change-log entries its save cleared, the dirty flag and the
+    re-apply stash. The undo journal needs nothing -- the doors commit their
+    units only once the push is decided.
+
+    Only what is provably the press's own is restored. The working pair must
+    still be exactly what the save wrote (stat fingerprint), and everything
+    the store did since the save must be EDITS appended after it -- the
+    saver's own rule (``Saver._only_edits_since``). Another window's save, an
+    undo or a reload in between and the save stands, as it did before
+    docs/255 (the caller then journals it). True when SM is back where the
+    press found it."""
+    def _flags():
+        ctx["working_dirty"] = press["dirty"]
+        ctx["pending_reapply"] = press["reapply"]
+        if press["has_orig"]:
+            ctx["pending_reapply_orig"] = press["reapply_orig"]
+        else:
+            ctx.pop("pending_reapply_orig", None)
+
+    if not press.get("saved"):
+        _flags()
+        return True
+    snap = press.get("bytes")
+    if snap is None or press.get("saved_fp") is None:
+        return False
+    store, wc = ctx["store"], ctx["working_copy"]
+    pre = press.get("log") or []
+    try:
+        with _active_wc_lock(ctx):
+            with store._lock:
+                if working_copy.working_fingerprint(wc) != press["saved_fp"]:
+                    return False
+                if (id(store.merged), id(store.state), id(store.wiring)) != press["docs"]:
+                    return False
+                log = store.change_log
+                ours = {id(e) for e in pre}
+                if any(id(e) in ours for e in log):
+                    return False        # the save did not clear what it was handed
+                steps = store.mutations_since(press["seq"])
+                if (steps is None or len(steps) != len(log)
+                        or any(s[1] != e.dot_path for s, e in zip(steps, log))):
+                    return False
+                working_copy.restore_working_bytes(wc, snap)
+                store.change_log[:0] = pre
+    except Exception:  # noqa: BLE001 -- the save then stands, honestly
+        logger.warning("putting a refused press's save back failed", exc_info=True)
+        return False
+    _flags()
+    return True
+
+
+def _apply_preflight(ctx) -> bool:
+    """True when an UNFORCED push must be refused -- decided before anything is
+    stashed, journaled or saved, so the refusal changes nothing (docs/255).
+
+    The live CONTENT moved away from the sync point (``live_moved``: a touch
+    is not a move -- it re-anchors) and it is not already what the press would
+    write (docs/116: a no-op is not a conflict -- the payload is the store's
+    own documents, which the save writes). Anything unreadable or unexpected
+    answers False: the door's own gate then decides, exactly as before.
+
+    Stat first: with the live mtimes where the sync point left them (the
+    common case) nothing is read here -- ``apply_to_live``'s own gate reads
+    the content once, as it always did, and a change the mtimes hid (coarse
+    granularity) is refused there and put back by :func:`_press_undo`. Only a
+    moved mtime costs a content read before the save."""
+    wc, store = ctx.get("working_copy"), ctx.get("store")
+    if wc is None or store is None:
+        return False
+    try:
+        if not working_copy.live_changed(wc):
+            return False
+        if not working_copy.live_moved(wc):
+            return False
+        live_hash = working_copy.live_content_hash(wc)
+        with store._lock:
+            payload = working_copy.content_hash(store.state, store.wiring)
+        return payload != live_hash
+    except Exception:  # noqa: BLE001 -- the door's own gate still runs
+        logger.debug("apply preflight failed", exc_info=True)
+        return False
+
+
 #: docs/160 B: a wholesale load (a staged snapshot applied, a run's state
 #: applied to the chip, a restore) becomes ONE journal unit of leaf changes,
 #: capped -- past this it is recorded as a unit Ctrl+Z names but cannot walk
@@ -25214,6 +25351,9 @@ def _sync_pull_apply_to_live(ctx, replay, *, pulled_other_changes=False,
     # (passed into this helper): a concurrent /load flipping the active context
     # would otherwise stash onto the wrong chip, so a conflict retry from the tray
     # replays an empty stash and the user's edits vanish.
+    # docs/255: what the stash and the save below change, so a push the chip
+    # refuses after the save puts SM back where this press found it
+    _press = _press_begin(ctx)
     with store._lock:
         _clear_reapply(ctx)
         _stash_reapply(_capture_change_log_as_updates(store), ctx)
@@ -25221,8 +25361,7 @@ def _sync_pull_apply_to_live(ctx, replay, *, pulled_other_changes=False,
 
     if store.change_log:
         try:
-            with _active_wc_lock(ctx):
-                saver.save()
+            _press_save(ctx, _press)
         except OSError as exc:
             logger.warning(
                 "pull-apply save failed with %d unsaved entries: %s",
@@ -25235,8 +25374,16 @@ def _sync_pull_apply_to_live(ctx, replay, *, pulled_other_changes=False,
                     "close any program that has state.json open and retry."
                 ),
             }), 500
-        _journal_commit(ctx, _jrn_units)   # docs/107: the log is gone — journal it
+        # docs/107's journal commit happens where the push is DECIDED (docs/255)
         _set_working_dirty(True, ctx)
+
+    def _commit_journal() -> None:
+        if _press.get("saved"):
+            _journal_commit(ctx, _jrn_units)
+
+    def _refused_after_save() -> None:
+        if not _press_undo(ctx, _press):
+            _commit_journal()      # not provably ours to put back: the save stands
 
     # docs/20 v2 "Revert last apply": capture the PRE-apply live content.
     # audit-r10: pinned to the CAPTURED ctx (a concurrent /load must never
@@ -25264,6 +25411,7 @@ def _sync_pull_apply_to_live(ctx, replay, *, pulled_other_changes=False,
     if force and not walk and not pre_apply_ts and _live_files_present(wc):
         logger.warning("Refusing a forced pull-apply of %s: no pre-apply "
                        "backup could be taken", ctx.get("path"))
+        _refused_after_save()          # docs/255: the press changes nothing
         ctx["live_diverged"] = True
         return jsonify({"status": "error", "conflict": "no_backup",
                         "message": _UNBACKED_OVERWRITE_MSG}), 409
@@ -25277,6 +25425,10 @@ def _sync_pull_apply_to_live(ctx, replay, *, pulled_other_changes=False,
                 _before_tree = _live_merged_tree(wc)
             working_copy.apply_to_live(wc, force=force)
     except working_copy.StaleLiveError:
+        # docs/255: nothing was written, so nothing changes -- the save this
+        # press made is put back (the edits stay in the tray, the stash as it
+        # was).
+        _refused_after_save()
         # The live chip changed again while we merged. Keep the stash and hand
         # back the conflict tray so the user can retry / force / discard.
         # staged_conflict (docs/65): no stash to replay — the working copy IS
@@ -25294,16 +25446,19 @@ def _sync_pull_apply_to_live(ctx, replay, *, pulled_other_changes=False,
             "replay": replay,
         })
     except (OSError, ValueError) as exc:
+        _commit_journal()          # a failed write is not a refusal: the save stands
         _pd = ("the live folder is READ-ONLY (network share?) — "
                if getattr(exc, "errno", None) in (13, 1) else "")
         return jsonify({"status": "error",
                         "message": f"Apply to live failed: {_pd}{exc}"}), 500
     except Exception as exc:  # noqa: BLE001 — r16 6: honest message, never a dropped 500
         logger.exception("apply-to-live (sync) unexpected failure")
+        _commit_journal()
         return jsonify({"status": "error",
                         "message": f"Apply to live failed unexpectedly: "
                                    f"{type(exc).__name__}: {exc}"}), 500
 
+    _commit_journal()              # docs/107 (docs/255: once the push is decided)
     _set_working_dirty(False, ctx)
     # docs/160 B: staged wholesale content (a snapshot / a run's state) just
     # reached the chip with no change-log entries to journal -- record the
@@ -25412,6 +25567,111 @@ def _keep_mine_reask(ctx, store):
     return resp
 
 
+def _apply_stale_refusal(ctx, store, _auto):
+    """The answer to an unforced push the live chip refused because its content
+    moved (``stale_live``) -- one body for the refusal decided before the save
+    (docs/255 ``_apply_preflight``) and the one only visible after it (the
+    save then put back). Nothing was written, and nothing changed in SM."""
+    wc = ctx["working_copy"]
+    # QA F5: the refusal is a verdict about the LIVE chip, so it lives in
+    # ctx like every other one -- the conflict fragment alone was the only
+    # record, and any re-render (a reload, another page) dropped it. From
+    # the content hash, not the mtime: a save that changed nothing must
+    # not raise a banner that nothing would ever lower (raise-only while
+    # the working copy holds edits).
+    try:
+        if working_copy.live_diverged_now(wc):
+            ctx["live_diverged"] = True
+    except Exception:  # noqa: BLE001 — an advisory flag, never a failure
+        logger.debug("post-conflict divergence verdict failed", exc_info=True)
+    if request.headers.get("Accept", "").startswith("application/json"):
+        # docs/172: a machine caller must not read the conflict fragment
+        # as success -- nothing was written (apply_to_live raises first).
+        # docs/255: and nothing changed in SM -- say so, and what it still
+        # holds that live does not (D-04: the tray used to be empty here).
+        _n = len(store.change_log)
+        _kept = (f"{_n} staged edit{'s' if _n != 1 else ''} "
+                 f"{'are' if _n != 1 else 'is'} still in the tray" if _n
+                 else "the working state SM holds is unchanged")
+        return jsonify(ok=False, conflict="stale_live", pending=_n,
+                       live_diverged=bool(ctx.get("live_diverged")),
+                       message="the live files' content changed since SM last synced; "
+                               "nothing was written and nothing changed in SM -- "
+                               f"{_kept}. Take live needs an empty tray (undo yours "
+                               "first), or let a human merge"), 409
+    # docs/255: the edits are still in the tray (or, for a staged version,
+    # the working copy) for the pull choice; staged_conflict — see the sync twin
+    _staged_conflict = bool(ctx.get("working_dirty")) and (
+        bool(ctx.get("staged_base")) or not ctx.get("pending_reapply"))
+    # docs/187 (3): decide the Auto-Sync verdict BEFORE rendering, so the
+    # tray can state it. The disarm used to happen after the body was
+    # already a finished string, which is why the tray could say nothing.
+    # docs/187 R4: and only where the merge CAN work. `/state/sync?mode=apply`
+    # takes the docs/65 carve-out for a staged/saved payload and delegates
+    # without pulling -- re-issuing the push that just conflicted -- so
+    # signalling a merge there buys three futile rounds and then the same
+    # disarm, while the tray claims to be resolving something. For that
+    # class the honest answer is docs/117's original one: turn the session
+    # off and let the person choose, which is what the staged branch of the
+    # tray is for (it deliberately does not offer pull-and-re-apply).
+    _will_merge = bool(_auto and _auto.get("pull")
+                       and _auto.get("merge_tries", 0) < _AUTO_MERGE_TRIES
+                       and not _staged_conflict)
+    # docs/117: nothing was written (apply_to_live raises BEFORE its write)
+    # and the edit is safe in the tray (docs/255), but a background writer the
+    # user may have forgotten about must never keep pushing at a chip that
+    # moved. Disarm, and say so where they are looking.
+    #
+    # docs/187 amends that for ONE case: a session that armed PULL has
+    # already granted SM permission to take live changes, and a push that
+    # finds live moved is precisely what pull exists to resolve. Disarming
+    # there turned the feature off on the bench it was built for -- a
+    # qualibrate node saves the chip every 30-60s, so Auto-Sync died within
+    # a minute of arming and every later edit silently stopped reaching the
+    # chip while the user kept typing (reproduced in real Chrome).
+    #
+    # The merge is the composition of the two permissions the user granted,
+    # not a new one: pull the live change, re-apply the user's edits on top,
+    # push. It is `pull_replace`-neutral -- that flag governs whether an
+    # auto-PULL may DISCARD the user's values, and this path keeps them.
+    #
+    # The client presses the same door the conflict tray offers
+    # (doStateSync('apply')); the decision of whether it MAY is made here,
+    # like every other Auto-Sync branch (docs/120 item 8).
+    if _auto is None:
+        return _conflict_tray(ctx, store, staged_conflict=_staged_conflict)
+    if _will_merge:
+        _auto["merge_tries"] = _auto.get("merge_tries", 0) + 1
+        resp = make_response(_conflict_tray(
+            ctx, store, staged_conflict=_staged_conflict,
+            auto_merging=True))
+        resp.headers["HX-Trigger"] = json.dumps({
+            # docs/187 R2: name the chip that conflicted. The client hands
+            # this exact token back, so a chip switch between the signal
+            # and the press (the latch wait is up to ~2s, and the context
+            # registry is shared with every other window) is a refusal
+            # rather than a write onto the wrong chip.
+            "autoSyncMerge": {"tries": _auto["merge_tries"],
+                              "chip": _active_chip_token() or ""},
+        })
+        return resp
+    # No pull permission, or the merge itself keeps conflicting -- something
+    # is genuinely wrong and a background writer must not keep trying. The
+    # tray is rendered with the verdict, so it can SAY it was turned off
+    # rather than leaving a toast as the only mention (docs/187 3).
+    # Pop BEFORE rendering, or the pill reads the session that is about to
+    # be thrown away and paints itself ON while the line beside it says the
+    # opposite. `_auto_disarm_response` pops again; it is idempotent.
+    # Reaching here means `_auto` is armed and `_will_merge` is false, so
+    # the disarm is certain -- a `_will_disarm` variable here could only
+    # ever be True, and reads as though it might not be (the sweep caught
+    # it as a no-op mutation).
+    ctx.pop("auto_apply", None)
+    body = _conflict_tray(ctx, store, staged_conflict=_staged_conflict,
+                          auto_disarmed=True)
+    return _auto_disarm_response(ctx, body, "conflict")
+
+
 @bp.route("/state/apply-to-live", methods=["POST"])
 @_live_write_critical
 def state_apply_to_live():
@@ -25472,9 +25732,37 @@ def state_apply_to_live():
     # It is still the only thing that writes live; the session just presses it.
     _auto = _auto_apply_state(ctx)
 
+    # docs/255: an unforced push onto a chip whose CONTENT moved is refused
+    # HERE, before anything is stashed, journaled or saved -- a refused press
+    # changes nothing (the tray, the working copy, the journal, the live
+    # files), and the tray keeps showing what SM holds that live does not.
+    if not force and _apply_preflight(ctx):
+        return _apply_stale_refusal(ctx, store, _auto)
+
+    # QA correctness-r2-09: the live chip moved while the Keep-mine confirm was
+    # open -- the user consented to replacing the values it named, not these.
+    # Nothing is written; the page asks again with the new count
+    # (keepMineReask). docs/255: checked before the save too (it used to run
+    # after it, leaving the tray saved away under a refusal), and still before
+    # the backup, so a refused push records no version.
+    if expect_live_hash is not None:
+        try:
+            _now = working_copy.live_content_hash(wc)
+        except (OSError, ValueError):
+            _now = None
+        if _now != expect_live_hash:
+            ctx["live_diverged"] = True
+            if request.headers.get("Accept", "").startswith("application/json"):
+                return jsonify(ok=False, conflict="live_moved",
+                               message=_LIVE_MOVED_DURING_CONFIRM_MSG), 409
+            return _keep_mine_reask(ctx, store)
+
     # Stash the edits before save() clears the change log, so if this hits a
     # staleness conflict the subsequent pull can re-apply or stage them. Pin to
     # the captured ctx so a concurrent /load can't divert the stash to another chip.
+    # docs/255: _press records what the stash and the save change, so a
+    # refusal found only after the save (a write racing the press) puts it back.
+    _press = _press_begin(ctx)
     with store._lock:
         _stash_reapply(_capture_change_log_as_updates(store), ctx)
         _jrn_units = _journal_prepare(          # docs/107: outgoing log
@@ -25485,8 +25773,7 @@ def state_apply_to_live():
 
     if store.change_log:
         try:
-            with _active_wc_lock(ctx):
-                saver.save()
+            _press_save(ctx, _press)
         except OSError as exc:
             # Narrow except (Phase 2 finding §5.1). The change_log is still
             # populated, so a retry after the user clears the file lock will
@@ -25508,8 +25795,22 @@ def state_apply_to_live():
                 ),
                 level="error",
             ), 500
-        _journal_commit(ctx, _jrn_units)   # docs/107: the log is gone — journal it
+        # docs/107's journal commit moved to where the push is DECIDED
+        # (docs/255): a refused press must not leave a unit for a write that
+        # never happened. Every exit below commits or puts the save back.
         _set_working_dirty(True, ctx)
+
+    def _commit_journal() -> None:
+        """docs/107 phase 2, at the exit where the push is decided: the units
+        this press saved, never for a save that did not happen."""
+        if _press.get("saved"):
+            _journal_commit(ctx, _jrn_units)
+
+    def _refused_after_save() -> None:
+        """docs/255: the chip refused after this press saved -- put the save
+        back; when that is not provably safe the save stands, journaled."""
+        if not _press_undo(ctx, _press):
+            _commit_journal()
 
     # docs/20 v2 "Revert last apply": capture the PRE-apply live content.
     # audit-r10: ctx-pinned + content-matched fallback (see the sync twin —
@@ -25518,23 +25819,6 @@ def state_apply_to_live():
     # "revert last apply" means "put back what the chip held when I armed it"
     # (the user's own choice; per-change revert is the applied log's X). Taking
     # it once is also what stops a 10-minute session writing 200 full snapshots.
-    if expect_live_hash is not None:
-        # QA correctness-r2-09: the live chip moved while the Keep-mine
-        # confirm was open -- the user consented to replacing the values it
-        # named, not these. Nothing is written; the page asks again with the
-        # new count (keepMineReask). Checked before the backup, so a refused
-        # push records no version.
-        try:
-            _now = working_copy.live_content_hash(wc)
-        except (OSError, ValueError):
-            _now = None
-        if _now != expect_live_hash:
-            ctx["live_diverged"] = True
-            if request.headers.get("Accept", "").startswith("application/json"):
-                return jsonify(ok=False, conflict="live_moved",
-                               message=_LIVE_MOVED_DURING_CONFIRM_MSG), 409
-            return _keep_mine_reask(ctx, store)
-
     def _take_pre_apply_backup():
         try:
             _hm = _history()
@@ -25586,6 +25870,7 @@ def state_apply_to_live():
     if force and not pre_apply_ts and _live_files_present(wc):
         logger.warning("Refusing a forced apply-to-live of %s: no pre-apply "
                        "backup could be taken", ctx.get("path"))
+        _refused_after_save()          # docs/255: the press changes nothing
         ctx["live_diverged"] = True
         if request.headers.get("Accept", "").startswith("application/json"):
             return jsonify(ok=False, conflict="no_backup",
@@ -25619,99 +25904,18 @@ def state_apply_to_live():
         if expect_live_hash is not None and _auto is None:
             # QA correctness-r2-09: the tight re-check inside apply_to_live --
             # a write landed between the check above and the write
+            _refused_after_save()      # docs/255: the press changes nothing
             ctx["live_diverged"] = True
             if request.headers.get("Accept", "").startswith("application/json"):
                 return jsonify(ok=False, conflict="live_moved",
                                message=_LIVE_MOVED_DURING_CONFIRM_MSG), 409
             return _keep_mine_reask(ctx, store)
-        # QA F5: the refusal is a verdict about the LIVE chip, so it lives in
-        # ctx like every other one -- the conflict fragment alone was the only
-        # record, and any re-render (a reload, another page) dropped it. From
-        # the content hash, not the mtime: a save that changed nothing must
-        # not raise a banner that nothing would ever lower (raise-only while
-        # the working copy holds edits).
-        try:
-            if working_copy.live_diverged_now(wc):
-                ctx["live_diverged"] = True
-        except Exception:  # noqa: BLE001 — an advisory flag, never a failure
-            logger.debug("post-conflict divergence verdict failed", exc_info=True)
-        if request.headers.get("Accept", "").startswith("application/json"):
-            # docs/172: a machine caller must not read the conflict fragment
-            # as success -- nothing was written (apply_to_live raises first).
-            return jsonify(ok=False, conflict="stale_live",
-                           message="the live files changed since SM last synced; "
-                                   "nothing was written -- take live (empty tray) or let a human merge"), 409
-        # stash kept for the pull choice; staged_conflict — see the sync twin
-        _staged_conflict = bool(ctx.get("working_dirty")) and (
-            bool(ctx.get("staged_base")) or not ctx.get("pending_reapply"))
-        # docs/187 (3): decide the Auto-Sync verdict BEFORE rendering, so the
-        # tray can state it. The disarm used to happen after the body was
-        # already a finished string, which is why the tray could say nothing.
-        # docs/187 R4: and only where the merge CAN work. `/state/sync?mode=apply`
-        # takes the docs/65 carve-out for a staged/saved payload and delegates
-        # without pulling -- re-issuing the push that just conflicted -- so
-        # signalling a merge there buys three futile rounds and then the same
-        # disarm, while the tray claims to be resolving something. For that
-        # class the honest answer is docs/117's original one: turn the session
-        # off and let the person choose, which is what the staged branch of the
-        # tray is for (it deliberately does not offer pull-and-re-apply).
-        _will_merge = bool(_auto and _auto.get("pull")
-                           and _auto.get("merge_tries", 0) < _AUTO_MERGE_TRIES
-                           and not _staged_conflict)
-        # docs/117: nothing was written (apply_to_live raises BEFORE its write)
-        # and the edit is safe in the working copy, but a background writer the
-        # user may have forgotten about must never keep pushing at a chip that
-        # moved. Disarm, and say so where they are looking.
-        #
-        # docs/187 amends that for ONE case: a session that armed PULL has
-        # already granted SM permission to take live changes, and a push that
-        # finds live moved is precisely what pull exists to resolve. Disarming
-        # there turned the feature off on the bench it was built for -- a
-        # qualibrate node saves the chip every 30-60s, so Auto-Sync died within
-        # a minute of arming and every later edit silently stopped reaching the
-        # chip while the user kept typing (reproduced in real Chrome).
-        #
-        # The merge is the composition of the two permissions the user granted,
-        # not a new one: pull the live change, re-apply the user's edits on top,
-        # push. It is `pull_replace`-neutral -- that flag governs whether an
-        # auto-PULL may DISCARD the user's values, and this path keeps them.
-        #
-        # The client presses the same door the conflict tray offers
-        # (doStateSync('apply')); the decision of whether it MAY is made here,
-        # like every other Auto-Sync branch (docs/120 item 8).
-        if _auto is None:
-            return _conflict_tray(ctx, store, staged_conflict=_staged_conflict)
-        if _will_merge:
-            _auto["merge_tries"] = _auto.get("merge_tries", 0) + 1
-            resp = make_response(_conflict_tray(
-                ctx, store, staged_conflict=_staged_conflict,
-                auto_merging=True))
-            resp.headers["HX-Trigger"] = json.dumps({
-                # docs/187 R2: name the chip that conflicted. The client hands
-                # this exact token back, so a chip switch between the signal
-                # and the press (the latch wait is up to ~2s, and the context
-                # registry is shared with every other window) is a refusal
-                # rather than a write onto the wrong chip.
-                "autoSyncMerge": {"tries": _auto["merge_tries"],
-                                  "chip": _active_chip_token() or ""},
-            })
-            return resp
-        # No pull permission, or the merge itself keeps conflicting -- something
-        # is genuinely wrong and a background writer must not keep trying. The
-        # tray is rendered with the verdict, so it can SAY it was turned off
-        # rather than leaving a toast as the only mention (docs/187 3).
-        # Pop BEFORE rendering, or the pill reads the session that is about to
-        # be thrown away and paints itself ON while the line beside it says the
-        # opposite. `_auto_disarm_response` pops again; it is idempotent.
-        # Reaching here means `_auto` is armed and `_will_merge` is false, so
-        # the disarm is certain -- a `_will_disarm` variable here could only
-        # ever be True, and reads as though it might not be (the sweep caught
-        # it as a no-op mutation).
-        ctx.pop("auto_apply", None)
-        body = _conflict_tray(ctx, store, staged_conflict=_staged_conflict,
-                              auto_disarmed=True)
-        return _auto_disarm_response(ctx, body, "conflict")
+        _refused_after_save()          # docs/255: the press changes nothing
+        return _apply_stale_refusal(ctx, store, _auto)
     except (OSError, ValueError) as exc:
+        # A FAILED write is not a refusal: the save stands, as it always did
+        # (the edits are in the working copy; a retry pushes them) -- journal it.
+        _commit_journal()
         # docs/114 (#16): the read-only case fails HERE (the LIVE write), not
         # in the working-copy save — name it where it actually happens.
         _pd = ("the live folder is READ-ONLY (network share?) — "
@@ -25724,6 +25928,7 @@ def state_apply_to_live():
         return _body, 500
     except Exception as exc:  # noqa: BLE001 — r16 6: honest message, never a dropped 500
         logger.exception("apply-to-live unexpected failure")
+        _commit_journal()                  # the save stands (see above)
         _body = render_template(
             "_status.html", level="error",
             message=f"Apply to live failed unexpectedly: "
@@ -25732,6 +25937,7 @@ def state_apply_to_live():
             return _auto_disarm_response(ctx, _body, "error", status=500)
         return _body, 500
 
+    _commit_journal()                  # docs/107 (docs/255: once the push is decided)
     if _backup_deferred and not pre_apply_ts:
         # QA F5: the deferred case landed -- the adopt (live already held the
         # payload), so the "pre-apply" content is what live holds now

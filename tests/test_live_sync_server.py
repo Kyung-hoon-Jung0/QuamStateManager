@@ -260,15 +260,16 @@ class TestOneClickApplyAsksAboutASameFieldCollision:
         assert _live(env)["qubits"]["qA1"]["T2ramsey"] == 1.23e-6
 
     def test_the_conflict_tray_retry_asks_about_a_same_field_move(self, env):
-        # (review) apply-to-live hit the staleness conflict and the edits went
-        # into the reapply stash. The conflict tray says only "an experiment
-        # program updated the live state" -- it never names the field -- so its
-        # "Pull & apply (merge)" used to replace the node's value unasked.
+        # (review) apply-to-live hit the staleness conflict. The conflict tray
+        # says only "an experiment program updated the live state" -- it never
+        # names the field -- so its "Pull & apply (merge)" used to replace the
+        # node's value unasked. docs/255: the refused press no longer saves the
+        # edit away into the reapply stash; it stays in the tray.
         _edit(env, _T2R, "1.23e-6")
         _write_chip(env["live"], _state(t2r=9.99e-7), future=True)
         html = env["client"].post("/state/apply-to-live").data.decode()
         assert "Apply wrote nothing" in html
-        assert _ctx(env).get("pending_reapply")
+        assert [e.dot_path for e in _ctx(env)["store"].change_log] == [_T2R]
         d = _apply(env).get_json()
         assert d["status"] == "collision" and d["paths"] == [_T2R], d
         assert _live(env)["qubits"]["qA1"]["T2ramsey"] == 9.99e-7, "nothing written"
@@ -281,7 +282,7 @@ class TestOneClickApplyAsksAboutASameFieldCollision:
         _edit(env, _T2R, "1.23e-6")
         _node_writes(env, T1=9.9e-5)
         env["client"].post("/state/apply-to-live")
-        assert _ctx(env).get("pending_reapply")
+        assert [e.dot_path for e in _ctx(env)["store"].change_log] == [_T2R]   # docs/255
         d = _apply(env).get_json()
         assert d["status"] == "ok", d
         live = _live(env)["qubits"]["qA1"]
@@ -470,8 +471,11 @@ class TestTheAppliedLogListsOnlyWhatLanded:
         assert _live(env)["qubits"]["qA1"]["T1"] == 1.77e-5, "nothing was written"
         rows = _rows(env)
         assert [row["entries"][-1]["new"] for row in rows] == [1.32e-5, 1.31e-5], rows
-        # ...while Ctrl+Z still has the saved edit to walk (docs/107)
-        assert len(_ctx(env)["undo_units"]) == 3
+        # ...and the journal holds only what landed: docs/255, a refused push
+        # changes nothing -- the refused edit is still IN THE TRAY (where
+        # Ctrl+Z pops it first), not saved away and journaled as a unit
+        assert len(_ctx(env)["undo_units"]) == 2
+        assert [e.new_value for e in _ctx(env)["store"].change_log] == [1.34e-5]
         # the applied log renders exactly those rows -- sync-ux 2026-09-25 (user decision: one control + one panel): in the panel
         assert c.get("/state/review").data.decode().count('class="applied-log-row') == 2
 

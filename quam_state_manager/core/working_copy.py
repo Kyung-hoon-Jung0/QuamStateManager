@@ -19,6 +19,7 @@ from __future__ import annotations
 import hashlib
 import json
 import logging
+import os
 import re
 import shutil
 import time
@@ -438,6 +439,98 @@ def live_diverged_now(wc: WorkingCopy) -> bool | None:
     return live_hash != wc.synced_live_hash
 
 
+def live_moved(wc: WorkingCopy) -> bool:
+    """Has the live CONTENT moved away from the sync point? (docs/255)
+
+    The question :func:`apply_to_live`'s gate refuses on behalf of (docs/116:
+    "would this write destroy someone else's write?"). An mtime is only the
+    cheap first look: live files touched without a content change -- the same
+    bytes with a new mtime (a backup tool, an editor's no-op save, QUAlibrate
+    re-saving unchanged content), or a re-serialisation of the same documents
+    -- hold nothing a write could destroy. Such a touch RE-ANCHORS the sync
+    point's mtimes (meta first, like every sync point; the content hash stays)
+    and is not a move, exactly as :func:`reconcile_with_live` has always
+    treated it ("mtime refresh"). Before docs/255 the apply gate alone read
+    the mtime as the answer, so a touch refused every apply while the drift
+    banner (content-based) said nothing had changed -- a deadlock (D-03).
+
+    * mtimes unchanged -> the content hash is still compared when a baseline
+      exists (coarse mtime granularity can hide a real write);
+    * no baseline (legacy meta) -> the mtime is all there is: moved == changed;
+    * live unreadable -> moved exactly when the mtimes moved (unchanged mtimes
+      let the write path surface the read error, as before).
+
+    Raises ``OSError`` when the live files cannot even be stat'ed (missing),
+    like :func:`live_changed`.
+    """
+    st_mt, wi_mt = safe_io.state_wiring_mtimes(wc.live_folder)
+    mt_moved = (st_mt != wc.synced_state_mtime or wi_mt != wc.synced_wiring_mtime)
+    if wc.synced_live_hash is None:
+        return mt_moved
+    try:
+        live_hash = live_content_hash(wc)
+    except (OSError, ValueError):
+        return mt_moved
+    if live_hash != wc.synced_live_hash:
+        return True
+    if mt_moved:
+        # A touch. The mtimes were read BEFORE the content, so a write landing
+        # after the read leaves them older than the files: the next look (the
+        # write path's re-check) sees them move again and reads the content
+        # again -- a real write is never re-anchored over.
+        try:
+            wc._write_meta_pair(st_mt, wi_mt, wc.synced_live_hash)
+            wc.synced_state_mtime = st_mt
+            wc.synced_wiring_mtime = wi_mt
+            logger.info("Live files touched without a content change; sync point "
+                        "re-anchored: %s", wc.live_folder)
+        except OSError:
+            logger.warning("Re-anchoring the sync point after a touch failed for %s",
+                           wc.key, exc_info=True)
+    return False
+
+
+def read_working_bytes(wc: WorkingCopy) -> dict:
+    """The working pair's exact bytes and stat fingerprint (docs/255).
+
+    Taken by a live-write press right before it saves, so a press the live
+    chip refuses AFTER that save can put the working copy back byte-for-byte
+    (:func:`restore_working_bytes`). Callers hold the working copy's build
+    lock, so no other SM writer can replace the pair mid-read; the fingerprint
+    bracket still refuses a torn read (``LiveFileError``)."""
+    folder = Path(wc.working_folder)
+    before = safe_io._pair_fingerprint(folder)
+    with safe_io.open_shared(folder / "state.json") as f:
+        sb = f.read()
+    with safe_io.open_shared(folder / "wiring.json") as f:
+        wb = f.read()
+    after = safe_io._pair_fingerprint(folder)
+    if before != after:
+        raise safe_io.LiveFileError(
+            f"the working copy {folder} changed while it was read")
+    return {"state": sb, "wiring": wb, "fp": before}
+
+
+def working_fingerprint(wc: WorkingCopy) -> tuple:
+    """``safe_io._pair_fingerprint`` of the working pair (stat only)."""
+    return safe_io._pair_fingerprint(Path(wc.working_folder))
+
+
+def restore_working_bytes(wc: WorkingCopy, snap: dict) -> None:
+    """Write :func:`read_working_bytes`' bytes back and restore their mtimes,
+    so the pair is what it was before the press -- content, bytes and stat
+    fingerprint (the tray's ``edit_seq`` folds the mtimes in; a restored
+    mtime means no other window re-fetches for a change that never was)."""
+    folder = Path(wc.working_folder)
+    safe_io.write_state_wiring_bytes(folder, snap["state"], snap["wiring"])
+    (st_ns, _), (wi_ns, _) = snap["fp"]
+    for name, ns in (("state.json", st_ns), ("wiring.json", wi_ns)):
+        try:
+            os.utime(folder / name, ns=(ns, ns))
+        except OSError:
+            logger.debug("restoring %s mtime failed", name, exc_info=True)
+
+
 def live_content_hash(wc: WorkingCopy, *, attempts: int | None = None) -> str:
     """``content_hash(*read_live(wc))`` -- the same armored pair read and the
     same value -- keyed on the bytes read, so content SM has already seen
@@ -725,19 +818,16 @@ def apply_to_live(wc: WorkingCopy, *, force: bool = False,
     in-sync.
     """
     if not force:
-        stale = live_changed(wc)
-        if not stale and wc.synced_live_hash is not None:
-            # mtime says unchanged — but coarse filesystem mtime granularity (or
-            # an experiment write landing in the same tick as the last sync) can
-            # collide, making a real content change invisible to the mtime gate.
-            # We are about to OVERWRITE live, so confirm by content hash here. The
-            # extra read is justified on this destructive, user-initiated path; the
-            # background poll / cache-hit pre-check stays mtime-only (cheap, and
-            # must never block an experiment's atomic save).
-            try:
-                stale = live_content_hash(wc) != wc.synced_live_hash
-            except OSError:
-                stale = False   # unreadable live → let the write path surface it
+        # docs/255: the CONTENT decides (live_moved). mtime unchanged is still
+        # confirmed by content hash (coarse filesystem mtime granularity, or an
+        # experiment write landing in the same tick as the last sync, can hide
+        # a real change -- we are about to OVERWRITE live, so the extra read is
+        # justified on this destructive, user-initiated path; the background
+        # poll stays mtime-only). mtime moved with the content unchanged -- a
+        # touch -- re-anchors the sync point and is NOT stale: refusing it was
+        # the D-03 deadlock (every apply refused, while the drift banner and
+        # take-live both said nothing had changed).
+        stale = live_moved(wc)
         if stale:
             # docs/116: `stale` answers "did live move away from OUR sync
             # point?" — but the question this gate refuses on behalf of is
@@ -795,7 +885,12 @@ def apply_to_live(wc: WorkingCopy, *, force: bool = False,
             pre_mt = safe_io.state_wiring_mtimes(wc.live_folder)
         except OSError:
             pre_mt = None
-        if pre_mt is not None and pre_mt != (wc.synced_state_mtime, wc.synced_wiring_mtime):
+        # docs/255: a moved mtime is only the cheap first look here too -- a
+        # touch landing in this window re-anchors and is not a conflict (the
+        # content read happens only when the mtimes DID move, i.e. rarely)
+        if (pre_mt is not None
+                and pre_mt != (wc.synced_state_mtime, wc.synced_wiring_mtime)
+                and live_moved(wc)):
             raise StaleLiveError(
                 "The live state files changed while preparing to apply -- refusing "
                 "to overwrite an out-of-band write."

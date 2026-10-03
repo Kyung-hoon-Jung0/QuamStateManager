@@ -9,7 +9,8 @@ hold the amendment to its terms.
   - with no session every byte of the manual path is what it was (the apply
     route's HX-Trigger string is pinned literally);
   - the session NEVER forces: a live chip that moved is refused, the session
-    disarms itself, and the edit survives in the working copy;
+    disarms itself, and the edit survives in the tray (docs/255: a refused
+    flush changes nothing -- it is not saved away into the working copy);
   - "revert last apply" anchors to the SESSION (the user's choice), which is
     also what stops a long session writing a snapshot per edit;
   - the applied log is the undo journal, labelled — per chip, newest first;
@@ -220,9 +221,11 @@ class TestConflictDisarms:
         assert "pending-tray-conflict" in r.data.decode()
         assert "autoApplyDisarm" in r.headers.get("HX-Trigger", "")
         assert _ctx(env).get("auto_apply") is None, "the session is off"
-        # and the edit is still recoverable
+        # and the edit is still recoverable -- docs/255: still IN THE TRAY,
+        # where the user can see it, never saved away into the working copy
         ctx = _ctx(env)
-        assert ctx.get("working_dirty") or ctx.get("pending_reapply")
+        assert [e.dot_path for e in ctx["store"].change_log] == ["qubits.qA1.f_01"]
+        assert not ctx.get("working_dirty") and not ctx.get("pending_reapply")
 
     def test_after_a_conflict_the_user_can_resolve_and_land_it(self, env):
         c = env["client"]
