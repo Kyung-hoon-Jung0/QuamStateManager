@@ -131,10 +131,16 @@ def record(ev: dict, backend: str | None = None) -> dict:
 
 
 def main() -> int:
+    # B-09/C-27: a CLI process SM launched itself (the in-app agent, a setup Test) is already
+    # recorded and journaled by SM from its own event stream. Recording it here too journaled
+    # every in-app turn twice and put a setup Test into the lab's notes. Name kept in sync with
+    # agent_backend.IN_APP_ENV (this module stays import-light: it runs on every tool call).
     try:
-        raw = sys.stdin.read()
+        raw = sys.stdin.read()             # drained first, so the CLI never writes into a closed pipe
         ev = json.loads(raw) if raw.strip() else {}
     except Exception:  # noqa: BLE001
+        return 0
+    if os.environ.get("SM_IN_APP_SESSION"):
         return 0
     if not isinstance(ev, dict):
         return 0

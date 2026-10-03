@@ -390,3 +390,23 @@ class TestCodexCarriesTheLabsProvider:
         cmd = self._cmd(tmp_path, monkeypatch, 'model = "gpt-5.2-codex"\n')
         assert "model_provider" not in " ".join(cmd)
         assert cmd[cmd.index("-m") + 1] == "gpt-5.2-codex"
+
+
+class TestInAppProcessCarriesTheMark:
+    """B-09/C-27: every CLI process SM launches carries IN_APP_ENV, so the user's own hooks
+    (quam_state_manager.hook) skip it instead of journaling the turn a second time."""
+
+    def test_the_process_env_names_its_session(self, tmp_path, monkeypatch):
+        seen = []
+        real = ab.subprocess.Popen
+
+        def spy(*a, **k):
+            seen.append(dict(k.get("env") or {}))
+            return real(*a, **k)
+
+        monkeypatch.setattr(ab.subprocess, "Popen", spy)
+        got = []
+        p = ab.AgentProcess(_FakeCodex("codex", tmp_path / "x", sm_url="u"), on_event=got.append,
+                            prompt="hi", local_id="L1", env={"SM_IN_APP_SESSION": "forged"})
+        assert _wait(p, lambda: not p.alive())
+        assert seen and seen[0].get(ab.IN_APP_ENV) == "L1"

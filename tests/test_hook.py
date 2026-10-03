@@ -119,3 +119,21 @@ class TestSummaries:
         assert hook._failure({"hook_event_name": "PostToolUse", "tool_response": {"interrupted": True}})[0]
         assert hook._failure({"hook_event_name": "PostToolUse", "tool_response": "Error: no such file"})[0]
         assert hook._failure({"hook_event_name": "PostToolUse", "tool_response": "all good"}) == (False, None, None)
+
+
+class TestInAppProcessesAreNotRecordedTwice:
+    """B-09/C-27: SM journals its own CLI processes from their event stream. The user's hook
+    firing inside them journaled every in-app turn twice and a setup Test into the lab's notes."""
+
+    def test_the_hook_records_nothing_for_a_process_sm_launched(self, tmp_path):
+        ev = {"hook_event_name": "Stop", "session_id": "s1", "last_assistant_message": "the answer"}
+        r = _run(tmp_path, ev, SM_IN_APP_SESSION="abc123")
+        assert r.returncode == 0, r.stderr
+        assert not (tmp_path / "agent_events").exists()
+        r = _run(tmp_path, ev)
+        assert r.returncode == 0 and _last(tmp_path)["summary"] == "the answer", "a terminal session is still recorded"
+
+    def test_the_mark_name_is_the_one_agent_backend_sets(self):
+        from quam_state_manager.core import agent_backend
+        src = (ROOT / "quam_state_manager" / "hook.py").read_text(encoding="utf-8")
+        assert agent_backend.IN_APP_ENV == "SM_IN_APP_SESSION" and f'os.environ.get("{agent_backend.IN_APP_ENV}")' in src

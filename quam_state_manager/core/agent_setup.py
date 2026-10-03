@@ -127,11 +127,25 @@ def write_blockers(paths) -> list[str]:
     return out
 
 
-def _write_json(path: Path, data: dict) -> None:
+def _write_keeping_newlines(path: Path, text: str) -> None:
+    """Atomic write of *text* (``\\n`` line ends) in the file's OWN line-ending style (C-26).
+
+    ``Path.write_text`` on Windows turns every ``\\n`` into ``\\r\\n``, so one Connect +
+    Disconnect left the user's LF ``config.toml`` in CRLF. An existing CRLF file stays
+    CRLF; anything else, including a new file, is written LF, as both CLIs write theirs."""
+    try:
+        nl = "\r\n" if b"\r\n" in path.read_bytes() else "\n"
+    except OSError:
+        nl = "\n"
     path.parent.mkdir(parents=True, exist_ok=True)
     tmp = path.with_name(path.name + ".tmp")
-    tmp.write_text(json.dumps(data, indent=2), encoding="utf-8")
+    with open(tmp, "w", encoding="utf-8", newline=nl) as f:
+        f.write(text)
     os.replace(tmp, path)
+
+
+def _write_json(path: Path, data: dict) -> None:
+    _write_keeping_newlines(path, json.dumps(data, indent=2))
 
 
 # ----------------------------------------------------------- the commands
@@ -402,7 +416,9 @@ def codex_block(spec: dict) -> str:
 
 
 def _strip_block(text: str) -> str:
-    pat = re.compile(re.escape(TOML_START) + r".*?" + re.escape(TOML_END) + r"\n?", re.S)
+    """SM's block out, together with the blank line SM put before it (C-26: Disconnect left
+    one extra blank line per Connect). A newline that ends the user's own last line is kept."""
+    pat = re.compile(r"(?:(?<=\n)\n)?" + re.escape(TOML_START) + r".*?" + re.escape(TOML_END) + r"\n?", re.S)
     return pat.sub("", text)
 
 
@@ -429,10 +445,7 @@ def write_codex(spec: dict, home: Path | None = None) -> dict:
     p = codex_config_path(home)
     bak = backup(p)
     prev = preview_codex(spec, home)
-    p.parent.mkdir(parents=True, exist_ok=True)
-    tmp = p.with_name(p.name + ".tmp")
-    tmp.write_text(prev["after"], encoding="utf-8")
-    os.replace(tmp, p)
+    _write_keeping_newlines(p, prev["after"])
     return {"file": str(p), "backup": bak}
 
 
@@ -445,9 +458,7 @@ def remove_codex(home: Path | None = None) -> dict:
     if TOML_START not in cur:
         return {"file": str(p), "backup": None, "removed": False}
     bak = backup(p)
-    tmp = p.with_name(p.name + ".tmp")
-    tmp.write_text(_strip_block(cur), encoding="utf-8")
-    os.replace(tmp, p)
+    _write_keeping_newlines(p, _strip_block(cur))
     return {"file": str(p), "backup": bak, "removed": True}
 
 
@@ -591,10 +602,7 @@ def write_context(cal_folder: str | Path, block: str, *, target: str = "claude",
     prev = preview_context(cal_folder, block, target=target, local=local)
     p = Path(prev["file"])
     bak = backup(p)
-    p.parent.mkdir(parents=True, exist_ok=True)
-    tmp = p.with_name(p.name + ".tmp")
-    tmp.write_text(prev["after"], encoding="utf-8")
-    os.replace(tmp, p)
+    _write_keeping_newlines(p, prev["after"])
     out = {"file": str(p), "backup": bak}
     if prev.get("moves_from"):
         out["moved_from"] = _remove_stale_codex_block(Path(prev["moves_from"]))
@@ -608,9 +616,7 @@ def _remove_stale_codex_block(p: Path) -> dict:
     bak = backup(p)
     rest = _CTX_BLOCK.sub("", p.read_text(encoding="utf-8")).strip()
     if rest:
-        tmp = p.with_name(p.name + ".tmp")
-        tmp.write_text(rest + "\n", encoding="utf-8")
-        os.replace(tmp, p)
+        _write_keeping_newlines(p, rest + "\n")
         return {"file": str(p), "backup": bak, "removed_file": False}
     p.unlink()
     return {"file": str(p), "backup": bak, "removed_file": True}

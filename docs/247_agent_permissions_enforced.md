@@ -170,6 +170,28 @@ The old file was gone, with its backup kept.
 
 **Pins:** `TestCodexReadsAgentsMd` (4) + 4 assertions in `agent_setup_selfcheck.cjs`; 8/8 mutations red.
 
+## Follow-up: setup leaves files as it found them; SM's own sessions are journaled once (C-26, C-27, B-09)
+
+**C-26:** one Connect + Disconnect of Codex rewrote the user's `config.toml` with CRLF and left an extra blank line. There were two causes:
+- `Path.write_text` on Windows turns `
+` into `
+`;
+- `_strip_block` removed SM's block but not the blank line SM had put before it.
+
+Every file Setup writes now goes through `_write_keeping_newlines`: a CRLF file stays CRLF, and anything else (including a new file) is LF, as both CLIs write theirs. `_strip_block` also takes the separator, but only a blank one: a newline that ends the user's own last line stays. A Connect + Disconnect now gives back the same bytes.
+
+**C-27 / B-09:** SM journals its own CLI processes (the in-app agent, a setup Test) from their event stream. The user's Claude Code hooks still fired inside those processes, so every in-app turn was journaled twice and a setup Test landed in the lab's notes.
+- Every process SM launches now carries `SM_IN_APP_SESSION=<local id>` (`agent_backend.IN_APP_ENV`), set after the caller's env so it cannot be overridden.
+- `quam_state_manager.hook` drains stdin and then records nothing for such a process.
+
+**Real CLI:** `claude -p` (haiku) with a Stop hook running this module. A terminal session wrote 1 record; the same call with the mark wrote 0. This means Claude Code passes its environment to hook processes.
+
+**Pins:**
+- `TestConnectDisconnectLeavesTheFileAsItWas` (4);
+- `TestInAppProcessesAreNotRecordedTwice` (2);
+- `TestInAppProcessCarriesTheMark` (1);
+- 8/8 mutations red.
+
 ## Open
 
 - SM's MCP bridge already returns `instructions` (the read/stage/apply path). They do not yet say "never edit state.json directly, never run `python <node>.py`", the rule the file carries. Codex 0.159.2 surfaces them once the server is loaded, so adding that rule there is a cheap second channel (`mcp.py`, after the bridge-safety merge).

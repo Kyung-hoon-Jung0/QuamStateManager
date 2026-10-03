@@ -719,3 +719,43 @@ class TestCodexReadsAgentsMd:
         s = c.get("/api/agent/setup").get_json()
         assert s["context_unread"] == [] and "context" not in s["todo"]
         assert s["context"]["codex:shared"] == str(c._cal / "AGENTS.md")
+
+
+class TestConnectDisconnectLeavesTheFileAsItWas:
+    """C-26: one Connect + Disconnect rewrote the user's LF config.toml as CRLF and left an
+    extra blank line. A round trip must give back the same BYTES; a CRLF file stays CRLF."""
+
+    def test_lf_config_round_trips_byte_identical(self, home):
+        p = st.codex_config_path(home)
+        p.parent.mkdir(parents=True, exist_ok=True)
+        orig = b'model = "gpt-5"\n\n[projects.\'d:\\\\work\\\\x\']\ntrust_level = "trusted"\n'
+        p.write_bytes(orig)
+        st.write_codex(st.mcp_server_spec("D:/envs/py.exe", "D:/repo"), home)
+        mid = p.read_bytes()
+        assert b"\r\n" not in mid and st.TOML_START.encode() in mid
+        st.remove_codex(home)
+        assert p.read_bytes() == orig
+
+    def test_crlf_config_stays_crlf_and_round_trips(self, home):
+        p = st.codex_config_path(home)
+        p.parent.mkdir(parents=True, exist_ok=True)
+        orig = b'model = "gpt-5"\r\n'
+        p.write_bytes(orig)
+        st.write_codex(st.mcp_server_spec("D:/envs/py.exe", "D:/repo"), home)
+        mid = p.read_bytes()
+        assert mid.count(b"\n") == mid.count(b"\r\n") and st.TOML_START.encode() in mid
+        st.remove_codex(home)
+        assert p.read_bytes() == orig
+
+    def test_a_block_right_after_the_users_last_line_keeps_that_lines_newline(self):
+        block = st.TOML_START + "\n[mcp_servers.x]\n" + st.TOML_END + "\n"
+        assert st._strip_block("a = 1\n" + block + "b = 2\n") == "a = 1\nb = 2\n"
+        assert st._strip_block(block) == ""
+        assert st._strip_block("a = 1\n\n" + block) == "a = 1\n"
+
+    def test_json_settings_keep_lf(self, home):
+        p = st.claude_json_path(home)
+        p.parent.mkdir(parents=True, exist_ok=True)
+        p.write_bytes(b'{\n  "numStartups": 3\n}\n')
+        st._write_json(p, {"numStartups": 3, "mcpServers": {}})
+        assert b"\r\n" not in p.read_bytes()

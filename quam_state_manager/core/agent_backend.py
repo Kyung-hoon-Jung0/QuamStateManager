@@ -74,6 +74,7 @@ CODEX_REQUIRED_FLAGS = ("--ignore-user-config", "--ignore-rules")
 READ_TOOLS = ("sm_status", "state_get", "state_search", "tray", "versions", "field_history", "runs", "run",
               "diagnostics", "check_fit", "families", "family_manual", "journal_read", "approvals", "plan_status")
 MCP_TOOL_TIMEOUT_S = 30 * 60      # run_node blocks up to wait_s (<= 60 min); both CLIs default far lower
+IN_APP_ENV = "SM_IN_APP_SESSION"  # set on every CLI process SM launches; quam_state_manager.hook reads it
 _LIMIT_RE = re.compile(r"(limit|quota|rate).{0,80}?(resets?|until|at)\s*(\d{1,2}(?::\d{2})?\s*(?:am|pm)?)", re.I)
 
 
@@ -541,6 +542,10 @@ class AgentProcess:
         cmd = resolve_command(backend.command(resume=resume, prompt=prompt))
         full_env = dict(os.environ, PYTHONUTF8="1", MCP_TOOL_TIMEOUT=str(MCP_TOOL_TIMEOUT_S * 1000))
         full_env.update(env or {})
+        # B-09/C-27: SM already reads this process's own event stream and journals its turns. The
+        # user's Claude Code hooks still fire inside it and would journal every turn a second time
+        # (and a setup Test into the lab's notes); the hook skips a process that carries this mark.
+        full_env[IN_APP_ENV] = self.ctx["local_id"]
         self.cmd = cmd
         self.proc = subprocess.Popen(cmd, stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
                                      text=True, encoding="utf-8", errors="replace", env=full_env,
