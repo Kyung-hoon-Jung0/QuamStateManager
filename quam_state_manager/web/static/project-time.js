@@ -437,7 +437,8 @@
         for (var i = 0; i < cards.length; i++) {
             var v = _views[cards[i].getAttribute('data-tz-card')];
             if (!v || !v.zone) continue;
-            cards[i].textContent = 'tz ' + cityOf(v.zone) + ' ' + offsetText(offsetMinutes(v.zone, now));
+            cards[i].textContent = v.zone === 'UTC' ? 'tz UTC'
+                : 'tz ' + cityOf(v.zone) + ' ' + offsetText(offsetMinutes(v.zone, now));
             cards[i].title = 'Times shown in ' + v.zone;
         }
     }
@@ -567,7 +568,10 @@
                                { 'data-pt-choice': 'ignore' }));
         d.appendChild(row);
         d.appendChild(msg);
-        var from = window.SnapTime && ask.from_utc ? window.SnapTime.display(ask.from_utc) : ask.from_utc;
+        // the regime starts at a RUN (its own clock is the skewed one, so a
+        // time here would read an hour off the seen times above it)
+        var from = ask.from_key ? 'run ' + String(ask.from_key).split('::').pop().split('/').pop()
+            : (window.SnapTime && ask.from_utc ? window.SnapTime.display(ask.from_utc) : ask.from_utc);
         d.appendChild(el('p', 'pt-text muted pt-small', 'Only “The experiment PC’s clock” changes how run '
             + 'times are shown: corrected from ' + from + ' on, labelled “corrected”, the recorded time kept '
             + 'beside it. SM asks again only if the difference changes.'));

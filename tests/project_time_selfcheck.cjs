@@ -217,6 +217,15 @@ const btn = (doc, sel) => doc.querySelector(sel);
     await until(() => /Does it match your watch/.test((W.d.getElementById('pt-zone-dialog') || {}).textContent || ''));
     ok(/Now 12:0\d in Asia\/Tokyo/.test(W.d.getElementById('pt-zone-dialog').textContent), 'P7: straight to the watch check');
   }
+  // P7b -- UTC reads once on the card
+  {
+    const W = await mk({ osOff: '+00:00' });
+    await until(() => W.w.ProjectTime._state().clock);
+    W.w.ProjectTime.pick('UTC');
+    await until(() => posts(W, '/project-time/zone').length === 1);
+    await tick(10);
+    ok(W.d.querySelector('[data-tz-card="alpha"]').textContent === 'tz UTC', 'P7b: a UTC card reads "tz UTC", got "' + W.d.querySelector('[data-tz-card="alpha"]').textContent + '"');
+  }
   // P8 -- cancel
   {
     const W = await mk();
@@ -270,7 +279,7 @@ const btn = (doc, sel) => doc.querySelector(sel);
     clock: {
       auto_ask: true,
       ask: { skew_s: 3600, skew_text: '1 h 00 min', ahead: true, n: 3, src: 'live', whole_units: true,
-             from_utc: '2026-09-30T07:00:00Z',
+             from_utc: '2026-09-30T07:00:00Z', from_key: 'D:/data::2026-09-30/#10_ramsey_005512',
              examples: [{ key: 'D:/data::2026-09-30/#12_ramsey_015512', run_utc: '2026-09-30T08:55:12Z',
                           run_off: '-07:00', seen_utc: '2026-09-30T07:55:13Z', skew_s: 3599 }] } },
     line: { text: 'Run clock: 1 h 00 min ahead of this PC (3 runs seen arriving live) -- waiting for your answer.', ask: true },
@@ -287,6 +296,7 @@ const btn = (doc, sel) => doc.querySelector(sel);
     ok(/(^|[^/])#12_ramsey_015512: run clock 2026-09-30 01:55:12 \(UTC-7\) · seen 2026-09-30 16:55:13 \(UTC\+9\)/.test(dlg.querySelector('.pt-examples').textContent),
        'P11: an example run: its own clock and when SM saw it, got "' + (dlg.querySelector('.pt-examples') || {}).textContent + '"');
     ok(/wrong time zone/.test(dlg.textContent), 'P11: a whole-hour step is named as a zone mistake');
+    ok(/corrected from run #10_ramsey_005512 on/.test(dlg.textContent), 'P11: the correction starts at a named run, not at its skewed clock');
     ok(/Only .The experiment PC.s clock. changes how run times are shown/.test(dlg.textContent), 'P11: it says what each answer does');
     ok(posts(W, '/project-time/skew-shown').length === 1 && posts(W, '/project-time/skew-shown')[0].form.skew_s === '3600',
        'P11: it is marked shown (asked once)');

@@ -58,7 +58,7 @@
             {% set tv = (tz_views or {}).get(p.name) %}
             <span class="landing-card-tz" data-tz-card="{{ p.name }}"
                   title="{{ ('Times shown in ' ~ tv.zone ~ (' (default from the last project)' if tv.state in ('default', 'suggested') else '')) if tv and tv.zone else 'No time zone set: the zone of this PC' }}">tz
-                {%- if tv and tv.zone %} {{ tv.zone.split('/')[-1].replace('_', ' ') }}{% if tv.offset_text %} {{ tv.offset_text }}{% endif %}{% else %} this PC{% endif %}</span>
+                {%- if tv and tv.zone == 'UTC' %} UTC{% elif tv and tv.zone %} {{ tv.zone.split('/')[-1].replace('_', ' ') }}{% if tv.offset_text %} {{ tv.offset_text }}{% endif %}{% else %} this PC{% endif %}</span>
         </div>
         {# w9/labwarm: the environment this project runs the lab's code with.
            Remembered per project; opening the project selects it. #}

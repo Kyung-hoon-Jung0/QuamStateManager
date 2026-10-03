@@ -248,8 +248,12 @@ class TestLandingAndRoutes:
         views = json.loads(html.split("data-tz-views>")[1].split("</script>")[0])
         assert views["alpha"]["zone"] == "Asia/Seoul" and views["alpha"]["state"] == "picked"
         assert views["beta"]["state"] == "suggested"
-        # each card shows its zone
+        # each card shows its zone (UTC once, not "UTC UTC")
         assert 'data-tz-card="alpha"' in html and "Seoul UTC+9" in html
+        pt.set_zone(lab["inst"], "beta", "UTC")
+        html = lab["c"].get("/landing/projects").get_data(as_text=True)
+        beta = html[html.index('data-tz-card="beta"'):]
+        assert beta[:beta.index("</span>")].split(">")[1].split() == ["tz", "UTC"]
 
     def test_the_landing_never_probes_the_clock_on_render(self, lab, monkeypatch):
         def boom(*a, **k):
@@ -338,8 +342,17 @@ class TestWitnesses:
                                gap_s=pt.LIVE_GAP_S) is not None
 
     def test_a_naive_run_clock_is_no_witness(self):
+        # seen at the very instant the naive clock reads in this machine's
+        # zone, so only the quality guard can refuse it (a far-off first sight
+        # would be refused by the 26 h guard instead -- the mutation sweep
+        # caught that this pin once passed for the wrong reason)
         node = {"created_at": "2026-09-30T08:55:12"}
-        assert pt.make_witness(node, "k", src="live", first_seen_utc_us=0, gap_s=0.5) is None
+        us, q = timefmt.run_instant(node)
+        assert q == "assumed_local"
+        assert pt.make_witness(node, "k", src="live", first_seen_utc_us=us, gap_s=0.5) is None
+        aware = {"created_at": "2026-09-30T08:55:12+00:00"}
+        assert pt.make_witness(aware, "k", src="live", first_seen_utc_us=_us(
+            datetime(2026, 9, 30, 8, 55, 12, tzinfo=UTC)), gap_s=0.5) is not None
 
     def test_beyond_any_zone_mistake_is_a_copied_in_run(self):
         saved = datetime(2026, 9, 30, 8, 55, 12, tzinfo=UTC)
@@ -379,6 +392,7 @@ class TestAskOnce:
         cv = pt.clock_view(inst, "alpha")
         assert cv["ask"] and cv["auto_ask"] and cv["ask"]["n"] == 3
         assert cv["ask"]["examples"] and cv["ask"]["skew_text"] == "1 h 00 min"
+        assert cv["ask"]["from_key"] == "r0", "the regime starts at its first run, named"
         pt.mark_shown(inst, "alpha", cv["ask"]["skew_s"])
         cv = pt.clock_view(inst, "alpha")
         assert cv["ask"] and not cv["auto_ask"], "shown once; it waits on Diagnostics"

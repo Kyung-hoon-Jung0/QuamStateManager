@@ -192,6 +192,8 @@ function writeRun(project, skewS) {
   const stext = await p.ev("(document.getElementById('pt-skew-dialog')||{}).textContent||''");
   rec('J6 three runs with the run clock 1 h ahead raise the question once, with the evidence',
       asked && /Two clocks disagree by 1 h 00 min/.test(stext) && /SM saw 3 runs of alpha arrive/.test(stext), stext);
+  rec('J6 the correction starts at a named run (not at its skewed clock)',
+      new RegExp('corrected from run #' + runs[0].id + '_').test(stext), stext.slice(stext.indexOf('Only')));
   await p.shot(path.join(SHOTS, 'j6_skew_ask.png'));
   const s3 = store();
   rec('J6 it is marked shown (asked once)', s3.projects.alpha.clock.shown && Math.abs(s3.projects.alpha.clock.shown.skew_s - 3600) < 120,

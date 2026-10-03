@@ -726,7 +726,9 @@ def _ask_payload(witnesses: list[dict], summ: dict) -> dict:
     return {"skew_s": summ["skew_s"], "skew_text": skew_text(summ["skew_s"]),
             "ahead": summ["skew_s"] > 0, "n": summ["n_regime"], "src": summ["src"],
             "whole_units": summ.get("whole_units", False),
-            "from_utc": _iso_us(summ["from_us"]), "examples": ex}
+            "from_utc": _iso_us(summ["from_us"]),
+            "from_key": next((w["key"] for w in use if w["node_us"] == summ["from_us"]), None),
+            "examples": ex}
 
 
 def _iso_us(us: int | None) -> str | None:
