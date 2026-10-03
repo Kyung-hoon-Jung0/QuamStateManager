@@ -656,7 +656,10 @@ class TestTheStageMessagePointsAtAReviewThatExists:
         assert "tray-revert-apply" in tray, tray[:600]
         import re
         m = re.search(r"Revert last apply \(done ([^)]*)\)", tray)
-        assert m and m.group(1).endswith(" local time") and "T" not in m.group(1), m and m.group(1)
+        # docs/244: the time names its zone. It used to be the server's naive
+        # wall clock labelled "local time"; a title attribute cannot be
+        # localized by the page, so it now reads the instant in UTC, offset kept
+        assert m and re.fullmatch(r"\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2} UTC", m.group(1)), m and m.group(1)
 
 
 # ── liveedit-r2-31 ──────────────────────────────────────────────────────────

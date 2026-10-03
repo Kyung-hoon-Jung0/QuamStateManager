@@ -9844,7 +9844,11 @@
 
   function hhmm(at) {
     try {
-      return new Date(at).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+      // docs/244: digits in the viewer's zone, never the locale's words
+      var d = new Date(at);
+      if (isNaN(d.getTime())) return "";
+      return window.SnapTime ? window.SnapTime.display(d, true).slice(6)
+                             : d.toISOString().slice(11, 16);
     } catch (e) { return ""; }
   }
 
@@ -10609,7 +10613,10 @@
         var note = document.createElement("p");
         note.className = "muted gen-build-restored";
         note.textContent = "Report of the build" +
-          (own.built_at ? " at " + String(own.built_at).slice(0, 16).replace("T", " ") : "") +
+          (own.built_at ? " at " + (window.SnapTime ? window.SnapTime.display(own.built_at)   // docs/244: its offset kept
+                                     : String(own.built_at).replace("T", " ")
+                                           .replace(/\.\d+/, "")
+                                           .replace(/(Z|[+-]\d{2}:\d{2})$/, " ($1)")) : "") +
           ", read back from this folder (the page that started it was " +
           "reloaded or left).";
         el.insertBefore(note, el.firstChild);

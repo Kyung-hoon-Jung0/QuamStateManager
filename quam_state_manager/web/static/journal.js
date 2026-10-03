@@ -34,7 +34,7 @@ window.JournalPage = (function () {
     var since = $("jr-since");
     if (since) {
       if (last && fresh) {
-        since.textContent = "· " + fresh + " new since your last visit (" + new Date(last * 1000).toLocaleString() + ")";
+        since.textContent = "· " + fresh + " new since your last visit (" + (window.SnapTime ? window.SnapTime.display(new Date(last * 1000)) : new Date(last * 1000).toISOString()) + ")";   // docs/244
         since.hidden = false;
       } else { since.hidden = true; }
     }

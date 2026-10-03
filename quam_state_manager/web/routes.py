@@ -10882,10 +10882,15 @@ def field_history():
         f = float(v)
         if f != f or f in (float("inf"), float("-inf")):
             continue
-        ts = pt.get("timestamp") or ""
-        iso = (f"{ts[0:4]}-{ts[4:6]}-{ts[6:8]} {ts[9:11]}:{ts[11:13]}:{ts[13:15]}"
-               if len(ts) >= 15 else pt.get("when") or "")
-        chart.append({"t": iso, "v": f, "trigger": pt.get("trigger") or "auto"})
+        # docs/244: the INSTANT (ISO Z), never UTC digits passed off as a wall
+        # clock -- the rows beside it are shown in the viewer's zone, and the
+        # chart used to read the same points nine hours apart in Korea. The
+        # client puts it on the axis in that same zone (SnapTime.axisValue).
+        from quam_state_manager.core.timefmt import iso_z, to_utc
+        _t = to_utc(pt.get("timestamp") or pt.get("when"))
+        if _t is None:
+            continue
+        chart.append({"t": iso_z(_t), "v": f, "trigger": pt.get("trigger") or "auto"})
     return render_template("_field_history.html", hist=hist,
                            current_display=_fh_display_string(current),
                            # docs/186: the Revert button's delta is CURRENT ->
@@ -13289,7 +13294,7 @@ def chip_status_report():
         has_chip=True,
         chip_name=_chip_display_name(path) if path else "chip",
         folder=str(path or ""),
-        generated=datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+        generated=__import__("quam_state_manager.core.timefmt", fromlist=["local_text"]).local_text(),   # docs/244: with its offset
         qubits=qubits,
         pairs=pairs,
         resonators=[q for q in qubits if q.get("has_resonator")],
@@ -13844,7 +13849,7 @@ def state_history_restore_live(timestamp: str):
     # aborted above if it was).
     ctx["last_apply"] = {
         "pre_ts": backup_meta.timestamp,
-        "at": datetime.now().isoformat(timespec="seconds"),
+        "at": datetime.now().astimezone().isoformat(timespec="seconds"),
     }
     # Record that the live chip is now this snapshot's content. NOT force=True:
     # the restored bytes are identical to an existing snapshot, so content-hash
@@ -23027,7 +23032,7 @@ def _conflict_tray(ctx, store, *, staged_conflict: bool,
     if ctx is not None:
         wc = ctx.get("working_copy")
         ctx["apply_refused"] = {
-            "at": time.strftime("%H:%M:%S"),
+            "at": datetime.now().astimezone().isoformat(timespec="seconds"),
             "hash": getattr(wc, "synced_live_hash", None),
             "staged": bool(staged_conflict),
             "auto_disarmed": bool(auto_disarmed),
@@ -23818,7 +23823,7 @@ def state_review():
         auto_sync=_auto_sync_state(),
         take_live_backup=ctx.get("take_live_backup"),
         fsp_bundle_gids=_fsp_bundle_gids(log),
-        checked_at=time.strftime("%H:%M:%S"),
+        checked_at=datetime.now().astimezone().isoformat(timespec="seconds"),
         active_name=(_active_chip_identity() or {}).get("name"),
     )
 
@@ -24570,7 +24575,7 @@ def _take_live_backup(ctx, store, pending: dict) -> dict | None:
     for, and the pull is not made to wait on it more than one snapshot write.
     Caller holds the build lock."""
     n = len(pending or {}) or (1 if ctx.get("working_dirty") else 0)
-    rec = {"at": time.strftime("%H:%M:%S"), "n": n,
+    rec = {"at": datetime.now().astimezone().isoformat(timespec="seconds"), "n": n,
            "updates": copy.deepcopy(pending or {}), "snapshot": None}
     try:
         from quam_state_manager.core.history import chip_name_for
@@ -25136,7 +25141,7 @@ def _sync_pull_apply_to_live(ctx, replay, *, pulled_other_changes=False,
     if pre_apply_ts:
         ctx["last_apply"] = {
             "pre_ts": pre_apply_ts,
-            "at": datetime.now().isoformat(timespec="seconds"),
+            "at": datetime.now().astimezone().isoformat(timespec="seconds"),
         }
     elif not walk:
         # audit-r10: no trustworthy pre-apply target — an honestly missing
@@ -25556,7 +25561,7 @@ def state_apply_to_live():
     if pre_apply_ts:
         ctx["last_apply"] = {
             "pre_ts": pre_apply_ts,
-            "at": datetime.now().isoformat(timespec="seconds"),
+            "at": datetime.now().astimezone().isoformat(timespec="seconds"),
         }
     else:
         # audit-r10: no trustworthy pre-apply target — an honestly missing
@@ -35454,7 +35459,11 @@ def _build_output_guard(output_path: str) -> dict | None:
     own = regenerate.own_build(out) if existing_chip else None
     parts = []
     if own is not None:
-        when = (own.get("built_at") or "")[:16].replace("T", " ")
+        # docs/244: the stored time carries its offset; slicing it dropped
+        # the offset and showed a clock with no zone
+        from quam_state_manager.core.timefmt import to_utc, utc_text
+        _bt = to_utc(own.get("built_at"))
+        when = utc_text(_bt) if _bt is not None else ""
         src = own.get("source_folder")
         parts.append("This folder holds the chip State Manager re-generated here"
                      + (f" at {when}" if when else "")

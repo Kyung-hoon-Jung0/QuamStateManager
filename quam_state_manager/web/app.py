@@ -650,53 +650,37 @@ def create_app(*, testing: bool = False, instance_path: str | None = None) -> Fl
     app.jinja_env.filters["soft_breaks"] = _soft_breaks_filter
 
     def _format_ts_filter(ts) -> str:
-        """Render a ``YYYYMMDD_HHMMSS`` snapshot timestamp as
-        ``YYYY-MM-DD HH:MM:SS UTC``. Robust: falls back to the raw string when it
-        doesn't match (never the old slice-based '::' garbage), and includes the
-        date so snapshots taken days apart are distinguishable."""
-        import re
-        if not isinstance(ts, str):
-            return str(ts)
-        m = re.match(r"^(\d{4})(\d{2})(\d{2})[_\- ]?(\d{2})(\d{2})(\d{2})", ts)
-        if not m:
-            return ts
-        y, mo, d, h, mi, s = m.groups()
-        return f"{y}-{mo}-{d} {h}:{mi}:{s} UTC"
+        """Render a timestamp as plain ``YYYY-MM-DD HH:MM:SS UTC`` (attribute
+        sites: hx-confirm, title). docs/244: read through ``core.timefmt`` --
+        an ISO time with an offset is converted, never re-labelled as UTC.
+        Anything that is not a time is returned as written."""
+        from quam_state_manager.core.timefmt import to_utc, utc_text
+        d = to_utc(ts)
+        return utc_text(d) if d is not None else str(ts)
     app.jinja_env.filters["format_ts"] = _format_ts_filter
 
     def _ts_local_filter(ts, short: bool = False):
-        """Render a snapshot/ISO timestamp as a CLIENT-LOCALIZABLE span (feedback C2:
-        users are worldwide; UTC isn't friendly). The body is the UTC fallback (graceful
-        with JS off); ``data-utc`` carries a strict ISO-8601 Z instant that app.js's
-        applyLocalTimes() converts to each user's local time. Use at DISPLAY sites;
-        ATTRIBUTE sites (hx-confirm/title) keep ``format_ts`` plain text — a span there
-        would corrupt the attribute."""
+        """Render a timestamp as a CLIENT-LOCALIZABLE span (feedback C2: users are
+        worldwide). ``data-utc`` carries the instant (ISO-8601 Z); app.js's
+        applyLocalTimes() shows it in the viewer's zone WITH its UTC offset, in
+        one fixed English format (docs/244 -- never the browser locale's words).
+        The body is the UTC fallback (JS off). Use at DISPLAY sites; ATTRIBUTE
+        sites (hx-confirm/title) keep ``format_ts`` -- a span there would
+        corrupt the attribute.
+
+        docs/244: the old reader kept the first 19 characters of an ISO string
+        and appended ``Z``, so node.json's ``19:55:46+09:00`` was shown as
+        19:55 UTC -- nine hours late in Korea. ``core.timefmt.to_utc`` keeps
+        the offset."""
         from markupsafe import Markup, escape
-        import re
-        if not isinstance(ts, str):
-            ts = str(ts)
-        m = re.match(r"^(\d{4})(\d{2})(\d{2})[_\- ]?(\d{2})(\d{2})(\d{2})", ts)
-        if m:
-            y, mo, d, h, mi, s = m.groups()
-            iso = f"{y}-{mo}-{d}T{h}:{mi}:{s}Z"
-            # docs/201: a CHIP has no room for a full stamp, which is why five
-            # surfaces grew their own digit-slicing instead of using this
-            # filter. The short form is the same instant, rendered small.
-            fallback = (f"{mo}-{d} {h}:{mi}" if short
-                        else f"{y}-{mo}-{d} {h}:{mi}:{s} UTC")
-        else:
-            iso_m = re.match(r"^(\d{4}-\d{2}-\d{2})[T ](\d{2}:\d{2}:\d{2})", ts)
-            if iso_m:
-                iso = f"{iso_m.group(1)}T{iso_m.group(2)}Z"
-                fallback = f"{iso_m.group(1)} {iso_m.group(2)} UTC"
-            else:
-                return Markup(f'<span class="ts-local">{escape(ts)}</span>')
-            if short:
-                fallback = f"{iso_m.group(1)[5:]} {iso_m.group(2)[:5]}"
+        from quam_state_manager.core.timefmt import iso_z, to_utc, utc_text
+        d = to_utc(ts)
+        if d is None:
+            return Markup(f'<span class="ts-local">{escape(str(ts))}</span>')
         fmt = ' data-fmt="short"' if short else ""
         return Markup(
-            f'<span class="ts-local" data-utc="{escape(iso)}"{fmt}>'
-            f'{escape(fallback)}</span>')
+            f'<span class="ts-local" data-utc="{escape(iso_z(d))}"{fmt}>'
+            f'{escape(utc_text(d, short))}</span>')
     app.jinja_env.filters["ts_local"] = _ts_local_filter
 
     # Long-cache static assets (they're fingerprinted by asset_url below, so a

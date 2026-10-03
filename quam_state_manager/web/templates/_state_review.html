@@ -60,11 +60,11 @@
       {%- if _nm %}; you have {{ _nm }} unapplied edit{{ 's' if _nm != 1 }}{% elif working_dirty %}; you have a saved or staged version that is not on the live chip{% endif -%}
       {%- if _nc %}; {{ _nc }} field{{ 's' if _nc != 1 }} {{ 'are' if _nc != 1 else 'is' }} in both{% endif -%}
       . {% if _nl or _nm or working_dirty %}Nothing has been written yet.{% elif total == 0 %}No differences &mdash; what you see matches the live chip.{% else %}Nothing to do.{% endif %}
-      <span class="sp-when muted">checked {{ checked_at }}</span>
+      <span class="sp-when muted">checked {{ checked_at | ts_local }}</span>
     {%- endif -%}
   </p>
   {% if refused %}
-  <p class="sp-note sp-note-warn">Your apply at {{ refused.at }} wrote nothing: the live chip had changed in between.
+  <p class="sp-note sp-note-warn">Your apply at {{ refused.at | ts_local }} wrote nothing: the live chip had changed in between.
     {%- if refused.auto_disarmed %} Auto-Sync has been turned <b>off</b>; it will not write again until you turn it back on.{% elif refused.auto_merging %} Auto-Sync is still on and will merge this itself; choose below only if you would rather decide.{% endif %}</p>
   {% endif %}
   {% if mixed %}
@@ -257,7 +257,7 @@
     <div class="sp-choices-head">History</div>
     {% if take_live_backup %}
     <div class="sp-hist-row">
-      <span>&#8595; Take live at {{ take_live_backup.at }} dropped {{ take_live_backup.n }} edit{{ 's' if take_live_backup.n != 1 }}{% if take_live_backup.snapshot %} (backup version {{ take_live_backup.snapshot }}){% endif %}.</span>
+      <span>&#8595; Take live at {{ take_live_backup.at | ts_local }} dropped {{ take_live_backup.n }} edit{{ 's' if take_live_backup.n != 1 }}{% if take_live_backup.snapshot %} (backup version {{ take_live_backup.snapshot }}){% endif %}.</span>
       <button type="button" class="btn-sm outline sp-bring-back"
               hx-post="/state/take-live/restore" hx-target="#pending-tray" hx-swap="outerHTML"
               data-after-request="syncPanelRefresh"
@@ -266,14 +266,14 @@
     {% endif %}
     {% if last_apply and _nm == 0 and not working_dirty %}
     <div class="sp-hist-row">
-      <span>Last apply {{ (last_apply.at or '') | replace('T', ' ') }}</span>
+      <span>Last apply {{ last_apply.at | ts_local }}</span>
       <button type="button" class="btn-sm outline tray-revert-apply sync-arm"
               data-arm-label="Press again to stage the pre-apply state"
               hx-post="/state-history/{{ last_apply.pre_ts }}/stage?from=tray"
               hx-target="#status-bar" hx-swap="innerHTML" hx-trigger="{% if auto_apply %}revertconfirmed{% else %}armed{% endif %}"
               data-after-request="syncPanelRefresh"
               onclick="{% if auto_apply %}revertSessionConfirm(this){% else %}SyncPanel.arm(this, event){% endif %}"
-              title="{% if auto_apply %}Revert the whole Auto-Sync session — stages the state as it was when you turned it on, including values pulled since (the confirm names them).{% else %}Revert last apply (done {{ (last_apply.at or '') | replace('T', ' ') }} local time) — stages the state as it was before it, for review; nothing touches the live chip until you apply.{% endif %}">&#8634; Revert {% if auto_apply %}this session{% else %}last apply{% endif %}</button>
+              title="{% if auto_apply %}Revert the whole Auto-Sync session — stages the state as it was when you turned it on, including values pulled since (the confirm names them).{% else %}Revert last apply (done {{ last_apply.at | format_ts }}) — stages the state as it was before it, for review; nothing touches the live chip until you apply.{% endif %}">&#8634; Revert {% if auto_apply %}this session{% else %}last apply{% endif %}</button>
     </div>
     {% endif %}
     {% if auto_apply or applied_log %}{% include '_applied_log.html' %}{% endif %}

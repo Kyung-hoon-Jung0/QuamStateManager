@@ -854,7 +854,7 @@ document.addEventListener('htmx:afterSwap', function (e) {
      * renders UTC, so the shift has to happen before it. Naive-and-shifted is
      * the only spelling that puts the chosen zone's wall clock on the axis. */
     function axisValue(ts) {
-        var d = parse(ts);
+        var d = instant(ts);        /* docs/244: an ISO instant too, offset kept */
         if (!d) return null;
         var p = parts(d);
         return p.year + '-' + p.month + '-' + p.day
@@ -883,9 +883,51 @@ document.addEventListener('htmx:afterSwap', function (e) {
         } catch (e) { return 'local time'; }
     }
 
+    /* docs/244: the ONE display form of an absolute time, everywhere.
+     * The viewer's zone (or the one chosen in Settings) WITH its offset,
+     * digits only -- never the browser locale's words ("오후 7:55", "PM").
+     *   long:  2026-09-30 19:55:46 (UTC+9)
+     *   short: 09-30 19:55            (a chip; the title carries the long form)
+     * `d` is a Date (an instant) or anything `instant()` reads. */
+    function instant(x) {
+        if (x instanceof Date) return isNaN(x.getTime()) ? null : x;
+        if (typeof x === 'number') { var e = new Date(x); return isNaN(e.getTime()) ? null : e; }
+        var s = String(x == null ? '' : x);
+        var st = parse(s);                       /* SM's UTC stamp */
+        if (st) return st;
+        if (/^\d{4}-\d{2}-\d{2}[T ]\d{2}:\d{2}/.test(s)) {
+            /* ISO: an offset or Z is honoured; a bare one is SM's UTC */
+            var iso = s.replace(' ', 'T');
+            if (!/(Z|[+-]\d{2}:?\d{2})$/i.test(iso)) iso += 'Z';
+            var d = new Date(iso);
+            return isNaN(d.getTime()) ? null : d;
+        }
+        return null;
+    }
+    function offsetMinutes(d) {
+        var p = parts(d);
+        var asUtc = Date.UTC(+p.year, +p.month - 1, +p.day, +p.hour, +p.minute, +p.second);
+        return Math.round((asUtc - Math.floor(d.getTime() / 1000) * 1000) / 60000);
+    }
+    function offsetLabel(d) {
+        var m = offsetMinutes(d);
+        if (!m) return 'UTC';
+        var a = Math.abs(m), h = Math.floor(a / 60), mm = a % 60;
+        return 'UTC' + (m < 0 ? '-' : '+') + h + (mm ? ':' + (mm < 10 ? '0' : '') + mm : '');
+    }
+    function display(x, isShort) {
+        var d = instant(x);
+        if (!d) return String(x == null ? '' : x);
+        var p = parts(d);
+        if (isShort) return p.month + '-' + p.day + ' ' + p.hour + ':' + p.minute;
+        return p.year + '-' + p.month + '-' + p.day + ' ' + p.hour + ':' + p.minute + ':' + p.second
+             + ' (' + offsetLabel(d) + ')';
+    }
+
     window.SnapTime = { zone: zone, setZone: setZone, parse: parse,
                         axisValue: axisValue, format: format, short: short,
-                        label: label, KEY: KEY };
+                        label: label, KEY: KEY,
+                        instant: instant, offsetLabel: offsetLabel, display: display };
 })();
 
 /* C2: render all state-change timestamps in the user's LOCAL time (users are
@@ -901,21 +943,13 @@ function applyLocalTimes(root) {
             /* The viewer's chosen zone, so a row and the chart beside it can
                never read two different clocks. With no choice made this is
                toLocaleString's own zone, i.e. exactly the old behaviour. */
-            var z = window.SnapTime ? window.SnapTime.zone() : '';
             /* docs/201: a chip asks for the compact form. Same instant, same
                zone -- only the rendering differs, so a chip and the row above
-               it can never disagree. */
+               it can never disagree. docs/244: ONE format (SnapTime.display),
+               digits + the UTC offset, never the browser locale's words. */
             var short = el.getAttribute('data-fmt') === 'short';
-            var opt = short
-                ? { month: '2-digit', day: '2-digit',
-                    hour: '2-digit', minute: '2-digit' }
-                : undefined;
-            try {
-                if (z) opt = Object.assign({}, opt || {}, { timeZone: z });
-                el.textContent = opt ? d.toLocaleString(undefined, opt)
-                                     : d.toLocaleString();
-            } catch (e) { el.textContent = d.toLocaleString(); }
-            el.title = iso + ' (UTC)';
+            el.textContent = window.SnapTime.display(d, short);
+            el.title = (short ? window.SnapTime.display(d, false) + ' · ' : '') + iso + ' (UTC)';
         }
         el.setAttribute('data-localized', '1');   // never re-convert (safe across nested swaps)
     }
@@ -3555,6 +3589,9 @@ window.SyncPanel = (function () {
                 if (g !== _gen || !_syncPanelOpen()) return;
                 h.innerHTML = html;
                 if (window.htmx) htmx.process(h);
+                // docs/244: the panel's times (checked / last apply / take
+                // live) are ts_local spans now -- show them in the viewer's zone
+                if (typeof applyLocalTimes === "function") applyLocalTimes(h);
                 var nb = h.querySelector(".sp-body");
                 if (nb) nb.scrollTop = y;
                 var o = document.getElementById("state-review-overlay");
@@ -23583,16 +23620,20 @@ window.FieldHistory = (function () {
         };
         var muted = (getComputedStyle(document.documentElement)
             .getPropertyValue("--color-text-muted") || "#888").trim();
+        // docs/244: the axis in the SAME zone as the rows above it, and the
+        // hover names it ("2026-09-30 19:55:46 (UTC+9)")
+        var ST = window.SnapTime;
         var trace = {
-            x: pts.map(function (d) { return d.t; }),
+            x: pts.map(function (d) { return (ST && ST.axisValue(d.t)) || d.t; }),
             y: pts.map(function (d) { return d.v; }),
+            customdata: pts.map(function (d) { return ST ? ST.display(d.t) : d.t; }),
             type: "scatter", mode: "lines+markers",
             line: { shape: "hv", color: muted, width: 1.2 },
             marker: {
                 size: 7,
                 color: pts.map(function (d) { return cssVar(d.trigger); }),
             },
-            hovertemplate: "%{x}<br>%{y}<extra></extra>",
+            hovertemplate: "%{customdata}<br>%{y}<extra></extra>",
         };
         var layout = {
             height: 128,
