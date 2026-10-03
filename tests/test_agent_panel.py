@@ -386,7 +386,7 @@ class TestHome:
                 ".ag-root input:not([type=checkbox]) { width: auto; margin: 0; }") in blk
         # The only uppercase text on the page is a STATUS PILL: the plan/step
         # states, the simulated flag, and the wiring strip's CONNECTED /
-        # NOT CONNECTED / NO CLI badge — which is the same kind of thing and
+        # IN-APP ONLY / NO CLI badge — which is the same kind of thing and
         # deliberately wears the same shape. Anything else shouting in capitals
         # is the defect this pin exists to catch.
         upper = [ln for ln in blk.splitlines() if "text-transform: uppercase" in ln]

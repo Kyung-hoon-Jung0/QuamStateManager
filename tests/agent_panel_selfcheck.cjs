@@ -607,6 +607,14 @@ const tick = (ms) => new Promise(r => setTimeout(r, ms || 15));
   P.toggleMore(a18.querySelector('.ag-more'));
   ok(!a18.hasAttribute('data-expanded') && a18.querySelector('.ag-more').textContent === 'show more', 'and toggles back');
 
+  // C-25: a person's Stop reads "Stopped by a person" -- never "Stopped stopped by ..."
+  feed.cards.push({ n: 20, ts: t0 + 10, kind: 'stop', text: 'stopped by a person' });
+  feed.last = 20;
+  await P.poll(true); await tick();
+  const s20 = feedEl.querySelector('[data-card="stop:20"]');
+  ok(!!s20 && s20.querySelector('.ag-stopped').textContent.trim() === 'Stopped by a person',
+     'C-25: the stop card says it once: ' + (s20 && s20.textContent.trim()));
+
   // the compact float carries the same strip + composer; its presets sit behind one toggle
   const popRoot = document.getElementById('agent-popover').querySelector('.ag-root.ag-compact');
   ok(popRoot.querySelector('.ag-now .ag-now-acts') && popRoot.querySelector('form.ag-composer textarea.ag-input[rows="1"]') && popRoot.querySelector('.ag-presets[title] .ag-presets-toggle'), 'the compact float has the same strip, composer and preset toggle');
@@ -893,7 +901,7 @@ const tick = (ms) => new Promise(r => setTimeout(r, ms || 15));
   P._wire.data = { backends: { claude: { found: true, version: '9' }, codex: { found: false } }, 'default': 'claude' };
   P._wire.setup.clis = P._wire.data.backends;
   P.wirePaint();
-  ok(badge() === 'NOT CONNECTED' && /not registered as an MCP server/.test(wire.textContent),
+  ok(badge() === 'IN-APP ONLY' && /terminal: not registered as an MCP server/.test(wire.textContent),
      'W12 installed but not registered is its OWN state, with the fix beside '
      + 'it: ' + wire.textContent);
   ok(!!wire.querySelector('.ag-wire-fix'), 'W13 …and that fix is a link to Setup');

@@ -292,7 +292,7 @@ class TestStop:
         assert ev[-1]["hook_event_name"] == "Stop" and ev[-1].get("stopped") is True
         j = _journal(c, inst)
         assert "Stop (now) pressed by human" in j
-        assert "Claude: stopped by a human" not in j, "the human's Stop is journaled by the door, not as agent speech"
+        assert "stopped by a person" not in j and "stopped by a human" not in j, "the human's Stop is journaled by the door, not as agent speech"
         assert c.post("/api/agent/chat/send", json={"text": "z"}).status_code == 409
 
     def test_stop_after_run_keeps_the_process_and_a_new_message_resumes(self, c, inst):

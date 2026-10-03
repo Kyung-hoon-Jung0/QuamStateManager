@@ -543,7 +543,7 @@ async function main() {
     if(!w) return null; var b=w.querySelector('.ag-wire-badge');
     return {badge:b?b.textContent:null, text:w.textContent, clis:w.querySelectorAll('.ag-wire-cli').length, wraps:w.querySelectorAll('.ag-wire-clis').length};})()`, 15000);
   ok('the wiring strip resolves to a real state, not CHECKING for ever',
-     wire && ['CONNECTED', 'NOT CONNECTED', 'NO CLI'].indexOf(wire.badge) >= 0, wire);
+     wire && ['CONNECTED', 'IN-APP ONLY', 'NO CLI'].indexOf(wire.badge) >= 0, wire);
   ok('…and it NEVER claims anyone is logged in',
      wire && !/logged ?in|log ?in|authenticated|signed ?in/i.test(wire.text), wire && wire.text);
   ok('…and one line per backend, not more', wire && wire.wraps <= 1 && wire.clis <= 3, wire);

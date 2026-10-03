@@ -306,7 +306,7 @@ async function main() {
     var b=w.querySelector('.ag-wire-badge'); return {badge:b?b.textContent:null, text:w.textContent, clis:w.querySelectorAll('.ag-wire-cli').length, wraps:w.querySelectorAll('.ag-wire-clis').length};})()`, 12000);
   ok('the strip renders on the Agent home', !!wire, wire);
   ok('…and it says a real state, not CHECKING for ever',
-     wire && ['CONNECTED', 'NOT CONNECTED', 'NO CLI'].indexOf(wire.badge) >= 0, wire && wire.badge);
+     wire && ['CONNECTED', 'IN-APP ONLY', 'NO CLI'].indexOf(wire.badge) >= 0, wire && wire.badge);
   ok('…and it never claims a login',
      wire && !/logged ?in|authenticated|signed ?in/i.test(wire.text), wire && wire.text);
   ok('…and there is exactly one line per backend',

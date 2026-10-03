@@ -103,8 +103,8 @@ async function main() {
     const setupLink = await txt('.ag-wire:not(.ag-wire-compact) .ag-wire-setup');
     timings.landing_badge = badge; timings.landing_wire_line = wireLine; timings.landing_setup_link = setupLink;
     ok('A1 the landing strip states a real connection verdict, not CHECKING', badge && badge !== 'CHECKING', badge);
-    ok('A2 the verdict is NOT CONNECTED on a cold machine with both CLIs present',
-       badge === 'NOT CONNECTED', { badge, wireLine });
+    ok('A2 the verdict is IN-APP ONLY on a cold machine with both CLIs present',
+       badge === 'IN-APP ONLY', { badge, wireLine });
     ok('A3 the strip names each CLI and says what is missing',
        /claude/i.test(wireLine || '') && /codex/i.test(wireLine || '') && /not registered as an MCP server/i.test(wireLine || ''), wireLine);
     ok('A4 a Connect link is offered right there', /Connect/.test(wireLine || ''), wireLine);
@@ -230,7 +230,7 @@ async function main() {
     await clickSel('#nav-agent');
     await sleep(2500);
     const badge2 = await txt('.ag-wire:not(.ag-wire-compact) .ag-wire-badge');
-    ok('A32 coming back to /agent the strip is still NOT CONNECTED (no stale CONNECTED)', badge2 === 'NOT CONNECTED', badge2);
+    ok('A32 coming back to /agent the strip is still IN-APP ONLY (no stale CONNECTED)', badge2 === 'IN-APP ONLY', badge2);
     const dupes = await ev(`document.querySelectorAll('.ag-wire:not(.ag-wire-compact) .ag-wire-clis').length`);
     ok('A33 …and the strip did not duplicate its CLI lines on the repaint', dupes === 1, dupes);
     await snap('07_back_on_agent');

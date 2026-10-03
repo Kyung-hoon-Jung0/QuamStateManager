@@ -601,7 +601,7 @@ class AgentProcess:
         self.stopped_by_human = True             # review R2-10: the kill's exit code is not a failure
         if self.alive():
             kill_tree(self.proc.pid)
-        self._emit(_mk(self.ctx, "Stop", summary="stopped by a human", stopped=True))
+        self._emit(_mk(self.ctx, "Stop", summary="stopped by a person", stopped=True))
 
     def _emit(self, rec: dict) -> None:
         with self._lock:

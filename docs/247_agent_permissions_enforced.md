@@ -192,6 +192,17 @@ Every file Setup writes now goes through `_write_keeping_newlines`: a CRLF file 
 - `TestInAppProcessCarriesTheMark` (1);
 - 8/8 mutations red.
 
+## Follow-up: the strip says what is actually missing (C-18, C-25)
+
+**C-18:** the wire strip said "NOT CONNECTED" while the in-app agent was answering. The in-app agent passes SM's MCP wiring itself and never needs Connect. What is missing without Connect is a terminal `claude`/`codex` reaching SM.
+- The badge now reads **IN-APP ONLY**.
+- The per-CLI line reads "terminal: not registered as an MCP server", with a title that says the agent in this window works without it.
+- The real-browser stress drivers' label lists were updated with it.
+
+**C-25:** a person's Stop showed "Stopped stopped by a human". The card drops the repeated word and the event says "by a person", so it reads "Stopped by a person".
+
+**Pins:** W12 + a new stop-card assertion in `agent_panel_selfcheck.cjs`; 2/2 mutations red.
+
 ## Open
 
 - SM's MCP bridge already returns `instructions` (the read/stage/apply path). They do not yet say "never edit state.json directly, never run `python <node>.py`", the rule the file carries. Codex 0.159.2 surfaces them once the server is loaded, so adding that rule there is a cheap second channel (`mcp.py`, after the bridge-safety merge).

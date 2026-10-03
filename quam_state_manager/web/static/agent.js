@@ -362,7 +362,8 @@ window.AgentPanel = (function () {
     } else if (c.kind === "limited") {
       html = '<div class="ag-tool ag-limited"><strong>usage limit</strong> ' + esc(c.text || "") + "</div>";
     } else if (c.kind === "stop") {
-      html = '<div class="ag-tool ag-stopped"><strong>Stopped</strong> ' + esc(c.text || "") + "</div>";
+      // C-25: the card read "Stopped stopped by a human" -- the label already says it
+      html = '<div class="ag-tool ag-stopped"><strong>Stopped</strong> ' + esc(String(c.text || "").replace(/^stopped\s+/i, "")) + "</div>";
     } else {
       html = '<div class="ag-tool">' + esc(c.kind) + " " + esc(c.text || c.summary || "") + "</div>";
     }
@@ -1118,7 +1119,7 @@ window.AgentPanel = (function () {
     if (reg.allow === true) bits.push('<span class="ag-wire-ok" title="SM\'s tools are pre-allowed in this calibrations folder">allow \u2713</span>');
     var line = '<span class="ag-wire-cli"><b>' + esc(name) + "</b> " + bits.join(" \u00b7 ");
     if (!reg.mcp) {
-      line += ' <span class="ag-wire-warn">not registered as an MCP server</span>'
+      line += ' <span class="ag-wire-warn" title="The agent in this window works without it. A ' + esc(name) + ' you start in a terminal cannot use SM until SM is registered as its MCP server.">terminal: not registered as an MCP server</span>'
             + ' <a class="ag-wire-fix" href="/agent/setup" hx-get="/agent/setup" hx-target="#table-pane" hx-push-url="true">Connect \u2192</a>';
     } else if (t && t.ok) {
       // past tense, and the title says why it is past tense
@@ -1186,7 +1187,10 @@ window.AgentPanel = (function () {
       var label, kind;
       if (!anyFound) { label = "NO CLI"; kind = "static"; }
       else if (!mainFound) { label = main.toUpperCase() + " MISSING"; kind = "warn"; }
-      else if (!mainReg) { label = "NOT CONNECTED"; kind = "warn"; }
+      // C-18: the in-app agent passes SM's MCP wiring itself and works without Connect; what
+      // is missing is a TERMINAL claude/codex reaching SM. "NOT CONNECTED" read as "the agent
+      // here does not work" while it was answering.
+      else if (!mainReg) { label = "IN-APP ONLY"; kind = "warn"; }
       else if (otherFound && otherReg < otherFound) {
         // honest about a machine-wide summary: never a bare CONNECTED
         label = (1 + otherReg) + " OF " + (1 + otherFound) + " CONNECTED"; kind = "ok";
