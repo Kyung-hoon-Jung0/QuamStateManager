@@ -1,0 +1,206 @@
+{
+ "method": "scratchpad review_b.py (independent of tools/check_hub_builder.py); ledgers rebuilt at 9bdaad77 under D:/work/sm_qa_rigs/hub3/review",
+ "real_kriss_cz": {
+  "total": 987,
+  "counts": {
+   "earlier_run_first_window:direct_row": 840,
+   "same_run:direct_row": 16,
+   "earlier_run_in_window:direct_row": 89,
+   "X_hub_value_differs_at_this_run": 6,
+   "earlier_run_in_window:gone_row": 5,
+   "earlier_run_in_window:other_path_row": 25,
+   "X_hub_changed_before_window": 6
+  },
+  "asof_mismatch": [
+   {
+    "snap": 2,
+    "eid": 146,
+    "path": "qubits.q1.xy.operations.-x90_DragCosine.amplitude",
+    "leaf": [
+     4,
+     0.2485911179070533
+    ],
+    "hub": [
+     4,
+     0.4756100100604491
+    ]
+   },
+   {
+    "snap": 2,
+    "eid": 146,
+    "path": "qubits.q1.xy.operations.-y90_DragCosine.amplitude",
+    "leaf": [
+     4,
+     0.2485911179070533
+    ],
+    "hub": [
+     4,
+     0.4756100100604491
+    ]
+   },
+   {
+    "snap": 2,
+    "eid": 146,
+    "path": "qubits.q1.xy.operations.x90_DragCosine.amplitude",
+    "leaf": [
+     0,
+     0.2485911179070533
+    ],
+    "hub": [
+     0,
+     0.4756100100604491
+    ]
+   },
+   {
+    "snap": 2,
+    "eid": 146,
+    "path": "qubits.q1.xy.operations.y90_DragCosine.amplitude",
+    "leaf": [
+     4,
+     0.2485911179070533
+    ],
+    "hub": [
+     4,
+     0.4756100100604491
+    ]
+   },
+   {
+    "snap": 2,
+    "eid": 146,
+    "path": "qubits.q1.xy.operations.x180_DragCosine.amplitude",
+    "leaf": [
+     0,
+     0.4971822358141066
+    ],
+    "hub": [
+     0,
+     0.9512200201208982
+    ]
+   },
+   {
+    "snap": 2,
+    "eid": 146,
+    "path": "qubits.q1.xy.operations.y180_DragCosine.amplitude",
+    "leaf": [
+     4,
+     0.4971822358141066
+    ],
+    "hub": [
+     4,
+     0.9512200201208982
+    ]
+   }
+  ],
+  "reverse_miss": 0,
+  "truth_bad": 0,
+  "flat_bad": 0,
+  "identity": [
+   {
+    "snap_id": 0,
+    "ts": "20260907_084348_015",
+    "run_id": 15,
+    "eid": 15,
+    "key_from_hub": "20260907_084348_015",
+    "t_src": "2026-09-07T17:43:48+09:00",
+    "eids_with_same_key": [
+     15
+    ]
+   },
+   {
+    "snap_id": 1,
+    "ts": "20260907_085348_022",
+    "run_id": 22,
+    "eid": 22,
+    "key_from_hub": "20260907_085348_022",
+    "t_src": "2026-09-07T17:53:48+09:00",
+    "eids_with_same_key": [
+     22
+    ]
+   },
+   {
+    "snap_id": 2,
+    "ts": "20260907_124116_146",
+    "run_id": 146,
+    "eid": 146,
+    "key_from_hub": "20260907_124116_146",
+    "t_src": "2026-09-07T21:41:16+09:00",
+    "eids_with_same_key": [
+     146
+    ]
+   },
+   {
+    "snap_id": 3,
+    "ts": "20260907_130429_147",
+    "run_id": 147,
+    "eid": 147,
+    "key_from_hub": "20260907_130429_147",
+    "t_src": "2026-09-07T22:04:29+09:00",
+    "eids_with_same_key": [
+     147
+    ]
+   }
+  ]
+ },
+ "synthetic_legacy_index": {
+  "KH_202608_CZ every 40th (+2% random), 183 snapshots": {
+   "snapshots": 183,
+   "total": 122800,
+   "counts": {
+    "earlier_run_first_window:direct_row": 832,
+    "same_run:direct_row": 429,
+    "earlier_run_in_window:direct_row": 4794,
+    "earlier_run_in_window:gone_row": 17908,
+    "earlier_run_in_window:other_path_row": 1004,
+    "same_run:other_path_row": 102,
+    "earlier_run_in_window:array_marker_row": 92722,
+    "same_run:gone_row": 2509,
+    "same_run:array_marker_row": 2500
+   },
+   "asof_mismatch": 0,
+   "reverse_miss": 0,
+   "truth_bad": 0,
+   "flat_bad": 0
+  },
+  "KH_202608_CZ dense, every run": {
+   "snapshots": 4112,
+   "total": 1030999,
+   "counts": {
+    "same_run:direct_row": 11445,
+    "same_run:gone_row": 270659,
+    "same_run:other_path_row": 2659,
+    "same_run:array_marker_row": 746236
+   },
+   "asof_mismatch": 0,
+   "reverse_miss": 0,
+   "truth_bad": 0,
+   "flat_bad": 0
+  },
+  "Novera9Q dense, every run": {
+   "snapshots": 2069,
+   "total": 14058,
+   "counts": {
+    "same_run:direct_row": 10967,
+    "same_run:other_path_row": 2840,
+    "same_run:gone_row": 251
+   },
+   "asof_mismatch": 0,
+   "reverse_miss": 0,
+   "truth_bad": 0,
+   "flat_bad": 0
+  },
+  "arbel_20260929 dense, every run": {
+   "snapshots": 1610,
+   "total": 33138,
+   "counts": {
+    "same_run:direct_row": 20665,
+    "same_run:array_marker_row": 7251,
+    "same_run:other_path_row": 1045,
+    "same_run:gone_row": 4177
+   },
+   "asof_mismatch": 0,
+   "reverse_miss": 0,
+   "truth_bad": 0,
+   "flat_bad": 0
+  }
+ }
+}

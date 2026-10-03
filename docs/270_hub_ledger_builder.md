@@ -16,7 +16,8 @@ $env:PYTHONDONTWRITEBYTECODE = '1'
 ```
 
 `hub_build.build(root, out, limit=None)` returns discovery, additions, extra
-locations, errors, raw-hash repeats, event/row totals, archive offset, and elapsed
+locations, errors, **deferred** (review fix: an unreadable newest run is not
+committed), raw-hash repeats, event/row totals, archive offset, and elapsed
 seconds. `limit` counts **new events this invocation**, so repeated limited builds
 make progress. A completed location is authoritative for this offline,
 immutable-archive projection; it is not rehashed on every restart.
@@ -34,6 +35,9 @@ An unknown eid raises `KeyError`. An error event raises `ValueError` from
 `state_at`: it has no saved document, and returning a previous run's state as
 its own would be misleading. Error events remain in the timeline and advance
 the build watermark. Later runs compare against the last **successful** head.
+An error event keeps the node's own `status` (review fix: 18 real runs that
+*finished* without saving state were stored as `status="error"`); the reason the
+ledger has no state is in `error`.
 
 ## Schema as built
 
@@ -87,7 +91,10 @@ foreign runs into another ledger. Routing requires S5's chip/root registration.
    Naive run bounds use the same archive hint. No run DAY is computed.
 3. Skip completed locations. Read an unknown state/wiring pair with size/mtime
    checks before and after the read, retrying a changing pair up to three times.
-   Use the run identity to admit alternate locations. Otherwise keep an event.
+   Use the run identity to admit alternate locations. Otherwise keep an event,
+   except that the **newest** discovered run with no readable pair is deferred
+   (review fix): it may still be in flight, and a committed location is never
+   revisited. Once a later run exists, a stateless run is final.
 4. If the raw pair hash equals the successful head's hash, write a zero-change
    event **without parsing the state/wiring bytes**. Metadata still belongs to
    this run. If it differs, use S2 `merged`, `flatten`, and `diff` against the head.
@@ -219,7 +226,8 @@ benchmark; other jobs were running.
 | arbel_20260929, frozen at discovery | 1,600 | 1 | 26,607 | 5.137 | 65.382 | 61.11 |
 | Synthetic concatenation | 10,000 | 27 | 38,205 | 12.551 | 209.166 | 85.99 |
 
-All discovered runs became events, including incomplete pairs. The synthetic
+All discovered runs became events, including incomplete pairs (none of the
+three archives' newest run lacks a pair, so the review's deferral changes no count). The synthetic
 archive concatenates retimed copies of the 4,121-run first archive to reach
 10,000 distinct run identities. It copies each payload into scratch, then creates
 hardlinks **only among scratch files**, rotating backing copies every 500 runs to
@@ -309,3 +317,226 @@ Frozen discovery's next-invocation additions already work offline.
 Open questions for later steps: policy for repaired error-event identity and
 explicit mixed-chip registration, and a compatible SM-event flag/order version.
 No user decision blocks this offline S3 implementation.
+
+## Review (2026-10-04, independent)
+
+Adversarial review of `9bdaad77` before merge. **Verdict: merge after the fixes in
+`8c984bbb`.** No P0 was found: no change is missing from the ledger, and no change is
+attributed to the wrong run by the builder. Two P1 wrong-row generators and two P1
+pin gaps were fixed. One P1 premise problem remains for S5 (run folders are not
+immutable). Machine-readable results are in
+[270_hub_builder_review.json](270_hub_builder_review.json).
+
+The review used its own scripts and did not reuse `tools/check_hub_builder.py`. The
+scripts and their outputs are kept in `D:\work\sm_qa_rigs\hub3\review\scripts` and
+`D:\work\sm_qa_rigs\hub3\review`. The
+ledgers were rebuilt from `9bdaad77` into `D:\work\sm_qa_rigs\hub3\review`. The
+production `KRISS_CZ` history was copied before it was opened; its `index.sqlite` is
+byte-identical (sha256 `b28c97cf…`) to the copy Codex used.
+
+### (b) recomputed: what the hub holds, run by run
+
+**Method.** The review script opens the ledger read-only. It folds the **change rows
+itself** from genesis, without `state_at` or checkpoints, because those rows are what
+every history surface will read. It rebuilds each event's document from the event's
+shape blob and its own fold, then runs the legacy walker (`leaf_index.numeric_leaves`)
+over that document.
+
+For every legacy change point at snapshot run S, it finds the run at which the hub's
+legacy-visible value of that path last changed, and the kind of hub row that caused
+it. The window is the runs after the previous legacy snapshot, up to and including S.
+
+At every snapshot run it also checks three things:
+
+- **As-of maps, both directions.** The legacy index's value for every path known at S
+  is compared with the hub's value there.
+- **Legacy view.** The legacy walker over the hub's document is compared with the
+  walker over the archive's own raw pair.
+- **Folded rows.** The review's fold is compared with `S2.flatten(S2.merged(raw pair))`.
+
+**Identity and time key.** Each of the 4 legacy snapshots was matched to its hub event
+in two ways. By folder, it maps to a location row. By key, the legacy `ts` equals
+`run_time.snapshot_key(t_utc_us, run_id)` of exactly one hub event (the docs/262 UTC
+key). Both ways give the same event, with the same run id and experiment:
+
+| ts | run | eid | `t_src` |
+|---|---:|---:|---|
+| `20260907_084348_015` | 15 | 15 | `2026-09-07T17:43:48+09:00` |
+| `20260907_085348_022` | 22 | 22 | `2026-09-07T17:53:48+09:00` |
+| `20260907_124116_146` | 146 | 146 | `2026-09-07T21:41:16+09:00` |
+| `20260907_130429_147` | 147 | 147 | `2026-09-07T22:04:29+09:00` |
+
+There is no off-by-run or offset slip.
+
+| Where the hub records the legacy change point | Points | Hand-checked |
+|---|---:|---:|
+| Same run, row on the path itself | 16 | 16 |
+| Earlier run, first window (#1-#15): legacy baseline at #15; hub `add` at genesis (823) or a `set` at #11-#14 (17) | 840 | 25 |
+| Earlier run inside the window, row on the path | 89 | 25 |
+| Earlier run inside the window, `gone` row (`ports.mw_inputs.con1.3.1.*`, run #48) | 5 | 5 |
+| Earlier run inside the window, pointer target's row (`x180_DragCosine.length` 40->64, run #105) | 25 | 25 |
+| **Hub newer than legacy at #146**: x180/x90 amplitude and 4 pointers to them | 6 | 6 |
+| **Hub changed one run earlier than legacy**: the same 6 paths, seen at #147 | 6 | 6 |
+| Missing | **0** | |
+
+The as-of comparison differs at exactly those 6 paths, at #146 only. There are 0
+reverse misses (paths the hub changed that the legacy index lacks). Legacy-view and
+folded-row equality hold at all 4 runs.
+
+The 12 marked points have one cause: the archive's #146 folder was **rewritten after
+the run**. Its `node.json` and `quam_state/state.json` have mtime `22:04:08`, 23
+minutes after `created_at`. The legacy snapshot was captured at about 21:47, from the
+pre-acceptance state. The later rewrite carries the accepted patch:
+`x180_DragCosine.amplitude` 0.4972 -> 0.9512, `proven=1`. The hub therefore records
+the change at #146, the run whose patch it is. The legacy index first saw it at #147.
+
+Codex's table was right that nothing is missing. It mislabelled the #147 half of
+this pair: the 2 direct points and the 4 pointer points at #147 sit inside "unchanged
+versus predecessor: sparse catch-up" and "raw pointer holder". In fact they are the
+same deferred acceptance, seen from the next run. Codex's "unchanged" and "pointer"
+buckets also only checked the value at S. This review checked that a hub row inside
+the window produced that value.
+
+**Hand checks.** At least 20 points were sampled per category, or every point when a
+category has fewer. 108 real points were checked, plus 225 sparse and 275 dense
+synthetic points. Each check reads the **raw archive pair** at three runs: the run
+where the hub says the change happened, its predecessor, and the snapshot run. It
+then confirms three things:
+
+- the value moved at that run;
+- it equals the legacy value;
+- the hub's own row at that run is the one that moved it.
+
+For long arrays, the check loads the blob named by the marker row and compares
+element `i`. Every `gone` sample has the hub `gone` row, or the array or ancestor row,
+that removed it. Result: 0 unexpected.
+
+**Extended (b).** The 987 real points touch only 4 runs and contain no long-array
+elements. To cover more, the review built a legacy index from the archives' own saved
+states. It runs `leaf_index.numeric_leaves` and `_diff_rows` over every successful run
+in hub order, keeping "latest" in RAM as `_latest_values` would. On the 183-snapshot
+sparse case this replica was identical to real `ingest_snapshot`.
+
+| Legacy index built from | Change points | Same run | Earlier run in window | As-of / reverse / legacy-view / folded-row mismatches |
+|---|---:|---:|---:|---:|
+| KH, every 40th run (183 snapshots) | 122,800 | 5,540 | 117,260 | 0 / 0 / 0 / 0 |
+| KH, every run (4,112) | 1,030,999 | 1,030,999 | 0 | 0 / 0 / 0 / 0 |
+| Novera, every run (2,069), -04:00 | 14,058 | 14,058 | 0 | 0 / 0 / 0 / 0 |
+| arbel, every run (1,610) | 33,138 | 33,138 | 0 | 0 / 0 / 0 / 0 |
+
+The dense KH change points split by the hub row that produced them: 746,236 long-array
+marker rows, 270,659 `gone` rows, 11,445 rows on the path itself, and 2,659 pointer
+target rows. Sampled array elements were checked against the blob.
+
+### (a) and replay
+
+**What Codex compared.** Codex compared the merged and flattened state under `same`.
+That comparison misses three things:
+
+- **Checkpoint events.** At a checkpoint eid, `state_at` loads the checkpoint itself,
+  so the comparison is trivially true there. The change rows written AT checkpoint
+  events were never checked. A mutation that drops exactly those rows survived all 30
+  existing tests. It is now pinned (below).
+- **Container shape.** A flattened comparison cannot see empty containers or
+  list-versus-dict changes.
+- **Which checkpoint replay starts from.** Random sampling does exercise replay from
+  checkpoints other than genesis (16 of them on KH).
+
+**Extra checks run by the review:**
+
+- **Strict nested-document equality** (key sets, empties, container types) on
+  330/315/310 events, including every checkpoint and checkpoint+1: 0 mismatches.
+- **Folded change rows**, from genesis without checkpoints, equal the archive at every
+  successful run of all three archives (`flat_bad` above).
+- **Instants.** Every `t_utc_us` is nondecreasing in `ord`. All 400 sampled per archive
+  equal `run_time.resolve(read_node=True)`. All real runs have quality `offset`,
+  including Novera's -04:00, so the archive-hint path is exercised only by unit tests.
+  No instant ties.
+- **Resume.** Building Novera in 8 resumed chunks of 333 gave a ledger identical to
+  the one-shot build in events, rows, checkpoints and blobs.
+- **`REVERTS_TO_EARLIER` and `base_hash`**, recomputed independently, match on every
+  event (KH 335, Novera 23, arbel 120 flagged; none on a zero-change event).
+- **`proven`**, recomputed from `node.json` patches, matches on all 2,408/6,974/661 rows
+  of patched runs.
+- **`OFF_LIVE`** is absent from the code and flags.
+
+### Defects
+
+| # | Sev | Finding | Status |
+|---|---|---|---|
+| 1 | P1 | **An in-flight newest run became a permanent error event, and its changes moved to the next run.** On a live root (arbel grew during Codex's own run), a folder whose `node.json` exists before `quam_state` is saved was committed as an error. Completed locations are never revisited, so after the run saved, v 1->2 was still recorded at the following run. | Fixed: the newest discovered run without a readable pair is reported as `deferred` and not committed. Pinned by `test_newest_run_without_saved_state_is_deferred_not_committed`. |
+| 2 | P1 | **Error events overwrote the node's status with `"error"`.** Of the 23 real stateless runs, 18 *finished* (KH 9, Novera 8, arbel 1); the other Novera runs say `error` (3) and `running` (2). The Calibration log would have shown all 23 as errors. | Fixed: `status` keeps `metadata.status`, and the reason stays in `error`. The existing assertion that encoded the defect was corrected. |
+| 3 | P1 (pin) | **Resume correctness was unpinned.** Two real mutations survived every pin: diffing the first resumed run against `{}`, and forgetting the head hash. The third probe, which forgets the head shape, is equivalent. | Pinned: `test_resumed_build_equals_one_shot_build_row_for_row` (resume after every event, checkpoint interval 2). |
+| 4 | P1 (pin) | **Change rows at checkpoint events were unverified** (see (a)). | Pinned: `test_change_rows_alone_reproduce_every_saved_state`. |
+| 5 | P1, S5 | **Run folders are not immutable** (premise of DESIGN 3.1). See the measurements below the table. | Open, S5. |
+| 6 | P2 | A run whose `node.json` is unreadable but whose saved pair is fine becomes an error event, so its changes move to the next run. Not seen in the three archives; it is now deferred when it is the newest run. | Open |
+| 7 | P2 | `read_pair` and `node.json` reads use a plain `open()` without `FILE_SHARE_DELETE`. The project's doctrine routes reads of externally written files through `safe_io.open_shared`. | Open, S5 live ingest |
+| 8 | P3 | `REVERTS_TO_EARLIER` is byte-based. A content-equal re-serialisation of an earlier state would flag a zero-change run (none seen). | Open |
+| 9 | P3 | The `state_hash` lookups for reverts and identity have no index. `HubStore()` writes `meta` on every open, so a reader takes the write lock briefly. | Open |
+| 10 | P3 | In `tools/mutate_hub_builder.py`, `uncertainty` and `conflicting_chip`, and also `numeric_equal` and `revert_head`, are the same edit. 36 mutations are 34 distinct ones. `str.replace` also mutates every occurrence. | Noted |
+
+**Measurements behind defect 5.** These runs had `state.json` written more than 60 s
+after the run instant, and some were rewritten after later runs had already started:
+
+| Archive | Rewritten >60 s after the run | Of those, after later runs had started |
+|---|---:|---:|
+| KH | 70 | 32 |
+| Novera | 127 | 2 |
+| arbel | 10 | 0 |
+
+The KH cases include:
+
+- #1-#31: rewritten together at 18:53 on 2026-09-07; the rewrite dropped `twpa_ext`.
+- #146: the deferred acceptance described above.
+- #2483: rewritten on 2026-09-29, 16 days later, with identical bytes.
+
+Consequences:
+
+- Resumed builds never see such rewrites.
+- The ledger depends on when it was built.
+- A deferred acceptance is dated at the run's instant, not the time it took effect.
+
+S5 needs per-location `(size, mtime_ns)` (or a rehash: about 6 s for KH) and a
+correction-event policy.
+
+**Environment observation, outside this branch.** The KH archive's files are hardlinked
+into `D:\work\sm_qa_rigs\_shared\KH_202608_CZ` (created 2026-09-25). The #2483 rewrite on
+2026-09-29 happened through one of those two names. Any rig that writes in place there
+writes into `D:\work\Customer_Codes`.
+
+### Mutations and tests
+
+**Mutation checks:**
+
+- Codex's 36 mutations, re-run on the fixed tree: **36/36 RED**.
+- The review's own runner replaces exactly one occurrence of each target. Six of
+  Codex's mutations re-run there were RED: `checkpoint_replay`, `keep_error`,
+  `late_guard`, `identity_hash`, `array_replay`, `revert_fact`.
+- Of the review's 12 new probes, 9 were RED. These covered adjacent-revert flagging,
+  the lossy old side, the `/quam` envelope, `base_hash`, zero-change uncertainty, the
+  status overwrite, the `state_at` bound, the checkpoint payload and tie order.
+- The 3 resume probes stayed GREEN (defect 3). Dropping rows at checkpoint events
+  (interval > 1) also stayed GREEN under all old tests (defect 4).
+- The new pins are RED under every one of those mutations:
+
+  | Pin | Mutations that turn it RED |
+  |---|---|
+  | In-flight | never defer; defer every error; off by one |
+  | Status | status restored to `"error"` |
+  | Resume | diff the first resumed run against `{}`; forget the head hash |
+  | Rows-only | drop rows at checkpoint events |
+
+**Tests (cqt).** The hub suite (`test_hub_store`, `test_hub_build`, `test_hub_rules`)
+was run with `test_one_run_instant`, `test_run_instant`, `test_run_instant_callers`,
+`test_clock_health`, `test_leaf_index`, `test_history`, `test_param_history_changes` and
+`test_field_history`. Result: **583 passed, 1 skipped**.
+
+On the first run, `test_one_run_instant::TestRekeyMigration::test_revert_keeps_a_label_written_after_the_rekey`
+failed once. That file does not import the hub. It passed in isolation and in a full
+re-run, so it is recorded as a flake.
+
+**Sizes and timings:**
+
+- Rebuild times: KH 87 s, Novera 23 s, arbel 80 s (1,611 runs, live).
+- Peak RSS for arbel: 61.7 MiB.
+- Per-event write transaction on arbel: p50 23 ms, p95 30 ms, max 403 ms.
