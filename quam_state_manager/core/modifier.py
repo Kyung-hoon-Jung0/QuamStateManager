@@ -314,8 +314,11 @@ class Modifier:
 
         Cache clear and search index update happen ONCE after all edits
         succeed, not per-edit (the performance optimization noted in the plan).
+        So does the pending-tray checkpoint (docs/265): a batch outside a
+        request (the autofit writer) is one write, not one per row.
         """
-        with self.store._lock:
+        from quam_state_manager.core.pending_tray import batch as _tray_batch
+        with self.store._lock, _tray_batch(self.store):
             entries: list[ChangeEntry] = []
             # Tag every edit in this batch with one group id so a single Ctrl+Z
             # undoes the whole batch atomically (LIFO within the group). A batch

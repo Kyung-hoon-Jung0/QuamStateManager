@@ -1,6 +1,7 @@
 """A-22 recovery rejects partial checkpoints before publishing any data."""
 import copy
 import json
+import threading
 from dataclasses import asdict
 from types import SimpleNamespace
 
@@ -31,21 +32,23 @@ def _checkpoint(tmp_path):
 
 @pytest.mark.parametrize("field,value", [
     ("entries", []), ("entries", {}), ("entries", [None]),
-    ("version", 2), ("version", True), ("live_folder", "wrong-chip"),
+    ("version", pending_tray.VERSION + 1), ("version", True), ("live_folder", "wrong-chip"),
     ("flags", None), ("flags", {}),
     ("flags.working_dirty", "false"), ("flags.staged_base", "true"),
     ("flags.pending_reapply", []), ("flags.pending_reapply_orig", []),
     ("mutation_seq", -1), ("mutation_seq", True), ("mutation_seq", "3"),
-    ("state", []), ("wiring", []),
+    ("base_hash", None), ("applied", 3), ("applied", True), ("base_hash", "0" * 64),
     ("row.dot_path", None), ("row.dot_path", ""),
     ("row.source_file", "unknown"), ("row.created", 1),
     ("row.deleted", "false"), ("row.actor", None), ("row.group_id", []),
     ("synced_live_hash", "wrong-sync-point"),
+    ("row.old_value", 99), ("row.source_file", "wiring"),
 ], ids=["empty-rows", "rows-shape", "partial-row", "version", "version-bool",
         "identity", "flags-shape", "flags-missing", "dirty-type", "base-type",
         "stash-type", "originals-type", "negative-seq", "bool-seq", "string-seq",
-        "state-shape", "wiring-shape", "path-type", "path-empty", "source-type",
-        "created-type", "deleted-type", "actor-type", "group-type", "sync-hash"])
+        "base-shape", "applied-range", "applied-type", "base-mismatch", "path-type", "path-empty", "source-type",
+        "created-type", "deleted-type", "actor-type", "group-type", "sync-hash",
+        "row-old-value", "row-source-moved"])
 def test_partial_checkpoint_never_publishes(tmp_path, field, value):
     ctx, path = _checkpoint(tmp_path)
     doc = json.loads(path.read_text(encoding="utf-8"))
@@ -94,8 +97,11 @@ def test_save_interruption_recovers_complete_snapshot_without_writing(tmp_path, 
     ctx, path = _checkpoint(tmp_path)
     doc = json.loads(path.read_text(encoding="utf-8"))
     folder = ctx["working_copy"].working_folder
-    safe_io.write_state_wiring(folder, doc["state"], doc["wiring"])
-    ctx["store"] = QuamStore.from_dicts(doc["state"], doc["wiring"])
+    # docs/265 redesign: the sidecar no longer carries the documents; the
+    # staged pair is what the checkpointed store held (see _checkpoint).
+    staged = ({"value": 3, "other": 4}, {})
+    safe_io.write_state_wiring(folder, *copy.deepcopy(staged))
+    ctx["store"] = QuamStore.from_dicts(*copy.deepcopy(staged))
     def forbidden(*args, **kwargs):
         pytest.fail("recovery wrote a chip file")
     monkeypatch.setattr(safe_io, "write_state_wiring", forbidden)
@@ -247,16 +253,21 @@ def test_http_batch_persists_only_complete_rows_and_actor(tmp_path, monkeypatch)
     original = safe_io.atomic_write_json
     def recorded(target, doc, **kwargs):
         if target == path:
-            writes.append(copy.deepcopy(doc))
+            writes.append((threading.get_ident(), copy.deepcopy(doc)))
         return original(target, doc, **kwargs)
     monkeypatch.setattr(safe_io, "atomic_write_json", recorded)
+    request_thread = threading.get_ident()
     result = client.post("/field/edit-batch", json={"updates": [
         {"dot_path": "qubits.q1.f_01", "value": "5200000000"},
         {"dot_path": "qubits.q1.z.joint_offset", "value": "0.16"}]},
         headers={"X-SM-Agent": "codex"})
     assert result.status_code == 200 and result.get_json()["ok"]
-    # One batch commit, then the request-completion flags checkpoint.
-    assert len(writes) == 2
+    # docs/265 redesign: the request thread writes nothing; ONE write lands
+    # after the request (batch rows, actor stamps and flags together).
+    assert request_thread not in [t for t, _ in writes]
+    pending_tray.flush_all()
+    assert len(writes) == 1
+    writes = [doc for _, doc in writes]
     assert all(len(doc["entries"]) == 4 for doc in writes)
     assert all(row["actor"] == "by_codex" for doc in writes for row in doc["entries"][-2:])
 

@@ -39,6 +39,10 @@ def _staged(tmp_path):
                         ("qubits.q1.z.joint_offset", "0.12")]:
         response = client.post("/field/edit", data={"dot_path": path, "value": value})
         assert response.status_code == 200 and response.get_json()["ok"]
+    # docs/265 redesign: a request never writes the sidecar itself; the
+    # background writer lands it after the request. Wait for that write, so a
+    # test that then corrupts or reads the file sees the last request's rows.
+    pending_tray.flush_all()
     return instance, live, app, client
 
 
@@ -121,8 +125,15 @@ def test_sidecar_crash_before_replace_keeps_last_complete_tray(tmp_path, monkeyp
 
     with monkeypatch.context() as patch:
         patch.setattr(safe_io, "_replace_into_place", crash)
+        # docs/265 redesign: the request no longer writes; the third row's
+        # write happens after it, and THAT write is the one that crashes.
+        response = client.post("/field/edit", data={"dot_path": "qubits.q1.f_01", "value": "5200000000"})
+        assert response.status_code == 200 and response.get_json()["ok"]
         with pytest.raises(SimulatedCrash):
-            client.post("/field/edit", data={"dot_path": "qubits.q1.f_01", "value": "5200000000"})
+            pending_tray.flush_all()
+        # The process dies here: nothing the crashed process still holds may
+        # reach the disk afterwards (a context's retirement, as on eviction).
+        _ctx(first)["_pending_tray_retired"] = True
     assert path.read_bytes() == previous
     app, _, _ = _open(instance, live)
     assert [asdict(e) for e in _ctx(app)["store"].change_log] == previous_rows

@@ -1883,7 +1883,7 @@ def _activate_quam(folder_path: str | Path, *, origin: str = "live") -> dict:
             # cross-save undo journal from its sidecar; cursor starts at tip.
             _journal_reset(ctx)
             from quam_state_manager.core import pending_tray
-            pending_tray.attach(ctx)
+            pending_tray.attach(ctx, build_lock=build_lock)
         # Project lens (docs/63): fresh builds (first load, LRU-eviction
         # rehydrates, restarts) derive their scope here — BEFORE publication
         # (a concurrent /datasets render must never observe an active scoped
@@ -9190,10 +9190,30 @@ def _tray_recovery_context():
         "_tray_recovery_notice", "")}
 
 
+@bp.before_app_request
+def _pending_tray_request_begins():
+    # docs/265: a request's tray changes become durable as a whole, AFTER it
+    # ends, on the background writer -- never a write on this thread. The
+    # scope lives in this request's environ, so a nested test_request_context
+    # (agent_api's apply door) cannot end it early.
+    from quam_state_manager.core import pending_tray
+    request.environ["sm.pending_tray"] = pending_tray.enter_request()
+
+
+@bp.teardown_app_request
+def _pending_tray_request_ends(exc=None):  # noqa: ANN001 -- Flask's signature
+    scope = request.environ.pop("sm.pending_tray", None)
+    if scope is not None:
+        from quam_state_manager.core import pending_tray
+        pending_tray.leave_request(scope)
+
+
 @bp.after_app_request
 def _checkpoint_pending_tray_flags(response):
     # Actor stamps and staged_base/dirty/stash flags may be set AFTER a log
-    # mutation. Finish the checkpoint before acknowledging a mutating request.
+    # mutation: a mutating request marks every chip with pending rows, so the
+    # one write after it carries them (docs/265 -- marked here, written by the
+    # background writer once the request ends).
     if request.method not in ("GET", "HEAD", "OPTIONS"):
         from quam_state_manager.core import pending_tray
         seen = set()
@@ -9203,7 +9223,7 @@ def _checkpoint_pending_tray_flags(response):
                     and isinstance(store.change_log, pending_tray.PendingLog)
                     and store.change_log):
                 seen.add(id(store))
-                pending_tray.checkpoint(ctx)
+                pending_tray.note_flags(ctx)
     return response
 
 
