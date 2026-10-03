@@ -140,7 +140,39 @@ Rig: `D:\work\sm_qa_rigs\agent\rC`, port 5096, `srv_fix.bat`. Before any run, `/
 
 **Pins:** `TestCodexCarriesTheLabsProvider`, 5 tests. Each override parses back through `tomllib` to the exact table. 6/6 mutations red: drop the provider, drop the table, carry everything, let the user's model beat SM's, leak on a broken file, and invent a provider for a default-provider config.
 
+## Follow-up: Codex reads AGENTS.md, so SM's block goes there (B-02)
+
+Setup wrote Codex's lab context and SM's rules to `AGENTS.local.md`, a file Codex never reads. Without the rules, a terminal Codex bypassed SM in the campaign: 0 MCP calls, 14 shell calls, 211 s. With the rules in `AGENTS.md` it made 8 MCP calls, 0 shell calls, in 54 s.
+
+**Measured on the real Codex 0.159.2 CLI** (scratch folders, one question each):
+
+| Folder holds | `project_doc_fallback_filenames` | Codex read |
+|---|---|---|
+| `AGENTS.md` + `AGENTS.local.md` | `['AGENTS.local.md']` | `AGENTS.md` only |
+| `AGENTS.local.md` alone | `['AGENTS.local.md']` | `AGENTS.local.md` |
+| (an MCP server returning `instructions`) | - | known once the server's tools are loaded (the model answered from them after one call; told not to call tools, it did not know them) |
+
+A fallback name is consulted only when `AGENTS.md` is absent. It cannot put SM's rules beside a lab's own `AGENTS.md`. MCP `instructions` reach Codex only after it touches SM's server, and the failure B-02 measured was exactly a Codex that never touched it. So the file is the channel that matters; the bridge's `instructions` are a second one (open below).
+
+**Changes:**
+- `context_path(..., "codex", local)` is always `AGENTS.md`. SM's block sits between its markers, and the lab's own text is kept. Claude keeps its `CLAUDE.local.md` / `CLAUDE.md` choice.
+- A block SM wrote earlier into `AGENTS.local.md` counts as unread, not written (`context_unread`). Setup keeps "context" on its to-do list and shows a red line naming the file.
+- The next write moves the block. Only SM's marked block leaves; the lab's text around it stays. A file left empty is removed, and a backup stays beside it. The preview names the file the block moves out of.
+- The form says "Codex: always AGENTS.md" beside the Claude local checkbox.
+
+**End to end (real CLI):** a folder held a lab `AGENTS.md` ("sign with ZEBRA") and an old SM block in `AGENTS.local.md`. SM's `write_context` then ran. Codex answered:
+- the new chip name;
+- the lab note "do not touch q2";
+- "ZEBRA";
+- "never edit state.json directly".
+
+The old file was gone, with its backup kept.
+
+**Pins:** `TestCodexReadsAgentsMd` (4) + 4 assertions in `agent_setup_selfcheck.cjs`; 8/8 mutations red.
+
 ## Open
+
+- SM's MCP bridge already returns `instructions` (the read/stage/apply path). They do not yet say "never edit state.json directly, never run `python <node>.py`", the rule the file carries. Codex 0.159.2 surfaces them once the server is loaded, so adding that rule there is a cheap second channel (`mcp.py`, after the bridge-safety merge).
 
 - The two flags need a recent Codex; an older one is refused by name. `default_tools_approval_mode` was verified on 0.159.2 only.
 - Allowing `Read` lets the in-app agent read any file the user can read (needed for figures outside the cwd). It cannot write.

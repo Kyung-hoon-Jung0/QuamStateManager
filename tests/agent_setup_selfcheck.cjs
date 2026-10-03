@@ -44,7 +44,7 @@ global.fetch = window.fetch = function (url, opts) {
   else if (/\/setup\/connect/.test(url) && !body.apply) resp = { ok: true, applied: false, previews: { mcp: { file: 'H/.claude.json', exists: true, before: null, after: { command: 'py.exe' }, changed: true }, hooks: { file: 'H/.claude/settings.json', exists: true, before: { PreToolUse: [] }, after: { PreToolUse: [{ matcher: 'Bash' }] }, changed: true } }, writes: {} };
   else if (/\/setup\/connect/.test(url)) resp = { ok: true, applied: true, writes: { mcp: { file: 'H/.claude.json', backup: 'H/.claude.json.sm-backup-1' } } };
   else if (/\/setup\/context$/.test(url) && (!opts || opts.method === 'GET')) resp = { ok: true, facts: { n_qubits: 20, n_pairs: 30, bias_modes: { opx: 9 }, nodes: ['05_power_rabi'] }, questions: [{ id: 'tunable', kind: 'choice', options: ['flux-tunable', 'fixed-frequency', 'mixed'], question: 'Are the qubits flux-tunable?', detected: 'mixed', why: 'x' }, { id: 'notes', kind: 'text', question: 'Anything else?', detected: '' }] };
-  else if (/\/setup\/context$/.test(url)) resp = { ok: true, applied: !!body.apply, block: 'B', previews: { claude: { file: 'D:/lab/cal/CLAUDE.local.md', exists: false, before: '', after: 'a\nb\n', changed: true } }, writes: {} };
+  else if (/\/setup\/context$/.test(url)) resp = { ok: true, applied: !!body.apply, block: 'B', previews: { claude: { file: 'D:/lab/cal/CLAUDE.local.md', exists: false, before: '', after: 'a\nb\n', changed: true }, codex: { file: 'D:/lab/cal/AGENTS.md', exists: true, before: 'lab\n', after: 'lab\n\nB', changed: true, moves_from: 'D:/lab/cal/AGENTS.local.md' } }, writes: {} };
   else if (/\/setup\/test/.test(url)) resp = { ok: true, backend: 'claude', elapsed_s: 12.3, done: true, failed: false, answer: 'PJ_10082026 is open: 20 qubits.', tools: ['mcp__sm__sm_status'] };
   return Promise.resolve({ status: code, json: function () { return Promise.resolve(resp); } });
 };
@@ -171,6 +171,25 @@ const tick = (ms) => new Promise(r => setTimeout(r, ms || 15));
   ok(/✓/.test((testSec.querySelector('summary') || {}).textContent || ''),
      'A04: and it is still marked done (summary: '
      + ((testSec.querySelector('summary') || {}).textContent || '').trim().slice(0, 24) + ')');
+  // B-02: Codex reads AGENTS.md only -- the UI says so, and a block it never reads is not "written"
+  A.loadContext();
+  await tick(30);
+  ok(/Codex: always AGENTS\.md/.test(document.getElementById('as-ctx').textContent), 'B-02: the context form says Codex always uses AGENTS.md');
+  A.previewContext();
+  await tick(30);
+  ok(/takes SM's block out of D:\/lab\/cal\/AGENTS\.local\.md/.test(document.getElementById('as-ctx-prev').textContent), 'B-02: the preview names the unread file it moves the block out of');
+  status.context = { 'claude:local': 'D:/lab/cal/CLAUDE.local.md' };
+  status.context_unread = ['D:/lab/cal/AGENTS.local.md'];
+  A.load();
+  await tick(30);
+  const ctxSec = document.getElementById('as-context');
+  ok(!!ctxSec && ctxSec.open && /Codex never reads/.test(ctxSec.textContent) && /AGENTS\.local\.md/.test(ctxSec.textContent) && !/✓/.test(ctxSec.querySelector('summary').textContent),
+     'B-02: an unread AGENTS.local.md block keeps the section open, not done, and says why');
+  status.context_unread = [];
+  A.load();
+  await tick(30);
+  const ctxSec2 = document.getElementById('as-context');
+  ok(!!ctxSec2 && !/Codex never reads/.test(ctxSec2.textContent) && /✓/.test(ctxSec2.querySelector('summary').textContent), 'B-02: nothing unread -> no warning, section done');
   console.log(`\n${passes} passed, ${fails} failed`);
   process.exit(fails ? 1 : 0);
 })();

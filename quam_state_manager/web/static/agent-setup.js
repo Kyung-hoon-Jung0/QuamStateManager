@@ -124,8 +124,10 @@ window.AgentSetup = (function () {
       '<button type="button" class="btn-sm" onclick="AgentSetup.journal()">Use this folder</button></div>' +
       '<p class="muted">Suggested: beside the project data folder (shared by everyone who uses this PC account; survives a reinstall). Obsidian: embed with <code>![[&lt;chip&gt;/&lt;date&gt;]]</code>; never type into SM\'s file directly.</p>'));
     // 5. lab context
-    var ctxDone = d.context && Object.keys(d.context).length > 0;
+    var ctxUnread = d.context_unread || [];
+    var ctxDone = d.context && Object.keys(d.context).length > 0 && !ctxUnread.length;
     parts.push(sec("context", "5. Lab context (what the agent must know about this device)", !!ctxDone,
+      (ctxUnread.length ? '<p class="ag-err">Codex never reads <code>' + esc(ctxUnread.join(", ")) + "</code>: SM's block there has no effect. Write the lab context again to move it into AGENTS.md.</p>" : "") +
       '<div id="as-ctx">' + (d.calibrations_folder ? '<button type="button" class="btn-sm" onclick="AgentSetup.loadContext()">Show the questions</button>' : '<p class="muted">needs the calibrations folder first</p>') + "</div>" +
       (ctxDone ? '<p class="muted">written: ' + Object.keys(d.context).map(function (k) { return esc(k) + " → <code>" + esc(d.context[k]) + "</code>"; }).join(", ") + "</p>" : "")));
     // 6. test
@@ -291,7 +293,8 @@ window.AgentSetup = (function () {
         }
         html.push("</div>");
       });
-      html.push('<div class="as-acts"><label class="ag-observer"><input type="checkbox" id="as-ctx-local" checked> write to the .local.md files (not shared through git)</label> ' +
+      html.push('<div class="as-acts"><label class="ag-observer"><input type="checkbox" id="as-ctx-local" checked> Claude: CLAUDE.local.md (not shared through git)</label> ' +
+        '<span class="muted" title="Codex reads one project file per folder: AGENTS.md. It ignores AGENTS.local.md.">Codex: always AGENTS.md</span> ' +
         '<label class="ag-observer"><input type="checkbox" id="as-ctx-claude" checked> CLAUDE</label> <label class="ag-observer"><input type="checkbox" id="as-ctx-codex" checked> AGENTS</label> ' +
         '<button type="button" class="btn-sm" onclick="AgentSetup.previewContext()">Preview the block</button></div><div id="as-ctx-prev"></div>');
       host.innerHTML = html.join("");
@@ -310,7 +313,7 @@ window.AgentSetup = (function () {
       if (!host) return;
       if (r.status !== 200) { host.innerHTML = '<p class="ag-err">' + esc(r.body.error || "failed") + "</p>"; return; }
       var pv = r.body.previews || {};
-      host.innerHTML = Object.keys(pv).map(function (t) { var p = pv[t]; return "<h5><code>" + esc(p.file) + "</code>" + (p.exists ? "" : ' <span class="muted">(new file)</span>') + "</h5>" + diffHtml(p.before, p.after); }).join("") +
+      host.innerHTML = Object.keys(pv).map(function (t) { var p = pv[t]; return "<h5><code>" + esc(p.file) + "</code>" + (p.exists ? "" : ' <span class="muted">(new file)</span>') + "</h5>" + (p.moves_from ? '<p class="muted">and takes SM\'s block out of <code>' + esc(p.moves_from) + "</code>, which Codex never reads (a backup stays beside it)</p>" : "") + diffHtml(p.before, p.after); }).join("") +
         '<div class="as-acts"><button type="button" class="btn-sm ag-start" onclick="AgentSetup.writeContext()">Write (with backups)</button></div>';
     });
   }

@@ -651,3 +651,71 @@ class TestTheWiringStrip:
 def _app_for_wiring(tmp_path):
     from quam_state_manager.web.app import create_app
     return create_app(testing=True, instance_path=str(tmp_path / "_i"))
+
+
+class TestCodexReadsAgentsMd:
+    """B-02: Setup wrote Codex's lab context + SM's rules to AGENTS.local.md, which Codex
+    never reads (measured on Codex 0.159.2: with a lab's AGENTS.md present, even
+    project_doc_fallback_filenames=['AGENTS.local.md'] is not consulted). Without the rules a
+    terminal Codex bypassed SM entirely. The block now always goes to AGENTS.md."""
+
+    @staticmethod
+    def _block():
+        facts = st.detect_facts({"qubits": {"q1": {}}, "qubit_pairs": {}})
+        return st.context_block(facts, {"tunable": "fixed-frequency", "notes": "fridge warming"}, chip="X")
+
+    def test_codex_always_writes_agents_md_never_the_local_file(self, tmp_path):
+        cal = tmp_path / "cal"
+        cal.mkdir()
+        (cal / "AGENTS.md").write_text("# the lab's own rules\n\nkeep these\n", encoding="utf-8")
+        for local in (True, False):
+            assert st.context_path(cal, "codex", local) == cal / "AGENTS.md"
+        r = st.write_context(cal, self._block(), target="codex", local=True)
+        assert r["file"] == str(cal / "AGENTS.md") and not (cal / "AGENTS.local.md").exists()
+        t = (cal / "AGENTS.md").read_text(encoding="utf-8")
+        assert t.startswith("# the lab's own rules\n\nkeep these\n\n" + st.CTX_START) and "fridge warming" in t
+        st.write_context(cal, self._block(), target="codex", local=True)
+        assert (cal / "AGENTS.md").read_text(encoding="utf-8").count(st.CTX_START) == 1
+        assert st.context_written(cal) == {"codex:shared": str(cal / "AGENTS.md")}
+        # Claude keeps its local/shared choice
+        assert st.context_path(cal, "claude", True) == cal / "CLAUDE.local.md"
+        assert st.context_path(cal, "claude", False) == cal / "CLAUDE.md"
+
+    def test_an_old_local_block_is_unread_not_written_and_is_moved(self, tmp_path):
+        cal = tmp_path / "cal"
+        cal.mkdir()
+        old = self._block().replace("fridge warming", "old notes")
+        (cal / "AGENTS.local.md").write_text("my private notes\n\n" + old, encoding="utf-8")
+        assert st.context_written(cal) == {}
+        assert st.context_unread(cal) == [str(cal / "AGENTS.local.md")]
+        pv = st.preview_context(cal, self._block(), target="codex")
+        assert pv["moves_from"] == str(cal / "AGENTS.local.md") and pv["file"] == str(cal / "AGENTS.md")
+        assert "moves_from" not in st.preview_context(cal, self._block(), target="claude")
+        r = st.write_context(cal, self._block(), target="codex")
+        mv = r["moved_from"]
+        assert mv["file"] == str(cal / "AGENTS.local.md") and mv["removed_file"] is False and Path(mv["backup"]).exists()
+        left = (cal / "AGENTS.local.md").read_text(encoding="utf-8")
+        assert left == "my private notes\n" and st.CTX_START not in left
+        assert st.CTX_START in Path(mv["backup"]).read_text(encoding="utf-8")
+        assert st.context_unread(cal) == [] and "codex:shared" in st.context_written(cal)
+
+    def test_a_local_file_holding_only_sms_block_is_removed(self, tmp_path):
+        cal = tmp_path / "cal"
+        cal.mkdir()
+        (cal / "AGENTS.local.md").write_text(self._block(), encoding="utf-8")
+        r = st.write_context(cal, self._block(), target="codex")
+        assert r["moved_from"]["removed_file"] is True and not (cal / "AGENTS.local.md").exists()
+        assert Path(r["moved_from"]["backup"]).exists()
+
+    def test_status_keeps_context_on_the_todo_list_while_a_block_is_unread(self, c):
+        (c._cal / "CLAUDE.local.md").write_text(self._block(), encoding="utf-8")
+        (c._cal / "AGENTS.local.md").write_text(self._block(), encoding="utf-8")
+        s = c.get("/api/agent/setup").get_json()
+        assert s["context_unread"] == [str(c._cal / "AGENTS.local.md")] and "context" in s["todo"]
+        answers = {"tunable": "fixed-frequency"}
+        d = c.post("/api/agent/setup/context", json={"answers": answers, "apply": True, "targets": ["codex"]}).get_json()
+        assert d["writes"]["codex"]["file"] == str(c._cal / "AGENTS.md")
+        assert d["writes"]["codex"]["moved_from"]["removed_file"] is True
+        s = c.get("/api/agent/setup").get_json()
+        assert s["context_unread"] == [] and "context" not in s["todo"]
+        assert s["context"]["codex:shared"] == str(c._cal / "AGENTS.md")

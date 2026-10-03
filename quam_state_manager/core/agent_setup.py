@@ -10,7 +10,7 @@ Files this module may write (each idempotent, marked, backed up):
   ~/.claude/settings.json                hooks.{PreToolUse,PostToolUse,PostToolUseFailure,Stop}
   <calibrations>/.claude/settings.local.json   permissions.allow
   ~/.codex/config.toml                   [mcp_servers.quam-state-manager] between markers
-  <calibrations>/CLAUDE.local.md | AGENTS.local.md   the lab-context block between markers
+  <calibrations>/CLAUDE(.local).md | AGENTS.md   the lab-context block between markers
   <instance>/agent_setup.json            what was done, when, and where the backups are
 """
 
@@ -540,9 +540,24 @@ def context_block(facts: dict, answers: dict, *, chip: str | None = None, data_f
     return "\n".join(lines) + "\n"
 
 
+# B-02: Codex reads exactly one project doc per directory, and AGENTS.local.md is not it.
+# Measured on the real Codex 0.159.2 CLI (scratch dirs, one question each):
+#   AGENTS.md + AGENTS.local.md, project_doc_fallback_filenames=['AGENTS.local.md'] -> only AGENTS.md read
+#   AGENTS.local.md alone, same fallback                                          -> AGENTS.local.md read
+# A fallback name is consulted only when AGENTS.md is absent, so it cannot add SM's rules beside a
+# lab's own AGENTS.md. SM's block therefore always goes into AGENTS.md, between its markers. Without
+# it, a terminal Codex bypassed SM entirely in the campaign: 0 MCP calls, 14 shell calls.
+CODEX_CONTEXT_FILE = "AGENTS.md"
+CODEX_UNREAD_FILE = "AGENTS.local.md"
+_CTX_BLOCK = re.compile(re.escape(CTX_START) + r".*?" + re.escape(CTX_END) + r"\n?", re.S)
+
+
 def context_path(cal_folder: str | Path, target: str = "claude", local: bool = True) -> Path:
-    name = ("CLAUDE" if target == "claude" else "AGENTS") + (".local.md" if local else ".md")
-    return Path(cal_folder) / name
+    """Where *target* reads the lab context. ``local`` (not shared through git) exists for
+    Claude only (CLAUDE.local.md); Codex has no local variant, see ``CODEX_CONTEXT_FILE``."""
+    if target != "claude":
+        return Path(cal_folder) / CODEX_CONTEXT_FILE
+    return Path(cal_folder) / ("CLAUDE.local.md" if local else "CLAUDE.md")
 
 
 def preview_context(cal_folder: str | Path, block: str, *, target: str = "claude", local: bool = True) -> dict:
@@ -551,12 +566,25 @@ def preview_context(cal_folder: str | Path, block: str, *, target: str = "claude
         cur = p.read_text(encoding="utf-8")
     except OSError:
         cur = ""
-    pat = re.compile(re.escape(CTX_START) + r".*?" + re.escape(CTX_END) + r"\n?", re.S)
-    if pat.search(cur):
-        after = pat.sub(lambda _m: block, cur)
+    if _CTX_BLOCK.search(cur):
+        after = _CTX_BLOCK.sub(lambda _m: block, cur)
     else:
         after = cur.rstrip("\n") + ("\n\n" if cur.strip() else "") + block
-    return {"file": str(p), "exists": p.exists(), "before": cur, "after": after, "changed": after != cur}
+    out = {"file": str(p), "exists": p.exists(), "before": cur, "after": after, "changed": after != cur}
+    if target != "claude":
+        stale = _stale_codex_block(cal_folder)
+        if stale:
+            out["moves_from"] = stale
+    return out
+
+
+def _stale_codex_block(cal_folder: str | Path) -> str | None:
+    """AGENTS.local.md holding SM's block (written by SM before B-02), or None."""
+    p = Path(cal_folder) / CODEX_UNREAD_FILE
+    try:
+        return str(p) if CTX_START in p.read_text(encoding="utf-8") else None
+    except OSError:
+        return None
 
 
 def write_context(cal_folder: str | Path, block: str, *, target: str = "claude", local: bool = True) -> dict:
@@ -567,22 +595,48 @@ def write_context(cal_folder: str | Path, block: str, *, target: str = "claude",
     tmp = p.with_name(p.name + ".tmp")
     tmp.write_text(prev["after"], encoding="utf-8")
     os.replace(tmp, p)
-    return {"file": str(p), "backup": bak}
+    out = {"file": str(p), "backup": bak}
+    if prev.get("moves_from"):
+        out["moved_from"] = _remove_stale_codex_block(Path(prev["moves_from"]))
+    return out
+
+
+def _remove_stale_codex_block(p: Path) -> dict:
+    """Take SM's own block out of AGENTS.local.md, after it is safely in AGENTS.md. Only the
+    marked block goes; anything the lab wrote around it stays. A file left holding nothing is
+    removed (a backup stays beside it)."""
+    bak = backup(p)
+    rest = _CTX_BLOCK.sub("", p.read_text(encoding="utf-8")).strip()
+    if rest:
+        tmp = p.with_name(p.name + ".tmp")
+        tmp.write_text(rest + "\n", encoding="utf-8")
+        os.replace(tmp, p)
+        return {"file": str(p), "backup": bak, "removed_file": False}
+    p.unlink()
+    return {"file": str(p), "backup": bak, "removed_file": True}
 
 
 def context_written(cal_folder: str | Path | None) -> dict:
+    """The files that hold SM's block AND are read by their CLI. A block Codex never reads
+    (``context_unread``) does not count as written."""
     out = {}
     if not cal_folder:
         return out
-    for target in ("claude", "codex"):
-        for local in (True, False):
-            p = context_path(cal_folder, target, local)
-            try:
-                if CTX_START in p.read_text(encoding="utf-8"):
-                    out[f"{target}:{'local' if local else 'shared'}"] = str(p)
-            except OSError:
-                continue
+    for key, p in (("claude:local", context_path(cal_folder, "claude", True)),
+                   ("claude:shared", context_path(cal_folder, "claude", False)),
+                   ("codex:shared", context_path(cal_folder, "codex"))):
+        try:
+            if CTX_START in p.read_text(encoding="utf-8"):
+                out[key] = str(p)
+        except OSError:
+            continue
     return out
+
+
+def context_unread(cal_folder: str | Path | None) -> list[str]:
+    """Files holding SM's block that their CLI never reads (B-02)."""
+    stale = _stale_codex_block(cal_folder) if cal_folder else None
+    return [stale] if stale else []
 
 
 # ------------------------------------------------------------------ state
@@ -602,6 +656,7 @@ def status(instance_path, *, home: Path | None = None, cal_folder: str | None = 
                    "settings": str(claude_settings_path(home))},
         "codex": {"mcp": codex_registered(home), "config": str(codex_config_path(home))},
         "context": context_written(cal_folder),
+        "context_unread": context_unread(cal_folder),
         "calibrations_folder": cal_folder,
         "frozen": bool(getattr(sys, "frozen", False)),
     }

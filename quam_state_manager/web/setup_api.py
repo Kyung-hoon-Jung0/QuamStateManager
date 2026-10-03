@@ -143,7 +143,8 @@ def setup_status():
         todo.append("calibrations_folder")
     if not s["journal"]["configured"]:
         todo.append("journal")
-    if cal and not s["context"]:
+    if cal and (not s["context"] or s.get("context_unread")):
+        # B-02: a block only in AGENTS.local.md is one Codex never reads -- still to do
         todo.append("context")
     s["todo"] = todo
     return jsonify(ok=True, **s)
