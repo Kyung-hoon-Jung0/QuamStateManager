@@ -126,10 +126,24 @@ Rig: `D:\work\sm_qa_rigs\agent\rC`, port 5096, `srv_fix.bat`. Before any run, `/
 
 **Hashes:** `chip/state.json`, `chip/wiring.json` and the node file were identical before and after. The user's real `~/.claude/settings.json` and `~/.codex/config.toml` were unchanged, with no `quam-state-manager` entry anywhere.
 
-## Open (needs the user)
+## Follow-up: the lab's Codex provider rides along
 
-- `--ignore-user-config` also drops a lab's own Codex `model_provider` (e.g. Azure) and model defaults from config.toml. Only `agent_setup.json`'s model rides along. A lab on a custom provider would need SM to carry that setting explicitly.
+`--ignore-user-config` also dropped a lab's own `model_provider` (e.g. Azure OpenAI or a proxy) from `~/.codex/config.toml`, so a lab on a custom provider got no answer at all.
+
+- `codex_user_provider()` reads `$CODEX_HOME/config.toml` (else `~/.codex/config.toml`). It carries exactly two things as `-c` overrides: `model_provider` and that provider's own `model_providers.<id>` table.
+- The user's `model` also rides along, but only when SM's own setup names none. SM's model wins.
+- Nothing else crosses: no MCP servers (C-02), no `approval_policy`, no `sandbox_mode`, no other provider tables.
+- A missing or unparseable config carries nothing. That is byte-identical to the command before.
+- `tests/conftest.py` points `CODEX_HOME` at a missing tmp dir, so no test ever reads the developer's real config.
+
+**Real CLI (0.159.2):** with a fake `labproxy` provider at `http://127.0.0.1:9/v1`, Codex started the turn and failed with `Reconnecting... waiting for network`. That means the overrides were accepted and the provider was used. The same command naming a provider that does not exist fails at once with `Model provider ... not found`.
+
+**Pins:** `TestCodexCarriesTheLabsProvider`, 5 tests. Each override parses back through `tomllib` to the exact table. 6/6 mutations red: drop the provider, drop the table, carry everything, let the user's model beat SM's, leak on a broken file, and invent a provider for a default-provider config.
+
+## Open
+
 - The two flags need a recent Codex; an older one is refused by name. `default_tools_approval_mode` was verified on 0.159.2 only.
 - Allowing `Read` lets the in-app agent read any file the user can read (needed for figures outside the cwd). It cannot write.
-- Out of scope, still open: A-01 / D-02 (run_node and the whole-snapshot proposal; the plan runs above proposed 299 writes, all held and rejected), and A-09 (identity is recorded, not checked).
+- A Codex turn whose provider is unreachable retries ("waiting for network") instead of failing. SM has no turn timeout, so only the user's Stop ends it.
+- A-01 / D-02 (run_node and the whole-snapshot proposal) shipped in docs/245. A-09 (identity is recorded, not checked) is still open.
   - The in-app agent no longer has a shell to forge requests with. A terminal agent still can.

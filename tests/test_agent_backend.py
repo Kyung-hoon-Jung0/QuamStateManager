@@ -308,3 +308,85 @@ class TestProcessOverTheFakeCli:
         d = ab.detect(sys.executable)
         assert d["found"] is True and d["version"]
         assert ab.detect("no-such-cli-xyz")["found"] is False
+
+
+class TestCodexCarriesTheLabsProvider:
+    """docs/247 follow-up: --ignore-user-config keeps the user's MCP servers and
+    sandbox defaults out of the in-app session -- but a lab whose Codex talks to
+    its own provider (Azure OpenAI, a proxy) could not answer at all without it.
+    Exactly the provider (and the user's model, when SM's setup names none) is
+    carried; nothing else crosses."""
+
+    CFG = (
+        'model = "gpt-azure-deploy"\n'
+        'model_provider = "azure"\n'
+        'approval_policy = "on-request"\n'
+        'sandbox_mode = "danger-full-access"\n'
+        '\n'
+        '[model_providers.azure]\n'
+        'name = "Azure OpenAI"\n'
+        'base_url = "https://lab.openai.azure.com/openai"\n'
+        'env_key = "AZURE_OPENAI_API_KEY"\n'
+        'wire_api = "responses"\n'
+        'query_params = { api-version = "2025-04-01-preview" }\n'
+        '\n'
+        '[model_providers.other]\n'
+        'name = "unused"\n'
+        '\n'
+        '[mcp_servers.quam-state-manager]\n'
+        'command = "python"\n'
+        'args = ["-m", "quam_state_manager.mcp"]\n'
+    )
+
+    def _cmd(self, tmp_path, monkeypatch, cfg_text, **kw):
+        home = tmp_path / "codexhome"
+        home.mkdir()
+        if cfg_text is not None:
+            (home / "config.toml").write_text(cfg_text, encoding="utf-8")
+        monkeypatch.setenv("CODEX_HOME", str(home))
+        return ab.CodexBackend("codex", tmp_path / "x", sm_url="u", **kw).command(prompt="p")
+
+    @staticmethod
+    def _overrides(cmd):
+        import tomllib
+        out = {}
+        for i, a in enumerate(cmd):
+            if a == "-c":
+                k, _, v = cmd[i + 1].partition("=")
+                out[k] = tomllib.loads("v=" + v)["v"]
+        return out
+
+    def test_the_provider_and_its_table_cross_and_parse_back(self, tmp_path, monkeypatch):
+        cmd = self._cmd(tmp_path, monkeypatch, self.CFG)
+        ov = self._overrides(cmd)
+        assert ov["model_provider"] == "azure"
+        assert ov["model_providers.azure"] == {
+            "name": "Azure OpenAI", "base_url": "https://lab.openai.azure.com/openai",
+            "env_key": "AZURE_OPENAI_API_KEY", "wire_api": "responses",
+            "query_params": {"api-version": "2025-04-01-preview"}}
+        assert cmd[cmd.index("-m") + 1] == "gpt-azure-deploy"
+
+    def test_nothing_else_crosses(self, tmp_path, monkeypatch):
+        cmd = self._cmd(tmp_path, monkeypatch, self.CFG)
+        flat = " ".join(cmd)
+        assert "quam-state-manager" not in flat, "the user's own MCP servers stay out (C-02)"
+        assert "model_providers.other" not in flat
+        assert "on-request" not in flat and "danger-full-access" not in flat
+        assert cmd[cmd.index("-s") + 1] == "read-only"
+        assert "--ignore-user-config" in cmd
+
+    def test_sms_own_model_wins(self, tmp_path, monkeypatch):
+        cmd = self._cmd(tmp_path, monkeypatch, self.CFG, model="gpt-sm-setup")
+        assert cmd[cmd.index("-m") + 1] == "gpt-sm-setup" and cmd.count("-m") == 1
+
+    def test_no_user_config_or_a_broken_one_carries_nothing(self, tmp_path, monkeypatch):
+        for text in (None, "model_provider = [broken"):
+            sub = tmp_path / ("none" if text is None else "broken")
+            sub.mkdir()
+            cmd = self._cmd(sub, monkeypatch, text)
+            assert "model_provider" not in " ".join(cmd) and "-m" not in cmd
+
+    def test_a_default_provider_config_carries_only_the_model(self, tmp_path, monkeypatch):
+        cmd = self._cmd(tmp_path, monkeypatch, 'model = "gpt-5.2-codex"\n')
+        assert "model_provider" not in " ".join(cmd)
+        assert cmd[cmd.index("-m") + 1] == "gpt-5.2-codex"

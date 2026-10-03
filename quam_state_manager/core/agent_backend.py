@@ -93,6 +93,67 @@ def toml_str(v) -> str:
     return '"' + s.replace("\\", "\\\\").replace('"', '\\"').replace("\n", "\\n") + '"'
 
 
+_TOML_BARE_KEY = re.compile(r"^[A-Za-z0-9_-]+$")
+
+
+def _toml_key(k) -> str:
+    k = str(k)
+    return k if _TOML_BARE_KEY.match(k) else '"' + k.replace("\\", "\\\\").replace('"', '\\"') + '"'
+
+
+def toml_inline(v) -> str:
+    """One TOML value on one line (a ``-c key=value`` override): tables become
+    inline tables, strings go through :func:`toml_str`."""
+    if isinstance(v, bool):
+        return "true" if v else "false"
+    if isinstance(v, (int, float)):
+        return repr(v)
+    if isinstance(v, dict):
+        return "{" + ",".join(f"{_toml_key(k)}={toml_inline(x)}" for k, x in v.items()) + "}"
+    if isinstance(v, (list, tuple)):
+        return "[" + ",".join(toml_inline(x) for x in v) + "]"
+    return toml_str(v)
+
+
+def codex_user_provider(codex_home: str | Path | None = None) -> tuple[list[str], str | None]:
+    """The lab's OWN model provider, carried into the isolated in-app session.
+
+    docs/247 follow-up: ``--ignore-user-config`` keeps the user's MCP servers and
+    sandbox defaults out of the in-app session -- and with them, a lab's custom
+    provider (Azure OpenAI, a proxy, a local endpoint) and its deployment name,
+    without which Codex cannot answer at all in that lab. So exactly these are
+    read from the user's config and passed back as ``-c`` overrides:
+    ``model_provider`` and that provider's ``[model_providers.<name>]`` table.
+    Nothing else crosses (no MCP servers, no sandbox/approval settings). Returns
+    ``(override args, the user's model or None)``; an unreadable config -- or a
+    Python without a TOML reader -- carries nothing."""
+    base = Path(codex_home or os.environ.get("CODEX_HOME") or (Path.home() / ".codex"))
+    try:
+        text = (base / "config.toml").read_text(encoding="utf-8")
+    except OSError:
+        return [], None
+    try:
+        import tomllib as _toml                      # Python 3.11+
+    except ImportError:                              # pragma: no cover - 3.10
+        try:
+            import tomli as _toml                    # type: ignore[no-redef]
+        except ImportError:
+            return [], None
+    try:
+        cfg = _toml.loads(text)
+    except Exception:  # noqa: BLE001 -- a broken user config carries nothing
+        return [], None
+    out: list[str] = []
+    prov = cfg.get("model_provider")
+    if isinstance(prov, str) and prov.strip():
+        out += ["-c", f"model_provider={toml_str(prov)}"]
+        table = (cfg.get("model_providers") or {}).get(prov)
+        if isinstance(table, dict) and table:
+            out += ["-c", f"model_providers.{_toml_key(prov)}={toml_inline(table)}"]
+    model = cfg.get("model")
+    return out, (model if isinstance(model, str) and model.strip() else None)
+
+
 # ----------------------------------------------------------------- config
 
 def mcp_config(python: str, repo: str | None, sm_url: str, *, readonly: bool = False, chip: str | None = None) -> dict:
@@ -249,8 +310,12 @@ class CodexBackend(Backend):
                 "-c", f"mcp_servers.sm.tool_timeout_sec={MCP_TOOL_TIMEOUT_S}",
                 # without this every MCP call is "blocked: requires approval" under `never` (measured)
                 "-c", "mcp_servers.sm.default_tools_approval_mode='approve'"]
-        if self.model:
-            cmd += ["-m", self.model]
+        # docs/247 follow-up: the lab's own provider (and its model, when SM's setup names none)
+        prov_args, user_model = codex_user_provider()
+        cmd += prov_args
+        model = self.model or user_model
+        if model:
+            cmd += ["-m", model]
         if resume:
             cmd += ["resume", resume]
         return cmd                                  # the prompt goes over stdin (initial_input)

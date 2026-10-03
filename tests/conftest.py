@@ -70,6 +70,9 @@ def _isolate_qualibrate_config(tmp_path_factory, monkeypatch):
     monkeypatch.delenv("QUALIBRATE_CONFIG_DIR", raising=False)
     monkeypatch.delenv("QUALIBRATE_STATE_PATH", raising=False)
     monkeypatch.delenv("QUAM_STATE_PATH", raising=False)
+    # docs/247 follow-up: the in-app Codex command carries the user's model
+    # provider from $CODEX_HOME/config.toml -- never the developer's real one
+    monkeypatch.setenv("CODEX_HOME", str(tmp_path_factory.getbasetemp() / "_no_codex_home"))
 
 
 @pytest.fixture(autouse=True)
