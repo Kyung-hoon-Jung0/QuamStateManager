@@ -250,20 +250,27 @@ _ENTRY_KIND = re.compile(r"^\*\*\d{2}:\d{2}:\d{2}\*\*\s+`([A-Za-z_][\w:.-]*)`") 
 
 
 def _inline(s: str) -> str:
-    """Escape, then re-introduce the few inline forms we allow."""
-    out = []
-    pos = 0
-    for m in _INLINE_CODE.finditer(s):
-        out.append(_inline_text(s[pos:m.start()]))
+    """Escape, then re-introduce the few inline forms we allow.
+
+    Code spans are set aside as placeholders and the text forms run over the WHOLE line, so bold
+    or a link may wrap inline code. Splitting the line at each code span first left `**` showing
+    around it: an agent's "**`sm`**" rendered as "** sm **" (integration finding I-02)."""
+    codes: list[str] = []
+
+    def _stash(m: "re.Match") -> str:
         code = m.group(1)
         if _PATH.match(code.strip()):
             p = html.escape(code.strip())
-            out.append(f'<code class="jr-path" data-path="{p}" title="open this value\'s history">{p}</code>')
+            codes.append(f'<code class="jr-path" data-path="{p}" title="open this value\'s history">{p}</code>')
         else:
-            out.append(f"<code>{html.escape(code)}</code>")
-        pos = m.end()
-    out.append(_inline_text(s[pos:]))
-    return "".join(out)
+            codes.append(f"<code>{html.escape(code)}</code>")
+        return f"\x00{len(codes) - 1}\x00"
+
+    text = _INLINE_CODE.sub(_stash, s.replace("\x00", ""))
+    return _CODE_SLOT.sub(lambda m: codes[int(m.group(1))], _inline_text(text))
+
+
+_CODE_SLOT = re.compile("\x00(\\d+)\x00")
 
 
 def _inline_text(s: str) -> str:

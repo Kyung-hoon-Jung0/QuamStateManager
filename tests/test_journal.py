@@ -242,3 +242,25 @@ class TestAKeyIsADirectoryName:
                        headers={"Origin": "http://localhost"})
             assert r.status_code == 400, f"{bad!r} answered {r.status_code}"
             assert "cannot use that folder" in r.get_json()["error"]
+
+
+class TestBoldMayWrapInlineCode:
+    """Integration finding I-02: an agent's "**`sm`**" showed as "** sm **". Code spans are now set
+    aside while the text forms run over the whole line."""
+
+    def test_bold_around_code(self):
+        assert journal.render("One server: **`sm`**.") == "<p>One server: <strong><code>sm</code></strong>.</p>"
+
+    def test_bold_spanning_two_code_spans(self):
+        out = journal.render("**Neither `state_edit` nor `run_node` is available.**")
+        assert out == ("<p><strong>Neither <code>state_edit</code> nor <code>run_node</code> "
+                       "is available.</strong></p>")
+
+    def test_code_stays_literal_and_escaped(self):
+        out = journal.render("`**not bold**` and `<b>x</b>` and `qubits.q1.f_01`")
+        assert "<code>**not bold**</code>" in out and "<code>&lt;b&gt;x&lt;/b&gt;</code>" in out
+        assert 'class="jr-path" data-path="qubits.q1.f_01"' in out and "<strong>" not in out
+
+    def test_a_stray_nul_in_the_text_cannot_forge_a_slot(self):
+        out = journal.render("x \x000\x00 y `c`")
+        assert out == "<p>x 0 y <code>c</code></p>"
