@@ -47,6 +47,37 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
+# docs/258: one lock per index FILE, process-wide (shared by every
+# HistoryManager). Every capture writer that owns its connection holds it from
+# the schema bootstrap through COMMIT; a bootstrap of any other kind (a
+# migration's schema helper, a reader's first open of a not-yet-WAL file) holds
+# it too. Why: on a brand-new, still rollback-journal file the
+# ``PRAGMA journal_mode=WAL`` switch needs an exclusive lock and fails at once
+# with "database is locked" while another connection holds any lock -- SQLite
+# does not run the busy handler for it (measured 0.1-1.8 ms against
+# ``timeout=10``). That is how the first Apply's two deferred index writes on a
+# fresh chip lost one of them. Holding it through COMMIT also commits this
+# process's writes to one file in the order they took the lock (the backup's
+# thread starts first), so the save no longer overtakes it and turns the backup
+# into an out-of-order leaf ingest (which writes nothing and marks the leaf
+# index dirty). Readers of an established (WAL) file never take it. Another
+# PROCESS's writers are not covered -- same as before this lock.
+# Lock order: the manager lock may be held when this is taken (the sync
+# capture path does), never the reverse -- nothing under it takes the manager
+# lock.
+_INDEX_WRITE_LOCKS: dict[str, "threading.RLock"] = {}
+_INDEX_WRITE_LOCKS_GUARD = threading.Lock()
+
+
+def _index_write_lock(idx_path: Path) -> "threading.RLock":
+    key = os.path.normcase(os.path.abspath(str(idx_path)))
+    with _INDEX_WRITE_LOCKS_GUARD:
+        lock = _INDEX_WRITE_LOCKS.get(key)
+        if lock is None:
+            lock = _INDEX_WRITE_LOCKS[key] = threading.RLock()
+        return lock
+
+
 _differ = Differ()
 
 DEFAULT_MAX_SNAPSHOTS = 100_000
@@ -3577,6 +3608,11 @@ class HistoryManager:
         series: list[tuple] = []
         prop = self._tracked_property_for(dot_path)
         if prop is not None and snapshots:
+            # docs/258: any non-empty row set is taken as the WHOLE timeline
+            # (the tiers below run only on zero rows), so an index behind disk
+            # silently drops values -- heal it first, as every other curated
+            # reader does.
+            self._index_fresh_for_read(path)
             try:
                 conn = self._open_index(path)
                 try:
@@ -3785,6 +3821,7 @@ class HistoryManager:
                 and len(entity_by_row) == len(path_map)):
             prop = next(iter(props))
             entities = sorted(set(entity_by_row.values()))
+            self._index_fresh_for_read(path)       # docs/258: field_history's rule
             try:
                 conn = self._open_index(path)
                 try:
@@ -3848,6 +3885,20 @@ class HistoryManager:
                                  meta.experiment_folder_path))
         return out
 
+    def _index_fresh_for_read(self, path: Path) -> None:
+        """Run the curated self-heal before a tracked-tier read (docs/258).
+
+        ``_ensure_index_fresh`` joins in-flight deferred index writes, then
+        rebuilds any snapshot the index is missing; it is memoised on the
+        snapshot count, so a steady-state read pays one dict lookup. A heal
+        that fails never costs the read -- it falls through to the rows the
+        index has, as before."""
+        try:
+            self._ensure_index_fresh(path)
+        except Exception:  # noqa: BLE001
+            logger.warning("Param-history self-heal failed before a read of %s",
+                           path, exc_info=True)
+
     def _open_index(self, quam_state_path: Path) -> sqlite3.Connection:
         """Open (and create on first use) the param-history SQLite index.
 
@@ -3877,40 +3928,16 @@ class HistoryManager:
         with self._lock:
             already_init = key in self._db_initialised
         if not already_init:
-            # ``journal_mode=WAL`` is persisted in the file header so
-            # only the first connection in this process needs to set it.
-            conn.execute("PRAGMA journal_mode=WAL")
-            conn.execute("""
-                CREATE TABLE IF NOT EXISTS param_history (
-                    timestamp     TEXT NOT NULL,
-                    qubit         TEXT NOT NULL,
-                    property      TEXT NOT NULL,
-                    value         REAL,
-                    raw_pointer   TEXT,
-                    trigger       TEXT NOT NULL,
-                    run_id        INTEGER,
-                    experiment    TEXT,
-                    PRIMARY KEY (timestamp, qubit, property)
-                )
-            """)
-            conn.execute(
-                "CREATE INDEX IF NOT EXISTS idx_qubit_property_ts "
-                "ON param_history (qubit, property, timestamp)"
-            )
-            conn.execute(
-                "CREATE INDEX IF NOT EXISTS idx_trigger_ts "
-                "ON param_history (trigger, timestamp)"
-            )
-            # The all-numeric-parameters change-point tables (docs/83) live in
-            # the same per-chip file. They carry their OWN version marker in
-            # leaf_meta — PRAGMA user_version belongs to param_history and
-            # drives its pair-row upgrade, which this must never trigger.
-            leaf_index.ensure_schema(conn)
-            # A brand-new file's rows can only ever be current-generation —
-            # stamp it so the one-time v2 verification never force-rebuilds
-            # an index that a capture path (not rebuild_index) created.
-            if brand_new:
-                conn.execute(f"PRAGMA user_version={_INDEX_SCHEMA_VERSION}")
+            # docs/258: on a file that is not WAL yet (a fresh chip) this is a
+            # bootstrap like a capture writer's and takes the same per-file
+            # lock -- unlocked, the WAL switch failed outright, or made a
+            # deferred write's fail. An established WAL file (the query is a
+            # header read) switches nothing, so its readers never wait on it.
+            if conn.execute("PRAGMA journal_mode").fetchone()[0].lower() == "wal":
+                self._bootstrap_open_index(conn, brand_new)
+            else:
+                with _index_write_lock(idx_path):
+                    self._bootstrap_open_index(conn, brand_new)
             # Mark initialised *after* the CREATEs succeed, so a racing
             # thread that sees ``already_init=True`` is guaranteed the
             # schema is on disk. CREATE … IF NOT EXISTS is idempotent.
@@ -3925,6 +3952,45 @@ class HistoryManager:
             conn.close()
             return self._open_index(quam_state_path)
         return conn
+
+    @staticmethod
+    def _bootstrap_open_index(conn: sqlite3.Connection, brand_new: bool) -> None:
+        """First-use schema of :meth:`_open_index` (the caller holds the
+        index's write lock unless the file is already WAL)."""
+        # ``journal_mode=WAL`` is persisted in the file header so
+        # only the first connection in this process needs to set it.
+        conn.execute("PRAGMA journal_mode=WAL")
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS param_history (
+                timestamp     TEXT NOT NULL,
+                qubit         TEXT NOT NULL,
+                property      TEXT NOT NULL,
+                value         REAL,
+                raw_pointer   TEXT,
+                trigger       TEXT NOT NULL,
+                run_id        INTEGER,
+                experiment    TEXT,
+                PRIMARY KEY (timestamp, qubit, property)
+            )
+        """)
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_qubit_property_ts "
+            "ON param_history (qubit, property, timestamp)"
+        )
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_trigger_ts "
+            "ON param_history (trigger, timestamp)"
+        )
+        # The all-numeric-parameters change-point tables (docs/83) live in
+        # the same per-chip file. They carry their OWN version marker in
+        # leaf_meta — PRAGMA user_version belongs to param_history and
+        # drives its pair-row upgrade, which this must never trigger.
+        leaf_index.ensure_schema(conn)
+        # A brand-new file's rows can only ever be current-generation —
+        # stamp it so the one-time v2 verification never force-rebuilds
+        # an index that a capture path (not rebuild_index) created.
+        if brand_new:
+            conn.execute(f"PRAGMA user_version={_INDEX_SCHEMA_VERSION}")
 
     @staticmethod
     def _extract_pointer_string(raw_state: dict, qubit: str, prop: str) -> str | None:
@@ -4025,12 +4091,25 @@ class HistoryManager:
         idx_path = target_chip_dir / "index.sqlite"
         own_conn = conn is None
         if own_conn:
-            # Bootstrap the schema if the dir is fresh; only the legacy
-            # path hits this (backfill calls _ensure_param_history_schema
-            # once before the loop and reuses one connection).
-            _ensure_param_history_schema(idx_path)
-            conn = sqlite3.connect(str(idx_path), isolation_level=None, timeout=10.0)
-            conn.execute("PRAGMA journal_mode=WAL")
+            # docs/258: the index's write lock, held from this bootstrap
+            # through COMMIT (released in the ``finally`` below). On a fresh
+            # chip the first Apply's two deferred writers both get here at
+            # once; unserialised, the loser's WAL switch failed outright
+            # ("database is locked") and its snapshot never reached the index.
+            write_lock = _index_write_lock(idx_path)
+            write_lock.acquire()
+            try:
+                # Bootstrap the schema if the dir is fresh; only the legacy
+                # path hits this (backfill calls _ensure_param_history_schema
+                # once before the loop and reuses one connection).
+                _ensure_param_history_schema(idx_path)
+                conn = sqlite3.connect(str(idx_path), isolation_level=None, timeout=10.0)
+                conn.execute("PRAGMA journal_mode=WAL")
+            except BaseException:
+                if conn is not None:
+                    conn.close()
+                write_lock.release()
+                raise
         try:
             # ALL-OR-NOTHING when we own the connection. isolation_level=None is
             # autocommit — each executemany row committed individually, so a
@@ -4079,7 +4158,10 @@ class HistoryManager:
                 raise
         finally:
             if own_conn:
-                conn.close()
+                try:
+                    conn.close()
+                finally:
+                    write_lock.release()
 
     def _upgrade_index_pair_rows(self, quam_state_path: Path, conn) -> int:
         """v1→v2 content upgrade: append the PAIR-scope rows for every existing
@@ -6758,7 +6840,16 @@ _LEGACY_KEY_PATTERN = re.compile(r"^_\d+_.+_\d{6}$")
 
 def _ensure_param_history_schema(idx_path: Path) -> None:
     """Create the param_history schema if missing — used when a migration
-    target dir doesn't yet have its own SQLite index."""
+    target dir doesn't yet have its own SQLite index, and by every capture
+    writer that owns its connection. Serialised per index file (docs/258,
+    :func:`_index_write_lock`)."""
+    with _index_write_lock(idx_path):
+        _ensure_param_history_schema_locked(idx_path)
+
+
+def _ensure_param_history_schema_locked(idx_path: Path) -> None:
+    """Body of :func:`_ensure_param_history_schema`; the caller holds the
+    index's write lock."""
     idx_path.parent.mkdir(parents=True, exist_ok=True)
     brand_new = not idx_path.exists()
     conn = sqlite3.connect(str(idx_path), isolation_level=None, timeout=10.0)
