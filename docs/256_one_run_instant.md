@@ -172,3 +172,14 @@ and dependent caches, so the same run remains deduplicated across ingestion
 paths. Feed UTC mtime and first-seen values into `run_witnesses`, then persist
 the ask decision per project. This step adds the primitive and classification;
 it leaves the four callers and stored keys unchanged as requested.
+
+## Review note (coordinator): when a witness is a witness
+
+`run_witnesses` only classifies; the caller decides what to pass. Two of the three witnesses are only evidence of the run's time when SM watched the run being written:
+- **SM first-seen** is a witness only when SM discovered the run while it was being created (live polling: first seen within a few minutes of the run's own claim). For an archive opened days later, or a folder scanned for the first time, it is just the scan time. Passing it would turn every old run into an "ask".
+- **Folder mtime** is a witness only when the folder was written in place. A copied or synced archive gets the copy time, unless the copy preserved it.
+
+So S1 must pass `first_seen_utc_us` only for runs SM saw arrive live, and must treat a large mtime gap on a copied archive as "copy", not as a wrong clock. The 30-minute question is asked once per project, never per run.
+
+Independent re-check of the pins: preferring `run_end` over `created_at` turns 9 tests red, and `>` instead of `>=` at the 30-minute boundary turns 3 red.
+
