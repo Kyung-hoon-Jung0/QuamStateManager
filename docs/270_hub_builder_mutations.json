@@ -1,0 +1,223 @@
+{
+  "red": 36,
+  "total": 36,
+  "pins": 28,
+  "results": [
+    {
+      "name": "wal",
+      "pin": "tests/test_hub_store.py::test_schema_wal_and_versions",
+      "red": true,
+      "exit_code": 1
+    },
+    {
+      "name": "version_guard",
+      "pin": "tests/test_hub_store.py::test_schema_wal_and_versions",
+      "red": true,
+      "exit_code": 1
+    },
+    {
+      "name": "blob_address",
+      "pin": "tests/test_hub_store.py::test_blob_gzip_content_address_and_corruption",
+      "red": true,
+      "exit_code": 1
+    },
+    {
+      "name": "nonfinite_and_bigint",
+      "pin": "tests/test_hub_store.py::test_lossless_numbers_and_null_absence",
+      "red": true,
+      "exit_code": 1
+    },
+    {
+      "name": "array_replay",
+      "pin": "tests/test_hub_store.py::test_arrays_shapes_and_escaped_paths_survive_source_loss",
+      "red": true,
+      "exit_code": 1
+    },
+    {
+      "name": "checkpoint_cadence",
+      "pin": "tests/test_hub_store.py::test_checkpoint_cadence_and_bounded_replay",
+      "red": true,
+      "exit_code": 1
+    },
+    {
+      "name": "atomic_projection",
+      "pin": "tests/test_hub_store.py::test_event_transaction_rolls_back_all_projection_data",
+      "red": true,
+      "exit_code": 1
+    },
+    {
+      "name": "error_state_at",
+      "pin": "tests/test_hub_store.py::test_error_event_is_not_a_reconstructed_run_state",
+      "red": true,
+      "exit_code": 1
+    },
+    {
+      "name": "instant_order",
+      "pin": "tests/test_hub_build.py::test_order_is_canonical_offset_instant_with_microseconds",
+      "red": true,
+      "exit_code": 1
+    },
+    {
+      "name": "archive_hint",
+      "pin": "tests/test_hub_build.py::test_archive_offset_hint_and_assumed_local_flag",
+      "red": true,
+      "exit_code": 1
+    },
+    {
+      "name": "run_end_source",
+      "pin": "tests/test_hub_build.py::test_run_end_fallback_and_metadata",
+      "red": true,
+      "exit_code": 1
+    },
+    {
+      "name": "zero_hash_no_parse",
+      "pin": "tests/test_hub_build.py::test_identical_hash_keeps_zero_event_without_parsing",
+      "red": true,
+      "exit_code": 1
+    },
+    {
+      "name": "numeric_equal",
+      "pin": "tests/test_hub_build.py::test_raw_hash_changes_but_numeric_equal_has_no_rows",
+      "red": true,
+      "exit_code": 1
+    },
+    {
+      "name": "revert_fact",
+      "pin": "tests/test_hub_build.py::test_revert_is_plain_head_diff_and_only_nonadjacent_flag",
+      "red": true,
+      "exit_code": 1
+    },
+    {
+      "name": "revert_head",
+      "pin": "tests/test_hub_build.py::test_revert_is_plain_head_diff_and_only_nonadjacent_flag",
+      "red": true,
+      "exit_code": 1
+    },
+    {
+      "name": "extra_location",
+      "pin": "tests/test_hub_build.py::test_archive_copy_adds_location_not_event",
+      "red": true,
+      "exit_code": 1
+    },
+    {
+      "name": "identity_hash",
+      "pin": "tests/test_hub_build.py::test_run_identity_does_not_collapse_overlapping_ids",
+      "red": true,
+      "exit_code": 1
+    },
+    {
+      "name": "wiring_merge",
+      "pin": "tests/test_hub_build.py::test_checkpoint_replay_and_shared_merge",
+      "red": true,
+      "exit_code": 1
+    },
+    {
+      "name": "resume_watermark",
+      "pin": "tests/test_hub_build.py::test_resume_after_exception_and_idempotent_rebuild",
+      "red": true,
+      "exit_code": 1
+    },
+    {
+      "name": "new_limit",
+      "pin": "tests/test_hub_build.py::test_limit_counts_new_events_and_cli",
+      "red": true,
+      "exit_code": 1
+    },
+    {
+      "name": "keep_error",
+      "pin": "tests/test_hub_build.py::test_bad_state_is_kept_as_error_and_next_run_uses_good_head",
+      "red": true,
+      "exit_code": 1
+    },
+    {
+      "name": "uncertainty",
+      "pin": "tests/test_hub_build.py::test_chip_uncertain_and_patch_provenance",
+      "red": true,
+      "exit_code": 1
+    },
+    {
+      "name": "late_guard",
+      "pin": "tests/test_hub_build.py::test_late_unknown_run_fails_without_wrong_diff",
+      "red": true,
+      "exit_code": 1
+    },
+    {
+      "name": "stable_pair",
+      "pin": "tests/test_hub_build.py::test_state_pair_changed_during_read_is_rejected",
+      "red": true,
+      "exit_code": 1
+    },
+    {
+      "name": "identity_time",
+      "pin": "tests/test_hub_build.py::test_run_identity_includes_time_id_and_experiment",
+      "red": true,
+      "exit_code": 1
+    },
+    {
+      "name": "identity_id",
+      "pin": "tests/test_hub_build.py::test_run_identity_includes_time_id_and_experiment",
+      "red": true,
+      "exit_code": 1
+    },
+    {
+      "name": "identity_experiment",
+      "pin": "tests/test_hub_build.py::test_run_identity_includes_time_id_and_experiment",
+      "red": true,
+      "exit_code": 1
+    },
+    {
+      "name": "array_patch",
+      "pin": "tests/test_hub_build.py::test_long_array_patch_is_proven_under_shared_rules",
+      "red": true,
+      "exit_code": 1
+    },
+    {
+      "name": "run_bound_hint",
+      "pin": "tests/test_hub_build.py::test_naive_run_bounds_share_archive_offset",
+      "red": true,
+      "exit_code": 1
+    },
+    {
+      "name": "frozen_discovery",
+      "pin": "tests/test_hub_build.py::test_discovery_is_frozen_and_next_build_catches_new_runs",
+      "red": true,
+      "exit_code": 1
+    },
+    {
+      "name": "patch_exact_value",
+      "pin": "tests/test_hub_build.py::test_chip_uncertain_and_patch_provenance",
+      "red": true,
+      "exit_code": 1
+    },
+    {
+      "name": "blob_integrity",
+      "pin": "tests/test_hub_store.py::test_blob_gzip_content_address_and_corruption",
+      "red": true,
+      "exit_code": 1
+    },
+    {
+      "name": "shape_escaping",
+      "pin": "tests/test_hub_store.py::test_arrays_shapes_and_escaped_paths_survive_source_loss",
+      "red": true,
+      "exit_code": 1
+    },
+    {
+      "name": "checkpoint_replay",
+      "pin": "tests/test_hub_store.py::test_checkpoint_cadence_and_bounded_replay",
+      "red": true,
+      "exit_code": 1
+    },
+    {
+      "name": "conflicting_chip",
+      "pin": "tests/test_hub_build.py::test_declared_chip_and_conflicting_identity_are_retained",
+      "red": true,
+      "exit_code": 1
+    },
+    {
+      "name": "error_checkpoint",
+      "pin": "tests/test_hub_build.py::test_error_checkpoint_keeps_successful_head_and_replays_past_it",
+      "red": true,
+      "exit_code": 1
+    }
+  ]
+}

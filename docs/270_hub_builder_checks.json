@@ -1,0 +1,209 @@
+{
+  "builds": [
+    {
+      "added": 4121,
+      "change_rows": 14277,
+      "discovered": 4121,
+      "errors": 9,
+      "events": 4121,
+      "extra_locations": 0,
+      "offset_hint": "+09:00",
+      "raw_zero_change": 2191,
+      "seconds": 80.542,
+      "archive": "KH_202608_CZ",
+      "ledger_mb": 6.262,
+      "peak_rss_mb": 67.19,
+      "process_seconds": 80.725
+    },
+    {
+      "added": 2082,
+      "change_rows": 13395,
+      "discovered": 2082,
+      "errors": 13,
+      "events": 2082,
+      "extra_locations": 0,
+      "offset_hint": "-04:00",
+      "raw_zero_change": 894,
+      "seconds": 20.675,
+      "archive": "Novera9Q",
+      "ledger_mb": 3.332,
+      "peak_rss_mb": 60.27,
+      "process_seconds": 20.82
+    },
+    {
+      "added": 1600,
+      "change_rows": 26607,
+      "discovered": 1600,
+      "errors": 1,
+      "events": 1600,
+      "extra_locations": 0,
+      "offset_hint": "+09:00",
+      "raw_zero_change": 239,
+      "seconds": 65.382,
+      "archive": "arbel_20260929",
+      "ledger_mb": 5.137,
+      "peak_rss_mb": 61.11,
+      "process_seconds": 65.652
+    },
+    {
+      "added": 10000,
+      "change_rows": 38205,
+      "discovered": 10000,
+      "errors": 27,
+      "events": 10000,
+      "extra_locations": 0,
+      "offset_hint": "+09:00",
+      "raw_zero_change": 5085,
+      "seconds": 209.166,
+      "archive": "synthetic-10000",
+      "ledger_mb": 12.551,
+      "peak_rss_mb": 85.99,
+      "process_seconds": 209.465
+    }
+  ],
+  "replays": [
+    {
+      "archive": "KH_202608_CZ",
+      "random_runs": 500,
+      "checkpoints": 16,
+      "unique_checked": 516,
+      "mismatches": 0,
+      "examples": [],
+      "p50_ms": 32.922,
+      "p95_ms": 50.427,
+      "idempotent_added": 0,
+      "idempotent_seconds": 1.093
+    },
+    {
+      "archive": "Novera9Q",
+      "random_runs": 500,
+      "checkpoints": 8,
+      "unique_checked": 507,
+      "mismatches": 0,
+      "examples": [],
+      "p50_ms": 8.014,
+      "p95_ms": 17.218,
+      "idempotent_added": 0,
+      "idempotent_seconds": 0.517
+    },
+    {
+      "archive": "arbel_20260929",
+      "random_runs": 500,
+      "checkpoints": 6,
+      "unique_checked": 503,
+      "mismatches": 0,
+      "examples": [],
+      "p50_ms": 45.188,
+      "p95_ms": 76.55,
+      "idempotent_added": 0,
+      "idempotent_seconds": 0.189
+    },
+    {
+      "archive": "synthetic-10000",
+      "random_runs": 500,
+      "checkpoints": 40,
+      "unique_checked": 539,
+      "mismatches": 0,
+      "examples": [],
+      "p50_ms": 35.036,
+      "p95_ms": 107.222,
+      "idempotent_added": 0,
+      "idempotent_seconds": 1.011
+    }
+  ],
+  "live_growth_observed": {
+    "archive": "arbel_20260929",
+    "added_during_first_replay": 2,
+    "events_after_catchup": 1602,
+    "change_rows_after_catchup": 26611
+  },
+  "coverage": {
+    "total": 987,
+    "applicable": 987,
+    "covered": 16,
+    "explained_by_rule": 971,
+    "missing": 0,
+    "reasons": {
+      "run_by_run_unchanged": 575,
+      "covered": 16,
+      "raw_pointer_holders": 385,
+      "saved_post_patch_state": 6,
+      "run_by_run_already_gone": 5
+    },
+    "per_run": [
+      {
+        "run_id": 15,
+        "eid": 15,
+        "counts": {
+          "run_by_run_unchanged": 485,
+          "covered": 4,
+          "raw_pointer_holders": 355
+        },
+        "post_patch_evidence": []
+      },
+      {
+        "run_id": 22,
+        "eid": 22,
+        "counts": {
+          "covered": 12,
+          "run_by_run_unchanged": 18
+        },
+        "post_patch_evidence": []
+      },
+      {
+        "run_id": 146,
+        "eid": 146,
+        "counts": {
+          "run_by_run_unchanged": 70,
+          "saved_post_patch_state": 6,
+          "run_by_run_already_gone": 5,
+          "raw_pointer_holders": 26
+        },
+        "post_patch_evidence": [
+          {
+            "path": "qubits.q1.xy.operations.x180_DragCosine.amplitude",
+            "old": 0.4971822358141066,
+            "saved": 0.9512200201208982
+          },
+          {
+            "path": "qubits.q1.xy.operations.x90_DragCosine.amplitude",
+            "old": 0.2485911179070533,
+            "saved": 0.4756100100604491
+          }
+        ]
+      },
+      {
+        "run_id": 147,
+        "eid": 147,
+        "counts": {
+          "run_by_run_unchanged": 2,
+          "raw_pointer_holders": 4
+        },
+        "post_patch_evidence": []
+      }
+    ],
+    "missing_examples": [],
+    "outside_snapshots": []
+  },
+  "synthetic": {
+    "runs": 10000,
+    "source_runs": 4121,
+    "payload_files": 4592,
+    "preparation_seconds": 49.985
+  },
+  "history_copy": {
+    "bytes": 409600,
+    "sha256": "b28c97cfc2c2bdf867293c71d35ce3f115ec1774d50f3945c03fb35ece366711",
+    "leaf_meta": {
+      "version": "1",
+      "dirty": "1",
+      "dirty_reason": "out-of-order 20260907_123829_142 < 20260907_124116_146"
+    },
+    "leaf_kinds": {
+      "0": 593,
+      "1": 229,
+      "2": 5,
+      "4": 160
+    }
+  }
+}
