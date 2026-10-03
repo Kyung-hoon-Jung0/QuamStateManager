@@ -74,7 +74,9 @@
                    when it does not (text value, dangling chain, amp 0, no channel
                    ancestor) the row is byte-identical to before. #}
                 {% set _phys = p.dot_path | phys_amp(p.value) %}
-                {% if _phys %}<span class="phys-note muted"{% if _phys.kind == 'mw' %} data-dbm="{{ _phys.dbm }}"{% endif %} title="{% if _phys.kind == 'mw' %}Actual output power: P = FSP ({{ _phys.fsp }} dBm) + 20·log10|amp| — the stored amplitude is a scale factor, not a voltage{% else %}LF amplitude is the output voltage{% endif %}">&#8776; {{ _phys.text }}</span>
+                {% set _pb = none if _phys else (p.dot_path | phys_amp_blank(p.value)) %}
+                {% if _phys %}<span class="phys-note muted"{% if _phys.kind == 'mw' %} data-dbm="{{ _phys.dbm }}"{% endif %} title="{% if _phys.kind == 'mw' %}Actual output power: P = FSP ({{ _phys.fsp }} dBm) + 20·log10|amp|{% if _phys.peak != 1 %}, pulse-shape peak = {{ '%.4g'|format(_phys.peak) }} × amp{% endif %} — the stored amplitude is a scale factor, not a voltage{% elif _phys.peak != 1 %}LF peak voltage = {{ '%.4g'|format(_phys.peak) }} × amp, from the pulse shape{% else %}LF amplitude is the output voltage{% endif %}">&#8776; {{ _phys.text }}</span>
+                {% elif _pb %}<span class="phys-note phys-note-why muted" title="{{ _pb.text }}">{{ _pb.mark }}</span>
                 {% elif p.unit %}<span class="unit-preview muted">{{ p.unit }}</span>{% endif %}
                 {% if p.kind in ('float', 'int') and not p.is_pointer %}
                 <button type="button" class="pulse-tune-btn" title="Tune with a slider"

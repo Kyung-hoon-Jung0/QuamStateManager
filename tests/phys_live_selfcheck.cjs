@@ -9,6 +9,10 @@
  *    when no FSP box is on the page;
  *  - a cell that had no line (amp 0 at render) gets one; a chain that no
  *    longer resolves loses it; a stale answer never overwrites a newer one.
+ *  - docs/248: the pulse-shape peak (data-phys-peak) scales the recompute,
+ *    MW and LF alike; a cell the server blanks for its CLASS loses its line,
+ *    gains the why-marker (and the reason in its title), and typing into it
+ *    paints nothing; an answer that annotates it again takes the marker away.
  * Run: node tests/phys_live_selfcheck.cjs   (driven by tests/test_phys_live.py)
  */
 const fs = require('fs');
@@ -54,8 +58,9 @@ function world(withFspBox) {
     const d = w.document;
     const cell = (dp) => d.querySelector('input.bulk-cell[data-dot-path="' + dp + '"]');
     const line = (dp) => { const s = cell(dp).closest('td').querySelector('.bulk-phys'); return s ? s.textContent : null; };
-    const answer = (k, phys) => replies[k]({ ok: true, json: () => Promise.resolve({ ok: true, phys: phys }) });
-    return { w, d, cell, line, posts, answer };
+    const answer = (k, phys, blank) => replies[k]({ ok: true, json: () => Promise.resolve({ ok: true, phys: phys, blank: blank || {} }) });
+    const why = (dp) => { const s = cell(dp).closest('td').querySelector('.bulk-phys-why'); return s ? s : null; };
+    return { w, d, cell, line, why, posts, answer };
 }
 function type(W, el, v) { el.value = v; el.dispatchEvent(new W.w.Event('input', { bubbles: true })); }
 
@@ -113,6 +118,51 @@ function type(W, el, v) { el.value = v; el.dispatchEvent(new W.w.Event('input', 
     W.answer(0, { 'qubits.qA1.xy.operations.x180.amplitude': { kind: 'mw', fsp: -40, dbm: -60, text: '', fsp_path: FSP_A } });
     await tick(20);
     ok(W.line('qubits.qA1.xy.operations.x180.amplitude') === '-15.0 dBm', 'the newer answer stands (' + W.line('qubits.qA1.xy.operations.x180.amplitude') + ')');
+
+    // 5. docs/248: the pulse-shape peak scales the live recompute
+    W = world(false);
+    const X = 'qubits.qA1.xy.operations.x180.amplitude';
+    W.cell(X).setAttribute('data-phys-peak', '0.5');
+    type(W, W.cell(X), '0.1');
+    ok(W.line(X) === '-26.0 dBm', 'MW: peak 0.5 x amp 0.1 at FSP 0 reads -26.0 dBm (' + W.line(X) + ')');
+    const Z = 'qubits.qA1.xy.operations.x90.amplitude';
+    const z = W.cell(Z);
+    z.setAttribute('data-phys-kind', 'lf');
+    z.removeAttribute('data-phys-fsp'); z.removeAttribute('data-phys-fsp-path');
+    z.setAttribute('data-phys-peak', '-1');
+    type(W, z, '0.012');
+    ok(W.line(Z) === '-12 mV', 'LF: a negative-polarity peak reads -12 mV for amp 0.012 (' + W.line(Z) + ')');
+    z.removeAttribute('data-phys-peak');
+    type(W, z, '0.012');
+    ok(W.line(Z) === '12 mV', 'LF without a peak attribute is the amplitude itself (' + W.line(Z) + ')');
+
+    // 6. docs/248: a class the server cannot synthesize -> blank + why, and
+    // the client never paints a number into it; annotated again -> marker gone
+    W = world(false);
+    W.d.dispatchEvent(new W.w.CustomEvent('sm:wc-moved'));
+    await tick(150);
+    const R = 'qubits.qA1.resonator.operations.readout.amplitude';
+    const WHY = 'dBm unknown: pulse class LabAreaNormReadoutPulse is not one SM can synthesize';
+    W.answer(0, {
+        [X]: { kind: 'mw', fsp: 0, dbm: -20, text: '', fsp_path: FSP_A, peak: 1 },
+        [R]: null,
+    }, { [R]: { mark: 'dBm ?', text: WHY } });
+    await tick(20);
+    ok(W.line(R) === null, 'a class-blanked cell loses its line');
+    ok(W.why(R) && W.why(R).textContent === 'dBm ?' && W.why(R).title === WHY, 'and shows the compact marker with the reason as its title');
+    ok(W.cell(R).title.endsWith(' — ' + WHY), 'the input title names the reason too (' + W.cell(R).title + ')');
+    ok(!/actual output shown below/.test(W.cell(R).title), 'and no longer promises an output line it does not show');
+    type(W, W.cell(R), '0.2');
+    ok(W.line(R) === null, 'typing into it paints NO number (' + W.line(R) + ')');
+    ok(W.why(X) === null && !W.cell(X).hasAttribute('data-phys-peak'), 'an annotated cell carries no marker and no peak attribute when the peak is 1');
+    W.d.dispatchEvent(new W.w.CustomEvent('sm:wc-moved'));
+    await tick(150);
+    W.answer(1, { [R]: { kind: 'mw', fsp: 0, dbm: -10, text: '', fsp_path: FSP_B, peak: 0.25 } }, {});
+    await tick(20);
+    ok(W.why(R) === null, 'annotated again: the marker goes');
+    ok(!/unknown:/.test(W.cell(R).title), 'and the reason leaves the title (' + W.cell(R).title + ')');
+    ok(W.cell(R).getAttribute('data-phys-peak') === '0.25', 'the new peak factor is stamped on the box');
+    ok(W.line(R) === '-26.0 dBm', 'and the line is the box text x peak at the FSP: 0.2 x 0.25 -> -26.0 dBm (' + W.line(R) + ')');
 
     console.log(fails ? fails + ' FAILED' : 'all passed');
     process.exit(fails ? 1 : 0);

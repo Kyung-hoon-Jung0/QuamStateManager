@@ -43,6 +43,7 @@ __all__ = [
     "chip_classes_active",
     "chip_pulse_specs",
     "by_qclass",
+    "spec_at_known_home",
     "resolve_qclass",
     "infer_spec",
     "infer_spec_ex",
@@ -983,6 +984,29 @@ def is_pulse_class(qclass: Any) -> bool:
 def by_qclass(qclass: str) -> PulseSpec | None:
     """Resolve a ``__class__`` string (or bare key) to its spec, or None."""
     return resolve_qclass(qclass)[0]
+
+
+def spec_at_known_home(qclass: Any) -> PulseSpec | None:
+    """The spec ONLY when *qclass* is a full dotted path whose waveform this
+    catalog transcribed (docs/248) -- or None.
+
+    Stricter than :func:`resolve_qclass` on purpose. A caller that turns the
+    waveform into a physical claim (``physical_units``: the peak a pulse puts
+    on the wire) may trust exactly the homes the golden tests pin: a catalog
+    ``qclass``, an ``_EXTRA_HOMES`` path, or a full-path deprecated alias
+    (``_QCLASS_ALIASES``, golden-verified bit-for-bit). Never the ``leaf``
+    step (a lab's own ``my_lab.pulses.SquarePulse`` shares a NAME, not a
+    waveform), never a bare key (no state file stores one), and never the
+    ``env`` step (the selected env's roster proves a class EXISTS at that
+    home, not that its ``waveform_function`` is the one transcribed here).
+    """
+    if not isinstance(qclass, str) or "." not in qclass:
+        return None
+    spec = _BY_QCLASS.get(qclass)
+    if spec is not None:
+        return spec
+    alias = _QCLASS_ALIASES.get(qclass)
+    return PULSE_CATALOG[alias] if alias is not None else None
 
 
 def infer_spec_ex(pulse_dict: dict, *, context_slot: str | None = None

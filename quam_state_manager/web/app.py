@@ -609,6 +609,26 @@ def create_app(*, testing: bool = False, instance_path: str | None = None) -> Fl
             return None
     app.jinja_env.filters["phys_amp"] = _phys_amp_filter
 
+    # docs/248 -- the twin a blank `phys_amp` asks: was the blank the pulse
+    # CLASS's doing (a lab class SM cannot synthesize)? Then ``{"mark",
+    # "text"}`` -- a compact marker and the reason for its title -- else None
+    # (a broken chain or amp 0 stays the silent blank it always was).
+    def _phys_amp_blank_filter(dot_path, value):
+        try:
+            name = app.config.get("active_context")
+            ctx = app.config.get("contexts", {}).get(name) if name else None
+            store = ctx.get("store") if ctx else None
+            if store is None or not dot_path:
+                return None
+            from quam_state_manager.core import physical_units
+            why: list = []
+            ann = physical_units.amp_annotation(store.merged, str(dot_path), value,
+                                                why=why)
+            return why[0] if (ann is None and why) else None
+        except Exception:
+            return None
+    app.jinja_env.filters["phys_amp_blank"] = _phys_amp_blank_filter
+
     # docs/190 F47 — the env strip's one sentence about the classes that are
     # NOT on the create list, built beside the classifier the list itself is
     # built with so the two cannot drift apart.

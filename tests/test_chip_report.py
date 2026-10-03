@@ -153,9 +153,12 @@ def _rich_chip(folder: Path) -> Path:
                     "gef_confusion_matrix": [[0.94, 0.04, 0.02],
                                              [0.09, 0.88, 0.03],
                                              [0.05, 0.07, 0.88]],
+                    # docs/248: the class decides the peak the P(RO) states
                     "operations": {"readout": {"amplitude": 0.1,
                                                "length": 1000,
-                                               "threshold": 4.4588e-4}}},
+                                               "threshold": 4.4588e-4,
+                                               "__class__": "quam.components."
+                                               "pulses.SquareReadoutPulse"}}},
                 "z": {"joint_offset": 0.05, "independent_offset": 0.02,
                       "flux_point": "joint",
                       "opx_output": "#/wiring/qubits/q1/z/opx_output",

@@ -18,6 +18,8 @@ import pytest
 from quam_state_manager.core import physical_units
 from quam_state_manager.web.app import create_app
 
+_QC = "quam.components.pulses."
+
 _WIRING = {
     "network": {"host": "1.1.1.1", "cluster_name": "C1"},
     "wiring": {"qubits": {"qA1": {
@@ -31,23 +33,34 @@ _WIRING = {
 def _state():
     return {
         "qubits": {"qA1": {
-            "id": "qA1", "f_01": 5.0e9,
+            "id": "qA1", "f_01": 5.0e9, "anharmonicity": -2.0e8,
             "xy": {
                 "opx_output": "#/wiring/qubits/qA1/xy/opx_output",
                 "operations": {
                     # the real alias shape: op name -> sibling pulse dict
                     "x180": "#./x180_DragCosine",
-                    "x180_DragCosine": {"amplitude": 0.1, "length": 100},
+                    # docs/248: a real chip's pulse always names its class, and
+                    # the class decides the peak. An ODD length samples the
+                    # centre, where a DragCosine with |k| <= sqrt(2) peaks at
+                    # exactly its amplitude (TestPeakFollowsTheClass)
+                    "x180_DragCosine": {
+                        "__class__": _QC + "DragCosinePulse", "amplitude": 0.1,
+                        "length": 101, "axis_angle": 0.0, "alpha": -0.3,
+                        "anharmonicity": "#/qubits/qA1/anharmonicity",
+                        "detuning": 0.0},
                 },
             },
             "z": {
                 "opx_output": "#/wiring/qubits/qA1/z/opx_output",
                 "joint_offset": 0.01,
-                "operations": {"const": {"amplitude": 0.012, "length": 200}},
+                "operations": {"const": {"__class__": _QC + "SquarePulse",
+                                         "amplitude": 0.012, "length": 200}},
             },
             "resonator": {
                 "opx_output": "#/wiring/qubits/qA1/rr/opx_output",
-                "operations": {"readout": {"amplitude": 0.1, "length": 800}},
+                "operations": {"readout": {
+                    "__class__": _QC + "SquareReadoutPulse",
+                    "amplitude": 0.1, "length": 800}},
             },
         }},
         "qubit_pairs": {},

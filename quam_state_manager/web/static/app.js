@@ -6215,8 +6215,10 @@ document.addEventListener("DOMContentLoaded", function () {
    tables, inspector notes). V is always V_rms @ 50 Ω and labeled so — the
    same identity as the calculator's dBm↔V section. LF/flux annotations are
    already volts and never converted. Live typing recomputes via the
-   FSP-compensation identity (fsp + 20·log10|amp|); invalid or mw-zero →
-   blank (never an invented -∞). */
+   FSP-compensation identity (fsp + 20·log10|amp|), times the pulse-shape
+   peak the server measured (data-phys-peak, docs/248 -- absent means 1);
+   invalid or mw-zero → blank (never an invented -∞). A cell the server
+   blanked has no data-phys-kind, so typing never paints a number into it. */
 window.PhysAmp = (function () {
     var KEY = 'quam_phys_unit';
     function unit() {
@@ -6317,14 +6319,20 @@ window.PhysAmp = (function () {
             td.appendChild(el);
         }
         var v = parseFloat(String(t.value).replace(/,/g, ''));
+        // docs/248: the waveform peak per unit amplitude (signed for LF) the
+        // server read off the synthesized pulse; absent = exactly 1
+        var pk = t.hasAttribute('data-phys-peak')
+            ? parseFloat(t.getAttribute('data-phys-peak')) : 1;
+        if (!isFinite(pk) || pk === 0) { paint(el, null); return; }
         if (kind === 'mw') {
             var fsp = _fspOf(t);
             if (isFinite(v) && isFinite(fsp) && v !== 0) {
-                paint(el, fsp + 20 * Math.log10(Math.abs(v)));
+                paint(el, fsp + 20 * Math.log10(Math.abs(v) * Math.abs(pk)));
             } else {
                 paint(el, null);
             }
         } else {
+            v = v * pk;
             el.textContent = isFinite(v)
                 ? (Math.abs(v) >= 1 || v === 0
                    ? Number(v.toPrecision(3)) + ' V'
@@ -6359,17 +6367,47 @@ window.PhysAmp = (function () {
             .forEach(function (t) { out.push(t); });
         return out;
     }
-    function _setKind(t, ann) {
+    // docs/248: a blank the pulse CLASS caused carries a compact marker whose
+    // title says why -- kept in step with the server like the line itself.
+    var _WHY_RE = / — (dBm|volts) unknown: .*$/;
+    function _setWhy(t, blank) {
+        var td = t.closest('td');
+        var w = td && td.querySelector('.bulk-phys-why');
+        if (t.title) t.title = t.title.replace(_WHY_RE, '');
+        if (!blank) {
+            if (w) w.parentNode.removeChild(w);
+            return;
+        }
+        if (td && !w) {
+            w = document.createElement('span');
+            w.className = 'bulk-phys-why';
+            w.setAttribute('aria-hidden', 'true');
+            td.appendChild(w);
+        }
+        if (w) { w.textContent = blank.mark; w.title = blank.text; }
+        // the render's "actual output shown below (...)" promise no longer holds
+        t.title = (t.title || '').replace(/ — actual output shown below \([^)]*\)/, '')
+            + ' — ' + blank.text;
+    }
+    function _setKind(t, ann, blank) {
         if (!ann) {
             t.removeAttribute('data-phys-kind');
             t.removeAttribute('data-phys-fsp');
             t.removeAttribute('data-phys-fsp-path');
+            t.removeAttribute('data-phys-peak');
             var td = t.closest('td');
             var el = td && td.querySelector('.bulk-phys');
             if (el) el.parentNode.removeChild(el);
+            _setWhy(t, blank || null);
             return;
         }
+        _setWhy(t, null);
         t.setAttribute('data-phys-kind', ann.kind);
+        if (typeof ann.peak === 'number' && ann.peak !== 1) {
+            t.setAttribute('data-phys-peak', String(ann.peak));
+        } else {
+            t.removeAttribute('data-phys-peak');
+        }
         if (ann.kind === 'mw') {
             if (ann.fsp_path) t.setAttribute('data-phys-fsp-path', ann.fsp_path);
             var f = String(ann.fsp);
@@ -6401,6 +6439,7 @@ window.PhysAmp = (function () {
           .then(function (d) {
             if (!d || !d.ok || my !== _refreshSeq) return null;   // a newer ask wins
             var phys = d.phys || {};
+            var blank = d.blank || {};
             _ampCells(document).forEach(function (t) {
                 var p = t.getAttribute('data-dot-path');
                 if (!Object.prototype.hasOwnProperty.call(phys, p)) return;
@@ -6408,7 +6447,7 @@ window.PhysAmp = (function () {
                 // The line is always the BOX's number with the port's FSP:
                 // a box the grid has not repainted yet never gets a power
                 // computed from a value it does not show.
-                _setKind(t, ann);
+                _setKind(t, ann, blank[p] || null);
                 if (ann) recompute(t);
             });
             return d;

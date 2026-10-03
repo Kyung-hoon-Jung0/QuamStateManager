@@ -240,7 +240,7 @@
             <td>{{ q.readout_RF_frequency | qty('readout_RF_frequency') }}</td>
             <td>{{ q.readout_amplitude | qty('readout_amplitude') }}</td>
             {% set _ph = ('qubits.' ~ q.id ~ '.resonator.operations.readout.amplitude') | phys_amp(q.readout_amplitude) %}
-            <td>{% if _ph and _ph.kind == 'mw' %}{{ _ph.text }}{% else %}-{% endif %}</td>
+            <td>{% if _ph and _ph.kind == 'mw' %}{{ _ph.text }}{% else %}{% set _pb = ('qubits.' ~ q.id ~ '.resonator.operations.readout.amplitude') | phys_amp_blank(q.readout_amplitude) %}<span{% if _pb %} title="{{ _pb.text }}"{% endif %}>-</span>{% endif %}</td>
             <td>{{ q.readout_length | qty('readout_length') }}</td>
             <td>{{ raw(q.readout_threshold) }}</td>
             <td>{{ raw(q.readout_iw_angle) }}</td>

@@ -10312,6 +10312,9 @@ html.topbar-hidden .chrome-reveal { display: block; }
    reads as an annotation, block-level like .bulk-band-msg so the column keeps
    its input-driven width. */
 .bulk-phys { display: block; font-size: 0.7em; opacity: 0.65; font-family: var(--font-ui); max-width: 24ch; white-space: normal; }
+/* docs/248: the blank a lab pulse class causes -- the same line, quieter, and
+   its title says why SM states no power for it */
+.bulk-phys-why { display: block; font-size: 0.7em; opacity: 0.45; font-family: var(--font-ui); cursor: help; }
 .bulk-band-warn-count, #bulk-band-warn { color: var(--color-error-text); font-size: 0.82em; font-weight: 600; }
 .bulk-apply-col { text-align: center; position: sticky; right: calc(-1 * var(--table-pane-pad-h, 0px)); background: var(--pico-card-background-color); }
 .btn-xs { padding: 0.05rem 0.5rem; font-size: 0.78em; width: auto; margin: 0; }

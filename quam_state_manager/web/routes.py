@@ -269,6 +269,7 @@ def _build_bulk_cell(merged: dict, alias: str, modified: dict,
                 # shape, two verdicts, one of them false. Reuse the one rule.
                 from quam_state_manager.core.pointer_resolver import is_self_ref
                 ptr_kind = "runtime" if is_self_ref(raw_val) else "dangling"
+    why: list = []
     p = mw_fem.port_of_resolved(resolved)
     if p:
         _port_info_add(port_info, p, owner, val)
@@ -307,9 +308,14 @@ def _build_bulk_cell(merged: dict, alias: str, modified: dict,
         # not see, let alone fix, an externally string-ified value).
         "str_numeric": _is_numeric_string(val),
         # docs/109: what actually leaves the instrument for this amplitude —
-        # MW: FSP + 20·log10|amp| in dBm; LF/flux: the value IS volts. None
-        # (blank) whenever the chain doesn't fully resolve — never invented.
-        "phys": physical_units.amp_annotation(merged, resolved, val, reads),
+        # MW: FSP + 20·log10|peak| in dBm; LF/flux: the peak sample in volts.
+        # None (blank) whenever the chain doesn't fully resolve or the pulse
+        # class is not one SM can synthesize (docs/248) — never invented.
+        "phys": physical_units.amp_annotation(merged, resolved, val, reads,
+                                              alias_path=alias, why=why),
+        # docs/248: the blank the pulse CLASS caused, with its reason -- the
+        # one blank a person can act on, so the cell says why
+        "phys_blank": why[0] if why else None,
         "_port": p,
     }
 
@@ -7940,6 +7946,7 @@ def bulk_phys():
     if not isinstance(paths, list):
         return jsonify({"ok": False, "error": "paths must be a list"}), 400
     out: dict[str, Any] = {}
+    blank: dict[str, Any] = {}
     with store._lock:
         merged = store.merged
         for dp in paths[:5000]:
@@ -7953,9 +7960,15 @@ def bulk_phys():
                 out[dp] = None
                 continue
             val = ft.get("resolved_value")
+            why: list = []
             out[dp] = physical_units.amp_annotation(
-                merged, ft.get("resolved_path") or dp, val)
-    return jsonify({"ok": True, "phys": out})
+                merged, ft.get("resolved_path") or dp, val,
+                alias_path=dp, why=why)
+            if why:
+                # docs/248: a class-caused blank says why, exactly as the
+                # cold render's cell does (its ``phys_blank``)
+                blank[dp] = why[0]
+    return jsonify({"ok": True, "phys": out, "blank": blank})
 
 
 @bp.route("/bulk/cells")

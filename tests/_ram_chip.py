@@ -9,6 +9,12 @@ to a whole qubit and whose CZ flux pulse lives in the qubit's ``z`` channel,
 per-port bands/LOs shared between two qubits (the LO-peer annotation), an
 LF-FEM ``output_mode``, confusion matrices, fidelity records, ``extras``, a
 TWPA collection and a numeric-looking string. Deterministic for a seed.
+
+docs/248: the DRAG pulses' ``anharmonicity`` is the ABSOLUTE pointer real
+chips write (``#/qubits/<q>/anharmonicity``; the multi-level ``#../../../``
+form this file used is in no real chip, and SM's resolvers follow one ``../``
+only) -- an amplitude's dBm now reads the pulse shape, so a shape pointer that
+does not resolve would blank every drive cell.
 """
 from __future__ import annotations
 
@@ -65,13 +71,13 @@ def build(n_qubits: int = 6, seed: int = 1) -> tuple[dict, dict]:
                 "operations": {
                     "x180_DragCosine": {"__class__": DRAG, "length": 40,
                                         "amplitude": amp, "alpha": -0.4,
-                                        "anharmonicity": "#../../../anharmonicity",
+                                        "anharmonicity": f"#/qubits/{q}/anharmonicity",
                                         "detuning": 0.0, "axis_angle": 0.0,
                                         "digital_marker": None},
                     "x90_DragCosine": {"__class__": DRAG,
                                        "length": "#../x180_DragCosine/length",
                                        "amplitude": round(amp / 2, 5), "alpha": -0.4,
-                                       "anharmonicity": "#../../../anharmonicity",
+                                       "anharmonicity": f"#/qubits/{q}/anharmonicity",
                                        "detuning": "#../x180_DragCosine/detuning",
                                        "axis_angle": 0.0},
                     "x180": "#./x180_DragCosine",
