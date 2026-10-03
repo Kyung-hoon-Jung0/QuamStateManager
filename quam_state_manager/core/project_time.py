@@ -222,7 +222,11 @@ def clock_status(force: bool = False) -> dict:
         out = dict(hit[1])
     else:
         try:
-            from quam_state_manager.core import clock_health  # noqa: PLC0415
+            # import_module, not `from ... import`: it honours sys.modules, so a module
+            # swapped in or blocked there is what runs (an attribute already bound on
+            # the package would otherwise win)
+            import importlib  # noqa: PLC0415
+            clock_health = importlib.import_module("quam_state_manager.core.clock_health")
             raw = clock_health.status()
             src = "clock_health"
         except ImportError:
