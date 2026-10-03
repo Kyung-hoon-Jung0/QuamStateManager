@@ -207,7 +207,7 @@ def check_gates(req: RunRequest, *, session: dict | None, lim: dict, settings: d
         st = (session or {}).get("agent_stop") or {}
         return {"refused": "stopped_by_human", "by": st.get("who"), "at": st.get("at"), "stop_mode": st.get("mode"),
                 "how": "stop now: tell the human what you did and why; the human clears it by sending a new message"}
-    if limits_mod.past_stop_by(lim, datetime.fromtimestamp(now)):
+    if limits_mod.past_stop_by(lim, datetime.fromtimestamp(now), since=(session or {}).get("armed_at") or now):   # docs/253 D-16
         return {"refused": "past_stop_by", "stop_by": lim.get("stop_by"),
                 "how": "the lab's stop time for tonight has passed; summarize and stop"}
     if not (session or {}).get("start_token"):

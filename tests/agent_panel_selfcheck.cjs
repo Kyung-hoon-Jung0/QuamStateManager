@@ -92,7 +92,8 @@ const tick = (ms) => new Promise(r => setTimeout(r, ms || 15));
   const ap = cards.querySelector('[data-card="approval:ap-1"]');
   ok(ap && ap.querySelector('.ag-approve') && ap.querySelector('input.ag-ap-new').value === '4320000000', 'an approval card with an editable proposed value');
   const nowCol = home.querySelector('.ag-now');
-  ok(/thinking · by_claude/.test(nowCol.textContent) && nowCol.querySelector('.ag-arm') && /not armed/.test(nowCol.textContent), 'the now column: pill text, Arm offered while not armed');
+  // docs/253: no session-wide Arm -- the plan card's Start is the click, for that plan only
+  ok(/thinking · by_claude/.test(nowCol.textContent) && !nowCol.querySelector('.ag-arm') && !/>Arm</.test(nowCol.innerHTML) && /not armed/.test(nowCol.textContent), 'the now column: pill text, not armed, and no blank Arm');
   ok(/waiting 1/.test(nowCol.textContent), 'waiting count shows');
   const sel = home.querySelector('.ag-backend');
   ok(sel && sel.value === 'claude' && sel.querySelector('option[value=codex]').disabled, 'backends: default selected, a missing one disabled');
@@ -464,7 +465,7 @@ const tick = (ms) => new Promise(r => setTimeout(r, ms || 15));
   ok(P.actorName() === '', 'a name with nothing sendable in it becomes no name');
   P.setActor('Park OO');
   calls.length = 0;
-  P.arm();
+  P.disarm();                                   // docs/253: Arm is the plan card's Start now; any door will do
   await tick(30);
   // SM works in English (user directive 2026-09-11): the name box is
   // stripped to ASCII, because it travels in an HTTP header and a
@@ -679,7 +680,8 @@ const tick = (ms) => new Promise(r => setTimeout(r, ms || 15));
   feed.session = { alive: true, busy: false, backend: 'claude', ended: null };
   await P.poll(true); await tick();
   const sActs = strip.querySelector('.ag-now-acts'), sMain = strip.querySelector('.ag-now-main');
-  ok(sActs && sMain && sActs.querySelector('.ag-arm') && /not armed/.test(sMain.textContent), 'precondition: strip parts, Arm offered, not armed');
+  ok(sActs && sMain && !sActs.querySelector('.ag-arm') && sActs.querySelector('.ag-stop-now') && !/Stop after this run/.test(sActs.textContent) && /not armed/.test(sMain.textContent),
+     'precondition: strip parts, not armed -- Stop now for the live session, no Stop after this run (nothing armed to stop)');
   const actsFirst = sActs.firstElementChild, mainFirst = sMain.firstElementChild;
   await P.poll(true); await tick();
   ok(sActs.firstElementChild === actsFirst && sMain.firstElementChild === mainFirst && strip.querySelector('.ag-now-acts') === sActs, 'a poll that changes nothing leaves the strip\'s DOM alone (no wholesale innerHTML)');
@@ -694,17 +696,27 @@ const tick = (ms) => new Promise(r => setTimeout(r, ms || 15));
   const obs = strip.querySelector('.ag-observer input');
   obs.focus();
   ok(document.activeElement === obs, 'precondition: the observer box holds the focus');
-  feed.file.armed = true;                                   // Arm -> Disarm: the acts part is rebuilt
+  feed.file.armed = true;                                   // a Start armed a plan: the acts part is rebuilt
+  feed.file.grant = { plan_id: 'pl-9', title: '/run 05_power_rabi q1', steps: 1, by: 'human:kyunghoon', at: now - 5,
+                      driver: { kind: 'terminal', actor: 'by_claude', id: 't-1', pid: 4242 } };
   await P.poll(true); await tick();
   const obs2 = strip.querySelector('.ag-observer input');
-  ok(!sActs.querySelector('.ag-arm') && /Disarm/.test(sActs.textContent) && obs2 !== obs, 'precondition: the acts were rebuilt (Disarm now)');
+  ok(!sActs.querySelector('.ag-arm') && /Stop after this run/.test(sActs.textContent) && !/Disarm/.test(sActs.textContent) && obs2 !== obs,
+     'precondition: the acts were rebuilt (Stop after this run now; no Disarm beside it)');
   ok(document.activeElement === obs2 && strip.contains(document.activeElement), 'the focus comes back to the observer box after the rebuild (not <body>)');
+  // docs/253: the strip says WHICH plan is armed and WHO drives it
+  ok(/armed: \/run 05_power_rabi q1/.test(sMain.textContent) && /by_claude, terminal/.test(sMain.textContent) && /driven by by_claude in a terminal \(PID 4242\)/.test(sMain.querySelector('.ag-driver').getAttribute('title')),
+     'armed names its plan and its driver: ' + JSON.stringify(sMain.textContent));
+  ok(/for plan \/run 05_power_rabi q1 \(1 step\(s\)\)/.test(sMain.querySelector('.ag-armed').getAttribute('title')), 'the armed chip\'s title says what it covers');
   // a control that went away hands the focus to its successor at the same place
-  const disarm = Array.from(sActs.querySelectorAll('button')).find(b => b.textContent === 'Disarm');
-  disarm.focus();
-  feed.file.armed = false;                                  // Disarm -> Arm at the same slot
+  const afterRun = Array.from(sActs.querySelectorAll('button')).find(b => b.textContent === 'Stop after this run');
+  afterRun.focus();
+  feed.file.armed = false; delete feed.file.grant;          // the plan ended: its arming with it
+  feed.file.last_grant = { plan_id: 'pl-9', title: '/run 05_power_rabi q1', ended_at: now, why: 'plan `/run 05_power_rabi q1` finished' };
   await P.poll(true); await tick();
-  ok(document.activeElement === sActs.querySelector('.ag-arm'), 'Disarm pressed and gone: the focus lands on Arm, its successor, not on <body>');
+  ok(document.activeElement === sActs.querySelector('.ag-stop-now'), 'Stop after this run gone: the focus lands on Stop now, its successor, not on <body>');
+  ok(/finished/.test(sMain.querySelector('.ag-now-line .muted[title]').getAttribute('title')), '"not armed" carries why the last arming ended');
+  delete feed.file.last_grant;
   // the ticking run row is its own part: a Stop now that holds the focus is not even touched
   feed.now.state = 'running'; feed.now.running = { node: '05_power_rabi', since: now - 30, typical_s: 300 };
   await P.poll(true); await tick();
@@ -723,6 +735,26 @@ const tick = (ms) => new Promise(r => setTimeout(r, ms || 15));
   feed.now.state = 'between'; delete feed.now.running;
   await P.poll(true); await tick();
   ok(!strip.querySelector('.ag-now-run') && sr.textContent === 'thinking · by_claude · ask-writes', 'the run ends: the row goes, the status node says so');
+
+  // --- docs/253 (C-22): after End session the strip offered Arm and Stop for a session that was over,
+  // and said "today 0 events" while approvals waited
+  {
+    const keepSession = feed.session, keepEvents = feed.now.events_today;
+    feed.session = { alive: false, busy: false, backend: 'claude', ended: now - 5, session_id: null };
+    feed.now.events_today = 0;
+    await P.poll(true); await tick();
+    ok(!sActs.querySelector('.ag-stop') && !sActs.querySelector('.ag-arm') && !/End session/.test(sActs.textContent),
+       'a session that is over is offered no Stop, no Arm, no End: ' + JSON.stringify(sActs.textContent));
+    ok(!/0 events/.test(sMain.textContent) && /waiting 1/.test(sMain.textContent), 'no "0 events" beside what waits: ' + JSON.stringify(sMain.textContent));
+    feed.runs_backup = feed.live.runs;
+    feed.live.runs = [{ key: 'r9', node: '05_power_rabi', targets: ['q1'], status: 'running', since: now - 3, result: null }];
+    await P.poll(true); await tick();
+    ok(/Stop after this run/.test(sActs.textContent) && sActs.querySelector('.ag-stop-now'), 'a run still in flight is stoppable even with the session over');
+    feed.live.runs = feed.runs_backup; delete feed.runs_backup;
+    P._state.runs = {};
+    feed.session = keepSession; feed.now.events_today = keepEvents;
+    await P.poll(true); await tick();
+  }
 
   // --- round 2 (measured in Chrome): the strip said the same thing twice and grew to three rows
   feed.now.state = 'human-ran';

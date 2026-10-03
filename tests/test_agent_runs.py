@@ -133,10 +133,24 @@ def _journal(c, inst):
     return journal_mod.read(str(inst), _name(c), datetime.now().strftime("%Y-%m-%d")) or ""
 
 
-def _arm(c):
-    r = c.post("/api/agent/session/arm", json={}, headers=HUMAN)
+def _arm(c, *, mode=None, steps=8):
+    """docs/253: arming is a person's Start on a PLAN, for that plan's steps only.
+    The pins here run ``05_power_rabi`` on qA1 the way a driving agent runs its
+    plan: the agent proposes ``steps`` identical steps, a person presses Start.
+    The plan's mode is the session's / the chip's at proposal time (as a run's
+    was before), unless ``mode`` is given."""
+    body = {"title": "the pins' plan", "steps": [{"node": "05_power_rabi", "targets": ["qA1"]}] * steps}
+    pid = c.post("/api/agent/plans", json=body, headers=AGENT).get_json()["plan"]["id"]
+    if mode:
+        assert c.post(f"/api/agent/plans/{pid}/mode", json={"mode": mode}, headers=HUMAN).status_code == 200
+    r = c.post(f"/api/agent/plans/{pid}/start", json={}, headers=HUMAN)
     assert r.status_code == 200, r.get_json()
     return r.get_json()
+
+
+def _armed_plan(c):
+    s = c.get("/api/agent/session").get_json().get("session") or {}
+    return (s.get("grant") or {}).get("plan_id")
 
 
 class FakeRun:
@@ -180,6 +194,8 @@ def fake_run(monkeypatch):
 def _run(c, **kw):
     body = {"node": "05_power_rabi", "targets": ["qA1"], "reason": "verify the pin", "wait_s": 20}
     body.update(kw)
+    if "plan_id" not in kw and _armed_plan(c):
+        body["plan_id"] = _armed_plan(c)      # the driving agent runs the plan it was armed for
     return c.post("/api/agent/run-node", json=body, headers=AGENT)
 
 
@@ -315,17 +331,26 @@ class TestGates:
         assert _run(c, node="graph_x").get_json()["refused"] == "not_a_node"
         assert _run(c, node="util_no_hook").get_json()["refused"] == "not_a_node"
         r = _run(c).get_json()
-        assert r["refused"] == "no_start_token" and "Arm" in r["how"]
+        assert r["refused"] == "no_start_token" and "plan" in r["how"] and "Start" in r["how"]
         _arm(c)
-        agent_session.request_stop(str(inst), chip, who="human:k", mode="after_run")
-        r = _run(c).get_json()
+        pid = _armed_plan(c)
+        assert c.post("/api/agent/session/stop", json={"mode": "after_run"},
+                      headers={"X-SM-Actor": "k"}).get_json()["ok"]
+        r = _run(c, plan_id=pid).get_json()
         assert r["refused"] == "stopped_by_human" and r["by"] == "human:k"
         assert not agent_session.load(str(inst), chip).get("start_token"), "a Stop takes the token back"
         _arm(c)
-        assert agent_session.load(str(inst), chip).get("agent_stop") is None, "Arm clears the stop"
+        assert agent_session.load(str(inst), chip).get("agent_stop") is None, "Start clears the stop"
+        # docs/253 (D-16): stop_by is the first one AFTER the arming -- armed yesterday, today's 00:00 has
+        # passed, and the plan's arming ended there (overnight: the stop time is one of a grant's ends)
+        pid = _armed_plan(c)
+        agent_session.save(str(inst), chip, armed_at=time.time() - 86400)
         limits.save(str(inst), chip, {"stop_by": "00:00"})
-        assert _run(c).get_json()["refused"] == "past_stop_by"
+        r = _run(c, plan_id=pid).get_json()
+        assert r["refused"] == "past_stop_by" and "stop time (00:00) was reached" in r["how"], r
+        assert not agent_session.load(str(inst), chip).get("start_token")
         limits.save(str(inst), chip, {"stop_by": ""})
+        _arm(c)
         monkeypatch.setattr(aa, "_human_ran_recently", lambda now, ar, ev: {"run_id": 9, "node": "x", "ts": now - 60})
         r = _run(c).get_json()
         assert r["refused"] == "human_active" and r["run"]["run_id"] == 9
@@ -347,9 +372,11 @@ class TestGates:
         st["run"].update({"status": "idle", "worker_pid": None})
         scheduler.save_queue(scope, st)
         scheduler.save_settings(scope, {"global_simulate": True})
-        limits.save(str(inst), _chip(c), {"mode": "auto"})
+        c.post(f"/api/agent/plans/{_armed_plan(c)}/cancel", json={}, headers=HUMAN)
+        _arm(c, mode="auto")
         assert _run(c).get_json()["refused"] == "simulate_on_in_auto"
-        limits.save(str(inst), _chip(c), {"mode": "ask-writes"})
+        c.post(f"/api/agent/plans/{_armed_plan(c)}/cancel", json={}, headers=HUMAN)
+        _arm(c, mode="ask-writes")
         assert _run(c).get_json()["ok"] is True, "ask-writes may run under Dry run"
 
     def test_no_env_and_no_folder(self, c, inst, fake_run):
@@ -362,10 +389,10 @@ class TestGates:
 
     def test_ask_all_files_a_run_request_then_runs_on_approval(self, c, inst, fake_run):
         chip = _chip(c)
-        _arm(c)
         limits.save(str(inst), chip, {"mode": "auto"})
-        # the SESSION's mode wins when a session exists; make one in ask-all
+        # the SESSION's mode wins when a session exists; make one in ask-all (a plan proposed now takes it)
         agent_session.save(str(inst), chip, mode="ask-all", backend="claude", owner="human")
+        _arm(c)
         r = _run(c).get_json()
         assert r["refused"] == "awaiting_approval" and r["needs"] == "run" and r["approval"]["kind"] == "run"
         aid = r["approval"]["id"]
@@ -397,8 +424,8 @@ class TestGates:
 class TestRun:
     def test_auto_applies_through_the_door_and_records(self, c, inst, fake_run, synth_folder):
         chip = _chip(c)
-        _arm(c)
         limits.save(str(inst), chip, {"mode": "auto"})
+        _arm(c)
         r = _run(c).get_json()
         assert r["ok"] and r["status"] == "done", r
         res = r["result"]
@@ -583,10 +610,10 @@ class TestRun:
 
     def test_limits_hold_in_auto(self, c, inst, fake_run):
         chip = _chip(c)
-        _arm(c)
         fam = agent_runs.family_key("05_power_rabi")
         assert fam, "the families table knows power rabi"
         limits.save(str(inst), chip, {"mode": "auto", "max_delta": {fam: 1.0}})
+        _arm(c)
         res = _run(c).get_json()["result"]
         assert res["applied"] is False and res["why_held"].startswith("max_delta") and res["approval"]
 
@@ -594,8 +621,8 @@ class TestRun:
         """review R1-M3: a run's writes land whole or not at all -- a key SM cannot
         stage refuses the group, names the key, and parks the writes for a person."""
         chip = _chip(c)
-        _arm(c)
         limits.save(str(inst), chip, {"mode": "auto"})
+        _arm(c)
         fake_run.extra = {"brand_new_key": 1}
         res = _run(c).get_json()["result"]
         assert res["applied"] is False
@@ -692,8 +719,8 @@ class TestRun:
                 return fresh + [{"run_id": 700, "experiment_name": "05_power_rabi", "qubits": ["qA1"], "status": "successful",
                                  "date": "2020-01-01", "time": "00:00:00"}]
         monkeypatch.setattr(aa, "_ds", lambda: _DS())
-        _arm(c)
         limits.save(str(inst), _chip(c), {"mode": "auto"})
+        _arm(c)
         res = _run(c).get_json()["result"]
         assert res["run_id"] == 777 and res["classification"] == "ok"
         assert "ran `05_power_rabi` on qA1 → #777 (1 write(s) applied)" in _journal(c, inst)
@@ -711,8 +738,8 @@ class TestRun:
                 return [{"run_id": 700, "experiment_name": "05_power_rabi", "qubits": ["qA1"], "status": "successful",
                          "date": "2020-01-01", "time": "00:00:00"}]
         monkeypatch.setattr(aa, "_ds", lambda: _DS())
-        _arm(c)
         limits.save(str(inst), _chip(c), {"mode": "auto"})
+        _arm(c)
         res = _run(c).get_json()["result"]
         assert res["run_id"] is None and res["classification"] == "unattributed"
         assert "→ #" not in _journal(c, inst)
@@ -720,8 +747,8 @@ class TestRun:
     def test_no_dataset_store_means_no_attribution_wait(self, c, inst, fake_run):
         """A chip with no run folder at all: the run answers at once, it does
         not poll 6 s for a folder that cannot appear."""
-        _arm(c)
         limits.save(str(inst), _chip(c), {"mode": "auto"})
+        _arm(c)
         t0 = time.time()
         res = _run(c).get_json()["result"]
         assert res["applied"] is True
@@ -740,8 +767,8 @@ class TestRun:
             (synth_folder / "state.json").write_text(json.dumps(st), encoding="utf-8")
             return fr(instance_path, item, settings, runner)
         monkeypatch.setattr(scheduler, "_run_item", drift_then_run)
-        _arm(c)
         limits.save(str(inst), _chip(c), {"mode": "auto"})
+        _arm(c)
         res = _run(c).get_json()["result"]
         assert res["applied"] is False and res["approval"] and res["why_held"].startswith("apply refused: stale_live")
         assert c.get("/api/agent/chip").get_json()["pending"] == 0, "the refused group is not left in the tray"
@@ -792,9 +819,12 @@ class TestRun:
 
     def test_arm_is_a_persons_click_and_journaled(self, c, inst):
         assert c.post("/api/agent/session/arm", json={}, headers=AGENT).status_code == 403
-        d = _arm(c)
-        assert d["session"]["armed"] is True and d["session"]["armed_by"] == "human:kyunghoon"
-        assert "armed by human:kyunghoon" in _journal(c, inst)
+        # docs/253: no session-wide Arm -- the plan card's Start is the click
+        assert c.post("/api/agent/session/arm", json={}, headers=HUMAN).status_code == 409
+        _arm(c)
+        s = c.get("/api/agent/session").get_json()["session"]
+        assert s["armed"] is True and s["armed_by"] == "human:kyunghoon" and s["grant"]["title"] == "the pins' plan"
+        assert "STARTED by human:kyunghoon" in _journal(c, inst) and "armed for this plan only" in _journal(c, inst)
         assert c.post("/api/agent/session/disarm", json={}, headers=HUMAN).get_json()["session"]["armed"] is False
         assert "disarmed by human:kyunghoon" in _journal(c, inst)
 

@@ -77,6 +77,7 @@ class ChatSession:
         self.display = display or chip            # the chip's NAME on events (the journal's key); chip = the records' key
         self.record, self.instance_path = record, instance_path
         self.local_id = uuid.uuid4().hex[:12]
+        self.secret = getattr(backend, "session_secret", None)   # docs/253: its bridge's SM_SESSION
         self.session_id: str | None = None
         self.proc: ab.AgentProcess | None = None
         self.queue: deque[str] = deque()
@@ -125,7 +126,8 @@ class ChatSession:
             # session id into this file, and must never be overwritten by a later save
             agent_session.save(self.instance_path, self.chip, backend=self.backend.name, mode=self.mode,
                                owner=self.owner, until=self.until, pid=None, started=self.started,
-                               session_id=resume, agent_stop=None, limited_until=None, window="chat")
+                               session_id=resume, agent_stop=None, limited_until=None, window="chat",
+                               app_session=self.secret)
             if self.backend.one_turn_per_process:
                 self._spawn_turn(prompt)
             else:

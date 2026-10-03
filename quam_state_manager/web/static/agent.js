@@ -70,6 +70,21 @@ window.AgentPanel = (function () {
     if (typeof v === "object") return JSON.stringify(v).slice(0, 60);
     return String(v);
   }
+  // docs/253: who drives an armed plan, in words a person reads
+  function driverText(d) {
+    if (!d) return "";
+    if (d.kind === "app") return "driven by SM's in-app " + (d.backend || "agent");
+    return "driven by " + (d.actor || "an agent") + " in a terminal" + (d.pid ? " (PID " + d.pid + ")" : "");
+  }
+  function driverShort(d) {
+    if (!d) return "";
+    return d.kind === "app" ? "· in-app " + (d.backend || "agent") : "· " + (d.actor || "agent") + ", terminal";
+  }
+  function grantTitle(g) {
+    if (!g) return "a person's Start armed a plan: the agent may run its steps, nothing else";
+    return "armed by " + (g.by || "a person") + " " + fmtClock(g.at) + " for plan " + (g.title || g.plan_id) +
+      " (" + (g.steps || 0) + " step(s)) -- its own steps only; it ends when the plan ends";
+  }
   // docs/173 S8: the name picker in front of the keyboard. One key, `quam_actor_name`,
   // is the person the door records (armed by / Stop by / mode by / "I ran it"). Empty =
   // the routes fall back to a plain "human".
@@ -481,8 +496,9 @@ window.AgentPanel = (function () {
       " <strong>" + esc(p.title) + "</strong>" + ' <span class="muted">' + esc(origin) + " · " + esc(fmtClock(p.created)) + "</span></div>";
     var prog = "";
     if (p.status !== "draft") {
-      prog = '<div class="ag-plan-prog">' + (c.done || 0) + " / " + (c.total || 0) + " done" + (c.failed ? " · ✗ " + c.failed : "") + (c.skipped ? " · skipped " + c.skipped : "") +
-        (c.waiting ? " · waiting " + c.waiting : "") + (p.ended ? " · " + (p.status === "done" ? "finished " : "ended ") + fmtClock(p.ended) + (p.ended_by ? " by " + esc(p.ended_by) : "") : "") + "</div>";
+      prog = '<div class="ag-plan-prog">' + (p.driver ? '<span class="muted ag-driver">' + esc(driverText(p.driver)) + "</span> · " : "") + (c.done || 0) + " / " + (c.total || 0) + " done" + (c.failed ? " · ✗ " + c.failed : "") + (c.skipped ? " · skipped " + c.skipped : "") +
+        (c.waiting ? " · waiting " + c.waiting : "") + (p.ended ? " · " + (p.status === "done" ? "finished " : "ended ") + fmtClock(p.ended) + (p.ended_by ? " by " + esc(p.ended_by) : "") : "") +
+        (p.ended_by === "SM" && p.note ? ' <span class="muted ag-plan-why">(' + esc(p.note) + ")</span>" : "") + "</div>";   // docs/253: why SM closed it
     }
     var mode = p.mode || (S.now && S.now.mode) || "ask-writes";
     var modeSel = p.status === "draft"
@@ -520,7 +536,8 @@ window.AgentPanel = (function () {
       " <strong><code>" + esc(r.node) + "</code></strong> " + esc((r.targets || []).join(" ")) + paramsHtml(r.params) +
       simBadge(res.simulated || r.simulated) +
       (res.classification && res.classification !== "ok" ? ' <span class="ag-err">' + esc(res.classification) + "</span>" : "") +
-      (res.run_id ? " " + runLink(res.run_id) : "") + ' <span class="muted">' + esc(fmtClock(r.since)) + "</span>";
+      (res.run_id ? " " + runLink(res.run_id) : "") + ' <span class="muted">' + esc(fmtClock(r.since)) + "</span>" +
+      (r.driver && r.driver.kind === "terminal" ? ' <span class="muted ag-via" title="' + esc(driverText(r.driver)) + '">via terminal</span>' : "");
     var writes = "";
     if (res.writes && res.writes.length) {
       writes = '<details class="ag-writes"><summary>' + res.writes.length + " write(s) " + (res.applied ? "applied to the chip" : (res.approval ? "waiting for approval" : "not staged")) + "</summary><div class=\"ag-tbl\"><table>" +
@@ -623,18 +640,34 @@ window.AgentPanel = (function () {
     var live = s.session || null;
     var alive = !!(live && live.alive);
     var armed = !!(file && file.armed);
+    /* docs/253: an arming is a grant for ONE plan, to ONE driving agent -- the strip says which
+       plan and who drives it, and after it ended, why. */
+    var grant = armed ? (file.grant || null) : null;
+    var lastGrant = (!armed && file && file.last_grant) || null;
+    var runActive = Object.keys(S.runs).some(function (k) { var st = S.runs[k] && S.runs[k].status; return st === "starting" || st === "running"; });
     // customer feedback 2026-09-08: the "now" column became a ONE-LINE status strip --
     // state · session · today's counts on the left, the doors + links on the right; a
     // second row only for a run in progress (and on a narrow pane, where the strip wraps)
     var seg = [];
     seg.push('<span class="ag-now-state ag-' + esc(v.state) + '"' + (v.title ? ' title="' + esc(v.title) + '"' : "") + '><span class="agent-pill-dot"></span>' + esc(String(v.text || "").replace(/^Agent: /, "")) + "</span>");
+    var armedHtml = armed
+      ? ' · <span class="ag-armed" title="' + esc(grantTitle(grant)) + '">armed' + (grant && grant.title ? ": " + esc(grant.title) : "") + "</span>" +
+        (grant && grant.driver ? ' <span class="muted ag-driver" title="' + esc(driverText(grant.driver)) + '">' + esc(driverShort(grant.driver)) + "</span>" : "")
+      : ' · <span class="muted"' + (lastGrant ? ' title="' + esc("disarmed " + fmtClock(lastGrant.ended_at) + ": " + (lastGrant.why || "")) + '"' : "") + ">not armed</span>";
     if (file && file.owner) {
       seg.push('<span class="ag-now-line">' + esc(file.backend || "") + " · " + esc(file.owner) + (file.until ? " → " + esc(fmtClock(file.until)) : "") + (file.stopped ? ' · <span class="ag-err">stopped</span>' : "") +
-        (armed ? ' · <span class="ag-armed" title="a person pressed Arm: the agent may start hardware runs">armed</span>' : ' · <span class="muted">not armed</span>') + "</span>");
+        armedHtml + "</span>");
+    } else if (armed) {
+      seg.push('<span class="ag-now-line">no in-app session' + armedHtml + "</span>");      // a terminal agent drives the armed plan
     } else {
-      seg.push('<span class="ag-now-line muted">no agent session on this chip</span>');
+      seg.push('<span class="ag-now-line muted">no agent session on this chip' + (lastGrant ? armedHtml : "") + "</span>");
     }
-    seg.push('<span class="ag-now-line">today ' + (d.events_today || 0) + " events" + (d.failures_today ? ' · <span class="ag-err">' + d.failures_today + " failed</span>" : "") + (d.waiting ? ' · <strong>waiting ' + d.waiting + "</strong>" : "") + "</span>");
+    // C-22: "today 0 events" beside approvals that wait read as "nothing happened" -- a zero count is not said
+    var counts = [];
+    if (d.events_today) counts.push("today " + d.events_today + " events");
+    if (d.failures_today) counts.push('<span class="ag-err">' + d.failures_today + " failed</span>");
+    if (d.waiting) counts.push("<strong>waiting " + d.waiting + "</strong>");
+    if (counts.length) seg.push('<span class="ag-now-line">' + counts.join(" · ") + "</span>");
     // customer feedback 2026-09-08 (round 2, measured in Chrome): the strip read
     // "human ran X · 32s ago · … · human ran X 32s ago" -- the pill's own state text
     // ALREADY says it, so the separate line is a duplicate that pushed the strip to
@@ -645,12 +678,12 @@ window.AgentPanel = (function () {
     if (S.unreachable) seg.push('<span class="ag-now-line ag-err ag-unreachable">' + esc(UNREACHABLE) + "</span>");
     var acts = [];
     if (!S.observer) {
-      if (file && file.owner && !armed) acts.push('<button type="button" class="btn-sm ag-arm" onclick="AgentPanel.arm()" title="rule 0: hardware starts only by this click">Arm</button>');
-      if (armed) acts.push('<button type="button" class="btn-sm" onclick="AgentPanel.disarm()">Disarm</button>');
-      if (alive || (file && file.owner && !file.stopped)) {
-        acts.push('<button type="button" class="btn-sm ag-stop" onclick="AgentPanel.stop(\'after_run\')">Stop after this run</button>');
-        acts.push('<button type="button" class="btn-sm ag-stop ag-stop-now" onclick="AgentPanel.stop(\'now\')">Stop now</button>');
-      }
+      /* docs/253 (C-05, C-22): no session-wide Arm -- the plan card's Start is the click, for that plan
+         only. Each door is offered only where it does something: "Stop after this run" while an armed
+         plan or a run could go on; "Stop now" while something runs or thinks; never for a session
+         that is over. */
+      if (armed || runActive) acts.push('<button type="button" class="btn-sm ag-stop" onclick="AgentPanel.stop(\'after_run\')">Stop after this run</button>');
+      if (alive || armed || runActive) acts.push('<button type="button" class="btn-sm ag-stop ag-stop-now" onclick="AgentPanel.stop(\'now\')">Stop now</button>');
       if (sessionOpen()) acts.push('<button type="button" class="btn-sm" onclick="AgentPanel.endSession()">End session</button>');   // docs/247: a Codex conversation between turns too
     }
     acts.push('<label class="ag-observer" title="observer: this window shows but never starts, stops or approves (an accident guard, not a permission)"><input type="checkbox" ' + (S.observer ? "checked" : "") + ' onchange="AgentPanel.setObserver(this.checked)"> observer' + (S.observer ? ' <span class="ag-observing">— observing</span>' : "") + "</label>");
@@ -998,7 +1031,9 @@ window.AgentPanel = (function () {
   function startPlan(id) {
     if (S.observer) return;
     api("POST", "/api/agent/plans/" + id + "/start", {}).then(function (r) {
-      if (r.status !== 200) toast(errText(r, "could not start"), "error"); else toast("started — the agent is running the plan");
+      // docs/253: say WHO runs it -- a terminal agent's plan is not run by SM's in-app agent
+      if (r.status !== 200) toast(errText(r, "could not start"), "error");
+      else toast("started — " + (r.body && r.body.driver ? driverText(r.body.driver).replace(/^driven by /, "") + " runs it" : "the agent is running the plan"));
       poll(true);
     });
   }
@@ -1070,7 +1105,7 @@ window.AgentPanel = (function () {
       poll(true);
     });
   }
-  function arm() { if (S.observer) return; api("POST", "/api/agent/session/arm", {}).then(function (r) { if (r.status !== 200) toast(errText(r, "not armed"), "error"); poll(true); }); }
+  function arm() { toast("Arm is per plan: press Start on the plan card", "info"); }   // docs/253: no session-wide Arm
   function disarm() { if (S.observer) return; api("POST", "/api/agent/session/disarm", {}).then(function (r) { if (r.status !== 200) toast(errText(r, "not disarmed"), "error"); poll(true); }); }
   function endSession() { if (S.observer) return; api("POST", "/api/agent/chat/end", {}).then(function (r) { if (r.status !== 200) toast(errText(r, "no session"), "error"); poll(true); }); }
 
@@ -1087,7 +1122,7 @@ window.AgentPanel = (function () {
       '<textarea class="ag-input" rows="1" onkeydown="return AgentPanel.key(event)" oninput="AgentPanel.grow(this)" placeholder="Ask, or tell the agent what to do…  (Enter sends · Shift+Enter newline · /run <node> <targets>)"></textarea>' +
       '<div class="ag-form-row"><select class="ag-intent" title="Ask = a read-only question (SM\'s read tools only, nothing can change). Task = the agent session that may propose plans and, after your Start, run them through SM." onchange="AgentPanel.setIntent(this.value, this)"><option value="ask">Ask (read-only)</option><option value="task">Task</option></select>' +
       '<select class="ag-backend" title="which CLI drives"></select>' +
-      '<label class="ag-actor-wrap" title="who is at the keyboard — the person SM records for Arm / Stop / mode / “I ran it”. English letters only (it travels in a request header); what you SAY to the agent can be any language.">⌨ <input class="ag-actor" list="ag-actor-list" placeholder="your name" autocomplete="off" spellcheck="false" oninput="AgentPanel.setActor(this.value, this)"><datalist id="ag-actor-list"></datalist></label>' +
+      '<label class="ag-actor-wrap" title="who is at the keyboard — the person SM records for Start / Stop / mode / “I ran it”. English letters only (it travels in a request header); what you SAY to the agent can be any language.">⌨ <input class="ag-actor" list="ag-actor-list" placeholder="your name" autocomplete="off" spellcheck="false" oninput="AgentPanel.setActor(this.value, this)"><datalist id="ag-actor-list"></datalist></label>' +
       '<span class="ag-presets" title="a preset fills a draft; nothing starts before a plan card\'s Start">' +
       '<button type="button" class="btn-sm ag-presets-toggle" onclick="AgentPanel.togglePresets(this)" aria-expanded="false">presets ▾</button>' +
       PRESETS.map(function (p, i) { return '<button type="button" class="btn-sm ag-preset" onclick="AgentPanel.preset(' + i + ', this.closest(\'.ag-root\'))">' + esc(p[0]) + "</button>"; }).join("") + "</span>" +

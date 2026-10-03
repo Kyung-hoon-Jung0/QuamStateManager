@@ -23,7 +23,8 @@ from quam_state_manager.core import journal as journal_mod
 
 FIELDS = ("chip", "backend", "session_id", "mode", "owner", "started", "until", "pid", "worker_pid",
           "agent_stop", "stop_by", "plan_id", "limited_until", "claimed_by_tool", "window",
-          "start_token", "armed_by", "armed_at", "run_key")
+          "start_token", "armed_by", "armed_at", "run_key",
+          "grant", "last_grant", "app_session")          # docs/253: the arming's scope, its end, the in-app session's id
 
 
 def _dir(instance_path) -> Path:
@@ -34,12 +35,35 @@ def path_for(instance_path, chip: str) -> Path:
     return _dir(instance_path) / (journal_mod._safe_key(chip) + ".json")
 
 
+def read_record(p: Path, attempts: int = 4):
+    """The parsed file, or None when it is absent. docs/253: a read that lands
+    while another thread replaces the file (the in-app session's Init event
+    writes it right after a Start) used to come back as "no record" -- and a
+    run_node gate read an armed chip as not armed. The handle shares delete and
+    a transient failure is retried; only an absent file reads as absent."""
+    for i in range(max(1, attempts)):
+        if not p.exists():
+            return None
+        try:
+            with safe_io.open_shared(p) as f:
+                return json.loads(f.read().decode("utf-8"))
+        except (OSError, ValueError):
+            if i + 1 < attempts:
+                time.sleep(0.05 * (i + 1))
+    return None
+
+
+def _load(p: Path) -> dict | None:
+    d = read_record(p)
+    return d if isinstance(d, dict) else None
+
+
 def load(instance_path, chip: str) -> dict | None:
-    try:
-        d = json.loads(path_for(instance_path, chip).read_text(encoding="utf-8"))
-        return d if isinstance(d, dict) else None
-    except (OSError, ValueError):
-        return None
+    # under the writers' lock: a replace on Windows is not one step, and a read that lands inside it
+    # saw NO file -- an armed chip read as never armed (docs/253, measured in this suite)
+    p = path_for(instance_path, chip)
+    with safe_io.path_lock(p):
+        return _load(p)
 
 
 def save(instance_path, chip: str, **fields) -> dict:
@@ -51,7 +75,7 @@ def save(instance_path, chip: str, **fields) -> dict:
     # `ReplaceFileW` calls on one target collide outright -- measured at 40
     # threads). Two windows, one process: see safe_io.path_lock.
     with safe_io.path_lock(p):
-        cur = load(instance_path, chip) or {"chip": chip, "started": time.time()}
+        cur = _load(p) or {"chip": chip, "started": time.time()}
         for k, v in fields.items():
             if k in FIELDS:
                 cur[k] = v
@@ -94,10 +118,19 @@ def stopped(rec: dict | None) -> bool:
 
 def request_stop(instance_path, chip: str, *, who: str, mode: str = "after_run") -> dict | None:
     """Stop, recorded before anything is killed: run_node reads this first."""
-    if load(instance_path, chip) is None:
+    before = load(instance_path, chip)
+    if before is None:
         return None
-    # rule 0 both ways: a Stop also takes the start token back -- the next run needs a new click
-    return save(instance_path, chip, agent_stop={"who": who, "mode": mode, "at": time.time()}, start_token=None)
+    # rule 0 both ways: a Stop also takes the start token back -- the next run needs a new click.
+    # docs/253: and the grant's scope with it, remembered as how it ended
+    fields = {"agent_stop": {"who": who, "mode": mode, "at": time.time()}, "start_token": None}
+    if before.get("start_token") and before.get("grant"):
+        from quam_state_manager.core import agent_grant
+        g = before["grant"]
+        fields.update(grant=None, plan_id=None, armed_by=None, armed_at=None,
+                      last_grant=dict(agent_grant.public_grant(g) or {}, ended_at=time.time(),
+                                      why=f"Stop ({'now' if mode == 'now' else 'after this run'}) pressed by {who}"))
+    return save(instance_path, chip, **fields)
 
 
 def summary(rec: dict | None) -> dict | None:
@@ -109,8 +142,36 @@ def summary(rec: dict | None) -> dict | None:
             "alive": alive(rec), "stopped": stopped(rec), "stop": rec.get("agent_stop"),
             "limited_until": rec.get("limited_until"), "session_id": rec.get("session_id"),
             "claimed_by_tool": rec.get("claimed_by_tool"), "armed": bool(rec.get("start_token")),
-            "armed_by": rec.get("armed_by"), "armed_at": rec.get("armed_at"), "run_key": rec.get("run_key")}
+            "armed_by": rec.get("armed_by"), "armed_at": rec.get("armed_at"), "run_key": rec.get("run_key"),
+            # docs/253: what the arming covers and who drives it -- never the in-app session's own value
+            "grant": _public_grant(rec.get("grant")) if rec.get("start_token") else None,
+            "last_grant": rec.get("last_grant")}
+
+
+def _public_grant(g):
+    from quam_state_manager.core import agent_grant
+    return agent_grant.public_grant(g)
 
 
 def safe_owner(name: str | None) -> str:
     return re.sub(r"[\r\n\t]+", " ", str(name or "")).strip()[:40]
+
+
+def change(instance_path, chip: str, fn):
+    """Read -> decide -> write under ONE lock (docs/253: a compare-and-clear,
+    so two readers noticing the same ended grant journal it once).
+    ``fn(rec_or_None)`` returns ``(fields | None, result)``; fields are merged
+    and written only when not None. Returns ``result``."""
+    p = path_for(instance_path, chip)
+    with safe_io.path_lock(p):
+        cur = _load(p)
+        fields, result = fn(cur)
+        if fields:
+            p.parent.mkdir(parents=True, exist_ok=True)
+            rec = cur or {"chip": chip, "started": time.time()}
+            for k, v in fields.items():
+                if k in FIELDS:
+                    rec[k] = v
+            rec["updated"] = time.time()
+            safe_io.atomic_write_json(p, json.loads(json.dumps(rec, default=str)), compact=True)
+    return result

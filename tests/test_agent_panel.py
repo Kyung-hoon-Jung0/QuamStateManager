@@ -166,26 +166,35 @@ class TestPlans:
         assert c.post(f"/api/agent/plans/{pid}/mode", json={"mode": "auto"}, headers=HUMAN).get_json()["plan"]["mode"] == "auto"
         assert c.post(f"/api/agent/plans/{pid}/mode", json={"mode": "nope"}, headers=HUMAN).status_code == 400
         assert "mode set to auto by human:kyunghoon" in _journal(c, inst), "docs/173 S8: a mode change is a journal line"
-        # THE click
+        # THE click. docs/253 (D-09): the agent that proposed it drives it -- a terminal agent here
+        # (no in-app session value) -- so SM's in-app agent is NOT started or told as well
         d = c.post(f"/api/agent/plans/{pid}/start", json={}, headers=HUMAN).get_json()
-        assert d["ok"] and d["session_started"] is True and d["pre_ts"]
+        assert d["ok"] and d["session_started"] is False and d["pre_ts"] and d["driver"]["kind"] == "terminal"
         p = d["plan"]
         assert p["status"] == "running" and p["started_by"] == "human:kyunghoon" and p["mode"] == "auto"
         rec = agent_session.load(str(inst), chip)
         assert rec["start_token"] and rec["plan_id"] == pid and rec["mode"] == "auto", "Start arms; the session carries the plan's mode"
+        assert rec["grant"]["plan_id"] == pid, "the arming is FOR this plan"
         assert limits.load(str(inst), chip)["mode"] == "ask-writes", "review R1-M4: the chip's default never changes"
         assert "STARTED by human:kyunghoon (mode auto" in _journal(c, inst)
+        assert "driven by by_claude in a terminal" in _journal(c, inst)
         # the snapshot the plan can be reverted to, labelled
         with app.app_context():
             from quam_state_manager.web import routes as rt
             snaps = rt._history().list_snapshots(rt._active_path())
         labels = [getattr(s, "label", None) or (s.get("label") if isinstance(s, dict) else None) for s in snaps]
         assert any(l and l.startswith("before plan 1Q bringup") for l in labels), labels
+        # not twice
+        assert c.post(f"/api/agent/plans/{pid}/start", json={}, headers=HUMAN).status_code == 409
+        # a person's /run line is driven by SM's in-app agent: Start starts it with the plan as its first message
+        assert c.post(f"/api/agent/plans/{pid}/cancel", json={}, headers=HUMAN).get_json()["plan"]["status"] == "cancelled"
+        assert not agent_session.load(str(inst), chip).get("start_token"), "the cancelled plan's arming ended with it"
+        pid2 = c.post("/api/agent/plans", json={"run_line": "/run 05_power_rabi qA1"}, headers=HUMAN).get_json()["plan"]["id"]
+        d = c.post(f"/api/agent/plans/{pid2}/start", json={}, headers=HUMAN).get_json()
+        assert d["ok"] and d["session_started"] is True and d["driver"]["kind"] == "app", d
         # the agent got the plan as its first message (the fake echoes the first 20 chars)
         assert _wait(lambda: any(k["kind"] == "answer" and k["text"].startswith("answer 1: The human (") for k in _feed(c)["cards"]))
         assert any(k["kind"] == "user" and k["text"].startswith("[Start] plan") for k in _feed(c)["cards"])
-        # not twice
-        assert c.post(f"/api/agent/plans/{pid}/start", json={}, headers=HUMAN).status_code == 409
 
     def test_run_node_reports_into_the_plan_card(self, c, inst, monkeypatch):
         fr = FakeRun()

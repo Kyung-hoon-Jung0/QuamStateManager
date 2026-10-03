@@ -157,8 +157,11 @@ def codex_user_provider(codex_home: str | Path | None = None) -> tuple[list[str]
 
 # ----------------------------------------------------------------- config
 
-def mcp_config(python: str, repo: str | None, sm_url: str, *, readonly: bool = False, chip: str | None = None) -> dict:
+def mcp_config(python: str, repo: str | None, sm_url: str, *, readonly: bool = False, chip: str | None = None,
+               session: str | None = None) -> dict:
     env = {"PYTHONUTF8": "1", "SM_URL": sm_url}
+    if session:
+        env["SM_SESSION"] = session          # docs/253: the in-app session's bridge says whose it is
     if repo:
         env["PYTHONPATH"] = repo
     if readonly:
@@ -303,7 +306,8 @@ class CodexBackend(Backend):
         cmd += ["-s", "read-only", "-c", "approval_policy='never'"]
         for f in CODEX_OFF_FEATURES:
             cmd += ["-c", f"features.{f}=false"]
-        cfg = mcp_config(self.python, self.repo, self.sm_url, readonly=self.readonly, chip=self.chip)["mcpServers"]["sm"]
+        cfg = mcp_config(self.python, self.repo, self.sm_url, readonly=self.readonly, chip=self.chip,
+                         session=getattr(self, "session_secret", None))["mcpServers"]["sm"]
         env_toml = ",".join(f"{k}={toml_str(v)}" for k, v in cfg["env"].items())
         cmd += ["-c", f"mcp_servers.sm.command={toml_str(cfg['command'])}",
                 "-c", "mcp_servers.sm.args=[" + ",".join(toml_str(a) for a in cfg["args"]) + "]",

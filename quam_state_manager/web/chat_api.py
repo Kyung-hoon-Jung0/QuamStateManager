@@ -22,6 +22,7 @@ import re
 import sys
 import threading
 import time
+import uuid
 from datetime import datetime, timedelta
 from pathlib import Path
 
@@ -272,11 +273,16 @@ def _build_backend(name: str, *, readonly: bool, chip: str, mode: str, cwd: str 
     # name -- a second folder called the same would otherwise pass the in-app session's own pin. The key
     # also names the MCP config file, so two such folders never share one.
     pin = aa._chip_key()
+    # docs/253: the driving session's bridge carries a value only SM and this config hold, so a plan
+    # SM's in-app agent drives is told apart from one a terminal agent drives (a question needs none)
+    secret = None if readonly else "app-" + uuid.uuid4().hex
     mj = Path(current_app.instance_path) / "agent_mcp" / f"{_safe(pin)}-{name}{'-ro' if readonly else ''}.json"
-    ab.write_mcp_config(mj, ab.mcp_config(sys.executable, _repo_root(), _sm_url(), readonly=readonly, chip=pin))
+    ab.write_mcp_config(mj, ab.mcp_config(sys.executable, _repo_root(), _sm_url(), readonly=readonly, chip=pin,
+                                          session=secret))
     rules = agent_chat.ASK_RULES if readonly else agent_chat.DEFAULT_RULES
     b = cls(exe, mj, cwd=cwd, model=model, system_prompt=rules + _facts(chip, mode, cwd), readonly=readonly,
             sm_url=_sm_url(), repo=_repo_root(), python=sys.executable, chip=pin)
+    b.session_secret = secret
     why = b.preflight()
     if why:
         raise ValueError(why)
@@ -361,6 +367,8 @@ def status():
     chip = aa._chip_name() if _r()._active_path() else None
     key = aa._chip_key() if chip else None
     mgr = _manager()
+    if chip:
+        aa._reconcile_grant()                     # docs/253: never show a grant that ended
     rec = agent_session.load(current_app.instance_path, key) if chip else None
     try:
         lim = limits.load(current_app.instance_path, key) if chip else dict(limits.DEFAULTS)
@@ -485,7 +493,12 @@ def end():
     mgr.end(key)
     inst = current_app.instance_path
     agent_session.save(inst, key, pid=None)
-    journal_mod.append(inst, chip, f"{cur.backend.name} session ended by {_r()._request_actor()}", kind="sm")
+    who = _r()._request_actor()
+    # docs/253 (D-06): the arming SM's in-app session drove ends with it, and so does its plan (a step
+    # still running finishes and reports); a plan a terminal agent drives is not this session's
+    g = aa._end_grant(f"the in-app {cur.backend.name} session was ended by {who}", driver_kind="app")
+    journal_mod.append(inst, chip, f"{cur.backend.name} session ended by {who}"
+                       + (f" -- disarmed (plan `{g.get('title')}` stopped)" if g else ""), kind="sm")
     aa._bump()
     aa._wake()
     return jsonify(ok=True, session=mgr.status(key))

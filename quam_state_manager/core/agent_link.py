@@ -135,6 +135,21 @@ def candidate_urls(instance_path: Path | None = None) -> list[str]:
     return [f"http://127.0.0.1:{port}" for _, port in rows]
 
 
+# docs/253: which agent this bridge speaks for. SM's in-app session hands its
+# bridge SM_SESSION (a value only that session's MCP config holds); any other
+# bridge -- a terminal agent's -- picks its own id once per process. With the
+# PID, SM can tell the plan's driver apart and notice when it is gone.
+BRIDGE_SESSION = (os.environ.get("SM_SESSION") or "").strip() or None
+
+
+def bridge_session() -> str:
+    global BRIDGE_SESSION
+    if not BRIDGE_SESSION:
+        import uuid
+        BRIDGE_SESSION = "t-" + uuid.uuid4().hex[:12]
+    return BRIDGE_SESSION
+
+
 class SMLink:
     """A tiny HTTP client that speaks to one SM window."""
 
@@ -149,6 +164,8 @@ class SMLink:
              "X-SM-Agent": self.agent_id, **self.extra_headers}
         if extra:
             h.update(extra)
+        h.setdefault("X-SM-Session", bridge_session())        # docs/253: which agent this bridge speaks for
+        h.setdefault("X-SM-Bridge-Pid", str(os.getpid()))
         return h
 
     def get(self, path: str, params: dict | None = None, *, timeout: float | None = None) -> tuple[int, object]:

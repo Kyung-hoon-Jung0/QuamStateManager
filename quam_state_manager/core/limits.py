@@ -17,7 +17,7 @@ import os
 import math
 import re
 import time
-from datetime import datetime
+from datetime import datetime, timedelta
 from pathlib import Path
 
 from quam_state_manager.core import safe_io
@@ -192,15 +192,38 @@ def save(instance_path, chip: str, patch: dict, *, who: str = "human", journal_c
     return cur
 
 
-def past_stop_by(limits: dict, now: datetime | None = None) -> bool:
-    """True once the wall clock passed today's stop_by (a night plan ends at
-    the time the lab said, even if the agent is mid-chain)."""
+def past_stop_by(limits: dict, now: datetime | None = None, *, since: float | None = None) -> bool:
+    """True once the wall clock passed the stop_by that applies (a night plan
+    ends at the time the lab said, even if the agent is mid-chain).
+
+    docs/253 (D-16): "06:00" set for a night run means the FIRST 06:00 after
+    the person armed it (``since``, the Start click) -- read against today
+    only, a 06:00 stop refused the whole evening before it. Without ``since``
+    the deadline is today's, as before."""
     s = limits.get("stop_by") or ""
     if not s:
         return False
     now = now or datetime.now()
+    if since:
+        return now.timestamp() >= stop_deadline(limits, since)
     hh, mm = (int(x) for x in s.split(":"))
     return (now.hour, now.minute) >= (hh, mm)
+
+
+def stop_deadline(limits: dict, since: float) -> float | None:
+    """The instant (epoch seconds) a plan armed at ``since`` must stop by: the
+    first ``stop_by`` wall-clock time at or after ``since``, on SM's own clock
+    (docs/253). ``stop_by`` "06:00" armed at 18:00 = tomorrow 06:00; armed at
+    05:59 = one minute later. None when no stop_by is set."""
+    s = limits.get("stop_by") or ""
+    if not s:
+        return None
+    hh, mm = (int(x) for x in s.split(":"))
+    start = datetime.fromtimestamp(float(since))
+    deadline = start.replace(hour=hh, minute=mm, second=0, microsecond=0)
+    if deadline < start:
+        deadline += timedelta(days=1)
+    return deadline.timestamp()
 
 
 def delta_exceeds(limits: dict, family: str | None, old, new) -> bool:

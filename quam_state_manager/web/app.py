@@ -887,6 +887,14 @@ def create_app(*, testing: bool = False, instance_path: str | None = None) -> Fl
     from quam_state_manager.core import instances
     instances.register(app.instance_path)
     atexit.register(instances.deregister, app.instance_path)
+    # docs/253: an arming outlives nothing -- a grant the previous SM process
+    # armed ends NOW (one journal line, its plan closed), not whenever someone
+    # next opens that chip. Another live window's grant is left to it.
+    try:
+        from quam_state_manager.core import agent_grant
+        agent_grant.sweep(app.instance_path)
+    except Exception:  # noqa: BLE001
+        logging.getLogger(__name__).warning("agent grant sweep failed", exc_info=True)
 
     # Runner state moved from the instance dir into per-chip scopes (docs/80
     # Part 4). Adopt any pre-scope queue ONCE, at startup, so which scope

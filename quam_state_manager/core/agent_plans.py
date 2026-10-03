@@ -35,12 +35,17 @@ def path_for(instance_path, chip: str) -> Path:
     return Path(instance_path) / "agent_plans" / (journal_mod._safe_key(chip) + ".json")
 
 
+def _load(instance_path, chip: str) -> list[dict]:
+    from quam_state_manager.core import agent_session
+    d = agent_session.read_record(path_for(instance_path, chip))
+    return [x for x in d if isinstance(x, dict)] if isinstance(d, list) else []
+
+
 def load(instance_path, chip: str) -> list[dict]:
-    try:
-        d = json.loads(path_for(instance_path, chip).read_text(encoding="utf-8"))
-        return [x for x in d if isinstance(x, dict)] if isinstance(d, list) else []
-    except (OSError, ValueError):
-        return []
+    # docs/253: under the writers' lock -- a read inside a Windows replace saw no file, i.e. "no plans",
+    # and run_node's grant check reads this
+    with _lock_for(instance_path, chip):
+        return _load(instance_path, chip)
 
 
 def _save(instance_path, chip: str, rows: list[dict]) -> None:
@@ -128,14 +133,17 @@ def clip_title(title: str | None) -> str:
 
 
 def add(instance_path, chip: str, *, title: str, steps: list, mode: str | None, created_by: str,
-        source: str = "agent", reason: str | None = None, session_id: str | None = None) -> dict:
+        source: str = "agent", reason: str | None = None, session_id: str | None = None,
+        proposer: dict | None = None) -> dict:
+    # docs/253: ``proposer`` is the agent that proposed it (agent_grant.public -- never a secret);
+    # ``driver`` is the ONE agent the person's Start lets run it, set at Start
     rec = {"id": "pl-" + uuid.uuid4().hex[:8], "chip": chip, "title": clip_title(title) or "plan",
            "steps": normalize_steps(steps), "mode": mode, "status": "draft", "created": time.time(),
            "created_by": created_by, "source": source, "reason": reason, "session_id": session_id,
            "started_by": None, "started_at": None, "pre_ts": None, "ended": None, "ended_by": None,
-           "summary": None, "note": None}
+           "summary": None, "note": None, "proposer": proposer, "driver": None}
     with _lock_for(instance_path, chip):
-        rows = load(instance_path, chip)
+        rows = _load(instance_path, chip)
         rows.append(rec)
         _save(instance_path, chip, rows)
     return rec
@@ -147,7 +155,7 @@ def get(instance_path, chip: str, plan_id: str) -> dict | None:
 
 def update(instance_path, chip: str, plan_id: str, **fields) -> dict | None:
     with _lock_for(instance_path, chip):
-        rows = load(instance_path, chip)
+        rows = _load(instance_path, chip)
         rec = next((r for r in rows if r.get("id") == plan_id), None)
         if rec is None:
             return None
@@ -181,17 +189,32 @@ def step_for(rec: dict, *, step: int | None, node: str | None, targets: list | N
 def step_update(instance_path, chip: str, plan_id: str, step_i: int, **fields) -> dict | None:
     """Update one step and derive the plan's own status from its steps."""
     with _lock_for(instance_path, chip):
-        rows = load(instance_path, chip)
+        rows = _load(instance_path, chip)
         rec = next((r for r in rows if r.get("id") == plan_id), None)
         if rec is None:
             return None
         st = next((s for s in rec.get("steps") or [] if s.get("i") == step_i), None)
         if st is None:
             return None
+        was = rec.get("status")
         st.update(fields)
         _derive(rec)
         _save(instance_path, chip, rows)
+    if was in ("running", "stopping") and rec.get("status") not in ("running", "stopping"):
+        _ended(instance_path, chip, rec)
     return rec
+
+
+def _ended(instance_path, chip: str, rec: dict) -> None:
+    """docs/253: the plan reached its end through its own steps -- the arming
+    that was FOR it ends now, with its journal line (never left open for the
+    next unplanned node, D-06 / C-20)."""
+    try:
+        from quam_state_manager.core import agent_grant
+        agent_grant.plan_ended(instance_path, chip, rec)
+    except Exception:  # noqa: BLE001
+        import logging
+        logging.getLogger(__name__).warning("ending the plan's arming failed", exc_info=True)
 
 
 def _derive(rec: dict) -> None:
@@ -227,9 +250,15 @@ def counts(rec: dict) -> dict:
     return out
 
 
-def stop(instance_path, chip: str, plan_id: str, *, who: str, how: str) -> dict | None:
+def stop(instance_path, chip: str, plan_id: str, *, who: str, how: str, after_run: bool | None = None) -> dict | None:
+    """Close a plan by a person's (or SM's) hand. ``after_run`` (default: the
+    words "stop after this run") lets a step still running finish and report:
+    the plan sits at "stopping" until it does. The arming is the CALLER's to
+    end (docs/253) -- it says so in its own journal line."""
+    if after_run is None:
+        after_run = how == "stop after this run"
     with _lock_for(instance_path, chip):
-        rows = load(instance_path, chip)
+        rows = _load(instance_path, chip)
         rec = next((r for r in rows if r.get("id") == plan_id), None)
         if rec is None:
             return None
@@ -237,7 +266,7 @@ def stop(instance_path, chip: str, plan_id: str, *, who: str, how: str) -> dict 
             running_step = any(s.get("status") == "running" for s in rec.get("steps") or [])
             if how == "cancelled":
                 rec["status"] = "cancelled"
-            elif how == "stop after this run" and running_step:
+            elif after_run and running_step:
                 rec["status"] = "stopping"                     # review R2-15: closes when that step ends
             else:
                 rec["status"] = "stopped"
