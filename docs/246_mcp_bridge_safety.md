@@ -192,3 +192,13 @@ Fix F and this fix were merged together, so SM's own in-app session (`chat_api._
 
 **Pins:** `TestAsk` (2 tests) assert `SM_CHIP == chip_key != display name`; the mutation back to the name turns both red.
 
+## D-11, settled at integration: the agent waits; the run's own writes land
+
+D-11 read the `X-SM-Agent` exemption in `_agent_edit_lock_refusal` as dead code, because `_scheduler_lock_guard` (before_request) refuses every mutator while the agent's node runs. It is not dead.
+- `agent_api` stages and applies the RUN's writes by calling these routes inside a `test_request_context`, which does not run before_request hooks. That is where the exemption acts: removing it turns the `TestRun` auto-apply and attribution tests red (measured).
+- An agent's own HTTP `state_edit` during its run is refused by the guard, so the agent waits too. This is pinned explicitly ("the agent waits too").
+
+A Codex attempt let agent requests through the guard. It then hit `scheduler_running`, because `run_node` drives the scheduler chassis, and it broke that pin; it was discarded. A coordinator "cleanup" that removed the exemption broke the run's own writes; it was reverted.
+
+**Outcome:** behaviour unchanged, and the docstring now explains both paths.
+

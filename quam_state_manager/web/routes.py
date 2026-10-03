@@ -2649,7 +2649,15 @@ def _archive_info() -> dict | None:
 def _agent_edit_lock_refusal(ctx: dict | None):
     """docs/173 S5: while the agent's node runs, the working copy is what its
     writes will be diffed against -- a human edit meanwhile would be silently
-    folded into or lost under them. The agent's own staging goes direct."""
+    folded into or lost under them.
+
+    D-11 (docs/246): "the agent's own staging" means SM staging the RUN's writes
+    (agent_api calls these routes in a test_request_context, which skips the
+    blueprint's before_request guard). An agent's own HTTP request during its run
+    never reaches this point: ``_scheduler_lock_guard`` refuses it first, so the
+    agent waits too (pinned: tests/test_agent_runs "the agent waits too"); the
+    exemption is what lets the run's own writes land (pinned: the TestRun
+    auto-apply and attribution tests go red without it)."""
     lock = current_app.config.get("agent_edit_lock")
     if not lock or not ctx or lock.get("path") != ctx.get("path"):
         return None
