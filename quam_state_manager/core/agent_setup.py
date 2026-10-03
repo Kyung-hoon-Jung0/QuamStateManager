@@ -32,7 +32,11 @@ TOML_START = "# --- quam-state-manager: start (written by SM; edit between the m
 TOML_END = "# --- quam-state-manager: end"
 CTX_START = "<!-- sm:lab-context:start -->"
 CTX_END = "<!-- sm:lab-context:end -->"
-ALLOW_RULES = ("mcp__quam-state-manager__*", "Bash(python *)", "Bash(python3 *)")
+# docs/247 (C-14/A-16): Connect allow-lists SM's MCP tools ONLY. It used to add `Bash(python *)` and
+# `Bash(python3 *)` too -- in the calibrations folder, that is exactly the permission that lets a
+# terminal agent run `python <node>.py` past run_node's gates, or rewrite state.json with a one-liner.
+ALLOW_RULES = ("mcp__quam-state-manager__*",)
+LEGACY_ALLOW_RULES = ("mcp__quam-state-manager__*", "Bash(python *)", "Bash(python3 *)")
 HOOK_MATCHER = "Bash|Edit|Write|MultiEdit"
 
 
@@ -283,7 +287,35 @@ def allow_registered(cal_folder: str | Path | None) -> bool:
     if not cal_folder:
         return False
     allow = (_read_json(allow_path(cal_folder)).get("permissions") or {}).get("allow") or []
-    return all(r in allow for r in ALLOW_RULES[:2])
+    return all(r in allow for r in ALLOW_RULES)
+
+
+def allow_python_rules(cal_folder: str | Path | None) -> list[str]:
+    """The `Bash(python*)` allow rules sitting in the calibrations folder (an older SM wrote them):
+    Setup names them, because they open the door run_node exists to guard."""
+    if not cal_folder:
+        return []
+    allow = (_read_json(allow_path(cal_folder)).get("permissions") or {}).get("allow") or []
+    return [r for r in allow if isinstance(r, str) and r.replace(" ", "").lower().startswith("bash(python")]
+
+
+def _legacy_python(allow: list) -> list[str]:
+    """The two python rules an OLDER SM's Connect appended, recognised by its signature: SM's MCP
+    rule immediately followed by `Bash(python *)`, `Bash(python3 *)` -- the exact order it wrote
+    them. A python rule anywhere else may be the lab's own and is never touched (docs/247)."""
+    n = len(LEGACY_ALLOW_RULES)
+    for i in range(len(allow) - n + 1):
+        if tuple(allow[i:i + n]) == LEGACY_ALLOW_RULES:
+            return list(LEGACY_ALLOW_RULES[1:])
+    return []
+
+
+def _allow_after_connect(allow: list) -> tuple[list, list, list]:
+    """(after, added, migrated): SM's rule added once; an older SM's python rules taken out."""
+    migrated = _legacy_python(allow)
+    after = [r for r in allow if r not in migrated]
+    added = [r for r in ALLOW_RULES if r not in after]
+    return after + added, added, migrated
 
 
 def preview_allow(cal_folder: str | Path) -> dict:
@@ -291,8 +323,9 @@ def preview_allow(cal_folder: str | Path) -> dict:
     cur = _read_json(p)
     perms = dict(cur.get("permissions") or {})
     allow = list(perms.get("allow") or [])
-    after = allow + [r for r in ALLOW_RULES if r not in allow]
-    return {"file": str(p), "exists": p.exists(), "before": allow, "after": after, "changed": after != allow}
+    after, _added, migrated = _allow_after_connect(allow)
+    return {"file": str(p), "exists": p.exists(), "before": allow, "after": after, "changed": after != allow,
+            "removes": migrated}
 
 
 def write_allow(cal_folder: str | Path) -> dict:
@@ -300,12 +333,46 @@ def write_allow(cal_folder: str | Path) -> dict:
     cur = _read_json_for_write(p)       # refuses BEFORE any backup or write
     bak = backup(p)
     perms = dict(cur.get("permissions") or {})
-    allow = list(perms.get("allow") or [])
-    allow += [r for r in ALLOW_RULES if r not in allow]
+    allow, added, migrated = _allow_after_connect(list(perms.get("allow") or []))
     perms["allow"] = allow
     cur["permissions"] = perms
     _write_json(p, cur)
-    return {"file": str(p), "backup": bak}
+    # `added` is what Disconnect takes back -- exactly these, never a rule the lab wrote itself;
+    # `removed` = an older SM's python rules, taken out on this Connect (docs/247)
+    return {"file": str(p), "backup": bak, "added": added, "removed": migrated}
+
+
+def remove_allow(cal_folder: str | Path, added: list[str] | None) -> dict:
+    """Disconnect's half of write_allow: SM's own MCP rule, whatever this SM's Connect recorded adding
+    (``added``; None = no record, a Connect by an older SM), and an older SM's python rules when they
+    carry its signature (``_legacy_python``). Any other python rule may be the lab's own and is
+    reported, not touched."""
+    p = allow_path(cal_folder)
+    if not p.exists():
+        return {"file": str(p), "removed": [], "left": []}
+    cur = _read_json_for_write(p)
+    perms = dict(cur.get("permissions") or {})
+    allow = list(perms.get("allow") or [])
+    # SM's own MCP rule names SM's server, which Disconnect unregisters anyway: it goes whoever wrote it
+    # (an older SM's Connect left it, so a later Connect "added" nothing -- measured in the rig)
+    drop = {ALLOW_RULES[0]} | set(added or [])
+    drop |= set(_legacy_python(allow))
+    removed = [r for r in allow if r in drop]
+    left = [r for r in allow_python_rules(cal_folder) if r not in drop]
+    if not removed:
+        return {"file": str(p), "removed": [], "left": left}
+    bak = backup(p)
+    perms["allow"] = [r for r in allow if r not in drop]
+    if perms["allow"]:
+        cur["permissions"] = perms
+    else:
+        perms.pop("allow")
+        if perms:
+            cur["permissions"] = perms
+        else:
+            cur.pop("permissions", None)
+    _write_json(p, cur)
+    return {"file": str(p), "backup": bak, "removed": removed, "left": left}
 
 
 # ------------------------------------------------------------------ Codex
@@ -530,7 +597,8 @@ def status(instance_path, *, home: Path | None = None, cal_folder: str | None = 
         "clis": detect or {},
         "python": python or sys.executable, "repo": repo,
         "claude": {"mcp": claude_mcp_registered(home) is not None, "hooks": claude_hooks_registered(home),
-                   "allow": allow_registered(cal_folder), "json": str(claude_json_path(home)),
+                   "allow": allow_registered(cal_folder), "allow_python": allow_python_rules(cal_folder),
+                   "json": str(claude_json_path(home)),
                    "settings": str(claude_settings_path(home))},
         "codex": {"mcp": codex_registered(home), "config": str(codex_config_path(home))},
         "context": context_written(cal_folder),

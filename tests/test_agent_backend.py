@@ -1,7 +1,7 @@
 """docs/173 S4: two CLIs, one event shape.
 
 Command lines are pinned against the facts measured on the real CLIs
-(readonly = read tools only / approve-for-me; driving = bypass; resume;
+(readonly = read tools only; driving = SM's tools + read-only built-ins, docs/247; resume;
 system prompt), the normalizers are pinned on recorded event shapes, and
 AgentProcess is driven over a FAKE CLI that speaks both dialects.
 """
@@ -43,17 +43,71 @@ def _wait(proc, pred, timeout=15.0):
     return False
 
 
+class TestEnforcedPermissions:
+    """docs/247 (C-01/C-02/C-07): the in-app rules are the CLI's tool configuration, not prompt text.
+    Measured on claude 2.1.288 (the init event lists exactly Glob/Grep/Read/ToolSearch + mcp__sm__*,
+    permissionMode dontAsk) and codex-cli 0.159.2 (shell "blocked by policy", apply_patch "blocked by
+    read-only sandbox", sm_status completed, a user-config MCP server absent)."""
+
+    @pytest.mark.parametrize("readonly", [False, True])
+    def test_claude_has_no_shell_and_no_write_tool(self, tmp_path, readonly):
+        cmd = ab.ClaudeBackend("claude", tmp_path / "m.json", readonly=readonly).command(resume="s")
+        assert "bypassPermissions" not in cmd and "--dangerously-skip-permissions" not in cmd
+        assert cmd[cmd.index("--permission-mode") + 1] == "dontAsk"
+        tools = cmd[cmd.index("--tools") + 1].split(",")
+        assert set(tools) == {"Read", "Glob", "Grep", "ToolSearch"}
+        for bad in ("Bash", "PowerShell", "Edit", "Write", "NotebookEdit", "Task", "Agent", "WebFetch"):
+            assert bad not in tools
+        deny = cmd[cmd.index("--disallowedTools") + 1].split(",")
+        assert {"Bash", "PowerShell", "Edit", "Write", "NotebookEdit"} <= set(deny)
+        allowed = cmd[cmd.index("--allowedTools") + 1].split(",")
+        assert not any(a.startswith(("Bash", "Edit", "Write", "PowerShell")) for a in allowed)
+        if not readonly:
+            assert "mcp__sm" in allowed, "the driving session reaches every SM tool without a prompt"
+        else:
+            assert "mcp__sm" not in allowed and "mcp__sm__state_edit" not in allowed
+
+    @pytest.mark.parametrize("readonly", [False, True])
+    def test_codex_is_sandboxed_isolated_and_never_bypassed(self, tmp_path, readonly):
+        cmd = ab.CodexBackend("codex", tmp_path / "x", cwd="D:/lab", sm_url="u", readonly=readonly).command(prompt="p")
+        assert "--dangerously-bypass-approvals-and-sandbox" not in cmd and "--approve-for-me" not in cmd
+        assert cmd[cmd.index("-s") + 1] == "read-only"
+        assert "--ignore-user-config" in cmd and "--ignore-rules" in cmd
+        vals = [cmd[i + 1] for i, a in enumerate(cmd) if a == "-c"]
+        assert "approval_policy='never'" in vals
+        assert "mcp_servers.sm.default_tools_approval_mode='approve'" in vals
+        for f in ("apps", "multi_agent", "computer_use", "browser_use"):
+            assert f"features.{f}=false" in vals
+        assert not any(v.startswith("mcp_servers.") and not v.startswith("mcp_servers.sm.") for v in vals)
+        res = ab.CodexBackend("codex", tmp_path / "x", sm_url="u").command(resume="t-1", prompt="more")
+        i = res.index("resume")
+        assert res[i:] == ["resume", "t-1"] and "-s" in res[:i] and "--ignore-user-config" in res[:i], \
+            "a resumed turn carries the same enforcement (exec options precede the subcommand)"
+
+    def test_codex_preflight_refuses_a_codex_that_cannot_be_isolated(self, tmp_path, monkeypatch):
+        b = ab.CodexBackend("codex-old", tmp_path / "x", sm_url="u")
+        monkeypatch.setattr(ab, "exec_flags", lambda exe, ttl=600.0: frozenset({"--json", "--skip-git-repo-check"}))
+        why = b.preflight()
+        assert why and "--ignore-user-config" in why and "update Codex" in why
+        monkeypatch.setattr(ab, "exec_flags", lambda exe, ttl=600.0: frozenset(ab.CODEX_REQUIRED_FLAGS) | {"--json"})
+        assert b.preflight() is None
+        monkeypatch.setattr(ab, "exec_flags", lambda exe, ttl=600.0: None)
+        assert b.preflight() is None, "could not ask: the launch says what is wrong"
+        assert ab.ClaudeBackend("claude", tmp_path / "m").preflight() is None
+
+
 class TestCommandLines:
     def test_claude_driving_vs_readonly(self, tmp_path):
         mj = tmp_path / "mcp.json"
         drv = ab.ClaudeBackend("claude", mj, model="haiku", system_prompt="rules").command()
         assert drv[:5] == ["claude", "-p", "--input-format", "stream-json", "--output-format"]
-        assert "--permission-mode" in drv and "bypassPermissions" in drv and "--allowedTools" not in drv
+        assert "bypassPermissions" not in drv and drv[drv.index("--permission-mode") + 1] == "dontAsk"
         assert drv[drv.index("--model") + 1] == "haiku" and drv[drv.index("--append-system-prompt") + 1] == "rules"
         assert "--strict-mcp-config" in drv and drv[drv.index("--mcp-config") + 1] == str(mj)
         ro = ab.ClaudeBackend("claude", mj, readonly=True).command(resume="sess-1")
         allowed = ro[ro.index("--allowedTools") + 1].split(",")
-        assert "--permission-mode" not in ro and all(a.startswith("mcp__sm__") for a in allowed)
+        assert ro[ro.index("--permission-mode") + 1] == "dontAsk"
+        assert all(a.startswith("mcp__sm__") or a in ab.CLAUDE_TOOLS for a in allowed)
         assert "mcp__sm__state_get" in allowed and "mcp__sm__state_edit" not in allowed and "Bash" not in allowed
         assert ro[ro.index("--resume") + 1] == "sess-1"
 
@@ -61,12 +115,12 @@ class TestCommandLines:
         drv = ab.CodexBackend("codex", tmp_path / "x", cwd="D:/lab", sm_url="http://127.0.0.1:1", repo="R",
                               python="py.exe").command(prompt="go")
         assert drv[:4] == ["codex", "exec", "--json", "--skip-git-repo-check"] and drv[drv.index("-C") + 1] == "D:/lab"
-        assert "--dangerously-bypass-approvals-and-sandbox" in drv and "--approve-for-me" not in drv
+        assert "--dangerously-bypass-approvals-and-sandbox" not in drv and "--approve-for-me" not in drv
         assert "go" not in drv, "the prompt never rides argv (a newline there truncates the line through a .cmd shim)"
         cfg = " ".join(drv)
         assert "mcp_servers.sm.command='py.exe'" in cfg and "SM_URL='http://127.0.0.1:1'" in cfg and "PYTHONPATH='R'" in cfg
         ro = ab.CodexBackend("codex", tmp_path / "x", readonly=True, sm_url="u").command(prompt="q?")
-        assert "--approve-for-me" in ro and "--dangerously-bypass-approvals-and-sandbox" not in ro
+        assert "--approve-for-me" not in ro and "--dangerously-bypass-approvals-and-sandbox" not in ro
         assert "SM_MCP_MODE='readonly'" in " ".join(ro)
 
     def test_codex_config_values_are_valid_toml_for_windows_paths(self, tmp_path):
@@ -231,6 +285,16 @@ class TestProcessOverTheFakeCli:
         assert _wait(p, lambda: not p.alive() and any(e["hook_event_name"] == "Stop" for e in got))
         err = next(e for e in got if e["hook_event_name"] == "Error")
         assert err["failed"] and "boom" in err["error"] and p.returncode == 3
+
+    def test_a_failed_turn_names_its_reason_not_the_stderr_banner(self, tmp_path):
+        """docs/247: the card said "agent exited: Reading prompt from stdin..." while the turn had
+        failed with "Selected model is at capacity" (measured in the rig)."""
+        got = []
+        p = ab.AgentProcess(_FakeCodex("codex", tmp_path / "x", sm_url="u"), on_event=got.append, prompt="q",
+                            env={"FAKE_CAPACITY": "1"})
+        assert _wait(p, lambda: not p.alive() and any(e["hook_event_name"] == "Error" for e in got))
+        err = next(e for e in got if e["hook_event_name"] == "Error")
+        assert "at capacity" in err["error"] and "Reading prompt" not in err["error"]
 
     def test_stop_kills_the_tree_and_says_so(self, tmp_path):
         got = []

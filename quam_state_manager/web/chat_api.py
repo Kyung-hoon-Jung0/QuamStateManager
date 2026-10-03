@@ -128,6 +128,8 @@ def _record(rec: dict) -> None:
         asks.setdefault(rec["ask_id"], []).append(rec)
         while len(asks) > _ASK_KEEP:
             asks.popitem(last=False)
+        if rec.get("hook_event_name") == "Stop":
+            _post_feed_answer(rec["ask_id"], asks.get(rec["ask_id"]) or [])
         aa._bump()
         aa._wake()
         return
@@ -148,6 +150,27 @@ def _record(rec: dict) -> None:
         logger.debug("absorb failed", exc_info=True)
     aa._bump()
     aa._wake()
+
+
+def _post_feed_answer(ask_id: str, evs: list[dict]) -> None:
+    """docs/247 (C-06): a question typed in the Agent panel is answered by the READ-ONLY one-shot,
+    and its answer lands in the panel's feed as one card -- once, when the ask stops. Asks from
+    elsewhere (Setup -> Test) are not in the feed set and stay off the feed."""
+    feed: dict = current_app.config.setdefault("agent_feed_asks", {})
+    meta = feed.pop(ask_id, None)
+    if not meta:
+        return
+    texts = [e.get("text") for e in evs if e.get("hook_event_name") == "Text" and e.get("text")]
+    result = next((e for e in reversed(evs) if e.get("hook_event_name") in ("Result", "Error")), None)
+    if texts:
+        text = texts[-1]
+    elif result and result.get("failed"):
+        text = "The read-only question did not get an answer: " + str(result.get("error") or "the CLI failed")[-300:]
+    else:
+        text = "(no answer)"
+    _record({"ts": time.time(), "hook_event_name": "Text", "origin": "chat", "chip": meta["chip"], "text": text,
+             "backend": meta["backend"], "session_id": None, "ask_id": ask_id, "readonly": True,
+             "owner": meta.get("who"), "mode": None})
 
 
 _N_LOCK = threading.Lock()
@@ -213,12 +236,21 @@ def _disk_max_chat_n() -> int:
 
 
 def _record_user(chip: str, text: str, who: str, backend: str, *, owner: str | None = None,
-                 mode: str | None = None) -> None:
+                 mode: str | None = None, **extra) -> None:
     """The person's own message, recorded like the agent's events so the card
     stream survives a reload and a restart (docs/173 S6). It carries the same
     owner/mode fields as the session's events (review R4-6)."""
     _record({"ts": time.time(), "hook_event_name": "User", "origin": "chat", "chip": chip, "text": text[:4000],
-             "who": who, "backend": backend, "session_id": None, "owner": owner or who, "mode": mode})
+             "who": who, "backend": backend, "session_id": None, "owner": owner or who, "mode": mode, **extra})
+
+
+def session_open(cur) -> bool:
+    """Is this chip's driving conversation still open for a next message? Codex runs ONE process per
+    turn, so between turns its process is gone while the conversation is not: treating that as "no
+    session" started a fresh thread for every message (C-03, docs/247)."""
+    if cur is None or cur.ended:
+        return False
+    return cur.alive() or bool(cur.backend.one_turn_per_process and cur.session_id)
 
 
 def _facts(chip: str, mode: str, cwd: str | None) -> str:
@@ -239,8 +271,12 @@ def _build_backend(name: str, *, readonly: bool, chip: str, mode: str, cwd: str 
     mj = Path(current_app.instance_path) / "agent_mcp" / f"{_safe(chip)}-{name}{'-ro' if readonly else ''}.json"
     ab.write_mcp_config(mj, ab.mcp_config(sys.executable, _repo_root(), _sm_url(), readonly=readonly, chip=chip))
     rules = agent_chat.ASK_RULES if readonly else agent_chat.DEFAULT_RULES
-    return cls(exe, mj, cwd=cwd, model=model, system_prompt=rules + _facts(chip, mode, cwd), readonly=readonly,
-               sm_url=_sm_url(), repo=_repo_root(), python=sys.executable, chip=chip)
+    b = cls(exe, mj, cwd=cwd, model=model, system_prompt=rules + _facts(chip, mode, cwd), readonly=readonly,
+            sm_url=_sm_url(), repo=_repo_root(), python=sys.executable, chip=chip)
+    why = b.preflight()
+    if why:
+        raise ValueError(why)
+    return b
 
 
 def _detect_all(refresh: bool = False) -> dict:
@@ -415,7 +451,7 @@ def send():
     key = aa._chip_key()
     mgr = _manager()
     cur = mgr.get(key)
-    if cur is None or (not cur.alive() and not cur.backend.one_turn_per_process) or cur.ended:
+    if not session_open(cur):
         return _err("no running session on this chip; start one", 409)
     inst = current_app.instance_path
     rec = agent_session.load(inst, key)
@@ -484,6 +520,7 @@ def ask():
         lim_mode = limits.load(current_app.instance_path, aa._chip_key()).get("mode")
     except Exception:  # noqa: BLE001
         lim_mode = limits.DEFAULTS["mode"]
+    feed = str(data.get("feed") or "").lower() in ("1", "true", "yes")
     try:
         backend = _build_backend(name, readonly=True, chip=chip, mode=lim_mode or "ask-writes", cwd=_cwd(),
                                  model=data.get("model"))
@@ -493,7 +530,14 @@ def ask():
     except OSError as exc:
         return _err(f"could not start {name}: {exc}", 502)
     current_app.config.setdefault("agent_asks", collections.OrderedDict()).setdefault(res["ask_id"], [])
-    return jsonify(ok=True, **res, backend=name)
+    if feed:
+        # docs/247 (C-06): the panel's question -- its card now, its answer card when the ask stops
+        who = _r()._request_actor()
+        current_app.config.setdefault("agent_feed_asks", {})[res["ask_id"]] = {"chip": chip, "backend": name, "who": who}
+        _record_user(chip, text, who, name, owner=who, ask_id=res["ask_id"], readonly=True)
+        aa._bump()
+        aa._wake()
+    return jsonify(ok=True, **res, backend=name, feed=feed)
 
 
 @chat_bp.route("/ask/<ask_id>")

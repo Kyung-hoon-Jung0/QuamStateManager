@@ -28,6 +28,7 @@ window.AgentPanel = (function () {
     after: 0, seq: -1, chip: null, session: null, now: null, backends: null, defaultBackend: "claude",
     plans: {}, runs: {}, approvals: {}, mounts: [], timer: null, inflight: false, observer: false,
     seenCards: {}, lastPoll: 0, unreachable: false,
+    intentTouched: false,                          // docs/247: the person chose Ask / Task by hand
     deciding: {}                                   // approval id -> "approve" | "reject" while its press is in flight
   };
   var PRESETS = [
@@ -344,10 +345,10 @@ window.AgentPanel = (function () {
     if (!el) return;
     var html;
     if (c.kind === "user") {
-      html = '<div class="ag-bubble ag-user"><span class="ag-who">' + esc(c.who || "you") + '</span><p class="ag-user-text">' + esc(c.text) + "</p></div>";
+      html = '<div class="ag-bubble ag-user"><span class="ag-who">' + esc(c.who || "you") + (c.readonly ? ' · <span class="muted">question</span>' : "") + '</span><p class="ag-user-text">' + esc(c.text) + "</p></div>";
     } else if (c.kind === "answer") {
       var long = isLong(c);
-      html = '<div class="ag-answer"><span class="ag-who">' + esc(c.backend ? "by_" + c.backend : "agent") + "</span>" +
+      html = '<div class="ag-answer"><span class="ag-who">' + esc(c.backend ? "by_" + c.backend : "agent") + (c.readonly ? ' · <span class="muted" title="answered by a read-only call: SM\'s read tools only">read-only</span>' : "") + "</span>" +
         '<div class="ag-md' + (long ? " ag-clamp" : "") + '">' + (c.html || "<p>" + esc(c.text) + "</p>") + "</div>" +
         (long ? '<button type="button" class="ag-more" onclick="return AgentPanel.toggleMore(this)">show more</button>' : "") + "</div>";
     } else if (c.kind === "tool") {
@@ -627,7 +628,7 @@ window.AgentPanel = (function () {
         acts.push('<button type="button" class="btn-sm ag-stop" onclick="AgentPanel.stop(\'after_run\')">Stop after this run</button>');
         acts.push('<button type="button" class="btn-sm ag-stop ag-stop-now" onclick="AgentPanel.stop(\'now\')">Stop now</button>');
       }
-      if (alive) acts.push('<button type="button" class="btn-sm" onclick="AgentPanel.endSession()">End session</button>');
+      if (sessionOpen()) acts.push('<button type="button" class="btn-sm" onclick="AgentPanel.endSession()">End session</button>');   // docs/247: a Codex conversation between turns too
     }
     acts.push('<label class="ag-observer" title="observer: this window shows but never starts, stops or approves (an accident guard, not a permission)"><input type="checkbox" ' + (S.observer ? "checked" : "") + ' onchange="AgentPanel.setObserver(this.checked)"> observer' + (S.observer ? ' <span class="ag-observing">— observing</span>' : "") + "</label>");
     acts.push('<span class="ag-now-links"><a href="/journal" hx-get="/journal" hx-target="#table-pane" hx-push-url="true">Calibration log →</a>' +
@@ -703,6 +704,7 @@ window.AgentPanel = (function () {
       if (chipEl && d.chip && chipEl.textContent !== d.chip) chipEl.textContent = d.chip;
     });
     S.session = { session: d.session, file: d.file };
+    syncIntent();
     S.now = d.now;
     if (typeof d.agent_seq === "number") S.seq = d.agent_seq;
     var live = d.live || {};
@@ -781,6 +783,28 @@ window.AgentPanel = (function () {
       }
     }, 0);
   }, true);
+
+  // ------------------------------------------------------------ intent
+  /* docs/247 (C-06, docs/173 §1.2): a line is a QUESTION or a TASK. A question goes to the
+     read-only one-shot (/chat/ask: SM's read tools only, nothing can change); a task goes to the
+     chip's driving session -- starting one costs a real CLI session, so it is never what a typed
+     line does by default. Default: Task while a conversation is open (the person is talking to
+     it), Ask otherwise; a hand-picked choice holds. */
+  function sessionOpen() {
+    var live = S.session && S.session.session;
+    if (!live || live.ended) return false;
+    // Codex runs one process per turn: between turns the process is gone, the conversation is not (C-03)
+    return !!(live.alive || (live.one_turn_per_process && live.session_id));
+  }
+  function syncIntent() {
+    if (S.intentTouched) return;
+    var want = sessionOpen() ? "task" : "ask";
+    S.mounts.forEach(function (m) { var el = m.root.querySelector(".ag-intent"); if (el && el.value !== want) el.value = want; });
+  }
+  function setIntent(v, el) {
+    S.intentTouched = true;
+    S.mounts.forEach(function (m) { var x = m.root.querySelector(".ag-intent"); if (x && x !== el) x.value = v; });
+  }
 
   // ------------------------------------------------------------ actions
   function key(ev) {
@@ -874,12 +898,21 @@ window.AgentPanel = (function () {
       });
       return false;
     }
-    var live = S.session && S.session.session;
-    var p = (live && live.alive && !live.ended) ? api("POST", "/api/agent/chat/send", { text: text })
-      : api("POST", "/api/agent/chat/start", { prompt: text, backend: backend });
+    var intentEl = root.querySelector(".ag-intent");
+    var intent = (intentEl && intentEl.value) || (sessionOpen() ? "task" : "ask");
+    var p;
+    if (intent === "ask") {
+      // read-only, never the driving session: the question and its answer land in the feed
+      p = api("POST", "/api/agent/chat/ask", { text: text, backend: backend, feed: 1 });
+    } else if (sessionOpen()) {
+      p = api("POST", "/api/agent/chat/send", { text: text });
+    } else {
+      p = api("POST", "/api/agent/chat/start", { prompt: text, backend: backend });
+    }
     p.then(function (r) {
       var ok = r.status === 200;
-      if (!ok) toast(errText(r, "the agent did not start"), "error");
+      if (!ok) toast(errText(r, intent === "ask" ? "the question was not asked" : "the agent did not start"), "error");
+      if (ok && intent === "task") { S.intentTouched = false; }      // the conversation now leads the default
       done(ok);
     });
     return false;
@@ -892,6 +925,8 @@ window.AgentPanel = (function () {
     var pr = PRESETS[i];
     if (!pr) return;
     var ta = root.querySelector(".ag-input");
+    var it = root.querySelector(".ag-intent");
+    if (it) { it.value = "task"; setIntent("task", it); }        // a preset asks for a plan: that is a task
     if (ta) { ta.value = pr[1]; grow(ta); ta.focus(); ta.setSelectionRange(pr[1].indexOf("<"), pr[1].indexOf(">") + 1); }
   }
   function togglePresets(btn) {
@@ -1016,7 +1051,8 @@ window.AgentPanel = (function () {
       '<div class="ag-cards" aria-live="polite"></div>' +
       '<form class="ag-form ag-composer" onsubmit="return AgentPanel.submit(event)">' +
       '<textarea class="ag-input" rows="1" onkeydown="return AgentPanel.key(event)" oninput="AgentPanel.grow(this)" placeholder="Ask, or tell the agent what to do…  (Enter sends · Shift+Enter newline · /run <node> <targets>)"></textarea>' +
-      '<div class="ag-form-row"><select class="ag-backend" title="which CLI drives"></select>' +
+      '<div class="ag-form-row"><select class="ag-intent" title="Ask = a read-only question (SM\'s read tools only, nothing can change). Task = the agent session that may propose plans and, after your Start, run them through SM." onchange="AgentPanel.setIntent(this.value, this)"><option value="ask">Ask (read-only)</option><option value="task">Task</option></select>' +
+      '<select class="ag-backend" title="which CLI drives"></select>' +
       '<label class="ag-actor-wrap" title="who is at the keyboard — the person SM records for Arm / Stop / mode / “I ran it”. English letters only (it travels in a request header); what you SAY to the agent can be any language.">⌨ <input class="ag-actor" list="ag-actor-list" placeholder="your name" autocomplete="off" spellcheck="false" oninput="AgentPanel.setActor(this.value, this)"><datalist id="ag-actor-list"></datalist></label>' +
       '<span class="ag-presets" title="a preset fills a draft; nothing starts before a plan card\'s Start">' +
       '<button type="button" class="btn-sm ag-presets-toggle" onclick="AgentPanel.togglePresets(this)" aria-expanded="false">presets ▾</button>' +
@@ -1389,6 +1425,7 @@ window.AgentPanel = (function () {
   if (document.readyState === "loading") document.addEventListener("DOMContentLoaded", init); else init();
 
   return { mount: mount, poll: poll, submit: submit, key: key, preset: preset, startPlan: startPlan, cancelPlan: cancelPlan,
+           setIntent: setIntent, sessionOpen: sessionOpen,
            wireHelp: wireHelp, wirePaint: wirePaint, wireLoad: wireLoad, _wire: WIRE,
            shortVersion: shortVersion,
            setPlanMode: setPlanMode, approve: approve, reject: reject, stop: stop, arm: arm, disarm: disarm,

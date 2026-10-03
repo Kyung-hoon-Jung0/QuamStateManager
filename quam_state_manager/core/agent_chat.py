@@ -39,6 +39,8 @@ DEFAULT_RULES = (
     "and wait -- a person presses Start on the card and you are told to go; only then run_node with plan_id and step. "
     "Never edit state.json or wiring.json files directly. The mcp__sm__* tools are already available to you: call "
     "them directly, never through Bash, python -m, or another claude/codex process. "
+    # docs/247: said so the model does not waste turns on it -- the CLI's tool config enforces it
+    "This session has no shell and cannot write files: SM's tools are the only way to act on the chip. "
     # customer feedback 2026-09-08: the person reads the answer in a small panel, and the
     # answers were long and came with a translated summary -- concision at the source
     "Answer in at most ~120 words unless the human asks for detail; lead with the fact or the decision; "

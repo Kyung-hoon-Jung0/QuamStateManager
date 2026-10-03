@@ -79,6 +79,10 @@ def codex():
     if os.environ.get("FAKE_LIMIT") == "1":
         out({"type": "turn.failed", "error": {"message": "usage limit reached, resets at 14:50"}})
         return
+    if os.environ.get("FAKE_CAPACITY") == "1":           # measured 2026-10-03: the real CLI then exits 1
+        sys.stderr.write("Reading prompt from stdin...\n")
+        out({"type": "turn.failed", "error": {"message": "Selected model is at capacity. Please try a different model."}})
+        sys.exit(1)
     tool = os.environ.get("FAKE_TOOL", "sm_status")
     item = {"id": "item_1", "type": "mcp_tool_call", "server": "sm", "tool": tool, "arguments": {"q": prompt[:20]}, "status": "in_progress"}
     out({"type": "item.started", "item": item})

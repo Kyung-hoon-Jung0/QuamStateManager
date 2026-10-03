@@ -26,10 +26,9 @@ in the session notes):
     * items: {"type":"item.started|item.completed","item":{"type":
       "agent_message"|"mcp_tool_call"|"command_execution"|"reasoning",...}},
       {"type":"turn.completed","usage":{...}} / "turn.failed"
-    * MCP tools are BLOCKED under the default approval policy; they run with
-      --dangerously-bypass-approvals-and-sandbox (the driving session -- SM's
-      own gates hold the permissions) or --approve-for-me (a question, under
-      the workspace-write sandbox, with SM's read-only MCP mode)
+    * MCP tools are BLOCKED under the default approval policy; docs/247: they
+      run because the ONE server SM attaches says
+      default_tools_approval_mode='approve' -- never by a bypass flag
     * there is no stdin channel mid-turn: a message while a turn runs waits
 
 Normalized event (one dict per line in the same agent_events jsonl the
@@ -60,6 +59,18 @@ from typing import Any, Callable
 logger = logging.getLogger(__name__)
 
 BACKENDS = ("claude", "codex")
+# docs/247 (C-01): the in-app session's rules are ENFORCED by the CLI's tool configuration, not by
+# the prompt. Claude gets only these built-in tools (read files to look at figures and node code,
+# ToolSearch to load the deferred MCP tools); Bash / PowerShell / Edit / Write / NotebookEdit / Task
+# do not EXIST in the session, so `python node.py` or a one-liner on state.json is impossible, not
+# refused. The deny list is belt and braces against an allow rule in a settings file (Connect used
+# to write `Bash(python *)` into the calibrations folder the session runs in).
+CLAUDE_TOOLS = ("Read", "Glob", "Grep", "ToolSearch")
+CLAUDE_DENY = ("Bash", "PowerShell", "Edit", "Write", "NotebookEdit")
+# Codex features that reach outside SM (account connectors, browser/computer use, sub-agents, image
+# generation, plugins) are switched off for the in-app session; Codex ignores an unknown name.
+CODEX_OFF_FEATURES = ("apps", "plugins", "browser_use", "computer_use", "multi_agent", "image_generation")
+CODEX_REQUIRED_FLAGS = ("--ignore-user-config", "--ignore-rules")
 READ_TOOLS = ("sm_status", "state_get", "state_search", "tray", "versions", "field_history", "runs", "run",
               "diagnostics", "check_fit", "families", "family_manual", "journal_read", "approvals", "plan_status")
 MCP_TOOL_TIMEOUT_S = 30 * 60      # run_node blocks up to wait_s (<= 60 min); both CLIs default far lower
@@ -120,6 +131,10 @@ class Backend:
         """What to write on stdin for a user turn (None: not supported)."""
         return None
 
+    def preflight(self) -> str | None:
+        """Why this CLI cannot run an ENFORCED session (docs/247), or None."""
+        return None
+
     def initial_input(self, prompt: str, resume: str | None = None) -> str | None:
         """What to write on stdin right after the process starts, for the
         first message. NEVER argv: a newline in any argv element truncates
@@ -137,10 +152,14 @@ class ClaudeBackend(Backend):
     def command(self, *, resume=None, prompt=None):
         cmd = [self.exe, "-p", "--input-format", "stream-json", "--output-format", "stream-json", "--verbose",
                "--mcp-config", str(self.mcp_json), "--strict-mcp-config"]
-        if self.readonly:
-            cmd += ["--allowedTools", ",".join(_mcp_name(t) for t in READ_TOOLS)]
-        else:
-            cmd += ["--permission-mode", "bypassPermissions"]
+        # docs/247: an EXPLICIT mode always -- with none, a user's own `defaultMode: bypassPermissions`
+        # in ~/.claude/settings.json applied here too. dontAsk = anything not allowed below is denied
+        # without a prompt, so a headless session never hangs on one.
+        mcp_allow = [_mcp_name(t) for t in READ_TOOLS] if self.readonly else ["mcp__sm"]
+        cmd += ["--permission-mode", "dontAsk",
+                "--tools", ",".join(CLAUDE_TOOLS),
+                "--allowedTools", ",".join(mcp_allow + list(CLAUDE_TOOLS)),
+                "--disallowedTools", ",".join(CLAUDE_DENY)]
         if self.model:
             cmd += ["--model", self.model]
         if self.system_prompt:
@@ -208,16 +227,28 @@ class CodexBackend(Backend):
     one_turn_per_process = True
 
     def command(self, *, resume=None, prompt=None):
-        cmd = [self.exe, "exec", "--json", "--skip-git-repo-check"]
+        # docs/247 (C-01, C-02): --ignore-user-config = the user's own ~/.codex/config.toml is not read,
+        # so neither its MCP servers (Setup's `quam-state-manager`, write tools, no chip pin) nor its
+        # sandbox/approval defaults reach this session; auth still comes from CODEX_HOME, and so do the
+        # thread files `exec resume` needs. --ignore-rules = no execpolicy allow-rules either.
+        cmd = [self.exe, "exec", "--json", "--skip-git-repo-check", *CODEX_REQUIRED_FLAGS]
         if self.cwd:
             cmd += ["-C", self.cwd]
+        # read-only sandbox + approval `never`: a shell command that would write, and any escalation,
+        # is refused by Codex itself (measured on 0.159.2: "blocked by policy"; apply_patch: "writing
+        # is blocked by read-only sandbox"). The MCP server runs OUTSIDE the sandbox, so SM's tools --
+        # and SM's own gates -- are the only door to the chip.
+        cmd += ["-s", "read-only", "-c", "approval_policy='never'"]
+        for f in CODEX_OFF_FEATURES:
+            cmd += ["-c", f"features.{f}=false"]
         cfg = mcp_config(self.python, self.repo, self.sm_url, readonly=self.readonly, chip=self.chip)["mcpServers"]["sm"]
         env_toml = ",".join(f"{k}={toml_str(v)}" for k, v in cfg["env"].items())
         cmd += ["-c", f"mcp_servers.sm.command={toml_str(cfg['command'])}",
                 "-c", "mcp_servers.sm.args=[" + ",".join(toml_str(a) for a in cfg["args"]) + "]",
                 "-c", "mcp_servers.sm.env={" + env_toml + "}",
-                "-c", f"mcp_servers.sm.tool_timeout_sec={MCP_TOOL_TIMEOUT_S}"]
-        cmd += ["--approve-for-me"] if self.readonly else ["--dangerously-bypass-approvals-and-sandbox"]
+                "-c", f"mcp_servers.sm.tool_timeout_sec={MCP_TOOL_TIMEOUT_S}",
+                # without this every MCP call is "blocked: requires approval" under `never` (measured)
+                "-c", "mcp_servers.sm.default_tools_approval_mode='approve'"]
         if self.model:
             cmd += ["-m", self.model]
         if resume:
@@ -226,6 +257,20 @@ class CodexBackend(Backend):
 
     def encode_user(self, text):
         return text
+
+    def preflight(self):
+        """An older Codex without --ignore-user-config / --ignore-rules cannot be isolated from the
+        user's own config (its MCP servers, its sandbox defaults): refuse it by name rather than run
+        it open (docs/247)."""
+        flags = exec_flags(self.exe)
+        if flags is None:
+            return None                      # could not ask: the launch itself will say what is wrong
+        missing = [f for f in CODEX_REQUIRED_FLAGS if f not in flags]
+        if missing:
+            return (f"this Codex ({self.exe}) has no {' / '.join(missing)}, so SM cannot keep its in-app "
+                    "session away from your own Codex config and MCP servers -- update Codex "
+                    "(npm i -g @openai/codex) to use it inside SM")
+        return None
 
     def initial_input(self, prompt, resume=None):
         if self.system_prompt and not resume:
@@ -355,6 +400,8 @@ def _mk(ctx: dict, kind: str, **fields) -> dict:
     rec.update(fields)
     if kind == "Result":
         ctx["turn_open"] = False                 # the turn answered
+        if fields.get("failed") and fields.get("error"):
+            ctx["failed_reason"] = str(fields["error"])
     if kind == "Text":
         ctx["last_text"] = fields.get("text", "")
     if kind == "PreToolUse" and fields.get("tool_use_id"):
@@ -516,7 +563,9 @@ class AgentProcess:
             turn_open = self.ctx.get("turn_open", False)
             crashed = (self.returncode not in (0, None) or turn_open) and not getattr(self, "stopped_by_human", False)
             if crashed and not (self.returncode == 0 and not turn_open):
-                err = "\n".join(self.stderr_tail)[-400:] or self.ctx.get("errored") or ""
+                # docs/247: a turn that already FAILED with a reason (Codex "model at capacity") names it;
+                # the stderr tail then only says "Reading prompt from stdin..."
+                err = self.ctx.get("failed_reason") or "\n".join(self.stderr_tail)[-400:] or self.ctx.get("errored") or ""
                 self._emit(_mk(self.ctx, "Error", failed=True, error=err or f"exit {self.returncode}",
                                limited=bool(_limited(err)), limited_until=_limited(err)))
                 self._emit(_mk(self.ctx, "Stop", summary=err[:400]))
@@ -532,6 +581,25 @@ class AgentProcess:
                 self.stderr_tail.append(line.rstrip()[:300])
         except Exception:  # noqa: BLE001
             pass
+
+
+_FLAGS_CACHE: dict[str, tuple[float, frozenset | None]] = {}
+
+
+def exec_flags(exe: str, ttl: float = 600.0) -> frozenset | None:
+    """The long flags ``<exe> exec --help`` names (cached); None when it cannot be asked."""
+    hit = _FLAGS_CACHE.get(exe)
+    if hit and time.time() - hit[0] < ttl:
+        return hit[1]
+    try:
+        r = subprocess.run(resolve_command([exe, "exec", "--help"]), capture_output=True, text=True,
+                           encoding="utf-8", errors="replace", timeout=20)
+        text = (r.stdout or "") + (r.stderr or "")
+        out = frozenset(re.findall(r"--[a-z][a-z0-9-]+", text)) if r.returncode == 0 else None
+    except Exception:  # noqa: BLE001
+        out = None
+    _FLAGS_CACHE[exe] = (time.time(), out)
+    return out
 
 
 def detect(exe: str) -> dict:

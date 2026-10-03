@@ -123,13 +123,41 @@ const tick = (ms) => new Promise(r => setTimeout(r, ms || 15));
   P.submit({ preventDefault() {}, target: ta });
   await tick(30);
   ok(calls[0].url === '/api/agent/chat/send' && calls[0].body.text === 'why did q1 fail?', 'text goes to the live session');
+  // docs/247 (C-06): with no session the default door is the READ-ONLY question, never a session
   feed.session = null;
   await P.poll(true); await tick();
+  const intentSel = home.querySelector('.ag-intent');
+  ok(intentSel && intentSel.value === 'ask', 'no session: the composer defaults to Ask (read-only)');
+  ta.value = 'what is q1 f_01?';
+  calls.length = 0;
+  P.submit({ preventDefault() {}, target: ta });
+  await tick(30);
+  ok(calls[0].url === '/api/agent/chat/ask' && calls[0].body.text === 'what is q1 f_01?' && calls[0].body.feed === 1 && calls[0].body.backend === 'claude', 'no session: a question goes to the read-only ask, into the feed');
+  ok(!calls.some(c => /\/chat\/(start|send)$/.test(c.url)), 'and no driving session is started or fed');
+  // a TASK chosen by hand starts the session
+  intentSel.value = 'task';
+  P.setIntent('task', intentSel);
   ta.value = 'start over';
   calls.length = 0;
   P.submit({ preventDefault() {}, target: ta });
   await tick(30);
-  ok(calls[0].url === '/api/agent/chat/start' && calls[0].body.prompt === 'start over' && calls[0].body.backend === 'claude', 'no session: text starts one');
+  ok(calls[0].url === '/api/agent/chat/start' && calls[0].body.prompt === 'start over' && calls[0].body.backend === 'claude', 'Task with no session: the line starts one');
+  // C-03: a Codex conversation between turns (process gone, thread kept) is fed, not restarted
+  feed.session = { alive: false, ended: null, one_turn_per_process: true, session_id: 'thread-1', backend: 'codex' };
+  await P.poll(true); await tick();
+  ok(P.sessionOpen() === true, 'Codex between turns: the conversation is open');
+  ok(/End session/.test(home.querySelector('.ag-now').textContent), 'Codex between turns: End session is offered (the process is gone, the conversation is not)');
+  ta.value = 'and the next step?';
+  calls.length = 0;
+  P.submit({ preventDefault() {}, target: ta });
+  await tick(30);
+  ok(calls[0].url === '/api/agent/chat/send' && calls[0].body.text === 'and the next step?', 'Codex between turns: the follow-up continues the same thread (/send)');
+  feed.session = { alive: false, ended: 123, one_turn_per_process: true, session_id: 'thread-1', backend: 'codex' };
+  await P.poll(true); await tick();
+  ok(P.sessionOpen() === false, 'an ended conversation is not open');
+  ok(!/End session/.test(home.querySelector('.ag-now').textContent), 'an ended conversation offers no End session');
+  feed.session = null;
+  await P.poll(true); await tick();
 
   // observer mode hides the doors
   P.setObserver(true);
@@ -499,7 +527,7 @@ const tick = (ms) => new Promise(r => setTimeout(r, ms || 15));
   ok(/^Ask, or tell the agent what to do…/.test(ta2.placeholder) && /Enter sends · Shift\+Enter newline · \/run <node> <targets>/.test(ta2.placeholder), 'the shortened placeholder: ' + ta2.placeholder);
   const rowEl = comp.querySelector('.ag-form-row');
   const rowKids = Array.from(rowEl.children);
-  ok(rowKids[0].classList.contains('ag-backend') && rowKids[1].classList.contains('ag-actor-wrap') && rowKids[2].classList.contains('ag-presets') && rowEl.lastElementChild.classList.contains('ag-send'), 'the row: backend · name · presets · Send last');
+  ok(rowKids[0].classList.contains('ag-intent') && rowKids[1].classList.contains('ag-backend') && rowKids[2].classList.contains('ag-actor-wrap') && rowKids[3].classList.contains('ag-presets') && rowEl.lastElementChild.classList.contains('ag-send'), 'the row: Ask/Task · backend · name · presets · Send last');
   const pres = comp.querySelector('.ag-presets');
   ok(pres.getAttribute('title') === "a preset fills a draft; nothing starts before a plan card's Start" && !h2.querySelector('.ag-hint'), 'the preset sentence is a tooltip on the group, not visible text');
   ok(pres.querySelectorAll('.ag-preset').length === 3 && pres.querySelector('.ag-presets-toggle') && pres.querySelectorAll('.ag-preset')[0].textContent === '1Q bringup', 'three preset chips and the compact toggle');

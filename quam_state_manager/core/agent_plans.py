@@ -278,6 +278,9 @@ def parse_run_line(text: str) -> dict | None:
             params[k] = _coerce(v)
         else:
             targets.extend(x for x in p.split(",") if x)
+    if not targets:
+        # C-08 (docs/247): an empty target list reached the plan store and came back as a 500
+        return {"error": f"/run {node} names no target -- usage: /run <node> <targets...> [param=value ...]"}
     return {"node": node, "targets": targets, "params": params}
 
 

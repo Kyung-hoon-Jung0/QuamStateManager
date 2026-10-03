@@ -36,6 +36,9 @@ class _FakeCodex(ab.CodexBackend):
     def command(self, *, resume=None, prompt=None):
         return FAKE + super().command(resume=resume, prompt=prompt)[1:]
 
+    def preflight(self):
+        return None                 # the fake is not asked `exec --help`; TestEnforced pins the refusal
+
 
 def _wait(pred, timeout=15.0):
     t0 = time.time()
@@ -423,7 +426,8 @@ class TestAsk:
         askp = next(iter(mgr.asks.values()))
         drive = mgr.get(_chip(c)).proc
         assert agent_chat.ASK_RULES in askp.backend.system_prompt and "--allowedTools" in askp.cmd
-        assert agent_chat.DEFAULT_RULES in drive.backend.system_prompt and "bypassPermissions" in drive.cmd
+        assert agent_chat.DEFAULT_RULES in drive.backend.system_prompt and "bypassPermissions" not in drive.cmd
+        assert drive.cmd[drive.cmd.index("--tools") + 1] == ",".join(ab.CLAUDE_TOOLS)
         assert f"Chip: {_name(c)}. Mode: ask-writes" in drive.backend.system_prompt
 
     def test_the_driving_rules_end_with_the_concision_rule(self):
@@ -439,6 +443,91 @@ class TestAsk:
         assert "cite runs as #N and fields as `dot.paths`" in r
         assert "reads you in a small panel" not in r and "Answer briefly" not in r
         assert r.rstrip().endswith("`dot.paths`.")
+
+
+class TestEnforced:
+    """docs/247: what reaches the CLI is the enforced configuration, on every door that starts one."""
+
+    def test_driving_session_and_question_are_launched_without_any_bypass(self, c, app):
+        c.post("/api/agent/chat/start", json={"prompt": "x"})
+        c.post("/api/agent/chat/ask", json={"text": "q", "backend": "codex"})
+        mgr = app.config["agent_chat"]
+        drive = mgr.get(_chip(c)).proc.cmd
+        askp = next(iter(mgr.asks.values())).cmd
+        for cmd in (drive, askp):
+            j = " ".join(cmd)
+            assert "bypassPermissions" not in j and "--dangerously-bypass-approvals-and-sandbox" not in j
+            assert "--approve-for-me" not in j
+        assert "Bash" not in drive[drive.index("--tools") + 1]
+        assert askp[askp.index("-s") + 1] == "read-only" and "--ignore-user-config" in askp
+
+    def test_a_codex_that_cannot_be_isolated_is_refused_by_name(self, c, app, monkeypatch):
+        monkeypatch.setattr(_FakeCodex, "preflight", lambda self: "this Codex has no --ignore-user-config -- update Codex")
+        r = c.post("/api/agent/chat/start", json={"prompt": "x", "backend": "codex"})
+        assert r.status_code == 400 and "--ignore-user-config" in r.get_json()["error"]
+        assert c.get("/api/agent/chat/status").get_json()["session"] is None, "nothing was spawned"
+        r = c.post("/api/agent/chat/ask", json={"text": "q", "backend": "codex"})
+        assert r.status_code == 400
+
+    def test_the_driving_rules_say_the_session_has_no_shell(self):
+        from quam_state_manager.core import agent_chat
+        assert "no shell" in agent_chat.DEFAULT_RULES and "cannot write files" in agent_chat.DEFAULT_RULES
+
+
+class TestQuestionInTheFeed:
+    """C-06 (docs/247, docs/173 §1.2): the panel's question goes to the READ-ONLY one-shot and its
+    question + answer land in the feed as cards -- without starting a driving session."""
+
+    def test_feed_ask_posts_question_and_answer_cards_and_starts_no_session(self, c, inst):
+        r = c.post("/api/agent/chat/ask", json={"text": "what is q1 f_01?", "feed": 1}).get_json()
+        assert r["ok"] and r["feed"] is True
+        ans = _wait(lambda: [e for e in _events(c) if e["hook_event_name"] == "Text"])
+        assert ans and ans[-1]["text"] == "answer 1: what is q1 f_01?" and ans[-1]["readonly"] is True
+        assert ans[-1]["ask_id"] == r["ask_id"]
+        users = [e for e in _events(c) if e["hook_event_name"] == "User"]
+        assert users[-1]["text"] == "what is q1 f_01?" and users[-1]["readonly"] is True
+        cards = c.get("/api/agent/chat/cards?after=0").get_json()["cards"]
+        kinds = [(k["kind"], k.get("readonly")) for k in cards]
+        assert ("user", True) in kinds and ("answer", True) in kinds
+        assert c.get("/api/agent/chat/status").get_json()["session"] is None
+        assert "answer 1" not in _journal(c, inst)
+        time.sleep(0.3)
+        assert len([e for e in _events(c) if e["hook_event_name"] == "Text"]) == 1, "the answer is posted once"
+
+    def test_a_failed_question_says_so_in_the_feed(self, c, monkeypatch):
+        monkeypatch.setenv("FAKE_CRASH", "1")
+        c.post("/api/agent/chat/ask", json={"text": "q", "feed": 1})
+        ans = _wait(lambda: [e for e in _events(c) if e["hook_event_name"] == "Text"])
+        assert ans and "did not get an answer" in ans[-1]["text"]
+
+
+class TestCodexConversationStaysOpen:
+    """C-03 (docs/247): between Codex turns the process is gone and the conversation is not."""
+
+    def test_session_open_between_turns_and_closed_after_end(self, c, app):
+        c.post("/api/agent/chat/start", json={"prompt": "hello", "backend": "codex"})
+        assert _wait(lambda: "codex answer: hello" in _texts(c))
+        assert _wait(lambda: not c.get("/api/agent/chat/status").get_json()["session"]["alive"])
+        cur = app.config["agent_chat"].get(_chip(c))
+        assert chat_api.session_open(cur) is True
+        c.post("/api/agent/chat/end")
+        assert chat_api.session_open(cur) is False
+        assert chat_api.session_open(None) is False
+
+    def test_allow_run_tells_the_open_conversation(self, c, app, inst, monkeypatch):
+        from quam_state_manager.core import approvals
+        monkeypatch.setenv("FAKE_ECHO_STDIN", "1")
+        c.post("/api/agent/chat/start", json={"prompt": "hello", "backend": "codex"})
+        assert _wait(lambda: any(t.endswith("hello") for t in _texts(c)))
+        assert _wait(lambda: not c.get("/api/agent/chat/status").get_json()["session"]["alive"])
+        ap = approvals.add(str(inst), _chip(c), kind="run", node="05_power_rabi", targets=["q1"], writes=None,
+                           reason="r", why_held="mode ask-all", actor="by_codex", plan_id="pl-1")
+        r = c.post(f"/api/agent/approvals/{ap['id']}/approve", json={}).get_json()
+        assert r["ok"] and r["agent_told"] is True
+        assert _wait(lambda: any("allowed the run of 05_power_rabi" in t for t in _texts(c))), \
+            "the fake echoes the message it was resumed with"
+        inits = [e for e in _events(c) if e["hook_event_name"] == "Init"]
+        assert [i["session_id"] for i in inits] == ["thread-fresh", "thread-fresh"], "same thread, resumed"
 
 
 # ---------------------------------------------------------------- replay
@@ -512,3 +601,15 @@ class TestReplay:
             rec = {"ts": time.time(), "origin": "chat", "chip": "X", "hook_event_name": "User", "text": "new", "session_id": None}
             chat_api._record(rec)
         assert rec["n"] > 50, f"next chat n={rec['n']} did not clear the evicted event's n=50"
+
+
+class TestRunLineNeedsATarget:
+    """C-08 (docs/247): `/run <node>` with no target used to reach the plan store and answer 500."""
+
+    def test_no_target_is_a_400_naming_the_usage(self, c):
+        from quam_state_manager.core import agent_plans
+        assert "names no target" in agent_plans.parse_run_line("/run 05_power_rabi")["error"]
+        assert "names no target" in agent_plans.parse_run_line("/run 05_power_rabi num_shots=10")["error"]
+        r = c.post("/api/agent/plans", json={"run_line": "/run 05_power_rabi"})
+        assert r.status_code == 400 and "names no target" in r.get_json()["error"]
+        assert agent_plans.parse_run_line("/run 05_power_rabi q1")["targets"] == ["q1"]

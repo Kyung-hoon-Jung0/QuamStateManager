@@ -13907,7 +13907,7 @@ table.diff-wb-list tbody > tr[hidden] { display: none; }
 .ag-composer { flex: 0 0 auto; border-top: 1px solid var(--pico-muted-border-color); padding-top: .4rem; margin: 0; }
 .ag-root .ag-input { display: block; width: 100%; margin: 0; resize: none; line-height: 1.4; padding: .4rem .6rem; min-height: 0; height: auto; font-size: 1em; overflow-y: hidden; }
 .ag-form-row { display: flex; flex-wrap: wrap; gap: .4rem; align-items: center; margin-top: .35rem; }
-.ag-root .ag-backend { font-size: .88em; padding-top: .15rem; padding-bottom: .15rem; height: auto; }
+.ag-root .ag-backend, .ag-root .ag-intent { font-size: .88em; padding-top: .15rem; padding-bottom: .15rem; height: auto; }
 /* docs/173 S8: the name picker in front of the keyboard */
 .ag-actor-wrap { display: inline-flex; align-items: center; gap: .25rem; font-size: .85em; color: var(--pico-muted-color); }
 .ag-root .ag-actor { width: 7rem; padding: .15rem .4rem; height: auto; font-size: .9em; }

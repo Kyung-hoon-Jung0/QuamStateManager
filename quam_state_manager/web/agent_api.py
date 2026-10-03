@@ -1789,12 +1789,32 @@ def approvals_decide(aid: str, verb: str):
     elif verb == "approve":
         journal_mod.append(inst, _chip_name(), f"approved the run of `{rec.get('node')}` on {' '.join(rec.get('targets') or [])}",
                            kind="sm")
+        out["agent_told"] = _tell_agent(chip, (
+            f"The human ({actor}) allowed the run of {rec.get('node')} on {' '.join(rec.get('targets') or [])} "
+            f"(approval {aid}). Call run_node again now with the same node, targets and params"
+            + (f", plan_id={rec.get('plan_id')}" if rec.get("plan_id") else "") + "."))
     else:
         journal_mod.append(inst, _chip_name(), f"rejected {rec.get('kind')} from `{rec.get('node')}`"
                                        + (f": {data.get('note')}" if data.get("note") else ""), kind="sm")
     _bump()
     _wake()
     return jsonify(**out)
+
+
+def _tell_agent(chip_key: str, msg: str) -> bool:
+    """C-04 (docs/247): an ask-all "Allow run" used to be recorded and nothing else, so the in-app
+    agent -- which had been told to wait -- never heard it and the plan sat at RUNNING 0/1. The
+    chip's open in-app conversation is told; a terminal agent reads `approvals` itself."""
+    try:
+        from quam_state_manager.web import chat_api
+        mgr = chat_api._manager()
+        cur = mgr.get(chip_key)
+        if not chat_api.session_open(cur):
+            return False
+        return not mgr.send(chip_key, msg).get("error")
+    except Exception:  # noqa: BLE001
+        logger.debug("tell agent failed", exc_info=True)
+        return False
 
 
 @agent_bp.route("/undo-mine", methods=["POST"])
@@ -1883,6 +1903,8 @@ def _plan_brief() -> dict | None:
 def _chat_card(e: dict) -> dict | None:
     h = e.get("hook_event_name")
     base = {"n": e.get("n"), "ts": e.get("ts"), "backend": e.get("backend")}
+    if e.get("readonly"):
+        base["readonly"] = True                 # docs/247: a question answered by the read-only one-shot
     if h == "User":
         return {**base, "kind": "user", "text": e.get("text") or "", "who": e.get("who")}
     if h == "Text":
@@ -2263,7 +2285,7 @@ def _plan_start_locked(pid, actor, inst, chip, name):
                            mode=limits.load(inst, chip).get("mode"))
         return _err(f"could not tell the agent: {why}", 502)
     try:
-        if cur is not None and cur.alive() and not cur.ended:
+        if chat_api.session_open(cur):          # docs/247 C-03: a Codex conversation between turns is open
             res = mgr.send(chip, msg)
             if res.get("error"):
                 return _undo_start(res["error"])

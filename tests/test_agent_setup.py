@@ -75,7 +75,7 @@ class TestClaude:
         cal.mkdir()
         assert st.allow_registered(cal) is False and st.allow_registered(None) is False
         pv = st.preview_allow(cal)
-        assert pv["exists"] is False and pv["after"][:2] == list(st.ALLOW_RULES[:2])
+        assert pv["exists"] is False and pv["after"] == list(st.ALLOW_RULES)
         st.write_allow(cal)
         st.write_allow(cal)
         d = json.loads(st.allow_path(cal).read_text(encoding="utf-8"))
@@ -231,7 +231,9 @@ class TestRoutes:
         assert "claude connected to SM by human:kyunghoon (mcp, hooks, allow)" in (jm.read(str(c._inst), "chip", datetime.now().strftime("%Y-%m-%d")) or "")
         d = c.post("/api/agent/setup/disconnect", json={"backend": "claude"}).get_json()
         assert d["removed"]["mcp"]["removed"] and d["removed"]["hooks"]["removed"]
-        assert c.get("/api/agent/setup").get_json()["claude"]["mcp"] is False
+        assert d["removed"]["allow"]["removed"] == ["mcp__quam-state-manager__*"]
+        s = c.get("/api/agent/setup").get_json()
+        assert s["claude"]["mcp"] is False and s["claude"]["allow"] is False, "Disconnect took the allow rule back (A-16)"
         d = c.post("/api/agent/setup/connect", json={"backend": "codex", "apply": True}).get_json()
         assert d["writes"]["mcp"]["file"].endswith("config.toml") and (home / ".codex" / "config.toml").exists()
         assert c.post("/api/agent/setup/connect", json={"backend": "nope"}).status_code == 400
@@ -307,14 +309,76 @@ class TestRoutes:
         assert c.get("/api/agent/setup").get_json()["record"]["tested"]["claude"]["ok"] is True
 
 
+class TestAllowRulesNoPython:
+    """C-14/A-16 (docs/247): Connect never allow-lists `python` in the calibrations folder (that is the
+    door run_node guards), and Disconnect takes back exactly what Connect added."""
+
+    def test_connect_adds_only_the_mcp_rule(self, tmp_path):
+        cal = tmp_path / "cal"
+        cal.mkdir()
+        w = st.write_allow(cal)
+        allow = json.loads(st.allow_path(cal).read_text(encoding="utf-8"))["permissions"]["allow"]
+        assert allow == ["mcp__quam-state-manager__*"] and w["added"] == allow
+        assert not any("python" in r.lower() or r.startswith("Bash") for r in st.ALLOW_RULES)
+
+    def test_disconnect_removes_what_connect_added_and_keeps_the_labs_own(self, tmp_path):
+        cal = tmp_path / "cal"
+        (cal / ".claude").mkdir(parents=True)
+        st.allow_path(cal).write_text(json.dumps({"permissions": {"allow": ["Read", "Bash(python *)"]}, "x": 1}),
+                                      encoding="utf-8")
+        w = st.write_allow(cal)
+        r = st.remove_allow(cal, w["added"])
+        d = json.loads(st.allow_path(cal).read_text(encoding="utf-8"))
+        assert r["removed"] == ["mcp__quam-state-manager__*"] and d == {"permissions": {"allow": ["Read", "Bash(python *)"]}, "x": 1}
+        assert r["left"] == ["Bash(python *)"], "the lab's own python rule is reported, never touched"
+        assert r["backup"] and Path(r["backup"]).exists()
+
+    def test_legacy_connect_triple_is_removed_but_a_separate_python_rule_is_not(self, tmp_path):
+        cal = tmp_path / "cal"
+        (cal / ".claude").mkdir(parents=True)
+        st.allow_path(cal).write_text(json.dumps({"permissions": {"allow": ["Read", *st.LEGACY_ALLOW_RULES]}}), encoding="utf-8")
+        r = st.remove_allow(cal, None)
+        assert set(r["removed"]) == set(st.LEGACY_ALLOW_RULES) and r["left"] == []
+        assert json.loads(st.allow_path(cal).read_text(encoding="utf-8")) == {"permissions": {"allow": ["Read"]}}
+        st.allow_path(cal).write_text(json.dumps({"permissions": {"allow": ["Bash(python *)", "Read", "mcp__quam-state-manager__*"]}}),
+                                      encoding="utf-8")
+        r = st.remove_allow(cal, None)
+        assert r["removed"] == ["mcp__quam-state-manager__*"] and r["left"] == ["Bash(python *)"]
+        assert st.allow_python_rules(cal) == ["Bash(python *)"]
+
+    def test_reconnect_over_an_older_connect_takes_its_python_rules_out(self, tmp_path):
+        """Measured in the rig: the rule set an older SM wrote was still there, so a Connect added
+        nothing and its Disconnect (correctly) took nothing -- the python rules stayed for good."""
+        cal = tmp_path / "cal"
+        (cal / ".claude").mkdir(parents=True)
+        st.allow_path(cal).write_text(json.dumps({"permissions": {"allow": ["Read", *st.LEGACY_ALLOW_RULES]}}), encoding="utf-8")
+        pv = st.preview_allow(cal)
+        assert pv["changed"] and pv["removes"] == ["Bash(python *)", "Bash(python3 *)"]
+        assert pv["after"] == ["Read", "mcp__quam-state-manager__*"]
+        w = st.write_allow(cal)
+        assert w["added"] == [] and w["removed"] == ["Bash(python *)", "Bash(python3 *)"]
+        assert json.loads(st.allow_path(cal).read_text(encoding="utf-8"))["permissions"]["allow"] == ["Read", "mcp__quam-state-manager__*"]
+        assert st.allow_python_rules(cal) == []
+        r = st.remove_allow(cal, w["added"])          # the record says "added nothing": SM's rule still goes
+        assert r["removed"] == ["mcp__quam-state-manager__*"]
+        assert json.loads(st.allow_path(cal).read_text(encoding="utf-8"))["permissions"]["allow"] == ["Read"]
+
+    def test_only_sm_rules_means_the_permissions_key_goes_too(self, tmp_path):
+        cal = tmp_path / "cal"
+        w = st.write_allow(cal)
+        st.remove_allow(cal, w["added"])
+        assert json.loads(st.allow_path(cal).read_text(encoding="utf-8")) == {}
+        assert st.remove_allow(tmp_path / "nowhere", None)["removed"] == []
+
+
 class TestStatusRecord:
     def test_status_reads_the_files_and_the_record(self, home, tmp_path):
         inst = tmp_path / "inst"
         cal = tmp_path / "cal"
         cal.mkdir()
         s = st.status(inst, home=home, cal_folder=str(cal), python="py", repo="R", detect={"claude": {"found": True}})
-        assert s["claude"] == {"mcp": False, "hooks": False, "allow": False, "json": str(home / ".claude.json"),
-                               "settings": str(home / ".claude" / "settings.json")}
+        assert s["claude"] == {"mcp": False, "hooks": False, "allow": False, "allow_python": [],
+                               "json": str(home / ".claude.json"), "settings": str(home / ".claude" / "settings.json")}
         assert s["codex"]["mcp"] is False and s["context"] == {} and s["record"] == {}
         st.write_claude_mcp(st.mcp_server_spec("py"), home)
         st.write_allow(cal)

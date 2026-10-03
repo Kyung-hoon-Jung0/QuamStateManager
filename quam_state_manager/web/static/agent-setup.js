@@ -95,7 +95,9 @@ window.AgentSetup = (function () {
       if (k === "claude") {
         lines.push("<p>" + (c.hooks ? done() + " the live-strip hook is registered" : "the hook (what the pill and the Calibration log follow when you use the terminal) is not registered") + " in <code>" + esc(c.settings) + "</code></p>");
         lines.push('<p class="muted">hook line: <code>' + esc(d.hook_command || "") + "</code></p>");
-        if (d.calibrations_folder) lines.push("<p>" + (c.allow ? done() + " allow rules in the calibrations folder" : "allow rules (no permission prompt for SM's tools and <code>python</code>) not yet in <code>" + esc(d.calibrations_folder) + "\\.claude\\settings.local.json</code>") + "</p>");
+        if (d.calibrations_folder) lines.push("<p>" + (c.allow ? done() + " allow rule for SM's tools in the calibrations folder" : "allow rule (no permission prompt for SM's tools) not yet in <code>" + esc(d.calibrations_folder) + "\\.claude\\settings.local.json</code>") + "</p>");
+        // docs/247: an older SM also allow-listed `python` there -- the door run_node exists to guard
+        if (d.calibrations_folder && c.allow_python && c.allow_python.length) lines.push('<p class="ag-err">' + esc(c.allow_python.join(", ")) + " is allowed in the calibrations folder: a terminal agent can run <code>python &lt;node&gt;.py</code> past SM's gates. Disconnect removes it if SM wrote it; otherwise remove it from <code>.claude\\settings.local.json</code>.</p>");
       }
       lines.push('<div class="as-acts"><button type="button" class="btn-sm" onclick="AgentSetup.preview(\'' + k + '\')">Preview what SM would write</button> ' +
         (isDone ? '<button type="button" class="btn-sm" onclick="AgentSetup.disconnect(\'' + k + '\')">Disconnect (remove SM\'s entries)</button>' : "") + "</div>");

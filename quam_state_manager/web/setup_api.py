@@ -211,6 +211,10 @@ def connect():
         connected = dict(rec.get("connected") or {})
         connected[backend] = {"at": time.time(), "by": _r()._request_actor(),
                               "backups": [w.get("backup") for w in out["writes"].values() if w.get("backup")]}
+        if "allow" in out["writes"]:
+            # docs/247 (A-16): what Disconnect must take back, and where
+            connected[backend]["allow_added"] = out["writes"]["allow"].get("added") or []
+            connected[backend]["allow_file"] = out["writes"]["allow"].get("file")
         st.save_record(inst, {"connected": connected})
         chip = aa._chip_name() if _r()._active_path() else None
         if chip:
@@ -228,15 +232,24 @@ def disconnect():
     home = _home()
     inst = current_app.instance_path
     out = {"ok": True, "backend": backend, "removed": {}}
+    rec = st.load_record(inst)
     if backend == "claude":
-        blockers = st.write_blockers([st.claude_json_path(home), st.claude_settings_path(home)])
+        # docs/247 (A-16/C-14): Disconnect takes back EVERYTHING Connect added -- the allow rules in
+        # the calibrations folder too (they were left behind, and the strip still said "allow")
+        mine = (rec.get("connected") or {}).get("claude") or {}
+        cal = mine.get("allow_file") and str(Path(mine["allow_file"]).parent.parent) or _cal_folder()
+        files = [st.claude_json_path(home), st.claude_settings_path(home)]
+        if cal:
+            files.append(st.allow_path(cal))
+        blockers = st.write_blockers(files)
         if blockers:
             return _err("; ".join(blockers), 409)
         out["removed"]["mcp"] = st.remove_claude_mcp(home)
         out["removed"]["hooks"] = st.remove_claude_hooks(home)
+        if cal:
+            out["removed"]["allow"] = st.remove_allow(cal, mine.get("allow_added") if "allow_added" in mine else None)
     else:
         out["removed"]["mcp"] = st.remove_codex(home)
-    rec = st.load_record(inst)
     connected = dict(rec.get("connected") or {})
     connected.pop(backend, None)
     st.save_record(inst, {"connected": connected})
