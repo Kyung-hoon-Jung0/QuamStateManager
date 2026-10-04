@@ -912,7 +912,7 @@ class HubStore:
         events changed flags."""
         rows = self.conn.execute(
             "SELECT e.eid, e.flags, s.sm_id, s.units, s.undoes FROM sm_events s JOIN events e USING(eid) "
-            "WHERE s.outcome='landed' ORDER BY COALESCE(s.jpos, -1) DESC, e.ord DESC").fetchall()
+            "WHERE s.outcome='landed' ORDER BY e.ord DESC").fetchall()
         covered: dict[str, set] = {}
         whole: set[str] = set()
         changed = 0

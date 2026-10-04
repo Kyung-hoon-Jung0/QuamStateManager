@@ -952,6 +952,17 @@ def clock(monkeypatch):
     return c
 
 
+def _rename(a: Path, b: Path) -> None:
+    """A folder rename that waits out a scanner's brief hold on fresh files."""
+    for _ in range(50):
+        try:
+            a.rename(b)
+            return
+        except PermissionError:
+            time.sleep(0.1)
+    a.rename(b)
+
+
 def _restart():
     """A new SM process: RAM bookkeeping is rebuilt from the ledger."""
     for h in list(hub.Hub._cache.values()):
@@ -1004,7 +1015,9 @@ class TestReviewSync:
             else real(store, cand, *a, **k)))
         tick(chip, root)
         rs = cs.roots[hub_sync._norm(root)]
-        assert "2026-01-01" not in rs.dates, "a day with a failed run is not marked listed"
+        cs.request(listing=True)                    # a periodic look before the retry is due
+        hub_sync.kick(cs)
+        assert rs.failed and "2026-01-01" not in rs.dates, "a day with a failed run is not marked listed"
 
     def test_a_run_that_keeps_failing_is_reported_not_ready(self, tmp_path, monkeypatch, clock):
         root, chip = tmp_path / "data", tmp_path / "chip"
@@ -1076,6 +1089,32 @@ class TestReviewSync:
             hub.set_inline(True)
         assert not (mid["state"] == "ready" and not landed)
 
+    def test_status_is_building_while_a_periodic_listing_ingests_what_it_found(self, tmp_path, monkeypatch):
+        root, chip = tmp_path / "data", tmp_path / "chip"
+        run(root, 1, doc(1.0))
+        cs = sync(chip, root)
+        real = hub_sync.attach_run
+        inside = threading.Event()
+
+        def slow(*a, **k):
+            inside.set()
+            time.sleep(0.6)
+            return real(*a, **k)
+        monkeypatch.setattr(hub_sync, "attach_run", slow)
+        run(root, 2, doc(2.0))
+        hub.set_inline(False)
+        try:
+            cs.request(listing=True)                 # no watcher tick: the 30 s look found it
+            hub_sync.kick(cs)
+            assert inside.wait(5)
+            time.sleep(0.1)
+            mid = cs.status()
+            landed = 2 in by_run(chip)
+            assert hub.flush(30)
+        finally:
+            hub.set_inline(True)
+        assert not (mid["state"] == "ready" and not landed), mid
+
     # -- P1-6: one failed slice does not stop the catch-up ----------------------
     def test_a_slice_that_raised_is_retried(self, tmp_path, monkeypatch):
         root, chip = tmp_path / "data", tmp_path / "chip"
@@ -1091,6 +1130,8 @@ class TestReviewSync:
                 raise sqlite3.OperationalError("database is locked")
             real(self, *a, **k)
         monkeypatch.setattr(hub_store.HubStore, "__init__", flaky)
+        monkeypatch.setattr(hub, "_PERIODIC_S", 3600.0)       # the backoff alone, no periodic rescue
+        hub._PROJECTOR.__dict__["_last_periodic"] = time.monotonic()
         hub.set_inline(False)
         try:
             cs = hub_sync.open_chip(chip, [(str(root), "declared")])
@@ -1295,13 +1336,20 @@ class TestReviewSync:
         for i in range(1, 6):
             run(root, i, doc(float(i)))
         sync(chip, root)
-        (tmp_path / "share").rename(tmp_path / "share_offline")
-        sweep(chip)
+        _rename(tmp_path / "share", tmp_path / "share_offline")
+        sigs = []
+        real_sig = hub_sync.file_sig
+        hub_sync.file_sig = lambda f: (sigs.append(f), real_sig(f))[1]
+        try:
+            sweep(chip)
+        finally:
+            hub_sync.file_sig = real_sig
+        assert sigs == [], "the runs of a root that cannot be listed were stat'ed one by one"
         st = hub_sync.status(chip)
         assert not [rid for rid, e in by_run(chip).items() if e["flags"] & SOURCE_GONE]
         assert st["state"] == "degraded" and st["unreadable"], st
         assert hub_sync.require_ready(chip)["state"] == "degraded"
-        (tmp_path / "share_offline").rename(tmp_path / "share")
+        _rename(tmp_path / "share_offline", tmp_path / "share")
         sweep(chip)
         assert hub_sync.status(chip)["state"] == "ready"
 
@@ -1381,11 +1429,11 @@ class TestReviewSync:
             run(root, i, doc(float(i)))
         cs = hub_sync.open_chip(chip, [(str(root), "declared")], kick=False)
         with HubStore(chip) as st:
-            cs.run_slice(st, None)                         # listing + reads
-            cs.request(roots=[str(root)])
-            n0 = len(events(chip))
-            cs.run_slice(st, None, should_yield=lambda: True)
-            assert len(events(chip)) - n0 <= 1
+            assert cs.run_slice(st, None, should_yield=lambda: True)
+            assert len(cs.unread) == 5, "the slice went on past one item while a request waited"
+            while cs.run_slice(st, None):
+                pass
+        assert len(events(chip)) == 6
 
 
 class TestReviewRoots:
@@ -1435,6 +1483,35 @@ class TestReviewRoots:
         assert first == [(1, False), (2, False)], "the first open did not sync the project's own runs"
         assert [r[:2] for r in second] == [(1, False), (2, False)], "another project's runs were synced"
         assert all(Path(r[2]).parent.parent.name == "pa" for r in second)
+
+    def test_a_project_known_only_after_the_pin_is_synced(self, tmp_path, monkeypatch, any_project_env_chosen):
+        """Two projects share one state_path: activation cannot tell which one
+        it is (no scope) -- only /qualibrate/open's pin names it."""
+        cfg = tmp_path / ".qualibrate"
+        chip = tmp_path / "chips" / "shared"
+        chip.mkdir(parents=True)
+        (chip / "state.json").write_text(json.dumps(doc(1.0, name="chip-a")), encoding="utf-8")
+        (chip / "wiring.json").write_text(json.dumps(WIRING), encoding="utf-8")
+        storage = tmp_path / "datasets"
+        for p in ("pa", "pc"):
+            (cfg / "projects" / p).mkdir(parents=True)
+            (cfg / "projects" / p / "config.toml").write_text(f'[quam]\nstate_path = "{chip.as_posix()}"\n',
+                                                               encoding="utf-8")
+        (cfg / "config.toml").write_text(
+            f'[qualibrate]\nproject = "pa"\nversion = 5\n\n[qualibrate.storage]\nlocation = "{storage.as_posix()}"\n\n'
+            f'[quam]\nstate_path = "{chip.as_posix()}"\nversion = 3\n', encoding="utf-8")
+        monkeypatch.setenv("QUALIBRATE_CONFIG_FILE", str(cfg))
+        monkeypatch.delenv("QUALIBRATE_CONFIG_DIR", raising=False)
+        _qc._state_index_cache.clear()
+        run(storage / "pa", 1, doc(1.0, name="chip-a"))
+        from quam_state_manager.web.app import create_app
+        app = create_app(testing=True, instance_path=str(tmp_path / "_inst"))
+        app.config["HUB_SYNC_ON_OPEN"] = True
+        c = app.test_client()
+        assert c.post("/qualibrate/open", data={"project": "pa"}).status_code in (200, 302)
+        st = c.get("/hub/status").get_json()
+        assert [r["sources"] for r in st["roots"]] == [["project_storage"]], st["roots"]
+        assert [e["run_id"] for e in events(Path(st["chip_dir"]))] == [1]
 
     def test_project_run_root_and_sibling_folders(self, tmp_path):
         loc = tmp_path / "datasets"
@@ -1577,8 +1654,9 @@ class TestReviewCausal:
     def test_an_undo_with_an_earlier_clock_still_undoes(self, tmp_path, monkeypatch):
         chip = tmp_path / "chip"
         apply_id = self._sm(chip, monkeypatch, T0 + 50_000_000, doc(5.0), "b0", post="p1", units=["u1"])
-        self._sm(chip, monkeypatch, T0 + 40_000_000, doc(2.0), "p1", post="p2",
-                 undoes=[{"event": apply_id, "units": ["u1"]}], units=["u1"])   # another window, clock behind
+        # another window (its own working copy: an unrelated base), clock behind
+        self._sm(chip, monkeypatch, T0 + 40_000_000, doc(2.0), "w2", post="p2",
+                 undoes=[{"event": apply_id, "units": ["u1"]}], units=["u1"])
         with HubStore(chip) as st:
             rows = st.conn.execute("SELECT s.sm_id, e.flags FROM sm_events s JOIN events e USING(eid) "
                                    "ORDER BY e.ord").fetchall()
@@ -1588,7 +1666,8 @@ class TestReviewCausal:
     def test_a_write_after_a_backward_clock_step_derives_from_the_write_before(self, tmp_path, monkeypatch):
         chip = tmp_path / "chip"
         self._sm(chip, monkeypatch, T0 + 50_000_000, doc(5.0, T1=7e-6), "b0", post="p1")
-        sid = self._sm(chip, monkeypatch, T0 + 20_000_000, None, "p1", post="p2", derived=True)
+        # the clock stepped back; this window's base hash names nothing else
+        sid = self._sm(chip, monkeypatch, T0 + 20_000_000, None, "w1", post="p2", derived=True)
         with HubStore(chip) as st:
             eid = st.conn.execute("SELECT eid FROM sm_events WHERE sm_id=?", (sid,)).fetchone()[0]
             got = st.state_at(eid)
@@ -1601,10 +1680,15 @@ class TestReviewS4AndStore:
         h = hub.Hub.for_chip(chip)
         real = hub.Hub._append
 
+        seen = []
+
         def append_then_project(self, obj, *a, **k):
             out = real(self, obj, *a, **k)
             if "id" in obj:
                 hub.project(self)            # a projector reads the journal in the gap
+                with HubStore(chip) as st:
+                    seen.append(st.conn.execute("SELECT outcome FROM sm_events WHERE sm_id=?",
+                                                (obj["id"],)).fetchone())
             return out
         monkeypatch.setattr(hub.Hub, "_append", append_then_project)
         rec = h.record("sm_apply", "human", [], None, (b'{"qubits": {}}', b"{}"), "apply")
@@ -1612,6 +1696,7 @@ class TestReviewS4AndStore:
         rec.landed()
         with HubStore(chip) as st:
             row = st.conn.execute("SELECT outcome FROM sm_events WHERE sm_id=?", (rec.id,)).fetchone()
+        assert seen == [None], "the line was projected (as unknown) while its writer was still writing"
         assert row is not None and row[0] == "landed"
 
     def test_a_derived_write_is_computed_inside_its_transaction(self, tmp_path, monkeypatch):
@@ -1698,6 +1783,38 @@ class TestReviewS4AndStore:
         w.set_roots([str(root)])
         w.poll_once()
         assert ds == [] and w.tick == 0, "exactly as before: a root added to Datasets is a baseline"
+
+    def test_two_windows_split_and_flag_the_same_event(self, tmp_path):
+        a, b, chip = tmp_path / "a", tmp_path / "b", tmp_path / "chip"
+        f1 = run(a, 1, doc(1.0))
+        f2 = run(a, 2, doc(2.0))
+        shutil.copytree(f2, b / f2.parent.name / f2.name)
+
+        def window():
+            cs = hub_sync.ChipSync(chip)
+            cs.set_roots([(str(a), "declared"), (str(b), "declared")])
+            return cs
+
+        def full(cs):
+            cs.request(full=True)
+            with HubStore(chip) as st:
+                while cs.run_slice(st, None):
+                    pass
+        wa, wb = window(), window()
+        full(wa)
+        full(wb)
+        time.sleep(0.02)
+        (f2 / "quam_state" / "state.json").write_text(json.dumps(doc(7.0)), encoding="utf-8")
+        full(wa)                                     # A splits the rewritten copy off
+        shutil.rmtree(f2)
+        full(wb)                                     # B (its RAM still names the shared event) sees it gone
+        with HubStore(chip) as st:
+            roots = dict(st.conn.execute("SELECT root_id, path FROM roots").fetchall())
+            by_root = {Path(roots[r[1]]).name: r[0] for r in st.conn.execute(
+                "SELECT eid, root_id FROM locations WHERE rel_path LIKE '%#2_%'")}
+            flags = dict(st.conn.execute("SELECT eid, flags FROM events").fetchall())
+        assert flags[by_root["a"]] & SOURCE_GONE, "the deleted copy's own event is not flagged"
+        assert not flags[by_root["b"]] & SOURCE_GONE, "the copy still on disk was flagged gone"
 
     def test_two_windows_moving_and_flagging_agree(self, tmp_path):
         root, chip = tmp_path / "data", tmp_path / "chip"
