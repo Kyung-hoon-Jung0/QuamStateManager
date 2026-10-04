@@ -686,9 +686,13 @@ class HubStore:
 
     def renumber(self) -> None:
         """Ranks 1..N in the current order. Two steps, so the UNIQUE rank is
-        never violated mid-update."""
-        eids = [r[0] for r in self.conn.execute("SELECT eid FROM events ORDER BY ord")]
-        self.conn.execute("UPDATE events SET ord = -ord - 1")
+        never violated mid-update (SQLite checks it row by row). A run being
+        re-placed holds a negative rank (``-eid``, hub_sync's ``_detach``): it
+        is out of the order and keeps that rank, and the first step moves
+        every other rank below all of those (docs/275 review round)."""
+        eids = [r[0] for r in self.conn.execute("SELECT eid FROM events WHERE ord > 0 ORDER BY ord")]
+        below = self.conn.execute("SELECT COALESCE(MAX(eid), 0) FROM events").fetchone()[0]
+        self.conn.execute("UPDATE events SET ord = -ord - 2 - ? WHERE ord > 0", (below,))
         self.conn.executemany("UPDATE events SET ord=? WHERE eid=?",
                               [(float(i + 1), eid) for i, eid in enumerate(eids)])
 

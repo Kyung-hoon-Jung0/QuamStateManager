@@ -1,0 +1,553 @@
+[
+ {
+  "name": "storage_is_location",
+  "file": "quam_state_manager/core/hub_sync.py",
+  "pins": [
+   "tests/test_hub_sync.py::TestReviewRoots::test_project_run_root_and_sibling_folders",
+   "tests/test_hub_sync.py::TestReviewRoots::test_opening_a_project_syncs_its_own_runs_and_no_other_chips"
+  ],
+  "result": "RED",
+  "s": 2.5,
+  "first_failure": "E       AssertionError: assert '<path>' == '<path>'"
+ },
+ {
+  "name": "siblings_adopted",
+  "file": "quam_state_manager/core/hub_sync.py",
+  "pins": [
+   "tests/test_hub_sync.py::TestReviewRoots::test_project_run_root_and_sibling_folders",
+   "tests/test_hub_sync.py::TestReviewRoots::test_opening_a_project_syncs_its_own_runs_and_no_other_chips"
+  ],
+  "result": "RED",
+  "s": 4.1,
+  "first_failure": "E       AssertionError: assert [('<path>')] == [('<path>')]"
+ },
+ {
+  "name": "no_reregister_after_pin",
+  "file": "quam_state_manager/web/routes.py",
+  "pins": [
+   "tests/test_hub_sync.py::TestReviewRoots::test_a_project_known_only_after_the_pin_is_synced"
+  ],
+  "result": "RED",
+  "s": 6.8,
+  "first_failure": "E       AssertionError: []",
+  "earlier_sweep": "GREEN; pin sharpened"
+ },
+ {
+  "name": "route_storage_raw",
+  "file": "quam_state_manager/web/routes.py",
+  "pins": [
+   "tests/test_hub_sync.py::TestReviewRoots::test_opening_a_project_syncs_its_own_runs_and_no_other_chips"
+  ],
+  "result": "RED",
+  "s": 7.7,
+  "first_failure": "E       AssertionError: the first open did not sync the project's own runs"
+ },
+ {
+  "name": "failed_not_requeued",
+  "file": "quam_state_manager/core/hub_sync.py",
+  "pins": [
+   "tests/test_hub_sync.py::TestReviewSync::test_a_run_whose_ingestion_raised_once_is_retried"
+  ],
+  "result": "RED",
+  "s": 4.5,
+  "first_failure": "E       AssertionError: run 3 raised once and was never retried"
+ },
+ {
+  "name": "failed_day_recorded",
+  "file": "quam_state_manager/core/hub_sync.py",
+  "pins": [
+   "tests/test_hub_sync.py::TestReviewSync::test_a_day_whose_run_failed_is_listed_again"
+  ],
+  "result": "RED",
+  "s": 4.2,
+  "first_failure": "E       AssertionError: a day with a failed run is not marked listed"
+ },
+ {
+  "name": "status_ignores_failed",
+  "file": "quam_state_manager/core/hub_sync.py",
+  "pins": [
+   "tests/test_hub_sync.py::TestReviewSync::test_a_run_whose_ingestion_raised_once_is_retried"
+  ],
+  "result": "RED",
+  "s": 3.9,
+  "first_failure": "E       AssertionError: a failed run awaiting its retry is not 'ready'"
+ },
+ {
+  "name": "gave_up_is_ready",
+  "file": "quam_state_manager/core/hub_sync.py",
+  "pins": [
+   "tests/test_hub_sync.py::TestReviewSync::test_a_run_that_keeps_failing_is_reported_not_ready"
+  ],
+  "result": "RED",
+  "s": 4.0,
+  "first_failure": "E       AssertionError: {'state': 'ready', 'phase': 'ready', 'done': 5, 'total': 5, ...}"
+ },
+ {
+  "name": "retries_unbounded",
+  "file": "quam_state_manager/core/hub_sync.py",
+  "pins": [
+   "tests/test_hub_sync.py::TestReviewSync::test_a_run_that_keeps_failing_is_reported_not_ready"
+  ],
+  "result": "RED",
+  "s": 4.0,
+  "first_failure": "E       AssertionError: {'state': 'building', 'phase': 'ready', 'done': 5, 'total': 5, ...}"
+ },
+ {
+  "name": "ready_kept_on_pop",
+  "file": "quam_state_manager/core/hub_sync.py",
+  "pins": [
+   "tests/test_hub_sync.py::TestReviewSync::test_status_never_says_ready_while_a_moved_root_is_being_listed"
+  ],
+  "result": "RED",
+  "s": 4.9,
+  "first_failure": "E       AssertionError: ready while the moved root's new run was not in the ledger"
+ },
+ {
+  "name": "in_hand_not_counted",
+  "file": "quam_state_manager/core/hub_sync.py",
+  "pins": [
+   "tests/test_hub_sync.py::TestReviewSync::test_status_is_building_while_a_periodic_listing_ingests_what_it_found"
+  ],
+  "result": "RED",
+  "s": 5.0,
+  "first_failure": "E       AssertionError: {'state': 'ready', 'phase': 'ingesting', 'done': 1, 'total': 2, ...}"
+ },
+ {
+  "name": "derive_outside",
+  "file": "quam_state_manager/core/hub.py",
+  "pins": [
+   "tests/test_hub_sync.py::TestReviewS4AndStore::test_a_derived_write_is_computed_inside_its_transaction"
+  ],
+  "result": "RED",
+  "s": 3.6,
+  "first_failure": "E           ValueError: missing ledger blob 888220e6b5d93f444552de2267f1311638c79f59"
+ },
+ {
+  "name": "no_journal_floor",
+  "file": "quam_state_manager/core/hub_store.py",
+  "pins": [
+   "tests/test_hub_sync.py::TestReviewCausal::test_an_undo_with_an_earlier_clock_still_undoes",
+   "tests/test_hub_sync.py::TestReviewCausal::test_a_write_after_a_backward_clock_step_derives_from_the_write_before"
+  ],
+  "result": "RED",
+  "s": 3.8,
+  "first_failure": "E       AssertionError: journal order: the apply comes first"
+ },
+ {
+  "name": "no_base_floor",
+  "file": "quam_state_manager/core/hub_store.py",
+  "pins": [
+   "tests/test_hub_sync.py::TestReviewCausal::test_a_run_whose_clock_is_ahead_is_still_the_base_of_the_write"
+  ],
+  "result": "RED",
+  "s": 2.8,
+  "first_failure": "E       AssertionError: [('run', 1), ('sm_apply', None), ('run', 2)]"
+ },
+ {
+  "name": "no_ceiling",
+  "file": "quam_state_manager/core/hub_store.py",
+  "pins": [
+   "tests/test_hub_sync.py::TestReviewCausal::test_a_run_whose_clock_is_ahead_is_still_the_base_of_the_write"
+  ],
+  "result": "RED",
+  "s": 3.0,
+  "first_failure": "E       AssertionError: [('run', 1), ('sm_apply', None), ('run', 2)]"
+ },
+ {
+  "name": "no_run_chash",
+  "file": "quam_state_manager/core/hub_sync.py",
+  "pins": [
+   "tests/test_hub_sync.py::TestReviewCausal::test_a_run_whose_clock_is_ahead_is_still_the_base_of_the_write"
+  ],
+  "result": "RED",
+  "s": 2.7,
+  "first_failure": "E       AssertionError: [('run', 1), ('sm_apply', None), ('run', 2)]"
+ },
+ {
+  "name": "no_retry_later",
+  "file": "quam_state_manager/core/hub.py",
+  "pins": [
+   "tests/test_hub_sync.py::TestReviewSync::test_a_slice_that_raised_is_retried"
+  ],
+  "result": "RED",
+  "s": 22.8,
+  "first_failure": "E       AssertionError: one failed slice stopped the catch-up"
+ },
+ {
+  "name": "no_rescue",
+  "file": "quam_state_manager/core/hub_sync.py",
+  "pins": [
+   "tests/test_hub_sync.py::TestReviewSync::test_periodic_rescues_a_chip_with_work_and_no_slice_queued"
+  ],
+  "result": "RED",
+  "s": 3.4,
+  "first_failure": "E       assert [] == [1]"
+ },
+ {
+  "name": "fresh_ignored",
+  "file": "quam_state_manager/core/hub_sync.py",
+  "pins": [
+   "tests/test_hub_sync.py::TestReviewSync::test_a_late_copy_caught_mid_copy_is_not_a_final_error",
+   "tests/test_hub_sync.py::TestReviewSync::test_a_run_in_flight_in_the_same_second_as_the_previous_save_waits"
+  ],
+  "result": "RED",
+  "s": 3.9,
+  "first_failure": "E       AssertionError: a copy in progress was committed as a final error event"
+ },
+ {
+  "name": "completed_is_rewritten",
+  "file": "quam_state_manager/core/hub_sync.py",
+  "pins": [
+   "tests/test_hub_sync.py::TestReviewSync::test_an_error_event_that_gains_its_state_is_completed_not_rewritten"
+  ],
+  "result": "RED",
+  "s": 3.4,
+  "first_failure": "E       assert (None is None and not (128 & 128))"
+ },
+ {
+  "name": "live_identity_unnamed",
+  "file": "quam_state_manager/web/routes.py",
+  "pins": [
+   "tests/test_hub_sync.py::TestReviewIdentity::test_the_chips_own_history_is_not_flagged_foreign"
+  ],
+  "result": "RED",
+  "s": 7.8,
+  "first_failure": "E       assert [(1, True), (...e), (3, True)] == [(1, False), ...), (3, False)]"
+ },
+ {
+  "name": "same_name_never_differs",
+  "file": "quam_state_manager/core/hub_build.py",
+  "pins": [
+   "tests/test_hub_sync.py::TestReviewIdentity::test_two_chips_that_share_a_chip_name_are_told_apart"
+  ],
+  "result": "RED",
+  "s": 3.1,
+  "first_failure": "E       assert [(1, False), (2, False)] == [(1, False), (2, True)]"
+ },
+ {
+  "name": "gross_on_any_difference",
+  "file": "quam_state_manager/core/hub_build.py",
+  "pins": [
+   "tests/test_hub_sync.py::TestReviewIdentity::test_a_named_chip_that_gained_a_qubit_is_still_itself"
+  ],
+  "result": "RED",
+  "s": 3.3,
+  "first_failure": "E       assert not True"
+ },
+ {
+  "name": "decided_by_label",
+  "file": "quam_state_manager/web/routes.py",
+  "pins": [
+   "tests/test_hub_sync.py::TestReviewRoots::test_a_decided_same_root_must_be_named"
+  ],
+  "result": "RED",
+  "s": 7.9,
+  "first_failure": "E           AssertionError: assert [('<path>')] == []"
+ },
+ {
+  "name": "decided_root_ignored",
+  "file": "quam_state_manager/web/routes.py",
+  "pins": [
+   "tests/test_hub_sync.py::TestReviewRoots::test_a_decided_same_root_must_be_named"
+  ],
+  "result": "RED",
+  "s": 7.5,
+  "first_failure": "E           AssertionError: assert [] == ['chip_a_runs']"
+ },
+ {
+  "name": "unreadable_swept",
+  "file": "quam_state_manager/core/hub_sync.py",
+  "pins": [
+   "tests/test_hub_sync.py::TestReviewSync::test_an_unreachable_data_folder_is_not_every_run_deleted"
+  ],
+  "result": "RED",
+  "s": 2.9,
+  "first_failure": "E       AssertionError: the runs of a root that cannot be listed were stat'ed one by one"
+ },
+ {
+  "name": "unreadable_is_ready",
+  "file": "quam_state_manager/core/hub_sync.py",
+  "pins": [
+   "tests/test_hub_sync.py::TestReviewSync::test_an_unreachable_data_folder_is_not_every_run_deleted"
+  ],
+  "result": "RED",
+  "s": 3.0,
+  "first_failure": "E       AssertionError: {'state': 'ready', 'phase': 'ready', 'done': 0, 'total': 0, ...}"
+ },
+ {
+  "name": "gone_by_ram_eid",
+  "file": "quam_state_manager/core/hub_sync.py",
+  "pins": [
+   "tests/test_hub_sync.py::TestReviewS4AndStore::test_two_windows_split_and_flag_the_same_event"
+  ],
+  "result": "RED",
+  "s": 3.0,
+  "first_failure": "E       AssertionError: the deleted copy's own event is not flagged"
+ },
+ {
+  "name": "copy_rewrite_in_place",
+  "file": "quam_state_manager/core/hub_sync.py",
+  "pins": [
+   "tests/test_hub_sync.py::TestReviewSync::test_every_location_of_a_rewritten_copied_run_replays_its_own_bytes"
+  ],
+  "result": "RED",
+  "s": 3.7,
+  "first_failure": "E           AssertionError: the unchanged copy replays the rewritten copy's bytes"
+ },
+ {
+  "name": "move_takes_every_copy",
+  "file": "quam_state_manager/core/hub_sync.py",
+  "pins": [
+   "tests/test_hub_sync.py::TestReviewSync::test_a_move_keeps_the_other_locations"
+  ],
+  "result": "RED",
+  "s": 3.2,
+  "first_failure": "E       AssertionError: the copy that did not move lost its event or its instant"
+ },
+ {
+  "name": "held_identity_ignored",
+  "file": "quam_state_manager/core/hub_sync.py",
+  "pins": [
+   "tests/test_hub_sync.py::TestReviewSync::test_copies_that_move_to_one_instant_are_one_event_again"
+  ],
+  "result": "RED",
+  "s": 3.0,
+  "first_failure": "E       AssertionError: [{'eid': 3, 'kind': 'run', 't_utc_us': 1767265200000000, 't_src': '2026-01-01T11:00:00+00:00', ...}, {'eid': 2, 'kind': 'run', 't_utc_us': 1767268820000000, 't_src': '2026-01-01T12:00:20+00:00', ...}]"
+ },
+ {
+  "name": "unnamed_event_kept",
+  "file": "quam_state_manager/core/hub_sync.py",
+  "pins": [
+   "tests/test_hub_sync.py::TestReviewSync::test_copies_that_move_to_one_instant_are_one_event_again"
+  ],
+  "result": "RED",
+  "s": 3.5,
+  "first_failure": "E       AssertionError: [{'eid': 3, 'kind': 'run', 't_utc_us': 1767265200000000, 't_src': '2026-01-01T11:00:00+00:00', ...}, {'eid': 2, 'kind': 'run', 't_utc_us': 1767268820000000, 't_src': '2026-01-01T12:00:20+00:00', ...}]"
+ },
+ {
+  "name": "verify_one_location",
+  "file": "quam_state_manager/core/hub_sync.py",
+  "pins": [
+   "tests/test_hub_sync.py::TestReviewSync::test_verify_checks_every_location"
+  ],
+  "result": "RED",
+  "s": 3.7,
+  "first_failure": "E           AssertionError: a location whose bytes differ is not reported"
+ },
+ {
+  "name": "closed_chips_swept",
+  "file": "quam_state_manager/core/hub_sync.py",
+  "pins": [
+   "tests/test_hub_sync.py::TestReviewSync::test_only_the_open_chip_is_swept"
+  ],
+  "result": "RED",
+  "s": 3.4,
+  "first_failure": "E       AssertionError: a closed chip's ledger is opened and swept"
+ },
+ {
+  "name": "others_stay_active",
+  "file": "quam_state_manager/core/hub_sync.py",
+  "pins": [
+   "tests/test_hub_sync.py::TestReviewSync::test_only_the_open_chip_is_swept"
+  ],
+  "result": "RED",
+  "s": 3.9,
+  "first_failure": "E       AssertionError: a closed chip's ledger is opened and swept"
+ },
+ {
+  "name": "listing_unbounded",
+  "file": "quam_state_manager/core/hub_sync.py",
+  "pins": [
+   "tests/test_hub_sync.py::TestReviewSync::test_a_periodic_listing_stats_a_bounded_chunk_of_days"
+  ],
+  "result": "RED",
+  "s": 3.9,
+  "first_failure": "E           AssertionError: ['2026-01-01', '2026-01-02', '2026-01-03', '2026-01-04', '2026-01-05', '2026-01-06', ...]"
+ },
+ {
+  "name": "no_yield",
+  "file": "quam_state_manager/core/hub_sync.py",
+  "pins": [
+   "tests/test_hub_sync.py::TestReviewSync::test_a_slice_ends_after_one_item_when_a_request_waits"
+  ],
+  "result": "RED",
+  "s": 3.6,
+  "first_failure": "E           assert False"
+ },
+ {
+  "name": "no_reserve",
+  "file": "quam_state_manager/core/hub.py",
+  "pins": [
+   "tests/test_hub_sync.py::TestReviewS4AndStore::test_a_line_read_before_it_is_registered_is_not_unconfirmed"
+  ],
+  "result": "RED",
+  "s": 3.4,
+  "first_failure": "E       AssertionError: the line was projected (as unknown) while its writer was still writing"
+ },
+ {
+  "name": "newest_by_string",
+  "file": "quam_state_manager/core/hub_sync.py",
+  "pins": [
+   "tests/test_hub_sync.py::TestReviewSync::test_a_light_tick_stat_checks_the_newest_runs"
+  ],
+  "result": "RED",
+  "s": 4.4,
+  "first_failure": "E       AssertionError: the newest run's rewrite was not seen on the light tick"
+ },
+ {
+  "name": "move_new_eid",
+  "file": "quam_state_manager/core/hub_sync.py",
+  "pins": [
+   "tests/test_hub_sync.py::TestReviewSync::test_repairing_a_corrupt_node_keeps_the_event_and_is_not_a_rewrite"
+  ],
+  "result": "RED",
+  "s": 3.0,
+  "first_failure": "E       AssertionError: the repaired run became a new event"
+ },
+ {
+  "name": "overlap_only_good",
+  "file": "quam_state_manager/core/hub_sync.py",
+  "pins": [
+   "tests/test_hub_sync.py::TestReviewSync::test_overlap_flag_of_a_stateless_run_does_not_depend_on_landing_order"
+  ],
+  "result": "RED",
+  "s": 3.4,
+  "first_failure": "E       AssertionError: assert {'run_first':...first': False} == {'run_first':..._first': True}"
+ },
+ {
+  "name": "vote_on_read",
+  "file": "quam_state_manager/core/hub_sync.py",
+  "pins": [
+   "tests/test_hub_sync.py::TestReviewSync::test_a_deferred_run_is_voted_once"
+  ],
+  "result": "RED",
+  "s": 3.5,
+  "first_failure": "E       AssertionError: assert 23 == 3"
+ },
+ {
+  "name": "error_base_stale",
+  "file": "quam_state_manager/core/hub_store.py",
+  "pins": [
+   "tests/test_hub_sync.py::TestReviewSync::test_an_error_events_base_hash_follows_a_late_insertion_like_the_offline_build"
+  ],
+  "result": "RED",
+  "s": 2.6,
+  "first_failure": "E       AssertionError: assert {1: None, 2: ...625ca916fd40'} == {1: None, 2: ...625ca916fd40'}"
+ },
+ {
+  "name": "resolve_raises",
+  "file": "quam_state_manager/core/hub_sync.py",
+  "pins": [
+   "tests/test_hub_sync.py::TestReviewSync::test_a_folder_that_vanishes_before_it_is_resolved_does_not_wedge_the_sync"
+  ],
+  "result": "RED",
+  "s": 2.7,
+  "first_failure": "E       FileNotFoundError: [WinError 2] The system cannot find the file specified: '<path>"
+ },
+ {
+  "name": "open_writes_meta",
+  "file": "quam_state_manager/core/hub_store.py",
+  "pins": [
+   "tests/test_hub_sync.py::TestReviewS4AndStore::test_opening_a_ledger_takes_no_write_lock"
+  ],
+  "result": "RED",
+  "s": 6.3,
+  "first_failure": "E       AssertionError: opening the ledger waited 3.1 s for another window's write"
+ },
+ {
+  "name": "schema_every_open",
+  "file": "quam_state_manager/core/hub_store.py",
+  "pins": [
+   "tests/test_hub_sync.py::TestReviewS4AndStore::test_opening_a_ledger_takes_no_write_lock"
+  ],
+  "result": "RED",
+  "s": 6.1,
+  "first_failure": "E       AssertionError: opening the ledger waited 3.0 s for another window's write"
+ },
+ {
+  "name": "plain_open",
+  "file": "quam_state_manager/core/hub_build.py",
+  "pins": [
+   "tests/test_hub_sync.py::TestReviewS4AndStore::test_run_files_are_read_through_a_share_delete_handle"
+  ],
+  "result": "RED",
+  "s": 2.9,
+  "first_failure": "E       AssertionError: assert {'node.json',...'wiring.json'} <= set()"
+ },
+ {
+  "name": "shared_baseline",
+  "file": "quam_state_manager/core/run_watch.py",
+  "pins": [
+   "tests/test_hub_sync.py::TestReviewS4AndStore::test_a_root_the_hub_saw_first_is_baselined_for_the_datasets_page"
+  ],
+  "result": "RED",
+  "s": 3.3,
+  "first_failure": "E       AssertionError: []",
+  "earlier_sweep": "GREEN; pin sharpened"
+ },
+ {
+  "name": "live_copies_all",
+  "file": "quam_state_manager/core/hub_sync.py",
+  "pins": [
+   "tests/test_hub_sync.py::TestReviewSync::test_a_run_whose_every_copy_is_deleted_is_gone",
+   "tests/test_hub_sync.py::TestReviewSync::test_every_copy_deleted_before_one_sweep_is_gone",
+   "tests/test_hub_sync.py::TestReviewSync::test_a_copy_that_lost_its_state_while_another_holds_it_is_not_gone",
+   "tests/test_hub_sync.py::TestReviewSync::test_rewriting_the_last_copy_on_disk_is_a_rewrite_not_a_split",
+   "tests/test_hub_sync.py::TestReviewSync::test_a_live_copy_is_one_whose_watermark_still_has_its_state"
+  ],
+  "result": "RED",
+  "s": 3.7,
+  "first_failure": "E       AssertionError: every copy is deleted, yet the event is not SOURCE_GONE"
+ },
+ {
+  "name": "live_copies_no_dash",
+  "file": "quam_state_manager/core/hub_sync.py",
+  "pins": [
+   "tests/test_hub_sync.py::TestReviewSync::test_a_live_copy_is_one_whose_watermark_still_has_its_state"
+  ],
+  "result": "RED",
+  "s": 3.5,
+  "first_failure": "E               AssertionError: -|10:1|20:2"
+ },
+ {
+  "name": "flag_gone_counts_every_location",
+  "file": "quam_state_manager/core/hub_sync.py",
+  "pins": [
+   "tests/test_hub_sync.py::TestReviewSync::test_a_run_whose_every_copy_is_deleted_is_gone",
+   "tests/test_hub_sync.py::TestReviewSync::test_every_copy_deleted_before_one_sweep_is_gone"
+  ],
+  "result": "RED",
+  "s": 3.5,
+  "first_failure": "E       AssertionError: every copy is deleted, yet the event is not SOURCE_GONE"
+ },
+ {
+  "name": "reread_gone_ignores_copies",
+  "file": "quam_state_manager/core/hub_sync.py",
+  "pins": [
+   "tests/test_hub_sync.py::TestReviewSync::test_a_copy_reread_without_its_state_is_not_gone_while_another_holds_it"
+  ],
+  "result": "RED",
+  "s": 4.3,
+  "first_failure": "E       AssertionError: the other copy still holds the saved state"
+ },
+ {
+  "name": "split_counts_gone_copies",
+  "file": "quam_state_manager/core/hub_sync.py",
+  "pins": [
+   "tests/test_hub_sync.py::TestReviewSync::test_rewriting_the_last_copy_on_disk_is_a_rewrite_not_a_split"
+  ],
+  "result": "RED",
+  "s": 2.9,
+  "first_failure": "E       AssertionError: an event that only a deleted folder names is not flagged SOURCE_GONE"
+ },
+ {
+  "name": "renumber_collides_with_a_move",
+  "file": "quam_state_manager/core/hub_store.py",
+  "pins": [
+   "tests/test_hub_sync.py::TestReviewSync::test_a_move_that_renumbers_the_ledger_lands"
+  ],
+  "result": "RED",
+  "s": 3.0,
+  "first_failure": "E       AssertionError: assert not {'2026-01-01/#6_scan_120100': [35307.046, 1, 'IntegrityError: UNIQUE constraint failed: events.ord']}"
+ }
+]

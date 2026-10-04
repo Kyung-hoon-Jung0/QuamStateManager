@@ -831,9 +831,9 @@ class ChipSync:
             loc = store.conn.execute("SELECT eid FROM locations WHERE root_id=? AND rel_path=?",
                                      (rs.root_id, rel)).fetchone()
             if loc is not None:
-                others = store.conn.execute("SELECT COUNT(*) FROM locations WHERE eid=? AND NOT "
-                                            "(root_id=? AND rel_path=?)", (loc[0], rs.root_id, rel)).fetchone()[0]
-                if not others:
+                # the event is gone when no OTHER copy still holds it (a copy
+                # deleted earlier keeps its location row, marked gone)
+                if not _live_copies(store, loc[0], rs.root_id, rel):
                     store.conn.execute("UPDATE events SET flags = flags | ? WHERE eid=?", (SOURCE_GONE, loc[0]))
                 entry[0] = loc[0]
             store.conn.execute("INSERT OR REPLACE INTO run_files(root_id,rel_path,sig,rewritten_us) "
@@ -859,8 +859,11 @@ class ChipSync:
                     _put_sig(store, rs.root_id, cand.rel, cand.sig, None)
                     return "unchanged"
                 if not state_file.is_file():
-                    # the saved state is gone: the ledger keeps what it ingested
-                    store.conn.execute("UPDATE events SET flags = flags | ? WHERE eid=?", (SOURCE_GONE, ev["eid"]))
+                    # the saved state is gone: the ledger keeps what it
+                    # ingested; the event is gone when no other copy holds it
+                    if not _live_copies(store, ev["eid"], rs.root_id, cand.rel):
+                        store.conn.execute("UPDATE events SET flags = flags | ? WHERE eid=?",
+                                           (SOURCE_GONE, ev["eid"]))
                     _put_sig(store, rs.root_id, cand.rel, cand.sig, None)
                     return "gone"
                 # being rewritten right now (torn or changing): no new
@@ -878,19 +881,37 @@ class ChipSync:
                 _reprove(store, ev, cand.run.node)
                 _put_sig(store, rs.root_id, cand.rel, cand.sig, None)
                 return "unchanged"
-            others = store.conn.execute("SELECT COUNT(*) FROM locations WHERE eid=? AND NOT "
-                                        "(root_id=? AND rel_path=?)", (ev["eid"], rs.root_id, cand.rel)).fetchone()[0]
-            if others and (ev["error"] is not None or digest != ev["state_hash"]):
-                # a COPY of this run now holds other bytes than the other
-                # copies: this folder leaves the shared event (which keeps
-                # replaying the bytes the other copies still hold) and is
-                # ingested as what it holds now -- every location replays its
-                # own bytes (P2: copies). Copies whose bytes agree stay one
-                # event: a node-only move below takes every location along.
+            others = _live_copies(store, ev["eid"], rs.root_id, cand.rel)
+            if others and (ev["error"] is not None or digest != ev["state_hash"] or not same_place):
+                # a COPY of this run now holds other bytes, or its node.json
+                # names another instant, than the copies left on the event:
+                # this folder leaves the shared event (which keeps what the
+                # other copies hold) and is ingested as what it holds now. One
+                # event per (instant, run, bytes) -- what a build from the
+                # files gives; every location replays its own bytes and sits
+                # at its own instant (P2: copies)
                 store.conn.execute("DELETE FROM locations WHERE root_id=? AND rel_path=?", (rs.root_id, cand.rel))
                 attach_run(store, cand, raw, digest, None, src=ev["src"] or "sm_sync", in_txn=True)
                 return "split"
             if not same_place:
+                held = store.conn.execute(
+                    "SELECT eid FROM events WHERE kind='run' AND t_utc_us=? AND run_id=? AND experiment=? "
+                    "AND state_hash IS ? AND eid<>?",
+                    (cand.run.instant, cand.run.run_id, cand.run.experiment, digest, ev["eid"])).fetchone()
+                if held is not None:
+                    # the folder now names a run the ledger already holds (a
+                    # copy that moved there first): it becomes that run's
+                    # location; an event no folder names any more is removed,
+                    # one that only deleted copies name is gone
+                    store.conn.execute("DELETE FROM locations WHERE root_id=? AND rel_path=?",
+                                       (rs.root_id, cand.rel))
+                    if not store.conn.execute("SELECT 1 FROM locations WHERE eid=?", (ev["eid"],)).fetchone():
+                        remove_event(store, ev)
+                    else:
+                        store.conn.execute("UPDATE events SET flags = flags | ? WHERE eid=?",
+                                           (SOURCE_GONE, ev["eid"]))
+                    attach_run(store, cand, raw, digest, None, src=ev["src"] or "sm_sync", in_txn=True)
+                    return "split"
                 # node.json now names another instant: the run moves (its
                 # neighbours on both sides are repaired) and keeps its eid;
                 # it is REWRITTEN only when its saved bytes changed too
@@ -945,6 +966,16 @@ def _put_sig(store, root_id, rel, sig, rewritten_us) -> None:
         "ON CONFLICT(root_id,rel_path) DO UPDATE SET sig=excluded.sig, "
         "rewritten_us=COALESCE(excluded.rewritten_us, run_files.rewritten_us)",
         (root_id, rel, sig, rewritten_us))
+
+
+def _live_copies(store, eid: int, root_id: int, rel: str) -> int:
+    """The OTHER locations of *eid* whose saved state is still on disk as far
+    as the ledger knows: a copy marked gone, or whose state file went, no
+    longer holds the event's bytes (docs/275 review: copies)."""
+    return store.conn.execute(
+        "SELECT COUNT(*) FROM locations l LEFT JOIN run_files f ON f.root_id=l.root_id AND f.rel_path=l.rel_path "
+        "WHERE l.eid=? AND NOT (l.root_id=? AND l.rel_path=?) "
+        "AND NOT (COALESCE(f.sig,'')='gone' OR COALESCE(f.sig,'') LIKE '-|%')", (eid, root_id, rel)).fetchone()[0]
 
 
 def _chip(store) -> dict | None:

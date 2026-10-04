@@ -1193,22 +1193,37 @@ class TestReviewSync:
         assert sum(rs.votes.values()) == before == 1
 
     # -- copies ------------------------------------------------------------------------
+    @staticmethod
+    def _locs_by_root(chip) -> dict:
+        with HubStore(chip) as st:
+            return {Path(r[0]).name: (r[1], r[2]) for r in st.conn.execute(
+                "SELECT r.path, l.eid, e.t_utc_us FROM locations l JOIN roots r USING(root_id) "
+                "JOIN events e USING(eid) WHERE l.rel_path LIKE '%#2_%'")}
+
     def test_a_move_keeps_the_other_locations(self, tmp_path):
+        """A copy whose node.json now names another instant leaves the shared
+        event; the other copy keeps its event, its location and its instant
+        (one event per instant, run and bytes -- what a build from the files
+        gives)."""
         a, b, chip = tmp_path / "a", tmp_path / "b", tmp_path / "chip"
         run(a, 1, doc(1.0))
         f2 = run(a, 2, doc(2.0))
         shutil.copytree(f2, b / f2.parent.name / f2.name)
         sync(chip, a, b)
+        before = self._locs_by_root(chip)
+        assert before["a"] == before["b"]
         node = json.loads((f2 / "node.json").read_text())
         node["created_at"] = "2026-01-01T11:00:00+00:00"
         (f2 / "node.json").write_text(json.dumps(node), encoding="utf-8")
         sweep(chip)
-        assert len(events(chip)) == 2
+        after = self._locs_by_root(chip)
+        assert after["b"] == before["b"], "the copy that did not move lost its event or its instant"
+        assert after["a"][0] != before["a"][0] and after["a"][1] == T0 - 3600 * 10**6, after
         with HubStore(chip) as st:
             assert st.conn.execute("SELECT COUNT(*) FROM locations").fetchone()[0] == 3
         check(chip)
 
-    def test_a_move_then_restart_does_not_duplicate_the_run(self, tmp_path):
+    def test_a_move_of_one_copy_is_the_same_ledger_after_a_restart(self, tmp_path):
         a, b, chip = tmp_path / "a", tmp_path / "b", tmp_path / "chip"
         run(a, 1, doc(1.0))
         f2 = run(a, 2, doc(2.0))
@@ -1218,9 +1233,32 @@ class TestReviewSync:
         node["created_at"] = "2026-01-01T11:00:00+00:00"
         (f2 / "node.json").write_text(json.dumps(node), encoding="utf-8")
         sweep(chip)
+        mid = [(e["eid"], e["run_id"], e["t_utc_us"]) for e in events(chip)]
         _restart()
         sync(chip, a, b)
-        assert sum(e["run_id"] == 2 for e in events(chip)) == 1, "run #2 became two events"
+        assert [(e["eid"], e["run_id"], e["t_utc_us"]) for e in events(chip)] == mid, "a restart changed the ledger"
+        check(chip)
+
+    def test_copies_that_move_to_one_instant_are_one_event_again(self, tmp_path):
+        """The second copy to move joins the event the first one made; the
+        event no folder names any more is removed (one event per instant, run
+        and bytes, as a build from the files gives)."""
+        a, b, chip = tmp_path / "a", tmp_path / "b", tmp_path / "chip"
+        run(a, 1, doc(1.0))
+        f2 = run(a, 2, doc(2.0))
+        g2 = b / f2.parent.name / f2.name
+        shutil.copytree(f2, g2)
+        sync(chip, a, b)
+        for folder in (g2, f2):
+            node = json.loads((folder / "node.json").read_text())
+            node["created_at"] = "2026-01-01T11:00:00+00:00"
+            time.sleep(0.01)
+            (folder / "node.json").write_text(json.dumps(node), encoding="utf-8")
+            sweep(chip)
+        twos = [e for e in events(chip) if e["run_id"] == 2]
+        assert [e["t_utc_us"] for e in twos] == [T0 - 3600 * 10**6], twos
+        locs = self._locs_by_root(chip)
+        assert locs["a"] == locs["b"], locs
         check(chip)
 
     def test_every_location_of_a_rewritten_copied_run_replays_its_own_bytes(self, tmp_path):
@@ -1254,6 +1292,100 @@ class TestReviewSync:
                                                                                  encoding="utf-8")
         with HubStore(chip) as st:
             assert hub_sync.verify(st)["problems"], "a location whose bytes differ is not reported"
+
+    @staticmethod
+    def _two_copies(tmp_path):
+        a, b, chip = tmp_path / "a", tmp_path / "b", tmp_path / "chip"
+        run(a, 1, doc(1.0))
+        f2 = run(a, 2, doc(2.0))
+        run(a, 3, doc(3.0))
+        c2 = b / f2.parent.name / f2.name
+        shutil.copytree(f2, c2)
+        age(a)
+        age(b)
+        sync(chip, a, b)
+        with HubStore(chip) as st:
+            shared = st.conn.execute("SELECT eid FROM locations GROUP BY eid HAVING COUNT(*) > 1").fetchall()
+        assert len(shared) == 1
+        return chip, f2, c2, shared[0][0]
+
+    @staticmethod
+    def _gone(chip, eid) -> bool:
+        with HubStore(chip) as st:
+            return bool(st.conn.execute("SELECT flags FROM events WHERE eid=?", (eid,)).fetchone()[0] & SOURCE_GONE)
+
+    def test_a_run_whose_every_copy_is_deleted_is_gone(self, tmp_path):
+        """A copy deleted earlier keeps its location row: the event is gone
+        when no copy still holds it, not when it has one location left."""
+        chip, f2, c2, eid = self._two_copies(tmp_path)
+        shutil.rmtree(f2)
+        sweep(chip)
+        assert not self._gone(chip, eid), "one copy remains"
+        shutil.rmtree(c2)
+        sweep(chip)
+        assert self._gone(chip, eid), "every copy is deleted, yet the event is not SOURCE_GONE"
+
+    def test_every_copy_deleted_before_one_sweep_is_gone(self, tmp_path):
+        chip, f2, c2, eid = self._two_copies(tmp_path)
+        shutil.rmtree(f2)
+        shutil.rmtree(c2)
+        sweep(chip)
+        assert self._gone(chip, eid), "every copy is deleted, yet the event is not SOURCE_GONE"
+
+    def test_a_copy_that_lost_its_state_while_another_holds_it_is_not_gone(self, tmp_path):
+        chip, f2, c2, eid = self._two_copies(tmp_path)
+        (f2 / "quam_state" / "state.json").unlink()
+        age(f2)
+        sweep(chip)
+        assert not self._gone(chip, eid), "the other copy still holds the saved state"
+        (c2 / "quam_state" / "state.json").unlink()
+        age(c2)
+        sweep(chip)
+        assert self._gone(chip, eid), "no copy holds the saved state any more"
+
+    def test_a_copy_reread_without_its_state_is_not_gone_while_another_holds_it(self, tmp_path, monkeypatch):
+        """The re-read path (the state went between the stat and the read)
+        follows the same rule as the sweep's."""
+        chip, f2, c2, eid = self._two_copies(tmp_path)
+        (f2 / "quam_state" / "state.json").unlink()
+        age(f2)
+        real = hub_sync.file_sig
+        monkeypatch.setattr(hub_sync, "file_sig",
+                            lambda folder: "1:1|2:2|3:3" if Path(folder) == f2 else real(folder))
+        sweep(chip)
+        assert hub_sync.sync_for(chip).counts["gone"] >= 1, "the re-read path was not taken"
+        assert not self._gone(chip, eid), "the other copy still holds the saved state"
+
+    def test_a_live_copy_is_one_whose_watermark_still_has_its_state(self, tmp_path):
+        """``_live_copies`` reads the watermark both ways a copy can lose its
+        state: marked gone by the sweep, or stored with no state file (``-``)."""
+        chip, f2, c2, eid = self._two_copies(tmp_path)
+        with HubStore(chip) as st:
+            (ra, rel_a), (rb, rel_b) = st.conn.execute(
+                "SELECT root_id, rel_path FROM locations WHERE eid=? ORDER BY root_id", (eid,)).fetchall()
+            assert hub_sync._live_copies(st, eid, ra, rel_a) == 1
+            for sig in ("gone", "-|10:1|20:2"):
+                st.conn.execute("UPDATE run_files SET sig=? WHERE root_id=? AND rel_path=?", (sig, rb, rel_b))
+                assert hub_sync._live_copies(st, eid, ra, rel_a) == 0, sig
+            st.conn.rollback()
+
+    def test_rewriting_the_last_copy_on_disk_is_a_rewrite_not_a_split(self, tmp_path):
+        """With the other copy deleted, a rewrite of the one left is the
+        event's own rewrite; splitting it off would leave an event that only a
+        deleted folder names, unflagged."""
+        chip, f2, c2, eid = self._two_copies(tmp_path)
+        shutil.rmtree(f2)
+        sweep(chip)
+        (c2 / "quam_state" / "state.json").write_text(json.dumps(doc(7.0)), encoding="utf-8")
+        age(c2)
+        sweep(chip)
+        with HubStore(chip) as st:
+            orphans = st.conn.execute(
+                "SELECT e.eid FROM events e WHERE e.kind='run' AND e.flags & ? = 0 AND NOT EXISTS ("
+                "SELECT 1 FROM locations l JOIN run_files f ON f.root_id=l.root_id AND f.rel_path=l.rel_path "
+                "WHERE l.eid=e.eid AND f.sig<>'gone')", (SOURCE_GONE,)).fetchall()
+        assert orphans == [], "an event that only a deleted folder names is not flagged SOURCE_GONE"
+        check(chip)
 
     # -- in flight ---------------------------------------------------------------------
     def test_a_late_copy_caught_mid_copy_is_not_a_final_error(self, tmp_path, clock):
@@ -1314,6 +1446,28 @@ class TestReviewSync:
         r2b = by_run(chip)[2]
         assert r2b["eid"] == r2["eid"], "the repaired run became a new event"
         assert not r2b["flags"] & (REWRITTEN | NODE_UNREADABLE)
+        check(chip)
+
+    def test_a_move_that_renumbers_the_ledger_lands(self, tmp_path, monkeypatch):
+        """A run being re-placed holds a negative rank (-eid) while its new
+        place is found; a renumber in that window must not collide with it
+        (SQLite checks UNIQUE row by row: rank 5 negated is -6, the rank of
+        the moved eid 6). Found by the fuzz with a small ORD_EPS."""
+        monkeypatch.setattr("quam_state_manager.core.hub_store.ORD_EPS", 0.6)
+        root, chip = tmp_path / "data", tmp_path / "chip"
+        folders = [run(root, i, doc(float(i)), t_us=T0 + i * 10_000_000) for i in range(1, 7)]
+        sync(chip, root)
+        age(run(root, 7, doc(7.0), t_us=T0 + 15_000_000))        # rank 1.5, between #1 and #2
+        sweep(chip)
+        f6 = folders[5]
+        node = json.loads((f6 / "node.json").read_text())
+        node["created_at"] = iso(T0 + 12_000_000)                 # between #1 (1.0) and #7 (1.5): renumbers
+        (f6 / "node.json").write_text(json.dumps(node), encoding="utf-8")
+        sweep(chip)
+        assert not hub_sync.sync_for(chip).roots[next(iter(hub_sync.sync_for(chip).roots))].failed
+        r6 = by_run(chip)[6]
+        assert r6["t_utc_us"] == T0 + 12_000_000, "the move failed and the run stayed at its old instant"
+        assert [e["run_id"] for e in events(chip)] == [1, 6, 7, 2, 3, 4, 5]
         check(chip)
 
     def test_an_error_events_base_hash_follows_a_late_insertion_like_the_offline_build(self, tmp_path):
@@ -1493,13 +1647,17 @@ class TestReviewRoots:
         (chip / "state.json").write_text(json.dumps(doc(1.0, name="chip-a")), encoding="utf-8")
         (chip / "wiring.json").write_text(json.dumps(WIRING), encoding="utf-8")
         storage = tmp_path / "datasets"
-        for p in ("pa", "pc"):
+        other = tmp_path / "chips" / "other"
+        other.mkdir(parents=True)
+        for p, sp in (("pa", chip), ("pc", chip), ("pz", other)):
             (cfg / "projects" / p).mkdir(parents=True)
-            (cfg / "projects" / p / "config.toml").write_text(f'[quam]\nstate_path = "{chip.as_posix()}"\n',
+            (cfg / "projects" / p / "config.toml").write_text(f'[quam]\nstate_path = "{sp.as_posix()}"\n',
                                                                encoding="utf-8")
+        # qualibrate's ACTIVE project is a third one: the derive at activation
+        # sees two matches and refuses to guess, so no scope is known yet
         (cfg / "config.toml").write_text(
-            f'[qualibrate]\nproject = "pa"\nversion = 5\n\n[qualibrate.storage]\nlocation = "{storage.as_posix()}"\n\n'
-            f'[quam]\nstate_path = "{chip.as_posix()}"\nversion = 3\n', encoding="utf-8")
+            f'[qualibrate]\nproject = "pz"\nversion = 5\n\n[qualibrate.storage]\nlocation = "{storage.as_posix()}"\n\n'
+            f'[quam]\nstate_path = "{other.as_posix()}"\nversion = 3\n', encoding="utf-8")
         monkeypatch.setenv("QUALIBRATE_CONFIG_FILE", str(cfg))
         monkeypatch.delenv("QUALIBRATE_CONFIG_DIR", raising=False)
         _qc._state_index_cache.clear()
@@ -1783,6 +1941,16 @@ class TestReviewS4AndStore:
         w.set_roots([str(root)])
         w.poll_once()
         assert ds == [] and w.tick == 0, "exactly as before: a root added to Datasets is a baseline"
+        # ... taken when Datasets adds it, not at the thread's next look: a run
+        # landing in between is announced, exactly as for a root the hub never saw
+        root2 = tmp_path / "data2"
+        run(root2, 1, doc(1.0))
+        w.watch("hub", [str(root), str(root2)])
+        w.poll_once()
+        w.set_roots([str(root), str(root2)])
+        run(root2, 2, doc(2.0))
+        w.poll_once()
+        assert ds == [[str(root2)]] and w.tick == 1, ds
 
     def test_two_windows_split_and_flag_the_same_event(self, tmp_path):
         a, b, chip = tmp_path / "a", tmp_path / "b", tmp_path / "chip"
