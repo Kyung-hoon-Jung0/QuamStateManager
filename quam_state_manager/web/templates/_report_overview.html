@@ -1,0 +1,17 @@
+{# docs/277: the Overview section of the shareable report. The contents list
+   is filled by the page as boxes change and REWRITTEN by the server's
+   finalize step from the sections the file actually holds. #}
+    <h1>{{ chip_name }}</h1>
+    <p class="rep-meta">Generated {{ generated }} &middot; time zone
+       {% if zone %}<b>{{ zone }}</b>{% else %}<b>this PC's zone</b> (no project zone is set){% endif %}
+       &middot; QUAM State Manager {{ version }}<br>
+       Source <code>{{ folder }}</code><br>
+       {{ n_qubits }} qubits &middot; {{ n_pairs }} pairs
+       &middot; {{ n_res }} resonators
+       &middot; {{ n_flux }} flux lines
+       &middot; {{ n_couplers }} couplers
+       {%- if n_qdac %} &middot; {{ n_qdac }} QDAC-biased{% endif %}</p>
+    <div class="rep-meta rep-contents-line">This file contains:
+       <ul class="rep-contents" data-rep-contents>{% for s in sections if s.available and s.default %}<li>{{ s.label }}</li>{% endfor %}</ul></div>
+    <p class="rep-meta">Network addresses and local folder paths are
+       {% if redact %}<b>hidden</b> (shown as [hidden]){% else %}<b>shown as stored</b>{% endif %}.</p>

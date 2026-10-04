@@ -1,0 +1,41 @@
+{# docs/277: the /zline page in the shareable report -- its table (the rows
+   _zline_rows builds for the page) and, per distinct filter set, the step
+   response /zline/data computes (QOP >= 3.5 sum model, the page default). #}
+    <h2>Z-line distortion ({{ rows | length }} flux line{{ '' if rows | length == 1 else 's' }})</h2>
+    <p class="rep-cap">What each port's output filters do to a flux step: the
+       exponential (IIR) and FIR filters applied together at 2&nbsp;GSa/s, before
+       the DC offset. A model of the documented filter, not a replay of the
+       firmware. Lines whose ports carry the same filters share one figure.</p>
+    {% if rows %}
+    <table class="rep-wide">
+        <thead><tr><th>Line</th><th>Port</th><th>Exponentials</th><th>FIR taps</th>
+            <th>FIR sum</th><th>QOP &ge; 3.5 / &le; 3.4</th><th>Notes</th></tr></thead>
+        <tbody>
+        {% for r in rows %}
+        <tr>
+            <td class="rep-id"><strong>{{ r.id }}</strong>{% if r.kind == 'coupler' %} <span class="rep-note">coupler</span>{% endif %}</td>
+            <td>{% if r.port_path %}<code>{{ r.port_path | replace('ports.analog_outputs.', '') | replace('.', '/') }}</code>{% else %}-{% endif %}</td>
+            <td>{{ r.n_exp if r.n_exp is not none else '-' }}</td>
+            <td>{{ r.n_taps if r.n_taps is not none else '-' }}</td>
+            <td>{{ '%.4f' | format(r.ff_sum) if r.ff_sum is not none else '-' }}</td>
+            <td>{%- if r.models -%}{%- for m in ('sum', 'cascade') -%}{{ r.models.get(m, 'ok') }}{% if not loop.last %} / {% endif %}{%- endfor -%}{%- else -%}-{%- endif -%}</td>
+            <td>{%- set shown = r.notes | selectattr('level', 'ne', 'info') | list -%}
+                {%- if shown -%}{{ shown[0].text }}{% if shown | length > 1 %} <span class="rep-note">+{{ shown | length - 1 }} more</span>{% endif %}
+                {%- else -%}ok{%- endif -%}</td>
+        </tr>
+        {% endfor %}
+        </tbody>
+    </table>
+    {% for f in figs %}
+    <figure class="rep-fig">
+        <figcaption>Step response &mdash; {{ f.lines | join(', ') }}
+            <span class="rep-note">&middot; port{{ '' if f.ports | length == 1 else 's' }} {{ f.ports | join(', ') }}</span></figcaption>
+        {% for n in f.notes %}<p class="rep-note">{{ 'not drawn' if n.level == 'block' else 'check' }}: {{ n.text }}</p>{% endfor %}
+        {% if f.svg %}{{ f.svg | safe }}{{ f.legend | safe }}
+        <p class="rep-note rep-stats">{{ f.stats }}</p>{% endif %}
+    </figure>
+    {% endfor %}
+    {% else %}
+    <p class="rep-note">No flux lines on this chip &mdash; no qubit has a <code>z</code>
+       channel and no pair a <code>coupler</code> with an <code>opx_output</code>.</p>
+    {% endif %}

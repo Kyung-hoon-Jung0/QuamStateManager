@@ -14227,32 +14227,293 @@ def comparison_table():
 
 @bp.route("/chip-status/report")
 def chip_status_report():
-    """docs/126 #21 — the printable chip report (customer request).
+    """docs/126 #21, docs/188, docs/277 -- the shareable chip report.
 
-    A STANDALONE page (no app chrome): header, the component-map drawing, and
-    read-only tables of all five component views, unpaginated. Served for
-    viewing/printing; its own toolbar offers a self-contained .html download
-    (the client serializes the DOM after the map has drawn, inlining the
-    stylesheet, so the file opens anywhere with the SVG baked in). Data comes
-    from the same QueryEngine the live pages use — nothing is recomputed or
-    approximated for the report."""
+    A STANDALONE page (no app chrome). Its Sections panel picks what the
+    downloaded file holds (``core/chip_report.SECTIONS``); Overview and Chip
+    Status render inline, the other sections are fetched lazily from
+    ``/chip-status/report/section/<key>``. The toolbar's Download builds ONE
+    offline .html from the checked sections only and has the server finalize
+    it (``/chip-status/report/finalize``: whitelist, redaction, offline).
+    Every number comes from the function its live page calls -- nothing is
+    recomputed or approximated for the report."""
+    from quam_state_manager.core import chip_report as _cr
     engine = _engine()
     store = _store()
     if not engine or not store:
         return render_template("chip_report.html", has_chip=False)
+    checked = _cr.parse_sections(request.args.get("sections"))
+    rc = _ReportCtx(redact=_cr.parse_redact(request.args.get("redact")),
+                    window=_cr.parse_window(request.args.get("window")))
+    inline = {k: _report_section(k, rc) for k in ("overview", "chip_status")
+              if k in checked}
+    return render_template(
+        "chip_report.html",
+        has_chip=True,
+        chip_name=rc.text(rc.chip_name),
+        generated=rc.generated,
+        sections=_cr.SECTIONS,
+        checked=checked,
+        redact=rc.redact,
+        window=rc.window,
+        windows=_cr.WINDOWS,
+        inline=inline,
+    )
 
+
+class _ReportCtx:
+    """What every report section reads: the active chip, the options of this
+    request, and the redactor when the switch is on (docs/277)."""
+
+    def __init__(self, *, redact: bool, window: str) -> None:
+        self.ctx = _active_ctx() or {}
+        self.engine = _engine()
+        self.store = _store()
+        self.path = _active_path()
+        self.redact = bool(redact)
+        self.window = window
+        self.red = _report_redactor(self.store) if (self.redact and self.store) else None
+        self.zone = (_display_zone() or {}).get("zone")
+        from quam_state_manager.core import timefmt as _tf
+        self.generated = _tf.local_text(zone=self.zone)
+        self.chip_name = _chip_display_name(self.path) if self.path else "chip"
+        self._pairs: list | None = None
+
+    def text(self, s: Any) -> Any:
+        return self.red.redact_text(s) if (self.red and isinstance(s, str)) else s
+
+    def pairs(self) -> list[dict]:
+        """The chip's pairs through ``get_pair`` (the /pairs rows), once."""
+        if self._pairs is None:
+            out = []
+            for pair_name in self.store.qubit_pair_names:
+                try:
+                    out.append(self.engine.get_pair(pair_name))
+                except KeyError:
+                    continue
+                except Exception as exc:  # noqa: BLE001 -- same degrade as /pairs
+                    logger.warning("report get_pair(%r) failed: %s", pair_name, exc)
+                    out.append({"id": pair_name, "is_active": True,
+                                "_error": f"{type(exc).__name__}: {exc}"})
+            self._pairs = out
+        return self._pairs
+
+
+_REPORT_REDACTORS: dict = {}
+_REPORT_REDACTORS_LOCK = threading.Lock()
+
+
+def _report_redactor(store):
+    """The chip's redactor (its literal set is the values S blanks in its own
+    two documents), kept per store until the store changes."""
+    from quam_state_manager.core.report_redact import Redactor
+    tok = (store.mutation_seq, id(store.state), id(store.wiring), str(store.folder_path))
+    with _REPORT_REDACTORS_LOCK:
+        hit = _REPORT_REDACTORS.get(id(store))
+        if hit and hit[0] == tok:
+            return hit[1]
+    with store._lock:
+        red = Redactor.for_documents(store.state, store.wiring)
+    with _REPORT_REDACTORS_LOCK:
+        if len(_REPORT_REDACTORS) >= 4:
+            _REPORT_REDACTORS.clear()
+        _REPORT_REDACTORS[id(store)] = (tok, red)
+    return red
+
+
+def _report_section(key: str, rc: _ReportCtx) -> str:
+    """One section's outer HTML. A builder that raises yields the section with
+    its honest "Could not be built: <reason>" line, never a blank or a 500."""
+    from quam_state_manager.core import chip_report as _cr
+    t0 = time.monotonic()
+    try:
+        builder = _REPORT_BUILDERS[key]
+        body = builder(rc)
+    except Exception as exc:  # noqa: BLE001 -- a section degrades, never the page
+        logger.exception("report section %s failed", key)
+        body = _cr.failure_html(exc)
+        if key not in ("overview", "chip_status"):
+            body = f'<h2>{_html_escape(_cr.SECTION_BY_KEY[key].label)}</h2>' + body
+    ms = int((time.monotonic() - t0) * 1000)
+    out = (f'<section class="rep-sec" id="rep-sec-{key}" data-rep-sec="{key}"'
+           f' data-rep-redact="{int(rc.redact)}" data-rep-ms="{ms}">{body}</section>')
+    if rc.red is not None:
+        out = rc.red.redact_html(out)
+    return out
+
+
+def _html_escape(s: Any) -> str:
+    import html as _h
+    return _h.escape(str(s), quote=True)
+
+
+@bp.route("/chip-status/report/section/<key>")
+def chip_status_report_section(key: str):
+    """One report section as an HTML fragment (docs/277)."""
+    from quam_state_manager.core import chip_report as _cr
+    if key not in _cr.AVAILABLE_KEYS:
+        why = (_cr.SECTION_BY_KEY[key].note if key in _cr.SECTION_BY_KEY
+               else "no such section")
+        return current_app.response_class(why, status=404, mimetype="text/plain")
+    if not _engine() or not _store():
+        return current_app.response_class("No chip is open in State Manager.", status=409,
+                        mimetype="text/plain")
+    rc = _ReportCtx(redact=_cr.parse_redact(request.args.get("redact")),
+                    window=_cr.parse_window(request.args.get("window")))
+    resp = current_app.response_class(_report_section(key, rc), mimetype="text/html")
+    resp.headers["Cache-Control"] = "no-store"
+    return resp
+
+
+@bp.route("/chip-status/report/frame/wiring")
+def chip_status_report_frame_wiring():
+    """A bare page that draws the Instrument Wiring rack with the screen's own
+    ``renderInstrumentWiring`` (app.js). The report loads it in a hidden
+    frame and imports the drawn SVG (docs/277 section 6) -- the picture in
+    the file is the picture on /instrument."""
+    engine = _engine()
+    if not engine:
+        return render_template("chip_report_frame_wiring.html",
+                               instrument_json='{"controllers": {}}', wiring_json="{}",
+                               instrument_error="No chip is open in State Manager.")
+    err = None
+    try:
+        instrument_json = json.dumps(engine.get_instrument_wiring())
+    except Exception as exc:  # noqa: BLE001 -- the /instrument honesty rule
+        logger.exception("report: instrument wiring failed")
+        instrument_json, err = '{"controllers": {}}', (str(exc) or type(exc).__name__)
+    return render_template("chip_report_frame_wiring.html", instrument_json=instrument_json,
+                           wiring_json=_wiring_json(), instrument_error=err)
+
+
+_REPORT_REF_RE = re.compile(r"""\s(src|href|xlink:href)\s*=\s*("[^"]*"|'[^']*')""", re.I)
+_REPORT_FOR_RE = re.compile(r'data-rep-for="([^"]*)"')
+
+
+def _report_final_pass(doc: str, sections: list[str], red=None) -> str:
+    """The server's last pass over a finished report -- ONE walk
+    (``report_redact.html_pass``):
+
+    * a script survives only if it carries ``data-rep-keep`` and the section
+      it serves (``data-rep-for``) is in the file;
+    * a ``src`` / ``href`` that is not a ``#fragment`` or a ``data:`` URI is
+      dropped -- the file must not reach for the network or for SM;
+    * whitespace between tags collapses (the templates' indentation is ~2 MB
+      of a big chip's file);
+    * with *red*, the redaction rule on every text and attribute value."""
+    from quam_state_manager.core.report_redact import html_pass
+    keep = set(sections)
+
+    def on_script(tok: str):
+        head = tok[: tok.index(">") + 1]
+        m = _REPORT_FOR_RE.search(head)
+        if "data-rep-keep" not in head or (m and m.group(1) not in keep):
+            return None
+        return tok
+
+    def _ref(m: re.Match) -> str:
+        v = m.group(2)[1:-1].strip()
+        return m.group(0) if (v.startswith("#") or v.lower().startswith("data:")) else ""
+
+    def on_tag(tag: str) -> str:
+        return _REPORT_REF_RE.sub(_ref, tag) if ("src" in tag or "href" in tag) else tag
+
+    return html_pass(doc, red, on_script=on_script, on_tag=on_tag, collapse_space=True)
+
+
+@bp.route("/chip-status/report/finalize", methods=["POST"])
+def chip_status_report_finalize():
+    """Turn the page's serialized report into the file that is sent (docs/277).
+
+    The server is the last gate: it refuses a document that carries a section
+    the request did not declare (or declares one that does not exist), and one
+    whose sections were rendered under a different redaction setting; it
+    strips scripts and network references; with redaction on it applies the
+    rule to the whole document and to the file name."""
+    from quam_state_manager.core import chip_report as _cr
+    t0 = time.monotonic()
+    store = _store()
+    if not store:
+        return jsonify(ok=False, error="No chip is open in State Manager."), 409
+    body = request.get_json(silent=True)
+    if not isinstance(body, dict) or not isinstance(body.get("html"), str):
+        return jsonify(ok=False, error="html missing"), 400
+    doc = body["html"]
+    sections = body.get("sections")
+    if not isinstance(sections, list) or not all(isinstance(s, str) for s in sections):
+        return jsonify(ok=False, error="sections must be a list of section keys"), 400
+    bad = [s for s in sections if s not in _cr.AVAILABLE_KEYS]
+    if bad:
+        return jsonify(ok=False, error=f"not an available section: {', '.join(bad)}"), 400
+    redact = bool(body.get("redact"))
+    found = re.findall(r'<section\b[^>]*\bdata-rep-sec="([^"]*)"', doc)
+    extra = sorted(set(found) - set(sections))
+    if extra:
+        return jsonify(ok=False, error="the file would contain a section that is not "
+                                       f"checked: {', '.join(extra)}"), 400
+    missing = [s for s in sections if s not in found]
+    if missing:
+        return jsonify(ok=False, error=f"checked but not in the page: {', '.join(missing)}"), 400
+    for tag in re.findall(r'<section\b[^>]*\bdata-rep-sec="[^"]*"[^>]*>', doc):
+        m = re.search(r'data-rep-redact="([01])"', tag)
+        if not m or m.group(1) != str(int(redact)):
+            return jsonify(ok=False, error="a section was built under a different "
+                                           "redaction setting -- reload the page"), 409
+    labels = [_cr.SECTION_BY_KEY[s].label for s in sections]
+    doc = re.sub(r'(<ul class="rep-contents"[^>]*>).*?(</ul>)',
+                 lambda m: m.group(1) + "".join(f"<li>{_html_escape(x)}</li>" for x in labels)
+                 + m.group(2), doc, count=1, flags=re.S)
     path = _active_path()
+    chip = _chip_display_name(path) if path else "chip"
+    if "overview" not in sections:
+        # the chip's name is the Overview's content: an unchecked Overview
+        # takes it out of the title and the file name too
+        doc = re.sub(r"<title>.*?</title>", "<title>Chip report</title>", doc, count=1, flags=re.S)
+        chip = ""
+    red = _report_redactor(store) if redact else None
+    doc = _report_final_pass(doc, sections, red)
+    if red is not None:
+        chip = red.redact_text(chip)
+    from quam_state_manager.core import timefmt as _tf
+    stamp = _tf.local_text(zone=(_display_zone() or {}).get("zone"))[:16]
+    stamp = re.sub(r"[^0-9]+", "", stamp[:10]) + "_" + re.sub(r"[^0-9]+", "", stamp[11:16])
+    safe_chip = re.sub(r"[^A-Za-z0-9_.-]+", "_", chip).strip("_.")
+    fname = f"chip_report_{safe_chip + '_' if safe_chip else ''}{stamp}.html"
+    resp = current_app.response_class(doc, mimetype="text/html")
+    resp.headers["Content-Disposition"] = f'attachment; filename="{fname}"'
+    resp.headers["X-Report-Filename"] = fname
+    resp.headers["X-Report-Ms"] = str(int((time.monotonic() - t0) * 1000))
+    resp.headers["Cache-Control"] = "no-store"
+    return resp
+
+
+# ---------------------------------------------------------------------------
+# Report sections (docs/277). Each builder returns the section's body HTML.
+# ---------------------------------------------------------------------------
+def _report_build_overview(rc: _ReportCtx) -> str:
+    import quam_state_manager as _sm
+    from quam_state_manager.core import chip_report as _cr
+    qubits = rc.engine.list_qubits()
+    pairs = rc.pairs()
+    return render_template(
+        "_report_overview.html",
+        chip_name=rc.chip_name, version=getattr(_sm, "__version__", "?"),
+        generated=rc.generated, zone=rc.zone, folder=str(rc.path or ""),
+        n_qubits=len(qubits), n_pairs=len(pairs),
+        n_res=sum(1 for q in qubits if q.get("has_resonator")),
+        n_flux=sum(1 for q in qubits if q.get("has_z")),
+        n_couplers=sum(1 for p in pairs if p.get("has_coupler")),
+        n_qdac=sum(1 for q in qubits if q.get("has_qdac")),
+        redact=rc.redact, sections=_cr.SECTIONS,
+    )
+
+
+def _report_build_chip_status(rc: _ReportCtx) -> str:
+    """docs/126 #21 + docs/188: the map and every component table, from the
+    same QueryEngine rows and topology the live pages use."""
+    engine, store = rc.engine, rc.store
     qubits = engine.list_qubits()
-    pairs = []
-    for pair_name in store.qubit_pair_names:
-        try:
-            pairs.append(engine.get_pair(pair_name))
-        except KeyError:
-            continue
-        except Exception as exc:  # noqa: BLE001 — same degrade as /pairs
-            logger.warning("report get_pair(%r) failed: %s", pair_name, exc)
-            pairs.append({"id": pair_name, "is_active": True,
-                          "_error": f"{type(exc).__name__}: {exc}"})
+    pairs = rc.pairs()
     # docs/188 (customer 2026-09-16: "the report should hold every value that
     # can be extracted"). The report reads the SAME topology Chip Status does,
     # rather than deriving a second, poorer version of its own: the readout
@@ -14277,7 +14538,8 @@ def chip_status_report():
         ms = rec.get("last_calibrated")
         if key and isinstance(ms, (int, float)) and not isinstance(ms, bool):
             try:
-                cal[key] = datetime.fromtimestamp(ms / 1000.0).strftime("%Y-%m-%d")
+                # docs/277: the project's zone, like every other time in the report
+                cal[key] = datetime.fromtimestamp(ms / 1000.0, tz=_report_tz(rc.zone)).strftime("%Y-%m-%d")
             except (OverflowError, OSError, ValueError):
                 pass
 
@@ -14307,11 +14569,7 @@ def chip_status_report():
         }
 
     return render_template(
-        "chip_report.html",
-        has_chip=True,
-        chip_name=_chip_display_name(path) if path else "chip",
-        folder=str(path or ""),
-        generated=__import__("quam_state_manager.core.timefmt", fromlist=["local_text"]).local_text(zone=(_display_zone() or {}).get("zone")),   # docs/244: with its offset
+        "_report_chip_status.html",
         qubits=qubits,
         pairs=pairs,
         resonators=[q for q in qubits if q.get("has_resonator")],
@@ -14372,6 +14630,310 @@ def _report_gate_param_rows(pairs: list[dict], store=None) -> list[dict]:
                     store, pair.get("id"), gate) if store is not None else None)
             rows.append(row)
     return rows
+
+
+def _report_tz(zone: str | None):
+    """The display zone as a tzinfo (the project's, else this PC's)."""
+    if zone:
+        try:
+            from zoneinfo import ZoneInfo
+            return ZoneInfo(zone)
+        except Exception:  # noqa: BLE001 -- no tzdata / not a zone: this PC's
+            pass
+    return datetime.now().astimezone().tzinfo
+
+
+def _report_zone_label(rc: _ReportCtx) -> str:
+    from quam_state_manager.core import timefmt as _tf
+    off = _tf.offset_label(datetime.now(timezone.utc).astimezone(_report_tz(rc.zone)))
+    return f"{off}, {rc.zone}" if rc.zone else f"{off}, this PC's zone"
+
+
+def _snap_epoch(ts: Any) -> float | None:
+    """A snapshot id as epoch seconds (the id is a UTC stamp), else None."""
+    iso = _snap_iso(ts)
+    if not iso:
+        return None
+    try:
+        return datetime.fromisoformat(iso).replace(tzinfo=timezone.utc).timestamp()
+    except ValueError:
+        return None
+
+
+def _report_crop(pts: list[tuple[float, Any]], start: float | None) -> list[tuple[float, Any]]:
+    """The points a chart zoomed to ``[start, ...]`` shows: those inside, plus
+    the line's value AT the window edge when it crosses it (the straight line
+    the live chart draws between the two neighbours -- nothing new)."""
+    if start is None:
+        return pts
+    inside = [p for p in pts if p[0] >= start]
+    before = [p for p in pts if p[0] < start]
+    if before and inside and inside[0][0] > start:
+        (x0, y0), (x1, y1) = before[-1], inside[0]
+        if isinstance(y0, (int, float)) and isinstance(y1, (int, float)) and x1 > x0:
+            inside.insert(0, (start, y0 + (y1 - y0) * (start - x0) / (x1 - x0)))
+    elif before and not inside:
+        inside = [(start, before[-1][1])]          # unchanged since before the window
+    return inside
+
+
+def _report_build_trends(rc: _ReportCtx) -> str:
+    """Chip Status > Trends for every curated metric with history: the series
+    ``/topology/trends`` charts (``_trend_series_curated`` over the chip's
+    trends table), cropped to the chosen window, drawn as static SVG."""
+    from quam_state_manager.core import chip_report as _cr
+    from quam_state_manager.core import report_svg as _svg
+    from quam_state_manager.core import units as _units
+    hm = _history()
+    path = Path(rc.path)
+    tbl = chip_trends_ram.table(hm, path)
+    curated = list(DEFAULT_TRACKED_PROPERTIES)
+    have = _trend_metrics_with_data(hm, path, curated, tbl)
+    metrics = [m for m in curated if m in have]
+    series = _trend_series_curated(hm, path, metrics, tbl) if metrics else []
+    start = _cr.window_start(rc.window)
+    tz = _report_tz(rc.zone)
+    names = sorted(rc.store.qubit_names, key=natural_key)
+    order = {n: i for i, n in enumerate(names)}
+    charts = []
+    no_time = 0
+    for m in metrics:
+        rows = sorted((s for s in series if s["metric"] == m),
+                      key=lambda s: (order.get(s["entity"], len(order)), natural_key(str(s["entity"]))))
+        if not rows:
+            continue
+        sv, leg, xs_all = [], [], []
+        for s in rows:
+            pts = []
+            for ts, v in s["points"]:
+                x = _snap_epoch(ts)
+                if x is None:
+                    no_time += 1
+                    continue
+                pts.append((x, v))
+            newest = s["points"][-1][1] if s["points"] else None
+            shown = _report_crop(pts, start)
+            idx = order.get(s["entity"], len(order) + len(sv))
+            color, dash = _svg.series_style(idx)
+            sv.append({"name": s["entity"], "xs": [p[0] for p in shown],
+                       "ys": [p[1] for p in shown], "color": color, "dash": dash})
+            xs_all += [p[0] for p in shown]
+            full = _units.qty_filter(newest, m, "full")
+            leg.append({"name": s["entity"], "color": color, "dash": dash,
+                        "value": full or _units.qty_filter(newest, m)})
+        scale = _units.fixed_scale(m)
+        factor, suffix = scale if scale else (1.0, _trend_unit(m))
+        label = _trend_metric_label(m)
+        x_rng = None
+        if xs_all:
+            hi = max(xs_all)
+            lo = start if start is not None else min(xs_all)
+            x_rng = (lo, max(hi, lo + 1))
+        svg = _svg.line_chart(sv, x_kind="time", tz=tz, y_factor=factor,
+                              y_label=label + (f" ({suffix})" if suffix else ""),
+                              x_label=f"time ({_report_zone_label(rc)})", title=label,
+                              x_range=x_rng)
+        charts.append({"metric": m, "label": label, "svg": svg,
+                       "legend": _svg.legend(leg), "n": len(rows),
+                       "empty": not xs_all})
+    return render_template("_report_trends.html", charts=charts,
+                           window_label=_cr.window_label(rc.window),
+                           zone_label=_report_zone_label(rc), no_time=no_time,
+                           n_snapshots=len(hm.list_snapshots(path)) if charts else 0)
+
+
+_REPORT_CHANNEL = {"xy": "xy", "z": "z", "resonator": "res", "flux_pulse_qubit": "flux",
+                   "coupler_flux_pulse": "coupler", "flux_pulse_target": "flux·target"}
+
+
+def _report_build_pulses(rc: _ReportCtx) -> str:
+    """The Pulses page table (``PulseIndex.rows``) with the thumbnails the page
+    draws (``_pulse_draw_sparks``); identical thumbnails stored once."""
+    from quam_state_manager.core import chip_report as _cr
+    e = _html_escape
+    pulse_index = _pulse_index()
+    if pulse_index is None:
+        raise RuntimeError("the pulse index is not available")
+    rows = [dict(r) for r in pulse_index.rows()]
+    _pulse_draw_sparks(rc.store, pulse_index, rows)
+    lab = [bool(r.get("spark_from_lab") or r.get("spark_from_config")) for r in rows]
+    defs, refs = _cr.dedupe_sparks([None if l else r.get("spark_svg")
+                                    for r, l in zip(rows, lab)])
+    distinct = defs.count("<symbol ")
+    out = []
+    for r, ref, is_lab in zip(rows, refs, lab):
+        if r.get("is_alias"):
+            tgt = (r.get("alias_target") or "?").rsplit(".", 1)[-1]
+            wave = f'<span class="rep-note">&rarr; {e(tgt)}</span>'
+        elif is_lab and r.get("spark_svg"):
+            wave = f'<span class="pulse-spark-lab" title="Drawn by the class\'s own code">{r["spark_svg"]}</span>'
+        elif ref:
+            wave = ref
+        else:
+            wave = "-"
+        flags = ""
+        if r.get("is_alias"):
+            flags += ' <span class="rep-flag">alias</span>'
+        if r.get("iq"):
+            flags += ' <span class="rep-flag">IQ</span>'
+        if r.get("readout"):
+            flags += ' <span class="rep-flag">RO</span>'
+        ln = r.get("length")
+        ln_txt = "-" if ln is None else e(ln)
+        if r.get("length_implausible"):
+            ln_txt += ' <span class="rep-bad" title="not a possible length">&#9888;</span>'
+        amp = r.get("amplitude")
+        amp_txt = ("%.4g" % amp) if isinstance(amp, (int, float)) and not isinstance(amp, bool) else "-"
+        used = len(r.get("used_by") or [])
+        cls = "&rarr;" if r.get("is_alias") else e(r.get("class_short") or "")
+        out.append(
+            f'<tr><td class="rep-id"><strong>{e(r.get("owner") or "")}</strong></td>'
+            f'<td>{e(_REPORT_CHANNEL.get(r.get("channel"), r.get("channel") or ""))}</td>'
+            f'<td>{e(r.get("op_name") or "")}{flags}</td><td>{cls}</td>'
+            f'<td class="rep-spark">{wave}</td><td>{ln_txt}</td><td>{amp_txt}</td>'
+            f'<td>{used or ""}</td></tr>')
+    n_drawn = sum(1 for x in refs if x) + sum(1 for r, l in zip(rows, lab) if l and r.get("spark_svg"))
+    return render_template("_report_pulses.html", rows_html="".join(out), defs=defs,
+                           n=len(rows), n_drawn=n_drawn, n_distinct=distinct)
+
+
+def _report_build_zline(rc: _ReportCtx) -> str:
+    """The /zline table (``_zline_rows``) and, per distinct filter set, the
+    step response ``/zline/data`` computes (``_zline_payload``, QOP >= 3.5
+    sum model -- the page's default)."""
+    from concurrent.futures import ThreadPoolExecutor
+    from quam_state_manager.core import report_svg as _svg
+    from quam_state_manager.core import units as _units
+    store = rc.store
+    rows = _zline_rows(store)
+    groups: dict[Any, list[dict]] = {}
+    order: list[Any] = []
+    for r in rows:
+        if not r.get("port_path"):
+            continue
+        snap = _zline_snapshot(store, r["channel_path"])
+        if snap.get("port") is None:
+            continue
+        pf, _n, _v = _zline_analyze(snap["port_path"], snap["port"])
+        if pf is None:
+            continue
+        k = pf.key()
+        if k not in groups:
+            groups[k] = []
+            order.append(k)
+        groups[k].append(r)
+
+    def one(k):
+        first = groups[k][0]["channel_path"]
+        return k, _zline_payload(store, first, "sum", with_pulse=False)
+
+    with ThreadPoolExecutor(max_workers=max(1, min(8, len(order)))) as ex:
+        payloads = dict(ex.map(one, order))
+    figs = []
+    for k in order:
+        d = payloads[k]
+        lines = groups[k]
+        s = d.get("step")
+        fig = {"lines": [r["id"] + (" (coupler)" if r.get("kind") == "coupler" else "") for r in lines],
+               "ports": [(r.get("port_path") or "").replace("ports.analog_outputs.", "").replace(".", "/")
+                         for r in lines],
+               "notes": [n for n in (d.get("notes") or []) if n.get("level") != "info"],
+               "svg": "", "stats": "", "legend": ""}
+        if s:
+            muted = _svg.MUTED
+            tr = [{"name": "ideal step", "xs": s["t_ns"], "ys": s["ideal"], "color": muted,
+                   "dash": "5 3", "width": 1.4}]
+            which = ("exponential + FIR" if s.get("iir_only") and s.get("fir_only")
+                     else "exponential" if s.get("iir_only") else "FIR" if s.get("fir_only")
+                     else "no filter")
+            if s.get("iir_only") and s.get("fir_only"):
+                tr.append({"name": "exponential only", "xs": s["t_ns"], "ys": s["iir_only"],
+                           "color": _svg.PALETTE[1], "dash": "1.5 3", "width": 1.3})
+                tr.append({"name": "FIR only", "xs": s["t_ns"], "ys": s["fir_only"],
+                           "color": _svg.PALETTE[2], "dash": "1.5 3", "width": 1.3})
+            tr.append({"name": f"output ({which})", "xs": s["t_ns"], "ys": s["both"],
+                       "color": _svg.PALETTE[0], "dash": "", "width": 2.0})
+            fig["svg"] = _svg.line_chart(tr, x_kind="log", x_label="time since the step (log)",
+                                         y_label="output / step height", markers=False,
+                                         title="Step response")
+            fig["legend"] = _svg.legend({"name": t["name"], "color": t["color"], "dash": t["dash"]}
+                                        for t in tr)
+
+            def f(v, dd=4):
+                return "—" if v is None else f"{v:.{dd}f}"
+            st = (f"first sample {f(s.get('first'))} · peak {f(s.get('peak'))} at "
+                  f"{f(s.get('peak_t_ns'), 1)} ns · at "
+                  f"{_units.format_metric(s['horizon_ns'] * 1e-9, 's')} {f(s.get('final'), 5)}")
+            st += (" · no DC limit (integrating high-pass)" if s.get("dc_limit") is None
+                   else f" · DC limit {f(s.get('dc_limit'), 5)}")
+            if s.get("truncated"):
+                st += " · the slowest decay is longer than the 1 ms drawn"
+            fig["stats"] = st
+        figs.append(fig)
+    return render_template("_report_zline.html", rows=rows, figs=figs)
+
+
+def _report_build_wiring(rc: _ReportCtx) -> str:
+    """The Instrument Wiring model (``QueryEngine.get_instrument_wiring``) as
+    a port table, and a host the page fills with the rack the screen's own
+    renderer draws (``/chip-status/report/frame/wiring``)."""
+    data = rc.engine.get_instrument_wiring()
+    rows = []
+    for ctrl in sorted((data.get("controllers") or {}), key=natural_key):
+        cd = data["controllers"][ctrl] or {}
+        fems = cd.get("fems") or {}
+        for fem in sorted(fems, key=lambda x: (int(x) if str(x).isdigit() else 0, str(x))):
+            fd = fems[fem] or {}
+            for direction, key in (("out", "output_ports"), ("in", "input_ports"),
+                                   ("dig", "digital_ports")):
+                ports = fd.get(key) or (fd.get("ports") if key == "output_ports" else None) or {}
+                for port in sorted(ports, key=lambda x: (int(x) if str(x).isdigit() else 0, str(x))):
+                    for a in ports[port] or []:
+                        rows.append({"ctrl": ctrl, "fem": fem, "type": fd.get("type") or "",
+                                     "port": port, "dir": direction, **(a or {})})
+    stats = data.get("stats") or {}
+    return render_template("_report_wiring.html", rows=rows,
+                           n_ctrl=len(data.get("controllers") or {}), stats=stats)
+
+
+def _report_build_diagnostics(rc: _ReportCtx) -> str:
+    """The Diagnostics findings (``_active_chip_findings``), through the live
+    page's own list template, without its jump/fix buttons."""
+    findings = _active_chip_findings(rc.store)
+    if findings is None:
+        raise RuntimeError("the diagnostics are still being computed; reload in a moment")
+    return render_template("_report_diagnostics.html", findings=findings,
+                           diag_summary=diagnostics.summarize(findings),
+                           allow_jump=False, allow_fix=False)
+
+
+def _report_build_raw(rc: _ReportCtx) -> str:
+    """state.json + wiring.json as stored (``QuamStore.state`` / ``.wiring``,
+    the documents the saver writes), redacted structurally when the switch is
+    on, embedded once for the page's collapsible tree."""
+    import marshal
+    from quam_state_manager.core import chip_report as _cr
+    with rc.store._lock:                   # a consistent pair, copied fast
+        blob = marshal.dumps((rc.store.state, rc.store.wiring))
+    state, wiring = marshal.loads(blob)
+    p = _cr.raw_payload(state, wiring, rc.red)
+    return render_template("_report_raw.html", enc=p["enc"], text=p["text"],
+                           json_bytes=p["json_bytes"], file_bytes=len(p["text"]))
+
+
+#: key -> builder. The calibration log is the hub S6 seam (docs/277 section 7):
+#: S6 adds ``"calibration_log": _report_build_calibration_log`` here and sets
+#: ``available=True`` on its entry in ``core/chip_report.SECTIONS``.
+_REPORT_BUILDERS: dict[str, Any] = {
+    "overview": _report_build_overview,
+    "chip_status": _report_build_chip_status,
+    "trends": _report_build_trends,
+    "pulses": _report_build_pulses,
+    "zline": _report_build_zline,
+    "wiring": _report_build_wiring,
+    "diagnostics": _report_build_diagnostics,
+    "raw": _report_build_raw,
+}
 
 
 @bp.route("/wiring")
@@ -18025,13 +18587,10 @@ def _zline_default_op(ops: list[str]) -> str:
     return ops[0] if ops else ""
 
 
-@bp.route("/zline")
-def zline_page():
-    """Every flux line's output filters, drawn: the ideal step and the lab's
-    own flux pulses through the port's exponential + FIR filters together."""
-    store = _store()
-    if not store:
-        return _no_chip("z-line distortion", "zline")
+def _zline_rows(store) -> list[dict]:
+    """The /zline table rows: one per flux line, its port's filter summary
+    and notes. Shared by the page and the chip report (docs/277), so the
+    report's table is this table."""
     from quam_state_manager.core import zline_filters as zf
     with store._lock:
         ents = zf.zline_entities(store.merged)
@@ -18046,6 +18605,17 @@ def zline_page():
     for r in rows:
         r["worst"] = ("block" if any(n["level"] == "block" for n in r["notes"])
                       else "warn" if any(n["level"] == "warn" for n in r["notes"]) else "")
+    return rows
+
+
+@bp.route("/zline")
+def zline_page():
+    """Every flux line's output filters, drawn: the ideal step and the lab's
+    own flux pulses through the port's exponential + FIR filters together."""
+    store = _store()
+    if not store:
+        return _no_chip("z-line distortion", "zline")
+    rows = _zline_rows(store)
     want = request.args.get("line", "").strip()
     paths = [r["channel_path"] for r in rows]
     selected = want if want in paths else next(
@@ -18068,16 +18638,27 @@ def zline_data():
         known = {e["channel_path"] for e in zf.zline_entities(store.merged)}
     if line not in known:
         return jsonify(ok=False, error=f"not a flux line on this chip: {line!r}"), 404
+    return jsonify(_zline_payload(store, line, model,
+                                  request.args.get("op", "").strip()))
+
+
+def _zline_payload(store, line: str, model: str = "sum", op: str = "",
+                   *, with_pulse: bool = True) -> dict:
+    """The /zline/data body for one line (notes, step response, one flux
+    pulse's response). Shared by the page's endpoint and the chip report
+    (docs/277), which asks for the step only (*with_pulse* False)."""
+    from quam_state_manager.core import zline_filters as zf
+    from quam_state_manager.core.waveform_synth import synth_for_operation
     snap = _zline_snapshot(store, line)
     out = {"ok": True, "line": line, "port_path": snap["port_path"],
            "chain": snap["chain"], "ops": snap["ops"], "model": model,
            "notes": list(snap["notes"]), "step": None, "pulse": None, "op": None}
     if snap["port"] is None:
-        return jsonify(out)
+        return out
     pf, notes, verdicts = _zline_analyze(snap["port_path"], snap["port"])
     out["notes"].extend(notes)
     if pf is None:
-        return jsonify(out)
+        return out
     # Stability is a property of the MODEL drawn: block only the model that
     # is actually unstable, and say when the other one can draw this line.
     out["models"] = {m: not zf.model_blocked(v) for m, v in verdicts.items()}
@@ -18088,7 +18669,7 @@ def zline_data():
                 out["notes"].append({"level": "info", "code": "other_model_draws",
                                      "text": f"The {zf.MODEL_LABEL[m]} is stable for this set: "
                                              "switch the Model selector to draw it."})
-        return jsonify(out)
+        return out
     out["notes"].extend(zf.model_notes(pf, model))
     out["port"] = {"sampling_rate": pf.sampling_rate, "upsampling_mode": pf.upsampling_mode,
                    "output_mode": pf.output_mode, "dc_gain": pf.dc_gain,
@@ -18111,7 +18692,9 @@ def zline_data():
     out["step"] = memo((line, "step", model), (pf.key(), model),
                        lambda: zf.step_response(pf, model=model))
 
-    op = request.args.get("op", "").strip()
+    if not with_pulse:
+        return out
+    op = (op or "").strip()
     if op not in snap["ops"]:
         op = _zline_default_op(snap["ops"])
     out["op"] = op
@@ -18132,7 +18715,7 @@ def zline_data():
             tok = (pf.key(), model, tuple(float(v) for v in samples))
             out["pulse"] = memo((line, "pulse", op), tok,
                                 lambda: zf.pulse_response(pf, samples, model=model))
-    return jsonify(out)
+    return out
 
 
 @bp.route("/pulses")

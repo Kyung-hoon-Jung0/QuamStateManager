@@ -1,0 +1,6 @@
+{# docs/277: the Diagnostics findings in the shareable report, rendered by the
+   live page's own list template (no jump / fix / acknowledge buttons). #}
+    <h2>Diagnostics ({{ diag_summary.total }})</h2>
+    <p class="rep-cap">The checks the Diagnostics page runs on this chip, grouped
+       by domain. An acknowledged finding is listed and marked; it is not counted.</p>
+    <div class="rep-diag">{% include "_diagnostics_list.html" %}</div>

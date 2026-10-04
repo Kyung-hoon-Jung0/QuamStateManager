@@ -1,0 +1,36 @@
+<!DOCTYPE html>
+{# docs/277: a bare page whose only job is to let the screen's own
+   renderInstrumentWiring (app.js) draw the rack, so the shareable report can
+   import the SAME picture /instrument shows. Loaded in a hidden frame by the
+   report page and removed as soon as the drawing is taken. #}
+<html lang="en" data-theme="dark">
+<head>
+    <meta charset="utf-8">
+    <title>Instrument wiring</title>
+</head>
+<body>
+<div id="instrument-diagram" style="width:1400px"></div>
+<div id="port-popup" class="port-popup hidden" hidden><span id="popup-label"></span><span id="popup-role-badge"></span><div id="popup-body"></div></div>
+<script src="{{ url_for('static', filename='app.js') }}"></script>
+<script>
+(function () {
+    var host = document.getElementById('instrument-diagram');
+    var err = {{ (instrument_error if instrument_error is defined else None) | tojson }};
+    function done(state, why) {
+        host.setAttribute('data-rep-drawn', state);
+        if (why) host.setAttribute('data-rep-why', why);
+    }
+    if (err) { done('failed', 'the wiring model could not be built: ' + err); return; }
+    try {
+        renderInstrumentWiring('instrument-diagram',
+                               {{ instrument_json | script_json }},
+                               {{ wiring_json | script_json }});
+        done(host.querySelector('svg.instrument-svg') ? 'ok' : 'empty',
+             host.querySelector('svg.instrument-svg') ? '' : (host.textContent || '').trim());
+    } catch (e) {
+        done('failed', String(e && e.message || e));
+    }
+})();
+</script>
+</body>
+</html>

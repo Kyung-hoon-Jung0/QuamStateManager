@@ -1,0 +1,37 @@
+{# docs/277: Instrument Wiring in the shareable report. The rack picture is
+   drawn by the screen's own renderInstrumentWiring in a hidden frame and
+   imported by the page; the table is the same model's assignments -- the
+   values the diagram shows only on hover. #}
+    <h2>Instrument wiring ({{ rows | length }} port assignment{{ '' if rows | length == 1 else 's' }})</h2>
+    <p class="rep-cap">The OPX rack as the Instrument Wiring page draws it, and
+       every port assignment with its band, LO and full-scale power.</p>
+    <div class="rep-iw-host" data-rep-iw="pending"><p class="rep-note">Drawing the rack&hellip;</p></div>
+    {% if rows %}
+    <table class="rep-wide">
+        <thead><tr><th>Controller</th><th>FEM</th><th>Port</th><th>Dir</th>
+            <th>Element</th><th>Role</th><th>Label</th><th>Band</th>
+            <th>LO (GHz)</th><th>FSP (dBm)</th></tr></thead>
+        <tbody>
+        {% for r in rows %}
+        <tr>
+            <td>{{ r.ctrl }}</td>
+            <td>{{ r.fem }}{% if r.type %} <span class="rep-note">{{ r.type }}</span>{% endif %}</td>
+            <td>{{ r.port }}</td>
+            <td>{{ {'out': 'out', 'in': 'in', 'dig': 'digital'}.get(r.dir, r.dir) }}</td>
+            <td class="rep-id"><strong>{{ r.element if r.element is not none else '-' }}</strong></td>
+            <td>{{ r.role or '-' }}</td>
+            <td>{{ r.label or '-' }}</td>
+            <td>{{ r.band if r.band is not none else '-' }}</td>
+            <td>{{ r.lo_frequency | qty('LO_frequency') if r.lo_frequency is number else (r.lo_frequency if r.lo_frequency is not none else '-') }}</td>
+            <td>{{ r.full_scale_power_dbm if r.full_scale_power_dbm is not none else '-' }}</td>
+        </tr>
+        {% endfor %}
+        </tbody>
+    </table>
+    {% else %}
+    <p class="rep-note">{% if stats.octave_detected or (stats.refs_seen and not stats.refs_placed) %}This
+       chip's wiring uses a layout the diagram does not render yet (an OPX+ or an Octave
+       setup){% if stats.refs_seen %}: {{ stats.refs_seen }} port connection(s) were found
+       but could not be placed on the rack{% endif %}.{% else %}No instrument wiring data
+       on this chip.{% endif %}</p>
+    {% endif %}

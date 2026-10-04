@@ -1,36 +1,25 @@
 <!DOCTYPE html>
-{# docs/126 #21 — the printable chip report. STANDALONE by design: no base.html,
-   no topbar/sidebar. Forced DARK theme (r3 feedback): the report shows exactly
-   what users see in SM — the light-forced first cut washed the map out — and
-   print-color-adjust makes the printer keep the dark background instead of
-   stripping it (which would leave light text on white paper). The map is the
-   SAME ComponentMap drawing the component pages use (it fetches /api/topology
-   itself); the tables are read-only renderings of the same QueryEngine rows
-   those pages show, all entities, unpaginated. The toolbar's Download
-   serializes the CURRENT DOM (SVG already drawn) with the stylesheet inlined,
-   so the saved file is fully self-contained.
+{# docs/126 #21 — the printable chip report; docs/277 — the shareable one.
+   STANDALONE by design: no base.html, no app chrome. Forced DARK theme (r3
+   feedback): the report shows what users see in SM, and print-color-adjust
+   makes the printer keep the dark background.
 
-   docs/188 (customer 2026-09-16: "the report should hold every value that can
-   be extracted — T2, echo, RB and the rest"). The one 9-column Qubits table
-   became six grouped sections, and the pairs grew an RB table and a gate-
-   parameter table. Two rules the grouping is built on:
-
-     * a column is NEVER dropped because this chip happens not to fill it.
-       docs/94/docs/148: a silently-absent field reads as "this chip has no
-       such thing", which is the opposite of what an empty cell means. Every
-       column renders, an absent value is "-", and a block that is empty for
-       EVERY entity says which leaf it would have filled from.
-     * every number goes through the `qty` filter — the app's one unit
-       renderer — so the report and the live pages cannot disagree about what
-       a value means. `pct` below is the one thing this file adds: a fidelity
-       as a percentage, which `qty` has no opinion about.
-#}
+   docs/277: a Sections panel picks what the downloaded file holds. Overview
+   and Chip Status render inline (the docs/188 tables, now in
+   _report_chip_status.html); every other section is fetched lazily from
+   /chip-status/report/section/<key>. The toolbar's Download clones the
+   CURRENT DOM, keeps only the checked sections, inlines the stylesheet and
+   hands the result to /chip-status/report/finalize, which enforces the
+   whitelist, the offline rule and the redaction rule before the file is
+   saved. Every number in every section comes from the function its live page
+   calls. #}
 <html lang="en" data-theme="dark">
 <head>
     <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
     <link rel="icon" type="image/svg+xml"
           href="{{ url_for('static', filename='favicon.svg') }}">
-    <title>Chip report — {{ chip_name or 'no chip' }}</title>
+    <title>Chip report{% if has_chip and 'overview' in (checked or []) %} — {{ chip_name }}{% endif %}</title>
     {# BOTH sheets, same order as base.html — the --pico-* base tokens live
        in pico.min.css; without it the dark background token resolved to
        nothing and the body rendered transparent-on-white. #}
@@ -59,7 +48,7 @@
                           background: color-mix(in srgb, var(--pico-card-background-color) 55%, transparent); }
         .chip-report .rep-off { color: var(--pico-muted-color); }
         .chip-report .rep-toolbar { display: flex; gap: 0.5rem; align-items: center;
-                          justify-content: flex-end; margin: 0 0 0.4rem; }
+                          justify-content: flex-end; margin: 0 0 0.4rem; flex-wrap: wrap; }
         .chip-report .rep-toolbar button { width: auto; padding: 0.3rem 0.9rem;
                           font-size: 0.85rem; margin: 0; }
         .chip-report .cmap { border: 1px solid var(--pico-muted-border-color); border-radius: 8px;
@@ -84,6 +73,74 @@
         /* an unphysical number is SHOWN (it is in the file) and marked — never
            silently dropped, and never rendered as if it were a measurement */
         .chip-report .rep-bad { color: var(--pico-del-color, #d33); }
+        /* docs/277 — a big chip's section is thousands of table rows: the
+           browser lays out only what is near the screen (print still renders
+           everything) */
+        .chip-report section.rep-sec { content-visibility: auto; contain-intrinsic-size: auto 1200px; }
+        /* docs/277 — the Sections panel, section states, static charts */
+        .chip-report .rep-panel { border: 1px solid var(--pico-muted-border-color); border-radius: 8px;
+                          padding: 0.6rem 0.9rem 0.5rem; margin: 0 0 1rem; font-size: 0.85rem;
+                          background: var(--pico-card-background-color); }
+        .chip-report .rep-panel h2 { margin: 0 0 0.45rem; border: 0; padding: 0; font-size: 1rem; }
+        .chip-report .rep-boxes { display: grid; grid-template-columns: 1fr 1fr; gap: 0.3rem 1.4rem; }
+        .chip-report .rep-boxes label { display: flex; gap: 0.5rem; align-items: baseline; margin: 0;
+                          font-size: 0.84rem; line-height: 1.3; }
+        .chip-report .rep-boxes input, .chip-report .rep-opts input { margin: 0; flex: none; }
+        .chip-report .rep-box-desc { display: block; color: var(--pico-muted-color); font-size: 0.75rem; }
+        .chip-report .rep-boxes label.rep-box-off { opacity: 0.6; }
+        .chip-report .rep-opts { display: flex; flex-wrap: wrap; gap: 0.4rem 1.4rem; align-items: center;
+                          margin: 0.6rem 0 0.2rem; }
+        .chip-report .rep-opts label { display: inline-flex; gap: 0.45rem; align-items: center; margin: 0;
+                          font-size: 0.84rem; }
+        .chip-report .rep-opts select { width: auto; margin: 0; padding: 0.12rem 1.8rem 0.12rem 0.45rem;
+                          font-size: 0.8rem; height: auto; }
+        .chip-report .rep-will { margin: 0.45rem 0 0; font-size: 0.8rem; }
+        .chip-report ul.rep-contents { display: inline; margin: 0; padding: 0; }
+        .chip-report ul.rep-contents li { display: inline; list-style: none; margin: 0; }
+        .chip-report ul.rep-contents li + li::before { content: ", "; }
+        .chip-report .rep-fig svg.rep-chart { max-width: 900px; }
+        .chip-report .rep-status { font-size: 0.8rem; color: var(--pico-muted-color); }
+        .chip-report .rep-fail { color: var(--pico-del-color, #d33); font-weight: 600; }
+        .chip-report .rep-fig { margin: 0.6rem 0 1.1rem; }
+        .chip-report .rep-fig figcaption { font-weight: 600; font-size: 0.88rem; margin-bottom: 0.2rem; }
+        .chip-report svg.rep-chart { width: 100%; height: auto; display: block; }
+        .chip-report .rc-grid { stroke: var(--pico-muted-border-color); stroke-width: 1; }
+        .chip-report .rc-frame { fill: none; stroke: var(--pico-muted-border-color); }
+        .chip-report .rc-tick { fill: var(--pico-muted-color); font-size: 10px; }
+        .chip-report .rc-label { fill: var(--pico-muted-color); font-size: 11px; }
+        .chip-report .rc-legend { display: flex; flex-wrap: wrap; gap: 0.1rem 0.95rem; font-size: 0.74rem; }
+        .chip-report .rc-key { display: inline-flex; align-items: center; gap: 0.3rem; white-space: nowrap; }
+        .chip-report .rep-stats { margin: 0.2rem 0 0; }
+        .chip-report .rep-flag { font-size: 0.66rem; border: 1px solid var(--pico-muted-border-color);
+                          border-radius: 3px; padding: 0 0.22rem; color: var(--pico-muted-color); }
+        .chip-report .rep-pulses td { padding-top: 0.12rem; padding-bottom: 0.12rem; }
+        .chip-report .rep-iw-host { overflow-x: auto; margin: 0 0 0.6rem; }
+        .chip-report .rep-iw-host svg { max-width: 100%; height: auto; display: block; }
+        /* the rack's controller title is drawn in a fixed dark ink; on the
+           report's dark page it gets the muted text token instead */
+        .chip-report .rep-iw-host svg.instrument-svg > text[font-size="14"] { fill: var(--pico-muted-color); }
+        .chip-report .rep-diag .diag-row-collapsed { display: table-row !important; }
+        .chip-report .rep-diag .diag-acked-toggle { display: none; }
+        .chip-report .rep-diag .diag-pill { pointer-events: none; }
+        .chip-report .rep-raw-tree { font-family: ui-monospace, Consolas, monospace; font-size: 0.76rem; }
+        .chip-report .rep-raw-tree details > details,
+        .chip-report .rep-raw-tree details > .rt-leaf { margin-left: 1.1rem; }
+        .chip-report .rep-raw-tree summary { cursor: pointer; }
+        .chip-report .rep-raw-tree details { margin: 0; padding: 0; border: 0; }
+        .chip-report .rep-raw-tree details > summary { padding: 0.05rem 0; line-height: 1.5; margin: 0; }
+        .chip-report .rep-raw-tree details > summary::after { display: none; }
+        .chip-report .rep-raw-tree details > summary::before { content: "\25B8 "; color: var(--pico-muted-color); }
+        .chip-report .rep-raw-tree details[open] > summary::before { content: "\25BE "; }
+        .chip-report .rt-key, .chip-report .rt-n { color: var(--pico-muted-color); }
+        .chip-report .rt-ptr { color: #9085e9; }
+        .chip-report .rt-str { color: #199e70; }
+        .chip-report .rep-foot { margin-top: 2.2rem; padding-top: 0.5rem; font-size: 0.75rem;
+                          border-top: 1px solid var(--pico-muted-border-color);
+                          color: var(--pico-muted-color); }
+        @media (max-width: 720px) {
+            body.chip-report { padding: 0.8rem 1rem 2rem; }
+            .chip-report .rep-boxes { grid-template-columns: 1fr; }
+        }
         @media print {
             .no-print { display: none !important; }
             /* keep the dark ink — the browser's default background-stripping
@@ -97,457 +154,352 @@
     </style>
 </head>
 <body class="chip-report">
-{# ---------------------------------------------------------------------- #}
-{# Formatting this file owns. Everything dimensional goes through `qty`    #}
-{# (the app's one unit renderer); these two cover what `qty` deliberately  #}
-{# does not: a fidelity as a percentage, and a bare fit parameter.         #}
-{# ---------------------------------------------------------------------- #}
-{% macro pct(v) -%}
-{%- if v is none %}-{% elif v is number %}{{ "%.3f" | format(v * 100) }}%{% else %}&quot;{{ v }}&quot;{% endif -%}
-{%- endmacro %}
-{% macro raw(v) -%}
-{%- if v is none %}-{% else %}{{ v | qty('') }}{% endif -%}
-{%- endmacro %}
-{% macro yn(v) -%}
-{%- if v %}&#10003;{% else %}<span class="rep-off">off</span>{% endif -%}
-{%- endmacro %}
 {% if not has_chip %}
     <h1>Chip report</h1>
     <p class="rep-meta">No chip is open in State Manager — open a state folder,
        then press the printer icon beside <b>Chip Status</b> again.</p>
 {% else %}
     <div class="rep-toolbar no-print">
-        <span class="rep-note">The download is a single self-contained .html
-              (map included) you can attach or archive.</span>
+        <span class="rep-note" id="rep-status">One offline .html file with the checked sections.</span>
         <button type="button" onclick="window.print()">Print</button>
         <button type="button" id="rep-download">Download HTML</button>
     </div>
-    <h1>{{ chip_name }}</h1>
-    <p class="rep-meta">Generated {{ generated }} by QUAM State Manager
-       &middot; source <code>{{ folder }}</code><br>
-       {{ qubits | length }} qubits &middot; {{ pairs | length }} pairs
-       &middot; {{ resonators | length }} resonators
-       &middot; {{ flux | length }} flux lines
-       &middot; {{ couplers | length }} couplers
-       {%- if qdac_qubits %} &middot; {{ qdac_qubits | length }} QDAC-biased{% endif %}</p>
 
-    <h2>Topology</h2>
-    {# the exact mount shape _component_map.html uses — ComponentMap draws the
-       stones / pair edges / CR arrows / coupler dots / resonator marks / flux
-       stubs / feedline buses from /api/topology #}
-    <details class="cmap" id="component-map" data-highlight="" data-cell="120" data-chain="" open>
-        <summary class="cmap-summary no-print">Chip layout</summary>
-        <div class="cmap-body"><p class="muted" style="margin:0">Loading chip layout&hellip;</p></div>
-    </details>
-
-    {# ================================================================== #}
-    {# Qubits — one section per family of numbers. The ID column repeats so #}
-    {# every table is readable on its own page in print.                   #}
-    {# ================================================================== #}
-    <h2>Qubits &mdash; frequencies ({{ qubits | length }})</h2>
-    <p class="rep-cap">f&#8320;&#8321; and f&#8321;&#8322; are the qubit transitions;
-       &alpha; is the anharmonicity f&#8320;&#8321;&minus;f&#8321;&#8322;, stored as a
-       positive magnitude, &chi; the
-       dispersive shift. xy IF is RF &minus; LO (the LO read from the drive
-       port), the arithmetic quam itself runs for an IF the file stores as
-       inferred; &ldquo;-&rdquo; where it cannot be read. &quot;Last cal.&quot; is the freshest timestamp anywhere
-       in that qubit.</p>
-    <table class="rep-wide">
-        <thead><tr><th>ID</th><th>Active</th><th>Grid</th>
-            <th>f_01 (GHz)</th><th>f_12 (GHz)</th><th>Anharm. (MHz)</th>
-            <th>&chi; (MHz)</th><th>xy RF (GHz)</th><th>xy IF (MHz)</th>
-            <th>Last cal.</th></tr></thead>
-        <tbody>
-        {% for q in qubits %}
-        <tr>
-            <td class="rep-id"><strong>{{ q.id }}</strong></td>
-            <td>{{ yn(q.is_active) }}</td>
-            <td>{{ q.grid_location or '-' }}</td>
-            <td>{{ q.f_01 | qty('f_01') }}</td>
-            <td>{{ q.f_12 | qty('f_12') }}</td>
-            <td>{{ q.anharmonicity | qty('anharmonicity') }}</td>
-            <td>{{ q.chi | qty('chi') }}</td>
-            {% set xf = (xy_freq or {}).get(q.id) or {} %}
-            <td>{{ xf.rf_hz | qty('xy_RF_frequency') }}</td>
-            <td>{{ xf.if_hz | qty('xy_intermediate_frequency') }}</td>
-            <td>{{ cal.get(q.id) or '-' }}</td>
-        </tr>
+    <section class="rep-panel no-print" id="rep-panel" aria-label="Sections in the file">
+        <h2>Sections</h2>
+        <div class="rep-boxes">
+        {% for s in sections %}
+            <label class="{{ '' if s.available else 'rep-box-off' }}">
+                <input type="checkbox" data-rep-box value="{{ s.key }}"
+                       {{ 'checked' if s.key in checked }} {{ '' if s.available else 'disabled' }}>
+                <span><b>{{ s.label }}</b>{% if s.note %} <i class="rep-note">— {{ s.note }}</i>{% endif %}
+                    <span class="rep-box-desc">{{ s.desc }}</span></span>
+            </label>
         {% endfor %}
-        </tbody>
-    </table>
+        </div>
+        <div class="rep-opts">
+            <label><input type="checkbox" id="rep-redact" {{ 'checked' if redact }}>
+                Hide network addresses and local folder paths</label>
+            <label>Trends window
+                <select id="rep-window" aria-label="Trends window">
+                {% for v, lab in windows %}<option value="{{ v }}"{{ ' selected' if v == window }}>{{ lab }}</option>{% endfor %}
+                </select></label>
+        </div>
+        <p class="rep-will" id="rep-will"></p>
+        <p class="rep-note" style="margin:0.2rem 0 0">An unchecked section is left out of the
+           file entirely. {% if redact %}Hidden: host names, IP addresses, network ports and
+           cluster names, URLs, and absolute folder paths &mdash; replaced by [hidden] everywhere
+           in the file, the raw tree included.{% else %}Nothing is hidden: network addresses and
+           folder paths are written as stored.{% endif %} Charts in the file are static pictures.</p>
+    </section>
 
-    <h2>Qubits &mdash; coherence ({{ qubits | length }})</h2>
-    <table>
-        <thead><tr><th>ID</th><th>T1 (&micro;s)</th><th>T2 Ramsey (&micro;s)</th>
-            <th>T2 echo (&micro;s)</th><th>T2 Ramsey / 2&middot;T1</th></tr></thead>
-        <tbody>
-        {% for q in qubits %}
-        <tr>
-            <td class="rep-id"><strong>{{ q.id }}</strong></td>
-            <td>{{ q.T1 | qty('T1') }}</td>
-            <td>{{ q.T2ramsey | qty('T2ramsey') }}</td>
-            <td>{{ q.T2echo | qty('T2echo') }}</td>
-            {# the T2 <= 2*T1 ceiling as a ratio — a number the chip implies but
-               stores nowhere, and the one cross-check a coherence table is for.
-               Rendered only when BOTH are real numbers, never inferred. #}
-            <td>{% if q.T1 is number and q.T2ramsey is number and q.T1 > 0 -%}
-                {{ "%.2f" | format(q.T2ramsey / (2 * q.T1)) }}
-                {%- else %}-{% endif %}</td>
-        </tr>
-        {% endfor %}
-        </tbody>
-    </table>
-
-    <h2>Qubits &mdash; single-qubit gates ({{ qubits | length }})</h2>
-    <p class="rep-cap">Amplitudes are the stored waveform amplitudes;
-       &alpha;<sub>DRAG</sub> is the x180 DRAG coefficient. Fidelities are
-       whatever the chip records under <code>gate_fidelity</code>.</p>
-    <table class="rep-wide">
-        <thead><tr><th>ID</th><th>x180 amp</th><th>x180 length (ns)</th>
-            <th>x180 &alpha;<sub>DRAG</sub></th><th>x90 amp</th><th>Saturation amp</th>
-            <th>F avg</th><th>F x180</th><th>F x90</th></tr></thead>
-        <tbody>
-        {% for q in qubits %}
-        <tr>
-            <td class="rep-id"><strong>{{ q.id }}</strong></td>
-            <td>{{ q.x180_amplitude | qty('x180_amplitude') }}</td>
-            <td>{{ q.x180_length | qty('x180_length') }}</td>
-            <td>{{ raw(q.x180_alpha) }}</td>
-            <td>{{ q.x90_amplitude | qty('x90_amplitude') }}</td>
-            <td>{{ q.saturation_amplitude | qty('saturation_amplitude') }}</td>
-            <td>{{ pct(q.gate_fidelity_avg) }}</td>
-            <td>{{ pct(q.gate_fidelity_x180) }}</td>
-            <td>{{ pct(q.gate_fidelity_x90) }}</td>
-        </tr>
-        {% endfor %}
-        </tbody>
-    </table>
-
-    <h2>Readout ({{ resonators | length }})</h2>
-    <p class="rep-cap">P(RO) is the true power leaving the instrument
-       (P = FSP + 20&middot;log&#8321;&#8320;|amp|, docs/109) and is blank on a
-       non-MW channel.</p>
-    <table class="rep-wide">
-        <thead><tr><th>ID</th><th>Active</th><th>Readout f (GHz)</th><th>RF (GHz)</th>
-            <th>Amp</th><th>P(RO) (dBm)</th><th>Length (ns)</th>
-            <th>Threshold</th><th>IW angle (rad)</th><th>ToF (ns)</th></tr></thead>
-        <tbody>
-        {% for q in resonators %}
-        <tr>
-            <td class="rep-id"><strong>{{ q.id }}</strong></td>
-            <td>{{ yn(q.is_active) }}</td>
-            <td>{{ q.readout_frequency | qty('readout_frequency') }}</td>
-            <td>{{ q.readout_RF_frequency | qty('readout_RF_frequency') }}</td>
-            <td>{{ q.readout_amplitude | qty('readout_amplitude') }}</td>
-            {% set _ph = ('qubits.' ~ q.id ~ '.resonator.operations.readout.amplitude') | phys_amp(q.readout_amplitude) %}
-            <td>{% if _ph and _ph.kind == 'mw' %}{{ _ph.text }}{% else %}{% set _pb = ('qubits.' ~ q.id ~ '.resonator.operations.readout.amplitude') | phys_amp_blank(q.readout_amplitude) %}<span{% if _pb %} title="{{ _pb.text }}"{% endif %}>-</span>{% endif %}</td>
-            <td>{{ q.readout_length | qty('readout_length') }}</td>
-            <td>{{ raw(q.readout_threshold) }}</td>
-            <td>{{ raw(q.readout_iw_angle) }}</td>
-            <td>{{ q.time_of_flight | qty('time_of_flight') }}</td>
-        </tr>
-        {% endfor %}
-        </tbody>
-    </table>
-
-    {# Readout fidelity is DERIVED from the confusion matrices, and only the
-       topology derives it (query._assignment_fidelity / _cm_diag). An absent
-       block names the leaf it fills from rather than not existing — docs/148,
-       the customer's own "why is there no GEF". #}
-    {% set _ge_any = topo_nodes.values() | map(attribute='assignment_fidelity') | select('number') | list %}
-    {% set _gef_any = topo_nodes.values() | map(attribute='assignment_fidelity_gef') | select('number') | list %}
-    <h2>Readout fidelity ({{ resonators | length }})</h2>
-    <p class="rep-cap">Derived from each resonator's confusion matrix &mdash; the
-       mean diagonal (assignment) and each state's own diagonal.
-       {% if not _ge_any %}<br>GE columns fill from <code>resonator.confusion_matrix</code>;
-       no qubit on this chip carries a usable one.{% endif %}
-       {% if not _gef_any %}<br>GEF columns fill from <code>resonator.gef_confusion_matrix</code>;
-       no qubit on this chip carries one.{% endif %}</p>
-    <table class="rep-wide">
-        <thead><tr><th>ID</th><th>Assignment (GE)</th><th>F |g&rang;</th><th>F |e&rang;</th>
-            <th>Assignment (GEF)</th><th>F |g&rang;</th><th>F |e&rang;</th><th>F |f&rang;</th></tr></thead>
-        <tbody>
-        {% for q in resonators %}
-        {% set n = topo_nodes.get(q.id) or {} %}
-        <tr>
-            <td class="rep-id"><strong>{{ q.id }}</strong></td>
-            <td>{{ pct(n.get('assignment_fidelity')) }}</td>
-            <td>{{ pct(n.get('ro_fidelity_g')) }}</td>
-            <td>{{ pct(n.get('ro_fidelity_e')) }}</td>
-            <td>{{ pct(n.get('assignment_fidelity_gef')) }}</td>
-            <td>{{ pct(n.get('ro_fidelity_gef_g')) }}</td>
-            <td>{{ pct(n.get('ro_fidelity_gef_e')) }}</td>
-            <td>{{ pct(n.get('ro_fidelity_gef_f')) }}</td>
-        </tr>
-        {% endfor %}
-        </tbody>
-    </table>
-
-    <h2>Flux lines ({{ flux | length }})</h2>
-    {% if flux %}
-    <table class="rep-wide">
-        <thead><tr><th>ID</th><th>Active</th><th>Bias source</th>
-            <th>Joint offset (V)</th><th>Independent offset (V)</th><th>Flux point</th>
-            <th>Delay (ns)</th><th>&Phi;&#8320; voltage (V)</th><th>&Phi;&#8320; current (A)</th>
-            <th>df&#8320;&#8321;/d&Phi;&sup2; (Hz/&Phi;&#8320;&sup2;)</th></tr></thead>
-        <tbody>
-        {% for q in flux %}
-        <tr>
-            <td class="rep-id"><strong>{{ q.id }}</strong></td>
-            <td>{{ yn(q.is_active) }}</td>
-            <td>{{ q.bias_mode or '-' }}</td>
-            <td>{{ q.z_joint_offset | qty('z_joint_offset') }}</td>
-            <td>{{ q.z_independent_offset | qty('z_independent_offset') }}</td>
-            <td>{{ q.z_flux_point or '-' }}</td>
-            <td>{{ q.z_delay_ns | qty('z_delay_ns') }}</td>
-            <td>{{ q.phi0_voltage | qty('phi0_voltage') }}</td>
-            <td>{{ raw(q.phi0_current) }}</td>
-            <td>{{ q.freq_vs_flux_01_quad_term | qty('freq_vs_flux_01_quad_term') }}</td>
-        </tr>
-        {% endfor %}
-        </tbody>
-    </table>
-    {% else %}
-    <p class="rep-note">No qubit on this chip has an OPX flux line.</p>
+    {% for s in sections if s.available %}
+    {% if s.key in inline %}{{ inline[s.key] | safe }}{% else %}
+    <section class="rep-sec" id="rep-sec-{{ s.key }}" data-rep-sec="{{ s.key }}" data-rep-lazy
+             data-rep-redact="{{ redact | int }}"{{ ' hidden' if s.key not in checked }}>
+        <h2>{{ s.label }}</h2><p class="rep-note">Building&hellip;</p></section>
     {% endif %}
+    {% endfor %}
 
-    {# docs/136 — a QDAC-biased qubit's DC point lives on its own component, not
-       on `z`. The section renders only on a chip that has one: unlike a COLUMN,
-       a whole absent instrument is not a value this chip failed to record. #}
-    {% if qdac_qubits %}
-    <h2>QDAC-II bias ({{ qdac_qubits | length }})</h2>
-    <p class="rep-cap">Several qubits legitimately share one trigger cable
-       &mdash; one OPX digital output per QDAC ext input.</p>
-    <table class="rep-wide">
-        <thead><tr><th>ID</th><th>Channel</th><th>DC offset (V)</th><th>Trigger</th>
-            <th>Dwell (s)</th><th>Slew rate</th><th>Output range</th>
-            <th>Output filter</th><th>Settle time (ns)</th></tr></thead>
-        <tbody>
-        {% for q in qdac_qubits %}
-        <tr>
-            <td class="rep-id"><strong>{{ q.id }}</strong></td>
-            <td>{{ q.qdac_channel if q.qdac_channel is not none else '-' }}</td>
-            <td>{{ q.qdac_dc_offset | qty('qdac_dc_offset') }}</td>
-            <td>{{ q.qdac_trigger_port_label or q.qdac_trigger_port or '-' }}</td>
-            <td>{{ raw(q.qdac_dwell) }}</td>
-            <td>{{ raw(q.qdac_slew_rate) }}</td>
-            <td>{{ q.qdac_output_range or '-' }}</td>
-            <td>{{ q.qdac_output_filter or '-' }}</td>
-            <td>{{ q.qdac_settle_time | qty('qdac_settle_time') }}</td>
-        </tr>
-        {% endfor %}
-        </tbody>
-    </table>
-    {% endif %}
-
-    {# Which physical port drives which qubit. It lives only on the topology
-       node (`_extract_port_label` follows the state -> wiring -> ports chain
-       and builds the label from the port's own identity fields), and a printed
-       chip record that cannot answer "which port is q3's flux line" is not a
-       record of the chip. The Instrument Wiring DIAGRAM is deliberately not
-       reproduced here -- it is an SVG of the rack, and the map above is
-       already the drawing this page carries. #}
-    <h2>Wiring &mdash; ports ({{ qubits | length }})</h2>
-    <p class="rep-cap">The OPX port each channel is cabled to, followed through
-       the chip's own pointer chain. A blank means that qubit declares no such
-       channel &mdash; a QDAC-biased qubit has a channel number instead of a
-       flux port.</p>
-    <table class="rep-wide">
-        <thead><tr><th>ID</th><th>Drive (xy)</th><th>Readout</th><th>Flux (z)</th>
-            <th>Bias source</th><th>QDAC channel</th></tr></thead>
-        <tbody>
-        {% for q in qubits %}
-        {% set n = topo_nodes.get(q.id) or {} %}
-        <tr>
-            <td class="rep-id"><strong>{{ q.id }}</strong></td>
-            <td>{{ n.get('xy_port') or '-' }}</td>
-            <td>{{ n.get('rr_port') or '-' }}</td>
-            <td>{{ n.get('z_port') or '-' }}</td>
-            <td>{{ q.bias_mode or '-' }}</td>
-            <td>{{ q.qdac_channel if q.qdac_channel is not none else '-' }}</td>
-        </tr>
-        {% endfor %}
-        </tbody>
-    </table>
-
-    {# ================================================================== #}
-    {# Pairs                                                               #}
-    {# ================================================================== #}
-    <h2>Qubit pairs ({{ pairs | length }})</h2>
-    <p class="rep-cap">&quot;Best 2Q fidelity&quot; is the number Chip Status colours
-       the edge with, and the source names what measured it &mdash; the per-gate
-       and per-Clifford numbers are in the next table, where they are labelled
-       (docs/138).</p>
-    <table class="rep-wide">
-        <thead><tr><th>Pair</th><th>Control</th><th>Target</th><th>Active</th>
-            <th>Moving</th><th>Best 2Q fidelity</th><th>Source</th><th>Best gate</th>
-            <th>Detuning (V)</th><th>Mutual flux bias</th><th>Last cal.</th></tr></thead>
-        <tbody>
-        {% for p in pairs %}
-        {% if p.get('_error') %}
-        <tr><td class="rep-id"><strong>{{ p.id }}</strong></td>
-            <td colspan="10">&#9888; unreadable pair &mdash; {{ p._error }}</td></tr>
-        {% else %}
-        {% set e = (topo_edges | selectattr('pair_id', 'equalto', p.id) | list | first) or {} %}
-        <tr>
-            <td class="rep-id"><strong>{{ p.id }}</strong></td>
-            <td>{{ p.qubit_control or '-' }}</td>
-            <td>{{ p.qubit_target or '-' }}</td>
-            <td>{{ yn(p.is_active) }}</td>
-            <td>{{ e.get('moving_qubit') or '-' }}</td>
-            <td>{{ pct(e.get('cz_fidelity')) }}</td>
-            <td>{{ e.get('fidelity_source') or '-' }}</td>
-            <td>{{ e.get('best_gate') or '-' }}</td>
-            <td>{{ e.get('detuning') | qty('pair_detuning') }}</td>
-            <td>{% set _mb = e.get('mutual_flux_bias') %}{% if _mb is none %}-{% elif _mb is string or _mb is number %}{{ raw(_mb) }}{% else %}{{ _mb | join(', ') }}{% endif %}</td>
-            <td>{{ cal.get(p.id) or '-' }}</td>
-        </tr>
-        {% endif %}
-        {% endfor %}
-        </tbody>
-    </table>
-
-    {# Every RB / Bell number the chip stores, with the LEVEL spelled out.
-       docs/138: StandardRB is per CLIFFORD and InterleavedRB is per GATE, and a
-       Clifford is several gates — a table that printed both as "fidelity" is
-       exactly the report the customer already had to correct once. #}
-    {% set _lvl = {'gate': '2Q gate (IRB)', 'clifford': '2Q Clifford (SRB)',
-                   'state': '2Q Bell state', 'decay': 'RB fit (decay α)'} %}
-    {% set rb_rows = [] %}
-    {% for e in topo_edges %}{% for gf in (e.get('gate_fidelities') or []) %}
-        {% set _ = rb_rows.append((e.get('pair_id'), gf)) %}
-    {% endfor %}{% endfor %}
-    <h2>2Q randomized benchmarking ({{ rb_rows | length }})</h2>
-    {% if rb_rows %}
-    <p class="rep-cap">One row per number the chip actually stores.
-       A decay &alpha; is the RB exponential's base &mdash; a fit parameter, not a
-       fidelity &mdash; so it is shown as a bare number.
-       &quot;Per gate &divide;N&quot; is the per-gate fidelity the Standard-RB run
-       itself computed, read from that run (never recomputed here) &mdash; blank
-       where that run is not in this workspace's dataset folders.</p>
-    <table class="rep-wide">
-        <thead><tr><th>Pair</th><th>Gate</th><th>Measurement</th><th>What it measures</th>
-            <th>Value</th><th>Per gate &divide;N</th><th>Run</th></tr></thead>
-        <tbody>
-        {% for pair_id, gf in rb_rows %}
-        <tr>
-            <td class="rep-id"><strong>{{ pair_id }}</strong></td>
-            <td class="rep-id">{{ gf.get('gate') or '-' }}</td>
-            <td>{{ gf.get('metric') or '-' }}</td>
-            <td class="rep-lvl">{{ _lvl.get(gf.get('level')) or '—' }}</td>
-            <td>{% if gf.get('raw_value') is not none -%}
-                    <span class="rep-bad">{{ raw(gf.get('raw_value')) }} &#9888; unphysical</span>
-                {%- elif gf.get('level') == 'decay' -%}
-                    {{ raw(gf.get('value')) }}
-                {%- else -%}
-                    {{ pct(gf.get('value')) }}
-                {%- endif %}</td>
-            <td>{% if gf.get('derived_gate_fidelity') is not none -%}
-                    {{ pct(gf.get('derived_gate_fidelity')) }}
-                    {%- if gf.get('average_gates_per_clifford') is number %}
-                    <span class="rep-note">&divide;{{ "%.2f" | format(gf.get('average_gates_per_clifford')) }}</span>
-                    {%- endif %}
-                {%- else %}-{% endif %}</td>
-            <td>{{ gf.get('load_id') if gf.get('load_id') is not none else '-' }}</td>
-        </tr>
-        {% endfor %}
-        </tbody>
-    </table>
-    {% else %}
-    <p class="rep-note">No pair on this chip stores an RB or Bell-state fidelity.
-       These fill from a gate macro's <code>fidelity</code> block.</p>
-    {% endif %}
-
-    <h2>2Q gate parameters ({{ gate_params | length }})</h2>
-    {% if gate_params %}
-    <p class="rep-cap">One row per gate variant the pair carries, calibrated or
-       not. A length the file stores as an inferred total is computed the way
-       quam computes it; &lsquo;-&rsquo; where SM does not know the pulse class.</p>
-    <table class="rep-wide">
-        <thead><tr><th>Pair</th><th>Gate</th><th>Amplitude</th><th>Coupler amp</th>
-            <th>Length (ns)</th><th>Flat length (ns)</th><th>Smoothing (ns)</th>
-            <th>Phase shift ctrl (rad)</th><th>Phase shift tgt (rad)</th></tr></thead>
-        <tbody>
-        {% for g in gate_params %}
-        <tr>
-            <td class="rep-id"><strong>{{ g.pair }}</strong></td>
-            <td class="rep-id">{{ g.gate }}</td>
-            <td>{{ g.amplitude | qty('amplitude') }}</td>
-            <td>{{ g.coupler_amplitude | qty('coupler_amplitude') }}</td>
-            <td>{{ g.length | qty('length') }}</td>
-            <td>{{ g.flat_length | qty('flat_length') }}</td>
-            <td>{{ g.smoothing_length | qty('smoothing_length') }}</td>
-            <td>{{ raw(g.phase_shift_control) }}</td>
-            <td>{{ raw(g.phase_shift_target) }}</td>
-        </tr>
-        {% endfor %}
-        </tbody>
-    </table>
-    {% else %}
-    <p class="rep-note">No pair on this chip carries a CZ-shaped gate macro.</p>
-    {% endif %}
-
-    {# The pair's own multi-qubit readout confusion matrix — the 2Q counterpart
-       of the per-qubit assignment fidelity above, and stored on the PAIR. #}
-    {% set conf_edges = topo_edges | selectattr('confusion_diag') | list %}
-    {% if conf_edges %}
-    <h2>Pair readout confusion ({{ conf_edges | length }})</h2>
-    <p class="rep-cap">The diagonal of each pair's stored confusion matrix &mdash;
-       the probability each joint state is read back as itself.</p>
-    <table>
-        <thead><tr><th>Pair</th><th>States</th><th>Diagonal</th><th>Mean diagonal</th></tr></thead>
-        <tbody>
-        {% for e in conf_edges %}
-        <tr>
-            <td class="rep-id"><strong>{{ e.pair_id }}</strong></td>
-            <td>{{ e.confusion_size }}</td>
-            <td>{% for v in e.confusion_diag %}{{ raw(v) }}{% if not loop.last %}, {% endif %}{% endfor %}</td>
-            <td>{% set _d = e.confusion_diag | select('number') | list %}
-                {%- if _d %}{{ pct((_d | sum) / (_d | length)) }}{% else %}-{% endif %}</td>
-        </tr>
-        {% endfor %}
-        </tbody>
-    </table>
-    {% endif %}
-
-    <h2>Couplers ({{ couplers | length }})</h2>
-    {% if couplers %}
-    <table>
-        <thead><tr><th>Pair</th><th>Control</th><th>Target</th><th>Active</th>
-            <th>Decouple offset (V)</th><th>Interaction offset (V)</th>
-            <th>Delay (ns)</th></tr></thead>
-        <tbody>
-        {% for p in couplers %}
-        <tr>
-            <td class="rep-id"><strong>{{ p.id }}</strong></td>
-            <td>{{ p.qubit_control or '-' }}</td>
-            <td>{{ p.qubit_target or '-' }}</td>
-            <td>{{ yn(p.is_active) }}</td>
-            <td>{{ p.coupler_decouple_offset | qty('coupler_decouple_offset') }}</td>
-            <td>{{ p.coupler_interaction_offset | qty('coupler_interaction_offset') }}</td>
-            <td>{{ p.coupler_delay_ns | qty('coupler_delay_ns') }}</td>
-        </tr>
-        {% endfor %}
-        </tbody>
-    </table>
-    {% else %}
-    <p class="rep-note">No pair on this chip has a tunable coupler.</p>
-    {% endif %}
+    <footer class="rep-foot">Chip report made by QUAM State Manager. Charts in this file are
+        static pictures of the values listed beside them; nothing in it reaches the network.</footer>
 
     <script src="{{ url_for('static', filename='topo-graph.js') }}"></script>
     <script src="{{ url_for('static', filename='component-map.js') }}"></script>
+    {# The ONE script a downloaded file keeps, and only when the raw section is
+       in it: it turns the embedded JSON into a collapsible tree on demand.
+       Self-contained; no network. #}
+    <script data-rep-keep data-rep-for="raw">
+    (function () {
+        'use strict';
+        function decode(el) {
+            var enc = el.getAttribute('data-enc'), txt = el.textContent;
+            if (enc !== 'gzip-base64') return Promise.resolve(JSON.parse(txt));
+            if (typeof DecompressionStream !== 'function') {
+                return Promise.reject(new Error('this browser cannot unpack the compressed tree'));
+            }
+            var bin = atob(txt), bytes = new Uint8Array(bin.length);
+            for (var i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
+            var stream = new Blob([bytes]).stream().pipeThrough(new DecompressionStream('gzip'));
+            return new Response(stream).text().then(JSON.parse);
+        }
+        function scalar(v) {
+            var s = document.createElement('span');
+            if (v === null) { s.className = 'rt-n'; s.textContent = 'null'; }
+            else if (typeof v === 'string') {
+                s.className = v.charAt(0) === '#' ? 'rt-ptr' : 'rt-str';
+                s.textContent = JSON.stringify(v);
+            } else { s.textContent = String(v); }
+            return s;
+        }
+        function small(v) {
+            if (!Array.isArray(v)) return !Object.keys(v).length;   // {} is a leaf
+            for (var i = 0; i < v.length; i++) {
+                var x = v[i];
+                if (x !== null && typeof x === 'object' && !(Array.isArray(x) && small(x))) return false;
+            }
+            return JSON.stringify(v).length <= 120;
+        }
+        function node(key, v) {
+            if (v !== null && typeof v === 'object' && !small(v)) {
+                var d = document.createElement('details');
+                var sm = document.createElement('summary');
+                var n = Array.isArray(v) ? v.length : Object.keys(v).length;
+                var k = document.createElement('span'); k.className = 'rt-key'; k.textContent = key;
+                var c = document.createElement('span'); c.className = 'rt-n';
+                c.textContent = Array.isArray(v) ? ' [' + n + ']' : ' {' + n + '}';
+                sm.appendChild(k); sm.appendChild(c); d.appendChild(sm);
+                d.addEventListener('toggle', function () {
+                    if (!d.open || d._filled) return;
+                    d._filled = true;
+                    var frag = document.createDocumentFragment();
+                    (Array.isArray(v) ? v.map(function (_, i) { return i; }) : Object.keys(v))
+                        .forEach(function (kk) { frag.appendChild(node(String(kk), v[kk])); });
+                    d.appendChild(frag);
+                });
+                return d;
+            }
+            var row = document.createElement('div'); row.className = 'rt-leaf';
+            var kk = document.createElement('span'); kk.className = 'rt-key'; kk.textContent = key + ': ';
+            row.appendChild(kk);
+            row.appendChild(v !== null && typeof v === 'object'
+                ? (function () { var s = document.createElement('span'); s.textContent = JSON.stringify(v); return s; })()
+                : scalar(v));
+            return row;
+        }
+        function mount(root) {
+            root = root || document;
+            var data = root.querySelector('#rep-raw-data');
+            var host = root.querySelector('[data-rep-raw-tree]');
+            if (!data || !host) return Promise.resolve(false);
+            return decode(data).then(function (doc) {
+                host.textContent = '';
+                Object.keys(doc).forEach(function (k) { host.appendChild(node(k, doc[k])); });
+                host.setAttribute('data-rep-raw-ready', '1');
+                return true;
+            }).catch(function (e) {
+                host.textContent = '';
+                var p = document.createElement('p'); p.className = 'rep-fail';
+                p.textContent = 'Could not be built: ' + (e && e.message || e);
+                host.appendChild(p);
+                return false;
+            });
+        }
+        window.ChipReportRaw = { mount: mount };
+        if (document.readyState === 'loading') {
+            document.addEventListener('DOMContentLoaded', function () { mount(document); });
+        } else { mount(document); }
+    })();
+    </script>
     <script>
     (function () {
-        if (window.ComponentMap) {
+        'use strict';
+        var REDACT = {{ 'true' if redact else 'false' }};
+        var panel = document.getElementById('rep-panel');
+        var boxes = Array.prototype.slice.call(panel.querySelectorAll('input[data-rep-box]'));
+        var winSel = document.getElementById('rep-window');
+        var status = document.getElementById('rep-status');
+        var pending = {};
+        var wiringP = null;
+        if (window.ComponentMap && document.getElementById('component-map')) {
             ComponentMap.mount(document.getElementById('component-map'));
         }
-        /* Self-contained download: wait for the map SVG, clone the document,
-           strip scripts + the download affordance (dead in a saved file; the
-           Print button keeps its inline onclick), inline the stylesheet, and
-           hand back one HTML string. Exposed so the browser selfcheck can pin
-           the output without driving a real download. */
+        function esc(s) {
+            return String(s == null ? '' : s).replace(/[&<>"']/g, function (c) {
+                return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c];
+            });
+        }
+        function checked() {
+            return boxes.filter(function (b) { return b.checked && !b.disabled; })
+                        .map(function (b) { return b.value; });
+        }
+        function sec(key) { return document.querySelector('section[data-rep-sec="' + key + '"]'); }
+        function labelOf(key) {
+            var b = boxes.filter(function (x) { return x.value === key; })[0];
+            var t = b && b.parentNode.querySelector('b');
+            return t ? t.textContent : key;
+        }
+        function syncUrl() {
+            try {
+                var u = new URL(window.location.href);
+                u.searchParams.set('sections', checked().join(','));
+                u.searchParams.set('redact', REDACT ? '1' : '0');
+                u.searchParams.set('window', winSel ? winSel.value : 'all');
+                history.replaceState(history.state, '', u.pathname + u.search);
+            } catch (e) { /* no URL support: the page still works */ }
+        }
+        /* The panel says, in words, what the file will and will not hold. */
+        function summary() {
+            var on = checked(), off = [];
+            boxes.forEach(function (b) { if (on.indexOf(b.value) < 0) off.push(b.value); });
+            var el = document.getElementById('rep-will');
+            if (el) {
+                el.innerHTML = '<b>In the file:</b> ' + (on.length ? on.map(function (k) { return esc(labelOf(k)); }).join(', ') : 'nothing')
+                    + (off.length ? ' &middot; <b>Not in the file:</b> ' + off.map(function (k) { return esc(labelOf(k)); }).join(', ') : '');
+            }
+            var ul = document.querySelector('ul[data-rep-contents]');
+            if (ul) ul.innerHTML = on.map(function (k) { return '<li>' + esc(labelOf(k)) + '</li>'; }).join('');
+        }
+        function failLine(el, why) {
+            el.innerHTML = '<h2>' + esc(labelOf(el.getAttribute('data-rep-sec'))) + '</h2>'
+                + '<p class="rep-fail" role="alert">Could not be built: ' + esc(why) + '</p>';
+            // settled (the download takes the line as it is); checking the
+            // box again retries
+            el.removeAttribute('data-rep-lazy');
+            el.setAttribute('data-rep-state', 'failed');
+        }
+        function after(key, el) {
+            if (key === 'chip_status' && window.ComponentMap) {
+                var m = el.querySelector('#component-map');
+                if (m) ComponentMap.mount(m);
+            }
+            if (key === 'wiring') { wiringP = null; return drawWiring(el); }
+            if (key === 'raw' && window.ChipReportRaw) return ChipReportRaw.mount(el);
+            return null;
+        }
+        /* One section, fetched once per option set; a failed fetch is said in
+           the section itself, never a blank. */
+        function load(key) {
+            var el = sec(key);
+            if (!el) return Promise.resolve(null);
+            if (!el.hasAttribute('data-rep-lazy')) return Promise.resolve(el);
+            if (pending[key]) return pending[key];
+            el.innerHTML = '<h2>' + esc(labelOf(key)) + '</h2><p class="rep-note">Building&hellip;</p>';
+            var q = '/chip-status/report/section/' + encodeURIComponent(key)
+                  + '?redact=' + (REDACT ? '1' : '0') + '&window=' + encodeURIComponent(winSel ? winSel.value : 'all');
+            pending[key] = fetch(q, { headers: { 'Accept': 'text/html' }, cache: 'no-store' })
+                .then(function (r) {
+                    return r.text().then(function (t) {
+                        if (!r.ok) throw new Error('HTTP ' + r.status + (t ? ' — ' + t.slice(0, 200) : ''));
+                        return t;
+                    });
+                })
+                .then(function (html) {
+                    var tpl = document.createElement('template');
+                    tpl.innerHTML = html.trim();
+                    var fresh = tpl.content.firstElementChild;
+                    if (!fresh || fresh.getAttribute('data-rep-sec') !== key) throw new Error('unexpected response');
+                    var cur = sec(key);
+                    fresh.hidden = checked().indexOf(key) < 0;
+                    cur.parentNode.replaceChild(fresh, cur);
+                    return Promise.resolve(after(key, fresh)).then(function () { return fresh; });
+                })
+                .catch(function (e) {
+                    var cur = sec(key);
+                    if (cur) failLine(cur, e && e.message || e);
+                    return cur;
+                })
+                .then(function (x) { delete pending[key]; return x; });
+            return pending[key];
+        }
+        /* Instrument wiring: the rack is drawn by the screen's own renderer in
+           a hidden frame and its SVG imported here (docs/277 section 6). */
+        function drawWiring(el) {
+            var host = el.querySelector('[data-rep-iw]');
+            if (!host) return Promise.resolve();
+            if (wiringP) return wiringP;
+            wiringP = new Promise(function (res) {
+                var fr = document.createElement('iframe');
+                fr.setAttribute('aria-hidden', 'true');
+                fr.tabIndex = -1;
+                fr.style.cssText = 'position:absolute;left:-10000px;top:0;width:1500px;height:900px;visibility:hidden;border:0';
+                var t0 = Date.now(), timer = null, over = false;
+                function finish(state, why, svgs) {
+                    if (over) return;
+                    over = true;
+                    clearInterval(timer);
+                    if (svgs && svgs.length) {
+                        host.textContent = '';
+                        svgs.forEach(function (s) {
+                            var n = document.importNode(s, true);
+                            var w = parseFloat(n.getAttribute('width')) || 0;
+                            n.removeAttribute('style');
+                            n.style.width = '100%';
+                            if (w) n.style.maxWidth = w + 'px';
+                            n.style.height = 'auto';
+                            host.appendChild(n);
+                        });
+                        host.setAttribute('data-rep-iw', 'ok');
+                    } else if (state === 'empty') {
+                        host.innerHTML = '<p class="rep-note">' + esc(why) + '</p>';
+                        host.setAttribute('data-rep-iw', 'empty');
+                    } else {
+                        host.innerHTML = '<p class="rep-fail" role="alert">Could not be built: ' + esc(why || 'the rack was not drawn') + '</p>';
+                        host.setAttribute('data-rep-iw', 'failed');
+                    }
+                    if (fr.parentNode) fr.parentNode.removeChild(fr);
+                    res();
+                }
+                timer = setInterval(function () {
+                    var d = null;
+                    try { d = fr.contentDocument; } catch (e) { d = null; }
+                    var root = d && d.getElementById('instrument-diagram');
+                    var st = root && root.getAttribute('data-rep-drawn');
+                    if (st === 'ok') return finish('ok', '', Array.prototype.slice.call(root.querySelectorAll('svg.instrument-svg')));
+                    if (st) return finish(st, root.getAttribute('data-rep-why') || '');
+                    if (Date.now() - t0 > 20000) finish('failed', 'the rack was not drawn within 20 s');
+                }, 100);
+                fr.addEventListener('load', function () {
+                    // a frame that LOADED without the drawing page in it (an
+                    // error page, a refused request) is a failure now, not
+                    // after the 20 s wait
+                    setTimeout(function () {
+                        var d = null;
+                        try { d = fr.contentDocument; } catch (e) { d = null; }
+                        if (fr.parentNode && !(d && d.getElementById('instrument-diagram'))) {
+                            finish('failed', 'the drawing page could not be loaded');
+                        }
+                    }, 300);
+                });
+                fr.src = '/chip-status/report/frame/wiring';
+                document.body.appendChild(fr);
+            });
+            return wiringP;
+        }
+        boxes.forEach(function (b) {
+            b.addEventListener('change', function () {
+                var el = sec(b.value);
+                if (el) el.hidden = !b.checked;
+                if (el && b.checked && el.getAttribute('data-rep-state') === 'failed') {
+                    el.setAttribute('data-rep-lazy', '');
+                }
+                if (b.checked) load(b.value);
+                syncUrl();
+                summary();
+            });
+        });
+        /* The switch changes what every section may contain: the page is
+           rebuilt under it (the URL carries the choice, so Back/reload agree). */
+        var red = document.getElementById('rep-redact');
+        if (red) red.addEventListener('change', function () {
+            REDACT = red.checked;
+            syncUrl();
+            window.location.replace(window.location.href);
+        });
+        if (winSel) winSel.addEventListener('change', function () {
+            syncUrl();
+            var el = sec('trends');
+            if (el) {
+                el.setAttribute('data-rep-lazy', '');
+                if (checked().indexOf('trends') >= 0) load('trends');
+            }
+        });
+        // lazily build what is checked and not inline, all at once
+        checked().forEach(function (k) { load(k); });
+        var wsec = sec('wiring');
+        if (wsec && !wsec.hasAttribute('data-rep-lazy')) drawWiring(wsec);
+        summary();
+        syncUrl();
+
+        /* Self-contained download: wait for every checked section and the
+           drawings, clone the document, keep ONLY the checked sections, strip
+           scripts (all of them unless the raw tree is in the file) and the
+           download affordance, inline the stylesheet, and let the server
+           finalize it (whitelist, offline, redaction). Exposed so a browser
+           probe can pin the output without driving a real download. */
         function whenDrawn(timeoutMs) {
             return new Promise(function (res) {
+                if (checked().indexOf('chip_status') < 0) return res();
                 var t0 = Date.now();
                 (function tick() {
                     if (document.querySelector('#component-map svg')
@@ -556,41 +508,140 @@
                 })();
             });
         }
+        /* Only the stylesheet rules the file can use (docs/277 size budget):
+           a rule is kept unless one of its classes, ids or element names
+           appears nowhere in the file. Conservative by construction --
+           pseudo-classes, attribute selectors, :root and @-rules are kept --
+           so pruning can only drop a rule that could never apply. Returns
+           null when the sheets cannot be read (the caller then inlines them
+           whole). */
+        function usedCss(doc, urls) {
+            var cls = {}, ids = {}, tags = { html: 1, body: 1, head: 1 };
+            var all = doc.getElementsByTagName('*');
+            for (var i = 0; i < all.length; i++) {
+                var el = all[i];
+                tags[el.localName.toLowerCase()] = 1;
+                if (el.id) ids[el.id] = 1;
+                var c = el.getAttribute('class');
+                if (c) c.split(/\s+/).forEach(function (x) { if (x) cls[x] = 1; });
+            }
+            function partUsed(part) {
+                var p = part.replace(/:(?:not|is|where|has|matches)\((?:[^()]|\([^()]*\))*\)/g, '')
+                            .replace(/\[[^\]]*\]/g, '').replace(/::?[\w-]+(\([^)]*\))?/g, '');
+                var m, re = /\.((?:\\.|[\w-])+)/g;
+                while ((m = re.exec(p))) { if (!cls[m[1].replace(/\\/g, '')]) return false; }
+                re = /#((?:\\.|[\w-])+)/g;
+                while ((m = re.exec(p))) { if (!ids[m[1].replace(/\\/g, '')]) return false; }
+                var comps = p.split(/[\s>+~]+/);
+                for (var k = 0; k < comps.length; k++) {
+                    var t = /^([a-zA-Z][\w-]*)/.exec(comps[k]);
+                    if (t && !tags[t[1].toLowerCase()]) return false;
+                }
+                return true;
+            }
+            function walk(rules) {
+                var s = '';
+                for (var i = 0; i < rules.length; i++) {
+                    var r = rules[i];
+                    if (window.CSSStyleRule && r instanceof CSSStyleRule) {
+                        if (r.selectorText.split(',').some(partUsed)) s += r.cssText + '\n';
+                    } else if (window.CSSMediaRule && r instanceof CSSMediaRule) {
+                        var inner = walk(r.cssRules);
+                        if (inner) s += '@media ' + r.conditionText + ' {\n' + inner + '}\n';
+                    } else {
+                        s += r.cssText + '\n';      // @font-face, @keyframes, @supports, ...
+                    }
+                }
+                return s;
+            }
+            var out = [];
+            for (var u = 0; u < urls.length; u++) {
+                var sheet = null;
+                for (var j = 0; j < document.styleSheets.length; j++) {
+                    var h = document.styleSheets[j].href || '';
+                    if (h.indexOf(urls[u]) >= 0) { sheet = document.styleSheets[j]; break; }
+                }
+                if (!sheet) return null;
+                try { out.push(walk(sheet.cssRules)); } catch (e) { return null; }
+            }
+            return out.join('\n');
+        }
+        var lastName = null;
         function buildStandalone() {
-            return whenDrawn().then(function () {
+            var keep = checked();
+            return Promise.all(keep.map(load)).then(function () {
+                var w = keep.indexOf('wiring') >= 0 ? sec('wiring') : null;
+                return Promise.all([whenDrawn(), w ? drawWiring(w) : null]);
+            }).then(function () {
+                var doc = document.documentElement.cloneNode(true);
+                doc.querySelectorAll('script').forEach(function (el) {
+                    var forSec = el.getAttribute('data-rep-for');
+                    if (!el.hasAttribute('data-rep-keep') || (forSec && keep.indexOf(forSec) < 0)) el.remove();
+                });
+                doc.querySelectorAll('section[data-rep-sec]').forEach(function (el) {
+                    if (keep.indexOf(el.getAttribute('data-rep-sec')) < 0) el.remove();
+                    else el.removeAttribute('hidden');
+                });
+                doc.querySelectorAll('#rep-panel, #rep-download, #rep-status, iframe').forEach(function (el) { el.remove(); });
+                doc.querySelectorAll('[data-rep-raw-tree]').forEach(function (el) {
+                    el.removeAttribute('data-rep-raw-ready');
+                    el.innerHTML = '<p class="rep-note">Opening the tree&hellip;</p>';
+                });
                 var urls = ['{{ url_for('static', filename='pico.min.css') }}',
                             '{{ url_for('static', filename='style.css') }}'];
-                return Promise.all(urls.map(function (u) {
+                var pruned = null;
+                try { pruned = usedCss(doc, urls); } catch (e) { pruned = null; }
+                var css = pruned !== null ? Promise.resolve(pruned) : Promise.all(urls.map(function (u) {
                     return fetch(u).then(function (r) { return r.ok ? r.text() : ''; })
                                    .catch(function () { return ''; });
                 })).then(function (parts) { return parts.join('\n'); });
-            }).then(function (css) {
-                var doc = document.documentElement.cloneNode(true);
-                doc.querySelectorAll('script').forEach(function (el) { el.remove(); });
-                var dl = doc.querySelector('#rep-download');
-                if (dl) dl.remove();
-                doc.querySelectorAll('link[rel="stylesheet"]').forEach(function (el) { el.remove(); });
+                return css.then(function (text) { return [doc, text]; });
+            }).then(function (pair) {
+                var doc = pair[0], css = pair[1];
+                doc.querySelectorAll('link[rel="stylesheet"], link[rel="icon"]').forEach(function (el) { el.remove(); });
                 if (css) {
                     var st = document.createElement('style');
                     st.textContent = css;
                     doc.querySelector('head').appendChild(st);
                 }
-                return '<!DOCTYPE html>\n' + doc.outerHTML;
+                var html = '<!DOCTYPE html>\n' + doc.outerHTML;
+                return fetch('/chip-status/report/finalize', {
+                    method: 'POST', cache: 'no-store',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ html: html, sections: keep, redact: REDACT })
+                }).then(function (r) {
+                    return r.text().then(function (t) {
+                        if (!r.ok) {
+                            var why = t;
+                            try { why = JSON.parse(t).error || t; } catch (e) { /* plain text */ }
+                            throw new Error(why);
+                        }
+                        lastName = r.headers.get('X-Report-Filename');
+                        return t;
+                    });
+                });
             });
         }
-        window.ChipReport = { buildStandalone: buildStandalone };
+        window.ChipReport = { buildStandalone: buildStandalone, load: load, checked: checked,
+                              lastFilename: function () { return lastName; } };
         var btn = document.getElementById('rep-download');
         if (btn) btn.addEventListener('click', function () {
             btn.disabled = true;
+            var t0 = Date.now();
+            if (status) status.textContent = 'Building the file…';
             buildStandalone().then(function (html) {
                 var blob = new Blob([html], { type: 'text/html' });
                 var a = document.createElement('a');
                 a.href = URL.createObjectURL(blob);
-                a.download = 'chip_report_{{ (chip_name or "chip") | replace(" ", "_") }}_{{ generated | replace(" ", "_") | replace(":", "") }}.html';
+                a.download = lastName || 'chip_report.html';
                 document.body.appendChild(a);
                 a.click();
                 setTimeout(function () { URL.revokeObjectURL(a.href); a.remove(); }, 2000);
-            }).finally(function () { btn.disabled = false; });
+                if (status) status.textContent = 'Saved ' + (lastName || 'the file') + ' — '
+                    + (blob.size / 1048576).toFixed(2) + ' MB in ' + ((Date.now() - t0) / 1000).toFixed(1) + ' s.';
+            }).catch(function (e) {
+                if (status) status.innerHTML = '<span class="rep-fail">Not saved: ' + esc(e && e.message || e) + '</span>';
+            }).then(function () { btn.disabled = false; });
         });
     })();
     </script>

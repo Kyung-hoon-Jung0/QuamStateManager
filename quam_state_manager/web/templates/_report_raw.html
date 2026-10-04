@@ -1,0 +1,10 @@
+{# docs/277: the raw state tree. The data travels ONCE, as a JSON script the
+   page's renderer (and the file's, the one script a report keeps) turns into
+   a collapsible tree on demand. Pointer strings are shown as stored. #}
+    <h2>Raw state tree</h2>
+    <p class="rep-cap">state.json and wiring.json as SM holds them (the working
+       copy), pointers unresolved &mdash; {{ '{:,}'.format(json_bytes) }} bytes of JSON{% if enc != 'json' %},
+       stored compressed in this file ({{ '{:,}'.format(file_bytes) }} bytes){% endif %}.
+       Open a branch to read it.</p>
+    <div class="rep-raw-tree" data-rep-raw-tree><p class="rep-note">Opening the tree&hellip;</p></div>
+    <script type="application/json" id="rep-raw-data" data-rep-keep data-rep-for="raw" data-enc="{{ enc }}">{{ text | safe }}</script>

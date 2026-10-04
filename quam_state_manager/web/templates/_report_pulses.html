@@ -1,0 +1,16 @@
+{# docs/277: the Pulses page table in the shareable report. Rows and
+   thumbnails come from PulseIndex + _pulse_draw_sparks (the page's own);
+   identical thumbnails are one <symbol> referenced by <use>. #}
+    <h2>Pulses ({{ n }})</h2>
+    <p class="rep-cap">Every pulse on the chip, as the Pulses page lists it.
+       {{ n_drawn }} waveform thumbnail{{ '' if n_drawn == 1 else 's' }}
+       ({{ n_distinct }} distinct, each stored once in this file);
+       a dashed thumbnail was drawn by the pulse class's own code.
+       Length in ns; &ldquo;Used by&rdquo; counts the operations that point at the pulse.</p>
+    {{ defs | safe }}
+    <table class="rep-wide rep-pulses">
+        <thead><tr><th>Owner</th><th>Channel</th><th>Operation</th><th>Class</th>
+            <th>Waveform</th><th>Length (ns)</th><th>Amp</th><th>Used by</th></tr></thead>
+        <tbody>{{ rows_html | safe }}</tbody>
+    </table>
+    {% if not n %}<p class="rep-note">No pulses found on this chip.</p>{% endif %}

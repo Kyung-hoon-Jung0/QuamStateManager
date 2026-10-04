@@ -1,0 +1,19 @@
+{# docs/277: Chip Status > Trends in the shareable report. The series are the
+   ones /topology/trends charts; the pictures are static SVG. #}
+    <h2>Trends ({{ charts | length }} metric{{ '' if charts | length == 1 else 's' }})</h2>
+    <p class="rep-cap">The Chip Status trend series: change points from the
+       parameter history (at most 400 per line), {{ window_label | lower }},
+       times in {{ zone_label }}. The value beside each qubit is its newest
+       recorded value.{% if no_time %} {{ no_time }} point{{ '' if no_time == 1 else 's' }}
+       whose snapshot id is not a time {{ 'is' if no_time == 1 else 'are' }} not drawn.{% endif %}</p>
+    {% if not charts %}
+    <p class="rep-note">No parameter history is recorded for this chip yet.
+       Trends fill in as calibrations and saves are captured.</p>
+    {% endif %}
+    {% for c in charts %}
+    <figure class="rep-fig" data-rep-metric="{{ c.metric }}">
+        <figcaption>{{ c.label }} <span class="rep-note">&middot; {{ c.n }} qubit{{ '' if c.n == 1 else 's' }}</span></figcaption>
+        {% if c.empty %}<p class="rep-note">Nothing recorded in this window.</p>{% else %}{{ c.svg | safe }}{% endif %}
+        {{ c.legend | safe }}
+    </figure>
+    {% endfor %}

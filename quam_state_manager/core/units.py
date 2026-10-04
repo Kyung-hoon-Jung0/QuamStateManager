@@ -192,6 +192,18 @@ def format_quantity(value: Any, field: str) -> Optional[tuple[str, str]]:
     return (f"{value * factor:.{decimals}f}", fixed)
 
 
+def fixed_scale(field: str) -> Optional[tuple[float, str]]:
+    """``(factor, suffix)`` the fixed-per-field display (``qty``) uses for
+    *field* -- ``T1`` -> ``(1e6, "µs")`` -- or ``None`` for a field with no
+    known unit. A chart axis that must agree with the tables reads this."""
+    dimension, fixed = _resolve_field(field)
+    if dimension is None:
+        return None
+    if dimension == "duration_ns":
+        return (1.0, "ns")
+    return (_FIXED[fixed][0], fixed)
+
+
 def stored_unit_label(field: str) -> str:
     """SI base unit a *field* is stored in (for 'editing raw X' hints), or ''."""
     dimension, _ = _resolve_field(field)
