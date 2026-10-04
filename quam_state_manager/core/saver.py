@@ -97,6 +97,11 @@ class Saver:
     def __init__(self, store: QuamStore, backup_retention: int = DEFAULT_BACKUP_RETENTION) -> None:
         self.store = store
         self.backup_retention = max(1, int(backup_retention))
+        #: docs/271: the change-log entries the LAST save wrote (and cleared) --
+        #: exactly what the saved files carry beyond the content before them,
+        #: which is what a live-write door records. Set under the store lock
+        #: at the swap, so an edit landing during the save never enters it.
+        self.last_cleared: list = []
 
     # ------------------------------------------------------------------
     # Save
@@ -247,8 +252,10 @@ class Saver:
         safe_io._replace_state_or_drop_wiring_tmp(s_tmp, state_path, w_tmp)
         safe_io._replace_into_place(w_tmp, wiring_path)
         if clear is None:
+            self.last_cleared = list(self.store.change_log)
             self.store.change_log.clear()
         else:
+            self.last_cleared = list(self.store.change_log[:clear])
             del self.store.change_log[:clear]
 
     def _write_locked(self, state_path: Path, wiring_path: Path) -> None:

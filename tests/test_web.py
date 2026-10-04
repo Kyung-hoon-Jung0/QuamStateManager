@@ -7926,7 +7926,7 @@ class TestApplyHardeningR16:
                                                        monkeypatch):
         from quam_state_manager.core import working_copy as wc_mod
 
-        def boom(wc, force=False):
+        def boom(wc, force=False, **_kw):    # docs/271: doors also pass record=
             raise RuntimeError("weird internal state")
 
         monkeypatch.setattr(wc_mod, "apply_to_live", boom)

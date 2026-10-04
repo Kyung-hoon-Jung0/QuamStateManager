@@ -46,6 +46,11 @@ class ChipHandle:
     live_path: str
     # engine-supplied refresh: pull live into store/wc (reconcile-by-path)
     reconcile: Callable[[], None] = lambda: None
+    # docs/271: where this chip's SM writes are recorded (its history dir) and
+    # under which plan. None = no chip ledger: the simulator's synthetic chip
+    # (and test handles) -- every production ChipHandle names it explicitly.
+    hub_dir: Any = None
+    hub_plan: str | None = None
 
 
 @dataclass
@@ -61,6 +66,24 @@ class WriteOutcome:
         return {"ok": self.ok, "action": self.action, "group_id": self.group_id,
                 "paths": self.paths, "error": self.error,
                 "conflicts": self.conflicts}
+
+
+def _pending(chip: ChipHandle, src: str, mine: list) -> Any:
+    """docs/271: the record of one autofit live write -- exactly the entries
+    the save before it wrote (``Saver.last_cleared``); the writer's own ones
+    are stamped ``by="autofit"`` (they carry the modifier's default actor)."""
+    from quam_state_manager.core import hub, hub_entries
+    if chip.hub_dir is None:
+        return hub.unrecorded("autofit handle without a chip ledger (simulator / test chip)")
+    own = {id(e) for e in mine or ()}
+    ents = []
+    for e in list(getattr(chip.saver, "last_cleared", None) or []):
+        ent = hub_entries.entry_of(e)
+        if id(e) in own:
+            ent["by"] = "autofit"
+        ents.append(ent)
+    return hub.Pending(chip.hub_dir, "autofit", "autofit", src, entries=ents,
+                       plan_id=chip.hub_plan, fragments=hub.store_fragments(chip.store))
 
 
 def _values_equal(a, b) -> bool:
@@ -111,11 +134,14 @@ def apply_rows(chip: ChipHandle, rows: list[dict], *, apply_live: bool,
             return WriteOutcome(ok=True, action="staged", group_id=gid,
                                 paths=paths)
 
+        restaged: list = []
+
         def _restage() -> str | None:
-            chip.modifier.batch_set(updates)
+            restaged[:] = chip.modifier.batch_set(updates)
             return None
 
-        err = _apply_live_with_one_retry(chip, _restage)
+        err = _apply_live_with_one_retry(chip, _restage, src=f"autofit_apply:{label}",
+                                         mine=lambda: restaged or entries)
         if err:
             return WriteOutcome(ok=False, action="staged", group_id=gid,
                                 paths=paths, error=err)
@@ -124,7 +150,8 @@ def apply_rows(chip: ChipHandle, rows: list[dict], *, apply_live: bool,
 
 
 def _apply_live_with_one_retry(chip: ChipHandle,
-                               restage: Callable[[], str | None]) -> str | None:
+                               restage: Callable[[], str | None], *, src: str = "autofit",
+                               mine: Callable[[], list] = lambda: []) -> str | None:
     """apply_to_live with the amendment-§8 policy: ONE pull + re-stage retry
     on StaleLiveError, then give up (defer). Returns an error string or None.
 
@@ -136,7 +163,7 @@ def _apply_live_with_one_retry(chip: ChipHandle,
     re-verify CAS against the fresh content), save, apply. All under the
     build lock the caller already holds."""
     try:
-        working_copy.apply_to_live(chip.wc)
+        working_copy.apply_to_live(chip.wc, record=_pending(chip, src, mine()))
         return None
     except working_copy.StaleLiveError:
         logger.info("apply_to_live stale — one pull + re-stage retry")
@@ -149,7 +176,7 @@ def _apply_live_with_one_retry(chip: ChipHandle,
         if err:
             return f"re-stage after pull refused: {err}"
         chip.saver.save()
-        working_copy.apply_to_live(chip.wc)
+        working_copy.apply_to_live(chip.wc, record=_pending(chip, src, mine()))
         return None
     except Exception as exc:  # noqa: BLE001
         return f"apply_to_live failed after pull+re-stage: {exc}"
@@ -234,6 +261,8 @@ def revert_patches(chip: ChipHandle, patches: list[dict], *, apply_live: bool,
                                 paths=paths, error=f"save failed: {exc}",
                                 conflicts=conflicts)
         if apply_live:
+            restaged: list = []
+
             def _restage() -> str | None:
                 # after the pull the store holds the freshest live content —
                 # a revert must re-win its CAS there or refuse (never clobber)
@@ -244,13 +273,13 @@ def revert_patches(chip: ChipHandle, patches: list[dict], *, apply_live: bool,
                             return (f"CAS lost after pull at {dotted} "
                                     f"(current={cur!r})")
                     for dotted, old, _ in revertible:
-                        chip.modifier.set_value(dotted, old, coerce=False,
-                                                _defer_hooks=True,
-                                                group_id=gid)
+                        restaged.append(chip.modifier.set_value(
+                            dotted, old, coerce=False, _defer_hooks=True, group_id=gid))
                     chip.store._clear_pointer_cache()
                 return None
 
-            err = _apply_live_with_one_retry(chip, _restage)
+            err = _apply_live_with_one_retry(chip, _restage, src=f"autofit_revert:{label}",
+                                             mine=lambda: restaged or entries)
             if err:
                 return WriteOutcome(ok=False, action="reverted", group_id=gid,
                                     paths=paths, error=err, conflicts=conflicts)
@@ -299,17 +328,19 @@ def restore_values(chip: ChipHandle, rows: list[dict], *, apply_live: bool,
             return WriteOutcome(ok=False, action="restored", group_id=gid,
                                 paths=paths, error=f"save failed: {exc}")
         if apply_live:
+            restaged: list = []
+
             def _restage() -> str | None:
                 with chip.store._lock:
                     for r in rows:
-                        chip.modifier.set_value(r["path"], r["value"],
-                                                coerce=False,
-                                                _defer_hooks=True,
-                                                group_id=gid)
+                        restaged.append(chip.modifier.set_value(
+                            r["path"], r["value"], coerce=False, _defer_hooks=True,
+                            group_id=gid))
                     chip.store._clear_pointer_cache()
                 return None
 
-            err = _apply_live_with_one_retry(chip, _restage)
+            err = _apply_live_with_one_retry(chip, _restage, src=f"autofit_restore:{label}",
+                                             mine=lambda: restaged or entries)
             if err:
                 return WriteOutcome(ok=False, action="restored", group_id=gid,
                                     paths=paths, error=err)

@@ -1884,6 +1884,8 @@ def _activate_quam(folder_path: str | Path, *, origin: str = "live") -> dict:
             _journal_reset(ctx)
             from quam_state_manager.core import pending_tray
             pending_tray.attach(ctx, build_lock=build_lock)
+            if origin == "live":
+                _hub_catch_up(folder)       # docs/271
         # Project lens (docs/63): fresh builds (first load, LRU-eviction
         # rehydrates, restarts) derive their scope here — BEFORE publication
         # (a concurrent /datasets render must never observe an active scoped
@@ -2454,6 +2456,7 @@ def _rebuild_after_working_copy_replaced(ctx: dict) -> None:
     # audit-r10: a wholesale replace resolves any prior staged base (a pull
     # consumed it; a fresh stage re-sets the flag right after this call).
     ctx["staged_base"] = False
+    ctx.pop("staged_from", None)    # docs/271: ...and where it came from
     # docs/107: the reload cleared the change log, so any staged journal steps
     # died with it — re-read the sidecar and put the cursor back at the tip
     # (the redo stack self-invalidates via the mutation_seq handshake).
@@ -3165,6 +3168,180 @@ def _journal_mark_landed(ctx, units: list[dict]) -> None:
 
 
 # ----------------------------------------------------------------------
+# docs/271 (S4): every SM write to a live chip is recorded exactly
+# ----------------------------------------------------------------------
+# Each live-write door builds a ``hub.Pending`` (who pressed, which door, the
+# entries) and hands it to ``working_copy.apply_to_live(record=...)``, which
+# journals it write-ahead -- after the last refusal gate, before the live
+# files are touched. The helpers below are the doors' shared vocabulary.
+
+
+def _hub_chip_dir(path) -> Path | None:
+    """The chip's history dir -- where its events.jsonl + ledger live -- for
+    the live folder *path*, through the one identity ladder (memoized)."""
+    try:
+        return _history().history_dir_cached(path)
+    except Exception:  # noqa: BLE001 -- None: the commit then refuses the write
+        logger.warning("hub: no history dir for %s", path, exc_info=True)
+        return None
+
+
+def _hub_undoes_of(ctx, log) -> list[dict] | None:
+    """docs/271: a change log carrying staged journal inverses (``jrn:<unit>``
+    -- a Ctrl+Z step -- or ``alr:<unit>`` -- the applied log's revert) undoes
+    the recorded event that applied that unit: ``[{"event", "units"}]``,
+    from the unit's own ``meta.hub`` stamp. Units applied before S4 carry no
+    stamp and link nothing (honest: unknown, never a guess)."""
+    want: dict[str, list] = {}
+    by_id = {str(u.get("id")): u for u in (ctx.get("undo_units") or [])}
+    for e in log or ():
+        gid = getattr(e, "group_id", None)
+        if not isinstance(gid, str):
+            continue
+        for pfx in (undo_journal.GID_PREFIX, "alr:"):
+            if gid.startswith(pfx):
+                uid = gid[len(pfx):]
+                hub_id = ((by_id.get(uid) or {}).get("meta") or {}).get("hub")
+                if hub_id and uid not in want.setdefault(hub_id, []):
+                    want[hub_id].append(uid)
+    return [{"event": k, "units": v} for k, v in want.items()] or None
+
+
+def _hub_pending(ctx, src: str, *, log=None, wholesale: bool = False, kind: str | None = None,
+                 actor: str | None = None, plan_id: str | None = None, run_uid: str | None = None,
+                 undoes=None, units=None, ref: dict | None = None, after: dict | None = None,
+                 before_ref: dict | None = None, journal_unit: dict | None = None):
+    """The ``hub.Pending`` of one live-write press (docs/271).
+
+    ``log``: the change-log entries the press's save wrote (``Saver.last_cleared``)
+    -- the exact old -> new of every edit, each with the actor that staged it.
+    ``wholesale``: the working copy carries content the log does not name (a
+    staged version or run state, saved-but-unapplied edits, a forced push over
+    a moved chip, an empty log): the entries are then the tree difference
+    between the chip read right before the write (``before_ref["tree"]``, or
+    read then) and what is written -- computed only once the write is certain.
+    ``journal_unit`` (``{"src", "edit_units"}``): the door also journals a
+    docs/160 B wholesale unit; it is built in the same pass, BEFORE the write,
+    into ``before_ref["wh_unit"]`` -- so the event lists exactly the units
+    that exist (``units`` may be a callable read after the entries) and the
+    door commits that very unit once the write landed (no second walk when
+    there are no tray edits to exclude).
+    """
+    from quam_state_manager.core import hub as _hub, hub_entries as _he
+
+    who = actor or _request_actor()
+    plan = plan_id if plan_id is not None else (request.headers.get("X-SM-Plan") or None)
+    log = list(log or ())
+    if kind is None:
+        kind = "agent" if (str(who).startswith("by_") or plan) else "sm_apply"
+    if undoes is None:
+        undoes = _hub_undoes_of(ctx, log)
+    by_path = {e.dot_path: getattr(e, "actor", None) for e in log}
+    store, wc = ctx["store"], ctx["working_copy"]
+    before_ref = before_ref if before_ref is not None else {}
+
+    if wholesale or not log:
+        def entries(post_state=None):
+            before = before_ref.get("tree")
+            if before is None:
+                before = _live_merged_tree(wc) or {}
+                before_ref["tree"] = before
+            with store._lock:
+                aft = after
+                if aft is None and store.change_log and post_state is not None:
+                    # an edit landed after the save: the written bytes are the
+                    # truth, not the store (which holds that edit too)
+                    from quam_state_manager.core.state_merge import merge_state_wiring
+                    aft = merge_state_wiring(json.loads(post_state[0]), json.loads(post_state[1]))
+                    before_ref["aft"] = aft
+                jsrc = (journal_unit or {}).get("src") or src
+                unit = _wholesale_unit(before, ctx, jsrc, after=aft, cap=False)
+                if journal_unit is not None:
+                    if not journal_unit.get("edit_units"):
+                        ju = None if unit is None else {**unit, "meta": dict(unit["meta"]),
+                                                        "entries": list(unit["entries"])}
+                        if ju is not None and len(ju["entries"]) > _WHOLESALE_UNIT_CAP:
+                            ju["meta"]["too_large"] = len(ju["entries"])
+                            ju["entries"] = []
+                    else:
+                        ju = _wholesale_journal_unit(ctx, before, jsrc, journal_unit["edit_units"], aft)
+                    before_ref["wh_unit"] = ju
+            out = []
+            for e in (unit or {}).get("entries") or []:
+                ent = _he.entry_of(e, by=by_path.get(e["path"]))
+                out.append(ent)
+            return out
+    else:
+        entries = [_he.entry_of(e) for e in log]
+    return _hub.Pending(_hub_chip_dir(ctx["path"]), kind, who, src, entries=entries,
+                        plan_id=plan, run_uid=run_uid, undoes=undoes, units=units, ref=ref,
+                        fragments=_hub.store_fragments(store, after=after, holder=before_ref))
+
+
+def _hub_stamp_units(pending, units: list[dict] | None) -> None:
+    """Before the journal commit of a LANDED press: each undo-journal unit it
+    commits names the recorded event (``meta.hub``), so a later Ctrl+Z of that
+    unit can say which event it takes back. Never for a refused/failed press."""
+    if pending is None or not pending.landed or not units:
+        return
+    for u in units:
+        u.setdefault("meta", {})["hub"] = pending.id
+
+
+def _hub_mark_units(ctx, pending, unit_ids, field: str = "hub") -> None:
+    """Stamp ``meta[field] = <event id>`` on units already in the sidecar
+    (a /save'd unit landed by a later press; ``hub_undo`` on the unit a live
+    Ctrl+Z just took back). Advisory, like every journal write."""
+    if pending is None or not pending.landed:
+        return
+    ids = [str(i) for i in (unit_ids or []) if i]
+    if not ids:
+        return
+    try:
+        path = undo_journal.sidecar_path(current_app.instance_path, ctx["path"])
+        ctx["undo_units"] = undo_journal.mark_units(path, ids, {field: pending.id})
+        ctx["undo_cursor"] = min(int(ctx.get("undo_cursor") or 0), len(ctx["undo_units"]))
+        ctx["undo_sidecar_mtime"] = undo_journal.sidecar_mtime(path)
+    except Exception:  # noqa: BLE001
+        logger.warning("hub: unit stamp failed", exc_info=True)
+
+
+def _hub_catch_up(folder) -> None:
+    """docs/271: on a fresh chip build, let the projector take whatever the
+    chip's SM-write journal holds that its ledger does not (another window's
+    lines, a crash between a line and its projection). One stat when there is
+    no journal; the work runs off the request thread."""
+    try:
+        from quam_state_manager.core import hub as _hub
+        chip_dir = _hub_chip_dir(folder)
+        if chip_dir is not None and (chip_dir / _hub.JOURNAL_NAME).exists():
+            _hub.catch_up(chip_dir)
+    except Exception:  # noqa: BLE001 -- bookkeeping, never blocks an open
+        logger.debug("hub catch-up failed", exc_info=True)
+
+
+def _hub_stamp_unit(ctx, unit_id, field: str, event_id) -> None:
+    """``meta[field] = event_id`` on one unit in the sidecar (a live walk step
+    that landed). Advisory."""
+    if not unit_id or not event_id:
+        return
+    try:
+        path = undo_journal.sidecar_path(current_app.instance_path, ctx["path"])
+        ctx["undo_units"] = undo_journal.mark_units(path, [str(unit_id)], {field: event_id})
+        ctx["undo_cursor"] = min(int(ctx.get("undo_cursor") or 0), len(ctx["undo_units"]))
+        ctx["undo_sidecar_mtime"] = undo_journal.sidecar_mtime(path)
+    except Exception:  # noqa: BLE001
+        logger.warning("hub: unit stamp failed", exc_info=True)
+
+
+def _hub_saved_units(ctx) -> list[str]:
+    """Units a /save committed whose edits no press has landed yet (``meta.saved``,
+    no ``meta.hub``): the next landed press carries them to the chip."""
+    return [str(u.get("id")) for u in (ctx.get("undo_units") or [])
+            if (u.get("meta") or {}).get("saved") and not (u.get("meta") or {}).get("hub")]
+
+
+# ----------------------------------------------------------------------
 # docs/255: a refused live-write press changes nothing
 # ----------------------------------------------------------------------
 # Both live-write doors (/state/apply-to-live and _sync_pull_apply_to_live)
@@ -3209,6 +3386,9 @@ def _press_save(ctx, press: dict) -> None:
             press["docs"] = (id(store.merged), id(store.state), id(store.wiring))
         ctx["saver"].save()
         press["saved"] = True
+        # docs/271: exactly the entries this save wrote (and cleared) -- the
+        # recorded write's entries, never an edit that landed during it
+        press["cleared"] = list(getattr(ctx["saver"], "last_cleared", None) or [])
         press["bytes"] = snap
         try:
             press["saved_fp"] = working_copy.working_fingerprint(wc)
@@ -3355,7 +3535,8 @@ def _live_merged_tree(wc) -> dict | None:
 
 def _wholesale_unit(before: dict | None, ctx: dict, src: str,
                     exclude: set[str] | None = None,
-                    staged_over: dict[str, Any] | None = None) -> dict | None:
+                    staged_over: dict[str, Any] | None = None,
+                    after: dict | None = None, cap: bool = True) -> dict | None:
     """docs/160 B: the difference between ``before`` (the chip's merged tree,
     read right before the write) and the working copy NOW, as one journal
     unit -- what a Ctrl+Z can walk after a State-History stage → Apply, a
@@ -3380,7 +3561,9 @@ def _wholesale_unit(before: dict | None, ctx: dict, src: str,
         return None
     try:
         store = ctx["store"]
-        after = store.merged
+        # docs/271: a door that knows what it is writing (restore-live writes
+        # a snapshot the store has not loaded yet) passes it as `after`
+        after = store.merged if after is None else after
     except Exception:  # noqa: BLE001
         return None
     def _src(p: str) -> str:
@@ -3456,14 +3639,43 @@ def _wholesale_unit(before: dict | None, ctx: dict, src: str,
     meta = {"src": src, "wholesale": True, "owner_pid": os.getpid(), "at": time.time()}
     if _auto_apply_state(ctx):
         meta["auto"] = True
-    if len(entries) > _WHOLESALE_UNIT_CAP:
+    if cap and len(entries) > _WHOLESALE_UNIT_CAP:
         meta["too_large"] = len(entries)
         entries = []
     return {"id": uuid.uuid4().hex[:12], "ts": time.time(), "entries": entries, "meta": meta}
 
 
+_UNSET = object()
+
+
+def _wholesale_journal_unit(ctx: dict, before: dict | None, src: str,
+                            edit_units: list[dict] | None = None,
+                            after: dict | None = None) -> dict | None:
+    """The docs/160 B wholesale unit with the docs/65 mixed-state rule (see
+    :func:`_journal_wholesale_commit`). Split out (docs/271) so a door can
+    build it BEFORE the write, list it in the recorded event, and commit
+    that same unit once the write landed."""
+    # F-MIX: split the same-apply edit paths by op. A created/deleted tray
+    # edit is EXCLUDED from the wholesale unit (the edit unit owns the
+    # subtree op). A plain SET edit is instead recorded at its STAGED value
+    # (the value before the tray edit = the OLDEST edit entry's `old`), so
+    # the wholesale + edit units compose back to the chip's pre-apply state
+    # rather than dropping it.
+    excl: set[str] = set()
+    staged_over: dict[str, Any] = {}
+    for u in (edit_units or []):
+        for e in (u.get("entries") or []):
+            if e.get("created") or e.get("deleted"):
+                excl.add(e["path"])
+            else:
+                staged_over.setdefault(e["path"], e.get("old"))
+    return _wholesale_unit(before, ctx, src, exclude=excl, staged_over=staged_over, after=after)
+
+
 def _journal_wholesale_commit(ctx: dict, before: dict | None, src: str,
-                              edit_units: list[dict] | None = None) -> None:
+                              edit_units: list[dict] | None = None, *,
+                              unit=_UNSET, pending=None,
+                              after: dict | None = None) -> None:
     """docs/160 B: journal the staged wholesale content that just reached the
     chip as one unit (``before`` = the chip's tree read right before the
     write). ``edit_units`` are the change-log units the same apply journaled
@@ -3472,23 +3684,12 @@ def _journal_wholesale_commit(ctx: dict, before: dict | None, src: str,
     edits were made on, so Ctrl+Z walks the edits first, then the base).
     Advisory: never raises."""
     try:
-        # F-MIX: split the same-apply edit paths by op. A created/deleted tray
-        # edit is EXCLUDED from the wholesale unit (the edit unit owns the
-        # subtree op). A plain SET edit is instead recorded at its STAGED value
-        # (the value before the tray edit = the OLDEST edit entry's `old`), so
-        # the wholesale + edit units compose back to the chip's pre-apply state
-        # rather than dropping it.
-        excl: set[str] = set()
-        staged_over: dict[str, Any] = {}
-        for u in (edit_units or []):
-            for e in (u.get("entries") or []):
-                if e.get("created") or e.get("deleted"):
-                    excl.add(e["path"])
-                else:
-                    staged_over.setdefault(e["path"], e.get("old"))
-        unit = _wholesale_unit(before, ctx, src, exclude=excl, staged_over=staged_over)
+        if unit is _UNSET:
+            unit = _wholesale_journal_unit(ctx, before, src, edit_units, after)
         if unit is None:
             return
+        # docs/271: the unit the recorded event lists (built before the write)
+        _hub_stamp_units(pending, [unit])
         if edit_units:
             _journal_insert_before(ctx, unit, len(edit_units))
         else:
@@ -14303,6 +14504,12 @@ def state_history_stage(timestamp: str):
             # not on stash emptiness (a later /save or conflict fills the
             # stash with only the EDITS and would flip a stash-based check).
             ctx["staged_base"] = True
+            # docs/271: the press that applies it records which version it was
+            # (the tray's "Revert last apply" is this same stage)
+            ctx["staged_from"] = {
+                "src": ("revert_last_apply" if request.values.get("from") == "tray"
+                        else "apply_staged"),
+                "ref": {"snapshot": timestamp}}
             _clear_reapply(ctx)   # in-lock: no window for a concurrent
                                   # sync to read dirty+stale-stash (audit-r10)
     except (OSError, ValueError) as exc:
@@ -14458,7 +14665,16 @@ def state_history_restore_live(timestamp: str):
 
             safe_io.write_state_wiring(wc.working_folder, state, wiring)
             _before_tree = _live_merged_tree(wc)      # docs/160 B: the chip, before
-            working_copy.apply_to_live(wc, force=True)
+            # docs/271: a restore is an SM write -- recorded as the tree
+            # difference between the chip and the snapshot it puts back
+            from quam_state_manager.core.state_merge import merge_state_wiring
+            _rbref: dict = {"tree": _before_tree}
+            _pend = _hub_pending(ctx, "restore_live", kind="restore",
+                                 after=merge_state_wiring(state, wiring), before_ref=_rbref,
+                                 journal_unit={"src": "restore-live", "edit_units": []},
+                                 units=lambda: [_rbref["wh_unit"]["id"]] if _rbref.get("wh_unit") else [],
+                                 ref={"snapshot": timestamp, "backup": backup_meta.timestamp})
+            working_copy.apply_to_live(wc, force=True, record=_pend)
             ctx["_alarm_reason"] = "restore-live"
             _rebuild_after_working_copy_replaced(ctx)
     except (OSError, ValueError, safe_io.LiveFileError) as exc:
@@ -14471,7 +14687,8 @@ def state_history_restore_live(timestamp: str):
     # docs/160 B: the restore wrote the chip wholesale -- journal the leaf
     # difference as one unit so Ctrl+Z can walk it (the rebuild above already
     # re-read the sidecar, so this appends at the persisted cursor)
-    _journal_wholesale_commit(ctx, _before_tree, "restore-live")
+    _journal_wholesale_commit(ctx, _before_tree, "restore-live",
+                              unit=_rbref.get("wh_unit", _UNSET), pending=_pend)
     # A restore is the user deliberately writing live — rebase drift tracking on
     # the restored state so it isn't reported as accumulated live drift.
     _reset_baseline_after_apply(ctx)
@@ -22415,6 +22632,10 @@ def save():
             saver.save()
     except Exception as e:
         return render_template("_status.html", message=f"Save failed: {e}", level="error"), 500
+    # docs/271: saved, not on the chip -- the press that lands them stamps
+    # them with its recorded event (``_hub_saved_units``)
+    for _u in _jrn_units:
+        _u.setdefault("meta", {})["saved"] = True
     _journal_commit(ctx, _jrn_units)   # docs/107: the log is gone — journal it
 
     # Save writes the working copy only — the live chip is untouched until an
@@ -22985,7 +23206,7 @@ def _rollback_walk_step(ctx, store, modifier, staged: list) -> bool:
         return False
 
 
-def _flush_walk_step_live(ctx, gid: str | None = None) -> dict:
+def _flush_walk_step_live(ctx, gid: str | None = None, hub: dict | None = None) -> dict:
     """docs/160: the ONE door, pressed for a walk step (``walk=True``, which
     leaves ↺ Revert last apply pointing at the APPLY the user is thinking of
     and keeps a held Ctrl+Z from minting two history snapshots per press --
@@ -23009,7 +23230,7 @@ def _flush_walk_step_live(ctx, gid: str | None = None) -> dict:
                                 + ", ".join(stray[:3]) + ("…" if len(stray) > 3 else "")
                                 + ") — review the tray, then undo again")}
     try:
-        result = _sync_pull_apply_to_live(ctx, None, journal=False, walk=True)
+        result = _sync_pull_apply_to_live(ctx, None, journal=False, walk=True, hub=hub)
         body = (result[0] if isinstance(result, tuple) else result).get_json() or {}
     except Exception as exc:  # noqa: BLE001 — never lose the step over a write error
         logger.warning("walk-step live flush failed", exc_info=True)
@@ -23053,8 +23274,16 @@ def _undo_live_flush(ctx, store, modifier, unit: dict, staged: list, *,
     if foreign:
         return {"live": False,
                 "note": f"staged only: this change was applied from another SM window (pid {foreign}) — press Apply to write it from here"}
-    body = _flush_walk_step_live(ctx, gid=(staged[-1].group_id if staged else None))
+    # docs/271: a live Ctrl+Z is an SM write that takes back the recorded
+    # event this unit was applied by (its `meta.hub` stamp; none for a unit
+    # applied before S4 -- then the link is honestly absent, not guessed)
+    _src_ev = (unit.get("meta") or {}).get("hub")
+    body = _flush_walk_step_live(
+        ctx, gid=(staged[-1].group_id if staged else None),
+        hub={"kind": "undo", "src": "ctrl_z", "units": [unit.get("id")],
+             "undoes": ([{"event": _src_ev, "units": [unit.get("id")]}] if _src_ev else [])})
     if body.get("status") == "ok":
+        _hub_stamp_unit(ctx, unit.get("id"), "hub_undo", body.get("hub_event"))
         return {"live": True, "note": None}
     clean = _rollback_walk_step(ctx, store, modifier, staged)
     ctx["undo_cursor"] = cursor_before
@@ -23153,7 +23382,15 @@ def _redo_journal_forward(ctx, store, modifier, index: int, unit_id: str | None 
             _invalidate_engine_cache()
             return [], f"redo failed, nothing changed: {exc}"
     _invalidate_engine_cache()
-    body = _flush_walk_step_live(ctx, gid=gid)
+    # docs/271: a live redo takes back the recorded UNDO of this unit (its
+    # `meta.hub_undo`), and becomes the event that applied it (`meta.hub`)
+    _undo_ev = (unit.get("meta") or {}).get("hub_undo")
+    body = _flush_walk_step_live(
+        ctx, gid=gid,
+        hub={"kind": "redo", "src": "ctrl_shift_z", "units": [unit.get("id")],
+             "undoes": ([{"event": _undo_ev, "units": None}] if _undo_ev else [])})
+    if body.get("status") == "ok":
+        _hub_stamp_unit(ctx, unit.get("id"), "hub", body.get("hub_event"))
     if body.get("status") != "ok":
         _rollback_walk_step(ctx, store, modifier, staged)
         _redo_mark(ctx, store)
@@ -25757,7 +25994,8 @@ def _crash_token(store) -> str:
 
 
 def _sync_pull_apply_to_live(ctx, replay, *, pulled_other_changes=False,
-                             force=False, patch=None, journal=True, walk=False):
+                             force=False, patch=None, journal=True, walk=False,
+                             hub: dict | None = None):
     """Finish a ``mode=apply`` sync: save the re-applied edits to the working
     copy and push them to the live chip. Mirrors ``/state/apply-to-live`` but
     returns JSON so ``doStateSync`` can drive it. On a fresh staleness conflict
@@ -25776,7 +26014,12 @@ def _sync_pull_apply_to_live(ctx, replay, *, pulled_other_changes=False,
         every Ctrl+Z silently turned the button into "redo what I just undid".
       - the two full history snapshots (pre-apply backup + post-apply save)
         become one, throttled per chip like the docs/117 auto-apply session:
-        ten presses of a held Ctrl+Z used to copy state+wiring twenty times."""
+        ten presses of a held Ctrl+Z used to copy state+wiring twenty times.
+    ``hub`` (docs/271): what the recorded event is when the caller knows more
+    than this door -- ``kind``/``src``/``undoes``/``units``/``run_uid``/``ref``
+    (a Ctrl+Z step names the event it takes back, a redo the undo it takes
+    back, a dataset apply its run). The result body carries the event id as
+    ``hub_event`` when the write landed."""
     store = ctx["store"]
     wc = ctx["working_copy"]
     saver = ctx["saver"]
@@ -25853,13 +26096,30 @@ def _sync_pull_apply_to_live(ctx, replay, *, pulled_other_changes=False,
                         "message": _UNBACKED_OVERWRITE_MSG}), 409
 
     _before_tree = None
+    # docs/271: what this press records (see /state/apply-to-live)
+    _hub = dict(hub or {})
+    _staged = bool(ctx.get("staged_base"))
+    _from = (ctx.get("staged_from") or {}) if _staged else {}
+    _saved_ids = _hub_saved_units(ctx) if (_press.get("dirty") and journal) else []
+    _bref: dict = {}
+    _pend = _hub_pending(
+        ctx, _hub.get("src") or _from.get("src") or ("apply_staged" if _staged else "pull_apply"),
+        log=_press.get("cleared"), kind=_hub.get("kind"),
+        wholesale=bool(_staged or force or _press.get("dirty") or not _press.get("cleared")),
+        run_uid=_hub.get("run_uid") or _from.get("run_uid"), ref=_hub.get("ref") or _from.get("ref"),
+        undoes=_hub.get("undoes"), before_ref=_bref,
+        journal_unit=({"src": "apply-staged", "edit_units": _jrn_units} if (journal and _staged) else None),
+        units=(_hub.get("units") if "units" in _hub else
+               lambda: ([u.get("id") for u in _jrn_units] + _saved_ids
+                        + ([_bref["wh_unit"]["id"]] if _bref.get("wh_unit") else []))))
     try:
         with _active_wc_lock(ctx):
             # docs/160 B: the chip's tree right before the write is the `old`
             # side of a wholesale unit (read only when one will be recorded)
             if journal and ctx.get("staged_base"):
                 _before_tree = _live_merged_tree(wc)
-            working_copy.apply_to_live(wc, force=force)
+                _bref["tree"] = _before_tree
+            working_copy.apply_to_live(wc, force=force, record=_pend)
     except working_copy.StaleLiveError:
         # docs/255: nothing was written, so nothing changes -- the save this
         # press made is put back (the edits stay in the tray, the stash as it
@@ -25894,14 +26154,17 @@ def _sync_pull_apply_to_live(ctx, replay, *, pulled_other_changes=False,
                         "message": f"Apply to live failed unexpectedly: "
                                    f"{type(exc).__name__}: {exc}"}), 500
 
+    _hub_stamp_units(_pend, _jrn_units)     # docs/271: before the commit writes them
     _commit_journal()              # docs/107 (docs/255: once the push is decided)
+    _hub_mark_units(ctx, _pend, _saved_ids)
     _set_working_dirty(False, ctx)
     # docs/160 B: staged wholesale content (a snapshot / a run's state) just
     # reached the chip with no change-log entries to journal -- record the
     # leaf difference as ONE unit so Ctrl+Z can walk it. Before the flag is
     # cleared below, and only for a real apply (a walk step never stages one).
     if journal and ctx.get("staged_base"):
-        _journal_wholesale_commit(ctx, _before_tree, "apply-staged", edit_units=_jrn_units)
+        _journal_wholesale_commit(ctx, _before_tree, "apply-staged", edit_units=_jrn_units,
+                                  unit=_bref.get("wh_unit", _UNSET), pending=_pend)
     # docs/187 R1: THIS is the door the autoSyncMerge signal presses, and it was
     # the one that never refilled the budget.
     _auto_apply_landed(ctx)
@@ -25910,6 +26173,7 @@ def _sync_pull_apply_to_live(ctx, replay, *, pulled_other_changes=False,
     if _auto is not None and journal:
         _journal_mark_landed(ctx, _jrn_units)
     ctx["staged_base"] = False   # the staged content reached live (audit-r10)
+    ctx.pop("staged_from", None)
     _clear_reapply(ctx)  # edits are on the live chip now — nothing left to re-apply
     ctx["live_diverged"] = False  # live now holds the merged working content
     ctx.pop("live_drift_count", None)   # docs/116
@@ -25959,6 +26223,7 @@ def _sync_pull_apply_to_live(ctx, replay, *, pulled_other_changes=False,
         "tray_html": _tray_html(),
         "replay": replay,
         "pulled_other_changes": pulled_other_changes,
+        **({"hub_event": _pend.id} if _pend.landed else {}),
         **((patch() if callable(patch) else patch) or {}),
         **({"crash_values": _crash} if _crash else {}),
         **({"crash_pending": _crash_pending} if _crash_pending is not None else {}),
@@ -26323,6 +26588,24 @@ def state_apply_to_live():
         return resp
 
     _before_tree = None
+    # docs/271: what this press records. Exact entries from the save when the
+    # working copy held nothing else; the chip-vs-written tree difference when
+    # it did (a staged version or run state, saved-but-unapplied edits, a
+    # forced push over values the log never saw, or an empty log).
+    _staged = bool(ctx.get("staged_base"))
+    _from = (ctx.get("staged_from") or {}) if _staged else {}
+    _saved_ids = _hub_saved_units(ctx) if _press.get("dirty") else []
+    _bref: dict = {}
+    _pend = _hub_pending(
+        ctx, ("auto_apply" if _auto is not None else "keep_mine" if force
+              else _from.get("src") or ("apply_staged" if _staged else "apply")),
+        log=_press.get("cleared"),
+        wholesale=bool(_staged or force or _press.get("dirty") or not _press.get("cleared")),
+        run_uid=_from.get("run_uid"), ref=_from.get("ref"), before_ref=_bref,
+        journal_unit=({"src": "apply-staged" if _staged else "force-overwrite", "edit_units": _jrn_units}
+                      if (_staged or force) else None),
+        units=lambda: ([u.get("id") for u in _jrn_units] + _saved_ids
+                       + ([_bref["wh_unit"]["id"]] if _bref.get("wh_unit") else [])))
     try:
         with _active_wc_lock(ctx):
             # docs/160 B (see the sync twin). QA correctness-r2-10: a FORCED
@@ -26331,10 +26614,11 @@ def state_apply_to_live():
             # needs the same "before" tree to be journaled.
             if ctx.get("staged_base") or force:
                 _before_tree = _live_merged_tree(wc)
+                _bref["tree"] = _before_tree
             # the hash rides along ONLY when the Keep-mine confirm sent one:
             # every other push keeps the exact call it always made
             working_copy.apply_to_live(
-                wc, force=force,
+                wc, force=force, record=_pend,
                 **({"expect_live_hash": expect_live_hash} if expect_live_hash else {}))
     except working_copy.StaleLiveError:
         if expect_live_hash is not None and _auto is None:
@@ -26373,7 +26657,9 @@ def state_apply_to_live():
             return _auto_disarm_response(ctx, _body, "error", status=500)
         return _body, 500
 
+    _hub_stamp_units(_pend, _jrn_units)     # docs/271: before the commit writes them
     _commit_journal()                  # docs/107 (docs/255: once the push is decided)
+    _hub_mark_units(ctx, _pend, _saved_ids)
     if _backup_deferred and not pre_apply_ts:
         # QA F5: the deferred case landed -- the adopt (live already held the
         # payload), so the "pre-apply" content is what live holds now
@@ -26385,7 +26671,8 @@ def state_apply_to_live():
     if _auto is not None:
         _journal_mark_landed(ctx, _jrn_units)   # QA liveedit-r2-17: it landed
     if ctx.get("staged_base"):
-        _journal_wholesale_commit(ctx, _before_tree, "apply-staged", edit_units=_jrn_units)   # docs/160 B
+        _journal_wholesale_commit(ctx, _before_tree, "apply-staged", edit_units=_jrn_units,
+                                  unit=_bref.get("wh_unit", _UNSET), pending=_pend)   # docs/160 B
     elif force:
         # QA correctness-r2-10: Keep mine over an already-applied edit is a
         # force push with an EMPTY change log, so it journaled nothing -- and
@@ -26395,8 +26682,10 @@ def state_apply_to_live():
         # before -> the working state) as its own unit, on top, so Ctrl+Z undoes
         # the Keep mine first. Nothing differs -> no unit (a plain conflict
         # resolution that overwrote nothing stays invisible, as before).
-        _journal_wholesale_commit(ctx, _before_tree, "force-overwrite", edit_units=_jrn_units)
+        _journal_wholesale_commit(ctx, _before_tree, "force-overwrite", edit_units=_jrn_units,
+                                  unit=_bref.get("wh_unit", _UNSET), pending=_pend)
     ctx["staged_base"] = False   # the staged content reached live (audit-r10)
+    ctx.pop("staged_from", None)
     _clear_reapply(ctx)  # the edits are now on the live chip — nothing left to re-apply
     ctx["live_diverged"] = False  # live now holds the working content (incl. force)
     ctx.pop("live_drift_count", None)   # docs/116
@@ -35375,6 +35664,9 @@ def dataset_load_state(uid):
             _rebuild_after_working_copy_replaced(ctx)
             ctx["working_dirty"] = True   # working now differs from live
             ctx["staged_base"] = True     # audit-r10 (see state_history_stage)
+            # docs/271: an Apply of this staged state records the run it came from
+            ctx["staged_from"] = {"src": "dataset_apply", "run_uid": str(uid),
+                                  "ref": {"run_id": run_id}}
             _clear_reapply(ctx)
     except (OSError, ValueError) as exc:
         return render_template("_status.html",
@@ -39785,7 +40077,10 @@ def _autofit_start_sim(inst, p, auditor):
 
     handle = ChipHandle(store=store, modifier=Modifier(store),
                         saver=Saver(store), wc=wc, build_lock=handle_lock,
-                        live_path=str(live), reconcile=reconcile)
+                        live_path=str(live), reconcile=reconcile,
+                        # docs/271: the simulator's synthetic chip under
+                        # instance/autofit/sim is not a lab chip -- no ledger
+                        hub_dir=None)
 
     class _SimIngest(LiveSimBackend):
         def run_step(self, step, targets, params, attempt, abort):
@@ -39887,7 +40182,10 @@ def _autofit_start_real(inst, p, data, auditor):
     handle = ChipHandle(store=ctx["store"], modifier=ctx["modifier"],
                         saver=ctx["saver"], wc=ctx["working_copy"],
                         build_lock=build_lock, live_path=str(live_path),
-                        reconcile=reconcile)
+                        reconcile=reconcile,
+                        # docs/271: every autofit live write is recorded in
+                        # this chip's history, under the plan's name
+                        hub_dir=_hub_chip_dir(live_path), hub_plan=f"autofit:{p.name}")
     adapter = RealAdapter(instance_path=inst, reconcile=reconcile,
                           rescan_and_list_runs=rescan_and_list_runs)
     backend = RealBackend(adapter, resolved)

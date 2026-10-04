@@ -175,8 +175,11 @@ def build(root: str | Path, out: str | Path, *, limit: int | None = None,
         ordinal = int(head["ord"]) if head else 0
         last_order = None
         if head:
-            head_key = store.conn.execute("SELECT folder_key FROM roots WHERE root_id=?", (head["root_id"],)).fetchone()[0]
-            last_order = (head["t_utc_us"], head_key, head["run_id"], head["experiment"])
+            # docs/271: an SM write is a head with no root, run id or
+            # experiment; it orders by its own instant alone
+            key_row = store.conn.execute("SELECT folder_key FROM roots WHERE root_id=?", (head["root_id"],)).fetchone()
+            last_order = (head["t_utc_us"], key_row[0] if key_row else "", head["run_id"] or 0,
+                          head["experiment"] or "")
         for index, run in enumerate(runs):
             rel = run.folder.relative_to(root).as_posix()
             if store.conn.execute("SELECT 1 FROM locations WHERE root_id=? AND rel_path=?", (root_id, rel)).fetchone():
@@ -210,7 +213,8 @@ def build(root: str | Path, out: str | Path, *, limit: int | None = None,
                 continue
             order = (run.instant, key, run.run_id, run.experiment)
             if last_order is not None and order < last_order:
-                raise ValueError("unknown run precedes ledger head; build all roots in canonical order or rebuild offline")
+                raise ValueError("unknown run precedes ledger head (a run, or an SM write recorded after it -- "
+                                 "late insertion is S5); build all roots in canonical order or rebuild offline")
             flags = TIME_ASSUMED if run.quality in ("assumed_local", "mtime") else 0
             changes, next_doc, next_flat, next_shape = [], doc, flat, shape_hash
             if error is None and digest != head_hash:

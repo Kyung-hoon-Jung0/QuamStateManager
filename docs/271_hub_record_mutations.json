@@ -1,0 +1,551 @@
+{
+ "summary": {
+  "red": 59,
+  "total": 59,
+  "pins": 51,
+  "pins_targeted": 51
+ },
+ "mutations": [
+  {
+   "file": "quam_state_manager/core/working_copy.py",
+   "pins": [
+    "TestJournal::test_one_line_is_durable_before_the_live_write",
+    "TestJournal::test_an_unwritable_journal_means_nothing_is_written"
+   ],
+   "mutation": "wal_after_write",
+   "status": "RED",
+   "red_by": "FAILED tests/test_hub_record.py::TestJournal::test_one_line_is_durable_before_the_live_write"
+  },
+  {
+   "file": "quam_state_manager/core/hub.py",
+   "pins": [
+    "TestJournal::test_one_line_is_durable_before_the_live_write"
+   ],
+   "mutation": "no_fsync",
+   "status": "RED",
+   "red_by": "FAILED tests/test_hub_record.py::TestJournal::test_one_line_is_durable_before_the_live_write"
+  },
+  {
+   "file": "quam_state_manager/core/working_copy.py",
+   "pins": [
+    "TestJournal::test_a_write_that_fails_after_its_line_is_marked_failed",
+    "TestNotDoors::test_a_failed_live_write_is_marked_and_claims_no_rows"
+   ],
+   "mutation": "no_failed_mark",
+   "status": "RED",
+   "red_by": "FAILED tests/test_hub_record.py::TestJournal::test_a_write_that_fails_after_its_line_is_marked_failed"
+  },
+  {
+   "file": "quam_state_manager/core/working_copy.py",
+   "pins": [
+    "TestJournal::test_an_unverified_write_is_marked_failed"
+   ],
+   "mutation": "unverified_counts",
+   "status": "RED",
+   "red_by": "FAILED tests/test_hub_record.py::TestJournal::test_an_unverified_write_is_marked_failed"
+  },
+  {
+   "file": "quam_state_manager/core/working_copy.py",
+   "pins": [
+    "TestNotDoors::test_a_refusal_found_after_the_save_records_nothing"
+   ],
+   "mutation": "commit_before_gates",
+   "status": "RED",
+   "red_by": "FAILED tests/test_hub_record.py::TestNotDoors::test_a_refusal_found_after_the_save_records_nothing"
+  },
+  {
+   "file": "quam_state_manager/core/hub.py",
+   "pins": [
+    "TestJournal::test_a_write_with_no_chip_to_file_it_under_is_not_made"
+   ],
+   "mutation": "no_chip_skips",
+   "status": "RED",
+   "red_by": "FAILED tests/test_hub_record.py::TestJournal::test_a_write_with_no_chip_to_file_it_under_is_not_made"
+  },
+  {
+   "file": "quam_state_manager/core/hub.py",
+   "pins": [
+    "TestJournal::test_unmarkable_failure_rolls_the_line_back_out"
+   ],
+   "mutation": "no_rollback",
+   "status": "RED",
+   "red_by": "FAILED tests/test_hub_record.py::TestJournal::test_unmarkable_failure_rolls_the_line_back_out"
+  },
+  {
+   "file": "quam_state_manager/core/hub.py",
+   "pins": [
+    "TestJournal::test_a_torn_last_line_is_skipped_and_the_next_line_starts_fresh"
+   ],
+   "mutation": "torn_breaks_next",
+   "status": "RED",
+   "red_by": "FAILED tests/test_hub_record.py::TestJournal::test_a_torn_last_line_is_skipped_and_the_next_line_starts_fresh"
+  },
+  {
+   "file": "quam_state_manager/core/hub.py",
+   "pins": [
+    "TestJournal::test_a_large_write_is_one_line_plus_one_blob_file_never_a_directory"
+   ],
+   "mutation": "blob_in_subdir",
+   "status": "RED",
+   "red_by": "FAILED tests/test_hub_record.py::TestJournal::test_a_large_write_is_one_line_plus_one_blob_file_never_a_directory"
+  },
+  {
+   "file": "quam_state_manager/core/hub.py",
+   "pins": [
+    "TestJournal::test_lines_nobody_can_vouch_for_are_decided_by_evidence"
+   ],
+   "mutation": "orphan_trusted",
+   "status": "RED",
+   "red_by": "FAILED tests/test_hub_record.py::TestJournal::test_lines_nobody_can_vouch_for_are_decided_by_evidence"
+  },
+  {
+   "file": "quam_state_manager/core/hub.py",
+   "pins": [
+    "TestJournal::test_lines_nobody_can_vouch_for_are_decided_by_evidence"
+   ],
+   "mutation": "orphan_no_later_base",
+   "status": "RED",
+   "red_by": "FAILED tests/test_hub_record.py::TestJournal::test_lines_nobody_can_vouch_for_are_decided_by_evidence"
+  },
+  {
+   "file": "quam_state_manager/core/hub.py",
+   "pins": [
+    "TestJournal::test_another_live_windows_line_waits_for_that_window"
+   ],
+   "mutation": "peer_not_waited",
+   "status": "RED",
+   "red_by": "FAILED tests/test_hub_record.py::TestJournal::test_another_live_windows_line_waits_for_that_window"
+  },
+  {
+   "file": "quam_state_manager/core/hub.py",
+   "pins": [
+    "TestJournal::test_rewriting_the_same_content_is_not_an_event_and_costs_no_diff"
+   ],
+   "mutation": "diff_before_skip",
+   "status": "RED",
+   "red_by": "FAILED tests/test_hub_record.py::TestJournal::test_rewriting_the_same_content_is_not_an_event_and_costs_no_diff"
+  },
+  {
+   "file": "quam_state_manager/core/hub_entries.py",
+   "pins": [
+    "TestEntriesToRows::test_an_element_of_a_long_list_is_a_change_of_the_list_holder",
+    "TestEntriesToRows::test_rows_for_equals_the_full_s2_diff_on_random_edits"
+   ],
+   "mutation": "no_list_lift",
+   "status": "RED",
+   "red_by": "FAILED tests/test_hub_record.py::TestEntriesToRows::test_an_element_of_a_long_list_is_a_change_of_the_list_holder"
+  },
+  {
+   "file": "quam_state_manager/core/hub_entries.py",
+   "pins": [
+    "TestEntriesToRows::test_rows_for_equals_the_full_s2_diff_on_random_edits"
+   ],
+   "mutation": "revert_forgets_created",
+   "status": "RED",
+   "red_by": "FAILED tests/test_hub_record.py::TestEntriesToRows::test_rows_for_equals_the_full_s2_diff_on_random_edits"
+  },
+  {
+   "file": "quam_state_manager/core/hub_entries.py",
+   "pins": [
+    "TestDoors::test_an_edit_landing_after_the_save_is_not_recorded_as_written",
+    "TestEntriesToRows::test_fragments_take_back_edits_that_are_not_in_the_written_bytes"
+   ],
+   "mutation": "fragments_keep_late_edit",
+   "status": "RED",
+   "red_by": "FAILED tests/test_hub_record.py::TestDoors::test_an_edit_landing_after_the_save_is_not_recorded_as_written"
+  },
+  {
+   "file": "quam_state_manager/core/hub.py",
+   "pins": [
+    "TestDoors::test_an_edit_landing_after_the_save_is_not_recorded_as_written"
+   ],
+   "mutation": "projector_parses",
+   "status": "RED",
+   "red_by": "FAILED tests/test_hub_record.py::TestDoors::test_an_edit_landing_after_the_save_is_not_recorded_as_written"
+  },
+  {
+   "file": "quam_state_manager/core/hub_entries.py",
+   "pins": [
+    "TestEntriesToRows::test_inputs_are_never_mutated"
+   ],
+   "mutation": "set_in_place",
+   "status": "RED",
+   "red_by": "FAILED tests/test_hub_record.py::TestEntriesToRows::test_inputs_are_never_mutated"
+  },
+  {
+   "file": "quam_state_manager/core/hub_entries.py",
+   "pins": [
+    "TestEntriesToRows::test_revert_and_apply_are_inverse"
+   ],
+   "mutation": "delete_sets_none",
+   "status": "RED",
+   "red_by": "FAILED tests/test_hub_record.py::TestEntriesToRows::test_revert_and_apply_are_inverse"
+  },
+  {
+   "file": "quam_state_manager/core/hub.py",
+   "pins": [
+    "TestNotDoors::test_a_no_op_apply_records_nothing"
+   ],
+   "mutation": "no_change_recorded",
+   "status": "RED",
+   "red_by": "FAILED tests/test_hub_record.py::TestNotDoors::test_a_no_op_apply_records_nothing"
+  },
+  {
+   "file": "quam_state_manager/web/routes.py",
+   "pins": [
+    "TestNotDoors::test_a_refused_apply_records_nothing"
+   ],
+   "mutation": "refusal_records",
+   "status": "RED",
+   "red_by": "FAILED tests/test_hub_record.py::TestNotDoors::test_a_refused_apply_records_nothing"
+  },
+  {
+   "file": "quam_state_manager/web/routes.py",
+   "pins": [
+    "TestNotDoors::test_take_live_records_nothing",
+    "TestNotDoors::test_reconcile_adopt_and_auto_sync_pull_record_nothing"
+   ],
+   "mutation": "pull_records",
+   "status": "RED",
+   "red_by": "FAILED tests/test_hub_record.py::TestNotDoors::test_take_live_records_nothing"
+  },
+  {
+   "file": "quam_state_manager/core/hub_store.py",
+   "pins": [
+    "TestLedger::test_state_at_equals_what_was_written_anchored_or_replayed"
+   ],
+   "mutation": "never_anchor",
+   "status": "RED",
+   "red_by": "FAILED tests/test_hub_record.py::TestLedger::test_state_at_equals_what_was_written_anchored_or_replayed"
+  },
+  {
+   "file": "quam_state_manager/core/hub_store.py",
+   "pins": [
+    "TestLedger::test_state_at_equals_what_was_written_anchored_or_replayed"
+   ],
+   "mutation": "always_anchor",
+   "status": "RED",
+   "red_by": "FAILED tests/test_hub_record.py::TestLedger::test_state_at_equals_what_was_written_anchored_or_replayed"
+  },
+  {
+   "file": "quam_state_manager/core/hub_store.py",
+   "pins": [
+    "TestLedger::test_undo_marks_the_target_and_redo_puts_it_back"
+   ],
+   "mutation": "undone_undo_counts",
+   "status": "RED",
+   "red_by": "FAILED tests/test_hub_record.py::TestLedger::test_undo_marks_the_target_and_redo_puts_it_back"
+  },
+  {
+   "file": "quam_state_manager/core/hub_store.py",
+   "pins": [
+    "TestLedger::test_undo_marks_the_target_and_redo_puts_it_back"
+   ],
+   "mutation": "no_partly",
+   "status": "RED",
+   "red_by": "FAILED tests/test_hub_record.py::TestLedger::test_undo_marks_the_target_and_redo_puts_it_back"
+  },
+  {
+   "file": "quam_state_manager/core/hub_store.py",
+   "pins": [
+    "TestDoors::test_ctrl_z_and_ctrl_shift_z_on_the_chip"
+   ],
+   "mutation": "no_reverts_flag",
+   "status": "RED",
+   "red_by": "FAILED tests/test_hub_record.py::TestDoors::test_ctrl_z_and_ctrl_shift_z_on_the_chip"
+  },
+  {
+   "file": "quam_state_manager/core/hub_build.py",
+   "pins": [
+    "TestLedger::test_an_sm_head_does_not_break_the_offline_builder"
+   ],
+   "mutation": "builder_sm_head",
+   "status": "RED",
+   "red_by": "FAILED tests/test_hub_record.py::TestLedger::test_an_sm_head_does_not_break_the_offline_builder"
+  },
+  {
+   "file": "quam_state_manager/core/hub.py",
+   "pins": [
+    "TestLedger::test_the_ledger_rebuilds_from_the_journal_alone"
+   ],
+   "mutation": "derived_skips_entries",
+   "status": "RED",
+   "red_by": "FAILED tests/test_hub_record.py::TestLedger::test_the_ledger_rebuilds_from_the_journal_alone"
+  },
+  {
+   "file": "quam_state_manager/core/hub.py",
+   "pins": [
+    "TestLedger::test_the_async_projector_projects_off_the_writer_thread"
+   ],
+   "mutation": "async_inline",
+   "status": "RED",
+   "red_by": "FAILED tests/test_hub_record.py::TestLedger::test_the_async_projector_projects_off_the_writer_thread"
+  },
+  {
+   "file": "quam_state_manager/web/routes.py",
+   "pins": [
+    "TestDoors::test_apply_records_who_when_old_new",
+    "TestEveryDoorRecords::test_every_apply_to_live_call_names_its_record"
+   ],
+   "mutation": "apply_no_record",
+   "status": "RED",
+   "red_by": "FAILED tests/test_hub_record.py::TestDoors::test_apply_records_who_when_old_new"
+  },
+  {
+   "file": "quam_state_manager/web/routes.py",
+   "pins": [
+    "TestDoors::test_apply_records_who_when_old_new"
+   ],
+   "mutation": "apply_actor_ignored",
+   "status": "RED",
+   "red_by": "FAILED tests/test_hub_record.py::TestDoors::test_apply_records_who_when_old_new"
+  },
+  {
+   "file": "quam_state_manager/web/routes.py",
+   "pins": [
+    "TestDoors::test_keep_mine_records_the_outside_value_it_replaced"
+   ],
+   "mutation": "keep_mine_log_mode",
+   "status": "RED",
+   "red_by": "FAILED tests/test_hub_record.py::TestDoors::test_keep_mine_records_the_outside_value_it_replaced"
+  },
+  {
+   "file": "quam_state_manager/web/routes.py",
+   "pins": [
+    "TestDoors::test_keep_mine_over_nothing_lists_no_phantom_unit"
+   ],
+   "mutation": "phantom_unit",
+   "status": "RED",
+   "red_by": "FAILED tests/test_hub_record.py::TestDoors::test_keep_mine_over_nothing_lists_no_phantom_unit"
+  },
+  {
+   "file": "quam_state_manager/web/routes.py",
+   "pins": [
+    "TestDoors::test_dataset_apply_to_chip_carries_the_run"
+   ],
+   "mutation": "staged_unit_unlisted",
+   "status": "RED",
+   "red_by": "FAILED tests/test_hub_record.py::TestDoors::test_dataset_apply_to_chip_carries_the_run"
+  },
+  {
+   "file": "quam_state_manager/web/routes.py",
+   "pins": [
+    "TestDoors::test_the_applied_log_revert_names_what_it_takes_back"
+   ],
+   "mutation": "alr_not_linked",
+   "status": "RED",
+   "red_by": "FAILED tests/test_hub_record.py::TestDoors::test_the_applied_log_revert_names_what_it_takes_back"
+  },
+  {
+   "file": "quam_state_manager/web/routes.py",
+   "pins": [
+    "TestDoors::test_agent_apply_is_an_agent_event_with_its_plan",
+    "TestDoors::test_approval_names_the_person_and_the_agent"
+   ],
+   "mutation": "plan_ignored",
+   "status": "RED",
+   "red_by": "FAILED tests/test_hub_record.py::TestDoors::test_agent_apply_is_an_agent_event_with_its_plan"
+  },
+  {
+   "file": "quam_state_manager/web/routes.py",
+   "pins": [
+    "TestDoors::test_auto_apply_session_flush"
+   ],
+   "mutation": "auto_src",
+   "status": "RED",
+   "red_by": "FAILED tests/test_hub_record.py::TestDoors::test_auto_apply_session_flush"
+  },
+  {
+   "file": "quam_state_manager/web/routes.py",
+   "pins": [
+    "TestDoors::test_pull_and_apply"
+   ],
+   "mutation": "pull_src",
+   "status": "RED",
+   "red_by": "FAILED tests/test_hub_record.py::TestDoors::test_pull_and_apply"
+  },
+  {
+   "file": "quam_state_manager/web/routes.py",
+   "pins": [
+    "TestDoors::test_pull_and_apply",
+    "TestDoors::test_dataset_apply_to_chip_carries_the_run",
+    "TestDoors::test_ctrl_z_and_ctrl_shift_z_on_the_chip"
+   ],
+   "mutation": "sync_no_record",
+   "status": "RED",
+   "red_by": "FAILED tests/test_hub_record.py::TestDoors::test_pull_and_apply"
+  },
+  {
+   "file": "quam_state_manager/web/routes.py",
+   "pins": [
+    "TestDoors::test_staged_version_then_apply_records_the_wholesale_difference"
+   ],
+   "mutation": "stage_origin_lost",
+   "status": "RED",
+   "red_by": "FAILED tests/test_hub_record.py::TestDoors::test_staged_version_then_apply_records_the_wholesale_difference"
+  },
+  {
+   "file": "quam_state_manager/web/routes.py",
+   "pins": [
+    "TestDoors::test_restore_live"
+   ],
+   "mutation": "restore_after_stale",
+   "status": "RED",
+   "red_by": "FAILED tests/test_hub_record.py::TestDoors::test_restore_live"
+  },
+  {
+   "file": "quam_state_manager/web/routes.py",
+   "pins": [
+    "TestDoors::test_restore_live"
+   ],
+   "mutation": "restore_no_record",
+   "status": "RED",
+   "red_by": "FAILED tests/test_hub_record.py::TestDoors::test_restore_live"
+  },
+  {
+   "file": "quam_state_manager/web/routes.py",
+   "pins": [
+    "TestDoors::test_dataset_apply_to_chip_carries_the_run"
+   ],
+   "mutation": "dataset_run_lost",
+   "status": "RED",
+   "red_by": "FAILED tests/test_hub_record.py::TestDoors::test_dataset_apply_to_chip_carries_the_run"
+  },
+  {
+   "file": "quam_state_manager/web/routes.py",
+   "pins": [
+    "TestDoors::test_ctrl_z_and_ctrl_shift_z_on_the_chip"
+   ],
+   "mutation": "undo_link_lost",
+   "status": "RED",
+   "red_by": "FAILED tests/test_hub_record.py::TestDoors::test_ctrl_z_and_ctrl_shift_z_on_the_chip"
+  },
+  {
+   "file": "quam_state_manager/web/routes.py",
+   "pins": [
+    "TestDoors::test_ctrl_z_and_ctrl_shift_z_on_the_chip"
+   ],
+   "mutation": "redo_link_lost",
+   "status": "RED",
+   "red_by": "FAILED tests/test_hub_record.py::TestDoors::test_ctrl_z_and_ctrl_shift_z_on_the_chip"
+  },
+  {
+   "file": "quam_state_manager/web/routes.py",
+   "pins": [
+    "TestDoors::test_the_applied_units_name_the_event"
+   ],
+   "mutation": "units_unstamped",
+   "status": "RED",
+   "red_by": "FAILED tests/test_hub_record.py::TestDoors::test_the_applied_units_name_the_event"
+  },
+  {
+   "file": "quam_state_manager/web/routes.py",
+   "pins": [
+    "TestDoors::test_saved_then_applied_records_the_saved_edits"
+   ],
+   "mutation": "saved_unstamped",
+   "status": "RED",
+   "red_by": "FAILED tests/test_hub_record.py::TestDoors::test_saved_then_applied_records_the_saved_edits"
+  },
+  {
+   "file": "quam_state_manager/web/routes.py",
+   "pins": [
+    "TestDoors::test_approval_names_the_person_and_the_agent"
+   ],
+   "mutation": "approval_kind",
+   "status": "RED",
+   "red_by": "FAILED tests/test_hub_record.py::TestDoors::test_approval_names_the_person_and_the_agent"
+  },
+  {
+   "file": "quam_state_manager/core/autofit/writer.py",
+   "pins": [
+    "TestDoors::test_autofit_writer"
+   ],
+   "mutation": "autofit_by_lost",
+   "status": "RED",
+   "red_by": "FAILED tests/test_hub_record.py::TestDoors::test_autofit_writer"
+  },
+  {
+   "file": "quam_state_manager/core/autofit/writer.py",
+   "pins": [
+    "TestDoors::test_autofit_writer"
+   ],
+   "mutation": "autofit_no_record",
+   "status": "RED",
+   "red_by": "FAILED tests/test_hub_record.py::TestDoors::test_autofit_writer"
+  },
+  {
+   "file": "quam_state_manager/cli.py",
+   "pins": [
+    "TestDoors::test_cli_set_save",
+    "TestEveryDoorRecords::test_every_saver_save_is_classified"
+   ],
+   "mutation": "cli_bypass",
+   "status": "RED",
+   "red_by": "FAILED tests/test_hub_record.py::TestDoors::test_cli_set_save"
+  },
+  {
+   "file": "quam_state_manager/core/saver.py",
+   "pins": [
+    "TestDoors::test_apply_records_who_when_old_new"
+   ],
+   "mutation": "last_cleared_lost",
+   "status": "RED",
+   "red_by": "FAILED tests/test_hub_record.py::TestDoors::test_apply_records_who_when_old_new"
+  },
+  {
+   "file": "quam_state_manager/web/routes.py",
+   "pins": [
+    "TestCatchUp::test_opening_a_chip_projects_what_its_journal_holds"
+   ],
+   "mutation": "catch_up_lost",
+   "status": "RED",
+   "red_by": "FAILED tests/test_hub_record.py::TestCatchUp::test_opening_a_chip_projects_what_its_journal_holds"
+  },
+  {
+   "file": "quam_state_manager/web/routes.py",
+   "pins": [
+    "TestEveryDoorRecords::test_every_apply_to_live_call_names_its_record"
+   ],
+   "mutation": "new_door_unrecorded",
+   "status": "RED",
+   "red_by": "FAILED tests/test_hub_record.py::TestEveryDoorRecords::test_every_apply_to_live_call_names_its_record"
+  },
+  {
+   "file": "quam_state_manager/web/routes.py",
+   "pins": [
+    "TestEveryDoorRecords::test_every_direct_pair_write_is_classified"
+   ],
+   "mutation": "new_pair_writer",
+   "status": "RED",
+   "red_by": "FAILED tests/test_hub_record.py::TestEveryDoorRecords::test_every_direct_pair_write_is_classified"
+  },
+  {
+   "file": "quam_state_manager/web/routes.py",
+   "pins": [
+    "TestEveryDoorRecords::test_every_named_state_file_write_is_classified"
+   ],
+   "mutation": "new_named_writer",
+   "status": "RED",
+   "red_by": "FAILED tests/test_hub_record.py::TestEveryDoorRecords::test_every_named_state_file_write_is_classified"
+  },
+  {
+   "file": "quam_state_manager/web/routes.py",
+   "pins": [
+    "TestEveryDoorRecords::test_every_chip_handle_names_its_ledger"
+   ],
+   "mutation": "sim_handle_unnamed",
+   "status": "RED",
+   "red_by": "FAILED tests/test_hub_record.py::TestEveryDoorRecords::test_every_chip_handle_names_its_ledger"
+  },
+  {
+   "file": "quam_state_manager/web/routes.py",
+   "pins": [
+    "TestEveryDoorRecords::test_the_real_autofit_handle_has_a_ledger"
+   ],
+   "mutation": "real_handle_none",
+   "status": "RED",
+   "red_by": "FAILED tests/test_hub_record.py::TestEveryDoorRecords::test_the_real_autofit_handle_has_a_ledger"
+  }
+ ]
+}

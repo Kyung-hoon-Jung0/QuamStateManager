@@ -109,6 +109,16 @@ _SECTION_KEYS: dict[str, list[str]] = {
 }
 
 
+def _cli_chip_dir(folder: Path, instance: Path | None) -> Path:
+    """The history dir of the chip in *folder*, in the SM instance the app
+    itself would use (docs/271) -- the same identity ladder as the web app."""
+    from quam_state_manager.core.history import HistoryManager
+    if instance is None:
+        from quam_state_manager.web.app import default_instance_path
+        instance = Path(default_instance_path() or Path(__file__).resolve().parent.parent / "instance")
+    return HistoryManager(instance).resolve_chip_dir(folder)[0]
+
+
 def _load_store(folder: Path) -> QuamStore:
     try:
         return QuamStore(folder)
@@ -418,6 +428,9 @@ def set_value(
     value: str = typer.Argument(help="New value"),
     folder: Path = typer.Option(".", "--folder", "-f", help="Path to quam_state folder"),
     save_now: bool = typer.Option(False, "--save", help="Save immediately after setting"),
+    instance: Path | None = typer.Option(
+        None, "--instance",
+        help="SM instance folder whose history records this write (default: the app's)"),
 ):
     """Set a single value by dot-path."""
     store = _load_store(folder)
@@ -468,8 +481,17 @@ def set_value(
     ))
 
     if save_now:
+        # docs/271: this writes the folder directly (no working copy), so it is
+        # a live write SM makes -- recorded write-ahead in the chip's history
+        from quam_state_manager.core import hub
         saver = Saver(store)
-        saver.save()
+        hub.set_inline(True)
+        try:
+            hub.record_direct_save(_cli_chip_dir(folder, instance), folder, store, saver,
+                                   actor="cli", src="cli_set")
+        except OSError as e:
+            console.print(f"[red]Error:[/red] {e}")
+            raise typer.Exit(1)
         console.print("[green]Saved.[/green]")
 
 

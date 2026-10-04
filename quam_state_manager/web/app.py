@@ -494,6 +494,13 @@ def create_app(*, testing: bool = False, instance_path: str | None = None) -> Fl
     app = Flask(__name__, **flask_kwargs)
     os.makedirs(app.instance_path, exist_ok=True)
     app.config["TESTING"] = testing
+    if testing:
+        # docs/271: a test reads the ledger right after the write; projecting
+        # on the writer's thread makes that deterministic (and no projector
+        # thread outlives a test's tmp instance). Production projects off the
+        # request thread.
+        from quam_state_manager.core import hub as _hub
+        _hub.set_inline(True)
     app.config["SECRET_KEY"] = os.urandom(24).hex()
 
     # SM-side qualibrate config-location override (docs/63 §B): the UI-chosen

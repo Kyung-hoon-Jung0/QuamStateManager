@@ -196,9 +196,9 @@ class TestFlush:
         seen = []
         real = working_copy.apply_to_live
 
-        def spy(wc, *, force=False):
+        def spy(wc, *, force=False, **kw):    # docs/271: doors also pass record=
             seen.append(force)
-            return real(wc, force=force)
+            return real(wc, force=force, **kw)
 
         monkeypatch.setattr(working_copy, "apply_to_live", spy)
         c = env["client"]

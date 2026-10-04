@@ -793,8 +793,19 @@ def sync_from_live(wc: WorkingCopy) -> tuple[dict, dict]:
 
 
 def apply_to_live(wc: WorkingCopy, *, force: bool = False,
-                  expect_live_hash: str | None = None) -> None:
+                  expect_live_hash: str | None = None, record=None) -> None:
     """Push the working copy's state + wiring to the live folder.
+
+    ``record`` (S4, docs/271) is the door's ``hub.Pending``: what this write
+    is (who pressed, which door, the entries). It is committed -- one fsync'd
+    line in ``history/<chip>/events.jsonl`` -- AFTER every refusal gate below
+    and BEFORE the live files are written, so a refused apply records nothing
+    (docs/255) and no SM write lands unrecorded: a journal that cannot be
+    written raises ``hub.RecordError`` (an OSError) with nothing written. A
+    write that then fails, or cannot be verified, is marked failed in the
+    journal before the error propagates; a verified write is handed to the
+    ledger projector. Every production caller names it -- pinned by
+    tests/test_hub_record.py, which fails the build for a door that does not.
 
     Unless *force*, raises :class:`StaleLiveError` if the live files changed
     since the last sync -- applying would otherwise silently overwrite an
@@ -862,6 +873,8 @@ def apply_to_live(wc: WorkingCopy, *, force: bool = False,
             if adopted:
                 logger.info("Apply to live was a no-op (live already holds "
                             "this content): %s", wc.live_folder)
+                if record is not None:
+                    record.skipped = "no-op: the live chip already held this content"
                 return
             raise StaleLiveError(
                 "The live state files changed since they were loaded or synced."
@@ -906,46 +919,75 @@ def apply_to_live(wc: WorkingCopy, *, force: bool = False,
                 "The live state files changed after the overwrite was confirmed "
                 "-- refusing to replace values the confirm did not name.")
 
-    safe_io.write_state_wiring_bytes(wc.live_folder, state_b, wiring_b)
-
-    # Post-write: read back the mtimes our write produced. If this fails
-    # (live folder vanished, permission flipped under us), do NOT update the
-    # synced mtimes and do NOT write meta -- raise instead so the user sees
-    # the failure and can investigate, rather than future syncs silently
-    # treating a partial-write state as authoritative.
-    try:
-        state_mt, wiring_mt = safe_io.state_wiring_mtimes(wc.live_folder)
-    except OSError as exc:
-        raise safe_io.LiveFileError(
-            f"Wrote to {wc.live_folder} but could not read back its mtimes "
-            f"({exc}); working copy's synced state was not advanced."
-        ) from exc
-
     applied_hash = _wpair.content_hash()
 
-    # r16 ⑥ (docs/65 amendment): VERIFY the apply landed. "Applied" used to
-    # be believed, never observed — the hash below was computed from the
-    # SOURCE bytes, so a write misdirected by a junction/case-variant path,
-    # or immediately overwritten by a racing experiment save, still reported
-    # success ("apply to live sometimes doesn't reflect"). One extra read on
-    # this destructive, user-initiated path is cheap; a mismatch raises with
-    # an honest message instead of advancing the synced state.
+    # S4 (docs/271): write-ahead. Every refusal is behind us; the journal line
+    # is durable before the chip is touched. Base = what the chip held: the
+    # sync point (the gates above proved live still equals it), or for a
+    # forced push the content the confirm named / that live holds now.
+    rec = None
+    if record is not None:
+        if not force:
+            base_hash = wc.synced_live_hash
+        elif expect_live_hash is not None:
+            base_hash = expect_live_hash
+        else:
+            try:
+                base_hash = live_content_hash(wc)
+            except (OSError, ValueError):
+                base_hash = None     # nothing readable was there to replace
+        rec = record.commit(base_hash=base_hash, post_state=(state_b, wiring_b),
+                            post_hash=applied_hash, live=wc.live_folder)
+
     try:
-        verified = live_content_hash(wc) == applied_hash
-    except (OSError, ValueError) as exc:
-        raise safe_io.LiveFileError(
-            f"Wrote to {wc.live_folder} but could not read it back to verify "
-            f"({exc}); treat the apply as UNVERIFIED and re-sync before "
-            "further edits."
-        ) from exc
-    if not verified:
-        raise safe_io.LiveFileError(
-            f"Apply verification FAILED: {wc.live_folder} does not contain "
-            "the just-written content — another program wrote the live files "
-            "during the apply (or the path is redirected). Re-sync to see "
-            "what the live chip holds now; your edits are still in the "
-            "working copy."
-        )
+        safe_io.write_state_wiring_bytes(wc.live_folder, state_b, wiring_b)
+
+        # Post-write: read back the mtimes our write produced. If this fails
+        # (live folder vanished, permission flipped under us), do NOT update the
+        # synced mtimes and do NOT write meta -- raise instead so the user sees
+        # the failure and can investigate, rather than future syncs silently
+        # treating a partial-write state as authoritative.
+        try:
+            state_mt, wiring_mt = safe_io.state_wiring_mtimes(wc.live_folder)
+        except OSError as exc:
+            raise safe_io.LiveFileError(
+                f"Wrote to {wc.live_folder} but could not read back its mtimes "
+                f"({exc}); working copy's synced state was not advanced."
+            ) from exc
+
+        # r16 ⑥ (docs/65 amendment): VERIFY the apply landed. "Applied" used to
+        # be believed, never observed — the hash below was computed from the
+        # SOURCE bytes, so a write misdirected by a junction/case-variant path,
+        # or immediately overwritten by a racing experiment save, still reported
+        # success ("apply to live sometimes doesn't reflect"). One extra read on
+        # this destructive, user-initiated path is cheap; a mismatch raises with
+        # an honest message instead of advancing the synced state.
+        try:
+            verified = live_content_hash(wc) == applied_hash
+        except (OSError, ValueError) as exc:
+            raise safe_io.LiveFileError(
+                f"Wrote to {wc.live_folder} but could not read it back to verify "
+                f"({exc}); treat the apply as UNVERIFIED and re-sync before "
+                "further edits."
+            ) from exc
+        if not verified:
+            raise safe_io.LiveFileError(
+                f"Apply verification FAILED: {wc.live_folder} does not contain "
+                "the just-written content — another program wrote the live files "
+                "during the apply (or the path is redirected). Re-sync to see "
+                "what the live chip holds now; your edits are still in the "
+                "working copy."
+            )
+
+    except BaseException as exc:
+        # docs/271: the line is already in the journal -- a write that did not
+        # land (or that nobody can vouch for) is marked failed before the
+        # error reaches the door, so the ledger never claims it.
+        if rec is not None:
+            rec.failed(exc)
+        raise
+    if rec is not None:
+        rec.landed()
 
     # Persist meta FIRST -- only advance in-memory synced_* after the meta
     # write succeeds. Otherwise an OSError on the meta write leaves the

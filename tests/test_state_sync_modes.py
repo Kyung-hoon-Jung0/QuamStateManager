@@ -143,7 +143,7 @@ class TestConflictPullFlow:
 
         _edit(loaded_client, "qubits.qA1.f_01", "5.0e9")
 
-        def _boom(wc, *, force=False):
+        def _boom(wc, *, force=False, **_kw):    # docs/271: doors also pass record=
             raise working_copy.StaleLiveError("changed again mid-apply")
 
         monkeypatch.setattr(working_copy, "apply_to_live", _boom)
