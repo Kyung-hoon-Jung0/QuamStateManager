@@ -3444,11 +3444,15 @@ window.ChipStatus.mount = function (opts) {
         topo.edges.forEach(function(e) {
             if (!e.gate_fidelities) return;
             e.gate_fidelities.forEach(function(gf) {
-                var rbType = gf.metric === 'StandardRB' ? 'StandardRB'
+                // The panel family is the SERVER's one classification
+                // (query.fidelity_family): any spelling of SRB / IRB / Bell / XEB,
+                // and a metric no table knows as `other:<name>`, shown "as
+                // stored" -- so a new gate's own XEB or IRB appears with no code
+                // change. A row without the key (an older payload) falls back to
+                // the three exact names this builder used to know.
+                var rbType = gf.family !== undefined ? gf.family
+                           : gf.metric === 'StandardRB' ? 'StandardRB'
                            : (gf.metric === 'InterleavedRB' || gf.metric === 'IRB') ? 'InterleavedRB'
-                           // A gate whose only 2Q figure is XEB (a flat
-                           // `fidelity.XEB` block) had no panel at all, so the
-                           // gate vanished from 2Q Fid. (on-site report).
                            : (typeof gf.metric === 'string' && gf.metric.toUpperCase() === 'XEB') ? 'XEB'
                            : null;
                 if (!rbType) return;
@@ -3469,7 +3473,7 @@ window.ChipStatus.mount = function (opts) {
         // so the 2Q Gate Fidelity section read as a bare heading -- a silently
         // skipped panel reads as a broken one. Say so, and name the leaf it
         // fills from, the way the 1Q / readout sections do (docs/148).
-        if (!rbData.StandardRB && !rbData.InterleavedRB && !rbData.XEB) {
+        if (!Object.keys(rbData).length) {
             container.innerHTML = '<p class="muted topo-2qrb-empty" style="margin:0.2rem 0 0.8rem">'
                 + 'no 2Q randomized-benchmarking values on this chip yet — fills from '
                 + '<code>qubit_pairs.&lt;pair&gt;.macros.&lt;gate&gt;.fidelity.StandardRB</code> / '
@@ -3518,12 +3522,18 @@ window.ChipStatus.mount = function (opts) {
         // made panel by panel, the one a jump goes to first -- see below).
         // docs/141 4o: the first block of the Fidelity section (the wrapper's
         // <h3> says Fidelity); this is its sub-heading.
-        // The sub-heading names what the section shows: RB, XEB, or both.
-        var _hasRb = !!(rbData.StandardRB || rbData.InterleavedRB);
-        var html = [rbData.XEB
-            ? '<h4 class="topo-section-title topo-fidelity-subtitle" style="margin-top:0.5rem;font-size:1.05em">2Q Gate Fidelity \u2014 '
-              + (_hasRb ? 'RB \u00b7 ' : '') + 'XEB</h4>'
-            : '<h4 class="topo-section-title topo-fidelity-subtitle" style="margin-top:0.5rem;font-size:1.05em">2Q Gate Fidelity \u2014 RB</h4>'];
+        // The sub-heading names what the section shows: RB, XEB, Bell, other.
+        var _KNOWN = ['StandardRB', 'InterleavedRB', 'XEB', 'Bell'];
+        var _others = Object.keys(rbData).filter(function (k) { return _KNOWN.indexOf(k) < 0; }).sort();
+        var _parts = [];
+        if (rbData.StandardRB || rbData.InterleavedRB) _parts.push('RB');
+        if (rbData.XEB) _parts.push('XEB');
+        if (rbData.Bell) _parts.push('Bell');
+        if (_others.length) _parts.push('other');
+        var html = [(_parts.length === 1 && _parts[0] === 'RB')
+            ? '<h4 class="topo-section-title topo-fidelity-subtitle" style="margin-top:0.5rem;font-size:1.05em">2Q Gate Fidelity \u2014 RB</h4>'
+            : '<h4 class="topo-section-title topo-fidelity-subtitle" style="margin-top:0.5rem;font-size:1.05em">2Q Gate Fidelity \u2014 '
+              + _parts.join(' \u00b7 ') + '</h4>'];
         var specs = [];
         var blocks = [];     // {h: a heading's HTML} | {p: a panel's index}
         var panels = [];     // {key, rbType, cells, built, make() -> {html, spec}}
@@ -3531,21 +3541,27 @@ window.ChipStatus.mount = function (opts) {
             ? topo.edges.filter(function(e) { return pairGridPositions[e.pair_id]; }).length : 0;
 
         // ── Render panels per RB type, then per gate ────────────────
-        ['StandardRB', 'InterleavedRB', 'XEB'].forEach(function(rbType) {
+        _KNOWN.concat(_others).forEach(function(rbType) {
             var gates = rbData[rbType];
             if (!gates) return;
 
-            var rbLabel = rbType === 'StandardRB' ? 'Standard RB' : rbType === 'XEB' ? 'XEB' : 'Interleaved RB';
+            var _isOther = rbType.indexOf('other:') === 0;
+            var rbLabel = rbType === 'StandardRB' ? 'Standard RB' : rbType === 'XEB' ? 'XEB'
+                        : rbType === 'Bell' ? 'Bell' : rbType === 'InterleavedRB' ? 'Interleaved RB'
+                        : _esc(rbType.slice('other:'.length));
             // QA F-21: under the section's "2Q Gate Fidelity" headings a
             // Standard RB number read as a GATE fidelity, but it is 1 - EPC
             // per CLIFFORD (docs/138). Say which, in the popup's own words.
             // XEB: the chip stores the number but not WHICH XEB figure it is
             // (per cycle or per gate, average or Pauli), so it is shown as
             // stored and never wears an RB kind it may not have.
-            var rbKind = rbType === 'StandardRB' ? 'per Clifford' : rbType === 'XEB' ? 'as stored' : 'per gate';
-            blocks.push({ h: '<h5 class="topo-section-title" data-rb-heading="' + rbType + '" style="margin-top:0.8rem;font-size:1em">' + rbLabel
+            // A Bell-state number is a STATE fidelity; a metric no table knows
+            // is shown under its own name and claims nothing about what it is.
+            var rbKind = rbType === 'StandardRB' ? 'per Clifford' : rbType === 'InterleavedRB' ? 'per gate'
+                       : rbType === 'Bell' ? 'state fidelity' : 'as stored';
+            blocks.push({ h: '<h5 class="topo-section-title" data-rb-heading="' + _esc(rbType) + '" style="margin-top:0.8rem;font-size:1em">' + rbLabel
                 + ' <span class="topo-popup-kind topo-rb-kind">' + rbKind
-                + (rbType === 'StandardRB' ? ' (1 \u2212 EPC)' : rbType === 'XEB' ? '' : ' (1 \u2212 EPG)') + '</span></h5>' });
+                + (rbType === 'StandardRB' ? ' (1 \u2212 EPC)' : rbType === 'InterleavedRB' ? ' (1 \u2212 EPG)' : '') + '</span></h5>' });
 
             var gateNames = Object.keys(gates).sort(function(a, b) {
                 return gates[b].length - gates[a].length;  // most results first
@@ -3576,14 +3592,14 @@ window.ChipStatus.mount = function (opts) {
                 // (v-min)/range = 0, the LOW end, and then flipped to mid-scale on
                 // the first bar-palette switch (recolorBarCharts reads the tile's t).
                 var _tOf = function (v) { return agg.count > 1 ? (v - agg.min) / range : 0.5; };
-                var scorer = outlierScorer(_physCz, rbType === 'XEB' ? {} : {   // robust MAD flag (this gate),
+                var scorer = outlierScorer(_physCz, (rbType !== 'StandardRB' && rbType !== 'InterleavedRB') ? {} : {   // robust MAD flag (this gate),
                     // spec-gated: an in-spec fidelity is never branded. XEB is not
                     // judged against the CZ-fidelity spec: SM does not know it is
                     // the same quantity.
                     verdict: function(v) { return _verdict(v, thresholds['cz_fidelity']); },
                 });
                 var gateLabel = _esc(gateName.replace(/^cz_/, ''));   // only ever rendered as HTML
-                var secId = 'rb-' + rbType + '-' + gateName.replace(/[^a-zA-Z0-9]/g, '-');
+                var secId = 'rb-' + rbType.replace(/[^a-zA-Z0-9]/g, '-') + '-' + gateName.replace(/[^a-zA-Z0-9]/g, '-');
                 var chartId = secId + '-chart';
 
                 var dKey = '2q:' + rbType + ':' + gateName;

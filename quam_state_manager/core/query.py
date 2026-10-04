@@ -7,6 +7,8 @@ support filtering and comparison tables.
 
 from __future__ import annotations
 
+import re
+
 import ast
 import logging
 import operator
@@ -1461,6 +1463,21 @@ _RB_LEVEL = {
 # measurement by one half of the app and as level-unknown by the other.
 _RB_LEVEL_LC = {k.lower(): v for k, v in _RB_LEVEL.items()}
 
+# Other spellings of the SAME measurements: separators and case are not part
+# of a name (`Interleaved_RB`, `interleaved-rb`, `bell state`), and two short
+# forms labs write for these exact quantities. A bare "RB" is NOT here: it is
+# not clear whether a lab means the Clifford or the gate number.
+_RB_LEVEL_ALIASES = {"SRB": "clifford", "Bell": "state"}
+
+
+def _norm_metric(name: str) -> str:
+    """A metric name with case and separators removed: the key two spellings
+    of one measurement share."""
+    return re.sub(r"[\s_\-]+", "", name.lower())
+
+
+_RB_LEVEL_NORM = {_norm_metric(k): v for k, v in {**_RB_LEVEL, **_RB_LEVEL_ALIASES}.items()}
+
 
 def rb_level(metric: Any) -> str | None:
     """``"gate"`` / ``"clifford"`` / ``"state"`` / ``"decay"`` / None.
@@ -1483,7 +1500,42 @@ def rb_level(metric: Any) -> str | None:
     low = metric.lower()
     if low.endswith("_alpha"):
         return "decay"
-    return _RB_LEVEL_LC.get(low)
+    return _RB_LEVEL_LC.get(low) or _RB_LEVEL_NORM.get(_norm_metric(metric))
+
+
+#: The 2Q Fid. panel family of each RB level. The labels and kinds are drawn by
+#: chip-status.js from the family key; only an UNKNOWN metric needs its own name.
+_FAMILY_OF_LEVEL = {"clifford": "StandardRB", "gate": "InterleavedRB", "state": "Bell"}
+
+
+def fidelity_family(metric: Any) -> str | None:
+    """Which 2Q Fid. panel family a pair-fidelity row belongs to, or None.
+
+    ``"StandardRB"`` / ``"InterleavedRB"`` / ``"Bell"`` by the RB level (any
+    spelling), ``"XEB"`` for any XEB spelling (`XEB`, `xeb_fidelity`), and
+    ``"other:<name>"`` for a metric no table knows -- shown under its own name,
+    "as stored", rather than dropped. None for what is not a fidelity at all:
+    an RB decay base, an error, a run id (:func:`fidelity_field_kind`).
+
+    ONE classification for every reader (the panel builder only reads the
+    key), so a lab's own spelling or a new gate's own XEB/IRB shows up without
+    a code change.
+    """
+    if not isinstance(metric, str) or not metric:
+        return None
+    level = rb_level(metric)
+    if level == "decay":
+        return None
+    if level in _FAMILY_OF_LEVEL:
+        return _FAMILY_OF_LEVEL[level]
+    if fidelity_field_kind(metric) in ("decay", "error", "load_id"):
+        return None
+    if re.search(r"(?:^|_)(?:err|stderr|std|uncertainty|sigma)$", metric.lower()):
+        return None                  # an uncertainty, not a value (a lone `XEB_err`)
+    norm = _norm_metric(metric)
+    if norm.startswith(("xeb", "crossentropy")):
+        return "XEB"
+    return "other:" + metric
 
 
 # The historical private name. Kept so existing callers and pins read the same,
@@ -1689,11 +1741,13 @@ def _extract_pair_gate_fidelities(macros: dict) -> list[dict]:
                 if len(entry) > 2:  # has at least one numeric value
                     entry["load_id"] = gate_load_id
                     entry["level"] = _rb_level(metric_name)
+                    entry["family"] = fidelity_family(metric_name)
                     results.append(_gate_fidelity_row(entry))
             elif isinstance(metric_val, (int, float)):
                 row = {"gate": gate_name, "metric": metric_name,
                        "value": metric_val, "load_id": gate_load_id,
-                       "level": _rb_level(metric_name)}
+                       "level": _rb_level(metric_name),
+                       "family": fidelity_family(metric_name)}
                 row.update(flat_attrs.get(metric_name) or {})
                 results.append(_gate_fidelity_row(row))
     return results
