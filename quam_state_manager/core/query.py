@@ -1532,6 +1532,11 @@ def fidelity_field_kind(name: Any) -> str | None:
     # the number, not the number.
     if low == "id" or low.endswith("_id"):
         return "load_id"
+    # A RUN NUMBER is the same provenance in another spelling: a flat block
+    # writes `XEB_run: 1782` / `XEB_runs: [1782, 1783]` beside `XEB: 0.9889`,
+    # and `XEB_run` was being emitted as a fidelity row and charted on Trends.
+    if low in ("run", "runs") or low.endswith(("_run", "_runs")):
+        return "load_id"
     if _rb_level(name) == "decay" or low == "alpha":
         return "decay"
     if low.startswith(_ERROR_FIELD_PREFIXES) or low.endswith(("_epc", "_epg")) \
@@ -1583,6 +1588,55 @@ def _gate_fidelity_row(entry: dict) -> dict:
     return entry
 
 
+#: Suffixes that make a flat key ``<M>_<suffix>`` an ATTRIBUTE of the scalar
+#: metric ``<M>`` beside it rather than a metric of its own -> the row field it
+#: becomes. ``err`` is the stated uncertainty of the value (not 1 - F).
+_FLAT_METRIC_ATTRS = {
+    "err": "err", "stderr": "err", "std": "err", "uncertainty": "err", "sigma": "err",
+    "run": "load_id", "run_id": "load_id", "load_id": "load_id",
+    "runs": "runs", "updated_at": "updated_at",
+}
+
+
+def _flat_metric_attrs(fid: dict) -> tuple[dict[str, dict], set[str]]:
+    """``({metric: {field: value}}, {keys consumed})`` for a FLAT fidelity block.
+
+    Some writers store one measurement as sibling keys instead of a nested
+    dict: ``{"XEB": 0.9889, "XEB_err": 0.0012, "XEB_run": 1782,
+    "XEB_runs": [1782, 1783], "XEB_updated_at": "..."}``. Read key by key, the
+    uncertainty and the run number became fidelity rows of their own (a run
+    number of 1782 under a fidelity heading). A key ``<M>_<suffix>`` is an
+    attribute of ``<M>`` only when ``<M>`` is itself a numeric key of the same
+    block and the suffix is one of :data:`_FLAT_METRIC_ATTRS`; anything else
+    is left to the per-key rules unchanged.
+    """
+    scalars = {k for k, v in fid.items()
+               if isinstance(k, str) and isinstance(v, (int, float)) and not isinstance(v, bool)}
+    attrs: dict[str, dict] = {}
+    used: set[str] = set()
+    for key, val in fid.items():
+        if not isinstance(key, str) or "_" not in key:
+            continue
+        for cut in range(len(key) - 1, 0, -1):          # longest metric name first
+            if key[cut] != "_":
+                continue
+            head, suffix = key[:cut], key[cut + 1:].lower()
+            field = _FLAT_METRIC_ATTRS.get(suffix)
+            if head in scalars and field:
+                if field == "err" or field == "load_id":
+                    if isinstance(val, (int, float)) and not isinstance(val, bool):
+                        attrs.setdefault(head, {})[field] = val
+                elif field == "runs":
+                    if isinstance(val, list):
+                        attrs.setdefault(head, {})[field] = [
+                            v for v in val if isinstance(v, (int, float)) and not isinstance(v, bool)]
+                elif isinstance(val, str):
+                    attrs.setdefault(head, {})[field] = val
+                used.add(key)
+                break
+    return attrs, used
+
+
 def _extract_pair_gate_fidelities(macros: dict) -> list[dict]:
     """Search all gate macros for fidelity data, return list of found results.
 
@@ -1602,8 +1656,11 @@ def _extract_pair_gate_fidelities(macros: dict) -> list[dict]:
         # each gate to its source dataset — even when this gate isn't the pair's
         # best (the old single edge-level cz_load_id only surfaced one pair).
         gate_load_id = fid.get("StandardRB_load_id") or fid.get("InterleavedRB_load_id")
+        flat_attrs, flat_used = _flat_metric_attrs(fid)
         # Search for any key containing fidelity-like data
         for metric_name, metric_val in fid.items():
+            if metric_name in flat_used:
+                continue                 # an attribute of a flat metric, not a metric
             # The *_load_id keys are provenance, not a measurement — don't emit
             # them as their own "fidelity" rows (they rendered as e.g. "529.0000").
             # Asked through the shared classifier, so this rule and the Trends
@@ -1634,10 +1691,11 @@ def _extract_pair_gate_fidelities(macros: dict) -> list[dict]:
                     entry["level"] = _rb_level(metric_name)
                     results.append(_gate_fidelity_row(entry))
             elif isinstance(metric_val, (int, float)):
-                results.append(_gate_fidelity_row(
-                    {"gate": gate_name, "metric": metric_name,
-                     "value": metric_val, "load_id": gate_load_id,
-                     "level": _rb_level(metric_name)}))
+                row = {"gate": gate_name, "metric": metric_name,
+                       "value": metric_val, "load_id": gate_load_id,
+                       "level": _rb_level(metric_name)}
+                row.update(flat_attrs.get(metric_name) or {})
+                results.append(_gate_fidelity_row(row))
     return results
 
 
