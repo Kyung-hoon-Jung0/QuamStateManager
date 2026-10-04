@@ -308,7 +308,13 @@ def versions():
     path = r._active_path()
     if not path:
         return _err("no chip loaded", 409)
-    n = max(1, min(int(request.args.get("n") or 30), 500))
+    try:
+        n = int(request.args.get("n", "30"))
+    except ValueError:
+        return _err("n must be a positive integer")
+    if n <= 0:
+        return _err("n must be a positive integer")
+    n = min(n, 500)
     hm = r._history()
     try:
         snaps = hm.list_snapshots(path)
@@ -338,6 +344,12 @@ def field_history():
     dot = (request.args.get("path") or "").strip()
     if not dot:
         return _err("path required")
+    target = resolve_field_target(r._store().merged, dot)
+    raw_path = target["candidates"][0]["path"] if target["resolvable"] else dot
+    try:
+        r._store().get_value(raw_path)
+    except (KeyError, IndexError, TypeError, ValueError):
+        return _err(f"no such path: {dot}", 404)
     try:
         data = r._history().field_history(path, dot)
     except Exception as exc:  # noqa: BLE001
@@ -369,13 +381,32 @@ def _uid(ds, run) -> str | None:
 
 @agent_bp.route("/runs")
 def runs():
+    from difflib import SequenceMatcher
+    from quam_state_manager.core.search_query import groups, matches_hay
+
+    day = request.args.get("date") or None
+    if day is not None:
+        try:
+            if not journal_mod.is_day(day):
+                raise ValueError
+            datetime.strptime(day, "%Y-%m-%d")
+        except ValueError:
+            return _err("date must be a valid YYYY-MM-DD day")
     ds = _ds()
     if not ds:
         return jsonify(ok=True, count=0, runs=[], note="no dataset folder is open in SM")
     n = max(1, min(int(request.args.get("n") or 20), 500))
-    rows = ds.list_runs(experiment=request.args.get("experiment") or None,
-                        date=request.args.get("date") or None,
-                        qubit=request.args.get("qubit") or None)[:n]
+    query = (request.args.get("experiment") or "").strip()
+    grps = groups(query)
+    qubit = request.args.get("qubit") or None
+    all_rows = ds.list_runs()
+    if qubit:
+        available = sorted({q for row in all_rows for q in row.get("qubits") or []}, key=natural_key)
+        if qubit not in available:
+            return _err(f"no qubit called {qubit} in the open dataset folder", 404, available=available)
+    matches = [row for row in all_rows if matches_hay((row.get("experiment_name") or "").lower(), grps)]
+    rows = [row for row in matches if (not day or row.get("date") == day)
+            and (not qubit or qubit in (row.get("qubits") or []))][:n]
     out = []
     for row in rows:
         d = {k: _jsonable(row.get(k)) for k in ("run_id", "experiment_name", "date", "time", "qubits",
@@ -384,7 +415,14 @@ def runs():
              if k in row}
         d["uid"] = row.get("uid") or _uid(ds, row)
         out.append(d)
-    return jsonify(ok=True, count=len(out), runs=out)
+    hint = {}
+    if query and not matches:
+        names = sorted({row["experiment_name"] for row in all_rows if row.get("experiment_name")}, key=natural_key)
+        closest = sorted(names, key=lambda name: SequenceMatcher(None, query.lower(), name.lower()).ratio(),
+                         reverse=True)[:5]
+        hint = {"closest": closest, "hint": f"no experiment matches {query!r}"
+                + (f"; closest: {', '.join(closest)}" if closest else "; no experiment names are available")}
+    return jsonify(ok=True, count=len(out), runs=out, **hint)
 
 
 @agent_bp.route("/run/<int:run_id>")
@@ -554,6 +592,15 @@ def notes_get():
     if not _r()._active_path():
         return _err("no chip loaded", 409)
     path = (request.args.get("path") or "").strip()
+    if path:
+        store = _r()._store()
+        path = _note_subject(store, path)
+        target = resolve_field_target(store.merged, path)
+        raw_path = target["candidates"][0]["path"] if target["resolvable"] else path
+        try:
+            store.get_value(raw_path)
+        except (KeyError, IndexError, TypeError, ValueError):
+            return _err(f"no such path: {path}", 404)
     notes = _notes_touching(path or None)
     return jsonify(ok=True, path=path or None, count=len(notes), notes=notes)
 
@@ -596,8 +643,13 @@ def journal_get():
     # field naming today -- honest, but a question nobody asked. Both spellings.
     day = request.args.get("date") or request.args.get("day") or None
     # docs/191 H05: this went into a file path unchecked. A day is a day.
-    if day is not None and not journal_mod.is_day(day):
-        return _err("date must be YYYY-MM-DD")
+    if day is not None:
+        try:
+            if not journal_mod.is_day(day):
+                raise ValueError
+            datetime.strptime(day, "%Y-%m-%d")
+        except ValueError:
+            return _err("date must be a valid YYYY-MM-DD day")
     text = journal_mod.read(current_app.instance_path, chip, day)
     return jsonify(ok=True, chip=chip, date=day or datetime.now().strftime("%Y-%m-%d"),
                    days=journal_mod.list_days(current_app.instance_path, chip),
@@ -821,6 +873,11 @@ def _author_kind(rec: dict) -> str:
     return "hook"
 
 
+# D-17: every name a CLI gives its shell tool (Claude Code: Bash / PowerShell; Codex:
+# exec_command / shell_command / shell) -- one list, read by the journal, the feed and the strip
+_SHELL_TOOLS = ("Bash", "PowerShell", "exec_command", "shell_command", "shell")
+
+
 def _journal_line(rec: dict) -> tuple[str | None, int | None, str]:
     """What of an event belongs in the human's notes, and WHO. A node run (with
     its run id and failure), a .py edit, and -- default ON, labelled -- what the
@@ -834,13 +891,20 @@ def _journal_line(rec: dict) -> tuple[str | None, int | None, str]:
             return None, None, who                # the human's Stop is journaled by the door that pressed it
         if s and journal_mod.settings(current_app.instance_path)["agent_says"]:
             # docs/173 S8: the label IS the kind now (`by_claude` said …), not a "Claude:" prefix
-            return s.replace("\n", " ")[:600], None, (who if who != "hook" else "by_claude")
+            if len(s) > 600:
+                marker = "\n[truncated]"
+                head = s[:600 - len(marker)]
+                boundary = head.rfind("\n")
+                if boundary > 0:
+                    head = head[:boundary]
+                s = head + marker
+            return s, None, (who if who != "hook" else "by_claude")
         return None, None, who
     if h not in ("PostToolUse", "PostToolUseFailure"):
         return None, None, who
     failed = bool(rec.get("failed"))
     err = (rec.get("error") or "").replace("\n", " ")[-200:]
-    if tool == "Bash":
+    if tool.rsplit(".", 1)[-1] in _SHELL_TOOLS:
         node = _node_of(s)
         if not node:
             return None, None, who
@@ -929,7 +993,7 @@ def _relevant(session_events: list[dict]) -> bool:
     for e in session_events:
         if is_sm_mcp_tool(e.get("tool_name") or ""):
             return True
-        if e.get("tool_name") == "Bash" and _node_of(e.get("summary") or ""):
+        if (e.get("tool_name") or "").rsplit(".", 1)[-1] in _SHELL_TOOLS and _node_of(e.get("summary") or ""):
             return True
     return False
 
@@ -1111,7 +1175,8 @@ def _human_ran_recently(now: float, agent_runs: dict, ev: list[dict]) -> dict | 
                and abs(float(m.get("ts") or 0) - when) < 900 for m in mine):
             continue
         want = story._norm(row.get("experiment_name") or "")
-        hooked = any(e.get("tool_name") == "Bash" and e.get("hook_event_name") in ("PostToolUse", "PreToolUse")
+        hooked = any((e.get("tool_name") or "").rsplit(".", 1)[-1] in _SHELL_TOOLS
+                     and e.get("hook_event_name") in ("PostToolUse", "PreToolUse")
                      and abs(float(e.get("ts") or 0) - when) < 600
                      and (story._node_of(e.get("summary") or "") or "") and want
                      and (story._norm(story._node_of(e.get("summary") or "")) in want) for e in ev)
@@ -1751,7 +1816,7 @@ def _run_view(m: dict) -> dict:
     out = {"key": m.get("key"), "status": m.get("status"), "node": m.get("node"), "targets": m.get("targets"),
            "params": m.get("params") or {},
            "since": m.get("since"), "ended": m.get("ended"), "actor": m.get("actor"), "plan_id": m.get("plan_id"),
-           "simulated": bool(m.get("simulated")), "result": res}
+           "simulated": bool(res.get("simulated", m.get("simulated"))), "result": res}
     if m.get("status") in ("starting", "running"):
         out["how"] = f"still running; call run_wait with key {m.get('key')}"
     elif (res.get("failure") or {}).get("how"):
@@ -2349,7 +2414,8 @@ def _chat_card(e: dict) -> dict | None:
         return {**base, "kind": "answer", "text": txt, "html": html}
     if h in ("PreToolUse",):
         tool = e.get("tool_name") or ""
-        if not (tool.startswith("mcp__sm") or tool in ("Bash", "Edit", "Write", "MultiEdit")):
+        if not (tool.startswith("mcp__sm") or tool in ("Edit", "Write", "MultiEdit")
+                or tool.rsplit(".", 1)[-1] in _SHELL_TOOLS):
             return None
         return {**base, "kind": "tool", "tool": tool, "summary": e.get("summary") or "", "failed": False}
     if h in ("PostToolUseFailure",):
