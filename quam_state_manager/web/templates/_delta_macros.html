@@ -59,3 +59,35 @@
 <span class="muted">&ndash;</span>
 {%- endif -%}
 {%- endmacro %}
+
+{# One change row's before -> after (docs/281): the row's op decides the
+   words, so a key that did not exist on one side is never printed as "None".
+     add      -> "+ added <new>"
+     gone     -> "- removed, was <old>"
+     first    -> "<new> first recorded" (the legacy snapshot feed's first point)
+     retarget -> "retargeted <old> -> <new>" (a pointer that names another node)
+     set      -> "<old> -> <new>" plus the delta chip above
+   Values print through groupdigits like every other before->after surface;
+   a JSON null prints "null", a list or object as compact JSON. The ledger
+   keeps a scalar list longer than 16 as one value, {"_array": n, "_hash": h}
+   (docs/269): it prints as "[n values]", its content hash in the tooltip. #}
+{% macro value_text(v) -%}
+{%- if v is none -%}null
+{%- elif v is mapping and v|length == 2 and '_array' in v and '_hash' in v -%}<span class="ba-array" title="content hash {{ v._hash }}">[{{ v._array }} values]</span>
+{%- elif v is mapping or (v is iterable and v is not string) -%}{{ v | tojson }}
+{%- else -%}{{ v | groupdigits }}{%- endif -%}
+{%- endmacro %}
+
+{% macro before_after(old, new, op='set') -%}
+{%- if op == 'add' -%}
+<span class="ba-op ba-op-add">+ added</span> <span class="ba-new">{{ value_text(new) }}</span>
+{%- elif op == 'gone' -%}
+<span class="ba-op ba-op-gone">&minus; removed</span> <span class="ba-old">was {{ value_text(old) }}</span>
+{%- elif op == 'first' -%}
+<span class="ba-new">{{ value_text(new) }}</span> <span class="ba-op">first recorded</span>
+{%- else -%}
+{%- if op == 'retarget' %}<span class="ba-op">retargeted</span> {% endif -%}
+<span class="ba-old">{{ value_text(old) }}</span> <span class="ba-arrow">&rarr;</span> <span class="ba-new">{{ value_text(new) }}</span>{{ delta_chip(old, new) }}
+{%- if old is mapping and new is mapping and '_hash' in old and '_hash' in new %} <span class="ba-op">contents changed</span>{% endif -%}
+{%- endif -%}
+{%- endmacro %}

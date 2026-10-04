@@ -747,7 +747,7 @@ class Registry:
         key = datetime.now().strftime("%Y%m%d-%H%M%S-") + uuid.uuid4().hex[:6]
         meta = {"key": key, "chip": adapter.chip, "node": node_info.name, "file": node_info.file,
                 "targets": list(req.targets), "params": dict(req.params or {}), "reason": req.reason,
-                "plan_id": req.plan_id, "actor": req.actor, "session_id": req.session_id,
+                "plan_id": req.plan_id, "step": req.step, "actor": req.actor, "session_id": req.session_id,
                 "status": "starting", "since": time.time(), "result": None, "item_id": None,
                 "chip_name": adapter.chip_name, "scope": adapter.scope}
         with self._cv:
@@ -898,7 +898,7 @@ class Registry:
             try:
                 story.record_agent_run(inst, {
                     "run_id": result.get("run_id"), "chip": chip, "node": node_info.name,
-                    "targets": list(req.targets), "actor": req.actor, "plan_id": req.plan_id,
+                    "targets": list(req.targets), "actor": req.actor, "plan_id": req.plan_id, "step": req.step,
                     "ts": time.time(), "key": key, "group_id": result.get("group_id"),
                     "outcome": status, "classification": result["classification"],
                     "session_id": req.session_id, "reason": req.reason,

@@ -1,0 +1,33 @@
+{# The Calibration log's change rows and undo links (docs/281). ONE template
+   for the page's run and SM-write cards and the shareable report's log
+   section, so a value reads the same in both: every before -> after goes
+   through before_after (_delta_macros.html, docs/76). #}
+{% from '_delta_macros.html' import before_after %}
+
+{% macro change_list(rows, actors=False) -%}
+<ul class="jr-changes">{% for w in rows %}<li><code class="jr-path" data-path="{{ w.path }}">{{ w.path }}</code>
+    {{ before_after(w.old, w.new, w.op or 'set') }}{% if actors and w.actor %} <span class="jr-author jr-author-{{ w.actor.split(':')[0] }}">{{ w.actor }}</span>{% endif %}</li>{% endfor %}</ul>
+{%- endmacro %}
+
+{# The run's own rows. The ledger's first event has no earlier state, so its
+   rows are the starting state: counted, never listed as values it added. #}
+{% macro run_changes(c) -%}
+{% if c.first_state_n %}
+<div class="jr-sec jr-first-state"><b>First state in the chip history</b>
+    <p class="muted">{{ '{:,}'.format(c.first_state_n) }} value{{ 's' if c.first_state_n != 1 }} recorded; there is no earlier state to compare against.</p></div>
+{% elif c.writes %}
+<div class="jr-sec jr-run-changes"><b>Changed since the state before this run</b>
+    <span class="muted">this run's saved state vs the chip history just before it</span>
+    {{ change_list(c.writes) }}</div>
+{% endif %}
+{%- endmacro %}
+
+{# An undo or redo names the write it takes back: its door and time, linked to
+   that write's card (on this page when it is on this day). #}
+{# ``in_file``: the shareable report holds every day in one file, so the link
+   is always an in-file anchor there. #}
+{% macro undo_links(c, day, in_file=False) -%}
+{% for u in c.undoes or [] %}<p class="jr-undo-of">{{ 'Undoes' if c.event_kind == 'undo' else 'Redoes' if c.event_kind == 'redo' else 'Takes back' }}
+    {% if u.time %}<a href="{{ '' if (in_file or u.day == day) else '/journal?day=' ~ u.day }}#write-{{ u.event }}">the {{ u.src or u.kind or 'SM' }} write of {% if u.day != day %}{{ u.day }} {% endif %}{{ u.time }}</a>
+    {%- else %}an SM write the history does not hold (event {{ u.event }}){% endif %}</p>{% endfor %}
+{%- endmacro %}

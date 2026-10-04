@@ -1,26 +1,34 @@
 """The calibration story: one run = one card, whoever ran it (docs/173 S1).
 
-The Calibration log is NOT a rendering of the journal. Its spine is the
-DatasetStore -- every run folder in the open data folder, whether an agent
-made it through SM, a person made it in the QUAlibrate GUI, or nobody knows.
-Onto that spine the story attaches:
+Since hub S6 (docs/281) the spine is the chip LEDGER, read one project-zone
+day at a time through ``hub_query.timeline``:
+
+  * a run event -> a run card. What it changed is the event's exact rows
+    (the run's saved state vs the ledger state just before it), each with
+    its op; the ledger's first event is the starting state, counted only.
+  * an SM write that landed -> a write card: who, the door, every entry SM
+    recorded at the door, undo links named by door and time, UNDONE flags.
+  * an agent run that left no run folder (``agent_runs`` index rows merged
+    with Registry metas) -> its own card (C-17).
+
+Onto a run card the story attaches, as before:
 
   * journal lines (``core/journal.py``): by ``#run`` when the writer named
     it, else by time window ``[run_start-60s, run_end+300s]`` plus target
     overlap -- so a hook line that never learned the run id still lands.
-  * the values the run WROTE to the chip: the change points of the history
-    snapshot stamped with that run id (``leaf_index``), never a guess.
   * the parameters that changed vs the previous run of the same node.
   * the deterministic gate verdict, anchored on the run's OWN saved state
     (``<run>/quam_state/state.json``) so the answer is a property of the run
-    and does not drift as the chip moves on; cached per (run, GATES_REV).
-  * the author: certain when SM ran the node (``agent_runs/index.jsonl``),
-    inferred from a hook event in the window, claimed by a person
-    ("I ran this one"), else ``unknown`` -- never ``qualibrate`` by default,
-    because a terminal `python node.py` looks the same from here.
+    and does not drift as the chip moves on.
+  * the author: a person's claim, else certain when SM ran the node
+    (``agent_runs/index.jsonl``), else inferred from a hook event in the
+    window, else the event's actor, else ``unknown`` -- never ``qualibrate``
+    by default, because a terminal `python node.py` looks the same from here.
 
-Write cards come from the undo journal: every applied unit, each entry with
-its actor, so "who changed it on Tuesday" has a record behind it.
+The undo journal is not history (it holds working-copy saves): it never
+makes a write card; edits it holds from before the ledger recorded SM writes
+are only counted. The unbound DatasetStore path (no ledger) remains for
+standalone callers; it is never the active chip's history source.
 """
 
 from __future__ import annotations
@@ -29,6 +37,8 @@ import hashlib
 import json
 import logging
 import re
+import threading
+from collections import Counter, OrderedDict
 from collections.abc import Mapping
 from datetime import datetime, timedelta
 from pathlib import Path
@@ -47,6 +57,8 @@ _ENTRY = re.compile(r"^- \*\*(\d{2}:\d{2}:\d{2})\*\* `([^`]+)` ?(.*)$")
 _RUN_TOKEN = re.compile(r"\s*·\s*run #(\d+)")
 _PATH_TOKEN = re.compile(r"`([A-Za-z_][\w-]*(?:\.[\w-]+)+)`")
 _NODE_RE = re.compile(r"python[^\s]*\s+(?:-m\s+\S+\s+)?(?:\"[^\"]*[\\/])?([^\s;&|\"']+)\.py\b")
+_HUB_GATES = OrderedDict()
+_HUB_GATES_LOCK = threading.Lock()
 
 
 # ------------------------------------------------------------ journal side
@@ -321,7 +333,7 @@ def _author_of(run: dict, start: float | None, end: float | None, *, agent_runs:
         return str(claims[str(rid)]["author"]), "claimed", agent_runs.get(rid)
     ar = agent_runs.get(rid)
     if ar:
-        return f"by_{ar.get('backend') or 'agent'}", "certain", ar
+        return ar.get("actor") or f"by_{ar.get('backend') or 'agent'}", "certain", ar
     if start is not None:
         lo = start - _BEFORE_S
         hi = (end if end is not None else start) + _AFTER_S
@@ -441,7 +453,8 @@ def _writes_for_run(hm, active_path, run_id: int) -> list[dict]:
     for g in groups:
         for r in g.get("rows") or []:
             rows.append({"path": r.get("path"), "old": r.get("previous"), "new": r.get("value"),
-                         "is_first": bool(r.get("is_first"))})
+                         "is_first": bool(r.get("is_first")),
+                         "op": "first" if r.get("is_first") else "set"})
     return rows
 
 
@@ -590,7 +603,7 @@ def _timeline(cards: list[dict]) -> dict[str, list[dict]]:
             continue
         short = c.get("family_short") or _short_family(c.get("family"), c.get("family_label"), c.get("node"))
         full = c.get("family_label") or c.get("node") or ""
-        step = {"run_id": c["run_id"], "family": full, "outcome": c.get("outcome"),
+        step = {"run_id": c["run_id"], "card_id": c.get("card_id") or f"card-{c['run_id']}", "family": full, "outcome": c.get("outcome"),
                 "gate": (c.get("gate") or {}).get("verdict"), "author": c.get("author")}
         for t in c.get("targets") or []:
             segs = out.setdefault(t, [])
@@ -612,29 +625,264 @@ def _family_label(name: str) -> tuple[str | None, str]:
     return None, name
 
 
+def _empty_day(chip, day, history, instance_path=None):
+    def lines(key):
+        return parse_journal(journal_mod.read(instance_path, key, day), day) if instance_path else []
+    return {"chip": chip, "day": day, "cards": [], "loose": lines(chip), "unassigned": lines("unassigned"),
+            "digest": {}, "timeline": {}, "counts": _counts([]), "history": history}
+
+
+def _hub_clock(instant, ledger, fmt="%H:%M:%S"):
+    from quam_state_manager.core.hub_index import _binding
+    from zoneinfo import ZoneInfo
+    return datetime.fromtimestamp(instant / 1e6, ZoneInfo(_binding(ledger)[1])).strftime(fmt)
+
+
+def _hub_run(event, ds):
+    folder = Path(event["root_path"] or "") / (event["rel_path"] or "")
+    run = ds.get_run(event["run_id"]) if ds is not None else None
+    from_dataset = bool(run and Path(run.get("folder_path") or "").resolve() == folder.resolve())
+    if not from_dataset:
+        # A ledger spans multiple roots. Read this run's enrichment directly
+        # when Datasets has a different root or a colliding local run id.
+        try:
+            node = json.loads((folder / "node.json").read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            node = {}
+        meta = node.get("metadata") or {}
+        data = node.get("data") or {}
+        params = (data.get("parameters") or {}).get("model") or {}
+        try:
+            payload = json.loads((folder / "data.json").read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            payload = {}
+        run = {"run_id": event["run_id"], "experiment_name": event["experiment"],
+               "folder_path": str(folder), "run_start": meta.get("run_start"),
+               "run_end": meta.get("run_end"), "parameters": params,
+               "qubits": params.get("qubits") or [], "qubit_pairs": params.get("qubit_pairs") or [],
+               "outcomes": data.get("outcomes") or {}, "status": event["status"],
+               "figure_names": list(payload.get("figures") or {})}
+    else:
+        run = dict(run)
+    run["instant_us"] = event["t_utc_us"]
+    if not from_dataset and not run.get("qubits") and not run.get("qubit_pairs"):
+        run["qubits"] = json.loads(event.get("targets") or "[]") or []
+    run["_hub"] = event
+    return run
+
+
+def entry_op(row: Mapping) -> str:
+    """What one change row did: ``add`` / ``set`` / ``gone`` / ``retarget``.
+
+    Ledger rows carry their ``op``; an SM entry marks a key it created or
+    deleted (``hub_entries.entry_of``). A missing value is never shown as
+    ``None``: the op says whether the key existed before or after."""
+    op = row.get("op")
+    if op:
+        return str(op)
+    if row.get("created"):
+        return "add"
+    if row.get("deleted"):
+        return "gone"
+    if row.get("is_first"):
+        return "first"
+    return "set"
+
+
+def _hub_write(event, ledger):
+    from quam_state_manager.core.hub_store import UNDONE, PARTLY_UNDONE
+    flags = event.get("flags") or 0
+    author = event.get("actor") or "unknown"
+    # The entries SM recorded at the door; the ledger's rows for this event
+    # only when those entries cannot be read (said on the card).
+    rows = event["exact_entries"] if "exact_entries" in event else event["changes"]
+    undoes = []
+    for link in event.get("undo_links") or ():
+        target = link.get("target") or {}
+        when = target.get("t_utc_us")
+        undoes.append({"event": link["event"], "units": link.get("units"),
+                       "kind": target.get("kind"), "src": target.get("src"),
+                       "day": _hub_clock(when, ledger, "%Y-%m-%d") if when is not None else None,
+                       "time": _hub_clock(when, ledger) if when is not None else None})
+    return {"kind": "write", "id": event.get("sm_id") or event["eid"], "eid": event["eid"], "order": event.get("ord"),
+            "event_kind": event["kind"], "ts": event["t_utc_us"] / 1e6,
+            "time": _hub_clock(event["t_utc_us"], ledger), "author": author,
+            "entries": [dict(row, op=entry_op(row), old=row.get("old"), new=row.get("new"),
+                             actor=row.get("by") or row.get("actor") or author)
+                        for row in rows],
+            "entries_error": event.get("entries_error"),
+            "src": event.get("src"), "plan_id": event.get("plan_id"),
+            "undoes": undoes,
+            "undone": bool(flags & UNDONE), "partly_undone": bool(flags & PARTLY_UNDONE)}
+
+
+def _hub_gate(instance, run, key, compute):
+    fact = run["_hub"]
+    token = (str(instance), key, fact.get("state_hash"), GATES_REV, compute,
+             json.dumps([run.get("parameters"), run.get("outcomes")], sort_keys=True, default=str))
+    with _HUB_GATES_LOCK:
+        hit = _HUB_GATES.get(token)
+        if hit is not None:
+            _HUB_GATES.move_to_end(token)
+            return hit
+    digest = hashlib.sha1(repr(token[2:]).encode()).hexdigest()[:12]
+    value = gate_for_run(instance, run, folder_key=f"{key}-{digest}", compute=compute)
+    with _HUB_GATES_LOCK:
+        _HUB_GATES[token] = value
+        if len(_HUB_GATES) > 1024:
+            _HUB_GATES.popitem(last=False)
+    return value
+
+
+def _agent_records(instance, chip) -> list[dict]:
+    """Every ended agent run SM knows of for *chip*: the durable index rows
+    (``agent_runs/index.jsonl``) merged by key with the Registry's per-run
+    ``meta.json`` (a run whose index row was never written still has one)."""
+    records = list(load_agent_runs(instance, chip).values()) + unattributed_agent_runs(instance, chip)
+    by_key = {r["key"]: r for r in records if r.get("key")}
+    # Read Registry's durable metas without constructing Registry: construction
+    # reconciles interrupted workers and would mutate history during a read.
+    for path in (Path(instance) / "agent_runs").glob("*/meta.json"):
+        try:
+            meta = json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            continue
+        if not isinstance(meta, dict) or meta.get("chip") not in (chip, None) or not meta.get("ended"):
+            continue
+        result = meta.get("result") or {}
+        merged = dict(by_key.get(meta.get("key")) or {}, **meta)
+        merged.update(result if isinstance(result, dict) else {})
+        merged["ts"] = meta["ended"]
+        if meta.get("key") in by_key:
+            records = [r for r in records if r.get("key") != meta["key"]]
+        records.append(merged)
+    return records
+
+
+def _int_or_none(value):
+    try:
+        return int(value) if value is not None else None
+    except (TypeError, ValueError):
+        return None
+
+
+def _folderless_cards(instance, chip, day, ledger, records, runs, attributed=None):
+    from quam_state_manager.core import run_terms
+    cards = []
+    for order, record in enumerate(records):
+        try:
+            end = float(record.get("ended") or record.get("ts") or 0)
+        except (TypeError, ValueError):
+            end = 0.0
+        if not end:
+            continue
+        if record.get("step") is None and record.get("plan_id") and record.get("key"):
+            from quam_state_manager.core import agent_plans
+            plan = agent_plans.get(instance, chip, record["plan_id"]) or {}
+            step = next((s for s in plan.get("steps") or [] if s.get("run_key") == record["key"]), None)
+            if step is not None:
+                record["step"] = step["i"]
+        rid = _int_or_none(record.get("run_id"))
+        matched = next((run for run in runs if
+                        (rid is not None and run["run_id"] == rid) or
+                        (rid is None and run_terms.same_node(run["experiment"], record.get("node")) and
+                         abs(end - run["t_utc_us"] / 1e6) < 900)), None)
+        if matched is not None:
+            if attributed is not None:
+                attributed.setdefault(matched["run_id"], record)
+            continue
+        if _hub_clock(int(end * 1e6), ledger, "%Y-%m-%d") != day:
+            continue
+        failure = record.get("failure") if isinstance(record.get("failure"), dict) else {}
+        classification = record.get("classification") or "unattributed"
+        cards.append({"kind": "agent_run", "id": record.get("key") or f"record-{order}",
+                      "ts": end, "time": _hub_clock(int(end * 1e6), ledger),
+                      "author": record.get("actor") or f"by_{record.get('backend') or 'agent'}",
+                      "node": record.get("node") or "unknown node", "targets": record.get("targets") or [],
+                      "plan_id": record.get("plan_id"), "step": record.get("step"),
+                      "classification": classification,
+                      # a run a person stopped did not fail
+                      "outcome": ("cancelled" if classification == "cancelled" else
+                                  "failed" if classification not in ("ok", "unattributed") else None),
+                      # A run id was recorded, so a folder was written: the
+                      # history has not got it (another folder, or not read yet).
+                      "missing_run_id": rid,
+                      # What went wrong, never the purpose the agent stated.
+                      "reason": (record.get("error") or failure.get("what")
+                                 or ("no failure recorded" if classification == "ok" else "reason not recorded")),
+                      "purpose": record.get("reason") or None})
+    return cards
+
+
 def build_day(instance_path, chip: str, day: str, *, ds, hm=None, active_path=None,
               events: list[dict] | None = None, uid_of: Callable | None = None,
-              gate_compute: Callable | None = None, with_gates: bool = True) -> dict:
+              gate_compute: Callable | None = None, with_gates: bool = True,
+              ledger=None, agent_chip=None) -> dict:
     """Everything the Calibration log renders for one chip and one day."""
+    history = {"state": "ready"}
+    hub_events = None
+    records: list[dict] = []
+    if ledger is not None:
+        from quam_state_manager.core import hub_query, hub_sync
+        from quam_state_manager.core.ramcache import Warming
+        directory = ledger.store.directory
+        records = _agent_records(instance_path, agent_chip or chip)
+        try:
+            history = hub_sync.require_ready(directory)
+            # Every run in the ledger is read only when an agent record has to
+            # be matched against them (a folder on an adjacent project day, or
+            # under a root Datasets has not open, still counts as its folder).
+            page = hub_query.timeline(ledger, day_from=day, day_to=day, limit=1_000_000,
+                                      include_runs=bool(records))
+            hub_events = page["events"]
+            if page["cursor"]:
+                return _empty_day(chip, day, {"state": "unavailable", "note": "This day exceeds the log's display limit."}, instance_path)
+            all_runs = page.get("runs") or []
+        except Warming as exc:
+            history = dict(getattr(exc, "status", None) or hub_sync.status(directory), state="building")
+            return _empty_day(chip, day, history, instance_path)
+        except ValueError as exc:
+            if "project time zone" not in str(exc):
+                raise
+            return _empty_day(chip, day, {"state": "unavailable", "note": str(exc)}, instance_path)
     events = events or []
     text = journal_mod.read(instance_path, chip, day)
     entries = parse_journal(text, day)
-    agent_runs = load_agent_runs(instance_path, chip)   # review R3-2: another chip's #104 must not claim this chip's
+    agent_runs = load_agent_runs(instance_path, agent_chip or chip)
     claims = load_claims(instance_path, chip)
-    rows = ds.list_runs(date=day) if ds is not None else []
-    folder_key = _folder_key(getattr(ds, "folder_path", "")) if ds is not None else "none"
+    rows = ([_hub_run(e, ds) for e in reversed(hub_events) if e["kind"] == "run"]
+            if hub_events is not None else ds.list_runs(date=day) if ds is not None else [])
+    daily_entries = entries
+    if hub_events is not None:
+        local_days = set()
+        for run in rows:
+            for instant in (start_epoch(run), run_epoch(run)):
+                if instant is not None:
+                    local_days.add(datetime.fromtimestamp(instant).strftime("%Y-%m-%d"))
+        # Journal files historically use the server calendar. Read the run's
+        # local file as well when its project day differs, without moving loose
+        # lines from that file into the current day's independent line group.
+        for local_day in local_days - {day}:
+            entries = entries + parse_journal(journal_mod.read(instance_path, chip, local_day), local_day)
+    folderless = (_folderless_cards(instance_path, agent_chip or chip, day, ledger, records, all_runs, agent_runs)
+                  if hub_events is not None else [])
+    folder_key = (_folder_key(ledger.store.directory) if hub_events is not None else
+                  _folder_key(getattr(ds, "folder_path", "")) if ds is not None else "none")
 
     cards: list[dict] = []
     used: set[int] = set()
     for row in sorted(rows, key=lambda r: (r.get("time") or "")):
-        run = ds.get_run(int(row["run_id"])) or dict(row)
+        run = row if hub_events is not None else ds.get_run(int(row["run_id"])) or dict(row)
+        fact = run.get("_hub") or {}
         rid = int(run["run_id"])
         # docs/262: instants, not the folder digits in the server's zone -- the
         # window is compared with journal ``ts``/hook ``ts`` and the card ``ts``
         # is sorted with undo-unit epochs. ``time`` (shown) stays the folder clock.
-        start = start_epoch(run, ds)
+        start = start_epoch(run, None if fact else ds)
         end = _iso_epoch(run.get("run_end")) or start
         author, certainty, ar = _author_of(run, start, end, agent_runs=agent_runs, events=events, claims=claims)
+        if certainty == "none" and fact.get("actor"):
+            author, certainty = fact["actor"], "certain"
         attached = [e for e in entries if e.get("run_id") == rid]
         targets = list(run.get("qubits") or []) + list(run.get("qubit_pairs") or [])
         if start is not None:
@@ -653,23 +901,33 @@ def build_day(instance_path, chip: str, day: str, *, ds, hm=None, active_path=No
             prev_id = ds.get_previous_same_experiment_id(rid)
         except Exception:  # noqa: BLE001
             pass
-        prev = ds.get_run(prev_id) if prev_id else None
+        prev = ds.get_run(prev_id) if prev_id and ds is not None else None
         fam_key, fam_label = _family_label(run.get("experiment_name") or "")
-        gate = gate_for_run(instance_path, run, folder_key=folder_key, compute=gate_compute) if with_gates else None
+        run_key = f"{folder_key}-{fact['eid']}" if fact else folder_key
+        gate = (_hub_gate(instance_path, run, run_key, gate_compute) if fact else
+                gate_for_run(instance_path, run, folder_key=run_key, compute=gate_compute)) if with_gates else None
         figs = list(run.get("figure_names") or [])
         cards.append({
             "kind": "run", "run_id": rid, "uid": (uid_of(run) if uid_of else None),
-            "ts": start, "time": run.get("time"), "duration_s": run.get("duration_s"),
+            "ts": fact.get("t_utc_us", 0) / 1e6 if fact else start,
+            "time": _hub_clock(fact["t_utc_us"], ledger) if fact else run.get("time"),
+            "eid": fact.get("eid"), "order": fact.get("ord"), "duration_s": run.get("duration_s"),
             "node": run.get("experiment_name"), "family": fam_key, "family_label": fam_label,
             "family_short": _short_family(fam_key, fam_label, run.get("experiment_name")),
             "targets": targets, "outcome": _outcome(run.get("outcomes")), "outcomes": run.get("outcomes") or {},
             "status": run.get("status"), "gate": gate,
             "author": author, "certainty": certainty,
             "plan_id": (ar or {}).get("plan_id"),
+            "step": (ar or {}).get("step"),
             "params": run.get("parameters") or {},
             "params_diff": _params_diff(run.get("parameters"), (prev or {}).get("parameters")),
             "prev_run_id": prev_id,
-            "writes": _writes_for_run(hm, active_path, rid),
+            # The event's exact rows vs the ledger state before it. The
+            # ledger's first event has nothing before it: its rows are the
+            # starting state, counted, never listed as values the run added.
+            "writes": ([] if fact.get("first") else fact["changes"]) if fact
+                      else _writes_for_run(hm, active_path, rid),
+            "first_state_n": len(fact["changes"]) if fact.get("first") else None,
             "because": because,
             "journal": attached,
             "figure": figs[0] if figs else None, "figures": figs,
@@ -677,15 +935,60 @@ def build_day(instance_path, chip: str, day: str, *, ds, hm=None, active_path=No
             "note": (claims.get(str(rid)) or {}).get("note"),
         })
 
-    # write cards: applied undo-journal units of that day
-    for u in _units_of_day(instance_path, active_path, day):
-        cards.append(u)
+    if hub_events is None:
+        cards.extend(_units_of_day(instance_path, active_path, day))
+    else:
+        from quam_state_manager.core.hub_store import SM_KINDS
+        # Every door records one of these kinds (its door is the ``src``);
+        # only a write that landed on the chip is a write card.
+        cards.extend(_hub_write(e, ledger) for e in reversed(hub_events)
+                     if e["kind"] in SM_KINDS and e.get("outcome") == "landed")
+        cards.extend(folderless)
 
-    loose = [e for e in entries if id(e) not in used and e.get("run_id") is None]
-    cards.sort(key=lambda c: (c.get("ts") or 0))
+    loose = [e for e in daily_entries if id(e) not in used and e.get("run_id") is None]
+    # Same instant: the ledger's canonical order decides (docs/275).
+    cards.sort(key=lambda c: (c.get("ts") or 0, c.get("order") is None, c.get("order") or 0))
+    run_ids = [c["run_id"] for c in cards if c["kind"] == "run"]
+    duplicates = {rid for rid, count in Counter(run_ids).items() if count > 1}
+    for card in cards:
+        if card["kind"] == "run":
+            card["card_id"] = f"card-{card['run_id']}" + (f"-{card['eid']}" if card["run_id"] in duplicates else "")
     unassigned = parse_journal(journal_mod.read(instance_path, "unassigned", day), day)
-    return {"chip": chip, "day": day, "cards": cards, "loose": loose, "digest": _digest(cards),
-            "timeline": _timeline(cards), "unassigned": unassigned, "counts": _counts(cards)}
+    out = {"chip": chip, "day": day, "cards": cards, "loose": loose, "digest": _digest(cards),
+           "timeline": _timeline(cards), "unassigned": unassigned, "counts": _counts(cards), "history": history}
+    if hub_events is not None:
+        out["unrecorded"] = _unrecorded_edits(instance_path, active_path, day, ledger)
+    return out
+
+
+def _unrecorded_edits(instance_path, active_path, day, ledger) -> dict | None:
+    """Edits in SM's undo journal on *day* (project zone) that predate the
+    ledger's first recorded SM write. The undo journal is not history: it
+    holds working-copy saves and never says whether one reached the chip, so
+    these are only counted, so a day is never shown as if SM wrote nothing
+    (docs/281). Any that reached the chip show inside the next run's rows."""
+    if not active_path:
+        return None
+    try:
+        from quam_state_manager.core import hub_query, undo_journal
+        units = undo_journal.load(undo_journal.sidecar_path(instance_path, active_path))
+        units = [u for u in units if float(u.get("ts") or 0)
+                 and _hub_clock(int(float(u["ts"]) * 1e6), ledger, "%Y-%m-%d") == day]
+        if not units:
+            return None
+        recorded = hub_query.sm_writes_recorded(ledger)
+    except Exception:  # noqa: BLE001 -- a note never breaks the day
+        logger.debug("unrecorded-edit note failed", exc_info=True)
+        return None
+    first = recorded["first"]
+    # A unit a recorded write names is that write (its journal stamp can be a
+    # few ms before the event's own instant); it is never "unrecorded".
+    early = [u for u in units
+             if str(u.get("id")) not in recorded["units"] and not (u.get("meta") or {}).get("hub")
+             and (first is None or float(u["ts"]) * 1e6 < first)]
+    if not early:
+        return None
+    return {"n": len(early), "since": _hub_clock(first, ledger, "%Y-%m-%d %H:%M:%S") if first is not None else None}
 
 
 def _mentions_any_target(e: dict) -> bool:
@@ -719,7 +1022,7 @@ def _units_of_day(instance_path, active_path, day: str) -> list[dict]:
         if not (lo <= ts < hi):
             continue
         entries = [{"path": e.get("path"), "old": e.get("old"), "new": e.get("new"),
-                    "actor": e.get("actor") or "human"} for e in u.get("entries") or []]
+                    "op": entry_op(e), "actor": e.get("actor") or "human"} for e in u.get("entries") or []]
         actors = sorted({e["actor"] for e in entries})
         meta = u.get("meta") or {}
         out.append({"kind": "write", "id": u.get("id"), "ts": ts,
@@ -743,7 +1046,7 @@ def _digest(cards: list[dict]) -> dict[str, list[dict]]:
 
 
 def _counts(cards: list[dict]) -> dict:
-    runs = [c for c in cards if c.get("kind") == "run"]
+    runs = [c for c in cards if c.get("kind") in ("run", "agent_run")]
     writes = [c for c in cards if c.get("kind") == "write"]
     biggest = None
     for w in writes:

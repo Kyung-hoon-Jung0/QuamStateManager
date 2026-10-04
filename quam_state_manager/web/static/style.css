@@ -4182,6 +4182,17 @@ input.edit-input {
 /* The percentage is context, not the headline — one step quieter. */
 .val-delta .val-delta-pct { opacity: 0.78; font-weight: 500; }
 
+/* docs/281: one change row's before -> after (the before_after macro in
+   _delta_macros.html). The op badge says "added" / "removed" instead of a
+   side that never existed; values stay full-width (no tray truncation). */
+.ba-old { color: var(--pico-muted-color); overflow-wrap: anywhere; }
+.ba-new { font-weight: 600; overflow-wrap: anywhere; }
+.ba-arrow { color: var(--pico-muted-color); margin: 0 0.2em; }
+.ba-op { font-size: 0.78em; font-weight: 600; padding: 0 0.35em; margin-right: 0.15em;
+         border: 1px solid var(--pico-muted-border-color); border-radius: 4px; white-space: nowrap; }
+.ba-op-add { color: var(--color-success-text); }
+.ba-op-gone { color: var(--color-error-text); }
+
 /* Table Δ columns keep their own alignment. */
 th.col-delta, td.col-delta { text-align: right; white-space: nowrap; }
 td.col-delta .val-delta { margin-left: 0; }
@@ -12201,6 +12212,11 @@ body.scheduler-active #pending-tray { opacity: .5; pointer-events: none; }
 .jr-badge.jr-out-failed { color: #e5484d; border-color: rgba(229,72,77,.5); background: rgba(229,72,77,.1); }
 .jr-badge.jr-out-mixed { color: #d99a00; border-color: rgba(230,167,0,.5); }
 .jr-badge.jr-out-none { opacity: .65; }
+/* docs/281: an agent run with no run folder sits on the run grid; its failure
+   class can be long, so it never widens the pills column of its row. */
+.jr-agent-run .jr-pills .jr-badge { display: inline-block; max-width: 9.3rem; overflow: hidden;
+    text-overflow: ellipsis; white-space: nowrap; vertical-align: middle; }
+.jr-no-folder { font-weight: 400; }
 .jr-badge.jr-gate-pass { color: #2e9e5b; border-color: rgba(46,158,91,.4); }
 .jr-badge.jr-gate-fail { color: #e5484d; border-color: rgba(229,72,77,.5); }
 .jr-badge.jr-gate-unknown { opacity: .55; }

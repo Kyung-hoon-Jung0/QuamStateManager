@@ -8,6 +8,7 @@ import json
 import math
 import os
 import sqlite3
+import time
 from collections import OrderedDict
 from pathlib import Path
 from typing import Any
@@ -190,6 +191,23 @@ def value(num: Any, txt: str | None) -> Any:
     return json.loads(txt) if txt is not None else num
 
 
+def _enable_wal(connection, *, timeout_s=30):
+    """Allow another window to finish changing the ledger's journal mode."""
+    deadline = time.monotonic() + timeout_s
+    while True:
+        try:
+            connection.execute("PRAGMA journal_mode=WAL")
+            return
+        except sqlite3.OperationalError as exc:
+            code = getattr(exc, "sqlite_errorcode", None)
+            # Extended result codes retain BUSY/LOCKED in their low byte.
+            busy = (code & 255) in (5, 6) if code is not None else str(exc) in (
+                "database is locked", "database table is locked")
+            if not busy or time.monotonic() >= deadline:
+                raise
+            time.sleep(0.01)
+
+
 class HubStore:
     """One SQLite projection, with atomic event/rows/checkpoint/watermark writes.
 
@@ -213,7 +231,7 @@ class HubStore:
                                     check_same_thread=check_same_thread)
         self.conn.row_factory = sqlite3.Row
         self.conn.execute("PRAGMA foreign_keys=ON")
-        self.conn.execute("PRAGMA journal_mode=WAL")
+        _enable_wal(self.conn)
         self.conn.execute("PRAGMA synchronous=NORMAL")
         self.conn.execute("PRAGMA cache_size=-16384")
         if not self._schema_current():

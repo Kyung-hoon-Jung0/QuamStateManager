@@ -1,0 +1,50 @@
+{# The shareable report's Calibration log (docs/281): every day the page can
+   show, built by the page's own day builder (journal_routes._build) and
+   rendered with the page's own change rows (_journal_changes.html). #}
+{% from '_journal_changes.html' import change_list, run_changes, undo_links %}
+<h2>Calibration log</h2>
+{% if building %}<p>building the history ({{ building.done or 0 }}/{{ building.total or 0 }}): days that hold only runs or SM writes are not listed yet, so this log is incomplete.</p>{% endif %}
+{% for s in days %}
+<h3>{{ s.day }}</h3>
+{% if s.history.state == 'building' %}
+<p>building the history ({{ s.history.done or 0 }}/{{ s.history.total or 0 }})</p>
+{% elif s.history.state == 'unavailable' %}<p>{{ s.history.note }}</p>
+{% else %}
+{% if s.history.state == 'degraded' %}
+<p>History is incomplete. Unreadable folders or runs:</p>
+<ul>{% for folder in s.history.unreadable %}<li>{{ folder }}</li>{% endfor %}
+{% for root in s.history.roots %}{% for folder in root.failed %}<li>{{ root.path }}/{{ folder }}</li>{% endfor %}{% endfor %}
+{% for error in s.history.errors %}<li>{{ error }}</li>{% endfor %}</ul>
+{% endif %}
+<p>{{ s.counts.runs }} run{{ 's' if s.counts.runs != 1 }}; {{ s.counts.writes }} SM write entr{{ 'ies' if s.counts.writes != 1 else 'y' }}.</p>
+{% if s.unrecorded %}<p>SM's undo journal holds {{ s.unrecorded.n }} edit{{ 's' if s.unrecorded.n != 1 }} from this day made before the chip history recorded SM writes ({% if s.unrecorded.since %}it records them from {{ s.unrecorded.since }}{% else %}none recorded yet{% endif %}). Whether they reached the chip was not recorded; any that did show in the next run's changes.</p>{% endif %}
+{% for c in s.cards %}
+<article class="rep-log-card"{% if c.kind == 'write' %} id="write-{{ c.id }}"{% endif %}>
+{% if c.kind == 'run' %}
+<h4>{{ c.time }} - {{ c.author }} - run #{{ c.run_id }}: {{ c.node }}</h4>
+{% elif c.kind == 'agent_run' %}
+<h4>{{ c.time }} - {{ c.author }} ran {{ c.node }} on {{ c.targets|join(' ') }} -- {{ 'run folder #' ~ c.missing_run_id ~ ' is not in the chip history' if c.missing_run_id is not none else 'no run folder' }} ({{ c.classification }}: {{ c.reason }})</h4>
+{% if c.purpose %}<p>Purpose: {{ c.purpose }}</p>{% endif %}
+{% else %}
+<h4>{{ c.time }} - {{ c.author }} - {{ c.event_kind }}{% if c.src and c.src != c.event_kind %} via {{ c.src }}{% endif %}: {{ c.entries|length }} value{{ 's' if c.entries|length != 1 }} written to the chip</h4>
+{% endif %}
+{% if c.plan_id %}<p>plan {{ c.plan_id }}{% if c.step is defined and c.step is not none %}, step {{ c.step }}{% endif %}</p>{% endif %}
+{% if c.kind == 'run' %}
+<p>Targets: {{ c.targets|join(' ') }}; outcome: {{ c.outcome or c.status }}{% if c.gate %}; gate: {{ c.gate.verdict }} - {{ c.gate.reason }}{% endif %}</p>
+{% if c.because %}<p>{{ c.because }}</p>{% endif %}
+{% if c.note %}<p>Note: {{ c.note }}</p>{% endif %}
+{% if c.figures %}<p>Figures: {{ c.figures|join(', ') }}</p>{% endif %}
+{{ run_changes(c) }}
+{% elif c.kind == 'write' %}
+{% if c.undone %}<p>UNDONE: a later undo took all of it back</p>{% elif c.partly_undone %}<p>PARTLY_UNDONE: a later undo took part of it back</p>{% endif %}
+{{ undo_links(c, s.day, in_file=True) }}
+{% if c.entries_error %}<p>{{ c.entries_error }}; the history's own rows for this write are shown instead.</p>{% endif %}
+{{ change_list(c.entries, actors=True) }}
+{% endif %}
+{% for e in c.journal or [] %}<p style="white-space:pre-wrap">{{ e.time }} {{ e.kind }}: {{ e.text }}{% if e.because %} - {{ e.because }}{% endif %}</p>{% endfor %}
+</article>
+{% endfor %}
+{% endif %}
+{% if s.history.state in ('building', 'unavailable') and (s.loose or s.unassigned) %}<p>Recorded journal lines only. Run history and line attachments are {{ 'building' if s.history.state == 'building' else 'unavailable' }}.</p>{% endif %}
+{% for e in s.loose + s.unassigned %}<p style="white-space:pre-wrap">{{ e.time }} {{ e.kind }}: {{ e.text }}</p>{% endfor %}
+{% endfor %}

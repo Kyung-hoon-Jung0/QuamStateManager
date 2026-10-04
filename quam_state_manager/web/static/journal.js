@@ -240,7 +240,7 @@ window.JournalPage = (function () {
 
   document.addEventListener("htmx:afterSwap", function (e) {
     var t = e.target || e.detail && e.detail.target;
-    if (t && (t.id === "jr-body" || t.id === "table-pane") && document.querySelector(".jr-counts")) init(t);
+    if (t && (t.id === "jr-body" || t.id === "table-pane") && document.querySelector("#jr-body")) init(t);
   });
   if (document.readyState !== "loading") init(); else document.addEventListener("DOMContentLoaded", function () { init(); });
 

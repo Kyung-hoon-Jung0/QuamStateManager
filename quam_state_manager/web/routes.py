@@ -14821,6 +14821,9 @@ def _report_section(key: str, rc: _ReportCtx) -> str:
     token = (_report_content_token(rc.store), key, rc.redact, rc.window, rc.zone,
              str(rc.path), id(_REPORT_BUILDERS[key]))
     with _REPORT_HEAVY:
+        if key == "calibration_log":
+            # The ledger and agent records change independently of chip state.
+            return _report_section_uncached(key, rc)[0]
         hit = _REPORT_HTML_CACHE.get(token)
         if hit is not None:
             if key == "overview":
@@ -15506,9 +15509,38 @@ def _report_build_raw(rc: _ReportCtx) -> str:
                            json_bytes=p["json_bytes"], file_bytes=len(p["text"]))
 
 
-#: key -> builder. The calibration log is the hub S6 seam (docs/277 section 7):
-#: S6 adds ``"calibration_log": _report_build_calibration_log`` here and sets
-#: ``available=True`` on its entry in ``core/chip_report.SECTIONS``.
+def _report_build_calibration_log(rc: _ReportCtx) -> str:
+    """docs/281: every day the Calibration log can show, each built by the
+    page's own day builder (``journal_routes._build``) and rendered with the
+    page's own change rows. The report's redaction runs on the output."""
+    from quam_state_manager.core import hub_index, hub_sync, story
+    from quam_state_manager.core.ramcache import Warming
+    from quam_state_manager.web import journal_routes as log
+    try:
+        ledger = log._ledger_context()
+    except RuntimeError:
+        ledger = None                 # each day then says the history is unavailable
+    days, building = set(), None
+    if ledger is not None and (ledger.store.directory / "ledger.sqlite").exists():
+        try:
+            with hub_index.snapshot(ledger) as (_conn, index):
+                days.update(index.postings["day"])
+            # the same agent records the page reads, by their end instant
+            for record in story._agent_records(current_app.instance_path, log._agent_chip_key()):
+                end = record.get("ended") or record.get("ts")
+                if end:
+                    days.add(story._hub_clock(int(float(end) * 1e6), ledger, "%Y-%m-%d"))
+        except Warming:
+            building = hub_sync.status(ledger.store.directory)
+        except ValueError:
+            pass                      # no project zone: each day says so
+    elif ledger is not None:
+        building = hub_sync.status(ledger.store.directory)
+    days.update(log.journal_mod.list_days(current_app.instance_path, log._chip_name()))
+    data = [log._build(day, filters={"author": "", "q": ""}) for day in sorted(days or {log._today()})]
+    return render_template("_report_calibration_log.html", days=data, building=building)
+
+
 _REPORT_BUILDERS: dict[str, Any] = {
     "overview": _report_build_overview,
     "chip_status": _report_build_chip_status,
@@ -15517,6 +15549,7 @@ _REPORT_BUILDERS: dict[str, Any] = {
     "zline": _report_build_zline,
     "wiring": _report_build_wiring,
     "diagnostics": _report_build_diagnostics,
+    "calibration_log": _report_build_calibration_log,
     "raw": _report_build_raw,
 }
 

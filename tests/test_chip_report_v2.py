@@ -144,9 +144,9 @@ class TestRegistryAndPanel:
             "overview", "chip_status", "trends", "pulses", "zline", "wiring",
             "diagnostics", "calibration_log", "raw"]
         log = cr.SECTION_BY_KEY["calibration_log"]
-        assert not log.available and log.note == "available once the ledger lands"
-        assert "calibration_log" not in cr.AVAILABLE_KEYS
-        assert "calibration_log" not in routes._REPORT_BUILDERS
+        assert log.available and not log.note
+        assert "calibration_log" in cr.AVAILABLE_KEYS
+        assert routes._REPORT_BUILDERS["calibration_log"] is routes._report_build_calibration_log
         assert set(routes._REPORT_BUILDERS) == set(cr.AVAILABLE_KEYS)
         assert cr.DEFAULT_KEYS == ("overview", "chip_status", "trends", "pulses", "zline",
                                    "wiring", "diagnostics")          # raw: off by default
@@ -154,7 +154,7 @@ class TestRegistryAndPanel:
     def test_parse_sections(self):
         assert cr.parse_sections(None) == list(cr.DEFAULT_KEYS)
         assert cr.parse_sections("") == []
-        assert cr.parse_sections("raw,nope,calibration_log,overview") == ["overview", "raw"]
+        assert cr.parse_sections("raw,nope,calibration_log,overview") == ["overview", "calibration_log", "raw"]
 
     def test_the_panel_has_one_box_per_section_with_its_description(self, chip_client):
         c, _ = chip_client
@@ -164,8 +164,8 @@ class TestRegistryAndPanel:
         for s in cr.SECTIONS:
             assert s.desc in _html.unescape(b), s.key
         flags = dict(boxes)
-        assert "disabled" in flags["calibration_log"] and "checked" not in flags["calibration_log"]
-        assert "available once the ledger lands" in b
+        assert "disabled" not in flags["calibration_log"] and "checked" not in flags["calibration_log"]
+        assert "available once the ledger lands" not in b
         assert "checked" in flags["overview"] and "checked" not in flags["raw"]
         assert re.search(r'<input type="checkbox" id="rep-redact" checked>\s*'
                          r'Hide network addresses and local folder paths', b)
@@ -195,8 +195,12 @@ class TestSectionRoute:
     def test_an_unknown_or_unavailable_section_is_refused(self, chip_client):
         c, _ = chip_client
         assert _section(c, "nope")[0] == 404
-        st, body = _section(c, "calibration_log")
-        assert st == 404 and body == "available once the ledger lands"
+        from unittest import mock
+        from quam_state_manager.web import journal_routes
+        with mock.patch.object(journal_routes, "_build", wraps=journal_routes._build) as built:
+            st, body = _section(c, "calibration_log")
+        assert st == 200 and 'data-rep-sec="calibration_log"' in body
+        assert built.called                      # the /journal page's own day builder
 
     def test_no_chip_is_a_409_not_a_500(self, tmp_path):
         c = create_app(testing=True, instance_path=str(tmp_path / "_n")).test_client()
@@ -409,7 +413,11 @@ class TestConfidentiality:
         doc = _assemble(c, ["overview"])
         r = _finalize(c, doc, ["overview", "calibration_log"])
         assert r.status_code == 400
-        assert r.get_json()["error"] == "not an available section: calibration_log"
+        assert r.get_json()["error"] == "checked but not in the page: calibration_log"
+        included = _assemble(c, ["overview", "calibration_log"])
+        assert _finalize(c, included, ["overview", "calibration_log"]).status_code == 200
+        excluded = _file(c, doc, ["overview"])
+        assert 'data-rep-sec="calibration_log"' not in excluded
 
     def test_a_section_built_under_the_other_switch_is_refused(self, chip_client):
         c, _ = chip_client

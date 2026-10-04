@@ -1,17 +1,23 @@
 """The Calibration log page (docs/173 S2): the story of a chip, one day at a time.
 
-Renders ``core/story.build_day`` -- every run in the open dataset folder as a
-card (agent-run, human-run, or unknown), the values each wrote, the gate,
-the journal lines attached to it, and the day's write cards -- with a
-per-target digest strip on top. Filters (author, target) and the day are
-query parameters so htmx re-fetches only the body.
+Renders ``core/story.build_day`` on the open chip's ledger (docs/281): one
+card per run event (its exact change rows, gate, figures and attached journal
+lines), one per SM write that landed (actor, door, every entry, undo links),
+and one per agent run that left no run folder -- with a per-target digest
+strip on top. The day is the project-zone day of each instant. Filters
+(author, search) and the day are query parameters so htmx re-fetches only
+the body. The shareable report's Calibration log section calls ``_build``.
 """
 
 from __future__ import annotations
 
 import logging
+import hashlib
+import json
+import threading
 from datetime import datetime, timedelta
 from pathlib import Path
+from types import SimpleNamespace
 
 from flask import Blueprint, current_app, jsonify, render_template, request
 
@@ -22,6 +28,7 @@ from quam_state_manager.core.search_query import groups, matches_hay
 logger = logging.getLogger(__name__)
 
 journal_bp = Blueprint("journal", __name__)
+_DAY_HTML_LOCK = threading.Lock()
 
 
 def _r():
@@ -46,7 +53,27 @@ def _day_arg() -> str:
         datetime.strptime(d, "%Y-%m-%d")
         return d
     except ValueError:
-        return datetime.now().strftime("%Y-%m-%d")
+        return _today()
+
+
+def _today():
+    from zoneinfo import ZoneInfo
+    zone = (_r()._display_zone() or {}).get("zone")
+    return datetime.now(ZoneInfo(zone) if zone else None).strftime("%Y-%m-%d")
+
+
+def _ledger_context():
+    from quam_state_manager.core.hub_index import context
+    r = _r()
+    active = r._active_path()
+    if not active:
+        return None
+    ctx = r._active_ctx() or {}
+    directory = ctx.get("hub_chip_dir") or r._hub_chip_dir(active)
+    if directory is None:
+        raise RuntimeError("the chip history is unavailable")
+    return context(SimpleNamespace(directory=Path(directory)), instance=current_app.instance_path,
+                   project=ctx.get("qualibrate_project"))
 
 
 def _filters() -> dict:
@@ -69,19 +96,32 @@ def _matches(card: dict, f: dict) -> bool:
         card["search_hay"].lower(), groups(f["q"]))
 
 
-def _build(day: str) -> dict:
+def _build(day: str, *, filters=None) -> dict:
     r = _r()
     ds = r._dataset_store()
-    hm = None
     active = r._active_path()
     try:
-        hm = r._history() if active else None
-    except Exception:  # noqa: BLE001
-        hm = None
+        ledger, unavailable = _ledger_context(), None
+    except RuntimeError as exc:
+        # No history dir for the open chip: say so, never fall back to a
+        # second history source and present it as the chip's.
+        ledger, unavailable = None, f"{exc}, so runs and SM writes cannot be listed."
     key = r._folder_key(ds.folder_path) if ds is not None else None
-    data = story.build_day(current_app.instance_path, _chip_name(), day, ds=ds, hm=hm, active_path=active,
-                           events=_events(), uid_of=(lambda run: f"{key}:{run['run_id']}") if key else None)
-    f = _filters()
+    def uid_of(run):
+        root = (run.get("_hub") or {}).get("root_path")
+        run_key = r._folder_key(root) if root else key
+        return f"{run_key}:{run['run_id']}" if run_key else None
+    if unavailable:
+        data = story._empty_day(_chip_name(), day, {"state": "unavailable", "note": unavailable[:1].upper() + unavailable[1:]},
+                                current_app.instance_path)
+    elif ledger is not None and not (ledger.store.directory / "ledger.sqlite").exists():
+        from quam_state_manager.core import hub_sync
+        data = story._empty_day(_chip_name(), day, dict(hub_sync.status(ledger.store.directory), state="building"), current_app.instance_path)
+    else:
+        data = story.build_day(current_app.instance_path, _chip_name(), day, ds=ds, active_path=active,
+                               ledger=ledger, agent_chip=_agent_chip_key(),
+                               events=_events(), uid_of=uid_of)
+    f = _filters() if filters is None else filters
     data["filters"] = f
     for order, c in enumerate(data["cards"]):
         c["search_order"] = order
@@ -92,9 +132,9 @@ def _build(day: str) -> dict:
             e["search_hay"] = _search_text(e)
     data["cards_shown"] = [c for c in data["cards"] if _matches(c, f)]
     data["cards_cached"] = [c for c in data["cards"] if not _matches(c, f)]
-    data["runs_shown"] = sum(c["kind"] == "run" for c in data["cards_shown"])
+    data["runs_shown"] = sum(c["kind"] in ("run", "agent_run") for c in data["cards_shown"])
     data["lines_shown"] = [e for e in data["loose"] + data["unassigned"] if _matches(e, f)]
-    data["no_dataset"] = ds is None
+    data["no_dataset"] = ds is None and ledger is None
     data["folder"] = str(journal_mod.root(current_app.instance_path))
     d0 = datetime.strptime(day, "%Y-%m-%d")
     # docs/191 A02: the day arrives from a date picker with no bounds, and the
@@ -109,11 +149,16 @@ def _build(day: str) -> dict:
             return base.strftime("%Y-%m-%d")
     data["prev_day"] = _step(d0, -1)
     data["next_day"] = _step(d0, 1)
-    data["is_today"] = day == datetime.now().strftime("%Y-%m-%d")
+    data["is_today"] = day == _today()
     data["days"] = journal_mod.list_days(current_app.instance_path, _chip_name())
     data["authors"] = sorted({c.get("author") for c in data["cards"] if c.get("author")})
     data["loaded"] = bool(active)
     return data
+
+
+def _agent_chip_key():
+    from quam_state_manager.web.agent_api import _chip_key
+    return _chip_key()
 
 
 @journal_bp.route("/journal")
@@ -136,7 +181,26 @@ def journal_day():
     one day, the next-day button stayed disabled forever, and `today` never
     appeared at all."""
     data = _build(_day_arg())
-    return render_template("_journal_day_swap.html", story=data)
+    # Hash the freshly read content, so ledger writes, claims, journal lines,
+    # author changes and warmup transitions invalidate the rendered fragment.
+    # Keep two days at most; a large day can otherwise retain megabytes of HTML.
+    # Every key the template reads, except the three split from "cards" and
+    # "loose" by the filters (already in the token through them).
+    keys = sorted(k for k in data if k not in ("cards_shown", "cards_cached", "lines_shown"))
+    token = hashlib.sha256(json.dumps([[k, data.get(k)] for k in keys], default=str,
+                                     ensure_ascii=True).encode()).digest()
+    cache = current_app.config.setdefault("journal_day_html", {})
+    with _DAY_HTML_LOCK:
+        hit = cache.get(token)
+    if hit is not None:
+        return hit
+    html = render_template("_journal_day_swap.html", story=data)
+    if len(html.encode("utf-8")) <= 6 * 1024 * 1024:
+        with _DAY_HTML_LOCK:
+            if len(cache) >= 2:
+                cache.pop(next(iter(cache)))
+            cache[token] = html
+    return html
 
 
 @journal_bp.route("/journal/raw")

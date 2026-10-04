@@ -304,6 +304,18 @@ under the mutation.
 
 ## Review round (2026-10-04)
 
+**S6 follow-up ([281](281_calibration_log_on_the_hub.md)).** Section 7 scheduled
+the Calibration log's "available once the ledger lands" state to end at S6. By
+coordinator decision the five assertions that pinned that temporary state now
+pin the S6 contract, and every other assertion in `tests/test_chip_report_v2.py`
+is unchanged: the section is listed, available and registered; `parse_sections`
+keeps it in declared order; its checkbox is enabled but unchecked by default (it
+spans every recorded day, so like the raw tree it can make a large file); the
+section route answers 200 with a body built by `journal_routes._build`, the
+`/journal` page's own day builder; the final pass accepts it when checked and
+still leaves it out entirely when unchecked. Redaction runs on its output like
+every other section. The old-to-new table is in 281 section 4.
+
 The adversarial review was reproduced against `80dddbcb` before changing
 production code. The reviewer tools were copied into a temporary rig and
 retargeted to this worktree, SM 5153 and Chrome CDP 9473. One SM server ran at

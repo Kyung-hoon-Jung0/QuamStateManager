@@ -53,8 +53,7 @@ SECTIONS: tuple[Section, ...] = (
             "Every Diagnostics finding: severity, domain, location and message."),
     Section("calibration_log", "Calibration log",
             "Run-by-run record of what each calibration wrote.",
-            default=False, available=False,
-            note="available once the ledger lands"),
+            default=False, available=True),
     Section("raw", "Raw state tree",
             "state.json and wiring.json as a collapsible tree, pointer strings as "
             "stored. The whole chip; off by default. "
