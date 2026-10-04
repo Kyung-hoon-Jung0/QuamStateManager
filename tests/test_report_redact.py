@@ -135,17 +135,40 @@ class TestHtml:
     r"\\nas\s\f", repr(r"\\nas\s\f"), "//host.example/share/file",
     "TCPIP::host.example.internal::5025::SOCKET", "git@github.com:group/repo.git@abc",
     "nfs:/export/share/q", "host-a:9510", "wiki.example.org/setup",
-    "Primary device is host.example.internal", "host.example.private", "cluster_a queue",
+    "Primary device is host.example.internal", "host.example.corp", "cluster_a queue",
+    "lab-opx.example.internal", "lab-gw.example.internal", "qdac-secret.lab.internal",
+    "wiki.secret-lab.org/opx/setup", "labopx-b:9510",
+    "git@github.com:secret-org/repo.git", "opx-keyhost:9510",
+    "//nas-secret02/secretshare/file", r"\\nas-secret03\secretshare\file",
+    r"\nas-secret03\secretshare\file", r"\\nas-secret01\secretshare\file",
+    "nfs:/export/secretshare/file", r"E:\KeyPathSecret\file",
+    "10.20.30.40", "127.0.0.1", "qm-secret.example.internal",
+    r"D:\SecretAnalysis\file", r"D:\Secret Spaced Folder\file",
+    r"D:\Secret Diag Folder\file", r"D:\Diag Folder\file",
+    r"D:\sm-report-277-review\file", r"D:\folder with spaces\file",
+    "QCLUSTER_ZETA9", "qcluster_zeta9",
+    "host.example.lan", "host.example.intra", "host.example.home",
+    "host.example.localdomain", "host.example.local", "host.example.example",
+    "host.example.dev", "host.example.cloud", "HOST.EXAMPLE.INTERNAL",
+    "host.example.com", "host.example.net", "host.example.io",
+    "quam.components.internal", "quam-config.components.internal",
+    "2026-10-04T10:45:00Z host-a:9510",
 ])
 def test_review_hidden_strings(secret):
-    red = Redactor.for_documents({"extras": {"cluster_name": "CLUSTER_A"}})
+    red = Redactor.for_documents({"extras": {"cluster_name": "CLUSTER_A"},
+                                 "network": {"host": "lab-opx.example.internal",
+                                             "cluster": "QCLUSTER_ZETA9"}})
     out = red.redact_text(secret)
+    assert red.redact_tree({"value": secret}) == {"value": out}
+    assert red.redact_html("<p>" + secret + "</p>") == "<p>" + out + "</p>"
     if secret.startswith("Primary device is "):
         assert out == "Primary device is [hidden]"
     elif secret == "cluster_a queue":
         assert out == "[hidden] queue"
     elif secret.startswith("'"):
         assert out == "'[hidden]'"
+    elif secret.startswith("2026-"):
+        assert out == "2026-10-04T10:45:00Z [hidden]"
     else:
         assert out == HIDDEN
 
@@ -153,9 +176,34 @@ def test_review_hidden_strings(secret):
 @pytest.mark.parametrize("ordinary", [
     "3.4.0.1", "quam_config.two_flux_gate.CZGateTwoFlux",
     "quam.components.pulses.SquarePulse", "#/qubits/qA1/xy", "cal.h5", "con1/2/1",
+    "2026-10-04T10:45:00+09:00", "2026-10-04T10:45:00Z",
+    "2026-10-04T10:45:00.123456+00:00", "20261004T104500",
+    "2026-10-04T10:45:00", "20261004T104500Z", "20261004T104500+0900",
+    "updated_at: 2026-10-04T10:45:00+09:00",
+    "readout.operations.readout.length", "quam.components.pulses.squarepulse",
+    "resonator.operations.readout.integration_weights",
+    "quam.components.channels.iqchannel", "quam.components.qubits.transmon",
+    "quam_config.components.qubits.transmon", "json.encoder.JSONEncoder",
+    "collections.abc.MutableMapping", "quam.components.pulses.composite",
+    "qubits.qB3.xy.RF_frequency",
+    "qubits.qA1.xy.operations.x180", "ports.analog_outputs.con1.5.1",
+    "qubits.qa.xy.operations.x180", "wiring.qubits.qa.xy.output",
+    "#/ports/analog_outputs/con1/2/1", "#../readout/length", "#./inferred_x",
+    "10:45", "10:45:00", "2026-10-04 10:45:00 (GMT+3)",
+    "10:45 GMT+3", "08_qubit_spectroscopy", "01_readout_calibration",
+    "3.4.0", "1.23.0", "I/Q", "rad/s", "4.8954", "-0.35", "host.example.private",
 ])
 def test_review_surviving_strings(ordinary):
-    assert Redactor.for_documents({}).redact_text(ordinary) == ordinary
+    doc = {"network": {"host": "lab-opx.example.internal"},
+           "updated_at": ordinary, "values": [ordinary], ordinary: 7}
+    red = Redactor.for_documents(doc)
+    assert ordinary not in red.literals
+    assert red.redact_text(ordinary) == ordinary
+    assert red.redact_value(ordinary) == ordinary
+    assert red.redact_tree(doc) == {**doc, "network": {"host": HIDDEN}}
+    assert red.redact_html("<p>" + ordinary + "</p>") == "<p>" + ordinary + "</p>"
+    assert red.redact_html('<p title="' + ordinary + '">value</p>') == (
+        '<p title="' + ordinary + '">value</p>')
 
 
 def test_review_keys_cluster_and_frozen_literals():

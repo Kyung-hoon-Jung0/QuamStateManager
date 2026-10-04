@@ -426,3 +426,45 @@ this review records its own additional mutations.
 Cleanup: the original reviewer tools were read only. The owned SM/Chrome
 processes were stopped, and the complete temporary rig (chip/history copies,
 profile, downloads and scratch logs) was deleted after validation.
+
+Follow-up over-blanking review against `acb8cabb`: recognize complete extended
+and basic ISO timestamps before host:port matching, and preserve that matched
+span. Bare domains now require a final label in a fixed public/private suffix
+list; the arbitrary lowercase final-label fallback is gone. Common private
+suffixes are internal, local, lan, corp, intra, home, localdomain and example;
+the existing test/invalid special-use suffixes remain. The broad Quam-prefix
+exemption is removed, so an address with that prefix is still hidden. Rooted
+backslash paths, alongside repeated-separator UNC paths, are also covered.
+
+Both complete string lists are pinned in `tests/test_report_redact.py`:
+`test_review_surviving_strings` has 44 strings (all unchanged), including the
+four requested ISO forms, lowercase Quam/Python class paths, readout dot-paths,
+JSON pointers, con1/2/1, numeric versions, GMT+3 times and numbered node names.
+It checks literal collection, raw-tree values/lists/keys, text, stored values,
+HTML paragraphs and attributes. `test_review_hidden_strings` has 50 cases
+(all address/path/literal tokens disappear), including every token from the
+previous 23-token secret hunt in its address, path or learned-literal context.
+The mixed timestamp/address case preserves the timestamp and hides the
+address; sentences and quoted values retain their surrounding text.
+
+Branch-only expectation correction: `host.example.private` previously hid
+because any lowercase final label was accepted. It now survives in ordinary
+text because private is absent from the fixed suffix list; the must-hide pin
+uses `host.example.corp`. Structural network-field and learned-literal
+redaction still hide an unknown-suffix hostname when supplied by configuration.
+No test on origin/main was edited. No rendered markup changed.
+
+Follow-up validation: **31/31 mutations RED**, each requiring an assertion
+failure in one of the two string-list pins. Mutations cover timestamp
+recognition/order/replacement/fractions, the lowercase domain fallback,
+suffix boundaries and 14 individual suffixes, the Quam-prefix exemption,
+seven address/path patterns, rooted backslash paths, learned literals and
+numeric version preservation. The original source bytes and timestamps were
+restored in finally before the final test run.
+
+Final restored-source checks: **202 passed** across `tests/test_report_redact.py`
+and `tests/test_chip_report_v2.py` (36.72 s), using the cqt Python,
+PYTHONUTF8=1 and `-p no:cacheprovider --timeout=900`. This includes the real
+`node tests/chip_report_v2_selfcheck.cjs` serializer check. The Node selfcheck
+was also invoked separately with the freshly generated fixture and passed.
+No browser rig was needed for this value-rule change.

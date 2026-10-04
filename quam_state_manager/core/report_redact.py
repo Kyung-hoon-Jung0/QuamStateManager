@@ -51,22 +51,33 @@ _IPV6 = (rf"(?<![\w:])(?:(?:{_H4}:){{7}}{_H4}"
          rf"|(?=[0-9a-fA-F:]*::)(?:{_H4})?(?:::?{_H4}){{2,7}}::?|"
          rf"(?=[0-9a-fA-F:]*::)(?:{_H4})?(?:::?{_H4}){{2,7}})(?![\w:])")
 _HOSTPORT = r"(?<![\w.\-/])(?=[\w.\-]*[a-zA-Z])[a-zA-Z0-9\-]+(?:\.[a-zA-Z0-9\-]+)*:\d{1,5}\b"
+# Consume the entire timestamp before its date and hour can read as host:port.
+_TIMESTAMP = (r"(?<![\w.])(?P<timestamp>\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}"
+              r"(?:\.\d+)?(?:Z|[+-]\d{2}:\d{2})?|\d{8}T\d{6}(?:\.\d+)?"
+              r"(?:Z|[+-]\d{4})?)(?![\w.])")
 _WIN = r"(?<![A-Za-z0-9])[A-Za-z]:[\\/](?:[^\"'<>|*?\r\n\\/]*[\\/])*[^\s\"'<>|*?\\/]*"
-_UNC = r"(?<!\w)[\\/]{2,}[^\s\\/\"'<>]+[\\/]+(?:[^\"'<>|*?\r\n\\/]*[\\/]+)*[^\s\"'<>|*?\\/]*"
+_UNC = r"(?<!\w)(?:\\+|/{2,})[^\s\\/\"'<>]+[\\/]+(?:[^\"'<>|*?\r\n\\/]*[\\/]+)*[^\s\"'<>|*?\\/]*"
 _POSIX = r"(?<![\w.~:/\\#\-])/(?:[^\s/\"'<>|]+/)+[^\s/\"'<>|]*"
 _HOME = r"(?<![\w])~[\\/][^\s\"'<>]*"
 _SCP = r"\b[\w.\-]+@[\w.\-]+:[^\s\"'<>]+"
 _VISA = r"\bTCPIP\d*::[^\s\"'<>]+"
 _MOUNT = r"\b[\w.\-]+:/(?:[^\s/\"'<>]+/)*[^\s\"'<>]+"
-_FQDN = (r"(?<![\w.])(?:(?:[a-zA-Z0-9-]+\.)+"
-         r"(?:com|org|net|edu|gov|io|co|uk|de|fr|kr|local|internal|example|test|invalid)"
-         r"|(?:[a-zA-Z0-9-]+\.){2,}(?-i:[a-z]{2,}))"
+# A fixed suffix list distinguishes bare domains from dotted parameter paths.
+_DOMAIN_SUFFIXES = (
+    "com", "org", "net", "edu", "gov", "mil", "int", "io", "co", "ai",
+    "app", "dev", "cloud", "info", "biz", "name", "xyz", "online", "site", "tech",
+    "uk", "us", "ca", "de", "fr", "kr", "jp", "cn", "au", "eu", "ch", "nl",
+    "internal", "local", "lan", "corp", "intra", "home", "localdomain", "example",
+    "test", "invalid",
+)
+_FQDN = (r"(?<![\w.])(?:[a-zA-Z0-9-]+\.)+"
+         rf"(?:{'|'.join(_DOMAIN_SUFFIXES)})"
          r"(?![\w.])(?:/[^\s\"'<>]*)?")
 
 #: Layer V, in order (a URL is consumed before its ``s://`` could read as a
 #: drive letter, an address before its digits could read as anything else).
 VALUE_PATTERNS: tuple[re.Pattern, ...] = tuple(
-    re.compile(p, re.I) for p in (_URL, _SCP, _VISA, _MOUNT, _IPV4, _IPV6,
+    re.compile(p, re.I) for p in (_TIMESTAMP, _URL, _SCP, _VISA, _MOUNT, _IPV4, _IPV6,
                                  _HOSTPORT, _WIN, _UNC, _POSIX, _HOME, _FQDN))
 #: The same layer as ONE alternation (leftmost match wins; at one position the
 #: order above decides), so a text costs one scan, not eight.
@@ -77,7 +88,7 @@ def _replace_value_match(m: re.Match) -> str:
     # Small four-part numeric versions are ambiguous with IPv4. Network
     # fields still hide them structurally; ordinary version text survives.
     value = m.group()
-    if value.startswith(("quam.", "quam_config.")):
+    if m.lastgroup == "timestamp":
         return value
     if re.fullmatch(r"[0-9]\.[0-9]\.[0-9]\.[0-9]", value):
         return value
