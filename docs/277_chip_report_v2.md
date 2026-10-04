@@ -23,9 +23,8 @@ that the server finalizes.
    file at all: not hidden by CSS, not in a data attribute, not in an inlined
    JSON blob. Two independent gates enforce it:
    * the browser builds the file from a whitelist: it clones the page and
-     removes every `section[data-rep-sec]` whose box is unchecked, the panel,
-     and every script except the raw-tree renderer (kept only when the raw
-     section is in the file);
+     rebuilds the body from checked `section[data-rep-sec]` elements and the
+     footer, keeping the raw-tree renderer inside Raw only;
    * `POST /chip-status/report/finalize` refuses (HTTP 400) a document that
      carries a `data-rep-sec` the request did not declare, or declares a
      section that is not available.
@@ -34,7 +33,8 @@ that the server finalizes.
    (section 3).
 4. **Offline.** CSS inline; charts are static inline SVG; no external fonts,
    scripts or images; no plotly.js. The server's finalize step strips any
-   `src`/`href` that is not a `#fragment` or a `data:` URI. The only script a
+   nonlocal `src`/`href`/`xlink:href`, `poster`, object `data`,
+   `srcset`, CSS `url(...)`, and download attributes. The only script a
    file can carry is the raw-tree renderer (inline, no network). The file
    says, in its footer, that its charts are static pictures.
 5. **English-only UI; one time format.** Times print as
@@ -42,7 +42,8 @@ that the server finalizes.
    project zone (`project_time.display_zone`), and the Overview names the zone
    (`Asia/Seoul`), or says "this PC's zone" when no project zone is set.
 6. **Honest failure.** A section whose source raises renders
-   `Could not be built: <ExceptionType>: <message>` inside its own section,
+   `Could not be built: <ExceptionType>: the section source failed.` when
+   redaction is ON, or the exception details when OFF, inside its own section,
    never a blank, never a 500 for the page. The same line is used when the
    browser's fetch of a section fails.
 
@@ -69,51 +70,30 @@ most likely to carry something nobody meant to send.
 
 ## 3. The redaction rule (`core/report_redact.py`)
 
-Applied when the switch is on. The marker is `[hidden]`. Three layers, each a
-rule rather than a list of one chip's keys:
+With the switch ON, the marker is `[hidden]`.
 
-**S -- structural, on state.json / wiring.json** (`Redactor.redact_tree`):
+* Structural: every non-null scalar in `network`; string values under keys
+  containing network vocabulary, including `cluster`; network ports beside
+  host fields. Every other string value and every dictionary key receives
+  the text pass. Redacted keys get distinct suffixes when needed.
+* Patterns: scheme URLs, scp-style SSH locations, VISA TCPIP resources,
+  IPv4/IPv6, host:port (including single-label hosts), drive/UNC/POSIX/home
+  paths, forward-slash UNC and host:/path mounts, scheme-less domain/path,
+  hosts with recognized suffixes and lowercase hosts with at least two dots.
+* Literals: collect hidden stored strings plus the working/source/data
+  folders before rendering; freeze the set; match case-insensitively and
+  before patterns. Shared-prefix regex branches avoid a large flat alternation.
+* Coverage: HTML text, attributes, comments and CSS strings/URL arguments.
+  CSS selectors, properties, numbers, colours and stylesheet data URIs keep
+  their bytes. Raw JSON is redacted structurally before serialization;
+  script code and namespace identifiers are not text content.
 
-* **S1 network block.** Every scalar inside a dict stored under a key named
-  `network` (any depth) is blanked. `null` stays `null` (it carries nothing).
-  The QUAM wiring stores `network: {host, port, cluster_name, ...}` there.
-* **S2 network vocabulary.** A string value whose key, split into lowercase
-  words (`_`, `-`, `.`, camelCase), contains one of `host`, `hostname`, `ip`,
-  `ipaddr`, `ipv4`, `ipv6`, `addr`, `address`, `url`, `uri`, `endpoint`,
-  `server`, `proxy`, `gateway` is blanked. A key containing the word `port`
-  is blanked only when the same dict also holds such a host-like key (a
-  `host:port` pair). An OPX port (`port_id`, `ports`, `opx_output`) is never
-  touched by S2.
-* **S3 values.** Every string leaf goes through layer V.
-
-**V -- value patterns, on any text** (`Redactor.redact_text`), in this order:
-
-1. a URL with a scheme (`scheme://...`);
-2. an IPv4 address with an optional `:port`; an IPv6 address in full
-   eight-group or `::`-compressed form;
-3. a dotted host name or `localhost` followed by `:port`;
-4. an absolute filesystem path: a Windows drive path (`C:\...`, `C:/...`,
-   segments may contain spaces when a separator follows), a UNC path
-   (`\\server\share...`), a POSIX path of at least two segments starting at a
-   word boundary (`/home/x`), or `~/...`. A JSON pointer (`#/qubits/q1`) is
-   never a path: a `/` preceded by `#`, `.`, a word character or another
-   separator does not start one.
-
-A string that *starts* with a match is blanked whole (a value that is a path
-is the path); otherwise only the matched span is replaced.
-
-**L -- literals.** Every string of four or more characters that S1/S2/S3
-blanked is remembered, and every occurrence of it anywhere in the final
-document is replaced too -- a cluster name that a chip key, a diagnostics
-message or a title repeats is caught where it is repeated.
-
-**Where it runs.** The raw section's payload is built from the redacted trees
-(layer S). Every server-rendered section and the finalized document go
-through `Redactor.redact_html`: text nodes and attribute values get layers V
-and L; `<style>` bodies, the raw-tree JSON script and `xmlns` attributes are
-not touched (the JSON was redacted structurally before it was serialized).
-The download file name goes through layer V/L as well. With the switch off,
-nothing is changed.
+Preserved: QUAM class paths, JSON pointers, filenames without directories,
+element/port ids and small four-part numeric versions such as `3.4.0.1`.
+Those versions are ambiguous with IPv4; structural network fields still hide
+such values. Unknown bare host names and standalone ports in prose are not
+detected. The panel states these limits explicitly. Raw contains the chip
+name even when Overview is unchecked; its checkbox says so.
 
 ## 4. The download
 
@@ -137,7 +117,8 @@ nothing is changed.
    the chip name out of `<title>` and the file name when Overview is not
    declared, and makes ONE pass over the document
    (`report_redact.html_pass`): scripts survive only with `data-rep-keep`
-   and their section declared, non-local `src`/`href` are dropped,
+   and their section declared, non-local references and download attributes are dropped; body children
+   outside checked sections and the footer are discarded,
    whitespace between tags collapses (the templates' indentation was ~2 MB
    of the big chip's file), and with the switch on every text and attribute
    value is redacted. The response carries the file name
@@ -307,11 +288,10 @@ under the mutation.
 * Chip Status > Trends has no time window on screen; the report's window
   crops the same series and puts the line's value at the window edge (the
   straight line the chart draws between the two neighbouring points).
-* Redaction is a rule, so it over- and under-reaches: an IPv4-shaped
-  version string (`3.4.0.1`) and a dotted `name:digits` text are blanked; a
-  bare host name stored under a key with no network word (and not followed
-  by `:port`) is not, nor a bare port number in prose. Client-drawn pictures
-  get the text pass (V + L) only.
+* Redaction recognizes address/path syntax and known stored network values.
+  Unknown bare hosts and standalone ports in prose remain outside the rule;
+  small numeric versions survive outside structural network fields. The
+  panel names these limits. The raw section explicitly includes the chip name.
 * The rack is drawn by loading app.js in a hidden same-origin frame for
   ~1 s; app.js starts its read-only polls there until the frame is removed.
 * A packed raw tree needs `DecompressionStream` (Chrome 80+, Firefox 113+,
@@ -320,3 +300,129 @@ under the mutation.
 * CSS is pruned from Chrome's CSSOM: a vendor-prefixed declaration Chrome
   drops is not in the file.
 * On the stress chip, building every preview takes 9-15 s (above).
+
+
+## Review round (2026-10-04)
+
+The adversarial review was reproduced against `80dddbcb` before changing
+production code. The reviewer tools were copied into a temporary rig and
+retargeted to this worktree, SM 5153 and Chrome CDP 9473. One SM server ran at
+a time. Chips were copied with `copytree`, never hardlinked; their network
+was host 127.0.0.1, port 1. The small copy used a source folder containing
+spaces; its final display name was generic. The large copy retained 200
+copied history snapshots. No write-door code or tests from origin/main changed.
+
+The initial `probe_redact.py` exposed ten raw-tree leaks, escaped UNC errors,
+folder suffixes, comments and case variants. The new pins ran RED first:
+33 failed / 86 passed. The original browser phases reproduced retained hover
+cards, a lingering download link and both topology fail/slow exports without
+an honest failure. A cold fault run reproduced the UNC and connection error
+leaks. The original `perf.cjs` run reproduced slow builds and other-user
+latency; `probe_gil.py` was also run with baseline modules extracted by
+`git show` and then with the new modules.
+
+| Finding | Fix | Pin | Measured result |
+|---|---|---|---|
+| P0-1 escaped UNC exception | UNC accepts repeated separators; OSError details use strerror and literal filenames when OFF; every server section failure uses a type plus fixed sentence when ON. | `test_review_oserror_representation`, `test_review_hidden_strings`, `test_review_failure_details_hidden` | Fault ON contains no UNC token; OFF contains its filename. |
+| P0-2 raw values and keys | Redact dictionary keys, scp/VISA/mount/forward UNC/domain/FQDN syntax; add cluster fields; apply frozen case-insensitive literals first. Keep numeric versions, class paths, pointers, filenames and port ids. Panel states detection limits. | `test_review_hidden_strings`, `test_review_surviving_strings`, `test_review_keys_cluster_and_frozen_literals`, `test_review_literals_precede_patterns` | All planted address/path variants disappear ON and survive OFF, including unpacked gzip raw. |
+| P0-3 excluded hover card | Browser rebuilds body from checked sections and footer; server independently discards all other body children. Raw renderer is inside Raw. | jsdom body whitelist; `test_review_body_whitelist_and_download_attribute` | `popup` phase: no hover card with Chip Status unchecked. |
+| P1-1 source folder suffix | Overview prints `[hidden]` directly; working, source and data folders join the literal set before patterns. | `test_review_overview_source_hidden_with_spaces`, literal-order pin | Source with spaces is entirely hidden. |
+| P1-2 failure details | Exception type plus `the section source failed.` ON; same rule for unreadable pairs and client fetch failures. OFF retains details. | failure-details pin, eight honest-failure pins, jsdom private-failure check | Fault ON exposes only three types and the fixed sentence; OFF exposes all planted details. |
+| P2-1 map timeout/error | A clone whose map has not drawn in 6 s contains the exact requested failure sentence. | jsdom missing-map check | `mapfault.cjs` fail and slow both export the failure, with no Loading text. |
+| P2-2 repeated download | Download link stays detached; server strips download attributes regardless of redaction. | jsdom detached-anchor check; server body/download pin | `race`: no lingering anchor and no download attribute in the next file. |
+| P2-3 local DST rules | No project zone returns None; each timestamp uses OS rules. Chart ticks retain the same local conversion. | `test_review_local_zone_uses_each_instant`, winter/summer date pin, local chart tick pin | Winter 23:30 stays on its own date; summer date and local chart label also pinned. |
+| P2-4 request contention | One semaphore bounds builders/finalize; section HTML cache is keyed by store content/options/zone/builder and capped at 16 entries / 32 MiB. Literal collection runs on a copied snapshot outside the store lock. finditer streams tokens; iterencode yields JSON chunks. Literal regex shares prefixes and the offline pass memoizes tags. Cached Overview refreshes its generated time. | cache/invalidation, bounded concurrent builds, collection-lock, streaming-token, JSON-encoding and Overview-time pins | Timing table below; cache invalidates on content, redaction and window changes. |
+| P3 literal learning | for_documents freezes literals before use; later tree/value passes cannot add values. | frozen-literal pin | Repeated use keeps the literal set unchanged. |
+| P3 CSS/comments | Redact CSS quoted strings and url arguments and HTML comments; preserve CSS structure, numeric values, colours and own data URLs. | `test_review_css_and_comments_preserve_structure`, existing HTML pin updated | Exact-byte CSS preservation assertion passes; comments lose addresses. |
+| P3 offline channels | Strip external poster/object/embed/srcset and CSS url references, plus existing href/src checks. | `test_review_offline_reference_channels`, unchanged assertion coverage in `TestOffline` | Offline journeys show zero external requests and zero console errors. |
+| P3 Raw without Overview | Raw checkbox explicitly says it contains the chip name even when Overview is unchecked. | `test_review_raw_discloses_chip_name` | `nooverview`: generic title/filename; Raw's disclosed chip name remains. |
+
+Branch-only pin corrections: the old CSS assertion expected
+`content:"10.20.30.40"` to survive because "CSS is not content"; it now expects
+`content:"[hidden]"`, because CSS content strings render and URL arguments
+can carry hosts. The eight old honest-failure assertions expected exception
+messages ON; they now expect exception types and the fixed sentence required
+by P1-2. The offline fixture's local/data references moved inside a declared
+section: body siblings are excluded by P0-3. Its original offline assertions
+remain intact and new reference channels are pinned separately. No test on
+origin/main was edited.
+
+The temporary copies of the tools needed two harness corrections: downloaded
+files with the same minute-based filename can overwrite an existing file, so
+polling now notices modification times as well as new filenames. The initial
+second-download 75 s result was a polling collision, not a real build time;
+it is excluded below. The fault wrapper invalidates section HTML when its
+fault switch changes, so a previously cached healthy section cannot mask the
+fault. GIL after-probes use finditer in place of the baseline split.
+
+| Measurement, same large copy with another-user poller | Before | After cold | After warm cache |
+|---|---:|---:|---:|
+| HTML/page load | 7.944 s | 8.194 s | 4.308 s |
+| All sections drawn | 51.552 s | 35.942 s | 5.376 s |
+| Press to file | 8.841 s | 5.348 / 4.961 s | 5.497 / 4.737 s |
+| Other user's /qubits p90 during build | 1,228 ms | 702 ms | 136 ms |
+| Download size | 8.82 MiB | 8.78 MiB | 8.78 MiB |
+
+The PC remained under unrelated load. Cold page load did not improve in this
+sample; cold total build and other-user p90 improved, while warm cache avoids
+rebuilding heavy sections. Four final downloads span 4.737-5.497 s: a strict
+under-5-s guarantee is still not met under load. No timing sample is presented
+as a hardware-independent latency guarantee.
+
+The baseline GIL probe measured split at 311 ms with a 311 ms thread stall;
+finditer measured 233 ms with a 38 ms stall. Raw encoding's largest stall
+fell from 262 ms to 47 ms. Literal gathering's CPU time grew (277 to 1,392 ms)
+while covering more patterns/keys, but it now runs outside the store lock;
+its largest GIL stall was 20 ms. The copied snapshot still costs a short
+marshal interval (after probe: 67 ms total / 46 ms longest stall).
+
+Secret hunt: scan HTML and decoded Raw, including gzip payloads. All 21 final
+ON artifacts/downloads have zero hits for the following 23 tokens. The fault
+OFF file contains every token; ordinary OFF files contain the applicable
+stored tokens, with fault-only tokens present only when the source raises.
+Both large and small ON/OFF raw trees were opened offline by the reviewer journey.
+
+| Token | ON (HTML + unpacked Raw) | OFF |
+|---|---|---|
+| `lab-opx.example.internal` | absent | present |
+| `lab-gw.example.internal` | absent | present |
+| `10.20.30.40` | absent | present |
+| `SecretAnalysis` | absent | present |
+| `nas-secret01` | absent | present |
+| `nas-secret02` | absent | present |
+| `nas-secret03` | absent | present |
+| `Secret Spaced Folder` | absent | present |
+| `qdac-secret.lab.internal` | absent | present |
+| `secret-org` | absent | present |
+| `opx-keyhost` | absent | present |
+| `KeyPathSecret` | absent | present |
+| `QCLUSTER_ZETA9` | absent | present |
+| `qcluster_zeta9` | absent | present |
+| `labopx-b` | absent | present |
+| `wiki.secret-lab.org` | absent | present |
+| `secretshare` | absent | present |
+| `qm-secret.example.internal` | absent | present |
+| `Secret Diag Folder` | absent | present |
+| `Diag Folder` | absent | present |
+| `127.0.0.1` | absent | present |
+| `sm-report-277-review` | absent | present |
+| `folder with spaces` | absent | present |
+
+Validation: the report/redactor/jsdom pins passed: 125 passed after mutation restoration (41.81 s), including
+the real jsdom serializer, local DST/chart rules and cache timestamp refresh. The requested related files were selected by report,
+zline, pulse, trend, wiring, instrument, units and diagnostic names: 60 files,
+1,677 passed, 2 skipped, 23 warnings; 1,013.77 s under load. Existing numerical
+overflow warnings are in waveform synthesis and no test failed. This was not
+the full suite. Every pytest invocation used the supplied cqt Python,
+PYTHONUTF8=1, `-p no:cacheprovider --timeout=900`.
+
+Mutation result: **33/33 RED**, all restored; the following clean run was
+**125/125 passed**. Each review mutation changes shipped code, runs the
+pin that claims it, requires a test assertion failure, and restores the
+original bytes and timestamps in finally. A final report test run follows
+restoration. The historical 49/49 above belongs to the original feature;
+this review records its own additional mutations.
+
+Cleanup: the original reviewer tools were read only. The owned SM/Chrome
+processes were stopped, and the complete temporary rig (chip/history copies,
+profile, downloads and scratch logs) was deleted after validation.

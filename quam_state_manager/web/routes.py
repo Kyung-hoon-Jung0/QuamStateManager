@@ -14294,26 +14294,46 @@ class _ReportCtx:
                 except Exception as exc:  # noqa: BLE001 -- same degrade as /pairs
                     logger.warning("report get_pair(%r) failed: %s", pair_name, exc)
                     out.append({"id": pair_name, "is_active": True,
-                                "_error": f"{type(exc).__name__}: {exc}"})
+                                "_error": (f"{type(exc).__name__}: the section source failed."
+                                           if self.redact else f"{type(exc).__name__}: {exc}")})
             self._pairs = out
         return self._pairs
 
 
 _REPORT_REDACTORS: dict = {}
 _REPORT_REDACTORS_LOCK = threading.Lock()
+_REPORT_HEAVY = threading.BoundedSemaphore(1)
+_REPORT_HTML_CACHE: dict = {}
+_REPORT_HTML_BYTES = 32 * 1024 * 1024
+
+
+def _report_content_token(store):
+    return (_store_token(store), id(store.state), id(store.wiring), str(store.folder_path))
 
 
 def _report_redactor(store):
     """The chip's redactor (its literal set is the values S blanks in its own
     two documents), kept per store until the store changes."""
     from quam_state_manager.core.report_redact import Redactor
-    tok = (store.mutation_seq, id(store.state), id(store.wiring), str(store.folder_path))
+    live_folder = str(_active_path() or "")
+    tok = (_report_content_token(store), live_folder)
     with _REPORT_REDACTORS_LOCK:
         hit = _REPORT_REDACTORS.get(id(store))
         if hit and hit[0] == tok:
             return hit[1]
-    with store._lock:
-        red = Redactor.for_documents(store.state, store.wiring)
+    with _REPORT_HEAVY:
+        with _REPORT_REDACTORS_LOCK:
+            hit = _REPORT_REDACTORS.get(id(store))
+            if hit and hit[0] == tok:
+                return hit[1]
+        import marshal
+        with store._lock:
+            tok = (_report_content_token(store), live_folder)
+            snapshot = marshal.dumps((store.state, store.wiring))
+            folder = str(store.folder_path)
+        state, wiring = marshal.loads(snapshot)
+        data_folder = (state.get("extras") or {}).get("data_folder") if isinstance(state, dict) else None
+        red = Redactor.for_documents(state, wiring, literals=(folder, live_folder, data_folder))
     with _REPORT_REDACTORS_LOCK:
         if len(_REPORT_REDACTORS) >= 4:
             _REPORT_REDACTORS.clear()
@@ -14322,16 +14342,40 @@ def _report_redactor(store):
 
 
 def _report_section(key: str, rc: _ReportCtx) -> str:
+    """Bound heavy work and reuse section HTML for unchanged content/options."""
+    token = (_report_content_token(rc.store), key, rc.redact, rc.window, rc.zone,
+             str(rc.path), id(_REPORT_BUILDERS[key]))
+    with _REPORT_HEAVY:
+        hit = _REPORT_HTML_CACHE.get(token)
+        if hit is not None:
+            if key == "overview":
+                return re.sub(r"(Generated )[^<]+?( &middot; time zone)",
+                              lambda m: m.group(1) + _html_escape(rc.generated) + m.group(2), hit)
+            return hit
+        out, succeeded = _report_section_uncached(key, rc)
+        if succeeded:
+            size = len(out.encode("utf-8"))
+            if size <= _REPORT_HTML_BYTES:
+                while _REPORT_HTML_CACHE and (len(_REPORT_HTML_CACHE) >= 16 or
+                        sum(len(v.encode("utf-8")) for v in _REPORT_HTML_CACHE.values()) + size > _REPORT_HTML_BYTES):
+                    _REPORT_HTML_CACHE.pop(next(iter(_REPORT_HTML_CACHE)))
+                _REPORT_HTML_CACHE[token] = out
+        return out
+
+
+def _report_section_uncached(key: str, rc: _ReportCtx) -> tuple[str, bool]:
     """One section's outer HTML. A builder that raises yields the section with
     its honest "Could not be built: <reason>" line, never a blank or a 500."""
     from quam_state_manager.core import chip_report as _cr
     t0 = time.monotonic()
+    succeeded = True
     try:
         builder = _REPORT_BUILDERS[key]
         body = builder(rc)
     except Exception as exc:  # noqa: BLE001 -- a section degrades, never the page
         logger.exception("report section %s failed", key)
-        body = _cr.failure_html(exc)
+        succeeded = False
+        body = _cr.failure_html(exc, redact=rc.redact)
         if key not in ("overview", "chip_status"):
             body = f'<h2>{_html_escape(_cr.SECTION_BY_KEY[key].label)}</h2>' + body
     ms = int((time.monotonic() - t0) * 1000)
@@ -14339,7 +14383,7 @@ def _report_section(key: str, rc: _ReportCtx) -> str:
            f' data-rep-redact="{int(rc.redact)}" data-rep-ms="{ms}">{body}</section>')
     if rc.red is not None:
         out = rc.red.redact_html(out)
-    return out
+    return out, succeeded
 
 
 def _html_escape(s: Any) -> str:
@@ -14386,7 +14430,7 @@ def chip_status_report_frame_wiring():
                            wiring_json=_wiring_json(), instrument_error=err)
 
 
-_REPORT_REF_RE = re.compile(r"""\s(src|href|xlink:href)\s*=\s*("[^"]*"|'[^']*')""", re.I)
+_REPORT_REF_RE = re.compile(r"""\s(src|href|xlink:href|poster|data|srcset|download)\s*=\s*("[^"]*"|'[^']*'|[^\s>]+)""", re.I)
 _REPORT_FOR_RE = re.compile(r'data-rep-for="([^"]*)"')
 
 
@@ -14401,8 +14445,51 @@ def _report_final_pass(doc: str, sections: list[str], red=None) -> str:
     * whitespace between tags collapses (the templates' indentation is ~2 MB
       of a big chip's file);
     * with *red*, the redaction rule on every text and attribute value."""
-    from quam_state_manager.core.report_redact import html_pass
+    from quam_state_manager.core.report_redact import html_pass, redact_css, _ATTR
     keep = set(sections)
+    in_body = False
+    child = None
+    depth = 0
+    allowed = False
+    tag_memo: dict[str, str] = {}
+    voids = {"area", "base", "br", "col", "embed", "hr", "img", "input", "link", "meta", "param", "source", "track", "wbr"}
+
+    def on_token(tok):
+        nonlocal in_body, child, depth, allowed
+        if tok[:5].lower() == "<body":
+            in_body = True
+            return True
+        if tok[:7].lower() == "</body>":
+            in_body = False
+            child = None
+            return True
+        if not in_body:
+            return True
+        if tok[:1] != "<" or tok.startswith("<!"):
+            return allowed if child else False
+        if child is not None:
+            prefix = tok[:len(child) + 3].lower()
+            if not prefix.startswith(("<" + child, "</" + child)):
+                return allowed
+        m = re.match(r"</?([\w:-]+)", tok)
+        if not m:
+            return False
+        name = m.group(1).lower()
+        closing = tok.startswith("</")
+        whole = name in ("script", "style", "pre", "textarea") and not closing
+        if child is None:
+            attrs = dict((a.group(1).lower(), a.group(3).strip("\"'")) for a in _ATTR.finditer(tok))
+            allowed = ((name == "section" and attrs.get("data-rep-sec") in keep) or
+                       (name == "footer" and "rep-foot" in attrs.get("class", "").split()))
+            if not closing and not whole and name not in voids and not tok.endswith("/>"):
+                child, depth = name, 1
+            return allowed
+        result = allowed
+        if name == child and not whole:
+            depth += -1 if closing else (0 if tok.endswith("/>") else 1)
+            if depth == 0:
+                child, allowed = None, False
+        return result
 
     def on_script(tok: str):
         head = tok[: tok.index(">") + 1]
@@ -14412,13 +14499,35 @@ def _report_final_pass(doc: str, sections: list[str], red=None) -> str:
         return tok
 
     def _ref(m: re.Match) -> str:
-        v = m.group(2)[1:-1].strip()
+        if m.group(1).lower() in ("srcset", "download"):
+            return ""
+        v = m.group(2).strip("\"'").strip()
         return m.group(0) if (v.startswith("#") or v.lower().startswith("data:")) else ""
 
     def on_tag(tag: str) -> str:
-        return _REPORT_REF_RE.sub(_ref, tag) if ("src" in tag or "href" in tag) else tag
+        if "=" not in tag:
+            return tag
+        hit = tag_memo.get(tag)
+        if hit is not None:
+            return hit
+        original = tag
+        tag = _REPORT_REF_RE.sub(_ref, tag)
+        def style(m):
+            if m.group(1).lower() != "style":
+                return m.group()
+            q = m.group(3)
+            quote = q[0] if q[0] in "\"'" else ""
+            value = q[1:-1] if quote else q
+            return m.group(1) + m.group(2) + quote + redact_css(value, offline=True) + quote
+        if "style" in tag.lower():
+            tag = _ATTR.sub(style, tag)
+        if len(tag_memo) >= 65536:
+            tag_memo.clear()
+        tag_memo[original] = tag
+        return tag
 
-    return html_pass(doc, red, on_script=on_script, on_tag=on_tag, collapse_space=True)
+    return html_pass(doc, red, on_script=on_script, on_tag=on_tag, collapse_space=True,
+                     offline=True, on_token=on_token)
 
 
 @bp.route("/chip-status/report/finalize", methods=["POST"])
@@ -14471,7 +14580,8 @@ def chip_status_report_finalize():
         doc = re.sub(r"<title>.*?</title>", "<title>Chip report</title>", doc, count=1, flags=re.S)
         chip = ""
     red = _report_redactor(store) if redact else None
-    doc = _report_final_pass(doc, sections, red)
+    with _REPORT_HEAVY:
+        doc = _report_final_pass(doc, sections, red)
     if red is not None:
         chip = red.redact_text(chip)
     from quam_state_manager.core import timefmt as _tf
@@ -14498,7 +14608,7 @@ def _report_build_overview(rc: _ReportCtx) -> str:
     return render_template(
         "_report_overview.html",
         chip_name=rc.chip_name, version=getattr(_sm, "__version__", "?"),
-        generated=rc.generated, zone=rc.zone, folder=str(rc.path or ""),
+        generated=rc.generated, zone=rc.zone, folder="[hidden]" if rc.redact else str(rc.path or ""),
         n_qubits=len(qubits), n_pairs=len(pairs),
         n_res=sum(1 for q in qubits if q.get("has_resonator")),
         n_flux=sum(1 for q in qubits if q.get("has_z")),
@@ -14640,7 +14750,7 @@ def _report_tz(zone: str | None):
             return ZoneInfo(zone)
         except Exception:  # noqa: BLE001 -- no tzdata / not a zone: this PC's
             pass
-    return datetime.now().astimezone().tzinfo
+    return None
 
 
 def _report_zone_label(rc: _ReportCtx) -> str:

@@ -229,7 +229,7 @@ class TestHonestFailure:
             monkeypatch.setattr(routes, target, boom)
         st, body = _section(c, key)
         assert st == 200
-        assert f"Could not be built: RuntimeError: planted fault in {target}" in body
+        assert "Could not be built: RuntimeError: the section source failed." in body
         label = cr.SECTION_BY_KEY[key].label
         if key != "overview":
             assert f"<h2>{_html.escape(label)}</h2>" in body
@@ -240,7 +240,7 @@ class TestHonestFailure:
                             lambda rc: (_ for _ in ()).throw(ValueError("no topology")))
         r = c.get("/chip-status/report")
         assert r.status_code == 200
-        assert "Could not be built: ValueError: no topology" in r.get_data(as_text=True)
+        assert "Could not be built: ValueError: the section source failed." in r.get_data(as_text=True)
 
 
 class TestSameCode:
@@ -494,12 +494,12 @@ class TestRedaction:
 class TestOffline:
     def test_scripts_and_network_references_are_stripped(self, chip_client):
         c, _ = chip_client
-        doc = _assemble(c, ["overview"], redact=0).replace("</body>", (
+        doc = _assemble(c, ["overview"], redact=0).replace("</section>", (
             '<script src="http://cdn.example/x.js"></script><script>alert(1)</script>'
             '<script data-rep-keep data-rep-for="raw">var x=1;</script>'
             '<img src="https://img.example/a.png"><img src="data:image/png;base64,AAAA">'
             '<a href="http://example.org/p">ext</a><a href="#rep-sec-overview">in</a>'
-            '<link rel="stylesheet" href="/static/style.css"></body>'))
+            '<link rel="stylesheet" href="/static/style.css"></section>'), 1)
         out = _file(c, doc, ["overview"], redact=False)
         assert "<script" not in out
         assert "cdn.example" not in out and "img.example" not in out
@@ -569,3 +569,170 @@ def test_the_page_serializer_keeps_only_checked_sections(chip_client, tmp_path):
                          encoding="utf-8", timeout=120, cwd=str(_ROOT))
     assert res.returncode == 0, f"selfcheck failed:\n{res.stdout}\n{res.stderr}"
     assert res.stdout.count("ok - ") >= 12, res.stdout
+
+
+@pytest.mark.parametrize("exc", [FileNotFoundError(2, "x", r"\\nas\s\f"),
+                                  ConnectionError("HTTPConnectionPool(host='host.example.internal', port=80)")])
+def test_review_failure_details_hidden(chip_client, monkeypatch, exc):
+    c, _ = chip_client
+    def fail(rc):
+        raise exc
+    monkeypatch.setitem(routes._REPORT_BUILDERS, "pulses", fail)
+    on = _section(c, "pulses")[1]
+    off = _section(c, "pulses", redact=0)[1]
+    assert "the section source failed." in on and "nas" not in on and "host.example.internal" not in on
+    assert type(exc).__name__ in on and "the section source failed." not in off
+
+
+def test_review_body_whitelist_and_download_attribute(chip_client):
+    c, _ = chip_client
+    doc = _assemble(c, ["overview"], redact=0).replace('</body>',
+        '<div class="cm-popup">excluded sentinel</div><a download="private.html">extra</a></body>')
+    doc = doc.replace('</section>', '<a download="private.html" href="#x">link</a></section>', 1)
+    out = _file(c, doc, ["overview"], redact=False)
+    assert "excluded sentinel" not in out and "private.html" not in out
+    assert "download=" not in out and 'class="rep-foot"' in out
+
+
+def test_review_offline_reference_channels(chip_client):
+    c, _ = chip_client
+    refs = ('<img srcset="https://host.example.org/x 1x"><video poster="https://host.example.org/x"></video>'
+            '<object data="https://host.example.org/x"></object><embed src="https://host.example.org/x">'
+            '<p style="background:url(https://host.example.org/x)">x</p>'
+            '<style>.x{background:url(https://host.example.org/x)}.y{background:url(data:image/png;base64,AAAA)}</style>')
+    doc = _assemble(c, ["overview"], redact=0).replace('</section>', refs + '</section>', 1)
+    out = _file(c, doc, ["overview"], redact=False)
+    assert "host.example.org" not in out and "srcset=" not in out
+    assert "data:image/png;base64,AAAA" in out
+
+
+def test_review_overview_source_hidden_with_spaces(chip_client, monkeypatch):
+    c, _ = chip_client
+    monkeypatch.setattr(routes, "_active_path", lambda: Path("D:/folder with spaces"))
+    assert re.search(r'Source.*?<code>\[hidden\]</code>', _section(c, "overview")[1], re.S)
+
+
+def test_review_local_zone_uses_each_instant():
+    assert routes._report_tz(None) is None
+
+
+def test_review_raw_discloses_chip_name(chip_client):
+    c, _ = chip_client
+    assert "Contains the chip name even when Overview is unchecked." in _page(c, ["raw"])
+
+
+def test_review_section_cache_options_and_invalidation(chip_client, monkeypatch):
+    c, _ = chip_client
+    calls = []
+    def build(rc):
+        calls.append((rc.redact, rc.window))
+        return '<h2>cached sentinel</h2>'
+    monkeypatch.setitem(routes._REPORT_BUILDERS, "pulses", build)
+    _section(c, "pulses"); _section(c, "pulses")
+    assert len(calls) == 1
+    _section(c, "pulses", redact=0); _section(c, "pulses", window="7")
+    assert len(calls) == 3
+    with c.application.app_context():
+        store = routes._store()
+        store.mutation_seq += 1
+    _section(c, "pulses")
+    assert len(calls) == 4
+
+
+def test_review_literal_collection_outside_lock(chip_client, monkeypatch):
+    from quam_state_manager.core.report_redact import Redactor
+    c, _ = chip_client
+    original = Redactor.for_documents
+    with c.application.app_context():
+        store = routes._store()
+        routes._REPORT_REDACTORS.clear()
+    def collect(*docs, **kwargs):
+        assert not store._lock._is_owned()
+        return original(*docs, **kwargs)
+    monkeypatch.setattr(Redactor, "for_documents", collect)
+    assert _section(c, "overview")[0] == 200
+
+
+def test_review_heavy_builds_are_bounded(monkeypatch):
+    import threading
+    from concurrent.futures import ThreadPoolExecutor
+    from types import SimpleNamespace
+    mutex = threading.Lock()
+    start = threading.Barrier(4)
+    active = peak = 0
+    def build(rc):
+        nonlocal active, peak
+        with mutex:
+            active += 1
+            peak = max(peak, active)
+        time.sleep(0.05)
+        with mutex:
+            active -= 1
+        return '<h2>bounded build</h2>'
+    monkeypatch.setitem(routes._REPORT_BUILDERS, "pulses", build)
+    monkeypatch.setattr(routes, "_report_content_token", lambda store: store)
+    def request_section(i):
+        rc = SimpleNamespace(store=("concurrent", i), redact=False, red=None,
+                             window="all", zone=None, path="")
+        start.wait()
+        return routes._report_section("pulses", rc)
+    with ThreadPoolExecutor(max_workers=4) as pool:
+        results = list(pool.map(request_section, range(4)))
+    assert all("bounded build" in r for r in results)
+    assert peak == 1
+
+
+def test_review_raw_json_does_not_use_monolithic_dumps(monkeypatch):
+    def fail(*args, **kwargs):
+        raise AssertionError("monolithic JSON encoding holds the GIL")
+    monkeypatch.setattr(cr.json, "dumps", fail)
+    payload = cr.raw_payload({"values": list(range(1000))}, {})
+    assert cr.decode_raw_payload(payload["enc"], payload["text"])["state.json"]["values"] == list(range(1000))
+
+
+def test_review_local_dates_follow_winter_and_summer_rules(chip_client, monkeypatch):
+    from datetime import datetime, timezone
+    from zoneinfo import ZoneInfo
+    c, _ = chip_client
+    zone = ZoneInfo("America/New_York")
+    winter = datetime(2026, 1, 15, 23, 30, tzinfo=zone)
+    summer = datetime(2026, 7, 15, 23, 30, tzinfo=zone)
+    class LocalClock(datetime):
+        @classmethod
+        def fromtimestamp(cls, value, tz=None):
+            assert tz is None
+            return datetime.fromtimestamp(value, timezone.utc).astimezone(zone)
+    monkeypatch.setattr(routes, "datetime", LocalClock)
+    monkeypatch.setattr(routes, "_display_zone", lambda: None)
+    monkeypatch.setattr(routes, "_topology_with_derived_rb", lambda engine: {
+        "nodes": [{"id": "q1", "last_calibrated": winter.timestamp() * 1000},
+                  {"id": "q2", "last_calibrated": summer.timestamp() * 1000}], "edges": []})
+    body = _section(c, "chip_status")[1]
+    assert "2026-01-15" in body and "2026-07-15" in body
+    assert "2026-01-16" not in body and "2026-07-16" not in body
+
+
+def test_review_chart_ticks_use_local_rules(monkeypatch):
+    from datetime import datetime
+    from zoneinfo import ZoneInfo
+    from quam_state_manager.core import report_svg
+    zone = ZoneInfo("America/New_York")
+    class LocalClock(datetime):
+        @classmethod
+        def fromtimestamp(cls, value, tz=None):
+            return datetime.fromtimestamp(value, zone if tz is None else tz)
+    monkeypatch.setattr(report_svg, "datetime", LocalClock)
+    lo = datetime(2026, 1, 15, 23, tzinfo=zone).timestamp()
+    ticks, labels = report_svg.time_ticks(lo, lo + 1800, None)
+    assert ticks == [lo] and labels == ["01-15 23:00"]
+
+
+def test_review_cached_overview_refreshes_generated_time(chip_client, monkeypatch):
+    from quam_state_manager.core import timefmt
+    c, _ = chip_client
+    now = ["2026-01-01 00:00:00 (UTC+0)"]
+    monkeypatch.setattr(timefmt, "local_text", lambda **kwargs: now[0])
+    first = _section(c, "overview")[1]
+    now[0] = "2026-01-01 00:00:01 (UTC+0)"
+    second = _section(c, "overview")[1]
+    assert "00:00:00" in first and "00:00:01" in second

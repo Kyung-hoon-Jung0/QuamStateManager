@@ -188,8 +188,10 @@
         <p class="rep-will" id="rep-will"></p>
         <p class="rep-note" style="margin:0.2rem 0 0">An unchecked section is left out of the
            file entirely. {% if redact %}Hidden: host names, IP addresses, network ports and
-           cluster names, URLs, and absolute folder paths &mdash; replaced by [hidden] everywhere
-           in the file, the raw tree included.{% else %}Nothing is hidden: network addresses and
+           cluster names stored in network fields, recognized dotted hosts, URLs, and absolute folder paths
+           &mdash; replaced by [hidden] throughout the file, the raw tree included.
+           Unknown bare host names and standalone port numbers in prose are not detected.
+           Small four-part numeric versions are preserved outside network fields.{% else %}Nothing is hidden: network addresses and
            folder paths are written as stored.{% endif %} Charts in the file are static pictures.</p>
     </section>
 
@@ -209,88 +211,7 @@
     {# The ONE script a downloaded file keeps, and only when the raw section is
        in it: it turns the embedded JSON into a collapsible tree on demand.
        Self-contained; no network. #}
-    <script data-rep-keep data-rep-for="raw">
-    (function () {
-        'use strict';
-        function decode(el) {
-            var enc = el.getAttribute('data-enc'), txt = el.textContent;
-            if (enc !== 'gzip-base64') return Promise.resolve(JSON.parse(txt));
-            if (typeof DecompressionStream !== 'function') {
-                return Promise.reject(new Error('this browser cannot unpack the compressed tree'));
-            }
-            var bin = atob(txt), bytes = new Uint8Array(bin.length);
-            for (var i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
-            var stream = new Blob([bytes]).stream().pipeThrough(new DecompressionStream('gzip'));
-            return new Response(stream).text().then(JSON.parse);
-        }
-        function scalar(v) {
-            var s = document.createElement('span');
-            if (v === null) { s.className = 'rt-n'; s.textContent = 'null'; }
-            else if (typeof v === 'string') {
-                s.className = v.charAt(0) === '#' ? 'rt-ptr' : 'rt-str';
-                s.textContent = JSON.stringify(v);
-            } else { s.textContent = String(v); }
-            return s;
-        }
-        function small(v) {
-            if (!Array.isArray(v)) return !Object.keys(v).length;   // {} is a leaf
-            for (var i = 0; i < v.length; i++) {
-                var x = v[i];
-                if (x !== null && typeof x === 'object' && !(Array.isArray(x) && small(x))) return false;
-            }
-            return JSON.stringify(v).length <= 120;
-        }
-        function node(key, v) {
-            if (v !== null && typeof v === 'object' && !small(v)) {
-                var d = document.createElement('details');
-                var sm = document.createElement('summary');
-                var n = Array.isArray(v) ? v.length : Object.keys(v).length;
-                var k = document.createElement('span'); k.className = 'rt-key'; k.textContent = key;
-                var c = document.createElement('span'); c.className = 'rt-n';
-                c.textContent = Array.isArray(v) ? ' [' + n + ']' : ' {' + n + '}';
-                sm.appendChild(k); sm.appendChild(c); d.appendChild(sm);
-                d.addEventListener('toggle', function () {
-                    if (!d.open || d._filled) return;
-                    d._filled = true;
-                    var frag = document.createDocumentFragment();
-                    (Array.isArray(v) ? v.map(function (_, i) { return i; }) : Object.keys(v))
-                        .forEach(function (kk) { frag.appendChild(node(String(kk), v[kk])); });
-                    d.appendChild(frag);
-                });
-                return d;
-            }
-            var row = document.createElement('div'); row.className = 'rt-leaf';
-            var kk = document.createElement('span'); kk.className = 'rt-key'; kk.textContent = key + ': ';
-            row.appendChild(kk);
-            row.appendChild(v !== null && typeof v === 'object'
-                ? (function () { var s = document.createElement('span'); s.textContent = JSON.stringify(v); return s; })()
-                : scalar(v));
-            return row;
-        }
-        function mount(root) {
-            root = root || document;
-            var data = root.querySelector('#rep-raw-data');
-            var host = root.querySelector('[data-rep-raw-tree]');
-            if (!data || !host) return Promise.resolve(false);
-            return decode(data).then(function (doc) {
-                host.textContent = '';
-                Object.keys(doc).forEach(function (k) { host.appendChild(node(k, doc[k])); });
-                host.setAttribute('data-rep-raw-ready', '1');
-                return true;
-            }).catch(function (e) {
-                host.textContent = '';
-                var p = document.createElement('p'); p.className = 'rep-fail';
-                p.textContent = 'Could not be built: ' + (e && e.message || e);
-                host.appendChild(p);
-                return false;
-            });
-        }
-        window.ChipReportRaw = { mount: mount };
-        if (document.readyState === 'loading') {
-            document.addEventListener('DOMContentLoaded', function () { mount(document); });
-        } else { mount(document); }
-    })();
-    </script>
+    {% include "_report_raw_renderer.html" %}
     <script>
     (function () {
         'use strict';
@@ -341,6 +262,10 @@
             if (ul) ul.innerHTML = on.map(function (k) { return '<li>' + esc(labelOf(k)) + '</li>'; }).join('');
         }
         function failLine(el, why) {
+            if (REDACT) {
+                var http = /^HTTP \d{3}/.exec(String(why));
+                why = (http ? http[0] : 'Error') + ': the section source failed.';
+            }
             el.innerHTML = '<h2>' + esc(labelOf(el.getAttribute('data-rep-sec'))) + '</h2>'
                 + '<p class="rep-fail" role="alert">Could not be built: ' + esc(why) + '</p>';
             // settled (the download takes the line as it is); checking the
@@ -502,8 +427,8 @@
                 if (checked().indexOf('chip_status') < 0) return res();
                 var t0 = Date.now();
                 (function tick() {
-                    if (document.querySelector('#component-map svg')
-                        || Date.now() - t0 > (timeoutMs || 6000)) return res();
+                    if (document.querySelector('#component-map svg')) return res(true);
+                    if (Date.now() - t0 > (timeoutMs || 6000)) return res(false);
                     setTimeout(tick, 120);
                 })();
             });
@@ -572,8 +497,19 @@
             return Promise.all(keep.map(load)).then(function () {
                 var w = keep.indexOf('wiring') >= 0 ? sec('wiring') : null;
                 return Promise.all([whenDrawn(), w ? drawWiring(w) : null]);
-            }).then(function () {
+            }).then(function (drawn) {
                 var doc = document.documentElement.cloneNode(true);
+                var body = doc.querySelector('body');
+                var selected = Array.prototype.slice.call(body.querySelectorAll('section[data-rep-sec]'))
+                    .filter(function (el) { return keep.indexOf(el.getAttribute('data-rep-sec')) >= 0; });
+                var footer = body.querySelector('footer.rep-foot');
+                body.replaceChildren();
+                selected.forEach(function (el) { body.appendChild(el); });
+                if (footer) body.appendChild(footer);
+                if (drawn[0] === false) {
+                    var map = body.querySelector('#component-map');
+                    if (map) map.innerHTML = '<p class="rep-fail" role="alert">Could not be built: the chip layout was not drawn within 6 s</p>';
+                }
                 doc.querySelectorAll('script').forEach(function (el) {
                     var forSec = el.getAttribute('data-rep-for');
                     if (!el.hasAttribute('data-rep-keep') || (forSec && keep.indexOf(forSec) < 0)) el.remove();
@@ -634,7 +570,6 @@
                 var a = document.createElement('a');
                 a.href = URL.createObjectURL(blob);
                 a.download = lastName || 'chip_report.html';
-                document.body.appendChild(a);
                 a.click();
                 setTimeout(function () { URL.revokeObjectURL(a.href); a.remove(); }, 2000);
                 if (status) status.textContent = 'Saved ' + (lastName || 'the file') + ' — '

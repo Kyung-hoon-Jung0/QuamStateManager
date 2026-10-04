@@ -70,7 +70,6 @@ _TIME_STEPS = (3600, 3 * 3600, 6 * 3600, 12 * 3600, 86400, 2 * 86400,
 def time_ticks(lo: float, hi: float, tz: tzinfo | None, target: int = 6
                ) -> tuple[list[float], list[str]]:
     """Tick positions (epoch seconds) and labels in *tz* for a time axis."""
-    tz = tz or timezone.utc
     span = max(hi - lo, 1.0)
     step = next((s for s in _TIME_STEPS if span / s <= target), _TIME_STEPS[-1])
     t0 = datetime.fromtimestamp(lo, tz)

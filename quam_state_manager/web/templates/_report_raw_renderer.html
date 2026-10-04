@@ -1,0 +1,82 @@
+    <script data-rep-keep data-rep-for="raw">
+    (function () {
+        'use strict';
+        function decode(el) {
+            var enc = el.getAttribute('data-enc'), txt = el.textContent;
+            if (enc !== 'gzip-base64') return Promise.resolve(JSON.parse(txt));
+            if (typeof DecompressionStream !== 'function') {
+                return Promise.reject(new Error('this browser cannot unpack the compressed tree'));
+            }
+            var bin = atob(txt), bytes = new Uint8Array(bin.length);
+            for (var i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
+            var stream = new Blob([bytes]).stream().pipeThrough(new DecompressionStream('gzip'));
+            return new Response(stream).text().then(JSON.parse);
+        }
+        function scalar(v) {
+            var s = document.createElement('span');
+            if (v === null) { s.className = 'rt-n'; s.textContent = 'null'; }
+            else if (typeof v === 'string') {
+                s.className = v.charAt(0) === '#' ? 'rt-ptr' : 'rt-str';
+                s.textContent = JSON.stringify(v);
+            } else { s.textContent = String(v); }
+            return s;
+        }
+        function small(v) {
+            if (!Array.isArray(v)) return !Object.keys(v).length;   // {} is a leaf
+            for (var i = 0; i < v.length; i++) {
+                var x = v[i];
+                if (x !== null && typeof x === 'object' && !(Array.isArray(x) && small(x))) return false;
+            }
+            return JSON.stringify(v).length <= 120;
+        }
+        function node(key, v) {
+            if (v !== null && typeof v === 'object' && !small(v)) {
+                var d = document.createElement('details');
+                var sm = document.createElement('summary');
+                var n = Array.isArray(v) ? v.length : Object.keys(v).length;
+                var k = document.createElement('span'); k.className = 'rt-key'; k.textContent = key;
+                var c = document.createElement('span'); c.className = 'rt-n';
+                c.textContent = Array.isArray(v) ? ' [' + n + ']' : ' {' + n + '}';
+                sm.appendChild(k); sm.appendChild(c); d.appendChild(sm);
+                d.addEventListener('toggle', function () {
+                    if (!d.open || d._filled) return;
+                    d._filled = true;
+                    var frag = document.createDocumentFragment();
+                    (Array.isArray(v) ? v.map(function (_, i) { return i; }) : Object.keys(v))
+                        .forEach(function (kk) { frag.appendChild(node(String(kk), v[kk])); });
+                    d.appendChild(frag);
+                });
+                return d;
+            }
+            var row = document.createElement('div'); row.className = 'rt-leaf';
+            var kk = document.createElement('span'); kk.className = 'rt-key'; kk.textContent = key + ': ';
+            row.appendChild(kk);
+            row.appendChild(v !== null && typeof v === 'object'
+                ? (function () { var s = document.createElement('span'); s.textContent = JSON.stringify(v); return s; })()
+                : scalar(v));
+            return row;
+        }
+        function mount(root) {
+            root = root || document;
+            var data = root.querySelector('#rep-raw-data');
+            var host = root.querySelector('[data-rep-raw-tree]');
+            if (!data || !host) return Promise.resolve(false);
+            return decode(data).then(function (doc) {
+                host.textContent = '';
+                Object.keys(doc).forEach(function (k) { host.appendChild(node(k, doc[k])); });
+                host.setAttribute('data-rep-raw-ready', '1');
+                return true;
+            }).catch(function (e) {
+                host.textContent = '';
+                var p = document.createElement('p'); p.className = 'rep-fail';
+                p.textContent = ['Could not', 'be built:'].join(' ') + ' ' + (e && e.message || e);
+                host.appendChild(p);
+                return false;
+            });
+        }
+        window.ChipReportRaw = { mount: mount };
+        if (document.readyState === 'loading') {
+            document.addEventListener('DOMContentLoaded', function () { mount(document); });
+        } else { mount(document); }
+    })();
+    </script>

@@ -40,7 +40,7 @@ const dom = new JSDOM(fx.page, {
             url = String(url);
             const m = /\/chip-status\/report\/section\/(\w+)/.exec(url);
             if (m) {
-                if (m[1] === failKey) return Promise.resolve(resp(500, 'planted server error'));
+                if (m[1] === failKey) return Promise.resolve(resp(500, 'private failure details'));
                 return Promise.resolve(resp(200, fx.sections[m[1]] || ''));
             }
             if (/\.css(\?|$)/.test(url)) return Promise.resolve(resp(200, 'body{--css-marker:1}'));
@@ -71,9 +71,18 @@ function toggle(key, on) {
     const svg = d.createElementNS('http://www.w3.org/2000/svg', 'svg');
     svg.setAttribute('data-drawn-map', '1');
     map.appendChild(svg);
+    const popup = d.createElement('div');
+    popup.className = 'cm-popup';
+    popup.textContent = 'excluded sentinel';
+    d.body.appendChild(popup);
+    const download = d.createElement('a');
+    download.download = 'private.html';
+    d.body.appendChild(download);
 
     const html = await w.ChipReport.buildStandalone();
     const p = posts[posts.length - 1];
+    ok(!p.html.includes('excluded sentinel') && !p.html.includes('private.html'),
+       'body children are limited to checked sections and the footer');
     ok(html === p.html, 'the build resolves to what the server sent back');
     ok(JSON.stringify(p.sections) === JSON.stringify(['overview', 'chip_status', 'pulses', 'zline', 'raw']),
        'the request declares exactly the checked sections: ' + JSON.stringify(p.sections));
@@ -122,6 +131,19 @@ function toggle(key, on) {
     const p4 = posts[posts.length - 1];
     ok(p4.html.indexOf('Could not be built: HTTP 500') >= 0,
        'the failure line, not a blank, is what the file carries');
+    ok(!p4.html.includes('private failure details'), 'redacted fetch failures hide source details');
+    let downloadAttached = null;
+    w.URL.createObjectURL = function () { return 'blob:local-report'; };
+    w.URL.revokeObjectURL = function () {};
+    w.HTMLAnchorElement.prototype.click = function () { downloadAttached = this.isConnected; };
+    d.getElementById('rep-download').click();
+    for (let i = 0; i < 200 && d.getElementById('rep-download').disabled; i++) await sleep(10);
+    ok(downloadAttached === false, 'the download link stays detached from the page');
+    map.innerHTML = '<p>Loading chip layout...</p>';
+    await w.ChipReport.buildStandalone();
+    ok(posts[posts.length - 1].html.includes('Could not be built: the chip layout was not drawn within 6 s')
+       && !posts[posts.length - 1].html.includes('Loading chip layout...'),
+       'a map that never draws carries an explicit failure');
 
     console.log(fails ? fails + ' FAILED' : 'all passed');
     process.exit(fails ? 1 : 0);

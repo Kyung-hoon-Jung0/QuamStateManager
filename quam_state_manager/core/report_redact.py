@@ -1,9 +1,8 @@
 """Hide network addresses and local folder paths in a shared chip report
 (docs/277 section 3).
 
-The report leaves the lab. With the switch on, everything that addresses a
-machine or names a folder on this PC is replaced by ``[hidden]``, by RULE --
-never by a list of one chip's keys:
+The report leaves the lab. With the switch on, recognized addresses, paths
+and values learned from network fields are replaced by ``[hidden]``:
 
 * **S (structural)** on the state / wiring documents: every scalar inside a
   ``network`` block; a string under a key whose words are network vocabulary
@@ -15,8 +14,8 @@ never by a list of one chip's keys:
   document repeats it (a cluster name inside a chip key or a message).
 
 ``redact_html`` applies V + L to the text and attribute values of a whole
-HTML document; ``<style>`` bodies, JSON scripts and ``xmlns`` attributes are
-left alone (the raw-tree JSON is redacted structurally before it is built).
+HTML document, including comments and CSS content. JSON scripts and ``xmlns``
+attributes are left alone (raw JSON is redacted before it is built).
 """
 
 from __future__ import annotations
@@ -32,7 +31,7 @@ HIDDEN = "[hidden]"
 #: ``_ - .`` and camelCase; one of these words is enough.
 NET_WORDS = frozenset({
     "host", "hostname", "ip", "ipaddr", "ipv4", "ipv6", "addr", "address",
-    "url", "uri", "endpoint", "server", "proxy", "gateway",
+    "url", "uri", "endpoint", "server", "proxy", "gateway", "cluster",
 })
 
 #: A key named after a port is network only beside a host-like key (S2).
@@ -51,19 +50,69 @@ _H4 = r"[0-9a-fA-F]{1,4}"
 _IPV6 = (rf"(?<![\w:])(?:(?:{_H4}:){{7}}{_H4}"
          rf"|(?=[0-9a-fA-F:]*::)(?:{_H4})?(?:::?{_H4}){{2,7}}::?|"
          rf"(?=[0-9a-fA-F:]*::)(?:{_H4})?(?:::?{_H4}){{2,7}})(?![\w:])")
-_HOSTPORT = r"(?<![\w.\-/])(?:localhost|(?=[\w.\-]*[a-zA-Z])[a-zA-Z0-9\-]+(?:\.[a-zA-Z0-9\-]+)+):\d{1,5}\b"
+_HOSTPORT = r"(?<![\w.\-/])(?=[\w.\-]*[a-zA-Z])[a-zA-Z0-9\-]+(?:\.[a-zA-Z0-9\-]+)*:\d{1,5}\b"
 _WIN = r"(?<![A-Za-z0-9])[A-Za-z]:[\\/](?:[^\"'<>|*?\r\n\\/]*[\\/])*[^\s\"'<>|*?\\/]*"
-_UNC = r"(?<![\w\\])\\\\[^\s\\/\"'<>]+[\\/](?:[^\"'<>|*?\r\n\\/]*[\\/])*[^\s\"'<>|*?\\/]*"
+_UNC = r"(?<!\w)[\\/]{2,}[^\s\\/\"'<>]+[\\/]+(?:[^\"'<>|*?\r\n\\/]*[\\/]+)*[^\s\"'<>|*?\\/]*"
 _POSIX = r"(?<![\w.~:/\\#\-])/(?:[^\s/\"'<>|]+/)+[^\s/\"'<>|]*"
 _HOME = r"(?<![\w])~[\\/][^\s\"'<>]*"
+_SCP = r"\b[\w.\-]+@[\w.\-]+:[^\s\"'<>]+"
+_VISA = r"\bTCPIP\d*::[^\s\"'<>]+"
+_MOUNT = r"\b[\w.\-]+:/(?:[^\s/\"'<>]+/)*[^\s\"'<>]+"
+_FQDN = (r"(?<![\w.])(?:(?:[a-zA-Z0-9-]+\.)+"
+         r"(?:com|org|net|edu|gov|io|co|uk|de|fr|kr|local|internal|example|test|invalid)"
+         r"|(?:[a-zA-Z0-9-]+\.){2,}(?-i:[a-z]{2,}))"
+         r"(?![\w.])(?:/[^\s\"'<>]*)?")
 
 #: Layer V, in order (a URL is consumed before its ``s://`` could read as a
 #: drive letter, an address before its digits could read as anything else).
 VALUE_PATTERNS: tuple[re.Pattern, ...] = tuple(
-    re.compile(p) for p in (_URL, _IPV4, _IPV6, _HOSTPORT, _WIN, _UNC, _POSIX, _HOME))
+    re.compile(p, re.I) for p in (_URL, _SCP, _VISA, _MOUNT, _IPV4, _IPV6,
+                                 _HOSTPORT, _WIN, _UNC, _POSIX, _HOME, _FQDN))
 #: The same layer as ONE alternation (leftmost match wins; at one position the
 #: order above decides), so a text costs one scan, not eight.
-_V_ALL = re.compile("|".join(f"(?:{p.pattern})" for p in VALUE_PATTERNS))
+_V_ALL = re.compile("|".join(f"(?:{p.pattern})" for p in VALUE_PATTERNS), re.I)
+
+
+def _replace_value_match(m: re.Match) -> str:
+    # Small four-part numeric versions are ambiguous with IPv4. Network
+    # fields still hide them structurally; ordinary version text survives.
+    value = m.group()
+    if value.startswith(("quam.", "quam_config.")):
+        return value
+    if re.fullmatch(r"[0-9]\.[0-9]\.[0-9]\.[0-9]", value):
+        return value
+    return HIDDEN
+
+
+def _value_text(s: str) -> str:
+    return _V_ALL.sub(_replace_value_match, s)
+
+
+def _literal_pattern(strings: Iterable[str]) -> str:
+    """Share literal prefixes so case-insensitive matching stays bounded."""
+    trie: dict = {}
+    for value in strings:
+        node = trie
+        for char in value.lower():
+            node = node.setdefault(char, {})
+        node[None] = None
+
+    def render(node):
+        branches = []
+        for char, child in node.items():
+            if char is None:
+                continue
+            prefix = char
+            while len(child) == 1 and None not in child:
+                char, child = next(iter(child.items()))
+                prefix += char
+            branches.append(re.escape(prefix) + render(child))
+        if None in node:
+            branches.append("")
+        if len(branches) == 1:
+            return branches[0]
+        return "(?:" + "|".join(branches) + ")"
+    return render(trie)
 
 
 def key_words(key: Any) -> list[str]:
@@ -110,20 +159,30 @@ class Redactor:
 
     # ---------------------------------------------------------- construction
     @classmethod
-    def for_documents(cls, *docs: Any) -> "Redactor":
+    def for_documents(cls, *docs: Any, literals: Iterable[str] = ()) -> "Redactor":
         """A redactor whose literal set (L) holds every value S blanks in
         *docs*. Walks without building a copy."""
-        r = cls()
+        r = cls(literals)
         r._seen: set = set()
+        r._seen_keys: set = set()
         for d in docs:
             r._collect(d, False)
         del r._seen
+        del r._seen_keys
+        r.literals = frozenset(r.literals)
+        r._memo.clear()
+        r._tag_memo.clear()
+        r._apply_literals("")
         return r
 
     def _collect(self, obj: Any, in_net: bool) -> None:
         """The literal-gathering half of :meth:`redact_tree`, copy-free."""
         if isinstance(obj, dict):
             for k, v in obj.items():
+                if isinstance(k, str) and k not in self._seen_keys:
+                    self._seen_keys.add(k)
+                    if _value_text(k) != k:
+                        self._remember(k)
                 net = in_net or str(k).lower() == "network"
                 if isinstance(v, (dict, list)):
                     self._collect(v, net)
@@ -132,8 +191,8 @@ class Redactor:
                         self._remember(v)
                     elif v not in self._seen:
                         self._seen.add(v)
-                        if _V_ALL.search(v):
-                            self.redact_value(v)
+                        if _value_text(v) != v:
+                            self._remember(v)
         elif isinstance(obj, list):
             for v in obj:
                 if isinstance(v, (dict, list)):
@@ -143,8 +202,10 @@ class Redactor:
                         self._remember(v)
                     elif v not in self._seen:
                         self._seen.add(v)
-                        if _V_ALL.search(v):
-                            self.redact_value(v)
+                        if _value_text(v) != v:
+                            self._remember(v)
+        elif isinstance(obj, str) and (in_net or _value_text(obj) != obj):
+            self._remember(obj)
 
     @staticmethod
     def _literal_ok(s: Any) -> bool:
@@ -155,6 +216,8 @@ class Redactor:
                 and not re.fullmatch(r"[\d.\s+\-eE]+", t))
 
     def _remember(self, s: Any) -> None:
+        if isinstance(self.literals, frozenset):
+            return
         if self._literal_ok(s) and s.strip() not in self.literals:
             self.literals.add(s.strip())
             self._lit_re = None
@@ -167,12 +230,10 @@ class Redactor:
         a path is blanked whole; otherwise each matched span is replaced."""
         if not isinstance(s, str) or not s:
             return s
-        if _V_ALL.match(s):
-            self._remember(s)
+        match = _V_ALL.match(s)
+        if match and _replace_value_match(match) == HIDDEN:
             return HIDDEN
         out = self.redact_text(s)
-        if out != s:
-            self._remember(s)
         return out
 
     def redact_text(self, s: str) -> str:
@@ -182,7 +243,7 @@ class Redactor:
         hit = self._memo.get(s)
         if hit is not None:
             return hit
-        out = self._apply_literals(_V_ALL.sub(HIDDEN, s))
+        out = _value_text(self._apply_literals(s))
         if len(self._memo) > self.MEMO_MAX:
             self._memo.clear()
         self._memo[s] = out
@@ -196,7 +257,7 @@ class Redactor:
                            for x in (lit, _html.escape(lit, quote=True),
                                      _html.escape(lit, quote=False))},
                           key=len, reverse=True)
-            self._lit_re = re.compile("|".join(re.escape(a) for a in alts))
+            self._lit_re = re.compile(_literal_pattern(alts), re.I)
         return self._lit_re.sub(HIDDEN, s)
 
     # ---------------------------------------------------------------- layer S
@@ -208,6 +269,13 @@ class Redactor:
             out: dict = {}
             for k, v in obj.items():
                 net = _in_network or str(k).lower() == "network"
+                original_key = k
+                k = self.redact_text(k) if isinstance(k, str) else k
+                hidden_key = k
+                suffix = len(out)
+                while k in out:
+                    k = f"{hidden_key} {suffix}"
+                    suffix += 1
                 if isinstance(v, (dict, list)):
                     out[k] = self.redact_tree(v, _in_network=net)
                 elif v is None:
@@ -215,10 +283,10 @@ class Redactor:
                 elif net:
                     self._remember(v)
                     out[k] = HIDDEN
-                elif isinstance(v, str) and is_network_key(k):
+                elif isinstance(v, str) and is_network_key(original_key):
                     self._remember(v)
                     out[k] = HIDDEN
-                elif (host_like and _is_port_key(k) and not isinstance(v, bool)
+                elif (host_like and _is_port_key(original_key) and not isinstance(v, bool)
                       and isinstance(v, (str, int, float))):
                     out[k] = HIDDEN
                 elif isinstance(v, str):
@@ -254,7 +322,10 @@ class Redactor:
                 if name == "xmlns" or name.startswith("xmlns:"):
                     return m.group(0)
                 q = m.group(3)
-                return f"{m.group(1)}{m.group(2)}{q[0]}{self.redact_text(q[1:-1])}{q[0]}"
+                quote = q[0] if q[0] in "\"'" else ""
+                value = q[1:-1] if quote else q
+                value = redact_css(value, self) if name == "style" else self.redact_text(value)
+                return f"{m.group(1)}{m.group(2)}{quote}{value}{quote}"
             out = _ATTR.sub(one, tag)
         if len(self._tag_memo) > self.MEMO_MAX:
             self._tag_memo.clear()
@@ -268,11 +339,46 @@ HTML_TOKENS = re.compile(
     r"(<!--.*?-->|<script\b[^>]*>.*?</script\s*>|<style\b[^>]*>.*?</style\s*>"
     r"|<pre\b[^>]*>.*?</pre\s*>|<textarea\b[^>]*>.*?</textarea\s*>|<[^>]+>)",
     re.S | re.I)
-_ATTR = re.compile(r"""([^\s=/>"']+)(\s*=\s*)("[^"]*"|'[^']*')""")
+_ATTR = re.compile(r"""([^\s=/>"']+)(\s*=\s*)("[^"]*"|'[^']*'|[^\s>]+)""")
+_CSS_CONTENT = re.compile(r'''url\(\s*(?:"(?:\\.|[^"\\])*"|'(?:\\.|[^'\\])*'|[^)]*)\s*\)|"(?:\\.|[^"\\])*"|'(?:\\.|[^'\\])*'|/\*.*?\*/''', re.S | re.I)
+
+
+def redact_css(css: str, red=None, *, offline: bool = False) -> str:
+    """Change CSS content tokens only; preserve declarations and data URIs."""
+    def replace(m):
+        token = m.group()
+        if token.lower().startswith("url("):
+            argument = token[4:-1]
+            stripped = argument.strip()
+            quote = stripped[0] if stripped[:1] in ("'", '"') else ""
+            value = stripped[1:-1] if quote else stripped
+            if value.lower().startswith("data:") or value.startswith("#"):
+                return token
+            if offline:
+                return 'url("")'
+            return token.replace(value, red.redact_text(value), 1) if red else token
+        if not red:
+            return token
+        if token.startswith("/*"):
+            return "/*" + red.redact_text(token[2:-2]) + "*/"
+        return token[0] + red.redact_text(token[1:-1]) + token[-1]
+    return _CSS_CONTENT.sub(replace, css)
+
+
+def _html_tokens(doc: str):
+    """Yield text gaps and matches without a whole-document split."""
+    pos = 0
+    for match in HTML_TOKENS.finditer(doc):
+        if match.start() > pos:
+            yield doc[pos:match.start()]
+        yield match.group()
+        pos = match.end()
+    if pos < len(doc):
+        yield doc[pos:]
 
 
 def html_pass(doc: str, red: "Redactor | None", *, on_script=None, on_tag=None,
-              collapse_space: bool = False) -> str:
+              collapse_space: bool = False, offline: bool = False, on_token=None) -> str:
     """ONE walk over an HTML document's tokens.
 
     * text runs and ``<pre>`` / ``<textarea>`` bodies get layers V + L (when
@@ -284,10 +390,14 @@ def html_pass(doc: str, red: "Redactor | None", *, on_script=None, on_tag=None,
       STRUCTURALLY before it is serialized; code is not content) -- only its
       opening tag is redacted; *on_script(tok) -> str | None* may drop it
       (``None``) or replace it;
-    * ``<style>`` and comments pass through."""
+    * comments and CSS quoted strings / URL arguments get V + L; CSS
+      structure and embedded data URIs survive; *offline* drops remote URLs;
+    * *on_token* can discard body children outside the section whitelist."""
     out: list[str] = []
     app = out.append
-    for tok in HTML_TOKENS.split(doc):
+    for tok in _html_tokens(doc):
+        if on_token is not None and not on_token(tok):
+            continue
         if not tok:
             continue
         c0 = tok[0]
@@ -304,6 +414,9 @@ def html_pass(doc: str, red: "Redactor | None", *, on_script=None, on_tag=None,
             else:
                 app(red.redact_text(tok) if red is not None else tok)
             continue
+        if tok.startswith("<!--"):
+            app("<!--" + red.redact_text(tok[4:-3]) + "-->" if red else tok)
+            continue
         if tok[1:2] == "/" or tok.startswith("<!"):
             app(tok)                         # an end tag / comment / doctype
             continue
@@ -318,7 +431,12 @@ def html_pass(doc: str, red: "Redactor | None", *, on_script=None, on_tag=None,
                 tok = red.redact_tag(tok[:end]) + tok[end:]
             app(tok)
         elif low.startswith("<style"):
-            app(tok)
+            end = tok.index(">") + 1
+            close = tok.rindex("</")
+            head = on_tag(tok[:end]) if on_tag else tok[:end]
+            if red:
+                head = red.redact_tag(head)
+            app(head + redact_css(tok[end:close], red, offline=offline) + tok[close:])
         elif low.startswith(("<pre", "<textarea")):
             end = tok.index(">") + 1
             close = tok.rindex("</")

@@ -57,7 +57,8 @@ SECTIONS: tuple[Section, ...] = (
             note="available once the ledger lands"),
     Section("raw", "Raw state tree",
             "state.json and wiring.json as a collapsible tree, pointer strings as "
-            "stored. The whole chip; off by default.",
+            "stored. The whole chip; off by default. "
+            "Contains the chip name even when Overview is unchecked.",
             default=False),
 )
 
@@ -131,7 +132,7 @@ def raw_payload(state: Any, wiring: Any, redactor: Redactor | None = None,
     doc = {"state.json": state, "wiring.json": wiring}
     if redactor is not None:
         doc = redactor.redact_tree(doc)
-    text = json.dumps(doc, separators=(",", ":"), ensure_ascii=False)
+    text = "".join(json.JSONEncoder(separators=(",", ":"), ensure_ascii=False).iterencode(doc))
     raw = text.encode("utf-8")
     if len(raw) <= plain_max:
         return {"enc": "json", "text": _script_safe(text), "json_bytes": len(raw)}
@@ -183,9 +184,19 @@ def dedupe_sparks(svgs: Iterable[str | None], prefix: str = "rsp") -> tuple[str,
     return defs, refs
 
 
-def failure_html(exc: BaseException | str) -> str:
+def failure_html(exc: BaseException | str, *, redact: bool = False) -> str:
     """The one honest line a section shows when its source raised."""
     import html as _html
-    why = exc if isinstance(exc, str) else f"{type(exc).__name__}: {exc}"
+    if redact:
+        kind = type(exc).__name__ if isinstance(exc, BaseException) else "Error"
+        why = f"{kind}: the section source failed."
+    elif isinstance(exc, OSError) and exc.strerror:
+        why = f"{type(exc).__name__}: {exc.strerror}"
+        if exc.filename:
+            why += f": {exc.filename}"
+        if exc.filename2:
+            why += f": {exc.filename2}"
+    else:
+        why = exc if isinstance(exc, str) else f"{type(exc).__name__}: {exc}"
     return (f'<p class="rep-fail" role="alert">Could not be built: '
             f'{_html.escape(str(why))}</p>')
