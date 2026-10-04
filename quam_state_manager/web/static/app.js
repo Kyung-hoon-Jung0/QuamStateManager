@@ -23842,17 +23842,38 @@ window.FieldHistory = (function () {
         if (window.PlotHost) { try { window.PlotHost.purgeWithin(p); } catch (e) {} }
         p.innerHTML = '<p class="fh-empty">Loading history…</p>';
         position(anchor);
+        load(anchor, path, ++loadSeq);
+    }
+
+    // docs/282: while the chip's change ledger is being built the server says
+    // so (a [data-vh-retry] line, never a partial history) and this asks again
+    // by itself -- only while the panel is open on the SAME path, and only for
+    // the newest open (a stale retry never overwrites another field's panel).
+    var loadSeq = 0;
+    function load(anchor, path, seq) {
+        var p = ensurePanel();
         fetch("/field/history?path=" + encodeURIComponent(path))
             .then(function (r) { return r.text(); })
             .then(function (html) {
+                if (seq !== loadSeq || openPath !== path) return;
                 p.innerHTML = html;
                 // same reason as the Column History card: no swap event here
                 if (window.applyLocalTimes) window.applyLocalTimes(p);
                 if (window.htmx) window.htmx.process(p);
                 renderChart(p);
                 position(anchor);
+                var wait = p.querySelector("[data-vh-retry]");
+                if (wait) {
+                    var ms = parseInt(wait.getAttribute("data-vh-retry"), 10) || 2000;
+                    setTimeout(function () {
+                        if (seq !== loadSeq || openPath !== path) return;
+                        if (p.style.display === "none") return;
+                        load(anchor, path, seq);
+                    }, ms);
+                }
             })
             .catch(function () {
+                if (seq !== loadSeq) return;
                 p.innerHTML = '<p class="fh-empty">Could not load history.</p>';
             });
     }
@@ -24062,7 +24083,7 @@ window.FieldHistory = (function () {
        (the "clock escaped the cell again" report). A per-cell button would
        widen every column of a dense grid, so the single shared button stays.
        mousedown + preventDefault keeps the cell focused. */
-    var CELLBTN_LABEL = "Value history — past values of this field from Param History snapshots";
+    var CELLBTN_LABEL = "Value history — when this field changed and what set it";
     // A plain `title` attribute waits on the BROWSER's own hover delay
     // (500ms+, not something CSS/JS can shorten) — user feedback: hovering
     // the clock should show its label right away. A tiny custom tooltip,
@@ -24959,13 +24980,21 @@ window.ColumnHistory = (function () {
         body.set("label", _label);
         body.set("unit", btn.getAttribute("data-unit") || "");
         body.set("paths", JSON.stringify(_paths));
+        _load(o, card, body.toString(), ++_loadSeq);
+    }
+
+    // docs/282: a [data-vh-retry] answer means the change ledger is still
+    // being built -- ask again by itself while THIS open is still showing.
+    var _loadSeq = 0;
+    function _load(o, card, payload, seq) {
         fetch("/bulk/column-history", {
             method: "POST",
             headers: { "Content-Type": "application/x-www-form-urlencoded" },
-            body: body.toString(),
+            body: payload,
         })
             .then(function (r) { return r.text(); })
             .then(function (html) {
+                if (seq !== _loadSeq) return;
                 card.innerHTML = html;
                 // docs/201 made the `when` chips `.ts-local` (hidden until
                 // localized). A raw fetch+innerHTML fires no htmx swap event,
@@ -24974,8 +25003,17 @@ window.ColumnHistory = (function () {
                 if (window.applyLocalTimes) window.applyLocalTimes(card);
                 if (window.htmx) window.htmx.process(card);
                 _applyView(card);
+                var wait = card.querySelector("[data-vh-retry]");
+                if (wait) {
+                    var ms = parseInt(wait.getAttribute("data-vh-retry"), 10) || 2000;
+                    setTimeout(function () {
+                        if (seq !== _loadSeq || o.style.display === "none") return;
+                        _load(o, card, payload, seq);
+                    }, ms);
+                }
             })
             .catch(function () {
+                if (seq !== _loadSeq) return;
                 card.innerHTML =
                     '<p class="ch-empty">Could not load column history.</p>';
             });

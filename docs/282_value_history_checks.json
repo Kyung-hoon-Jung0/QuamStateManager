@@ -1,0 +1,190 @@
+{
+ "note": "docs/282 S7 checks: counts only (no paths, values, names or times). Produced by tools/check_hub_drawer.py.",
+ "golden": {
+  "archive_A": {
+   "runs_copied": 300,
+   "ledger_events": 300,
+   "param_history_snapshots": 203,
+   "paths": 200,
+   "path_classes": {
+    "alias": 40,
+    "pointer_leaf": 20,
+    "long_array_element": 20,
+    "leaf": 120
+   },
+   "modes": {
+    "ledger": 200
+   },
+   "old_points": {
+    "drawer": {
+     "exact": 202,
+     "shown_by_new_drawer": 289,
+     "earlier_change_in_ledger": 87,
+     "earlier:oldest_old_point_is_its_window_start": 87
+    },
+    "column": {
+     "earlier_change_in_ledger": 193,
+     "earlier:oldest_old_point_is_its_window_start": 193,
+     "shown_by_new_drawer": 229,
+     "exact": 36
+    }
+   },
+   "extra_ledger_points": {
+    "drawer": {
+     "return_to_an_earlier_state": 4
+    },
+    "column": {
+     "older_than_old_window": 64
+    }
+   },
+   "missing": {
+    "drawer": 0,
+    "column": 0
+   }
+  },
+  "archive_B": {
+   "runs_copied": 300,
+   "ledger_events": 291,
+   "param_history_snapshots": 175,
+   "paths": 200,
+   "path_classes": {
+    "alias": 40,
+    "pointer_leaf": 20,
+    "leaf": 140
+   },
+   "modes": {
+    "ledger": 200
+   },
+   "old_points": {
+    "drawer": {
+     "earlier_change_in_ledger": 86,
+     "earlier:oldest_old_point_is_its_window_start": 85,
+     "shown_by_new_drawer": 220,
+     "exact": 134,
+     "pointer_string_in_via": 1,
+     "earlier:the_changing_run_has_no_param_history_snapshot": 1,
+     "absent_both": 1
+    },
+    "column": {
+     "earlier_change_in_ledger": 193,
+     "earlier:oldest_old_point_is_its_window_start": 193,
+     "shown_by_new_drawer": 202,
+     "exact": 9,
+     "pointer_string_in_via": 1,
+     "absent_both": 1
+    }
+   },
+   "extra_ledger_points": {
+    "drawer": {
+     "older_than_old_window": 1
+    },
+    "column": {
+     "older_than_old_window": 19
+    }
+   },
+   "missing": {
+    "drawer": 0,
+    "column": 0
+   }
+  }
+ },
+ "alias_agreement": {
+  "archive_A:alias": {
+   "before_points": {
+    "drawer": 1,
+    "column": 1,
+    "trends": 0
+   },
+   "after_points": {
+    "drawer": 1,
+    "column": 1,
+    "trends": 1
+   },
+   "before_agree": false,
+   "after_agree": true,
+   "via_hops": 1
+  },
+  "archive_A:alias_most_changed": {
+   "before_points": {
+    "drawer": 17,
+    "column": 3,
+    "trends": 0
+   },
+   "after_points": {
+    "drawer": 17,
+    "column": 17,
+    "trends": 17
+   },
+   "before_agree": false,
+   "after_agree": true,
+   "via_hops": 1
+  },
+  "archive_B:alias_most_changed": {
+   "before_points": {
+    "drawer": 1,
+    "column": 1,
+    "trends": 0
+   },
+   "after_points": {
+    "drawer": 1,
+    "column": 1,
+    "trends": 1
+   },
+   "before_agree": false,
+   "after_agree": true,
+   "via_hops": 1
+  }
+ },
+ "performance_ms": {
+  "big_chip_20_runs": {
+   "before": {
+    "first_ms": 1800.86,
+    "cold_p50": 1945.2,
+    "cold_p95": 4200.18,
+    "warm_p50": 10.22,
+    "warm_p95": 13.58,
+    "n_warm": 150,
+    "answers": {
+     "old_path": 200
+    }
+   },
+   "after": {
+    "first_ms": 2572.63,
+    "cold_p50": 1.74,
+    "cold_p95": 3.11,
+    "warm_p50": 1.92,
+    "warm_p95": 3.28,
+    "n_warm": 150,
+    "answers": {
+     "ledger_rows": 200
+    }
+   },
+   "paths": 50
+  },
+  "synthetic_10k_runs": {
+   "before": {
+    "first_ms": 3570.21,
+    "cold_p50": 31.71,
+    "cold_p95": 198.43,
+    "warm_p50": 15.63,
+    "warm_p95": 172.92,
+    "n_warm": 150,
+    "answers": {
+     "old_path": 200
+    }
+   },
+   "after": {
+    "first_ms": 317.97,
+    "cold_p50": 3.27,
+    "cold_p95": 11.46,
+    "warm_p50": 2.7,
+    "warm_p95": 10.06,
+    "n_warm": 150,
+    "answers": {
+     "ledger_rows": 200
+    }
+   },
+   "paths": 50
+  }
+ }
+}

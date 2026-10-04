@@ -27,6 +27,9 @@
   <button type="button" class="fh-close" onclick="FieldHistory.close()"
           title="Close (Esc)">&times;</button>
 </div>
+{# docs/282: this is the OLD snapshot path, shown only while the chip's change
+   ledger holds no runs -- said on the panel, never passed off as the ledger. #}
+{% if hist.fallback_note %}<p class="vh-note vh-fallback">{{ hist.fallback_note }}</p>{% endif %}
 {% if current_display and current_display != '—' %}
 <div class="fh-currentline">now: <code>{{ current_display }}</code></div>
 {% endif %}

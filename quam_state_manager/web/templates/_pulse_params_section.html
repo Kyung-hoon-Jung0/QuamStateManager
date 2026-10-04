@@ -87,7 +87,7 @@
                    where the promise was not kept (measured: 545 on the grid, 0 here). #}
                 <button type="button" class="field-hist-btn" tabindex="-1"
                         data-dot-path="{{ p.dot_path }}"
-                        title="Value history — past values of this field from Param History snapshots"
+                        title="Value history — when this field changed and what set it"
                         onclick="PulsesPage.openFieldHistory(this)">&#128344;</button>
                 {% if p.prev_link and not p.is_pointer %}
                 {# This field was a pointer earlier this session; unlinking

@@ -127,6 +127,11 @@ def segments(path: str) -> list[str]:
     """Decode the escaped holder path produced by S2 (not a pointer path)."""
     if path == "":
         return []
+    if "\\" not in path:
+        # docs/282: no escape anywhere, so every dot is a separator. The
+        # character loop below cost ~2.8 s of a 3.1 s index build on a
+        # 155k-path ledger; this is the same answer for the common spelling.
+        return path.split(".")
     parts, buf, escaped = [], "", False
     for ch in path:
         if escaped:

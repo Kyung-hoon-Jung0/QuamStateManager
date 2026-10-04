@@ -1,0 +1,22 @@
+{# docs/282: the change ledger is still being built (or its RAM index is being
+   prepared). The surface says so and asks again by itself (FieldHistory /
+   ColumnHistory read data-vh-retry) -- it never shows a partial history as if
+   it were complete. #}
+{% if surface == 'drawer' %}
+<div class="fh-head">
+  <span class="fh-title" title="{{ dot_path }}">
+    &#128344; {{ dot_path.split('.')[-1] }}
+    <span class="fh-path">{{ dot_path }}</span>
+  </span>
+  <button type="button" class="fh-close" onclick="FieldHistory.close()"
+          title="Close (Esc)">&times;</button>
+</div>
+{% else %}
+<div class="ch-head">
+  <span class="ch-title">&#128344; Column history — {{ label }}</span>
+  <button type="button" class="ch-close" onclick="ColumnHistory.close()"
+          title="Close (Esc)">&times;</button>
+</div>
+{% endif %}
+<p class="vh-wait" data-vh-retry="{{ 800 if ans.mode == 'preparing' else 2000 }}"
+   data-vh-mode="{{ ans.mode }}">{{ message }}</p>

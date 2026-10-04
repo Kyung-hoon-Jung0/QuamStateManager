@@ -209,7 +209,11 @@ def build_index(conn, zone: str) -> LedgerIndex:
         index.paths[path] = pid
         index.search_paths.setdefault(path.lower(), []).append(pid)
         index.path_postings[pid] = array("I")
+        # docs/282: only a segment starting with q or c can name an entity
+        # (_ENTITY / "cz_"); skipping the rest is the same set, ~0.8 s less
+        # on a 155k-path ledger
         path_tokens[pid] = (family, {entity for part in segments(path)
+                                    if part[:1] in "qQcC"
                                     for entity in _entities(part)})
     for pid, eid in conn.execute("SELECT pid,eid FROM changes ORDER BY pid,eid"):
         index.path_postings[pid].append(eid)

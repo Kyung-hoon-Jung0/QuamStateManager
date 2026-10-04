@@ -11591,6 +11591,354 @@ CH_SERIES_RUNS = 60
 CH_SERIES_EXAMINE = 60
 
 
+# ----------------------------------------------------------------------
+# docs/282 -- the per-value history on the chip's change ledger
+# ----------------------------------------------------------------------
+# ONE function, :func:`_value_history`, answers the value drawer, Column
+# History, the agent API's field-history and (for a typed path that crosses a
+# pointer) Chip Status Trends. It picks the mode, resolves every path through
+# the one resolver (value_history.target) and reads every row from one ledger
+# read snapshot (value_history.read). The surfaces only draw the answer.
+
+#: change points the drawer reads (and shows); the total is always stated
+_VH_DRAWER_LIMIT = 40
+
+_VH_FALLBACK_NOTES = {
+    "no_ledger": ("Older snapshot history: this chip has no change ledger yet, so "
+                  "changes between snapshots can be missing."),
+    "no_runs": ("Older snapshot history: this chip's change ledger holds no runs (no data "
+                "folder is linked to the chip), so changes between snapshots can be missing."),
+    "no_chip_dir": ("Older snapshot history: the chip's history folder could not be "
+                    "resolved, so changes between snapshots can be missing."),
+    "unreadable": ("Older snapshot history: the change ledger could not be read, so "
+                   "changes between snapshots can be missing."),
+}
+
+
+def _value_history(ctx: dict, path_map: dict[str, str], *, limit: int | None = None,
+                   runs: int = 0) -> dict:
+    """docs/282: the history of every path in *path_map* (``{key: dot_path}``).
+
+    ``mode``:
+    * ``building`` -- the ledger is catching up (``hub_sync`` says so, or the
+      read raised ``Building``): the surface says so and asks again;
+    * ``preparing`` -- the RAM index is being built by another request;
+    * ``ledger`` -- the answer: ``rows`` / ``runs`` / ``ledger`` from
+      :func:`value_history.read`, ``notes`` per key;
+    * ``fallback`` -- the chip has no ledger of its runs yet: the caller
+      draws the OLD path under ``fallback_note``.
+    """
+    from quam_state_manager.core import hub_sync, value_history as vh
+    store = ctx["store"]
+    with store._lock:
+        merged = store.merged
+    targets = {k: vh.target(merged, dp) for k, dp in path_map.items()}
+    out: dict[str, Any] = {"mode": "fallback", "targets": targets, "status": None,
+                           "fallback_note": None, "notes": {}, "rows": {}, "runs": [],
+                           "ledger": {}}
+
+    def fallback(reason: str) -> dict:
+        out.update(mode="fallback", reason=reason, fallback_note=_VH_FALLBACK_NOTES[reason])
+        return out
+
+    chip_dir = ctx.get("hub_chip_dir") or _hub_chip_dir(ctx["path"])
+    if chip_dir is None:
+        return fallback("no_chip_dir")
+    chip_dir = Path(chip_dir)
+    st = hub_sync.status(chip_dir)
+    out["status"] = st
+    if st.get("state") == "building":
+        out.update(mode="building")
+        return out
+    if not (chip_dir / "ledger.sqlite").exists():
+        return fallback("no_ledger")
+    try:
+        res = vh.read(chip_dir, targets, limit=limit, runs=runs)
+    except hub_sync.Building as exc:
+        out.update(mode="building", status=getattr(exc, "status", None) or st)
+        return out
+    except _ramcache.Warming:
+        out.update(mode="preparing")
+        return out
+    except Exception:  # noqa: BLE001 -- an unreadable ledger never 500s a drawer
+        logger.warning("value history: the ledger of %s could not be read", chip_dir,
+                       exc_info=True)
+        return fallback("unreadable")
+    if not res["ledger"].get("has_runs") and not st.get("roots"):
+        return fallback("no_runs")
+    out.update(mode="ledger", rows=res["rows"], runs=res["runs"], ledger=res["ledger"])
+    for key, tgt in targets.items():
+        pts = res["rows"][key]["points"]
+        newest: Any = vh.ABSENT
+        if pts:
+            newest = None if pts[-1]["removed"] else pts[-1]["value"]
+        current = vh.comparable(tgt) if tgt.get("has_current") else None
+        out["notes"][key] = vh.notes(st, res["ledger"], current=current, newest=newest)
+    return out
+
+
+def _vh_actor(actor: Any) -> str:
+    a = str(actor or "")
+    if a.startswith("human:"):
+        return a[len("human:"):] or "a person"
+    if a in ("human", ""):
+        return "a person"
+    if a.startswith("by_"):
+        return f"{a[3:]} (agent)"
+    if a == "unattributed":
+        return "an unrecorded SM door"
+    return a
+
+
+_VH_FLAG_TEXT = {
+    "source_gone": "run folder deleted",
+    "rewritten": "run folder rewritten after the run",
+    "overlaps_sm_write": "this run's save went over an SM write",
+    "reverts_to_earlier": "returned to an earlier saved state",
+    "node_unreadable": "node.json unreadable",
+    "time_assumed": "time zone assumed",
+}
+
+_VH_SM_VERB = {"sm_apply": "applied", "restore": "restored", "undo": "undo",
+               "redo": "redo", "autofit": "Auto Calibrate", "agent": "agent"}
+
+
+def _vh_value_strings(value: Any, removed: bool) -> tuple[str, str, bool]:
+    """(display, fill, usable) -- a long-array marker or a removal has no fill."""
+    if removed:
+        return "removed", "", False
+    if isinstance(value, dict) and set(value) == {"_array", "_hash"}:
+        return f"array of {value['_array']} (#{str(value['_hash'])[:7]})", "", False
+    return _fh_display_string(value), _fh_fill_string(value), value is not None
+
+
+def _vh_present(p: dict, uid_roots, uid_memo: dict) -> dict:
+    """One ledger point as every surface shows it (docs/282 §1.4): what the
+    ledger can prove about who set it, and nothing more."""
+    prov = p["provenance"]
+    rid = p.get("run_id")
+    exp = p.get("experiment") or ""
+    run = f"#{rid}" if rid is not None else "a run"
+    uid = None
+    link_title = ""
+    if prov == "run_proven":
+        label = f"{run} {exp}".strip()
+        title = (f"Run {run} ({exp}) wrote this value: its node.json records the patch "
+                 f"that set it.")
+        sub = "its own patch set it"
+        trigger = "experiment"
+        if "source_gone" not in p["flags"]:
+            key = p.get("folder") or ""
+            if key not in uid_memo:
+                uid_memo[key] = _uid_for_run_ref(p.get("folder"), rid, uid_roots)
+            uid = uid_memo[key]
+            link_title = f"Open run {run}'s data in the inspector pane"
+    elif prov == "run_saved":
+        label = f"saved in {run} {exp}".strip()
+        sub = "writer not proven"
+        title = (f"Run {run}'s saved state was the first to carry this value. Its node.json "
+                 f"records no patch for it, so the run that set it is not proven; a change "
+                 f"made outside SM before the run lands here too.")
+        trigger = "auto"
+    elif prov == "first_record":
+        label = f"first recorded in {run}"
+        sub = "ledger start; writer unknown"
+        title = (f"The change ledger begins at run {run}; the value was already set then. "
+                 f"Who set it is not recorded.")
+        trigger = "auto"
+    elif prov == "run_uncertain_chip":
+        label = f"{run} (chip uncertain)"
+        sub = "not named as writer"
+        title = (f"Run {run}'s chip identity disagrees with this chip's, so it is not "
+                 f"named as the writer of this value.")
+        trigger = "auto"
+    elif prov == "sm":
+        kind = p.get("kind") or ""
+        who = _vh_actor(p.get("actor"))
+        verb = _VH_SM_VERB.get(kind, kind)
+        if kind == "autofit":
+            label = "Auto Calibrate"
+        elif kind == "agent":
+            actor = str(p.get("actor") or "")
+            # an agent's own write (by_<agent>), or a person approving an
+            # agent's plan (docs/271: the person is the actor, the plan rides along)
+            label = (f"agent {actor[3:]}" if actor.startswith("by_")
+                     else f"approved by {who} (agent plan)")
+        elif kind in ("undo", "redo"):
+            label = f"{verb} by {who}"
+        else:
+            label = f"{verb} by {who}"
+        if p.get("run_uid"):
+            label += " (a run's state)"
+            uid = p["run_uid"]
+            link_title = "Open the run whose saved state this apply wrote"
+        sub = f"SM write ({p.get('src') or kind})"
+        title = f"Written by SM ({kind}, {p.get('src') or 'door unknown'}) for {who}"
+        if p.get("plan_id"):
+            title += f", plan {p['plan_id']}"
+        title += "."
+        trigger = "manual" if kind in ("agent", "autofit") else "save"
+    else:
+        label = p.get("kind") or "unknown"
+        sub = "writer unknown"
+        title = "Recorded in the change ledger; who set it is not known."
+        trigger = "auto"
+    if p.get("undone"):
+        label += " (undone)" if p["undone"] == "undone" else " (partly undone)"
+        title += (" A later undo took this write back." if p["undone"] == "undone"
+                  else " A later undo took part of this write back.")
+    flags = [_VH_FLAG_TEXT[f] for f in p["flags"] if f in _VH_FLAG_TEXT]
+    display, fill, usable = _vh_value_strings(p["value"], p["removed"])
+    return {**p, "label": label, "sub": sub, "title": title, "trigger": trigger, "uid": uid,
+            "link_title": link_title, "flag_text": flags, "display": display,
+            "fill": fill, "usable": usable}
+
+
+def _vh_wait_message(ans: dict) -> str:
+    if ans["mode"] == "preparing":
+        return "Preparing the change history…"
+    st = ans.get("status") or {}
+    done, total = st.get("done"), st.get("total")
+    if total:
+        return (f"The change history is being built ({done or 0} of {total} runs). "
+                "It shows here when it is complete.")
+    return "The change history is being built. It shows here when it is complete."
+
+
+def _vh_numeric(v: Any) -> float | None:
+    if isinstance(v, bool) or not isinstance(v, (int, float)):
+        return None
+    f = float(v)
+    return f if f == f and f not in (float("inf"), float("-inf")) else None
+
+
+def _vh_points_view(ans: dict, key: str, uid_roots, uid_memo: dict) -> list[dict]:
+    """Presented points, NEWEST first, each with the value it replaced."""
+    from quam_state_manager.core import hub_rules
+    tgt = ans["targets"][key]
+    pts = [_vh_present(p, uid_roots, uid_memo) for p in ans["rows"][key]["points"]]
+    pts.reverse()
+    current = tgt.get("current")
+    marked = False
+    for i, pt in enumerate(pts):
+        older = pts[i + 1] if i + 1 < len(pts) else None
+        pt["prev_value"] = (None if older is None or older["removed"] else older["value"])
+        pt["has_prev"] = older is not None and not older["removed"] and older["value"] is not None
+        pt["is_current"] = False
+        if (not marked and tgt.get("has_current") and not pt["removed"]
+                and pt["value"] is not None and current is not None
+                and not isinstance(current, (dict, list))
+                and hub_rules.same(pt["value"], current)):
+            pt["is_current"] = True
+        marked = True          # only the newest point can be the current value
+    return pts
+
+
+def _vh_via_view(ans: dict, key: str, uid_roots, uid_memo: dict) -> list[dict]:
+    out = []
+    for hop in ans["rows"][key]["retargets"]:
+        rows = [_vh_present(p, uid_roots, uid_memo) for p in hop["rows"]]
+        changed = [r for r in rows if r["provenance"] != "first_record"]
+        out.append({"from_path": hop["from_path"], "to_path": hop["to_path"],
+                    "pointer": hop["pointer"], "alias": hop["from_path"].split(".")[-1],
+                    "holder": hop["to_path"].split(".")[-1],
+                    "unrecorded": bool(hop.get("unrecorded")),
+                    "retargets": list(reversed(changed))})
+    return out
+
+
+def _vh_drawer_view(ans: dict, key: str, dot_path: str) -> dict:
+    uid_roots, uid_memo = _uid_roots(), {}
+    tgt = ans["targets"][key]
+    row = ans["rows"][key]
+    pts = _vh_points_view(ans, key, uid_roots, uid_memo)
+    chart = []
+    for pt in reversed(pts):
+        f = _vh_numeric(None if pt["removed"] else pt["value"])
+        if f is None or not pt.get("t"):
+            continue
+        chart.append({"t": pt["t"], "v": f, "trigger": pt["trigger"]})
+    current = tgt.get("current")
+    cur_display = _vh_value_strings(current, False)[0] if tgt.get("has_current") else "—"
+    return {"dot_path": dot_path, "tgt": tgt, "points": pts, "total": row["total"],
+            "via": _vh_via_view(ans, key, uid_roots, uid_memo),
+            "via_since": row.get("via_since"), "notes": ans["notes"].get(key) or [],
+            "ledger": ans["ledger"], "chart": chart if len(chart) >= 2 else [],
+            "current_display": cur_display,
+            "current_value": current if not isinstance(current, (dict, list)) else None}
+
+
+def _vh_agent_view(ans: dict, key: str) -> dict:
+    """The agent's copy of the drawer: the same points, the same words."""
+    uid_roots, uid_memo = _uid_roots(), {}
+    tgt = ans["targets"][key]
+    pts = _vh_points_view(ans, key, uid_roots, uid_memo)
+    keep = ("t", "value", "old", "op", "removed", "kind", "provenance", "proven", "label",
+            "sub", "title", "run_id", "experiment", "actor", "src", "plan_id", "run_uid", "flags",
+            "undone", "before_via", "is_current", "uid")
+    return {"path": tgt["path"], "holder": tgt["holder_path"], "current": tgt.get("current"),
+            "via": [{k: h[k] for k in ("from_path", "pointer", "to_path")} for h in tgt["via"]],
+            "retargets": [{"from_path": v["from_path"], "pointer": v["pointer"],
+                           "unrecorded": v["unrecorded"],
+                           "changes": [{k: r.get(k) for k in keep} for r in v["retargets"]]}
+                          for v in _vh_via_view(ans, key, uid_roots, uid_memo)],
+            "points": [{k: p.get(k) for k in keep} for p in pts],
+            "total": ans["rows"][key]["total"], "notes": ans["notes"].get(key) or [],
+            "ledger": ans["ledger"]}
+
+
+def _vh_column_view(ans: dict, path_map: dict[str, str], *, label: str, unit: str,
+                    grid: str, col_key: str) -> dict:
+    """Column History on the ledger: the same points per row (Changes) and the
+    newest run events with each row's value at that run (By run)."""
+    uid_roots, uid_memo = _uid_roots(), {}
+    hm = _history()
+    runs = []
+    for r in ans["runs"]:
+        key = r.get("folder") or ""
+        if key not in uid_memo:
+            uid_memo[key] = _uid_for_run_ref(r.get("folder"), r.get("run_id"), uid_roots)
+        runs.append({**r, "uid": None if "source_gone" in r["flags"] else uid_memo[key]})
+    rows_out = []
+    notes_seen: dict[str, dict] = {}
+    for row_id in sorted(path_map, key=natural_key):
+        tgt = ans["targets"][row_id]
+        pts = _vh_points_view(ans, row_id, uid_roots, uid_memo)
+        current = tgt.get("current")
+        cur_num = _vh_numeric(current)
+        spark = [{"value": _vh_numeric(p["value"]), "trigger": p["trigger"]}
+                 for p in reversed(pts) if not p["removed"] and _vh_numeric(p["value"]) is not None]
+        svg = ""
+        if len(spark) >= 2:
+            try:
+                svg = hm.render_sparkline_svg_inner(spark, current=cur_num)
+            except Exception:  # noqa: BLE001
+                svg = ""
+        cells = []
+        for i, r in enumerate(runs):
+            v = r["values"].get(row_id)
+            older = runs[i + 1]["values"].get(row_id) if i + 1 < len(runs) else None
+            d, f, _u = _vh_value_strings(v, False)
+            cells.append({"display": d, "fill": f, "has": v is not None and bool(f),
+                          "changed": i + 1 < len(runs) and v != older})
+        for n in ans["notes"].get(row_id) or []:
+            if n["code"] != "current_differs":
+                notes_seen.setdefault(n["code"], n)
+        cd, cf, _u = _vh_value_strings(current, False) if tgt.get("has_current") else ("—", "", False)
+        rows_out.append({
+            "id": row_id, "dot_path": path_map[row_id], "svg": svg,
+            "current": cd, "current_fill": cf,
+            "editable": tgt.get("resolvable", False), "cells": cells,
+            "chips": pts[:CH_MAX_CHIPS], "more": max(0, len(pts) - CH_MAX_CHIPS),
+            "total": ans["rows"][row_id]["total"],
+            "differs": any(n["code"] == "current_differs" for n in ans["notes"].get(row_id) or []),
+            "via": _vh_via_view(ans, row_id, uid_roots, uid_memo),
+        })
+    return {"label": label, "unit": unit, "grid": grid, "col_key": col_key, "rows": rows_out,
+            "runs": runs, "chip_cap": CH_MAX_CHIPS, "notes": list(notes_seen.values()),
+            "ledger": ans["ledger"]}
+
+
 @bp.route("/bulk/column-history", methods=["POST"])
 def bulk_column_history():
     """Column History panel (docs/20 v2 + the r9 Changes amendment).
@@ -11628,6 +11976,29 @@ def bulk_column_history():
         return render_template("_status.html", message="no usable paths",
                                level="error"), 400
 
+    # docs/282: the same ledger read as the value drawer, every row from one
+    # read snapshot; the old two-tier path is the labelled fallback only.
+    ans = _value_history(ctx, path_map, runs=CH_BYRUN_COLS)
+    if ans["mode"] in ("building", "preparing"):
+        return render_template("_value_history_wait.html", ans=ans, surface="column",
+                               message=_vh_wait_message(ans),
+                               label=label)
+    if ans["mode"] == "ledger":
+        return render_template("_column_history_ledger.html",
+                               **_vh_column_view(ans, path_map, label=label, unit=unit,
+                                                 grid=grid, col_key=col_key))
+    view = _legacy_column_history(ctx, path_map)
+    return render_template(
+        "_column_history.html", label=label, unit=unit, grid=grid,
+        col_key=col_key, fallback_note=ans.get("fallback_note"), **view)
+
+
+def _legacy_column_history(ctx: dict, path_map: dict[str, str]) -> dict:
+    """Column History before the ledger (docs/20 v2 + r9): Param History's
+    curated tier or a 40-snapshot scan merged with a 60-run workspace scan.
+    docs/282 keeps it ONLY as the labelled fallback for a chip whose ledger
+    holds no runs yet; S10 deletes it. Returns the template's row/run args."""
+    store = ctx["store"]
     from quam_state_manager.core.pointer_path import resolve_field_target
 
     # QA F5: the cells hand over their ALIAS path (x180 amp is
@@ -11791,10 +12162,8 @@ def bulk_column_history():
             "chips": chips,
         })
 
-    return render_template(
-        "_column_history.html", label=label, unit=unit, grid=grid,
-        col_key=col_key, rows=rows_out, runs=runs, examined=examined,
-        matched=len(runs_all), chip_cap=CH_MAX_CHIPS)
+    return {"rows": rows_out, "runs": runs, "examined": examined,
+            "matched": len(runs_all), "chip_cap": CH_MAX_CHIPS}
 
 
 @bp.route("/field/history", methods=["GET"])
@@ -11816,6 +12185,35 @@ def field_history():
     if not dot_path:
         return render_template("_status.html", message="path required",
                                level="error"), 400
+    # docs/282: the chip's change ledger answers, through the one function
+    # Column History and the agent API read too. The old snapshot path below
+    # answers only when the chip has no ledger of its runs yet, labelled.
+    ans = _value_history(ctx, {"value": dot_path}, limit=_VH_DRAWER_LIMIT)
+    if ans["mode"] in ("building", "preparing"):
+        return render_template("_value_history_wait.html", ans=ans, surface="drawer",
+                               message=_vh_wait_message(ans),
+                               dot_path=dot_path)
+    if ans["mode"] == "ledger":
+        return render_template("_field_history_ledger.html",
+                               **_vh_drawer_view(ans, "value", dot_path))
+    hist, current, chart = _legacy_field_history(ctx, dot_path)
+    hist["fallback_note"] = ans.get("fallback_note")
+    return render_template("_field_history.html", hist=hist,
+                           current_display=_fh_display_string(current),
+                           # docs/186: the Revert button's delta is CURRENT ->
+                           # this value -- what the press would do -- not the
+                           # delta the point introduced when it happened.
+                           current_value=current,
+                           chart=chart)
+
+
+def _legacy_field_history(ctx: dict, dot_path: str) -> tuple[Any, Any, list]:
+    """The value drawer before the ledger (docs/20 v2 .. docs/250): Param
+    History snapshot tiers merged with a 60-run scan of the workspace runs,
+    run names checked by :class:`_WriterCheck`. docs/282 keeps it ONLY as the
+    labelled fallback for a chip whose ledger holds no runs yet; S10 deletes
+    it. Returns ``(hist, current, chart)``."""
+    store = ctx["store"]
     # Runs tier (docs/20 v2): the workspace runs' own quam_state copies keep
     # the timeline fresh independent of Param History ingestion — today's
     # runs appear with a guaranteed Data link.
@@ -11846,6 +12244,8 @@ def field_history():
         runs_series = []
     hist = _history().field_history(ctx["path"], hist_path,
                                     extra_series=runs_series)
+    if not isinstance(hist, dict):
+        return hist, current, []
     hist["dot_path"] = dot_path
     hist["history_path"] = hist_path
 
@@ -11900,13 +12300,7 @@ def field_history():
         if _t is None:
             continue
         chart.append({"t": iso_z(_t), "v": f, "trigger": pt.get("trigger") or "auto"})
-    return render_template("_field_history.html", hist=hist,
-                           current_display=_fh_display_string(current),
-                           # docs/186: the Revert button's delta is CURRENT ->
-                           # this value -- what the press would do -- not the
-                           # delta the point introduced when it happened.
-                           current_value=current,
-                           chart=chart)
+    return hist, current, chart
 
 
 def _editability_reason(store: QuamStore, target_path: str) -> str | None:
@@ -15990,6 +16384,41 @@ def _trend_is_num(v) -> bool:
     return isinstance(v, (int, float))      # bool included, as before
 
 
+def _trend_alias_series(dot_paths: list[str]) -> dict[str, list[tuple]]:
+    """docs/282: Trends rows for typed entity paths that cross a pointer, from
+    :func:`_value_history` (the value drawer's own read) in the leaf tier's row
+    shape ``(ts, value, trigger, run_id, experiment, folder[, held_from])``.
+    Empty unless the chip's ledger answers (building / fallback: nothing, as
+    before)."""
+    from quam_state_manager.core import run_time, value_history as vh
+    ctx = _active_ctx()
+    store = ctx.get("store") if ctx else None
+    if store is None:
+        return {}
+    with store._lock:
+        merged = store.merged
+    alias = [dp for dp in dot_paths if "*" not in dp and vh.target(merged, dp)["via"]]
+    if not alias:
+        return {}
+    ans = _value_history(ctx, {dp: dp for dp in alias})
+    if ans["mode"] != "ledger":
+        return {}
+    last_us = ans["ledger"].get("last_us")
+    out: dict[str, list[tuple]] = {}
+    for dp in alias:
+        rows = [(run_time.snapshot_key(p["t_us"], p.get("run_id") or 0),
+                 None if p["removed"] else p["value"], "ledger", p.get("run_id"),
+                 p.get("experiment"), p.get("folder"))
+                for p in ans["rows"][dp]["points"]]
+        if rows and last_us is not None:
+            newest = run_time.snapshot_key(last_us, 0)
+            if newest > rows[-1][0] and _trend_is_num(rows[-1][1]):
+                rows.append((newest, rows[-1][1], None, None, None, None, rows[-1][0]))
+        if rows:
+            out[dp] = rows
+    return out
+
+
 def _trend_series_leaf(hm, path: Path, dot_path: str, qubits: list[str],
                        pairs: list[str] | None = None, tbl=None) -> list[dict]:
     """Any numeric leaf, via the docs/83 change-point index.
@@ -16032,6 +16461,17 @@ def _trend_series_leaf(hm, path: Path, dot_path: str, qubits: list[str],
         got = (tbl.leaf_series_many(list(by_e), hold_to_newest=True)
                if tbl is not None else
                hm.leaf_field_series_many(path, list(by_e), hold_to_newest=True))
+        # docs/282: a typed path that crosses a pointer (an alias such as
+        # ``resonator.operations.readout.amplitude`` with ``readout ==
+        # "#./readout_square"``) names nothing the leaf index holds -- it keys
+        # holders -- so this chart drew nothing while the value drawer and
+        # Column History showed a history. The value history answers it here,
+        # the SAME read those two make, so the three agree. (The rest of Trends
+        # moves onto the ledger in S8.)
+        _missing = [dp for dp in by_e if not got.get(dp)]
+        if _missing:
+            got = dict(got)
+            got.update(_trend_alias_series(_missing))
         for dp, e in by_e.items():
             rows = got.get(dp) or []
             # A non-numeric row (the leaf disappeared, or held text) is a GAP,

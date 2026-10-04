@@ -51,7 +51,7 @@
                                    placeholder="{% if p.value is none %}not set{% endif %}"
                                    title="{% if is_modified %}Modified — was: {{ modified_map[p.dot_path] }}{% set _d = modified_map[p.dot_path] | value_delta(p.value) %}{% if _d %} (difference {{ _d.text }}{% if _d.pct_text %}, {{ _d.pct_text }}{% endif %}){% endif %}{% else %}Press Enter to stage this edit (then Save to working state / Apply to live). Current: {{ p.value }}{% if _stored %} (raw {{ _stored }}){% endif %}{% endif %}">
                             <button type="button" class="field-hist-btn" tabindex="-1"
-                                    title="Value history — past values of this field from Param History snapshots"
+                                    title="Value history — when this field changed and what set it"
                                     onclick="FieldHistory.openInspector(this)">&#128344;</button>
                             <button type="button" class="key-help-btn" tabindex="-1"
                                     title="Config Manual — this key (F1)"

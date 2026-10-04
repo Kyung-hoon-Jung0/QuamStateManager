@@ -1,0 +1,616 @@
+{
+ "mutations": 38,
+ "red": 38,
+ "pins_targeted": [
+  "TestAliases::test_a_pointer_retargeted_mid_history_is_named_and_older_rows_are_marked",
+  "TestAliases::test_a_pointer_to_a_whole_object_shows_the_pointers_own_history",
+  "TestAliases::test_an_alias_pointer_edited_but_not_applied_marks_every_row",
+  "TestAliases::test_an_alias_reads_its_holder_and_says_via",
+  "TestDrawerOnTheLedger::test_an_unproven_run_is_never_named_as_the_writer",
+  "TestDrawerOnTheLedger::test_strings_and_booleans_have_a_history_too",
+  "TestDrawerOnTheLedger::test_the_drawer_reads_the_ledger_and_names_a_run_only_on_its_own_patch",
+  "TestElementsAndTrends::test_an_element_of_a_long_array_changes_only_when_it_does",
+  "TestElementsAndTrends::test_chip_trends_charts_an_alias_path_with_the_drawers_points",
+  "TestHonesty::test_a_building_ledger_says_so_and_shows_no_rows",
+  "TestHonesty::test_a_chip_whose_ledger_holds_no_runs_gets_the_old_path_labelled",
+  "TestHonesty::test_a_current_value_not_yet_recorded_is_said",
+  "TestHonesty::test_a_deleted_run_folder_keeps_its_row_but_loses_its_link",
+  "TestHonesty::test_a_ledger_caught_building_mid_read_says_so",
+  "TestHonesty::test_a_run_still_in_flight_is_said_to_be_missing",
+  "TestHonesty::test_an_index_being_prepared_says_so",
+  "TestHonesty::test_an_unreadable_data_folder_is_named",
+  "TestOneImplementation::test_all_three_surfaces_answer_through_one_function",
+  "TestOneImplementation::test_column_history_shows_the_drawers_points",
+  "TestOneImplementation::test_the_agent_reads_the_same_points_in_the_same_words",
+  "TestSmWrites::test_an_agent_write_and_an_approved_plan_say_who",
+  "TestSmWrites::test_an_apply_names_its_actor_and_an_undo_marks_it",
+  "test_holder_path_decoding_is_the_same_with_and_without_escapes",
+  "test_the_retry_selfcheck",
+  "tests/test_hub_query.py::test_macro_classifier_and_actor_class_and_family_are_distinct",
+  "tests/test_hub_query.py::test_pair_members_and_macro_targets_and_changed_segments"
+ ],
+ "results": [
+  {
+   "name": "proven_ignored",
+   "file": "quam_state_manager/core/value_history.py",
+   "pins": [
+    "TestDrawerOnTheLedger::test_the_drawer_reads_the_ledger_and_names_a_run_only_on_its_own_patch"
+   ],
+   "red": true,
+   "rc": 1,
+   "seconds": 5.3,
+   "evidence": [
+    "E       AssertionError: [{'cls': 'vh-run_saved fh-current', 'prov': 'run_saved', 'value': '3e-05', 'label': 'saved in #2 scan', ...}, {'cls': 'vh-first_record', 'prov': 'first_record', 'value': '1e-05', 'label': 'first recorded in #1', ...}",
+    "E       assert [('3e-05', 'r...irst_record')] == [('3e-05', 'r...irst_record')]",
+    "E         ",
+    "E         At index 0 diff: ('3e-05', 'run_saved') != ('3e-05', 'run_proven')"
+   ]
+  },
+  {
+   "name": "unproven_named_writer",
+   "file": "quam_state_manager/core/value_history.py",
+   "pins": [
+    "TestDrawerOnTheLedger::test_an_unproven_run_is_never_named_as_the_writer"
+   ],
+   "red": true,
+   "rc": 1,
+   "seconds": 5.4,
+   "evidence": [
+    "E       AssertionError: assert ('5,100,000,000.0' == '5,100,000,000.0'",
+    "E         ",
+    "E           5,100,000,000.0 and 'run_proven' == 'run_saved'",
+    "E         "
+   ]
+  },
+  {
+   "name": "genesis_named_writer",
+   "file": "quam_state_manager/core/value_history.py",
+   "pins": [
+    "TestDrawerOnTheLedger::test_the_drawer_reads_the_ledger_and_names_a_run_only_on_its_own_patch"
+   ],
+   "red": true,
+   "rc": 1,
+   "seconds": 8.6,
+   "evidence": [
+    "E       AssertionError: [{'cls': 'vh-run_proven fh-current', 'prov': 'run_proven', 'value': '3e-05', 'label': '#2 scan', ...}, {'cls': 'vh-run_saved', 'prov': 'run_saved', 'value': '1e-05', 'label': 'saved in #1 scan', ...}]",
+    "E       assert [('3e-05', 'r... 'run_saved')] == [('3e-05', 'r...irst_record')]",
+    "E         ",
+    "E         At index 1 diff: ('1e-05', 'run_saved') != ('1e-05', 'first_record')"
+   ]
+  },
+  {
+   "name": "data_link_for_any_run",
+   "file": "quam_state_manager/web/templates/_field_history_ledger.html",
+   "pins": [
+    "TestDrawerOnTheLedger::test_an_unproven_run_is_never_named_as_the_writer"
+   ],
+   "red": true,
+   "rc": 1,
+   "seconds": 5.7,
+   "evidence": [
+    "E       AssertionError: no Data link: run #3 is not shown to have written it",
+    "E       assert not True",
+    "FAILED tests/test_hub_drawer.py::TestDrawerOnTheLedger::test_an_unproven_run_is_never_named_as_the_writer"
+   ]
+  },
+  {
+   "name": "numeric_only_like_the_leaf_index",
+   "file": "quam_state_manager/web/routes.py",
+   "pins": [
+    "TestDrawerOnTheLedger::test_strings_and_booleans_have_a_history_too"
+   ],
+   "red": true,
+   "rc": 1,
+   "seconds": 5.5,
+   "evidence": [
+    "E       IndexError: list index out of range",
+    "FAILED tests/test_hub_drawer.py::TestDrawerOnTheLedger::test_strings_and_booleans_have_a_history_too"
+   ]
+  },
+  {
+   "name": "no_via",
+   "file": "quam_state_manager/core/value_history.py",
+   "pins": [
+    "TestAliases::test_an_alias_reads_its_holder_and_says_via"
+   ],
+   "red": true,
+   "rc": 1,
+   "seconds": 6.0,
+   "evidence": [
+    "E       assert 'via <code>readout</code> &rarr; <code>readout_square</code>' in '\\n\\n<div class=\"fh-head\">\\n  <span class=\"fh-title\" title=\"qubits.qA1.resonator.operations.readout.amplitude\">\\n    &...n<p class=\"fh-foot vh-foot\">\\n  1 chang",
+    "FAILED tests/test_hub_drawer.py::TestAliases::test_an_alias_reads_its_holder_and_says_via"
+   ]
+  },
+  {
+   "name": "alias_read_literally",
+   "file": "quam_state_manager/core/value_history.py",
+   "pins": [
+    "TestAliases::test_an_alias_reads_its_holder_and_says_via"
+   ],
+   "red": true,
+   "rc": 1,
+   "seconds": 5.8,
+   "evidence": [
+    "E       AssertionError: assert [] == ['0.05']",
+    "E         ",
+    "E         Right contains one more item: '0.05'",
+    "E         Use -v to get more diff"
+   ]
+  },
+  {
+   "name": "before_via_never_marked",
+   "file": "quam_state_manager/core/value_history.py",
+   "pins": [
+    "TestAliases::test_a_pointer_retargeted_mid_history_is_named_and_older_rows_are_marked"
+   ],
+   "red": true,
+   "rc": 1,
+   "seconds": 5.7,
+   "evidence": [
+    "E       AssertionError: values from before #4 belonged to a holder the alias did not name then",
+    "E       assert False",
+    "E        +  where False = all(<generator object TestAliases.test_a_pointer_retargeted_mid_history_is_named_and_older_rows_are_marked.<locals>.<genexpr> at 0x000002362B3CA8E0>)",
+    "FAILED tests/test_hub_drawer.py::TestAliases::test_a_pointer_retargeted_mid_history_is_named_and_older_rows_are_marked"
+   ]
+  },
+  {
+   "name": "retarget_position_ignored",
+   "file": "quam_state_manager/core/value_history.py",
+   "pins": [
+    "TestAliases::test_a_pointer_retargeted_mid_history_is_named_and_older_rows_are_marked"
+   ],
+   "red": true,
+   "rc": 1,
+   "seconds": 5.8,
+   "evidence": [
+    "E       AssertionError: values from before #4 belonged to a holder the alias did not name then",
+    "E       assert False",
+    "E        +  where False = all(<generator object TestAliases.test_a_pointer_retargeted_mid_history_is_named_and_older_rows_are_marked.<locals>.<genexpr> at 0x000001E4768EA810>)",
+    "FAILED tests/test_hub_drawer.py::TestAliases::test_a_pointer_retargeted_mid_history_is_named_and_older_rows_are_marked"
+   ]
+  },
+  {
+   "name": "pointer_to_object_reads_the_object",
+   "file": "quam_state_manager/core/value_history.py",
+   "pins": [
+    "TestAliases::test_a_pointer_to_a_whole_object_shows_the_pointers_own_history"
+   ],
+   "red": true,
+   "rc": 1,
+   "seconds": 5.6,
+   "evidence": [
+    "E       AssertionError: assert [] == [('#./x180_Dr...irst_record')]",
+    "E         ",
+    "E         Right contains 2 more items, first extra item: ('#./x180_DragCosine', 'run_saved')",
+    "E         Use -v to get more diff"
+   ]
+  },
+  {
+   "name": "unapplied_pointer_trusted",
+   "file": "quam_state_manager/core/value_history.py",
+   "pins": [
+    "TestAliases::test_an_alias_pointer_edited_but_not_applied_marks_every_row"
+   ],
+   "red": true,
+   "rc": 1,
+   "seconds": 5.5,
+   "evidence": [
+    "E       assert 'this pointer is not recorded yet' in '\\n\\n<div class=\"fh-head\">\\n  <span class=\"fh-title\" title=\"qubits.qA1.xy.operations.x180.amplitude\">\\n    &#128344; a...n<p class=\"fh-foot vh-foot\">\\n  1 change point\\n  &middot; from th",
+    "FAILED tests/test_hub_drawer.py::TestAliases::test_an_alias_pointer_edited_but_not_applied_marks_every_row"
+   ]
+  },
+  {
+   "name": "actor_dropped",
+   "file": "quam_state_manager/web/routes.py",
+   "pins": [
+    "TestSmWrites::test_an_apply_names_its_actor_and_an_undo_marks_it"
+   ],
+   "red": true,
+   "rc": 1,
+   "seconds": 6.0,
+   "evidence": [
+    "E       AssertionError: assert ('4.5e-05', '... by a person') == ('4.5e-05', '... by operator')",
+    "E         ",
+    "E         At index 2 diff: 'applied by a person' != 'applied by operator'",
+    "E         Use -v to get more diff"
+   ]
+  },
+  {
+   "name": "approval_called_the_agent",
+   "file": "quam_state_manager/web/routes.py",
+   "pins": [
+    "TestSmWrites::test_an_agent_write_and_an_approved_plan_say_who"
+   ],
+   "red": true,
+   "rc": 1,
+   "seconds": 5.9,
+   "evidence": [
+    "E       AssertionError: assert ('agent an:operator' == 'approved by ... (agent plan)'",
+    "E         ",
+    "E         - approved by operator (agent plan)",
+    "E         + agent an:operator)"
+   ]
+  },
+  {
+   "name": "undone_not_marked",
+   "file": "quam_state_manager/core/value_history.py",
+   "pins": [
+    "TestSmWrites::test_an_apply_names_its_actor_and_an_undo_marks_it"
+   ],
+   "red": true,
+   "rc": 1,
+   "seconds": 6.5,
+   "evidence": [
+    "E       AssertionError: assert ('applied by operator' == 'applied by operator (undone)'",
+    "E         ",
+    "E         - applied by operator (undone)",
+    "E         ?                    ---------"
+   ]
+  },
+  {
+   "name": "building_drawn_as_fallback",
+   "file": "quam_state_manager/web/routes.py",
+   "pins": [
+    "TestHonesty::test_a_building_ledger_says_so_and_shows_no_rows"
+   ],
+   "red": true,
+   "rc": 1,
+   "seconds": 6.1,
+   "evidence": [
+    "E       assert ('being built (2 of 9 runs)' in '\\n\\n\\n\\n\\n<div class=\"fh-head\">\\n  <span class=\"fh-title\" title=\"qubits.qA1.T1\">\\n    &#128344; T1\\n    <span class=\"...p class=\"fh-foot\">\\n  2 change points\\n  &middot; 0 of 0 snapshots\\n  (s",
+    "FAILED tests/test_hub_drawer.py::TestHonesty::test_a_building_ledger_says_so_and_shows_no_rows"
+   ]
+  },
+  {
+   "name": "building_read_called_preparing",
+   "file": "quam_state_manager/web/routes.py",
+   "pins": [
+    "TestHonesty::test_a_ledger_caught_building_mid_read_says_so"
+   ],
+   "red": true,
+   "rc": 1,
+   "seconds": 5.3,
+   "evidence": [
+    "E       assert 'being built (1 of 4 runs)' in '\\n\\n<div class=\"fh-head\">\\n  <span class=\"fh-title\" title=\"qubits.qA1.T1\">\\n    &#128344; T1\\n    <span class=\"fh-pat...tton>\\n</div>\\n\\n<p class=\"vh-wait\" data-vh-retry=\"800\"\\n   data-vh-mode=",
+    "E        +  where '\\n\\n<div class=\"fh-head\">\\n  <span class=\"fh-title\" title=\"qubits.qA1.T1\">\\n    &#128344; T1\\n    <span class=\"fh-pat...tton>\\n</div>\\n\\n<p class=\"vh-wait\" data-vh-retry=\"800\"\\n   data-vh-mode=\"preparing\">Preparing the ch",
+    "FAILED tests/test_hub_drawer.py::TestHonesty::test_a_ledger_caught_building_mid_read_says_so"
+   ]
+  },
+  {
+   "name": "warming_called_building",
+   "file": "quam_state_manager/web/routes.py",
+   "pins": [
+    "TestHonesty::test_an_index_being_prepared_says_so"
+   ],
+   "red": true,
+   "rc": 1,
+   "seconds": 5.1,
+   "evidence": [
+    "E       assert ('Preparing the change history' in '\\n\\n<div class=\"fh-head\">\\n  <span class=\"fh-title\" title=\"qubits.qA1.T1\">\\n    &#128344; T1\\n    <span class=\"fh-pat...0\"\\n   data-vh-mode=\"building\">The change history is being built (4 o",
+    "FAILED tests/test_hub_drawer.py::TestHonesty::test_an_index_being_prepared_says_so"
+   ]
+  },
+  {
+   "name": "deferred_unsaid",
+   "file": "quam_state_manager/core/value_history.py",
+   "pins": [
+    "TestHonesty::test_a_run_still_in_flight_is_said_to_be_missing"
+   ],
+   "red": true,
+   "rc": 1,
+   "seconds": 5.8,
+   "evidence": [
+    "E       assert '1 newest run is still being saved and not in this history yet' in '\\n\\n<div class=\"fh-head\">\\n  <span class=\"fh-title\" title=\"qubits.qA1.T1\">\\n    &#128344; T1\\n    <span class=\"fh-pat...<p class=\"fh-foot vh-foot\">\\n  2 chan",
+    "FAILED tests/test_hub_drawer.py::TestHonesty::test_a_run_still_in_flight_is_said_to_be_missing"
+   ]
+  },
+  {
+   "name": "degraded_unsaid",
+   "file": "quam_state_manager/core/value_history.py",
+   "pins": [
+    "TestHonesty::test_an_unreadable_data_folder_is_named"
+   ],
+   "red": true,
+   "rc": 1,
+   "seconds": 5.3,
+   "evidence": [
+    "E       assert 'This history may be missing changes: a data folder cannot be read' in '\\n\\n<div class=\"fh-head\">\\n  <span class=\"fh-title\" title=\"qubits.qA1.T1\">\\n    &#128344; T1\\n    <span class=\"fh-pat...<p class=\"fh-foot vh-foot\">\\n  2 ",
+    "FAILED tests/test_hub_drawer.py::TestHonesty::test_an_unreadable_data_folder_is_named"
+   ]
+  },
+  {
+   "name": "gone_folder_still_linked",
+   "file": "quam_state_manager/web/routes.py",
+   "pins": [
+    "TestHonesty::test_a_deleted_run_folder_keeps_its_row_but_loses_its_link"
+   ],
+   "red": true,
+   "rc": 1,
+   "seconds": 5.3,
+   "evidence": [
+    "E       AssertionError: a Data link to a deleted folder would open nothing",
+    "E       assert not True",
+    "FAILED tests/test_hub_drawer.py::TestHonesty::test_a_deleted_run_folder_keeps_its_row_but_loses_its_link"
+   ]
+  },
+  {
+   "name": "current_differs_unsaid",
+   "file": "quam_state_manager/core/value_history.py",
+   "pins": [
+    "TestHonesty::test_a_current_value_not_yet_recorded_is_said"
+   ],
+   "red": true,
+   "rc": 1,
+   "seconds": 5.4,
+   "evidence": [
+    "E       assert 'The value now is not the newest recorded one' in '\\n\\n<div class=\"fh-head\">\\n  <span class=\"fh-title\" title=\"qubits.qA1.T1\">\\n    &#128344; T1\\n    <span class=\"fh-pat...<p class=\"fh-foot vh-foot\">\\n  2 change points\\n  &mid",
+    "E        +  where '\\n\\n<div class=\"fh-head\">\\n  <span class=\"fh-title\" title=\"qubits.qA1.T1\">\\n    &#128344; T1\\n    <span class=\"fh-pat...<p class=\"fh-foot vh-foot\">\\n  2 change points\\n  &middot; from the change ledger (4 events: runs and",
+    "FAILED tests/test_hub_drawer.py::TestHonesty::test_a_current_value_not_yet_recorded_is_said"
+   ]
+  },
+  {
+   "name": "sm_only_ledger_used",
+   "file": "quam_state_manager/web/routes.py",
+   "pins": [
+    "TestHonesty::test_a_chip_whose_ledger_holds_no_runs_gets_the_old_path_labelled"
+   ],
+   "red": true,
+   "rc": 1,
+   "seconds": 6.8,
+   "evidence": [
+    "E       assert ('holds no runs (no data folder is linked' in '\\n\\n<div class=\"fh-head\">\\n  <span class=\"fh-title\" title=\"qubits.qA1.T1\">\\n    &#128344; T1\\n    <span class=\"fh-pat...\\n<p class=\"fh-foot vh-foot\">\\n  1 change point\\n  &middot",
+    "FAILED tests/test_hub_drawer.py::TestHonesty::test_a_chip_whose_ledger_holds_no_runs_gets_the_old_path_labelled"
+   ]
+  },
+  {
+   "name": "missing_ledger_not_checked",
+   "file": "quam_state_manager/web/routes.py",
+   "pins": [
+    "TestHonesty::test_a_chip_whose_ledger_holds_no_runs_gets_the_old_path_labelled"
+   ],
+   "red": true,
+   "rc": 1,
+   "seconds": 7.0,
+   "evidence": [
+    "E       assert 'this chip has no change ledger yet' in '\\n\\n\\n\\n\\n<div class=\"fh-head\">\\n  <span class=\"fh-title\" title=\"qubits.qA1.T1\">\\n    &#128344; T1\\n    <span class=\"...\\n\\n<p class=\"fh-empty\">\\n  No history for this field \u2014\\n  this ",
+    "FAILED tests/test_hub_drawer.py::TestHonesty::test_a_chip_whose_ledger_holds_no_runs_gets_the_old_path_labelled"
+   ]
+  },
+  {
+   "name": "agent_second_implementation",
+   "file": "quam_state_manager/web/agent_api.py",
+   "pins": [
+    "TestOneImplementation::test_all_three_surfaces_answer_through_one_function",
+    "TestOneImplementation::test_the_agent_reads_the_same_points_in_the_same_words"
+   ],
+   "red": true,
+   "rc": 1,
+   "seconds": 8.3,
+   "evidence": [
+    "E       AssertionError: assert [['qubits.qA1...bits.qA1.T1']] == [['qubits.qA1...bits.qA1.T1']]",
+    "E         ",
+    "E         Right contains one more item: ['qubits.qA1.T1']",
+    "E         Use -v to get more diff"
+   ]
+  },
+  {
+   "name": "agent_other_words",
+   "file": "quam_state_manager/web/routes.py",
+   "pins": [
+    "TestOneImplementation::test_the_agent_reads_the_same_points_in_the_same_words"
+   ],
+   "red": true,
+   "rc": 1,
+   "seconds": 7.5,
+   "evidence": [
+    "E       KeyError: 'label'",
+    "FAILED tests/test_hub_drawer.py::TestOneImplementation::test_the_agent_reads_the_same_points_in_the_same_words"
+   ]
+  },
+  {
+   "name": "column_chips_oldest_first",
+   "file": "quam_state_manager/web/routes.py",
+   "pins": [
+    "TestOneImplementation::test_column_history_shows_the_drawers_points"
+   ],
+   "red": true,
+   "rc": 1,
+   "seconds": 5.4,
+   "evidence": [
+    "E       AssertionError: assert [('first_reco...', '#2 scan')] == [('run_proven...orded in #1')]",
+    "E         ",
+    "E         At index 0 diff: ('first_record', '1e-05', 'first recorded in #1') != ('run_proven', '3e-05', '#2 scan')",
+    "E         Use -v to get more diff"
+   ]
+  },
+  {
+   "name": "byrun_value_old_side",
+   "file": "quam_state_manager/core/value_history.py",
+   "pins": [
+    "TestOneImplementation::test_column_history_shows_the_drawers_points"
+   ],
+   "red": true,
+   "rc": 1,
+   "seconds": 5.1,
+   "evidence": [
+    "E       assert ('data-fill=\"3e-05\"' in '\" hidden>\\n<div class=\"ch-scroll\">\\n<table class=\"ch-table\" data-grid=\"qubit\" data-col-key=\"c\">\\n  <thead>\\n    <tr>\\...ghlighted cell differs from the previous run\\'s saved value (which run wrote it ",
+    "FAILED tests/test_hub_drawer.py::TestOneImplementation::test_column_history_shows_the_drawers_points"
+   ]
+  },
+  {
+   "name": "element_index_ignored",
+   "file": "quam_state_manager/core/value_history.py",
+   "pins": [
+    "TestElementsAndTrends::test_an_element_of_a_long_array_changes_only_when_it_does"
+   ],
+   "red": true,
+   "rc": 1,
+   "seconds": 5.3,
+   "evidence": [
+    "E       AssertionError: assert ['0'] == ['7', '0']",
+    "E         ",
+    "E         At index 0 diff: '0' != '7'",
+    "E         Right contains one more item: '0'"
+   ]
+  },
+  {
+   "name": "element_unchanged_versions_kept",
+   "file": "quam_state_manager/core/value_history.py",
+   "pins": [
+    "TestElementsAndTrends::test_an_element_of_a_long_array_changes_only_when_it_does"
+   ],
+   "red": true,
+   "rc": 1,
+   "seconds": 5.2,
+   "evidence": [
+    "E       AssertionError: assert ['7', '0', '0'] == ['7', '0']",
+    "E         ",
+    "E         Left contains one more item: '0'",
+    "E         Use -v to get more diff"
+   ]
+  },
+  {
+   "name": "trends_alias_unread",
+   "file": "quam_state_manager/web/routes.py",
+   "pins": [
+    "TestElementsAndTrends::test_chip_trends_charts_an_alias_path_with_the_drawers_points"
+   ],
+   "red": true,
+   "rc": 1,
+   "seconds": 5.4,
+   "evidence": [
+    "E       AssertionError: the alias path drew no qA1 line",
+    "E       assert 0 == 1",
+    "E        +  where 0 = len([])",
+    "FAILED tests/test_hub_drawer.py::TestElementsAndTrends::test_chip_trends_charts_an_alias_path_with_the_drawers_points"
+   ]
+  },
+  {
+   "name": "js_drawer_no_retry",
+   "file": "quam_state_manager/web/static/app.js",
+   "pins": [
+    "test_the_retry_selfcheck"
+   ],
+   "red": true,
+   "rc": 1,
+   "seconds": 7.3,
+   "evidence": [
+    "E       AssertionError: ok - the drawer shows the building line, not a history",
+    "E         ok - and none after the history arrived",
+    "E         ok - a closed drawer asks no more (1)",
+    "E         ok - the newer field stays on screen; the older retry is dropped"
+   ]
+  },
+  {
+   "name": "js_drawer_retry_after_close",
+   "file": "quam_state_manager/web/static/app.js",
+   "pins": [
+    "test_the_retry_selfcheck"
+   ],
+   "red": true,
+   "rc": 1,
+   "seconds": 7.4,
+   "evidence": [
+    "E       AssertionError: ok - the drawer shows the building line, not a history",
+    "E         ok - it asked again by itself and shows the history once the ledger is ready",
+    "E         ok - three requests: the first and two retries (3)",
+    "E         ok - and none after the history arrived"
+   ]
+  },
+  {
+   "name": "js_drawer_stale_answer_lands",
+   "file": "quam_state_manager/web/static/app.js",
+   "pins": [
+    "test_the_retry_selfcheck"
+   ],
+   "red": true,
+   "rc": 1,
+   "seconds": 7.3,
+   "evidence": [
+    "E       AssertionError: ok - the drawer shows the building line, not a history",
+    "E         ok - it asked again by itself and shows the history once the ledger is ready",
+    "E         ok - three requests: the first and two retries (3)",
+    "E         ok - and none after the history arrived"
+   ]
+  },
+  {
+   "name": "writer_not_proven_only_on_hover",
+   "file": "quam_state_manager/web/templates/_field_history_ledger.html",
+   "pins": [
+    "TestDrawerOnTheLedger::test_an_unproven_run_is_never_named_as_the_writer"
+   ],
+   "red": true,
+   "rc": 1,
+   "seconds": 4.9,
+   "evidence": [
+    "E       AssertionError: the row SAYS the writer is not proven, not only on hover",
+    "E       assert ('<span class=\"vh-sub\"' in '\\n      <td class=\"fh-val\" title=\"5100000000.0\"><code>5,100,000,000.0</code> <span class=\"fh-now\">current</span><span...he run lands here too.\">saved in #3 scan</span></td>\\n      <td class=\"fh-act",
+    "FAILED tests/test_hub_drawer.py::TestDrawerOnTheLedger::test_an_unproven_run_is_never_named_as_the_writer"
+   ]
+  },
+  {
+   "name": "chip_qualifier_dropped",
+   "file": "quam_state_manager/web/templates/_column_history_ledger.html",
+   "pins": [
+    "TestOneImplementation::test_column_history_shows_the_drawers_points"
+   ],
+   "red": true,
+   "rc": 1,
+   "seconds": 5.3,
+   "evidence": [
+    "E       AssertionError: a chip SAYS when its writer is unknown",
+    "E       assert 'first recorded in #1</span><span class=\"vh-chip-sub\"> \u00b7 ledger start; writer unknown' in '\\n\\n<div class=\"ch-head\">\\n  <span class=\"ch-title\">\\n    &#128344; Column history \u2014 col\\n  </span>\\n  <div class=\"ch...ghlighted cell",
+    "FAILED tests/test_hub_drawer.py::TestOneImplementation::test_column_history_shows_the_drawers_points"
+   ]
+  },
+  {
+   "name": "segments_fast_path_for_escaped_paths",
+   "file": "quam_state_manager/core/hub_store.py",
+   "pins": [
+    "test_holder_path_decoding_is_the_same_with_and_without_escapes"
+   ],
+   "red": true,
+   "rc": 1,
+   "seconds": 4.8,
+   "evidence": [
+    "E           AssertionError: \\e",
+    "E           assert ['\\\\e'] == ['']",
+    "E             ",
+    "E             At index 0 diff: '\\\\e' != ''"
+   ]
+  },
+  {
+   "name": "entity_prefilter_too_narrow",
+   "file": "quam_state_manager/core/hub_index.py",
+   "pins": [
+    "tests/test_hub_query.py::test_pair_members_and_macro_targets_and_changed_segments",
+    "tests/test_hub_query.py::test_macro_classifier_and_actor_class_and_family_are_distinct"
+   ],
+   "red": true,
+   "rc": 1,
+   "seconds": 2.2,
+   "evidence": [
+    "E       assert [] == [3, 2]",
+    "E         ",
+    "E         Right contains 2 more items, first extra item: 3",
+    "E         Use -v to get more diff"
+   ]
+  },
+  {
+   "name": "js_column_retry_after_close",
+   "file": "quam_state_manager/web/static/app.js",
+   "pins": [
+    "test_the_retry_selfcheck"
+   ],
+   "red": true,
+   "rc": 1,
+   "seconds": 7.1,
+   "evidence": [
+    "E       AssertionError: ok - the drawer shows the building line, not a history",
+    "E         ok - it asked again by itself and shows the history once the ledger is ready",
+    "E         ok - three requests: the first and two retries (3)",
+    "E         ok - and none after the history arrived"
+   ]
+  }
+ ]
+}

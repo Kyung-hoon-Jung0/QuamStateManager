@@ -351,11 +351,24 @@ def field_history():
         r._store().get_value(raw_path)
     except (KeyError, IndexError, TypeError, ValueError):
         return _err(f"no such path: {dot}", 404)
+    # docs/282: the person's value drawer and this answer are ONE history --
+    # the same routes._value_history read, the same words for who set a value.
+    ctx = r._active_ctx()
     try:
-        data = r._history().field_history(path, dot)
+        ans = r._value_history(ctx, {"value": dot}, limit=r._VH_DRAWER_LIMIT)
+        if ans["mode"] in ("building", "preparing"):
+            st = ans.get("status") or {}
+            return jsonify(ok=True, path=dot, source=ans["mode"], history=None,
+                           note=r._vh_wait_message(ans),
+                           building={"done": st.get("done"), "total": st.get("total")})
+        if ans["mode"] == "ledger":
+            return jsonify(ok=True, path=dot, source="ledger",
+                           history=_jsonable(r._vh_agent_view(ans, "value")))
+        data, _current, _chart = r._legacy_field_history(ctx, dot)
     except Exception as exc:  # noqa: BLE001
         return _err(f"field history unavailable: {exc}", 500)
-    return jsonify(ok=True, path=dot, history=_jsonable(data))
+    return jsonify(ok=True, path=dot, source="snapshots", note=ans.get("fallback_note"),
+                   history=_jsonable(data))
 
 
 # ---------------------------------------------------------------- the runs

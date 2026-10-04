@@ -12371,6 +12371,36 @@ body.scheduler-active #pending-tray { opacity: .5; pointer-events: none; }
 .fh-val .fh-srcfolder { display: block; width: max-content; max-width: 100%;
     margin-top: .15rem; font-size: .62rem; }
 .fh-other-note { margin: .3rem 0 0; font-size: .66rem; color: var(--color-text-muted); }
+/* docs/282: the value drawer and Column History on the change ledger. */
+.vh-note { margin: .2rem 0 .3rem; font-size: .7rem; color: var(--color-text-muted); }
+.vh-note-warning, .vh-fallback {
+    color: var(--color-warning-text); background: var(--color-warning-bg);
+    border-left: 3px solid var(--color-warning-border); padding: .15rem .4rem; border-radius: 4px; }
+.vh-wait { margin: .5rem 0; font-size: .78rem; color: var(--color-text-muted); }
+.vh-via { margin: 0 0 .3rem; font-size: .7rem; color: var(--color-text-muted); }
+.vh-via code { font-size: .7rem; }
+.vh-retarget { margin-left: .2rem; }
+.vh-flag { display: inline-block; margin: .1rem .25rem 0 0; padding: 0 .3rem; font-size: .6rem;
+    border: 1px solid var(--pico-muted-border-color); border-radius: .5rem;
+    color: var(--color-text-muted); white-space: nowrap; }
+.vh-undone .fh-val code, .vh-chip.vh-undone code { text-decoration: line-through; }
+.vh-before-via td, .vh-chip.vh-before-via { opacity: .62; }
+.vh-run_saved .vh-by, .vh-first_record .vh-by, .vh-run_uncertain_chip .vh-by { color: var(--color-text-muted); }
+.vh-chip { flex-wrap: wrap; max-width: 100%; }
+.vh-chip-who { flex: 1 0 100%; font-size: .6rem; line-height: 1.2; color: var(--color-text-muted);
+    white-space: normal; text-align: left; }
+.vh-chip-by { font-size: .6rem; color: var(--color-text-muted); }
+/* the provenance is the point of the row: it wraps, never ellipsizes away */
+.vh-table .fh-src { white-space: normal; overflow: visible; max-width: none; overflow-wrap: anywhere; }
+/* the ledger table gives the provenance column room (it carries a second line) */
+.vh-table th:nth-child(1) { width: 31%; }
+.vh-table th:nth-child(2) { width: 17%; }
+.vh-table th:nth-child(3) { width: 30%; }
+.vh-table th:nth-child(4) { width: 22%; }
+.vh-table .vh-by { display: block; }
+.vh-sub { display: block; font-size: .6rem; color: var(--color-text-muted); }
+.vh-chip-sub { font-size: .58rem; color: var(--color-text-muted); }
+.vh-chip-via, .vh-more { font-size: .62rem; color: var(--color-text-muted); margin-right: .3rem; }
 
 /* inspector-row button — INSIDE the edit box (search-icon pattern), never a
    separate element beside it. .fh-host scopes this to the qubit/pair detail

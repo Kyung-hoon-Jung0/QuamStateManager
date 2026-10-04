@@ -1,0 +1,84 @@
+{% from '_delta_macros.html' import delta_chip, delta_pct %}
+{# docs/282: the value drawer on the chip's change ledger. Rows are the
+   ledger's change points for the value's holder, newest first. "Set by" names
+   only what the ledger proves (routes._vh_present): a run is named as the
+   writer only when its node.json patch set exactly this value; otherwise the
+   row says "saved in run #N -- writer not proven", "first recorded", or the SM
+   write's own actor and kind. Use / Revert / Data keep the old drawer's hooks
+   (FieldHistory.useValue / revertTo, hx-get into #inspector-pane). #}
+<div class="fh-head">
+  <span class="fh-title" title="{{ dot_path }}">
+    &#128344; {{ dot_path.split('.')[-1] }}
+    <span class="fh-path">{{ dot_path }}</span>
+  </span>
+  <button type="button" class="fh-close" onclick="FieldHistory.close()"
+          title="Close (Esc)">&times;</button>
+</div>
+{% if current_display and current_display != '—' %}
+<div class="fh-currentline">now: <code>{{ current_display }}</code></div>
+{% endif %}
+{% if via %}
+<div class="vh-via">
+  {% for hop in via %}
+  <div class="vh-via-hop" title="{{ hop.from_path }} = {{ hop.pointer }}">
+    via <code>{{ hop.alias }}</code> &rarr; <code>{{ hop.holder }}</code>
+    {% if hop.unrecorded %}
+    <span class="vh-retarget">&middot; this pointer is not recorded yet (an edit not applied to the chip): every row below is from before it</span>
+    {% elif hop.retargets %}
+    <span class="vh-retarget">&middot; pointed here since {{ hop.retargets[0].t | ts_local(short=True) }}
+      ({{ hop.retargets[0].label }}{% if hop.retargets[0].old is string %}, was <code>{{ hop.retargets[0].old }}</code>{% endif %}){% if hop.retargets|length > 1 %}; retargeted {{ hop.retargets|length }} times{% endif %}</span>
+    {% endif %}
+  </div>
+  {% endfor %}
+</div>
+{% endif %}
+{% for n in notes %}
+<p class="vh-note vh-note-{{ n.level }}" data-note="{{ n.code }}">{{ n.text }}</p>
+{% endfor %}
+{% if chart and chart|length >= 2 %}
+<div class="fh-chart" id="fh-chart" aria-label="Value trend"></div>
+<script id="fh-chart-data" type="application/json">{{ chart | tojson }}</script>
+{% endif %}
+{% if not points %}
+<p class="fh-empty">
+  No change of this value is recorded in the change ledger
+  ({{ ledger.events }} event{{ 's' if ledger.events != 1 }}{% if ledger.first %} since {{ ledger.first | ts_local(short=True) }}{% endif %}).
+</p>
+{% else %}
+<table class="fh-table vh-table">
+  <thead><tr><th>Value</th><th>When</th><th>Set by</th><th></th></tr></thead>
+  <tbody>
+  {% for pt in points %}
+    <tr class="vh-row vh-{{ pt.provenance }}{% if pt.is_current %} fh-current{% endif %}{% if pt.undone %} vh-undone{% endif %}{% if pt.before_via %} vh-before-via{% endif %}"
+        data-eid="{{ pt.eid }}" data-provenance="{{ pt.provenance }}">
+      <td class="fh-val" title="{{ pt.fill }}"><code>{{ pt.display }}</code>{% if pt.is_current %} <span class="fh-now">current</span>{% endif %}{% if pt.has_prev and pt.usable %}{{ delta_chip(pt.prev_value, pt.value, 'fh-delta') }}{% endif %}
+        {% if pt.before_via %}<span class="vh-flag" title="The alias named another holder at this time{% if via_since %}; it has named this one since {{ via_since | format_ts }}{% endif %}.">before {{ via[0].alias if via else 'the alias' }} pointed here</span>{% endif %}
+        {% for f in pt.flag_text %}<span class="vh-flag">{{ f }}</span>{% endfor %}
+      </td>
+      <td class="fh-ts">{{ pt.t | ts_local(short=True) }}</td>
+      <td class="fh-src"><span class="fh-exp vh-by" title="{{ pt.title }}">{{ pt.label }}</span><span class="vh-sub" title="{{ pt.title }}">{{ pt.sub }}</span></td>
+      <td class="fh-act">
+        {% if not pt.is_current and pt.usable and pt.fill %}
+        <button type="button" class="fh-revert" data-value="{{ pt.fill }}"
+                data-path="{{ dot_path }}"
+                onclick="FieldHistory.revertTo(this)"
+                title="Put this value back — staged as a pending edit; the live chip is untouched until you Apply.">&#8634; Revert</button>{% if current_value is not none %}{{ delta_pct(current_value, pt.value, 'fh-revert-delta') }}{% endif %}
+        <button type="button" class="fh-use" data-value="{{ pt.fill }}"
+                onclick="FieldHistory.useValue(this)"
+                title="Fill the edit field with this value, without staging it (press Enter there to stage)">Use</button>
+        {% endif %}
+        {% if pt.uid %}
+        <button type="button" class="fh-data" hx-get="/dataset/{{ pt.uid }}"
+                hx-target="#inspector-pane" hx-swap="innerHTML"
+                title="{{ pt.link_title }}">Data</button>
+        {% endif %}
+      </td>
+    </tr>
+  {% endfor %}
+  </tbody>
+</table>
+{% endif %}
+<p class="fh-foot vh-foot">
+  {{ points|length }}{% if total > points|length %} of {{ total }}{% endif %} change point{{ 's' if total != 1 }}
+  &middot; from the change ledger ({{ ledger.events }} event{{ 's' if ledger.events != 1 }}: runs and SM writes){% if total > points|length %} &middot; {{ total - points|length }} older not shown{% endif %}
+</p>
