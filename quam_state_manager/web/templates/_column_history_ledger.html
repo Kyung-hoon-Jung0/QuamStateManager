@@ -62,7 +62,7 @@
             {% if p.is_current %}<span class="ch-chip-now">current</span>{% endif %}
             {% if _prev and p.usable and _prev.usable %}{{ delta_chip(_prev.value, p.value, 'ch-chip-delta') }}{% endif %}
             {# who set it, on its own line under the value: the chip never clips it #}
-            <span class="vh-chip-who"><span class="vh-chip-by">{{ p.label }}</span>{% if p.provenance not in ('run_proven', 'sm') %}<span class="vh-chip-sub"> · {{ p.sub }}</span>{% endif %}</span>
+            <span class="vh-chip-who"><span class="vh-chip-by">{{ p.label }}</span>{% if p.provenance not in ('run_proven', 'sm') %}<span class="vh-chip-sub"> · {{ p.sub }}</span>{% endif %}{% if p.before_via %}<span class="vh-chip-bv"> · before {{ row.via[0].alias if row.via else 'the alias' }} pointed here</span>{% endif %}</span>
           </button>
           {% if p.uid %}
           <button type="button" class="ch-chip-data" hx-get="/dataset/{{ p.uid }}"
@@ -131,7 +131,8 @@
 </table>
 </div>
 <p class="ch-foot">
-  the newest {{ runs|length }} run{{ 's' if runs|length != 1 }} of the change ledger, each row's saved value at that run
+  the newest {{ runs|length }} run{{ 's' if runs|length != 1 }} of this chip in the change ledger, each row's value in force at that run (through its alias, when it has one)
+  {% if runs_left_out %}&middot; {{ runs_left_out }} run{{ 's' if runs_left_out != 1 }} of an uncertain chip identity {{ 'is' if runs_left_out == 1 else 'are' }} left out{% endif %}
   &middot; a highlighted cell differs from the previous run's saved value (which run wrote it is in the Changes tab)
 </p>
 </div>

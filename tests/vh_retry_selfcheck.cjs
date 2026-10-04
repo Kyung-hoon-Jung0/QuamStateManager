@@ -152,6 +152,29 @@ const DONE = (v) => '<table class="fh-table vh-table"><tr class="vh-row"><td><co
     ok(calls.filter(c => c.url.indexOf('/bulk/column-history') >= 0).length === nc2,
        'a closed Column History asks no more');
 
+    // 5. review P2-1: a grid cell whose path crosses a pointer opens the drawer
+    //    on ITS OWN path (the alias), so the drawer can name the hop -- not on
+    //    the resolved holder the grid also carries
+    const grid = window.document.createElement('table');
+    grid.innerHTML = '<tbody><tr data-qubit="q1"><td class="bulk-td" data-col-key="ro">' +
+        '<input class="bulk-cell" id="vh-alias-cell" data-dot-path="qubits.q1.resonator.operations.readout.amplitude"' +
+        ' data-resolved="qubits.q1.resonator.operations.readout_square.amplitude"></td></tr></tbody>';
+    window.document.body.appendChild(grid);
+    const cell = window.document.getElementById('vh-alias-cell');
+    queues['/field/history|qubits.q1.resonator.operations.readout.amplitude'] = [DONE('alias-ok')];
+    queues['/field/history|qubits.q1.resonator.operations.readout_square.amplitude'] = [DONE('holder')];
+    cell.focus();
+    cell.dispatchEvent(new window.FocusEvent('focusin', { bubbles: true }));
+    await wait(20);
+    const btn5 = window.document.getElementById('fh-cellbtn');
+    ok(!!btn5, 'focusing a grid cell docks the clock button');
+    const before5 = calls.length;
+    if (btn5) btn5.dispatchEvent(new window.MouseEvent('mousedown', { bubbles: true }));
+    await wait(40);
+    const asked = calls.slice(before5).map(c => c.url);
+    ok(asked.length === 1 && asked[0].indexOf('path=' + encodeURIComponent('qubits.q1.resonator.operations.readout.amplitude')) >= 0,
+       'the drawer is asked for the cell\'s own (alias) path: ' + asked.join(', '));
+
     if (fails) { console.error(fails + ' check(s) failed'); process.exit(1); }
     console.log('all ' + oks + ' checks passed');
     process.exit(0);

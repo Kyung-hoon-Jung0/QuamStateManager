@@ -1,7 +1,12 @@
 /* docs/282 journey: the value drawer and Column History on the change ledger,
  * walked like a person: open Live State Edit, open the clock on a T1 cell and on
  * an alias cell, open a Column History, Use a value, close, Back, reload --
- * the page stays whole and the console stays clean.
+ * the page stays whole and the console stays clean. The review round adds:
+ * the alias drawer names its hop and marks only rows from while the alias named
+ * another holder; By run shows the value in force through the alias and leaves
+ * out a run of another chip identity; a partly-undone pair strikes through only
+ * the value taken back. The rig needs runs that retarget the alias and back, a
+ * run of another chip identity, and two T1 cells (qA1, qA2).
  *
  * Env: SM_URL (the served SM), SM_CDP_PORT (headless Chrome), SHOTS (a folder),
  *      VH_T1 (a T1 dot-path), VH_ALIAS (an alias dot-path, e.g. through
@@ -120,10 +125,18 @@ async function openCellHistory(b, dotPath, tag, colKey) {
       path: (p.querySelector('.fh-path')||{}).textContent||'', via: (p.querySelector('.vh-via')||{}).textContent||'',
       rows: [...p.querySelectorAll('tr.vh-row')].map(r=>[r.querySelector('.fh-val code').textContent, r.querySelector('.vh-by').textContent, (r.querySelector('.vh-sub')||{}).textContent||''])}})()`);
   console.log(JSON.stringify(al));
-  // the grid hands the drawer the cell's RESOLVED holder (data-resolved): no hop left to name
-  ok(al && /readout_square\.amplitude$/.test(al.path.trim()) && al.rows.length > 0,
-     'alias cell: the drawer reads the holder the alias names (' + (al && al.path.trim()) + ')');
+  // docs/282 review P2-1: the grid hands the drawer the cell's OWN path, so the hop is named
+  ok(al && /readout\.amplitude$/.test(al.path.trim()) && al.rows.length > 0,
+     'alias cell: the drawer opens on the alias path itself (' + (al && al.path.trim()) + ')');
+  ok(al && /via readout\s*→\s*readout_square/.test(al.via), 'alias cell: the drawer names the hop (' + (al && al.via.trim().split('\n')[0]) + ')');
   ok(al && al.rows.every(r => r[2].length > 0), 'alias cell: every row says what is known about its writer');
+  // P1-1: only a row from while the alias named ANOTHER holder is marked
+  const bv = await b.ev(`(function(){var p=document.getElementById('field-history-panel');
+      return [...p.querySelectorAll('tr.vh-row')].map(r=>[r.classList.contains('vh-before-via'), [...r.querySelectorAll('.vh-flag')].map(f=>f.textContent).join('|')])})()`);
+  console.log(JSON.stringify(bv));
+  ok(bv && bv.some(r => r[0] && /before readout pointed here/.test(r[1])),
+     'alias cell: the change made while readout named another holder says so in text');
+  ok(bv && bv.length > 1 && bv.some(r => !r[0]), 'alias cell: rows from while readout named this holder are not marked');
   await b.shot(path.join(SHOTS, '4_alias_drawer.png'));
   await b.key('Escape', 'Escape', 27);
   await sleep(250);
@@ -134,12 +147,31 @@ async function openCellHistory(b, dotPath, tag, colKey) {
   const ac = await waitFor(b, `(function(){var c=document.querySelector('.ch-overlay .ch-card');if(!c||c.closest('.ch-overlay').style.display==='none')return null;
      var tr=c.querySelector('.ch-chg-table tr[data-row="qA1"]');if(!tr)return null;
      return {via:(tr.querySelector('.vh-chip-via')||{}).textContent||'',
-             vals:[...tr.querySelectorAll('.vh-chip code')].map(x=>x.textContent)}})()`, 30000);
+             vals:[...tr.querySelectorAll('.vh-chip code')].map(x=>x.textContent),
+             bv:[...tr.querySelectorAll('.vh-chip-bv')].filter(x=>/before readout pointed here/.test(x.textContent)).length}})()`, 30000);
   console.log(JSON.stringify(ac));
   ok(ac && /via readout\s*→\s*readout_square/.test(ac.via), 'alias column: Column History names the hop (via readout → readout_square)');
   ok(ac && al && JSON.stringify(ac.vals) === JSON.stringify(al.rows.map(r => r[0])),
      'alias column: Column History shows the same points as the drawer for qA1 (' + (ac && ac.vals.join(', ')) + ')');
+  ok(ac && ac.bv > 0, 'alias column: the marked change says "before readout pointed here" in text, not only by opacity');
   await b.shot(path.join(SHOTS, '4b_alias_column.png'));
+  // P0-2 / P0-3: By run -- the value IN FORCE at each run through the alias, and no foreign run
+  await clickSel(b, '.ch-overlay .ch-tab[data-view="byrun"]');
+  await sleep(300);
+  const abr = await b.ev(`(function(){var c=document.querySelector('.ch-overlay .ch-view-byrun');
+     var heads=[...c.querySelectorAll('th.ch-run')].map(h=>(h.querySelector('a,span')||{}).textContent.trim());
+     var tr=c.querySelector('tr[data-row="qA1"]');
+     var cells=tr?[...tr.querySelectorAll('td.ch-val')].map(td=>td.getAttribute('data-fill')):[];
+     return {heads:heads, cells:cells, foot:(c.querySelector('.ch-foot')||{}).textContent.replace(/\\s+/g,' ')}})()`);
+  console.log(JSON.stringify(abr));
+  const at = (run) => abr && abr.cells[abr.heads.indexOf(run)];
+  ok(abr && abr.heads.indexOf('#9') < 0 && abr.heads.indexOf('#8') >= 0,
+     'alias By run: the run of another chip identity is not a column (' + (abr && abr.heads.join(' ')) + ')');
+  ok(abr && /1 run of an uncertain chip identity is left out/.test(abr.foot), 'alias By run: the footer says one run was left out');
+  ok(abr && at('#7') && at('#8') && Math.abs(parseFloat(at('#7')) - parseFloat(at('#8'))) > 1e-4,
+     'alias By run: run #7 shows the value the alias named THEN, not the current holder (' + (abr && at('#7')) + ' vs ' + (abr && at('#8')) + ')');
+  await b.shot(path.join(SHOTS, '4c_alias_byrun.png'));
+  await clickSel(b, '.ch-overlay .ch-tab[data-view="changes"]');
   await b.key('Escape', 'Escape', 27);
   await sleep(300);
 
@@ -157,11 +189,50 @@ async function openCellHistory(b, dotPath, tag, colKey) {
   await b.shot(path.join(SHOTS, '5_column_changes.png'));
   await clickSel(b, '.ch-overlay .ch-tab[data-view="byrun"]');
   await sleep(300);
+  const tbr = await b.ev(`(function(){var c=document.querySelector('.ch-overlay .ch-view-byrun');
+     return {heads:[...c.querySelectorAll('th.ch-run')].map(h=>(h.querySelector('a,span')||{}).textContent.trim()),
+             useall:c.querySelectorAll('.ch-useall').length}})()`);
+  console.log(JSON.stringify(tbr));
+  ok(tbr && tbr.heads.indexOf('#9') < 0 && tbr.useall === tbr.heads.length,
+     'T1 By run: no Use all for the run of another chip identity (' + (tbr && tbr.heads.join(' ')) + ')');
   await b.shot(path.join(SHOTS, '6_column_byrun.png'));
   await clickSel(b, '.ch-overlay .ch-tab[data-view="changes"]');
   await b.key('Escape', 'Escape', 27);
   await sleep(300);
   ok(await b.ev(`document.querySelector('.ch-overlay').style.display==='none'`), 'Escape closes Column History');
+
+  // 5b. a partly-undone pair (review P2-2): one apply sets two T1 values, one undo
+  // takes back the last of them -- only that one is struck through
+  const steps = await b.ev(`(async function(){var out=[];var h={'X-SM-Actor':'operator'};
+     async function post(u, body){var r=await fetch(u,{method:'POST',headers:h,body:body});out.push(u+' '+r.status);}
+     var f1=new FormData();f1.append('dot_path','qubits.qA1.T1');f1.append('value','4.5e-5');await post('/field/edit',f1);
+     var f2=new FormData();f2.append('dot_path','qubits.qA2.T1');f2.append('value','5.5e-5');await post('/field/edit',f2);
+     await post('/state/apply-to-live');await post('/undo');return out;})()`);
+  console.log(JSON.stringify(steps));
+  ok(Array.isArray(steps) && steps.every(s => / 200$/.test(s)), 'two edits, one apply, one undo: ' + JSON.stringify(steps));
+  await b.send('Page.reload', {});
+  await waitFor(b, `document.readyState==='complete' && !!document.querySelector('.bulk-cell')`, 30000);
+  await sleep(800);
+  await clickSel(b, `th[data-col-key="${colKey}"] .bulk-col-hist`);
+  const pu = await waitFor(b, `(function(){var c=document.querySelector('.ch-overlay .ch-card');if(!c||c.closest('.ch-overlay').style.display==='none')return null;
+     function chips(id){var tr=c.querySelector('.ch-chg-table tr[data-row="'+id+'"]');return tr?[...tr.querySelectorAll('.vh-chip')].slice(0,2).map(x=>[(x.querySelector('.vh-chip-by')||{}).textContent,x.classList.contains('vh-undone')]):null}
+     var a=chips('qA1'),b=chips('qA2');return a&&b?{qA1:a,qA2:b}:null})()`, 30000);
+  console.log(JSON.stringify(pu));
+  ok(pu && pu.qA1[0][0] === 'applied by operator' && !pu.qA1[0][1], 'partly undone: qA1 keeps its applied value, not struck through');
+  ok(pu && pu.qA2[0][0] === 'undo by operator' && pu.qA2[1][0] === 'applied by operator (undone)' && pu.qA2[1][1],
+     'partly undone: qA2 shows the undo and its own applied value struck through');
+  await b.shot(path.join(SHOTS, '6b_partly_undone_column.png'));
+  await b.key('Escape', 'Escape', 27);
+  await sleep(300);
+  await openCellHistory(b, 'qubits.qA2.T1', 'qA2 T1', T1_COL);
+  const d2 = await b.ev(`(function(){var p=document.getElementById('field-history-panel');
+     return [...p.querySelectorAll('tr.vh-row')].slice(0,2).map(r=>[r.querySelector('.vh-by').textContent, r.classList.contains('vh-undone')])})()`);
+  console.log(JSON.stringify(d2));
+  ok(d2 && d2[0][0] === 'undo by operator' && d2[1][0] === 'applied by operator (undone)' && d2[1][1],
+     'partly undone: the qA2 drawer says the same as its Column History row');
+  await b.shot(path.join(SHOTS, '6c_partly_undone_drawer.png'));
+  await b.key('Escape', 'Escape', 27);
+  await sleep(250);
 
   // 6. Back, then reload: the page is whole
   await b.ev('history.back()');

@@ -331,6 +331,11 @@ class ChipSync:
         self.errors: deque = deque(maxlen=20)
         self.last_slice_ms = 0.0
         self.slices = 0
+        # docs/282 review P1-2: the chip's Param History snapshots that are
+        # not runs -- states SM itself observed -- imported once the runs are in
+        self.observed_source: Callable[[], list[dict]] | None = None
+        self.observe_wanted = True
+        self.observe_queue: deque = deque()
 
     # -- registration ----------------------------------------------------
 
@@ -357,9 +362,11 @@ class ChipSync:
         with self.lock:
             if full:
                 self.full_wanted = True
+                self.observe_wanted = True
                 return bool(self.roots)
             if listing:
                 self.listing_wanted = True
+                self.observe_wanted = True
                 return bool(self.roots)
             hit = False
             for r in roots:
@@ -367,12 +374,16 @@ class ChipSync:
                 if k in self.roots:
                     self.dirty.add(k)
                     hit = True
+            if hit:
+                # a run landed: SM may have captured a state around it too
+                self.observe_wanted = True
             return hit
 
     def has_work(self) -> bool:
         with self.lock:
             inbox = bool(self.full_wanted or self.listing_wanted or self.dirty)
-        return bool(inbox or self.unread or self.read or self.ready_cands or self.sweep)
+        observing = bool(self.observe_queue) or (self.observe_wanted and self.observed_source is not None)
+        return bool(inbox or self.unread or self.read or self.ready_cands or self.sweep or observing)
 
     def _failed_waiting(self) -> tuple[int, int]:
         """(retries still due, given up)"""
@@ -389,7 +400,8 @@ class ChipSync:
         # lock-free snapshot: the slice owns the work lists; a read that races
         # it can only lag by one item, never block a request. The item a
         # slice holds right now counts as pending (docs/275 review, P1-3).
-        pending = len(self.unread) + len(self.read) + len(self.ready_cands) + self.in_hand
+        pending = (len(self.unread) + len(self.read) + len(self.ready_cands) + self.in_hand
+                   + len(self.observe_queue))
         # a root the watcher saw move is "building" until it is looked at:
         # the run that moved it may not be in the ledger yet
         inbox = bool(self.full_wanted or self.dirty)
@@ -550,6 +562,30 @@ class ChipSync:
             steps += 1
         if self.sweep and not self.unread and not self.ready_cands:
             self.phase = "sweeping"
+        # docs/282 review P1-2: the observed snapshots, only once every known
+        # run is in (an observation is compared with the runs around it)
+        runs_settled = not (self.unread or self.read or self.ready_cands)
+        ingested = sum(self.counts[k] for k in ("added", "inserted", "moved", "rewritten", "completed"))
+        if runs_settled and self.observed_source is not None:
+            if self.observe_wanted:
+                self.observe_wanted = False
+                self._observe_list(store)
+            while self.observe_queue and not late():
+                snap = self.observe_queue.popleft()
+                self.in_hand += 1
+                try:
+                    self.counts["observed:" + attach_observed(store, snap)] += 1
+                except Exception as exc:  # noqa: BLE001 -- one snapshot never stops the sync
+                    logger.warning("hub sync: snapshot %s failed", snap.get("ts"), exc_info=True)
+                    self.errors.append(f"snapshot {snap.get('ts')}: {type(exc).__name__}: {exc}")
+                finally:
+                    self.in_hand -= 1
+                steps += 1
+            if ingested != self.__dict__.get("_ingested_seen", 0):
+                # a run that landed next to an observation of its own save
+                # takes its change back (clock skew between the two PCs)
+                self.__dict__["_ingested_seen"] = ingested
+                self.counts["observed:dropped"] += drop_observed_runs(store)
         more = self.has_work()
         if not more:
             self.phase = "ready"
@@ -557,6 +593,20 @@ class ChipSync:
             self.sweep_initial = False
         self.last_slice_ms = (time.perf_counter() - t0) * 1000.0
         return more
+
+    def _observe_list(self, store: HubStore) -> None:
+        """Queue the snapshots the ledger has not looked at yet, oldest first."""
+        try:
+            snaps = list(self.observed_source() or ())
+        except Exception as exc:  # noqa: BLE001 -- history unreadable now: try at the next look
+            self.errors.append(f"snapshots: {type(exc).__name__}: {exc}")
+            return
+        _observed_table(store.conn)
+        seen = {r[0] for r in store.conn.execute("SELECT ts FROM observed_snapshots")}
+        queued = {s["ts"] for s in self.observe_queue}
+        fresh = [s for s in snaps if s["ts"] not in seen and s["ts"] not in queued]
+        fresh.sort(key=lambda s: (s["t_us"], s["ts"]))
+        self.observe_queue.extend(fresh)
 
     # -- listing ---------------------------------------------------------
 
@@ -1195,6 +1245,137 @@ def attach_run(store: HubStore, cand: Cand, raw, digest, error, *, src: str,
     return "added" if hi is None else "inserted"
 
 
+OBSERVED_KIND = "observed"
+
+
+def _observed_table(conn) -> None:
+    conn.execute("CREATE TABLE IF NOT EXISTS observed_snapshots("
+                  "ts TEXT PRIMARY KEY, outcome TEXT NOT NULL, eid INTEGER)")
+
+
+def snapshot_instant_us(ts: str) -> int | None:
+    """A Param History capture stamp (``YYYYMMDD_HHMMSS[_ffff..]``, UTC) as
+    UTC microseconds; the fraction is the capture's own sub-second clock."""
+    from datetime import datetime, timezone
+    parts = str(ts).split("_")
+    try:
+        d = datetime.strptime(parts[0] + parts[1], "%Y%m%d%H%M%S").replace(tzinfo=timezone.utc)
+    except (ValueError, IndexError):
+        return None
+    us = 0
+    if len(parts) > 2 and parts[2].isdigit() and len(parts[2]) >= 4:
+        us = int(parts[2][:6].ljust(6, "0"))
+    return int(d.timestamp()) * 1_000_000 + us
+
+
+def attach_observed(store: HubStore, snap: dict, *, in_txn: bool = False) -> str:
+    """docs/282 review P1-2: one Param History snapshot that is not a run --
+    a state SM itself observed (an ``auto`` capture after an outside edit, a
+    ``save`` from before the ledger, a ``backup`` taken before an apply) --
+    placed by its instant as an ``observed`` event whose rows are its diff
+    against the event before it (its successor is re-diffed, I2).
+
+    Nothing is imported that the ledger already explains: a snapshot equal to
+    the state before it or after it (an SM write's own ``save``/``backup``
+    copy, a run's save seen by SM) is recorded as looked at and left out.
+    ``snap``: ``{"ts", "t_us", "trigger", "dir", "actor"?}``. Returns the
+    outcome: ``added`` / ``inserted`` / ``same_before`` / ``same_after`` /
+    ``unreadable`` / ``present``."""
+    if not in_txn:
+        with txn(store):
+            return attach_observed(store, snap, in_txn=True)
+    c = store.conn
+    _observed_table(c)
+    if c.execute("SELECT 1 FROM observed_snapshots WHERE ts=?", (snap["ts"],)).fetchone():
+        return "present"
+
+    def done(outcome, eid=None):
+        c.execute("INSERT OR REPLACE INTO observed_snapshots VALUES(?,?,?)", (snap["ts"], outcome, eid))
+        return outcome
+    folder = Path(snap["dir"])
+    try:
+        raw = (hub_build._read_shared(folder / "state.json"), hub_build._read_shared(folder / "wiring.json"))
+        state, wiring = (json.loads(data) for data in raw)
+        if not isinstance(state, dict) or not isinstance(wiring, dict):
+            raise ValueError("not a state/wiring pair")
+        doc = rules.merged(state, wiring)
+        flat = rules.flatten(doc)
+    except (OSError, ValueError) as exc:
+        logger.debug("hub sync: snapshot %s unreadable: %s", snap["ts"], exc)
+        return done("unreadable")
+    digest = rules.state_hash(*raw)
+    t_us = int(snap["t_us"])
+    rel = "snapshot:" + snap["ts"]
+    lo, hi = store.neighbors((t_us, "", 0, "", rel, _NEW))
+    pred, succ = store.good_at_or_before(lo), store.good_at_or_after(hi)
+    pred_flat = store.flat_of(pred) if pred is not None else {}
+    rows = rules.diff(pred_flat, flat)
+    if not rows:
+        return done("same_before")
+    if succ is not None and not rules.diff(store.flat_of(succ), flat):
+        # the next event's own state, seen a moment early (a save copy, or a
+        # run's save on a PC whose clock is ahead): it belongs to that event
+        return done("same_after")
+    succ_flat = _prepare_successor(store, succ)
+    chash = _content_hash_of(state, wiring)
+    ord_ = store.alloc_ord(lo, hi)
+    trigger = str(snap.get("trigger") or "snapshot")
+    event = dict(kind=OBSERVED_KIND, t_utc_us=t_us, t_src=snap["ts"], t_quality="sm_clock", ord=ord_,
+                 root_id=None, rel_path=rel, run_id=None, experiment=None, status=trigger,
+                 run_start_us=None, run_end_us=None, parents=None, targets=None, patches_n=0,
+                 actor=snap.get("actor"), plan_id=None, src="param_history:" + trigger,
+                 state_hash=digest, base_hash=pred["state_hash"] if pred is not None else None,
+                 state_ref=str(folder), n_changes=len(rows), flags=0,
+                 shape_hash=store.shape_and_arrays(doc, flat), error=None, t_ord=t_us, chash=chash)
+    columns = ",".join(event)
+    eid = c.execute(f"INSERT INTO events({columns}) VALUES({','.join('?' for _ in event)})",
+                    tuple(event.values())).lastrowid
+    if succ is not None:
+        succ = store.event(succ["eid"])              # alloc_ord may have renumbered
+    hi_ord = succ["ord"] if succ is not None else None
+    store.write_rows(eid, rows, set())
+    row = store.event(eid)
+    store.remember_flat(row, flat)
+
+    def doc_fn():
+        return doc
+    if succ is not None and succ_flat is not None:
+        _rediff_successor(store, succ, flat, digest, succ_flat)
+    store.refresh_error_checkpoints(ord_, hi_ord, doc_fn)
+    store.refresh_error_bases(ord_, hi_ord, digest)
+    store.maybe_checkpoint(eid, ord_, doc_fn)
+    store.refresh_reverts([eid, succ["eid"] if succ is not None else None,
+                           *store.same_hash_after(digest, ord_)])
+    return done("added" if hi is None else "inserted", eid)
+
+
+def drop_observed_runs(store: HubStore) -> int:
+    """An observed event whose next event is a run that saved exactly the
+    same state was that run's save, seen by SM before the run's folder (clock
+    skew): the observation is removed and the run takes its change back.
+    Returns how many were removed."""
+    _observed_table(store.conn)
+    dropped = 0
+    for ev in store.conn.execute("SELECT * FROM events WHERE kind=? AND error IS NULL",
+                                 (OBSERVED_KIND,)).fetchall():
+        nxt = store.conn.execute("SELECT * FROM events WHERE ord>? AND error IS NULL ORDER BY ord LIMIT 1",
+                                 (ev["ord"],)).fetchone()
+        if nxt is None or nxt["kind"] != "run":
+            continue
+        # cheap first: the same bytes, or the same parsed content
+        if not ((nxt["state_hash"] and nxt["state_hash"] == ev["state_hash"])
+                or (nxt["chash"] and nxt["chash"] == ev["chash"])):
+            continue
+        if rules.diff(store.flat_of(nxt), store.flat_of(ev)):
+            continue
+        with txn(store):
+            remove_event(store, ev)
+            store.conn.execute("UPDATE observed_snapshots SET outcome='same_after', eid=NULL WHERE eid=?",
+                               (ev["eid"],))
+        dropped += 1
+    return dropped
+
+
 def remove_event(store: HubStore, ev) -> None:
     """Take a run out of the chain and delete it (inside a transaction)."""
     _detach(store, ev)
@@ -1306,7 +1487,8 @@ def registered() -> list[ChipSync]:
 
 
 def open_chip(chip_dir, roots: Iterable[tuple[str, str]], *, identity: dict | None = None,
-              kick: bool = True, exclusive: bool = True) -> ChipSync:
+              kick: bool = True, exclusive: bool = True,
+              observed: Callable[[], list[dict]] | None = None) -> ChipSync:
     """A chip was activated: register its roots and catch every one of them
     up in the background (no page visit needed). ``exclusive``: every other
     chip's sync goes idle -- not watched, not swept -- until it is opened
@@ -1320,6 +1502,8 @@ def open_chip(chip_dir, roots: Iterable[tuple[str, str]], *, identity: dict | No
     cs.set_roots(roots)
     if identity:
         cs.identity = identity
+    if observed is not None:
+        cs.observed_source = observed
     cs.request(full=True)
     if kick and cs.roots:
         _kick(cs)

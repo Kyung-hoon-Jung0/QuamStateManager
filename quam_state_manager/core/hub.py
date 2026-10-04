@@ -806,10 +806,13 @@ class _Projector:
             except queue.Empty:
                 self._periodic()                   # docs/275
                 continue
+            touched = self.__dict__.setdefault("_touched", set())
             try:
                 if isinstance(item, _SyncTask):
+                    touched.add(str(item.hub.dir))
                     self._sync_one(item.hub)
                 else:
+                    touched.add(str(item.dir))
                     self._run_locked(item)
             finally:
                 with self._lock:
@@ -821,6 +824,11 @@ class _Projector:
                     # docs/275: the burst is over, no ledger handle stays open
                     for h in list(Hub._cache.values()):
                         h.release()
+                    # docs/282 review P2-3: build the read index now, off the
+                    # request thread, so the first drawer after a run finds it
+                    if PREWARM and touched:
+                        _prewarm_soon(touched)
+                    touched.clear()
                 if time.monotonic() - self.__dict__.get("_last_periodic", 0.0) >= _PERIODIC_S:
                     self._periodic()               # a busy queue never starves it
 
@@ -957,6 +965,47 @@ def flush(timeout: float = 30.0) -> bool:
 
 def set_inline(value: bool) -> None:
     _PROJECTOR.inline = bool(value)
+
+
+# docs/282 review P2-3: after a burst of ledger commits, the read index of
+# every chip it touched is rebuilt on its own thread (a slow build never holds
+# the projector, and a reader that arrives meanwhile answers "preparing" --
+# hub_index.READ_WAIT_S -- instead of waiting). Production only: a TESTING
+# app projects inline and keeps no read handle open behind a test's back.
+PREWARM = False
+_PREWARM_LOCK = threading.Lock()
+_PREWARM_WANT: set[str] = set()
+_PREWARM_THREAD: threading.Thread | None = None
+
+
+def set_prewarm(value: bool) -> None:
+    global PREWARM
+    PREWARM = bool(value)
+
+
+def _prewarm_soon(dirs) -> None:
+    global _PREWARM_THREAD
+    with _PREWARM_LOCK:
+        _PREWARM_WANT.update(str(d) for d in dirs)
+        if _PREWARM_THREAD is None:
+            _PREWARM_THREAD = threading.Thread(target=_prewarm_loop, name="sm-hub-index",
+                                               daemon=True)
+            _PREWARM_THREAD.start()
+
+
+def _prewarm_loop() -> None:
+    global _PREWARM_THREAD
+    from quam_state_manager.core import hub_index
+    while True:
+        with _PREWARM_LOCK:
+            if not _PREWARM_WANT:
+                _PREWARM_THREAD = None
+                return
+            directory = _PREWARM_WANT.pop()
+        try:
+            hub_index.prewarm(directory)
+        except Exception:  # noqa: BLE001 -- a warm-up never fails anything
+            logger.debug("hub index prewarm failed for %s", directory, exc_info=True)
 
 
 def catch_up(chip_dir: str | Path) -> None:

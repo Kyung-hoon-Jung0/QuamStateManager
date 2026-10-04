@@ -24125,7 +24125,11 @@ window.FieldHistory = (function () {
             _hideCellBtnTip();
             var input = cellBtn._input;
             if (input) {
-                open(cellBtn, input.dataset.resolved || input.dataset.dotPath || "", input);
+                // docs/282 review P2-1: the cell's OWN path (an alias when it
+                // crosses a pointer). The server resolves it once, names the
+                // hop and marks the rows the alias did not read -- the same
+                // answer Column History gives for this column.
+                open(cellBtn, input.dataset.dotPath || input.dataset.resolved || "", input);
             }
         });
         document.body.appendChild(cellBtn);

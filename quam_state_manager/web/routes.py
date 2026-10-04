@@ -3433,6 +3433,42 @@ def _hub_live_identity(ctx) -> dict | None:
     return ident if ident and ident.get("name") else None
 
 
+def _hub_observed_source(ctx, chip_dir):
+    """docs/282 review P1-2: what the run sync imports as ``observed`` events
+    -- this chip's Param History snapshots that are NOT runs (``auto`` /
+    ``manual`` / ``save`` / ``backup`` / ``restore`` captures: states SM itself
+    saw), of this folder's own timeline (never a parallel folder's, docs/250).
+    Runs come from the data folders; a snapshot of a run is never imported.
+    Called on the projector thread: no request context is used."""
+    from quam_state_manager.core import hub_sync
+    from quam_state_manager.core.history import LINEAGE_PARALLEL
+    hm = _history()
+    path = ctx["path"]
+    base = Path(chip_dir)
+
+    def source() -> list[dict]:
+        snaps = hm.list_snapshots(path)
+        try:
+            srcs = hm.snapshot_sources(path, snaps)
+        except Exception:  # noqa: BLE001 -- unknown lineage: nothing is imported
+            return []
+        out = []
+        for m in snaps:
+            if (getattr(m, "kind", None) == "exp" or m.trigger == "experiment"
+                    or m.run_id is not None or m.experiment_folder_path):
+                continue
+            if (srcs.get(m.timestamp) or {}).get("lineage", LINEAGE_PARALLEL) == LINEAGE_PARALLEL:
+                continue
+            t_us = hub_sync.snapshot_instant_us(m.timestamp)
+            folder = base / m.timestamp
+            if t_us is None or not (folder / "state.json").is_file() or not (folder / "wiring.json").is_file():
+                continue
+            out.append({"ts": m.timestamp, "t_us": t_us, "trigger": m.trigger, "dir": str(folder),
+                        "actor": getattr(m, "actor", None)})
+        return out
+    return source
+
+
 def _hub_sync_open(ctx) -> None:
     """docs/275: a live chip was activated -- register every data folder that
     belongs to it and catch the ledger up in the background (runs made while
@@ -3452,7 +3488,8 @@ def _hub_sync_open(ctx) -> None:
         # catch-up only when a test asks for it: an unrelated test opening a
         # chip whose declared data folder is a real archive must not ingest it.
         kick = not app.config.get("TESTING") or bool(app.config.get("HUB_SYNC_ON_OPEN"))
-        cs = hub_sync.open_chip(chip_dir, roots, identity=_hub_live_identity(ctx), kick=False)
+        cs = hub_sync.open_chip(chip_dir, roots, identity=_hub_live_identity(ctx), kick=False,
+                                observed=_hub_observed_source(ctx, chip_dir))
         if not app.config.get("TESTING"):
             # the watcher first: its baseline is ~a stat per run of the newest
             # day, and once the catch-up runs it competes for the interpreter
@@ -11653,7 +11690,8 @@ def _value_history(ctx: dict, path_map: dict[str, str], *, limit: int | None = N
     if not (chip_dir / "ledger.sqlite").exists():
         return fallback("no_ledger")
     try:
-        res = vh.read(chip_dir, targets, limit=limit, runs=runs)
+        res = vh.read(chip_dir, targets, limit=limit, runs=runs,
+                      binding=_vh_binding(ctx, chip_dir))
     except hub_sync.Building as exc:
         out.update(mode="building", status=getattr(exc, "status", None) or st)
         return out
@@ -11664,9 +11702,11 @@ def _value_history(ctx: dict, path_map: dict[str, str], *, limit: int | None = N
         logger.warning("value history: the ledger of %s could not be read", chip_dir,
                        exc_info=True)
         return fallback("unreadable")
-    if not res["ledger"].get("has_runs") and not st.get("roots"):
+    if (not res["ledger"].get("has_runs") and not res["ledger"].get("has_observed")
+            and not st.get("roots")):
         return fallback("no_runs")
-    out.update(mode="ledger", rows=res["rows"], runs=res["runs"], ledger=res["ledger"])
+    out.update(mode="ledger", rows=res["rows"], runs=res["runs"], ledger=res["ledger"],
+               runs_left_out=res.get("runs_left_out", 0))
     for key, tgt in targets.items():
         pts = res["rows"][key]["points"]
         newest: Any = vh.ABSENT
@@ -11675,6 +11715,25 @@ def _value_history(ctx: dict, path_map: dict[str, str], *, limit: int | None = N
         current = vh.comparable(tgt) if tgt.get("has_current") else None
         out["notes"][key] = vh.notes(st, res["ledger"], current=current, newest=newest)
     return out
+
+
+def _vh_binding(ctx: dict, chip_dir):
+    """The read binding every reader of this chip uses, so they share ONE RAM
+    index (docs/282 review P2-3): the chip's project zone when one is set --
+    the Calibration log binds the same -- else the plain store (UTC days)."""
+    from types import SimpleNamespace
+    from quam_state_manager.core import hub_index
+    raw = SimpleNamespace(directory=Path(chip_dir))
+    try:
+        from quam_state_manager.core import project_time
+        zone = project_time.display_zone(current_app.instance_path,
+                                         ctx.get("qualibrate_project")).get("zone")
+    except Exception:  # noqa: BLE001 -- no zone: the plain store
+        zone = None
+    if not zone:
+        return raw
+    return hub_index.context(raw, instance=current_app.instance_path,
+                             project=ctx.get("qualibrate_project"))
 
 
 def _vh_actor(actor: Any) -> str:
@@ -11752,6 +11811,14 @@ def _vh_present(p: dict, uid_roots, uid_memo: dict) -> dict:
         title = (f"Run {run}'s chip identity disagrees with this chip's, so it is not "
                  f"named as the writer of this value.")
         trigger = "auto"
+    elif prov == "observed":
+        trig = str(p.get("src") or "").split(":", 1)[-1] or "snapshot"
+        label = f"seen by SM ({trig} snapshot)"
+        sub = "writer unknown"
+        title = ("SM saw the chip hold this value when it took a Param History snapshot "
+                 f"({trig}); no run or SM write recorded in the ledger set it, so who did is "
+                 "not known (a change made outside SM, or an SM write from before the ledger).")
+        trigger = "auto"
     elif prov == "sm":
         kind = p.get("kind") or ""
         who = _vh_actor(p.get("actor"))
@@ -11784,9 +11851,9 @@ def _vh_present(p: dict, uid_roots, uid_memo: dict) -> dict:
         title = "Recorded in the change ledger; who set it is not known."
         trigger = "auto"
     if p.get("undone"):
-        label += " (undone)" if p["undone"] == "undone" else " (partly undone)"
-        title += (" A later undo took this write back." if p["undone"] == "undone"
-                  else " A later undo took part of this write back.")
+        # docs/282 review P2-2: decided per path (value_history._mark_undone)
+        label += " (undone)"
+        title += " A later undo took this write back."
     flags = [_VH_FLAG_TEXT[f] for f in p["flags"] if f in _VH_FLAG_TEXT]
     display, fill, usable = _vh_value_strings(p["value"], p["removed"])
     return {**p, "label": label, "sub": sub, "title": title, "trigger": trigger, "uid": uid,
@@ -11884,6 +11951,9 @@ def _vh_agent_view(ans: dict, key: str) -> dict:
                           for v in _vh_via_view(ans, key, uid_roots, uid_memo)],
             "points": [{k: p.get(k) for k in keep} for p in pts],
             "total": ans["rows"][key]["total"], "notes": ans["notes"].get(key) or [],
+            "in_force": [{"t": e["t"], "value": e["value"], "removed": e["removed"],
+                          "holder": e.get("holder"), "provenance": e["provenance"],
+                          "run_id": e.get("run_id")} for e in ans["rows"][key]["effective"]],
             "ledger": ans["ledger"]}
 
 
@@ -11920,7 +11990,7 @@ def _vh_column_view(ans: dict, path_map: dict[str, str], *, label: str, unit: st
             older = runs[i + 1]["values"].get(row_id) if i + 1 < len(runs) else None
             d, f, _u = _vh_value_strings(v, False)
             cells.append({"display": d, "fill": f, "has": v is not None and bool(f),
-                          "changed": i + 1 < len(runs) and v != older})
+                          "changed": i + 1 < len(runs) and not _vh_same(v, older)})
         for n in ans["notes"].get(row_id) or []:
             if n["code"] != "current_differs":
                 notes_seen.setdefault(n["code"], n)
@@ -11936,7 +12006,18 @@ def _vh_column_view(ans: dict, path_map: dict[str, str], *, label: str, unit: st
         })
     return {"label": label, "unit": unit, "grid": grid, "col_key": col_key, "rows": rows_out,
             "runs": runs, "chip_cap": CH_MAX_CHIPS, "notes": list(notes_seen.values()),
-            "ledger": ans["ledger"]}
+            "ledger": ans["ledger"], "runs_left_out": ans.get("runs_left_out", 0)}
+
+
+def _vh_same(a: Any, b: Any) -> bool:
+    """The one equality (hub_rules.same; NaN == NaN), None-safe."""
+    from quam_state_manager.core import hub_rules
+    if a is None or b is None:
+        return a is None and b is None
+    try:
+        return hub_rules.same(a, b)
+    except Exception:  # noqa: BLE001
+        return a == b
 
 
 @bp.route("/bulk/column-history", methods=["POST"])
@@ -16406,10 +16487,13 @@ def _trend_alias_series(dot_paths: list[str]) -> dict[str, list[tuple]]:
     last_us = ans["ledger"].get("last_us")
     out: dict[str, list[tuple]] = {}
     for dp in alias:
+        # docs/282 review P0-1: the value IN FORCE through the alias at each
+        # change (the rows of the holder it named then), never today's
+        # holder's values back-dated over a retarget
         rows = [(run_time.snapshot_key(p["t_us"], p.get("run_id") or 0),
                  None if p["removed"] else p["value"], "ledger", p.get("run_id"),
                  p.get("experiment"), p.get("folder"))
-                for p in ans["rows"][dp]["points"]]
+                for p in ans["rows"][dp]["effective"]]
         if rows and last_us is not None:
             newest = run_time.snapshot_key(last_us, 0)
             if newest > rows[-1][0] and _trend_is_num(rows[-1][1]):

@@ -186,5 +186,331 @@
    },
    "paths": 50
   }
+ },
+ "review_round": {
+  "note": "docs/282 \u00a711: the golden comparison again with 20 outside edits per archive (Param History auto captures, imported as observed events), the alias truth check (each run's value through the alias vs that run's own saved state), and the first drawer open after a run on the big chip copy. Counts and milliseconds only.",
+  "golden": {
+   "archive_A": {
+    "runs_copied": 300,
+    "ledger_events": 320,
+    "ledger_observed_events": 20,
+    "param_history_snapshots": 237,
+    "outside_edits": {
+     "made": 20,
+     "captured": 20,
+     "import": {
+      "observed:dropped": 0,
+      "observed:inserted": 20
+     }
+    },
+    "paths": 200,
+    "path_classes": {
+     "outside_edit": 33,
+     "alias": 40,
+     "pointer_leaf": 20,
+     "long_array_element": 20,
+     "leaf": 87
+    },
+    "modes": {
+     "ledger": 200
+    },
+    "old_points": {
+     "drawer": {
+      "exact": 277,
+      "shown_by_new_drawer": 363,
+      "earlier_change_in_ledger": 86,
+      "earlier:the_changing_run_has_no_param_history_snapshot": 19,
+      "earlier:oldest_old_point_is_its_window_start": 67
+     },
+     "column": {
+      "earlier_change_in_ledger": 197,
+      "earlier:oldest_old_point_is_its_window_start": 196,
+      "beyond_new_drawer_cap": 1,
+      "exact": 39,
+      "shown_by_new_drawer": 235,
+      "earlier:the_changing_run_has_no_param_history_snapshot": 1
+     }
+    },
+    "extra_ledger_points": {
+     "drawer": {
+      "return_to_an_earlier_state": 39,
+      "after_a_return_to_an_earlier_state": 23,
+      "observed_state": 1
+     },
+     "column": {
+      "older_than_old_window": 184,
+      "observed_state": 3,
+      "back_from_an_unshown_observed_state": 2,
+      "return_to_an_earlier_state": 1
+     }
+    },
+    "missing": {
+     "drawer": 0,
+     "column": 0
+    },
+    "alias_truth": {
+     "holder_mismatch": 0,
+     "value_mismatch": 0,
+     "checks": 80099,
+     "alias_unresolvable_in_that_run": 1261,
+     "s7_value_wrong": 6,
+     "runs_where_the_alias_named_another_holder": 8,
+     "aliases": 1356,
+     "runs": 60
+    },
+    "alias_most_changed": {
+     "before_agree": false,
+     "after_drawer_equals_column": true,
+     "after_trends_equals_in_force": true,
+     "unmarked_rows_all_in_trends": true,
+     "rows": 20,
+     "rows_marked_before_via": 2,
+     "in_force_points": 23,
+     "in_force_from_another_holder": 5,
+     "after_agree": true,
+     "before_points": {
+      "drawer": 20,
+      "column": 3,
+      "trends": 0
+     },
+     "after_points": {
+      "drawer": 20,
+      "column": 20,
+      "trends": 23
+     }
+    }
+   },
+   "archive_B": {
+    "runs_copied": 300,
+    "ledger_events": 311,
+    "ledger_observed_events": 20,
+    "param_history_snapshots": 195,
+    "outside_edits": {
+     "made": 20,
+     "captured": 20,
+     "import": {
+      "observed:dropped": 0,
+      "observed:inserted": 20
+     }
+    },
+    "paths": 200,
+    "path_classes": {
+     "outside_edit": 33,
+     "alias": 40,
+     "pointer_leaf": 20,
+     "leaf": 107
+    },
+    "modes": {
+     "ledger": 200
+    },
+    "old_points": {
+     "drawer": {
+      "exact": 219,
+      "shown_by_new_drawer": 297,
+      "earlier_change_in_ledger": 78,
+      "earlier:the_changing_run_has_no_param_history_snapshot": 12,
+      "earlier:oldest_old_point_is_its_window_start": 66,
+      "pointer_string_in_via": 1,
+      "absent_both": 1
+     },
+     "column": {
+      "exact": 50,
+      "shown_by_new_drawer": 238,
+      "earlier_change_in_ledger": 188,
+      "earlier:oldest_old_point_is_its_window_start": 186,
+      "earlier:the_changing_run_has_no_param_history_snapshot": 2,
+      "pointer_string_in_via": 1,
+      "absent_both": 1
+     }
+    },
+    "extra_ledger_points": {
+     "drawer": {
+      "older_than_old_window": 1
+     },
+     "column": {
+      "older_than_old_window": 52,
+      "observed_state": 4,
+      "back_from_an_unshown_observed_state": 4
+     }
+    },
+    "missing": {
+     "drawer": 0,
+     "column": 0
+    },
+    "alias_truth": {
+     "holder_mismatch": 0,
+     "value_mismatch": 0,
+     "checks": 29160,
+     "aliases": 486,
+     "runs": 60
+    },
+    "alias_most_changed": {
+     "before_agree": false,
+     "after_drawer_equals_column": true,
+     "after_trends_equals_in_force": true,
+     "unmarked_rows_all_in_trends": true,
+     "rows": 3,
+     "rows_marked_before_via": 0,
+     "in_force_points": 3,
+     "in_force_from_another_holder": 0,
+     "after_agree": true,
+     "before_points": {
+      "drawer": 3,
+      "column": 1,
+      "trends": 0
+     },
+     "after_points": {
+      "drawer": 3,
+      "column": 3,
+      "trends": 3
+     }
+    }
+   }
+  },
+  "first_open_after_a_run_ms": {
+   "ledger_paths": 155528,
+   "first_commit_no_prewarm_full_rebuild": [
+    {
+     "first_request_ms": 3247.8,
+     "first_answer": "rows",
+     "requests": 1,
+     "rows_request_ms": 3247.8,
+     "cross_chip_read_ms_max": null,
+     "cross_chip_reads": 0
+    },
+    {
+     "first_request_ms": 3169.4,
+     "first_answer": "rows",
+     "requests": 1,
+     "rows_request_ms": 3169.4,
+     "cross_chip_read_ms_max": null,
+     "cross_chip_reads": 0
+    }
+   ],
+   "intermediate_full_rebuild_on_projector": [
+    {
+     "first_request_ms": 273.2,
+     "first_answer": "preparing",
+     "requests": 4,
+     "rows_request_ms": 7.1,
+     "cross_chip_read_ms_max": 248.6,
+     "cross_chip_reads": 3
+    },
+    {
+     "first_request_ms": 270.7,
+     "first_answer": "preparing",
+     "requests": 4,
+     "rows_request_ms": 96.8,
+     "cross_chip_read_ms_max": 325.5,
+     "cross_chip_reads": 4
+    },
+    {
+     "first_request_ms": 257.5,
+     "first_answer": "preparing",
+     "requests": 4,
+     "rows_request_ms": 6.6,
+     "cross_chip_read_ms_max": 133.1,
+     "cross_chip_reads": 4
+    },
+    {
+     "first_request_ms": 460.0,
+     "first_answer": "preparing",
+     "requests": 5,
+     "rows_request_ms": 8.0,
+     "cross_chip_read_ms_max": 140.4,
+     "cross_chip_reads": 4,
+     "open_after_rebuild_ms": 7.5
+    },
+    {
+     "first_request_ms": 259.9,
+     "first_answer": "preparing",
+     "requests": 4,
+     "rows_request_ms": 8.9,
+     "cross_chip_read_ms_max": 263.9,
+     "cross_chip_reads": 3,
+     "open_after_rebuild_ms": 7.1
+    },
+    {
+     "first_request_ms": 259.4,
+     "first_answer": "preparing",
+     "requests": 5,
+     "rows_request_ms": 13.0,
+     "cross_chip_read_ms_max": 157.5,
+     "cross_chip_reads": 4,
+     "open_after_rebuild_ms": 10.6
+    }
+   ],
+   "final_extend_in_place_and_prewarm": [
+    {
+     "first_request_ms": 23.3,
+     "first_answer": "rows",
+     "requests": 1,
+     "rows_request_ms": 23.3,
+     "cross_chip_read_ms_max": 7.8,
+     "cross_chip_reads": 1
+    },
+    {
+     "first_request_ms": 33.4,
+     "first_answer": "rows",
+     "requests": 1,
+     "rows_request_ms": 33.4,
+     "cross_chip_read_ms_max": null,
+     "cross_chip_reads": 0
+    },
+    {
+     "first_request_ms": 32.1,
+     "first_answer": "rows",
+     "requests": 1,
+     "rows_request_ms": 32.1,
+     "cross_chip_read_ms_max": 1.5,
+     "cross_chip_reads": 1
+    },
+    {
+     "first_request_ms": 32.4,
+     "first_answer": "rows",
+     "requests": 1,
+     "rows_request_ms": 32.4,
+     "cross_chip_read_ms_max": 1.1,
+     "cross_chip_reads": 1,
+     "open_after_rebuild_ms": 4.9
+    },
+    {
+     "first_request_ms": 27.6,
+     "first_answer": "rows",
+     "requests": 1,
+     "rows_request_ms": 27.6,
+     "cross_chip_read_ms_max": null,
+     "cross_chip_reads": 0,
+     "open_after_rebuild_ms": 5.1
+    },
+    {
+     "first_request_ms": 18.5,
+     "first_answer": "rows",
+     "requests": 1,
+     "rows_request_ms": 18.5,
+     "cross_chip_read_ms_max": 1.1,
+     "cross_chip_reads": 1,
+     "open_after_rebuild_ms": 3.8
+    }
+   ],
+   "final_without_prewarm": [
+    {
+     "first_request_ms": 34.5,
+     "first_answer": "rows",
+     "requests": 1,
+     "rows_request_ms": 34.5,
+     "cross_chip_read_ms_max": null,
+     "cross_chip_reads": 0
+    },
+    {
+     "first_request_ms": 32.3,
+     "first_answer": "rows",
+     "requests": 1,
+     "rows_request_ms": 32.3,
+     "cross_chip_read_ms_max": null,
+     "cross_chip_reads": 0
+    }
+   ]
+  }
  }
 }

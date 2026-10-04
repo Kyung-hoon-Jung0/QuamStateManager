@@ -501,6 +501,11 @@ def create_app(*, testing: bool = False, instance_path: str | None = None) -> Fl
         # request thread.
         from quam_state_manager.core import hub as _hub
         _hub.set_inline(True)
+    else:
+        # docs/282 review P2-3: production rebuilds a chip's read index right
+        # after its ledger changes, off the request thread
+        from quam_state_manager.core import hub as _hub
+        _hub.set_prewarm(True)
     app.config["SECRET_KEY"] = os.urandom(24).hex()
 
     # SM-side qualibrate config-location override (docs/63 §B): the UI-chosen

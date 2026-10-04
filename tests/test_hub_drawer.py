@@ -65,8 +65,8 @@ def iso(t_us: int) -> str:
     return datetime.fromtimestamp(t_us / 1e6, tz=timezone.utc).isoformat()
 
 
-def run(root: Path, rid: int, state, *, patches=None, name="scan") -> Path:
-    t_us = T0 + rid * 10_000_000
+def run(root: Path, rid: int, state, *, patches=None, name="scan", t_us=None) -> Path:
+    t_us = T0 + rid * 10_000_000 if t_us is None else t_us
     hhmmss = datetime.fromtimestamp(t_us / 1e6, tz=timezone.utc).strftime("%H%M%S")
     folder = root / "2026-01-01" / f"#{rid}_{name}_{hhmmss}"
     (folder / "quam_state").mkdir(parents=True, exist_ok=True)
@@ -230,7 +230,10 @@ class TestAliases:
         assert "this pointer is not recorded yet" in html
         got = rows(html)
         assert [r["value"] for r in got] == ["0.3"]
-        assert all("vh-before-via" in r["cls"] for r in got),             "the chip has not run with this pointer: no recorded value was read through it"
+        # review P1-1: runs #1-#3 DID read x180_Gauss through x180, so its 0.3
+        # (recorded at #1) is not "before x180 pointed here" -- one rule, the
+        # holder the alias named at that row
+        assert not any("vh-before-via" in r["cls"] for r in got)
 
 
 # ======================================================================
@@ -425,9 +428,12 @@ class TestElementsAndTrends:
         series = [s for c in charts for s in c["series"] if s["entity"] == "qA1"]
         assert len(series) == 1, "the alias path drew no qA1 line"
         pts = [(ts, v) for ts, v in series[0]["points"] if ts not in (series[0].get("held") or {})]
-        d = rows(drawer(sm, p))
-        assert [v for _ts, v in pts] == [0.1, 0.2, 0.25]
-        assert [routes_mod._fh_display_string(v) for _ts, v in reversed(pts)] == [r["value"] for r in d]
+        # review P0-1: the value IN FORCE through x180 (x180_Gauss's 0.3 at
+        # #1-#3, x180_DragCosine's 0.25 from #4) -- the agent's in-force
+        # series, from the same read, says exactly this
+        j = sm["client"].get("/api/agent/field-history", query_string={"path": p}).get_json()
+        in_force = [e["value"] for e in j["history"]["in_force"]]
+        assert [v for _ts, v in pts] == in_force == [0.3, 0.25]
 
 
 # ======================================================================
@@ -443,7 +449,7 @@ def test_the_retry_selfcheck():
     if r.returncode == 2 and "jsdom not installed" in r.stdout:
         pytest.skip("jsdom not installed")
     assert r.returncode == 0, r.stdout + r.stderr
-    assert "all 11 checks passed" in r.stdout, r.stdout
+    assert "all 13 checks passed" in r.stdout, r.stdout
 
 # ======================================================================
 # 8. the index-build speedup keeps the decoder's answer (docs/282 perf)
@@ -490,3 +496,430 @@ def test_holder_path_decoding_is_the_same_with_and_without_escapes():
         assert segments(spelled) == _reference_segments(spelled) == keys, spelled
     assert segments("qubits.qA1.T1") == ["qubits", "qA1", "T1"]
     assert segments("a\\.b.c") == ["a.b", "c"] and segments("\\e.x") == ["", "x"]
+
+
+# ======================================================================
+# 9. review round (docs/282 "Review round"): each pin was RED on 3a9a774f
+# ======================================================================
+
+def _truth_through_alias(folder: Path, dot_path: str):
+    """The value an alias path had in ONE run's own saved state -- read from
+    the run folder with the one resolver, independent of the ledger."""
+    from quam_state_manager.core.hub_rules import merged
+    from quam_state_manager.core.pointer_path import resolve_field_target
+    state = json.loads((folder / "quam_state" / "state.json").read_text(encoding="utf-8"))
+    wiring = json.loads((folder / "quam_state" / "wiring.json").read_text(encoding="utf-8"))
+    return resolve_field_target(merged(state, wiring), dot_path)["resolved_value"]
+
+
+def _runs_of(env) -> list[Path]:
+    return sorted((env["data"] / "2026-01-01").glob("#*"), key=lambda f: int(f.name[1:].split("_")[0]))
+
+
+def _column_cells(html: str, row: str) -> list[str]:
+    byrun = html.split("ch-view-byrun")[1]
+    tr = re.search(r'<tr data-row="%s">(.*?)</tr>' % re.escape(row), byrun, re.S).group(1)
+    out = []
+    for tag in re.findall(r'<td class="ch-val[^"]*"[^>]*>', tr):
+        m = re.search(r'data-fill="([^"]*)"', tag)
+        out.append(m.group(1) if m else "")
+    return out
+
+
+@pytest.fixture
+def aba(tmp_path):
+    """x180 names DragCosine (#1), then Gauss (#2, while DragCosine's amplitude
+    moves), then DragCosine again (#3, amplitude moves again)."""
+    data, live = tmp_path / "data", tmp_path / "chips" / "live"
+    run(data, 1, chip_state(alias="#./x180_DragCosine", amp=0.1))
+    run(data, 2, chip_state(alias="#./x180_Gauss", amp=0.12))
+    run(data, 3, chip_state(alias="#./x180_DragCosine", amp=0.15))
+    write_chip(live, chip_state(alias="#./x180_DragCosine", amp=0.15), data)
+    app = make_app(tmp_path)
+    c = app.test_client()
+    assert c.post("/load", data={"folder": str(live)}).status_code in (200, 302)
+    return {"app": app, "client": c, "live": live, "data": data, "tmp": tmp_path}
+
+
+class TestReviewRound:
+    ALIAS = "qubits.qA1.xy.operations.x180.amplitude"
+
+    def test_p0_1_trends_draws_the_value_in_force_through_the_alias(self, sm):
+        html = sm["client"].get("/topology/trends", query_string={"path": self.ALIAS}).data.decode()
+        charts = json.loads(re.search(r'id="topo-trends-data">(.*?)</script>', html, re.S).group(1))
+        series = [s for c in charts for s in c["series"] if s["entity"] == "qA1"]
+        assert len(series) == 1
+        held = series[0].get("held") or {}
+        pts = [v for ts, v in series[0]["points"] if ts not in held]
+        truth = [_truth_through_alias(f, self.ALIAS) for f in _runs_of(sm)]
+        assert truth == [0.3, 0.3, 0.3, 0.25]
+        assert pts == [0.3, 0.25], "every charted value is one the alias really had at that run"
+        assert all(v == 0.25 for ts, v in series[0]["points"] if ts in held), \
+            "the held tail is the current holder's own value"
+
+    def test_p0_3_by_run_shows_the_then_holders_value_for_an_alias_row(self, sm):
+        html = column(sm, {"qA1": self.ALIAS})
+        cells = _column_cells(html, "qA1")
+        truth = [_truth_through_alias(f, self.ALIAS) for f in reversed(_runs_of(sm))]
+        assert [float(c) for c in cells] == truth == [0.25, 0.3, 0.3, 0.3]
+
+    def test_p0_2_by_run_leaves_out_a_run_of_another_chip(self, sm):
+        foreign = chip_state(alias="#./x180_DragCosine", amp=0.9, t1=9.0e-5, name="another-device")
+        run(sm["data"], 5, foreign)
+        with sm["app"].app_context():
+            hub_sync.on_roots_moved([str(sm["data"])])
+        assert "(chip uncertain)" in drawer(sm, "qubits.qA1.T1"), "the drawer itself names it uncertain"
+        html = column(sm, {"qA1": "qubits.qA1.T1"})
+        byrun = html.split("ch-view-byrun")[1]
+        assert ">#5</" not in byrun and 'data-fill="9e-05"' not in byrun, \
+            "a run of another chip is never offered as this chip's saved value (nor Use all)"
+        assert "1 run of an uncertain chip identity is left out" in byrun
+
+    def test_p1_1_before_via_marks_only_rows_the_alias_did_not_name(self, aba):
+        html = drawer(aba, self.ALIAS)
+        got = {r["value"]: "vh-before-via" in r["cls"] for r in rows(html)}
+        assert got == {"0.15": False, "0.12": True, "0.1": False}, got
+        j = aba["client"].get("/api/agent/field-history", query_string={"path": self.ALIAS}).get_json()
+        assert {p["value"]: p["before_via"] for p in j["history"]["points"]} == {0.15: False, 0.12: True, 0.1: False}
+
+    def test_p0_3_and_p1_1_share_one_rule_after_a_return(self, aba):
+        html = column(aba, {"qA1": self.ALIAS})
+        cells = [float(c) for c in _column_cells(html, "qA1")]
+        truth = [_truth_through_alias(f, self.ALIAS) for f in reversed(_runs_of(aba))]
+        assert cells == truth == [0.15, 0.3, 0.1]
+
+    def test_p2_2_partly_undone_marks_only_the_path_taken_back(self, sm):
+        c = sm["client"]
+        for path, val in (("qubits.qA1.T1", "4.5e-5"), ("qubits.qA2.T1", "5.5e-5")):
+            assert c.post("/field/edit", data={"dot_path": path, "value": val},
+                          headers={"X-SM-Actor": "operator"}).status_code == 200
+        assert c.post("/state/apply-to-live", headers={"X-SM-Actor": "operator"}).status_code == 200
+        assert c.post("/undo", headers={"X-SM-Actor": "operator"}).status_code == 200   # takes back qA2
+        a1 = rows(drawer(sm, "qubits.qA1.T1"))
+        a2 = rows(drawer(sm, "qubits.qA2.T1"))
+        assert a1[0]["label"] == "applied by operator" and "vh-undone" not in a1[0]["cls"], \
+            "qA1's edit is still live: never struck through"
+        assert a2[0]["label"] == "undo by operator"
+        assert a2[1]["label"] == "applied by operator (undone)" and "vh-undone" in a2[1]["cls"]
+
+    def test_p2_4_an_array_that_shrank_keeps_its_element_history(self, tmp_path):
+        data, live = tmp_path / "data", tmp_path / "chips" / "live"
+        w = [0.0] * 20
+        run(data, 1, chip_state(wave=w))
+        run(data, 2, chip_state(wave=w[:3] + [5.0] + w[4:]))           # element 3, long list
+        run(data, 3, chip_state(wave=[0.0, 0.0, 0.0, 5.0, 0.0]))        # shrinks, element 3 unchanged
+        run(data, 4, chip_state(wave=[0.0, 0.0, 0.0, 6.0, 0.0]))        # element 3 moves, short list
+        write_chip(live, chip_state(wave=[0.0, 0.0, 0.0, 6.0, 0.0]), data)
+        app = make_app(tmp_path)
+        c = app.test_client()
+        c.post("/load", data={"folder": str(live)})
+        got = rows(drawer({"app": app, "client": c}, "qubits.qA1.wave.3"))
+        assert [(r["value"], r["label"]) for r in got] == [
+            ("6.0", "saved in #4 scan"), ("5", "saved in #2 scan"), ("0", "first recorded in #1")], got
+
+    def test_p3_nan_in_by_run_is_not_a_change(self, tmp_path):
+        data, live = tmp_path / "data", tmp_path / "chips" / "live"
+        nan = float("nan")
+        run(data, 1, chip_state(t1=nan))
+        run(data, 2, chip_state(t1=nan, f01=5.2e9))
+        write_chip(live, chip_state(t1=nan, f01=5.2e9), data)
+        app = make_app(tmp_path)
+        c = app.test_client()
+        c.post("/load", data={"folder": str(live)})
+        html = column({"app": app, "client": c}, {"qA1": "qubits.qA1.T1"})
+        byrun = html.split("ch-view-byrun")[1]
+        tr = re.search(r'<tr data-row="qA1">(.*?)</tr>', byrun, re.S).group(1)
+        assert "ch-changed" not in tr, "NaN then NaN is no change"
+
+    def test_p3_column_history_says_before_via_in_text(self, aba):
+        html = column(aba, {"qA1": self.ALIAS})
+        changes = html.split("ch-view-byrun")[0]
+        assert "before x180 pointed here" in changes, "a visible marker, not only opacity"
+
+
+# ======================================================================
+# 10. review round: the read index never blocks across chips, and is warm
+# ======================================================================
+
+def _small_ledger(tmp_path: Path, name: str) -> Path:
+    from quam_state_manager.core import hub_build
+    data, out = tmp_path / f"data_{name}", tmp_path / f"ledger_{name}"
+    for rid in (1, 2, 3):
+        run(data, rid, chip_state(t1=rid * 1e-5))
+    hub_build.build(data, out)
+    return out
+
+
+class TestReviewIndexLocks:
+    def test_p2_3_a_busy_chip_never_holds_a_read_of_another_chip(self, tmp_path):
+        import threading
+        import time
+        from types import SimpleNamespace
+        from quam_state_manager.core import hub_index
+        from quam_state_manager.core.ramcache import Warming
+        a, b = _small_ledger(tmp_path, "a"), _small_ledger(tmp_path, "b")
+        A, B = SimpleNamespace(directory=a), SimpleNamespace(directory=b)
+        try:
+            for s in (A, B):
+                with hub_index.snapshot(s):
+                    pass
+            holding, release = threading.Event(), threading.Event()
+
+            def hold():                      # a slow read of chip A (an index build, say)
+                with hub_index.snapshot(A):
+                    holding.set()
+                    release.wait(5)
+            outcome = {}
+
+            def second():                    # another reader of chip A
+                t0 = time.perf_counter()
+                try:
+                    with hub_index.snapshot(A):
+                        outcome["a"] = "read"
+                except Warming:
+                    outcome["a"] = "warming"
+                outcome["a_s"] = time.perf_counter() - t0
+            t1 = threading.Thread(target=hold)
+            t1.start()
+            assert holding.wait(5)
+            t2 = threading.Thread(target=second)
+            t2.start()
+            time.sleep(0.05)                 # the second reader is now waiting on A
+            t0 = time.perf_counter()
+            with hub_index.snapshot(B):
+                b_s = time.perf_counter() - t0
+            t2.join(5)
+            release.set()
+            t1.join(5)
+            assert b_s < 0.2, f"a read of chip B waited {b_s:.2f} s behind chip A"
+            assert outcome.get("a") == "warming" and outcome.get("a_s", 9) < 1.0, \
+                f"a second read of the busy chip answers 'preparing', not after the holder: {outcome}"
+        finally:
+            hub_index.close_readers()
+
+    def test_p2_3_the_projector_builds_the_index_after_a_burst(self, tmp_path):
+        import time
+        from quam_state_manager.core import hub_index
+        led = _small_ledger(tmp_path, "w")
+        slot = str(led.resolve()).lower()
+        old_inline, old_pre = hub._PROJECTOR.inline, hub.PREWARM
+        hub.set_inline(False)
+        hub.set_prewarm(True)
+        try:
+            hub_index.close_readers()
+            assert hub_index.INDEX_CACHE.peek(slot) is None
+            hub._PROJECTOR.kick_sync(hub.Hub.for_chip(led))
+            deadline = time.monotonic() + 15
+            while time.monotonic() < deadline and hub_index.INDEX_CACHE.peek(slot) is None:
+                time.sleep(0.05)
+            assert hub_index.INDEX_CACHE.peek(slot) is not None, "no read index was built after the burst"
+        finally:
+            hub.set_inline(old_inline)
+            hub.set_prewarm(old_pre)
+            deadline = time.monotonic() + 10
+            while hub._PREWARM_THREAD is not None and time.monotonic() < deadline:
+                time.sleep(0.05)
+            hub._PROJECTOR.flush(10)
+            hub_index.close_readers()
+
+
+class TestReviewObserved:
+    def test_p1_2_a_state_sm_saw_between_runs_is_in_the_history(self, sm):
+        import time
+        live = sm["live"]
+        st = json.loads((live / "state.json").read_text(encoding="utf-8"))
+        st["qubits"]["qA1"]["T1"] = 7.0e-5                     # an edit made outside SM
+        (live / "state.json").write_text(json.dumps(st), encoding="utf-8")
+        with sm["app"].app_context():
+            assert routes_mod._history().check_and_snapshot(str(live), "auto", force=True)
+        run(sm["data"], 5, chip_state(alias="#./x180_DragCosine", t1=8.0e-5, f01=5.1e9, amp=0.25),
+            t_us=int(time.time() * 1e6) + 60_000_000)
+        with sm["app"].app_context():
+            hub_sync.on_roots_moved([str(sm["data"])])
+        got = rows(drawer(sm, "qubits.qA1.T1"))
+        assert [(r["value"], r["prov"]) for r in got][:3] == [
+            ("8e-05", "run_saved"), ("7e-05", "observed"), ("3e-05", "run_proven")], got
+        assert got[1]["label"] == "seen by SM (auto snapshot)" and "writer unknown" in got[1]["body"]
+        assert not got[1]["data"], "no run is named for a state SM only saw"
+
+    def test_p1_2_an_sm_writes_own_snapshots_are_not_a_second_history(self, sm):
+        """An Apply takes two Param History copies: a backup of the live chip
+        before it and a save after it. The save IS the SM event's state: it
+        is recorded as looked at and adds no event. (The backup is the live
+        chip as SM saw it before the write; it is imported only for what no
+        event explains -- here the live file's own data-folder entry, never T1.)"""
+        import sqlite3
+        c = sm["client"]
+        assert c.post("/field/edit", data={"dot_path": "qubits.qA1.T1", "value": "4.5e-5"}).status_code == 200
+        assert c.post("/state/apply-to-live").status_code == 200   # backup + save snapshots of the apply
+        with sm["app"].app_context():
+            hub_sync.on_roots_moved([str(sm["data"])])
+        got = rows(drawer(sm, "qubits.qA1.T1"))
+        assert [r["prov"] for r in got].count("observed") == 0, \
+            "the apply's own Param History copies are the SM event, never an extra row"
+        assert got[0]["label"].startswith("applied by")
+        con = sqlite3.connect(f"{(chip_dir(sm) / 'ledger.sqlite').resolve().as_uri()}?mode=ro", uri=True)
+        try:
+            kinds = [k for (k,) in con.execute("SELECT kind FROM events ORDER BY ord")]
+            outcomes = sorted(o for (o,) in con.execute("SELECT outcome FROM observed_snapshots"))
+        finally:
+            con.close()
+        assert kinds[-1] == "sm_apply", f"nothing after the SM write: its save copy is not an event ({kinds})"
+        assert "same_before" in outcomes, outcomes
+
+
+class TestReviewMore:
+    ALIAS = "qubits.qA1.xy.operations.x180.amplitude"
+
+    def test_p0_1_after_a_return_trends_draws_each_holders_value_in_force(self, aba):
+        html = aba["client"].get("/topology/trends", query_string={"path": self.ALIAS}).data.decode()
+        charts = json.loads(re.search(r'id="topo-trends-data">(.*?)</script>', html, re.S).group(1))
+        series = [s for c in charts for s in c["series"] if s["entity"] == "qA1"][0]
+        pts = [v for ts, v in series["points"] if ts not in (series.get("held") or {})]
+        truth = [_truth_through_alias(f, self.ALIAS) for f in _runs_of(aba)]
+        assert truth == [0.1, 0.3, 0.15] and pts == truth, (pts, truth)
+
+    def test_p2_3_every_zone_shares_one_index(self, sm):
+        from types import SimpleNamespace
+        from quam_state_manager.core import hub_index
+        led = chip_dir(sm)
+        slot = str(led.resolve()).lower()
+        hub_index.close_readers()
+        calls = []
+        real = hub_index.build_index
+        real_extend = hub_index.extend_index
+
+        def counting(conn, zone=None):
+            calls.append(zone)
+            return real(conn, zone)
+
+        def preparing(conn, prev):
+            # every time the cached index is (re)prepared for a token, even
+            # when an extend finds nothing new: another zone is a cache HIT
+            prepared.append(prev is not None)
+            return real_extend(conn, prev)
+        prepared = []
+        try:
+            hub_index.build_index = counting
+            hub_index.extend_index = preparing
+            for zone in ("UTC", "Asia/Seoul", "America/New_York"):
+                with hub_index.snapshot(hub_index.context(SimpleNamespace(directory=led), zone=zone)) as (_c, idx):
+                    assert idx.zone == zone
+            assert len(calls) == 1, f"one ledger, one index: built {len(calls)} times for three zones"
+            assert len(prepared) == 1, f"one ledger, one index: prepared {len(prepared)} times for three zones"
+            assert hub_index.INDEX_CACHE.peek(slot) is not None
+        finally:
+            hub_index.build_index = real
+            hub_index.extend_index = real_extend
+            hub_index.close_readers()
+
+    def test_p1_2_a_runs_save_seen_early_stays_the_runs(self, sm):
+        """An auto capture of the state a run saved, stamped BEFORE that run
+        (the experiment PC's clock is ahead), found after the run is already
+        in the ledger: the change stays the run's (no new run lands with it,
+        so only the import's own rule can decide)."""
+        import time
+        from quam_state_manager.core import history as history_mod
+        from datetime import datetime, timezone
+        live = sm["live"]
+        nxt = chip_state(alias="#./x180_DragCosine", t1=8.0e-5, f01=5.1e9, amp=0.25)
+        t_run = int(time.time() * 1e6) + 60_000_000
+        run(sm["data"], 5, nxt, t_us=t_run)
+        with sm["app"].app_context():
+            hub_sync.on_roots_moved([str(sm["data"])])
+        assert rows(drawer(sm, "qubits.qA1.T1"))[0]["label"] == "saved in #5 scan"
+        # the live chip holds exactly what the run saved (qualibrate writes both)
+        (live / "state.json").write_text(json.dumps(nxt), encoding="utf-8")
+        stamp = datetime.fromtimestamp((t_run - 5_000_000) / 1e6, tz=timezone.utc).strftime("%Y%m%d_%H%M%S_%f")[:20]
+        real = history_mod._ts_stamp
+        try:
+            history_mod._ts_stamp = lambda: stamp
+            with sm["app"].app_context():
+                assert routes_mod._history().check_and_snapshot(str(live), "auto", force=True)
+        finally:
+            history_mod._ts_stamp = real
+        cs = hub_sync.sync_for(chip_dir(sm))
+        cs.request(listing=True)
+        hub_sync._kick(cs)
+        got = rows(drawer(sm, "qubits.qA1.T1"))
+        assert (got[0]["value"], got[0]["label"]) == ("8e-05", "saved in #5 scan"), got[:2]
+        assert "observed" not in [r["prov"] for r in got]
+
+    def test_p1_2_a_run_landing_after_its_own_early_observation_takes_it_back(self, sm):
+        import time
+        live = sm["live"]
+        nxt = chip_state(alias="#./x180_DragCosine", t1=8.0e-5, f01=5.1e9, amp=0.25)
+        body = json.dumps(nxt)
+        (live / "state.json").write_text(body, encoding="utf-8")
+        with sm["app"].app_context():
+            assert routes_mod._history().check_and_snapshot(str(live), "auto", force=True)
+            hub_sync.on_roots_moved([str(sm["data"])])
+        first = rows(drawer(sm, "qubits.qA1.T1"))
+        assert first[0]["prov"] == "observed", "the capture is in the history before any run explains it"
+        folder = run(sm["data"], 5, nxt, t_us=int(time.time() * 1e6) + 60_000_000)
+        (folder / "quam_state" / "state.json").write_text(body, encoding="utf-8")   # the very bytes SM saw
+        with sm["app"].app_context():
+            hub_sync.on_roots_moved([str(sm["data"])])
+        got = rows(drawer(sm, "qubits.qA1.T1"))
+        assert (got[0]["value"], got[0]["label"]) == ("8e-05", "saved in #5 scan"), got[:2]
+        assert "observed" not in [r["prov"] for r in got], "the run's own save, seen early, is the run's"
+
+
+class TestReviewIncrementalIndex:
+    def _base(self, tmp_path):
+        from quam_state_manager.core import hub_build
+        data, out = tmp_path / "data_i", tmp_path / "ledger_i"
+        for rid in (1, 2, 3):
+            run(data, rid, chip_state(t1=rid * 1e-5, alias="#./x180_Gauss" if rid == 2 else "#./x180_DragCosine"))
+        hub_build.build(data, out)
+        return data, out
+
+    def test_p2_3_an_appended_run_extends_the_index_and_equals_a_full_build(self, tmp_path, monkeypatch):
+        import sqlite3
+        from types import SimpleNamespace
+        from quam_state_manager.core import hub_index
+        data, led = self._base(tmp_path)
+        store = SimpleNamespace(directory=led)
+        slot = str(led.resolve()).lower()
+        try:
+            with hub_index.snapshot(store):
+                pass
+            first = hub_index.INDEX_CACHE.peek(slot)[1]
+            builds = []
+            real = hub_index.build_index
+            monkeypatch.setattr(hub_index, "build_index", lambda *a, **k: builds.append(1) or real(*a, **k))
+            run(data, 4, chip_state(t1=4e-5, f01=5.3e9, alias="#./x180_Gauss"))   # a new run at the head
+            hub_sync.catch_up(led, [str(data)])
+            with hub_index.snapshot(hub_index.context(store, zone="UTC")) as (_c, view):
+                newest = view.eids.tolist()[-1]
+                assert newest == max(view.eids)
+                assert any(newest in ids for ids in view.postings["day"].values()),                     "a zone's day postings follow the appended run"
+            held = hub_index.INDEX_CACHE.peek(slot)[1]
+            assert held is first and builds == [], "an append extends the index; it is not rebuilt"
+            conn = sqlite3.connect(f"{(led / 'ledger.sqlite').resolve().as_uri()}?mode=ro", uri=True)
+            conn.row_factory = sqlite3.Row
+            cold = real(conn)
+            conn.close()
+            assert held == cold, "the extended index equals a full build field for field"
+            # an indexed event changed IN PLACE (its folder deleted: SOURCE_GONE),
+            # nothing appended: never served from the stale index
+            shutil.rmtree(next(data.glob("*/#2_*")))
+            hub_sync.catch_up(led, [str(data)])
+            with hub_index.snapshot(store):
+                pass
+            held = hub_index.INDEX_CACHE.peek(slot)[1]
+            conn = sqlite3.connect(f"{(led / 'ledger.sqlite').resolve().as_uri()}?mode=ro", uri=True)
+            conn.row_factory = sqlite3.Row
+            cold = real(conn)
+            conn.close()
+            assert held == cold, "an event re-flagged in place: the index equals a full build"
+            assert builds, "an event changed in place is a full build, not an extend"
+            builds.clear()
+            # a run that lands in the MIDDLE (late) re-diffs its successor: full build
+            run(data, 0, chip_state(t1=0.5e-5))
+            hub_sync.catch_up(led, [str(data)])
+            with hub_index.snapshot(store):
+                pass
+            assert builds, "a commit that changed an indexed event is a full build"
+        finally:
+            hub_index.close_readers()

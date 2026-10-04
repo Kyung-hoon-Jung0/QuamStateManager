@@ -149,6 +149,27 @@ class LedgerIndex:
             return {eid for name, ids in posting.items() if token in name for eid in ids}
         return set(posting.get(token, ()))
 
+    def for_zone(self, zone: str) -> "LedgerIndex":
+        """docs/282 review P2-3: the one RAM index of a ledger serves every
+        zone. Only the day postings depend on the zone; a view shares every
+        other array and map and adds that zone's days (built once per zone,
+        from ``t``)."""
+        views = self.__dict__.setdefault("_views", {})
+        view = views.get(zone)
+        if view is None:
+            tz = ZoneInfo(zone)
+            days: dict[str, set] = {}
+            for eid, t in zip(self.eids, self.t):
+                day = (_EPOCH + timedelta(microseconds=t)).astimezone(tz).date().isoformat()
+                days.setdefault(day, set()).add(eid)
+            postings = dict(self.postings)
+            postings["day"] = {d: array("I", sorted(ids)) for d, ids in days.items()}
+            view = LedgerIndex(self.ledger_id, zone, self.eids, self.t, self.kind, self.root,
+                               self.run_id, self.experiment, self.flags, self.positions, self.names,
+                               postings, self.paths, self.search_paths, self.path_postings, self.keys)
+            views[zone] = view
+        return view
+
     def search(self, text):
         result = None
         for group in search_query.groups(text):
@@ -161,47 +182,71 @@ class LedgerIndex:
         return set(self.eids) if result is None else result
 
 
-def build_index(conn, zone: str) -> LedgerIndex:
-    """Build only from the caller's SQLite read snapshot; no file writes."""
-    tz = ZoneInfo(zone)
+_EVENTS_SQL = ("SELECT e.*, COALESCE(r.folder_key,'') AS folder_key FROM events e "
+               "LEFT JOIN roots r USING(root_id) ORDER BY e.ord")
+#: what an already-indexed event must still be for an append-only update to
+#: keep it (docs/282 review P2-3): its place, every field the index reads, and
+#: the facts a re-diff of its rows changes (n_changes, base/state hash)
+_SIG_COLS = ("ord", "t_utc_us", "kind", "root_id", "rel_path", "run_id", "experiment", "flags",
+             "actor", "targets", "n_changes", "base_hash", "state_hash", "folder_key")
+
+
+def _event_sig(row) -> tuple:
+    return tuple(row[c] for c in _SIG_COLS)
+
+
+def _path_tokens(path: str, family) -> tuple:
+    # docs/282: only a segment starting with q or c can name an entity
+    # (_ENTITY / "cz_"); skipping the rest is the same set, ~0.8 s less
+    # on a 155k-path ledger
+    return family, {entity for part in segments(path) if part[:1] in "qQcC"
+                    for entity in _entities(part)}
+
+
+def _add_event(index: LedgerIndex, row, add) -> None:
+    def intern(kind, name):
+        names = index.names[kind]
+        return names.setdefault(name, len(names))
+    eid = row["eid"]
+    index.positions[eid] = len(index.eids)
+    index.eids.append(eid)
+    index.t.append(row["t_utc_us"])
+    index.kind.append(intern("kind", row["kind"]))
+    index.root.append(row["root_id"] if row["root_id"] is not None else -1)
+    index.run_id.append(row["run_id"] if row["run_id"] is not None else -1)
+    index.experiment.append(intern("experiment", row["experiment"] or ""))
+    index.flags.append(row["flags"])
+    index.keys[eid] = (row["t_utc_us"], row["folder_key"],
+                       row["run_id"] if row["run_id"] is not None else -1,
+                       row["experiment"] or "", row["rel_path"] or "", eid)
+    add("kind", row["kind"], eid)
+    add("experiment", row["experiment"] or "", eid)
+    for token in re.split(r"[\s_]+", row["experiment"] or ""):
+        add("experiment", token, eid)
+    add("actor", row["actor"] or "", eid)
+    for target in _strings(json.loads(row["targets"] or "null")):
+        for entity in _entities(target):
+            add("entity", entity, eid)
+
+
+def build_index(conn, zone: str | None = None) -> LedgerIndex:
+    """Build only from the caller's SQLite read snapshot; no file writes.
+    *zone* None builds the zone-free base (no day postings); a zone returns
+    that zone's view of it."""
+    if zone is not None:
+        return build_index(conn, None).for_zone(zone)
     ledger_id = conn.execute("SELECT v FROM meta WHERE k='ledger_id'").fetchone()[0]
-    index = LedgerIndex(ledger_id, zone)
+    index = LedgerIndex(ledger_id, "")
     pending = {key: {} for key in index.postings}
 
     def add(kind, token, eid):
         if token:
             pending[kind].setdefault(token.lower(), set()).add(eid)
 
-    def intern(kind, name):
-        names = index.names[kind]
-        return names.setdefault(name, len(names))
-
-    rows = conn.execute(
-        "SELECT e.*, COALESCE(r.folder_key,'') AS folder_key FROM events e "
-        "LEFT JOIN roots r USING(root_id) ORDER BY e.ord")
-    for row in rows:
-        eid = row["eid"]
-        index.positions[eid] = len(index.eids)
-        index.eids.append(eid)
-        index.t.append(row["t_utc_us"])
-        index.kind.append(intern("kind", row["kind"]))
-        index.root.append(row["root_id"] if row["root_id"] is not None else -1)
-        index.run_id.append(row["run_id"] if row["run_id"] is not None else -1)
-        index.experiment.append(intern("experiment", row["experiment"] or ""))
-        index.flags.append(row["flags"])
-        index.keys[eid] = (row["t_utc_us"], row["folder_key"],
-                           row["run_id"] if row["run_id"] is not None else -1,
-                           row["experiment"] or "", row["rel_path"] or "", eid)
-        add("kind", row["kind"], eid)
-        add("experiment", row["experiment"] or "", eid)
-        for token in re.split(r"[\s_]+", row["experiment"] or ""):
-            add("experiment", token, eid)
-        add("actor", row["actor"] or "", eid)
-        day = (_EPOCH + timedelta(microseconds=row["t_utc_us"])).astimezone(tz).date().isoformat()
-        add("day", day, eid)
-        for target in _strings(json.loads(row["targets"] or "null")):
-            for entity in _entities(target):
-                add("entity", entity, eid)
+    sigs = {}
+    for row in conn.execute(_EVENTS_SQL):
+        _add_event(index, row, add)
+        sigs[row["eid"]] = _event_sig(row)
 
     path_tokens = {}
     for row in conn.execute("SELECT pid,path,family FROM paths"):
@@ -209,12 +254,7 @@ def build_index(conn, zone: str) -> LedgerIndex:
         index.paths[path] = pid
         index.search_paths.setdefault(path.lower(), []).append(pid)
         index.path_postings[pid] = array("I")
-        # docs/282: only a segment starting with q or c can name an entity
-        # (_ENTITY / "cz_"); skipping the rest is the same set, ~0.8 s less
-        # on a 155k-path ledger
-        path_tokens[pid] = (family, {entity for part in segments(path)
-                                    if part[:1] in "qQcC"
-                                    for entity in _entities(part)})
+        path_tokens[pid] = _path_tokens(path, family)
     for pid, eid in conn.execute("SELECT pid,eid FROM changes ORDER BY pid,eid"):
         index.path_postings[pid].append(eid)
         family, entities = path_tokens[pid]
@@ -223,10 +263,86 @@ def build_index(conn, zone: str) -> LedgerIndex:
             add("entity", entity, eid)
     index.postings = {kind: {token: array("I", sorted(ids)) for token, ids in table.items()}
                       for kind, table in pending.items()}
+    index.__dict__["_sig"] = sigs
     return index
 
 
-INDEX_CACHE = KeyedMemo("hub_read_index", sizeof=footprint)
+def extend_index(conn, prev: LedgerIndex | None) -> LedgerIndex:
+    """docs/282 review P2-3: the index after a commit that only APPENDED
+    events (a new run at the head, an SM write) -- ``prev`` extended in place
+    with the new events, their paths and rows, instead of rebuilt (a full
+    build is ~1.2 s on a 155k-path ledger). Anything else -- an event moved,
+    re-diffed, re-flagged, removed, another ledger file -- is a full build.
+    Safe in place: every reader of one chip holds that chip's read lock, so
+    no other thread is inside ``prev`` while it changes."""
+    if prev is None or prev.__dict__.get("_sig") is None:
+        return build_index(conn)
+    ledger_id = conn.execute("SELECT v FROM meta WHERE k='ledger_id'").fetchone()[0]
+    if ledger_id != prev.ledger_id:
+        return build_index(conn)
+    rows = conn.execute(_EVENTS_SQL).fetchall()
+    sigs = prev.__dict__["_sig"]
+    n = len(prev.eids)
+    if len(rows) < n:
+        return build_index(conn)
+    for i in range(n):
+        if rows[i]["eid"] != prev.eids[i] or sigs.get(rows[i]["eid"]) != _event_sig(rows[i]):
+            return build_index(conn)
+    new = rows[n:]
+    high = max(prev.eids, default=0)
+    if any(r["eid"] <= high for r in new):
+        return build_index(conn)
+    pending = {key: {} for key in prev.postings}
+
+    def add(kind, token, eid):
+        if token:
+            pending[kind].setdefault(token.lower(), set()).add(eid)
+
+    for row in new:
+        _add_event(prev, row, add)
+        sigs[row["eid"]] = _event_sig(row)
+    top_pid = max(prev.path_postings, default=0)
+    new_paths = 0
+    for pid, path, family in conn.execute("SELECT pid,path,family FROM paths WHERE pid>?", (top_pid,)):
+        prev.paths[path] = pid
+        prev.search_paths.setdefault(path.lower(), []).append(pid)
+        prev.path_postings[pid] = array("I")
+        new_paths += 1
+    added = conn.execute("SELECT c.pid, c.eid, p.path, p.family FROM changes c JOIN paths p USING(pid) "
+                         "WHERE c.eid>? ORDER BY c.pid, c.eid", (high,)).fetchall()
+    tokens: dict = {}
+    for pid, eid, path, family in added:
+        prev.path_postings[pid].append(eid)
+        if pid not in tokens:
+            tokens[pid] = _path_tokens(path, family)
+        fam, entities = tokens[pid]
+        add("family", fam, eid)
+        for entity in entities:
+            add("entity", entity, eid)
+    for kind, table in pending.items():
+        target = prev.postings.setdefault(kind, {})
+        for token, ids in table.items():
+            arr = target.get(token)
+            if arr is None:
+                target[token] = array("I", sorted(ids))
+            else:
+                arr.extend(sorted(ids))     # new eids are all larger: still sorted
+    prev.__dict__.pop("_views", None)       # day postings follow the new events
+    if "_bytes" in prev.__dict__:
+        prev.__dict__["_bytes"] += 160 * len(new) + 260 * new_paths + 16 * len(added)
+    return prev
+
+
+def _index_bytes(index: LedgerIndex) -> int:
+    """Retained size: measured once per full build (``footprint``), then
+    kept current by an estimate for each append (the full traversal costs
+    ~0.7 s on a 155k-path ledger, more than the append itself)."""
+    if "_bytes" not in index.__dict__:
+        index.__dict__["_bytes"] = footprint(index)
+    return index.__dict__["_bytes"]
+
+
+INDEX_CACHE = KeyedMemo("hub_read_index", sizeof=_index_bytes)
 
 
 class _Reader:
@@ -245,18 +361,28 @@ class _Reader:
 
 _READERS = OrderedDict()
 _READERS_LOCK = threading.RLock()
+#: docs/282 review P2-3: how long a read waits for its chip's connection
+#: (another read of THE SAME chip -- an index being built, say) before it
+#: answers "preparing" (ramcache.Warming) instead of blocking the request
+READ_WAIT_S = 0.25
+
+
+def _close(reader, slot) -> None:
+    with reader.lock:
+        reader.conn.close()
+    INDEX_CACHE.drop_where(lambda candidate: candidate == slot)
 
 
 def close_readers(directory=None):
-    """Release read handles before deleting scratch ledgers or shutting down."""
+    """Release read handles before deleting scratch ledgers or shutting down.
+    A handle in use is closed once its reader is done; the global lock is
+    never held while waiting for it (docs/282 review P2-3)."""
     key = os.path.normcase(str(Path(directory).resolve())) if directory is not None else None
     with _READERS_LOCK:
-        for slot in list(_READERS):
-            if key is None or slot == key:
-                reader = _READERS.pop(slot)
-                with reader.lock:
-                    reader.conn.close()
-                INDEX_CACHE.drop_where(lambda candidate: candidate == slot)
+        gone = [(slot, _READERS.pop(slot)) for slot in list(_READERS)
+                if key is None or slot == key]
+    for slot, reader in gone:
+        _close(reader, slot)
 
 
 @contextmanager
@@ -267,20 +393,26 @@ def snapshot(store):
     hub_sync.require_ready(directory)
     store, zone = _binding(store)
     slot = os.path.normcase(str(Path(directory).resolve()))
+    stale = []
     with _READERS_LOCK:
         reader = _READERS.get(slot)
         if reader is not None and reader.identity != reader.file_identity():
-            close_readers(directory)
+            stale.append((slot, _READERS.pop(slot)))
             reader = None
         if reader is None:
             reader = _Reader(directory)
             _READERS[slot] = reader
         _READERS.move_to_end(slot)
-        reader.lock.acquire()
         # Bound connection resources separately from the RAM-cache budget.
         while len(_READERS) > 8:
             oldest = next(iter(_READERS))
-            close_readers(oldest)
+            stale.append((oldest, _READERS.pop(oldest)))
+    # docs/282 review P2-3: closing and waiting happen OUTSIDE the global
+    # lock -- a slow read of one chip never holds up a read of another
+    for old_slot, old in stale:
+        _close(old, old_slot)
+    if not reader.lock.acquire(timeout=READ_WAIT_S):
+        raise Warming("hub_read_lock", slot, READ_WAIT_S)
     try:
         conn = reader.conn
         version = conn.execute("PRAGMA data_version").fetchone()[0]
@@ -293,8 +425,10 @@ def snapshot(store):
                 journal_size = journal.stat().st_size
             except FileNotFoundError:
                 journal_size = 0
-            token = (reader.identity, ledger_id, version, high, journal_size, zone)
-            index = INDEX_CACHE.get(slot, token, lambda: build_index(conn, zone), wait_s=0)
+            # zone-free token: every zone shares the one base index
+            token = (reader.identity, ledger_id, version, high, journal_size)
+            index = INDEX_CACHE.get(slot, token, lambda prev: extend_index(conn, prev), wait_s=0,
+                                    incremental=True).for_zone(zone)
             hub_sync.require_ready(directory)
             yield conn, index
         finally:
@@ -306,3 +440,18 @@ def snapshot(store):
             raise Warming("hub_read_snapshot", slot, 0)
     finally:
         reader.lock.release()
+
+
+def prewarm(directory) -> bool:
+    """Build the chip's read index now (docs/282 review P2-3), so the first
+    reader after a ledger commit finds it ready. Off the request thread: the
+    hub's projector calls it when a burst of commits is over. False when the
+    ledger is still building, missing, or another read holds it."""
+    from types import SimpleNamespace
+    if not (Path(directory) / "ledger.sqlite").exists():
+        return False
+    try:
+        with snapshot(SimpleNamespace(directory=directory)):
+            return True
+    except (Warming, sqlite3.Error, OSError):
+        return False
