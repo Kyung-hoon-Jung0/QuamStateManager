@@ -5636,7 +5636,7 @@ def home():
     page is the Projects landing (shell renders instantly; the cards are a
     lazy fragment so GET / never pays the TOML/doctor I/O — it is the
     workbench iframe's entry and the most-hit route). Without a config the
-    pre-lens Welcome renders verbatim."""
+    Welcome renders with the time-zone picker inline (docs/263)."""
     config_exists = bool(qualibrate_config.tray_status().get("config_exists"))
     # The top-left title link promises "Projects landing" (its own title=):
     # ?landing=1 keeps that promise even with a chip open (customer report:
@@ -5732,6 +5732,10 @@ def _home_landing(config_exists, session):
         # "Getting started" manual starts expanded; any history collapses it.
         first_run=not (session.get("last_project") or resume_path or recents),
         active_project=qualibrate_config.tray_status().get("active"),
+        # docs/263 "Without projects": with no qualibrate config the Welcome shows the
+        # zone picker itself (scope "default") -- the lazy project cards stay out
+        # (nothing to list), so GET / still reads no ~/.qualibrate listing
+        landing_tz_views=None if config_exists else _project_tz_views(["default"]),
     ))
 
 
@@ -5740,13 +5744,15 @@ def landing_projects():
     """The landing's lazy project-cards fragment (docs/63) — the only place
     the landing pays the listing + doctor cost."""
     listing = _qualibrate_listing()
+    tz_names = _pt_scope_names(listing)
     return render_template(
         "_landing_projects.html",
         listing=listing,
         last_project=_load_session().get("last_project"),
         env_views=_project_env_views([p["name"] for p in listing.get("projects") or []]),
         # docs/263: each project's time zone (one memoized file read)
-        tz_views=_project_tz_views([p["name"] for p in listing.get("projects") or []]),
+        tz_views=_project_tz_views(tz_names),
+        tz_project=tz_names[0],
     )
 
 
@@ -5834,8 +5840,18 @@ def qualibrate_project_env():
 # ----------------------------------------------------------------------
 
 
+def _pt_scope_names(listing) -> list[str]:
+    """Listed projects, or the root-only project's name / standalone default.
+
+    The fallback is also a valid save target: no QUAlibrate project folder is
+    needed to remember a display zone in SM's own instance (docs/263).
+    """
+    return ([p["name"] for p in listing.get("projects") or []]
+            or [listing.get("active") or "default"])
+
+
 def _pt_listing_names() -> list[str]:
-    return [p["name"] for p in _qualibrate_listing().get("projects") or []]
+    return _pt_scope_names(_qualibrate_listing())
 
 
 def _pt_project_arg(source) -> str | None:

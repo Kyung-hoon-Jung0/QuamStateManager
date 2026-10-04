@@ -273,6 +273,7 @@
         line.textContent = 'This PC: ' + (off == null ? 'zone unknown' : offsetText(off))
             + (_clock.os_zone && _clock.os_zone.iana ? ' (' + _clock.os_zone.iana + ')' : '')
             + ' · ' + (_clock.ntp_text || 'Time sync: unknown');
+        line.title = (_clock.ntp && _clock.ntp.detail) || '';
         line.setAttribute('data-ntp', _clock.ntp && _clock.ntp.synced === true ? 'on'
             : _clock.ntp && _clock.ntp.synced === false ? 'off' : 'unknown');
     }
@@ -461,6 +462,7 @@
         d.appendChild(line);
         d.appendChild(el('p', 'pt-question', 'Does it match your watch?'));
         var ntp = el('p', 'pt-ntp muted', (_clock && _clock.ntp_text) || 'Time sync: unknown');
+        if (_clock && _clock.ntp && _clock.ntp.detail) ntp.title = _clock.ntp.detail;
         if (_clock && _clock.ntp) ntp.setAttribute('data-ntp', _clock.ntp.synced === true ? 'on' : _clock.ntp.synced === false ? 'off' : 'unknown');
         d.appendChild(ntp);
         var row = el('div', 'pt-actions');
@@ -539,7 +541,7 @@
         }
         var ntp = el('p', 'pt-ntp muted', 'This PC: checking time sync…');
         d.appendChild(ntp);
-        clockStatus().then(function (c) { ntp.textContent = 'This PC: ' + ((c && c.ntp_text) || 'Time sync: unknown'); });
+        clockStatus().then(function (c) { ntp.textContent = 'This PC: ' + ((c && c.ntp_text) || 'Time sync: unknown'); if (c && c.ntp && c.ntp.detail) ntp.title = c.ntp.detail; });
         d.appendChild(el('p', 'pt-question', 'Which clock is wrong?'));
         var row = el('div', 'pt-actions');
         var msg = el('p', 'pt-text pt-result', '');

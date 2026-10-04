@@ -277,8 +277,19 @@ def ntp_text(status: dict) -> str:
             out += f", off by {span_text(ntp['offset_s'])}"
         return out
     if synced is False:
-        return "Time sync: OFF -- " + (ntp.get("detail") or "this PC's clock is not synchronized")
-    return "Time sync: unknown" + (f" ({ntp['detail']})" if ntp.get("detail") else "")
+        return "Time sync: OFF -- " + (_short_detail(ntp.get("detail")) or "this PC's clock is not synchronized")
+    short = _short_detail(ntp.get("detail"))
+    return "Time sync: unknown" + (f" ({short})" if short else "")
+
+
+def _short_detail(detail) -> str:
+    """The OS's own message, said briefly: the full text stays in ``ntp.detail`` (the
+    UI puts it in a tooltip). A stopped Windows Time service is the common case."""
+    d = str(detail or "").strip()
+    low = d.lower()
+    if "0x80070426" in low or "service has not been started" in low or "service is not started" in low:
+        return "the Windows Time service is not running"
+    return d if len(d) <= 70 else d[:67].rstrip() + "..."
 
 
 # ----------------------------------------------------------------- store

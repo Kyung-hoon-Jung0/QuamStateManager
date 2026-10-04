@@ -322,3 +322,72 @@ Two runner lessons, recorded so the numbers can be trusted: the first sweep foun
 - A run that straddles an SM apply (DESIGN §2 item 11) compares SM's own
   stamps with run instants: with a `this_pc` answer, shift SM's stamps by
   `sm_correction_for` first.
+
+## Without projects
+
+2026-10-04, branch `fix/tz-without-projects`.
+
+The landing now includes the same `_landing_project_tz.html` component when
+QUAlibrate has no project overlays. Its scope is the root config's current
+project name, when present, otherwise `default`. Using that name keeps a
+root-only lab's setting with its project if an overlay is added later;
+`default` gives a standalone lab a stable scope before it has any projects.
+The scope is offered and accepted by the same zone and watch routes. Unknown
+names are still rejected.
+
+The no-config Welcome installs the lazy `/landing/projects` fragment too.
+Settings' existing `Change on Projects` link (`/?landing=1`) therefore reaches
+a working picker with projects, a root config only, or no config. The picker
+needs no Python environment. Rendering still does no clock probe: the shipped
+client fetches the OS-zone and time-sync status afterward, compares offsets
+before saving, then asks the same watch question. Reload only shows the saved
+zone.
+
+Storage remains `instance/project_time.json`; QUAlibrate's config files and
+their mtimes are untouched. A fallback-scope pick updates the existing
+`last_zone`, so the first later project is offered that zone and keeps it
+through the existing `ensure_default` rule when opened. No second setting or
+QUAlibrate config write is needed. The with-projects branch is unchanged;
+four rendered-fragment SHA256 pins cover no last project, either listed last
+project, and an unknown last project. Their digests were independently checked
+against the original template from `HEAD`.
+
+**Pins:** `tests/test_project_time_without_projects.py`, **17 passed**;
+its new jsdom driver exercises the actual rendered root-only and no-config
+fragments through the shipped client (**11 assertions per scope**, 22 total).
+The pins cover picker presence, scope, SM-only persistence, unknown-name
+rejection, watch storage, later-project inheritance, Settings navigation,
+render-time clock isolation, reload without a question, and the four original
+with-projects fragment digests. Existing tests were not edited.
+
+**Mutation sweep: 26/26 RED.** Each of the 17 new pytest cases was broken
+individually; nine additional breaks target scope naming, fallback saves,
+OS comparison and its answer, the watch popup and POST scope, and both reload
+properties. Each ran in a fresh pytest process with an isolated basetemp and
+the required timeout/cache options. Every source was restored byte-for-byte,
+and all source snapshots matched after the sweep. The runner initially
+stopped on its CRLF Settings-pattern lookup; the complete rerun handles that
+and detects all 26 breaks.
+
+**Real browser: 14/14 checks, console errors 0.** SM ran from this worktree
+on port **5129**, with a root-only scratch `QUALIBRATE_CONFIG_FILE` naming
+`current-chip`, no `projects/`, and sandboxed HOME/USERPROFILE. Chrome for
+Testing 154.0.8037.92 used a scratch profile and CDP **9449**. The installed
+Chrome refused remote debugging, so the temporary testing binary was used.
+The requested `D:\work\statemanager\tests\browser\journeys\cdp.cjs` was absent;
+the check used this worktree's tracked `tests/browser/journeys/cdp.cjs` and
+called `b.errors()` as a function. Real mouse clicks selected Los Angeles,
+answered the OS-zone and watch popups, reloaded to the saved zone without
+questions, and followed Settings to the working picker. Root config bytes
+and mtime remained identical. All seven screenshots were visually inspected:
+
+`D:\work\sm_qa_rigs\codex\tzroot_shots\`:
+`01_root_only_landing.png`, `02_zone_search.png`, `03_os_zone_compare.png`,
+`04_watch_check.png`, `05_saved_reload.png`, `06_settings.png`,
+`07_settings_reaches_picker.png`.
+
+### Settled at integration (coordinator)
+- **With no qualibrate config at all,** the Welcome renders the zone picker INLINE (scope `default`). It does not reuse the lazy project-cards fragment. `tests/test_project_scope.py::test_landing_welcome_without_config` pins that a config-less Welcome never asks for `/landing/projects`, a decision this keeps. The root-only case still goes through the cards fragment, which now carries the picker.
+- **The time-sync line says the OS message briefly:** "the Windows Time service is not running", otherwise up to 70 characters. The full text stays in `ntp.detail`, and the UI shows it as a tooltip. On this PC, the raw Windows message filled two lines of the Welcome (`tzroot_shots/08_no_config_welcome.png`).
+- **Pins:** `test_settings_link_reaches_a_picker[no-config]` (inline picker, no cards) and `test_time_sync_line_says_the_os_message_briefly`; mutation red.
+

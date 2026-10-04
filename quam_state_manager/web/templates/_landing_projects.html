@@ -4,8 +4,10 @@
    disjoint from qualibrate-tray-* — the topbar badge tests pin those class
    names to badge-only usage. #}
 {% if not listing.config_exists %}
+{% include '_landing_project_tz.html' %}
 <p class="muted">No ~/.qualibrate config found at <code>{{ listing.config_dir }}</code>.</p>
 {% elif not listing.projects %}
+{% include '_landing_project_tz.html' %}
 <p class="muted">No projects yet — create one in QUAlibrate, then open it here.</p>
 {% else %}
 {# w9/labwarm: the environment picker -- the same discovery as Generate

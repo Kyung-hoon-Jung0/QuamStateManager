@@ -20,6 +20,9 @@
                            BUTTON. The locate block still leads for qualibrate
                            users, but a standalone user no longer has to infer
                            the sidebar. #}
+                        {%- if landing_tz_views is not none %}
+                        {% with tz_project="default", tz_views=landing_tz_views %}{% include '_landing_project_tz.html' %}{% endwith %}
+                        {%- endif %}
                         <div class="landing-cta">
                             <button class="btn-sm landing-cta-open"
                                     onclick="window.smOpenStateFolder &amp;&amp; window.smOpenStateFolder()"
