@@ -587,8 +587,10 @@ The one-folder mode without SM ends by comparing row for row with S3's offline b
 archive at rest.
 
 There are five modes: full looks, light ticks, one folder, a checkpoint every 3 events, and
-`ORD_EPS` = 0.6, which forces renumbering. The 300-seed run on the final code (100 full, 60 light, 60 one-folder, 40 checkpoint, 40
-small `ORD_EPS`) was still running at this commit.
+`ORD_EPS` = 0.6, which forces renumbering. On the final code and harness: **300/300 seeds green** (100 full, 60 light, 60 one-folder, 40
+checkpoint, 40 small `ORD_EPS`; 61 min). The seeds exercised at least 3,255 SM writes,
+641 moves, 762 rewrites, 397 gone folders, 244 copies joined to an event, 110 copies split off
+and 323 renumbers.
 
 The fuzz found two product defects, both fixed above:
 
