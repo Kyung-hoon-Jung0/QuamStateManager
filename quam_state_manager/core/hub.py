@@ -166,6 +166,10 @@ class Hub:
         }
         if ref:
             line["ref"] = ref
+        # docs/275 review: registered BEFORE the append -- a projector reading
+        # the journal in the gap between the two used to decide this line by
+        # evidence and record a landed write as "outcome unknown"
+        _PROJECTOR.reserve(line["id"])
         try:
             payload = _dumps(ents)
             if len(payload) > INLINE_ENTRIES_BYTES:
@@ -175,8 +179,10 @@ class Hub:
                 line["entries"] = ents
             start, end = self._append(line)
         except RecordError:
+            _PROJECTOR.unreserve(line["id"])
             raise
         except (OSError, ValueError, TypeError) as exc:
+            _PROJECTOR.unreserve(line["id"])
             raise RecordError(f"could not record this write in {self.journal} "
                               f"({type(exc).__name__}: {exc}); nothing was written") from exc
         rec = Recorded(self, line, post_state, start, end)
@@ -749,6 +755,15 @@ class _Projector:
     def inflight(self, hub: Hub, rec: Recorded) -> None:
         with self._lock:
             self._inflight[rec.id] = rec
+            self.__dict__.setdefault("_reserved", set()).discard(rec.id)
+
+    def reserve(self, line_id: str) -> None:
+        with self._lock:
+            self.__dict__.setdefault("_reserved", set()).add(line_id)
+
+    def unreserve(self, line_id: str) -> None:
+        with self._lock:
+            self.__dict__.setdefault("_reserved", set()).discard(line_id)
 
     def done(self, rec: Recorded) -> None:
         with self._lock:
@@ -861,12 +876,32 @@ class _Projector:
             # one watcher tick (the RunIngest rule, RAM P7)
             FOREGROUND.wait_idle(quiet_s=0.05, max_s=0.5)
             with hub.ledger(keep=True) as store:
-                more = hub_sync.run(hub.dir, store, hub_sync.SLICE_S)
+                # a user's request that arrives mid-slice ends it after the
+                # current item (docs/275 review: deep archives)
+                more = hub_sync.run(hub.dir, store, hub_sync.SLICE_S,
+                                    should_yield=lambda: FOREGROUND.active > 0)
+            self.__dict__.setdefault("_sync_fails", {}).pop(os.path.normcase(str(hub.dir)), None)
         except Exception as exc:  # noqa: BLE001
             logger.warning("hub run sync failed for %s", hub.dir, exc_info=True)
             self.errors.append(f"{hub.dir}: sync: {type(exc).__name__}: {exc}")
+            self._retry_sync_later(hub)
         if more:
             self.kick_sync(hub)
+
+    def _retry_sync_later(self, hub: Hub) -> None:
+        """docs/275 review (P1-6): a slice that raised (a locked ledger, a
+        share that dropped out) is tried again -- 1, 2, 4 ... 60 s later --
+        instead of leaving the catch-up stopped until a folder moves."""
+        fails = self.__dict__.setdefault("_sync_fails", {})
+        key = os.path.normcase(str(hub.dir))
+        n = fails[key] = fails.get(key, 0) + 1
+        t = threading.Timer(min(60.0, 2.0 ** (n - 1)), self.kick_sync, [hub])
+        t.daemon = True
+        t.start()
+
+    def sync_queued(self, hub: Hub) -> bool:
+        with self._lock:
+            return os.path.normcase(str(hub.dir)) in self.__dict__.get("_sync_queued", ())
 
     def _periodic(self) -> None:
         self.__dict__["_last_periodic"] = time.monotonic()
@@ -895,7 +930,7 @@ class _Projector:
                 return "landed"
             if line["id"] in self._unknown:
                 return "unknown"
-            if line["id"] in self._inflight:
+            if line["id"] in self._inflight or line["id"] in self.__dict__.get("_reserved", ()):
                 return "wait"
         return None
 
@@ -1097,12 +1132,15 @@ def project(hub: Hub, proj: _Projector | None = None) -> int:
         store.close()
 
 
-def _placed_base(store, line: dict):
-    """docs/275: the event an SM line follows is the one BEFORE its instant
-    (its place in the ledger), not whatever was projected last."""
-    from quam_state_manager.core.hub_store import _NEW
-    lo, _hi = store.neighbors((int(line["t_utc_us"]), "", 0, "", "", _NEW))
-    return store.good_at_or_before(lo)
+def _derive_from(entries: list) -> Callable:
+    """docs/275 review (P1-4): the rows of a write whose bytes are gone --
+    its placed predecessor's document plus its own entries. ``append_sm``
+    calls it inside its transaction with the predecessor it places, so a
+    run another window inserts meanwhile can never be skipped."""
+    def derive(base_doc: dict) -> list:
+        doc = hub_entries.apply_entries(base_doc, entries)
+        return hub_entries.rows_for(entries, doc)
+    return derive
 
 
 def _offset_fits(journal: Path, offset: int) -> bool:
@@ -1147,6 +1185,7 @@ def _relabel_late(store, hub: Hub, line_id: str, proj: _Projector) -> None:
 
 def _project_line(store, hub: Hub, line: dict, outcome: str, post, end: int | None,
                   failure: str | None = None, *, replace: bool = False) -> None:
+    derive = None
     error = None
     rows: list = []
     entries: list = []
@@ -1172,13 +1211,10 @@ def _project_line(store, hub: Hub, line: dict, outcome: str, post, end: int | No
             elif sparse is not None:
                 doc = sparse
             else:
-                prev = _placed_base(store, line)       # docs/275
-                try:
-                    base_doc = store.state_at(prev[0]) if prev else {}
-                    doc = hub_entries.apply_entries(base_doc, entries)
-                    flags |= DERIVED
-                except Exception as exc:  # noqa: BLE001
-                    error = f"post-state unavailable: {type(exc).__name__}: {exc}"
+                # docs/275 review (P1-4): predecessor + entries, computed by
+                # append_sm INSIDE its transaction from the event it places
+                derive = _derive_from(entries)
+                flags |= DERIVED
             if doc is not None:
                 rows = hub_entries.rows_for(entries, doc)
     elif outcome == "failed":
@@ -1190,7 +1226,7 @@ def _project_line(store, hub: Hub, line: dict, outcome: str, post, end: int | No
     store.append_sm(line=line, outcome=outcome, rows=rows, flags=flags, state_hash=state_hash, error=error,
                     pair_payload=pair_payload, entries_gz=entries_gz, journal_end=end,
                     anchor_every=ANCHOR_EVERY, keep_entries_bytes=KEEP_ENTRIES_GZ_BYTES,
-                    replace=replace)
+                    replace=replace, jpos=end, derive=derive)
     if line.get("undoes") or replace:
         store.recompute_undo_flags()
 

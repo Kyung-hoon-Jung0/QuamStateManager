@@ -213,7 +213,7 @@ an LRU of 3 flats.
 
 ## Measured
 
-The machine is this PC: Windows 11, the `cqt` env. Every number is from a **copy** in the
+The machine is this PC: Windows 11, the test env. Every number is from a **copy** in the
 scratchpad. The 4,121-run archive's run folders were copied (only `node.json` + `quam_state/`,
 4.0 GiB, real byte copies, no links). The newest 12 runs were held aside to be added later. The
 10k synthetic is generated from one ~300 KB saved pair, with 1-5 numeric leaves moved per run,
@@ -319,7 +319,7 @@ One case per channel S5 watches. Each case checks the outcome, not "no crash". P
   - the chip-open hook baselined the watcher on the request thread (1.9-3.5 s on a first open,
     see "When the sync looks").
 
-Regression run (`cqt`, `--timeout=900`):
+Regression run (the test env, `--timeout=900`):
 
 - **The 199 test files** that touch the hub, run ingestion, the run watcher or chip activation
   (`/load`, `_activate_quam`, `/workspace/select`, `/qualibrate/open`), found by grep:

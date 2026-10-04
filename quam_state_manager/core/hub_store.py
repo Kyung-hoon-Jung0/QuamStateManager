@@ -48,6 +48,9 @@ ORD_EPS = 1e-6
 FLAT_CACHE = 3
 #: the eid component of a key for an event not yet inserted
 _NEW = 1 << 62
+#: docs/275 review (P1-5): how far apart two clocks may be for the causal
+#: floor to reorder an SM write and the run its base names (one hour)
+CAUSAL_WINDOW_US = 3_600_000_000
 #: SM-event kinds (docs/271). Run events keep kind="run".
 SM_KINDS = ("sm_apply", "agent", "autofit", "restore", "undo", "redo")
 
@@ -95,6 +98,25 @@ CREATE TABLE IF NOT EXISTS run_files(
 # by its instant; ``run_files`` is the stat watermark (size + mtime of the
 # saved pair and node.json) of every ingested run folder, so a rewrite is
 # found by a stat, never by re-reading every run.
+#
+# S5 review (docs/275 "Review round"), additive columns:
+#   events.t_ord   the ORDER instant: t_utc_us, except where causality moves an
+#                  event (an SM write after the run it was based on although
+#                  that run's clock is ahead; journal order between SM writes)
+#   events.chash   working_copy.content_hash of the event's (state, wiring) --
+#                  the hash an SM write names as its base
+#   sm_events.jpos the line's journal position (journal order = causal order)
+_COLUMNS = (("events", "t_ord", "INTEGER"), ("events", "chash", "TEXT"), ("sm_events", "jpos", "INTEGER"))
+_SCHEMA_S5R = """
+CREATE INDEX IF NOT EXISTS events_by_order_time ON events(t_ord, ord);
+CREATE INDEX IF NOT EXISTS events_by_chash ON events(chash);
+CREATE TRIGGER IF NOT EXISTS events_default_t_ord AFTER INSERT ON events WHEN NEW.t_ord IS NULL
+ BEGIN UPDATE events SET t_ord=NEW.t_utc_us WHERE eid=NEW.eid; END;
+"""
+_SCHEMA_OBJECTS = ("meta", "roots", "events", "run_identity", "locations", "locations_by_event", "paths",
+                   "changes", "changes_by_event", "blobs", "checkpoints", "sm_events", "sm_anchors",
+                   "events_by_state_hash", "events_by_time", "run_files", "events_by_order_time",
+                   "events_by_chash", "events_default_t_ord")
 
 
 def json_bytes(value: Any) -> bytes:
@@ -189,9 +211,20 @@ class HubStore:
         self.conn.execute("PRAGMA journal_mode=WAL")
         self.conn.execute("PRAGMA synchronous=NORMAL")
         self.conn.execute("PRAGMA cache_size=-16384")
-        for stmt in _SCHEMA.split(";"):
-            if stmt.strip():
-                self.conn.execute(stmt)
+        if not self._schema_current():
+            # docs/275 review: only a ledger that lacks part of its schema
+            # takes the write lock on open (a second window used to wait up
+            # to 21 s for another window's long transaction just to open)
+            for stmt in _SCHEMA.split(";"):
+                if stmt.strip():
+                    self.conn.execute(stmt)
+            for table, col, typ in _COLUMNS:
+                have = {r[1] for r in self.conn.execute(f"PRAGMA table_info({table})")}
+                if col not in have:
+                    self.conn.execute(f"ALTER TABLE {table} ADD COLUMN {col} {typ}")
+            self.conn.execute("UPDATE events SET t_ord=t_utc_us WHERE t_ord IS NULL")
+            self.conn.commit()
+            self.conn.executescript(_SCHEMA_S5R)
         if checkpoint_interval is None:
             # docs/275: a reader or the in-SM sync that names no interval
             # adopts the ledger's own (a new ledger gets the default)
@@ -204,14 +237,27 @@ class HubStore:
             if existing is not None and existing != val:
                 self.conn.close()
                 raise ValueError(f"incompatible ledger {key}: {existing}; expected {val}")
-            self.set_meta(key, val)
+            if existing is None:
+                self.set_meta(key, val)
         if self.meta("ledger_id") is None:
             # docs/275: the identity of THIS file; RAM caches built from a
             # ledger are dropped when the file is replaced or rebuilt
             self.set_meta("ledger_id", os.urandom(8).hex())
-        self.conn.commit()
+        if self.conn.in_transaction:
+            self.conn.commit()
         self.checkpoint_interval = checkpoint_interval
         self._pids = dict(self.conn.execute("SELECT path,pid FROM paths"))
+
+    def _schema_current(self) -> bool:
+        names = {r[0] for r in self.conn.execute(
+            "SELECT name FROM sqlite_master WHERE name IN (%s)" % ",".join("?" * len(_SCHEMA_OBJECTS)),
+            _SCHEMA_OBJECTS)}
+        if names != set(_SCHEMA_OBJECTS):
+            return False
+        for table, col, _typ in _COLUMNS:
+            if col not in {r[1] for r in self.conn.execute(f"PRAGMA table_info({table})")}:
+                return False
+        return True
 
     def __enter__(self):
         return self
@@ -423,7 +469,8 @@ class HubStore:
     def append_sm(self, *, line: dict, outcome: str, rows: list[rules.Change], flags: int,
                   state_hash: str | None, error: str | None, pair_payload,
                   entries_gz: bytes | None, journal_end: int | None, anchor_every: int,
-                  keep_entries_bytes: int, replace: bool = False) -> int | None:
+                  keep_entries_bytes: int, replace: bool = False, jpos: int | None = None,
+                  derive=None) -> int | None:
         """Project one journal line (docs/271) in ONE transaction, together with
         the journal offset it advances to. Idempotent per ``sm_id``: a line
         another SM window already projected is skipped. ``BEGIN IMMEDIATE``
@@ -457,6 +504,9 @@ class HubStore:
                     # S4 relabel: the old projection is a failed/unconfirmed
                     # event (no rows, no state, nothing replays from it); it is
                     # removed and the line takes its place by instant again
+                    if jpos is None:
+                        got = self.conn.execute("SELECT jpos FROM sm_events WHERE eid=?", (old["eid"],)).fetchone()
+                        jpos = got[0] if got else None
                     for table in ("changes", "sm_anchors", "sm_events", "checkpoints"):
                         self.conn.execute(f"DELETE FROM {table} WHERE eid=?", (old["eid"],))
                     self.conn.execute("DELETE FROM events WHERE eid=?", (old["eid"],))
@@ -465,9 +515,22 @@ class HubStore:
                 # not by projection order (two windows, a projector behind a
                 # run the sync already ingested)
                 t_us = int(line["t_utc_us"])
-                lo, hi = self.neighbors((t_us, "", 0, "", "", _NEW))
+                # docs/275 review (P1-5): never before the events it depends on
+                # -- SM writes earlier in the journal, and the event its base
+                # names -- whatever the wall clocks say
+                t_ord = self.causal_t_ord(line, t_us, jpos)
+                lo, hi = self.neighbors((t_ord, "", 0, "", "", _NEW))
                 prev = self.good_at_or_before(lo)
                 succ = self.good_at_or_after(hi)
+                if landed_ok and derive is not None:
+                    # P1-4: a write with no bytes is its PLACED predecessor +
+                    # its entries, computed here, inside this transaction --
+                    # another window cannot change the predecessor meanwhile
+                    try:
+                        rows = derive(self.state_at(prev["eid"]) if prev is not None else {})
+                    except Exception as exc:  # noqa: BLE001
+                        error = f"post-state unavailable: {type(exc).__name__}: {exc}"
+                        landed_ok, rows = False, []
                 anchor_hash = None
                 keep_entries = (entries_gz if entries_gz is not None and len(entries_gz) <= keep_entries_bytes
                                 else None)
@@ -505,7 +568,8 @@ class HubStore:
                         succ_flat = self.flat_of(succ)
                 ord_ = self.alloc_ord(lo, hi)
                 event = dict(
-                    kind=line.get("kind") or "sm_apply", t_utc_us=int(line["t_utc_us"]), t_src=line.get("t"),
+                    kind=line.get("kind") or "sm_apply", t_utc_us=int(line["t_utc_us"]), t_ord=t_ord,
+                    chash=line.get("post_hash") if landed_ok else None, t_src=line.get("t"),
                     t_quality="sm_clock", ord=ord_, root_id=None, rel_path=None, run_id=None,
                     experiment=None, status=outcome, actor=line.get("actor"), plan_id=line.get("plan_id"),
                     src=line.get("src"), state_hash=state_hash if landed_ok else None, base_hash=None,
@@ -525,11 +589,11 @@ class HubStore:
                         self.conn.execute("INSERT INTO sm_anchors VALUES(?,?)", (eid, anchor_hash))
                 self.conn.execute(
                     "INSERT INTO sm_events(eid,sm_id,outcome,base_chash,post_chash,run_uid,units,undoes,"
-                    "entries_n,entries,live) VALUES(?,?,?,?,?,?,?,?,?,?,?)",
+                    "entries_n,entries,live,jpos) VALUES(?,?,?,?,?,?,?,?,?,?,?,?)",
                     (eid, line["id"], outcome, line.get("base_hash"), line.get("post_hash"), line.get("run_uid"),
                      json_bytes(line.get("units") or []).decode("utf-8"),
                      json_bytes(line["undoes"]).decode("utf-8") if line.get("undoes") else None,
-                     int(line.get("n") or 0), keep_entries if landed_ok else None, line.get("live")))
+                     int(line.get("n") or 0), keep_entries if landed_ok else None, line.get("live"), jpos))
                 if landed_ok:
                     self.after_sm_placed(eid, ord_, t_us, succ, succ_flat, state_hash)
                 if journal_end is not None:
@@ -570,18 +634,19 @@ class HubStore:
         return key
 
     def order_key(self, row) -> tuple:
-        return (row["t_utc_us"], self.folder_key_of(row["root_id"]), row["run_id"] or 0,
+        t = row["t_ord"] if row["t_ord"] is not None else row["t_utc_us"]
+        return (t, self.folder_key_of(row["root_id"]), row["run_id"] or 0,
                 row["experiment"] or "", row["rel_path"] or "", row["eid"])
 
     def neighbors(self, key: tuple):
         """The events immediately before and after *key* in canonical order
         (I1), any kind, errors included."""
         t = key[0]
-        lo = self.conn.execute("SELECT * FROM events WHERE t_utc_us<? ORDER BY t_utc_us DESC, ord DESC LIMIT 1",
+        lo = self.conn.execute("SELECT * FROM events WHERE t_ord<? ORDER BY t_ord DESC, ord DESC LIMIT 1",
                                (t,)).fetchone()
-        hi = self.conn.execute("SELECT * FROM events WHERE t_utc_us>? ORDER BY t_utc_us, ord LIMIT 1",
+        hi = self.conn.execute("SELECT * FROM events WHERE t_ord>? ORDER BY t_ord, ord LIMIT 1",
                                (t,)).fetchone()
-        for row in self.conn.execute("SELECT * FROM events WHERE t_utc_us=?", (t,)).fetchall():
+        for row in self.conn.execute("SELECT * FROM events WHERE t_ord=?", (t,)).fetchall():
             k = self.order_key(row)
             if k < key:
                 if lo is None or row["ord"] > lo["ord"]:
@@ -690,6 +755,13 @@ class HubStore:
         self.conn.execute("UPDATE events SET base_hash=?, n_changes=? WHERE eid=?",
                           (base_hash, len(rows), row["eid"]))
 
+    def refresh_error_bases(self, lo_ord: float, hi_ord: float | None, base_hash: str | None) -> None:
+        """An error event's base_hash is the state before it (S3): after an
+        insertion or removal the error events between two good events name
+        the new predecessor (docs/275 review, P3)."""
+        self.conn.execute("UPDATE events SET base_hash=? WHERE error IS NOT NULL AND kind='run' AND ord>? AND ord<?",
+                          (base_hash, lo_ord, hi_ord if hi_ord is not None else float("inf")))
+
     def refresh_error_checkpoints(self, lo_ord: float, hi_ord: float | None, doc_fn) -> None:
         """I4 for error events between two good events: their checkpoint is
         the earlier good event's state."""
@@ -754,6 +826,43 @@ class HubStore:
             "SELECT 1 FROM events WHERE kind IN (%s) AND error IS NULL AND t_utc_us>? AND t_utc_us<? LIMIT 1"
             % ",".join("?" * len(SM_KINDS)), (*SM_KINDS, run_start_us, t_us)).fetchone() is not None
 
+    def causal_t_ord(self, line: dict, t_us: int, jpos: int | None) -> int:
+        """The order instant of an SM write (docs/275 review, P1-5): its own
+        clock, but never before (a) an SM write earlier in the journal (two
+        windows, a clock stepped back) or (b) the event whose content its base
+        names when that event is placed later than this clock says (a run on a
+        PC whose clock is ahead). An event with that content already placed at
+        or before this instant explains the base; then (b) moves nothing."""
+        floor = None
+        if jpos is not None:
+            row = self.conn.execute(
+                "SELECT MAX(e.t_ord) FROM sm_events s JOIN events e USING(eid) WHERE s.jpos<?",
+                (jpos,)).fetchone()
+            floor = row[0]
+        base = line.get("base_hash")
+        if base and not self.conn.execute("SELECT 1 FROM events WHERE chash=? AND t_ord<=? LIMIT 1",
+                                          (base, t_us)).fetchone():
+            row = self.conn.execute("SELECT MIN(t_ord) FROM events WHERE chash=? AND t_ord>? AND t_ord<=?",
+                                    (base, t_us, t_us + CAUSAL_WINDOW_US)).fetchone()
+            if row[0] is not None:
+                floor = row[0] if floor is None else max(floor, row[0])
+        return t_us if floor is None or floor < t_us else int(floor) + 1
+
+    def causal_ceiling(self, chash: str | None, t_us: int) -> int | None:
+        """The order instant a run must stay below (P1-5): an SM write placed
+        before this run's clock whose base IS this run's content, unless an
+        earlier event with that content already explains it."""
+        if not chash:
+            return None
+        row = self.conn.execute(
+            "SELECT MIN(e.t_ord) FROM sm_events s JOIN events e USING(eid) WHERE s.base_chash=? "
+            "AND e.t_ord<? AND e.t_ord>=?", (chash, t_us, t_us - CAUSAL_WINDOW_US)).fetchone()
+        if row[0] is None:
+            return None
+        if self.conn.execute("SELECT 1 FROM events WHERE chash=? AND t_ord<? LIMIT 1", (chash, row[0])).fetchone():
+            return None
+        return int(row[0])
+
     def after_sm_placed(self, eid: int, ord_: float, t_us: int, succ, succ_flat, state_hash) -> None:
         """The local repair after a landed SM event took its place: a run
         after it is re-diffed against it (I2), error checkpoints between them
@@ -766,6 +875,7 @@ class HubStore:
             self.rediff_run(succ, own, state_hash, succ_flat)
         hi_ord = succ["ord"] if succ is not None else None
         self.refresh_error_checkpoints(ord_, hi_ord, lambda: self.state_at(eid))
+        self.refresh_error_bases(ord_, hi_ord, state_hash)
         self.conn.execute(
             "UPDATE events SET flags = flags | ? WHERE kind='run' AND run_start_us IS NOT NULL "
             "AND run_start_us<? AND t_utc_us>? AND (flags & ?)=0",
@@ -802,7 +912,7 @@ class HubStore:
         events changed flags."""
         rows = self.conn.execute(
             "SELECT e.eid, e.flags, s.sm_id, s.units, s.undoes FROM sm_events s JOIN events e USING(eid) "
-            "WHERE s.outcome='landed' ORDER BY e.ord DESC").fetchall()
+            "WHERE s.outcome='landed' ORDER BY COALESCE(s.jpos, -1) DESC, e.ord DESC").fetchall()
         covered: dict[str, set] = {}
         whole: set[str] = set()
         changed = 0

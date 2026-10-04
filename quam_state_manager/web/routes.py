@@ -3359,18 +3359,38 @@ def _hub_roots_for(ctx) -> list[tuple[str, str]]:
     location, the folders recorded for that project
     (``project_dataset_roots.json``), and a Datasets root the user has
     declared to be this chip's data (a "same" chip decision). Never every
-    workspace root: one workspace often holds several chips' data."""
+    workspace root: one workspace often holds several chips' data.
+
+    docs/275 review (P1-1, P2):
+    * a storage location shared by several projects holds one subfolder per
+      project; the project's runs are in ``<location>/<project>``
+      (``hub_sync.project_run_root``), never the location itself;
+    * a recorded root that is ANOTHER project's folder of that shared
+      location is never adopted (/qualibrate/open records every project's
+      subfolder for the Datasets folder filter);
+    * a "same" decision counts for a root when it names that root
+      (``<chip>::root:<fs_key>``), or when its data-folder label belongs to
+      exactly one workspace root -- two roots that share a label are
+      evidence for neither."""
     from quam_state_manager.core import hub_sync
     from quam_state_manager.core.history import _data_folder_name, load_chip_decisions
+
+    def key(p: str) -> str:
+        try:
+            return path_match.fs_key(p) or os.path.normcase(os.path.abspath(p))
+        except (OSError, ValueError):
+            return os.path.normcase(os.path.abspath(p))
+
     declared = list(ctx.get("extras_data_roots") or [])
     scope = ctx.get("qualibrate_project")
-    storage, recorded = None, []
+    storage, shared, recorded = None, None, []
     if scope:
         try:
             st = qualibrate_config.project_storage(scope)
-            storage = st.get("native") if st.get("exists") else None
+            shared = st.get("native") if st.get("exists") else None
+            storage = hub_sync.project_run_root(shared, scope)
         except Exception:  # noqa: BLE001
-            storage = None
+            storage = shared = None
         try:
             recorded = list(_load_project_roots().get(scope, []))
         except Exception:  # noqa: BLE001
@@ -3381,35 +3401,36 @@ def _hub_roots_for(ctx) -> list[tuple[str, str]]:
     if ws_roots:
         chip_dir = _hub_chip_dir(ctx["path"])
         decisions = load_chip_decisions(current_app.instance_path) if chip_dir is not None else {}
+        labels = Counter(_data_folder_name(r) for r in ws_roots)
 
         def decided(root: str) -> bool:
+            if chip_dir is None:
+                return False
+            if decisions.get(f"{chip_dir.name}::root:{key(root)}") == "same":
+                return True
             label = _data_folder_name(root)
-            return bool(label) and decisions.get(f"{chip_dir.name}::{label}") == "same"
-
-    def key(p: str) -> str:
-        try:
-            return path_match.fs_key(p) or os.path.normcase(os.path.abspath(p))
-        except (OSError, ValueError):
-            return os.path.normcase(os.path.abspath(p))
+            return (bool(label) and labels[label] == 1
+                    and decisions.get(f"{chip_dir.name}::{label}") == "same")
 
     return hub_sync.roots_for_chip(declared=declared, project_storage=storage, project_roots=recorded,
-                                   workspace_roots=ws_roots, decided_same=decided, key=key)
+                                   workspace_roots=ws_roots, decided_same=decided, key=key,
+                                   shared_location=shared if storage != shared else None)
 
 
 def _hub_live_identity(ctx) -> dict | None:
-    """The open chip's identity in the S3 ledger form (name + fingerprint
-    token), so a run of another chip in a synced folder is flagged."""
-    from quam_state_manager.core.history import (
-        extras_chip_name, fingerprint_from_dicts, fingerprint_token)
+    """The open chip's identity in the S3 ledger form (``hub_build``'s one
+    identity function), so a run of another chip in a synced folder is
+    flagged -- seeded only from a chip that DECLARES a name. A nameless
+    chip's hardware fingerprint changes as the chip does (a qubit added, a
+    controller moved); its ledger takes the identity from its own archive,
+    exactly as the offline builder does (docs/275 review)."""
+    from quam_state_manager.core import hub_build
     store = ctx.get("store")
     if store is None:
         return None
     with store._lock:
-        name = extras_chip_name(store.state)
-        fp = fingerprint_from_dicts(store.state, store.wiring)
-    if not name and not (fp.network or fp.qubits or fp.pairs):
-        return None
-    return {"name": name, "fingerprint": fingerprint_token(fp)}
+        ident = hub_build._chip_identity(store.state, store.wiring, Path(ctx["path"]))
+    return ident if ident and ident.get("name") else None
 
 
 def _hub_sync_open(ctx) -> None:
@@ -3432,15 +3453,21 @@ def _hub_sync_open(ctx) -> None:
         # chip whose declared data folder is a real archive must not ingest it.
         kick = not app.config.get("TESTING") or bool(app.config.get("HUB_SYNC_ON_OPEN"))
         cs = hub_sync.open_chip(chip_dir, roots, identity=_hub_live_identity(ctx), kick=False)
-        if roots and not app.config.get("TESTING"):
+        if not app.config.get("TESTING"):
             # the watcher first: its baseline is ~a stat per run of the newest
             # day, and once the catch-up runs it competes for the interpreter
             # (measured: 2.8 s of a first open when kicked before this)
-            w = _run_watcher()
-            w.watch(f"hub:{chip_dir}", [r for r, _src in roots])
-            if not app.config.get("_hub_sync_listener"):
-                w.add_listener(hub_sync.on_roots_moved, all_roots=True)
-                app.config["_hub_sync_listener"] = True
+            w = _run_watcher() if roots or app.config.get("run_watcher") is not None else None
+            if w is not None:
+                # only the OPEN chip's folders are watched (docs/275 review:
+                # every chip ever opened used to stay watched and swept)
+                for other in hub_sync.registered():
+                    if other is not cs:
+                        w.watch(f"hub:{other.dir}", [])
+                w.watch(f"hub:{chip_dir}", [r for r, _src in roots])
+                if roots and not app.config.get("_hub_sync_listener"):
+                    w.add_listener(hub_sync.on_roots_moved, all_roots=True)
+                    app.config["_hub_sync_listener"] = True
         if kick:
             hub_sync.kick(cs)
     except Exception:  # noqa: BLE001 -- bookkeeping, never blocks an open
@@ -7349,6 +7376,9 @@ def qualibrate_open_project():
         # including already-registered ones — so Datasets/Trends can seed
         # their folder selection from the scope in later sessions too.
         _record_project_roots(name, found)
+    # docs/275 review (P1-1): the chip was activated before its project scope
+    # was pinned -- register its run folders again now that SM knows them
+    _hub_sync_open(opened)
 
     logger.info("qualibrate open-in-sm: %s -> %s (+%d dataset roots)",
                 name, state["native"], added)

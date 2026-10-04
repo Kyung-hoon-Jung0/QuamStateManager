@@ -32,7 +32,7 @@ import pytest
 from quam_state_manager.core import hub, hub_build, hub_rules as rules, hub_sync, run_watch
 from quam_state_manager.core.hub_store import (
     CHIP_UNCERTAIN, NODE_UNREADABLE, OPS, OVERLAPS_SM_WRITE, REVERTS_TO_EARLIER, REWRITTEN,
-    SOURCE_GONE, HubStore)
+    SOURCE_GONE, UNDONE, HubStore)
 from quam_state_manager.core.ramcache import Warming
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -74,6 +74,14 @@ def run(root: Path, rid: int, state, *, t_us: int | None = None, day="2026-01-01
         (folder / "quam_state" / "state.json").write_text(json.dumps(state), encoding="utf-8")
         (folder / "quam_state" / "wiring.json").write_text(json.dumps(wiring or WIRING), encoding="utf-8")
     return folder
+
+
+def age(path: Path, seconds: float = 3600.0) -> None:
+    """Make a folder look settled: every file and directory under it was last
+    written *seconds* ago (a run still being written waits, docs/275 review)."""
+    old = time.time() - seconds
+    for p in [path, *path.rglob("*")]:
+        os.utime(p, (old, old))
 
 
 def sync(chip: Path, *roots: Path, identity=None):
@@ -155,6 +163,7 @@ class TestPlacement:
         run(root, 6, None)                     # a stateless run, final (a later one exists)
         (run(root, 7, doc(4.0)) / "node.json").write_text("{torn", encoding="utf-8")
         run(root, 8, doc(5.0))
+        age(root)                              # a settled archive: nothing is being written
         hub_build.build(root, tmp_path / "offline")
         sync(tmp_path / "chip", root)
         a, b = events(tmp_path / "offline"), events(tmp_path / "chip")
@@ -509,9 +518,10 @@ class TestRunFolders:
     def test_a_stateless_run_is_final_once_a_later_run_exists(self, tmp_path):
         root, chip = tmp_path / "data", tmp_path / "chip"
         run(root, 1, doc(1.0))
-        run(root, 2, None)
+        f2 = run(root, 2, None)
         sync(chip, root)
         assert len(events(chip)) == 1
+        age(f2)                                # the crashed run's files are long settled
         run(root, 3, doc(3.0))
         tick(chip, root)
         evs = by_run(chip)
@@ -910,3 +920,808 @@ class TestConcurrency:
         assert "_ledger_store" not in hub.Hub.for_chip(chip).__dict__, "closed once the projector went idle"
         monkeypatch.undo()
         assert len(events(chip)) == 12
+
+
+# ======================================================================
+# 7. the review round (docs/275 "Review round"): every refutation, pinned
+# ======================================================================
+
+import sqlite3  # noqa: E402
+import threading  # noqa: E402
+
+from quam_state_manager.core import qualibrate_config as _qc  # noqa: E402
+
+
+class _Clock:
+    """hub_sync's view of time.monotonic, shifted forward on demand."""
+
+    def __init__(self):
+        self.offset = 0.0
+
+    def monotonic(self):
+        return time.monotonic() + self.offset
+
+    def __getattr__(self, name):
+        return getattr(time, name)
+
+
+@pytest.fixture
+def clock(monkeypatch):
+    c = _Clock()
+    monkeypatch.setattr(hub_sync, "time", c)
+    return c
+
+
+def _restart():
+    """A new SM process: RAM bookkeeping is rebuilt from the ledger."""
+    for h in list(hub.Hub._cache.values()):
+        h._close_ledger()
+    hub_sync._SYNCS.clear()
+
+
+class TestReviewSync:
+    # -- P1-2: a run whose ingestion raised is retried --------------------
+    def test_a_run_whose_ingestion_raised_once_is_retried(self, tmp_path, monkeypatch, clock):
+        root, chip = tmp_path / "data", tmp_path / "chip"
+        run(root, 1, doc(1.0))
+        run(root, 2, doc(2.0))
+        sync(chip, root)
+        run(root, 3, doc(3.0))
+        real = hub_sync.attach_run
+        raised = []
+
+        def flaky(store, cand, *a, **k):
+            if cand.run.run_id == 3 and not raised:
+                raised.append(1)
+                raise sqlite3.OperationalError("database is locked")    # another window's long write
+            return real(store, cand, *a, **k)
+        monkeypatch.setattr(hub_sync, "attach_run", flaky)
+        tick(chip, root)
+        assert raised and 3 not in by_run(chip)
+        cs = hub_sync.sync_for(chip)
+        st = cs.status()
+        assert st["state"] == "building" and st["failed"] == 1, "a failed run awaiting its retry is not 'ready'"
+        clock.offset += 10                         # a periodic listing before the retry is due
+        cs.request(listing=True)
+        hub_sync.kick(cs)
+        assert 3 not in by_run(chip)
+        for _ in range(3):
+            clock.offset += 40
+            hub_sync.periodic()
+            tick(chip, root)
+        assert 3 in by_run(chip), "run 3 raised once and was never retried"
+        assert cs.status()["state"] == "ready" and cs.status()["failed"] == 0
+
+    def test_a_day_whose_run_failed_is_listed_again(self, tmp_path, monkeypatch, clock):
+        root, chip = tmp_path / "data", tmp_path / "chip"
+        for i in (1, 2):
+            run(root, i, doc(float(i)))
+        cs = sync(chip, root)
+        run(root, 3, doc(3.0))
+        real = hub_sync.attach_run
+        monkeypatch.setattr(hub_sync, "attach_run", lambda store, cand, *a, **k: (
+            (_ for _ in ()).throw(sqlite3.OperationalError("locked")) if cand.run.run_id == 3
+            else real(store, cand, *a, **k)))
+        tick(chip, root)
+        rs = cs.roots[hub_sync._norm(root)]
+        assert "2026-01-01" not in rs.dates, "a day with a failed run is not marked listed"
+
+    def test_a_run_that_keeps_failing_is_reported_not_ready(self, tmp_path, monkeypatch, clock):
+        root, chip = tmp_path / "data", tmp_path / "chip"
+        run(root, 1, doc(1.0))
+        cs = sync(chip, root)
+        run(root, 2, doc(2.0))
+        real = hub_sync.attach_run
+        monkeypatch.setattr(hub_sync, "attach_run", lambda store, cand, *a, **k: (
+            (_ for _ in ()).throw(RuntimeError("always")) if cand.run.run_id == 2 else real(store, cand, *a, **k)))
+        tick(chip, root)
+        for _ in range(hub_sync.MAX_RETRIES + 1):
+            clock.offset += hub_sync.RETRY_AFTER_S + 1
+            hub_sync.periodic()
+        st = cs.status()
+        assert st["state"] == "degraded" and st["failed"] == 1, st
+
+    # -- P1-3: status is never "ready" while a found run is in hand -----------
+    def test_status_never_says_ready_while_a_moved_root_is_being_listed(self, tmp_path, monkeypatch):
+        root, chip = tmp_path / "data", tmp_path / "chip"
+        run(root, 1, doc(1.0))
+        cs = sync(chip, root)
+        assert cs.status()["state"] == "ready"
+        real = hub_sync.ChipSync._list_root
+        in_listing = threading.Event()
+
+        def slow(self, rs, mode):
+            in_listing.set()
+            time.sleep(0.6)
+            return real(self, rs, mode)
+        monkeypatch.setattr(hub_sync.ChipSync, "_list_root", slow)
+        run(root, 2, doc(2.0))
+        hub.set_inline(False)
+        try:
+            hub_sync.on_roots_moved([str(root)])
+            assert in_listing.wait(5)
+            time.sleep(0.1)
+            mid = cs.status()["state"]
+            landed = 2 in by_run(chip)
+            assert hub.flush(30)
+            deadline = time.monotonic() + 10
+            while cs.has_work() and time.monotonic() < deadline:
+                time.sleep(0.05)
+        finally:
+            hub.set_inline(True)
+        assert not (mid == "ready" and not landed), "ready while the moved root's new run was not in the ledger"
+
+    def test_status_never_says_ready_while_the_last_run_is_being_ingested(self, tmp_path, monkeypatch):
+        root, chip = tmp_path / "data", tmp_path / "chip"
+        run(root, 1, doc(1.0))
+        cs = sync(chip, root)
+        real = hub_sync.attach_run
+        inside = threading.Event()
+
+        def slow(*a, **k):
+            inside.set()
+            time.sleep(0.6)
+            return real(*a, **k)
+        monkeypatch.setattr(hub_sync, "attach_run", slow)
+        run(root, 2, doc(2.0))
+        hub.set_inline(False)
+        try:
+            hub_sync.on_roots_moved([str(root)])
+            assert inside.wait(5)
+            time.sleep(0.1)
+            mid = cs.status()
+            landed = 2 in by_run(chip)
+            assert hub.flush(30)
+        finally:
+            hub.set_inline(True)
+        assert not (mid["state"] == "ready" and not landed)
+
+    # -- P1-6: one failed slice does not stop the catch-up ----------------------
+    def test_a_slice_that_raised_is_retried(self, tmp_path, monkeypatch):
+        root, chip = tmp_path / "data", tmp_path / "chip"
+        for i in range(1, 6):
+            run(root, i, doc(float(i)))
+        from quam_state_manager.core import hub_store
+        real = hub_store.HubStore.__init__
+        failed = []
+
+        def flaky(self, *a, **k):
+            if threading.current_thread().name == "sm-hub-projector" and not failed:
+                failed.append(1)
+                raise sqlite3.OperationalError("database is locked")
+            real(self, *a, **k)
+        monkeypatch.setattr(hub_store.HubStore, "__init__", flaky)
+        hub.set_inline(False)
+        try:
+            cs = hub_sync.open_chip(chip, [(str(root), "declared")])
+            deadline = time.monotonic() + 20
+            while (cs.has_work() or len(events(chip)) < 5) and time.monotonic() < deadline:
+                time.sleep(0.1)
+            assert hub.flush(30)
+        finally:
+            hub.set_inline(True)
+        assert failed and len(events(chip)) == 5, "one failed slice stopped the catch-up"
+
+    def test_periodic_rescues_a_chip_with_work_and_no_slice_queued(self, tmp_path):
+        root, chip = tmp_path / "data", tmp_path / "chip"
+        run(root, 1, doc(1.0))
+        cs = hub_sync.open_chip(chip, [(str(root), "declared")], kick=False)
+        assert cs.has_work() and not events(chip) if (chip / "ledger.sqlite").exists() else cs.has_work()
+        hub_sync.periodic()
+        assert [e["run_id"] for e in events(chip)] == [1]
+
+    # -- the light tick, numerically --------------------------------------------
+    def test_a_light_tick_stat_checks_the_newest_runs(self, tmp_path):
+        root, chip = tmp_path / "data", tmp_path / "chip"
+        folders = {i: run(root, i, doc(float(i))) for i in range(1, 121)}
+        sync(chip, root)
+        time.sleep(0.02)
+        (folders[120] / "quam_state" / "state.json").write_text(json.dumps(doc(999.0, T1=5e-6)), encoding="utf-8")
+        tick(chip, root)
+        assert by_run(chip)[120]["flags"] & REWRITTEN, "the newest run's rewrite was not seen on the light tick"
+
+    # -- OVERLAPS_SM_WRITE for a stateless run, either landing order -----------
+    def test_overlap_flag_of_a_stateless_run_does_not_depend_on_landing_order(self, tmp_path, monkeypatch):
+        out = {}
+        for order in ("run_first", "sm_first"):
+            root, chip = tmp_path / order / "data", tmp_path / order / "chip"
+            run(root, 1, doc(1.0), t_us=T0 + 1_000_000)
+            run(root, 3, doc(1.0), t_us=T0 + 90_000_000)
+            if order == "run_first":
+                age(run(root, 2, None, t_us=T0 + 50_000_000, start_us=T0 + 5_000_000))
+                sync(chip, root)
+                sm_write(chip, monkeypatch, T0 + 20_000_000, doc(1.0), doc(2.0))
+            else:
+                sync(chip, root)
+                sm_write(chip, monkeypatch, T0 + 20_000_000, doc(1.0), doc(2.0))
+                age(run(root, 2, None, t_us=T0 + 50_000_000, start_us=T0 + 5_000_000))
+                sweep(chip)
+            out[order] = bool(by_run(chip)[2]["flags"] & OVERLAPS_SM_WRITE)
+        assert out == {"run_first": True, "sm_first": True}
+
+    # -- offset votes: one per ingested run -----------------------------------------
+    def test_a_deferred_run_is_voted_once(self, tmp_path):
+        root, chip = tmp_path / "data", tmp_path / "chip"
+        run(root, 1, doc(1.0))
+        run(root, 2, None)
+        cs = sync(chip, root)
+        rs = cs.roots[hub_sync._norm(root)]
+        before = sum(rs.votes.values())
+        for _ in range(20):
+            tick(chip, root)
+        assert sum(rs.votes.values()) == before == 1
+
+    # -- copies ------------------------------------------------------------------------
+    def test_a_move_keeps_the_other_locations(self, tmp_path):
+        a, b, chip = tmp_path / "a", tmp_path / "b", tmp_path / "chip"
+        run(a, 1, doc(1.0))
+        f2 = run(a, 2, doc(2.0))
+        shutil.copytree(f2, b / f2.parent.name / f2.name)
+        sync(chip, a, b)
+        node = json.loads((f2 / "node.json").read_text())
+        node["created_at"] = "2026-01-01T11:00:00+00:00"
+        (f2 / "node.json").write_text(json.dumps(node), encoding="utf-8")
+        sweep(chip)
+        assert len(events(chip)) == 2
+        with HubStore(chip) as st:
+            assert st.conn.execute("SELECT COUNT(*) FROM locations").fetchone()[0] == 3
+        check(chip)
+
+    def test_a_move_then_restart_does_not_duplicate_the_run(self, tmp_path):
+        a, b, chip = tmp_path / "a", tmp_path / "b", tmp_path / "chip"
+        run(a, 1, doc(1.0))
+        f2 = run(a, 2, doc(2.0))
+        shutil.copytree(f2, b / f2.parent.name / f2.name)
+        sync(chip, a, b)
+        node = json.loads((f2 / "node.json").read_text())
+        node["created_at"] = "2026-01-01T11:00:00+00:00"
+        (f2 / "node.json").write_text(json.dumps(node), encoding="utf-8")
+        sweep(chip)
+        _restart()
+        sync(chip, a, b)
+        assert sum(e["run_id"] == 2 for e in events(chip)) == 1, "run #2 became two events"
+        check(chip)
+
+    def test_every_location_of_a_rewritten_copied_run_replays_its_own_bytes(self, tmp_path):
+        a, b, chip = tmp_path / "a", tmp_path / "b", tmp_path / "chip"
+        run(a, 1, doc(1.0))
+        f2 = run(a, 2, doc(2.0))
+        g2 = b / f2.parent.name / f2.name
+        shutil.copytree(f2, g2)
+        sync(chip, b, a)
+        time.sleep(0.05)
+        (f2 / "quam_state" / "state.json").write_text(json.dumps(doc(7.0, T1=9e-6)), encoding="utf-8")
+        sweep(chip)
+        with HubStore(chip) as st:
+            roots = dict(st.conn.execute("SELECT root_id, path FROM roots").fetchall())
+            locs = {Path(roots[r[1]]).name: r[0] for r in st.conn.execute("SELECT eid, root_id, rel_path FROM locations "
+                                                                         "WHERE rel_path LIKE '%#2_%'")}
+            assert not rules.diff(rules.flatten(st.state_at(locs["a"])), own(f2))
+            assert not rules.diff(rules.flatten(st.state_at(locs["b"])), own(g2)), \
+                "the unchanged copy replays the rewritten copy's bytes"
+            assert hub_sync.verify(st)["problems"] == []
+
+    def test_verify_checks_every_location(self, tmp_path):
+        a, b, chip = tmp_path / "a", tmp_path / "b", tmp_path / "chip"
+        f1 = run(a, 1, doc(1.0))
+        shutil.copytree(f1, b / f1.parent.name / f1.name)
+        sync(chip, a, b)
+        with HubStore(chip) as st:
+            st.conn.execute("DELETE FROM run_files")          # no watermark: read every location
+            st.conn.commit()
+        (b / f1.parent.name / f1.name / "quam_state" / "state.json").write_text(json.dumps(doc(5.0)),
+                                                                                 encoding="utf-8")
+        with HubStore(chip) as st:
+            assert hub_sync.verify(st)["problems"], "a location whose bytes differ is not reported"
+
+    # -- in flight ---------------------------------------------------------------------
+    def test_a_late_copy_caught_mid_copy_is_not_a_final_error(self, tmp_path, clock):
+        root, chip = tmp_path / "data", tmp_path / "chip"
+        run(root, 1, doc(1.0), t_us=T0 + 1_000_000)
+        run(root, 3, doc(3.0), t_us=T0 + 90_000_000)
+        sync(chip, root)
+        late = run(root, 2, doc(2.0, T1=4e-6), t_us=T0 + 50_000_000)
+        wiring = late / "quam_state" / "wiring.json"
+        held = wiring.read_bytes()
+        wiring.unlink()
+        clock.offset += 31
+        hub_sync.periodic()
+        mid = by_run(chip).get(2)
+        wiring.write_bytes(held)
+        clock.offset += 400
+        hub_sync.periodic()
+        r2 = by_run(chip)[2]
+        assert mid is None or mid["error"] is None, "a copy in progress was committed as a final error event"
+        assert r2["error"] is None and not r2["flags"] & REWRITTEN
+
+    def test_an_error_event_that_gains_its_state_is_completed_not_rewritten(self, tmp_path):
+        root, chip = tmp_path / "data", tmp_path / "chip"
+        run(root, 1, doc(1.0))
+        f2 = run(root, 2, None)
+        age(f2)
+        run(root, 3, doc(3.0))
+        sync(chip, root)
+        assert by_run(chip)[2]["error"]
+        (f2 / "quam_state" / "state.json").write_text(json.dumps(doc(2.0)), encoding="utf-8")
+        (f2 / "quam_state" / "wiring.json").write_text(json.dumps(WIRING), encoding="utf-8")
+        sweep(chip)
+        r2 = by_run(chip)[2]
+        assert r2["error"] is None and not r2["flags"] & REWRITTEN
+        assert hub_sync.sync_for(chip).counts["completed"] == 1
+        check(chip)
+
+    def test_a_run_in_flight_in_the_same_second_as_the_previous_save_waits(self, tmp_path):
+        root, chip = tmp_path / "data", tmp_path / "chip"
+        run(root, 1, doc(1.0), t_us=T0 + 25_300_000)               # created_at 12:00:25.3
+        sync(chip, root)
+        (root / "2026-01-01" / "#2_scan_120025").mkdir(parents=True)   # folder clock 12:00:25, nothing in it
+        tick(chip, root)
+        assert 2 not in by_run(chip), "a run still being written was committed as a final error event"
+
+    def test_repairing_a_corrupt_node_keeps_the_event_and_is_not_a_rewrite(self, tmp_path):
+        root, chip = tmp_path / "data", tmp_path / "chip"
+        run(root, 1, doc(1.0))
+        f2 = run(root, 2, doc(2.0))
+        (f2 / "node.json").write_text("{not json", encoding="utf-8")
+        run(root, 3, doc(3.0))
+        sync(chip, root)
+        r2 = by_run(chip)[2]
+        assert r2["flags"] & NODE_UNREADABLE
+        (f2 / "node.json").write_text(json.dumps({"created_at": iso(T0 + 20_250_000), "metadata": {
+            "status": "finished", "name": "scan"}}), encoding="utf-8")
+        sweep(chip)
+        r2b = by_run(chip)[2]
+        assert r2b["eid"] == r2["eid"], "the repaired run became a new event"
+        assert not r2b["flags"] & (REWRITTEN | NODE_UNREADABLE)
+        check(chip)
+
+    def test_an_error_events_base_hash_follows_a_late_insertion_like_the_offline_build(self, tmp_path):
+        root, chip = tmp_path / "data", tmp_path / "chip"
+        run(root, 1, doc(1.0), t_us=T0 + 10_000_000)
+        age(run(root, 3, None, t_us=T0 + 30_000_000))
+        run(root, 4, doc(4.0), t_us=T0 + 40_000_000)
+        sync(chip, root)
+        age(run(root, 2, doc(2.0), t_us=T0 + 20_000_000))
+        tick(chip, root)
+        sweep(chip)
+        hub_build.build(root, tmp_path / "offline")
+        a = {e["run_id"]: e["base_hash"] for e in events(tmp_path / "offline")}
+        b = {e["run_id"]: e["base_hash"] for e in events(chip)}
+        assert a == b
+
+    # -- a data folder that cannot be listed ----------------------------------------
+    def test_an_unreachable_data_folder_is_not_every_run_deleted(self, tmp_path):
+        root, chip = tmp_path / "share" / "data", tmp_path / "chip"
+        for i in range(1, 6):
+            run(root, i, doc(float(i)))
+        sync(chip, root)
+        (tmp_path / "share").rename(tmp_path / "share_offline")
+        sweep(chip)
+        st = hub_sync.status(chip)
+        assert not [rid for rid, e in by_run(chip).items() if e["flags"] & SOURCE_GONE]
+        assert st["state"] == "degraded" and st["unreadable"], st
+        assert hub_sync.require_ready(chip)["state"] == "degraded"
+        (tmp_path / "share_offline").rename(tmp_path / "share")
+        sweep(chip)
+        assert hub_sync.status(chip)["state"] == "ready"
+
+    # -- one vanished folder never wedges the sync ---------------------------------
+    def test_a_folder_that_vanishes_before_it_is_resolved_does_not_wedge_the_sync(self, tmp_path):
+        root, chip = tmp_path / "data", tmp_path / "chip"
+        for i in range(1, 4):
+            run(root, i, doc(float(i)))
+        cs = sync(chip, root)
+        odd = root / "2026-01-01" / "#7_scan_996199"        # no clock: its instant needs the folder's mtime
+        odd.mkdir()
+        run(root, 8, doc(8.0), t_us=T0 + 80_000_000)
+        cs.request(roots=[str(root)])
+        with HubStore(chip) as st:
+            hub_sync.run(chip, st, 0.0)                     # one item read
+            shutil.rmtree(odd)
+            for _ in range(5):
+                hub_sync.run(chip, st, 0.0)
+        assert 8 in by_run(chip) and not cs.read
+
+    # -- every chip ever opened stays watched and swept -------------------------
+    def test_only_the_open_chip_is_swept(self, tmp_path, monkeypatch):
+        old_root, old_chip = tmp_path / "old_data", tmp_path / "old_chip"
+        run(old_root, 1, doc(1.0))
+        sync(old_chip, old_root)
+        root, chip = tmp_path / "data", tmp_path / "chip"
+        for i in range(1, 4):
+            run(root, i, doc(float(i)))
+        sync(chip, root)                                # the open chip changes
+        from quam_state_manager.core import hub_store
+        real_init = hub_store.HubStore.__init__
+        opened = []
+
+        def counting(self, directory, *a, **k):
+            opened.append(str(directory))
+            real_init(self, directory, *a, **k)
+        monkeypatch.setattr(hub_store.HubStore, "__init__", counting)
+        hub_sync.periodic(now=time.monotonic() + 10_000)
+        hub_sync.on_roots_moved([str(old_root)])
+        assert str(old_chip) not in opened, "a closed chip's ledger is opened and swept"
+        assert not hub_sync.sync_for(old_chip).active
+
+    # -- deep archives: bounded listing, slices that yield ------------------------
+    def test_a_periodic_listing_stats_a_bounded_chunk_of_days(self, tmp_path, monkeypatch, clock):
+        root, chip = tmp_path / "data", tmp_path / "chip"
+        for d in range(1, 13):
+            run(root, d, doc(float(d)), day=f"2026-01-{d:02d}")
+        cs = sync(chip, root)
+        monkeypatch.setattr(hub_sync, "LISTING_CHUNK", 3)
+        stats = []
+        real_stat = os.stat
+
+        class _Os:
+            def __getattr__(self, name):
+                return getattr(os, name)
+
+            @staticmethod
+            def stat(p, *a, **k):
+                if hub_sync._DAY.fullmatch(Path(p).name):
+                    stats.append(Path(p).name)
+                return real_stat(p, *a, **k)
+        monkeypatch.setattr(hub_sync, "os", _Os())
+        late = run(root, 99, doc(99.0), day="2026-01-07", t_us=T0 + 6 * 86_400_000_000 + 500_000)
+        looks = 0
+        while 99 not in by_run(chip) and looks < 6:
+            stats.clear()
+            clock.offset += hub_sync.LISTING_EVERY_S + 1
+            hub_sync.periodic()
+            assert len(stats) <= 3 + hub_sync.NEWEST_DATES, stats
+            looks += 1
+        assert 99 in by_run(chip) and looks > 1, (looks, "the late copy into an old day lands within a few looks")
+        assert not rules.diff(state_flat(chip, by_run(chip)[99]["eid"]), own(late))
+
+    def test_a_slice_ends_after_one_item_when_a_request_waits(self, tmp_path):
+        root, chip = tmp_path / "data", tmp_path / "chip"
+        for i in range(1, 7):
+            run(root, i, doc(float(i)))
+        cs = hub_sync.open_chip(chip, [(str(root), "declared")], kick=False)
+        with HubStore(chip) as st:
+            cs.run_slice(st, None)                         # listing + reads
+            cs.request(roots=[str(root)])
+            n0 = len(events(chip))
+            cs.run_slice(st, None, should_yield=lambda: True)
+            assert len(events(chip)) - n0 <= 1
+
+
+class TestReviewRoots:
+    @pytest.fixture
+    def two_projects(self, tmp_path, monkeypatch, any_project_env_chosen):
+        """One storage location in the ROOT config (no project template): qualibrate
+        writes each project's runs to <location>/<project>/<date>/... Two projects,
+        two chips."""
+        cfg = tmp_path / ".qualibrate"
+        chips = {}
+        for tag, name, v in (("a", "chip-a", 1.0), ("b", "chip-b", 9.0)):
+            f = tmp_path / "chips" / f"chip_{tag}"
+            f.mkdir(parents=True)
+            (f / "state.json").write_text(json.dumps(doc(v, name=name)), encoding="utf-8")
+            (f / "wiring.json").write_text(json.dumps(WIRING), encoding="utf-8")
+            chips[tag] = f
+        storage = tmp_path / "datasets"
+        (cfg / "projects" / "pa").mkdir(parents=True)
+        (cfg / "projects" / "pb").mkdir(parents=True)
+        (cfg / "config.toml").write_text(
+            f'[qualibrate]\nproject = "pa"\nversion = 5\n\n[qualibrate.storage]\nlocation = "{storage.as_posix()}"\n\n'
+            f'[quam]\nstate_path = "{chips["a"].as_posix()}"\nversion = 3\n', encoding="utf-8")
+        (cfg / "projects" / "pa" / "config.toml").write_text(
+            f'[quam]\nstate_path = "{chips["a"].as_posix()}"\n', encoding="utf-8")
+        (cfg / "projects" / "pb" / "config.toml").write_text(
+            f'[quam]\nstate_path = "{chips["b"].as_posix()}"\n', encoding="utf-8")
+        monkeypatch.setenv("QUALIBRATE_CONFIG_FILE", str(cfg))
+        monkeypatch.delenv("QUALIBRATE_CONFIG_DIR", raising=False)
+        _qc._state_index_cache.clear()
+        run(storage / "pa", 1, doc(1.0, name="chip-a"))
+        run(storage / "pa", 2, doc(2.0, name="chip-a"))
+        run(storage / "pb", 1, doc(9.0, name="chip-b"))
+        run(storage / "pb", 7, doc(8.0, name="chip-b"))
+        from quam_state_manager.web.app import create_app
+        app = create_app(testing=True, instance_path=str(tmp_path / "_inst"))
+        app.config["HUB_SYNC_ON_OPEN"] = True
+        return {"app": app, "client": app.test_client(), "chip_a": chips["a"], "storage": storage}
+
+    def test_opening_a_project_syncs_its_own_runs_and_no_other_chips(self, two_projects):
+        c = two_projects["client"]
+        assert c.post("/qualibrate/open", data={"project": "pa"}).status_code in (200, 302)
+        st1 = c.get("/hub/status").get_json()
+        chip_dir = Path(st1["chip_dir"])
+        first = [(e["run_id"], bool(e["flags"] & CHIP_UNCERTAIN)) for e in events(chip_dir)]
+        c.post("/load", data={"folder": str(two_projects["chip_a"])})
+        second = [(e["run_id"], bool(e["flags"] & CHIP_UNCERTAIN), e["state_ref"]) for e in events(chip_dir)]
+        assert first == [(1, False), (2, False)], "the first open did not sync the project's own runs"
+        assert [r[:2] for r in second] == [(1, False), (2, False)], "another project's runs were synced"
+        assert all(Path(r[2]).parent.parent.name == "pa" for r in second)
+
+    def test_project_run_root_and_sibling_folders(self, tmp_path):
+        loc = tmp_path / "datasets"
+        for p in ("pa", "pb"):
+            (loc / p).mkdir(parents=True)
+        assert hub_sync.project_run_root(str(loc), "pa") == str(loc / "pa")
+        assert hub_sync.project_run_root(str(loc / "pa"), "pa") == str(loc / "pa")
+        out = hub_sync.roots_for_chip(project_storage=str(loc / "pa"), shared_location=str(loc),
+                                      project_roots=[str(loc / "pa"), str(loc / "pb")])
+        assert out == [(str(loc / "pa"), "project_storage")]
+
+    def test_a_decided_same_root_must_be_named(self, tmp_path):
+        from quam_state_manager.core.history import _chip_decisions_file
+        from quam_state_manager.core import path_match
+        from quam_state_manager.web import routes
+        from quam_state_manager.web.app import create_app
+        live = tmp_path / "chips" / "live"
+        live.mkdir(parents=True)
+        (live / "state.json").write_text(json.dumps(doc(1.0, name="chip-a")), encoding="utf-8")
+        (live / "wiring.json").write_text(json.dumps(WIRING), encoding="utf-8")
+        mine = tmp_path / "lab1" / "data" / "QPU" / "chip_a_runs"
+        theirs = tmp_path / "lab1" / "data" / "QPU" / "chip_b_runs"
+        run(mine, 1, doc(1.0, name="chip-a"))
+        run(theirs, 1, doc(9.0, name="chip-b"))
+        app = create_app(testing=True, instance_path=str(tmp_path / "_inst"))
+        c = app.test_client()
+        c.post("/load", data={"folder": str(live)})
+        with app.test_request_context():
+            ws = routes._ws()
+            ws.add_root(str(mine), defer_parse=True)
+            ws.add_root(str(theirs), defer_parse=True)
+            ctx = routes._active_ctx()
+            chip_dir = routes._hub_chip_dir(ctx["path"])
+            f = _chip_decisions_file(app.instance_path)
+            # a label shared by two roots is evidence for neither
+            f.write_text(json.dumps({f"{chip_dir.name}::QPU": "same"}), encoding="utf-8")
+            assert routes._hub_roots_for(ctx) == []
+            # a decision that names the root
+            f.write_text(json.dumps({f"{chip_dir.name}::root:{path_match.fs_key(str(mine))}": "same"}),
+                         encoding="utf-8")
+            assert [Path(p).name for p, _ in routes._hub_roots_for(ctx)] == ["chip_a_runs"]
+
+
+class TestReviewIdentity:
+    @staticmethod
+    def _nameless(v, extra_qubit=False):
+        s = {"qubits": {"qA1": {"f": v}, "qA2": {"f": 2.0}}}
+        if extra_qubit:
+            s["qubits"]["qA3"] = {"f": 3.0}
+        return s
+
+    @pytest.mark.parametrize("change", ["qubit_added_since", "network_changed_since"])
+    def test_the_chips_own_history_is_not_flagged_foreign(self, tmp_path, change):
+        from quam_state_manager.web import routes
+        from quam_state_manager.web.app import create_app
+        data = tmp_path / "data"
+        for i in (1, 2, 3):
+            run(data, i, self._nameless(float(i)))
+        live = tmp_path / "chips" / "live"
+        live.mkdir(parents=True)
+        state = self._nameless(4.0, extra_qubit=(change == "qubit_added_since"))
+        state["extras"] = {"data_folder": str(data)}
+        wiring = WIRING if change != "network_changed_since" else {"network": {"host": "10.0.0.2",
+                                                                              "cluster_name": "C1"}}
+        (live / "state.json").write_text(json.dumps(state), encoding="utf-8")
+        (live / "wiring.json").write_text(json.dumps(wiring), encoding="utf-8")
+        app = create_app(testing=True, instance_path=str(tmp_path / "_inst"))
+        app.config["HUB_SYNC_ON_OPEN"] = True
+        app.test_client().post("/load", data={"folder": str(live)})
+        with app.test_request_context():
+            chip = routes._hub_chip_dir(routes._active_ctx()["path"])
+        hub_build.build(data, tmp_path / "offline")
+        flags = lambda d: [(e["run_id"], bool(e["flags"] & CHIP_UNCERTAIN)) for e in events(d)]
+        assert flags(chip) == flags(tmp_path / "offline") == [(1, False), (2, False), (3, False)]
+
+    def test_two_chips_that_share_a_chip_name_are_told_apart(self, tmp_path):
+        root, chip = tmp_path / "data", tmp_path / "chip"
+        for i, (qs, host) in enumerate(((("qA1", "qA2"), "10.0.0.1"), (("qB1", "qB2", "qB3"), "10.0.0.9")), 1):
+            st = {"qubits": {q: {"f": float(i)} for q in qs}, "extras": {"chip_name": "QPU"}}
+            run(root, i, st, wiring={"network": {"host": host, "cluster_name": "c"}})
+        sync(chip, root, identity=hub_build._chip_identity(
+            {"qubits": {"qA1": {}, "qA2": {}}, "extras": {"chip_name": "QPU"}},
+            {"network": {"host": "10.0.0.1", "cluster_name": "c"}}, tmp_path))
+        assert [(e["run_id"], bool(e["flags"] & CHIP_UNCERTAIN)) for e in events(chip)] == [(1, False), (2, True)]
+
+    def test_a_named_chip_that_gained_a_qubit_is_still_itself(self, tmp_path):
+        root, chip = tmp_path / "data", tmp_path / "chip"
+        run(root, 1, doc(1.0))
+        grown = doc(2.0)
+        grown["qubits"]["qA3"] = {"f": 3.0}
+        run(root, 2, grown, wiring={"network": {"host": "10.0.0.5", "cluster_name": "c"}})
+        sync(chip, root, identity={"name": "device", "fingerprint": "x", "qubits": ["qA1", "qA2"]})
+        assert not any(e["flags"] & CHIP_UNCERTAIN for e in events(chip))
+
+
+class TestReviewCausal:
+    """P1-5: SM writes follow causality, not wall clocks."""
+
+    @staticmethod
+    def _chash(folder):
+        from quam_state_manager.core import working_copy
+        return working_copy.content_hash(json.loads((folder / "quam_state" / "state.json").read_text()),
+                                         json.loads((folder / "quam_state" / "wiring.json").read_text()))
+
+    def _sm(self, chip, monkeypatch, t_us, after, base, post="p1", derived=False, undoes=None, units=None):
+        monkeypatch.setattr(hub, "_now", lambda: (t_us, iso(t_us)))
+        rec = hub.Hub.for_chip(chip).record(
+            "undo" if undoes else "sm_apply", "human", [{"path": "qubits.qA1.f", "old": 2.0, "new": 5.0}], base,
+            None if derived else (json.dumps(after).encode(), json.dumps(WIRING).encode()), "apply",
+            post_hash=post, undoes=undoes, units=units)
+        rec.landed()
+        monkeypatch.undo()
+        return rec.id
+
+    @pytest.mark.parametrize("order", ["run_first", "sm_first"])
+    def test_a_run_whose_clock_is_ahead_is_still_the_base_of_the_write(self, tmp_path, monkeypatch, order):
+        root, chip = tmp_path / "data", tmp_path / "chip"
+        run(root, 1, doc(1.0), t_us=T0 + 10_000_000)
+        r2 = run(root, 2, doc(2.0), t_us=T0 + 80_000_000)       # saved at ~T0+20 s, its PC's clock 60 s ahead
+        base = self._chash(r2)
+        after = doc(5.0)
+        if order == "run_first":
+            sync(chip, root)
+            sid = self._sm(chip, monkeypatch, T0 + 30_000_000, after, base)
+        else:
+            (root / "2026-01-01" / r2.name).rename(tmp_path / "held")
+            sync(chip, root)
+            sid = self._sm(chip, monkeypatch, T0 + 30_000_000, after, base)
+            (tmp_path / "held").rename(root / "2026-01-01" / r2.name)
+            tick(chip, root)
+        kinds = [(e["kind"], e["run_id"]) for e in events(chip)]
+        assert kinds == [("run", 1), ("run", 2), ("sm_apply", None)], kinds
+        with HubStore(chip) as st:
+            eid = st.conn.execute("SELECT eid FROM sm_events WHERE sm_id=?", (sid,)).fetchone()[0]
+        assert rows_of(chip, eid)["qubits.qA1.f"] == (OPS["set"], 2.0, 5.0)
+        assert rows_of(chip, by_run(chip)[2]["eid"]) == {"qubits.qA1.f": (OPS["set"], 1.0, 2.0)}, \
+            "the run shows the user's write reverted"
+        check(chip)
+
+    def test_an_undo_with_an_earlier_clock_still_undoes(self, tmp_path, monkeypatch):
+        chip = tmp_path / "chip"
+        apply_id = self._sm(chip, monkeypatch, T0 + 50_000_000, doc(5.0), "b0", post="p1", units=["u1"])
+        self._sm(chip, monkeypatch, T0 + 40_000_000, doc(2.0), "p1", post="p2",
+                 undoes=[{"event": apply_id, "units": ["u1"]}], units=["u1"])   # another window, clock behind
+        with HubStore(chip) as st:
+            rows = st.conn.execute("SELECT s.sm_id, e.flags FROM sm_events s JOIN events e USING(eid) "
+                                   "ORDER BY e.ord").fetchall()
+        assert [r[0] for r in rows][0] == apply_id, "journal order: the apply comes first"
+        assert dict(rows)[apply_id] & UNDONE
+
+    def test_a_write_after_a_backward_clock_step_derives_from_the_write_before(self, tmp_path, monkeypatch):
+        chip = tmp_path / "chip"
+        self._sm(chip, monkeypatch, T0 + 50_000_000, doc(5.0, T1=7e-6), "b0", post="p1")
+        sid = self._sm(chip, monkeypatch, T0 + 20_000_000, None, "p1", post="p2", derived=True)
+        with HubStore(chip) as st:
+            eid = st.conn.execute("SELECT eid FROM sm_events WHERE sm_id=?", (sid,)).fetchone()[0]
+            got = st.state_at(eid)
+        assert got["qubits"]["qA1"]["T1"] == 7e-6, "the derived write invented a state from nothing"
+
+
+class TestReviewS4AndStore:
+    def test_a_line_read_before_it_is_registered_is_not_unconfirmed(self, tmp_path, monkeypatch):
+        chip = tmp_path / "chip"
+        h = hub.Hub.for_chip(chip)
+        real = hub.Hub._append
+
+        def append_then_project(self, obj, *a, **k):
+            out = real(self, obj, *a, **k)
+            if "id" in obj:
+                hub.project(self)            # a projector reads the journal in the gap
+            return out
+        monkeypatch.setattr(hub.Hub, "_append", append_then_project)
+        rec = h.record("sm_apply", "human", [], None, (b'{"qubits": {}}', b"{}"), "apply")
+        monkeypatch.undo()
+        rec.landed()
+        with HubStore(chip) as st:
+            row = st.conn.execute("SELECT outcome FROM sm_events WHERE sm_id=?", (rec.id,)).fetchone()
+        assert row is not None and row[0] == "landed"
+
+    def test_a_derived_write_is_computed_inside_its_transaction(self, tmp_path, monkeypatch):
+        """P1-4: another window ingests a run just before an SM line with no
+        bytes is placed; the write's rows come from the predecessor it is
+        placed after, so every later replay works."""
+        root, chip = tmp_path / "data", tmp_path / "chip"
+        want = [1] * 20
+        want[3] = 9
+        run(root, 1, doc(1.0, wave=[0] * 20), t_us=T0 + 10_000_000)
+        run(root, 3, doc(1.0, wave=want), t_us=T0 + 30_000_000)
+        sync(chip, root)
+        window_a = hub_sync.ChipSync(chip)
+        window_a.set_roots([(str(root), "declared")])
+        from quam_state_manager.core.hub_store import HubStore as HS
+        real = HS.append_sm
+        raced = []
+
+        def racing(self, **kw):
+            if not raced:
+                raced.append(1)
+                run(root, 2, doc(1.0, wave=[1] * 20), t_us=T0 + 20_000_000)
+                window_a.request(full=True)
+                with HubStore(chip) as st_a:
+                    while window_a.run_slice(st_a, None):
+                        pass
+            return real(self, **kw)
+        monkeypatch.setattr(HS, "append_sm", racing)
+        monkeypatch.setattr(hub, "_now", lambda: (T0 + 25_000_000, iso(T0 + 25_000_000)))
+        rec = hub.Hub.for_chip(chip).record("sm_apply", "human", [{"path": "qubits.qA1.wave.3", "old": 1, "new": 9}],
+                                            "b", None, "apply", post_hash="p")
+        rec.landed()
+        monkeypatch.undo()
+        assert raced
+        assert [e["run_id"] for e in events(chip)] == [1, 2, None, 3]
+        with HubStore(chip) as st:
+            st.conn.execute("DELETE FROM checkpoints")       # replay through the SM rows
+            st.conn.commit()
+            for e in st.conn.execute("SELECT eid FROM events WHERE error IS NULL").fetchall():
+                st.state_at(e[0])
+            sm = st.conn.execute("SELECT eid FROM sm_events WHERE sm_id=?", (rec.id,)).fetchone()[0]
+            assert st.state_at(sm)["qubits"]["qA1"]["wave"] == want
+        check(chip)
+
+    def test_opening_a_ledger_takes_no_write_lock(self, tmp_path):
+        chip = tmp_path / "chip"
+        HubStore(chip).close()
+        holder = sqlite3.connect(chip / "ledger.sqlite", timeout=1, check_same_thread=False)
+        holder.execute("BEGIN IMMEDIATE")
+        released = threading.Timer(3.0, holder.rollback)
+        released.start()
+        t0 = time.monotonic()
+        try:
+            HubStore(chip).close()
+            took = time.monotonic() - t0
+        finally:
+            released.join()
+            holder.close()
+        assert took < 1.0, f"opening the ledger waited {took:.1f} s for another window's write"
+
+    def test_run_files_are_read_through_a_share_delete_handle(self, tmp_path, monkeypatch):
+        folder = run(tmp_path / "data", 1, doc(1.0))
+        from quam_state_manager.core import safe_io
+        real = safe_io.open_shared
+        seen = []
+
+        def spy(path):
+            seen.append(Path(path).name)
+            return real(path)
+        monkeypatch.setattr(safe_io, "open_shared", spy)
+        hub_build.read_pair(folder)
+        hub_build.read_node(folder)
+        assert {"state.json", "wiring.json", "node.json"} <= set(seen)
+
+    def test_a_root_the_hub_saw_first_is_baselined_for_the_datasets_page(self, tmp_path):
+        root = tmp_path / "data"
+        run(root, 1, doc(1.0))
+        w = run_watch.RunWatcher()
+        ds = []
+        w.add_listener(ds.append)
+        w.watch("hub", [str(root)])
+        w.poll_once()
+        run(root, 2, doc(2.0))                          # lands before the Datasets page adds the root
+        w.set_roots([str(root)])
+        w.poll_once()
+        assert ds == [] and w.tick == 0, "exactly as before: a root added to Datasets is a baseline"
+
+    def test_two_windows_moving_and_flagging_agree(self, tmp_path):
+        root, chip = tmp_path / "data", tmp_path / "chip"
+        folders = {i: run(root, i, doc(float(i))) for i in range(1, 5)}
+
+        def window():
+            cs = hub_sync.ChipSync(chip)
+            cs.set_roots([(str(root), "declared")])
+            return cs
+
+        def full(cs):
+            cs.request(full=True)
+            with HubStore(chip) as st:
+                while cs.run_slice(st, None):
+                    pass
+        a, b = window(), window()
+        full(a)
+        full(b)
+        body = json.loads((folders[3] / "node.json").read_text())
+        body["created_at"] = iso(T0 + 45_000_000)
+        (folders[3] / "node.json").write_text(json.dumps(body), encoding="utf-8")
+        full(a)                                       # A moves #3
+        shutil.rmtree(folders[3])
+        full(b)                                       # B sees it deleted
+        r3 = by_run(chip)[3]
+        assert r3["flags"] & SOURCE_GONE, "the deletion was flagged on a stale event"
+        check(chip)

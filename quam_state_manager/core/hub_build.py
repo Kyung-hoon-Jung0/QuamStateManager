@@ -178,21 +178,29 @@ def _chip_identity(state: dict, wiring: dict, folder: Path) -> dict | None:
     fp = ident.fingerprint
     if not ident.name and not (fp and (fp.network or fp.qubits or fp.pairs)):
         return None
-    return {"name": ident.name, "fingerprint": fingerprint_token(fp)}
+    return {"name": ident.name, "fingerprint": fingerprint_token(fp),
+            "qubits": sorted(fp.qubits) if fp else []}
 
 
 def identity_disagrees(chip: dict, identity: dict) -> bool:
     """The S3 rule: names decide when both sides declare one, else the
-    hardware fingerprint does."""
-    return bool((chip["name"] and identity["name"] and chip["name"] != identity["name"])
-                or (not (chip["name"] and identity["name"]) and chip["fingerprint"] != identity["fingerprint"]))
+    hardware fingerprint does. docs/275 review: two DIFFERENT chips can
+    declare one name -- with no qubit in common they disagree all the same
+    (a qubit added or a controller moved is not that)."""
+    if chip["name"] and identity["name"]:
+        if chip["name"] != identity["name"]:
+            return True
+        mine, theirs = set(chip.get("qubits") or ()), set(identity.get("qubits") or ())
+        return bool(mine and theirs and not (mine & theirs))
+    return chip["fingerprint"] != identity["fingerprint"]
 
 
-def parse_state(raw: tuple[bytes, bytes], folder: Path, chip: dict | None) -> tuple[dict, dict, int, dict | None]:
+def parse_state(raw: tuple[bytes, bytes], folder: Path, chip: dict | None, *, want_pair: bool = False):
     """``(merged doc, S2 flat, flags, chip identity)`` of one saved pair: the
-    parse, the shared merge and the chip-identity check. Raises ``ValueError``
-    / ``TypeError`` for a pair that is not two JSON objects. *chip* is the
-    ledger's identity so far; the first identified run supplies it."""
+    parse, the shared merge and the chip-identity check (``want_pair``: also
+    the parsed ``(state, wiring)``). Raises ``ValueError`` / ``TypeError`` for
+    a pair that is not two JSON objects. *chip* is the ledger's identity so
+    far; the first identified run supplies it."""
     state, wiring = (json.loads(data) for data in raw)
     if not isinstance(state, dict) or not isinstance(wiring, dict):
         raise ValueError("state and wiring roots must be objects")
@@ -206,6 +214,8 @@ def parse_state(raw: tuple[bytes, bytes], folder: Path, chip: dict | None) -> tu
         chip = identity
     elif identity_disagrees(chip, identity):
         flags |= CHIP_UNCERTAIN
+    if want_pair:
+        return doc, flat, flags, chip, (state, wiring)
     return doc, flat, flags, chip
 
 

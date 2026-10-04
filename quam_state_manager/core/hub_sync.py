@@ -15,14 +15,14 @@ continuously, so the ledger needs no page visit and no offline build:
   its place by instant: it is diffed against its predecessor and its
   successor is re-diffed against it; nothing else is rebuilt
   (``HubStore`` S5 section, invariants I1-I4);
-* **in-flight and rewritten runs** -- the newest run of a folder with no
-  readable state (or node) waits until it is complete or a later run proves
-  it final; a run folder whose saved pair is rewritten after ingestion is
-  found by a stat watermark (size + mtime of state, wiring and node) and
-  re-diffed in place, its successor too;
-* **status** -- ``status(chip_dir)``: building n/N | ready; ``require_ready``
-  raises :class:`Building` (a ``ramcache.Warming``) so no surface presents a
-  partial ledger as complete.
+* **in-flight and rewritten runs** -- a run with no readable state (or node)
+  waits while it is the newest of its folder or its files are still being
+  written, and lands once complete or proven final; a run folder whose saved
+  pair is rewritten after ingestion is found by a stat watermark (size +
+  mtime of state, wiring and node) and re-diffed in place, its successor too;
+* **status** -- ``status(chip_dir)``: building n/N | ready | degraded;
+  ``require_ready`` raises :class:`Building` (a ``ramcache.Warming``) so no
+  surface presents a partial ledger as complete.
 
 One writer per ledger: every slice runs on the hub's projector thread, under
 the chip's writer lock, on the projector's one connection -- the same writer
@@ -71,30 +71,40 @@ from quam_state_manager.core.ramcache import Warming
 logger = logging.getLogger(__name__)
 
 #: One background slice of work; then the projector takes queued SM lines and
-#: requests get the interpreter back (docs/275 "budget per tick").
-SLICE_S = 0.5
+#: requests get the interpreter back (docs/275 "budget per tick"). A slice also
+#: ends early, after any item, as soon as a user's request is in flight.
+SLICE_S = 0.25
 #: A kick in inline mode (tests, the CLI) works this long on the caller's thread.
 INLINE_BUDGET_S = 120.0
-#: Rewrites of a root's newest runs are stat-checked on every light tick.
+#: Rewrites of a root's newest runs (by run id) are stat-checked on every light tick.
 RECENT_CHECK = 64
-#: A full listing + stat sweep of every root, at least this often.
+#: Every ingested run of a root is stat-checked at least this often (round
+#: robin, ``SWEEP_CHUNK`` runs per periodic look); chip open sweeps them all.
 SWEEP_EVERY_S = 300.0
-#: Every date directory of every root is stat'ed (listed when it moved) this
-#: often: a late copy into an OLD day moves no directory the run watcher
-#: looks at. One stat per day folder; no run file is touched.
+SWEEP_CHUNK = 2000
+#: Day folders are stat'ed (listed when they moved) this often -- a late copy
+#: into an OLD day moves no directory the run watcher looks at. At most
+#: ``LISTING_CHUNK`` days per look (round robin; the newest days always), so a
+#: deep archive costs a bounded look, not one stat per day every 30 s.
 LISTING_EVERY_S = 30.0
+LISTING_CHUNK = 200
 #: Date directories re-listed on a light tick (new ones always are).
 NEWEST_DATES = 2
-#: A candidate that raised is retried after this long.
+#: A candidate that raised is retried after this long, at most MAX_RETRIES times.
 RETRY_AFTER_S = 30.0
+MAX_RETRIES = 5
+#: A run folder whose files changed less than this long ago is still being
+#: written (a copy, a save): a missing or torn saved pair waits instead of
+#: becoming a final error event (docs/275 review).
+FRESH_S = 120.0
 
 _DAY = hub_build._DAY
 _RUN = hub_build._RUN
 
 
 class Deferred(Exception):
-    """The newest run of a folder is not readable yet (torn or mid-write):
-    its insertion is rolled back and it waits (docs/275)."""
+    """A run is not readable yet (torn or mid-write): its insertion is rolled
+    back and it waits (docs/275)."""
 
 
 class Building(Warming):
@@ -114,22 +124,47 @@ class Building(Warming):
 ROOT_SOURCES = ("declared", "project_storage", "project_roots", "decided_same")
 
 
+def project_run_root(location: str | None, project: str | None) -> str | None:
+    """Where qualibrate writes a project's runs (docs/275 review, P1-1): the
+    storage location when it already names the project (the lazy
+    ``${#/qualibrate/project}`` template), else ``<location>/<project>`` -- a
+    storage location shared by several projects holds one subfolder each."""
+    if not location:
+        return None
+    if not project:
+        return location
+    if os.path.normcase(project) in {os.path.normcase(p) for p in Path(location).parts}:
+        return location
+    return str(Path(location) / project)
+
+
+def _inside(child: str, parent: str, key: Callable[[str], str]) -> bool:
+    try:
+        c, p = key(child), key(parent)
+    except (OSError, ValueError):
+        return False
+    return c == p or c.startswith(p.rstrip("\\/") + os.sep) or c.startswith(p.rstrip("\\/") + "/")
+
+
 def roots_for_chip(*, declared: Iterable[str] = (), project_storage: str | None = None,
                    project_roots: Iterable[str] = (), workspace_roots: Iterable[str] = (),
                    decided_same: Callable[[str], bool] | None = None,
-                   key: Callable[[str], str] | None = None) -> list[tuple[str, str]]:
+                   key: Callable[[str], str] | None = None,
+                   shared_location: str | None = None) -> list[tuple[str, str]]:
     """THE rule for which data folders are synced into a chip's ledger, from
     what SM already knows about the chip -- ``[(folder, source)]``, deduped,
     existing directories only, strongest source first:
 
     1. ``declared`` -- the chip's own ``extras.data_folder`` (docs/20 v2), as
        resolved by the OS-dialect bridge;
-    2. ``project_storage`` -- the qualibrate project storage location of the
-       chip's project scope (docs/63): where qualibrate saves its runs;
+    2. ``project_storage`` -- where qualibrate writes the runs of the chip's
+       project (``project_run_root``: the project's own folder of a shared
+       storage location);
     3. ``project_roots`` -- folders recorded for that project
-       (``instance/project_dataset_roots.json``);
-    4. ``decided_same`` -- a Datasets (workspace) root the user has already
-       declared to be THIS chip's data (``chip_decisions.json`` "same").
+       (``instance/project_dataset_roots.json``), EXCEPT another project's
+       folder of the same shared storage location (``shared_location``);
+    4. ``decided_same`` -- a Datasets (workspace) root the user has declared
+       to be THIS chip's data.
 
     A workspace root SM has no such evidence for is NOT synced: a workspace
     often holds several chips' data, and syncing a foreign folder would put
@@ -158,6 +193,9 @@ def roots_for_chip(*, declared: Iterable[str] = (), project_storage: str | None 
         add(p, "declared")
     add(project_storage, "project_storage")
     for p in project_roots:
+        if shared_location and _inside(str(p), shared_location, key) and not (
+                project_storage and _inside(str(p), project_storage, key)):
+            continue        # a sibling project's folder: another chip's runs
         add(p, "project_roots")
     if decided_same is not None:
         for p in workspace_roots:
@@ -198,6 +236,26 @@ def file_sig(folder: Path) -> str:
     return "|".join(parts)
 
 
+def _fresh(folder: Path, now: float | None = None) -> bool:
+    """A file of this run folder changed less than FRESH_S ago: something is
+    still writing it (a copy, a save)."""
+    now = time.time() if now is None else now
+    newest = 0.0
+    for p in (folder, folder / "node.json", folder / "quam_state", folder / "quam_state" / "state.json",
+              folder / "quam_state" / "wiring.json"):
+        try:
+            newest = max(newest, os.stat(p).st_mtime)
+        except OSError:
+            continue
+    return newest > 0 and now - newest < FRESH_S
+
+
+def _rel_order(rel: str) -> tuple:
+    day, _, name = rel.partition("/")
+    m = _RUN.fullmatch(name)
+    return (day, int(m[1]) if m else -1, name)
+
+
 @dataclass
 class Cand:
     """One run folder read for ingestion (metadata only until attached)."""
@@ -206,6 +264,7 @@ class Cand:
     run: hub_build.Run
     sig: str
     rewrite: bool = False
+    vote: str | None = None
 
     @property
     def key(self) -> tuple:
@@ -223,17 +282,23 @@ class RootState:
     known: dict = field(default_factory=dict)      # rel -> [eid, sig]
     deferred: dict = field(default_factory=dict)   # rel -> why
     newest: tuple | None = None                    # newest ingested (t, run_id, rel)
-    votes: Counter = field(default_factory=Counter)
+    votes: Counter = field(default_factory=Counter)   # committed: one per ingested run
     stored_hint: str | None = None
-    failed: dict = field(default_factory=dict)     # rel -> retry-after (monotonic)
+    failed: dict = field(default_factory=dict)     # rel -> [retry_at (monotonic), attempts, error]
     readable: bool = True
+    list_cursor: int = 0
+    sweep_cursor: int = 0
 
-    @property
-    def hint(self) -> str | None:
-        ranked = self.votes.most_common(2)
+    def hint(self, extra: Counter | None = None) -> str | None:
+        votes = self.votes + extra if extra else self.votes
+        ranked = votes.most_common(2)
         if not ranked or (len(ranked) == 2 and ranked[0][1] == ranked[1][1]):
             return self.stored_hint
         return ranked[0][0]
+
+    def failed_day_pending(self, day: str, now: float) -> bool:
+        return any(rel.startswith(day + "/") and f[0] > now and f[1] < MAX_RETRIES
+                   for rel, f in self.failed.items())
 
 
 class ChipSync:
@@ -245,9 +310,11 @@ class ChipSync:
         self.roots: dict[str, RootState] = {}
         self.identity: dict | None = None
         self.ledger_id: str | None = None
+        self.active = True
         self.full_wanted = True
         self.listing_wanted = False
         self.last_listing = 0.0
+        self.last_full = 0.0
         self.dirty: set[str] = set()
         self.unread: deque = deque()          # (root, rel, rewrite?) to read
         self.read: list[Cand] = []
@@ -255,11 +322,11 @@ class ChipSync:
         self.sweep: list[tuple[RootState, str]] = []
         self.sweep_initial = False
         self.pending_max: dict = {}
+        self.in_hand = 0
         self.ready = False
         self.phase = "idle"
         self.done = 0
         self.total = 0
-        self.last_full = 0.0
         self.counts: Counter = Counter()
         self.errors: deque = deque(maxlen=20)
         self.last_slice_ms = 0.0
@@ -307,23 +374,50 @@ class ChipSync:
             inbox = bool(self.full_wanted or self.listing_wanted or self.dirty)
         return bool(inbox or self.unread or self.read or self.ready_cands or self.sweep)
 
+    def _failed_waiting(self) -> tuple[int, int]:
+        """(retries still due, given up)"""
+        due = gave_up = 0
+        for rs in list(self.roots.values()):
+            for f in list(rs.failed.values()):
+                if f[1] >= MAX_RETRIES:
+                    gave_up += 1
+                else:
+                    due += 1
+        return due, gave_up
+
     def status(self) -> dict:
         # lock-free snapshot: the slice owns the work lists; a read that races
-        # it can only lag by one item, never block a request
-        pending = len(self.unread) + len(self.read) + len(self.ready_cands)
+        # it can only lag by one item, never block a request. The item a
+        # slice holds right now counts as pending (docs/275 review, P1-3).
+        pending = len(self.unread) + len(self.read) + len(self.ready_cands) + self.in_hand
         # a root the watcher saw move is "building" until it is looked at:
         # the run that moved it may not be in the ledger yet
         inbox = bool(self.full_wanted or self.dirty)
-        building = (not self.ready) or inbox or pending > 0 or (self.sweep_initial and bool(self.sweep))
         roots = list(self.roots.values())
+        due, gave_up = self._failed_waiting()
+        building = ((not self.ready) or inbox or pending > 0 or due > 0
+                    or (self.sweep_initial and bool(self.sweep)))
+        unreadable = [str(rs.path) for rs in roots if not rs.readable]
+        if not roots:
+            state = "ready"
+        elif building:
+            state = "building"
+        elif unreadable or gave_up:
+            state = "degraded"
+        else:
+            state = "ready"
         st = {
-            "state": "building" if building and roots else "ready",
+            "state": state,
             "phase": self.phase,
             "done": self.done,
             "total": self.total,
             "roots": [{"path": str(rs.path), "sources": list(rs.sources), "runs": len(rs.known),
-                       "deferred": sorted(rs.deferred), "readable": rs.readable} for rs in roots],
+                       "deferred": sorted(rs.deferred), "readable": rs.readable,
+                       "failed": sorted(rs.failed)} for rs in roots],
             "deferred": sum(len(rs.deferred) for rs in roots),
+            "failed": due + gave_up,
+            "unreadable": unreadable,
+            "active": self.active,
             "counts": dict(self.counts),
             "errors": list(self.errors),
             "last_slice_ms": round(self.last_slice_ms, 1),
@@ -331,6 +425,9 @@ class ChipSync:
         }
         if not roots:
             st["note"] = "no data folder is registered to this chip"
+        elif state == "degraded":
+            st["note"] = ("a data folder cannot be read now" if unreadable
+                          else "some runs could not be ingested") + "; the ledger holds everything else"
         return st
 
     # -- binding to one ledger file --------------------------------------
@@ -357,8 +454,9 @@ class ChipSync:
             self.sweep.clear()
             self.ready = False
         if self.identity and store.meta("chip_identity") is None:
-            with store.conn:
-                store.set_meta("chip_identity", json_bytes(self.identity).decode("utf-8"))
+            with txn(store):
+                if store.meta("chip_identity") is None:
+                    store.set_meta("chip_identity", json_bytes(self.identity).decode("utf-8"))
         for rs in list(self.roots.values()):
             if rs.root_id is None:
                 self._register(store, rs)
@@ -367,11 +465,14 @@ class ChipSync:
 
     def _register(self, store: HubStore, rs: RootState) -> None:
         normalized = os.path.normcase(str(rs.path.resolve()))
-        with store.conn:
-            store.conn.execute("INSERT OR IGNORE INTO roots(path,folder_key,offset_hint) VALUES(?,?,NULL)",
-                               (normalized, hashlib.sha1(normalized.encode("utf-8")).hexdigest()[:12]))
         row = store.conn.execute("SELECT root_id, folder_key, offset_hint FROM roots WHERE path=?",
                                  (normalized,)).fetchone()
+        if row is None:
+            with txn(store):
+                store.conn.execute("INSERT OR IGNORE INTO roots(path,folder_key,offset_hint) VALUES(?,?,NULL)",
+                                   (normalized, hashlib.sha1(normalized.encode("utf-8")).hexdigest()[:12]))
+            row = store.conn.execute("SELECT root_id, folder_key, offset_hint FROM roots WHERE path=?",
+                                     (normalized,)).fetchone()
         rs.root_id, rs.fkey, rs.stored_hint = row[0], row[1], row[2]
         votes = store.meta(f"offset_votes:{rs.root_id}")
         rs.votes = Counter(json.loads(votes)) if votes else Counter()
@@ -380,48 +481,72 @@ class ChipSync:
             "ON f.root_id=l.root_id AND f.rel_path=l.rel_path WHERE l.root_id=?", (rs.root_id,))}
         row = store.conn.execute(
             "SELECT e.t_utc_us, e.run_id, l.rel_path FROM locations l JOIN events e USING(eid) "
-            "WHERE l.root_id=? ORDER BY e.ord DESC LIMIT 1", (rs.root_id,)).fetchone()
+            "WHERE l.root_id=? ORDER BY e.t_utc_us DESC, e.run_id DESC LIMIT 1", (rs.root_id,)).fetchone()
         rs.newest = (row[0], row[1] or 0, row[2]) if row else None
 
     # -- one slice -------------------------------------------------------
 
-    def run_slice(self, store: HubStore, budget_s: float | None) -> bool:
+    def run_slice(self, store: HubStore, budget_s: float | None,
+                  should_yield: Callable[[], bool] | None = None) -> bool:
         """Do up to *budget_s* of work (None: until done). Returns whether
         more work remains. Runs on the projector thread only; the RAM lock is
         taken just to read the inbox (``request`` / ``set_roots`` from other
-        threads), so ``status()`` never waits for a slice."""
+        threads), so ``status()`` never waits for a slice. ``should_yield``
+        (a user request is in flight) ends the slice after the current item."""
         t0 = time.perf_counter()
         deadline = None if budget_s is None else time.monotonic() + budget_s
         self.slices += 1
         with self.lock:
             full, dirty, listing = self.full_wanted, set(self.dirty), self.listing_wanted
+            if full or dirty:
+                # a moved root or a chip open: "building" until looked at --
+                # set BEFORE the inbox is emptied, so status() never sees
+                # an empty inbox and a stale "ready" (P1-3)
+                self.ready = False
             self.full_wanted = self.listing_wanted = False
             self.dirty.clear()
-        if self.ready and (full or dirty):
-            self.done = self.total = 0              # a new burst of work
+        if full or dirty:
+            if self.phase == "ready":
+                self.done = self.total = 0          # a new burst of work
         if self._bind(store):
             full = True
         if full or dirty or listing:
             self._list(full=full, dirty=dirty, listing=listing)
-        # every slice makes progress (at least one item), whatever the budget
         steps = 0
 
         def late() -> bool:
-            return steps > 0 and _late(deadline)
+            # every slice makes progress (at least one item), whatever the budget
+            if steps == 0:
+                return False
+            if should_yield is not None and should_yield():
+                return True
+            return _late(deadline)
 
         while self.unread and not late():
             rs, rel, rewrite = self.unread.popleft()
-            self._read(rs, rel, rewrite)
+            self.in_hand += 1
+            try:
+                self._read(rs, rel, rewrite)
+            finally:
+                self.in_hand -= 1
             steps += 1
         if not self.unread and self.read:
             self._resolve()
         while self.ready_cands and not late():
             cand = self.ready_cands.popleft()
-            self._ingest(store, cand)
+            self.in_hand += 1
+            try:
+                self._ingest(store, cand)
+            finally:
+                self.in_hand -= 1
             steps += 1
         while self.sweep and not self.unread and not self.ready_cands and not late():
             rs, rel = self.sweep.pop()
-            self._check(store, rs, rel)
+            self.in_hand += 1
+            try:
+                self._check(store, rs, rel)
+            finally:
+                self.in_hand -= 1
             steps += 1
         if self.sweep and not self.unread and not self.ready_cands:
             self.phase = "sweeping"
@@ -445,18 +570,30 @@ class ChipSync:
             targets = [roots[k] for k in dirty if k in roots]
         queued = {(id(rs), rel) for rs, rel, _ in self.unread}
         queued |= {(id(c.root), c.rel) for c in [*self.read, *self.ready_cands]}
+        now = time.monotonic()
         added = 0
         for rs in targets:
-            for rel in [*self._list_root(rs, full or listing), *list(rs.deferred)]:
+            new = self._list_root(rs, "full" if full else ("listing" if listing else "light"))
+            # deferred runs, and failed runs whose retry is due, are looked
+            # at again on every listing (P1-2: a run that raised is retried)
+            retry = [rel for rel, f in rs.failed.items() if f[0] <= now and f[1] < MAX_RETRIES]
+            for rel in [*new, *list(rs.deferred), *retry]:
                 if (id(rs), rel) not in queued:
-                    self.unread.append((rs, rel, False))
+                    self.unread.append((rs, rel, rel in rs.known))
                     queued.add((id(rs), rel))
                     added += 1
+            if not rs.readable:
+                # an unlistable root (a share that dropped out) proves
+                # nothing about its runs: no gone-check, status "degraded"
+                continue
             if full:
                 self.sweep.extend((rs, rel) for rel in rs.known)
-            elif _norm(rs.path) in dirty:
-                newest = sorted(rs.known)[-RECENT_CHECK:]
-                self.sweep.extend((rs, rel) for rel in newest)
+                rs.sweep_cursor = 0
+            else:
+                picks = self._newest_runs(rs) if _norm(rs.path) in dirty else []
+                if listing:
+                    picks += self._sweep_chunk(rs)
+                self.sweep.extend((rs, rel) for rel in dict.fromkeys(picks))
         self.total += added               # each queued item counts once in "n/N"
         if full:
             self.last_full = time.monotonic()
@@ -464,7 +601,32 @@ class ChipSync:
                 self.sweep_initial = True
         self.phase = "reading"
 
-    def _list_root(self, rs: RootState, full: bool) -> list[str]:
+    @staticmethod
+    def _newest_runs(rs: RootState) -> list[str]:
+        """The newest RECENT_CHECK ingested runs by (day, run id) -- the ones
+        a light tick stat-checks (a rewrite of a recent run)."""
+        days = sorted({rel.partition("/")[0] for rel in rs.known})
+        out: list[str] = []
+        for day in reversed(days):
+            mine = sorted((r for r in rs.known if r.startswith(day + "/")), key=_rel_order)
+            out = mine + out
+            if len(out) >= RECENT_CHECK:
+                break
+        return out[-RECENT_CHECK:]
+
+    @staticmethod
+    def _sweep_chunk(rs: RootState) -> list[str]:
+        """The next SWEEP_CHUNK ingested runs, round robin: every run is
+        stat-checked within about SWEEP_EVERY_S without a burst."""
+        rels = sorted(rs.known, key=_rel_order)
+        if not rels:
+            return []
+        start = rs.sweep_cursor % len(rels)
+        chunk = (rels[start:] + rels[:start])[:SWEEP_CHUNK]
+        rs.sweep_cursor = start + len(chunk)
+        return chunk
+
+    def _list_root(self, rs: RootState, mode: str) -> list[str]:
         try:
             with os.scandir(rs.path) as it:
                 days = sorted(e.name for e in it if _DAY.fullmatch(e.name) and e.is_dir())
@@ -475,8 +637,18 @@ class ChipSync:
             return []
         for gone in set(rs.dates) - set(days):
             rs.dates.pop(gone, None)
-        look = days if (full or not rs.listed) else sorted(set(d for d in days if d not in rs.dates)
-                                                            | set(days[-NEWEST_DATES:]))
+        newest = set(days[-NEWEST_DATES:]) | {d for d in days if d not in rs.dates}
+        if mode == "full" or not rs.listed:
+            look = days
+        elif mode == "listing":
+            # bounded round robin over the older days (P2: a deep archive)
+            older = [d for d in days if d not in newest]
+            start = rs.list_cursor % len(older) if older else 0
+            chunk = (older[start:] + older[:start])[:LISTING_CHUNK]
+            rs.list_cursor = start + len(chunk)
+            look = sorted(newest | set(chunk))
+        else:
+            look = sorted(newest)
         new: list[str] = []
         now = time.monotonic()
         for day in look:
@@ -491,10 +663,13 @@ class ChipSync:
                     names = [e.name for e in it if _RUN.fullmatch(e.name) and e.is_dir()]
             except OSError:
                 continue
-            rs.dates[day] = mtime
+            if not rs.failed_day_pending(day, now):
+                # P1-2: a day whose run failed is NOT marked listed until the
+                # retry is due -- else an unchanged day would hide it forever
+                rs.dates[day] = mtime
             for name in names:
                 rel = f"{day}/{name}"
-                if rel in rs.known or rs.failed.get(rel, 0) > now:
+                if rel in rs.known or rel in rs.failed:
                     continue
                 new.append(rel)
         rs.listed = True
@@ -514,16 +689,29 @@ class ChipSync:
             rs.deferred.pop(rel, None)
             self.done += 1
             return
-        if not rewrite:
-            label = timefmt.archive_offset_hint([run.node])
-            if label is not None:
-                rs.votes[label] += 1
-        self.read.append(Cand(rs, rel, run, sig, rewrite))
+        # the offset vote counts once, when the run is ingested (P3: a
+        # deferred run re-read every look used to vote every look)
+        vote = None if rewrite else timefmt.archive_offset_hint([run.node])
+        self.read.append(Cand(rs, rel, run, sig, rewrite, vote))
 
     def _resolve(self) -> None:
+        batch: dict[int, Counter] = {}
         for cand in self.read:
-            hub_build.resolve_instant(cand.run, cand.root.hint)
-        self.ready_cands = deque(sorted([*self.ready_cands, *self.read], key=lambda c: c.key))
+            if cand.vote is not None:
+                batch.setdefault(id(cand.root), Counter())[cand.vote] += 1
+        ok = []
+        for cand in self.read:
+            try:
+                hub_build.resolve_instant(cand.run, cand.root.hint(batch.get(id(cand.root))))
+                ok.append(cand)
+            except OSError as exc:
+                # vanished between its listing and now (P3: one folder used
+                # to wedge the sync, re-raising on every later slice)
+                cand.root.deferred.pop(cand.rel, None)
+                self.counts["vanished"] += 1
+                self.done += 1
+                self.errors.append(f"{cand.rel}: {exc}")
+        self.ready_cands = deque(sorted([*self.ready_cands, *ok], key=lambda c: c.key))
         self.read.clear()
         # the newest pending run of each folder (one pass, not one per run)
         self.pending_max = {}
@@ -549,14 +737,21 @@ class ChipSync:
             if not cand.run.folder.is_dir():
                 # deleted between listing and ingestion: nothing happened here
                 rs.deferred.pop(cand.rel, None)
+                rs.failed.pop(cand.rel, None)
                 self.counts["vanished"] += 1
                 self.done += 1
                 return
             raw, digest, error = _read_pair(cand.run.folder)
-            if (not cand.rewrite and (error is not None or cand.run.error is not None)
-                    and self._is_newest(cand)):
-                # in flight, or a crash we cannot tell from one yet: wait for
-                # the run to complete or for a later run to prove it final
+
+            def waiting() -> bool:
+                # the newest run of its folder, or a saved pair whose files
+                # are still being written (a copy in progress, P2)
+                return (not cand.rewrite) and (self._is_newest(cand) or _fresh(cand.run.folder))
+            if not cand.rewrite and ((error is not None and waiting())
+                                     or (cand.run.error is not None and self._is_newest(cand))):
+                # in flight (the newest run, or files still being written: a
+                # copy in progress), or a crash we cannot tell from one yet:
+                # wait for it to complete or for time/a later run to prove it final
                 rs.deferred[cand.rel] = error or cand.run.error
                 self.counts["deferred"] += 1
                 self.done += 1
@@ -565,16 +760,20 @@ class ChipSync:
                 outcome = self._rewrite(store, cand, raw, digest, error)
             else:
                 try:
-                    outcome = attach_run(store, cand, raw, digest, error, src="sm_sync",
-                                         newest=self._is_newest(cand))
+                    outcome = attach_run(store, cand, raw, digest, error, src="sm_sync", newest=waiting)
                 except Deferred as why:
                     rs.deferred[cand.rel] = str(why)
                     self.counts["deferred"] += 1
                     self.done += 1
                     return
+            if outcome == "retry":
+                self.done += 1
+                return
             rs.deferred.pop(cand.rel, None)
+            rs.failed.pop(cand.rel, None)
             self.counts[outcome] += 1
-            if outcome in ("added", "inserted", "location", "rewritten", "moved", "unchanged", "present", "gone"):
+            if outcome in ("added", "inserted", "location", "rewritten", "completed", "moved", "split",
+                           "unchanged", "present", "gone"):
                 eid = store.conn.execute("SELECT eid FROM locations WHERE root_id=? AND rel_path=?",
                                          (rs.root_id, cand.rel)).fetchone()
                 if eid is not None:
@@ -582,12 +781,18 @@ class ChipSync:
                     key = (cand.run.instant, cand.run.run_id, cand.rel)
                     if rs.newest is None or key > rs.newest:
                         rs.newest = key
+                if outcome in ("added", "inserted") and cand.vote is not None:
+                    rs.votes[cand.vote] += 1
+                    with txn(store):
+                        store.set_meta(f"offset_votes:{rs.root_id}", json_bytes(dict(rs.votes)).decode("utf-8"))
             self.done += 1
         except Exception as exc:  # noqa: BLE001 -- one bad folder never stops the sync
             logger.warning("hub sync: %s failed", cand.run.folder, exc_info=True)
             self.errors.append(f"{cand.rel}: {type(exc).__name__}: {exc}")
             self.counts["failed"] += 1
-            rs.failed[cand.rel] = time.monotonic() + RETRY_AFTER_S
+            prev = rs.failed.get(cand.rel)
+            attempts = (prev[1] if prev else 0) + 1
+            rs.failed[cand.rel] = [time.monotonic() + RETRY_AFTER_S, attempts, f"{type(exc).__name__}: {exc}"]
             rs.dates.pop(cand.rel.split("/", 1)[0], None)     # re-list that day later
             self.done += 1
 
@@ -602,6 +807,9 @@ class ChipSync:
         if sig == entry[1]:
             return
         if not folder.is_dir() or sig.split("|")[0] == "-":
+            if not rs.path.is_dir():
+                rs.readable = False         # the whole root went away: prove nothing
+                return
             if entry[1] != "gone":
                 self._flag_gone(store, rs, rel, entry)
             return
@@ -618,10 +826,16 @@ class ChipSync:
 
     def _flag_gone(self, store: HubStore, rs: RootState, rel: str, entry: list) -> None:
         with txn(store):
-            others = store.conn.execute("SELECT COUNT(*) FROM locations WHERE eid=? AND NOT "
-                                        "(root_id=? AND rel_path=?)", (entry[0], rs.root_id, rel)).fetchone()[0]
-            if not others:
-                store.conn.execute("UPDATE events SET flags = flags | ? WHERE eid=?", (SOURCE_GONE, entry[0]))
+            # the event of this folder as the LEDGER says now (another window
+            # may have moved it since this window's RAM was filled)
+            loc = store.conn.execute("SELECT eid FROM locations WHERE root_id=? AND rel_path=?",
+                                     (rs.root_id, rel)).fetchone()
+            if loc is not None:
+                others = store.conn.execute("SELECT COUNT(*) FROM locations WHERE eid=? AND NOT "
+                                            "(root_id=? AND rel_path=?)", (loc[0], rs.root_id, rel)).fetchone()[0]
+                if not others:
+                    store.conn.execute("UPDATE events SET flags = flags | ? WHERE eid=?", (SOURCE_GONE, loc[0]))
+                entry[0] = loc[0]
             store.conn.execute("INSERT OR REPLACE INTO run_files(root_id,rel_path,sig,rewritten_us) "
                                "VALUES(?,?,?,(SELECT rewritten_us FROM run_files WHERE root_id=? AND rel_path=?))",
                                (rs.root_id, rel, "gone", rs.root_id, rel))
@@ -636,11 +850,12 @@ class ChipSync:
             if loc is None:
                 return "vanished"
             ev = store.event(loc[0])
+            hint = rs.hint()
             if error is not None:
                 state_file = hub_build.state_paths(cand.run.folder)[0]
                 if ev["error"] is not None:
                     # it never had a state and still has none: its node only
-                    _update_run_meta(store, ev, cand, rs.hint)
+                    _update_run_meta(store, ev, cand, hint)
                     _put_sig(store, rs.root_id, cand.rel, cand.sig, None)
                     return "unchanged"
                 if not state_file.is_file():
@@ -656,21 +871,36 @@ class ChipSync:
             if same_place and ev["error"] is None and digest == ev["state_hash"]:
                 # same bytes (a re-save of identical content), or node.json
                 # alone moved: metadata only, nothing to re-diff
-                _update_run_meta(store, ev, cand, rs.hint)
+                _update_run_meta(store, ev, cand, hint)
                 flags = (ev["flags"] & ~(SOURCE_GONE | NODE_UNREADABLE)) | (
                     NODE_UNREADABLE if cand.run.error is not None else 0)
                 store.conn.execute("UPDATE events SET flags=? WHERE eid=?", (flags, ev["eid"]))
                 _reprove(store, ev, cand.run.node)
                 _put_sig(store, rs.root_id, cand.rel, cand.sig, None)
                 return "unchanged"
+            others = store.conn.execute("SELECT COUNT(*) FROM locations WHERE eid=? AND NOT "
+                                        "(root_id=? AND rel_path=?)", (ev["eid"], rs.root_id, cand.rel)).fetchone()[0]
+            if others and (ev["error"] is not None or digest != ev["state_hash"]):
+                # a COPY of this run now holds other bytes than the other
+                # copies: this folder leaves the shared event (which keeps
+                # replaying the bytes the other copies still hold) and is
+                # ingested as what it holds now -- every location replays its
+                # own bytes (P2: copies). Copies whose bytes agree stay one
+                # event: a node-only move below takes every location along.
+                store.conn.execute("DELETE FROM locations WHERE root_id=? AND rel_path=?", (rs.root_id, cand.rel))
+                attach_run(store, cand, raw, digest, None, src=ev["src"] or "sm_sync", in_txn=True)
+                return "split"
             if not same_place:
                 # node.json now names another instant: the run moves (its
-                # neighbours on both sides are repaired)
-                remove_event(store, ev)
-                attach_run(store, cand, raw, digest, error, src="sm_sync", in_txn=True, extra_flags=REWRITTEN)
+                # neighbours on both sides are repaired) and keeps its eid;
+                # it is REWRITTEN only when its saved bytes changed too
+                changed = ev["error"] is None and digest != ev["state_hash"]
+                attach_run(store, cand, raw, digest, None, src=ev["src"] or "sm_sync", in_txn=True,
+                           extra_flags=(REWRITTEN if changed else 0) | (ev["flags"] & REWRITTEN), move=ev)
                 return "moved"
-            rediff_in_place(store, ev, cand, raw, digest, hint=rs.hint)
-            return "rewritten"
+            completed = ev["error"] is not None
+            rediff_in_place(store, ev, cand, raw, digest, hint=hint, completed=completed)
+            return "completed" if completed else "rewritten"
 
 
 def _late(deadline) -> bool:
@@ -722,6 +952,26 @@ def _chip(store) -> dict | None:
     return json.loads(raw) if raw else None
 
 
+def _content_hash_of(state: dict, wiring: dict) -> str | None:
+    """``working_copy.content_hash`` of a parsed pair -- the hash an SM write
+    names as its base (P1-5 causal floor)."""
+    from quam_state_manager.core import working_copy
+    try:
+        return working_copy.content_hash(state, wiring)
+    except (ValueError, TypeError):
+        return None
+
+
+def _content_hash(raw) -> str | None:
+    try:
+        state, wiring = (json.loads(data) for data in raw)
+    except (ValueError, TypeError):
+        return None
+    if not isinstance(state, dict) or not isinstance(wiring, dict):
+        return None
+    return _content_hash_of(state, wiring)
+
+
 def _prover(row) -> Callable | None:
     """``prove(rows) -> proven paths`` for a run whose rows are re-diffed:
     its node.json patches, read again from its folder; None (carry the old
@@ -756,29 +1006,79 @@ def _prepare_successor(store, succ):
     return store.flat_of(succ)
 
 
+def _detach(store: HubStore, ev) -> None:
+    """Take a run out of its place (inside a transaction) WITHOUT deleting
+    it: its successor is re-diffed against its predecessor (an SM successor
+    anchored first), error events between them name the predecessor again,
+    and its rows and checkpoint go. The caller places it again (a move)."""
+    pred = store.conn.execute("SELECT * FROM events WHERE ord<? AND error IS NULL ORDER BY ord DESC LIMIT 1",
+                              (ev["ord"],)).fetchone()
+    succ = store.conn.execute("SELECT * FROM events WHERE ord>? AND error IS NULL ORDER BY ord LIMIT 1",
+                              (ev["ord"],)).fetchone()
+    succ_flat = _prepare_successor(store, succ) if ev["error"] is None else None
+    pred_flat = store.flat_of(pred) if pred is not None else {}
+    eid = ev["eid"]
+    store.conn.execute("DELETE FROM changes WHERE eid=?", (eid,))
+    store.conn.execute("DELETE FROM checkpoints WHERE eid=?", (eid,))
+    # out of every ordering while it is re-placed: no t_ord, a rank below 0,
+    # and not a "good" event any query could pick as a predecessor
+    store.conn.execute("UPDATE events SET t_ord=NULL, ord=?, error=? WHERE eid=?",
+                       (-float(eid), "(being re-placed)", eid))
+    pred_hash = pred["state_hash"] if pred is not None else None
+    if succ is not None and succ_flat is not None:
+        _rediff_successor(store, succ, pred_flat, pred_hash, succ_flat)
+    if ev["error"] is None:
+        store.refresh_error_checkpoints(pred["ord"] if pred is not None else 0.0,
+                                        succ["ord"] if succ is not None else None,
+                                        lambda: store.state_at(pred["eid"]) if pred is not None else {})
+        store.refresh_error_bases(pred["ord"] if pred is not None else 0.0,
+                                  succ["ord"] if succ is not None else None, pred_hash)
+    store.refresh_reverts([succ["eid"] if succ is not None else None,
+                           *store.same_hash_after(ev["state_hash"], ev["ord"])])
+
+
 def attach_run(store: HubStore, cand: Cand, raw, digest, error, *, src: str,
-               in_txn: bool = False, extra_flags: int = 0, newest: bool = False) -> str:
+               in_txn: bool = False, extra_flags: int = 0, newest: bool = False, move=None) -> str:
     """Insert one run at its place (I1-I4). Returns ``added`` (at the head),
     ``inserted`` (before existing events), ``location`` (a copy of a run the
-    ledger holds) or ``present`` (another writer ingested this folder)."""
+    ledger holds) or ``present`` (another writer ingested this folder).
+    ``move``: an existing event of this folder that is re-placed (keeps its
+    eid; its old place is repaired first)."""
     if not in_txn:
         with txn(store):
             return attach_run(store, cand, raw, digest, error, src=src, in_txn=True, extra_flags=extra_flags,
-                              newest=newest)
+                              newest=newest, move=move)
     rs, run = cand.root, cand.run
     c = store.conn
-    if c.execute("SELECT 1 FROM locations WHERE root_id=? AND rel_path=?", (rs.root_id, cand.rel)).fetchone():
-        _put_sig(store, rs.root_id, cand.rel, cand.sig, None)
-        return "present"
-    known = c.execute("SELECT eid FROM events WHERE kind='run' AND t_utc_us=? AND run_id=? AND experiment=? "
-                      "AND state_hash IS ?", (run.instant, run.run_id, run.experiment, digest)).fetchone()
-    if known:
-        c.execute("INSERT INTO locations VALUES(?,?,?)", (known[0], rs.root_id, cand.rel))
-        _put_sig(store, rs.root_id, cand.rel, cand.sig, None)
-        return "location"
-    lo, hi = store.neighbors(cand.key)
-    pred = store.good_at_or_before(lo)
-    succ = store.good_at_or_after(hi)
+    if move is None:
+        if c.execute("SELECT 1 FROM locations WHERE root_id=? AND rel_path=?", (rs.root_id, cand.rel)).fetchone():
+            _put_sig(store, rs.root_id, cand.rel, cand.sig, None)
+            return "present"
+        known = c.execute("SELECT eid FROM events WHERE kind='run' AND t_utc_us=? AND run_id=? AND experiment=? "
+                          "AND state_hash IS ?", (run.instant, run.run_id, run.experiment, digest)).fetchone()
+        if known:
+            c.execute("INSERT INTO locations VALUES(?,?,?)", (known[0], rs.root_id, cand.rel))
+            _put_sig(store, rs.root_id, cand.rel, cand.sig, None)
+            return "location"
+    else:
+        _detach(store, move)
+    # the content hash SM writes name as their base (P1-5): the same bytes
+    # an event already holds share it; new bytes get it from their parse
+    chash = None
+    if error is None:
+        row = c.execute("SELECT chash FROM events WHERE state_hash=? AND chash IS NOT NULL LIMIT 1",
+                        (digest,)).fetchone()
+        chash = row[0] if row else None
+
+    def place(t_ord):
+        lo, hi = store.neighbors((t_ord, rs.fkey, run.run_id, run.experiment, cand.rel, _NEW))
+        return lo, hi, store.good_at_or_before(lo), store.good_at_or_after(hi)
+
+    # P1-5: a run never lands after an SM write whose base IS this run's
+    # content (a run on a PC whose clock is ahead of SM's)
+    ceiling = store.causal_ceiling(chash, run.instant)
+    t_ord = run.instant if ceiling is None else ceiling - 1
+    lo, hi, pred, succ = place(t_ord)
     pred_hash = pred["state_hash"] if pred is not None else None
     flags = extra_flags
     if run.quality in ("assumed_local", "mtime"):
@@ -797,37 +1097,54 @@ def attach_run(store: HubStore, cand: Cand, raw, digest, error, *, src: str,
             flags |= pred["flags"] & CHIP_UNCERTAIN
         else:
             try:
-                doc, flat, id_flags, chip = hub_build.parse_state(raw, run.folder, chip)
+                doc, flat, id_flags, chip, pair = hub_build.parse_state(raw, run.folder, chip, want_pair=True)
                 flags |= id_flags
+                if chash is None:
+                    chash = _content_hash_of(*pair)
+                    late = store.causal_ceiling(chash, run.instant)
+                    if late is not None and ceiling is None:
+                        # its content is the base of an SM write already placed
+                        # before this clock: re-place it before that write
+                        ceiling, t_ord = late, late - 1
+                        lo, hi, pred, succ = place(t_ord)
+                        pred_hash = pred["state_hash"] if pred is not None else None
+                        pred_flat = store.flat_of(pred) if pred is not None else {}
                 rows = rules.diff(pred_flat, flat)
             except (OSError, ValueError, TypeError) as exc:
-                if newest:
-                    # a torn save of the newest run is a write in flight, not
-                    # a final error (the transaction rolls back)
+                if newest and (newest() if callable(newest) else newest):
+                    # a torn save of a run still being written is a write in
+                    # flight, not a final error (the transaction rolls back)
                     raise Deferred(f"saved state not readable yet: {exc}") from exc
-                error, doc, flat, rows = str(exc), None, None, []
+                error, doc, flat, rows, chash = str(exc), None, None, [], None
     if error is not None:
         flags |= CHIP_UNCERTAIN
     succ_flat = _prepare_successor(store, succ) if error is None else None
-    if error is None and store.overlaps_sm_write(_run_start(run, cand.root.hint), run.instant):
+    # a fact about timing, whatever this run saved (P3: same result in
+    # either landing order, a stateless run included)
+    if store.overlaps_sm_write(_run_start(run, cand.root.hint()), run.instant):
         flags |= OVERLAPS_SM_WRITE
     ord_ = store.alloc_ord(lo, hi)
-    event = hub_build.event_fields(run, root_id=rs.root_id, rel=cand.rel, hint=cand.root.hint, digest=digest,
-                                   base_hash=pred_hash, flags=flags,
-                                   error=error, src=src)
+    event = hub_build.event_fields(run, root_id=rs.root_id, rel=cand.rel, hint=cand.root.hint(), digest=digest,
+                                   base_hash=pred_hash, flags=flags, error=error, src=src)
     if error is None and shape_hash is None:
         shape_hash = store.shape_and_arrays(doc, flat)
-    event.update(ord=ord_, shape_hash=shape_hash, n_changes=len(rows))
-    columns = ",".join(event)
-    eid = c.execute(f"INSERT INTO events({columns}) VALUES({','.join('?' for _ in event)})",
-                    tuple(event.values())).lastrowid
-    c.execute("INSERT INTO locations VALUES(?,?,?)", (eid, rs.root_id, cand.rel))
-    _put_sig(store, rs.root_id, cand.rel, cand.sig, None)
+    event.update(ord=ord_, shape_hash=shape_hash, n_changes=len(rows), t_ord=t_ord, chash=chash)
+    if move is None:
+        columns = ",".join(event)
+        eid = c.execute(f"INSERT INTO events({columns}) VALUES({','.join('?' for _ in event)})",
+                        tuple(event.values())).lastrowid
+        c.execute("INSERT INTO locations VALUES(?,?,?)", (eid, rs.root_id, cand.rel))
+    else:
+        eid = move["eid"]
+        event.pop("kind")
+        sets = ",".join(f"{k}=?" for k in event)
+        c.execute(f"UPDATE events SET {sets} WHERE eid=?", (*event.values(), eid))
+    _put_sig(store, rs.root_id, cand.rel, cand.sig, time.time_ns() // 1000 if extra_flags & REWRITTEN else None)
     if chip is not None and store.meta("chip_identity") is None:
         store.set_meta("chip_identity", json_bytes(chip).decode("utf-8"))
-    label = timefmt.archive_offset_hint([run.node])
-    if label is not None and not cand.rewrite:
-        store.set_meta(f"offset_votes:{rs.root_id}", json_bytes(dict(rs.votes)).decode("utf-8"))
+    if succ is not None:
+        succ = store.event(succ["eid"])              # alloc_ord may have renumbered
+    hi_ord = succ["ord"] if succ is not None else None
     if error is None:
         store.write_rows(eid, rows, hub_build._proven(run.node, rows, flat))
         row = store.event(eid)
@@ -835,47 +1152,33 @@ def attach_run(store: HubStore, cand: Cand, raw, digest, error, *, src: str,
 
         def doc_fn():
             return doc if doc is not None else store.state_at(eid)
-        if succ is not None:
-            succ = store.event(succ["eid"])          # alloc_ord may have renumbered
-            if succ_flat is not None:
-                _rediff_successor(store, succ, flat, digest, succ_flat)
-        store.refresh_error_checkpoints(ord_, succ["ord"] if succ is not None else None, doc_fn)
+        if succ is not None and succ_flat is not None:
+            _rediff_successor(store, succ, flat, digest, succ_flat)
+        store.refresh_error_checkpoints(ord_, hi_ord, doc_fn)
+        store.refresh_error_bases(ord_, hi_ord, digest)
         store.maybe_checkpoint(eid, ord_, doc_fn)
-        store.refresh_reverts([eid, succ["eid"] if succ is not None else None,
-                               *store.same_hash_after(digest, ord_)])
+    store.refresh_reverts([eid, succ["eid"] if succ is not None else None,
+                           *store.same_hash_after(digest, ord_)])
+    if move is not None:
+        return "moved"
     return "added" if hi is None else "inserted"
 
 
 def remove_event(store: HubStore, ev) -> None:
-    """Take a run out of the chain (inside a transaction): its successor is
-    re-diffed against its predecessor, an SM successor anchored first, error
-    checkpoints between them hold the predecessor's state."""
-    pred = store.conn.execute("SELECT * FROM events WHERE ord<? AND error IS NULL ORDER BY ord DESC LIMIT 1",
-                              (ev["ord"],)).fetchone()
-    succ = store.conn.execute("SELECT * FROM events WHERE ord>? AND error IS NULL ORDER BY ord LIMIT 1",
-                              (ev["ord"],)).fetchone()
-    succ_flat = _prepare_successor(store, succ) if ev["error"] is None else None
-    pred_flat = store.flat_of(pred) if pred is not None else {}
-    eid = ev["eid"]
-    for table in ("changes", "checkpoints", "locations"):
-        store.conn.execute(f"DELETE FROM {table} WHERE eid=?", (eid,))
-    store.conn.execute("DELETE FROM events WHERE eid=?", (eid,))
-    if succ is not None and succ_flat is not None:
-        _rediff_successor(store, succ, pred_flat, pred["state_hash"] if pred is not None else None, succ_flat)
-    if ev["error"] is None:
-        store.refresh_error_checkpoints(pred["ord"] if pred is not None else 0.0,
-                                        succ["ord"] if succ is not None else None,
-                                        lambda: store.state_at(pred["eid"]) if pred is not None else {})
-    store.refresh_reverts([succ["eid"] if succ is not None else None,
-                           *store.same_hash_after(ev["state_hash"], ev["ord"])])
+    """Take a run out of the chain and delete it (inside a transaction)."""
+    _detach(store, ev)
+    for table in ("locations",):
+        store.conn.execute(f"DELETE FROM {table} WHERE eid=?", (ev["eid"],))
+    store.conn.execute("DELETE FROM events WHERE eid=?", (ev["eid"],))
 
 
-def rediff_in_place(store: HubStore, ev, cand: Cand, raw, digest, *, hint) -> None:
+def rediff_in_place(store: HubStore, ev, cand: Cand, raw, digest, *, hint, completed: bool = False) -> None:
     """A rewritten run folder (inside a transaction): the event keeps its
     place and eid; its rows become the diff of its CURRENT saved pair against
     its predecessor, its successor is re-diffed against it, and the
     checkpoints that held its state are refreshed. SM events after it are
-    facts: an un-anchored one is anchored first, none is re-diffed."""
+    facts: an un-anchored one is anchored first, none is re-diffed.
+    ``completed``: an error event whose state arrived -- not a rewrite."""
     run = cand.run
     pred = store.conn.execute("SELECT * FROM events WHERE ord<? AND error IS NULL ORDER BY ord DESC LIMIT 1",
                               (ev["ord"],)).fetchone()
@@ -884,13 +1187,13 @@ def rediff_in_place(store: HubStore, ev, cand: Cand, raw, digest, *, hint) -> No
     succ_flat = _prepare_successor(store, succ)
     pred_flat = store.flat_of(pred) if pred is not None else {}
     chip = _chip(store)
-    doc, flat, id_flags, chip = hub_build.parse_state(raw, run.folder, chip)
+    doc, flat, id_flags, chip, pair = hub_build.parse_state(raw, run.folder, chip, want_pair=True)
     rows = rules.diff(pred_flat, flat)
     store.conn.execute("DELETE FROM changes WHERE eid=?", (ev["eid"],))
     store.write_rows(ev["eid"], rows, hub_build._proven(run.node, rows, flat))
     shape_hash = store.shape_and_arrays(doc, flat)
     keep = ev["flags"] & ~(CHIP_UNCERTAIN | NODE_UNREADABLE | SOURCE_GONE | TIME_ASSUMED)
-    flags = keep | id_flags | REWRITTEN
+    flags = keep | id_flags | (0 if completed else REWRITTEN)
     if run.error is not None:
         flags |= NODE_UNREADABLE
     if run.quality in ("assumed_local", "mtime"):
@@ -900,7 +1203,7 @@ def rediff_in_place(store: HubStore, ev, cand: Cand, raw, digest, *, hint) -> No
                                     flags=flags, error=None, src=ev["src"])
     for k in ("kind", "t_utc_us", "root_id", "rel_path", "run_id", "experiment", "src"):
         fields.pop(k)
-    fields.update(shape_hash=shape_hash, n_changes=len(rows))
+    fields.update(shape_hash=shape_hash, n_changes=len(rows), chash=_content_hash_of(*pair))
     sets = ",".join(f"{k}=?" for k in fields)
     store.conn.execute(f"UPDATE events SET {sets} WHERE eid=?", (*fields.values(), ev["eid"]))
     old_hash = ev["state_hash"]
@@ -910,13 +1213,15 @@ def rediff_in_place(store: HubStore, ev, cand: Cand, raw, digest, *, hint) -> No
         store.conn.execute("UPDATE checkpoints SET hash=? WHERE eid=?", (store.put_blob(json_bytes(doc)), ev["eid"]))
     if succ is not None and succ_flat is not None:
         _rediff_successor(store, succ, flat, digest, succ_flat)
-    store.refresh_error_checkpoints(ev["ord"], succ["ord"] if succ is not None else None, lambda: doc)
+    hi_ord = succ["ord"] if succ is not None else None
+    store.refresh_error_checkpoints(ev["ord"], hi_ord, lambda: doc)
+    store.refresh_error_bases(ev["ord"], hi_ord, digest)
     if chip is not None and store.meta("chip_identity") is None:
         store.set_meta("chip_identity", json_bytes(chip).decode("utf-8"))
     store.refresh_reverts([ev["eid"], succ["eid"] if succ is not None else None,
                            *store.same_hash_after(old_hash, ev["ord"]),
                            *store.same_hash_after(digest, ev["ord"])])
-    _put_sig(store, ev["root_id"], cand.rel, cand.sig, time.time_ns() // 1000)
+    _put_sig(store, ev["root_id"], cand.rel, cand.sig, None if completed else time.time_ns() // 1000)
 
 
 def _reprove(store, ev, node: dict) -> None:
@@ -970,10 +1275,17 @@ def registered() -> list[ChipSync]:
 
 
 def open_chip(chip_dir, roots: Iterable[tuple[str, str]], *, identity: dict | None = None,
-              kick: bool = True) -> ChipSync:
+              kick: bool = True, exclusive: bool = True) -> ChipSync:
     """A chip was activated: register its roots and catch every one of them
-    up in the background (no page visit needed)."""
+    up in the background (no page visit needed). ``exclusive``: every other
+    chip's sync goes idle -- not watched, not swept -- until it is opened
+    again (docs/275 review: every chip ever opened used to stay swept)."""
     cs = sync_for(chip_dir)
+    if exclusive:
+        for other in registered():
+            if other is not cs:
+                other.active = False
+    cs.active = True
     cs.set_roots(roots)
     if identity:
         cs.identity = identity
@@ -984,40 +1296,52 @@ def open_chip(chip_dir, roots: Iterable[tuple[str, str]], *, identity: dict | No
 
 
 def on_roots_moved(moved: Iterable[str]) -> int:
-    """The run watcher's listener: wake every chip whose registered folder
-    moved. Never blocks (the work runs on the projector thread)."""
+    """The run watcher's listener: wake every active chip whose registered
+    folder moved. Never blocks (the work runs on the projector thread)."""
     moved = list(moved)
     n = 0
     for cs in registered():
-        if cs.request(roots=moved):
+        if cs.active and cs.request(roots=moved):
             _kick(cs)
             n += 1
     return n
 
 
 def periodic(now: float | None = None) -> int:
-    """A full listing + stat sweep for every chip whose last one is older
-    than ``SWEEP_EVERY_S`` (the projector calls this when idle)."""
+    """The projector's periodic look (every ~30 s) at every ACTIVE chip:
+    a bounded listing of its day folders and a chunk of its stat sweep, a
+    re-look at deferred runs and at failed runs whose retry is due, and a
+    rescue for a chip that has work but no slice queued (P1-6)."""
     now = time.monotonic() if now is None else now
     n = 0
     for cs in registered():
-        if not cs.roots or cs.has_work():
+        if not cs.roots or not cs.active:
             continue
-        if now - cs.last_full >= SWEEP_EVERY_S:
-            cs.request(full=True)
-        elif now - cs.last_listing >= LISTING_EVERY_S:
+        if cs.has_work():
+            if not _queued(cs):
+                _kick(cs)
+                n += 1
+            continue
+        if now - cs.last_listing >= LISTING_EVERY_S:
             cs.request(listing=True)
         else:
             # an in-flight run whose state lands by rewriting a file inside
             # an existing quam_state folder moves no directory the watcher
-            # looks at: look at the deferred ones again (a few reads)
-            waiting = [str(rs.path) for rs in list(cs.roots.values()) if rs.deferred]
+            # looks at; a failed run's retry may be due: look again (a few reads)
+            waiting = [str(rs.path) for rs in list(cs.roots.values())
+                       if rs.deferred or any(f[0] <= now and f[1] < MAX_RETRIES for f in rs.failed.values())]
             if not waiting:
                 continue
             cs.request(roots=waiting)
         _kick(cs)
         n += 1
     return n
+
+
+def _queued(cs: ChipSync) -> bool:
+    from quam_state_manager.core import hub
+    proj = hub._PROJECTOR
+    return proj.inline is False and proj.sync_queued(hub.Hub.for_chip(cs.dir))
 
 
 def _kick(cs: ChipSync) -> None:
@@ -1031,14 +1355,18 @@ def kick(cs: ChipSync) -> None:
         _kick(cs)
 
 
-def run(chip_dir, store: HubStore, budget_s: float | None) -> bool:
+def run(chip_dir, store: HubStore, budget_s: float | None,
+        should_yield: Callable[[], bool] | None = None) -> bool:
     """One slice for *chip_dir* on *store* (the projector's connection, under
     the chip's writer lock). Returns whether more work remains."""
-    return sync_for(chip_dir).run_slice(store, budget_s)
+    return sync_for(chip_dir).run_slice(store, budget_s, should_yield)
 
 
 def status(chip_dir) -> dict:
-    """``{"state": "building" | "ready", "done", "total", ...}`` from RAM."""
+    """``{"state": "building" | "ready" | "degraded", "done", "total", ...}``
+    from RAM. ``degraded``: nothing is in progress, but a data folder cannot
+    be listed now or some run could not be ingested -- the ledger holds
+    everything else."""
     with _SYNCS_LOCK:
         cs = _SYNCS.get(_norm(chip_dir))
     if cs is None:
@@ -1048,6 +1376,9 @@ def status(chip_dir) -> dict:
 
 
 def require_ready(chip_dir) -> dict:
+    """Raise :class:`Building` while the ledger is catching up. ``degraded``
+    is returned (not raised): its answer is complete for what can be read,
+    and a surface says which folder or run is missing."""
     st = status(chip_dir)
     if st["state"] == "building":
         raise Building(chip_dir, st)
@@ -1060,9 +1391,9 @@ def require_ready(chip_dir) -> dict:
 
 def verify(store: HubStore, *, sample: int | None = None, read_runs: bool = True) -> dict:
     """Check I1-I4 on a ledger: canonical order, every run's base hash, every
-    run's ``state_at`` against its own saved pair (when its folder holds the
-    ingested bytes), every checkpoint, every run's location. Returns counts
-    and a list of problems (empty = consistent)."""
+    run's ``state_at`` against the saved pair of EVERY one of its locations
+    (when that folder still holds the ingested bytes), every checkpoint,
+    every run's location. Returns counts and a list of problems."""
     problems: list[str] = []
     rows = store.conn.execute("SELECT * FROM events ORDER BY ord").fetchall()
     keys = [store.order_key(r) for r in rows]
@@ -1084,21 +1415,23 @@ def verify(store: HubStore, *, sample: int | None = None, read_runs: bool = True
                 if r["base_hash"] != want:
                     problems.append(f"eid {r['eid']}: base_hash {r['base_hash']} != predecessor {want}")
                 if read_runs and r["eid"] in pick and not r["flags"] & SOURCE_GONE:
-                    loc = store.conn.execute(
-                        "SELECT r.path, l.rel_path, f.sig FROM locations l JOIN roots r USING(root_id) "
-                        "LEFT JOIN run_files f ON f.root_id=l.root_id AND f.rel_path=l.rel_path "
-                        "WHERE l.eid=? LIMIT 1", (r["eid"],)).fetchone()
-                    folder = Path(loc[0]) / loc[1] if loc is not None else Path(r["state_ref"] or "")
-                    if folder.is_dir() and (loc is None or loc[2] is None or file_sig(folder) == loc[2]):
+                    got = None
+                    for loc in store.conn.execute(
+                            "SELECT r.path, l.rel_path, f.sig FROM locations l JOIN roots r USING(root_id) "
+                            "LEFT JOIN run_files f ON f.root_id=l.root_id AND f.rel_path=l.rel_path "
+                            "WHERE l.eid=?", (r["eid"],)).fetchall():
+                        folder = Path(loc[0]) / loc[1]
+                        if not folder.is_dir() or (loc[2] is not None and file_sig(folder) != loc[2]):
+                            continue        # changed since: the sweep will re-read it
                         try:
                             own = rules.flatten(hub_build.read_doc(folder))
                         except (OSError, ValueError, TypeError):
-                            own = None
-                        if own is not None:
+                            continue
+                        if got is None:
                             got = rules.flatten(store.state_at(r["eid"]))
-                            if rules.diff(got, own):
-                                problems.append(f"eid {r['eid']}: state_at differs from its saved pair")
-                            runs_checked += 1
+                        if rules.diff(got, own):
+                            problems.append(f"eid {r['eid']}: state_at differs from the saved pair of {loc[1]}")
+                        runs_checked += 1
         if r["error"] is None:
             prev_good = r
     for cp in store.conn.execute("SELECT c.eid, c.hash, e.error, e.ord FROM checkpoints c JOIN events e USING(eid)"):

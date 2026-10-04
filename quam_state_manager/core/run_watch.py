@@ -103,6 +103,11 @@ class RunWatcher:
         # asked for every root; the tick and the dataset listeners are as before.
         self._extra: dict[str, tuple[str, ...]] = {}
         self._sigs: dict[str, Any] = {}
+        # docs/275 review: the other owners' OWN last look per root -- one
+        # baseline per audience, so the dataset roots behave exactly as they
+        # did before the hub watched anything (a root the hub saw first and
+        # the Datasets page adds later is baselined for the dataset view)
+        self._xsigs: dict[str, Any] = {}
         self.tick = 0
         self.polls = 0
         self.last_change_at: float | None = None
@@ -155,10 +160,10 @@ class RunWatcher:
                 self._extra[owner] = new
             else:
                 self._extra.pop(owner, None)
-            watched = set(self._watched())
-            for k in list(self._sigs):
-                if k not in watched:
-                    del self._sigs[k]
+            extra = {r for rs in self._extra.values() for r in rs}
+            for k in list(self._xsigs):
+                if k not in extra:
+                    del self._xsigs[k]
 
     def set_roots(self, roots: Iterable[str]) -> None:
         """The folders to watch (the active dataset folders); a root seen for
@@ -169,9 +174,8 @@ class RunWatcher:
             if new == self._roots:
                 return
             self._roots = new
-            watched = set(self._watched())
             for k in list(self._sigs):
-                if k not in watched:
+                if k not in new:
                     del self._sigs[k]
             fresh = [r for r in new if r not in self._sigs]
         # baseline a new root NOW, in the caller's thread (~1 ms): a run that
@@ -201,8 +205,10 @@ class RunWatcher:
         with self._cond:
             roots = self._watched()
             dataset = set(self._roots)
+            extra = {r for rs in self._extra.values() for r in rs}
         changed = False
         moved: list[str] = []
+        moved_dataset: list[str] = []
         for root in roots:
             try:
                 sig = self._signature(root)
@@ -220,13 +226,22 @@ class RunWatcher:
                     if prev_at is not None:
                         self._gap[root] = now - prev_at
                     self._polled_at[root] = now
-                if root not in self._sigs:
-                    self._sigs[root] = sig          # first sight: baseline only
-                    if root not in dataset and sig is not None:
-                        moved.append(root)          # docs/275: an owner's root is announced
-                elif self._sigs[root] != sig:
-                    self._sigs[root] = sig
-                    changed = changed or root in dataset
+                if root in dataset:
+                    if root not in self._sigs:
+                        self._sigs[root] = sig          # first sight: baseline only
+                    elif self._sigs[root] != sig:
+                        self._sigs[root] = sig
+                        changed = True
+                        moved_dataset.append(root)
+                if root in extra:
+                    if root not in self._xsigs:
+                        self._xsigs[root] = sig
+                        if sig is not None:
+                            moved.append(root)          # docs/275: an owner's root is announced
+                    elif self._xsigs[root] != sig:
+                        self._xsigs[root] = sig
+                        moved.append(root)
+                elif root in moved_dataset:
                     moved.append(root)
         with self._cond:
             self.polls += 1
@@ -237,7 +252,6 @@ class RunWatcher:
                 self._cond.notify_all()
             listeners = list(self._listeners) if changed else []
             all_listeners = list(self._all_listeners) if moved else []
-        moved_dataset = [r for r in moved if r in dataset]
         for fn in listeners:
             try:
                 fn(moved_dataset)
