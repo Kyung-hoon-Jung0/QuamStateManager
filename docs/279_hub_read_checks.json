@@ -1,0 +1,36 @@
+{
+  "synthetic": {
+    "events": 10000,
+    "changes": 31021,
+    "paths": 1024,
+    "index_build_s": 0.6843,
+    "index_mib": 5.467,
+    "iterations": 300,
+    "search_p95_ms": 2.723,
+    "timeline_day_p95_ms": 6.924,
+    "series_p95_ms": 5.375,
+    "series_rows_p95": 79,
+    "ledger_build_s": 106.1
+  },
+  "copy": {
+    "events": 500,
+    "changes": 7179,
+    "paths": 3989,
+    "index_build_s": 0.2416,
+    "index_mib": 2.123,
+    "iterations": 300,
+    "search_p95_ms": 2.142,
+    "timeline_day_p95_ms": 14.493,
+    "series_p95_ms": 3.045,
+    "series_rows_p95": 4,
+    "folders_copied": 500,
+    "ledger_build_s": 10.381
+  },
+  "equivalence": {
+    "paths": 200,
+    "events_replayed": 499,
+    "rows_compared": 416,
+    "mismatches": 0,
+    "seed": 279
+  }
+}

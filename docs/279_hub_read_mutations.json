@@ -1,0 +1,243 @@
+{
+  "red": 39,
+  "total": 39,
+  "pins_targeted": 29,
+  "pins_total": 29,
+  "restored": true,
+  "results": [
+    {
+      "name": "timeline_order",
+      "pin": "tests/test_hub_query.py::test_timeline_newest_first_exact_rows_and_zero_change_events",
+      "red": true,
+      "exit_code": 1
+    },
+    {
+      "name": "timeline_old",
+      "pin": "tests/test_hub_query.py::test_timeline_newest_first_exact_rows_and_zero_change_events",
+      "red": true,
+      "exit_code": 1
+    },
+    {
+      "name": "series_limit",
+      "pin": "tests/test_hub_query.py::test_series_old_new_operations_proof_and_latest_limit",
+      "red": true,
+      "exit_code": 1
+    },
+    {
+      "name": "proof",
+      "pin": "tests/test_hub_query.py::test_series_old_new_operations_proof_and_latest_limit",
+      "red": true,
+      "exit_code": 1
+    },
+    {
+      "name": "many_missing",
+      "pin": "tests/test_hub_query.py::test_series_many_snapshot_and_missing_paths",
+      "red": true,
+      "exit_code": 1
+    },
+    {
+      "name": "newest",
+      "pin": "tests/test_hub_query.py::test_newest_change_is_latest_row_not_latest_event",
+      "red": true,
+      "exit_code": 1
+    },
+    {
+      "name": "writer_boundary",
+      "pin": "tests/test_hub_query.py::test_writer_of_inclusive_boundary_actor_kind_run_and_unknown",
+      "red": true,
+      "exit_code": 1
+    },
+    {
+      "name": "grammar",
+      "pin": "tests/test_hub_query.py::test_search_shared_and_or_grammar_and_literal_pipes",
+      "red": true,
+      "exit_code": 1
+    },
+    {
+      "name": "pair_members",
+      "pin": "tests/test_hub_query.py::test_pair_members_and_macro_targets_and_changed_segments",
+      "red": true,
+      "exit_code": 1
+    },
+    {
+      "name": "path_entities",
+      "pin": "tests/test_hub_query.py::test_pair_members_and_macro_targets_and_changed_segments",
+      "red": true,
+      "exit_code": 1
+    },
+    {
+      "name": "project_day",
+      "pin": "tests/test_hub_query.py::test_day_comes_from_project_zone_not_folder_or_pc",
+      "red": true,
+      "exit_code": 1
+    },
+    {
+      "name": "day_upper_inclusive",
+      "pin": "tests/test_hub_query.py::test_day_filters_inclusive_open_ends_and_dst",
+      "red": true,
+      "exit_code": 1
+    },
+    {
+      "name": "unset_zone",
+      "pin": "tests/test_hub_query.py::test_missing_project_zone_fails_and_offline_utc_is_explicit",
+      "red": true,
+      "exit_code": 1
+    },
+    {
+      "name": "combined_kinds",
+      "pin": "tests/test_hub_query.py::test_timeline_combines_all_filters",
+      "red": true,
+      "exit_code": 1
+    },
+    {
+      "name": "cursor_watermark",
+      "pin": "tests/test_hub_query.py::test_cursor_stable_on_new_and_late_appends_and_rank_renumbering",
+      "red": true,
+      "exit_code": 1
+    },
+    {
+      "name": "cursor_filters",
+      "pin": "tests/test_hub_query.py::test_cursor_rejects_other_query_zone_ledger_and_malformed",
+      "red": true,
+      "exit_code": 1
+    },
+    {
+      "name": "warming",
+      "pin": "tests/test_hub_query.py::test_every_api_raises_existing_warming_even_on_cached_index",
+      "red": true,
+      "exit_code": 1
+    },
+    {
+      "name": "warming_after",
+      "pin": "tests/test_hub_query.py::test_sync_starting_during_query_raises_warming",
+      "red": true,
+      "exit_code": 1
+    },
+    {
+      "name": "exact_case",
+      "pin": "tests/test_hub_query.py::test_alias_free_escaped_and_case_distinct_holder_paths",
+      "red": true,
+      "exit_code": 1
+    },
+    {
+      "name": "lossless_values",
+      "pin": "tests/test_hub_query.py::test_payloads_nonfinite_large_numbers_long_array_and_raw_pointer",
+      "red": true,
+      "exit_code": 1
+    },
+    {
+      "name": "rewrite_token",
+      "pin": "tests/test_hub_query.py::test_cache_reuses_index_and_invalidates_same_connection_rewrites",
+      "red": true,
+      "exit_code": 1
+    },
+    {
+      "name": "sparse_positions",
+      "pin": "tests/test_hub_query.py::test_cache_external_changes_rows_and_sparse_eids",
+      "red": true,
+      "exit_code": 1
+    },
+    {
+      "name": "eid_array",
+      "pin": "tests/test_hub_query.py::test_columnar_arrays_postings_footprint_and_read_only_sql",
+      "red": true,
+      "exit_code": 1
+    },
+    {
+      "name": "read_only",
+      "pin": "tests/test_hub_query.py::test_columnar_arrays_postings_footprint_and_read_only_sql",
+      "red": true,
+      "exit_code": 1
+    },
+    {
+      "name": "canonical_series",
+      "pin": "tests/test_hub_query.py::test_writer_and_series_follow_canonical_order_not_eid",
+      "red": true,
+      "exit_code": 1
+    },
+    {
+      "name": "snapshot_version",
+      "pin": "tests/test_hub_query.py::test_concurrent_commit_raises_warming_instead_of_mixed_result",
+      "red": true,
+      "exit_code": 1
+    },
+    {
+      "name": "limit_validation",
+      "pin": "tests/test_hub_query.py::test_input_limits_days_empty_results_and_sql_literals",
+      "red": true,
+      "exit_code": 1
+    },
+    {
+      "name": "series_cap",
+      "pin": "tests/test_hub_query.py::test_large_pages_and_many_series_batch_sql_parameters",
+      "red": true,
+      "exit_code": 1
+    },
+    {
+      "name": "root_holder",
+      "pin": "tests/test_hub_query.py::test_root_empty_key_and_backslash_holder_paths",
+      "red": true,
+      "exit_code": 1
+    },
+    {
+      "name": "macro_class",
+      "pin": "tests/test_hub_query.py::test_macro_classifier_and_actor_class_and_family_are_distinct",
+      "red": true,
+      "exit_code": 1
+    },
+    {
+      "name": "q_filter",
+      "pin": "tests/test_hub_query.py::test_timeline_each_filter_excludes_unrelated_events",
+      "red": true,
+      "exit_code": 1
+    },
+    {
+      "name": "entity_filter",
+      "pin": "tests/test_hub_query.py::test_timeline_each_filter_excludes_unrelated_events",
+      "red": true,
+      "exit_code": 1
+    },
+    {
+      "name": "path_filter",
+      "pin": "tests/test_hub_query.py::test_timeline_each_filter_excludes_unrelated_events",
+      "red": true,
+      "exit_code": 1
+    },
+    {
+      "name": "many_snapshots",
+      "pin": "tests/test_hub_query.py::test_series_many_uses_one_snapshot",
+      "red": true,
+      "exit_code": 1
+    },
+    {
+      "name": "reader_bound",
+      "pin": "tests/test_hub_query.py::test_reader_handles_are_bounded_and_close_drops_index",
+      "red": true,
+      "exit_code": 1
+    },
+    {
+      "name": "unbound_day",
+      "pin": "tests/test_hub_query.py::test_missing_project_zone_fails_and_offline_utc_is_explicit",
+      "red": true,
+      "exit_code": 1
+    },
+    {
+      "name": "array_root",
+      "pin": "tests/test_hub_query.py::test_columnar_arrays_postings_footprint_and_read_only_sql",
+      "red": true,
+      "exit_code": 1
+    },
+    {
+      "name": "array_run",
+      "pin": "tests/test_hub_query.py::test_columnar_arrays_postings_footprint_and_read_only_sql",
+      "red": true,
+      "exit_code": 1
+    },
+    {
+      "name": "array_time",
+      "pin": "tests/test_hub_query.py::test_columnar_arrays_postings_footprint_and_read_only_sql",
+      "red": true,
+      "exit_code": 1
+    }
+  ]
+}
