@@ -16,7 +16,7 @@
 </div>
 
 <form id="jr-filters" class="jr-filters" hx-get="/journal/day" hx-target="#jr-body" hx-swap="innerHTML"
-      hx-trigger="change, submit, keyup changed delay:300ms from:#jr-q">
+      hx-trigger="submit">
     <input type="hidden" name="day" id="jr-day" value="{{ story.day }}">
     {% include '_journal_daynav.html' %}
     <input type="search" name="q" id="jr-q" value="{{ story.filters.q }}" placeholder="{{ search_hint('a qubit, pair, node or path') }}"

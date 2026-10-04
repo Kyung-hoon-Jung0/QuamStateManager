@@ -17,6 +17,7 @@ from flask import Blueprint, current_app, jsonify, render_template, request
 
 from quam_state_manager.core import journal as journal_mod
 from quam_state_manager.core import story
+from quam_state_manager.core.search_query import groups, matches_hay
 
 logger = logging.getLogger(__name__)
 
@@ -53,17 +54,19 @@ def _filters() -> dict:
             "q": (request.args.get("q") or "").strip()}
 
 
+def _search_text(value) -> str:
+    """Search saved content, including paths and attached journal lines."""
+    if isinstance(value, dict):
+        return " ".join(_search_text(v) for k, v in value.items() if k != "search_hay")
+    if isinstance(value, (list, tuple)):
+        return " ".join(_search_text(v) for v in value)
+    return "" if value is None else str(value)
+
+
 def _matches(card: dict, f: dict) -> bool:
-    a = f["author"]
-    if a and not str(card.get("author") or "").startswith(a):
-        return False
-    q = f["q"].lower()
-    if q:
-        hay = " ".join(card.get("targets") or []) + " " + " ".join(e.get("path") or "" for e in card.get("entries") or []) \
-            + " " + " ".join(e.get("text") or "" for e in card.get("journal") or []) + " " + str(card.get("node") or "")
-        if q not in hay.lower():
-            return False
-    return True
+    author = str(card.get("author") or card.get("kind") or "")
+    return (not f["author"] or author.startswith(f["author"])) and matches_hay(
+        card["search_hay"].lower(), groups(f["q"]))
 
 
 def _build(day: str) -> dict:
@@ -80,7 +83,17 @@ def _build(day: str) -> dict:
                            events=_events(), uid_of=(lambda run: f"{key}:{run['run_id']}") if key else None)
     f = _filters()
     data["filters"] = f
+    for order, c in enumerate(data["cards"]):
+        c["search_order"] = order
+    for c in data["cards"] + data["loose"] + data["unassigned"]:
+        c["search_hay"] = _search_text(c)
+    for c in data["cards"]:
+        for e in c.get("journal") or []:
+            e["search_hay"] = _search_text(e)
     data["cards_shown"] = [c for c in data["cards"] if _matches(c, f)]
+    data["cards_cached"] = [c for c in data["cards"] if not _matches(c, f)]
+    data["runs_shown"] = sum(c["kind"] == "run" for c in data["cards_shown"])
+    data["lines_shown"] = [e for e in data["loose"] + data["unassigned"] if _matches(e, f)]
     data["no_dataset"] = ds is None
     data["folder"] = str(journal_mod.root(current_app.instance_path))
     d0 = datetime.strptime(day, "%Y-%m-%d")
