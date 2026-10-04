@@ -20,6 +20,7 @@ at the next start from the hook's jsonl, deduplicated by event identity.
 from __future__ import annotations
 
 import collections
+import base64
 import json
 import os
 import logging
@@ -435,9 +436,9 @@ def run_detail(run_id: int):
         return _err(f"no run #{run_id} in the open dataset folder", 404)
     folder = Path(run["folder_path"])
     figures = []
-    for name in run.get("figure_names") or []:
+    for index, name in enumerate(run.get("figure_names") or []):
         p = ds.get_figure_path(run_id, name)
-        figures.append({"name": name, "path": str(p) if p else None})
+        figures.append({"index": index, "name": name, "path": str(p) if p else None})
     files = {}
     for fn in ("node.json", "data.json", "ds_raw.h5", "ds_fit.h5", "state.json", "wiring.json"):
         cand = folder / fn
@@ -449,8 +450,61 @@ def run_detail(run_id: int):
                                             "qubits", "qubit_pairs", "outcomes", "parameters",
                                             "parent_id", "run_start", "run_end", "duration_s",
                                             "status", "fit_results")})
-    d.update(uid=_uid(ds, run), folder=str(folder), figures=figures, files=files)
+    d.update(uid=_uid(ds, run), folder=str(folder), figures=figures, files=files,
+             figure_help="Call run_figure with this run_id and a figure name or zero-based index to view a PNG.")
     return jsonify(ok=True, run=d)
+
+
+_FIGURE_MAX_BYTES = 2 * 1024 * 1024
+
+
+@agent_bp.route("/run/<int:run_id>/figure")
+def run_figure(run_id: int):
+    """Return a bounded PNG from a declared figure in a known run folder."""
+    ds = _ds()
+    if ds is None:
+        return _err("no dataset folder is open in SM", 409)
+    run = ds.get_run(run_id)
+    if not run:
+        return _err("unknown run id", 404)
+    names = run.get("figure_names") or []
+    name = request.args.get("name")
+    index = request.args.get("index")
+    if (name is None) == (index is None):
+        return _err("supply exactly one figure name or zero-based index", 400)
+    if index is not None:
+        try:
+            i = int(index)
+        except ValueError:
+            return _err("figure index must be a non-negative integer", 400)
+        if i < 0 or i >= len(names):
+            return _err("unknown figure index", 404)
+        name = names[i]
+    if not name or any(part in name for part in ("..", "/", "\\", ":")):
+        return _err("figure name must not be a path", 400)
+    if name not in names:
+        return _err("unknown figure name", 404)
+    path = ds.get_figure_path(run_id, name)
+    if path is None:
+        return _err("figure file is unavailable", 404)
+    try:
+        path = Path(path).resolve()
+        if not path.is_relative_to(Path(run["folder_path"]).resolve()):
+            return _err("figure file is outside its run folder", 403)
+        if path.suffix.lower() != ".png" or not path.is_file():
+            return _err("only PNG image files are supported", 415)
+        if path.stat().st_size > _FIGURE_MAX_BYTES:
+            return _err("figure exceeds the 2 MB image limit", 413)
+        with path.open("rb") as stream:
+            data = stream.read(_FIGURE_MAX_BYTES + 1)
+        if len(data) > _FIGURE_MAX_BYTES:
+            return _err("figure exceeds the 2 MB image limit", 413)
+        if not data.startswith(b"\x89PNG\r\n\x1a\n"):
+            return _err("figure file is not a PNG image", 415)
+    except (OSError, ValueError):
+        return _err("figure file is unavailable", 404)
+    return jsonify(ok=True, image={"type": "image", "data": base64.b64encode(data).decode("ascii"),
+                                   "mimeType": "image/png"})
 
 
 # ---------------------------------------------------------- diagnostics
@@ -1199,10 +1253,70 @@ def _clock_today() -> datetime:
     return datetime.now()
 
 
+_RUN_METAS_MEMO: dict = {}
+
+
+def _persisted_run_metas() -> dict[str, dict]:
+    """Every ``agent_runs/<key>/meta.json``, re-read only when the folder gains or
+    loses a run (the pill polls; a full scan per poll would grow with history).
+    A meta rewritten in place is current in the in-process registry instead."""
+    root = Path(current_app.instance_path) / "agent_runs"
+    try:
+        st = root.stat()
+        sig = (str(root), st.st_mtime_ns, sum(1 for _ in root.iterdir()))
+    except OSError:
+        return {}
+    if _RUN_METAS_MEMO.get("sig") == sig:
+        return _RUN_METAS_MEMO["records"]
+    records = {}
+    for path in root.glob("*/meta.json"):
+        try:
+            record = json.loads(path.read_text(encoding="utf-8"))
+            if isinstance(record, dict) and record.get("key"):
+                records[record["key"]] = record
+        except (OSError, ValueError):
+            continue
+    _RUN_METAS_MEMO.update(sig=sig, records=records)
+    return records
+
+
+def _failed_runs_today(day_start: float, day_end: float, sessions: dict[str, list[dict]]) -> list[float]:
+    """C-10: the end times of today's FAILED NODE RUNS on the open chip -- what a
+    person cares about. Two sources, never a tool-call error: run_node's own runs
+    (failure classes of docs/249, the chip's machine key) and a node a terminal
+    agent ran through its shell that failed (the journal's own "failed" line, on
+    the open chip's journal)."""
+    from quam_state_manager.core.agent_overnight import FAIL_CLASSES
+    chip = _chip_key()
+    records = dict(_persisted_run_metas())
+    registry = current_app.config.get("agent_run_registry")
+    if registry is not None:
+        records.update(registry.runs)
+    ends = [float(record.get("ended") or 0) for record in records.values()
+            if record.get("chip") == chip
+            and (record.get("result") or {}).get("classification") in FAIL_CLASSES
+            and (record.get("result") or {}).get("status") != "refused"
+            and day_start <= float(record.get("ended") or 0) < day_end]
+    journal_chip = None
+    for es in sessions.values():
+        for e in es:
+            ts = float(e.get("ts") or 0)
+            if not (e.get("failed") and day_start <= ts < day_end):
+                continue
+            if (e.get("tool_name") or "").rsplit(".", 1)[-1] not in _SHELL_TOOLS or not _node_of(e.get("summary") or ""):
+                continue
+            if journal_chip is None:
+                journal_chip = _chip_name() if _r()._active_path() else _UNASSIGNED
+            if _chip_for_event(e) == journal_chip:
+                ends.append(ts)
+    return ends
+
+
 def _now_state() -> dict:
     """The pill's one state, in the precedence order of docs/173 §3.1:
     waiting > limited > stalled > failed > running > between > human-ran > idle."""
-    from quam_state_manager.core import agent_session, story
+    from quam_state_manager.core import agent_plans, agent_session, story
+    from quam_state_manager.core.agent_runs import run_mode
     _reconcile_grant()                                # docs/253: never show a grant that ended
     now = _clock_now()
     with _events_lock:
@@ -1210,16 +1324,27 @@ def _now_state() -> dict:
     seq = int(current_app.config.get("agent_seq") or 0)
     lim = _mode_and_limits()
     sess = _session()
-    base = {"seq": seq, "mode": lim.get("mode"), "session": agent_session.summary(sess),
+    # C-11: the mode the next run obeys, by the run's own rule (agent_runs.run_mode) --
+    # an armed plan's mode, not the chip's default
+    armed = bool((sess or {}).get("start_token"))
+    plan = None
+    if armed and sess.get("plan_id"):
+        plan = agent_plans.get(current_app.instance_path, _chip_key(), sess["plan_id"])
+        if plan is not None and plan.get("status") not in ("running", "stopping"):
+            plan = None
+    mode = run_mode(plan, sess if armed else None, lim)
+    base = {"seq": seq, "mode": mode, "session": agent_session.summary(sess),
             "events_today": 0, "failures_today": 0, "waiting": _waiting_count()}
     agent_runs = story.load_agent_runs(current_app.instance_path, _chip_key())
     by_session: dict[str, list[dict]] = collections.defaultdict(list)
     for e in ev:
         by_session[str(e.get("session_id"))].append(e)
     sessions = {sid: es for sid, es in by_session.items() if _relevant(es)}
-    day_start = _clock_today().replace(hour=0, minute=0, second=0, microsecond=0).timestamp()
-    failures = sum(1 for es in sessions.values() for e in es
-                   if e.get("failed") and float(e.get("ts") or 0) >= day_start)
+    today = _clock_today().replace(hour=0, minute=0, second=0, microsecond=0)
+    day_start = today.timestamp()
+    failed_ends = _failed_runs_today(day_start, (today + timedelta(days=1)).timestamp(), sessions)
+    failures = len(failed_ends)
+    recent_failure = any(0 <= now - t < 3600 for t in failed_ends)
     base["failures_today"] = failures
     limited_until = (sess or {}).get("limited_until")
     for es in sessions.values():
@@ -1234,7 +1359,7 @@ def _now_state() -> dict:
         return {**base, "state": "limited", "limited_resets": resets}
     human = _human_ran_recently(now, agent_runs, ev)
     if not sessions:
-        state = "human-ran" if human else "idle"
+        state = "failed" if recent_failure else "human-ran" if human else "idle"
         return {**base, "state": state, "human_ran": human,
                 "note": "events seen, none from a calibration session" if ev and not human else None}
     sid, es = max(sessions.items(), key=lambda kv: max(float(e.get("ts") or 0) for e in kv[1]))
@@ -1280,7 +1405,7 @@ def _now_state() -> dict:
         state = "running"
     elif open_tools and not alive:
         state = "stalled"
-    elif failures and now - float(last.get("ts") or 0) < 3600:
+    elif recent_failure:
         state = "failed"
     elif alive:
         state = "between"

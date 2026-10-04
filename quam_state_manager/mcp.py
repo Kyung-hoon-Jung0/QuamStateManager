@@ -26,7 +26,7 @@ the paths -- when a human edited something in the window the agent never
 saw (docs/120's gate), instead of forcing.
 
 Protocol surface: initialize, notifications/initialized, ping, tools/list,
-tools/call. 25 tools. Newline-delimited JSON on stdio.
+tools/call. 26 tools. Newline-delimited JSON on stdio.
 """
 
 from __future__ import annotations
@@ -396,6 +396,11 @@ def t_run(a: dict) -> Any:
     return _ok(*_sm().get(f"/api/agent/run/{int(a['run_id'])}"))
 
 
+def t_run_figure(a: dict) -> Any:
+    return _ok(*_sm().get(f"/api/agent/run/{int(a['run_id'])}/figure",
+                         {k: a[k] for k in ("name", "index") if k in a}))["image"]
+
+
 def t_diagnostics(_a: dict) -> Any:
     return _ok(*_sm().get("/api/agent/diagnostics"))
 
@@ -571,8 +576,12 @@ TOOLS: dict[str, tuple[dict, Any]] = {
                 n={"type": "integer"}, experiment={"type": "string"}, qubit={"type": "string"},
                 date={"type": "string"}), t_runs),
     "run": (_s("One run in full: parameters, outcomes, fit results, and the absolute paths of its figures, "
-               "node.json, data.json, ds_raw.h5 -- Read the figure PNG yourself to look at it.",
+               "node.json, data.json, ds_raw.h5. Use run_figure with a listed name or index to view a figure.",
                run_id={"type": "integer", "required": True}), t_run),
+    "run_figure": (_s("View one declared PNG figure as MCP image content. Read-only; images over 2 MB are refused. "
+                      "Supply exactly one name or zero-based index from run's figure listing.",
+                      run_id={"type": "integer", "required": True}, name={"type": "string"},
+                      index={"type": "integer", "minimum": 0}), t_run_figure),
     "diagnostics": (_s("SM's lint of the open chip: env-schema mismatches, dangling pointers, type problems, physics checks."),
                     t_diagnostics),
     "check_fit": (_s("Deterministic sanity gates over one saved run's fit: outcome, physical bands, raw-data feature "
@@ -697,6 +706,9 @@ def handle(msg: Any) -> None:
             if _CHIP_PIN and name != "sm_status":
                 _chip_facts()                    # review R4-1: the pin guards EVERY tool, not four
             result = TOOLS[name][1](args)
+            if name == "run_figure":
+                _respond(mid, {"content": [result], "isError": False})
+                return
             if isinstance(result, dict) and "chip" not in result and "refused" not in result and _chip:
                 result = {"chip": _chip, **result}
             text = json.dumps(result, indent=1, default=str)

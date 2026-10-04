@@ -330,13 +330,17 @@ class TestLimits:
         now = c.get("/api/agent/chip").get_json()["now"]
         assert now["state"] == "limited" and now["limited_resets"] == "soon-ish"
 
-    def test_a_failed_tool_counts_as_a_failure(self, c, monkeypatch):
+    def test_a_failed_tool_is_in_the_feed_not_the_failure_count(self, c, monkeypatch):
+        """docs/274 C-10 (supersedes the old "a failed tool counts" pin): the pill's
+        failures_today counts failed NODE RUNS; a tool error stays visible as a
+        failed event in the feed but never turns the pill red."""
         monkeypatch.setenv("FAKE_FAIL", "1")
         c.post("/api/agent/chat/start", json={"prompt": "x"})
         assert _wait(lambda: any(e["hook_event_name"] == "PostToolUseFailure" for e in _events(c)))
         e = [e for e in _events(c) if e["hook_event_name"] == "PostToolUseFailure"][0]
         assert e["failed"] and "no chip" in e["error"]
-        assert c.get("/api/agent/chip").get_json()["now"]["failures_today"] >= 1
+        now = c.get("/api/agent/chip").get_json()["now"]
+        assert now["failures_today"] == 0 and now["state"] != "failed"
 
 
 # ----------------------------------------------------------------- codex
