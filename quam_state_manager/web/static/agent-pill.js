@@ -3,7 +3,8 @@
  *   waiting > limited > stalled > failed > running > between > human-ran > idle
  * -- plus the reservation line (who, until, mode). Refreshes when live-wake
  * wakes (the server bumps its tick on every agent event), on load, and on
- * a slow safety timer. Click -> the Calibration log. */
+ * a slow safety timer. Click -> the Calibration log; while approvals wait,
+ * -> their cards on the Agent page (docs/272, C-12). */
 "use strict";
 
 window.AgentPill = (function () {
@@ -68,6 +69,33 @@ window.AgentPill = (function () {
     return "Agent";
   }
 
+  /* docs/272 (C-12): "N waiting" opened the Calibration log, which shows no
+     approvals. While the pill says waiting it leads to the approval cards on
+     the Agent page (#approvals: agent.js brings them into view there). htmx
+     bound the click to the path it read when it processed the link, so a
+     changed path is re-processed, or the click would still fetch the old one. */
+  var DEST = {
+    log: { href: "/journal", get: "/journal", push: "true", says: "click for the Calibration log" },
+    approvals: { href: "/agent#approvals", get: "/agent", push: "/agent#approvals", says: "click to decide them on their cards" }
+  };
+  function setDestination(link, to) {
+    if (link.getAttribute("hx-get") === to.get && link.getAttribute("href") === to.href) return;
+    link.setAttribute("href", to.href);
+    link.setAttribute("hx-get", to.get);
+    link.setAttribute("hx-push-url", to.push);
+    link.title = "the calibration agent — " + to.says;
+    if (window.htmx) { try { window.htmx.process(link); } catch (e) { /* the href still navigates */ } }
+  }
+  // the cards already on screen (the Agent page, an open float): bring them into view, no reload
+  document.addEventListener("click", function (e) {
+    var a = e.target && e.target.closest ? e.target.closest("#agent-pill .agent-pill-link") : null;
+    if (!a || a.getAttribute("href") !== DEST.approvals.href || e.ctrlKey || e.metaKey || e.shiftKey || e.button) return;
+    if (window.AgentPanel && window.AgentPanel.showApprovals && window.AgentPanel.showApprovals(null, null) === false) {
+      e.preventDefault();
+      e.stopPropagation();                               // capture phase: the link's own (htmx) handler never sees it
+    }
+  }, true);
+
   function render(d) {
     var p = $();
     if (!p) return;
@@ -77,7 +105,10 @@ window.AgentPill = (function () {
     var t = p.querySelector(".agent-pill-text");
     if (t) t.textContent = v.short;                      // the compact form; the full one is the title
     // the whole sentence is the tooltip, so nothing is lost by the short label
-    p.title = v.text + (v.title ? " · " + v.title : "") + " — click for the Calibration log";
+    var waiting = v.state === "waiting";
+    var link = p.querySelector(".agent-pill-link");
+    if (link) setDestination(link, waiting ? DEST.approvals : DEST.log);
+    p.title = v.text + (v.title ? " · " + v.title : "") + " — " + (waiting ? DEST.approvals : DEST.log).says;
     var modeEl = p.querySelector(".agent-pill-mode");
     if (modeEl) {
       if (d && d.mode) { modeEl.hidden = false; modeEl.textContent = d.mode; }

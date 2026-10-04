@@ -2507,6 +2507,35 @@ def _approval_view(ap: dict, store) -> dict:
     return out
 
 
+def _with_display(rows: list | None) -> list:
+    """docs/272 (C-24): each value row the panel shows carries its display unit
+    (``display``) from ``core.units.display_spec`` -- the unit the inspector and
+    the qubit/pair tables already show that field in -- so agent.js formats
+    without a unit vocabulary of its own. Rows are copied, never mutated."""
+    from quam_state_manager.core import units
+    out = []
+    for w in rows or []:
+        spec = units.display_spec(w.get("path")) if isinstance(w, dict) and w.get("path") else None
+        out.append({**w, "display": spec} if spec else w)
+    return out
+
+
+def _feed_display(live: dict) -> None:
+    """The panel's feed only: approvals' writes, run writes and a plan's
+    "may change" rows. The MCP-visible views (``_run_view``, ``_plan_view``)
+    stay as they were -- an agent reads stored values, not display text."""
+    for p in live.get("plans") or []:
+        if p.get("may_change"):
+            p["may_change"] = _with_display(p["may_change"])
+    for a in live.get("approvals") or []:
+        if a.get("writes"):
+            a["writes"] = _with_display(a["writes"])
+    for rv in live.get("runs") or []:
+        res = rv.get("result") or {}
+        if res.get("writes"):
+            rv["result"] = {**res, "writes": _with_display(res["writes"])}   # the registry's dict stays untouched
+
+
 @agent_bp.route("/chat/cards")
 def chat_cards():
     """The panel's feed: chat cards after ``after`` plus the live objects
@@ -2547,6 +2576,7 @@ def chat_cards():
         file = agent_session.summary(agent_session.load(inst, key))
         mgr = current_app.config.get("agent_chat")
         session = mgr.status(key) if mgr else None
+        _feed_display(live)
     store = r._store()
     return jsonify(ok=True, chip=chip, chip_key=key, cards=cards, last=last, more=more, live=live, session=session, file=file,
                    now=_now_state(), waiting=_waiting_count(), agent_seq=int(current_app.config.get("agent_seq") or 0),

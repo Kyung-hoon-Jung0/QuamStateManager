@@ -55,13 +55,23 @@ window.JournalPage = (function () {
     });
   }
 
+  /* docs/272 (C-23): whose name THIS tab records -- the Agent panel's per-tab
+     name (agent.js, a core script) -- so a claim saved with an empty box and
+     a Stop pressed in the same tab can never carry two different people. The
+     shared keys are only the fallback when agent.js is not on the page. */
+  function tabActor() {
+    if (window.AgentPanel && typeof window.AgentPanel.actorName === "function") return window.AgentPanel.actorName() || "";
+    try { return localStorage.getItem("quam_actor_name") || localStorage.getItem("quam_actor") || ""; } catch (e) { return ""; }
+  }
+
   function claim(btn) {
     var box = btn.closest(".jr-claim");
     var run = box && box.getAttribute("data-run");
     var who = (box.querySelector(".jr-who") || {}).value || "";
     var note = (box.querySelector(".jr-note-in") || {}).value || "";
-    // docs/173 S8: one name key across the app — the same the chat's picker sets
-    if (!who) { try { who = localStorage.getItem("quam_actor_name") || localStorage.getItem("quam_actor") || ""; } catch (e) { /* ignore */ } }
+    // docs/173 S8: one name across the app — the same the chat's picker sets;
+    // docs/272 (C-23): THIS tab's, not the key every tab shares
+    if (!who) who = tabActor();
     if (who) { try { localStorage.setItem("quam_actor_name", who); } catch (e) { /* ignore */ } }
     fetch("/journal/claim", { method: "POST", headers: { "Content-Type": "application/json" },
                               body: JSON.stringify({ run_id: run, who: who, note: note }) })
@@ -120,8 +130,7 @@ window.JournalPage = (function () {
   function init(root) {
     bindPaths(root);
     markSince(root);
-    var who = "";
-    try { who = localStorage.getItem("quam_actor") || ""; } catch (e) { /* ignore */ }
+    var who = tabActor();
     if (who) (root || document).querySelectorAll(".jr-who").forEach(function (i) { if (!i.value) i.value = who; });
   }
 

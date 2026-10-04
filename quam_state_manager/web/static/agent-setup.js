@@ -14,7 +14,10 @@ window.AgentSetup = (function () {
   // English only, and for the same reason as in agent.js: this value goes
   // into an HTTP header, and a non-ISO-8859-1 one makes the browser refuse
   // the request before it is sent — which blanked this very page.
+  // docs/272 (C-23): THIS tab's name -- the one the Agent composer shows and
+  // records -- not the key every tab shares (agent.js owns it; core script).
   function actorName() {
+    if (window.AgentPanel && typeof window.AgentPanel.actorName === "function") return window.AgentPanel.actorName();
     try { return String(localStorage.getItem("quam_actor_name") || "").replace(/[^\x20-\x7E]/g, "").trim(); }
     catch (e) { return ""; }
   }

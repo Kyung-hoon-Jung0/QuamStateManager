@@ -13980,6 +13980,11 @@ table.diff-wb-list tbody > tr[hidden] { display: none; }
 .ag-ap-rows { width: 100%; font-size: .9em; margin: .2rem 0; } .ag-ap-rows td, .ag-ap-rows th { padding: .1rem .35rem; }
 .ag-root .ag-ap-rows input { width: 100%; margin: 0; padding: .05rem .3rem; height: auto; font-size: .95em; }
 .ag-ap-rows .ag-ap-moved .ag-ap-from { display: block; font-size: .85em; color: var(--pico-del-color, #b00020); }
+/* docs/272 (C-24): the proposed value in the row's display unit, then the raw stored value that is written */
+.ag-ap-rows .ag-ap-value { white-space: nowrap; margin-right: .35rem; } .ag-ap-rows .ag-ap-value:empty { display: none; }
+.ag-ap-rows .ag-ap-edit { display: inline-flex; align-items: center; gap: .25rem; max-width: 100%; }
+.ag-root .ag-ap-rows .ag-ap-edit input { flex: 1 1 7rem; width: 7rem; min-width: 4rem; }
+.ag-ap-rows .ag-ap-unit { color: var(--pico-muted-color); font-size: .85em; }
 .ag-ap-note { margin: .2rem 0; font-size: .9em; }
 .ag-because { color: var(--pico-muted-color); font-size: .9em; margin: .2rem 0 0; }
 .ag-writes, .ag-log { font-size: .9em; margin: .2rem 0; } .ag-writes > summary, .ag-log > summary { cursor: pointer; padding: 0; margin: 0; color: var(--pico-muted-color); }
@@ -13998,6 +14003,7 @@ table.diff-wb-list tbody > tr[hidden] { display: none; }
 .ag-root .ag-actor { width: 7rem; padding: .15rem .4rem; height: auto; font-size: .9em; }
 .ag-root .ag-actor.ag-actor-bad { border-color: var(--pico-del-color, #b00020); box-shadow: 0 0 0 1px var(--pico-del-color, #b00020); }
 .ag-root .ag-actor-note { color: var(--pico-del-color, #b00020); font-size: .85em; white-space: nowrap; }
+.ag-root .ag-actor-record { color: var(--pico-muted-color); white-space: nowrap; }   /* docs/272 (C-23): whose name this tab records */
 .ag-presets { display: inline-flex; flex-wrap: wrap; gap: .3rem; align-items: center; cursor: help; }
 .ag-root .ag-preset { font-size: .78em; padding: .08rem .55rem; border-radius: 999px; background: transparent; color: var(--pico-muted-color); border: 1px solid var(--pico-muted-border-color); cursor: pointer; }
 .ag-root .ag-preset:hover { color: var(--pico-primary); border-color: var(--pico-primary); }

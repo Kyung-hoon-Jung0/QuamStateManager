@@ -31,6 +31,8 @@ styled ``text-transform: none``); export headers use the ASCII tokens below.
 from __future__ import annotations
 
 import math
+import re
+from functools import lru_cache
 from typing import Any, Optional
 
 # U+00B5 MICRO SIGN (NOT U+03BC Greek mu — they render identically but only this
@@ -207,6 +209,56 @@ def pair_field_key(field: str) -> str:
     ``qsm show <pair>``) goes through here, so one value cannot get two units.
     """
     return "pair_detuning" if field == "detuning" else field
+
+
+@lru_cache(maxsize=1)
+def _curated_path_keys() -> tuple[tuple[re.Pattern, str, bool], ...]:
+    """``(pattern, key, is_pair)`` for every curated property's dot-path
+    template -- the inspector's own rows (``param_specs`` property maps)."""
+    from quam_state_manager.core.param_specs import _PAIR_PROPERTY_MAP, _QUBIT_PROPERTY_MAP
+    out = []
+    for is_pair, rows in ((False, _QUBIT_PROPERTY_MAP), (True, _PAIR_PROPERTY_MAP)):
+        for _section, key, tmpl in rows:
+            if tmpl:
+                rx = re.escape(tmpl).replace(re.escape("{name}"), r"[^.]+")
+                out.append((re.compile("^" + rx + "$"), key, is_pair))
+    return tuple(out)
+
+
+def path_units_key(path: str) -> str:
+    """The units key of a FULL stored dot path, chosen the way the inspector
+    chooses it for the same leaf (docs/272).
+
+    A curated property (``qubits.q1.z.joint_offset``) is looked up by its
+    curated key (``z_joint_offset``), exactly as the qubit/pair inspector row
+    for it is; any other leaf by its own name. A field held directly on a
+    pair goes through :func:`pair_field_key`, as the pair inspector does, so
+    ``qubit_pairs.<p>.detuning`` is volts and never the Hz ``detuning``.
+    """
+    p = str(path or "")
+    parts = p.split(".")
+    direct_pair = len(parts) == 3 and parts[0] == "qubit_pairs"
+    for rx, key, is_pair in _curated_path_keys():
+        if rx.match(p):
+            return pair_field_key(key) if (is_pair and direct_pair and parts[2] == key) else key
+    return pair_field_key(parts[-1]) if direct_pair else parts[-1]
+
+
+def display_spec(path: str) -> Optional[dict]:
+    """How a value stored at *path* is shown in its FIXED display unit -- the
+    unit the inspector and the qubit/pair tables already show that field in
+    (:func:`format_quantity`): ``{"unit", "scale", "dp", "stored"}`` with
+    ``shown = stored_value * scale`` written with ``dp`` decimals, and
+    ``stored`` the unit the raw value is kept in. ``None`` when the field has
+    no known unit -- never a guessed one (docs/272, the Agent cards)."""
+    dimension, fixed = _resolve_field(path_units_key(path))
+    if dimension is None:
+        return None
+    stored = _STORED_LABEL.get(dimension, "")
+    if dimension == "duration_ns":
+        return {"unit": "ns", "scale": 1.0, "dp": 0, "stored": stored}
+    factor, decimals = _FIXED[fixed]
+    return {"unit": fixed, "scale": factor, "dp": decimals, "stored": stored}
 
 
 def group_digits(value: Any) -> str:

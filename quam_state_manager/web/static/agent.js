@@ -38,6 +38,7 @@ window.AgentPanel = (function () {
     ["CZ tuneup", "CZ tuneup on <pair>: coupler flux -> CZ chevron -> CZ phase calibration -> 2Q RB. Propose the plan with plan_propose and wait for Start."]
   ];
   var UNREACHABLE = "SM cannot be reached (is the window still open?)";
+  var APPROVALS_URL = "/agent#approvals";            // docs/272 (C-12): where "N waiting" leads
 
   // ------------------------------------------------------------ helpers
   function esc(s) { return String(s == null ? "" : s).replace(/[&<>"']/g, function (c) { return { "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]; }); }
@@ -57,20 +58,62 @@ window.AgentPanel = (function () {
     if (s < 3600) return Math.round(s / 60) + "m ago";
     return Math.round(s / 360) / 10 + "h ago";
   }
-  function fmtNum(v) {
-    if (typeof v === "number") {
-      if (Number.isInteger(v)) return String(v);
-      var a = Math.abs(v);
-      if (a >= 1e9) return (v / 1e9).toPrecision(6).replace(/\.?0+$/, "") + " G";
-      if (a >= 1e6) return (v / 1e6).toPrecision(6).replace(/\.?0+$/, "") + " M";
-      if (a >= 1e3) return (v / 1e3).toPrecision(6).replace(/\.?0+$/, "") + " k";
-      if (a < 1e-3 && a > 0) return v.toExponential(3);
-      return String(+v.toPrecision(7));
-    }
-    if (v === null) return "null";
+  /* docs/272 (C-24): ONE way an agent card writes a stored value -- an
+     approval's now / proposed-from / proposed, a run's old -> new, a plan's
+     "now". The unit is never guessed from a path here: the feed names it per
+     row (`display`, from core/units.py display_spec -- the unit the inspector
+     and the qubit/pair tables already show that field in), so a T1 reads in
+     µs on a card as it does in the qubit table. The values of ONE row are
+     formatted together: one unit, one number of decimals, and two different
+     values are never printed alike (decimals are added until they differ).
+     With no known unit: integers exactly as stored (num_shots=100000, never
+     "100 k"), otherwise 5 significant digits of the row's largest value --
+     exponential outside [1e-3, 1e6), the bounds of units.py's plain rule --
+     with trailing zeros that every value of the row carries dropped. */
+  var MORE_DP = 6;                                   // at most this many extra decimals to tell values apart
+  function isNum(v) { return typeof v === "number" && isFinite(v); }
+  function fmtOther(v) {
+    if (v === null || v === undefined) return "null";
     if (typeof v === "object") return JSON.stringify(v).slice(0, 60);
     return String(v);
   }
+  function distinctAt(xs, f) {
+    var seen = {};
+    for (var i = 0; i < xs.length; i++) {
+      var t = f(xs[i]);
+      if (Object.prototype.hasOwnProperty.call(seen, t) && seen[t] !== xs[i]) return false;
+      seen[t] = xs[i];
+    }
+    return true;
+  }
+  function fmtRow(vals, disp) {
+    var xs = vals.filter(isNum), each, dp;
+    if (disp && disp.unit && isNum(disp.scale)) {
+      var sc = function (v) { return v * disp.scale; };
+      dp = Math.max(0, disp.dp | 0);
+      // ns durations are integers: "40"; a fractional one gets a decimal, like units._fmt_duration_ns
+      if (!dp && xs.some(function (v) { return !Number.isInteger(sc(v)); })) dp = 1;
+      var top = dp + MORE_DP;
+      while (dp < top && !distinctAt(xs, function (v) { return sc(v).toFixed(dp); })) dp++;
+      each = function (v) { return sc(v).toFixed(dp) + " " + disp.unit; };
+    } else if (xs.every(function (v) { return Number.isInteger(v); })) {
+      each = String;
+    } else {
+      var m = Math.max.apply(null, xs.map(Math.abs));
+      var expo = m >= 1e6 || m < 1e-3;
+      var f = expo ? function (v) { return v.toExponential(dp); } : function (v) { return v.toFixed(dp); };
+      dp = expo ? 4 : Math.max(0, 4 - Math.floor(Math.log10(m)));
+      var cap = dp + MORE_DP;
+      while (dp < cap && !distinctAt(xs, f)) dp++;
+      // a zero every value ends in says nothing: 0.10000 -> 0.11000 reads 0.10 -> 0.11
+      while (dp > 0 && xs.every(function (v) { return /0(e|$)/.test(f(v)); })) dp--;
+      each = f;
+    }
+    return vals.map(function (v) { return isNum(v) ? each(v) : fmtOther(v); });
+  }
+  function fmtNum(v, disp) { return fmtRow([v], disp)[0]; }
+  // the stored value itself, for a title: what the row's display was made from
+  function rawText(v) { return typeof v === "string" ? v : JSON.stringify(v); }
   // docs/253: who drives an armed plan, in words a person reads
   function driverText(d) {
     if (!d) return "";
@@ -100,11 +143,36 @@ window.AgentPanel = (function () {
   function asciiActor(s) {
     return String(s == null ? "" : s).replace(/[^\x20-\x7E]/g, "").trim();
   }
-  function actorName() { try { return asciiActor(localStorage.getItem("quam_actor_name")); } catch (e) { return ""; } }
+  /* docs/272 (C-23): the name was ONE localStorage key, shared by every tab of
+     the browser, so a second person typing a name in their tab re-credited
+     the first person's next Stop / Start / Allow. Each tab now has its own
+     (sessionStorage, which a browser keeps per tab), seeded ONCE -- at this
+     script's first run in the tab -- from the shared key, which stays the
+     default a NEW tab starts from (and is kept up to date by setActor, so an
+     older SM's stored name is still read). The composer says whose name this
+     tab records (actorLabel). agent-setup.js and journal.js read it through
+     AgentPanel.actorName, so one tab never records two names. */
+  var ACTOR_KEY = "quam_actor_name";
+  var tabActor;
+  function actorName() {
+    if (tabActor !== undefined) return tabActor;
+    var saved = null;
+    try { saved = window.sessionStorage.getItem(ACTOR_KEY); } catch (e) { saved = null; }
+    if (saved === null) {                        // first run in this tab: the shared default (an older SM's too)
+      try { saved = asciiActor(localStorage.getItem("quam_actor_name")); } catch (e) { saved = ""; }
+    }
+    tabActor = asciiActor(saved);                // stripped on the read path as well (docs/173 S8)
+    try { window.sessionStorage.setItem(ACTOR_KEY, tabActor); } catch (e) { /* this page's memory still holds it */ }
+    return tabActor;
+  }
+  actorName();                                   // seed now, before another tab can move the shared default
+  function actorLabel() { return "records " + (actorName() ? "human:" + actorName() : "human") + " · this tab"; }
   function actorRecents() { try { return JSON.parse(localStorage.getItem("quam_actor_recents") || "[]"); } catch (e) { return []; } }
   function setActor(v, input) {
     var typed = String(v == null ? "" : v).trim();
     v = asciiActor(v);
+    tabActor = v;                                // this tab's name (docs/272, C-23) ...
+    try { window.sessionStorage.setItem(ACTOR_KEY, v); } catch (e) { /* this page's memory still holds it */ }
     /* QA agents round: a name in Hangul stayed in the box while SM stored
        nothing and recorded every door as a plain "human" -- the box claimed
        a name the record would never carry. Say so where it is typed. */
@@ -127,7 +195,7 @@ window.AgentPanel = (function () {
       if (note) { note.textContent = msg; note.hidden = !bad; }
     }
     try {
-      localStorage.setItem("quam_actor_name", v);
+      localStorage.setItem(ACTOR_KEY, v);        // ... and the default a NEW tab starts from
       if (v) {
         var r = actorRecents().filter(function (x) { return x !== v; });
         r.unshift(v);
@@ -135,6 +203,11 @@ window.AgentPanel = (function () {
       }
     } catch (e) { /* ignore */ }
     S.mounts.forEach(function (m) { var d = m.root.querySelector("#ag-actor-list"); if (d) d.innerHTML = actorRecents().map(function (x) { return '<option value="' + esc(x) + '">'; }).join(""); });
+    S.mounts.forEach(function (m) {
+      var box = m.root.querySelector('.ag-actor'), label = m.root.querySelector('.ag-actor-record');
+      if (box && box !== input) box.value = v;
+      if (label) label.textContent = actorLabel();
+    });
   }
   function api(method, path, body) {
     // review R2-3: a rejected fetch (SM gone, network) answers like a refused
@@ -186,7 +259,10 @@ window.AgentPanel = (function () {
   /* docs/254 (D-05/D-15): a run IS its node, its targets and its params, and an
      approval covers exactly those -- so every card and plan step says all three.
      Values are shown as sent (JSON), never reformatted: "100000", not "100 k".
-     No overrides reads "node defaults", so the person sees that too. */
+     No overrides reads "node defaults", so the person sees that too.
+     docs/272 (C-24) keeps this: a param is not a stored value, SM holds no
+     unit for it, and a node names its own (`frequency_span_in_mhz=20` is MHz;
+     a state-leaf rule would have printed it as Hz). */
   function paramVal(v, cap) {
     var t = typeof v === "string" ? v : JSON.stringify(v);
     return cap && t.length > cap ? t.slice(0, cap - 1) + "…" : t;
@@ -455,12 +531,30 @@ window.AgentPanel = (function () {
     Object.keys(groups).forEach(function (k) { if (!used[k]) { var g = groups[k]; if (g.parentNode) g.parentNode.removeChild(g); delete groups[k]; } });
   }
 
-  var STEP_GLYPH = { pending: "·", running: "▶", done: "✓", failed: "✗", skipped: "skip", cancelled: "—", interrupted: "⏹" };
-  function stepBadge(s) {
+  var STEP_GLYPH = { pending: "·", running: "▶", done: "✓", failed: "✗", skipped: "skip", cancelled: "—", interrupted: "⏹", stopped: "⏹" };
+  /* docs/272 (C-21): a closed plan's step was still "▶". SM stops moving a
+     step once its plan has ended (agent_runs._plan_step: "a closed plan never
+     moves"), so the step that was running when Stop came keeps "running" in
+     the record forever. Its real state is its RUN's: the run registry
+     (live.runs, by the step's run_key) says whether that run still goes on
+     (then ▶ is true) or how it ended. A run no longer listed is said as what
+     is known: the plan ended while the step ran. */
+  function stepState(s, p) {
     var st = s.status || "pending";
-    var txt = STEP_GLYPH[st] || st;
     var title = st + (st === "interrupted" ? " (SM restarted while it ran)" : "");
-    return '<span class="ag-step-st ag-st-' + esc(st) + '" title="' + esc(title) + '">' + txt + "</span>";
+    if (st !== "running" || !p || p.status === "running" || p.status === "stopping" || p.status === "draft") return { st: st, title: title };
+    var ended = "the plan was " + p.status + " while this step ran";
+    var r = s.run_key ? S.runs[s.run_key] : null;
+    if (r && (r.status === "starting" || r.status === "running")) return { st: "running", title: "running -- its run goes on; " + ended };
+    if (r) {
+      var o = r.status === "ended" ? ((r.result || {}).status || "ended") : r.status;
+      return { st: o, title: o + " -- how its run ended; " + ended };
+    }
+    return { st: "stopped", title: "stopped -- " + ended + "; its run is no longer listed" };
+  }
+  function stepBadge(s, p) {
+    var x = stepState(s, p);
+    return '<span class="ag-step-st ag-st-' + esc(x.st) + '" title="' + esc(x.title) + '">' + esc(STEP_GLYPH[x.st] || x.st) + "</span>";
   }
   /* docs/261: what the stop-loss read from a step -- a fit the node itself marked failed (the
      run finished, so nothing else on the row says it), and a step skipped because its target
@@ -488,7 +582,7 @@ window.AgentPanel = (function () {
       var rq = s.request ? (s.request.status === "approved"
         ? ' <span class="ag-step-req" title="' + esc("run request " + s.request.id) + '">allowed' + (s.request.decided_by ? " by " + esc(s.request.decided_by) : "") + " — the agent runs it next</span>"
         : ' <span class="ag-step-req ag-st-waiting" title="' + esc("run request " + s.request.id) + '">run request waiting for Allow</span>') : "";
-      return '<div class="ag-step">' + stepBadge(s) + " <code>" + esc(s.node) + "</code>" + simBadge(s.simulated) +
+      return '<div class="ag-step">' + stepBadge(s, p) + " <code>" + esc(s.node) + "</code>" + simBadge(s.simulated) +
         ' <span class="ag-step-t">' + esc((s.targets || []).join(" ")) + "</span>" + paramsHtml(s.params) + rq +
         (s.run_id ? " " + runLink(s.run_id) : "") + (s.classification && s.classification !== "ok" ? ' <span class="ag-err">' + esc(s.classification) + "</span>" : "") +
         stepGateHtml(s) +
@@ -499,7 +593,7 @@ window.AgentPanel = (function () {
     var mayHtml = may.length
       ? "<ul class=\"ag-may\">" + may.map(function (x) {
           return "<li><strong title=\"" + esc(x.path) + "\">" + esc(x.target ? x.target + " · " : "") + esc(x.label || pathLabel(x.path)) + "</strong>" +
-            (x.now !== undefined && x.now !== null ? ' <span class="muted">now ' + esc(fmtNum(x.now)) + "</span>" : ' <span class="muted">now: not set</span>') +
+            (x.now !== undefined && x.now !== null ? ' <span class="muted" title="' + esc("stored: " + rawText(x.now)) + '">now ' + esc(fmtNum(x.now, x.display)) + "</span>" : ' <span class="muted">now: not set</span>') +
             (x.note ? ' <span class="muted">(' + esc(x.note) + ")</span>" : "") +
             (x.last ? ' <span class="muted">· last ' + esc(x.last.actor || "?") + " " + esc(x.last.when || "") + "</span>" : "") + "</li>";
         }).join("") + "</ul>"
@@ -596,7 +690,10 @@ window.AgentPanel = (function () {
     var writes = "";
     if (res.writes && res.writes.length) {
       writes = '<details class="ag-writes"><summary>' + res.writes.length + " write(s) " + (res.applied ? "applied to the chip" : (res.approval ? "waiting for approval" : "not staged")) + "</summary><div class=\"ag-tbl\"><table>" +
-        res.writes.slice(0, 40).map(function (w) { return "<tr><td title=\"" + esc(w.path) + "\">" + esc(w.path) + "</td><td>" + esc(fmtNum(w.old)) + " → " + esc(fmtNum(w.new)) + "</td></tr>"; }).join("") +
+        res.writes.slice(0, 40).map(function (w) {
+          var t = fmtRow([w.old, w.new], w.display);       // docs/272: old and new in one unit, one precision
+          return "<tr><td title=\"" + esc(w.path) + "\">" + esc(w.path) + "</td><td title=\"" + esc("stored: " + rawText(w.old) + " → " + rawText(w.new)) + "\">" + esc(t[0]) + " → " + esc(t[1]) + "</td></tr>";
+        }).join("") +
         (res.writes.length > 40 ? "<tr><td colspan=2 class=muted>… " + (res.writes.length - 40) + " more</td></tr>" : "") + "</table></div></details>";
     }
     // docs/249: what failed, in plain words, above the run's raw error ("QM host unreachable at 127.0.0.1:1")
@@ -607,6 +704,36 @@ window.AgentPanel = (function () {
     setHtml(el, row(r.since, '<div class="ag-run-line">' + line + "</div>" + what + err + writes + how + log), force);
   }
 
+  /* docs/272 (C-24): one approval row's values -- what SM holds now, what the
+     proposal was made from, what it proposes -- in one unit and one precision
+     (the finding: "3.931e-5" under now beside an input reading "0.000042").
+     The input stays the RAW stored value, because that is what is written
+     (docs/254: an approval is what the person saw), and names its stored
+     unit; the formatted value beside it follows what is typed (apPreview). */
+  function parseEdit(t) { t = String(t == null ? "" : t).trim(); try { return JSON.parse(t); } catch (e) { return t; } }
+  function apTexts(w, proposed) {
+    var nowV = w.now_known === true ? w.now : (w.now_known === false ? null : w.old);
+    var t = fmtRow([nowV, w.old, proposed], w.display);
+    var raw = typeof proposed === "object" ? JSON.stringify(proposed) : String(proposed);
+    return { cell: w.now_known === true ? t[0] : t[1], now: t[0], old: t[1], nw: t[2],
+             shown: isNum(proposed) && t[2] !== raw ? t[2] : "" };   // said only when it adds to the raw input
+  }
+  function movedTitle(t) { return "the proposal was made from " + t.old + "; SM holds " + t.now + " now"; }
+  function apPreview(inp) {
+    var card = inp && inp.closest ? inp.closest(".ag-card") : null;
+    var key = (card && card.getAttribute("data-card")) || "";
+    var a = key.indexOf("approval:") === 0 ? S.approvals[key.slice(9)] : null;
+    var w = a && (a.writes || [])[Number(inp.getAttribute("data-i"))];
+    var tr = inp.closest ? inp.closest("tr") : null;
+    if (!w || !tr) return;
+    var t = apTexts(w, parseEdit(inp.value));
+    [[".ag-ap-nowv", t.cell], [".ag-ap-oldv", t.old], [".ag-ap-value", t.shown]].forEach(function (x) {
+      var e = tr.querySelector(x[0]);
+      if (e) e.textContent = x[1];
+    });
+    var moved = tr.querySelector(".ag-ap-moved");
+    if (moved) moved.title = movedTitle(t);
+  }
   function renderApproval(m, a, force) {
     var el = cardFor(m, "approval", a.id, a.created);
     if (!el) return;
@@ -615,14 +742,17 @@ window.AgentPanel = (function () {
       /* verifier P3: "now" is the value SM holds now (the server reads it per
          poll), like the plan card's; the value the proposal was made from is
          shown beside it only when the two differ, and flagged. */
-      var nowTd;
-      if (w.now_known === undefined) nowTd = "<td>" + esc(fmtNum(w.old)) + "</td>";
+      var nowTd, t = apTexts(w, w.new);
+      if (w.now_known === undefined) nowTd = '<td><span class="ag-ap-nowv">' + esc(t.cell) + "</span></td>";
       else if (!w.now_known) nowTd = '<td class="muted">not set</td>';
-      else if (JSON.stringify(w.now) === JSON.stringify(w.old)) nowTd = "<td>" + esc(fmtNum(w.now)) + "</td>";
-      else nowTd = '<td class="ag-ap-moved" title="' + esc("the proposal was made from " + fmtNum(w.old) + "; SM holds " + fmtNum(w.now) + " now") + '">' +
-        esc(fmtNum(w.now)) + ' <span class="ag-ap-from">⚠ proposed from ' + esc(fmtNum(w.old)) + "</span></td>";
+      else if (JSON.stringify(w.now) === JSON.stringify(w.old)) nowTd = '<td><span class="ag-ap-nowv">' + esc(t.cell) + "</span></td>";
+      else nowTd = '<td class="ag-ap-moved" title="' + esc(movedTitle(t)) + '"><span class="ag-ap-nowv">' +
+        esc(t.cell) + '</span> <span class="ag-ap-from">⚠ proposed from <span class="ag-ap-oldv">' + esc(t.old) + "</span></span></td>";
+      var stored = (w.display && w.display.stored) || "";
       return "<tr><td title=\"" + esc(w.path) + "\">" + esc(w.path) + "</td>" + nowTd + "<td>" +
-        (S.observer ? esc(fmtNum(w.new)) : '<input class="ag-ap-new" data-i="' + i + '" value="' + esc(typeof w.new === "object" ? JSON.stringify(w.new) : w.new) + '">') + "</td></tr>";
+        (S.observer ? esc(t.nw) : '<span class="ag-ap-value">' + esc(t.shown) + '</span><span class="ag-ap-edit"><input class="ag-ap-new" data-i="' + i + '" oninput="AgentPanel.apPreview(this)"' +
+          ' title="' + esc("the value written, as stored" + (stored ? " (" + stored + ")" : "") + " — edit to change it") + '" value="' + esc(typeof w.new === "object" ? JSON.stringify(w.new) : w.new) + '">' +
+          (stored ? '<span class="ag-ap-unit">' + esc(stored) + "</span>" : "") + "</span>") + "</td></tr>";
     }).join("");
     // review R2-11: a RUN request is allowed, not written
     var acts = S.observer ? '<span class="muted">observing</span>' :
@@ -721,7 +851,9 @@ window.AgentPanel = (function () {
     var counts = [];
     if (d.events_today) counts.push("today " + d.events_today + " events");
     if (d.failures_today) counts.push('<span class="ag-err">' + d.failures_today + " failed</span>");
-    if (d.waiting) counts.push("<strong>waiting " + d.waiting + "</strong>");
+    // docs/272 (C-12): "waiting N" leads to the approval cards, where they are decided
+    if (d.waiting) counts.push('<a class="ag-waiting-link" href="' + APPROVALS_URL + '" hx-get="/agent" hx-target="#table-pane" hx-sync="#table-pane:replace" hx-push-url="' + APPROVALS_URL + '"' +
+      ' title="decide them on their cards" onclick="return AgentPanel.showApprovals(event, this)"><strong>waiting ' + d.waiting + "</strong></a>");
     if (counts.length) seg.push('<span class="ag-now-line">' + counts.join(" · ") + "</span>");
     // customer feedback 2026-09-08 (round 2, measured in Chrome): the strip read
     // "human ran X · 32s ago · … · human ran X 32s ago" -- the pill's own state text
@@ -845,10 +977,42 @@ window.AgentPanel = (function () {
       if (m.autoscroll !== false && follow[i]) host.scrollTop = host.scrollHeight;
       host.__agScrolledOnce = true;
     });
+    // docs/272 (C-12): arrived through "N waiting" -- the cards come into view once per panel
+    if (window.location.hash === "#approvals") S.mounts.forEach(function (m) { if (!m.__agApShown && revealApprovals(m.root)) m.__agApShown = true; });
     S.mounts.forEach(function (m) { var q = m.root.querySelector(".ag-qubits"); if (q && d.qubits != null) q.textContent = d.qubits + " qubits"; });
     if (window.htmx) S.mounts.forEach(function (m) { try { window.htmx.process(m.root); } catch (e) { /* ignore */ } });
     if (d.more) setTimeout(function () { poll(true); }, 0);   // review R2-13: the feed is capped from the front; keep draining
   }
+  /* docs/272 (C-12): the pill's and the strip's "N waiting" opened the
+     Calibration log, which shows no approvals. They lead to the approval
+     cards: in place when a VISIBLE panel already holds them (the Agent page,
+     or the open float the link sits in), else to the Agent page, whose first
+     render brings them into view (APPROVALS_URL). The card takes the focus,
+     never its "Write to chip": an Enter after the jump must not write. The
+     panel's follow-the-bottom is left as it was (nearBottom decides it). */
+  function revealApprovals(root) {
+    var shown = false;
+    S.mounts.forEach(function (m) {
+      if (root && m.root !== root) return;
+      if (!m.root || !document.body.contains(m.root) || m.root.closest(".agent-hidden, [hidden]")) return;   // a closed float shows nothing
+      var card = m.root.querySelector('[data-card^="approval:"]'), host = cardsHost(m);
+      if (!card || !host) return;
+      host.scrollTop += card.getBoundingClientRect().top - host.getBoundingClientRect().top - 8;
+      if (!card.hasAttribute("tabindex")) card.setAttribute("tabindex", "-1");
+      try { card.focus({ preventScroll: true }); } catch (e) { /* ignore */ }
+      shown = true;
+    });
+    return shown;
+  }
+  // onclick of a "waiting" link: false = handled here (the link must not navigate), true = let it
+  function showApprovals(ev, link) {
+    var root = link && link.closest ? link.closest(".ag-root") : null;
+    if (!revealApprovals(root)) return true;
+    if (ev) { ev.preventDefault(); if (ev.stopImmediatePropagation) ev.stopImmediatePropagation(); }   // htmx's own click handler too
+    return false;
+  }
+  // a plain-href arrival on the same page is a fragment change, not a load
+  window.addEventListener("hashchange", function () { if (window.location.hash === "#approvals") revealApprovals(null); });
   function poll(force) {
     if (!S.mounts.length) return Promise.resolve();
     if (S.inflight && !force) return Promise.resolve();
@@ -1150,7 +1314,7 @@ window.AgentPanel = (function () {
       writes = a.writes.map(function (w, i) {
         var inp = card.querySelector('.ag-ap-new[data-i="' + i + '"]');
         var v = w.new;
-        if (inp) { var t = inp.value.trim(); try { v = JSON.parse(t); } catch (e) { v = t; } }
+        if (inp) v = parseEdit(inp.value);                // the one parse the preview beside it shows (docs/272)
         return { path: w.path, old: w.old, new: v };
       });
     }
@@ -1207,7 +1371,7 @@ window.AgentPanel = (function () {
       '<textarea class="ag-input" rows="1" onkeydown="return AgentPanel.key(event)" oninput="AgentPanel.grow(this)" placeholder="Ask, or tell the agent what to do…  (Enter sends · Shift+Enter newline · /run <node> <targets>)"></textarea>' +
       '<div class="ag-form-row"><select class="ag-intent" title="Ask = a read-only question (SM\'s read tools only, nothing can change). Task = the agent session that may propose plans and, after your Start, run them through SM." onchange="AgentPanel.setIntent(this.value, this)"><option value="ask">Ask (read-only)</option><option value="task">Task</option></select>' +
       '<select class="ag-backend" title="which CLI drives"></select>' +
-      '<label class="ag-actor-wrap" title="who is at the keyboard — the person SM records for Start / Stop / mode / “I ran it”. English letters only (it travels in a request header); what you SAY to the agent can be any language.">⌨ <input class="ag-actor" list="ag-actor-list" placeholder="your name" autocomplete="off" spellcheck="false" oninput="AgentPanel.setActor(this.value, this)"><datalist id="ag-actor-list"></datalist></label>' +
+      '<label class="ag-actor-wrap" title="who is at the keyboard IN THIS TAB — the person SM records for Start / Stop / mode / “I ran it”; another tab keeps its own name, a new tab starts from the last one set. English letters only (it travels in a request header); what you SAY to the agent can be any language.">⌨ <input class="ag-actor" list="ag-actor-list" placeholder="your name" autocomplete="off" spellcheck="false" oninput="AgentPanel.setActor(this.value, this)"><datalist id="ag-actor-list"></datalist><small class="ag-actor-record">' + esc(actorLabel()) + '</small></label>' +
       '<span class="ag-presets" title="a preset fills a draft; nothing starts before a plan card\'s Start">' +
       '<button type="button" class="btn-sm ag-presets-toggle" onclick="AgentPanel.togglePresets(this)" aria-expanded="false">presets ▾</button>' +
       PRESETS.map(function (p, i) { return '<button type="button" class="btn-sm ag-preset" onclick="AgentPanel.preset(' + i + ', this.closest(\'.ag-root\'))">' + esc(p[0]) + "</button>"; }).join("") + "</span>" +
@@ -1587,7 +1751,7 @@ window.AgentPanel = (function () {
            wireHelp: wireHelp, wirePaint: wirePaint, wireLoad: wireLoad, _wire: WIRE,
            shortVersion: shortVersion,
            setPlanMode: setPlanMode, approve: approve, reject: reject, stop: stop, arm: arm, disarm: disarm,
-           endSession: endSession, setObserver: setObserver, setActor: setActor, actorName: actorName,
-           toggleFloat: toggleFloat, init: init, syncComposerClass: syncComposerClass, absorb: absorb, _state: S, fmtNum: fmtNum, fmtClock: fmtClock,
+           endSession: endSession, setObserver: setObserver, setActor: setActor, actorName: actorName, showApprovals: showApprovals, apPreview: apPreview,
+           toggleFloat: toggleFloat, init: init, syncComposerClass: syncComposerClass, absorb: absorb, _state: S, fmtNum: fmtNum, fmtRow: fmtRow, fmtClock: fmtClock,
            grow: grow, toggleMore: toggleMore, toggleGroup: toggleGroup, togglePresets: togglePresets };
 })();
