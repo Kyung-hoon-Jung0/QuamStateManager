@@ -189,7 +189,7 @@ the size/time accounting already treat it like every other section.
   and the 18 other files that touch the report, z-line, pulses, trends,
   instrument wiring, units and diagnostics (839 passed);
   `tests/report_download_probe.cjs` 16/16 against the big chip.
-* Full suite (cqt, two shards): 13,198 passed, 251 skipped, 0 failed.
+* Full suite (the test env, two shards): 13,198 passed, 251 skipped, 0 failed.
 
 ## 9. Measured (2026-10-04, real Chrome, every section on, switch ON)
 
@@ -413,7 +413,7 @@ the real jsdom serializer, local DST/chart rules and cache timestamp refresh. Th
 zline, pulse, trend, wiring, instrument, units and diagnostic names: 60 files,
 1,677 passed, 2 skipped, 23 warnings; 1,013.77 s under load. Existing numerical
 overflow warnings are in waveform synthesis and no test failed. This was not
-the full suite. Every pytest invocation used the supplied cqt Python,
+the full suite. Every pytest invocation used the supplied test-env Python,
 PYTHONUTF8=1, `-p no:cacheprovider --timeout=900`.
 
 Mutation result: **33/33 RED**, all restored; the following clean run was
@@ -463,7 +463,7 @@ numeric version preservation. The original source bytes and timestamps were
 restored in finally before the final test run.
 
 Final restored-source checks: **202 passed** across `tests/test_report_redact.py`
-and `tests/test_chip_report_v2.py` (36.72 s), using the cqt Python,
+and `tests/test_chip_report_v2.py` (36.72 s), using the test-env Python,
 PYTHONUTF8=1 and `-p no:cacheprovider --timeout=900`. This includes the real
 `node tests/chip_report_v2_selfcheck.cjs` serializer check. The Node selfcheck
 was also invoked separately with the freshly generated fixture and passed.
