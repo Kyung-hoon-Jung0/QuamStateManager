@@ -15,9 +15,10 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from quam_state_manager.core import hub_rules as rules
-from quam_state_manager.core import run_time, timefmt
+from quam_state_manager.core import run_time, safe_io, timefmt
 from quam_state_manager.core.hub_store import (
     CHIP_UNCERTAIN,
+    NODE_UNREADABLE,
     REVERTS_TO_EARLIER,
     TIME_ASSUMED,
     HubStore,
@@ -37,7 +38,64 @@ class Run:
     experiment: str
     instant: int = 0
     quality: str = "none"
+    #: node.json could not be read. The saved pair is still the run's fact
+    #: (docs/275): such a run keeps its state and is flagged NODE_UNREADABLE.
     error: str | None = None
+
+
+def _read_shared(path: Path) -> bytes:
+    # docs/270 review P2 #7: a run folder can be written by a live experiment;
+    # a share-delete handle never blocks its atomic replace.
+    with safe_io.open_shared(path) as f:
+        return f.read()
+
+
+def read_node(folder: Path) -> tuple[dict, str | None]:
+    """The slim ``node.json`` metadata the ledger keeps (never measurement
+    payloads), and the read error when it is unreadable. Shared by the offline
+    builder and the in-SM sync (docs/275), so one run reads one way."""
+    error = None
+    try:
+        node = json.loads(_read_shared(folder / "node.json"))
+        if not isinstance(node, dict):
+            raise ValueError("node root must be an object")
+    except (OSError, ValueError) as exc:
+        node, error = {}, f"node.json: {exc}"
+    meta = node.get("metadata")
+    meta = meta if isinstance(meta, dict) else {}
+    data = node.get("data")
+    data = data if isinstance(data, dict) else {}
+    # The real archive stores parameters under data.parameters.
+    params = node.get("parameters", data.get("parameters", {}))
+    params = params if isinstance(params, dict) else {}
+    model = params.get("model", params)
+    model = model if isinstance(model, dict) else {}
+    slim = {"created_at": node.get("created_at"), "metadata": {
+        k: meta.get(k) for k in ("run_start", "run_end", "status", "name")},
+        "parents": node.get("parents", []), "patches": node.get("patches", []),
+        "targets": {k: model[k] for k in ("qubits", "qubit_pairs", "pairs", "cz_macro_name") if k in model}}
+    return slim, error
+
+
+def run_of(folder: Path) -> Run | None:
+    """One run folder's metadata (no saved state), or None for a folder that
+    is not a run (``#<id>_<name>_<HHMMSS>``)."""
+    match = _RUN.fullmatch(folder.name)
+    if not match:
+        return None
+    slim, error = read_node(folder)
+    return Run(folder, slim, int(match[1]), slim["metadata"].get("name") or match[2], error=error)
+
+
+def resolve_instant(run: Run, hint: str | None) -> None:
+    """``run.instant`` / ``run.quality`` through the one instant rule."""
+    run.instant, run.quality = run_time.resolve(
+        run.node.get("created_at"), run.node["metadata"].get("run_end"), run.folder,
+        offset_hint=hint, read_node=False)
+    if run.instant is None:
+        # Standard run folders have a clock; explicitly retain anomalous ones.
+        run.instant = run.folder.stat().st_mtime_ns // 1000
+        run.quality = "mtime"
 
 
 def enumerate_runs(root: Path) -> tuple[list[Run], str | None]:
@@ -48,39 +106,14 @@ def enumerate_runs(root: Path) -> tuple[list[Run], str | None]:
             continue
         # Freeze each directory listing; tolerate new runs on later days too.
         for folder in list(day.iterdir()):
-            match = _RUN.fullmatch(folder.name)
-            if not match or not folder.is_dir():
+            if not folder.is_dir():
                 continue
-            error = None
-            try:
-                node = json.loads((folder / "node.json").read_bytes())
-                if not isinstance(node, dict):
-                    raise ValueError("node root must be an object")
-            except (OSError, ValueError) as exc:
-                node, error = {}, f"node.json: {exc}"
-            meta = node.get("metadata")
-            meta = meta if isinstance(meta, dict) else {}
-            data = node.get("data")
-            data = data if isinstance(data, dict) else {}
-            # The real archive stores parameters under data.parameters.
-            params = node.get("parameters", data.get("parameters", {}))
-            params = params if isinstance(params, dict) else {}
-            model = params.get("model", params)
-            model = model if isinstance(model, dict) else {}
-            slim = {"created_at": node.get("created_at"), "metadata": {
-                k: meta.get(k) for k in ("run_start", "run_end", "status", "name")},
-                "parents": node.get("parents", []), "patches": node.get("patches", []),
-                "targets": {k: model[k] for k in ("qubits", "qubit_pairs", "pairs", "cz_macro_name") if k in model}}
-            runs.append(Run(folder, slim, int(match[1]), meta.get("name") or match[2], error=error))
+            run = run_of(folder)
+            if run is not None:
+                runs.append(run)
     hint = timefmt.archive_offset_hint(run.node for run in runs)
     for run in runs:
-        run.instant, run.quality = run_time.resolve(
-            run.node.get("created_at"), run.node["metadata"].get("run_end"), run.folder,
-            offset_hint=hint, read_node=False)
-        if run.instant is None:
-            # Standard run folders have a clock; explicitly retain anomalous ones.
-            run.instant = run.folder.stat().st_mtime_ns // 1000
-            run.quality = "mtime"
+        resolve_instant(run, hint)
     runs.sort(key=lambda r: (r.instant, r.run_id, r.experiment, r.folder.name))
     return runs, hint
 
@@ -98,7 +131,7 @@ def read_pair(folder: Path) -> tuple[bytes, bytes]:
     paths = state_paths(folder)
     for _ in range(3):
         before = [(p.stat().st_size, p.stat().st_mtime_ns) for p in paths]
-        raw = tuple(p.read_bytes() for p in paths)
+        raw = tuple(_read_shared(p) for p in paths)
         after = [(p.stat().st_size, p.stat().st_mtime_ns) for p in paths]
         if before == after:
             return raw
@@ -148,13 +181,68 @@ def _chip_identity(state: dict, wiring: dict, folder: Path) -> dict | None:
     return {"name": ident.name, "fingerprint": fingerprint_token(fp)}
 
 
+def identity_disagrees(chip: dict, identity: dict) -> bool:
+    """The S3 rule: names decide when both sides declare one, else the
+    hardware fingerprint does."""
+    return bool((chip["name"] and identity["name"] and chip["name"] != identity["name"])
+                or (not (chip["name"] and identity["name"]) and chip["fingerprint"] != identity["fingerprint"]))
+
+
+def parse_state(raw: tuple[bytes, bytes], folder: Path, chip: dict | None) -> tuple[dict, dict, int, dict | None]:
+    """``(merged doc, S2 flat, flags, chip identity)`` of one saved pair: the
+    parse, the shared merge and the chip-identity check. Raises ``ValueError``
+    / ``TypeError`` for a pair that is not two JSON objects. *chip* is the
+    ledger's identity so far; the first identified run supplies it."""
+    state, wiring = (json.loads(data) for data in raw)
+    if not isinstance(state, dict) or not isinstance(wiring, dict):
+        raise ValueError("state and wiring roots must be objects")
+    doc = rules.merged(state, wiring)
+    flat = rules.flatten(doc)
+    flags = 0
+    identity = _chip_identity(state, wiring, folder / "quam_state")
+    if identity is None:
+        flags |= CHIP_UNCERTAIN
+    elif chip is None:
+        chip = identity
+    elif identity_disagrees(chip, identity):
+        flags |= CHIP_UNCERTAIN
+    return doc, flat, flags, chip
+
+
+def event_fields(run: Run, *, root_id: int, rel: str, hint: str | None, digest: str | None,
+                 base_hash: str | None, flags: int, error: str | None, src: str) -> dict:
+    """The ``events`` row of one run, without its order rank. One constructor
+    for the offline builder and the in-SM sync (docs/275)."""
+    meta = run.node["metadata"]
+    patches = run.node.get("patches")
+    t_src = run.node.get("created_at")
+    if run.quality == "offset" and run_time.iso_instant(t_src)[1] != "offset":
+        t_src = meta.get("run_end")
+    elif run_time.iso_instant(t_src)[0] is None:
+        t_src = meta.get("run_end")
+    return dict(kind="run", t_utc_us=run.instant, t_src=t_src or str(run.folder), t_quality=run.quality,
+                root_id=root_id, rel_path=rel, run_id=run.run_id, experiment=run.experiment,
+                # The node's own status is a fact about the run; a "finished"
+                # run that saved no state stays "finished" (review, docs/270).
+                # Why the ledger has no state for it lives in `error`.
+                status=meta.get("status"),
+                run_start_us=run_time.resolve(meta.get("run_start"), offset_hint=hint, read_node=False)[0],
+                run_end_us=run_time.resolve(meta.get("run_end"), offset_hint=hint, read_node=False)[0],
+                parents=json_bytes(run.node.get("parents", [])).decode("utf-8"),
+                targets=json_bytes(run.node["targets"]).decode("utf-8"),
+                patches_n=len(patches) if isinstance(patches, list) else 0,
+                src=src, state_hash=digest, base_hash=base_hash,
+                state_ref=str(run.folder), flags=flags, error=error)
+
+
 def build(root: str | Path, out: str | Path, *, limit: int | None = None,
           checkpoint_interval: int = 250, progress=None) -> dict:
     """Resume an ordered offline build. ``limit`` caps new events this call.
 
     Completed locations are authoritative for this immutable offline archive.
     Identity deduplication also admits an archive copy as extra locations.
-    Earlier unknown runs fail explicitly; S5 will insert and repair successors.
+    Earlier unknown runs fail explicitly here; the in-SM sync (``hub_sync``,
+    docs/275) inserts them and repairs their successors.
     """
     if limit is not None and limit < 0:
         raise ValueError("limit must be nonnegative")
@@ -186,13 +274,16 @@ def build(root: str | Path, out: str | Path, *, limit: int | None = None,
                 continue
             if limit is not None and added >= limit:
                 break
-            error, digest = run.error, None
+            # docs/275: an unreadable node.json no longer hides the saved pair
+            # (docs/270 review P2 #6); the run keeps its state, flagged.
+            node_error = run.error
+            error, digest = None, None
             raw = None
             try:
                 raw = read_pair(run.folder)
                 digest = rules.state_hash(*raw)
             except (OSError, ValueError) as exc:
-                error = error or str(exc)
+                error = str(exc)
             known = store.conn.execute("SELECT eid FROM events WHERE kind='run' AND t_utc_us=? "
                                        "AND run_id=? AND experiment=? AND state_hash IS ?",
                                        (run.instant, run.run_id, run.experiment, digest)).fetchone()
@@ -203,7 +294,7 @@ def build(root: str | Path, out: str | Path, *, limit: int | None = None,
                         {"eid": known[0], "t_utc_us": run.instant, "rel_path": rel}).decode("utf-8"))
                 duplicates += 1
                 continue
-            if error is not None and index == len(runs) - 1:
+            if (error is not None or node_error is not None) and index == len(runs) - 1:
                 # The newest discovered folder may still be in flight: node.json
                 # written, quam_state not yet saved. A committed location is never
                 # revisited, so recording it now would freeze an error event and move
@@ -213,27 +304,19 @@ def build(root: str | Path, out: str | Path, *, limit: int | None = None,
                 continue
             order = (run.instant, key, run.run_id, run.experiment)
             if last_order is not None and order < last_order:
-                raise ValueError("unknown run precedes ledger head (a run, or an SM write recorded after it -- "
-                                 "late insertion is S5); build all roots in canonical order or rebuild offline")
+                raise ValueError("unknown run precedes ledger head (a run, or an SM write recorded after it); "
+                                 "the in-SM sync inserts late runs (hub_sync, docs/275) -- this offline "
+                                 "builder appends only: build all roots in canonical order or rebuild offline")
             flags = TIME_ASSUMED if run.quality in ("assumed_local", "mtime") else 0
+            if node_error is not None:
+                flags |= NODE_UNREADABLE
             changes, next_doc, next_flat, next_shape = [], doc, flat, shape_hash
             if error is None and digest != head_hash:
                 try:
-                    state, wiring = (json.loads(data) for data in raw)
-                    if not isinstance(state, dict) or not isinstance(wiring, dict):
-                        raise ValueError("state and wiring roots must be objects")
-                    next_doc = rules.merged(state, wiring)
-                    next_flat = rules.flatten(next_doc)
+                    next_doc, next_flat, id_flags, chip = parse_state(raw, run.folder, chip)
                     changes = rules.diff(flat, next_flat)
                     next_shape = None
-                    identity = _chip_identity(state, wiring, run.folder / "quam_state")
-                    if identity is None:
-                        flags |= CHIP_UNCERTAIN
-                    elif chip is None:
-                        chip = identity
-                    elif ((chip["name"] and identity["name"] and chip["name"] != identity["name"])
-                          or (not (chip["name"] and identity["name"]) and chip["fingerprint"] != identity["fingerprint"])):
-                        flags |= CHIP_UNCERTAIN
+                    flags |= id_flags
                 except (OSError, ValueError, TypeError) as exc:
                     error = str(exc)
                     next_doc, next_flat, next_shape, changes = doc, flat, shape_hash, []
@@ -246,27 +329,10 @@ def build(root: str | Path, out: str | Path, *, limit: int | None = None,
             elif digest != head_hash and store.conn.execute(
                     "SELECT 1 FROM events WHERE state_hash=? AND error IS NULL LIMIT 1", (digest,)).fetchone():
                 flags |= REVERTS_TO_EARLIER
-            meta = run.node["metadata"]
-            patches = run.node.get("patches")
-            src = run.node.get("created_at")
-            if run.quality == "offset" and run_time.iso_instant(src)[1] != "offset":
-                src = meta.get("run_end")
-            elif run_time.iso_instant(src)[0] is None:
-                src = meta.get("run_end")
             ordinal += 1
-            event = dict(kind="run", t_utc_us=run.instant, t_src=src or str(run.folder), t_quality=run.quality,
-                         ord=ordinal, root_id=root_id, rel_path=rel, run_id=run.run_id, experiment=run.experiment,
-                         # The node's own status is a fact about the run; a "finished"
-                         # run that saved no state stays "finished" (review, docs/270).
-                         # Why the ledger has no state for it lives in `error`.
-                         status=meta.get("status"),
-                         run_start_us=run_time.resolve(meta.get("run_start"), offset_hint=hint, read_node=False)[0],
-                         run_end_us=run_time.resolve(meta.get("run_end"), offset_hint=hint, read_node=False)[0],
-                         parents=json_bytes(run.node.get("parents", [])).decode("utf-8"),
-                         targets=json_bytes(run.node["targets"]).decode("utf-8"),
-                         patches_n=len(patches) if isinstance(patches, list) else 0,
-                         src="offline_archive", state_hash=digest, base_hash=head_hash,
-                         state_ref=str(run.folder), flags=flags, error=error)
+            event = event_fields(run, root_id=root_id, rel=rel, hint=hint, digest=digest, base_hash=head_hash,
+                                 flags=flags, error=error, src="offline_archive")
+            event["ord"] = ordinal
             # Chip metadata participates in the same commit as its first event.
             if chip:
                 store.set_meta("chip_identity", json_bytes(chip).decode("utf-8"))

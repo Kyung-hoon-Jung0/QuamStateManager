@@ -1816,6 +1816,7 @@ def _activate_quam(folder_path: str | Path, *, origin: str = "live") -> dict:
         _maybe_chip_name_prompt(current)
         _adopt_extras_data_folders(current)
         _maybe_data_folder_suggest(current)
+        _hub_sync_open(current)                 # docs/275
         _arm_type_alarm(current, "chip-open")   # docs/78
         _publish_instance_chip(current)         # docs/80
         with _quam_cache_lock:
@@ -1897,6 +1898,7 @@ def _activate_quam(folder_path: str | Path, *, origin: str = "live") -> dict:
         _maybe_chip_name_prompt(ctx)
         _adopt_extras_data_folders(ctx)
         _maybe_data_folder_suggest(ctx)
+        _hub_sync_open(ctx)                 # docs/275
         _arm_type_alarm(ctx, "chip-open")   # docs/78
         _publish_instance_chip(ctx)         # docs/80
         with _quam_cache_lock:
@@ -3318,6 +3320,120 @@ def _hub_catch_up(folder) -> None:
             _hub.catch_up(chip_dir)
     except Exception:  # noqa: BLE001 -- bookkeeping, never blocks an open
         logger.debug("hub catch-up failed", exc_info=True)
+
+
+def _hub_roots_for(ctx) -> list[tuple[str, str]]:
+    """docs/275: THE data folders whose runs are synced into this chip's
+    ledger -- ``hub_sync.roots_for_chip`` over what SM already knows about the
+    chip, strongest first: its declared ``extras.data_folder``
+    (``ctx["extras_data_roots"]``, already bridged and existence-checked by
+    :func:`_adopt_extras_data_folders`), its qualibrate project's storage
+    location, the folders recorded for that project
+    (``project_dataset_roots.json``), and a Datasets root the user has
+    declared to be this chip's data (a "same" chip decision). Never every
+    workspace root: one workspace often holds several chips' data."""
+    from quam_state_manager.core import hub_sync
+    from quam_state_manager.core.history import _data_folder_name, load_chip_decisions
+    declared = list(ctx.get("extras_data_roots") or [])
+    scope = ctx.get("qualibrate_project")
+    storage, recorded = None, []
+    if scope:
+        try:
+            st = qualibrate_config.project_storage(scope)
+            storage = st.get("native") if st.get("exists") else None
+        except Exception:  # noqa: BLE001
+            storage = None
+        try:
+            recorded = list(_load_project_roots().get(scope, []))
+        except Exception:  # noqa: BLE001
+            recorded = []
+    ws = current_app.config.get("workspace")
+    ws_roots = [str(r) for r in (ws.root_folders if ws is not None else [])]
+    decided = None
+    if ws_roots:
+        chip_dir = _hub_chip_dir(ctx["path"])
+        decisions = load_chip_decisions(current_app.instance_path) if chip_dir is not None else {}
+
+        def decided(root: str) -> bool:
+            label = _data_folder_name(root)
+            return bool(label) and decisions.get(f"{chip_dir.name}::{label}") == "same"
+
+    def key(p: str) -> str:
+        try:
+            return path_match.fs_key(p) or os.path.normcase(os.path.abspath(p))
+        except (OSError, ValueError):
+            return os.path.normcase(os.path.abspath(p))
+
+    return hub_sync.roots_for_chip(declared=declared, project_storage=storage, project_roots=recorded,
+                                   workspace_roots=ws_roots, decided_same=decided, key=key)
+
+
+def _hub_live_identity(ctx) -> dict | None:
+    """The open chip's identity in the S3 ledger form (name + fingerprint
+    token), so a run of another chip in a synced folder is flagged."""
+    from quam_state_manager.core.history import (
+        extras_chip_name, fingerprint_from_dicts, fingerprint_token)
+    store = ctx.get("store")
+    if store is None:
+        return None
+    with store._lock:
+        name = extras_chip_name(store.state)
+        fp = fingerprint_from_dicts(store.state, store.wiring)
+    if not name and not (fp.network or fp.qubits or fp.pairs):
+        return None
+    return {"name": name, "fingerprint": fingerprint_token(fp)}
+
+
+def _hub_sync_open(ctx) -> None:
+    """docs/275: a live chip was activated -- register every data folder that
+    belongs to it and catch the ledger up in the background (runs made while
+    SM was closed land with no page visit); then the run watcher keeps it
+    current within one tick. Never blocks or breaks activation."""
+    if not ctx or ctx.get("type") != "quam" or (ctx.get("origin") or "live") != "live":
+        return
+    try:
+        from quam_state_manager.core import hub_sync
+        chip_dir = _hub_chip_dir(ctx["path"])
+        if chip_dir is None:
+            return
+        roots = _hub_roots_for(ctx)
+        ctx["hub_chip_dir"] = str(chip_dir)
+        app = current_app._get_current_object()
+        # A TESTING app (which syncs inline, on the request thread) runs the
+        # catch-up only when a test asks for it: an unrelated test opening a
+        # chip whose declared data folder is a real archive must not ingest it.
+        kick = not app.config.get("TESTING") or bool(app.config.get("HUB_SYNC_ON_OPEN"))
+        cs = hub_sync.open_chip(chip_dir, roots, identity=_hub_live_identity(ctx), kick=False)
+        if roots and not app.config.get("TESTING"):
+            # the watcher first: its baseline is ~a stat per run of the newest
+            # day, and once the catch-up runs it competes for the interpreter
+            # (measured: 2.8 s of a first open when kicked before this)
+            w = _run_watcher()
+            w.watch(f"hub:{chip_dir}", [r for r, _src in roots])
+            if not app.config.get("_hub_sync_listener"):
+                w.add_listener(hub_sync.on_roots_moved, all_roots=True)
+                app.config["_hub_sync_listener"] = True
+        if kick:
+            hub_sync.kick(cs)
+    except Exception:  # noqa: BLE001 -- bookkeeping, never blocks an open
+        logger.warning("hub run sync could not start", exc_info=True)
+
+
+@bp.route("/hub/status")
+def hub_status():
+    """docs/275: the open chip's ledger -- ``building`` (n/N) or ``ready`` --
+    never a partial ledger presented as complete."""
+    from quam_state_manager.core import hub_sync
+    ctx = _active_ctx()
+    if not ctx or ctx.get("type") != "quam":
+        resp = jsonify({"state": "idle", "note": "no chip is open"})
+    else:
+        chip_dir = ctx.get("hub_chip_dir") or _hub_chip_dir(ctx["path"])
+        st = hub_sync.status(chip_dir) if chip_dir is not None else {"state": "idle"}
+        st["chip_dir"] = str(chip_dir) if chip_dir is not None else None
+        resp = jsonify(st)
+    resp.headers["Cache-Control"] = "no-store"
+    return resp
 
 
 def _hub_stamp_unit(ctx, unit_id, field: str, event_id) -> None:

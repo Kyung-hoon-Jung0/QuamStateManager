@@ -36,6 +36,7 @@ import queue
 import secrets
 import threading
 import time
+from contextlib import contextmanager
 from datetime import datetime
 from pathlib import Path
 from typing import Any, Callable, Iterable
@@ -93,6 +94,18 @@ def _lock_for(path: Path) -> threading.Lock:
     key = os.path.normcase(str(path))
     with _LOCKS_GUARD:
         return _LOCKS.setdefault(key, threading.Lock())
+
+
+_WRITERS: dict[str, threading.RLock] = {}
+
+
+def _writer_for(chip_dir: Path) -> threading.RLock:
+    """docs/275: the ONE writer of a chip's ledger in this process -- the
+    projector (SM events) and the run sync (runs) both write under it.
+    Across processes, SQLite ``BEGIN IMMEDIATE`` serialises them."""
+    key = os.path.normcase(str(Path(chip_dir) / "ledger.sqlite"))
+    with _LOCKS_GUARD:
+        return _WRITERS.setdefault(key, threading.RLock())
 
 
 class Hub:
@@ -274,6 +287,60 @@ class Hub:
             out.append(o)
         return out
 
+    # -- docs/275: the run sync's ledger connection and status ------------
+
+    @property
+    def writer(self) -> threading.RLock:
+        return _writer_for(self.dir)
+
+    @contextmanager
+    def ledger(self, keep: bool = False):
+        """The chip's ledger under its writer lock, on ONE connection that a
+        burst of run-sync slices shares (the docs/271 hand-over: never re-open
+        a large ledger per item). ``keep`` leaves it open for the projector,
+        which releases it when its queue runs dry; otherwise it closes when
+        the outermost holder leaves, so no handle outlives the work."""
+        from quam_state_manager.core.hub_store import HubStore
+        with self.writer:
+            st = self.__dict__.get("_ledger_store")
+            if st is None:
+                st = self.__dict__["_ledger_store"] = HubStore(self.dir, check_same_thread=False)
+            self.__dict__["_ledger_depth"] = self.__dict__.get("_ledger_depth", 0) + 1
+            try:
+                yield st
+            finally:
+                self.__dict__["_ledger_depth"] -= 1
+                if self.__dict__["_ledger_depth"] == 0 and not keep:
+                    self._close_ledger()
+
+    def _close_ledger(self) -> None:
+        st = self.__dict__.pop("_ledger_store", None)
+        if st is not None:
+            try:
+                st.close()
+            except Exception:  # noqa: BLE001
+                logger.debug("hub: closing the ledger failed", exc_info=True)
+
+    def release(self) -> None:
+        """Close the shared connection if nobody holds it (projector idle)."""
+        if self.writer.acquire(blocking=False):
+            try:
+                if not self.__dict__.get("_ledger_depth"):
+                    self._close_ledger()
+            finally:
+                self.writer.release()
+
+    def status(self) -> dict:
+        """``building n/N`` | ``ready`` -- the run sync's honest state."""
+        from quam_state_manager.core import hub_sync
+        return hub_sync.status(self.dir)
+
+    def require_ready(self) -> dict:
+        """Raise ``hub_sync.Building`` (a ``ramcache.Warming``) while the
+        ledger is catching up: never a partial answer presented as complete."""
+        from quam_state_manager.core import hub_sync
+        return hub_sync.require_ready(self.dir)
+
 
 def _norm_undoes(undoes: Any) -> list | None:
     if not undoes:
@@ -445,6 +512,17 @@ def record_direct_save(chip_dir: str | Path, folder: str | Path, store, saver, *
 
 #: how many landed writes keep their bytes in RAM for the projector
 _KEEP_BYTES_FOR = 16
+#: docs/275: an idle projector wakes this often for the periodic run-sync
+#: check (full sweeps, deferred in-flight runs)
+_PERIODIC_S = 30.0
+
+
+class _SyncTask:
+    """A queued run-sync slice (docs/275); projections queue the Hub itself."""
+    __slots__ = ("hub",)
+
+    def __init__(self, hub: Hub):
+        self.hub = hub
 
 
 class _Projector:
@@ -485,7 +563,7 @@ class _Projector:
 
     def kick(self, hub: Hub) -> None:
         if self.inline:
-            self._run_one(hub)
+            self._run_locked(hub)
             return
         with self._lock:
             self._pending += 1
@@ -502,15 +580,95 @@ class _Projector:
 
     def _loop(self) -> None:
         while True:
-            hub = self._q.get()
             try:
-                self._run_one(hub)
+                item = self._q.get(timeout=_PERIODIC_S)
+            except queue.Empty:
+                self._periodic()                   # docs/275
+                continue
+            try:
+                if isinstance(item, _SyncTask):
+                    self._sync_one(item.hub)
+                else:
+                    self._run_locked(item)
             finally:
                 with self._lock:
                     self._pending -= 1
                     if self._pending <= 0:
                         self._pending = 0
                         self._idle.set()
+                if self._q.empty():
+                    # docs/275: the burst is over, no ledger handle stays open
+                    for h in list(Hub._cache.values()):
+                        h.release()
+                if time.monotonic() - self.__dict__.get("_last_periodic", 0.0) >= _PERIODIC_S:
+                    self._periodic()               # a busy queue never starves it
+
+    # -- docs/275: one writer per ledger; run-sync slices -----------------
+
+    def _run_locked(self, hub: Hub) -> None:
+        """A projection under the chip's ledger writer lock: it and the run
+        sync never write one ledger at the same time in this process."""
+        with hub.writer:
+            self._run_one(hub)
+
+    def kick_sync(self, hub: Hub) -> None:
+        """Queue one run-sync slice for *hub*; coalesced -- a chip has at most
+        one slice waiting. Inline (tests, CLI): run it now."""
+        if self.inline:
+            self._sync_inline(hub)
+            return
+        queued = self.__dict__.setdefault("_sync_queued", set())
+        key = os.path.normcase(str(hub.dir))
+        with self._lock:
+            if key in queued:
+                return
+            queued.add(key)
+            self._pending += 1
+            self._idle.clear()
+            if self._thread is None or not self._thread.is_alive():
+                self._thread = threading.Thread(target=self._loop, name="sm-hub-projector",
+                                                daemon=True)
+                self._thread.start()
+        self._q.put(_SyncTask(hub))
+
+    def _sync_inline(self, hub: Hub) -> None:
+        from quam_state_manager.core import hub_sync
+        deadline = time.monotonic() + hub_sync.INLINE_BUDGET_S
+        try:
+            with hub.ledger() as store:
+                while hub_sync.run(hub.dir, store, max(0.0, deadline - time.monotonic())):
+                    if time.monotonic() >= deadline:
+                        break
+        except Exception as exc:  # noqa: BLE001 -- the run folders stay the record
+            logger.warning("hub run sync failed for %s", hub.dir, exc_info=True)
+            self.errors.append(f"{hub.dir}: sync: {type(exc).__name__}: {exc}")
+
+    def _sync_one(self, hub: Hub) -> None:
+        from quam_state_manager.core import hub_sync
+        from quam_state_manager.core.run_ingest import FOREGROUND
+        with self._lock:
+            self.__dict__.setdefault("_sync_queued", set()).discard(os.path.normcase(str(hub.dir)))
+        more = False
+        try:
+            # a user's request goes first; bounded (0.5 s), so a busy server
+            # only delays the slice and a new run still lands within about
+            # one watcher tick (the RunIngest rule, RAM P7)
+            FOREGROUND.wait_idle(quiet_s=0.05, max_s=0.5)
+            with hub.ledger(keep=True) as store:
+                more = hub_sync.run(hub.dir, store, hub_sync.SLICE_S)
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("hub run sync failed for %s", hub.dir, exc_info=True)
+            self.errors.append(f"{hub.dir}: sync: {type(exc).__name__}: {exc}")
+        if more:
+            self.kick_sync(hub)
+
+    def _periodic(self) -> None:
+        self.__dict__["_last_periodic"] = time.monotonic()
+        try:
+            from quam_state_manager.core import hub_sync
+            hub_sync.periodic()
+        except Exception:  # noqa: BLE001
+            logger.debug("hub periodic sync check failed", exc_info=True)
 
     def _run_one(self, hub: Hub) -> None:
         try:
@@ -556,6 +714,11 @@ def catch_up(chip_dir: str | Path) -> None:
     """Project whatever the journal holds that the ledger does not (another
     window's lines, a crash between a line and its projection)."""
     _PROJECTOR.kick(Hub.for_chip(chip_dir))
+
+
+def kick_sync(hub: Hub) -> None:
+    """One run-sync slice for *hub* on the projector thread (docs/275)."""
+    _PROJECTOR.kick_sync(hub)
 
 
 def _live_peer_pids(hub: Hub) -> set[int]:
@@ -654,6 +817,14 @@ def project(hub: Hub, proj: _Projector | None = None) -> int:
         store.close()
 
 
+def _placed_base(store, line: dict):
+    """docs/275: the event an SM line follows is the one BEFORE its instant
+    (its place in the ledger), not whatever was projected last."""
+    from quam_state_manager.core.hub_store import _NEW
+    lo, _hi = store.neighbors((int(line["t_utc_us"]), "", 0, "", "", _NEW))
+    return store.good_at_or_before(lo)
+
+
 def _parse_pair(sb: bytes, wb: bytes) -> dict:
     """The whole written chip, parsed and merged: the projector's fallback
     when no door handed it the written roots (catch-up, the CLI)."""
@@ -692,8 +863,7 @@ def _project_line(store, hub: Hub, line: dict, outcome: str, post, end: int,
             elif sparse is not None:
                 doc = sparse
             else:
-                prev = store.conn.execute("SELECT eid FROM events WHERE error IS NULL "
-                                          "ORDER BY ord DESC LIMIT 1").fetchone()
+                prev = _placed_base(store, line)       # docs/275
                 try:
                     base_doc = store.state_at(prev[0]) if prev else {}
                     doc = hub_entries.apply_entries(base_doc, entries)

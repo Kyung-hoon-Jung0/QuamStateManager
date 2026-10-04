@@ -233,8 +233,9 @@ def test_late_unknown_run_fails_without_wrong_diff(tmp_path):
 def test_state_pair_changed_during_read_is_rejected(tmp_path, monkeypatch):
     root = tmp_path / "archive"
     folder = run(root, 1, {"v": 1})
-    path_type = type(folder)
-    original = path_type.read_bytes
+    # docs/275: run files are read through a share-delete handle (the docs/270
+    # review's P2 #7), so the injected writer hooks that one read.
+    original = hub_build._read_shared
 
     def changing(path):
         data = original(path)
@@ -242,7 +243,7 @@ def test_state_pair_changed_during_read_is_rejected(tmp_path, monkeypatch):
             path.write_bytes(data + b" ")
         return data
 
-    monkeypatch.setattr(path_type, "read_bytes", changing)
+    monkeypatch.setattr(hub_build, "_read_shared", changing)
     with pytest.raises(ValueError, match="changed during read"):
         hub_build.read_pair(folder)
 

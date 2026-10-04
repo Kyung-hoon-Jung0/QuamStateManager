@@ -8,6 +8,7 @@ import json
 import math
 import os
 import sqlite3
+from collections import OrderedDict
 from pathlib import Path
 from typing import Any
 
@@ -26,7 +27,27 @@ CHIP_UNCERTAIN = 4
 # re-does the change clears it again.
 UNDONE = 8
 PARTLY_UNDONE = 16
+# (32 = DERIVED, hub.py, docs/271.)
+# S5 (docs/275), runs ingested inside SM:
+#: run_start < an SM write's instant < the run's own instant: the run's save
+#: (the whole machine, at its end) went over that SM write (DESIGN 2.11).
+OVERLAPS_SM_WRITE = 64
+#: the run folder's saved pair was rewritten after it was first ingested; the
+#: event's rows are re-diffed against its CURRENT bytes, in place.
+REWRITTEN = 128
+#: the run folder (or its saved pair) is gone from disk; the event, its rows
+#: and its replay stay -- the ledger needs no archive files (docs/270).
+SOURCE_GONE = 256
+#: node.json could not be read; the saved pair is still the run's state and
+#: the instant comes from the folder clock.
+NODE_UNREADABLE = 512
 OPS = {"set": 0, "add": 1, "gone": 2, "retarget": 3}
+#: docs/275: ranks closer than this are renumbered before an insertion
+ORD_EPS = 1e-6
+#: docs/275: flats of recently used events kept by one store (bounded RAM)
+FLAT_CACHE = 3
+#: the eid component of a key for an event not yet inserted
+_NEW = 1 << 62
 #: SM-event kinds (docs/271). Run events keep kind="run".
 SM_KINDS = ("sm_apply", "agent", "autofit", "restore", "undo", "redo")
 
@@ -65,7 +86,15 @@ CREATE TABLE IF NOT EXISTS sm_events(
  units TEXT, undoes TEXT, entries_n INTEGER NOT NULL DEFAULT 0, entries BLOB, live TEXT);
 CREATE TABLE IF NOT EXISTS sm_anchors(eid INTEGER PRIMARY KEY REFERENCES events, hash TEXT NOT NULL);
 CREATE INDEX IF NOT EXISTS events_by_state_hash ON events(state_hash);
+CREATE INDEX IF NOT EXISTS events_by_time ON events(t_utc_us, ord);
+CREATE TABLE IF NOT EXISTS run_files(
+ root_id INTEGER NOT NULL REFERENCES roots, rel_path TEXT NOT NULL, sig TEXT,
+ rewritten_us INTEGER, PRIMARY KEY(root_id, rel_path)) WITHOUT ROWID;
 """
+# S5 (docs/275), additive like S4's tables: ``events_by_time`` places an event
+# by its instant; ``run_files`` is the stat watermark (size + mtime of the
+# saved pair and node.json) of every ingested run folder, so a rewrite is
+# found by a stat, never by re-reading every run.
 
 
 def json_bytes(value: Any) -> bytes:
@@ -142,14 +171,19 @@ class HubStore:
     Offline S3 appends in canonical order; late insertion belongs to S5.
     """
 
-    def __init__(self, directory: str | Path, *, checkpoint_interval: int = CHECKPOINT_INTERVAL):
-        if checkpoint_interval < 1:
+    def __init__(self, directory: str | Path, *, checkpoint_interval: int | None = None,
+                 check_same_thread: bool = True):
+        if checkpoint_interval is not None and checkpoint_interval < 1:
             raise ValueError("checkpoint interval must be positive")
         self.directory = Path(directory)
         self.directory.mkdir(parents=True, exist_ok=True)
         # timeout: two SM windows on one chip project into the same file
         # (docs/271); WAL lets readers proceed, writers wait their turn.
-        self.conn = sqlite3.connect(self.directory / "ledger.sqlite", timeout=30)
+        # check_same_thread=False: the hub's one writer connection per chip
+        # (docs/275) is used under the chip's writer lock from whichever thread
+        # holds it (the projector, or a test's inline caller).
+        self.conn = sqlite3.connect(self.directory / "ledger.sqlite", timeout=30,
+                                    check_same_thread=check_same_thread)
         self.conn.row_factory = sqlite3.Row
         self.conn.execute("PRAGMA foreign_keys=ON")
         self.conn.execute("PRAGMA journal_mode=WAL")
@@ -158,6 +192,11 @@ class HubStore:
         for stmt in _SCHEMA.split(";"):
             if stmt.strip():
                 self.conn.execute(stmt)
+        if checkpoint_interval is None:
+            # docs/275: a reader or the in-SM sync that names no interval
+            # adopts the ledger's own (a new ledger gets the default)
+            stored = self.meta("checkpoint_interval")
+            checkpoint_interval = int(stored) if stored else CHECKPOINT_INTERVAL
         expected = {"schema_version": str(SCHEMA_VERSION), "rule_version": RULE_VERSION,
                     "checkpoint_interval": str(checkpoint_interval)}
         for key, val in expected.items():
@@ -166,6 +205,10 @@ class HubStore:
                 self.conn.close()
                 raise ValueError(f"incompatible ledger {key}: {existing}; expected {val}")
             self.set_meta(key, val)
+        if self.meta("ledger_id") is None:
+            # docs/275: the identity of THIS file; RAM caches built from a
+            # ledger are dropped when the file is replaced or rebuilt
+            self.set_meta("ledger_id", os.urandom(8).hex())
         self.conn.commit()
         self.checkpoint_interval = checkpoint_interval
         self._pids = dict(self.conn.execute("SELECT path,pid FROM paths"))
@@ -216,6 +259,11 @@ class HubStore:
     def shape_and_arrays(self, doc: dict, flat: dict) -> str:
         for path, leaf in flat.items():
             if isinstance(leaf, dict):
+                # docs/275: the S2 marker already names the content address;
+                # an array the ledger holds is not encoded again (a 1.6 MB
+                # state spent ~0.1 s per run re-encoding unchanged waveforms)
+                if self.conn.execute("SELECT 1 FROM blobs WHERE hash=?", (leaf["_hash"],)).fetchone():
+                    continue
                 array = holder(doc, path)
                 normalized = [_hash_scalar(v) for v in array]
                 self.put_blob(json_bytes(normalized), expected_hash=leaf["_hash"])
@@ -382,22 +430,29 @@ class HubStore:
                     self.set_meta("journal_offset", str(journal_end))
                     self.conn.execute("COMMIT")
                     return None
-                ord_ = (self.conn.execute("SELECT COALESCE(MAX(ord),0) FROM events").fetchone()[0] or 0) + 1
                 landed_ok = outcome == "landed" and error is None
+                # docs/275: an SM event takes its place by its own instant,
+                # not by projection order (two windows, a projector behind a
+                # run the sync already ingested)
+                t_us = int(line["t_utc_us"])
+                lo, hi = self.neighbors((t_us, "", 0, "", "", _NEW))
+                prev = self.good_at_or_before(lo)
+                succ = self.good_at_or_after(hi)
                 anchor_hash = None
                 keep_entries = (entries_gz if entries_gz is not None and len(entries_gz) <= keep_entries_bytes
                                 else None)
                 if landed_ok and pair_payload is not None:
-                    prev = self.conn.execute(
-                        "SELECT e.kind, s.post_chash FROM events e LEFT JOIN sm_events s USING(eid) "
-                        "WHERE e.error IS NULL ORDER BY e.ord DESC LIMIT 1").fetchone()
-                    chained = (prev is not None and prev["kind"] in SM_KINDS
-                               and prev["post_chash"] is not None
-                               and prev["post_chash"] == line.get("base_hash"))
+                    prev_post = None
+                    if prev is not None and prev["kind"] in SM_KINDS:
+                        prev_post = self.conn.execute("SELECT post_chash FROM sm_events WHERE eid=?",
+                                                      (prev["eid"],)).fetchone()
+                    chained = (prev_post is not None and prev_post[0] is not None
+                               and prev_post[0] == line.get("base_hash"))
+                    bound = prev["ord"] if prev is not None else 0
                     since = self.conn.execute(
-                        "SELECT COUNT(*) FROM events e WHERE e.kind IN (%s) AND e.error IS NULL AND e.ord > "
-                        "COALESCE((SELECT MAX(e2.ord) FROM sm_anchors a JOIN events e2 USING(eid)), 0)"
-                        % ",".join("?" * len(SM_KINDS)), SM_KINDS).fetchone()[0]
+                        "SELECT COUNT(*) FROM events e WHERE e.kind IN (%s) AND e.error IS NULL AND e.ord<=? AND e.ord > "
+                        "COALESCE((SELECT MAX(e2.ord) FROM sm_anchors a JOIN events e2 USING(eid) WHERE e2.ord<=?), 0)"
+                        % ",".join("?" * len(SM_KINDS)), (*SM_KINDS, bound, bound)).fetchone()[0]
                     if not chained or keep_entries is None or since + 1 >= anchor_every:
                         payload = pair_payload() if callable(pair_payload) else pair_payload
                         anchor_hash = self.put_blob(payload, level=1)
@@ -406,12 +461,19 @@ class HubStore:
                     # on: keep them whatever their size
                     keep_entries = entries_gz
                 if state_hash is not None and landed_ok:
-                    head = self.conn.execute("SELECT state_hash FROM events WHERE error IS NULL "
-                                             "ORDER BY ord DESC LIMIT 1").fetchone()
-                    if ((head is None or head[0] != state_hash) and self.conn.execute(
-                            "SELECT 1 FROM events WHERE state_hash=? AND error IS NULL LIMIT 1",
-                            (state_hash,)).fetchone()):
+                    if ((prev is None or prev["state_hash"] != state_hash) and self.conn.execute(
+                            "SELECT 1 FROM events WHERE state_hash=? AND error IS NULL AND ord<? LIMIT 1",
+                            (state_hash, hi["ord"] if hi is not None else float("inf"))).fetchone()):
                         flags |= REVERTS_TO_EARLIER
+                succ_flat = None
+                if landed_ok and succ is not None:
+                    # the successor's own state, BEFORE this event changes what
+                    # it replays from (docs/275 local repair)
+                    if succ["kind"] in SM_KINDS:
+                        self.ensure_anchor(succ)
+                    else:
+                        succ_flat = self.flat_of(succ)
+                ord_ = self.alloc_ord(lo, hi)
                 event = dict(
                     kind=line.get("kind") or "sm_apply", t_utc_us=int(line["t_utc_us"]), t_src=line.get("t"),
                     t_quality="sm_clock", ord=ord_, root_id=None, rel_path=None, run_id=None,
@@ -438,6 +500,8 @@ class HubStore:
                      json_bytes(line.get("units") or []).decode("utf-8"),
                      json_bytes(line["undoes"]).decode("utf-8") if line.get("undoes") else None,
                      int(line.get("n") or 0), keep_entries if landed_ok else None, line.get("live")))
+                if landed_ok:
+                    self.after_sm_placed(eid, ord_, t_us, succ, succ_flat, state_hash)
                 self.set_meta("journal_offset", str(journal_end))
                 self.conn.execute("COMMIT")
                 return eid
@@ -448,8 +512,244 @@ class HubStore:
             self._pids = old_pids
             raise
 
+    # ------------------------------------------------------------------
+    # S5 (docs/275): every event takes its place by its instant; an
+    # out-of-order event is inserted and only its neighbours are repaired
+    # ------------------------------------------------------------------
+    #
+    # Invariants (pinned in tests/test_hub_sync.py):
+    #  I1  ``ord`` order == canonical order ``(t_utc_us, root folder_key,
+    #      run_id, experiment, rel_path, eid)``; an SM event has an empty root
+    #      key, so it sorts before a run of the same microsecond.
+    #  I2  a run's rows = S2 diff(state_at(previous good event), its saved
+    #      state); an SM event's rows are what SM wrote and never change.
+    #  I3  an SM event with no anchor replays from its predecessor: whenever
+    #      that predecessor would change, its exact state is anchored FIRST.
+    #  I4  a checkpoint holds the state of its event (an error event's: the
+    #      previous good event's), so state_at never needs an archive file.
+
+    def folder_key_of(self, root_id) -> str:
+        if root_id is None:
+            return ""
+        cache = self.__dict__.setdefault("_fkeys", {})
+        key = cache.get(root_id)
+        if key is None:
+            row = self.conn.execute("SELECT folder_key FROM roots WHERE root_id=?", (root_id,)).fetchone()
+            key = cache[root_id] = row[0] if row else ""
+        return key
+
+    def order_key(self, row) -> tuple:
+        return (row["t_utc_us"], self.folder_key_of(row["root_id"]), row["run_id"] or 0,
+                row["experiment"] or "", row["rel_path"] or "", row["eid"])
+
+    def neighbors(self, key: tuple):
+        """The events immediately before and after *key* in canonical order
+        (I1), any kind, errors included."""
+        t = key[0]
+        lo = self.conn.execute("SELECT * FROM events WHERE t_utc_us<? ORDER BY t_utc_us DESC, ord DESC LIMIT 1",
+                               (t,)).fetchone()
+        hi = self.conn.execute("SELECT * FROM events WHERE t_utc_us>? ORDER BY t_utc_us, ord LIMIT 1",
+                               (t,)).fetchone()
+        for row in self.conn.execute("SELECT * FROM events WHERE t_utc_us=?", (t,)).fetchall():
+            k = self.order_key(row)
+            if k < key:
+                if lo is None or row["ord"] > lo["ord"]:
+                    lo = row
+            elif k > key and (hi is None or row["ord"] < hi["ord"]):
+                hi = row
+        return lo, hi
+
+    def good_at_or_before(self, row):
+        if row is None or row["error"] is None:
+            return row
+        return self.conn.execute("SELECT * FROM events WHERE ord<? AND error IS NULL ORDER BY ord DESC LIMIT 1",
+                                 (row["ord"],)).fetchone()
+
+    def good_at_or_after(self, row):
+        if row is None or row["error"] is None:
+            return row
+        return self.conn.execute("SELECT * FROM events WHERE ord>? AND error IS NULL ORDER BY ord LIMIT 1",
+                                 (row["ord"],)).fetchone()
+
+    def alloc_ord(self, lo, hi) -> float:
+        """A fresh rank strictly between *lo* and *hi*. Appends keep S3's
+        integral ranks; an insertion takes the midpoint; when floating point
+        runs out of room the whole ledger is renumbered (order preserved)."""
+        for _ in range(2):
+            a = lo["ord"] if lo is not None else 0.0
+            if hi is None:
+                return float(math.floor(a)) + 1.0
+            b = hi["ord"]
+            mid = (a + b) / 2.0
+            if a < mid < b and b - a > ORD_EPS:
+                return mid
+            self.renumber()
+            lo = self.event(lo["eid"]) if lo is not None else None
+            hi = self.event(hi["eid"])
+        raise RuntimeError("could not allocate an order rank")
+
+    def renumber(self) -> None:
+        """Ranks 1..N in the current order. Two steps, so the UNIQUE rank is
+        never violated mid-update."""
+        eids = [r[0] for r in self.conn.execute("SELECT eid FROM events ORDER BY ord")]
+        self.conn.execute("UPDATE events SET ord = -ord - 1")
+        self.conn.executemany("UPDATE events SET ord=? WHERE eid=?",
+                              [(float(i + 1), eid) for i, eid in enumerate(eids)])
+
+    def flat_of(self, row) -> dict:
+        """S2 flat of an event's exact state (small LRU: a cold build reuses
+        its head, an interleaved merge its two neighbours)."""
+        key = (row["eid"], row["state_hash"], row["shape_hash"], row["error"])
+        flats = self.__dict__.setdefault("_flats", OrderedDict())
+        flat = flats.get(key)
+        if flat is None:
+            flat = rules.flatten(self.state_at(row["eid"]))
+            self.remember_flat(row, flat)
+        else:
+            flats.move_to_end(key)
+        return flat
+
+    def remember_flat(self, row, flat: dict) -> None:
+        flats = self.__dict__.setdefault("_flats", OrderedDict())
+        flats[(row["eid"], row["state_hash"], row["shape_hash"], row["error"])] = flat
+        while len(flats) > FLAT_CACHE:
+            flats.popitem(last=False)
+
+    def ensure_anchor(self, row) -> None:
+        """I3: an un-anchored SM event replays from its predecessor. Before
+        that predecessor changes, keep its exact state as an anchor (the SM
+        event is a fact; nothing inserted before it may change it)."""
+        if row is None or row["kind"] not in SM_KINDS or row["error"] is not None:
+            return
+        if self.conn.execute("SELECT 1 FROM sm_anchors WHERE eid=?", (row["eid"],)).fetchone():
+            return
+        doc = self.state_at(row["eid"])
+        digest = self.put_blob(b'{"s":' + json_bytes(doc) + b',"w":{}}', level=1)
+        self.conn.execute("INSERT INTO sm_anchors VALUES(?,?)", (row["eid"], digest))
+        self.conn.execute("UPDATE events SET state_ref=? WHERE eid=?", (f"anchored:{digest}", row["eid"]))
+
+    def write_rows(self, eid: int, rows: list[rules.Change], proven: set[str] | None = None) -> None:
+        for row in rows:
+            pid = self._pid(row.path)
+            num, txt = _persist_number(row.num, row.txt)
+            old_num, old_txt = _persist_number(row.old_num, row.old_txt)
+            self.conn.execute("INSERT INTO changes VALUES(?,?,?,?,?,?,?,?)",
+                              (pid, eid, OPS[row.op], num, txt, old_num, old_txt,
+                               int(row.path in (proven or set()))))
+
+    def rediff_run(self, row, base_flat: dict, base_hash: str | None, own_flat: dict,
+                   proven: set[str] | None = None) -> None:
+        """I2 for one run whose predecessor changed: its rows become the diff
+        against the new predecessor. Its own state does not change."""
+        rows = rules.diff(base_flat, own_flat)
+        if proven is None:
+            # carry `proven` for a row whose path and new value are unchanged;
+            # a new row's proof needs the run's patches (the caller passes them)
+            old = {r["path"]: (r["num"], r["txt"], r["proven"]) for r in self.conn.execute(
+                "SELECT p.path,c.num,c.txt,c.proven FROM changes c JOIN paths p USING(pid) WHERE c.eid=?",
+                (row["eid"],))}
+            proven = set()
+            for r in rows:
+                o = old.get(r.path)
+                num, txt = _persist_number(r.num, r.txt)
+                if o is not None and o[2] and (o[0], o[1]) == (num, txt):
+                    proven.add(r.path)
+        self.conn.execute("DELETE FROM changes WHERE eid=?", (row["eid"],))
+        self.write_rows(row["eid"], rows, proven)
+        self.conn.execute("UPDATE events SET base_hash=?, n_changes=? WHERE eid=?",
+                          (base_hash, len(rows), row["eid"]))
+
+    def refresh_error_checkpoints(self, lo_ord: float, hi_ord: float | None, doc_fn) -> None:
+        """I4 for error events between two good events: their checkpoint is
+        the earlier good event's state."""
+        rows = self.conn.execute(
+            "SELECT c.eid FROM checkpoints c JOIN events e USING(eid) WHERE e.error IS NOT NULL "
+            "AND e.ord>? AND e.ord<?", (lo_ord, hi_ord if hi_ord is not None else float("inf"))).fetchall()
+        if rows:
+            digest = self.put_blob(json_bytes(doc_fn()))
+            self.conn.executemany("UPDATE checkpoints SET hash=? WHERE eid=?", [(digest, r[0]) for r in rows])
+
+    def maybe_checkpoint(self, eid: int, ord_: float, doc_fn) -> bool:
+        """Bound replay: a checkpoint at *eid* when the stretch between the
+        start points (checkpoints, SM anchors) around it has reached the
+        interval."""
+        before = self.conn.execute(
+            "SELECT MAX(o) FROM (SELECT e.ord o FROM checkpoints c JOIN events e USING(eid) WHERE e.ord<? "
+            "UNION ALL SELECT e.ord FROM sm_anchors a JOIN events e USING(eid) WHERE e.ord<?)",
+            (ord_, ord_)).fetchone()[0]
+        after = self.conn.execute(
+            "SELECT MIN(o) FROM (SELECT e.ord o FROM checkpoints c JOIN events e USING(eid) WHERE e.ord>? "
+            "UNION ALL SELECT e.ord FROM sm_anchors a JOIN events e USING(eid) WHERE e.ord>?)",
+            (ord_, ord_)).fetchone()[0]
+        span = self.conn.execute("SELECT COUNT(*) FROM events WHERE ord>? AND ord<?",
+                                 (before if before is not None else 0.0,
+                                  after if after is not None else float("inf"))).fetchone()[0]
+        if span < self.checkpoint_interval:
+            return False
+        digest = self.put_blob(json_bytes(doc_fn()))
+        self.conn.execute("INSERT OR REPLACE INTO checkpoints VALUES(?,?)", (eid, digest))
+        return True
+
+    def refresh_reverts(self, eids) -> None:
+        """REVERTS_TO_EARLIER as a fact of the CURRENT order: the state equals
+        an earlier non-adjacent one."""
+        for eid in dict.fromkeys(e for e in eids if e is not None):
+            row = self.conn.execute("SELECT eid,ord,flags,error,state_hash FROM events WHERE eid=?",
+                                    (eid,)).fetchone()
+            if row is None:
+                continue
+            want = 0
+            if row["error"] is None and row["state_hash"] is not None:
+                prev = self.conn.execute("SELECT state_hash FROM events WHERE ord<? AND error IS NULL "
+                                         "ORDER BY ord DESC LIMIT 1", (row["ord"],)).fetchone()
+                if (prev is None or prev[0] != row["state_hash"]) and self.conn.execute(
+                        "SELECT 1 FROM events WHERE state_hash=? AND error IS NULL AND ord<? LIMIT 1",
+                        (row["state_hash"], row["ord"])).fetchone():
+                    want = REVERTS_TO_EARLIER
+            flags = (row["flags"] & ~REVERTS_TO_EARLIER) | want
+            if flags != row["flags"]:
+                self.conn.execute("UPDATE events SET flags=? WHERE eid=?", (flags, eid))
+
+    def same_hash_after(self, digest: str | None, ord_: float) -> list[int]:
+        if digest is None:
+            return []
+        return [r[0] for r in self.conn.execute(
+            "SELECT eid FROM events WHERE state_hash=? AND ord>? AND error IS NULL", (digest, ord_))]
+
+    def overlaps_sm_write(self, run_start_us, t_us) -> bool:
+        if run_start_us is None:
+            return False
+        return self.conn.execute(
+            "SELECT 1 FROM events WHERE kind IN (%s) AND error IS NULL AND t_utc_us>? AND t_utc_us<? LIMIT 1"
+            % ",".join("?" * len(SM_KINDS)), (*SM_KINDS, run_start_us, t_us)).fetchone() is not None
+
+    def after_sm_placed(self, eid: int, ord_: float, t_us: int, succ, succ_flat, state_hash) -> None:
+        """The local repair after a landed SM event took its place: a run
+        after it is re-diffed against it (I2), error checkpoints between them
+        hold its state (I4), runs it overlaps are flagged, revert facts of
+        the successor and of later equal states are refreshed."""
+        if succ is not None:
+            succ = self.event(succ["eid"])         # alloc_ord may have renumbered
+        if succ is not None and succ_flat is not None:
+            own = rules.flatten(self.state_at(eid))
+            self.rediff_run(succ, own, state_hash, succ_flat)
+        hi_ord = succ["ord"] if succ is not None else None
+        self.refresh_error_checkpoints(ord_, hi_ord, lambda: self.state_at(eid))
+        self.conn.execute(
+            "UPDATE events SET flags = flags | ? WHERE kind='run' AND run_start_us IS NOT NULL "
+            "AND run_start_us<? AND t_utc_us>? AND (flags & ?)=0",
+            (OVERLAPS_SM_WRITE, t_us, t_us, OVERLAPS_SM_WRITE))
+        self.refresh_reverts([succ["eid"] if succ is not None else None, *self.same_hash_after(state_hash, ord_)])
+
     def _pid(self, path: str) -> int:
         pid = self._pids.get(path)
+        if pid is None:
+            # docs/275: a long-lived connection's cache can miss a path another
+            # SM window added; ask the file before inserting
+            row = self.conn.execute("SELECT pid FROM paths WHERE path=?", (path,)).fetchone()
+            if row is not None:
+                self._pids[path] = row[0]
+                return row[0]
         if pid is None:
             parts = segments(path)
             entity = parts[1] if len(parts) > 1 and parts[0] in ("qubits", "qubit_pairs") else None

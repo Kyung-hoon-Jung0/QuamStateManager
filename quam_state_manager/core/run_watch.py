@@ -97,6 +97,11 @@ class RunWatcher:
         self.interval_s = max(0.02, float(interval_s))
         self._signature = signature_fn
         self._roots: tuple[str, ...] = ()
+        # docs/275: roots watched for another owner (the hub's run sync
+        # watches every data folder registered to an open chip, whether or
+        # not the Datasets page shows it). They wake only the listeners that
+        # asked for every root; the tick and the dataset listeners are as before.
+        self._extra: dict[str, tuple[str, ...]] = {}
         self._sigs: dict[str, Any] = {}
         self.tick = 0
         self.polls = 0
@@ -105,23 +110,55 @@ class RunWatcher:
         self._stop = threading.Event()
         self._thread: threading.Thread | None = None
         self._listeners: list = []
+        self._all_listeners: list = []
         # docs/263: per root, when this poll and the one before it looked --
         # the bound that makes "SM saw this run arrive" evidence of its time
         self._polled_at: dict[str, float] = {}
         self._gap: dict[str, float] = {}
 
-    def add_listener(self, fn) -> None:
+    def add_listener(self, fn, *, all_roots: bool = False) -> None:
         """``fn(changed_roots)`` is called on the watcher's thread after a
         tick that moved (never under the condition, never with an empty list).
-        It must return fast -- hand work to another thread (``run_ingest``)."""
+        It must return fast -- hand work to another thread (``run_ingest``).
+        By default it hears only the dataset roots (``set_roots``);
+        ``all_roots=True`` also hears the roots watched for other owners
+        (``watch``, docs/275)."""
         with self._cond:
-            if fn not in self._listeners:
-                self._listeners.append(fn)
+            bucket = self._all_listeners if all_roots else self._listeners
+            if fn not in bucket:
+                bucket.append(fn)
 
     # ── roots ─────────────────────────────────────────────────────────
     @property
     def roots(self) -> tuple[str, ...]:
         return self._roots
+
+    def _watched(self) -> tuple[str, ...]:
+        extra = [r for rs in self._extra.values() for r in rs]
+        return tuple(dict.fromkeys((*self._roots, *extra)))
+
+    def watch(self, owner: str, roots: Iterable[str]) -> None:
+        """Watch *roots* for *owner* as well as the dataset roots (docs/275).
+        Replaces that owner's previous set; ``roots`` (the dataset set) and
+        the tick are unaffected.
+
+        No signature is taken here: the caller is a request (a chip open),
+        and a stat per run of the newest day convoys behind any background
+        parse holding the interpreter (measured 2.2 s for 651 runs during a
+        first open, 20 ms alone). The watcher's own next look takes it and
+        ANNOUNCES the new root to the all-roots listeners instead of
+        swallowing it as a baseline, so a run landing in between is never
+        lost."""
+        new = tuple(dict.fromkeys(str(r) for r in roots if r))
+        with self._cond:
+            if new:
+                self._extra[owner] = new
+            else:
+                self._extra.pop(owner, None)
+            watched = set(self._watched())
+            for k in list(self._sigs):
+                if k not in watched:
+                    del self._sigs[k]
 
     def set_roots(self, roots: Iterable[str]) -> None:
         """The folders to watch (the active dataset folders); a root seen for
@@ -132,8 +169,9 @@ class RunWatcher:
             if new == self._roots:
                 return
             self._roots = new
+            watched = set(self._watched())
             for k in list(self._sigs):
-                if k not in new:
+                if k not in watched:
                     del self._sigs[k]
             fresh = [r for r in new if r not in self._sigs]
         # baseline a new root NOW, in the caller's thread (~1 ms): a run that
@@ -161,7 +199,8 @@ class RunWatcher:
         whether it did. Never raises."""
         import time
         with self._cond:
-            roots = self._roots
+            roots = self._watched()
+            dataset = set(self._roots)
         changed = False
         moved: list[str] = []
         for root in roots:
@@ -183,9 +222,11 @@ class RunWatcher:
                     self._polled_at[root] = now
                 if root not in self._sigs:
                     self._sigs[root] = sig          # first sight: baseline only
+                    if root not in dataset and sig is not None:
+                        moved.append(root)          # docs/275: an owner's root is announced
                 elif self._sigs[root] != sig:
                     self._sigs[root] = sig
-                    changed = True
+                    changed = changed or root in dataset
                     moved.append(root)
         with self._cond:
             self.polls += 1
@@ -195,7 +236,14 @@ class RunWatcher:
                 self.last_change_at = time.time()
                 self._cond.notify_all()
             listeners = list(self._listeners) if changed else []
+            all_listeners = list(self._all_listeners) if moved else []
+        moved_dataset = [r for r in moved if r in dataset]
         for fn in listeners:
+            try:
+                fn(moved_dataset)
+            except Exception:
+                logger.exception("run watcher: listener failed")
+        for fn in all_listeners:
             try:
                 fn(moved)
             except Exception:
@@ -253,5 +301,6 @@ class RunWatcher:
     def stats(self) -> dict[str, Any]:
         with self._cond:
             return {"tick": self.tick, "polls": self.polls, "roots": list(self._roots),
+                    "extra_roots": {k: list(v) for k, v in self._extra.items()},
                     "running": self.running, "interval_s": self.interval_s,
                     "last_change_at": self.last_change_at}
