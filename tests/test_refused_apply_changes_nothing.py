@@ -42,6 +42,7 @@ import pytest
 from quam_state_manager.core import undo_journal, working_copy
 from quam_state_manager.web import routes as routes_mod
 from quam_state_manager.web.app import create_app
+from quam_state_manager.core import hub as _hub_unrec
 
 _WIRING = {"network": {"host": "127.0.0.1", "cluster_name": "C1"}}
 AGENT = {"X-SM-Agent": "claude"}
@@ -201,7 +202,7 @@ class TestATouchIsNotAConflict:
         ctx = _ctx(env)
         ctx["saver"].save()
         _touch(env["live"])
-        working_copy.apply_to_live(ctx["working_copy"])      # must not raise
+        working_copy.apply_to_live(ctx["working_copy"], record=_hub_unrec.unrecorded("refusal unit test: the write is refused before any record"))      # must not raise
         assert _live_doc(env)["qubits"]["qA1"]["f_01"] == 5.1e9
 
     def test_live_already_holding_the_payload_is_not_a_conflict(self, env):

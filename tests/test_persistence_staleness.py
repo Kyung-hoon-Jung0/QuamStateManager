@@ -26,6 +26,7 @@ from quam_state_manager.core import working_copy as W
 from quam_state_manager.core.loader import QuamStore
 from quam_state_manager.core.modifier import Modifier, _type_coerce
 from quam_state_manager.web.app import create_app
+from quam_state_manager.core import hub as _hub_unrec
 
 
 # ---------------------------------------------------------------------------
@@ -91,7 +92,7 @@ class TestReconcileScenarios:
         ws = json.loads((wc.working_folder / "state.json").read_text())
         ws["qubits"]["q1"]["f_01"] = 6.1e9
         (wc.working_folder / "state.json").write_text(json.dumps(ws, indent=4))
-        W.apply_to_live(wc)
+        W.apply_to_live(wc, record=_hub_unrec.unrecorded("staleness unit test: no chip ledger"))
         # reload (simulate restart): live unchanged → in_sync, no banner
         assert W.reconcile_with_live(W.load(inst, live)) == W.RECONCILE_IN_SYNC
 
@@ -106,7 +107,7 @@ class TestReconcileScenarios:
         ws = json.loads((wc.working_folder / "state.json").read_text())
         ws["qubits"]["q1"]["f_01"] = 6.1e9
         (wc.working_folder / "state.json").write_text(json.dumps(ws, indent=4))
-        W.apply_to_live(wc)
+        W.apply_to_live(wc, record=_hub_unrec.unrecorded("staleness unit test: no chip ledger"))
         # experiment drops legacy_x, keeps f_01, bumps mtime
         _write(live, {"qubits": {"q1": {"f_01": 6.1e9}}}, WIRING)
         _bump(live)

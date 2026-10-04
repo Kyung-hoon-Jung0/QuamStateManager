@@ -2459,6 +2459,7 @@ def _rebuild_after_working_copy_replaced(ctx: dict) -> None:
     # consumed it; a fresh stage re-sets the flag right after this call).
     ctx["staged_base"] = False
     ctx.pop("staged_from", None)    # docs/271: ...and where it came from
+    _hub_discard_saved_units(ctx)   # docs/271 review P2-6
     # docs/107: the reload cleared the change log, so any staged journal steps
     # died with it — re-read the sidecar and put the cursor back at the tip
     # (the redo stack self-invalidates via the mutation_seq handshake).
@@ -3209,25 +3210,43 @@ def _hub_undoes_of(ctx, log) -> list[dict] | None:
     return [{"event": k, "units": v} for k, v in want.items()] or None
 
 
+def _hub_content_ok(ctx, press: dict | None) -> bool:
+    """docs/271 review P1-1: does the change log name EVERYTHING this press
+    writes? Only when the working files are byte-for-byte what they were at
+    the last sync point (their stat fingerprint, taken before the press's
+    own save) -- then working == live and the log is the whole difference.
+    A /save, a stage, a review-autonomy autofit save, anything that wrote the
+    working files since, makes it False, and the press records the
+    whole-chip difference instead."""
+    wc = ctx.get("working_copy")
+    fp0 = (press or {}).get("fp0")
+    return bool(wc is not None and fp0 is not None
+                and getattr(wc, "synced_working_fp", None) == fp0)
+
+
 def _hub_pending(ctx, src: str, *, log=None, wholesale: bool = False, kind: str | None = None,
                  actor: str | None = None, plan_id: str | None = None, run_uid: str | None = None,
                  undoes=None, units=None, ref: dict | None = None, after: dict | None = None,
-                 before_ref: dict | None = None, journal_unit: dict | None = None):
+                 before_ref: dict | None = None, journal_unit: dict | None = None,
+                 press: dict | None = None):
     """The ``hub.Pending`` of one live-write press (docs/271).
 
     ``log``: the change-log entries the press's save wrote (``Saver.last_cleared``)
     -- the exact old -> new of every edit, each with the actor that staged it.
-    ``wholesale``: the working copy carries content the log does not name (a
-    staged version or run state, saved-but-unapplied edits, a forced push over
-    a moved chip, an empty log): the entries are then the tree difference
-    between the chip read right before the write (``before_ref["tree"]``, or
-    read then) and what is written -- computed only once the write is certain.
+    ``wholesale``: the working copy carries content the log does not name
+    (decided by :func:`_hub_content_ok`, plus staged content and forced
+    pushes): the entries are then the difference between the chip read right
+    before the write (``before_ref["tree"]``, or read then -- the shared parse
+    of bytes SM already read) and what is written, by ``hub_rules.same``
+    (``hub.wholesale_entries``). Computed by ``Pending.prepare``, i.e. before
+    ``apply_to_live``'s last staleness re-check, only when needed.
     ``journal_unit`` (``{"src", "edit_units"}``): the door also journals a
-    docs/160 B wholesale unit; it is built in the same pass, BEFORE the write,
-    into ``before_ref["wh_unit"]`` -- so the event lists exactly the units
-    that exist (``units`` may be a callable read after the entries) and the
-    door commits that very unit once the write landed (no second walk when
-    there are no tray edits to exclude).
+    docs/160 B wholesale undo unit; it is built in the same prepare, into
+    ``before_ref["wh_unit"]``, so the event lists exactly the units that
+    exist (``units`` may be a callable read after the entries) and the door
+    commits that very unit once the write landed.
+    ``press``: the door's press record; when its save ran, the write must read
+    exactly the working pair that save produced (``Pending.expect_fp``).
     """
     from quam_state_manager.core import hub as _hub, hub_entries as _he
 
@@ -3256,28 +3275,37 @@ def _hub_pending(ctx, src: str, *, log=None, wholesale: bool = False, kind: str 
                     from quam_state_manager.core.state_merge import merge_state_wiring
                     aft = merge_state_wiring(json.loads(post_state[0]), json.loads(post_state[1]))
                     before_ref["aft"] = aft
-                jsrc = (journal_unit or {}).get("src") or src
-                unit = _wholesale_unit(before, ctx, jsrc, after=aft, cap=False)
+                out = _hub.wholesale_entries(before, aft if aft is not None else store.merged,
+                                             by_path=by_path, file_of=store.source_file_for)
                 if journal_unit is not None:
-                    if not journal_unit.get("edit_units"):
-                        ju = None if unit is None else {**unit, "meta": dict(unit["meta"]),
-                                                        "entries": list(unit["entries"])}
-                        if ju is not None and len(ju["entries"]) > _WHOLESALE_UNIT_CAP:
-                            ju["meta"]["too_large"] = len(ju["entries"])
-                            ju["entries"] = []
-                    else:
-                        ju = _wholesale_journal_unit(ctx, before, jsrc, journal_unit["edit_units"], aft)
-                    before_ref["wh_unit"] = ju
-            out = []
-            for e in (unit or {}).get("entries") or []:
-                ent = _he.entry_of(e, by=by_path.get(e["path"]))
-                out.append(ent)
+                    before_ref["wh_unit"] = _wholesale_journal_unit(
+                        ctx, before, journal_unit.get("src") or src,
+                        journal_unit.get("edit_units") or [], aft)
             return out
     else:
         entries = [_he.entry_of(e) for e in log]
+    expect_fp = (press or {}).get("saved_fp") if (press or {}).get("saved") else None
     return _hub.Pending(_hub_chip_dir(ctx["path"]), kind, who, src, entries=entries,
                         plan_id=plan, run_uid=run_uid, undoes=undoes, units=units, ref=ref,
-                        fragments=_hub.store_fragments(store, after=after, holder=before_ref))
+                        fragments=_hub.store_fragments(store, after=after, holder=before_ref),
+                        expect_fp=expect_fp)
+
+
+def _hub_discard_saved_units(ctx) -> None:
+    """docs/271 review P2-6: the working copy was replaced wholesale (a pull,
+    a stage, a restore): units a /save committed but no press landed are gone
+    with it. Mark them, so no later press claims a change it never wrote."""
+    try:
+        if (ctx.get("origin") or "live") != "live":
+            return
+        path = undo_journal.sidecar_path(current_app.instance_path, ctx["path"])
+        ids = [str(u.get("id")) for u in undo_journal.load(path)
+               if (u.get("meta") or {}).get("saved") and not (u.get("meta") or {}).get("hub")
+               and not (u.get("meta") or {}).get("discarded")]
+        if ids:
+            undo_journal.mark_units(path, ids, {"discarded": True})
+    except Exception:  # noqa: BLE001 -- advisory, like every journal write
+        logger.warning("hub: discarding saved units failed", exc_info=True)
 
 
 def _hub_stamp_units(pending, units: list[dict] | None) -> None:
@@ -3454,7 +3482,8 @@ def _hub_saved_units(ctx) -> list[str]:
     """Units a /save committed whose edits no press has landed yet (``meta.saved``,
     no ``meta.hub``): the next landed press carries them to the chip."""
     return [str(u.get("id")) for u in (ctx.get("undo_units") or [])
-            if (u.get("meta") or {}).get("saved") and not (u.get("meta") or {}).get("hub")]
+            if (u.get("meta") or {}).get("saved") and not (u.get("meta") or {}).get("hub")
+            and not (u.get("meta") or {}).get("discarded")]
 
 
 # ----------------------------------------------------------------------
@@ -3478,11 +3507,17 @@ def _press_begin(ctx) -> dict:
     accepts it, captured BEFORE the re-apply stash and the save: the dirty
     flag and the re-apply stash (+ its originals). :func:`_press_save` adds
     the save's own facts."""
+    try:
+        fp0 = working_copy.working_fingerprint(ctx["working_copy"])
+    except Exception:  # noqa: BLE001 -- unknown: the press records the whole difference
+        fp0 = None
     return {"dirty": bool(ctx.get("working_dirty")),
             "reapply": copy.deepcopy(ctx.get("pending_reapply")),
             "has_orig": "pending_reapply_orig" in ctx,
             "reapply_orig": copy.deepcopy(ctx.get("pending_reapply_orig")),
-            "saved": False}
+            "saved": False,
+            # docs/271 review P1-1: the working files as the press found them
+            "fp0": fp0}
 
 
 def _press_save(ctx, press: dict) -> None:
@@ -14793,6 +14828,12 @@ def state_history_restore_live(timestamp: str):
             working_copy.apply_to_live(wc, force=True, record=_pend)
             ctx["_alarm_reason"] = "restore-live"
             _rebuild_after_working_copy_replaced(ctx)
+    except working_copy.StaleLiveError as exc:
+        # docs/271 review: an outside write landed while the restore was
+        # being journaled -- nothing was written; the backup stands
+        return render_template("_status.html",
+                               message=f"Restore to live refused: {exc} Retry the restore.",
+                               level="warning"), 409
     except (OSError, ValueError, safe_io.LiveFileError) as exc:
         return render_template("_status.html",
                                message=f"Restore to live failed: {exc}", level="error"), 500
@@ -26221,9 +26262,10 @@ def _sync_pull_apply_to_live(ctx, replay, *, pulled_other_changes=False,
     _pend = _hub_pending(
         ctx, _hub.get("src") or _from.get("src") or ("apply_staged" if _staged else "pull_apply"),
         log=_press.get("cleared"), kind=_hub.get("kind"),
-        wholesale=bool(_staged or force or _press.get("dirty") or not _press.get("cleared")),
+        wholesale=bool(_staged or force or not _hub_content_ok(ctx, _press)
+                       or not _press.get("cleared")),
         run_uid=_hub.get("run_uid") or _from.get("run_uid"), ref=_hub.get("ref") or _from.get("ref"),
-        undoes=_hub.get("undoes"), before_ref=_bref,
+        undoes=_hub.get("undoes"), before_ref=_bref, press=_press,
         journal_unit=({"src": "apply-staged", "edit_units": _jrn_units} if (journal and _staged) else None),
         units=(_hub.get("units") if "units" in _hub else
                lambda: ([u.get("id") for u in _jrn_units] + _saved_ids
@@ -26716,8 +26758,9 @@ def state_apply_to_live():
         ctx, ("auto_apply" if _auto is not None else "keep_mine" if force
               else _from.get("src") or ("apply_staged" if _staged else "apply")),
         log=_press.get("cleared"),
-        wholesale=bool(_staged or force or _press.get("dirty") or not _press.get("cleared")),
-        run_uid=_from.get("run_uid"), ref=_from.get("ref"), before_ref=_bref,
+        wholesale=bool(_staged or force or not _hub_content_ok(ctx, _press)
+                       or not _press.get("cleared")),
+        run_uid=_from.get("run_uid"), ref=_from.get("ref"), before_ref=_bref, press=_press,
         journal_unit=({"src": "apply-staged" if _staged else "force-overwrite", "edit_units": _jrn_units}
                       if (_staged or force) else None),
         units=lambda: ([u.get("id") for u in _jrn_units] + _saved_ids
@@ -38234,9 +38277,31 @@ def _active_chip_findings(store: QuamStore, *, budget_s: float | None = None) ->
                          else max(0.0, budget_s - (time.monotonic() - t0))))
     if env is None:
         return None
-    findings = findings + env
+    findings = findings + env + _hub_ledger_findings(store)
     findings.sort(key=lambda f: _DIAG_RANK.get(f.severity, 3))
     return findings
+
+
+def _hub_ledger_findings(store: QuamStore) -> list:
+    """docs/271 review P2-5: recorded writes the chip's change history could
+    not take in (each kept with its error; the lines after it still project).
+    One read-only ledger query; nothing for an archive or an unresolved chip."""
+    try:
+        ctx = _active_ctx()
+        if not ctx or ctx.get("store") is not store or (ctx.get("origin") or "live") != "live":
+            return []
+        chip = _hub_chip_dir(ctx["path"])
+        from quam_state_manager.core import hub as _hub
+        errs = _hub.projection_errors(chip) if chip is not None else []
+    except Exception:  # noqa: BLE001 -- advisory: never breaks Diagnostics
+        logger.warning("hub: reading projection errors failed", exc_info=True)
+        return []
+    if not errs:
+        return []
+    return [diagnostics.Finding(
+        severity="warning", category="history_ledger", location="Change history",
+        message=f"{len(errs)} recorded write(s) could not be added to the change history",
+        detail="; ".join(errs[:5]) + (f" (+{len(errs) - 5} more)" if len(errs) > 5 else ""))]
 
 
 def _env_card_state(store: QuamStore) -> dict:

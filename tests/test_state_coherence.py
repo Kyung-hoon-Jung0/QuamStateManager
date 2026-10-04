@@ -22,6 +22,7 @@ import pytest
 from quam_state_manager.core import path_match
 from quam_state_manager.web import routes
 from quam_state_manager.web.app import create_app
+from quam_state_manager.core import hub as _hub_unrec
 
 
 def _key(p) -> str:
@@ -288,7 +289,7 @@ class TestApplyContentStaleness:
         assert not W.live_changed(wc)            # mtime gate fooled
 
         with pytest.raises(W.StaleLiveError):    # content gate catches it
-            W.apply_to_live(wc, force=False)
+            W.apply_to_live(wc, force=False, record=_hub_unrec.unrecorded("coherence unit test: no chip ledger"))
         # the experiment's value is intact on disk (not overwritten)
         assert json.loads((live / "state.json").read_text())["qubits"]["q1"]["f_01"] == 1.234e9
 

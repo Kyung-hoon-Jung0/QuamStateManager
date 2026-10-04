@@ -35,8 +35,20 @@ write-ahead. Fields:
 | `live`, `pid` | The live folder written and the writing process |
 | `n`, `entries` | Every change, uncapped: `{path, old, new}` plus `created` / `deleted`, `by` (who staged it) and `file`. When the serialized entries are over 256 KiB, `entries` is null and `entries_blob` names `events-<sha1>.json.gz`, a file beside the journal that is fsync'd before the line. It is a file, not a directory, because history scans every sub-directory of a chip dir as a snapshot. |
 
-A write that fails after its line gets a second line, `{"failed": <id>, "error": ...}`
-(see *Failure modes*).
+Each write line gets one outcome line after the write (see *Failure modes* and the
+*Review round*):
+
+- `{"landed": <id>}` once the write is verified. It is flushed, not fsync'd: it is as
+  durable as the live write it describes, and a rebuild that lacks it falls back to
+  evidence. A second read that found the written content adds `"verified": "second
+  read"`; a write found landed later by a no-op press adds `"late": true`.
+- `{"failed": <id>, "error": ...}`, fsync'd, when the chip still holds what it held
+  before.
+- none when nobody can tell (the chip unreadable, or holding neither the old content
+  nor the new): evidence decides at projection time.
+
+Every append, and the roll-back truncation, holds the journal's cross-process lock
+(`history/<chip>/events.lock`) and reads its line back.
 
 **`history/<chip>/ledger.sqlite` is the projection.** It is the S3 store. One projector
 thread puts each line into it off the request thread. A landed line becomes:
@@ -61,12 +73,17 @@ The **entries** are SM's own, so they are exact:
   entries the save actually cleared, under the store lock, so an edit that lands during
   the save never enters it.
 - From the tree difference between the chip read right before the write and what is
-  written (`_wholesale_unit(..., cap=False)`). This applies whenever the working copy
-  carries content the log does not name: a staged version or run state, edits that
-  were saved but not applied, a forced push (Keep mine) over values the log never saw,
-  or an empty log. It is computed only once the write is certain, never for a refused
-  press. A write whose content equals what the chip already holds is not an event, and
-  its diff is never computed.
+  written (`hub.wholesale_entries` -> `hub_entries.tree_entries`, with the one equality
+  `hub_rules.same`: `1 == 1.0`, never `1 == True`). This applies whenever the working
+  copy carries content the log does not name. That is decided **by content**, not by a
+  flag: the working pair's stat fingerprint taken before the press's own save must equal
+  `WorkingCopy.synced_working_fp`, the fingerprint recorded at the last sync point
+  (create, pull, apply). Anything that wrote the working files since -- `/save`, a
+  stage, an Auto-Calibrate review-autonomy save -- fails it, as do a staged version, a
+  forced push (Keep mine) and an empty log. The difference is computed in
+  `Pending.prepare`, before `apply_to_live`'s last staleness re-check and outside the
+  chip lock, from bytes SM already read. A write whose content equals what the chip
+  already holds is not an event, and its diff is never computed.
 
 The **rows** are S2 holder rows. `hub_entries.rows_for(entries, written document)`
 lifts each SM path to its S2 root: a list on the way is the root, because a long scalar
@@ -150,15 +167,20 @@ whole chip on the request thread.
 | The journal cannot be written (disk, permission, not a file) | `hub.RecordError` (an `OSError`) before the live write: **nothing is written**. The door's existing "the write failed, your edits are kept" branch applies. | `test_an_unwritable_journal_means_nothing_is_written` |
 | The chip identity cannot be resolved | Fails closed the same way | `test_a_write_with_no_chip_to_file_it_under_is_not_made` |
 | The live write raises after the line | A failure line `{"failed": id}`, fsync'd before the error reaches the door. The ledger gets a `failed` event with an `error`, no rows, and `state_at` raising. | `test_a_write_that_fails_after_its_line_is_marked_failed`, `test_a_failed_live_write_is_marked_and_claims_no_rows` |
-| The write cannot be verified (read-back hash differs, or mtimes unreadable) | Counted as failed, same as above. A write nobody can vouch for is never claimed. | `test_an_unverified_write_is_marked_failed` |
-| Even the failure line cannot be written | The event's own line is truncated back out, which is only possible while it is still the last line. Otherwise the loss is logged critically, and the in-process projector, which knows the outcome, still records it as failed. | `test_unmarkable_failure_rolls_the_line_back_out` |
-| SM stops between the line and the outcome | At catch-up a line with no failure mark, whose writer is gone, is `landed` only on evidence: a later line was taken against its `post_hash`, or the chip holds it now. Otherwise it is `unconfirmed`: an event with an error and no rows. | `test_lines_nobody_can_vouch_for_are_decided_by_evidence` |
-| Another live SM window's line | Never guessed. It waits for that window, which projects it, or for its failure line. Retried every 2 s for at most a minute. | `test_another_live_windows_line_waits_for_that_window` |
+| Any failure after the line | Settled by **reading the chip once more**: the written content -> `landed` (`"verified": "second read"`), and when its mtimes read back the press succeeds; the old content (`base_hash`) -> `failed`; anything else (unreadable, a half pair, a write overwritten before the verify) -> no outcome line, evidence decides. A landed write is never marked failed. | `test_a_landed_write_whose_verify_read_failed_is_recorded_landed`, `test_a_half_failed_pair_whose_content_is_whole_landed`, `test_a_true_half_pair_is_left_to_evidence_never_marked_failed`, `test_an_overwritten_write_is_left_to_evidence`, `test_a_write_found_unchanged_is_marked_failed` |
+| A write marked failed that had landed after all | The next press that finds the chip already holding that content (the docs/116 no-op adopt) writes a late `landed` line for it, and the ledger relabels the event `landed` in place (same `ord`). | `test_a_write_marked_failed_that_had_landed_is_relabelled_by_the_next_noop` |
+| Even the failure line cannot be written | The event's own line is truncated back out, under the journal lock, which is only possible while it is still the last line. Otherwise the loss is logged critically, and the in-process projector, which knows the outcome, still records it as failed. | `test_unmarkable_failure_rolls_the_line_back_out`, `test_a_failure_mark_truncation_never_cuts_another_writers_line` |
+| SM stops between the line and the outcome | At catch-up a line with no outcome line, whose writer is gone, is `landed` only on evidence: a later line was taken against its `post_hash`, or the chip holds it now. Otherwise it is `unconfirmed`: an event with an error and no rows. | `test_lines_nobody_can_vouch_for_are_decided_by_evidence` |
+| A line whose writer process is still alive (another SM window, the CLI, this process's own in-flight write seen by another projector) | Never guessed. It waits for that writer's outcome line, retried every 2 s, for at most `WRITER_GRACE_S` = 600 s from the line's own time (a reused pid cannot stall it). | `test_another_live_windows_line_waits_for_that_window`, `test_a_cli_line_in_flight_waits_for_its_writer`, `test_a_reused_pid_cannot_stall_a_line` |
 | A torn last line (crash mid-append) | Skipped by readers. The next line starts on a fresh line. | `test_a_torn_last_line_is_skipped_and_the_next_line_starts_fresh` |
+| The journal shortened or replaced behind the ledger's offset | An offset past the end of the file, or not on a line boundary, is not trusted: the whole journal is rescanned (projection is idempotent per line id). | `test_a_shortened_journal_is_rescanned`, `test_an_offset_not_on_a_line_boundary_is_rescanned`, `test_a_rolled_back_line_behind_the_offset_does_not_hide_the_next` |
+| One line the projector cannot project | Stored as an event with `error = "projection error: ..."` and no rows; the lines after it still project. Diagnostics shows a `history_ledger` warning naming it. | `test_one_unprojectable_line_is_kept_with_its_error_and_the_tail_moves_on`, `test_diagnostics_names_a_write_the_history_could_not_take_in` |
 
-**Decision: mark failed, with roll-back only as the fallback.** The journal stays
-append-only, so concurrent windows never race a truncate. The one-line success path the
-task asks for holds: a landed write has exactly one line, and only a failure adds one.
+**Decision: mark the outcome, with roll-back only as the fallback.** The journal stays
+append-only apart from that fallback, which runs under the journal lock and only while
+the line is still last. A landed write has its fsync'd event line plus one flushed
+`landed` line, so a rebuild from the journal alone agrees with the live ledger (review
+P1-3); only the event line is on the request thread's fsync path.
 
 ## Undo and redo
 
@@ -188,25 +210,60 @@ back to PARTLY (pinned on the real routes and on synthetic events).
 
 ## The build breaks for an unrecorded door
 
-`TestEveryDoorRecords` parses every module of the package (AST, not regex) and fails
-on any of these:
+Two layers since the review round (P2-1).
 
-1. an `apply_to_live(...)` call without `record=`, or with `record=None`, and any
-   call site outside the four-door table. A new door must name its record *and* be
-   listed. The keyword stays optional at runtime so that `working_copy`'s own unit
-   tests keep calling it bare.
-2. a `Saver.save` call site not classified: working copy, or the CLI's journalled
-   live save;
-3. a `write_state_wiring` / `write_state_wiring_bytes` call site not classified;
-4. a write naming `state.json` or `wiring.json` outright (`atomic_write_json`,
-   `write_text`, `copy2`, ...) not classified;
-5. an autofit `ChipHandle(...)` without `hub_dir=`, or a real-chassis handle with
-   `hub_dir=None`.
+**Static: every call site, per site.** `TestEveryDoorRecords` parses every module of
+the package (AST) and classifies each call site that can put bytes into a chip folder
+by (file, innermost function, kind), with its exact count, in `DOOR_SITES`:
+
+| Kind | What the scanner matches |
+|---|---|
+| `apply` | `apply_to_live(...)` and any alias of it (`import ... as`, an assignment). Must name `record=`, never `None`, never a `hub.unrecorded(...)` call. A bare reference that is not a call (a callback) is reported as a door the scan cannot follow. |
+| `unrecorded` | `hub.unrecorded(...)`: allowed only at documented sites (the simulator's handle). |
+| `save` | any `.save(` whose receiver is not an instance-dir store (`agent_session`, `entity_notes`, `limits`, ...): `Saver(store).save()`, `sv.save()`, `machine.save()`. |
+| `pair` | `write_state_wiring[_bytes]` outside `safe_io`. |
+| `named` | a file write, copy or move (`atomic_write_json`, `write_text`, `copytree`, `os.replace`, an `open(..., "w")`, ...) whose arguments or receiver name `state.json`, `wiring.json`, `*live*`, `state_path`, `quam_state*`, `chip_dir`, ... |
+
+A new site, or a second call inside a classified function, is not in the table, so the
+file fails until someone decides what the write is. Fault injection is part of the
+suite: the seven doors the review planted -- `Saver(store).save()` on a live folder,
+the same through a variable, an `atomic_write_json` to a `state_path`, an `as`-aliased
+`apply_to_live`, a `copytree` into a live folder, a second state/wiring write inside the
+classified stage route, a door passing `record=hub.unrecorded(...)` -- plus a callback
+reference are each planted in a copy of the sources and must be reported
+(`test_a_planted_new_file_door_is_reported`,
+`test_a_planted_edit_to_a_classified_function_is_reported`).
+
+**Runtime: the guard.** `apply_to_live(record=None)` goes through
+`hub.guard_unrecorded`. In the test suite (`tests/conftest.py` sets `SM_HUB_STRICT=1`)
+it raises `RecordError` before the chip is touched, so a door the scanner missed still
+breaks the build the first time a test drives it. In production a person's write is
+never refused over bookkeeping: it lands and is recorded as actor `unattributed`, src
+`unrecorded_door`, with the whole-chip difference, in the chip's ledger (the app
+registers its identity ladder with `hub.set_chip_dir_resolver`), and a warning is
+logged. The 13 unit tests that drive a bare working copy with no chip ledger say so
+with `record=hub.unrecorded("<reason>")` (`test_working_copy.py` x8,
+`test_persistence_staleness.py` x2, `test_refused_apply_changes_nothing.py`,
+`test_state_coherence.py`, `test_autofit_plan_writer.py`). Each of those tests drives
+the working-copy mechanics (sync points, staleness, refusal), not a door; the edit adds
+one keyword and changes nothing they assert.
+
+An autofit `ChipHandle(...)` must still name `hub_dir=`, and the real-chassis handle
+must not pass `None`.
 
 ## Changes outside the new modules
 
-- `core/working_copy.py`, `apply_to_live(record=None)`: commit after the last gate,
-  failure marking, `landed()`. The no-op adopt records `skipped`.
+- `core/working_copy.py`, `apply_to_live(record=None)`: `prepare` before the lock, the
+  re-checks and `commit` under the chip's cross-process write lock, a post-fsync mtime
+  re-check, the outcome settle by a second read, `landed()`. The no-op adopt records
+  `skipped` and calls `adopt_late`. `WorkingCopy.synced_working_fp` (persisted in the
+  meta sidecar) is the content check's anchor; the fingerprint of the working pair it
+  read goes to `prepare`, which checks it against the door's `Pending.expect_fp`.
+- `core/xlock.py` (new): an OS lock on a lock file (`msvcrt.locking` / `fcntl.flock`)
+  behind a per-process lock, re-entrant per thread. Two locks use it: the journal lock
+  `history/<chip>/events.lock`, and the machine-wide live-chip lock
+  `%TEMP%/quam-sm-locks/live-<sha1 of the resolved folder>.lock` (never in the chip
+  folder).
 - `core/saver.py`, `last_cleared`.
 - `core/hub_store.py`:
   - additive tables `sm_events` and `sm_anchors` (`CREATE IF NOT EXISTS`;
@@ -232,60 +289,69 @@ on any of these:
 - `core/autofit/writer.py`: `ChipHandle.hub_dir` and `hub_plan`, `_pending`.
 - `cli.py`: `set --save` journalled; `--instance`.
 - `web/app.py`: `testing=True` projects inline, so a test reads the ledger right after
-  the write.
+  the write; `hub.set_chip_dir_resolver` for the production guard.
+- `core/diagnostics.py`: a "Change history complete" check in the catalogue (domain
+  Other); `web/routes.py` `_hub_ledger_findings` emits it.
+- `tests/conftest.py`: strict mode for the unrecorded-door guard.
 
 ## Performance
 
-The harness is `scratchpad\hub4\perf_apply.py`. It builds the app in **production
-mode** (`testing=False`, so the projector runs off the request thread) against a copy of
-the chip, with the network forced to `127.0.0.1:1`. Each iteration makes one
-`/field/edit` of a T1 value, then a timed `POST /state/apply-to-live`. There are 3
-warm-up presses. Base = `219da644` in a detached scratch worktree. Base and new runs
-were interleaved, one round each in turn, on this PC, with nothing else running.
+Measured on this PC with other work running, so end-to-end numbers drift by more than
+the budget between runs; the door-side cost is measured directly. Harnesses:
+`scratchpad\rv4\probe_record.py` (per press: `Pending.prepare`, `Pending.commit`,
+`Recorded.landed`, each journal append), `perf_apply2.py` (end to end) and
+`perf_doors2.py` (the wholesale doors), all in **production mode** (`testing=False`,
+the projector off the request thread) against a copy of the chip with the network forced
+to `127.0.0.1:1`. Base = `219da644`, S4 = `e38602f9`, both in detached scratch worktrees.
 
-**End to end, Apply (ms).**
+**What recording adds to a plain edit -> Apply (the review-round code).**
 
-| Chip | Round | base p50 / p95 | S4 p50 / p95 |
-|---|---|---:|---:|
-| rC copy, 0.9 MB, 40 presses, 0.3 s pace | 1 | 219.1 / 244.9 | 213.9 / 317.4 |
-| | 2 | 207.6 / 242.4 | 204.6 / 256.6 |
-| | 3 | 202.0 / 235.3 | 209.8 / 243.8 |
-| big30x copy, 18.5 MB, 20 presses, 1 s pace | 1 | 2533.5 / 3282.1 | 2543.4 / 3413.7 |
-| | 2 | 2703.7 / 3561.2 | 3253.4 / 4471.0 |
-| | 3 | 3070.6 / 4435.2 | 2968.7 / 3446.8 |
+| Chip | presses | record() p50 | max | of which: prepare / commit / landed (p50) | whole-chip diffs |
+|---|---:|---:|---:|---|---:|
+| rC copy, 0.9 MB | 30 | 4.16 ms | 5.28 ms | 0.05 / 2.5 / 1.6 ms | 0 |
+| big30x copy, 18.5 MB | 15 | 5.33 ms | 21.6 ms (one 18.7 ms fsync) | 0.05 / 2.6 / 2.1 ms | 0 |
 
-- rC: the p50 difference is within ±7 ms across rounds. The one high p95 (317 ms) is a
-  single round; rounds 2 and 3 are +14 and +9 ms.
-- big30x: the base itself drifts 2.5 -> 3.1 s across rounds, so end to end cannot
-  resolve a 10 ms budget there.
+Inside the ~+10 ms budget on both chips and flat in the chip size. The `landed` line
+(~1.5-2 ms: the journal lock, a flushed append, its read-back) is the one cost the review
+round added to the success path. End to end in the same session: rC base 274.5 ms vs
+new 219.4 ms p50 (40 presses each; the order of the difference is the session's drift,
+not the change), big30x base 2687 ms vs new 2882 ms (20 presses each, the same drift).
 
-**What recording itself adds, measured directly.** Wrapped `Pending.commit` +
-`Recorded.landed`: the entries, the journal line and its fsync, and the hand-off. Same
-harness, S4:
+**The wholesale doors** (`/save` then Apply, and a staged version then Apply), p50 ms:
 
-| Chip | record() p50 | p95 | max | projector (off-thread, wall) p50 / max |
-|---|---:|---:|---:|---:|
-| rC | 3.53 ms | 4.99 ms | 6.44 ms | 24 ms / 110 ms |
-| big30x | 3.88 ms | 4.62 ms | 5.99 ms | 190 ms / 859 ms |
+| Chip | Door | base end to end | S4 end to end / **commit** | new end to end / **commit** / prepare |
+|---|---|---:|---:|---:|
+| rC | saved | 158.5, 137.3 | 168.7, 151.6 / **17.7, 16.5** | 166.0, 118.7 / **3.7, 1.7** / 7.2, 5.8 |
+| rC | staged | 136.2, 125.6 | 148.5, 128.3 / **16.6, 13.4** | 137.6, 120.1 / **3.2, 1.7** / 10.8, 14.0 |
+| big30x | saved | 2250.2 | 2353.0 / **288.7** | 2518.5 / **4.6** / 125.5 |
+| big30x | staged | 2022.2 | 1766.5 / **213.5** | 1897.8 / **4.1** / 269.2 |
 
-The door-side cost is under 4 ms p50 on both chips, inside the ~+10 ms budget, and it
-does not grow with the chip.
+"Commit" is the stretch between `apply_to_live`'s last staleness re-check and the live
+write, i.e. what widens the window another writer can slip into; under the chip lock it
+is now only the journal append. The whole-chip difference these doors need (the content
+check says the log does not name everything) moved into `prepare`, before the re-check
+and outside the lock. It is still paid on the request thread: big30x ~125 ms for a
+saved press, ~270 ms for a staged one (that one also builds the docs/160 B undo unit,
+which base built after the write). A plain edit -> Apply never pays it (0 of 45 presses
+above).
+
+**Entries -> rows** (`post_fragments` + `rows_for`, best of 3, a 20 000-qubit document):
+
+| Entries | S4 | review round |
+|---:|---:|---:|
+| 500 | 65.4 ms | 10.1 ms |
+| 2 000 | 1 006.7 ms | 46.7 ms |
+| 5 000 | 7 214.1 ms | 119.6 ms |
+
+The projector never parses the chip on the write path: the door hands it the written
+document reduced to the entries' roots (`hub_entries.post_fragments`, taken under the
+store lock, minus edits that landed after the save). Pinned by
+`test_an_edit_landing_after_the_save_is_not_recorded_as_written`, which makes the
+chip-parse fallback raise. Projector wall time (off the request thread) in the
+instrumented runs: rC p50 30 ms, big30x p50 223 ms.
 
 Nothing is added on the *edit* path. docs/265 took the tray's file write off the request
-thread, and that stays as it is. The one synchronous write S4 adds is the fsync'd
-journal line, and only on a press that already writes the chip.
-
-The projector never parses the chip on the write path. The door hands it the written
-document reduced to the entries' roots (`hub_entries.post_fragments`, taken under the
-store lock, minus edits that landed after the save). Hashing and the anchor's gzip
-release the GIL. Its big30x wall time is mostly waiting for the GIL behind the request
-thread's own snapshot work. The max is the first, anchored event: a 1.6 MB level-1 gz
-of the 18.5 MB pair.
-
-Consecutive SM writes chain, so only 1 anchor was stored in 23 big30x events (1.69 MB
-of blobs) and 1 in 43 rC events (87 KB). Pinned by
-`test_an_edit_landing_after_the_save_is_not_recorded_as_written`, which makes the
-chip-parse fallback raise.
+thread, and that stays as it is.
 
 ## Tests
 
@@ -300,7 +366,39 @@ grep. Base runs used the `219da644` scratch worktree.
 | S4, first run of the 97 files + `test_hub_record` | 3 failed: the three fakes below |
 | **S4, final, all 233 files on the final code** | **2 failed, 6609 passed, 83 skipped** (37 min, with the browser rig running alongside). Both failures pass 3/3 in isolation, and neither touches the hub. `test_one_run_instant::TestRekeyMigration::test_revert_keeps_a_label_written_after_the_rekey` is the flake docs/270 already recorded. `test_safe_io::TestTwoWritersOfOneFile::test_concurrent_writes_of_one_file_all_land` found a stray Windows `~RF*.TMP` replace temp in its tmp dir under load; `safe_io` is unchanged. |
 
-`tests/test_hub_record.py` has **51 pins**. Each of the three existing tests below was
+**Review round.** The scope was the review's own list (`scratchpad\rv4\files.txt`: every
+test file touching the working copy, apply, the autofit writer, the undo journal,
+auto-apply, sync, restore, dataset apply and the CLI -- 70 files) plus the five files
+this round edits or adds to (`test_hub_record`, `test_persistence_staleness`,
+`test_state_coherence`, `test_diagnostics_tier2`, `test_diagnostics_ui`), run from
+`tests/` in a scratch worktree holding exactly this round's code (node + jsdom present).
+
+| Run | Result |
+|---|---|
+| base `219da644`, the 70 files (the review's run) | 9 failed, 2038 passed, 58 skipped |
+| S4 `e38602f9`, the 70 files (the review's run) | the same 9 failed, 2038 passed, 58 skipped |
+| review round, the 75 files, before the shared-working-copy fix | 8 failed, 2254 passed, 37 skipped (20 min) |
+| **review round, the 75 files, final code** | **7 failed, 2258 passed, 37 skipped** (29 min, alongside the mutation sweep and the browser race) |
+
+All 7 are the base's own failures, identical on base: 2 x `test_column_history`,
+3 x `test_live_replace_routes::TestTheBadgeAndTheBannerAgree`,
+`test_unseen_edits::...test_the_poll_is_wired_to_the_decision`,
+`test_web_needs_no_cli::test_field_edit_works_with_typer_blocked`. No failure is new.
+Two base failures (`test_apply_ux` and `test_undo_nav` selfchecks) pass here because
+jsdom was present. The earlier run's 8th,
+`test_safe_io::TestTwoWritersOfOneFile::test_concurrent_writes_of_one_file_all_land`, is
+the `~RF*.TMP` flake recorded above: `safe_io` and its test are unchanged by this branch,
+and in isolation it failed 3/15 here and 1/15 on base with the same stray
+`ws_cache.json~RF*.TMP`. The four hub test files: **151 passed** on the final code, twice.
+In a third run, after the dep suite, `test_two_processes_pressing_apply_never_both_land`
+failed once and its message was not kept (the output was filtered to the summary line).
+It then passed 36 times in isolation, some of them under parallel test load (three
+more launches never started: no output, and where the exit code was kept it was 127
+from the shell -- a process-spawn failure on this loaded PC, not a test result), and in
+the next full-file run. Its assertions now carry every
+round's outcome and the journal's landed lines, so a recurrence explains itself.
+
+`tests/test_hub_record.py` has **88 pins** (51 at `e38602f9`). Each of the three existing tests below was
 edited by exactly one signature, and each is justified because this step changes the
 call it fakes. Their fakes of `working_copy.apply_to_live` had a fixed signature
 `(wc, *, force=False)`. Every door now also passes `record=`, so the fakes accept and
@@ -310,80 +408,69 @@ forward `**kw`, and what each test asserts is unchanged:
 - `tests/test_state_sync_modes.py::TestConflictPullFlow::test_apply_reconflict_returns_conflict_and_keeps_stash`.
 - `tests/test_web.py::TestApplyHardeningR16::test_unexpected_apply_failure_answers_honestly`.
 
-No other existing test was edited.
+No other existing test was edited in S4. The review round edits:
+
+- 13 bare `apply_to_live(wc)` calls in 5 unit-test files gain
+  `record=hub.unrecorded("<reason>")` (see *The build breaks for an unrecorded door*);
+- `tests/conftest.py` turns strict mode on;
+- in `test_hub_record.py`, three S4 pins follow the new protocol:
+  `test_one_line_is_durable_before_the_live_write` now also expects the `landed` line;
+  `test_another_live_windows_line_waits_for_that_window` fakes `_pid_alive` (the peer
+  registry it faked is gone: any live writer pid is waited for) with a line of now;
+  `test_an_unverified_write_is_marked_failed` became two pins, because an overwritten
+  write is no longer called failed (`test_an_overwritten_write_is_left_to_evidence`,
+  `test_a_write_found_unchanged_is_marked_failed`). The four classification tests of
+  `TestEveryDoorRecords` became the per-site scanner and its plants.
 
 ## Mutations
 
-The script is `scratchpad\hub4\mutate.py`. It applies one source edit at a time, runs
-the named pin(s) with the mandated interpreter and flags, and restores the source bytes
-in `finally`. A collection or syntax error does not count as RED. Machine-readable
-results: [271_hub_record_mutations.json](271_hub_record_mutations.json).
+The script is `scratchpad\hub4\mut_rv.py` (the S4 list of `mutate.py` with its anchors
+moved to the review-round code, plus one or more mutations per review fix). It applies
+one source edit at a time (some are two-site edits), runs the named pin(s) with the
+mandated interpreter and flags, and restores the source bytes in `finally`. A collection
+or syntax error does not count as RED. Machine-readable results:
+[271_hub_record_mutations.json](271_hub_record_mutations.json).
 
-**59 / 59 RED, and all 51 pins are targeted.** By area:
+**91 / 91 RED** in one final sweep on the final code. The S4 59 (12 re-anchored to the
+new code, 5 re-pointed at the per-site scanner) and 32 new ones:
 
-- **Write-ahead protocol:**
-  - commit after the write;
-  - no fsync;
-  - no failure mark;
-  - an unverified write counted;
-  - commit before the gates;
-  - no chip -> skip;
-  - no roll-back;
-  - a torn line breaks the next;
-  - blob in a sub-directory;
-  - an orphan trusted;
-  - an orphan's later-base evidence ignored;
-  - a peer's line not waited for;
-  - the diff computed before the no-change skip;
-  - a no-change write recorded;
-  - a refusal that records.
-- **Rows and replay:**
-  - no list lift;
-  - revert forgets `created`;
-  - in-place `_set`;
-  - delete sets null;
-  - fragments keep a late edit;
-  - the projector parses the chip;
-  - never anchor / always anchor;
-  - derived replay skips its entries;
-  - an UNDONE undo still counts;
-  - no PARTLY;
-  - no REVERTS flag;
-  - the builder's SM head;
-  - the async projector run inline.
-- **Doors:**
-  - each door unrecorded, or with its actor / plan / src / kind / run / undo link /
-    unit stamp / `staged_from` / restore `after` / wholesale decision lost;
-  - a phantom unit listed;
-  - the shared core's unit not listed;
-  - the `alr:` link lost;
-  - the autofit `by` lost;
-  - the CLI bypassing the journal;
-  - `Saver.last_cleared` lost;
-  - catch-up on open lost;
-  - Take live / pull recording.
-- **Fault injection:**
-  - a new unrecorded `apply_to_live` door;
-  - a new pair writer;
-  - a new named `state.json` writer;
-  - a `ChipHandle` without `hub_dir`;
-  - the real autofit handle with `hub_dir=None`.
+- **P0-1:** the live lock off; the post-fsync re-check off; both off (the two-process
+  pin: both windows landed in 10 of 25 rounds);
+- **P0-2:** the journal append unlocked; the roll-back truncation blind to later lines;
+- **P1-1:** the content check always true (routes), always false (routes), always true
+  (autofit writer); the sync point's fingerprint not advanced after an apply;
+- **P1-2:** the second read ignored; a half pair marked failed; the late landed mark off;
+  the relabel off;
+- **P1-3:** no landed line; the journal's landed marks ignored by a rebuild;
+- **P2-1:** strict mode off; the production `unattributed` record off;
+- **P2-2:** `prepare` skipped (the diff then runs inside the commit);
+- **P2-3:** the offset trusted; the line boundary unchecked;
+- **P2-4:** this process's own in-flight line never waited for; the grace unbounded;
+- **P2-5:** one bad line stops the tail; the Diagnostics finding off;
+- **P2-6:** discarded units not marked; discarded units still claimed;
+- **P3:** `!=` instead of `hub_rules.same`; a quadratic `_minimal`;
+- **the shared working copy (browser race):** the bytes check off; the Apply door not
+  naming its save's fingerprint; the autofit writer not naming it; the writer taking it
+  before its save instead of after.
 
-The first sweep found 3 non-RED results, all in the harness or the pins:
+An earlier sweep (87 mutations, before the shared-working-copy fix) found 2 GREEN,
+both weak pins, not weak code: the mid-line offset pin
+cut a line that was already projected (so skipping it lost nothing), and the CLI pin was
+healed by the late relabel even without the wait. The first pin now cuts an unprojected
+line; the second now asserts that the in-flight line is not projected while its writer
+runs. Both re-ran RED, as did the two neighbouring mutations. Of the four mutations added
+with the shared-working-copy fix, one (the fingerprint taken before the writer's save)
+was GREEN at first: it only sends every autofit write down the by-content path, which
+is exact but loses the `by="autofit"` stamp; the writer pin now asserts that stamp.
 
-1. two anchors were not unique or did not balance;
-2. a rebuild mutation also changed the ledger it was compared with, so it could never
-   show. It was replaced by one that breaks only the journal-only path;
-3. the generator for `test_revert_and_apply_are_inverse` used `apply_entries` itself,
-   so it agreed with any mutation of it. It now edits documents with its own plain
-   navigation.
-
-Two more pins (the shared core's unit list, the `alr:` link) were added after the
-sweep showed they were only covered indirectly. The final sweep was 59/59.
+**S4's own sweep (59 / 59)** is superseded by the list above; its history is unchanged:
+the first S4 sweep found 3 non-RED results, all in the harness or the pins (two anchors,
+a rebuild mutation that changed the ledger it was compared with, and a generator that
+used `apply_entries` itself).
 
 ## Real browser
 
-The rig was SM served from this worktree on **5131** (waitress, `cqt`) against a
+The rig was SM served from this worktree on **5131** (waitress, the test conda env) against a
 **copy** of `D:\work\sm_qa_rigs\agent\rC\chip`:
 
 - network `127.0.0.1:1`;
@@ -401,7 +488,7 @@ cookie (a generic `operator`). After each press the journal and ledger were read
 |---|---|---|
 | Live State Edit | typed `4.321e-05` into qA1 T1, Enter, clicked the tray Apply | `sm_apply` / `pull_apply`, actor `human:operator`, `t` 14:32:49.663+09:00; entry `qubits.qA1.T1` 3.5e-05 -> 4.321e-05 (`by` human:operator); ledger row `set` 3.5e-05 -> 4.321e-05; live file = 4.321e-05 |
 | Ctrl+Z | the keystroke on the page | `undo` / `ctrl_z`, `undoes` = the Apply's event + unit; entry 4.321e-05 -> 3.5e-05; the Apply's ledger flags = 8 (UNDONE); live file back to 3.5e-05 |
-| Datasets -> run -> State -> **Apply to chip** | real click | `sm_apply` / `dataset_apply`, `run_uid` `c3a2b7dc:1`, actor `human:operator`; entry `qubits.qA2.f_01` 5714586444.185409 -> 5715836444.185409; one ledger row; live file = the run's value |
+| Datasets -> run -> State -> **Apply to chip** | real click | `sm_apply` / `dataset_apply`, `run_uid` `c3a2b7dc:1`, actor `human:operator`; entry `qubits.qA2.f_01` `<f>` -> `<f>` + 1.25 MHz; one ledger row; live file = the run's value |
 | outside write, then sync control -> **Take live** | real click | still 3 journal lines; SM's working copy holds the outside value; pill "Took live" |
 | back + reload | | page intact |
 
@@ -415,6 +502,95 @@ made its run #1 the first `:1` row, and the identity gate rightly answered 409. 
 was rebuilt with its own data folder and the journey re-run from scratch. Only what was
 started was stopped: the server and Chrome. The rig copy, the perf copies and the
 Chrome profile were deleted (absolute paths).
+
+## Review round
+
+An adversarial review of `e38602f9` returned 13 executed refutations (repros in
+`scratchpad\rv4\`: `test_zz_review_repro.py`, three race scripts, `perf_doors.py`,
+seven planted doors). The fixes are new commits on top of `e38602f9`, which stays as
+it is (a later branch is built on it). Every repro is now a permanent pin in
+`tests/test_hub_record.py` (class `TestReviewRound`, plus `TestEveryDoorRecords` and
+`TestJournal`); each pin was mutation-checked (see *Mutations*).
+
+| Finding | Fix | Pin(s) | Measured |
+|---|---|---|---|
+| **P0-1** Two windows pressing Apply together could both land: the journal's fsync sat between the last staleness re-check and the write. | The entries are prepared before the re-check (`Pending.prepare`). A machine-wide per-chip OS lock (`xlock.live_lock_path`) is held from the re-check through the write and its verify, so a second SM process waits and then re-checks. After the fsync the live mtimes are re-read; a move with new content is refused as stale and the line is marked failed. | `test_a_window_holding_the_chip_lock_is_waited_for_then_refused`, `test_an_outside_write_during_the_journal_fsync_is_refused_not_overwritten`, `test_two_processes_pressing_apply_never_both_land` | `race_both_land.py`, 300 rounds, rounds where both landed: base **1**, S4 **155**, review round **0** (two runs: 0 and 0). Real browser, two SM processes: 0 of 6 rounds (below). |
+| **P0-2** The journal append was not atomic across processes (Windows append mode is seek-then-write). | A cross-process lock (`history/<chip>/events.lock`) around every append and the roll-back truncation; the line goes at the locked end of the file and is read back before it counts. | `test_concurrent_processes_append_without_loss_or_tearing`, `test_a_failure_mark_truncation_never_cuts_another_writers_line` | `race_append.py` 4 x 300: S4 1125/1200 parsable, **36 torn**; review round 1200/1200, 0 torn (and 8 x 300: 2400/2400, 0 torn). `race_windows.py` 300 rounds: S4 lost 1 line (a landed write); review round 300 claimed = 300 in the journal, 0 lost. |
+| **P1-1** Content the change log did not name (an Auto-Calibrate review-autonomy save in the same working copy) landed unrecorded. | Decided by content: the working pair's stat fingerprint before the press's save must equal `synced_working_fp` (the sync point's); otherwise the entries are the whole-chip difference. In the routes (`_hub_content_ok`) and the autofit writer (`_save` / `_pending`). | `test_a_review_save_then_a_person_apply_records_everything_that_lands`, `test_the_autofit_writer_records_a_review_save_it_later_applies` | Both repros green: the landed paths equal the recorded paths, `state_at` equals the chip. |
+| **P1-2** A write that landed but whose verify read failed was marked failed and never recorded landed (also a half-failed pair whose content was whole). | The failure branch reads the chip once more: the written content -> landed (`"verified": "second read"`; the press succeeds when the mtimes read back), the old content -> failed, anything else -> left to evidence. A no-op press that finds the chip holding a write's content writes a late `landed` line for it, and the ledger relabels it in place. | `test_a_landed_write_whose_verify_read_failed_is_recorded_landed`, `test_a_half_failed_pair_whose_content_is_whole_landed`, `test_a_true_half_pair_is_left_to_evidence_never_marked_failed`, `test_a_write_marked_failed_that_had_landed_is_relabelled_by_the_next_noop`, `TestJournal::test_an_overwritten_write_is_left_to_evidence`, `TestJournal::test_a_write_found_unchanged_is_marked_failed` | r3: the first press now answers 200 and its event is landed. r3b: the repro's precondition (`pytest.raises(OSError)`) no longer holds -- the press succeeds because the chip holds exactly the written content; the pin asserts that instead, and a true half pair is a separate pin. |
+| **P1-3** A rebuild from the journal alone disagreed with the live ledger (a landed write's outcome lived only in RAM). | A `{"landed": id}` line after the verify (flushed, not fsync'd); the projector reads outcome lines first. | `test_a_rebuild_from_the_journal_alone_agrees` | r12 green: original == rebuilt outcomes. |
+| **P2-1** The AST test missed 7 planted doors. | Per-call-site classification with counts (apply / unrecorded / save / pair / named), aliases resolved, `record=unrecorded(...)` at a door reported; plus the runtime guard (strict in the suite, `unattributed` in production). | `test_the_package_has_no_unrecorded_door`, `test_a_planted_new_file_door_is_reported` x6, `test_a_planted_edit_to_a_classified_function_is_reported` x2, `test_an_aliased_door_is_refused_at_runtime_in_strict_mode`, `test_an_unrecorded_door_in_production_is_recorded_unattributed` | All 7 plants (+ a callback reference) reported. The runtime half of r7 cannot cover plants a/b/c/f (a `Saver`, `safe_io` or `shutil` call on a live path is a generic file write); those are covered statically. Plant e (the alias) is refused at runtime too. |
+| **P2-2** Save-then-Apply parsed and walked the whole chip on the request thread inside commit (big30x 198-326 ms). | The whole-chip difference runs only when the content check needs it, in `prepare` (before the re-check, outside the lock), from the shared parse. | `test_a_plain_apply_never_parses_the_chip_inside_the_commit` | Commit p50 big30x saved 288.7 -> **4.6 ms**, staged 213.5 -> **4.1 ms**; rC 16.5-17.7 -> 1.7-3.7 ms. The difference itself is still paid on the request thread before the lock: big30x ~125 ms (saved), ~270 ms (staged). See *Performance*. |
+| **P2-3** An offset past a shortened journal meant new lines were never projected. | An offset past the end or not on a line boundary triggers a rescan from 0. | `test_a_shortened_journal_is_rescanned`, `test_an_offset_not_on_a_line_boundary_is_rescanned`, `test_a_rolled_back_line_behind_the_offset_does_not_hide_the_next` | r5, r5b green. |
+| **P2-4** A CLI write stayed `unconfirmed` (a window projected its line in flight). | A line whose writer pid is alive is waited for -- any pid, including this process's own when another projector reads it -- bounded by `WRITER_GRACE_S` (600 s from the line's time). | `test_a_cli_line_in_flight_waits_for_its_writer`, `test_a_reused_pid_cannot_stall_a_line` | r4 green: the CLI's write is landed. |
+| **P2-5** One unprojectable line blocked every later line. | Per-line error capture: the event is stored with `error = "projection error: ..."`, the tail moves on; Diagnostics shows a `history_ledger` warning. | `test_one_unprojectable_line_is_kept_with_its_error_and_the_tail_moves_on`, `test_diagnostics_names_a_write_the_history_could_not_take_in` | r11: 4 of 4 lines in the ledger (the repro asserted 3; the bad line is now stored with its error rather than skipped). |
+| **P2-6** A saved edit discarded by Take live was claimed by the next Apply (and kept the event PARTLY_UNDONE). | Units a `/save` committed and no press landed are marked `discarded` whenever the working copy is replaced wholesale (`_rebuild_after_working_copy_replaced`: Take live, stage, restore); saved-unit lists skip them. | `test_a_saved_edit_dropped_by_take_live_is_never_claimed` | r13, r13b green: the event's units exclude the discarded one; after Ctrl+Z it is UNDONE, not PARTLY. |
+| **P2-7** This document quoted real chip values and a lab-named conda env. | Replaced with `<f>` -> `<f>` + 1.25 MHz and "the test conda env". | -- | -- |
+| **P3** (a) The whole-chip difference treated `1 == True`; (b) `post_fragments` / `rows_for` were quadratic. | (a) `hub_rules.same` in `tree_entries`; (b) prefix-set minimal roots, an in-place sparse copy, copy-on-write apply/revert. | `test_the_whole_chip_difference_never_calls_1_true`, `test_keep_mine_over_a_number_to_bool_change_records_the_row`, `test_rows_and_fragments_scale_near_linearly` | r10 green. 5 000 entries: S4 7 214 ms -> 120 ms. |
+
+**One more, found by the browser race below.** Two SM windows of one install share one
+working copy on disk. When window B's save replaced the working files between window
+A's save and A's write, A wrote B's content: A's own edit did not land, and its event
+named A's edit while the chip took B's -- a record that did not match the bytes. (That
+the content is B's is pre-existing SM behaviour for two processes sharing one instance
+dir; the wrong record was this step's.) Fix: each door names the stat fingerprint of the
+working pair its own save produced (`Pending.expect_fp`, from `press["saved_fp"]` and the
+autofit writer's `_save`); `apply_to_live` passes the fingerprint of the pair it actually
+read, and when they differ the entries are the whole-chip difference to the bytes
+written, no undo unit is claimed and the projector parses the bytes. Pins:
+`test_bytes_another_process_saved_are_recorded_by_content`,
+`test_a_press_whose_saved_files_were_replaced_records_what_it_wrote`,
+`test_the_autofit_writer_records_what_it_wrote_when_its_files_were_replaced`.
+Making the two windows' save + write atomic across processes is left open (open item 14).
+
+The two route exactness sweeps of the review (r9b pulse page, r9c staged version plus
+tray edits) were green on S4 already and are kept as pins
+(`test_route_exactness_the_pulse_page`, `test_route_exactness_a_staged_version_plus_tray_edits`).
+
+**The repro file on the final code:** 15 of its 19 tests pass unchanged. Three pass
+after a one-line adaptation each, listed because each changes what the repro asserts:
+r5b's stand-in for `Hub._append` must take the new `fsync` keyword; r3b's precondition
+`pytest.raises(OSError)` no longer holds (the press succeeds -- the chip holds exactly
+the written content and the second read says so); r11 asserted 3 projected lines and 4
+are (the bad one is kept with its error). r7 imports the planted module, which is not in
+the tree: its plants are pinned statically. With the module in place, plant e (the
+alias) was refused at runtime by the strict guard; plants a/b/c/f (a `Saver`, `safe_io`
+or `shutil` writing a live path directly) can only be caught by the scanner.
+
+**Real browser, two windows.** Two SM processes (ports 5131 and 5132, one instance dir:
+two windows of one SM install) on a **copy** of `D:\work\sm_qa_rigs\agent\rC\chip`
+(network `127.0.0.1:1`, its data folder re-pointed into the rig, sandboxed `HOME` /
+`USERPROFILE` and qualibrate config), headless Chrome over CDP on **9451**, one tab per
+window. Each round each tab typed a different T1 into Live State Edit (real keys), then
+both tray Apply buttons were pressed and released at the same instant (the two mouse
+releases sent concurrently). Journey: `scratchpad\rv4\race_journey.cjs`; journal and
+ledger read after every round by `race_read.py`.
+
+Final run (12 rounds, the final code): **ALL OK, 78 checks, console errors 0.** Window
+A's write landed and B was refused in 5 rounds, the reverse in 5, and in 2 the second
+press pulled the first write and applied its own edit on top (the tray's Apply is Pull &
+apply, so that is a merge, not a lost update). In every round:
+
+- replaying the landed events in journal order onto the chip as it was gives the chip
+  as it is -- no lost update, nothing unrecorded;
+- each landed write was taken against the one before it (`base_hash` = the previous
+  `post_hash`);
+- each event records its own window's edit with that window's actor
+  (`human:operator_a` / `human:operator_b`), one ledger row each;
+- no landed event names the refused window's edit, which is not on the chip.
+
+Window A after back + reload: intact. Screenshots read: `race_a_round0` (A: "Your apply
+wrote nothing -- the live chip changed in between", naming B's change and offering
+Pull & apply), `race_b_round0` (B in sync, its value live), `race_a_final`.
+
+Two earlier runs are part of the result. In the first, both tabs were on `127.0.0.1`,
+whose cookies ignore the port, so both windows sent one `sm_actor` cookie and every
+event named one person; the windows were moved to two hosts (`127.0.0.1`, `localhost`).
+The next run (10 rounds) found the shared-working-copy record mismatch in its round 0
+(described above): window A's event named A's edit while the chip took the content B
+had saved. It was fixed and pinned before the final run. Only what was started was
+stopped (the two servers and Chrome); the rig copy, the perf copies and the Chrome
+profile were deleted (absolute paths).
 
 ## Open items for S5 and later
 
@@ -434,28 +610,42 @@ Chrome profile were deleted (absolute paths).
 4. **The Experiment Runner's human items save the live chip themselves.** They are runs,
    so they need real-time run ingestion, or the next SM write's base will not chain
    (it is anchored meanwhile).
-5. **Two windows on one chip.** The ledger order of their SM events is projection order
-   (`BEGIN IMMEDIATE`), and a window's line waits at most a minute for the other
-   window's projector (then the next write or open). Fine for one chip and one person;
-   S5's ordering by `t_utc_us` should replace the append rank.
-6. **`external_observed`** is not built (optional, and not trivial: see above).
-7. **The chip identity changing inside a write.** A run state that names another chip
+5. **Two windows on one chip.** Their writes serialise on the chip lock and their lines
+   on the journal lock (review round). The ledger order of their SM events is still
+   projection order (`BEGIN IMMEDIATE`), and a line waits for its live writer for at
+   most `WRITER_GRACE_S`. S5's ordering by `t_utc_us` should replace the append rank.
+6. **The whole-chip difference of a saved or staged press** (~125-270 ms on an 18.5 MB
+   chip) is on the request thread, outside the lock. Moving it off the request thread
+   would need the line written before its entries are known, which the write-ahead
+   contract forbids.
+7. **An entry's `by` after Pull & apply.** The tray's Apply pulls live and re-stages
+   the tray edits from the `pending_reapply` stash, which keeps values, not who staged
+   them; the re-staged entries then carry the modifier's default actor (`human`). The
+   event's `actor` (who pressed) is exact. Seen in the browser race's merged round.
+8. **`external_observed`** is not built (optional, and not trivial: see above).
+9. **The chip identity changing inside a write.** A run state that names another chip
    (`extras.chip_name`): the event is filed under the chip dir resolved *before* the
    write. A later chip-dir move does not carry `events.jsonl` with it.
-8. **Units from before S4** have no `meta.hub`, so undoing them links nothing (honest).
+10. **Units from before S4** have no `meta.hub`, so undoing them links nothing (honest).
    A staged-only Ctrl+Z (live walk OFF) followed by a manual Apply links through the same
    `jrn:` group rule as the `alr:` revert. That rule is pinned through the `alr:` route;
    the staged-only path has no route pin of its own yet.
-9. **`HubStore()` loads every path id on open, and writes `meta` on open** (docs/270
+11. **`HubStore()` loads every path id on open, and writes `meta` on open** (docs/270
    P3). The projector opens it once per run of the tail. That is fine for SM-only
    ledgers. Keep one connection per chip in the projector before S5 puts 100k-path run
    ledgers behind it.
-10. **`REVERTS_TO_EARLIER` is byte-based** (docs/270 P3). The same content serialized
+12. **`REVERTS_TO_EARLIER` is byte-based** (docs/270 P3). The same content serialized
     differently is not flagged.
-11. **`OVERLAPS_SM_WRITE`** (DESIGN 3.4: `run_start < sm_event.t < created_at`) needs
+13. **`OVERLAPS_SM_WRITE`** (DESIGN 3.4: `run_start < sm_event.t < created_at`) needs
     runs in the same ledger, so it belongs with S5's ingestion. The SM side of it is
     ready: every SM event carries its own UTC instant.
-12. **Bit assignment.** S3 uses 1/2/4. S4 adds UNDONE 8, PARTLY_UNDONE 16 and
+14. **Two windows of one install share one working copy.** A save in one window can
+    replace the working files another window just saved and is about to write; the
+    record now follows the bytes, but the other window's own edit does not land (its
+    press still answers success). Serialising each press's save + write across
+    processes (the chip lock taken before the save) would close it; the pre-apply backup
+    and the staleness gates sit in between today.
+15. **Bit assignment.** S3 uses 1/2/4. S4 adds UNDONE 8, PARTLY_UNDONE 16 and
     DERIVED 32. `schema_version` stays 1, because the tables are additive. A reader
     that predates S4 would not understand the SM rows. There is none outside this
     branch.

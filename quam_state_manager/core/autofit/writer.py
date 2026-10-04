@@ -20,6 +20,8 @@ ledger can record verbatim.
 """
 from __future__ import annotations
 
+from pathlib import Path
+
 import logging
 import math
 from dataclasses import dataclass, field
@@ -51,6 +53,12 @@ class ChipHandle:
     # (and test handles) -- every production ChipHandle names it explicitly.
     hub_dir: Any = None
     hub_plan: str | None = None
+    # docs/271 review P1-1: the working pair's stat fingerprint right before
+    # the writer's last save (``_save``) -- equal to the working copy's sync
+    # point means the save's change log is the whole difference to live
+    hub_fp0: Any = None
+    # ...and right after it: the bytes the live write reads must be these
+    hub_fp1: Any = None
 
 
 @dataclass
@@ -68,22 +76,67 @@ class WriteOutcome:
                 "conflicts": self.conflicts}
 
 
+def _save(chip: ChipHandle) -> None:
+    """``chip.saver.save()``, remembering what the working files were before
+    it (docs/271 review P1-1: the content check of the next live write)."""
+    try:
+        chip.hub_fp0 = working_copy.working_fingerprint(chip.wc)
+    except Exception:  # noqa: BLE001 -- unknown: the write records the whole difference
+        chip.hub_fp0 = None
+    chip.hub_fp1 = None
+    chip.saver.save()
+    try:
+        chip.hub_fp1 = working_copy.working_fingerprint(chip.wc)
+    except Exception:  # noqa: BLE001 -- unknown: no bytes check
+        chip.hub_fp1 = None
+
+
 def _pending(chip: ChipHandle, src: str, mine: list) -> Any:
-    """docs/271: the record of one autofit live write -- exactly the entries
-    the save before it wrote (``Saver.last_cleared``); the writer's own ones
-    are stamped ``by="autofit"`` (they carry the modifier's default actor)."""
+    """docs/271: the record of one autofit live write. When the working files
+    were exactly the sync point's before the save (``hub_fp0``), the entries
+    are what that save wrote (``Saver.last_cleared``); otherwise the working
+    copy carries content the log does not name (a review-autonomy save, a
+    person's /save) and the entries are the whole-chip difference between the
+    chip right before the write and the bytes written (review P1-1). The
+    writer's own entries are stamped ``by="autofit"`` (they carry the
+    modifier's default actor)."""
     from quam_state_manager.core import hub, hub_entries
     if chip.hub_dir is None:
         return hub.unrecorded("autofit handle without a chip ledger (simulator / test chip)")
     own = {id(e) for e in mine or ()}
+    cleared = list(getattr(chip.saver, "last_cleared", None) or [])
+    by_path = {}
     ents = []
-    for e in list(getattr(chip.saver, "last_cleared", None) or []):
+    for e in cleared:
         ent = hub_entries.entry_of(e)
         if id(e) in own:
             ent["by"] = "autofit"
+        if ent.get("by"):
+            by_path[ent["path"]] = ent["by"]
         ents.append(ent)
+    fp0 = chip.hub_fp0
+    content_ok = fp0 is not None and getattr(chip.wc, "synced_working_fp", None) == fp0
+    holder: dict = {}
+    if not content_ok:
+        store = chip.store
+
+        def ents(post_state=None):  # noqa: F811 -- the whole-chip difference
+            from quam_state_manager.core import doc_cache, hub_rules
+            try:
+                pair = doc_cache.read_pair(Path(chip.wc.live_folder), mode="shared")
+                before = hub_rules.merged(pair.state, pair.wiring)
+            except Exception:  # noqa: BLE001 -- nothing readable to replace
+                before = {}
+            with store._lock:
+                if store.change_log and post_state is not None:
+                    holder["aft"] = hub._parse_pair(*post_state)
+                aft = holder.get("aft") or store.merged
+                return hub.wholesale_entries(before, aft, by_path=by_path,
+                                             file_of=store.source_file_for)
     return hub.Pending(chip.hub_dir, "autofit", "autofit", src, entries=ents,
-                       plan_id=chip.hub_plan, fragments=hub.store_fragments(chip.store))
+                       plan_id=chip.hub_plan,
+                       fragments=hub.store_fragments(chip.store, holder=holder),
+                       expect_fp=chip.hub_fp1)
 
 
 def _values_equal(a, b) -> bool:
@@ -119,7 +172,7 @@ def apply_rows(chip: ChipHandle, rows: list[dict], *, apply_live: bool,
         paths = [{"path": e.dot_path, "old": e.old_value, "new": e.new_value}
                  for e in entries]
         try:
-            chip.saver.save()
+            _save(chip)
         except Exception as exc:  # noqa: BLE001
             # best-effort in-memory rollback: restore old values exactly
             try:
@@ -175,7 +228,7 @@ def _apply_live_with_one_retry(chip: ChipHandle,
         err = restage()
         if err:
             return f"re-stage after pull refused: {err}"
-        chip.saver.save()
+        _save(chip)
         working_copy.apply_to_live(chip.wc, record=_pending(chip, src, mine()))
         return None
     except Exception as exc:  # noqa: BLE001
@@ -255,7 +308,7 @@ def revert_patches(chip: ChipHandle, patches: list[dict], *, apply_live: bool,
         paths = [{"path": e.dot_path, "old": e.old_value, "new": e.new_value}
                  for e in entries]
         try:
-            chip.saver.save()
+            _save(chip)
         except Exception as exc:  # noqa: BLE001
             return WriteOutcome(ok=False, action="reverted", group_id=gid,
                                 paths=paths, error=f"save failed: {exc}",
@@ -323,7 +376,7 @@ def restore_values(chip: ChipHandle, rows: list[dict], *, apply_live: bool,
         paths = [{"path": e.dot_path, "old": e.old_value, "new": e.new_value}
                  for e in entries]
         try:
-            chip.saver.save()
+            _save(chip)
         except Exception as exc:  # noqa: BLE001
             return WriteOutcome(ok=False, action="restored", group_id=gid,
                                 paths=paths, error=f"save failed: {exc}")

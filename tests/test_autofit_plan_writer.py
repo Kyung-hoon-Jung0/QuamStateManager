@@ -14,6 +14,7 @@ from quam_state_manager.core.autofit import synth, writer
 from quam_state_manager.core.loader import QuamStore
 from quam_state_manager.core.modifier import Modifier
 from quam_state_manager.core.saver import Saver
+from quam_state_manager.core import hub as _hub_unrec
 
 
 # ---------------------------------------------------------------------------
@@ -190,7 +191,7 @@ class TestWriterEdges:
         chip, live, handle = world
         handle.store.state["qubits"]["qA1"]["f_01"] = 5.1e9
         handle.saver.save()
-        working_copy.apply_to_live(handle.wc)
+        working_copy.apply_to_live(handle.wc, record=_hub_unrec.unrecorded("plan-writer unit test: an outside write simulated through SM's own writer"))
         # out-of-band: live moves to a THIRD value after our sync point
         state, wiring = safe_io.read_state_wiring(live)
         state["qubits"]["qA1"]["f_01"] = 7.7e9

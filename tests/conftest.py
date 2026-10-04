@@ -37,6 +37,17 @@ os.environ.setdefault("SM_DISABLE_ENV_WARMUP", "1")
 # clear this variable themselves.
 os.environ.setdefault("SM_DISABLE_HISTORY_VERIFY", "1")
 
+# docs/271 review P2-1: a live write that reaches apply_to_live with no record
+# is an unrecorded door. Production records it as "unattributed" (a person's
+# write is never refused over bookkeeping); the suite refuses it, so a new door
+# that forgets its record breaks the build instead of shipping. A unit test
+# that writes a bare working copy with no chip ledger says so explicitly with
+# ``hub.unrecorded("<reason>")``.
+os.environ.setdefault("SM_HUB_STRICT", "1")
+from quam_state_manager.core import hub as _hub  # noqa: E402
+
+_hub.STRICT = os.environ.get("SM_HUB_STRICT") == "1"
+
 
 @pytest.fixture
 def tmp_path(tmp_path):

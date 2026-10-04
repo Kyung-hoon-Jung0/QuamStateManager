@@ -147,7 +147,7 @@ def test_apply_to_live(tmp_path):
     edited = {"qubits": {"q1": {"f_01": 7e9}}}
     (wc.working_folder / "state.json").write_text(json.dumps(edited), encoding="utf-8")
 
-    apply_to_live(wc)
+    apply_to_live(wc, record=_hub_unrec.unrecorded("working-copy unit test: no chip ledger"))
     assert json.loads((live / "state.json").read_text()) == edited
     assert live_changed(wc) is False
 
@@ -163,7 +163,7 @@ def test_apply_to_live_stale_raises(tmp_path):
     _touch_future(live / "state.json")
 
     with pytest.raises(StaleLiveError):
-        apply_to_live(wc)
+        apply_to_live(wc, record=_hub_unrec.unrecorded("working-copy unit test: no chip ledger"))
 
 
 def test_apply_to_live_force_overwrites(tmp_path):
@@ -177,7 +177,7 @@ def test_apply_to_live_force_overwrites(tmp_path):
     (live / "state.json").write_text(json.dumps({"qubits": {"theirs": {}}}), encoding="utf-8")
     _touch_future(live / "state.json")
 
-    apply_to_live(wc, force=True)
+    apply_to_live(wc, force=True, record=_hub_unrec.unrecorded("working-copy unit test: no chip ledger"))
     assert json.loads((live / "state.json").read_text()) == edited
 
 
@@ -207,7 +207,7 @@ def test_apply_to_live_does_not_advance_synced_on_meta_failure(tmp_path, monkeyp
 
     from quam_state_manager.core.safe_io import LiveFileError
     with pytest.raises(LiveFileError):
-        apply_to_live(wc)
+        apply_to_live(wc, record=_hub_unrec.unrecorded("working-copy unit test: no chip ledger"))
 
     # In-memory copy still matches the pre-apply meta — no divergence.
     assert wc.synced_state_mtime == pre_state_mt
@@ -256,7 +256,7 @@ def test_apply_to_live_raises_if_post_mtime_read_fails(tmp_path, monkeypatch):
     (wc.working_folder / "state.json").write_text(json.dumps(edited), encoding="utf-8")
 
     with pytest.raises(LiveFileError):
-        apply_to_live(wc)
+        apply_to_live(wc, record=_hub_unrec.unrecorded("working-copy unit test: no chip ledger"))
 
     # The synced mtime must NOT have been advanced -- next session must see
     # the divergence and prompt re-sync rather than treat the partial write
@@ -329,6 +329,7 @@ from quam_state_manager.core.working_copy import (  # noqa: E402
     reconcile_with_live,
     scan_working_copies,
 )
+from quam_state_manager.core import hub as _hub_unrec
 
 
 def _strip_hash_from_meta(wc):
@@ -547,7 +548,7 @@ def test_apply_to_live_updates_hash(tmp_path):
     wc = create(inst, live)
     edited = {"qubits": {"qA1": {"f_01": 5e9}}}
     (wc.working_folder / "state.json").write_text(json.dumps(edited), encoding="utf-8")
-    apply_to_live(wc)
+    apply_to_live(wc, record=_hub_unrec.unrecorded("working-copy unit test: no chip ledger"))
     assert wc.synced_live_hash == content_hash(edited, {"wiring": {}})
     assert reconcile_with_live(wc) == RECONCILE_IN_SYNC
 
@@ -1003,7 +1004,7 @@ def test_apply_verification_catches_misdirected_write(tmp_path, monkeypatch):
     monkeypatch.setattr(wcmod.safe_io, "write_state_wiring_bytes", misdirected)
     before = (wc.synced_state_mtime, wc.synced_wiring_mtime, wc.synced_live_hash)
     with pytest.raises(safe_io.LiveFileError, match="verification FAILED"):
-        apply_to_live(wc)
+        apply_to_live(wc, record=_hub_unrec.unrecorded("working-copy unit test: no chip ledger"))
     assert (wc.synced_state_mtime, wc.synced_wiring_mtime,
             wc.synced_live_hash) == before          # synced state NOT advanced
 
@@ -1016,5 +1017,5 @@ def test_apply_verification_passes_on_clean_write(tmp_path):
     wc = create(inst, live)
     edited = {"qubits": {"q1": {"T1": 12e-6}}}
     (wc.working_folder / "state.json").write_text(json.dumps(edited), encoding="utf-8")
-    apply_to_live(wc)
+    apply_to_live(wc, record=_hub_unrec.unrecorded("working-copy unit test: no chip ledger"))
     assert json.loads((live / "state.json").read_text()) == edited

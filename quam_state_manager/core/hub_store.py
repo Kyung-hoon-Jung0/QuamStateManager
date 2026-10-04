@@ -311,6 +311,20 @@ class HubStore:
             chain.append(cur["eid"])
             prev = self.conn.execute("SELECT * FROM events WHERE ord<? AND error IS NULL "
                                      "ORDER BY ord DESC LIMIT 1", (cur["ord"],)).fetchone()
+            # an un-anchored event replays from the write its base IS: when an
+            # event was later inserted in between (a late 'landed' relabel),
+            # step over it to the event whose post-state matches
+            base = self.conn.execute("SELECT base_chash FROM sm_events WHERE eid=?", (cur["eid"],)).fetchone()
+            if prev is not None and base is not None and base[0]:
+                match = self.conn.execute(
+                    "SELECT e.* FROM events e JOIN sm_events s USING(eid) WHERE e.ord<? AND e.error IS NULL "
+                    "AND s.post_chash=? ORDER BY e.ord DESC LIMIT 1", (cur["ord"], base[0])).fetchone()
+                if match is not None and match["ord"] != prev["ord"]:
+                    newer_run = self.conn.execute(
+                        "SELECT 1 FROM events WHERE ord>? AND ord<? AND kind NOT IN (%s) LIMIT 1"
+                        % ",".join("?" * len(SM_KINDS)), (match["ord"], cur["ord"], *SM_KINDS)).fetchone()
+                    if newer_run is None:
+                        prev = match
             if prev is None:
                 doc = {}
                 break
@@ -407,9 +421,9 @@ class HubStore:
     # ------------------------------------------------------------------
 
     def append_sm(self, *, line: dict, outcome: str, rows: list[rules.Change], flags: int,
-                  state_hash: str | None, error: str | None, pair_payload: bytes | None,
-                  entries_gz: bytes | None, journal_end: int, anchor_every: int,
-                  keep_entries_bytes: int) -> int | None:
+                  state_hash: str | None, error: str | None, pair_payload,
+                  entries_gz: bytes | None, journal_end: int | None, anchor_every: int,
+                  keep_entries_bytes: int, replace: bool = False) -> int | None:
         """Project one journal line (docs/271) in ONE transaction, together with
         the journal offset it advances to. Idempotent per ``sm_id``: a line
         another SM window already projected is skipped. ``BEGIN IMMEDIATE``
@@ -419,17 +433,33 @@ class HubStore:
         base is not the post-state of the event before it, when its entries
         are too large to keep for replay, or every ``anchor_every`` SM events;
         otherwise ``state_at`` replays it from its predecessor with its own
-        entries, which is exact because the base IS the predecessor."""
+        entries, which is exact because the base IS the predecessor.
+
+        ``replace`` (a late ``landed`` line for a write projected as failed or
+        unconfirmed): the event is projected again IN ITS PLACE -- same order
+        rank -- and the old projection removed, in the same transaction.
+        ``pair_payload`` may be a callable (the bytes are built only when the
+        event becomes an anchor)."""
         old_pids = self._pids.copy()
         if self.conn.in_transaction:
             self.conn.commit()
         try:
             self.conn.execute("BEGIN IMMEDIATE")
             try:
-                if self.conn.execute("SELECT 1 FROM sm_events WHERE sm_id=?", (line["id"],)).fetchone():
-                    self.set_meta("journal_offset", str(journal_end))
+                old = self.conn.execute("SELECT e.eid, e.ord FROM sm_events s JOIN events e USING(eid) "
+                                        "WHERE s.sm_id=?", (line["id"],)).fetchone()
+                if old is not None and not replace:
+                    if journal_end is not None:
+                        self.set_meta("journal_offset", str(journal_end))
                     self.conn.execute("COMMIT")
                     return None
+                if old is not None:
+                    # S4 relabel: the old projection is a failed/unconfirmed
+                    # event (no rows, no state, nothing replays from it); it is
+                    # removed and the line takes its place by instant again
+                    for table in ("changes", "sm_anchors", "sm_events", "checkpoints"):
+                        self.conn.execute(f"DELETE FROM {table} WHERE eid=?", (old["eid"],))
+                    self.conn.execute("DELETE FROM events WHERE eid=?", (old["eid"],))
                 landed_ok = outcome == "landed" and error is None
                 # docs/275: an SM event takes its place by its own instant,
                 # not by projection order (two windows, a projector behind a
@@ -453,7 +483,7 @@ class HubStore:
                         "SELECT COUNT(*) FROM events e WHERE e.kind IN (%s) AND e.error IS NULL AND e.ord<=? AND e.ord > "
                         "COALESCE((SELECT MAX(e2.ord) FROM sm_anchors a JOIN events e2 USING(eid) WHERE e2.ord<=?), 0)"
                         % ",".join("?" * len(SM_KINDS)), (*SM_KINDS, bound, bound)).fetchone()[0]
-                    if not chained or keep_entries is None or since + 1 >= anchor_every:
+                    if replace or not chained or keep_entries is None or since + 1 >= anchor_every:
                         payload = pair_payload() if callable(pair_payload) else pair_payload
                         anchor_hash = self.put_blob(payload, level=1)
                 if landed_ok and anchor_hash is None and keep_entries is None and entries_gz is not None:
@@ -502,7 +532,8 @@ class HubStore:
                      int(line.get("n") or 0), keep_entries if landed_ok else None, line.get("live")))
                 if landed_ok:
                     self.after_sm_placed(eid, ord_, t_us, succ, succ_flat, state_hash)
-                self.set_meta("journal_offset", str(journal_end))
+                if journal_end is not None:
+                    self.set_meta("journal_offset", str(journal_end))
                 self.conn.execute("COMMIT")
                 return eid
             except BaseException:

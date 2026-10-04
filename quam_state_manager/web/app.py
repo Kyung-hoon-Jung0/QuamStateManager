@@ -897,6 +897,11 @@ def create_app(*, testing: bool = False, instance_path: str | None = None) -> Fl
     # and re-parsing everything (a background staleness verify still runs).
     app.config["workspace"].cache_dir = Path(app.instance_path) / "workspace_cache"
     app.config["history_manager"] = HistoryManager(app.instance_path)
+    # docs/271 review P2-1: a live write that reaches apply_to_live with no
+    # record (an unrecorded door) is still recorded, as "unattributed", in
+    # its chip's ledger -- found through the same identity ladder
+    from quam_state_manager.core import hub as _hub_mod
+    _hub_mod.set_chip_dir_resolver(app.config["history_manager"].history_dir_cached)
     from quam_state_manager.web.routes import install_trends_prewarm
     install_trends_prewarm(app)
     app.config["contexts"] = {}

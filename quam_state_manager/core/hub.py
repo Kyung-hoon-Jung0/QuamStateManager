@@ -5,21 +5,25 @@ Two layers, as DESIGN 3.1 draws them:
 * ``history/<chip>/events.jsonl`` -- the PRIMARY fact. One JSON line per SM
   write, appended and fsync'd BEFORE the live files are written (write-ahead):
   who pressed, when, what kind of door, every entry (old -> new) and the
-  content hashes of the chip before and after. A write that then fails is
-  marked failed by a second line (``{"failed": <id>}``), so nothing that reads
-  the journal ever counts a write that did not land. If the journal cannot be
-  written, the live write does not happen (:class:`RecordError`).
+  content hashes of the chip before and after. Its outcome follows as a short
+  line: ``{"landed": <id>}`` once the write is verified on the chip (flushed,
+  not fsync'd -- it is as durable as the live write it describes), or
+  ``{"failed": <id>}`` (fsync'd) when it did not land. If the journal cannot
+  be written, the live write does not happen (:class:`RecordError`). Appends
+  hold a cross-process lock (two SM windows share one journal) and every line
+  is read back before it counts as written.
 * ``history/<chip>/ledger.sqlite`` -- the S3 projection (``hub_store``), fed
   off the request thread by one projector thread: the event, its S2 change
-  rows and (when needed) the post-state pair as a blob. Rebuildable: the
-  projector tails the journal from ``meta.journal_offset``, so a ledger that
-  is behind (a crash between the fsync and the upsert, another SM window's
-  lines) catches up from the journal alone.
+  rows and (when needed) the post-state pair as a blob. Rebuildable from the
+  journal alone: the projector tails it from ``meta.journal_offset`` (and
+  rescans from the start when that offset no longer fits the file).
 
-The door side is :class:`Pending`: built by the door BEFORE it calls
-``working_copy.apply_to_live(..., record=pending)``, committed by
-``apply_to_live`` itself between its last refusal gate and the write -- so a
-refused apply (docs/255) never reaches the journal.
+The door side is :class:`Pending`: built by the door, PREPARED by
+``apply_to_live`` before its last staleness re-check (entries, a whole-chip
+difference when needed -- the heavy part), and COMMITTED under the chip's
+cross-process write lock right before the write, so a refused apply (docs/255)
+never reaches the journal and the journal's fsync never widens the window in
+which another writer could slip in.
 
 No pointer resolution, no fit-vs-human split, no copied-state flags (the
 binding user decisions); arrays and equality follow the S2 rules.
@@ -41,12 +45,13 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any, Callable, Iterable
 
-from quam_state_manager.core import hub_entries
+from quam_state_manager.core import hub_entries, xlock
 from quam_state_manager.core import hub_rules as rules
 
 logger = logging.getLogger(__name__)
 
 JOURNAL_NAME = "events.jsonl"
+JOURNAL_LOCK_NAME = "events.lock"
 JOURNAL_VERSION = 1
 #: Serialized entries above this go to a content-addressed gz file beside the
 #: journal (``events-<sha1>.json.gz``, fsync'd before the line) -- there is no
@@ -58,11 +63,21 @@ INLINE_ENTRIES_BYTES = 256 * 1024
 #: entries are too large to keep for replay, and at least every N SM events.
 ANCHOR_EVERY = 50
 KEEP_ENTRIES_GZ_BYTES = 64 * 1024
+#: A line with no outcome whose writer process is still alive is that
+#: writer's to decide -- for this long; after it, evidence decides.
+WRITER_GRACE_S = 600.0
 
 #: Event flags the projector sets (hub_store holds the S3 bits 1/2/4 and the
 #: undo bits 8/16).
 DERIVED = 32       # landed, but the written bytes were not available to the
                    # projector: post-state = predecessor + entries
+
+#: The test suite runs with STRICT on (tests/conftest.py): an apply_to_live
+#: without a record is then refused. In production it is never refused -- it
+#: is recorded as an "unattributed" write with a warning (bookkeeping never
+#: stops a person's write).
+STRICT = os.environ.get("SM_HUB_STRICT") == "1"
+_CHIP_DIR_RESOLVER: Callable[[Any], Any] | None = None
 
 
 class RecordError(OSError):
@@ -86,17 +101,15 @@ def _dumps(obj: Any) -> str:
     return json.dumps(obj, ensure_ascii=False, separators=(",", ":"))
 
 
-_LOCKS: dict[str, threading.Lock] = {}
-_LOCKS_GUARD = threading.Lock()
-
-
-def _lock_for(path: Path) -> threading.Lock:
-    key = os.path.normcase(str(path))
-    with _LOCKS_GUARD:
-        return _LOCKS.setdefault(key, threading.Lock())
+def set_chip_dir_resolver(fn: Callable[[Any], Any] | None) -> None:
+    """The app's ``live folder -> history chip dir`` (the identity ladder),
+    used only to record a write that reached ``apply_to_live`` with no record."""
+    global _CHIP_DIR_RESOLVER
+    _CHIP_DIR_RESOLVER = fn
 
 
 _WRITERS: dict[str, threading.RLock] = {}
+_WRITERS_GUARD = threading.Lock()
 
 
 def _writer_for(chip_dir: Path) -> threading.RLock:
@@ -104,7 +117,7 @@ def _writer_for(chip_dir: Path) -> threading.RLock:
     projector (SM events) and the run sync (runs) both write under it.
     Across processes, SQLite ``BEGIN IMMEDIATE`` serialises them."""
     key = os.path.normcase(str(Path(chip_dir) / "ledger.sqlite"))
-    with _LOCKS_GUARD:
+    with _WRITERS_GUARD:
         return _WRITERS.setdefault(key, threading.RLock())
 
 
@@ -116,7 +129,7 @@ class Hub:
     def __init__(self, chip_dir: str | Path):
         self.dir = Path(chip_dir)
         self.journal = self.dir / JOURNAL_NAME
-        self._lock = _lock_for(self.journal)
+        self.lock_path = self.dir / JOURNAL_LOCK_NAME
 
     @classmethod
     def for_chip(cls, chip_dir: str | Path) -> "Hub":
@@ -176,7 +189,7 @@ class Hub:
         if path.exists():
             return digest
         self.dir.mkdir(parents=True, exist_ok=True)
-        tmp = path.with_name(path.name + f".{os.getpid()}.tmp")
+        tmp = path.with_name(path.name + f".{os.getpid()}.{threading.get_ident()}.tmp")
         with open(tmp, "wb") as f:
             f.write(gzip.compress(data, compresslevel=6, mtime=0))
             f.flush()
@@ -184,11 +197,16 @@ class Hub:
         os.replace(tmp, path)
         return digest
 
-    def _append(self, obj: dict) -> tuple[int, int]:
+    def _append(self, obj: dict, *, fsync: bool = True) -> tuple[int, int]:
+        """Append one line under the journal's CROSS-PROCESS lock (two SM
+        windows share it; Windows' append mode is seek-then-write, which is
+        not atomic between processes), from the locked end of the file, then
+        read it back: a line counts as written only once it reads back
+        byte for byte."""
         data = (_dumps(obj) + "\n").encode("utf-8")
         try:
             self.dir.mkdir(parents=True, exist_ok=True)
-            with self._lock, open(self.journal, "ab+") as f:
+            with xlock.held(self.lock_path), open(self.journal, "ab+") as f:
                 f.seek(0, os.SEEK_END)
                 size = f.tell()
                 if size:
@@ -200,18 +218,24 @@ class Hub:
                     f.seek(0, os.SEEK_END)
                 f.write(data)
                 f.flush()
-                os.fsync(f.fileno())
+                if fsync:
+                    os.fsync(f.fileno())
+                f.seek(size)
+                if f.read(len(data)) != data:
+                    raise RecordError(f"the line written to {self.journal} does not read back")
                 return size, size + len(data)
+        except RecordError:
+            raise
         except OSError as exc:
             raise RecordError(f"could not record this write in {self.journal} ({exc}); "
                               "nothing was written") from exc
 
     def mark_failed(self, rec: "Recorded", error: str) -> None:
         """The failure line for *rec*. If even that cannot be written, the
-        event's own line is taken back out (truncated) -- possible only while
-        it is still the journal's last line; otherwise the loss is logged and
-        the projector, which knows the outcome in this process, still records
-        it as failed."""
+        event's own line is taken back out (truncated, under the same lock) --
+        possible only while it is still the journal's last line; otherwise the
+        loss is logged and the in-process projector, which knows the outcome,
+        still records it as failed."""
         t_us, _ = _now()
         try:
             self._append({"v": JOURNAL_VERSION, "failed": rec.id, "t_utc_us": t_us,
@@ -221,17 +245,52 @@ class Hub:
             logger.error("could not mark write %s failed in %s; rolling the line back",
                          rec.id, self.journal, exc_info=True)
         try:
-            with self._lock, open(self.journal, "rb+") as f:
+            with xlock.held(self.lock_path), open(self.journal, "rb+") as f:
                 f.seek(0, os.SEEK_END)
                 if f.tell() == rec.end:
                     f.truncate(rec.start)
                     f.flush()
                     os.fsync(f.fileno())
+                    rec.rolled_back = True
                     return
         except OSError:
             pass
         logger.critical("write %s failed and could neither be marked nor rolled back in %s",
                         rec.id, self.journal)
+
+    def mark_landed(self, line_id: str, **extra: Any) -> bool:
+        """The landed line (flushed, not fsync'd: it is as durable as the live
+        write it describes, and a rebuild without it falls back to evidence).
+        Never raises -- the write it describes already happened."""
+        t_us, _ = _now()
+        try:
+            self._append({"v": JOURNAL_VERSION, "landed": line_id, "t_utc_us": t_us, **extra},
+                         fsync=False)
+            return True
+        except RecordError:
+            logger.warning("could not mark write %s landed in %s", line_id, self.journal, exc_info=True)
+            return False
+
+    def adopt_late(self, live_hash: str) -> str | None:
+        """A press found the chip already holding what it would write (the
+        docs/116 adopt). If the newest write line whose post-state that is was
+        marked failed or never got an outcome, it DID land: say so (``late``).
+        Returns the id it marked, else None."""
+        try:
+            lines = self.read()
+        except OSError:
+            return None
+        landed = {o["landed"] for _, _, o in lines if "landed" in o}
+        for _, _, o in reversed(lines):
+            if "id" not in o:
+                continue
+            if o.get("post_hash") != live_hash:
+                continue
+            if o["id"] in landed:
+                return None
+            self.mark_landed(o["id"], late=True)
+            return o["id"]
+        return None
 
     # -- reading --------------------------------------------------------
 
@@ -272,16 +331,20 @@ class Hub:
         return json.loads(data)
 
     def events(self) -> list[dict]:
-        """The journal's write lines with their outcome folded in
-        (``"outcome": "failed"`` + ``"error"`` when a failure line names it)."""
+        """The journal's write lines with their outcome folded in:
+        ``"outcome"`` is ``landed`` / ``failed`` (with ``"error"``) from the
+        outcome lines, else absent (no outcome written yet)."""
         lines = self.read()
         failed = {o["failed"]: o for _, _, o in lines if "failed" in o}
+        landed = {o["landed"] for _, _, o in lines if "landed" in o}
         out = []
         for _, _, o in lines:
             if "id" not in o:
                 continue
             o = dict(o)
-            if o["id"] in failed:
+            if o["id"] in landed:
+                o["outcome"] = "landed"
+            elif o["id"] in failed:
                 o["outcome"] = "failed"
                 o["error"] = failed[o["id"]].get("error")
             out.append(o)
@@ -369,16 +432,17 @@ class Recorded:
         self.id = line["id"]
         self.start, self.end = start, end
         self.outcome: str | None = None
+        self.rolled_back = False
 
-    def landed(self) -> None:
-        """The live files hold the written content (verified). No journal
-        write: the line already says so unless a failure line follows."""
+    def landed(self, **note: Any) -> None:
+        """The live files hold the written content (verified): the landed line
+        (authoritative for a rebuild), then the projector."""
         self.outcome = "landed"
+        self.hub.mark_landed(self.id, **note)
         _PROJECTOR.done(self)
 
     def failed(self, exc: BaseException | str) -> None:
-        """The write did not land (or could not be verified): mark it, so the
-        ledger never claims it."""
+        """The write did not land: mark it, so the ledger never claims it."""
         self.outcome = "failed"
         msg = exc if isinstance(exc, str) else f"{type(exc).__name__}: {exc}"
         self.hub.mark_failed(self, msg)
@@ -386,24 +450,44 @@ class Recorded:
         self.post_sparse = None
         _PROJECTOR.done(self)
 
+    def unknown(self, exc: BaseException | str) -> None:
+        """Nobody can tell whether the write landed (the chip could not be read
+        afterwards, or holds neither the old content nor the new -- a half
+        pair, a write overwritten before the verify read). No outcome line:
+        evidence decides later (a later write taken against this post-state,
+        or the chip holding it)."""
+        self.outcome = "unknown"
+        logger.warning("write %s: outcome unknown (%s); evidence will decide", self.id, exc)
+        self.post_state = None
+        self.post_sparse = None
+        _PROJECTOR.done(self)
+
 
 class Pending:
-    """What a door is about to write; ``apply_to_live`` commits it.
+    """What a door is about to write; ``apply_to_live`` prepares and commits it.
 
     Built by the door with what only the door knows (kind, who pressed, the
-    entries or how to compute them); ``commit`` is called by the writer with
-    what only the writer knows (the content hash of the chip before and of the
-    bytes it is about to write) between its last refusal gate and the write.
-    ``entries`` may be a callable: a wholesale diff is computed only once the
-    write is certain, never for a refused press. ``id`` exists before the
-    write, so the door can stamp its undo-journal units with it once landed.
+    entries or how to compute them). ``prepare`` runs BEFORE the writer's
+    last staleness re-check and does the heavy part (the entries -- maybe a
+    whole-chip difference -- the units, the written roots for the projector);
+    ``commit`` runs under the chip's write lock and only appends the line.
+    ``entries`` may be a callable (a whole-chip diff): it runs in ``prepare``,
+    after the writer's first gates and outside the lock, so a press refused at
+    the last re-check may have paid for it but records nothing. ``id`` exists
+    before the write, so the door can stamp its undo-journal units with it
+    once landed.
     """
 
     def __init__(self, chip_dir: str | Path | None, kind: str, actor: str, src: str, *,
-                 entries: list | Callable[[], list] | None = None, plan_id: str | None = None,
-                 run_uid: str | None = None, undoes: Any = None, units: list | None = None,
-                 ref: dict | None = None, fragments: Callable | None = None):
+                 entries: list | Callable | None = None, plan_id: str | None = None,
+                 run_uid: str | None = None, undoes: Any = None, units: list | Callable | None = None,
+                 ref: dict | None = None, fragments: Callable | None = None,
+                 expect_fp: Any = None):
         self.chip_dir = Path(chip_dir) if chip_dir is not None else None
+        # the working pair's stat fingerprint right after the door's own save:
+        # the bytes the write reads must be those (see prepare)
+        self.expect_fp = expect_fp
+        self.foreign_bytes = False
         self.kind, self.actor, self.src = kind, actor, src
         self.entries, self.plan_id, self.run_uid = entries, plan_id, run_uid
         self.undoes, self.units, self.ref = undoes, units, ref
@@ -411,6 +495,43 @@ class Pending:
         self.id = new_id()
         self.recorded: Recorded | None = None
         self.skipped: str | None = None
+        self._prepared: tuple | None = None
+
+    def prepare(self, *, post_state: tuple[bytes, bytes] | None, post_hash: str | None,
+                base_hint: str | None = None, working_fp: Any = None,
+                live: str | Path | None = None) -> None:
+        """The heavy part, outside the write lock. A write whose content the
+        chip already holds (``base_hint == post_hash``) computes nothing.
+
+        ``working_fp`` is the fingerprint of the working pair the writer read
+        (None when it changed during the read). When the door named the one
+        its own save produced (``expect_fp``) and they differ, the bytes are
+        not the ones that save wrote -- another SM process sharing this
+        working copy saved in between -- so the door's entries, units and
+        fragments describe a different write. The entries are then the
+        whole-chip difference between the chip and the bytes written, no
+        unit is claimed, and the projector parses the bytes."""
+        if self.chip_dir is None:
+            return
+        if base_hint is not None and post_hash == base_hint:
+            self._prepared = ([], [], None, post_hash, True)
+            return
+        if (self.expect_fp is not None and post_state is not None and live is not None
+                and working_fp != self.expect_fp):
+            self.foreign_bytes = True
+            logger.warning("write %s: the working files are not the ones this press saved; "
+                           "recording the bytes written, by content", self.id)
+            self._prepared = (_bytes_entries(live, post_state), [], None, post_hash, False)
+            return
+        entries = self.entries(post_state) if callable(self.entries) else list(self.entries or [])
+        units = self.units() if callable(self.units) else self.units   # after the entries
+        sparse = None
+        if self.fragments is not None:
+            try:
+                sparse = self.fragments(entries, post_state)
+            except Exception:  # noqa: BLE001 -- the projector parses the bytes instead
+                logger.debug("hub: post fragments unavailable", exc_info=True)
+        self._prepared = (entries, units, sparse, post_hash, False)
 
     def commit(self, *, base_hash: str | None, post_state: tuple[bytes, bytes] | None,
                post_hash: str | None, live: str | Path | None) -> Recorded | None:
@@ -424,19 +545,28 @@ class Pending:
             # a wholesale diff is never computed to find that out)
             self.skipped = "no change: the chip already holds this content"
             return None
-        entries = self.entries(post_state) if callable(self.entries) else list(self.entries or [])
-        units = self.units() if callable(self.units) else self.units   # after the entries
+        if self._prepared is None or self._prepared[3] != post_hash or self._prepared[4]:
+            # not prepared, or prepared for other content, or skipped as a
+            # no-change write that the base read under the lock says is not
+            self.prepare(post_state=post_state, post_hash=post_hash)
+        entries, units, sparse, _, _ = self._prepared
         hub = Hub.for_chip(self.chip_dir)
         self.recorded = hub.record(self.kind, self.actor, entries, base_hash, post_state, self.src,
                                    self.plan_id, self.run_uid, self.undoes, units=units,
                                    post_hash=post_hash, live=str(live) if live else None,
                                    ref=self.ref, event_id=self.id)
-        if self.fragments is not None:
-            try:
-                self.recorded.post_sparse = self.fragments(entries, post_state)
-            except Exception:  # noqa: BLE001 -- the projector parses the bytes instead
-                logger.debug("hub: post fragments unavailable", exc_info=True)
+        self.recorded.post_sparse = sparse
         return self.recorded
+
+    def adopt_late(self, live_hash: str | None) -> str | None:
+        """See :meth:`Hub.adopt_late` (the docs/116 no-op path)."""
+        if self.chip_dir is None or not live_hash:
+            return None
+        h = Hub.for_chip(self.chip_dir)
+        marked = h.adopt_late(live_hash)
+        if marked is not None:
+            _PROJECTOR.kick(h)          # the ledger relabels it landed, in place
+        return marked
 
     @property
     def landed(self) -> bool:
@@ -445,14 +575,21 @@ class Pending:
 
 class _Unrecorded(Pending):
     """An explicit, named decision that a write is not an SM chip event (the
-    autofit simulator's synthetic chip). Never the default: every production
-    ``apply_to_live`` call names its ``record=`` (tests/test_hub_record.py)."""
+    autofit simulator's synthetic chip, a unit test of the working-copy
+    mechanics). Allowed only at documented call sites
+    (tests/test_hub_record.py::TestEveryDoorRecords)."""
 
     def __init__(self, reason: str):
         super().__init__(None, "none", "none", "none")
         self.skipped = reason
 
+    def prepare(self, **_kw) -> None:
+        return None
+
     def commit(self, **_kw) -> None:
+        return None
+
+    def adopt_late(self, live_hash) -> None:
         return None
 
 
@@ -460,8 +597,66 @@ def unrecorded(reason: str) -> Pending:
     return _Unrecorded(reason)
 
 
+def guard_unrecorded(live_folder: str | Path) -> Pending | None:
+    """``apply_to_live`` was called without a record: a door that does not
+    record. In the test suite (``STRICT``) that is an error -- the build
+    breaks. In production a person's write is never refused over
+    bookkeeping: it is recorded as an ``unattributed`` write (actor unknown,
+    entries = the whole-chip difference) and logged."""
+    msg = f"live write to {live_folder} reached apply_to_live with no record (an unrecorded door)"
+    if STRICT:
+        raise RecordError(msg + " -- refused in strict mode")
+    logger.warning(msg + "; recorded as unattributed")
+    chip_dir = None
+    if _CHIP_DIR_RESOLVER is not None:
+        try:
+            chip_dir = _CHIP_DIR_RESOLVER(live_folder)
+        except Exception:  # noqa: BLE001
+            chip_dir = None
+    if chip_dir is None:
+        return None
+
+    def entries(post_state):
+        from quam_state_manager.core import doc_cache
+        try:
+            pair = doc_cache.read_pair(Path(live_folder), mode="shared")
+            before = rules.merged(pair.state, pair.wiring)
+        except Exception:  # noqa: BLE001 -- nothing readable to replace
+            before = {}
+        after = _parse_pair(*post_state) if post_state else {}
+        return hub_entries.tree_entries(before, after)
+
+    return Pending(chip_dir, "sm_apply", "unattributed", "unrecorded_door", entries=entries)
+
+
+def wholesale_entries(before: dict | None, after: dict, *, by_path: dict | None = None,
+                      file_of: Callable[[str], str] | None = None) -> list[dict]:
+    """The entries of a write the change log does not fully name: the tree
+    difference of the chip read right before the write and what is written
+    (``hub_entries.tree_entries``, the one equality), each entry tagged with
+    who staged that path when the tray says so."""
+    out = hub_entries.tree_entries(before or {}, after, file_of=file_of)
+    if by_path:
+        for e in out:
+            who = by_path.get(e["path"])
+            if who:
+                e["by"] = str(who)
+    return out
+
+
+def _bytes_entries(live_folder: str | Path, post_state: tuple[bytes, bytes]) -> list[dict]:
+    """The whole-chip difference between the chip now and *post_state*."""
+    from quam_state_manager.core import doc_cache
+    try:
+        pair = doc_cache.read_pair(Path(live_folder), mode="shared")
+        before = rules.merged(pair.state, pair.wiring)
+    except Exception:  # noqa: BLE001 -- nothing readable to replace
+        before = {}
+    return hub_entries.tree_entries(before, _parse_pair(*post_state))
+
+
 def store_fragments(store, after: dict | None = None, holder: dict | None = None) -> Callable:
-    """``Pending(fragments=...)`` for a door with a ``QuamStore``: at commit
+    """``Pending(fragments=...)`` for a door with a ``QuamStore``: at prepare
     time, under the store lock, the written document's roots of the entries
     -- the store's document (or *after*, or ``holder["aft"]`` when the door
     had to parse the written bytes) minus the edits still in the change log
@@ -480,29 +675,37 @@ def record_direct_save(chip_dir: str | Path, folder: str | Path, store, saver, *
                        actor: str, src: str, kind: str = "sm_apply") -> Path:
     """A ``Saver.save`` that writes a LIVE folder directly (the CLI's
     ``set --save``), journalled write-ahead exactly like ``apply_to_live``:
-    the line first, then the save, then a read-back that must hold the
-    content the line names -- else the line is marked failed."""
+    the folder's write lock, the line, the save, then a read-back that must
+    hold the content the line names -- else the line is marked failed."""
     from quam_state_manager.core import doc_cache, safe_io, working_copy
 
     folder = Path(folder)
     entries = [hub_entries.entry_of(e) for e in list(store.change_log)]
-    try:
-        base = doc_cache.read_pair(folder, mode="hash").content_hash()
-    except Exception:  # noqa: BLE001 -- nothing readable there yet
-        base = None
     post = working_copy.content_hash(store.state, store.wiring)
-    rec = Hub.for_chip(chip_dir).record(kind, actor, entries, base, None, src,
-                                        post_hash=post, live=str(folder))
-    try:
-        target = saver.save()
-        pair = doc_cache.read_pair(folder, mode="hash")
-        if pair.content_hash() != post:
-            raise safe_io.LiveFileError(f"{folder} does not hold the content just saved")
-    except BaseException as exc:
-        rec.failed(exc)
-        raise
-    rec.post_state = (pair.state_bytes, pair.wiring_bytes)
-    rec.landed()
+    with xlock.held(xlock.live_lock_path(folder)):
+        try:
+            base = doc_cache.read_pair(folder, mode="hash").content_hash()
+        except Exception:  # noqa: BLE001 -- nothing readable there yet
+            base = None
+        rec = Hub.for_chip(chip_dir).record(kind, actor, entries, base, None, src,
+                                            post_hash=post, live=str(folder))
+        try:
+            target = saver.save()
+            pair = doc_cache.read_pair(folder, mode="hash")
+            if pair.content_hash() != post:
+                raise safe_io.LiveFileError(f"{folder} does not hold the content just saved")
+        except BaseException as exc:
+            try:
+                now = doc_cache.read_pair(folder, mode="hash").content_hash()
+            except Exception:  # noqa: BLE001
+                now = None
+            if now is not None and now == base:
+                rec.failed(exc)
+            else:
+                rec.unknown(exc)
+            raise
+        rec.post_state = (pair.state_bytes, pair.wiring_bytes)
+        rec.landed()
     return target
 
 
@@ -533,11 +736,12 @@ class _Projector:
         self._inflight: dict[str, Recorded] = {}
         self._landed: dict[str, Recorded] = {}
         self._failed: set[str] = set()
+        self._unknown: set[str] = set()
         self._idle = threading.Event()
         self._idle.set()
         self._pending = 0
         self.errors: list[str] = []
-        #: retries spent waiting for another window's line (bounded: a minute)
+        #: retries spent waiting for another writer's line (bounded)
         self.foreign_waits: dict[str, int] = {}
         #: tests and the CLI: project on the caller's thread
         self.inline = False
@@ -557,6 +761,8 @@ class _Projector:
                 for old in list(self._landed.values())[:-_KEEP_BYTES_FOR]:
                     old.post_state = None
                     old.post_sparse = None
+            elif rec.outcome == "unknown":
+                self._unknown.add(rec.id)
             else:
                 self._failed.add(rec.id)
         self.kick(rec.hub)
@@ -675,7 +881,11 @@ class _Projector:
             project(hub, self)
         except Exception as exc:  # noqa: BLE001 -- the journal stays the record
             logger.warning("hub projection failed for %s", hub.dir, exc_info=True)
-            self.errors.append(f"{hub.dir}: {type(exc).__name__}: {exc}")
+            self.note_error(hub, f"{type(exc).__name__}: {exc}")
+
+    def note_error(self, hub: Hub, msg: str) -> None:
+        self.errors.append(f"{hub.dir}: {msg}")
+        del self.errors[:-200]
 
     def outcome_of(self, line: dict) -> str | None:
         with self._lock:
@@ -683,6 +893,8 @@ class _Projector:
                 return "failed"
             if line["id"] in self._landed:
                 return "landed"
+            if line["id"] in self._unknown:
+                return "unknown"
             if line["id"] in self._inflight:
                 return "wait"
         return None
@@ -697,6 +909,8 @@ class _Projector:
         with self._lock:
             self._landed.pop(line_id, None)
             self._failed.discard(line_id)
+            self._unknown.discard(line_id)
+            self.foreign_waits.pop(line_id, None)
 
 
 _PROJECTOR = _Projector()
@@ -721,12 +935,35 @@ def kick_sync(hub: Hub) -> None:
     _PROJECTOR.kick_sync(hub)
 
 
-def _live_peer_pids(hub: Hub) -> set[int]:
+def projection_errors(chip_dir: str | Path) -> list[str]:
+    """What the projector could not do for this chip: events stored with a
+    projection error, and whole runs that failed (Diagnostics shows them)."""
+    out: list[str] = []
+    key = os.path.normcase(str(Path(chip_dir)))
+    out.extend(e.split(": ", 1)[1] for e in _PROJECTOR.errors
+               if os.path.normcase(e.split(": ", 1)[0]) == key)
+    ledger = Path(chip_dir) / "ledger.sqlite"
+    if ledger.exists():
+        import sqlite3
+        try:
+            con = sqlite3.connect(f"file:{ledger}?mode=ro", uri=True, timeout=5)
+            try:
+                out.extend(r[0] for r in con.execute(
+                    "SELECT e.error FROM sm_events s JOIN events e USING(eid) "
+                    "WHERE e.error LIKE 'projection error:%' ORDER BY e.ord"))
+            finally:
+                con.close()
+        except sqlite3.Error:
+            pass
+    return list(dict.fromkeys(out))
+
+
+def _pid_alive(pid) -> bool:
     try:
         from quam_state_manager.core import instances
-        return {p.pid for p in instances.peers(hub.dir.parent.parent)}
+        return instances.pid_alive(pid)
     except Exception:  # noqa: BLE001
-        return set()
+        return False
 
 
 def _live_now(line: dict):
@@ -743,25 +980,34 @@ def _live_now(line: dict):
         return None
 
 
-def _decide(line: dict, later: list[dict], failed_ids: set[str], proj: _Projector,
-            peers: set[int]) -> tuple[str | None, Any]:
-    """``(outcome, post bytes)`` for one journal line, or ``(None, None)`` to
-    wait. A failure line decides "failed"; this process's own outcome decides
-    the rest; a line whose writer is still a live SM window waits for it. A
-    line nobody can vouch for (the writer is gone and wrote no failure line --
-    SM stopped mid-write) is "landed" only on evidence: a later write was
-    taken against its post-state, or the chip holds it now. Otherwise it is
-    "unconfirmed" and the ledger claims nothing for it."""
-    if line["id"] in failed_ids:
+def _decide(line: dict, later: list[dict], marks: dict, proj: _Projector) -> tuple[str | None, Any]:
+    """``(outcome, (post bytes, post fragments))`` for one journal line, or
+    ``(None, None)`` to wait.
+
+    1. an outcome line in the journal decides (``failed`` / ``landed``) --
+       authoritative, so a rebuild from the journal alone agrees;
+    2. this process's own outcome;
+    3. a line whose writer process is still alive is that writer's to decide
+       (bounded by :data:`WRITER_GRACE_S` -- a reused pid cannot stall it);
+    4. otherwise evidence: a later write taken against its post-state, or the
+       chip holding it now, makes it ``landed``; else ``unconfirmed`` and the
+       ledger claims nothing for it."""
+    lid = line["id"]
+    if marks.get(lid) == "failed":
         return "failed", None
     mine = proj.outcome_of(line)
+    if marks.get(lid) == "landed":
+        return "landed", proj.bytes_of(lid) if mine == "landed" else _evidence_bytes(line)
     if mine == "wait":
         return None, None
-    if mine is not None:
-        return mine, proj.bytes_of(line["id"]) if mine == "landed" else None
-    pid = line.get("pid")
-    if pid and pid != os.getpid() and pid in peers:
-        return None, None
+    if mine in ("landed", "failed"):
+        return mine, proj.bytes_of(lid) if mine == "landed" else None
+    if mine != "unknown":
+        pid = line.get("pid")
+        age_s = (time.time_ns() // 1000 - int(line.get("t_utc_us") or 0)) / 1e6
+        if pid and age_s < WRITER_GRACE_S and _pid_alive(pid) and not (
+                pid == os.getpid() and proj is _PROJECTOR):
+            return None, None
     post = line.get("post_hash")
     if post and any(o.get("base_hash") == post for o in later if "id" in o):
         return "landed", None
@@ -771,8 +1017,21 @@ def _decide(line: dict, later: list[dict], failed_ids: set[str], proj: _Projecto
     return "unconfirmed", None
 
 
+def _evidence_bytes(line: dict):
+    now = _live_now(line)
+    if now is not None and line.get("post_hash") and now[0] == line["post_hash"]:
+        return (now[1], now[2]), None
+    return None
+
+
 def project(hub: Hub, proj: _Projector | None = None) -> int:
-    """Tail *hub*'s journal into its ledger; returns how many lines it took."""
+    """Tail *hub*'s journal into its ledger; returns how many lines it took.
+
+    The ledger's offset is trusted only while it still fits the file (not past
+    its end, and on a line boundary); otherwise -- a journal restored from a
+    backup, truncated, replaced -- the whole journal is rescanned (projection
+    is idempotent per line id). One line that cannot be projected is stored
+    with its error and the tail moves on."""
     from quam_state_manager.core.hub_store import HubStore
 
     proj = proj or _PROJECTOR
@@ -781,35 +1040,56 @@ def project(hub: Hub, proj: _Projector | None = None) -> int:
     store = HubStore(hub.dir)
     try:
         offset = int(store.meta("journal_offset") or 0)
+        if offset and not _offset_fits(hub.journal, offset):
+            logger.warning("hub: journal offset %d no longer fits %s; rescanning", offset, hub.journal)
+            offset = 0
         lines = hub.read(offset)
-        failed = {o["failed"]: o for _, _, o in lines if "failed" in o}
-        failed_ids = set(failed)
-        peers = _live_peer_pids(hub) if any(
-            "id" in o and o.get("pid") not in (None, os.getpid()) for _, _, o in lines) else set()
+        marks: dict[str, str] = {}
+        fail_text: dict[str, str] = {}
+        for _, _, o in lines:
+            if "failed" in o:
+                marks.setdefault(o["failed"], "failed")
+                fail_text[o["failed"]] = o.get("error") or ""
+            elif "landed" in o:
+                marks[o["landed"]] = "landed"
         done = 0
         for i, (start, end, line) in enumerate(lines):
             if "id" not in line:
-                # a failure line: its event precedes it and is projected
+                if "landed" in line:
+                    _relabel_late(store, hub, line["landed"], proj)
                 _set_offset(store, end)
                 continue
             if store.conn.execute("SELECT 1 FROM sm_events WHERE sm_id=?", (line["id"],)).fetchone():
-                _set_offset(store, end)          # another window projected it
+                _set_offset(store, end)          # projected already (another window, a rescan)
                 proj.forget(line["id"])
                 continue
-            outcome, post = _decide(line, [o for _, _, o in lines[i + 1:]], failed_ids, proj, peers)
+            try:
+                outcome, post = _decide(line, [o for _, _, o in lines[i + 1:]], marks, proj)
+            except Exception as exc:  # noqa: BLE001 -- decide by evidence failing is not fatal
+                logger.warning("hub: deciding %s failed", line.get("id"), exc_info=True)
+                outcome, post = "unconfirmed", None
+                proj.note_error(hub, f"{line.get('id')}: {type(exc).__name__}: {exc}")
             if outcome is None:
                 tries = proj.foreign_waits.get(line["id"], 0)
-                if line.get("pid") not in (None, os.getpid()) and not proj.inline and tries < 30:
+                if not proj.inline and tries < 300:
+                    # another live writer's line: it marks its own outcome;
+                    # look again shortly so later lines are not left waiting
                     proj.foreign_waits[line["id"]] = tries + 1
-                    # another live SM window's line: it projects it itself; look
-                    # again shortly so this window's later lines are not left
-                    # waiting for its own next write
                     t = threading.Timer(2.0, proj.kick, [hub])
                     t.daemon = True
                     t.start()
                 break
-            _project_line(store, hub, line, outcome, post, end,
-                          failure=(failed.get(line["id"]) or {}).get("error"))
+            try:
+                _project_line(store, hub, line, outcome, post, end,
+                              failure=fail_text.get(line["id"]))
+            except Exception as exc:  # noqa: BLE001 -- one bad line never blocks the rest
+                logger.warning("hub: projecting %s failed; stored with its error", line["id"],
+                               exc_info=True)
+                proj.note_error(hub, f"{line['id']}: {type(exc).__name__}: {exc}")
+                store.append_sm(line=line, outcome=outcome, rows=[], flags=0, state_hash=None,
+                                error=f"projection error: {type(exc).__name__}: {exc}"[:500],
+                                pair_payload=None, entries_gz=None, journal_end=end,
+                                anchor_every=ANCHOR_EVERY, keep_entries_bytes=KEEP_ENTRIES_GZ_BYTES)
             proj.forget(line["id"])
             done += 1
         return done
@@ -825,6 +1105,18 @@ def _placed_base(store, line: dict):
     return store.good_at_or_before(lo)
 
 
+def _offset_fits(journal: Path, offset: int) -> bool:
+    try:
+        size = journal.stat().st_size
+        if offset > size:
+            return False
+        with open(journal, "rb") as f:
+            f.seek(offset - 1)
+            return f.read(1) == b"\n"
+    except OSError:
+        return False
+
+
 def _parse_pair(sb: bytes, wb: bytes) -> dict:
     """The whole written chip, parsed and merged: the projector's fallback
     when no door handed it the written roots (catch-up, the CLI)."""
@@ -836,8 +1128,25 @@ def _set_offset(store, end: int) -> None:
         store.set_meta("journal_offset", str(end))
 
 
-def _project_line(store, hub: Hub, line: dict, outcome: str, post, end: int,
-                  failure: str | None = None) -> None:
+def _relabel_late(store, hub: Hub, line_id: str, proj: _Projector) -> None:
+    """A late ``landed`` line for a write the ledger holds as failed or
+    unconfirmed (it had landed after all): project it again as landed, in
+    the same place of the timeline."""
+    row = store.conn.execute("SELECT outcome FROM sm_events WHERE sm_id=?", (line_id,)).fetchone()
+    if row is None or row[0] == "landed":
+        return
+    line = next((o for _, _, o in hub.read() if o.get("id") == line_id), None)
+    if line is None:
+        return
+    try:
+        _project_line(store, hub, line, "landed", _evidence_bytes(line), None, replace=True)
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("hub: relabelling %s landed failed", line_id, exc_info=True)
+        proj.note_error(hub, f"{line_id}: relabel: {type(exc).__name__}: {exc}")
+
+
+def _project_line(store, hub: Hub, line: dict, outcome: str, post, end: int | None,
+                  failure: str | None = None, *, replace: bool = False) -> None:
     error = None
     rows: list = []
     entries: list = []
@@ -880,8 +1189,9 @@ def _project_line(store, hub: Hub, line: dict, outcome: str, post, end: int,
     entries_gz = gzip.compress(_dumps(entries).encode("utf-8"), compresslevel=6, mtime=0) if entries else None
     store.append_sm(line=line, outcome=outcome, rows=rows, flags=flags, state_hash=state_hash, error=error,
                     pair_payload=pair_payload, entries_gz=entries_gz, journal_end=end,
-                    anchor_every=ANCHOR_EVERY, keep_entries_bytes=KEEP_ENTRIES_GZ_BYTES)
-    if line.get("undoes"):
+                    anchor_every=ANCHOR_EVERY, keep_entries_bytes=KEEP_ENTRIES_GZ_BYTES,
+                    replace=replace)
+    if line.get("undoes") or replace:
         store.recompute_undo_flags()
 
 
