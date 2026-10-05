@@ -13,9 +13,12 @@ panel shows is the snapshot that wrote the value on screen, which is exactly
   on record inside the history window: it was already there when history
   started. That is reported as ``first=True`` ("unchanged since history
   began"), never as a measurement at that time.
-* A metric derived from a SUBTREE (a readout fidelity from its confusion
-  matrix, a 2Q RB number from its nested fidelity block) is as new as the
-  newest change among the subtree's leaves.
+* A metric derived from a SUBTREE is as new as the newest change among
+  the leaves its NUMBER is made of -- a readout fidelity reads one diagonal
+  cell of its confusion matrix, an assignment fidelity the diagonal, a 2Q RB
+  panel the one value its row shows. (Until the S8 review, P0-1, every leaf
+  of the subtree counted: an edit of the e-row then dated -- and, on the
+  ledger, NAMED THE WRITER OF -- the |g> fidelity it never touched.)
 * A path the index declines (a pointer somewhere in its history) is followed
   to where it points in the CURRENT state when it is a pointer now; otherwise
   it is simply absent -- no entry, never an invented time.
@@ -25,6 +28,7 @@ folds index rows into entries. The route owns the history/IO side.
 """
 from __future__ import annotations
 
+import re
 from typing import Any, Iterable
 
 from quam_state_manager.core.pointer_resolver import _compute_resolved_path, is_pointer
@@ -54,6 +58,35 @@ QUBIT_SOURCES: dict[str, tuple[tuple[str, ...], ...]] = {
     "ro_fidelity_gef_e": (("resonator", "gef_confusion_matrix"),),
     "ro_fidelity_gef_f": (("resonator", "gef_confusion_matrix"),),
 }
+
+# The leaves a panel's NUMBER is made of, inside its source subtree (S8 review
+# P0-1), mirroring query.py: ``_cm_diag(cm, i)`` reads cell i.i,
+# ``_assignment_fidelity(_n)`` the mean of the diagonal. A panel not listed
+# here shows the whole (scalar) source. A string is one cell, a pattern any
+# cell whose last two path segments match it.
+_DIAGONAL = re.compile(r"^(\d+)\.\1$")
+VALUE_LEAVES: dict[str, Any] = {
+    "assignment_fidelity": _DIAGONAL,
+    "ro_fidelity_g": "0.0",
+    "ro_fidelity_e": "1.1",
+    "assignment_fidelity_gef": _DIAGONAL,
+    "ro_fidelity_gef_g": "0.0",
+    "ro_fidelity_gef_e": "1.1",
+    "ro_fidelity_gef_f": "2.2",
+}
+
+
+def _value_leaf(key: str, dot_path: str) -> bool:
+    spec = VALUE_LEAVES.get(key)
+    if spec is None:
+        return True
+    cell = ".".join(dot_path.split(".")[-2:])
+    return spec.match(cell) is not None if hasattr(spec, "match") else cell == spec
+
+
+# The scalar a 2Q RB row shows when its metric is a block (query.py
+# _extract_pair_gate_fidelities: ``value`` itself, else the first of these).
+_RB_VALUE_KEYS = ("value", "average_gate_fidelity", "Fidelity", "fidelity")
 
 # The 2Q RB panel grouping the page uses (chip-status.js build2QRBPanels):
 # StandardRB -> StandardRB, InterleavedRB / IRB -> InterleavedRB.
@@ -142,7 +175,8 @@ def qubit_paths(doc: dict, qubits: Iterable[str], *, resolver=None) -> dict[str,
         for key, rels in QUBIT_SOURCES.items():
             paths: list[str] = []
             for rel in rels:
-                paths.extend(numeric_leaf_paths(doc, ("qubits", q) + rel, resolver=resolver))
+                paths.extend(p for p in numeric_leaf_paths(doc, ("qubits", q) + rel, resolver=resolver)
+                             if _value_leaf(key, p))
             if paths:
                 out.setdefault(key, {})[q] = paths
     return out
@@ -178,7 +212,15 @@ def pair_rb_paths(doc: dict, pairs: Iterable[str], *, resolver=None) -> tuple[
                     continue
                 key = f"2q:{rb}:{gate}"
                 base = ("qubit_pairs", pid, "macros", str(gate), "fidelity", metric)
-                lp = numeric_leaf_paths(doc, base, skip_key=_id_key, resolver=resolver)
+                # S8 review P0-1: the ONE leaf the row's number is read from (an alpha
+                # or an error_per_gate beside it changes nothing the panel shows)
+                block = mv if not is_pointer(mv) else _follow(doc, base)[1]
+                if isinstance(block, dict):
+                    vk = next((k for k in _RB_VALUE_KEYS if _is_num(block.get(k))
+                               or is_pointer(block.get(k))), None)
+                    lp = numeric_leaf_paths(doc, base + (vk,), resolver=resolver) if vk else []
+                else:
+                    lp = numeric_leaf_paths(doc, base, skip_key=_id_key, resolver=resolver)
                 if lp:
                     paths.setdefault(key, {}).setdefault(pid, []).extend(lp)
                 lid = fid.get(f"{metric}_load_id")

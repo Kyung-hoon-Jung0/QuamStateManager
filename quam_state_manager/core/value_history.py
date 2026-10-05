@@ -692,7 +692,9 @@ def read(chip_dir, targets: dict[str, dict], *, limit: int | None = None,
                   "last_run": None, "kinds": sorted(kind_names.values()),
                   # what this answer was read from (docs/283: a surface's
                   # cache is validated on it without a second read snapshot)
-                  "version": [index.ledger_id,
+                  # (S8 review P1-1: data_version is per CONNECTION -- the reader's
+                  # opening number makes it mean the same thing after a reopen)
+                  "version": [index.ledger_id, getattr(conn, "gen", 0),
                               conn.execute("PRAGMA data_version").fetchone()[0],
                               max(index.eids, default=0), len(index.eids), len(index.paths)]}
         if run_kind is not None:

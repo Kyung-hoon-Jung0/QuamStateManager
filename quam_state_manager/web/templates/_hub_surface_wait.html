@@ -6,9 +6,18 @@
 {% set again = '/topology/trends' if surface == 'trends' else ('/param-history/changes' if surface == 'changes' else '/param-history') %}
 {% set qs = request.query_string.decode() %}
 <div {% if surface == 'trends' %}class="topo-trends" id="topo-trends"{% else %}id="param-history-root" class="param-history"{% endif %}>
+  {% if ans.mode == 'fallback' %}
+  {# S8 review P2-1: the ledger could not be read -- an end state, not a wait: no
+     self re-ask loop, one explicit press to try again #}
+  <p class="vh-wait" data-vh-mode="fallback">{{ message }}
+    <button type="button" class="btn-sm" hx-get="{{ again }}{% if qs %}?{{ qs }}{% endif %}"
+       hx-target="{{ '#topo-trends' if surface == 'trends' else '#param-history-root' }}"
+       hx-swap="outerHTML">Try again</button></p>
+  {% else %}
   <p class="vh-wait" data-vh-mode="{{ ans.mode }}"
      hx-get="{{ again }}{% if qs %}?{{ qs }}{% endif %}"
      hx-trigger="load delay:{{ 800 if ans.mode == 'preparing' else 2000 }}ms"
      hx-target="{{ '#topo-trends' if surface == 'trends' else '#param-history-root' }}"
      hx-swap="outerHTML">{{ message }}</p>
+  {% endif %}
 </div>

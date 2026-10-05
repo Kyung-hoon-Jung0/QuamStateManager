@@ -35,8 +35,10 @@ _CACHE = ramcache.KeyedMemo("hub_status", max_bytes=32 * 1024 * 1024)
 #: before it answers "preparing" (and asks again)
 _WAIT_S = 2.0
 
-#: the largest confusion matrix a derived readout fidelity is folded over
-_MAX_MATRIX = 4
+#: the largest confusion matrix a derived readout fidelity is folded over: the
+#: ledger keeps an array of up to 16 elements per element, so every row it can
+#: hold is read (S8 review P3: 4 folded a 5-state matrix as its top-left 4x4)
+_MAX_MATRIX = 16
 
 #: the Param History Source filter's vocabulary
 SOURCES = ("save", "manual", "auto", "experiment", "restore")
@@ -163,8 +165,11 @@ class LedgerTable:
         def compute():
             ans = self.read(self.ctx, {p: p for p in paths})
             if ans["mode"] != "ledger":
-                # never cached: a building / preparing answer is not a value
-                if ans["mode"] not in ("building", "preparing"):
+                # never cached: a building / preparing answer is not a value. S7's
+                # FALLBACK (an unreadable ledger, no runs) keeps its own mode -- it
+                # is not "about to be ready", and saying "Preparing" made the page
+                # ask again every 800 ms forever (S8 review P2-1)
+                if ans["mode"] not in ("building", "preparing", "fallback"):
                     ans["mode"] = "preparing"
                 self.waiting = ans
                 raise ramcache.Warming("hub_status", self.directory, 0)

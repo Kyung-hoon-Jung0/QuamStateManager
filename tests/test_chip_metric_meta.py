@@ -43,9 +43,12 @@ class TestPaths:
         assert p["T1"]["q1"] == ["qubits.q1.T1"]
         assert p["readout_frequency"]["q1"] == ["qubits.q1.resonator.f_01"]
         assert p["gate_fidelity_avg"]["q1"] == ["qubits.q1.gate_fidelity.averaged"]
-        # a derived readout fidelity is as new as ANY cell of its matrix
-        assert sorted(p["ro_fidelity_g"]["q1"]) == sorted(
-            f"qubits.q1.resonator.confusion_matrix.{i}.{j}" for i in (0, 1) for j in (0, 1))
+        # S8 review P0-1 (supersedes "as new as ANY cell of its matrix"): a derived
+        # readout fidelity is as new as the cells its number is made of
+        cm = "qubits.q1.resonator.confusion_matrix"
+        assert p["ro_fidelity_g"]["q1"] == [f"{cm}.0.0"]
+        assert p["ro_fidelity_e"]["q1"] == [f"{cm}.1.1"]
+        assert sorted(p["assignment_fidelity"]["q1"]) == [f"{cm}.0.0", f"{cm}.1.1"]
         assert "T2echo" not in p          # absent leaf -> no entry, never invented
 
     def test_a_pointer_is_followed_to_where_its_history_lives(self):
@@ -369,8 +372,11 @@ def test_an_edited_matrix_cell_is_not_in_history(env):
         "expect_chip": tok}, headers={"Origin": "http://localhost"})
     assert r.status_code == 200, r.get_data(as_text=True)
     d = _meta(env)
-    for key in ("assignment_fidelity", "ro_fidelity_g", "ro_fidelity_e"):
+    for key in ("assignment_fidelity", "ro_fidelity_g"):
         assert d["q"][key]["q1"]["matches_current"] is False, (key, d["q"][key]["q1"])
+    # S8 review P0-1: |e> reads cell 1.1 only -- the 0.0 edit did not change the number
+    # it shows (this pin used to expect False: every cell of the matrix counted)
+    assert d["q"]["ro_fidelity_e"]["q1"]["matches_current"] is True
     assert d["q"]["T1"]["q1"]["matches_current"] is True       # untouched leaf
 
 

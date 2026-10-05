@@ -11875,6 +11875,8 @@ def _vh_present(p: dict, uid_roots, uid_memo: dict) -> dict:
 
 
 def _vh_wait_message(ans: dict) -> str:
+    if ans["mode"] == "fallback":           # S8 review P2-1: an end state, in S7's words
+        return ans.get("fallback_note") or _VH_FALLBACK_NOTES["unreadable"]
     if ans["mode"] == "preparing":
         return "Preparing the change history…"
     st = ans.get("status") or {}
@@ -17480,7 +17482,7 @@ def _hub_waiting(table) -> dict:
     from the ledger (the read's own building / preparing answer, or
     ``preparing`` when another request's read is in flight)."""
     ans = dict(table.waiting or table.answer)
-    if ans.get("mode") not in ("building", "preparing"):
+    if ans.get("mode") not in ("building", "preparing", "fallback"):
         ans["mode"] = "preparing"
     return ans
 
@@ -18012,8 +18014,10 @@ def topology_metric_meta():
                 return jsonify(table.part("metric_meta", lambda: _hub_metric_meta(table)))
             except _ramcache.Warming:
                 waiting = _hub_waiting(table)
+                ended = waiting["mode"] == "fallback"     # S8 review P2-1: nothing to wait for
                 return jsonify(ok=True, mode=waiting["mode"], message=_vh_wait_message(waiting),
-                               updating=True, q={}, p={}, snaps={})
+                               updating=not ended, q={}, p={}, snaps={},
+                               **({"notes": [_vh_wait_message(waiting)]} if ended else {}))
         payload = _legacy_topology_metric_meta().get_json()
         if payload.get("ok"):
             payload.update(mode="fallback", notes=[ans["fallback_note"]])
@@ -33563,7 +33567,9 @@ def _hub_param_changes(table) -> tuple[str, int]:
             rid, exp = ev.get("run_id"), ev.get("experiment") or ""
             label = f"run #{rid} {exp}".strip()
             sub = "each row says whether this run's own patch set it"
-            if "source_gone" not in head["flags"]:
+            # S8 review P3: a data link only on proof (§1.2) -- when this run's own patch
+            # set at least one value of the group; Trends / meta / grid drop it otherwise
+            if "source_gone" not in head["flags"] and any(c.get("proven") for c in changes):
                 uid = _uid_for_run_ref(head.get("folder"), rid, table.roots)
                 link = (f"Open run #{rid}, whose saved state this is (a row names it as "
                         f"the writer only where its own patch set the value)")

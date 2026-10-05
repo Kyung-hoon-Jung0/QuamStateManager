@@ -7,6 +7,7 @@ from collections import OrderedDict
 from contextlib import contextmanager
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
+import itertools
 import json
 import os
 from pathlib import Path
@@ -351,13 +352,29 @@ def _index_bytes(index: LedgerIndex) -> int:
 INDEX_CACHE = KeyedMemo("hub_read_index", sizeof=_index_bytes)
 
 
+_READER_GEN = itertools.count(1)
+
+
+class _GenConnection(sqlite3.Connection):
+    """A read connection that knows which opening it is (S8 review P1-1).
+
+    ``PRAGMA data_version`` counts per CONNECTION: a freshly opened one starts
+    over whatever the file holds, so after a reader is reopened (LRU eviction
+    past eight chips, a replaced ledger file) the same number can describe
+    different contents, and a cache keyed on it served the old answer. ``gen``
+    is unique per opening in this process; a read's version carries both."""
+
+    gen = 0
+
+
 class _Reader:
     def __init__(self, directory):
         self.path = Path(directory) / "ledger.sqlite"
         self.identity = self.file_identity()
         self.lock = threading.RLock()
         self.conn = sqlite3.connect(self.path.resolve().as_uri() + "?mode=ro", uri=True,
-                                    check_same_thread=False, timeout=5)
+                                    check_same_thread=False, timeout=5, factory=_GenConnection)
+        self.conn.gen = next(_READER_GEN)
         self.conn.row_factory = sqlite3.Row
 
     def file_identity(self):

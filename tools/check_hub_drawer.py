@@ -582,7 +582,14 @@ def alias_agreement(sm, ctx, dot_path: str) -> dict:
     from quam_state_manager.core import chip_trends_ram
     tbl = chip_trends_ram.table(hm, Path(ctx["path"]))
 
+    # docs/283 (S8): Chip Status Trends reads the change ledger, so the old
+    # alias-series path this compared no longer exists; the ledger Trends is
+    # pinned against the drawer by tests/test_hub_chip_status.py
+    legacy_trends = hasattr(r, "_trend_alias_series")
+
     def trends(alias_on: bool):
+        if not legacy_trends:
+            return None
         real = r._trend_alias_series
         if not alias_on:
             r._trend_alias_series = lambda dps: {}
@@ -623,13 +630,14 @@ def alias_agreement(sm, ctx, dot_path: str) -> dict:
     return {"path": dot_path,
             "before": {"drawer": before_drawer, "column": before_col, "trends": before_trends},
             "after": {"drawer": after, "column": after_col, "trends": after_trends},
-            "before_agree": before_drawer == before_col == before_trends,
+            "before_agree": before_drawer == before_col and (not legacy_trends or before_col == before_trends),
             "after_drawer_equals_column": after == after_col,
-            "after_trends_equals_in_force": after_trends == in_force,
-            "unmarked_rows_all_in_trends": unmarked <= set(after_trends),
+            "after_trends_equals_in_force": after_trends == in_force if legacy_trends else None,
+            "unmarked_rows_all_in_trends": unmarked <= set(after_trends) if legacy_trends else None,
             "rows": len(after), "rows_marked_before_via": marked,
             "in_force_points": len(in_force), "in_force_from_another_holder": len(other),
-            "after_agree": after == after_col and after_trends == in_force and unmarked <= set(after_trends),
+            "after_agree": after == after_col and (not legacy_trends or (
+                after_trends == in_force and unmarked <= set(after_trends))),
             "holder": ans["targets"]["v"]["holder_path"],
             "via": [h["from_path"] + " -> " + h["to_path"] for h in ans["targets"]["v"]["via"]]}
 

@@ -136,9 +136,8 @@ MUTATIONS = [
      '                    value is not _ABSENT and new is not _ABSENT and rules.same(value, new)):',
      '            if (value is _ABSENT and new is _ABSENT):',
      [E + "test_an_element_of_a_long_array_changes_only_when_it_does"]),
-    ("trends_alias_unread", RT, '            got.update(_trend_alias_series(_missing))',
-     '            got.update({})',
-     [E + "test_chip_trends_charts_an_alias_path_with_the_drawers_points"]),
+    # ("trends_alias_unread" retired: docs/283 (S8) moved Chip Status Trends onto the
+    # change ledger and removed _trend_alias_series; its mutations live in S8's tools)
     ("js_drawer_no_retry", JS,
      '                var wait = p.querySelector("[data-vh-retry]");',
      '                var wait = null;',
