@@ -6066,6 +6066,11 @@ def home():
         # agent_dry_run: the Runner's global_simulate for this chip -- the
         # agent's run_node stamps every run with it, and the Runner page that
         # shows the checkbox is hidden since docs/172, so the home says it.
+        if _is_htmx():
+            # docs/294: PaneState re-fetches the URL INTO #table-pane after a Back it
+            # could not restore; the whole page here nested a second app shell
+            return render_template("_agent_home.html", agent_dry_run=_agent_dry_run(),
+                                   agent_wiring=_agent_wiring())
         return render_template("base.html", **_ctx(page="agent_home", landing_config_exists=config_exists,
                                                    agent_dry_run=_agent_dry_run(),
                                                    agent_wiring=_agent_wiring()))
@@ -6134,7 +6139,11 @@ def _home_landing(config_exists, session):
         if (isinstance(p, str) and p != resume_path
                 and (Path(p) / "state.json").exists()):
             recents.append({"path": p, "name": _chip_display_name(Path(p))})
-    return render_template("base.html", **_ctx(
+    # docs/294: an htmx request (PaneState's refetch into #table-pane) gets the pane's
+    # own partial -- the one base.html includes for this page -- never the whole page
+    template = (("_landing_shell.html" if config_exists else "_landing_welcome.html")
+                if _is_htmx() else "base.html")
+    return render_template(template, **_ctx(
         page="home",
         landing_config_exists=config_exists,
         # for the no-config welcome's locate block (docs/63 §B): WHERE we
