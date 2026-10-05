@@ -19,8 +19,11 @@ Two display calculations live here, and neither is a history reader:
 
 from __future__ import annotations
 
+from collections import OrderedDict
 import json
 from pathlib import Path
+import threading
+from typing import Any
 
 from quam_state_manager.core import chip_trends_ram, hub_index, ramcache, value_history
 from quam_state_manager.core.history import _DERIVED_FIDELITY_PROPS, _VALUE_PATHS
@@ -91,6 +94,28 @@ def representative(points: list[dict]) -> dict:
     return points[-1]
 
 
+#: dataset roots (their spelling) -> {run folder: dataset uid}, shared by every
+#: request (S8 review P2-2): a folder's uid depends only on the folder and the
+#: roots, and recomputing it per request was a containment test per POINT
+#: (0.1 s of a 2,000-run Trends after every new run). Bounded: a few root sets,
+#: and a set's map starts over past _UID_MEMO_MAX folders.
+_UID_MEMOS: "OrderedDict[Any, dict]" = OrderedDict()
+_UID_MEMO_SETS = 8
+_UID_MEMO_MAX = 200_000
+_UID_MEMO_LOCK = threading.Lock()
+
+
+def _shared_uid_memo(roots_key) -> dict:
+    with _UID_MEMO_LOCK:
+        memo = _UID_MEMOS.get(roots_key)
+        if memo is None or len(memo) > _UID_MEMO_MAX:
+            memo = _UID_MEMOS[roots_key] = {}
+        _UID_MEMOS.move_to_end(roots_key)
+        while len(_UID_MEMOS) > _UID_MEMO_SETS:
+            _UID_MEMOS.popitem(last=False)
+        return memo
+
+
 class LedgerTable:
     """The Trends table interface (``chip_trends_ram.table``'s methods the
     renderers call) over the chip's ledger.
@@ -111,7 +136,6 @@ class LedgerTable:
         self.waiting: dict | None = None
         self.read, self.present = read, present
         self._roots = roots
-        self.uid_memo: dict = {}
         self.directory = str(Path(ctx["hub_chip_dir"]))
         status = answer.get("status") or {}
         #: what the ledger's own parts depend on (its paths, families): the
@@ -125,6 +149,7 @@ class LedgerTable:
             json.dumps({k: status.get(k) for k in
                         ("state", "roots", "deferred", "failed", "unreadable")},
                        sort_keys=True, default=str))
+        self.uid_memo: dict = _shared_uid_memo(self.token[len(self.ledger_token) + 1])
 
         def paths():
             with hub_index.snapshot(binding) as (conn, index):

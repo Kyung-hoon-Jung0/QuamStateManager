@@ -11247,13 +11247,37 @@ def _uid_roots() -> list[tuple[Path, str]]:
     return roots
 
 
+#: run folder spelling -> its resolved path (S8 review P2-2). ``Path.resolve``
+#: asks the file system twice per call on Windows, and the ledger surfaces call
+#: this once per POINT: 0.53 s of a 0.86 s Trends request after one new run on a
+#: 2,000-run chip, recomputed on every request (the uid memo is per request).
+#: A folder that moves changes its spelling or the roots, never this answer.
+_RESOLVED_FOLDERS: "OrderedDict[str, Path]" = OrderedDict()
+_RESOLVED_FOLDERS_MAX = 65536
+_RESOLVED_FOLDERS_LOCK = threading.Lock()
+
+
+def _resolved_folder(fp: str) -> Path:
+    with _RESOLVED_FOLDERS_LOCK:
+        hit = _RESOLVED_FOLDERS.get(fp)
+        if hit is not None:
+            _RESOLVED_FOLDERS.move_to_end(fp)
+            return hit
+    rp = Path(fp).resolve()                   # OSError propagates: nothing is cached
+    with _RESOLVED_FOLDERS_LOCK:
+        _RESOLVED_FOLDERS[fp] = rp
+        while len(_RESOLVED_FOLDERS) > _RESOLVED_FOLDERS_MAX:
+            _RESOLVED_FOLDERS.popitem(last=False)
+    return rp
+
+
 def _uid_for_run_ref(fp: Any, rid: Any, roots: list[tuple[Path, str]]) -> str | None:
     """Resolve a history row's (experiment_folder_path, run_id) to a dataset
     uid via root containment — None when unresolvable (no Data link)."""
     if not fp or rid is None:
         return None
     try:
-        rp = Path(fp).resolve()
+        rp = _resolved_folder(str(fp))
     except OSError:
         return None
     for root, key in roots:
