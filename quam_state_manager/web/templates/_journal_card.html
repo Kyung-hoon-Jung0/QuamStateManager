@@ -54,10 +54,12 @@
 <div class="jr-body jr-body-lazy" hx-get="/journal/card?day={{ day }}&amp;card={{ dom_id|urlencode }}" hx-trigger="toggle once from:closest details" hx-swap="outerHTML"><p class="muted">Loading...</p></div>
 {%- endmacro %}
 
-{% macro card(c, day, lazy=False) %}
+{# ``paged`` (docs/291): a day too large to send whole; the server answers
+   its search, so a row carries no search text of its own. #}
+{% macro card(c, day, lazy=False, paged=False) %}
     {% if c.kind == 'run' %}
     {% set dom_id = c.card_id or ('card-' ~ c.run_id) %}
-    <details class="jr-card jr-run jr-by-{{ (c.author or 'unknown').split(':')[0] }}{% if c.other_chip %} jr-other-chip{% endif %}" id="{{ dom_id }}" data-ts="{{ c.ts or 0 }}" data-run="{{ c.run_id }}" data-jr-order="{{ c.search_order }}" data-jr-search="{{ c.search_hay }}" data-jr-author="{{ c.author }}">
+    <details class="jr-card jr-run jr-by-{{ (c.author or 'unknown').split(':')[0] }}{% if c.other_chip %} jr-other-chip{% endif %}" id="{{ dom_id }}" data-ts="{{ c.ts or 0 }}" data-run="{{ c.run_id }}" data-jr-order="{{ c.search_order }}"{% if not paged %} data-jr-search="{{ c.search_hay }}" data-jr-author="{{ c.author }}"{% endif %}>
         {# The row is a grid: time, node, targets, pills, run, who;
            every cell in its column, so the eye scans down instead of hunting pills left and right #}
         <summary>
@@ -80,7 +82,7 @@
     </details>
     {% elif c.kind == 'agent_run' %}
     {% set folder_text = 'run folder #' ~ c.missing_run_id ~ ' is not in the chip history' if c.missing_run_id is not none else ('not run' if c.outcome == 'not run' else 'no run folder') %}
-    <details class="jr-card jr-run jr-agent-run jr-by-{{ (c.author or 'unknown').split(':')[0] }}" id="agent-{{ c.id }}" data-ts="{{ c.ts }}" data-jr-order="{{ c.search_order }}" data-jr-search="{{ c.search_hay }}" data-jr-author="{{ c.author }}">
+    <details class="jr-card jr-run jr-agent-run jr-by-{{ (c.author or 'unknown').split(':')[0] }}" id="agent-{{ c.id }}" data-ts="{{ c.ts }}" data-jr-order="{{ c.search_order }}"{% if not paged %} data-jr-search="{{ c.search_hay }}" data-jr-author="{{ c.author }}"{% endif %}>
         {# the run row's own columns, so it scans like every run: node, targets,
            what happened, "-" where the run number sits, who #}
         <summary>
@@ -98,7 +100,7 @@
     </details>
     {% else %}
     {% set n = c.entries|length %}
-    <details class="jr-card jr-write jr-by-{{ (c.author or 'unknown').split(':')[0] }}" data-ts="{{ c.ts or 0 }}" id="write-{{ c.id }}" data-jr-order="{{ c.search_order }}" data-jr-search="{{ c.search_hay }}" data-jr-author="{{ c.author }}">
+    <details class="jr-card jr-write jr-by-{{ (c.author or 'unknown').split(':')[0] }}" data-ts="{{ c.ts or 0 }}" id="write-{{ c.id }}" data-jr-order="{{ c.search_order }}"{% if not paged %} data-jr-search="{{ c.search_hay }}" data-jr-author="{{ c.author }}"{% endif %}>
         <summary>
             <span class="jr-time">{{ c.time }}</span>
             <span class="jr-family">{{ c.label or 'SM write' }}: {{ n }} value{{ 's' if n != 1 }}</span>
@@ -114,3 +116,11 @@
     </details>
     {% endif %}
 {% endmacro %}
+
+{# docs/291: the control at either end of a paged day's rows. It names how
+   many rows it loads and how many remain that way, under the page's filter. #}
+{% macro more_row(s, where) -%}
+{%- set w = s.window -%}
+{%- set n = w.earlier if where == 'earlier' else w.later -%}
+<div class="jr-more-row jr-more-{{ where }}"><button type="button" class="btn-sm outline jr-more" onclick="JournalPage.more(this)" data-url="/journal/cards?day={{ s.day }}&amp;q={{ s.filters.q|urlencode }}&amp;author={{ s.filters.author|urlencode }}&amp;{{ 'before' if where == 'earlier' else 'after' }}={{ (w.first if where == 'earlier' else w.last)|urlencode }}">Show {{ '{:,}'.format([n, w.page]|min) }} {{ where }}</button> <span class="muted jr-more-note">({{ '{:,}'.format(n) }} more {{ 'match' if w.filtered else 'on this day' }})</span></div>
+{%- endmacro %}

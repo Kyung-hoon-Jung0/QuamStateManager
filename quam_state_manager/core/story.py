@@ -777,12 +777,24 @@ def _read_json_dict(path: str) -> dict:
     return value if isinstance(value, dict) else {}
 
 
-def _run_facts(folder: str) -> dict:
+def _run_facts(folder: str, memo: dict | None = None) -> dict:
     """``node.json`` + ``data.json`` of a run folder, read the way the
     Datasets scanner reads them (one reading of targets, parameters and
-    figures)."""
-    from quam_state_manager.core.dataset import _calc_duration, _extract_figure_names
-    from quam_state_manager.core.scanner import _with_pair_qubits, node_parameters
+    figures).
+
+    ``memo`` is one day build's own record (docs/291): a folder asked for
+    twice in one build -- a run, then the same run as the next run's
+    "previous" -- is stat'ed once, whichever way its path is spelled."""
+    if memo is None:
+        return _read_run_facts(folder)
+    key = os.path.normcase(os.path.normpath(folder))
+    hit = memo.get(key)
+    if hit is None:
+        hit = memo[key] = _read_run_facts(folder)
+    return hit
+
+
+def _read_run_facts(folder: str) -> dict:
     node_p, data_p = os.path.join(folder, "node.json"), os.path.join(folder, "data.json")
     token = (_file_sig(node_p), _file_sig(data_p))
     with _RUN_FACTS_LOCK:
@@ -790,6 +802,8 @@ def _run_facts(folder: str) -> dict:
         if hit is not None and hit[0] == token:
             _RUN_FACTS.move_to_end(folder)
             return hit[1]
+    from quam_state_manager.core.dataset import _calc_duration, _extract_figure_names
+    from quam_state_manager.core.scanner import _with_pair_qubits, node_parameters
     node, payload = _read_json_dict(node_p), _read_json_dict(data_p)
     meta, data = node.get("metadata") or {}, node.get("data") or {}
     raw = data.get("parameters") or {}
@@ -810,7 +824,7 @@ def _run_facts(folder: str) -> dict:
     return facts
 
 
-def _hub_run(event, ds):
+def _hub_run(event, ds, memo=None):
     """One run event plus what its folder says. A run Datasets holds (same
     folder) is read from the Datasets index in RAM; any other is read from its
     own folder, cached (docs/281: never a path resolve per run)."""
@@ -833,7 +847,7 @@ def _hub_run(event, ds):
                "qubit_pairs": list(info.qubit_pairs or []), "outcomes": info.outcomes or {},
                "status": info.status, "figure_names": list(info.figure_names or [])}
     else:
-        run = dict(_run_facts(folder))
+        run = dict(_run_facts(folder, memo))
     run.update(run_id=event["run_id"], experiment_name=event["experiment"], folder_path=folder,
                instant_us=event["t_utc_us"], _hub=event, _from_ds=info is not None)
     if not run.get("qubits") and not run.get("qubit_pairs"):
@@ -1192,6 +1206,17 @@ def _int_like(value, path, int_of):
     return value
 
 
+def _one_zone(ledger):
+    """The ledger bound to ONE zone for one day's build (docs/291). A project
+    binding reads the zone setting again on every call -- a file stat and a
+    JSON parse, 60-170 us -- and a day of thousands of runs asks for it
+    thousands of times; one build is one zone anyway."""
+    from quam_state_manager.core.hub_index import ReadContext, _binding
+    if isinstance(ledger, ReadContext) and ledger.instance is not None:
+        return ReadContext(ledger.store, None, None, _binding(ledger)[1])
+    return ledger
+
+
 def _build_day_hub(instance_path, chip, day, *, ds, active_path, events, uid_of, gate_compute,
                    with_gates, ledger, agent_chip, gate_wait=False, int_of=None) -> dict:
     from quam_state_manager.core import hub_query, hub_sync
@@ -1201,6 +1226,7 @@ def _build_day_hub(instance_path, chip, day, *, ds, active_path, events, uid_of,
     records = _agent_records(instance_path, agent_chip or chip)
     try:
         history = hub_sync.require_ready(directory)
+        ledger = _one_zone(ledger)
         page = hub_query.timeline(ledger, day_from=day, day_to=day, limit=1_000_000,
                                   include_runs=bool(records), include_ambiguous=True)
         if page["cursor"]:
@@ -1223,7 +1249,8 @@ def _build_day_hub(instance_path, chip, day, *, ds, active_path, events, uid_of,
 
     cards: list[dict] = []
     used: set[int] = set()
-    day_runs = [(event, _hub_run(event, ds)) for event in reversed(hub_events) if event["kind"] == "run"]
+    facts_memo: dict = {}
+    day_runs = [(event, _hub_run(event, ds, facts_memo)) for event in reversed(hub_events) if event["kind"] == "run"]
     root_keys: dict = {}
     # A number two folders hold names, in an older line, the run of the folder
     # Datasets showed when the line was written; otherwise no run at all.
@@ -1284,7 +1311,7 @@ def _build_day_hub(instance_path, chip, day, *, ds, active_path, events, uid_of,
                     else ds.get_run(prev_id) if prev_id else None)
         elif previous.get(eid):
             prev_id, folder_prev = previous[eid]
-            prev = _run_facts(folder_prev)
+            prev = _run_facts(folder_prev, facts_memo)
         fam_key, fam_label = _family_label(run.get("experiment_name") or "")
         gate = _hub_gate(instance_path, run, ledger_key, gate_compute, ds, gate_wait) if with_gates else None
         figs = list(run.get("figure_names") or [])

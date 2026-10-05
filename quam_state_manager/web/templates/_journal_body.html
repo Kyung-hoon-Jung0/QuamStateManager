@@ -1,6 +1,6 @@
 {# The day's body: counts, unassigned lines, digest strip, cards. #}
 {% from '_delta_macros.html' import before_after %}
-{% from '_journal_card.html' import card %}
+{% from '_journal_card.html' import card, more_row %}{% from '_journal_strip.html' import strip %}
 {% set s = story %}
 {% set history = s.history|default({'state': 'ready'}) %}
 {% if history.state == 'building' %}
@@ -21,7 +21,7 @@
 {% endif %}
 {% if history.state not in ('building', 'unavailable') %}
 {# customer feedback 2026-09-08: the day's numbers as stat pills, one glance #}
-<div class="jr-counts" data-day="{{ s.day }}" data-chip="{{ s.chip }}">
+<div class="jr-counts" data-day="{{ s.day }}" data-chip="{{ s.chip }}"{% if s.paged %} data-jr-ts="{{ s.day_ts }}"{% if s.reused %} data-jr-reused="1"{% endif %}{% endif %}>
     <span class="muted">{{ 'Available totals (incomplete)' if history.state == 'degraded' else ('As last recorded' if history.state == 'idle' else 'Day totals') }}</span>
     <span class="jr-stat jr-stat-day">{{ s.day }}</span>
     <span class="jr-stat"><b>{{ s.counts.runs }}</b> run{{ 's' if s.counts.runs != 1 }}</span>
@@ -63,28 +63,7 @@
    pills with arrows (one screen per target). Now: consecutive runs of ONE family
    are one segment -- the family named once, the runs as small numbered chips
    coloured by the node's own outcome; SM-blue section header. #}
-<section class="jr-section jr-digest{% if s.timeline|length > 6 %} jr-digest-folded{% endif %}">
-    <div class="jr-sec-head">
-        <span class="jr-sec-title">Per-target timeline</span>
-        <span class="jr-sec-note muted">time order · a run's colour is the node's own outcome · click a run to jump</span>
-        <span class="jr-sec-tools">
-            {% if s.timeline|length > 6 %}<button type="button" class="btn-sm outline jr-digest-more" onclick="JournalPage.toggleDigest(this)">all {{ s.timeline|length }} targets</button>{% endif %}
-            <button type="button" class="btn-sm outline jr-copy" onclick="JournalPage.copyDigest(this)" title="copy the strip as text">Copy as text</button>
-        </span>
-    </div>
-    {% for target, segs in s.timeline.items() %}
-    <div class="jr-digest-row"><span class="jr-digest-target">{{ target }}</span><span class="jr-digest-segs">
-        {%- for seg in segs -%}
-        <span class="jr-seg" title="{{ seg.full }}"><span class="jr-seg-fam">{{ seg.family }}</span>
-            {%- for st in seg.steps -%}
-            <a class="jr-pill jr-out-{{ st.outcome or 'none' }}" href="#{{ st.card_id or ('card-' ~ st.run_id) }}"
-               title="#{{ st.run_id }} · {{ st.family }} · {{ st.outcome or 'no outcome' }} · gate {{ st.gate or '?' }} · {{ st.author }}">{{ st.run_id }}</a>
-            {%- endfor -%}
-        </span>
-        {%- endfor -%}
-    </span></div>
-    {% endfor %}
-</section>
+{% if s.strip_later %}<section class="jr-section jr-digest jr-digest-folded jr-strip-later" hx-get="/journal/strip?day={{ s.day }}&amp;q={{ s.filters.q|urlencode }}&amp;author={{ s.filters.author|urlencode }}" hx-trigger="load" hx-swap="outerHTML"><div class="jr-sec-head"><span class="jr-sec-title">Per-target timeline</span><span class="jr-sec-note muted">loading the strip of {{ '{:,}'.format(s.strip_runs) }} runs...</span></div></section>{% else %}{% filter jr_squeeze(s.paged) %}{{ strip(s) }}{% endfilter %}{% endif %}
 {% endif %}
 
 {% set empty_text %}{% if s.cards or s.unassigned %}Nothing matches the filter.{% elif s.loose %}No runs on {{ s.day }} — only the journal line{{ 's' if s.loose|length != 1 }} below.{% else %}No runs and no journal lines on {{ s.day }}.{% endif %}{% endset %}
@@ -95,9 +74,10 @@
     <span class="jr-sec-note muted">time · node · targets · outcome · gate · run · who — click a row for what it wrote and why</span>
 </div>
 
-<div class="jr-cards">{% for c in s.cards_shown %}{{ card(c, s.day, s.lazy) }}{% endfor %}</div>
-{% set cached_html %}{% for c in s.cards_cached %}{{ card(c, s.day, s.lazy) }}{% endfor %}{% endset %}
-<script type="application/json" class="jr-search-cache">{{ cached_html|string|tojson }}</script>
+{% if s.window %}<p class="muted jr-window-note">Showing <b class="jr-window-n">{{ '{:,}'.format(s.cards_shown|length) }}</b> of {{ '{:,}'.format(s.window.n) }} rows {{ 'that match' if s.window.filtered else 'on this day' }}.</p>
+{% endif %}<div class="jr-cards"{% if s.paged %} data-jr-paged="1" data-jr-q="{{ s.filters.q }}" data-jr-who="{{ s.filters.author }}"{% endif %}>{% if s.window and s.window.earlier %}{{ more_row(s, 'earlier') }}{% endif %}{% for c in s.cards_shown %}{{ card(c, s.day, s.lazy, s.paged)|jr_squeeze(s.paged) }}{% endfor %}{% if s.window and s.window.later %}{{ more_row(s, 'later') }}{% endif %}</div>
+{% if not s.paged %}{% set cached_html %}{% for c in s.cards_cached %}{{ card(c, s.day, s.lazy) }}{% endfor %}{% endset %}
+<script type="application/json" class="jr-search-cache">{{ cached_html|string|tojson }}</script>{% endif %}
 {% endif %}
 
 {% if s.loose %}

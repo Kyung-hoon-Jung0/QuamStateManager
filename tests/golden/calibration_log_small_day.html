@@ -1,0 +1,375 @@
+
+
+
+
+
+
+
+<p class="jr-note jr-history-status jr-history-idle">As last recorded: this window is not updating the chip history, so runs saved since are not shown.</p>
+
+
+
+
+<div class="jr-counts" data-day="2026-10-03" data-chip="chipX">
+    <span class="muted">As last recorded</span>
+    <span class="jr-stat jr-stat-day">2026-10-03</span>
+    <span class="jr-stat"><b>5</b> runs</span>
+    
+    
+    
+    <span class="jr-stat"><b>1</b> write (2 values)</span>
+    
+    
+    <span id="jr-since" class="jr-since" hidden></span>
+</div>
+
+
+
+
+
+
+
+
+
+
+
+
+<section class="jr-section jr-digest">
+    <div class="jr-sec-head">
+        <span class="jr-sec-title">Per-target timeline</span>
+        <span class="jr-sec-note muted">time order · a run's colour is the node's own outcome · click a run to jump</span>
+        <span class="jr-sec-tools">
+            
+            <button type="button" class="btn-sm outline jr-copy" onclick="JournalPage.copyDigest(this)" title="copy the strip as text">Copy as text</button>
+        </span>
+    </div>
+    
+    <div class="jr-digest-row"><span class="jr-digest-target">qA1</span><span class="jr-digest-segs"><span class="jr-seg" title="scan"><span class="jr-seg-fam">scan</span><a class="jr-pill jr-out-none" href="#card-1"
+               title="#1 · scan · no outcome · gate unknown · unknown">1</a></span><span class="jr-seg" title="Echo (T2echo)"><span class="jr-seg-fam">Echo</span><a class="jr-pill jr-out-none" href="#card-2"
+               title="#2 · Echo (T2echo) · no outcome · gate unknown · unknown">2</a></span><span class="jr-seg" title="scan"><span class="jr-seg-fam">scan</span><a class="jr-pill jr-out-none" href="#card-3"
+               title="#3 · scan · no outcome · gate unknown · unknown">3</a></span><span class="jr-seg" title="Echo (T2echo)"><span class="jr-seg-fam">Echo</span><a class="jr-pill jr-out-none" href="#card-4"
+               title="#4 · Echo (T2echo) · no outcome · gate unknown · unknown">4</a></span><span class="jr-seg" title="scan"><span class="jr-seg-fam">scan</span><a class="jr-pill jr-out-none" href="#card-5"
+               title="#5 · scan · no outcome · gate unknown · unknown">5</a></span></span></div>
+    
+    <div class="jr-digest-row"><span class="jr-digest-target">qA2</span><span class="jr-digest-segs"><span class="jr-seg" title="scan"><span class="jr-seg-fam">scan</span><a class="jr-pill jr-out-none" href="#card-3"
+               title="#3 · scan · no outcome · gate unknown · unknown">3</a></span></span></div>
+    
+</section>
+
+
+
+<p class="muted jr-empty" data-empty-text="Nothing matches the filter." hidden style="display:none">Nothing matches the filter.</p>
+
+<div class="jr-sec-head jr-runs-head">
+    <span class="jr-sec-title">Runs <span class="jr-sec-count">5</span></span>
+    <span class="jr-sec-note muted">time · node · targets · outcome · gate · run · who — click a row for what it wrote and why</span>
+</div>
+
+<div class="jr-cards">
+    
+    
+    <details class="jr-card jr-run jr-by-unknown" id="card-1" data-ts="1791036060.0" data-run="1" data-jr-order="0" data-jr-search="10:01:00 unknown scan scan qA1 no outcome #1 gate unknown no autofit family for this node first state in the chip history" data-jr-author="unknown">
+        
+        <summary>
+            <span class="jr-time">10:01:00</span>
+            <span class="jr-family" title="scan">scan</span>
+            <span class="jr-targets">qA1</span>
+            <span class="jr-pills">
+                <span class="jr-badge jr-out-none" title="the node's own outcome">no outcome</span>
+                <span class="jr-badge jr-gate-unknown" title="deterministic gate, anchored on the run's own saved state — no autofit family for this node">gate unknown</span>
+                
+            </span>
+            
+            <a class="jr-run-link" href="/dataset/KEY:1" hx-get="/dataset/KEY:1" hx-target="#table-pane" hx-push-url="true" onclick="event.stopPropagation()">#1</a>
+            <span class="jr-who-cell">
+                <span class="jr-author jr-author-unknown" title="none">unknown</span>
+                
+            </span>
+        </summary>
+        
+    
+        <div class="jr-body">
+            <p class="jr-gate-reason muted">gate: no autofit family for this node</p>
+            
+            
+            
+<div class="jr-sec jr-first-state"><b>First state in the chip history</b>
+    <p class="muted">2 values recorded; there is no earlier state to compare against.</p></div>
+
+            
+            <div class="jr-sec"><b>Because</b>
+                <p class="muted">not recorded</p></div>
+            
+            
+            <div class="jr-sec jr-claim" data-run="1" data-uid="KEY:1">
+                
+                <details class="jr-claim-form"><summary class="muted">I ran this</summary>
+                    <label>Who <input type="text" class="jr-who" placeholder="your name" value=""></label>
+                    <label>Note <input type="text" class="jr-note-in" placeholder="optional" value=""></label>
+                    <button type="button" class="btn-sm" onclick="JournalPage.claim(this)">Save</button>
+                </details>
+            </div>
+            <p class="muted jr-meta">scan · ? s · <span title="TMP/archive/2026-10-03/#1_scan_100100">folder</span></p>
+        </div>
+    
+
+    </details>
+    
+
+    
+    
+    <details class="jr-card jr-run jr-by-unknown" id="card-2" data-ts="1791036120.0" data-run="2" data-jr-order="1" data-jr-search="10:02:00 unknown echo Echo (T2echo) qA1 no outcome #2 gate unknown the run saved no state to anchor on v 1.0 2.0 w 1.0 2.0" data-jr-author="unknown">
+        
+        <summary>
+            <span class="jr-time">10:02:00</span>
+            <span class="jr-family" title="echo">Echo (T2echo)</span>
+            <span class="jr-targets">qA1</span>
+            <span class="jr-pills">
+                <span class="jr-badge jr-out-none" title="the node's own outcome">no outcome</span>
+                <span class="jr-badge jr-gate-unknown" title="deterministic gate, anchored on the run's own saved state — the run saved no state to anchor on">gate unknown</span>
+                
+            </span>
+            
+            <a class="jr-run-link" href="/dataset/KEY:2" hx-get="/dataset/KEY:2" hx-target="#table-pane" hx-push-url="true" onclick="event.stopPropagation()">#2</a>
+            <span class="jr-who-cell">
+                <span class="jr-author jr-author-unknown" title="none">unknown</span>
+                
+            </span>
+        </summary>
+        
+    
+        <div class="jr-body">
+            <p class="jr-gate-reason muted">gate: the run saved no state to anchor on</p>
+            
+            
+            
+<div class="jr-sec jr-run-changes"><b>Changed since the state before this run</b>
+    <span class="muted">this run's saved state vs the chip history just before it</span>
+    <ul class="jr-changes"><li><code class="jr-path" data-path="v">v</code>
+    <span class="ba-old">1.0</span> <span class="ba-arrow">&rarr;</span> <span class="ba-new">2.0</span><span class="val-delta delta-up" title="difference: +1 (+100%)">+1 <span class="val-delta-pct">(+100%)</span></span></li><li><code class="jr-path" data-path="w">w</code>
+    <span class="ba-old">1.0</span> <span class="ba-arrow">&rarr;</span> <span class="ba-new">2.0</span><span class="val-delta delta-up" title="difference: +1 (+100%)">+1 <span class="val-delta-pct">(+100%)</span></span></li></ul></div>
+
+            
+            <div class="jr-sec"><b>Because</b>
+                <p class="muted">not recorded</p></div>
+            
+            
+            <div class="jr-sec jr-claim" data-run="2" data-uid="KEY:2">
+                
+                <details class="jr-claim-form"><summary class="muted">I ran this</summary>
+                    <label>Who <input type="text" class="jr-who" placeholder="your name" value=""></label>
+                    <label>Note <input type="text" class="jr-note-in" placeholder="optional" value=""></label>
+                    <button type="button" class="btn-sm" onclick="JournalPage.claim(this)">Save</button>
+                </details>
+            </div>
+            <p class="muted jr-meta">echo · ? s · <span title="TMP/archive/2026-10-03/#2_echo_100200">folder</span></p>
+        </div>
+    
+
+    </details>
+    
+
+    
+    
+    <details class="jr-card jr-run jr-by-unknown" id="card-3" data-ts="1791036180.0" data-run="3" data-jr-order="2" data-jr-search="10:03:00 unknown scan scan qA1 qA2 no outcome #3 gate unknown no autofit family for this node v 2.0 3.0 w 2.0 0.0" data-jr-author="unknown">
+        
+        <summary>
+            <span class="jr-time">10:03:00</span>
+            <span class="jr-family" title="scan">scan</span>
+            <span class="jr-targets">qA1 qA2</span>
+            <span class="jr-pills">
+                <span class="jr-badge jr-out-none" title="the node's own outcome">no outcome</span>
+                <span class="jr-badge jr-gate-unknown" title="deterministic gate, anchored on the run's own saved state — no autofit family for this node">gate unknown</span>
+                
+            </span>
+            
+            <a class="jr-run-link" href="/dataset/KEY:3" hx-get="/dataset/KEY:3" hx-target="#table-pane" hx-push-url="true" onclick="event.stopPropagation()">#3</a>
+            <span class="jr-who-cell">
+                <span class="jr-author jr-author-unknown" title="none">unknown</span>
+                
+            </span>
+        </summary>
+        
+    
+        <div class="jr-body">
+            <p class="jr-gate-reason muted">gate: no autofit family for this node</p>
+            
+            
+            
+<div class="jr-sec jr-run-changes"><b>Changed since the state before this run</b>
+    <span class="muted">this run's saved state vs the chip history just before it</span>
+    <ul class="jr-changes"><li><code class="jr-path" data-path="v">v</code>
+    <span class="ba-old">2.0</span> <span class="ba-arrow">&rarr;</span> <span class="ba-new">3.0</span><span class="val-delta delta-up" title="difference: +1 (+50%)">+1 <span class="val-delta-pct">(+50%)</span></span></li><li><code class="jr-path" data-path="w">w</code>
+    <span class="ba-old">2.0</span> <span class="ba-arrow">&rarr;</span> <span class="ba-new">0.0</span><span class="val-delta delta-down" title="difference: -2 (-100%)">-2 <span class="val-delta-pct">(-100%)</span></span></li></ul></div>
+
+            
+            <div class="jr-sec"><b>Because</b>
+                <p class="muted">not recorded</p></div>
+            
+            
+            <div class="jr-sec jr-claim" data-run="3" data-uid="KEY:3">
+                
+                <details class="jr-claim-form"><summary class="muted">I ran this</summary>
+                    <label>Who <input type="text" class="jr-who" placeholder="your name" value=""></label>
+                    <label>Note <input type="text" class="jr-note-in" placeholder="optional" value=""></label>
+                    <button type="button" class="btn-sm" onclick="JournalPage.claim(this)">Save</button>
+                </details>
+            </div>
+            <p class="muted jr-meta">scan · ? s · <span title="TMP/archive/2026-10-03/#3_scan_100300">folder</span></p>
+        </div>
+    
+
+    </details>
+    
+
+    
+    
+    <details class="jr-card jr-write jr-by-human" data-ts="1791036210.0" id="write-event-6" data-jr-order="3" data-jr-search="10:03:30 human:alice plan plan-a Applied to the chip v added 9.0 human:alice w added 0.0 human:alice" data-jr-author="human:alice">
+        <summary>
+            <span class="jr-time">10:03:30</span>
+            <span class="jr-family">Applied to the chip: 2 values</span>
+            <span class="jr-targets"></span>
+            <span class="jr-pills"></span>
+            <span class="jr-run-link muted"></span>
+            <span class="jr-who-cell">
+                <span class="jr-author jr-author-human">human:alice</span>
+                <span class="jr-plan muted">plan plan-a</span>
+            </span>
+        </summary>
+        
+    
+        <div class="jr-body">
+            <p class="jr-write-kind muted">Applied to the chip</p>
+            
+            
+            <ul class="jr-changes"><li><code class="jr-path" data-path="v">v</code>
+    <span class="ba-op ba-op-add">+ added</span> <span class="ba-new">9.0</span></li><li><code class="jr-path" data-path="w">w</code>
+    <span class="ba-op ba-op-add">+ added</span> <span class="ba-new">0.0</span></li></ul></div>
+    
+
+    </details>
+    
+
+    
+    
+    <details class="jr-card jr-run jr-by-unknown" id="card-4" data-ts="1791036240.0" data-run="4" data-jr-order="4" data-jr-search="10:04:00 unknown echo Echo (T2echo) qA1 no outcome #4 gate unknown the run saved no state to anchor on v 3.0 4.0 w 0.0 1.0" data-jr-author="unknown">
+        
+        <summary>
+            <span class="jr-time">10:04:00</span>
+            <span class="jr-family" title="echo">Echo (T2echo)</span>
+            <span class="jr-targets">qA1</span>
+            <span class="jr-pills">
+                <span class="jr-badge jr-out-none" title="the node's own outcome">no outcome</span>
+                <span class="jr-badge jr-gate-unknown" title="deterministic gate, anchored on the run's own saved state — the run saved no state to anchor on">gate unknown</span>
+                
+            </span>
+            
+            <a class="jr-run-link" href="/dataset/KEY:4" hx-get="/dataset/KEY:4" hx-target="#table-pane" hx-push-url="true" onclick="event.stopPropagation()">#4</a>
+            <span class="jr-who-cell">
+                <span class="jr-author jr-author-unknown" title="none">unknown</span>
+                
+            </span>
+        </summary>
+        
+    
+        <div class="jr-body">
+            <p class="jr-gate-reason muted">gate: the run saved no state to anchor on</p>
+            
+            
+            
+<div class="jr-sec jr-run-changes"><b>Changed since the state before this run</b>
+    <span class="muted">this run's saved state vs the chip history just before it</span>
+    <ul class="jr-changes"><li><code class="jr-path" data-path="v">v</code>
+    <span class="ba-old">3.0</span> <span class="ba-arrow">&rarr;</span> <span class="ba-new">4.0</span><span class="val-delta delta-up" title="difference: +1 (+33.3%)">+1 <span class="val-delta-pct">(+33.3%)</span></span></li><li><code class="jr-path" data-path="w">w</code>
+    <span class="ba-old">0.0</span> <span class="ba-arrow">&rarr;</span> <span class="ba-new">1.0</span><span class="val-delta delta-up" title="difference: +1">+1</span></li></ul></div>
+
+            
+            <div class="jr-sec"><b>Because</b>
+                <p class="muted">not recorded</p></div>
+            
+            
+            <div class="jr-sec jr-claim" data-run="4" data-uid="KEY:4">
+                
+                <details class="jr-claim-form"><summary class="muted">I ran this</summary>
+                    <label>Who <input type="text" class="jr-who" placeholder="your name" value=""></label>
+                    <label>Note <input type="text" class="jr-note-in" placeholder="optional" value=""></label>
+                    <button type="button" class="btn-sm" onclick="JournalPage.claim(this)">Save</button>
+                </details>
+            </div>
+            <p class="muted jr-meta">echo · ? s · <span title="TMP/archive/2026-10-03/#4_echo_100400">folder</span></p>
+        </div>
+    
+
+    </details>
+    
+
+    
+    
+    <details class="jr-card jr-run jr-by-unknown" id="card-5" data-ts="1791036300.0" data-run="5" data-jr-order="5" data-jr-search="10:05:00 unknown scan scan qA1 no outcome #5 gate unknown no autofit family for this node v 4.0 5.0 w 1.0 2.0" data-jr-author="unknown">
+        
+        <summary>
+            <span class="jr-time">10:05:00</span>
+            <span class="jr-family" title="scan">scan</span>
+            <span class="jr-targets">qA1</span>
+            <span class="jr-pills">
+                <span class="jr-badge jr-out-none" title="the node's own outcome">no outcome</span>
+                <span class="jr-badge jr-gate-unknown" title="deterministic gate, anchored on the run's own saved state — no autofit family for this node">gate unknown</span>
+                
+            </span>
+            
+            <a class="jr-run-link" href="/dataset/KEY:5" hx-get="/dataset/KEY:5" hx-target="#table-pane" hx-push-url="true" onclick="event.stopPropagation()">#5</a>
+            <span class="jr-who-cell">
+                <span class="jr-author jr-author-unknown" title="none">unknown</span>
+                
+            </span>
+        </summary>
+        
+    
+        <div class="jr-body">
+            <p class="jr-gate-reason muted">gate: no autofit family for this node</p>
+            
+            
+            
+<div class="jr-sec jr-run-changes"><b>Changed since the state before this run</b>
+    <span class="muted">this run's saved state vs the chip history just before it</span>
+    <ul class="jr-changes"><li><code class="jr-path" data-path="v">v</code>
+    <span class="ba-old">4.0</span> <span class="ba-arrow">&rarr;</span> <span class="ba-new">5.0</span><span class="val-delta delta-up" title="difference: +1 (+25%)">+1 <span class="val-delta-pct">(+25%)</span></span></li><li><code class="jr-path" data-path="w">w</code>
+    <span class="ba-old">1.0</span> <span class="ba-arrow">&rarr;</span> <span class="ba-new">2.0</span><span class="val-delta delta-up" title="difference: +1 (+100%)">+1 <span class="val-delta-pct">(+100%)</span></span></li></ul></div>
+
+            
+            <div class="jr-sec"><b>Because</b>
+                <p class="muted">not recorded</p></div>
+            
+            
+            <div class="jr-sec jr-claim" data-run="5" data-uid="KEY:5">
+                
+                <details class="jr-claim-form"><summary class="muted">I ran this</summary>
+                    <label>Who <input type="text" class="jr-who" placeholder="your name" value=""></label>
+                    <label>Note <input type="text" class="jr-note-in" placeholder="optional" value=""></label>
+                    <button type="button" class="btn-sm" onclick="JournalPage.claim(this)">Save</button>
+                </details>
+            </div>
+            <p class="muted jr-meta">scan · ? s · <span title="TMP/archive/2026-10-03/#5_scan_100500">folder</span></p>
+        </div>
+    
+
+    </details>
+    
+</div>
+
+<script type="application/json" class="jr-search-cache">""</script>
+
+
+
+
+<span class="jr-daynav" id="jr-daynav" hx-swap-oob="true">
+    <button type="button" class="btn-sm outline" onclick="JournalPage.day('2026-10-02')" title="previous day">‹</button>
+    <input type="date" name="day_pick" id="jr-day-pick" value="2026-10-03" onchange="JournalPage.day(this.value)">
+    <button type="button" class="btn-sm outline" onclick="JournalPage.day('2026-10-04')"
+             title="next day">›</button>
+    <button type="button" class="btn-sm outline" onclick="JournalPage.day('')">today</button>
+</span>
+<select name="author" id="jr-author" title="who" hx-swap-oob="true">
+    <option value="">everyone</option>
+    <option value="human:alice" >human:alice</option><option value="unknown" >unknown</option>
+</select>

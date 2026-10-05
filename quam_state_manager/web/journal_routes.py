@@ -14,12 +14,14 @@ from __future__ import annotations
 import logging
 import hashlib
 import json
+import re
 import threading
 from datetime import datetime, timedelta
 from pathlib import Path
 from types import SimpleNamespace
 
 from flask import Blueprint, current_app, jsonify, render_template, request
+from markupsafe import Markup
 
 from quam_state_manager.core import journal as journal_mod
 from quam_state_manager.core import story
@@ -34,6 +36,23 @@ _DAY_HTML_LOCK = threading.Lock()
 def _r():
     from quam_state_manager.web import routes
     return routes
+
+
+#: whitespace between two tags, or a line break between two attributes of one
+#: tag (a raw ``"`` is always an attribute's quote: values and text escape it)
+_GAP = re.compile(r'>\s+<|(?<=")\s*\n\s*(?=[\w:-]+=)')
+
+
+@journal_bp.app_template_filter("jr_squeeze")
+def _jr_squeeze(html, on=True):
+    """docs/291: a paged day's rows and strip without the whitespace between
+    their tags and the line breaks inside them. Every container there is a
+    flex or grid box, where that whitespace never shows; a paged day sends
+    thousands of tags, and each gap is a node the browser builds. Attribute
+    values and text are never touched."""
+    if not on:
+        return html
+    return Markup(_GAP.sub(lambda m: "><" if m.group(0)[0] == ">" else " ", str(html)))
 
 
 def _chip_name() -> str:
@@ -175,16 +194,154 @@ _MISSING = object()
 #: A day with more cards than this sends each card's row and fetches its body
 #: when it is first opened (docs/281: a 551-run day was a 4 MB page).
 LAZY_CARDS = 150
+#: A day with more cards than this is PAGED (docs/291): it renders the newest
+#: PAGE_CARDS rows of what the filter matches and sends the earlier (or later)
+#: ones a slice at a time; search and the author filter are then answered by
+#: the server over the whole day, never by the rows a page happens to hold.
+PAGE_CARDS = 300
 _DAY_DATA_LOCK = threading.Lock()
+#: The window a page may ask a paged day for (docs/291).
+_WINDOW_ARGS = ("at", "from", "to")
 
 
-def _matches(card: dict, f: dict) -> bool:
+def _matches(card: dict, f: dict, grps=None, hays=None) -> bool:
     author = str(card.get("author") or card.get("kind") or "")
-    return (not f["author"] or author.startswith(f["author"])) and matches_hay(
-        card["search_hay"].lower(), groups(f["q"]))
+    if f["author"] and not author.startswith(f["author"]):
+        return False
+    grps = groups(f["q"]) if grps is None else grps
+    if not grps:
+        return True
+    if hays is None:
+        return matches_hay(card["search_hay"].lower(), grps)
+    # a paged day's card: its search text is made the first time a search
+    # needs it, kept beside the shared build, never written into the card
+    hay = hays.get(card["search_order"])
+    if hay is None:
+        hay = hays[card["search_order"]] = _search_text(card).lower()
+    return matches_hay(hay, grps)
 
 
-def _build(day: str, *, filters=None, gate_wait=False, lazy_ok=True) -> dict:
+def _dom_id(c: dict) -> str:
+    """The element id a card renders with (``_journal_card.html``)."""
+    if c["kind"] == "run":
+        return c.get("card_id") or f"card-{c.get('run_id')}"
+    return f"write-{c.get('id')}" if c["kind"] == "write" else f"agent-{c.get('id')}"
+
+
+def _day_key(day: str):
+    return (str(_r()._active_path()), day)
+
+
+def _cached_day(day: str):
+    """The last build of *day* for the open chip that this process holds
+    (a lazy day's), or None."""
+    with _DAY_DATA_LOCK:
+        hit = (current_app.config.get("journal_day_cards") or {}).get(_day_key(day))
+    return hit["data"] if hit else None
+
+
+def _window(matched: list, args: dict) -> tuple[int, int]:
+    """Which rows of a paged day's matches render (docs/291): the newest
+    page; or the page around the card ``at`` names (a jump to a card the
+    page does not hold); or ``from`` a card to ``to`` a card (else to the
+    newest) -- the rows a page already shows, kept when the same day is
+    built again (a claim, the gates arriving)."""
+    n = len(matched)
+    if n <= PAGE_CARDS:
+        return 0, n
+    index = {_dom_id(c): i for i, c in enumerate(matched)}
+    at = index.get(args.get("at") or "")
+    if at is not None:
+        lo = max(0, min(at - PAGE_CARDS // 2, n - PAGE_CARDS))
+        return lo, lo + PAGE_CARDS
+    first = index.get(args.get("from") or "")
+    if first is not None:
+        last = index.get(args.get("to") or "")
+        return first, (last + 1 if last is not None and last >= first else n)
+    return n - PAGE_CARDS, n
+
+
+def _ts_deltas(cards: list) -> str:
+    """Every card's instant, as whole milliseconds rounded UP and written as
+    differences (docs/291): a paged page says how many of the WHOLE day are
+    new since a person's last visit, not how many of the rows it holds.
+    Rounding up keeps ``instant > last visit`` exact for a visit stamped in
+    milliseconds."""
+    out, prev = [], 0
+    for c in cards:
+        ts = c.get("ts") or 0
+        try:
+            ms = -(-round(float(ts) * 1e6) // 1000)
+        except (TypeError, ValueError, OverflowError):
+            ms = 0
+        out.append(str(ms - prev))
+        prev = ms
+    return ",".join(out)
+
+
+def _timeline_of(timeline: dict, shown: set) -> dict:
+    """The day's per-target strip with only the runs the filter matched --
+    a segment, or a target, left with none is gone, exactly what the page's
+    own search hides on a day it holds whole (docs/291)."""
+    out = {}
+    for target, segs in timeline.items():
+        kept = []
+        for seg in segs:
+            steps = [st for st in seg["steps"] if st["card_id"] in shown]
+            if steps:
+                kept.append(dict(seg, steps=steps))
+        if kept:
+            out[target] = kept
+    return out
+
+
+def _build(day: str, *, filters=None, gate_wait=False, lazy_ok=True, window=None, reuse=False) -> dict:
+    """The day as the page renders it. ``window`` picks the rows of a paged
+    day (``_window``); ``reuse`` (docs/291): only the filter changed, so the
+    day's last build is filtered again when this process still holds it --
+    the same day a page that holds every row filters in the browser."""
+    base = _cached_day(day) if reuse and lazy_ok else None
+    if base is None:
+        base = _build_base(day, gate_wait=gate_wait, lazy_ok=lazy_ok)
+    data = _view(base, _filters() if filters is None else filters, window or {})
+    data["reused"] = bool(reuse and base.get("paged"))
+    return data
+
+
+def _view(base: dict, f: dict, window: dict) -> dict:
+    """One filter (and, on a paged day, one window) over a built day. The
+    built day is shared between requests and never changed here."""
+    data = dict(base)
+    data["filters"] = f
+    grps = groups(f["q"])
+    hit = [_matches(c, f, grps, base.get("hays")) for c in base["cards"]]
+    matched = [c for c, ok in zip(base["cards"], hit) if ok]
+    data["window"] = None
+    if base.get("paged"):
+        lo, hi = _window(matched, window)
+        data["cards_shown"] = matched[lo:hi]
+        data["cards_cached"] = []
+        if len(matched) > PAGE_CARDS:
+            data["window"] = {"n": len(matched), "earlier": lo, "later": len(matched) - hi, "page": PAGE_CARDS,
+                              "first": _dom_id(matched[lo]), "last": _dom_id(matched[hi - 1]),
+                              "filtered": bool(f["q"] or f["author"])}
+        if len(matched) < len(base["cards"]):
+            data["timeline"] = _timeline_of(base["timeline"], {_dom_id(c) for c in matched})
+        # a strip of more runs than a page of rows starts folded, so the rows
+        # are on the first screen, and arrives after them (/journal/strip);
+        # its button shows the whole strip
+        data["strip_runs"] = len({st["card_id"] for segs in data["timeline"].values()
+                                  for seg in segs for st in seg["steps"]})
+        data["strip_fold"] = data["strip_later"] = data["strip_runs"] > PAGE_CARDS
+    else:
+        data["cards_shown"] = matched
+        data["cards_cached"] = [c for c, ok in zip(base["cards"], hit) if not ok]
+    data["runs_shown"] = sum(c["kind"] in ("run", "agent_run") for c in matched)
+    data["lines_shown"] = [e for e in base["loose"] + base["unassigned"] if _matches(e, f, grps)]
+    return data
+
+
+def _build_base(day: str, *, gate_wait=False, lazy_ok=True) -> dict:
     r = _r()
     ds = r._dataset_store()
     active = r._active_path()
@@ -220,33 +377,20 @@ def _build(day: str, *, filters=None, gate_wait=False, lazy_ok=True) -> dict:
                                gate_wait=gate_wait or bool(current_app.config.get(
                                    "JOURNAL_GATE_WAIT", current_app.testing)),
                                int_of=_int_types() if ledger is not None else None)
-    f = _filters() if filters is None else filters
-    data["filters"] = f
+    data["lazy"] = bool(lazy_ok and len(data["cards"]) > LAZY_CARDS)
+    data["paged"] = bool(lazy_ok and len(data["cards"]) > PAGE_CARDS)
     for order, c in enumerate(data["cards"]):
         c["search_order"] = order
-    for c in data["cards"] + data["loose"] + data["unassigned"]:
+    # docs/291: a paged day's rows carry no search text, so a card's is made
+    # only when a search needs it (``_matches``)
+    for c in ([] if data["paged"] else data["cards"]) + data["loose"] + data["unassigned"]:
         c["search_hay"] = _search_text(c)
     for c in data["cards"]:
         for e in c.get("journal") or []:
             e["search_hay"] = _line_text(e)
-    data["lazy"] = bool(lazy_ok and len(data["cards"]) > LAZY_CARDS)
-    if data["lazy"]:
-        # the bodies a lazy day sends later, by their element id
-        by_dom = {}
-        for c in data["cards"]:
-            dom = (c.get("card_id") or f"card-{c.get('run_id')}" if c["kind"] == "run" else
-                   f"write-{c.get('id')}" if c["kind"] == "write" else f"agent-{c.get('id')}")
-            by_dom[dom] = c
-        days = current_app.config.setdefault("journal_day_cards", {})
-        with _DAY_DATA_LOCK:
-            days.pop((str(active), day), None)
-            days[(str(active), day)] = by_dom
-            while len(days) > 4:
-                days.pop(next(iter(days)))
-    data["cards_shown"] = [c for c in data["cards"] if _matches(c, f)]
-    data["cards_cached"] = [c for c in data["cards"] if not _matches(c, f)]
-    data["runs_shown"] = sum(c["kind"] in ("run", "agent_run") for c in data["cards_shown"])
-    data["lines_shown"] = [e for e in data["loose"] + data["unassigned"] if _matches(e, f)]
+    if data["paged"]:
+        data["day_ts"] = _ts_deltas(data["cards"])
+        data["hays"] = {}
     data["no_dataset"] = ds is None and ledger is None
     data["folder"] = str(journal_mod.root(current_app.instance_path))
     d0 = datetime.strptime(day, "%Y-%m-%d")
@@ -266,6 +410,17 @@ def _build(day: str, *, filters=None, gate_wait=False, lazy_ok=True) -> dict:
     data["days"] = journal_mod.list_days(current_app.instance_path, _chip_name())
     data["authors"] = sorted({c.get("author") for c in data["cards"] if c.get("author")})
     data["loaded"] = bool(active)
+    if data["lazy"]:
+        # the bodies a lazy day sends later, by their element id; a paged
+        # day's slices and filters read the same build (docs/291). Kept
+        # only once complete: other requests read it as it is.
+        entry = {"data": data, "by_dom": {_dom_id(c): c for c in data["cards"]}}
+        days = current_app.config.setdefault("journal_day_cards", {})
+        with _DAY_DATA_LOCK:
+            days.pop((str(active), day), None)
+            days[(str(active), day)] = entry
+            while len(days) > 4:
+                days.pop(next(iter(days)))
     return data
 
 
@@ -278,7 +433,7 @@ def _agent_chip_key():
 def journal_page():
     r = _r()
     day = _day_arg()
-    data = _build(day)
+    data = _build(day, window=_window_args())
     template = "_journal.html" if r._is_htmx() else "journal.html"
     return render_template(template, **r._ctx(page="journal", story=data))
 
@@ -292,14 +447,21 @@ def journal_day():
     button were whatever the full page render had baked in, and never moved
     again. Measured in Chrome: three presses of the previous-day button moved
     one day, the next-day button stayed disabled forever, and `today` never
-    appeared at all."""
-    data = _build(_day_arg())
+    appeared at all.
+
+    docs/291: on a paged day ``at`` / ``from`` / ``to`` pick the rows
+    (``_window``) and ``reuse=1`` says only the filter changed."""
+    data = _build(_day_arg(), window=_window_args(), reuse=request.args.get("reuse") == "1")
     # Hash the freshly read content, so ledger writes, claims, journal lines,
     # author changes and warmup transitions invalidate the rendered fragment.
     # Keep two days at most; a large day can otherwise retain megabytes of HTML.
     # Every key the template reads, except the three split from "cards" and
     # "loose" by the filters (already in the token through them).
-    keys = sorted(k for k in data if k not in ("cards_shown", "cards_cached", "lines_shown"))
+    # docs/291: a paged day renders the rows it shows and the whole day only
+    # through keys of its own (counts, strip, instants), so its token hashes
+    # those rows, not all of the day's cards again
+    derived = ("cards_cached", "lines_shown", "hays") + (("cards",) if data.get("paged") else ("cards_shown",))
+    keys = sorted(k for k in data if k not in derived)
     token = hashlib.sha256(json.dumps([[k, data.get(k)] for k in keys], default=str,
                                      ensure_ascii=True).encode()).digest()
     cache = current_app.config.setdefault("journal_day_html", {})
@@ -322,18 +484,76 @@ def journal_card():
     page's own card template when the card is first opened."""
     day = _day_arg()
     card = request.args.get("card") or ""
-    key = (str(_r()._active_path()), day)
-    with _DAY_DATA_LOCK:
-        found = (current_app.config.get("journal_day_cards") or {}).get(key, {}).get(card)
+    found = _cached_card(day, card)
     if found is None:
         # a restart or another window rebuilt the day: build it again
         _build(day, filters={"author": "", "q": ""})
-        with _DAY_DATA_LOCK:
-            found = (current_app.config.get("journal_day_cards") or {}).get(key, {}).get(card)
+        found = _cached_card(day, card)
     if found is None:
         return '<div class="jr-body"><p class="muted">This card is no longer on this day.</p></div>'
     module = current_app.jinja_env.get_template("_journal_card.html").module
     resp = current_app.response_class(str(module.card_body(found, day)), mimetype="text/html")
+    resp.headers["Cache-Control"] = "no-store"
+    return resp
+
+
+def _cached_card(day: str, card: str):
+    with _DAY_DATA_LOCK:
+        hit = (current_app.config.get("journal_day_cards") or {}).get(_day_key(day))
+    return hit["by_dom"].get(card) if hit else None
+
+
+def _window_args() -> dict:
+    return {k: (request.args.get(k) or "").strip() for k in _WINDOW_ARGS}
+
+
+@journal_bp.route("/journal/cards")
+def journal_cards():
+    """docs/291: the next rows of a paged day, ``before`` or ``after`` the
+    card a page shows first or last, under the page's own filter: up to
+    PAGE_CARDS rows in time order and, when more remain, the control for
+    the rest. Read from the build the page was rendered from while this
+    process holds it, else from a new one. A card that is not on the day
+    any more (or a day that is not paged now) says so; never a guess."""
+    day = _day_arg()
+    before = (request.args.get("before") or "").strip()
+    after = (request.args.get("after") or "").strip()
+    base = _cached_day(day) or _build_base(day)
+    f = _filters()
+    grps = groups(f["q"])
+    matched = [c for c in base["cards"] if _matches(c, f, grps, base.get("hays"))]
+    anchor = before or after
+    at = (next((i for i, c in enumerate(matched) if _dom_id(c) == anchor), None)
+          if anchor and base.get("paged") else None)
+    if at is None:
+        return render_template("_journal_slice.html", story={"day": day, "filters": f, "gone": True})
+    if before:
+        lo, hi = max(0, at - PAGE_CARDS), at
+    else:
+        lo, hi = at + 1, min(len(matched), at + 1 + PAGE_CARDS)
+    rows = matched[lo:hi]
+    s = {"day": day, "filters": f, "lazy": base.get("lazy"), "cards_shown": rows,
+         "window": {"n": len(matched), "page": PAGE_CARDS, "earlier": lo if before else 0,
+                    "later": len(matched) - hi if after else 0,
+                    "first": _dom_id(rows[0]) if rows else before,
+                    "last": _dom_id(rows[-1]) if rows else after,
+                    "filtered": bool(f["q"] or f["author"])}}
+    resp = current_app.response_class(render_template("_journal_slice.html", story=s), mimetype="text/html")
+    resp.headers["Cache-Control"] = "no-store"
+    return resp
+
+
+@journal_bp.route("/journal/strip")
+def journal_strip():
+    """docs/291: a paged day's per-target strip, sent after its rows: the
+    whole day's runs under the page's filter, from the day's last build."""
+    data = _build(_day_arg(), reuse=True)
+    data["strip_later"] = False
+    if not data.get("timeline"):
+        return ""
+    module = current_app.jinja_env.get_template("_journal_strip.html").module
+    resp = current_app.response_class(str(_jr_squeeze(module.strip(data), bool(data.get("paged")))),
+                                      mimetype="text/html")
     resp.headers["Cache-Control"] = "no-store"
     return resp
 

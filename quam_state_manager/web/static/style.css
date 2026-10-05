@@ -12239,6 +12239,19 @@ body.scheduler-active #pending-tray { opacity: .5; pointer-events: none; }
 .jr-badge.jr-gate-unknown { opacity: .55; }
 .jr-body { padding: .15rem 0 .55rem 4.85rem; font-size: .8rem; }
 .jr-sec > b { display: block; font-size: .68rem; text-transform: uppercase; letter-spacing: .05em; color: var(--pico-primary); margin-bottom: .05rem; }
+/* docs/291: a paged day -- how many rows are shown, the controls at either
+   end of them, and the row a link jumped to */
+.jr-window-note { font-size: .74rem; margin: 0 0 .3rem; }
+.jr-more-row { display: flex; gap: .5rem; align-items: center; flex-wrap: wrap; padding: .3rem .55rem; font-size: .76rem;
+    background: color-mix(in srgb, var(--pico-primary) 4%, transparent);
+    border-bottom: 1px solid color-mix(in srgb, var(--pico-muted-border-color) 55%, transparent); }
+.jr-more-row.jr-more-later { border-bottom: 0; border-top: 1px solid color-mix(in srgb, var(--pico-muted-border-color) 55%, transparent); }
+.jr-more-row .btn-sm { margin: 0; width: auto; }
+.jr-cards > .jr-slice-gone { margin: 0; padding: .3rem .55rem; font-size: .78rem; }
+.jr-card.jr-jumped > summary { background: color-mix(in srgb, var(--pico-primary) 18%, transparent); }
+/* the strip that arrives after the rows holds its folded height meanwhile,
+   so the rows do not move when it lands */
+.jr-digest.jr-strip-later { min-height: 12.5rem; }
 @media (max-width: 980px) {
     .jr-card > summary { display: flex; flex-wrap: wrap; gap: .45rem; }
     .jr-body { padding-left: 0; }

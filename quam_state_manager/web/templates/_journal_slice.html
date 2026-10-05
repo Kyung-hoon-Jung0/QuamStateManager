@@ -1,0 +1,6 @@
+{# docs/291: the next rows of a paged day (/journal/cards), in time order,
+   with the control for the rest when more remain that way. #}
+{% from '_journal_card.html' import card, more_row %}
+{% set s = story %}
+{% if s.gone %}<p class="jr-note warn jr-slice-gone">This day changed since it was shown. <button type="button" class="btn-sm outline" onclick="JournalPage.day('{{ s.day }}')">Reload the day</button></p>
+{% else %}{% if s.window.earlier %}{{ more_row(s, 'earlier') }}{% endif %}{% for c in s.cards_shown %}{{ card(c, s.day, s.lazy, True)|jr_squeeze }}{% endfor %}{% if s.window.later %}{{ more_row(s, 'later') }}{% endif %}{% endif %}

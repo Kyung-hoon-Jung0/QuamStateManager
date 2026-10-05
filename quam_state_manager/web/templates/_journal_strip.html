@@ -1,0 +1,25 @@
+{# The per-target strip of a day (customer feedback 2026-09-08), one macro for
+   the day's body and for /journal/strip, which sends a paged day's strip
+   after its rows (docs/291). #}
+{% macro strip(s) %}<section class="jr-section jr-digest{% if s.timeline|length > 6 or s.strip_fold %} jr-digest-folded{% endif %}">
+    <div class="jr-sec-head">
+        <span class="jr-sec-title">Per-target timeline</span>
+        <span class="jr-sec-note muted">time order · a run's colour is the node's own outcome · click a run to jump</span>
+        <span class="jr-sec-tools">
+            {% if s.timeline|length > 6 %}<button type="button" class="btn-sm outline jr-digest-more" onclick="JournalPage.toggleDigest(this)">all {{ s.timeline|length }} targets</button>{% elif s.strip_fold %}<button type="button" class="btn-sm outline jr-digest-more" onclick="JournalPage.toggleDigest(this)">all {{ '{:,}'.format(s.strip_runs) }} runs</button>{% endif %}
+            <button type="button" class="btn-sm outline jr-copy" onclick="JournalPage.copyDigest(this)" title="copy the strip as text">Copy as text</button>
+        </span>
+    </div>
+    {% for target, segs in s.timeline.items() %}
+    <div class="jr-digest-row"><span class="jr-digest-target">{{ target }}</span><span class="jr-digest-segs">
+        {%- for seg in segs -%}
+        <span class="jr-seg" title="{{ seg.full }}"><span class="jr-seg-fam">{{ seg.family }}</span>
+            {%- for st in seg.steps -%}
+            <a class="jr-pill jr-out-{{ st.outcome or 'none' }}" href="#{{ st.card_id or ('card-' ~ st.run_id) }}"
+               title="#{{ st.run_id }} · {{ st.family }} · {{ st.outcome or 'no outcome' }} · gate {{ st.gate or '?' }} · {{ st.author }}">{{ st.run_id }}</a>
+            {%- endfor -%}
+        </span>
+        {%- endfor -%}
+    </span></div>
+    {% endfor %}
+</section>{% endmacro %}

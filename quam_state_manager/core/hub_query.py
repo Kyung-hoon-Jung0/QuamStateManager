@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import base64
+import bisect
 from datetime import date
 import hashlib
 import gzip
@@ -280,17 +281,52 @@ def previous_in_folder(store, eids):
         return out
     with snapshot(store) as (conn, _index):
         roots = {row[0]: row[1] for row in conn.execute("SELECT root_id, path FROM roots")}
+        # docs/291: one read per (folder, node), not one per run -- a day of
+        # 3,000 runs was 3,000 queries. Each run still looks at the 50 runs of
+        # its folder and node just before it, nearest first.
+        ids = list(eids)
+        cur_of = {}
+        for start in range(0, len(ids), 500):
+            chunk = ids[start:start + 500]
+            sql = ("SELECT eid, root_id, experiment, ord, targets FROM events WHERE eid IN ("
+                   + ",".join("?" for _ in chunk) + ")")
+            cur_of.update((row["eid"], row) for row in conn.execute(sql, chunk))
+        span = {}
+        for cur in cur_of.values():
+            if cur["root_id"] is None:
+                continue
+            key = (cur["root_id"], cur["experiment"])
+            lo, hi = span.get(key, (cur["ord"], cur["ord"]))
+            span[key] = (min(lo, cur["ord"]), max(hi, cur["ord"]))
+        before = {}
+        for (root_id, experiment), (lo, hi) in span.items():
+            edge = conn.execute("SELECT ord FROM events WHERE kind='run' AND root_id=? AND experiment=? AND ord<? "
+                                "ORDER BY ord DESC LIMIT 1 OFFSET 49", (root_id, experiment, lo)).fetchone()
+            sql = ("SELECT run_id, rel_path, targets, ord FROM events WHERE kind='run' AND root_id=? "
+                   "AND experiment=? AND ord<?" + (" AND ord>=?" if edge else "") + " ORDER BY ord")
+            rows = conn.execute(sql, (root_id, experiment, hi) + ((edge[0],) if edge else ())).fetchall()
+            before[(root_id, experiment)] = ([row["ord"] for row in rows], rows)
+        names, folders = {}, {}
+
+        def targets_of(text):
+            hit = names.get(text)
+            if hit is None:
+                hit = names[text] = set(_target_names(text))
+            return hit
         for eid in eids:
-            cur = conn.execute("SELECT root_id, experiment, ord, targets FROM events WHERE eid=?", (eid,)).fetchone()
+            cur = cur_of.get(eid)
             if cur is None or cur["root_id"] is None:
                 continue
-            mine = set(_target_names(cur["targets"]))
-            for row in conn.execute("SELECT run_id, rel_path, targets FROM events WHERE kind='run' AND root_id=? "
-                                    "AND experiment=? AND ord<? ORDER BY ord DESC LIMIT 50",
-                                    (cur["root_id"], cur["experiment"], cur["ord"])):
-                theirs = set(_target_names(row["targets"]))
+            ords, rows = before[(cur["root_id"], cur["experiment"])]
+            at = bisect.bisect_left(ords, cur["ord"])
+            mine = targets_of(cur["targets"])
+            for row in reversed(rows[max(0, at - 50):at]):
+                theirs = targets_of(row["targets"])
                 if not mine or not theirs or mine & theirs:
-                    out[eid] = (row["run_id"], str(Path(roots[cur["root_id"]]) / (row["rel_path"] or "")))
+                    base = folders.get(cur["root_id"])
+                    if base is None:
+                        base = folders[cur["root_id"]] = Path(roots[cur["root_id"]])
+                    out[eid] = (row["run_id"], str(base / (row["rel_path"] or "")))
                     break
     return out
 
