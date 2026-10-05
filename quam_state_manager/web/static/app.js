@@ -709,8 +709,9 @@ document.addEventListener('htmx:afterSwap', function(evt) {
     // while dispatching a toggle by hand fills the group instantly. htmx has
     // processed the element and its listener works; nothing ever rings it.
     //
-    // So ring it. Only for a group that is open AND still showing the
+    // So ask. Only for a group that is open AND still showing the
     // placeholder -- a group with its runs already in it is left alone.
+    // (A person's open rings `lazy-open` -- the listener below this handler.)
     tree.querySelectorAll('details[data-lazy-group][open]').forEach(function (g) {
         if (!g.querySelector('.tree-lazy-hint')) return;   // it has its runs
         if (g.__lazyAsked) return;                         // one ask per element
@@ -750,6 +751,22 @@ document.addEventListener('htmx:afterSwap', function(evt) {
         requestAnimationFrame(function() { sidebar.scrollTop = _sidebarSticky.scrollTop; });
     }
 });
+
+/* A lazy date group's "it was opened" signal. The markup used to say
+ * `hx-trigger="toggle[this.open] once"`, but an htmx trigger FILTER is compiled
+ * with Function(), which the app's Content-Security-Policy refuses: every full
+ * page load logged an EvalError per lazy group and htmx dropped the filter (the
+ * group still loaded only because its first toggle happens to be the opening).
+ * The filter now lives here: a person opening a lazy group that still shows its
+ * placeholder rings the group's own `lazy-open once` trigger. The restore path
+ * above asks on its own and marks `__lazyAsked`, so the two never both ask. */
+document.addEventListener('toggle', function (evt) {
+    var d = evt.target;
+    if (!d || !d.matches || !d.matches('details[data-lazy-group]') || !d.open) return;
+    if (d.__lazyAsked || !d.querySelector('.tree-lazy-hint')) return;
+    d.__lazyAsked = true;
+    if (window.htmx) window.htmx.trigger(d, 'lazy-open');
+}, true);   // capture: `toggle` does not bubble
 
 /* Below-the-fold result reveal (audit P0-2/P0-3). The State-History "Compare 2
  * selected" / "View changes" / stage / restore / 409-gate all swap their result

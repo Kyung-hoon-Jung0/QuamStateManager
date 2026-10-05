@@ -41,7 +41,7 @@ function groupHtml(open, filled) {
     return '<details class="tree-root" open><span class="tree-root-label"><span title="D:\\archive">archive</span></span>'
         + '<details class="tree-dir" data-tpath="2026-08-19" data-lazy-group="1"'
         + ' hx-get="' + HX_GET + '" hx-vals=\'' + HX_VALS + '\''
-        + ' hx-trigger="toggle[this.open] once" hx-target="find ul.tree-entries" hx-swap="innerHTML"'
+        + ' hx-trigger="lazy-open once" hx-target="find ul.tree-entries" hx-swap="innerHTML"'
         + (open ? ' open' : '') + '>'
         + '<summary>2026-08-19</summary>'
         + '<ul class="tree-entries" data-lazy="1">'
@@ -74,9 +74,10 @@ function makeWorld() {
     global.ResizeObserver = class { observe() {} disconnect() {} unobserve() {} };
     window.ResizeObserver = global.ResizeObserver;
     window.__ajax = [];
+    window.__trig = [];
     window.htmx = {
         ajax: function (verb, url, opts) { window.__ajax.push({ verb, url, opts }); return Promise.resolve(); },
-        trigger: function () {}, process: function () {},
+        trigger: function (el, name) { window.__trig.push({ el, name }); }, process: function () {},
     };
     global.htmx = window.htmx;
     window.eval("fetch = window.fetch = function(){ return new Promise(function(){}); };");
@@ -183,6 +184,36 @@ async function refetchCycle(win, { openBefore = true, filledAfter = false,
         await tick(30);
         ok(win.__ajax.filter((a) => String(a.url).indexOf('/workspace/tree/group') === 0).length === 0,
            'the same element is asked once, not once per afterSwap');
+    }
+
+    // 5. a PERSON opening a lazy group (CSP: no hx-trigger filter -- an htmx filter
+    //    is compiled with Function(), which the app's policy refuses and logged an
+    //    EvalError per lazy group on every page load). The open rings the group's
+    //    own `lazy-open once` trigger, once, and only for a group still waiting.
+    {
+        const win = makeWorld();
+        const d = win.document;
+        const tree = d.getElementById('sidebar-tree');
+        tree.innerHTML = groupHtml(false, false);
+        const g = d.querySelector('details[data-lazy-group]');
+        ok(g.getAttribute('hx-trigger') === 'lazy-open once', 'the markup carries no trigger filter');
+        g.open = true;
+        await tick(30);
+        const rung = win.__trig.filter((t) => t.name === 'lazy-open');
+        ok(rung.length === 1 && rung[0].el === g, 'opening a waiting group rings lazy-open once (got ' + rung.length + ')');
+        g.open = false; await tick(10); g.open = true; await tick(30);
+        ok(win.__trig.filter((t) => t.name === 'lazy-open').length === 1, 'opening it again rings nothing more');
+        win.__trig.length = 0;
+        tree.innerHTML = groupHtml(false, true);
+        d.querySelector('details[data-lazy-group]').open = true;
+        await tick(30);
+        ok(win.__trig.length === 0, 'a group that already has its runs rings nothing');
+        // the restore path asks by itself: its toggle must not ALSO ring the trigger
+        win.__trig.length = 0;
+        const asked = await refetchCycle(win);
+        ok(asked.length === 1 && win.__trig.filter((t) => t.name === 'lazy-open').length === 0,
+           'a restored group is asked once in all (' + asked.length + ' ask, '
+           + win.__trig.length + ' ring)');
     }
 
     console.log(fails ? ('FAILED: ' + fails) : ('ALL OK (' + passes + ' assertions)'));

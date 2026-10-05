@@ -55,3 +55,20 @@ def test_the_restore_asks_rather_than_simulating_a_toggle():
         "the parameters are read off the element so they cannot drift from the markup"
     assert ".trigger(g, 'toggle')" not in block and "dispatchEvent(new Event('toggle'))" not in block, \
         "a simulated toggle was measured NOT to reach this trigger -- see docs/164"
+
+
+def test_no_template_hx_trigger_carries_a_filter():
+    """An htmx trigger filter (``event[expr]``) is compiled with Function(); the app's
+    Content-Security-Policy refuses that, so every page load logged an EvalError per
+    lazy group and htmx silently dropped the filter."""
+    import re
+    root = Path(__file__).resolve().parents[1] / "quam_state_manager" / "web" / "templates"
+    bad = []
+    for f in root.glob("*.html"):
+        for m in re.finditer(r'hx-trigger="([^"]*)"', f.read_text(encoding="utf-8")):
+            # an event name followed directly by [ is a filter; "from:find input[name=x]" is a selector
+            for part in m.group(1).split(","):
+                head = part.strip().split(" ")[0]
+                if "[" in head:
+                    bad.append((f.name, m.group(1)))
+    assert not bad, bad
