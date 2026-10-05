@@ -81,13 +81,101 @@ def _filters() -> dict:
             "q": (request.args.get("q") or "").strip()}
 
 
-def _search_text(value) -> str:
-    """Search saved content, including paths and attached journal lines."""
-    if isinstance(value, dict):
-        return " ".join(_search_text(v) for k, v in value.items() if k != "search_hay")
-    if isinstance(value, (list, tuple)):
-        return " ".join(_search_text(v) for v in value)
-    return "" if value is None else str(value)
+_OP_WORD = {"add": "added", "gone": "removed", "retarget": "retargeted", "first": "first recorded"}
+
+
+def _value_words(v) -> str:
+    """A value as the card shows it, plus its plain number spelling."""
+    from quam_state_manager.core.units import group_digits
+    if v is None:
+        return "null"
+    if isinstance(v, bool):
+        return "true" if v else "false"
+    if isinstance(v, (int, float)):
+        shown = group_digits(v)
+        return shown if shown == repr(v) else f"{shown} {v!r}"
+    if isinstance(v, dict) and "_array" in v and "_hash" in v:
+        return f"[{v['_array']} values]"
+    if isinstance(v, (dict, list)):
+        return json.dumps(v, default=str)
+    return str(v)
+
+
+def _row_words(row) -> str:
+    return " ".join(x for x in (str(row.get("path") or ""), _OP_WORD.get(row.get("op"), ""),
+                                _value_words(row.get("old")) if row.get("op") != "add" else "",
+                                _value_words(row.get("new")) if row.get("op") != "gone" else "",
+                                "undone" if row.get("taken_back") else "") if x)
+
+
+def _line_text(e) -> str:
+    return " ".join(str(x) for x in (e.get("time"), e.get("kind"), e.get("text"), e.get("because")) if x)
+
+
+def _search_text(c) -> str:
+    """docs/281 review: what a person can SEE on the card -- never internal
+    ids, instants or folder hashes (a run number "700" used to match 40 cards
+    through their timestamps)."""
+    kind = c.get("kind")
+    if kind not in ("run", "write", "agent_run"):
+        return _line_text(c)
+    parts = [c.get("time"), c.get("author"), c.get("plan_id") and f"plan {c['plan_id']}"]
+    if kind == "run":
+        gate = c.get("gate") or {}
+        parts += [c.get("node"), c.get("family_label"), " ".join(c.get("targets") or []),
+                  c.get("outcome") or "no outcome", f"#{c.get('run_id')}",
+                  gate and f"gate {gate.get('verdict')}", gate.get("reason"),
+                  " ".join(f["label"] for f in c.get("flags") or []),
+                  c.get("first_state_n") and "first state in the chip history",
+                  c.get("because"), c.get("note")]
+        parts += [_row_words(r) for r in c.get("writes") or []]
+        parts += [f"{p.get('key')} {_value_words(p.get('old'))} {_value_words(p.get('new'))}"
+                  for p in c.get("params_diff") or []]
+        parts += [_line_text(e) for e in c.get("journal") or []]
+    elif kind == "write":
+        parts += [c.get("label") or c.get("event_kind"), "undone" if c.get("undone") else "",
+                  "partly undone" if c.get("partly_undone") else ""]
+        parts += [_row_words(r) + " " + str(r.get("actor") or "") for r in c.get("entries") or []]
+        parts += [f"takes back the write of {u.get('time')}" for u in c.get("undoes") or [] if u.get("time")]
+    else:
+        parts += [c.get("sentence"), c.get("reason"), c.get("purpose"), c.get("short"),
+                  c.get("step") is not None and f"step {c['step']}"]
+    return " ".join(str(x) for x in parts if x)
+
+
+def _int_types():
+    """docs/281 review: which ledger paths the OPEN chip stores as integers
+    (the ledger keeps every number as REAL); None without an open chip."""
+    store = _r()._store()
+    doc = getattr(store, "merged", None) if store is not None else None
+    if not isinstance(doc, dict):
+        return None
+    from quam_state_manager.core.hub_store import segments
+    memo: dict[str, bool] = {}
+
+    def int_of(path: str) -> bool:
+        hit = memo.get(path)
+        if hit is None:
+            node = doc
+            for part in segments(path):
+                if isinstance(node, dict):
+                    node = node.get(part, _MISSING)
+                elif isinstance(node, list) and part.isdigit() and int(part) < len(node):
+                    node = node[int(part)]
+                else:
+                    node = _MISSING
+                if node is _MISSING:
+                    break
+            hit = memo[path] = isinstance(node, int) and not isinstance(node, bool)
+        return hit
+    return int_of
+
+
+_MISSING = object()
+#: A day with more cards than this sends each card's row and fetches its body
+#: when it is first opened (docs/281: a 551-run day was a 4 MB page).
+LAZY_CARDS = 150
+_DAY_DATA_LOCK = threading.Lock()
 
 
 def _matches(card: dict, f: dict) -> bool:
@@ -96,7 +184,7 @@ def _matches(card: dict, f: dict) -> bool:
         card["search_hay"].lower(), groups(f["q"]))
 
 
-def _build(day: str, *, filters=None) -> dict:
+def _build(day: str, *, filters=None, gate_wait=False, lazy_ok=True) -> dict:
     r = _r()
     ds = r._dataset_store()
     active = r._active_path()
@@ -116,11 +204,22 @@ def _build(day: str, *, filters=None) -> dict:
                                 current_app.instance_path)
     elif ledger is not None and not (ledger.store.directory / "ledger.sqlite").exists():
         from quam_state_manager.core import hub_sync
-        data = story._empty_day(_chip_name(), day, dict(hub_sync.status(ledger.store.directory), state="building"), current_app.instance_path)
+        st = hub_sync.status(ledger.store.directory)
+        # building -> say so and refresh; no sync at all -> say so once (a
+        # page that polls a ledger nobody builds polls forever)
+        history = (dict(st, state="building") if st.get("state") == "building" else
+                   {"state": "unavailable", "note": "This window has not built a chip history for this chip, "
+                                                    "so runs and SM writes cannot be listed."})
+        data = story._empty_day(_chip_name(), day, history, current_app.instance_path)
     else:
         data = story.build_day(current_app.instance_path, _chip_name(), day, ds=ds, active_path=active,
                                ledger=ledger, agent_chip=_agent_chip_key(),
-                               events=_events(), uid_of=uid_of)
+                               events=_events(), uid_of=uid_of,
+                               # gates are checked in the background for a person; a test
+                               # app waits, so a page is the same page twice
+                               gate_wait=gate_wait or bool(current_app.config.get(
+                                   "JOURNAL_GATE_WAIT", current_app.testing)),
+                               int_of=_int_types() if ledger is not None else None)
     f = _filters() if filters is None else filters
     data["filters"] = f
     for order, c in enumerate(data["cards"]):
@@ -129,7 +228,21 @@ def _build(day: str, *, filters=None) -> dict:
         c["search_hay"] = _search_text(c)
     for c in data["cards"]:
         for e in c.get("journal") or []:
-            e["search_hay"] = _search_text(e)
+            e["search_hay"] = _line_text(e)
+    data["lazy"] = bool(lazy_ok and len(data["cards"]) > LAZY_CARDS)
+    if data["lazy"]:
+        # the bodies a lazy day sends later, by their element id
+        by_dom = {}
+        for c in data["cards"]:
+            dom = (c.get("card_id") or f"card-{c.get('run_id')}" if c["kind"] == "run" else
+                   f"write-{c.get('id')}" if c["kind"] == "write" else f"agent-{c.get('id')}")
+            by_dom[dom] = c
+        days = current_app.config.setdefault("journal_day_cards", {})
+        with _DAY_DATA_LOCK:
+            days.pop((str(active), day), None)
+            days[(str(active), day)] = by_dom
+            while len(days) > 4:
+                days.pop(next(iter(days)))
     data["cards_shown"] = [c for c in data["cards"] if _matches(c, f)]
     data["cards_cached"] = [c for c in data["cards"] if not _matches(c, f)]
     data["runs_shown"] = sum(c["kind"] in ("run", "agent_run") for c in data["cards_shown"])
@@ -203,6 +316,28 @@ def journal_day():
     return html
 
 
+@journal_bp.route("/journal/card")
+def journal_card():
+    """docs/281: the body of one card of a very large day, rendered by the
+    page's own card template when the card is first opened."""
+    day = _day_arg()
+    card = request.args.get("card") or ""
+    key = (str(_r()._active_path()), day)
+    with _DAY_DATA_LOCK:
+        found = (current_app.config.get("journal_day_cards") or {}).get(key, {}).get(card)
+    if found is None:
+        # a restart or another window rebuilt the day: build it again
+        _build(day, filters={"author": "", "q": ""})
+        with _DAY_DATA_LOCK:
+            found = (current_app.config.get("journal_day_cards") or {}).get(key, {}).get(card)
+    if found is None:
+        return '<div class="jr-body"><p class="muted">This card is no longer on this day.</p></div>'
+    module = current_app.jinja_env.get_template("_journal_card.html").module
+    resp = current_app.response_class(str(module.card_body(found, day)), mimetype="text/html")
+    resp.headers["Cache-Control"] = "no-store"
+    return resp
+
+
 @journal_bp.route("/journal/raw")
 def journal_raw():
     day = _day_arg()
@@ -223,13 +358,16 @@ def journal_claim():
         return jsonify(ok=False, error="run_id required"), 400
     who = str(data.get("who") or "").strip()
     author = f"human:{who}" if who else "human"
+    # docs/281 review: a run number is per data folder; the card's own
+    # identity (folder key + number) keys the claim when the page sends it
+    uid = str(data.get("uid") or "").strip() or None
     if str(data.get("author") or "").strip() in ("unknown", ""):
         pass
     # A payload that never mentions the note keeps the note (story.claim_run's
     # _KEEP); only a note the caller actually sent -- including an empty one --
     # decides it.
     kw = {"note": data["note"]} if "note" in data else {}
-    rec = story.claim_run(current_app.instance_path, _chip_name(), run_id, author=author, **kw)
+    rec = story.claim_run(current_app.instance_path, _chip_name(), run_id, author=author, uid=uid, **kw)
     # docs/173 S8: journal the claim on the RUN's own day, so the line sits next to
     # the run it is about (and is not stranded on today's page when the claim is made
     # later). Fall back to now() when the run's date cannot be resolved.

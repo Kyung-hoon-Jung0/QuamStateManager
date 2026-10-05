@@ -899,6 +899,7 @@ class Registry:
                 story.record_agent_run(inst, {
                     "run_id": result.get("run_id"), "chip": chip, "node": node_info.name,
                     "targets": list(req.targets), "actor": req.actor, "plan_id": req.plan_id, "step": req.step,
+                    "folder": (result.get("run") or {}).get("folder"),
                     "ts": time.time(), "key": key, "group_id": result.get("group_id"),
                     "outcome": status, "classification": result["classification"],
                     "session_id": req.session_id, "reason": req.reason,
@@ -1110,7 +1111,9 @@ def _attribute(adapter: RunAdapter, node_name: str, window_start: float, *, poll
                 continue
             return {"run_id": row.get("run_id"), "experiment_name": row.get("experiment_name"),
                     "outcomes": row.get("outcomes"), "qubits": row.get("qubits"), "status": row.get("status"),
-                    "date": row.get("date"), "time": row.get("time")}
+                    "date": row.get("date"), "time": row.get("time"),
+                    # docs/281 review: which data folder holds this run number
+                    "folder": row.get("folder_path")}
         if time.monotonic() > deadline:
             return None
         time.sleep(1.0)

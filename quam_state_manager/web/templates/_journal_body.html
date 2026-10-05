@@ -1,6 +1,6 @@
 {# The day's body: counts, unassigned lines, digest strip, cards. #}
 {% from '_delta_macros.html' import before_after %}
-{% from '_journal_changes.html' import change_list, run_changes, undo_links %}
+{% from '_journal_card.html' import card %}
 {% set s = story %}
 {% set history = s.history|default({'state': 'ready'}) %}
 {% if history.state == 'building' %}
@@ -13,6 +13,8 @@
 </div>
 {% elif history.state == 'unavailable' %}
 <p class="jr-note warn jr-history-status">{{ history.note }}</p>
+{% elif history.state == 'idle' %}
+<p class="jr-note jr-history-status jr-history-idle">As last recorded: this window is not updating the chip history, so runs saved since are not shown.</p>
 {% endif %}
 {% if history.state in ('building', 'unavailable') and (s.loose or s.unassigned) %}
 <p class="jr-note jr-journal-status">Recorded journal lines only. Run history and line attachments are {{ 'building' if history.state == 'building' else 'unavailable' }}.</p>
@@ -20,17 +22,22 @@
 {% if history.state not in ('building', 'unavailable') %}
 {# customer feedback 2026-09-08: the day's numbers as stat pills, one glance #}
 <div class="jr-counts" data-day="{{ s.day }}" data-chip="{{ s.chip }}">
-    <span class="muted">{{ 'Available totals (incomplete)' if history.state == 'degraded' else 'Day totals' }}</span>
+    <span class="muted">{{ 'Available totals (incomplete)' if history.state == 'degraded' else ('As last recorded' if history.state == 'idle' else 'Day totals') }}</span>
     <span class="jr-stat jr-stat-day">{{ s.day }}</span>
     <span class="jr-stat"><b>{{ s.counts.runs }}</b> run{{ 's' if s.counts.runs != 1 }}</span>
     {% if s.counts.failed %}<span class="jr-stat jr-stat-bad"><b>{{ s.counts.failed }}</b> failed</span>{% endif %}
     {% if s.counts.gate_fail %}<span class="jr-stat jr-stat-bad">gate fail <b>{{ s.counts.gate_fail }}</b></span>{% endif %}
-    <span class="jr-stat"><b>{{ s.counts.writes }}</b> write{{ 's' if s.counts.writes != 1 }}</span>
+    {% set n_cards = s.counts.write_cards if s.counts.write_cards is defined else s.counts.writes %}
+    <span class="jr-stat"><b>{{ n_cards }}</b> write{{ 's' if n_cards != 1 }}{% if s.counts.write_cards is defined and s.counts.writes != n_cards %} ({{ s.counts.writes }} values){% endif %}</span>
+    {% if s.counts.other_chip %}<span class="jr-stat jr-stat-bad" title="runs whose saved state may be another chip's, not counted above"><b>{{ s.counts.other_chip }}</b> maybe another chip's</span>{% endif %}
     {% if s.counts.biggest_write %}<span class="jr-stat muted">largest Δ <code class="jr-path" data-path="{{ s.counts.biggest_write.path }}">{{ s.counts.biggest_write.path }}</code>
         {{ before_after(s.counts.biggest_write.old, s.counts.biggest_write.new) }}</span>{% endif %}
     <span id="jr-since" class="jr-since" hidden></span>
 </div>
 
+{% if s.gates_pending %}
+<p class="jr-note jr-gates-pending" data-gates-day="{{ s.day }}">Checking {{ s.gates_pending }} gate{{ 's' if s.gates_pending != 1 }} in the background; this day refreshes when they are done.</p>
+{% endif %}
 {% if s.unrecorded %}
 <p class="jr-note jr-unrecorded">SM's undo journal holds {{ s.unrecorded.n }} edit{{ 's' if s.unrecorded.n != 1 }} from this day made before the chip history recorded SM writes ({% if s.unrecorded.since %}it records them from {{ s.unrecorded.since }}{% else %}none recorded yet{% endif %}). Whether they reached the chip was not recorded; any that did show in the next run's changes.</p>
 {% endif %}
@@ -87,97 +94,9 @@
     <span class="jr-sec-title">Runs <span class="jr-sec-count">{{ s.runs_shown }}</span></span>
     <span class="jr-sec-note muted">time · node · targets · outcome · gate · run · who — click a row for what it wrote and why</span>
 </div>
-{% macro card(c) %}
-    {% if c.kind == 'run' %}
-    <details class="jr-card jr-run jr-by-{{ (c.author or 'unknown').split(':')[0] }}" id="{{ c.card_id or ('card-' ~ c.run_id) }}" data-ts="{{ c.ts or 0 }}" data-run="{{ c.run_id }}" data-jr-order="{{ c.search_order }}" data-jr-search="{{ c.search_hay }}" data-jr-author="{{ c.author }}">
-        {# The row is a grid: time, node, targets, pills, run, who;
-           every cell in its column, so the eye scans down instead of hunting pills left and right #}
-        <summary>
-            <span class="jr-time">{{ c.time }}</span>
-            <span class="jr-family" title="{{ c.node }}">{{ c.family_label or c.node }}</span>
-            <span class="jr-targets">{{ c.targets|join(' ') }}</span>
-            <span class="jr-pills">
-                <span class="jr-badge jr-out-{{ c.outcome or 'none' }}" title="the node's own outcome">{% if c.outcome == 'ok' %}✓ ok{% elif c.outcome == 'failed' %}✗ failed{% elif c.outcome == 'mixed' %}mixed{% else %}no outcome{% endif %}</span>
-                {% if c.gate %}<span class="jr-badge jr-gate-{{ c.gate.verdict }}" title="deterministic gate, anchored on the run's own saved state{% if c.gate.reason %} — {{ c.gate.reason }}{% endif %}">gate {{ c.gate.verdict }}</span>{% endif %}
-            </span>
-            {% set run_url = '/dataset/' ~ c.uid if c.eid and c.uid else '/dataset/by-run/' ~ c.run_id %}
-            <a class="jr-run-link" href="{{ run_url }}" hx-get="{{ run_url }}" hx-target="#table-pane" hx-push-url="true" onclick="event.stopPropagation()">#{{ c.run_id }}</a>
-            <span class="jr-who-cell">
-                <span class="jr-author jr-author-{{ (c.author or 'unknown').split(':')[0] }}" title="{{ c.certainty }}">{{ c.author }}</span>
-                {% if c.plan_id %}<span class="jr-plan muted" title="plan">plan {{ c.plan_id }}</span>{% endif %}
-            </span>
-        </summary>
-        <div class="jr-body">
-            {% if c.gate and c.gate.reason %}<p class="jr-gate-reason muted">gate: {{ c.gate.reason }}</p>{% endif %}
-            {{ run_changes(c) }}
-            {% if c.params_diff %}
-            <div class="jr-sec"><b>Parameters changed vs {% if c.prev_run_id %}#{{ c.prev_run_id }}{% else %}the previous run{% endif %}</b>
-                <ul>{% for p in c.params_diff %}<li><code>{{ p.key }}</code> {{ before_after(p.old, p.new) }}</li>{% endfor %}</ul></div>
-            {% endif %}
-            <div class="jr-sec"><b>Because</b>
-                {% if c.because %}<p class="jr-because">{{ c.because }}</p>{% else %}<p class="muted">not recorded</p>{% endif %}</div>
-            {% if c.figure and c.uid %}
-            <div class="jr-sec jr-fig"><a href="/dataset/{{ c.uid }}" hx-get="/dataset/{{ c.uid }}" hx-target="#table-pane" hx-push-url="true">
-                <img src="/dataset/{{ c.uid }}/fig/{{ c.figure }}" alt="{{ c.figure }}" loading="lazy" class="jr-thumb"></a></div>
-            {% endif %}
-            {% if c.journal %}
-            <div class="jr-sec jr-line-group"><b>Journal</b>
-                <ul class="jr-lines">{% for e in c.journal %}<li data-jr-search="{{ e.search_hay }}" data-jr-author="{{ e.kind }}"><span class="jr-time">{{ e.time }}</span> <span class="jr-author jr-author-{{ e.kind.split(':')[0] }}">{{ e.kind }}</span> {{ e.text }}{% if e.because %} <i class="muted">— {{ e.because }}</i>{% endif %}</li>{% endfor %}</ul></div>
-            {% endif %}
-            <div class="jr-sec jr-claim" data-run="{{ c.run_id }}">
-                {% if c.note %}<p class="jr-note-text"><b>Note:</b> {{ c.note }}</p>{% endif %}
-                <details class="jr-claim-form"><summary class="muted">{% if c.author == 'unknown' %}I ran this{% else %}Correct the author / add a note{% endif %}</summary>
-                    <label>Who <input type="text" class="jr-who" placeholder="your name" value="{{ c.author[6:] if c.author and c.author.startswith('human:') else '' }}"></label>
-                    <label>Note <input type="text" class="jr-note-in" placeholder="optional" value="{{ c.note or '' }}"></label>
-                    <button type="button" class="btn-sm" onclick="JournalPage.claim(this)">Save</button>
-                </details>
-            </div>
-            <p class="muted jr-meta">{{ c.node }} · {{ c.duration_s or '?' }} s · <span title="{{ c.folder }}">folder</span></p>
-        </div>
-    </details>
-    {% elif c.kind == 'agent_run' %}
-    {% set folder_text = 'run folder #' ~ c.missing_run_id ~ ' is not in the chip history' if c.missing_run_id is not none else 'no run folder' %}
-    <details class="jr-card jr-run jr-agent-run jr-by-{{ (c.author or 'unknown').split(':')[0] }}" id="agent-{{ c.id }}" data-ts="{{ c.ts }}" data-jr-order="{{ c.search_order }}" data-jr-search="{{ c.search_hay }}" data-jr-author="{{ c.author }}">
-        {# the run row's own columns, so it scans like every run: node, targets,
-           what happened, "no folder" where the run link sits, who #}
-        <summary>
-            <span class="jr-time">{{ c.time }}</span>
-            <span class="jr-family" title="{{ c.node }} -- {{ folder_text }}">{{ c.node }}<span class="muted jr-no-folder"> &middot; {{ folder_text }}</span></span>
-            <span class="jr-targets">{{ c.targets|join(' ') }}</span>
-            <span class="jr-pills"><span class="jr-badge jr-out-{{ c.outcome or 'none' }}" title="{{ c.classification }}: {{ c.reason }}">{% if c.outcome == 'failed' %}&#10007; {% endif %}{{ c.classification }}</span></span>
-            <span class="jr-run-link muted" title="{{ folder_text }}">&ndash;</span>
-            <span class="jr-who-cell">
-                <span class="jr-author jr-author-{{ (c.author or 'unknown').split(':')[0] }}">{{ c.author }}</span>
-                {% if c.plan_id %}<span class="jr-plan muted" title="plan">plan {{ c.plan_id }}</span>{% endif %}
-            </span>
-        </summary>
-        <div class="jr-body"><p>{{ c.author }} ran {{ c.node }} on {{ c.targets|join(' ') }} -- {{ folder_text }} ({{ c.classification }}: {{ c.reason }})</p>
-            {% if c.plan_id %}<p class="jr-plan">plan {{ c.plan_id }}{% if c.step is not none %}, step {{ c.step }}{% endif %}</p>{% endif %}
-            {% if c.purpose %}<p class="jr-because muted">Purpose: {{ c.purpose }}</p>{% endif %}</div>
-    </details>
-    {% else %}
-    <details class="jr-card jr-write jr-by-{{ (c.author or 'unknown').split(':')[0] }}" data-ts="{{ c.ts or 0 }}" id="write-{{ c.id }}" data-jr-order="{{ c.search_order }}" data-jr-search="{{ c.search_hay }}" data-jr-author="{{ c.author }}">
-        <summary>
-            <span class="jr-time">{{ c.time }}</span>
-            <span class="jr-family">wrote {{ c.entries|length }} value{{ 's' if c.entries|length != 1 }} to the chip</span>
-            <span class="jr-targets"></span>
-            <span class="jr-pills">{% if c.event_kind %}<span class="jr-badge">{{ c.src or c.event_kind }}</span>{% endif %}{% if c.undone %}<span class="jr-badge">UNDONE</span>{% elif c.partly_undone %}<span class="jr-badge">PARTLY_UNDONE</span>{% endif %}{% if c.src == 'auto' %}<span class="jr-badge" title="an armed auto session">auto</span>{% endif %}</span>
-            <span class="jr-run-link muted"></span>
-            <span class="jr-who-cell">
-                <span class="jr-author jr-author-{{ (c.author or 'unknown').split(':')[0] }}">{{ c.author }}</span>
-                {% if c.plan_id %}<span class="jr-plan muted">plan {{ c.plan_id }}</span>{% endif %}
-            </span>
-        </summary>
-        <div class="jr-body">
-            <p class="jr-write-kind muted">{{ c.event_kind }}{% if c.src and c.src != c.event_kind %} via {{ c.src }}{% endif %}{% if c.undone %} -- UNDONE: a later undo took all of it back{% elif c.partly_undone %} -- PARTLY_UNDONE: a later undo took part of it back{% endif %}</p>
-            {{ undo_links(c, story.day) }}
-            {% if c.entries_error %}<p class="jr-note warn">{{ c.entries_error }}; the history's own rows for this write are shown instead.</p>{% endif %}
-            {{ change_list(c.entries, actors=True) }}</div>
-    </details>
-    {% endif %}
-{% endmacro %}
-<div class="jr-cards">{% for c in s.cards_shown %}{{ card(c) }}{% endfor %}</div>
-{% set cached_html %}{% for c in s.cards_cached %}{{ card(c) }}{% endfor %}{% endset %}
+
+<div class="jr-cards">{% for c in s.cards_shown %}{{ card(c, s.day, s.lazy) }}{% endfor %}</div>
+{% set cached_html %}{% for c in s.cards_cached %}{{ card(c, s.day, s.lazy) }}{% endfor %}{% endset %}
 <script type="application/json" class="jr-search-cache">{{ cached_html|string|tojson }}</script>
 {% endif %}
 

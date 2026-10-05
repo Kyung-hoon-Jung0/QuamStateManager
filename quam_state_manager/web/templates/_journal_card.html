@@ -1,0 +1,116 @@
+{# One Calibration log card (docs/173 S2, docs/281): its row and its body.
+   ``lazy``: a very large day sends each card's row only; the body is fetched
+   from /journal/card when the card is first opened (search still covers the
+   whole card through its data-jr-search text). #}
+{% from '_delta_macros.html' import before_after %}
+{% from '_journal_changes.html' import change_list, run_changes, undo_links %}
+
+{% macro card_body(c, day) %}
+    {% if c.kind == 'run' %}
+        <div class="jr-body">
+            {% if c.gate and c.gate.reason %}<p class="jr-gate-reason muted">gate: {{ c.gate.reason }}</p>{% endif %}
+            {% for f in c.flags or [] %}<p class="jr-flag-note jr-flag-{{ f.key }} muted">{{ f.note }}</p>{% endfor %}
+            {% if c.rows_hidden %}<p class="jr-note warn jr-rows-hidden">{{ '{:,}'.format(c.rows_hidden) }} changed value{{ 's' if c.rows_hidden != 1 }} not listed: this run may be another chip's.</p>{% endif %}
+            {{ run_changes(c) }}
+            {% if c.params_diff %}
+            <div class="jr-sec"><b>Parameters changed vs {% if c.prev_run_id %}#{{ c.prev_run_id }}{% else %}the previous run{% endif %}</b>
+                <ul>{% for p in c.params_diff %}<li><code>{{ p.key }}</code> {{ before_after(p.old, p.new) }}</li>{% endfor %}</ul></div>
+            {% endif %}
+            <div class="jr-sec"><b>Because</b>
+                {% if c.because %}<p class="jr-because">{{ c.because }}</p>{% else %}<p class="muted">not recorded</p>{% endif %}</div>
+            {% if c.figure and c.uid %}
+            <div class="jr-sec jr-fig"><a href="/dataset/{{ c.uid }}" hx-get="/dataset/{{ c.uid }}" hx-target="#table-pane" hx-push-url="true">
+                <img src="/dataset/{{ c.uid }}/fig/{{ c.figure }}" alt="{{ c.figure }}" loading="lazy" class="jr-thumb"></a></div>
+            {% endif %}
+            {% if c.journal %}
+            <div class="jr-sec jr-line-group"><b>Journal</b>
+                <ul class="jr-lines">{% for e in c.journal %}<li data-jr-search="{{ e.search_hay }}" data-jr-author="{{ e.kind }}"><span class="jr-time">{{ e.time }}</span> <span class="jr-author jr-author-{{ e.kind.split(':')[0] }}">{{ e.kind }}</span> {{ e.text }}{% if e.because %} <i class="muted">— {{ e.because }}</i>{% endif %}</li>{% endfor %}</ul></div>
+            {% endif %}
+            <div class="jr-sec jr-claim" data-run="{{ c.run_id }}" data-uid="{{ c.card_uid or '' }}">
+                {% if c.note %}<p class="jr-note-text"><b>Note:</b> {{ c.note }}</p>{% endif %}
+                <details class="jr-claim-form"><summary class="muted">{% if c.author == 'unknown' %}I ran this{% else %}Correct the author / add a note{% endif %}</summary>
+                    <label>Who <input type="text" class="jr-who" placeholder="your name" value="{{ c.author[6:] if c.author and c.author.startswith('human:') else '' }}"></label>
+                    <label>Note <input type="text" class="jr-note-in" placeholder="optional" value="{{ c.note or '' }}"></label>
+                    <button type="button" class="btn-sm" onclick="JournalPage.claim(this)">Save</button>
+                </details>
+            </div>
+            <p class="muted jr-meta">{{ c.node }} · {{ c.duration_s or '?' }} s · <span title="{{ c.folder }}">folder</span></p>
+        </div>
+    {% elif c.kind == 'agent_run' %}
+        <div class="jr-body"><p class="jr-agent-sentence">{{ c.sentence }}</p>
+            {% if c.reason %}<p class="jr-agent-reason muted">{{ c.reason }}</p>{% endif %}
+            {% if c.plan_id %}<p class="jr-plan">plan {{ c.plan_id }}{% if c.step is not none %}, step {{ c.step }}{% endif %}</p>{% endif %}
+            {% if c.purpose %}<p class="jr-because muted">Purpose: {{ c.purpose }}</p>{% endif %}</div>
+    {% else %}
+        <div class="jr-body">
+            <p class="jr-write-kind muted">{{ c.label or c.event_kind or c.src }}{% if c.undone %}: undone, a later undo took all of it back{% elif c.partly_undone %}: partly undone, a later undo took back the rows marked undone{% endif %}</p>
+            {{ undo_links(c, day) }}
+            {% if c.entries_error %}<p class="jr-note warn">{{ c.entries_error }}; the history's own rows for this write are shown instead.</p>{% endif %}
+            {{ change_list(c.entries, actors=True, author=c.author) }}</div>
+    {% endif %}
+{% endmacro %}
+
+{% macro lazy_body(c, day, dom_id) -%}
+<div class="jr-body jr-body-lazy" hx-get="/journal/card?day={{ day }}&amp;card={{ dom_id|urlencode }}" hx-trigger="toggle once from:closest details" hx-swap="outerHTML"><p class="muted">Loading...</p></div>
+{%- endmacro %}
+
+{% macro card(c, day, lazy=False) %}
+    {% if c.kind == 'run' %}
+    {% set dom_id = c.card_id or ('card-' ~ c.run_id) %}
+    <details class="jr-card jr-run jr-by-{{ (c.author or 'unknown').split(':')[0] }}{% if c.other_chip %} jr-other-chip{% endif %}" id="{{ dom_id }}" data-ts="{{ c.ts or 0 }}" data-run="{{ c.run_id }}" data-jr-order="{{ c.search_order }}" data-jr-search="{{ c.search_hay }}" data-jr-author="{{ c.author }}">
+        {# The row is a grid: time, node, targets, pills, run, who;
+           every cell in its column, so the eye scans down instead of hunting pills left and right #}
+        <summary>
+            <span class="jr-time">{{ c.time }}</span>
+            <span class="jr-family" title="{{ c.node }}">{{ c.family_label or c.node }}</span>
+            <span class="jr-targets">{{ c.targets|join(' ') }}</span>
+            <span class="jr-pills">
+                <span class="jr-badge jr-out-{{ c.outcome or 'none' }}" title="the node's own outcome">{% if c.outcome == 'ok' %}✓ ok{% elif c.outcome == 'failed' %}✗ failed{% elif c.outcome == 'mixed' %}mixed{% else %}no outcome{% endif %}</span>
+                {% if c.gate %}<span class="jr-badge jr-gate-{{ c.gate.verdict }}" title="{% if c.gate.verdict == 'pending' %}the gate is being checked; the page refreshes when it is done{% else %}deterministic gate, anchored on the run's own saved state{% if c.gate.reason %} — {{ c.gate.reason }}{% endif %}{% endif %}">gate {{ '...' if c.gate.verdict == 'pending' else c.gate.verdict }}</span>{% endif %}
+                {% for f in c.flags or [] %}<span class="jr-badge jr-flag jr-flag-{{ f.key }}" title="{{ f.note }}">{{ f.label }}</span>{% endfor %}
+            </span>
+            {% set run_url = '/dataset/' ~ c.uid if c.eid and c.uid else '/dataset/by-run/' ~ c.run_id %}
+            <a class="jr-run-link" href="{{ run_url }}" hx-get="{{ run_url }}" hx-target="#table-pane" hx-push-url="true" onclick="event.stopPropagation()">#{{ c.run_id }}</a>
+            <span class="jr-who-cell">
+                <span class="jr-author jr-author-{{ (c.author or 'unknown').split(':')[0] }}" title="{{ c.certainty }}">{{ c.author }}</span>
+                {% if c.plan_id %}<span class="jr-plan muted" title="plan">plan {{ c.plan_id }}</span>{% endif %}
+            </span>
+        </summary>
+        {% if lazy %}{{ lazy_body(c, day, dom_id) }}{% else %}{{ card_body(c, day) }}{% endif %}
+    </details>
+    {% elif c.kind == 'agent_run' %}
+    {% set folder_text = 'run folder #' ~ c.missing_run_id ~ ' is not in the chip history' if c.missing_run_id is not none else ('not run' if c.outcome == 'not run' else 'no run folder') %}
+    <details class="jr-card jr-run jr-agent-run jr-by-{{ (c.author or 'unknown').split(':')[0] }}" id="agent-{{ c.id }}" data-ts="{{ c.ts }}" data-jr-order="{{ c.search_order }}" data-jr-search="{{ c.search_hay }}" data-jr-author="{{ c.author }}">
+        {# the run row's own columns, so it scans like every run: node, targets,
+           what happened, "-" where the run number sits, who #}
+        <summary>
+            <span class="jr-time">{{ c.time }}</span>
+            <span class="jr-family" title="{{ c.sentence }}">{{ c.node }}<span class="muted jr-no-folder"> &middot; {{ folder_text }}</span></span>
+            <span class="jr-targets">{{ c.targets|join(' ') }}</span>
+            <span class="jr-pills"><span class="jr-badge jr-out-{{ c.outcome|replace(' ', '-') if c.outcome else 'none' }}" title="{{ c.sentence }}">{% if c.outcome == 'failed' %}&#10007; {% endif %}{{ c.short or c.classification }}</span></span>
+            <span class="jr-run-link muted" title="{{ folder_text }}">&ndash;</span>
+            <span class="jr-who-cell">
+                <span class="jr-author jr-author-{{ (c.author or 'unknown').split(':')[0] }}">{{ c.author }}</span>
+                {% if c.plan_id %}<span class="jr-plan muted" title="plan">plan {{ c.plan_id }}</span>{% endif %}
+            </span>
+        </summary>
+        {{ card_body(c, day) }}
+    </details>
+    {% else %}
+    {% set n = c.entries|length %}
+    <details class="jr-card jr-write jr-by-{{ (c.author or 'unknown').split(':')[0] }}" data-ts="{{ c.ts or 0 }}" id="write-{{ c.id }}" data-jr-order="{{ c.search_order }}" data-jr-search="{{ c.search_hay }}" data-jr-author="{{ c.author }}">
+        <summary>
+            <span class="jr-time">{{ c.time }}</span>
+            <span class="jr-family">{{ c.label or 'SM write' }}: {{ n }} value{{ 's' if n != 1 }}</span>
+            <span class="jr-targets"></span>
+            <span class="jr-pills">{% if c.undone %}<span class="jr-badge jr-undone">undone</span>{% elif c.partly_undone %}<span class="jr-badge jr-undone">partly undone</span>{% endif %}{% if c.src == 'auto' %}<span class="jr-badge" title="an armed auto session">auto</span>{% endif %}</span>
+            <span class="jr-run-link muted"></span>
+            <span class="jr-who-cell">
+                <span class="jr-author jr-author-{{ (c.author or 'unknown').split(':')[0] }}">{{ c.author }}</span>
+                {% if c.plan_id %}<span class="jr-plan muted">plan {{ c.plan_id }}</span>{% endif %}
+            </span>
+        </summary>
+        {% if lazy %}{{ lazy_body(c, day, 'write-' ~ c.id) }}{% else %}{{ card_body(c, day) }}{% endif %}
+    </details>
+    {% endif %}
+{% endmacro %}

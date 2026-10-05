@@ -14778,6 +14778,7 @@ class _ReportCtx:
 _REPORT_REDACTORS: dict = {}
 _REPORT_REDACTORS_LOCK = threading.Lock()
 _REPORT_HEAVY = threading.BoundedSemaphore(1)
+_REPORT_LOG_LOCK = threading.Lock()
 _REPORT_HTML_CACHE: dict = {}
 _REPORT_HTML_BYTES = 32 * 1024 * 1024
 
@@ -14820,10 +14821,13 @@ def _report_section(key: str, rc: _ReportCtx) -> str:
     """Bound heavy work and reuse section HTML for unchanged content/options."""
     token = (_report_content_token(rc.store), key, rc.redact, rc.window, rc.zone,
              str(rc.path), id(_REPORT_BUILDERS[key]))
-    with _REPORT_HEAVY:
-        if key == "calibration_log":
-            # The ledger and agent records change independently of chip state.
+    if key == "calibration_log":
+        # The ledger and agent records change independently of chip state, and
+        # every day is built: its own lock, so other sections never wait on it
+        # (docs/281 review).
+        with _REPORT_LOG_LOCK:
             return _report_section_uncached(key, rc)[0]
+    with _REPORT_HEAVY:
         hit = _REPORT_HTML_CACHE.get(token)
         if hit is not None:
             if key == "overview":
@@ -15512,7 +15516,10 @@ def _report_build_raw(rc: _ReportCtx) -> str:
 def _report_build_calibration_log(rc: _ReportCtx) -> str:
     """docs/281: every day the Calibration log can show, each built by the
     page's own day builder (``journal_routes._build``) and rendered with the
-    page's own change rows. The report's redaction runs on the output."""
+    page's own change rows. Gates are computed before the file is made (the
+    page computes them in the background); lines from a session that named
+    no chip are not this chip's and stay out. With the switch on, past values
+    of network fields and hosts in actor names are hidden too (review P0-3)."""
     from quam_state_manager.core import hub_index, hub_sync, story
     from quam_state_manager.core.ramcache import Warming
     from quam_state_manager.web import journal_routes as log
@@ -15533,12 +15540,82 @@ def _report_build_calibration_log(rc: _ReportCtx) -> str:
         except Warming:
             building = hub_sync.status(ledger.store.directory)
         except ValueError:
-            pass                      # no project zone: each day says so
+            ledger = None             # no project zone: each day says so
     elif ledger is not None:
         building = hub_sync.status(ledger.store.directory)
-    days.update(log.journal_mod.list_days(current_app.instance_path, log._chip_name()))
-    data = [log._build(day, filters={"author": "", "q": ""}) for day in sorted(days or {log._today()})]
-    return render_template("_report_calibration_log.html", days=data, building=building)
+    for file_day in log.journal_mod.list_days(current_app.instance_path, log._chip_name()):
+        # a line belongs to the project day of its instant (the page's rule)
+        lines = story.parse_journal(log.journal_mod.read(current_app.instance_path, log._chip_name(), file_day), file_day)
+        for e in lines:
+            try:
+                days.add(story._hub_clock(int(e["ts"] * 1e6), ledger, "%Y-%m-%d") if ledger is not None else file_day)
+            except (OverflowError, OSError, ValueError):
+                days.add(file_day)
+    data = [log._build(day, filters={"author": "", "q": ""}, gate_wait=True, lazy_ok=False)
+            for day in sorted(days or {log._today()})]
+    data = [d for d in data if d["cards"] or d["loose"] or d.get("unrecorded")
+            or (d.get("history") or {}).get("state") in ("building", "unavailable")] or data[-1:]
+    red = _report_log_redactor(rc, data) if rc.red is not None else None
+    html = render_template("_report_calibration_log.html", days=data, building=building)
+    return red.redact_html(html) if red is not None else html
+
+
+def _report_log_redactor(rc: _ReportCtx, days: list[dict]):
+    """docs/281 review P0-3: the report's structural rule hides network
+    fields of the CURRENT documents; a log also shows PAST values. Every row
+    on a network path is blanked, its past values join the literal set (so
+    they are hidden wherever else they appear), and a host after '@' in an
+    actor name is hidden. Returns the widened redactor for this section."""
+    from quam_state_manager.core.hub_store import segments
+    from quam_state_manager.core.report_redact import HIDDEN, Redactor, is_network_key
+
+    def on_network(path) -> bool:
+        try:
+            parts = segments(str(path or ""))
+        except Exception:  # noqa: BLE001 -- a malformed path is judged by its dots
+            parts = str(path or "").split(".")
+        return any(p.lower() == "network" or is_network_key(p) for p in parts)
+
+    extra: set[str] = set()
+
+    def blank(rows):
+        for r in rows or ():
+            path = r.get("path") if "path" in r else r.get("key")
+            if not on_network(path):
+                continue
+            for side in ("old", "new"):
+                v = r.get(side)
+                if isinstance(v, str):
+                    extra.add(v)
+                if v is not None:
+                    r[side] = HIDDEN
+
+    for d in days:
+        for c in d["cards"]:
+            blank(c.get("writes"))
+            blank(c.get("entries"))
+            blank(c.get("params_diff"))
+        blank([d["counts"]["biggest_write"]] if (d.get("counts") or {}).get("biggest_write") else [])
+    red = Redactor(set(rc.red.literals) | extra)
+    red.literals = frozenset(red.literals)
+
+    def actor(name):
+        if not isinstance(name, str):
+            return name
+        return re.sub(r"@[^\s:]+", "@" + HIDDEN, red.redact_text(name))
+
+    for d in days:
+        for c in d["cards"]:
+            c["author"] = actor(c.get("author"))
+            for r in (c.get("entries") or []):
+                r["actor"] = actor(r.get("actor"))
+            if c.get("sentence"):
+                c["sentence"] = re.sub(r"@[^\s:]+", "@" + HIDDEN, c["sentence"])
+            for e in c.get("journal") or []:
+                e["kind"] = actor(e.get("kind"))
+        for e in d.get("loose") or []:
+            e["kind"] = actor(e.get("kind"))
+    return red
 
 
 _REPORT_BUILDERS: dict[str, Any] = {

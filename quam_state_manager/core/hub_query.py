@@ -7,6 +7,7 @@ from datetime import date
 import hashlib
 import gzip
 import json
+from pathlib import Path
 
 from quam_state_manager.core import search_query
 from quam_state_manager.core.hub_index import context, require_day_zone, snapshot
@@ -86,7 +87,8 @@ def _decode(cursor):
 
 
 def timeline(store, q=None, kinds=None, entity=None, path=None, day_from=None,
-             day_to=None, cursor=None, limit=50, include_runs=False):
+             day_to=None, cursor=None, limit=50, include_runs=False,
+             include_ambiguous=False):
     """Return {events: [... with changes], cursor: str | None}, newest first.
 
     The cursor freezes the initial max eid, excluding subsequent appends even
@@ -100,6 +102,9 @@ def timeline(store, q=None, kinds=None, entity=None, path=None, day_from=None,
     ``exact_entries`` (the entries recorded at the door) or ``entries_error``.
     ``include_runs`` adds ``runs``: every run event of the ledger, for
     matching agent records against folders on any day.
+    ``include_ambiguous`` adds ``ambiguous_run_ids``: the run numbers that
+    two data folders both hold (run numbers are per folder, so such a number
+    names no single run by itself).
     """
     with snapshot(store) as (conn, index):
         if not isinstance(limit, int) or isinstance(limit, bool) or limit < 1:
@@ -185,11 +190,14 @@ def timeline(store, q=None, kinds=None, entity=None, path=None, day_from=None,
         for event in events.values():
             for link in event.get("undo_links") or ():
                 link["target"] = named.get(link["event"])
+        # The first event that HAS a state has no earlier state to compare
+        # with: its rows are the whole starting state, not values it added.
+        # Leading events with no readable state (an error) do not count.
+        first = conn.execute("SELECT eid FROM events WHERE error IS NULL ORDER BY ord LIMIT 1").fetchone()
+        first = first[0] if first else None
         for event in events.values():
             event["root_path"] = roots.get(event["root_id"])
-            # The ledger's first event has no earlier state: its rows are the
-            # whole starting state, not values that event added.
-            event["first"] = index.positions.get(event["eid"]) == 0
+            event["first"] = event["eid"] == first
             event["changes"] = []
         for start in range(0, len(selected), 500):
             chunk = selected[start:start + 500]
@@ -200,11 +208,80 @@ def timeline(store, q=None, kinds=None, entity=None, path=None, day_from=None,
         next_cursor = _encode({"v": 1, "ledger": index.ledger_id, "zone": index.zone,
                                "filters": signature, "high": high,
                                "last": index.keys[selected[-1]]}) if more else None
+        _taken_back(conn, events)
         result = {"events": [events[eid] for eid in selected], "cursor": next_cursor}
+        if include_ambiguous:
+            result["ambiguous_run_ids"] = {row[0] for row in conn.execute(
+                "SELECT run_id FROM events WHERE kind='run' AND run_id IS NOT NULL "
+                "GROUP BY run_id HAVING COUNT(DISTINCT root_id) > 1")}
         if include_runs:
-            result["runs"] = [dict(row) for row in conn.execute(
-                "SELECT run_id,experiment,run_start_us,run_end_us,t_utc_us FROM events WHERE kind='run'")]
+            result["runs"] = [dict(row, root_path=roots.get(row["root_id"])) for row in conn.execute(
+                "SELECT eid,run_id,experiment,root_id,rel_path,run_start_us,run_end_us,t_utc_us "
+                "FROM events WHERE kind='run'")]
         return result
+
+
+def _taken_back(conn, events):
+    """docs/281: which paths of an SM write a later undo took back -- the
+    entries (else the ledger rows) of every ``undo`` event that names it, so a
+    partly undone write can mark its rows."""
+    from quam_state_manager.core.hub_store import PARTLY_UNDONE, UNDONE
+    wanted = {e["sm_id"]: e for e in events.values()
+              if e.get("sm_id") and (e.get("flags") or 0) & (UNDONE | PARTLY_UNDONE)}
+    if not wanted:
+        return
+    for event in wanted.values():
+        event["taken_back"] = set()
+    rows = conn.execute("SELECT s.eid, s.undoes, s.entries FROM sm_events s JOIN events e USING(eid) "
+                        "WHERE e.kind='undo' AND s.undoes IS NOT NULL").fetchall()
+    for row in rows:
+        targets = [link["event"] for link in _undo_links(row["undoes"]) if link["event"] in wanted]
+        if not targets:
+            continue
+        paths = set()
+        try:
+            if row["entries"] is not None:
+                paths = {str(e.get("path")) for e in json.loads(gzip.decompress(row["entries"]))}
+        except (OSError, ValueError, EOFError):
+            paths = set()
+        if not paths:
+            paths = {r[0] for r in conn.execute(
+                "SELECT p.path FROM changes c JOIN paths p USING(pid) WHERE c.eid=?", (row["eid"],))}
+        for sm_id in targets:
+            wanted[sm_id]["taken_back"] |= paths
+
+
+def previous_in_folder(store, eids):
+    """docs/281: for each event, the nearest earlier run of the same node in
+    the same data folder on an overlapping target -- the run "Parameters
+    changed vs" names for a run of a folder Datasets has not open.
+    ``{eid: (run_id, folder)}``, one read snapshot for all of them."""
+    out = {}
+    if not eids:
+        return out
+    with snapshot(store) as (conn, _index):
+        roots = {row[0]: row[1] for row in conn.execute("SELECT root_id, path FROM roots")}
+        for eid in eids:
+            cur = conn.execute("SELECT root_id, experiment, ord, targets FROM events WHERE eid=?", (eid,)).fetchone()
+            if cur is None or cur["root_id"] is None:
+                continue
+            mine = set(_target_names(cur["targets"]))
+            for row in conn.execute("SELECT run_id, rel_path, targets FROM events WHERE kind='run' AND root_id=? "
+                                    "AND experiment=? AND ord<? ORDER BY ord DESC LIMIT 50",
+                                    (cur["root_id"], cur["experiment"], cur["ord"])):
+                theirs = set(_target_names(row["targets"]))
+                if not mine or not theirs or mine & theirs:
+                    out[eid] = (row["run_id"], str(Path(roots[cur["root_id"]]) / (row["rel_path"] or "")))
+                    break
+    return out
+
+
+def _target_names(text):
+    try:
+        value = json.loads(text) if text else []
+    except ValueError:
+        return []
+    return [str(v) for v in value] if isinstance(value, list) else []
 
 
 def _series(conn, index, path, limit=None, before=None):

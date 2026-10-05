@@ -68,11 +68,13 @@
      retarget -> "retargeted <old> -> <new>" (a pointer that names another node)
      set      -> "<old> -> <new>" plus the delta chip above
    Values print through groupdigits like every other before->after surface;
-   a JSON null prints "null", a list or object as compact JSON. The ledger
+   a JSON null prints "null" and a boolean "true"/"false" (one JSON style), a
+   list or object as compact JSON. The ledger
    keeps a scalar list longer than 16 as one value, {"_array": n, "_hash": h}
    (docs/269): it prints as "[n values]", its content hash in the tooltip. #}
 {% macro value_text(v) -%}
 {%- if v is none -%}null
+{%- elif v is boolean -%}{{ 'true' if v else 'false' }}
 {%- elif v is mapping and v|length == 2 and '_array' in v and '_hash' in v -%}<span class="ba-array" title="content hash {{ v._hash }}">[{{ v._array }} values]</span>
 {%- elif v is mapping or (v is iterable and v is not string) -%}{{ v | tojson }}
 {%- else -%}{{ v | groupdigits }}{%- endif -%}

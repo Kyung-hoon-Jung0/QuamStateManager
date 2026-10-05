@@ -1902,7 +1902,15 @@ def _run_adapter():
             try:
                 # docs/262: each row carries the run's instant -- the engine's
                 # attribution window is a time.time() epoch
-                return story.with_instants(ds.list_runs()[:60], ds)
+                rows = story.with_instants(ds.list_runs()[:60], ds)
+                # docs/281 review: run numbers are per data folder -- the
+                # record names the folder it attributed
+                runs = getattr(ds, "runs", None) or {}
+                for row in rows:
+                    info = runs.get(row.get("run_id")) if hasattr(runs, "get") else None
+                    if info is not None and getattr(info, "folder_path", None) is not None:
+                        row["folder_path"] = str(info.folder_path)
+                return rows
             except Exception:  # noqa: BLE001
                 return []
 

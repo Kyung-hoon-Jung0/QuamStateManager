@@ -71,6 +71,8 @@ window.JournalPage = (function () {
   function claim(btn) {
     var box = btn.closest(".jr-claim");
     var run = box && box.getAttribute("data-run");
+    // docs/281: the card's own identity (data folder + number) keys the claim
+    var uid = (box && box.getAttribute("data-uid")) || "";
     var who = (box.querySelector(".jr-who") || {}).value || "";
     var note = (box.querySelector(".jr-note-in") || {}).value || "";
     // docs/173 S8: one name across the app — the same the chat's picker sets;
@@ -78,7 +80,8 @@ window.JournalPage = (function () {
     if (!who) who = tabActor();
     if (who) { try { localStorage.setItem("quam_actor_name", who); } catch (e) { /* ignore */ } }
     fetch("/journal/claim", { method: "POST", headers: { "Content-Type": "application/json" },
-                              body: JSON.stringify({ run_id: run, who: who, note: note }) })
+                              body: JSON.stringify(uid ? { run_id: run, uid: uid, who: who, note: note }
+                                                       : { run_id: run, who: who, note: note }) })
       .then(function (r) { return r.json(); })
       .then(function (d) {
         if (!d.ok) { btn.textContent = d.error || "not saved"; return; }
@@ -228,12 +231,29 @@ window.JournalPage = (function () {
     form.addEventListener("change", function (e) { if (e.target.id === "jr-author") flush(); });
   }
 
+  /* docs/281: gates computed in the background -- refresh the day once they
+   * are done, but never under a person reading an open card or typing. */
+  var gateTimer = null, gateTries = 0;
+  function watchGates(root) {
+    window.clearTimeout(gateTimer);
+    var note = (root || document).querySelector(".jr-gates-pending");
+    if (!note) { gateTries = 0; return; }
+    gateTimer = window.setTimeout(function () {
+      var busy = document.querySelector(".jr-cards .jr-card[open]") ||
+                 document.activeElement === $("jr-q");
+      if (busy && gateTries < 40) { gateTries++; watchGates(document); return; }
+      gateTries = 0;
+      day($("jr-day") ? $("jr-day").value : note.getAttribute("data-gates-day"));
+    }, 2500);
+  }
+
   function init(root) {
     searchItems = null;
     bindSearch();
     filterSearch();
     bindPaths(root);
     markSince(root);
+    watchGates(root);
     var who = tabActor();
     if (who) (root || document).querySelectorAll(".jr-who").forEach(function (i) { if (!i.value) i.value = who; });
   }
@@ -241,6 +261,16 @@ window.JournalPage = (function () {
   document.addEventListener("htmx:afterSwap", function (e) {
     var t = e.target || e.detail && e.detail.target;
     if (t && (t.id === "jr-body" || t.id === "table-pane") && document.querySelector("#jr-body")) init(t);
+  });
+  /* docs/281: a very large day's card body arrives when the card is first
+   * opened -- bind its paths and let the search see its lines. */
+  document.addEventListener("htmx:afterSettle", function (e) {
+    var t = e.target;
+    var card = t && t.closest && t.closest(".jr-card");
+    if (!card || !t.classList || !t.classList.contains("jr-body") || t.classList.contains("jr-body-lazy")) return;
+    bindPaths(card);
+    searchItems = null;
+    filterSearch();
   });
   if (document.readyState !== "loading") init(); else document.addEventListener("DOMContentLoaded", function () { init(); });
 

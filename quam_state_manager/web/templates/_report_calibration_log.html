@@ -1,6 +1,7 @@
 {# The shareable report's Calibration log (docs/281): every day the page can
    show, built by the page's own day builder (journal_routes._build) and
-   rendered with the page's own change rows (_journal_changes.html). #}
+   rendered with the page's own change rows (_journal_changes.html). Lines from
+   a session that named no chip are not this chip's and are left out. #}
 {% from '_journal_changes.html' import change_list, run_changes, undo_links %}
 <h2>Calibration log</h2>
 {% if building %}<p>building the history ({{ building.done or 0 }}/{{ building.total or 0 }}): days that hold only runs or SM writes are not listed yet, so this log is incomplete.</p>{% endif %}
@@ -15,18 +16,24 @@
 <ul>{% for folder in s.history.unreadable %}<li>{{ folder }}</li>{% endfor %}
 {% for root in s.history.roots %}{% for folder in root.failed %}<li>{{ root.path }}/{{ folder }}</li>{% endfor %}{% endfor %}
 {% for error in s.history.errors %}<li>{{ error }}</li>{% endfor %}</ul>
+{% elif s.history.state == 'idle' %}
+<p>As last recorded: the window that made this file was not updating the chip history.</p>
 {% endif %}
-<p>{{ s.counts.runs }} run{{ 's' if s.counts.runs != 1 }}; {{ s.counts.writes }} SM write entr{{ 'ies' if s.counts.writes != 1 else 'y' }}.</p>
+{% set n_cards = s.counts.write_cards if s.counts.write_cards is defined else s.counts.writes %}
+<p>{{ s.counts.runs }} run{{ 's' if s.counts.runs != 1 }}{% if s.counts.other_chip %} (and {{ s.counts.other_chip }} that may be another chip's){% endif %}; {{ n_cards }} SM write{{ 's' if n_cards != 1 }} ({{ s.counts.writes }} value{{ 's' if s.counts.writes != 1 }}).</p>
 {% if s.unrecorded %}<p>SM's undo journal holds {{ s.unrecorded.n }} edit{{ 's' if s.unrecorded.n != 1 }} from this day made before the chip history recorded SM writes ({% if s.unrecorded.since %}it records them from {{ s.unrecorded.since }}{% else %}none recorded yet{% endif %}). Whether they reached the chip was not recorded; any that did show in the next run's changes.</p>{% endif %}
 {% for c in s.cards %}
 <article class="rep-log-card"{% if c.kind == 'write' %} id="write-{{ c.id }}"{% endif %}>
 {% if c.kind == 'run' %}
 <h4>{{ c.time }} - {{ c.author }} - run #{{ c.run_id }}: {{ c.node }}</h4>
+{% for f in c.flags or [] %}<p>{{ f.note }}</p>{% endfor %}
+{% if c.rows_hidden %}<p>{{ '{:,}'.format(c.rows_hidden) }} changed value{{ 's' if c.rows_hidden != 1 }} not listed: this run may be another chip's.</p>{% endif %}
 {% elif c.kind == 'agent_run' %}
-<h4>{{ c.time }} - {{ c.author }} ran {{ c.node }} on {{ c.targets|join(' ') }} -- {{ 'run folder #' ~ c.missing_run_id ~ ' is not in the chip history' if c.missing_run_id is not none else 'no run folder' }} ({{ c.classification }}: {{ c.reason }})</h4>
+<h4>{{ c.time }} - {{ c.sentence }}</h4>
+{% if c.reason %}<p>{{ c.reason }}</p>{% endif %}
 {% if c.purpose %}<p>Purpose: {{ c.purpose }}</p>{% endif %}
 {% else %}
-<h4>{{ c.time }} - {{ c.author }} - {{ c.event_kind }}{% if c.src and c.src != c.event_kind %} via {{ c.src }}{% endif %}: {{ c.entries|length }} value{{ 's' if c.entries|length != 1 }} written to the chip</h4>
+<h4>{{ c.time }} - {{ c.author }} - {{ c.label or 'SM write' }}: {{ c.entries|length }} value{{ 's' if c.entries|length != 1 }}{% if c.undone %} (undone){% elif c.partly_undone %} (partly undone){% endif %}</h4>
 {% endif %}
 {% if c.plan_id %}<p>plan {{ c.plan_id }}{% if c.step is defined and c.step is not none %}, step {{ c.step }}{% endif %}</p>{% endif %}
 {% if c.kind == 'run' %}
@@ -36,15 +43,14 @@
 {% if c.figures %}<p>Figures: {{ c.figures|join(', ') }}</p>{% endif %}
 {{ run_changes(c) }}
 {% elif c.kind == 'write' %}
-{% if c.undone %}<p>UNDONE: a later undo took all of it back</p>{% elif c.partly_undone %}<p>PARTLY_UNDONE: a later undo took part of it back</p>{% endif %}
 {{ undo_links(c, s.day, in_file=True) }}
 {% if c.entries_error %}<p>{{ c.entries_error }}; the history's own rows for this write are shown instead.</p>{% endif %}
-{{ change_list(c.entries, actors=True) }}
+{{ change_list(c.entries, actors=True, author=c.author) }}
 {% endif %}
 {% for e in c.journal or [] %}<p style="white-space:pre-wrap">{{ e.time }} {{ e.kind }}: {{ e.text }}{% if e.because %} - {{ e.because }}{% endif %}</p>{% endfor %}
 </article>
 {% endfor %}
 {% endif %}
-{% if s.history.state in ('building', 'unavailable') and (s.loose or s.unassigned) %}<p>Recorded journal lines only. Run history and line attachments are {{ 'building' if s.history.state == 'building' else 'unavailable' }}.</p>{% endif %}
-{% for e in s.loose + s.unassigned %}<p style="white-space:pre-wrap">{{ e.time }} {{ e.kind }}: {{ e.text }}</p>{% endfor %}
+{% if s.history.state in ('building', 'unavailable') and s.loose %}<p>Recorded journal lines only. Run history and line attachments are {{ 'building' if s.history.state == 'building' else 'unavailable' }}.</p>{% endif %}
+{% for e in s.loose %}<p style="white-space:pre-wrap">{{ e.time }} {{ e.kind }}: {{ e.text }}</p>{% endfor %}
 {% endfor %}
