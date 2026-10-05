@@ -20549,6 +20549,8 @@ function paramHistoryRenderDrawerChart(data, currentValue) {
         return;
     }
     var triggers = ['save', 'manual', 'auto', 'experiment'];
+    // docs/283: a drawer read from the change ledger also has SM restores
+    if (data.ledger) triggers.push('restore');
     var TRIGGER_LABELS = {
         save:       'Saved through app',
         manual:     'Manual snapshot',
@@ -20557,6 +20559,7 @@ function paramHistoryRenderDrawerChart(data, currentValue) {
     };
     var TRIGGER_PRETTY = {
         save: 'Save', manual: 'Manual', auto: 'Auto', experiment: 'Experiment',
+        restore: 'Restore',
     };
     var cssVar = function(t) {
         var s = getComputedStyle(document.documentElement)
@@ -20581,7 +20584,19 @@ function paramHistoryRenderDrawerChart(data, currentValue) {
                                     : ((p.run_id != null && p.run_id !== '') ? p.run_id : null); };
     var nodeOf = function(p) { return p.node || p.experiment || ''; };
     // Build a context line per point — used in hovertemplate.
+    var _phEsc = function(x) {
+        return String(x == null ? '' : x).replace(/[&<>"]/g, function(c) {
+            return {'&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;'}[c];
+        });
+    };
     var contextLine = function(p) {
+        // docs/283: a point read from the change ledger carries its own
+        // words (who the ledger can PROVE set it, or why it cannot) -- the
+        // same words the value drawer shows; nothing is inferred here
+        if (p.label) {
+            return _phEsc(p.label) + (p.sub ? ' · ' + _phEsc(p.sub) : '')
+                 + (p.flags && p.flags.length ? '<br>' + _phEsc(p.flags.join('; ')) : '');
+        }
         var t = p.trigger || 'auto';
         var run = runOf(p), node = nodeOf(p);
         // The server's writer check (2026-09-29): a run is named as the

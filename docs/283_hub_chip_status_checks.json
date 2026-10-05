@@ -1,0 +1,413 @@
+{
+ "golden": {
+  "Archive A": {
+   "runs_copied": 200,
+   "window": "patched",
+   "seed": 283,
+   "ledger_events": 228,
+   "param_history_snapshots": 185,
+   "leaf_paths": 200,
+   "leaf_path_classes": {
+    "alias": 40,
+    "pointer_leaf": 20,
+    "long_array_element": 20,
+    "leaf": 120
+   },
+   "outside_edits": {
+    "made": 20,
+    "captured": 20,
+    "import": {
+     "observed:dropped": 0,
+     "observed:inserted": 20
+    }
+   },
+   "sm_writes": {
+    "applied": 6,
+    "undone": 2
+   },
+   "sm_copy_snapshots": {
+    "mapped_by_content": 6,
+    "state_not_in_the_ledger": 1
+   },
+   "points": {
+    "changes:dated_earlier": 4,
+    "changes:dated_earlier:the_change_is_a_return_or_right_after_one": 1,
+    "changes:dated_earlier:the_changing_run_has_no_param_history_snapshot": 3,
+    "changes:long_array_element_read_from_its_array_row": 20,
+    "changes:old_points": 549,
+    "changes:same_event": 545,
+    "changes_all_paths:dated_earlier": 61,
+    "changes_all_paths:dated_earlier:the_changing_run_has_no_param_history_snapshot": 61,
+    "changes_all_paths:long_array_element_read_from_its_array_row": 2732,
+    "changes_all_paths:old_points": 12266,
+    "changes_all_paths:pointer_leaf_shown_at_the_holder_it_named": 1463,
+    "changes_all_paths:same_event": 12205,
+    "grid:dated_earlier": 32992,
+    "grid:dated_earlier:a_snapshot_after_the_change_the_value_was_still_in_force": 32992,
+    "grid:old_points": 33670,
+    "grid:old_shows_no_value": 12950,
+    "grid:same_event": 678,
+    "trends_curated:dated_earlier": 487,
+    "trends_curated:dated_earlier:the_change_is_a_return_or_right_after_one": 1,
+    "trends_curated:dated_earlier:the_changing_run_has_no_param_history_snapshot": 9,
+    "trends_curated:dated_earlier:the_closing_edge_of_an_unchanged_stretch": 477,
+    "trends_curated:old_points": 1160,
+    "trends_curated:same_event": 673,
+    "trends_leaf:dated_earlier": 105,
+    "trends_leaf:dated_earlier:the_closing_edge_of_an_unchanged_stretch": 105,
+    "trends_leaf:old_points": 230,
+    "trends_leaf:same_event": 125
+   },
+   "extras": {
+    "changes:a_return_to_an_earlier_saved_state": 9,
+    "changes:removal": 2,
+    "changes:sm_write": 2,
+    "changes:the_change_right_after_such_a_return": 4,
+    "grid:a_return_to_an_earlier_saved_state": 20,
+    "grid:path_the_old_tier_never_held:readout_amplitude": 52,
+    "grid:sm_write": 2,
+    "trends_curated:a_return_to_an_earlier_saved_state": 20,
+    "trends_curated:path_the_old_tier_never_held:readout_amplitude": 52,
+    "trends_curated:sm_write": 2,
+    "trends_curated:the_change_right_after_such_a_return": 2,
+    "trends_leaf:not_a_number": 37,
+    "trends_leaf:path_the_old_tier_never_held:alias": 30,
+    "trends_leaf:removal": 40
+   },
+   "meta_writer": {
+    "sampled": 100,
+    "class:first_record": 37,
+    "agree": 100,
+    "class:run_proven": 16,
+    "class:run_saved": 41,
+    "class:sm": 6,
+    "old_named_a_writer_run": 178,
+    "old_named_new_not_proven": 141,
+    "old_named_new_names_the_same_run": 37,
+    "old_named_new_names_another_run": 0,
+    "old_named_new_not_proven:by_new_provenance": {
+     "run_saved": 141
+    }
+   },
+   "cleanup_done": true,
+   "missing": 0,
+   "unexplained": 0
+  },
+  "Archive B": {
+   "runs_copied": 200,
+   "window": "patched",
+   "seed": 283,
+   "ledger_events": 225,
+   "param_history_snapshots": 148,
+   "leaf_paths": 200,
+   "leaf_path_classes": {
+    "alias": 40,
+    "pointer_leaf": 20,
+    "leaf": 140
+   },
+   "outside_edits": {
+    "made": 20,
+    "captured": 20,
+    "import": {
+     "observed:dropped": 0,
+     "observed:inserted": 20
+    }
+   },
+   "sm_writes": {
+    "applied": 6,
+    "undone": 2
+   },
+   "sm_copy_snapshots": {
+    "mapped_by_content": 6,
+    "state_not_in_the_ledger": 1
+   },
+   "points": {
+    "changes:dated_earlier": 11,
+    "changes:dated_earlier:the_change_is_a_return_or_right_after_one": 1,
+    "changes:dated_earlier:the_changing_run_has_no_param_history_snapshot": 10,
+    "changes:old_points": 829,
+    "changes:same_event": 818,
+    "changes_all_paths:dated_earlier": 29,
+    "changes_all_paths:dated_earlier:the_changing_run_has_no_param_history_snapshot": 29,
+    "changes_all_paths:old_points": 3167,
+    "changes_all_paths:pointer_leaf_shown_at_the_holder_it_named": 1204,
+    "changes_all_paths:same_event": 3138,
+    "grid:dated_earlier": 11181,
+    "grid:dated_earlier:a_snapshot_after_the_change_the_value_was_still_in_force": 11181,
+    "grid:old_points": 11988,
+    "grid:old_shows_no_value": 3996,
+    "grid:same_event": 807,
+    "trends_curated:dated_earlier": 617,
+    "trends_curated:dated_earlier:the_change_is_a_return_or_right_after_one": 1,
+    "trends_curated:dated_earlier:the_changing_run_has_no_param_history_snapshot": 8,
+    "trends_curated:dated_earlier:the_closing_edge_of_an_unchanged_stretch": 608,
+    "trends_curated:old_points": 1424,
+    "trends_curated:same_event": 807,
+    "trends_leaf:dated_earlier": 55,
+    "trends_leaf:dated_earlier:the_changing_run_has_no_param_history_snapshot": 1,
+    "trends_leaf:dated_earlier:the_closing_edge_of_an_unchanged_stretch": 54,
+    "trends_leaf:old_points": 176,
+    "trends_leaf:same_event": 121
+   },
+   "extras": {
+    "changes:a_return_to_an_earlier_saved_state": 11,
+    "changes:sm_write": 2,
+    "grid:a_return_to_an_earlier_saved_state": 9,
+    "grid:sm_write": 2,
+    "trends_curated:a_return_to_an_earlier_saved_state": 9,
+    "trends_curated:sm_write": 2,
+    "trends_leaf:a_return_to_an_earlier_saved_state": 1,
+    "trends_leaf:not_a_number": 57,
+    "trends_leaf:outside_edit_seen_by_sm": 3,
+    "trends_leaf:path_the_old_tier_never_held:alias": 58,
+    "trends_leaf:removal": 64
+   },
+   "meta_writer": {
+    "sampled": 100,
+    "class:first_record": 15,
+    "agree": 100,
+    "class:run_proven": 78,
+    "class:run_saved": 2,
+    "class:sm": 5,
+    "old_named_a_writer_run": 93,
+    "old_named_new_not_proven": 0,
+    "old_named_new_names_the_same_run": 93,
+    "old_named_new_names_another_run": 0,
+    "old_named_new_not_proven:by_new_provenance": {}
+   },
+   "cleanup_done": true,
+   "missing": 0,
+   "unexplained": 0
+  }
+ },
+ "faults": [
+  {
+   "fault": "a building ledger",
+   "injected_by": "hub_sync.status = building 2/9",
+   "trends": "The change history is being built (2 of 9 runs). It shows here when it is complete. (asks again by itself; no rows)",
+   "metric_meta": "The change history is being built (2 of 9 runs). It shows here when it is complete.",
+   "param_history_grid": "The change history is being built (2 of 9 runs). It shows here when it is complete. (asks again by itself; no rows)",
+   "changes": "The change history is being built (2 of 9 runs). It shows here when it is complete. (asks again by itself; no rows)"
+  },
+  {
+   "fault": "an idle ledger",
+   "injected_by": "hub_sync.status = idle",
+   "trends": "The ledger is not being kept current in this window; runs after 2026-01-01T12:00:40Z may be missing.",
+   "metric_meta": "panel line: The ledger is not being kept current in this window; runs after 2026-01-01T12:00:40Z may be missing. || cell: #2 scan / its own patch set it / names a writer run: #2",
+   "param_history_grid": "The ledger is not being kept current in this window; runs after 2026-01-01T12:00:40Z may be missing.",
+   "changes": "The ledger is not being kept current in this window; runs after 2026-01-01T12:00:40Z may be missing. || 01-01 12:00 run #4 scan each row says whether this run's own patch set it Data 2 parameters :: qubits.qA1.xy.operations.x180: writer not proven; qubits.qA1.xy.operations.x180_DragCosine.amplitude: writer not proven"
+  },
+  {
+   "fault": "a run of another chip identity",
+   "injected_by": "run #5 saved with another chip name, its patch sets qA1 T1",
+   "trends": "9e-05 / #5 (chip uncertain) / not named as writer",
+   "metric_meta": "#5 (chip uncertain) / not named as writer / names a writer run: no",
+   "param_history_grid": "9e-05 / #5 (chip uncertain) / not named as writer / opens run: no",
+   "changes": "01-01 12:00 #5 (chip uncertain) not named as writer 2 parameters :: extras.chip_name: not named as writer; qubits.qA1.T1: not named as writer"
+  },
+  {
+   "fault": "a pointer retargeted mid-history",
+   "injected_by": "run #4 retargets x180 from x180_Gauss to x180_DragCosine",
+   "trends": "alias path, in force: 0.3 -> 0.25 (newest: 0.25 / saved in #4 scan / writer not proven)",
+   "metric_meta": "saved in #4 scan / writer not proven / names a writer run: no",
+   "param_history_grid": "0.25 / saved in #4 scan / writer not proven / opens run: no",
+   "changes": "01-01 12:00 run #4 scan each row says whether this run's own patch set it Data 2 parameters :: qubits.qA1.xy.operations.x180: writer not proven; qubits.qA1.xy.operations.x180_DragCosine.amplitude: writer not proven"
+  },
+  {
+   "fault": "an SM write later undone",
+   "injected_by": "edit qA1 T1, Apply as operator, then undo",
+   "trends": "3e-05 #2 scan -> 4.5e-05 applied by operator (undone) -> 3e-05 undo by operator",
+   "metric_meta": "undo by operator / SM write (ctrl_z) / names a writer run: no",
+   "param_history_grid": "3e-05 / undo by operator / SM write (ctrl_z) / opens run: no",
+   "changes": "10-05 09:38 applied by operator (undone) SM write (apply) 1 parameter :: qubits.qA1.T1: undone (struck through)"
+  },
+  {
+   "fault": "a NaN-only metric",
+   "injected_by": "every run saved T1 = NaN on both qubits",
+   "trends": "No finite numeric value recorded; there is no numeric trend to draw.",
+   "metric_meta": "first recorded in #1 / ledger start; writer unknown / value: nan (not a finite number) / names a writer run: no",
+   "param_history_grid": "None / first recorded in #1 / ledger start; writer unknown / opens run: no",
+   "changes": "01-01 12:00 first recorded in #1 ledger start; writer unknown 18 parameters :: extras.chip_name: ledger start; writer unknown; network.cluster_name: ledger start; writer unknown; network.host: ledger start; writer unknown"
+  },
+  {
+   "fault": "a deleted run folder",
+   "injected_by": "run #2's folder deleted, full sweep",
+   "trends": "3e-05 / #2 scan / its own patch set it / run folder deleted",
+   "metric_meta": "#2 scan / its own patch set it / run folder deleted / names a writer run: #2",
+   "param_history_grid": "3e-05 / #2 scan / its own patch set it / run folder deleted / opens run: no",
+   "changes": "01-01 12:00 run #2 scan each row says whether this run's own patch set it run folder deleted 1 parameter :: qubits.qA1.T1: its own patch set it"
+  }
+ ],
+ "performance": {
+  "big_chip_copy_30_qubits_20_runs": {
+   "runs": 20,
+   "qubits": 30,
+   "generation_s": 2.9,
+   "state_mb": 4.61,
+   "load_and_ledger_s": 11.7,
+   "param_history_backfill_s": 35.0,
+   "ledger_events": 20,
+   "ledger_paths": 33490,
+   "before": {
+    "chip_status_page": {
+     "cold_ms": 680.0,
+     "bytes": 489773,
+     "preparing_reasks": 0,
+     "warm_ms": 20.6,
+     "warm_p90_ms": 22.0
+    },
+    "chip_status_trends": {
+     "cold_ms": 1712.7,
+     "bytes": 56615,
+     "preparing_reasks": 0,
+     "warm_ms": 1.8,
+     "warm_p90_ms": 3.8
+    },
+    "metric_meta": {
+     "cold_ms": 261.5,
+     "bytes": 33034,
+     "preparing_reasks": 0,
+     "warm_ms": 68.6,
+     "warm_p90_ms": 76.6
+    },
+    "param_history_grid": {
+     "cold_ms": 145.1,
+     "bytes": 372911,
+     "preparing_reasks": 0,
+     "warm_ms": 32.3,
+     "warm_p90_ms": 36.8
+    },
+    "param_history_changes": {
+     "cold_ms": 946.2,
+     "bytes": 225504,
+     "preparing_reasks": 0,
+     "warm_ms": 24.4,
+     "warm_p90_ms": 25.8
+    }
+   },
+   "after": {
+    "chip_status_page": {
+     "cold_ms": 21.3,
+     "bytes": 489773,
+     "preparing_reasks": 0,
+     "warm_ms": 20.0,
+     "warm_p90_ms": 21.2
+    },
+    "chip_status_trends": {
+     "cold_ms": 1065.6,
+     "bytes": 66405,
+     "preparing_reasks": 0,
+     "warm_ms": 2.1,
+     "warm_p90_ms": 2.5
+    },
+    "metric_meta": {
+     "cold_ms": 939.8,
+     "bytes": 202709,
+     "preparing_reasks": 0,
+     "warm_ms": 4.8,
+     "warm_p90_ms": 5.2
+    },
+    "param_history_grid": {
+     "cold_ms": 886.7,
+     "bytes": 221465,
+     "preparing_reasks": 0,
+     "warm_ms": 18.6,
+     "warm_p90_ms": 21.0
+    },
+    "param_history_changes": {
+     "cold_ms": 1557.3,
+     "bytes": 169291,
+     "preparing_reasks": 0,
+     "warm_ms": 3.1,
+     "warm_p90_ms": 3.8
+    }
+   },
+   "cleanup_done": false
+  },
+  "synthetic_10000_runs_32_qubits": {
+   "runs": 10000,
+   "qubits": 32,
+   "generation_s": 43.1,
+   "state_mb": 0.0,
+   "load_and_ledger_s": 94.4,
+   "param_history_backfill_s": 750.0,
+   "ledger_events": 10000,
+   "ledger_paths": 164,
+   "before": {
+    "chip_status_page": {
+     "cold_ms": 558.4,
+     "bytes": 305978,
+     "preparing_reasks": 0,
+     "warm_ms": 37.9,
+     "warm_p90_ms": 51.8
+    },
+    "chip_status_trends": {
+     "cold_ms": 41187.5,
+     "bytes": 2088485,
+     "preparing_reasks": 0,
+     "warm_ms": 1486.1,
+     "warm_p90_ms": 1578.8
+    },
+    "metric_meta": {
+     "cold_ms": 35840.7,
+     "bytes": 21199,
+     "preparing_reasks": 0,
+     "warm_ms": 37247.9,
+     "warm_p90_ms": 43098.8
+    },
+    "param_history_grid": {
+     "cold_ms": 56569.8,
+     "bytes": 1599791,
+     "preparing_reasks": 0,
+     "warm_ms": 741.1,
+     "warm_p90_ms": 820.9
+    },
+    "param_history_changes": {
+     "cold_ms": 104.0,
+     "bytes": 152303,
+     "preparing_reasks": 0,
+     "warm_ms": 16.2,
+     "warm_p90_ms": 17.6
+    }
+   },
+   "after": {
+    "chip_status_page": {
+     "cold_ms": 33.1,
+     "bytes": 305978,
+     "preparing_reasks": 0,
+     "warm_ms": 36.2,
+     "warm_p90_ms": 38.4
+    },
+    "chip_status_trends": {
+     "cold_ms": 22320.4,
+     "bytes": 1624428,
+     "preparing_reasks": 0,
+     "warm_ms": 61.7,
+     "warm_p90_ms": 119.6
+    },
+    "metric_meta": {
+     "cold_ms": 24981.4,
+     "bytes": 56060,
+     "preparing_reasks": 0,
+     "warm_ms": 30.6,
+     "warm_p90_ms": 61.5
+    },
+    "param_history_grid": {
+     "cold_ms": 2041.6,
+     "bytes": 531377,
+     "preparing_reasks": 0,
+     "warm_ms": 56.4,
+     "warm_p90_ms": 68.2
+    },
+    "param_history_changes": {
+     "cold_ms": 513.8,
+     "bytes": 150545,
+     "preparing_reasks": 0,
+     "warm_ms": 2.3,
+     "warm_p90_ms": 2.8
+    }
+   },
+   "cleanup_done": false
+  }
+ }
+}

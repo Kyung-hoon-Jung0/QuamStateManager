@@ -373,6 +373,23 @@ _READERS_LOCK = threading.RLock()
 READ_WAIT_S = 0.25
 
 
+#: docs/283: a chip folder's reader slot (its resolved, case-folded path),
+#: resolved once per spelling -- ``Path.resolve`` was the largest single cost
+#: of a warm read on Windows (two final-path system calls per read)
+_SLOTS: dict = {}
+
+
+def _slot(directory) -> str:
+    key = str(directory)
+    slot = _SLOTS.get(key)
+    if slot is None:
+        slot = os.path.normcase(str(Path(directory).resolve()))
+        if len(_SLOTS) > 256:
+            _SLOTS.clear()
+        _SLOTS[key] = slot
+    return slot
+
+
 def _close(reader, slot) -> None:
     with reader.lock:
         reader.conn.close()
@@ -383,7 +400,7 @@ def close_readers(directory=None):
     """Release read handles before deleting scratch ledgers or shutting down.
     A handle in use is closed once its reader is done; the global lock is
     never held while waiting for it (docs/282 review P2-3)."""
-    key = os.path.normcase(str(Path(directory).resolve())) if directory is not None else None
+    key = _slot(directory) if directory is not None else None
     with _READERS_LOCK:
         gone = [(slot, _READERS.pop(slot)) for slot in list(_READERS)
                 if key is None or slot == key]
@@ -398,7 +415,7 @@ def snapshot(store):
     directory = raw.directory
     hub_sync.require_ready(directory)
     store, zone = _binding(store)
-    slot = os.path.normcase(str(Path(directory).resolve()))
+    slot = _slot(directory)
     stale = []
     with _READERS_LOCK:
         reader = _READERS.get(slot)

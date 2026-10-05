@@ -12438,6 +12438,12 @@ body.scheduler-active #pending-tray { opacity: .5; pointer-events: none; }
 .vh-table .vh-by { display: block; }
 .vh-sub { display: block; font-size: .6rem; color: var(--color-text-muted); }
 .vh-chip-sub { font-size: .58rem; color: var(--color-text-muted); }
+/* docs/283: Param History Changes on the ledger -- the group names the
+   event, each row says who the ledger can prove set it */
+.ph-change-head .vh-sub { display: inline; font-size: .62rem; }
+.ph-change-who { font-size: .62rem; white-space: nowrap; width: 1%; padding-left: .6rem; }
+.ph-change-who .vh-sub { display: inline; }
+tr.vh-undone .ba-new { text-decoration: line-through; }
 .vh-chip-via, .vh-more { font-size: .62rem; color: var(--color-text-muted); margin-right: .3rem; }
 
 /* inspector-row button — INSIDE the edit box (search-icon pattern), never a

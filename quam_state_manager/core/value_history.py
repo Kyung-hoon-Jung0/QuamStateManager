@@ -102,13 +102,15 @@ def _long_list(value: Any) -> bool:
             and all(not isinstance(v, (dict, list)) for v in value))
 
 
-def target(merged: dict, dot_path: str) -> dict:
+def target(merged: dict, dot_path: str, *, container: bool = False) -> dict:
     """Resolve *dot_path* once, now, through the one resolver.
 
     Returns ``{"path", "holder", "via", "current", "has_current",
     "resolvable", "array", "element"}``. ``holder`` is the S2 spelling of
     where the value is stored; ``array``/``element`` name a long-array holder
-    and the index when the value is one element of a long scalar list."""
+    and the index when the value is one element of a long scalar list.
+    ``container=True`` lets a metric enumerate descendants through this same
+    resolver; actual history requests still name the individual leaves."""
     try:
         ft = resolve_field_target(merged, dot_path)
     except Exception:  # noqa: BLE001 -- the resolver never raises; belt and braces
@@ -123,7 +125,7 @@ def target(merged: dict, dot_path: str) -> dict:
         if found and isinstance(val, (dict, list)):
             current = val
             ptr = cands[-2] if len(cands) >= 2 else None
-            if not _long_list(val) and ptr is not None and ptr.get("is_pointer"):
+            if not container and not _long_list(val) and ptr is not None and ptr.get("is_pointer"):
                 # a pointer to a whole object (``x180 = "#./x180_DragCosine"``):
                 # the VALUE this path holds is the pointer string, so its
                 # history is the pointer holder's (its retargets)
@@ -461,7 +463,7 @@ def _point(ev: dict, old: Any, new: Any, op: str, proven: bool, roots: dict,
             folder = base.rstrip("/\\") + "/" + ev["rel_path"]
     info = sm.get(ev["eid"]) or {}
     return {
-        "eid": ev["eid"], "t_us": ev["t_utc_us"], "t": iso_z(ev["t_utc_us"]),
+        "eid": ev["eid"], "ord": ev["ord"], "t_us": ev["t_utc_us"], "t": iso_z(ev["t_utc_us"]),
         "kind": ev["kind"], "op": op, "value": new, "old": old,
         "removed": op == "gone", "was_absent": op == "add",
         "proven": bool(proven), "provenance": provenance(ev, proven),
@@ -492,6 +494,13 @@ def _sm_info(conn, eids: Iterable[int]) -> dict:
     return out
 
 
+def _undo_takes_back(lev: dict, mine: Any, sm: dict) -> bool:
+    """Is *lev* an undo still in effect (not itself undone by a redo) whose
+    undo links name SM write *mine*?"""
+    return (lev.get("kind") == "undo" and not int(lev.get("flags") or 0) & UNDONE
+            and mine in ((sm.get(lev["eid"]) or {}).get("undo_targets") or ()))
+
+
 def _mark_undone(raw: list[tuple], pts: list[dict], sm: dict) -> None:
     """docs/282 review P2-2: "undone" is decided per PATH. An event whose every
     unit was taken back (``UNDONE``) is undone on every path it wrote; a
@@ -508,11 +517,46 @@ def _mark_undone(raw: list[tuple], pts: list[dict], sm: dict) -> None:
             continue
         mine = (sm.get(ev["eid"]) or {}).get("sm_id")
         for later in raw[i + 1:]:
-            lev = later[0]
-            if (lev.get("kind") == "undo" and not int(lev.get("flags") or 0) & UNDONE
-                    and mine in ((sm.get(lev["eid"]) or {}).get("undo_targets") or ())):
+            if _undo_takes_back(later[0], mine, sm):
                 pts[i]["undone"] = "undone"
                 break
+
+
+#: :func:`undone_paths` for a write taken back on every path it wrote
+ALL_PATHS = object()
+
+
+def undone_paths(conn, index, ev: dict, sm: dict) -> Any:
+    """The rule of :func:`_mark_undone`, for every path of ONE SM event at
+    once (docs/283: the Changes page lists an event's rows, not a path's):
+    :data:`ALL_PATHS` when the whole write was taken back (``UNDONE``), the
+    holder paths a later undo still in effect wrote a row on and names this
+    write for (``PARTLY_UNDONE``), else None. *sm* is :func:`_sm_info` of
+    the event; the later undos' own facts are read here."""
+    flags = int(ev.get("flags") or 0)
+    if ev.get("kind") not in SM_KINDS:
+        return None
+    if flags & UNDONE:
+        return ALL_PATHS
+    if not flags & PARTLY_UNDONE:
+        return None
+    mine = (sm.get(ev["eid"]) or {}).get("sm_id")
+    undo_kind = index.names["kind"].get("undo")
+    pos = index.positions.get(ev["eid"])
+    if mine is None or undo_kind is None or pos is None:
+        return set()
+    later = [index.eids[q] for q in range(pos + 1, len(index.eids)) if index.kind[q] == undo_kind]
+    if not later:
+        return set()
+    facts = _sm_info(conn, later)
+    levs = hub_query._events(conn, later)
+    out: set[str] = set()
+    for eid in later:
+        lev = levs.get(eid)
+        if lev is not None and _undo_takes_back(lev, mine, facts):
+            out.update(r[0] for r in conn.execute(
+                "SELECT p.path FROM changes c JOIN paths p USING(pid) WHERE c.eid=?", (eid,)))
+    return out
 
 
 def read(chip_dir, targets: dict[str, dict], *, limit: int | None = None,
@@ -595,9 +639,8 @@ def read(chip_dir, targets: dict[str, dict], *, limit: int | None = None,
                     break
             out_rows[key] = {
                 "points": pts, "total": total, "retargets": retargets,
-                "effective": [dict(_point(ev, old, new, op, proven, roots, sm),
-                                   holder=_segment_at(segs[key], index.positions[ev["eid"]]))
-                              for ev, old, new, op, proven in eff[key]],
+                "effective": [dict(p, holder=_segment_at(segs[key], index.positions[p["eid"]]))
+                              for p in points(eff[key])],
                 "segments": [{"t": iso_z(index.t[s]) if 0 <= s < len(index.eids) else None,
                               "holder": h} for s, h in segs[key]],
                 "via_since": (iso_z(index.t[since]) if since is not None and 0 < since < len(index.eids)
@@ -645,7 +688,13 @@ def read(chip_dir, targets: dict[str, dict], *, limit: int | None = None,
                   "first": iso_z(index.t[0]) if index.eids else None,
                   "last": iso_z(index.t[-1]) if index.eids else None,
                   "last_us": index.t[-1] if index.eids else None,
-                  "last_run": None, "kinds": sorted(kind_names.values())}
+                  "last_eid": index.eids[-1] if index.eids else None,
+                  "last_run": None, "kinds": sorted(kind_names.values()),
+                  # what this answer was read from (docs/283: a surface's
+                  # cache is validated on it without a second read snapshot)
+                  "version": [index.ledger_id,
+                              conn.execute("PRAGMA data_version").fetchone()[0],
+                              max(index.eids, default=0), len(index.eids), len(index.paths)]}
         if run_kind is not None:
             for pos in range(len(index.eids) - 1, -1, -1):
                 if index.kind[pos] == run_kind:

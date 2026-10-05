@@ -9,13 +9,13 @@
      data-legacy-chip-key="{{ legacy_chip_key | default('') }}"
      data-active-chip-key="{{ active_chip_key }}"
      data-is-loaded-chip="{{ '1' if is_loaded_chip else '0' }}"
-     data-snapshot-total="{{ summary.total }}"
+     data-snapshot-total="{{ (snap_summary or summary).total }}"
      {# experiment-only count for the auto-backfill heuristic. Comparing
         ``importable`` (workspace experiments aligned with this chip)
         against the full ``total`` was an apples-to-oranges check — manual
         saves and live-poll captures inflated ``total`` and silently
         suppressed auto-fire for users with active hand-editing. #}
-     data-experiment-snapshot-count="{{ summary.by_trigger.get('experiment', 0) }}"
+     data-experiment-snapshot-count="{{ (snap_summary or summary).by_trigger.get('experiment', 0) }}"
      data-importable-count="{{ importable_count }}"
      data-pending-import-count="{{ pending_import_count }}">
   <div class="param-history-header">
@@ -398,6 +398,10 @@
      container — the form above targets it with hx-select, so a chip click
      re-renders the results and nothing else. #}
   <div id="param-history-results">
+  {# docs/283: the change ledger's notes, or the label of the older
+     snapshot path -- inside the results, so a filter change keeps them #}
+  {% if hub_fallback %}<p class="vh-fallback">{{ hub_fallback }}</p>{% endif %}
+  {% for note in hub_notes or [] %}<p class="vh-note vh-note-{{ note.level }}" data-code="{{ note.code }}">{{ note.text }}</p>{% endfor %}
   {# the busy-index banner lives INSIDE the results (code-review sweep): a
      filter change swaps only this container, so a failure during one must
      land where the user can see it #}
@@ -409,8 +413,13 @@
   </div>
   {% endif %}
   <div class="param-history-summary">
+    {% if hub_mode == 'ledger' %}
+    <strong>{{ summary.window_count }}</strong> recorded change{{ '' if summary.window_count == 1 else 's' }} shown
+    {% if summary.total %}<span class="muted">({{ summary.total }} event{{ '' if summary.total == 1 else 's' }} in the change ledger)</span>{% endif %}
+    {% else %}
     <strong>{{ summary.window_count }}</strong> snapshots match
     {% if summary.total %}<span class="muted">({{ summary.total }} total in index)</span>{% endif %}
+    {% endif %}
     {% if summary.by_trigger %}
       &nbsp;|&nbsp;
       {% for tk in ['save','manual','auto','experiment','restore'] %}

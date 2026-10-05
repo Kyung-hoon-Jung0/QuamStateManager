@@ -25,6 +25,10 @@
 {% if no_chip %}
     <p class="muted">No chip is open.</p>
 {% else %}
+    {# docs/283: the change ledger's notes (degraded / deferred / idle / no
+       data folder), or the label of the older snapshot path #}
+    {% if hub_fallback %}<p class="vh-fallback">{{ hub_fallback }}</p>{% endif %}
+    {% for note in hub_notes or [] %}<p class="vh-note vh-note-{{ note.level }}" data-code="{{ note.code }}">{{ note.text }}</p>{% endfor %}
     <div class="topo-trends-controls">
         <span class="muted topo-trends-label">Qubits</span>
         <span class="topo-trends-chips">
@@ -47,10 +51,10 @@
             <div class="topo-trend-suggest" id="topo-trend-suggest" hidden></div>
         </span>
         {% if snapshots is defined %}
-        <span class="muted topo-trends-count">{{ snapshots }} snapshot{{ '' if snapshots == 1 else 's' }}</span>
+        <span class="muted topo-trends-count">{{ snapshots }} {{ ('recorded event' if hub_mode == 'ledger' else 'snapshot') }}{{ '' if snapshots == 1 else 's' }}</span>
         {# QA chipstatus-r2-15: the same count as the History (N) button; a
            Trends refresh keeps the two in step #}
-        <span id="history-count" hx-swap-oob="true">{{ snapshots }}</span>
+        {% if hub_mode != 'ledger' %}<span id="history-count" hx-swap-oob="true">{{ snapshots }}</span>{% endif %}
         {% endif %}
     </div>
 

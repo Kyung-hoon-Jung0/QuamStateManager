@@ -1,0 +1,722 @@
+{
+ "mutations": 57,
+ "red": 57,
+ "results": [
+  {
+   "name": "curated_value_wrong",
+   "file": "quam_state_manager/web/hub_status.py",
+   "red": true,
+   "failed_pins": [
+    "TestOneReader::test_trends_the_grid_and_the_meta_read_through_the_value_history"
+   ],
+   "pins": [
+    "TestOneReader::test_trends_the_grid_and_the_meta_read_through_the_value_history"
+   ],
+   "seconds": 13.6
+  },
+  {
+   "name": "grid_reads_the_old_index",
+   "file": "quam_state_manager/web/routes.py",
+   "red": true,
+   "failed_pins": [
+    "TestOneReader::test_trends_the_grid_and_the_meta_read_through_the_value_history"
+   ],
+   "pins": [
+    "TestOneReader::test_trends_the_grid_and_the_meta_read_through_the_value_history"
+   ],
+   "seconds": 13.4
+  },
+  {
+   "name": "alias_drawn_from_todays_holder",
+   "file": "quam_state_manager/web/hub_status.py",
+   "red": true,
+   "failed_pins": [
+    "TestOneReader::test_an_alias_is_drawn_from_the_holder_it_named_then"
+   ],
+   "pins": [
+    "TestOneReader::test_an_alias_is_drawn_from_the_holder_it_named_then"
+   ],
+   "seconds": 12.7
+  },
+  {
+   "name": "text_families_offered",
+   "file": "quam_state_manager/web/hub_status.py",
+   "red": true,
+   "failed_pins": [
+    "TestOneReader::test_the_typeahead_offers_numeric_families_of_the_ledger"
+   ],
+   "pins": [
+    "TestOneReader::test_the_typeahead_offers_numeric_families_of_the_ledger"
+   ],
+   "seconds": 13.2
+  },
+  {
+   "name": "wildcard_crosses_segments",
+   "file": "quam_state_manager/web/hub_status.py",
+   "red": true,
+   "failed_pins": [
+    "TestOneReader::test_a_wildcard_family_matches_whole_segments"
+   ],
+   "pins": [
+    "TestOneReader::test_a_wildcard_family_matches_whole_segments"
+   ],
+   "seconds": 13.2
+  },
+  {
+   "name": "unproven_run_is_proven",
+   "file": "quam_state_manager/core/value_history.py",
+   "red": true,
+   "failed_pins": [
+    "TestWriterOnlyOnProof::test_the_meta_names_a_run_only_on_its_own_patch",
+    "TestWriterOnlyOnProof::test_changes_name_the_writer_per_row"
+   ],
+   "pins": [
+    "TestWriterOnlyOnProof::test_the_meta_names_a_run_only_on_its_own_patch",
+    "TestWriterOnlyOnProof::test_changes_name_the_writer_per_row"
+   ],
+   "seconds": 14.1
+  },
+  {
+   "name": "meta_names_any_run",
+   "file": "quam_state_manager/web/routes.py",
+   "red": true,
+   "failed_pins": [
+    "TestWriterOnlyOnProof::test_the_meta_names_a_run_only_on_its_own_patch"
+   ],
+   "pins": [
+    "TestWriterOnlyOnProof::test_the_meta_names_a_run_only_on_its_own_patch"
+   ],
+   "seconds": 13.1
+  },
+  {
+   "name": "one_proven_leaf_proves_the_matrix",
+   "file": "quam_state_manager/web/hub_status.py",
+   "red": true,
+   "failed_pins": [
+    "TestWriterOnlyOnProof::test_a_matrix_is_proven_only_when_every_leaf_change_is"
+   ],
+   "pins": [
+    "TestWriterOnlyOnProof::test_a_matrix_is_proven_only_when_every_leaf_change_is"
+   ],
+   "seconds": 13.5
+  },
+  {
+   "name": "a_proven_leaf_speaks_for_the_matrix",
+   "file": "quam_state_manager/web/hub_status.py",
+   "red": true,
+   "failed_pins": [
+    "TestWriterOnlyOnProof::test_a_matrix_is_proven_only_when_every_leaf_change_is"
+   ],
+   "pins": [
+    "TestWriterOnlyOnProof::test_a_matrix_is_proven_only_when_every_leaf_change_is"
+   ],
+   "seconds": 13.3
+  },
+  {
+   "name": "a_wholly_patched_matrix_is_not_proven",
+   "file": "quam_state_manager/web/hub_status.py",
+   "red": true,
+   "failed_pins": [
+    "TestWriterOnlyOnProof::test_a_matrix_whose_every_change_is_patched_names_its_run"
+   ],
+   "pins": [
+    "TestWriterOnlyOnProof::test_a_matrix_whose_every_change_is_patched_names_its_run"
+   ],
+   "seconds": 12.9
+  },
+  {
+   "name": "foreign_chip_flag_ignored",
+   "file": "quam_state_manager/core/value_history.py",
+   "red": true,
+   "failed_pins": [
+    "TestWriterOnlyOnProof::test_a_run_of_another_chip_is_never_the_writer"
+   ],
+   "pins": [
+    "TestWriterOnlyOnProof::test_a_run_of_another_chip_is_never_the_writer"
+   ],
+   "seconds": 10.8
+  },
+  {
+   "name": "every_change_row_claims_the_patch",
+   "file": "quam_state_manager/web/routes.py",
+   "red": true,
+   "failed_pins": [
+    "TestWriterOnlyOnProof::test_changes_name_the_writer_per_row"
+   ],
+   "pins": [
+    "TestWriterOnlyOnProof::test_changes_name_the_writer_per_row"
+   ],
+   "seconds": 11.2
+  },
+  {
+   "name": "change_rows_proven_by_the_event",
+   "file": "quam_state_manager/web/routes.py",
+   "red": true,
+   "failed_pins": [
+    "TestWriterOnlyOnProof::test_changes_name_the_writer_per_row"
+   ],
+   "pins": [
+    "TestWriterOnlyOnProof::test_changes_name_the_writer_per_row"
+   ],
+   "seconds": 12.4
+  },
+  {
+   "name": "drawer_names_any_run",
+   "file": "quam_state_manager/web/routes.py",
+   "red": true,
+   "failed_pins": [
+    "TestWriterOnlyOnProof::test_the_grid_drawer_opens_a_run_only_on_proof"
+   ],
+   "pins": [
+    "TestWriterOnlyOnProof::test_the_grid_drawer_opens_a_run_only_on_proof"
+   ],
+   "seconds": 11.6
+  },
+  {
+   "name": "drawer_opens_any_run",
+   "file": "quam_state_manager/web/routes.py",
+   "red": true,
+   "failed_pins": [
+    "TestWriterOnlyOnProof::test_the_grid_drawer_opens_a_run_only_on_proof"
+   ],
+   "pins": [
+    "TestWriterOnlyOnProof::test_the_grid_drawer_opens_a_run_only_on_proof"
+   ],
+   "seconds": 12.1
+  },
+  {
+   "name": "sm_actor_dropped",
+   "file": "quam_state_manager/web/routes.py",
+   "red": true,
+   "failed_pins": [
+    "TestSmWrites::test_an_sm_write_names_actor_and_kind_and_an_undo_is_marked"
+   ],
+   "pins": [
+    "TestSmWrites::test_an_sm_write_names_actor_and_kind_and_an_undo_is_marked"
+   ],
+   "seconds": 12.2
+  },
+  {
+   "name": "in_force_points_never_undone",
+   "file": "quam_state_manager/core/value_history.py",
+   "red": true,
+   "failed_pins": [
+    "TestSmWrites::test_an_sm_write_names_actor_and_kind_and_an_undo_is_marked"
+   ],
+   "pins": [
+    "TestSmWrites::test_an_sm_write_names_actor_and_kind_and_an_undo_is_marked"
+   ],
+   "seconds": 11.8
+  },
+  {
+   "name": "partly_undone_marks_every_row",
+   "file": "quam_state_manager/core/value_history.py",
+   "red": true,
+   "failed_pins": [
+    "TestSmWrites::test_a_partly_undone_write_marks_only_the_row_taken_back"
+   ],
+   "pins": [
+    "TestSmWrites::test_a_partly_undone_write_marks_only_the_row_taken_back"
+   ],
+   "seconds": 11.9
+  },
+  {
+   "name": "undone_rows_never_marked",
+   "file": "quam_state_manager/web/routes.py",
+   "red": true,
+   "failed_pins": [
+    "TestSmWrites::test_a_partly_undone_write_marks_only_the_row_taken_back"
+   ],
+   "pins": [
+    "TestSmWrites::test_a_partly_undone_write_marks_only_the_row_taken_back"
+   ],
+   "seconds": 12.1
+  },
+  {
+   "name": "meta_newest_by_clock",
+   "file": "quam_state_manager/web/routes.py",
+   "red": true,
+   "failed_pins": [
+    "TestSmWrites::test_the_meta_takes_the_newest_change_in_ledger_order"
+   ],
+   "pins": [
+    "TestSmWrites::test_the_meta_takes_the_newest_change_in_ledger_order"
+   ],
+   "seconds": 11.4
+  },
+  {
+   "name": "unproven_run_not_an_experiment",
+   "file": "quam_state_manager/web/hub_status.py",
+   "red": true,
+   "failed_pins": [
+    "TestGrid::test_the_source_filter_keeps_every_run_event_and_maps_sm_writes"
+   ],
+   "pins": [
+    "TestGrid::test_the_source_filter_keeps_every_run_event_and_maps_sm_writes"
+   ],
+   "seconds": 11.7
+  },
+  {
+   "name": "sm_write_not_a_save",
+   "file": "quam_state_manager/web/hub_status.py",
+   "red": true,
+   "failed_pins": [
+    "TestGrid::test_the_source_filter_keeps_every_run_event_and_maps_sm_writes"
+   ],
+   "pins": [
+    "TestGrid::test_the_source_filter_keeps_every_run_event_and_maps_sm_writes"
+   ],
+   "seconds": 11.3
+  },
+  {
+   "name": "window_drops_the_value_in_force",
+   "file": "quam_state_manager/web/routes.py",
+   "red": true,
+   "failed_pins": [
+    "TestGrid::test_a_value_in_force_when_the_window_opens_is_carried_in"
+   ],
+   "pins": [
+    "TestGrid::test_a_value_in_force_when_the_window_opens_is_carried_in"
+   ],
+   "seconds": 12.0
+  },
+  {
+   "name": "import_gate_counts_ledger_events",
+   "file": "quam_state_manager/web/templates/_param_history.html",
+   "red": true,
+   "failed_pins": [
+    "TestGrid::test_the_auto_import_gate_still_counts_snapshots"
+   ],
+   "pins": [
+    "TestGrid::test_the_auto_import_gate_still_counts_snapshots"
+   ],
+   "seconds": 10.8
+  },
+  {
+   "name": "archived_chip_reads_the_open_chip",
+   "file": "quam_state_manager/web/routes.py",
+   "red": true,
+   "failed_pins": [
+    "TestGrid::test_an_archived_chip_reads_its_own_ledger"
+   ],
+   "pins": [
+    "TestGrid::test_an_archived_chip_reads_its_own_ledger"
+   ],
+   "seconds": 12.6
+  },
+  {
+   "name": "changes_prefix_read_exactly",
+   "file": "quam_state_manager/web/routes.py",
+   "red": true,
+   "failed_pins": [
+    "TestChanges::test_changes_read_the_timeline_with_a_path_prefix"
+   ],
+   "pins": [
+    "TestChanges::test_changes_read_the_timeline_with_a_path_prefix"
+   ],
+   "seconds": 11.4
+  },
+  {
+   "name": "changes_prefix_case_sensitive",
+   "file": "quam_state_manager/core/hub_query.py",
+   "red": true,
+   "failed_pins": [
+    "TestChanges::test_changes_read_the_timeline_with_a_path_prefix"
+   ],
+   "pins": [
+    "TestChanges::test_changes_read_the_timeline_with_a_path_prefix"
+   ],
+   "seconds": 11.5
+  },
+  {
+   "name": "one_event_reference_ignored",
+   "file": "quam_state_manager/web/routes.py",
+   "red": true,
+   "failed_pins": [
+    "TestChanges::test_one_event_opens_whole_and_pages_never_skip_one"
+   ],
+   "pins": [
+    "TestChanges::test_one_event_opens_whole_and_pages_never_skip_one"
+   ],
+   "seconds": 12.0
+  },
+  {
+   "name": "older_page_never_offered",
+   "file": "quam_state_manager/web/routes.py",
+   "red": true,
+   "failed_pins": [
+    "TestChanges::test_one_event_opens_whole_and_pages_never_skip_one"
+   ],
+   "pins": [
+    "TestChanges::test_one_event_opens_whole_and_pages_never_skip_one"
+   ],
+   "seconds": 11.7
+  },
+  {
+   "name": "changes_numbers_only",
+   "file": "quam_state_manager/web/routes.py",
+   "red": true,
+   "failed_pins": [
+    "TestChanges::test_text_booleans_and_removals_are_changes_too"
+   ],
+   "pins": [
+    "TestChanges::test_text_booleans_and_removals_are_changes_too"
+   ],
+   "seconds": 12.0
+  },
+  {
+   "name": "invalid_reference_answers_200",
+   "file": "quam_state_manager/web/routes.py",
+   "red": true,
+   "failed_pins": [
+    "TestChanges::test_an_invalid_page_reference_is_a_readable_refusal[before=invalid]",
+    "TestChanges::test_an_invalid_page_reference_is_a_readable_refusal[at=invalid]"
+   ],
+   "pins": [
+    "TestChanges::test_an_invalid_page_reference_is_a_readable_refusal"
+   ],
+   "seconds": 12.6
+  },
+  {
+   "name": "typeahead_reads_the_old_index",
+   "file": "quam_state_manager/web/routes.py",
+   "red": true,
+   "failed_pins": [
+    "TestChanges::test_the_typeahead_offers_the_ledgers_paths"
+   ],
+   "pins": [
+    "TestChanges::test_the_typeahead_offers_the_ledgers_paths"
+   ],
+   "seconds": 11.3
+  },
+  {
+   "name": "page_cache_ignores_the_swap",
+   "file": "quam_state_manager/web/routes.py",
+   "red": true,
+   "failed_pins": [
+    "TestChanges::test_a_full_page_after_a_swap_is_still_a_full_page"
+   ],
+   "pins": [
+    "TestChanges::test_a_full_page_after_a_swap_is_still_a_full_page"
+   ],
+   "seconds": 11.5
+  },
+  {
+   "name": "building_words_lost",
+   "file": "quam_state_manager/web/routes.py",
+   "red": true,
+   "failed_pins": [
+    "TestModes::test_building_is_said_and_asked_again_without_rows[/topology/trends?metrics=T1]",
+    "TestModes::test_building_is_said_and_asked_again_without_rows[/topology/metric-meta]",
+    "TestModes::test_building_is_said_and_asked_again_without_rows[/param-history?since=all]",
+    "TestModes::test_building_is_said_and_asked_again_without_rows[/param-history/changes]"
+   ],
+   "pins": [
+    "TestModes::test_building_is_said_and_asked_again_without_rows"
+   ],
+   "seconds": 14.1
+  },
+  {
+   "name": "waiting_surface_never_asks_again",
+   "file": "quam_state_manager/web/templates/_hub_surface_wait.html",
+   "red": true,
+   "failed_pins": [
+    "TestModes::test_building_is_said_and_asked_again_without_rows[/topology/trends?metrics=T1]",
+    "TestModes::test_building_is_said_and_asked_again_without_rows[/param-history?since=all]",
+    "TestModes::test_building_is_said_and_asked_again_without_rows[/param-history/changes]"
+   ],
+   "pins": [
+    "TestModes::test_building_is_said_and_asked_again_without_rows"
+   ],
+   "seconds": 15.2
+  },
+  {
+   "name": "preparing_words_lost",
+   "file": "quam_state_manager/web/routes.py",
+   "red": true,
+   "failed_pins": [
+    "TestModes::test_preparing_is_said_in_the_same_words[/topology/trends?metrics=T1]",
+    "TestModes::test_preparing_is_said_in_the_same_words[/topology/metric-meta]",
+    "TestModes::test_preparing_is_said_in_the_same_words[/param-history?since=all]",
+    "TestModes::test_preparing_is_said_in_the_same_words[/param-history/changes]",
+    "TestModes::test_a_busy_read_after_the_mode_check_is_never_an_empty_answer[/topology/trends?metrics=T1]",
+    "TestModes::test_a_busy_read_after_the_mode_check_is_never_an_empty_answer[/topology/metric-meta]",
+    "TestModes::test_a_busy_read_after_the_mode_check_is_never_an_empty_answer[/param-history?since=all]",
+    "TestModes::test_a_busy_read_after_the_mode_check_is_never_an_empty_answer[/param-history/changes]"
+   ],
+   "pins": [
+    "TestModes::test_preparing_is_said_in_the_same_words",
+    "TestModes::test_a_busy_read_after_the_mode_check_is_never_an_empty_answer"
+   ],
+   "seconds": 17.4
+  },
+  {
+   "name": "busy_trends_read_swallowed",
+   "file": "quam_state_manager/web/routes.py",
+   "red": true,
+   "failed_pins": [
+    "TestModes::test_a_busy_read_after_the_mode_check_is_never_an_empty_answer[/topology/trends?metrics=T1]"
+   ],
+   "pins": [
+    "TestModes::test_a_busy_read_after_the_mode_check_is_never_an_empty_answer"
+   ],
+   "seconds": 14.1
+  },
+  {
+   "name": "idle_words_lost",
+   "file": "quam_state_manager/core/value_history.py",
+   "red": true,
+   "failed_pins": [
+    "TestModes::test_idle_is_said[/topology/trends?metrics=T1]",
+    "TestModes::test_idle_is_said[/topology/metric-meta]",
+    "TestModes::test_idle_is_said[/param-history?since=all]",
+    "TestModes::test_idle_is_said[/param-history/changes]",
+    "TestModes::test_an_empty_grid_still_says_idle"
+   ],
+   "pins": [
+    "TestModes::test_idle_is_said",
+    "TestModes::test_an_empty_grid_still_says_idle"
+   ],
+   "seconds": 14.8
+  },
+  {
+   "name": "grid_notes_dropped",
+   "file": "quam_state_manager/web/templates/_param_history.html",
+   "red": true,
+   "failed_pins": [
+    "TestModes::test_idle_is_said[/param-history?since=all]",
+    "TestModes::test_an_empty_grid_still_says_idle"
+   ],
+   "pins": [
+    "TestModes::test_idle_is_said",
+    "TestModes::test_an_empty_grid_still_says_idle"
+   ],
+   "seconds": 15.1
+  },
+  {
+   "name": "degraded_words_lost",
+   "file": "quam_state_manager/core/value_history.py",
+   "red": true,
+   "failed_pins": [
+    "TestModes::test_degraded_says_changes_may_be_missing[/topology/trends?metrics=T1]",
+    "TestModes::test_degraded_says_changes_may_be_missing[/topology/metric-meta]",
+    "TestModes::test_degraded_says_changes_may_be_missing[/param-history?since=all]",
+    "TestModes::test_degraded_says_changes_may_be_missing[/param-history/changes]"
+   ],
+   "pins": [
+    "TestModes::test_degraded_says_changes_may_be_missing"
+   ],
+   "seconds": 15.9
+  },
+  {
+   "name": "fallback_label_lost",
+   "file": "quam_state_manager/web/routes.py",
+   "red": true,
+   "failed_pins": [
+    "TestModes::test_a_chip_with_no_ledger_keeps_the_old_path_labelled[/topology/trends?metrics=T1]",
+    "TestModes::test_a_chip_with_no_ledger_keeps_the_old_path_labelled[/topology/metric-meta]",
+    "TestModes::test_a_chip_with_no_ledger_keeps_the_old_path_labelled[/param-history?since=all]",
+    "TestModes::test_a_chip_with_no_ledger_keeps_the_old_path_labelled[/param-history/changes]"
+   ],
+   "pins": [
+    "TestModes::test_a_chip_with_no_ledger_keeps_the_old_path_labelled"
+   ],
+   "seconds": 14.2
+  },
+  {
+   "name": "trends_fallback_label_dropped",
+   "file": "quam_state_manager/web/routes.py",
+   "red": true,
+   "failed_pins": [
+    "TestModes::test_a_chip_with_no_ledger_keeps_the_old_path_labelled[/topology/trends?metrics=T1]"
+   ],
+   "pins": [
+    "TestModes::test_a_chip_with_no_ledger_keeps_the_old_path_labelled"
+   ],
+   "seconds": 13.7
+  },
+  {
+   "name": "nan_drawn_as_a_number",
+   "file": "quam_state_manager/web/routes.py",
+   "red": true,
+   "failed_pins": [
+    "TestFaults::test_a_nan_only_metric_draws_no_trend_and_says_why"
+   ],
+   "pins": [
+    "TestFaults::test_a_nan_only_metric_draws_no_trend_and_says_why"
+   ],
+   "seconds": 11.2
+  },
+  {
+   "name": "nan_leaks_into_the_meta_json",
+   "file": "quam_state_manager/web/routes.py",
+   "red": true,
+   "failed_pins": [
+    "TestFaults::test_a_nan_only_metric_draws_no_trend_and_says_why"
+   ],
+   "pins": [
+    "TestFaults::test_a_nan_only_metric_draws_no_trend_and_says_why"
+   ],
+   "seconds": 11.3
+  },
+  {
+   "name": "deleted_folder_unsaid",
+   "file": "quam_state_manager/web/routes.py",
+   "red": true,
+   "failed_pins": [
+    "TestFaults::test_a_deleted_run_folder_keeps_its_proof_and_loses_its_link"
+   ],
+   "pins": [
+    "TestFaults::test_a_deleted_run_folder_keeps_its_proof_and_loses_its_link"
+   ],
+   "seconds": 11.4
+  },
+  {
+   "name": "deleted_folder_still_opens",
+   "file": "quam_state_manager/web/routes.py",
+   "red": true,
+   "failed_pins": [
+    "TestFaults::test_a_deleted_run_folder_keeps_its_proof_and_loses_its_link"
+   ],
+   "pins": [
+    "TestFaults::test_a_deleted_run_folder_keeps_its_proof_and_loses_its_link"
+   ],
+   "seconds": 11.4
+  },
+  {
+   "name": "cached_answers_frozen",
+   "file": "quam_state_manager/web/hub_status.py",
+   "red": true,
+   "failed_pins": [
+    "TestFaults::test_a_new_run_moves_every_cached_answer"
+   ],
+   "pins": [
+    "TestFaults::test_a_new_run_moves_every_cached_answer"
+   ],
+   "seconds": 11.9
+  },
+  {
+   "name": "aliased_matrix_not_enumerated",
+   "file": "quam_state_manager/core/value_history.py",
+   "red": true,
+   "failed_pins": [
+    "TestFaults::test_an_aliased_matrix_keeps_its_logical_paths"
+   ],
+   "pins": [
+    "TestFaults::test_an_aliased_matrix_keeps_its_logical_paths"
+   ],
+   "seconds": 11.5
+  },
+  {
+   "name": "js_iso_instant_lost",
+   "file": "quam_state_manager/web/static/chip-status.js",
+   "red": true,
+   "failed_pins": [
+    "test_the_chip_status_selfcheck"
+   ],
+   "pins": [
+    "test_the_chip_status_selfcheck"
+   ],
+   "seconds": 13.2
+  },
+  {
+   "name": "js_every_entry_written_by",
+   "file": "quam_state_manager/web/static/chip-status.js",
+   "red": true,
+   "failed_pins": [
+    "test_the_chip_status_selfcheck"
+   ],
+   "pins": [
+    "test_the_chip_status_selfcheck"
+   ],
+   "seconds": 13.5
+  },
+  {
+   "name": "js_tile_names_no_run",
+   "file": "quam_state_manager/web/static/chip-status.js",
+   "red": true,
+   "failed_pins": [
+    "test_the_chip_status_selfcheck"
+   ],
+   "pins": [
+    "test_the_chip_status_selfcheck"
+   ],
+   "seconds": 12.8
+  },
+  {
+   "name": "js_value_on_screen_ignored",
+   "file": "quam_state_manager/web/static/chip-status.js",
+   "red": true,
+   "failed_pins": [
+    "test_the_chip_status_selfcheck"
+   ],
+   "pins": [
+    "test_the_chip_status_selfcheck"
+   ],
+   "seconds": 13.4
+  },
+  {
+   "name": "js_lab_node_run_dropped",
+   "file": "quam_state_manager/web/static/chip-status.js",
+   "red": true,
+   "failed_pins": [
+    "test_the_chip_status_selfcheck"
+   ],
+   "pins": [
+    "test_the_chip_status_selfcheck"
+   ],
+   "seconds": 12.1
+  },
+  {
+   "name": "js_trends_words_lost",
+   "file": "quam_state_manager/web/static/chip-status.js",
+   "red": true,
+   "failed_pins": [
+    "test_the_chip_status_selfcheck"
+   ],
+   "pins": [
+    "test_the_chip_status_selfcheck"
+   ],
+   "seconds": 11.6
+  },
+  {
+   "name": "js_trends_words_unescaped",
+   "file": "quam_state_manager/web/static/chip-status.js",
+   "red": true,
+   "failed_pins": [
+    "test_the_chip_status_selfcheck"
+   ],
+   "pins": [
+    "test_the_chip_status_selfcheck"
+   ],
+   "seconds": 12.1
+  },
+  {
+   "name": "js_drawer_words_lost",
+   "file": "quam_state_manager/web/static/app.js",
+   "red": true,
+   "failed_pins": [
+    "test_the_chip_status_selfcheck"
+   ],
+   "pins": [
+    "test_the_chip_status_selfcheck"
+   ],
+   "seconds": 12.2
+  },
+  {
+   "name": "js_drawer_restore_dropped",
+   "file": "quam_state_manager/web/static/app.js",
+   "red": true,
+   "failed_pins": [
+    "test_the_chip_status_selfcheck"
+   ],
+   "pins": [
+    "test_the_chip_status_selfcheck"
+   ],
+   "seconds": 12.4
+  }
+ ],
+ "pins": 35,
+ "pins_turned_red": 35,
+ "pins_never_red": []
+}

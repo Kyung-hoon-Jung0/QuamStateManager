@@ -88,7 +88,7 @@ def _decode(cursor):
 
 def timeline(store, q=None, kinds=None, entity=None, path=None, day_from=None,
              day_to=None, cursor=None, limit=50, include_runs=False,
-             include_ambiguous=False):
+             include_ambiguous=False, path_prefix=False, event_id=None, changed_only=False):
     """Return {events: [... with changes], cursor: str | None}, newest first.
 
     The cursor freezes the initial max eid, excluding subsequent appends even
@@ -105,6 +105,9 @@ def timeline(store, q=None, kinds=None, entity=None, path=None, day_from=None,
     ``include_ambiguous`` adds ``ambiguous_run_ids``: the run numbers that
     two data folders both hold (run numbers are per folder, so such a number
     names no single run by itself).
+    docs/283 (Param History Changes): ``path_prefix`` treats ``path`` as a
+    case-insensitive prefix of the holder path; ``event_id`` keeps one event;
+    ``changed_only`` keeps events that changed at least one value.
     """
     with snapshot(store) as (conn, index):
         if not isinstance(limit, int) or isinstance(limit, bool) or limit < 1:
@@ -116,6 +119,8 @@ def timeline(store, q=None, kinds=None, entity=None, path=None, day_from=None,
             raise ValueError("day_from must not follow day_to")
         kinds = sorted(set([kinds] if isinstance(kinds, str) else kinds or []))
         filters = (q, kinds, entity, path, lo, hi)
+        if path_prefix or event_id is not None or changed_only:
+            filters += (bool(path_prefix), event_id, bool(changed_only))
         signature = hashlib.sha256(json.dumps(filters, separators=(",", ":")).encode()).hexdigest()
         high = max(index.eids, default=0)
         last = None
@@ -134,7 +139,21 @@ def timeline(store, q=None, kinds=None, entity=None, path=None, day_from=None,
         if entity is not None:
             found.intersection_update(index.postings["entity"].get(entity.lower(), ()))
         if path is not None:
-            found.intersection_update(index.path_postings.get(index.paths.get(path), ()))
+            if path_prefix:
+                # docs/283: Param History Changes' filter -- a case-insensitive
+                # prefix of the holder path (the change-point index's LIKE 'p%')
+                low = path.lower()
+                allowed = set()
+                for spelling, pid in index.paths.items():
+                    if spelling.lower().startswith(low):
+                        allowed.update(index.path_postings.get(pid, ()))
+                found.intersection_update(allowed)
+            else:
+                found.intersection_update(index.path_postings.get(index.paths.get(path), ()))
+        if event_id is not None:
+            found.intersection_update((event_id,))
+        if changed_only:
+            found.intersection_update(row[0] for row in conn.execute("SELECT eid FROM events WHERE n_changes>0"))
         if lo or hi:
             allowed = {eid for day, ids in index.postings["day"].items()
                        if (lo is None or day >= lo) and (hi is None or day <= hi) for eid in ids}

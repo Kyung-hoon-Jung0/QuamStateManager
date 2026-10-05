@@ -16507,13 +16507,27 @@ def _trend_series_curated(hm, path: Path, props: list[str], tbl=None) -> list[di
         else:
             rows = hm.extract_property_history(path, props, downsample=400,
                                                compress="changes")
+    except _ramcache.Warming:
+        if _is_ledger_table(tbl):
+            raise
+        return []
     except Exception:  # noqa: BLE001
         return []
     out = []
+    ledger = _is_ledger_table(tbl)
     for r in rows:
-        pts = _trend_points(r.get("values") or [])
+        # docs/283: on the ledger a non-numeric value (text, a removal, NaN)
+        # is a GAP in the line, never dropped (dropping it would join the
+        # line straight through the time the value was not a number)
+        pts = ([(p["timestamp"], p["value"] if _vh_numeric(p["value"]) is not None else None)
+                for p in r.get("values") or []] if ledger else
+               _trend_points(r.get("values") or []))
         if pts:
             row = {"metric": r["property"], "entity": r["qubit"], "points": pts}
+            if ledger:
+                row["held"] = {p["timestamp"]: p["held"] for p in r["values"] if p.get("held")}
+                # what each point says about who set it (S7's words)
+                row["attr"] = dict(r.get("_attrs") or {})
             # The concrete leaf the value lives at, for the per-point writer
             # check (value_writer). A derived metric (a readout fidelity from
             # a confusion matrix) has no scalar leaf and gets none.
@@ -16545,11 +16559,17 @@ def _trend_metrics_with_data(hm, path: Path, curated: list[str], tbl=None) -> se
         else:
             rows = hm.extract_property_history(path, list(curated),
                                                downsample=None, compress="changes")
+    except _ramcache.Warming:
+        if _is_ledger_table(tbl):
+            raise
+        return set()
     except Exception:  # noqa: BLE001
         logger.debug("trend metric probe failed", exc_info=True)
         return set()
+    ledger = _is_ledger_table(tbl)
     return {r["property"] for r in rows
-            if any(isinstance(p.get("value"), (int, float))
+            if any((_vh_numeric(p.get("value")) is not None if ledger else
+                    isinstance(p.get("value"), (int, float)))
                    for p in (r.get("values") or []))}
 
 
@@ -16588,44 +16608,6 @@ def _trend_is_num(v) -> bool:
     return isinstance(v, (int, float))      # bool included, as before
 
 
-def _trend_alias_series(dot_paths: list[str]) -> dict[str, list[tuple]]:
-    """docs/282: Trends rows for typed entity paths that cross a pointer, from
-    :func:`_value_history` (the value drawer's own read) in the leaf tier's row
-    shape ``(ts, value, trigger, run_id, experiment, folder[, held_from])``.
-    Empty unless the chip's ledger answers (building / fallback: nothing, as
-    before)."""
-    from quam_state_manager.core import run_time, value_history as vh
-    ctx = _active_ctx()
-    store = ctx.get("store") if ctx else None
-    if store is None:
-        return {}
-    with store._lock:
-        merged = store.merged
-    alias = [dp for dp in dot_paths if "*" not in dp and vh.target(merged, dp)["via"]]
-    if not alias:
-        return {}
-    ans = _value_history(ctx, {dp: dp for dp in alias})
-    if ans["mode"] != "ledger":
-        return {}
-    last_us = ans["ledger"].get("last_us")
-    out: dict[str, list[tuple]] = {}
-    for dp in alias:
-        # docs/282 review P0-1: the value IN FORCE through the alias at each
-        # change (the rows of the holder it named then), never today's
-        # holder's values back-dated over a retarget
-        rows = [(run_time.snapshot_key(p["t_us"], p.get("run_id") or 0),
-                 None if p["removed"] else p["value"], "ledger", p.get("run_id"),
-                 p.get("experiment"), p.get("folder"))
-                for p in ans["rows"][dp]["effective"]]
-        if rows and last_us is not None:
-            newest = run_time.snapshot_key(last_us, 0)
-            if newest > rows[-1][0] and _trend_is_num(rows[-1][1]):
-                rows.append((newest, rows[-1][1], None, None, None, None, rows[-1][0]))
-        if rows:
-            out[dp] = rows
-    return out
-
-
 def _trend_series_leaf(hm, path: Path, dot_path: str, qubits: list[str],
                        pairs: list[str] | None = None, tbl=None) -> list[dict]:
     """Any numeric leaf, via the docs/83 change-point index.
@@ -16638,6 +16620,7 @@ def _trend_series_leaf(hm, path: Path, dot_path: str, qubits: list[str],
     """
     fam = _trend_family_of(dot_path)
     out: list[dict] = []
+    ledger = _is_ledger_table(tbl)
     if fam:
         scope, label = fam
         kind = _TREND_ENTITY_ROOTS[scope]
@@ -16665,43 +16648,42 @@ def _trend_series_leaf(hm, path: Path, dot_path: str, qubits: list[str],
         # hold_to_newest: a value set once and never changed still has a
         # duration — it is carried to the newest snapshot as a HELD point the
         # chart draws hollow ("unchanged since …"), never as a new measurement.
+        # docs/283: on the ledger every path -- an alias that crosses a
+        # pointer included -- is read through the value drawer's own read
+        # (routes._value_history), so the chart and the drawer always agree.
         got = (tbl.leaf_series_many(list(by_e), hold_to_newest=True)
                if tbl is not None else
                hm.leaf_field_series_many(path, list(by_e), hold_to_newest=True))
-        # docs/282: a typed path that crosses a pointer (an alias such as
-        # ``resonator.operations.readout.amplitude`` with ``readout ==
-        # "#./readout_square"``) names nothing the leaf index holds -- it keys
-        # holders -- so this chart drew nothing while the value drawer and
-        # Column History showed a history. The value history answers it here,
-        # the SAME read those two make, so the three agree. (The rest of Trends
-        # moves onto the ledger in S8.)
-        _missing = [dp for dp in by_e if not got.get(dp)]
-        if _missing:
-            got = dict(got)
-            got.update(_trend_alias_series(_missing))
         for dp, e in by_e.items():
             rows = got.get(dp) or []
             # A non-numeric row (the leaf disappeared, or held text) is a GAP,
             # never dropped: dropping it would join the line straight through
             # the time the value did not exist.
-            pts = [(r[0], r[1] if _trend_is_num(r[1]) else None) for r in rows]
+            pts = [(r[0], r[1] if (_vh_numeric(r[1]) is not None if ledger else
+                                  _trend_is_num(r[1])) else None) for r in rows]
             if any(v is not None for _, v in pts):
                 ser = {"metric": label, "entity": e, "kind": kind,
                        "points": pts, "leaf": dp}
                 held = {r[0]: r[6] for r in rows if len(r) > 6}
                 if held:
                     ser["held"] = held
+                if ledger:
+                    ser["attr"] = dict(tbl.attrs.get(dp) or {})
                 out.append(ser)
         return out
     # Not entity-scoped (a port, a top-level key) — one line, and the path
     # itself is the legend, because there is nothing to fan out over.
     rows = (tbl.leaf_series(dot_path) if tbl is not None
             else hm.leaf_field_series(path, dot_path))
-    pts = [(r[0], r[1]) for r in (rows or [])
-           if isinstance(r[1], (int, float))]
-    if pts:
-        out.append({"metric": dot_path, "entity": dot_path.split(".")[-1],
-                    "kind": "", "points": pts, "leaf": dot_path})
+    pts = ([(r[0], r[1] if _vh_numeric(r[1]) is not None else None) for r in (rows or [])]
+           if ledger else [(r[0], r[1]) for r in (rows or [])
+                           if isinstance(r[1], (int, float))])
+    if any(v is not None for _, v in pts):
+        ser = {"metric": dot_path, "entity": dot_path.split(".")[-1],
+               "kind": "", "points": pts, "leaf": dot_path}
+        if ledger:
+            ser["attr"] = dict(tbl.attrs.get(dot_path) or {})
+        out.append(ser)
     return out
 
 
@@ -17417,6 +17399,21 @@ def topology_trends():
     store = _store()
     qubits = list(store.qubit_names) if store else []
     pairs = list(store.qubit_pair_names) if store else []
+    # docs/283: the chip's change ledger answers when it holds the chip's
+    # runs (S7's mode rule); while it builds the section says so and asks
+    # again; a chip with no ledger of its runs keeps the snapshot path below,
+    # under a label saying so.
+    ans, ledger_table = _hub_status_table(ctx)
+    if ans["mode"] in ("building", "preparing"):
+        return _hub_surface_wait(ans, "trends")
+    if ledger_table is not None:
+        try:
+            return ledger_table.part(
+                ("trends_fragment", request.query_string, tuple(qubits), tuple(pairs)),
+                lambda: _topology_trends_html(hm, path, store, qubits, pairs, ledger_table))
+        except _ramcache.Warming:
+            return _hub_surface_wait(_hub_waiting(ledger_table), "trends")
+    fallback = ans.get("fallback_note")
     # RAM P1a: every derived read below comes from ONE table validated
     # against the chip's history token (core/chip_trends_ram).
     tbl = chip_trends_ram.table(hm, path)
@@ -17433,19 +17430,76 @@ def topology_trends():
         except Exception:  # noqa: BLE001
             roots_sig = None
         key = (request.query_string, tuple(qubits), tuple(pairs), roots_sig,
-               tbl.index_updating())
+               tbl.index_updating(), fallback)
         def _render():
             vol: list = []
-            html = _topology_trends_html(hm, path, store, qubits, pairs, tbl, vol)
+            html = _topology_trends_html(hm, path, store, qubits, pairs, tbl, vol,
+                                         fallback_note=fallback)
             # a fragment that read the file system (see
             # _snapshot_provenance_map) is served but never kept
             return html, not vol
         return tbl.fragment(key, _render)
-    return _topology_trends_html(hm, path, store, qubits, pairs, tbl)
+    return _topology_trends_html(hm, path, store, qubits, pairs, tbl, fallback_note=fallback)
+
+
+def _is_ledger_table(tbl) -> bool:
+    """docs/283: is *tbl* the change-ledger table (else the snapshot one)?"""
+    from quam_state_manager.web.hub_status import LedgerTable
+    return isinstance(tbl, LedgerTable)
+
+
+def _hub_status_table(ctx):
+    """docs/283: ``(answer, table)`` for a surface that reads the chip's
+    ledger. The mode is S7's (``_value_history`` with no paths: building /
+    preparing / ledger / fallback); ``table`` is a ``hub_status.LedgerTable``
+    over S7's reader and presenter only in ``ledger`` mode, else None."""
+    from quam_state_manager.web.hub_status import LedgerTable
+    ctx = dict(ctx)
+    ctx["hub_chip_dir"] = ctx.get("hub_chip_dir") or _hub_chip_dir(ctx["path"])
+    ans = _value_history(ctx, {})
+    if ans["mode"] != "ledger":
+        return ans, None
+    try:
+        roots_sig = tuple(str(c) for c in _dataset_candidate_folders(fast=True))
+    except Exception:  # noqa: BLE001 -- the resolved roots name themselves
+        roots_sig = None
+    try:
+        table = LedgerTable(ctx, ans, _vh_binding(ctx, ctx["hub_chip_dir"]),
+                            _value_history, _vh_present, _uid_roots, roots_sig=roots_sig)
+    except _ramcache.Warming as exc:
+        from quam_state_manager.core import hub_sync
+        ans["mode"] = "building" if isinstance(exc, hub_sync.Building) else "preparing"
+        if getattr(exc, "status", None):
+            ans["status"] = exc.status
+        return ans, None
+    return ans, table
+
+
+def _hub_waiting(table) -> dict:
+    """The answer a surface waits on after its table's read did not answer
+    from the ledger (the read's own building / preparing answer, or
+    ``preparing`` when another request's read is in flight)."""
+    ans = dict(table.waiting or table.answer)
+    if ans.get("mode") not in ("building", "preparing"):
+        ans["mode"] = "preparing"
+    return ans
+
+
+def _hub_surface_wait(ans, surface):
+    """docs/283: "being built (n of N runs)" / "Preparing the change
+    history..." in S7's words, asking again by itself (no rows, never a
+    partial answer)."""
+    if surface == "trends" or _is_htmx():
+        template = "_hub_surface_wait.html"
+    else:
+        template = "hub_surface_wait.html"
+    return render_template(template, **_ctx(page="param_history", ans=ans, surface=surface,
+                                          message=_vh_wait_message(ans)))
 
 
 def _topology_trends_html(hm, path: Path, store, qubits: list[str],
-                          pairs: list[str], tbl, volatile: list | None = None) -> str:
+                          pairs: list[str], tbl, volatile: list | None = None,
+                          fallback_note: str | None = None) -> str:
     """The body of :func:`topology_trends` (the section fragment)."""
     curated = list(DEFAULT_TRACKED_PROPERTIES)
     # ONE ?path= could never carry a badge AND something typed at the same
@@ -17616,8 +17670,16 @@ def _topology_trends_html(hm, path: Path, store, qubits: list[str],
 
     # A value first seen at the newest snapshot has no duration to plot.
     # Earlier constant values carry an explicit held endpoint and draw a line.
+    ledger = _is_ledger_table(tbl)
     for c in charts:
         rows = c.get("series") or []
+        if ledger and rows and not any(
+                _vh_numeric(p[1]) is not None for r in rows for p in r.get("points") or []):
+            # docs/283: values were recorded, none of them a finite number
+            # (NaN, text): there is no numeric trend, and that is the answer
+            c["series"] = []
+            c["note"] = "No finite numeric value recorded; there is no numeric trend to draw."
+            continue
         if not rows or any(
                 sum(1 for p in (r.get("points") or []) if p[1] is not None) > 1
                 for r in rows):
@@ -17677,8 +17739,15 @@ def _topology_trends_html(hm, path: Path, store, qubits: list[str],
     # moment the repair is over.
     updating = tbl.index_updating()
     charted = {str(p[0]) for c in charts for s in c["series"] for p in s["points"]}
-    snaps = _snapshot_provenance_map(hm, path, only=charted, tbl=tbl, volatile=volatile)
-    writers_pending = _trend_point_writers(charts, snaps, tbl)
+    if ledger:
+        # docs/283: every point carries its own words (series["attr"], S7's
+        # provenance); there is no snapshot map and no writer re-check -- the
+        # ledger's ``proven`` is the proof
+        snaps = {}
+        writers_pending = False
+    else:
+        snaps = _snapshot_provenance_map(hm, path, only=charted, tbl=tbl, volatile=volatile)
+        writers_pending = _trend_point_writers(charts, snaps, tbl)
     if writers_pending and volatile is not None:
         # a partial answer is served, never kept: the re-fetch the note
         # below triggers must see the finished checks
@@ -17692,7 +17761,10 @@ def _topology_trends_html(hm, path: Path, store, qubits: list[str],
                            trim_note=trim_note, index_updating=updating,
                            writers_pending=writers_pending,
                            snaps=snaps,
-                           snapshots=tbl.snapshot_count())
+                           snapshots=tbl.snapshot_count(),
+                           hub_notes=tbl.notes if ledger else [],
+                           hub_fallback=None if ledger else fallback_note,
+                           hub_mode="ledger" if ledger else "fallback")
 
 
 def _trend_run_folder_resolver(roots: list[tuple[Path, str]]):
@@ -17921,6 +17993,109 @@ _METRIC_META_SNAP_CACHE: dict[str, dict] = {}
 
 @bp.route("/topology/metric-meta")
 def topology_metric_meta():
+    """docs/283: per-cell provenance for every Chip Status metric panel, from
+    the chip's change ledger when it holds the chip's runs (S7's mode rule),
+    else the snapshot path below, labelled (``mode: fallback`` + a note).
+
+    On the ledger an entry names a run as the WRITER only when the run's own
+    patch set exactly that value (S7's ``proven``); every other entry says
+    what the ledger knows -- "saved in #N, writer not proven", "first
+    recorded in #N, writer unknown", an SM write's actor and kind."""
+    ctx = _active_ctx()
+    if ctx and ctx.get("type") == "quam" and ctx.get("path") and _store():
+        ans, table = _hub_status_table(ctx)
+        if ans["mode"] in ("building", "preparing"):
+            return jsonify(ok=True, mode=ans["mode"], message=_vh_wait_message(ans),
+                           updating=True, q={}, p={}, snaps={})
+        if table is not None:
+            try:
+                return jsonify(table.part("metric_meta", lambda: _hub_metric_meta(table)))
+            except _ramcache.Warming:
+                waiting = _hub_waiting(table)
+                return jsonify(ok=True, mode=waiting["mode"], message=_vh_wait_message(waiting),
+                               updating=True, q={}, p={}, snaps={})
+        payload = _legacy_topology_metric_meta().get_json()
+        if payload.get("ok"):
+            payload.update(mode="fallback", notes=[ans["fallback_note"]])
+        return jsonify(payload)
+    return _legacy_topology_metric_meta()
+
+
+def _hub_metric_meta(table) -> dict:
+    """The ledger answer of :func:`topology_metric_meta`: every panel cell's
+    newest recorded change, through the same read as the value drawer.
+
+    The panel paths are enumerated by ``metric_meta`` through the one
+    resolver (``value_history.target``), so a metric read through an alias
+    (a confusion matrix behind a pointer) keeps its own paths and its history
+    follows whichever holder the alias named at each change (S7)."""
+    from functools import partial
+    from quam_state_manager.core import metric_meta as mm, value_history as vh
+    from quam_state_manager.web import hub_status
+    store = table.ctx["store"]
+    with store._lock:
+        doc = store.merged
+        resolver = partial(vh.target, container=True)
+        qpaths = mm.qubit_paths(doc, list(store.qubit_names), resolver=resolver)
+        ppaths, loads = mm.pair_rb_paths(doc, list(store.qubit_pair_names), resolver=resolver)
+    wanted = [dp for group in (qpaths, ppaths) for per in group.values()
+              for paths in per.values() for dp in paths]
+    ans = table.series_many(wanted)
+    rows = ans["rows"]
+
+    def entry_for(paths: list[str]) -> dict | None:
+        newest = [rows[dp]["effective"][-1] for dp in paths if rows[dp]["effective"]]
+        if not newest:
+            return None
+        top = max(p["ord"] for p in newest)
+        # every leaf change at the newest event: a value made of several
+        # leaves was written by that event only when EVERY one is proven
+        at_top = [p for dp in paths for p in rows[dp]["effective"] if p["ord"] == top]
+        best = hub_status.representative(at_top)
+        proven = hub_status.is_proven(at_top)
+        info = _vh_present(best, table.roots, table.uid_memo)
+        matches = all(rows[dp]["effective"] and _vh_same(
+            vh.comparable(ans["targets"][dp]),
+            None if rows[dp]["effective"][-1]["removed"] else rows[dp]["effective"][-1]["value"])
+            for dp in paths)
+        entry = {"ts": best["t"], "eid": best["eid"], "leaves": len(newest),
+                 "first": best["provenance"] == "first_record",
+                 "matches_current": matches, "gone": best["removed"],
+                 "provenance": best["provenance"], "label": info["label"],
+                 "sub": info["sub"], "title": info["title"], "actor": best.get("actor"),
+                 "kind": best["kind"], "flags": info["flag_text"],
+                 "undone": best.get("undone"), "saved_run": best.get("run_id"),
+                 # named only on proof (docs/283 §1.2)
+                 "run": best["run_id"] if proven else None,
+                 "writer": {"run": best["run_id"], "uid": info["uid"]} if proven else None}
+        if len(paths) == 1 and not best["removed"]:
+            value = best["value"]
+            if isinstance(value, float) and not math.isfinite(value):
+                entry["nonfinite"] = str(value)
+            elif _vh_numeric(value) is not None:
+                entry["value"] = value
+        return entry
+
+    def fold(group: dict) -> dict:
+        out: dict = {}
+        for metric, entities in group.items():
+            for entity, paths in entities.items():
+                e = entry_for(paths)
+                if e is not None:
+                    out.setdefault(metric, {})[entity] = e
+        return out
+
+    q, p = fold(qpaths), fold(ppaths)
+    for metric, entities in loads.items():
+        for entity, lid in entities.items():
+            p.setdefault(metric, {}).setdefault(entity, {})["load_id"] = lid
+    led = ans["ledger"]
+    return {"ok": True, "mode": "ledger", "newest": led.get("last"), "oldest": led.get("first"),
+            "snapshots": led.get("events", 0), "updating": False, "q": q, "p": p, "snaps": {},
+            "notes": [n["text"] for n in table.notes]}
+
+
+def _legacy_topology_metric_meta():
     """Queue item 4: per-cell provenance for every Chip Status metric panel.
 
     ``{ok, newest, snapshots, oldest, updating, q: {panel key: {qubit: entry}},
@@ -18087,6 +18262,14 @@ def topology_trends_paths():
     q = (request.args.get("q") or "").strip()
     ctx = _active_ctx()
     if not q or not ctx or not ctx.get("path"):
+        return jsonify([])
+    ans, table = _hub_status_table(ctx)
+    if table is not None:
+        try:
+            return jsonify(table.leaf_families(q, limit=25))
+        except _ramcache.Warming:
+            return jsonify([])
+    if ans["mode"] in ("building", "preparing"):
         return jsonify([])
     # Grouped in SQL, so each row's entity count is exact and the 25 is a limit
     # on FAMILIES rather than on the rows a count was folded from.
@@ -32807,6 +32990,84 @@ def compare_hub_options():
                            name=name, options=options)
 
 
+def _param_history_hub_ctx(hm, target_path, is_loaded_chip: bool) -> dict:
+    """docs/283: the context the Param History grid reads the ledger with.
+    The loaded chip's own; for an archived chip, its history folder and a
+    store that holds only the qubit names its ledger records (there is no
+    current state to compare with, and every value is read from the ledger
+    alone -- an alias is followed through the ledger's own pointer rows)."""
+    ctx = _active_ctx()
+    if is_loaded_chip:
+        return ctx
+    from types import SimpleNamespace
+    from quam_state_manager.core import hub_index
+    from quam_state_manager.core.loader import QuamStore
+    directory = None
+    try:
+        directory = hm.history_dir_cached(target_path) if target_path else None
+    except Exception:   # noqa: BLE001 -- no folder: the labelled fallback
+        directory = None
+    names: list[str] = []
+    if directory and (Path(directory) / "ledger.sqlite").exists():
+        try:
+            with hub_index.snapshot(SimpleNamespace(directory=Path(directory))) as (_c, index):
+                names = sorted({p.split(".")[1] for p in index.paths
+                                if p.startswith("qubits.") and p.count(".") >= 2},
+                               key=natural_key)
+        except Exception:   # noqa: BLE001 -- busy / unreadable: _value_history says so
+            names = []
+    return {"type": "quam", "path": target_path, "hub_chip_dir": directory,
+            "qualibrate_project": None,
+            "store": QuamStore.from_dicts({"qubits": {q: {} for q in names}}, {})}
+
+
+def _hub_grid_rows(table, props, qubit_filter, since, until, triggers) -> list[dict]:
+    """docs/283: the grid's rows from the ledger (``LedgerTable.curated``),
+    windowed the way the snapshot grid windowed (the same stamp-string
+    comparison) and filtered by Source (``hub_status.source_of``). A value
+    in force when the window opens is carried in as a held point at the
+    window's start, so an unchanged value still draws its line."""
+    want = set(qubit_filter or ())
+    out = []
+    for row in table.curated(tuple(props)):
+        if want and row["qubit"] not in want:
+            continue
+        values, carried = [], None
+        for v in row["values"]:
+            ts = v["timestamp"]
+            if since is not None and ts < since:
+                if not v.get("held"):
+                    carried = v
+                continue
+            if until is not None and ts > until:
+                continue
+            if triggers and v.get("trigger") not in triggers:
+                continue
+            values.append(v)
+        if carried is not None and (not triggers or carried.get("trigger") in triggers):
+            values.insert(0, {"timestamp": since, "value": carried["value"],
+                              "trigger": carried.get("trigger"), "held": carried["timestamp"]})
+        if not values:
+            continue
+        out.append({**row, "values": values, "count": len(values)})
+    return out
+
+
+def _hub_grid_summary(ledger: dict, rows: list[dict]) -> dict:
+    """The grid's summary line on the ledger: events shown in the window
+    (held points are not events), counted by Source, and the newest event."""
+    shown: dict[str, str] = {}
+    for row in rows:
+        for v in row["values"]:
+            if not v.get("held"):
+                shown[v["timestamp"]] = v.get("trigger") or "auto"
+    by: dict[str, int] = {}
+    for trig in shown.values():
+        by[trig] = by.get(trig, 0) + 1
+    return {"total": ledger.get("events", 0), "by_trigger": by, "window_count": len(shown),
+            "latest": {"timestamp": ledger.get("last"), "trigger": None} if ledger.get("last") else None}
+
+
 @bp.route("/param-history")
 def param_history():
     """Param History dashboard — sparkline grid of trended state.json fields.
@@ -32880,14 +33141,30 @@ def param_history():
     # swaps a Werkzeug error page into #param-history-root, turning the whole menu
     # into a dead/broken page (the diff/compare routes already catch this way).
     index_error = None
+    # docs/283: the grid reads the chip's change ledger when it holds the
+    # chip's runs (S7's mode rule) -- for an archived chip too, whose ledger
+    # is read as it is (an "idle" note says no sync keeps it current here);
+    # while it builds the page says so and asks again; with no ledger of the
+    # chip's runs the snapshot path below answers, under a label.
+    hub_answer, hub_table = _hub_status_table(
+        _param_history_hub_ctx(hm, target_path, is_loaded_chip))
+    if hub_answer["mode"] in ("building", "preparing"):
+        return _hub_surface_wait(hub_answer, "grid")
     try:
         # docs/158: nothing selected is an honest empty grid, not a query
-        rows = [] if (none_props or none_qubits or none_triggers) else hm.extract_property_history(
-            target_path, props,
-            qubit_filter=qubit_filter,
-            since=since, until=until,
-            triggers=triggers,
-        )
+        if none_props or none_qubits or none_triggers:
+            rows = []
+        elif hub_table is not None:
+            rows = _hub_grid_rows(hub_table, props, qubit_filter, since, until, triggers)
+        else:
+            rows = hm.extract_property_history(
+                target_path, props,
+                qubit_filter=qubit_filter,
+                since=since, until=until,
+                triggers=triggers,
+            )
+    except _ramcache.Warming:
+        return _hub_surface_wait(_hub_waiting(hub_table), "grid")
     except Exception as exc:   # noqa: BLE001 — never 500 the dashboard on a busy index
         logger.warning("param-history trend query failed: %s", exc)
         rows = []
@@ -32895,6 +33172,10 @@ def param_history():
 
     if only_changed:
         def _changed(values: list[dict[str, Any]]) -> bool:
+            if hub_table is not None:
+                # the one equality (hub_rules.same), finite numbers only
+                nums = [v["value"] for v in values if _vh_numeric(v.get("value")) is not None]
+                return any(not _vh_same(nums[0], n) for n in nums[1:])
             seen: set[float] = set()
             for v in values:
                 x = v.get("value")
@@ -32905,9 +33186,19 @@ def param_history():
             return False
         rows = [r for r in rows if _changed(r["values"])]
 
+    snap_summary = None
     try:
-        summary = hm.index_summary(target_path)
-        summary["window_count"] = hm.count_window(target_path, since=since, until=until, triggers=triggers)
+        if hub_table is not None:
+            summary = _hub_grid_summary(hub_answer["ledger"], rows)
+            # the page's auto-import gate counts SNAPSHOTS (the importer it
+            # gates writes snapshots), never ledger events
+            try:
+                snap_summary = hm.index_summary(target_path)
+            except Exception:   # noqa: BLE001
+                snap_summary = None
+        else:
+            summary = hm.index_summary(target_path)
+            summary["window_count"] = hm.count_window(target_path, since=since, until=until, triggers=triggers)
     except Exception as exc:   # noqa: BLE001 — same busy-index degrade as the trend query
         logger.warning("param-history summary failed: %s", exc)
         # Must match index_summary's shape (+ window_count) or the template throws.
@@ -32944,6 +33235,9 @@ def param_history():
     # complete even if some qubits have no indexed data yet.
     if is_loaded_chip:
         all_qubits = list(store.qubit_names)
+    elif hub_table is not None:
+        # docs/283: an archived chip's qubits are the ones its ledger names
+        all_qubits = sorted(hub_table.ctx["store"].qubit_names, key=natural_key)
     else:
         try:
             conn = hm._open_index(target_path)
@@ -33057,8 +33351,12 @@ def param_history():
             cells=by_cell,
             current_values=current_values,
             summary=summary,
+            snap_summary=snap_summary,
             disk_stats=disk_stats,
             index_error=index_error,
+            hub_notes=hub_table.notes if hub_table is not None else [],
+            hub_mode="ledger" if hub_table is not None else "fallback",
+            hub_fallback=None if hub_table is not None else hub_answer.get("fallback_note"),
             since=since_raw,
             triggers_filter=raw_triggers,
             none_triggers=none_triggers,
@@ -33187,6 +33485,113 @@ _CHANGES_ROWS_AT = 2000    # one snapshot opened in full
 
 @bp.route("/param-history/changes")
 def param_history_changes():
+    """docs/283: "what changed", newest first -- from the chip's change
+    ledger (``hub_query.timeline`` with a path filter) when it holds the
+    chip's runs, else the change-point index below, labelled."""
+    ctx = _active_ctx()
+    if ctx and ctx.get("type") == "quam" and ctx.get("path") and _store():
+        ans, table = _hub_status_table(ctx)
+        if ans["mode"] in ("building", "preparing"):
+            return _hub_surface_wait(ans, "changes")
+        if table is not None:
+            try:
+                body, status = table.part(("changes_page", request.query_string, _is_htmx()),
+                                          lambda: _hub_param_changes(table))
+            except _ramcache.Warming:
+                return _hub_surface_wait(_hub_waiting(table), "changes")
+            return body, status
+        return _legacy_param_history_changes(fallback_note=ans.get("fallback_note"))
+    return _legacy_param_history_changes()
+
+
+def _hub_param_changes(table) -> tuple[str, int]:
+    """The ledger page of :func:`param_history_changes`: ``(html, status)``.
+
+    One group per ledger event that changed a matching path. The group names
+    the EVENT (a run, an SM write, a state SM saw); each row says what the
+    ledger proves about who set THAT value, in S7's words -- a run's own patch
+    ("its own patch set it"), or "writer not proven" -- so a run is never the
+    named writer of a row its patch did not set. Undone is decided per path
+    (``value_history.undone_paths``, S7's rule)."""
+    from quam_state_manager.core import hub_index, hub_query, value_history as vh
+    from quam_state_manager.core.hub_store import CHIP_UNCERTAIN, PARTLY_UNDONE, SM_KINDS
+    prefix = (request.args.get("prefix") or "").strip()
+    cursor = (request.args.get("before") or "").strip() or None
+    at = (request.args.get("at") or "").strip() or None
+    bad = ("This history page reference is invalid; open Changes again.", 400)
+    if at is not None and not at.isdigit():
+        return bad
+    try:
+        result = hub_query.timeline(table.binding, path=prefix or None, path_prefix=True,
+                                    cursor=None if at else cursor,
+                                    event_id=int(at) if at else None, changed_only=True,
+                                    limit=1 if at else _CHANGES_SNAPS)
+    except ValueError:
+        return bad
+    events = result["events"]
+    sm_eids = [ev["eid"] for ev in events if ev.get("kind") in SM_KINDS]
+    with hub_index.snapshot(table.binding) as (conn, index):
+        sm = vh._sm_info(conn, sm_eids)
+        undone = {ev["eid"]: vh.undone_paths(conn, index, ev, sm) for ev in events
+                  if ev.get("kind") in SM_KINDS}
+        roots = {r[0]: r[1] for r in conn.execute("SELECT root_id, path FROM roots")}
+    low = prefix.lower()
+    shown_n = _CHANGES_ROWS_AT if at else _CHANGES_ROWS
+    groups = []
+    for ev in events:
+        changes = [c for c in ev["changes"] if not low or c["path"].lower().startswith(low)]
+        if not changes:
+            continue
+        taken = undone.get(ev["eid"])
+        rows = []
+        for c in changes[:shown_n]:
+            pt = vh._point(ev, c["old"], c["new"], c["op"], c["proven"], roots, sm)
+            if taken is not None and (taken is vh.ALL_PATHS or c["path"] in taken):
+                pt["undone"] = "undone"
+            info = _vh_present(pt, table.roots, table.uid_memo)
+            rows.append({"path": c["path"], "previous": c["old"], "value": c["new"],
+                         "op": c["op"], "is_first": pt["provenance"] == "first_record",
+                         "proven": pt["provenance"] == "run_proven",
+                         "who": info["sub"] if ev.get("kind") == "run" else "",
+                         "undone": bool(pt["undone"])})
+        head = vh._point(ev, None, None, "set", False, roots, sm)
+        info = _vh_present(head, table.roots, table.uid_memo)
+        label, sub, uid, link = info["label"], info["sub"], None, ""
+        flags = list(info["flag_text"])
+        if ev.get("kind") == "run" and head["provenance"] == "run_saved":
+            # the group is the run's SAVE; who set each value is per row
+            rid, exp = ev.get("run_id"), ev.get("experiment") or ""
+            label = f"run #{rid} {exp}".strip()
+            sub = "each row says whether this run's own patch set it"
+            if "source_gone" not in head["flags"]:
+                uid = _uid_for_run_ref(head.get("folder"), rid, table.roots)
+                link = (f"Open run #{rid}, whose saved state this is (a row names it as "
+                        f"the writer only where its own patch set the value)")
+        elif info.get("uid"):
+            uid, link = info["uid"], info.get("link_title") or ""
+        if ev.get("kind") in SM_KINDS:
+            if taken is vh.ALL_PATHS:
+                label = info["label"] if info["label"].endswith("(undone)") else label + " (undone)"
+            elif int(ev.get("flags") or 0) & PARTLY_UNDONE:
+                flags.append("partly undone (the rows a later undo took back are marked)")
+        if int(ev.get("flags") or 0) & CHIP_UNCERTAIN:
+            uid = None
+        groups.append({"timestamp": vh.iso_z(ev["t_utc_us"]), "eid": ev["eid"],
+                       "trigger": None, "experiment": None, "label": label, "sub": sub,
+                       "flags": flags, "uid": uid, "link_title": link,
+                       "run_id": ev.get("run_id"), "total": len(changes),
+                       "shown": len(rows), "rows": rows})
+    stats = {"paths": len(table.paths), "rows": sum(table.counts.values()),
+             "snapshots": table.snapshot_count(), "dirty": False}
+    template = "_param_history_changes.html" if _is_htmx() else "param_history_changes.html"
+    html = render_template(template, **_ctx(
+        page="param_history", groups=groups, stats=stats, prefix=prefix,
+        has_more=(not at) and result["cursor"] is not None, oldest_ts=result["cursor"],
+        at_ts=at, hub_mode="ledger", hub_notes=table.notes))
+    return html, 200
+
+
+def _legacy_param_history_changes(fallback_note: str | None = None):
     """"What changed" — every numeric parameter's change points, newest first.
 
     The curated dashboard answers "how has T1 drifted"; this answers the
@@ -33253,7 +33658,7 @@ def param_history_changes():
     return render_template(
         template, **_ctx(page="param_history", groups=groups, stats=stats,
                          prefix=prefix, has_more=has_more, oldest_ts=oldest,
-                         at_ts=at))
+                         at_ts=at, hub_fallback=fallback_note))
 
 
 @bp.route("/param-history/param-search")
@@ -33263,6 +33668,18 @@ def param_history_param_search():
     if not _store():
         return jsonify(ok=False, results=[]), 400
     q = (request.args.get("q") or "").strip()
+    # docs/283: the Changes page reads the change ledger, so its typeahead
+    # offers the ledger's paths (the same ranking over the ledger's rows)
+    ctx = _active_ctx()
+    if ctx and ctx.get("type") == "quam" and ctx.get("path"):
+        ans, table = _hub_status_table(ctx)
+        if ans["mode"] in ("building", "preparing"):
+            return jsonify(ok=True, results=[], mode=ans["mode"])
+        if table is not None:
+            try:
+                return jsonify(ok=True, results=table.path_rank().search(q, limit=30))
+            except _ramcache.Warming:
+                return jsonify(ok=True, results=[], mode="preparing")
     try:
         from quam_state_manager.core import param_history_ram as _phr
         hits = _phr.leaf_search(_history(), Path(_active_path()), q, limit=30)
@@ -33355,6 +33772,23 @@ def param_history_expand():
     if chip_key and chip_key != hm._key_for(Path(target_path)):
         target_path = _path_for_chip_key(chip_key)
         is_loaded = False
+    # docs/283: the cell's drawer reads what its grid read -- the change
+    # ledger when it holds the chip's runs, each point in S7's words
+    hub_answer, hub_table = _hub_status_table(
+        _param_history_hub_ctx(hm, target_path, is_loaded))
+    if hub_answer["mode"] in ("building", "preparing"):
+        return render_template("_param_history_drawer.html", row={
+            "qubit": qubit, "property": prop, "raw_pointer": None, "values": []},
+            row_json="{}", qubit=qubit, prop=prop, current_value=None,
+            hub_wait=_vh_wait_message(hub_answer))
+    if hub_table is not None:
+        try:
+            return _hub_param_history_expand(hub_table, qubit, prop, is_loaded)
+        except _ramcache.Warming:
+            return render_template("_param_history_drawer.html", row={
+                "qubit": qubit, "property": prop, "raw_pointer": None, "values": []},
+                row_json="{}", qubit=qubit, prop=prop, current_value=None,
+                hub_wait=_vh_wait_message(_hub_waiting(hub_table)))
     rows = hm.extract_property_history(
         target_path, [prop],
         qubit_filter=[qubit], downsample=None,
@@ -33443,7 +33877,52 @@ def param_history_expand():
         qubit=qubit,
         prop=prop,
         current_value=current_value,
+        hub_fallback=hub_answer.get("fallback_note"),
     )
+
+
+def _hub_param_history_expand(table, qubit: str, prop: str, is_loaded: bool):
+    """docs/283: one grid cell's drawer on the ledger -- the cell's recorded
+    changes (``LedgerTable.curated``, the grid's own rows), each with S7's
+    words; a point opens its run only when that run's own patch proves it
+    wrote the value (its uid is set only then)."""
+    rows = [r for r in table.curated((prop,)) if r["qubit"] == qubit]
+    row = rows[0] if rows else {"qubit": qubit, "property": prop, "raw_pointer": None, "values": []}
+    attrs = row.get("_attrs") or {}
+    values = []
+    for v in row.get("values") or []:
+        if v.get("held"):
+            continue          # not a recorded change: the current-value line covers it
+        info = attrs.get(v["timestamp"]) or {}
+        proven = info.get("provenance") == "run_proven"
+        pt = v.get("point") or {}
+        value = v["value"]
+        if isinstance(value, float) and value != value or value in (float("inf"), float("-inf")):
+            value = None          # JSON has no NaN; the chart draws finite numbers
+        values.append({"timestamp": v["timestamp"], "value": value,
+                       "trigger": v.get("trigger") or "auto",
+                       "label": info.get("label"), "sub": info.get("sub"),
+                       "flags": info.get("flag_text") or [],
+                       "provenance": info.get("provenance"),
+                       "uid": info.get("uid"),
+                       # a run is named for the click only on proof
+                       "run": pt.get("run_id") if proven else None,
+                       "node": pt.get("experiment") if proven else None})
+    out = {"qubit": qubit, "property": prop, "raw_pointer": row.get("raw_pointer"),
+           "values": values, "ledger": True}
+    current_value = None
+    if is_loaded:
+        engine = _engine()
+        if engine:
+            try:
+                current_value = engine.get_qubit(qubit).get(prop)
+            except Exception:  # noqa: BLE001
+                pass
+        if isinstance(current_value, float) and _vh_numeric(current_value) is None:
+            current_value = None  # a NaN would end the drawer's script
+    return render_template("_param_history_drawer.html", row=out, row_json=json.dumps(out),
+                           qubit=qubit, prop=prop, current_value=current_value,
+                           hub_notes=table.notes)
 
 
 @bp.route("/param-history/backfill", methods=["POST"])

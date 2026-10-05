@@ -5,13 +5,17 @@
    Grouped by snapshot, because a change point never happens alone — a run
    writes a handful of parameters at once, and reading them together is what
    makes the feed mean something. #}
-{% from '_delta_macros.html' import delta_chip %}
+{% from '_delta_macros.html' import delta_chip, before_after %}
 
 <div id="param-history-root" class="param-history">
+  {# docs/283: the change ledger's notes, or the label of the older
+     change-point index path -- inside the root, so a swap replaces them #}
+  {% if hub_fallback %}<p class="vh-fallback">{{ hub_fallback }}</p>{% endif %}
+  {% for note in hub_notes or [] %}<p class="vh-note vh-note-{{ note.level }}" data-code="{{ note.code }}">{{ note.text }}</p>{% endfor %}
   <div class="param-history-header">
     <h2 style="margin:0">Param History{% if project_scope %} <span class="scope-suffix">— {{ project_scope }}</span>{% endif %}</h2>
     <p class="muted" style="margin:0">
-      Every numeric parameter in <code>state.json</code> and <code>wiring.json</code> —
+      Every {{ 'recorded' if hub_mode == 'ledger' else 'numeric' }} parameter in <code>state.json</code> and <code>wiring.json</code> —
       {{ '{:,}'.format(stats.paths) }} of them — with the moment each one changed.
     </p>
   </div>
@@ -47,7 +51,7 @@
     {% endif %}
     <span class="muted ph-changes-stat">
       {{ '{:,}'.format(stats.rows) }} recorded changes over
-      {{ '{:,}'.format(stats.snapshots) }} snapshot{{ '' if stats.snapshots == 1 else 's' }}
+      {{ '{:,}'.format(stats.snapshots) }} {{ 'event' if hub_mode == 'ledger' else 'snapshot' }}{{ '' if stats.snapshots == 1 else 's' }}
       {%- if stats.dirty %} &middot; index rebuilding&hellip;{% endif %}
     </span>
   </form>
@@ -56,6 +60,8 @@
     <p class="ph-changes-empty muted">
       {% if prefix %}
         No parameter matching <code>{{ prefix }}</code> has changed.
+      {% elif hub_mode == 'ledger' %}
+        No change is recorded in this chip's change ledger yet.
       {% elif stats.snapshots == 0 %}
         No snapshots yet — Param History records one on every save, edit and
         experiment run.
@@ -69,6 +75,17 @@
     <div class="ph-change-group">
       <div class="ph-change-head">
         <span class="ph-change-when">{{ (g.timestamp or "") | ts_local(short=True) }}</span>
+        {% if hub_mode == 'ledger' %}
+        {# docs/283: the group names the EVENT; who set each value is per row #}
+        <span class="ph-change-exp vh-by">{{ g.label }}</span>
+        {% if g.sub %}<span class="muted vh-sub">{{ g.sub }}</span>{% endif %}
+        {% for flag in g.flags or [] %}<span class="vh-flag">{{ flag }}</span>{% endfor %}
+        {% if g.uid %}
+        <button type="button" class="btn-xs outline"
+                hx-get="/dataset/{{ g.uid }}" hx-target="#inspector-pane"
+                hx-swap="innerHTML" title="{{ g.link_title }}">Data</button>
+        {% endif %}
+        {% endif %}
         {% if g.trigger %}<span class="history-trigger-badge history-trigger-{{ g.trigger }}">{{ g.trigger }}</span>{% endif %}
         {% if g.experiment %}
           {# The snapshot copied this run's SAVE, which carries everything
@@ -77,7 +94,7 @@
              (2026-09-29; per value, the 🕘 timeline names the real writer). #}
           <span class="ph-change-exp" title="This snapshot recorded the save of {% if g.run_id is not none %}run #{{ g.run_id }} {% endif %}{{ g.experiment }}. Values listed here may have been written before it -- open a parameter's timeline for the run that wrote it.">captured with {% if g.run_id is not none %}#{{ g.run_id }} {% endif %}{{ g.experiment }}</span>
         {% endif %}
-        {% if g.uid %}
+        {% if g.uid and hub_mode != 'ledger' %}
         <button type="button" class="btn-xs outline"
                 hx-get="/dataset/{{ g.uid }}" hx-target="#inspector-pane"
                 hx-swap="innerHTML" title="Open run #{{ g.run_id }}, whose save this snapshot recorded (it did not necessarily write every value below)">Data</button>
@@ -87,13 +104,17 @@
       <table class="ph-change-table">
         <tbody>
         {% for r in g.rows %}
-          <tr>
+          <tr{% if r.undone %} class="vh-undone"{% endif %}>
             <td class="ph-change-path">
               <button type="button" class="ph-path-btn"
                       hx-get="/field/history?path={{ r.path | urlencode }}"
                       hx-target="#inspector-pane" hx-swap="innerHTML"
                       title="Open this parameter's full timeline">{{ r.path }}</button>
             </td>
+            {% if hub_mode == 'ledger' %}
+            <td class="ph-change-new" colspan="3">{{ before_after(r.previous, r.value, 'first' if r.is_first else r.op) }}</td>
+            <td class="ph-change-who">{% if r.who %}<span class="vh-sub">{{ r.who }}</span>{% endif %}{% if r.undone %} <span class="vh-flag">undone</span>{% endif %}</td>
+            {% else %}
             <td class="ph-change-old">
               {%- if r.is_first -%}<span class="muted">first recorded</span>
               {%- elif r.previous is none -%}<span class="muted">&mdash;</span>
@@ -102,6 +123,7 @@
             <td class="ph-change-arrow">&rarr;</td>
             <td class="ph-change-new"><code>{{ r.value | groupdigits }}</code></td>
             <td class="ph-change-delta">{{ delta_chip(r.previous, r.value) }}</td>
+            {% endif %}
           </tr>
         {% endfor %}
         </tbody>
@@ -109,9 +131,9 @@
       {% if g.total > g.shown %}
       <div class="ph-change-rest">
         <button type="button" class="btn-xs outline"
-                hx-get="/param-history/changes?at={{ g.timestamp }}{% if prefix %}&amp;prefix={{ prefix | urlencode }}{% endif %}"
+                hx-get="/param-history/changes?at={{ g.eid if hub_mode == 'ledger' else g.timestamp }}{% if prefix %}&amp;prefix={{ prefix | urlencode }}{% endif %}"
                 hx-target="#param-history-root" hx-swap="outerHTML">
-          Show all {{ '{:,}'.format(g.total) }} from this snapshot</button>
+          Show all {{ '{:,}'.format(g.total) }} from this {{ 'event' if hub_mode == 'ledger' else 'snapshot' }}</button>
         <span class="muted">&hellip; and {{ '{:,}'.format(g.total - g.shown) }} more</span>
       </div>
       {% endif %}

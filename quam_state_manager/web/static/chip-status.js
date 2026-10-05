@@ -208,6 +208,10 @@ window.ChipStatus.metaInfo = (function () {
     // screen, in the zone the viewer chose in Settings. Without it (a harness
     // that loads no app.js), the same UTC rule and the browser's own zone.
     function snapMs(ts) {
+        if (/^\d{4}-\d{2}-\d{2}T/.test(String(ts || ''))) {
+            var ledgerMs = Date.parse(ts);
+            return isFinite(ledgerMs) ? ledgerMs : null;
+        }
         if (window.SnapTime && window.SnapTime.parse) {
             var sd = window.SnapTime.parse(ts);
             return sd ? sd.getTime() : null;
@@ -259,10 +263,55 @@ window.ChipStatus.metaInfo = (function () {
        updating, now}. Returns {tag, lines, edited}: `tag` is the in-tile
        line, `lines` the hover text. Never a fabricated run number: a run is
        named only when the snapshot or the lab's node recorded one. */
+    /* docs/283: an entry read from the chip's change ledger names a run as
+       the WRITER only when the run's own patch set exactly that value
+       (provenance run_proven, e.run set); every other entry carries the
+       ledger's own words (label / sub: "saved in #N" / "writer not
+       proven", "first recorded in #N" / "writer unknown", an SM write's
+       actor and kind). The same checks as below otherwise: a value on
+       screen that is not the newest recorded one, the lab's own stamp,
+       the run the lab's node recorded. */
+    function _describeLedger(e, ctx, now) {
+        var lines = [], tag = '';
+        var ms = snapMs(e.ts);
+        var who = (e.label || '') + (e.sub ? ' — ' + e.sub : '');
+        var wrote = e.provenance === 'run_proven' || e.provenance === 'sm';
+        var edited = e.matches_current === false
+            || (!e.gone && typeof e.value === 'number' && !_same(e.value, ctx.cur));
+        if (edited) {
+            lines.push('Not in this chip’s change ledger yet — edited, or changed after the newest recorded change.');
+            lines.push('The ledger’s newest change of it: ' + when(ms) + ' (' + ageLong(ms, now) + ') — ' + who);
+            tag = 'not in history';
+        } else if (e.gone) {
+            lines.push('Removed at ' + when(ms) + ' (' + ageLong(ms, now) + ') — ' + who);
+            tag = 'removed';
+        } else if (e.first) {
+            lines.push('Unchanged since this chip’s change ledger began: ' + when(ms) + ' (' + ageLong(ms, now) + ')');
+            lines.push(who);
+            lines.push('No newer change on record — the value itself may be older.');
+            tag = '≤' + whenShort(ms);
+        } else {
+            lines.push('Last changed: ' + when(ms) + ' (' + ageLong(ms, now) + ')');
+            lines.push((wrote ? 'Written by: ' : 'Recorded: ') + who);
+            tag = whenShort(ms) + (e.run != null ? ' · #' + e.run : '');
+        }
+        (e.flags || []).forEach(function (flag) { lines.push(flag); });
+        if (e.undone) lines.push('A later undo took this write back.');
+        if (typeof ctx.stamp === 'number' && isFinite(ctx.stamp)) {
+            lines.push('Measured (the lab’s own stamp): ' + when(ctx.stamp) + ' (' + ageLong(ctx.stamp, now) + ')');
+        }
+        if (e.load_id != null) lines.push('Run recorded by the lab’s node: #' + e.load_id);
+        (ctx.notes || []).forEach(function (note) { lines.push(note); });
+        return { tag: tag, lines: lines, edited: edited };
+    }
     function describe(entry, ctx) {
         ctx = ctx || {};
         var lines = [], tag = '', now = ctx.now;
         var e = entry || {};
+        if (ctx.mode === 'building' || ctx.mode === 'preparing') {
+            return {tag: 'history pending', lines: [ctx.message || 'Preparing the change history...'], edited: false};
+        }
+        if (e.provenance) return _describeLedger(e, ctx, now);
         var hasHist = !!e.ts;
         var ms = hasHist ? snapMs(e.ts) : null;
         var prov = (hasHist && ctx.snaps && ctx.snaps[e.ts]) || null;
@@ -4199,12 +4248,14 @@ window.ChipStatus.mount = function (opts) {
         // a value with a SUBTREE source (a matrix, a nested RB block) has no
         // one history value to compare with: the server sends none
         return window.ChipStatus.metaInfo.describe(entry, {
-            snaps: d.snaps || {}, cur: cur, stamp: stamp, updating: !!d.updating });
+            snaps: d.snaps || {}, cur: cur, stamp: stamp, updating: !!d.updating,
+            mode: d.mode, message: d.message, notes: d.notes || [] });
     }
     // one panel's summary: newest / oldest change, how many values have one
     function _metaPanelSummary(sec) {
         var key = sec.getAttribute('data-density-panel');
         var d = _metaData || {}, MI = window.ChipStatus.metaInfo;
+        if (d.mode === 'building' || d.mode === 'preparing') return [d.message || 'Preparing the change history.'];
         var group = /^2q:/.test(key) ? ((d.p || {})[key] || {}) : ((d.q || {})[key] || {});
         var cells = sec.querySelectorAll('.heatmap-cell[data-qubit], .heatmap-cell[data-pair]');
         var newest = null, oldest = null, changed = 0, recorded = 0, first = 0, none = 0, edited = 0, unk = 0, total = 0;
@@ -4241,17 +4292,18 @@ window.ChipStatus.mount = function (opts) {
             if (oldest && oldest.ts !== newest.ts) parts.push('oldest ' + MI.when(MI.snapMs(oldest.ts)) + ' (' + oldest.id + ')');
         }
         var cnt = [];
-        if (changed) cnt.push(changed + ' measured in history');
-        if (recorded) cnt.push(recorded + ' recorded without a run');
-        if (first) cnt.push(first + ' unchanged since history began');
+        if (changed) cnt.push(changed + (d.mode === 'ledger' ? ' proven run write' + (changed === 1 ? '' : 's') : ' measured in history'));
+        if (recorded) cnt.push(recorded + (d.mode === 'ledger' ? ' recorded change' + (recorded === 1 ? '' : 's') : ' recorded without a run'));
+        if (first) cnt.push(first + (d.mode === 'ledger' ? ' first recorded, writer unknown' : ' unchanged since history began'));
         if (none) cnt.push(none + ' not in history');
         if (edited) cnt.push(edited + ' not in history yet');
         if (unk) cnt.push(unk + ' not dated (index incomplete)');
         if (cnt.length) parts.push(cnt.join(', ') + ' (of ' + total + ')');
-        if (d.snapshots) parts.push('history: ' + d.snapshots + ' snapshot' + (d.snapshots === 1 ? '' : 's')
+        if (d.snapshots) parts.push('history: ' + d.snapshots + (d.mode === 'ledger' ? ' recorded events' : ' snapshot' + (d.snapshots === 1 ? '' : 's'))
             + (d.newest ? ', newest ' + MI.when(MI.snapMs(d.newest)) : ''));
         else parts.push('no history snapshots for this chip yet');
         if (d.updating) parts.push('index updating');
+        (d.notes || []).forEach(function (note) { parts.push(note); });
         if (d.incomplete_index) parts.push('this chip’s change-point index is incomplete: values it cannot vouch for are not dated');
         return parts;
     }
@@ -7169,6 +7221,10 @@ window.ChipTrends = (function () {
        freshly-generated one) shows only why, which is the true answer. */
     function _provLine(info) {
         if (!info) return '';
+        if (info.provenance) {
+            return _esc(info.label) + (info.sub ? '<br>' + _esc(info.sub) : '')
+                 + (info.flag_text && info.flag_text.length ? '<br>' + _esc(info.flag_text.join('; ')) : '');
+        }
         if (info.run) {
             return '#' + _esc(info.run) + (info.short ? ' · ' + _esc(info.short) : '');
         }

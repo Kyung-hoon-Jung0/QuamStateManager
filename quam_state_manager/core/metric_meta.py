@@ -98,16 +98,24 @@ def _follow(doc: dict, path: tuple[str, ...]) -> tuple[tuple[str, ...], Any]:
 
 
 def numeric_leaf_paths(doc: dict, path: tuple[str, ...],
-                       skip_key=None) -> list[str]:
+                       skip_key=None, resolver=None) -> list[str]:
     """Every numeric leaf at or under *path* in the CURRENT state, as dot
     paths, with pointers followed (a pointer's history lives at its target)."""
-    path, val = _follow(doc, path)
+    if resolver is None:
+        path, val = _follow(doc, path)
+    else:
+        val = resolver(doc, ".".join(path)).get("current")
     out: list[str] = []
 
     def walk(p: tuple[str, ...], v: Any, depth: int) -> None:
         if depth > 6:
             return
         if is_pointer(v):
+            if resolver is not None:
+                resolved = resolver(doc, ".".join(p)).get("current")
+                if not is_pointer(resolved):
+                    walk(p, resolved, depth + 1)
+                return
             p2, v2 = _follow(doc, p)
             if p2 != p and not is_pointer(v2):
                 walk(p2, v2, depth + 1)
@@ -127,14 +135,14 @@ def numeric_leaf_paths(doc: dict, path: tuple[str, ...],
     return out
 
 
-def qubit_paths(doc: dict, qubits: Iterable[str]) -> dict[str, dict[str, list[str]]]:
+def qubit_paths(doc: dict, qubits: Iterable[str], *, resolver=None) -> dict[str, dict[str, list[str]]]:
     """``{panel key: {qubit: [dot path, ...]}}`` for every qubit panel."""
     out: dict[str, dict[str, list[str]]] = {}
     for q in qubits:
         for key, rels in QUBIT_SOURCES.items():
             paths: list[str] = []
             for rel in rels:
-                paths.extend(numeric_leaf_paths(doc, ("qubits", q) + rel))
+                paths.extend(numeric_leaf_paths(doc, ("qubits", q) + rel, resolver=resolver))
             if paths:
                 out.setdefault(key, {})[q] = paths
     return out
@@ -144,7 +152,7 @@ def _id_key(k: Any) -> bool:
     return fidelity_field_kind(k) == "load_id"
 
 
-def pair_rb_paths(doc: dict, pairs: Iterable[str]) -> tuple[
+def pair_rb_paths(doc: dict, pairs: Iterable[str], *, resolver=None) -> tuple[
         dict[str, dict[str, list[str]]], dict[str, dict[str, Any]]]:
     """``({"2q:<rbType>:<gate>": {pair: [dot path]}}, {same key: {pair: load_id}})``.
 
@@ -170,7 +178,7 @@ def pair_rb_paths(doc: dict, pairs: Iterable[str]) -> tuple[
                     continue
                 key = f"2q:{rb}:{gate}"
                 base = ("qubit_pairs", pid, "macros", str(gate), "fidelity", metric)
-                lp = numeric_leaf_paths(doc, base, skip_key=_id_key)
+                lp = numeric_leaf_paths(doc, base, skip_key=_id_key, resolver=resolver)
                 if lp:
                     paths.setdefault(key, {}).setdefault(pid, []).extend(lp)
                 lid = fid.get(f"{metric}_load_id")
