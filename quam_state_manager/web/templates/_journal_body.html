@@ -24,9 +24,9 @@
 <div class="jr-counts" data-day="{{ s.day }}" data-chip="{{ s.chip }}"{% if s.paged %} data-jr-ts="{{ s.day_ts }}"{% if s.reused %} data-jr-reused="1"{% endif %}{% endif %}>
     <span class="muted">{{ 'Available totals (incomplete)' if history.state == 'degraded' else ('As last recorded' if history.state == 'idle' else 'Day totals') }}</span>
     <span class="jr-stat jr-stat-day">{{ s.day }}</span>
-    <span class="jr-stat"><b>{{ s.counts.runs }}</b> run{{ 's' if s.counts.runs != 1 }}</span>
-    {% if s.counts.failed %}<span class="jr-stat jr-stat-bad"><b>{{ s.counts.failed }}</b> failed</span>{% endif %}
-    {% if s.counts.gate_fail %}<span class="jr-stat jr-stat-bad">gate fail <b>{{ s.counts.gate_fail }}</b></span>{% endif %}
+    <span class="jr-stat"><b>{{ '{:,}'.format(s.counts.runs) }}</b> run{{ 's' if s.counts.runs != 1 }}</span>
+    {% if s.counts.failed %}<span class="jr-stat jr-stat-bad"><b>{{ '{:,}'.format(s.counts.failed) }}</b> failed</span>{% endif %}
+    {% if s.counts.gate_fail %}<span class="jr-stat jr-stat-bad">gate fail <b>{{ '{:,}'.format(s.counts.gate_fail) }}</b></span>{% endif %}
     {% set n_cards = s.counts.write_cards if s.counts.write_cards is defined else s.counts.writes %}
     <span class="jr-stat"><b>{{ n_cards }}</b> write{{ 's' if n_cards != 1 }}{% if s.counts.write_cards is defined and s.counts.writes != n_cards %} ({{ s.counts.writes }} values){% endif %}</span>
     {% if s.counts.other_chip %}<span class="jr-stat jr-stat-bad" title="runs whose saved state may be another chip's, not counted above"><b>{{ s.counts.other_chip }}</b> maybe another chip's</span>{% endif %}
@@ -70,7 +70,7 @@
 <p class="muted jr-empty" data-empty-text="{{ empty_text }}"{% if s.cards_shown or s.lines_shown %} hidden style="display:none"{% endif %}>{{ empty_text }}</p>
 
 <div class="jr-sec-head jr-runs-head"{% if not s.runs_shown %} hidden style="display:none"{% endif %}>
-    <span class="jr-sec-title">Runs <span class="jr-sec-count">{{ s.runs_shown }}</span></span>
+    <span class="jr-sec-title">Runs <span class="jr-sec-count">{{ '{:,}'.format(s.runs_shown) }}</span></span>
     <span class="jr-sec-note muted">time · node · targets · outcome · gate · run · who — click a row for what it wrote and why</span>
 </div>
 

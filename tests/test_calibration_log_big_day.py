@@ -384,3 +384,12 @@ if __name__ == "__main__":
     os.environ["SM_DISABLE_ENV_WARMUP"] = "1"
     os.environ["QUALIBRATE_CONFIG_FILE"] = str(ROOT / "tmp_cr_audit/log_big_day/missing-config")
     print(json.dumps(client_fixture()))
+
+
+def test_counts_read_with_thousands_separators(paged, monkeypatch):
+    """A paged day says "Showing 300 of 3,000"; its run counts read the same way."""
+    # one a SECOND here: the minute clock of _day runs past midnight beyond ~830 runs
+    monkeypatch.setitem(globals(), "_clock", lambda i: f"10:{i // 60:02d}:{i % 60:02d}")
+    _day(paged, 1001)
+    html = _get(paged, f"/journal/day?day={DAY}")
+    assert 'Runs <span class="jr-sec-count">1,001</span>' in html and "<b>1,001</b> runs" in html

@@ -267,7 +267,7 @@ window.JournalPage = (function () {
     var head = body.querySelector(".jr-runs-head");
     if (head && !paged) {
       show(head, runs > 0);
-      head.querySelector(".jr-sec-count").textContent = runs;
+      head.querySelector(".jr-sec-count").textContent = runs.toLocaleString("en-US");   // "3,000", like the page's other counts
     }
     var empty = body.querySelector(".jr-empty");
     if (empty) {
