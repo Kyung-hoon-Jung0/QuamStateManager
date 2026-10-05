@@ -430,6 +430,28 @@ def view(inst, project: str | None) -> dict:
     return out
 
 
+def pc_zone() -> str | None:
+    """This PC's own zone as an IANA name, for a lab that set no project zone.
+
+    The OS's IANA zone when ``clock_status`` knows it; else a whole-hour UTC
+    offset as a fixed ``Etc/GMT`` zone (no daylight-saving rules -- an honest
+    approximation, never a guess at a region); else None.
+    """
+    osz = (clock_status() or {}).get("os_zone") or {}
+    iana = osz.get("iana")
+    if isinstance(iana, str) and valid_zone(iana):
+        return iana
+    m = re.fullmatch(r"([+-])(\d{2}):00", str(osz.get("utc_offset") or ""))
+    if m:
+        hours = int(m.group(2))
+        if hours == 0:
+            return "UTC"
+        # Etc/GMT signs are inverted by POSIX convention: UTC+09:00 is Etc/GMT-9
+        name = f"Etc/GMT{'-' if m.group(1) == '+' else '+'}{hours}"
+        return name if valid_zone(name) else None
+    return None
+
+
 def display_zone(inst, project: str | None) -> dict:
     """The ONE zone a page renders in: the project's (picked or defaulted),
     else the zone set most recently for any project, else none (the page

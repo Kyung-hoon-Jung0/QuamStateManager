@@ -51,6 +51,12 @@ def _binding(store):
     if isinstance(store, ReadContext):
         zone = (project_time.display_zone(store.instance, store.project)["zone"]
                 if store.instance is not None else store.zone)
+        if not zone and store.instance is not None:
+            # A lab that set no project zone sees its days in THIS PC's zone --
+            # the same fallback the report and the log's "today" already use.
+            # Raising here left the Calibration log empty with an internal
+            # message on every chip without a zone.
+            zone = project_time.pc_zone()
         if not zone:
             raise ValueError("a project time zone is required for ledger queries")
         return store.store, zone
