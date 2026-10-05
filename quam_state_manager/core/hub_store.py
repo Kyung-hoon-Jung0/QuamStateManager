@@ -108,12 +108,15 @@ CREATE TABLE IF NOT EXISTS run_files(
 #                  the hash an SM write names as its base
 #   sm_events.jpos the line's journal position (journal order = causal order)
 _COLUMNS = (("events", "t_ord", "INTEGER"), ("events", "chash", "TEXT"), ("sm_events", "jpos", "INTEGER"))
-_SCHEMA_S5R = """
-CREATE INDEX IF NOT EXISTS events_by_order_time ON events(t_ord, ord);
-CREATE INDEX IF NOT EXISTS events_by_chash ON events(chash);
-CREATE TRIGGER IF NOT EXISTS events_default_t_ord AFTER INSERT ON events WHEN NEW.t_ord IS NULL
- BEGIN UPDATE events SET t_ord=NEW.t_utc_us WHERE eid=NEW.eid; END;
-"""
+# The same statements one by one: a trigger body holds a ';', so the script
+# cannot be split on it, and executescript() would COMMIT the creating
+# transaction first.
+_SCHEMA_S5R_STATEMENTS = (
+    "CREATE INDEX IF NOT EXISTS events_by_order_time ON events(t_ord, ord)",
+    "CREATE INDEX IF NOT EXISTS events_by_chash ON events(chash)",
+    "CREATE TRIGGER IF NOT EXISTS events_default_t_ord AFTER INSERT ON events WHEN NEW.t_ord IS NULL"
+    " BEGIN UPDATE events SET t_ord=NEW.t_utc_us WHERE eid=NEW.eid; END",
+)
 _SCHEMA_OBJECTS = ("meta", "roots", "events", "run_identity", "locations", "locations_by_event", "paths",
                    "changes", "changes_by_event", "blobs", "checkpoints", "sm_events", "sm_anchors",
                    "events_by_state_hash", "events_by_time", "run_files", "events_by_order_time",
@@ -238,16 +241,7 @@ class HubStore:
             # docs/275 review: only a ledger that lacks part of its schema
             # takes the write lock on open (a second window used to wait up
             # to 21 s for another window's long transaction just to open)
-            for stmt in _SCHEMA.split(";"):
-                if stmt.strip():
-                    self.conn.execute(stmt)
-            for table, col, typ in _COLUMNS:
-                have = {r[1] for r in self.conn.execute(f"PRAGMA table_info({table})")}
-                if col not in have:
-                    self.conn.execute(f"ALTER TABLE {table} ADD COLUMN {col} {typ}")
-            self.conn.execute("UPDATE events SET t_ord=t_utc_us WHERE t_ord IS NULL")
-            self.conn.commit()
-            self.conn.executescript(_SCHEMA_S5R)
+            self._create_schema()
         if checkpoint_interval is None:
             # docs/275: a reader or the in-SM sync that names no interval
             # adopts the ledger's own (a new ledger gets the default)
@@ -255,21 +249,60 @@ class HubStore:
             checkpoint_interval = int(stored) if stored else CHECKPOINT_INTERVAL
         expected = {"schema_version": str(SCHEMA_VERSION), "rule_version": RULE_VERSION,
                     "checkpoint_interval": str(checkpoint_interval)}
+        if any(self.meta(key) is None for key in (*expected, "ledger_id")):
+            # A new ledger's identity is written once, by whichever process gets
+            # there first: two windows opening it together used to write two
+            # different ledger_ids (the last one won) -- re-read inside the lock.
+            self.conn.execute("BEGIN IMMEDIATE")
+            try:
+                for key, val in expected.items():
+                    if self.meta(key) is None:
+                        self.set_meta(key, val)
+                if self.meta("ledger_id") is None:
+                    # docs/275: the identity of THIS file; RAM caches built from a
+                    # ledger are dropped when the file is replaced or rebuilt
+                    self.set_meta("ledger_id", os.urandom(8).hex())
+                self.conn.commit()
+            except BaseException:
+                self.conn.rollback()
+                raise
         for key, val in expected.items():
             existing = self.meta(key)
-            if existing is not None and existing != val:
+            if existing != val:
                 self.conn.close()
                 raise ValueError(f"incompatible ledger {key}: {existing}; expected {val}")
-            if existing is None:
-                self.set_meta(key, val)
-        if self.meta("ledger_id") is None:
-            # docs/275: the identity of THIS file; RAM caches built from a
-            # ledger are dropped when the file is replaced or rebuilt
-            self.set_meta("ledger_id", os.urandom(8).hex())
         if self.conn.in_transaction:
             self.conn.commit()
         self.checkpoint_interval = checkpoint_interval
         self._pids = dict(self.conn.execute("SELECT path,pid FROM paths"))
+
+    def _create_schema(self) -> None:
+        """Create or complete the schema in ONE write transaction.
+
+        Two processes opening a new ledger together both saw an incomplete
+        schema and both ran ALTER TABLE ("duplicate column name"), and a
+        read that turned into a write inside WAL failed at once with
+        "database is locked" instead of waiting. BEGIN IMMEDIATE waits (the
+        connection's busy timeout) for the other creator; the schema is
+        re-checked inside, so the second process finds it complete.
+        """
+        self.conn.execute("BEGIN IMMEDIATE")
+        try:
+            if not self._schema_current():
+                for stmt in _SCHEMA.split(";"):
+                    if stmt.strip():
+                        self.conn.execute(stmt)
+                for table, col, typ in _COLUMNS:
+                    have = {r[1] for r in self.conn.execute(f"PRAGMA table_info({table})")}
+                    if col not in have:
+                        self.conn.execute(f"ALTER TABLE {table} ADD COLUMN {col} {typ}")
+                self.conn.execute("UPDATE events SET t_ord=t_utc_us WHERE t_ord IS NULL")
+                for stmt in _SCHEMA_S5R_STATEMENTS:
+                    self.conn.execute(stmt)
+            self.conn.commit()
+        except BaseException:
+            self.conn.rollback()
+            raise
 
     def _schema_current(self) -> bool:
         names = {r[0] for r in self.conn.execute(
