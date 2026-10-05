@@ -387,6 +387,38 @@ ok(step5.querySelector('svg.instrument-svg').style.width === Math.round(nat5 * 1
    step5.querySelector('.iw-size-pct').textContent === '125%',
    'G4 the size survives a wizard re-render');
 
+/* -- G5: an editable feedline's grip never covers a circle -------------
+ * The wizard's step-5 rack is editable: a port with 2+ qubits carries a drag
+ * grip on its left. It was placed by the cell's nominal radius while 4+
+ * circles spread wider, so it sat on the first circle and hid its label
+ * ("qA1" read "A1", seen in real Chrome at every size). */
+(function () {
+  const gw = rack();
+  const ports = gw.controllers['1'].fems['1'].output_ports;
+  const feed = (n, tag) => Array.from({ length: n }, (_, i) => (
+    { role: 'rr', element: tag + i, label: tag + i + '.rr', port_type: 'mw-fem-output' }));
+  ports['3'] = feed(2, 'b'); ports['4'] = feed(3, 'c'); ports['5'] = feed(6, 'd');
+  win.renderInstrumentWiring('gen-a', gw, {}, { editable: true });
+  const cells = Array.from(host('gen-a').querySelectorAll('g.iw-port')).filter((c) => c.querySelector('.iw-port-grip'));
+  ok(cells.length === 4, 'G5 every editable feedline (2, 3, 4 and 6 qubits) has a grip (' + cells.length + ')');
+  let worst = Infinity;
+  cells.forEach((c) => {
+    const g = c.querySelector('.iw-port-grip');
+    const gRight = +g.getAttribute('x') + +g.getAttribute('width');
+    Array.from(c.querySelectorAll('circle')).forEach((ci) => {
+      worst = Math.min(worst, (+ci.getAttribute('cx') - +ci.getAttribute('r')) - gRight);
+    });
+  });
+  ok(worst >= 1, 'G5 no grip overlaps a circle (smallest gap ' + worst.toFixed(1) + ' px)');
+  // ...and it stays inside its own 82 px output column (port 1 is a single circle at the centre)
+  const colX = +host('gen-a').querySelector('g.iw-port[data-slot="1"][data-port="1"][data-io="output"] circle').getAttribute('cx');
+  const lefts = cells.map((c) => +c.querySelector('.iw-port-grip').getAttribute('x'));
+  ok(Math.min.apply(null, lefts) >= colX - 41, 'G5 every grip stays inside its column (leftmost ' +
+     (Math.min.apply(null, lefts) - colX).toFixed(1) + ' px from the centre, edge at -41)');
+  win.renderInstrumentWiring('gen-b', gw, {}, {});
+  ok(!host('gen-b').querySelector('.iw-port-grip'), 'G5 a read-only rack carries no grip');
+})();
+
 // pretendToBeVisual keeps a rAF loop alive; exit from the write's callback
 // so the summary line is never truncated on a Windows pipe.
 win.close();

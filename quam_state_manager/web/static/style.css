@@ -14897,3 +14897,7 @@ html.sm-in-frame .topbar .wb-link { display: none; }
 .ag-term-stderr { color: var(--color-warning-text); }
 .ag-term-init, .ag-term-think { color: var(--pico-muted-color); }
 .ag-live-compact .ag-live-text { display: none; }
+
+/* docs/290: the wiring diagram's title follows the theme (a stylesheet rule beats the
+   SVG fill attribute, which stays as the fallback where this sheet is absent) */
+svg .iw-title { fill: var(--pico-muted-color); }

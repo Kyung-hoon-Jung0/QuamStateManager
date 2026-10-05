@@ -13924,7 +13924,9 @@ window.renderInstrumentWiring = function(containerId, data, rawWiring, options) 
         svg.dataset.natH = svgH;
 
         // Controller title
-        svg.appendChild(_svgText(svgW / 2, 22, ctrlName + ' \u2014 OPX1000 Wiring', 14, '600', '#333', 'middle'));
+        var iwTitle = _svgText(svgW / 2, 22, ctrlName + ' \u2014 OPX1000 Wiring', 14, '600', '#333', 'middle');
+        iwTitle.setAttribute('class', 'iw-title');   // docs/290: themed (a fixed #333 vanished on dark)
+        svg.appendChild(iwTitle);
 
         // Background rect for the grid area
         var iw = UI_CONFIG.instrumentWiring;
@@ -14085,11 +14087,27 @@ function _renderPortCell(svg, cx, cy, r, roleColors, assignments, rawWiring, por
         cell.appendChild(emptyC);
     } else if (assignments.length === 1) {
         _appendPortCircle(cell, cx, cy, r, roleColors, assignments[0], rawWiring, editable, onPortHover);
-    } else if (assignments.length <= 3) {
+    } else {
+    // docs/290: an editable feedline carries a grip on its left. It was placed by the
+    // cell's NOMINAL radius, but 4+ circles spread wider than that, so the grip sat on the
+    // first circle and hid its label ("qA1" read "A1"). The grip now sits left of the
+    // real leftmost circle, and the circles move right by half its width (the group
+    // stays centred on the port).
+    var gripRoom = editable ? 4.5 : 0;
+    var gcx = cx + gripRoom;
+    var leftEdge;
+    if (assignments.length <= 3) {
         // Single row: spread smaller circles horizontally
         var sr = Math.max(10, Math.floor(r * 0.62));
+        if (editable) {
+            // a full row of three already spans the whole column (3 x 26 + 4 = 82 px at
+            // r 21): the circles give the grip its 9 px, never below the 10 px floor
+            var n1 = assignments.length;
+            sr = Math.max(10, Math.min(sr, Math.floor((3.8 * r - 9 - (n1 - 1) * 2) / (2 * n1))));
+        }
         var spread = sr * 2 + 2;
-        var startX = cx - (assignments.length - 1) * spread / 2;
+        var startX = gcx - (assignments.length - 1) * spread / 2;
+        leftEdge = startX - sr;
         assignments.forEach(function(a, ai) {
             _appendPortCircle(cell, startX + ai * spread, cy, sr, roleColors, a, rawWiring, editable, onPortHover);
         });
@@ -14100,25 +14118,27 @@ function _renderPortCell(svg, cx, cy, r, roleColors, assignments, rawWiring, por
         var rowOff = sr2 + 3;
         var row1 = assignments.slice(0, 3);
         var row2 = assignments.slice(3);
+        leftEdge = gcx - (row1.length - 1) * spread2 / 2 - sr2;
         row1.forEach(function(a, ai) {
-            var rx = cx - (row1.length - 1) * spread2 / 2 + ai * spread2;
+            var rx = gcx - (row1.length - 1) * spread2 / 2 + ai * spread2;
             _appendPortCircle(cell, rx, cy - rowOff, sr2, roleColors, a, rawWiring, editable, onPortHover);
         });
         row2.forEach(function(a, ai) {
-            var rx = cx - (row2.length - 1) * spread2 / 2 + ai * spread2;
+            var rx = gcx - (row2.length - 1) * spread2 / 2 + ai * spread2;
             _appendPortCircle(cell, rx, cy + rowOff, sr2, roleColors, a, rawWiring, editable, onPortHover);
         });
     }
-    if (editable && assignments.length >= 2) {
+    if (editable) {
         // Feedline grip — drag to move the whole multiplexed feedline;
         // dragging a single circle moves just that one qubit.
         var grip = _svgEl('rect');
         var gh = Math.min(2 * r, 30);
-        _svgAttrs(grip, {x: cx - r - 12, y: cy - gh / 2, width: 7, height: gh,
+        _svgAttrs(grip, {x: Math.min(cx - r - 12, leftEdge - 9), y: cy - gh / 2, width: 7, height: gh,
                          rx: 2, fill: '#8a8f98', stroke: 'rgba(0,0,0,0.3)', 'stroke-width': 1});
         grip.setAttribute('class', 'iw-port-grip');
         grip.style.cursor = 'grab';
         cell.appendChild(grip);
+    }
     }
     svg.appendChild(cell);
 }
