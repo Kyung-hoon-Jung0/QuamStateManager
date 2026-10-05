@@ -7,7 +7,12 @@ per process (the prompt on stdin to EOF, the last paragraph being the user's). K
 (the turn ends on a usage limit), FAKE_CRASH=1 (exit 3 with stderr), FAKE_TOOL
 (the tool name to call, default mcp__sm__sm_status), FAKE_ECHO_STDIN=1 (codex: the
 answer is the whole stdin, so a pin can see the system prompt), FAKE_LINGER=1 (codex:
-stay alive 1.5 s after turn.completed, like the real CLI).
+stay alive 1.5 s after turn.completed, like the real CLI), FAKE_SLOW=<s> (claude: pause
+this long before the answer, so a pin can look at a turn in progress).
+With ``--include-partial-messages`` the Claude dialect also prints the stream_event
+lines measured on claude 2.1.289 (docs/289): a thinking block with EMPTY text, the
+tool_use input as input_json_delta chunks, the answer as text_delta chunks -- each
+before the whole message, exactly as the real CLI orders them.
 """
 
 from __future__ import annotations
@@ -51,6 +56,18 @@ def claude():
                  "result": "You've hit your usage limit · resets 2:50pm (Asia/Seoul)"})
             continue
         tid = f"toolu_{n}"
+        partial = "--include-partial-messages" in args
+
+        def se(event):
+            out({"type": "stream_event", "event": event, "session_id": sid, "parent_tool_use_id": None})
+        if partial:
+            se({"type": "message_start", "message": {"role": "assistant"}})
+            se({"type": "content_block_start", "index": 0, "content_block": {"type": "thinking", "thinking": ""}})
+            se({"type": "content_block_delta", "index": 0, "delta": {"type": "thinking_delta", "thinking": ""}})
+            se({"type": "content_block_stop", "index": 0})
+            se({"type": "content_block_start", "index": 1, "content_block": {"type": "tool_use", "id": tid, "name": tool, "input": {}}})
+            for chunk in ('{"q": ', json.dumps(text[:20]), "}"):
+                se({"type": "content_block_delta", "index": 1, "delta": {"type": "input_json_delta", "partial_json": chunk}})
         out({"type": "assistant", "message": {"role": "assistant", "content": [
             {"type": "thinking", "thinking": "..."},
             {"type": "tool_use", "id": tid, "name": tool, "input": {"q": text[:20]}}]}, "session_id": sid})
@@ -58,8 +75,17 @@ def claude():
         out({"type": "user", "message": {"role": "user", "content": [
             {"type": "tool_result", "tool_use_id": tid, "is_error": failed,
              "content": "Error: no chip" if failed else "{\"chip\": \"PJ\"}"}]}, "session_id": sid})
+        answer = f"answer {n}: {text[:20]}"
+        if partial:
+            se({"type": "message_start", "message": {"role": "assistant"}})
+            se({"type": "content_block_start", "index": 0, "content_block": {"type": "text", "text": ""}})
+            for i in range(0, len(answer), 4):
+                se({"type": "content_block_delta", "index": 0, "delta": {"type": "text_delta", "text": answer[i:i + 4]}})
+        slow = float(os.environ.get("FAKE_SLOW") or 0)
+        if slow:
+            time.sleep(slow)
         out({"type": "assistant", "message": {"role": "assistant", "content": [
-            {"type": "text", "text": f"answer {n}: {text[:20]}"}]}, "session_id": sid})
+            {"type": "text", "text": answer}]}, "session_id": sid})
         out({"type": "result", "subtype": "success", "is_error": False, "num_turns": n, "session_id": sid,
              "usage": {"input_tokens": 10 * n, "output_tokens": 5}, "total_cost_usd": 0.01 * n,
              "result": f"answer {n}: {text[:20]}"})

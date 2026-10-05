@@ -56,6 +56,8 @@ from collections import deque
 from pathlib import Path
 from typing import Any, Callable
 
+from quam_state_manager.core import agent_live
+
 logger = logging.getLogger(__name__)
 
 BACKENDS = ("claude", "codex")
@@ -229,6 +231,11 @@ class ClaudeBackend(Backend):
             cmd += ["--model", self.model]
         if self.system_prompt:
             cmd += ["--append-system-prompt", self.system_prompt]
+        # docs/289: the answer as it is written, and the phase between whole messages, for the
+        # person waiting (agent_live). Only when this CLI names the flag -- an older one would
+        # refuse the whole launch over an unknown option.
+        if PARTIAL_FLAG in (help_flags(self.exe, ttl=3600.0) or ()):      # ~0.5 s, once an hour
+            cmd += [PARTIAL_FLAG]
         if resume:
             cmd += ["--resume", resume]
         return cmd
@@ -543,6 +550,7 @@ class AgentProcess:
         self.started = time.time()
         self.ended: float | None = None
         self.returncode: int | None = None
+        self.live = agent_live.LiveState(backend.name)     # docs/289: what it is doing now, for the page
         cmd = resolve_command(backend.command(resume=resume, prompt=prompt))
         full_env = dict(os.environ, PYTHONUTF8="1", MCP_TOOL_TIMEOUT=str(MCP_TOOL_TIMEOUT_S * 1000))
         full_env.update(env or {})
@@ -561,6 +569,7 @@ class AgentProcess:
         self._err.start()
         self.stopped_by_human = False
         if prompt is not None:
+            self.live.turn(prompt)
             first = backend.initial_input(prompt, resume)
             if first is not None:
                 try:
@@ -591,6 +600,7 @@ class AgentProcess:
             self.proc.stdin.write(enc + "\n")
             self.proc.stdin.flush()
             self.ctx["turn_open"] = True
+            self.live.turn(text)
             return True
         except (OSError, ValueError):
             return False
@@ -608,6 +618,7 @@ class AgentProcess:
         self._emit(_mk(self.ctx, "Stop", summary="stopped by a person", stopped=True))
 
     def _emit(self, rec: dict) -> None:
+        self.live.event(rec)
         with self._lock:
             self.events.append(rec)
         if self.on_event:
@@ -622,11 +633,14 @@ class AgentProcess:
                 line = line.strip()
                 if not line:
                     continue
-                self.raw_tail.append(line[:300])
                 try:
                     ev = json.loads(line)
                 except ValueError:
+                    self.raw_tail.append(line[:300])
                     continue
+                if not (isinstance(ev, dict) and ev.get("type") == "stream_event"):
+                    self.raw_tail.append(line[:300])     # the partial chunks would push out what a crash needs
+                self.live.raw(ev)
                 for rec in self.backend.normalize(ev, self.ctx):
                     self._emit(rec)
         finally:
@@ -643,6 +657,8 @@ class AgentProcess:
                 self._emit(_mk(self.ctx, "Error", failed=True, error=err or f"exit {self.returncode}",
                                limited=bool(_limited(err)), limited_until=_limited(err)))
                 self._emit(_mk(self.ctx, "Stop", summary=err[:400]))
+            if not getattr(self, "stopped_by_human", False):
+                self.live.finish(self.returncode)        # docs/289: after the crash verdict above
             if self.on_exit:
                 try:
                     self.on_exit(self)
@@ -653,27 +669,35 @@ class AgentProcess:
         try:
             for line in self.proc.stderr:
                 self.stderr_tail.append(line.rstrip()[:300])
+                self.live.stderr(line)
         except Exception:  # noqa: BLE001
             pass
 
 
-_FLAGS_CACHE: dict[str, tuple[float, frozenset | None]] = {}
+_FLAGS_CACHE: dict[tuple, tuple[float, frozenset | None]] = {}
+PARTIAL_FLAG = "--include-partial-messages"
 
 
-def exec_flags(exe: str, ttl: float = 600.0) -> frozenset | None:
-    """The long flags ``<exe> exec --help`` names (cached); None when it cannot be asked."""
-    hit = _FLAGS_CACHE.get(exe)
+def help_flags(exe: str, sub: tuple = (), ttl: float = 600.0) -> frozenset | None:
+    """The long flags ``<exe> [sub...] --help`` names (cached); None when it cannot be asked."""
+    key = (exe, tuple(sub))
+    hit = _FLAGS_CACHE.get(key)
     if hit and time.time() - hit[0] < ttl:
         return hit[1]
     try:
-        r = subprocess.run(resolve_command([exe, "exec", "--help"]), capture_output=True, text=True,
+        r = subprocess.run(resolve_command([exe, *sub, "--help"]), capture_output=True, text=True,
                            encoding="utf-8", errors="replace", timeout=20)
         text = (r.stdout or "") + (r.stderr or "")
         out = frozenset(re.findall(r"--[a-z][a-z0-9-]+", text)) if r.returncode == 0 else None
     except Exception:  # noqa: BLE001
         out = None
-    _FLAGS_CACHE[exe] = (time.time(), out)
+    _FLAGS_CACHE[key] = (time.time(), out)
     return out
+
+
+def exec_flags(exe: str, ttl: float = 600.0) -> frozenset | None:
+    """The long flags ``<exe> exec --help`` names (cached); None when it cannot be asked."""
+    return help_flags(exe, ("exec",), ttl)
 
 
 def detect(exe: str) -> dict:

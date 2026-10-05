@@ -569,7 +569,10 @@ const tick = (ms) => new Promise(r => setTimeout(r, ms || 15));
   // the composer: one growing row, then backend · name · presets · Send, pinned after the feed
   const comp = h2.querySelector('form.ag-composer');
   const ta2 = comp && comp.querySelector('textarea.ag-input');
-  ok(comp && ta2 && ta2.getAttribute('rows') === '1' && comp.previousElementSibling.classList.contains('ag-cards') && comp.nextElementSibling.id === 'ag-toast', 'the composer is a one-row textarea right after the feed (the last thing in the column)');
+  // docs/289: the live box (what the agent is doing now) sits between the feed and the composer
+  ok(comp && ta2 && ta2.getAttribute('rows') === '1' && comp.previousElementSibling.classList.contains('ag-live')
+     && comp.previousElementSibling.previousElementSibling.classList.contains('ag-cards') && comp.nextElementSibling.id === 'ag-toast',
+     'the composer is a one-row textarea after the feed and its live box (the last thing in the column)');
   ok(/^Ask, or tell the agent what to do…/.test(ta2.placeholder) && /Enter sends · Shift\+Enter newline · \/run <node> <targets>/.test(ta2.placeholder), 'the shortened placeholder: ' + ta2.placeholder);
   const rowEl = comp.querySelector('.ag-form-row');
   const rowKids = Array.from(rowEl.children);

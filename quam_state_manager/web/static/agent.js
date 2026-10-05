@@ -288,7 +288,23 @@ window.AgentPanel = (function () {
     var host = cardsHost(m);
     if (!host || m.__agWidthWatch || typeof ResizeObserver !== "function") return;
     var last = Math.round(host.clientWidth);
+    /* docs/289: the feed's own HEIGHT changes under it too -- the column shrank 98 px
+       40 ms after Send (measured frame by frame), then the live box took its share, and
+       a reader who was at the bottom was left 96-460 px above it: the "follow only at
+       the bottom" rule then (correctly) read them as scrolled up, so the answer landed
+       below the fold. Where the reader IS is known from scroll events (a container that
+       shrinks fires none), so a height change puts a bottom reader back at the bottom. */
+    var lastH = Math.round(host.clientHeight);
+    host.__agAtBottom = true;
+    host.addEventListener("scroll", function () {
+      host.__agAtBottom = host.scrollHeight - host.scrollTop - host.clientHeight < 48;
+    }, { passive: true });
     m.__agWidthWatch = new ResizeObserver(function () {
+      var h = Math.round(host.clientHeight);
+      if (h !== lastH) {
+        lastH = h;
+        if (host.__agAtBottom && m.autoscroll !== false) host.scrollTop = host.scrollHeight;
+      }
       var w = Math.round(host.clientWidth);
       if (w === last) return;
       last = w;
@@ -978,6 +994,7 @@ window.AgentPanel = (function () {
       if (chipEl && d.chip && chipEl.textContent !== d.chip) chipEl.textContent = d.chip;
     });
     S.session = { session: d.session, file: d.file };
+    if (d.session && d.session.busy) liveKick();
     syncIntent();
     S.now = d.now;
     if (typeof d.agent_seq === "number") S.seq = d.agent_seq;
@@ -1076,6 +1093,147 @@ window.AgentPanel = (function () {
   // agent news -- it lagged a Take live by the 30 s idle poll (14-23 s
   // measured). `sm:wc-moved` (wc-moved.js) is the working copy moving.
   document.addEventListener("sm:wc-moved", function () { if (S.mounts.length) poll(true); });
+  // ------------------------------------------------------------ live progress
+  /* docs/289: between Send and the answer the screen used to stay unchanged
+     for as long as the turn took (18 s measured for a three-qubit T1
+     question) -- the CLI's events reach the feed only as whole messages, so
+     nobody could tell a working agent from a dead one. The box above the
+     composer shows what the CLI is doing NOW: a phase with a running clock,
+     the tool calls of this turn, the answer as it is written, and -- one
+     click away -- the terminal log of what the process printed. It is a view
+     of /api/agent/chat/live, polled about once a second ONLY while something
+     is in flight; nothing here decides or records anything. */
+  var LIVE = { timer: null, inflight: false, items: [], off: 0, empty: 0, termOpen: {}, shown: {} };
+  var LIVE_WHAT = {
+    starting: "Starting…", waiting: "Working…", thinking: "Thinking…",
+    tool: "Running a tool…", writing: "Writing the answer…", done: "Answered", failed: "Failed", stopped: "Stopped"
+  };
+  function liveClock(secs) {
+    secs = Math.max(0, Math.floor(secs || 0));
+    var m = Math.floor(secs / 60), s = secs % 60;
+    return m + ":" + (s < 10 ? "0" : "") + s;
+  }
+  function liveNow() { return Date.now() / 1000 + LIVE.off; }
+  function liveHms(ts) {
+    var d = new Date((ts - LIVE.off) * 1000);
+    function p(n) { return (n < 10 ? "0" : "") + n; }
+    return p(d.getHours()) + ":" + p(d.getMinutes()) + ":" + p(d.getSeconds());
+  }
+  function liveRunning(it) { return it.phase !== "done" && it.phase !== "failed" && it.phase !== "stopped"; }
+  function liveHead(it) {
+    var what = LIVE_WHAT[it.phase] || it.phase;
+    if (it.phase === "tool" && it.tool) what = "Running " + it.tool + "…";
+    var end = it.ended || liveNow();
+    return '<span class="ag-live-dot" aria-hidden="true"></span><b>' + esc(it.backend || "agent") + "</b>"
+      + ' <span class="ag-live-what">' + esc(what) + "</span>"
+      + (it.phase === "tool" && it.detail ? ' <code class="ag-live-detail">' + esc(it.detail) + "</code>" : "")
+      + '<span class="ag-live-clock" title="since you sent it">' + liveClock(end - (it.turn_started || it.started)) + "</span>"
+      + '<span class="ag-live-kind">' + (it.kind === "ask" ? "question" : "task") + (it.queued ? " · " + it.queued + " queued" : "") + "</span>";
+  }
+  var LIVE_STEPS_SHOWN = 6;      // the rest are one line; every call is in the terminal log
+  function liveSteps(it) {
+    var all = it.steps || [];
+    if (!all.length) return "";
+    var steps = all.slice(-LIVE_STEPS_SHOWN);
+    var earlier = all.length - steps.length;
+    return '<ol class="ag-live-steps">' + (earlier ? '<li class="ag-live-earlier">+ ' + earlier + " earlier tool call" + (earlier === 1 ? "" : "s") + "</li>" : "") + steps.map(function (s) {
+      var run = s.ok === null || s.ok === undefined;
+      var took = run ? liveClock(liveNow() - s.t0) : ((s.t1 - s.t0).toFixed(1) + " s");
+      return '<li class="' + (run ? "ag-live-run" : (s.ok ? "ag-live-ok" : "ag-live-bad")) + '"><span class="ag-live-mark">' + (run ? "○" : (s.ok ? "✓" : "✕")) + "</span>"
+        + esc(s.tool) + (s.detail ? ' <code>' + esc(s.detail) + "</code>" : "")
+        + '<span class="ag-live-took">' + esc(took) + "</span></li>";
+    }).join("") + "</ol>";
+  }
+  function liveTerm(it) {
+    var lines = it.lines || [];
+    var body = lines.map(function (r) {
+      return '<span class="ag-term-t">' + esc(liveHms(r[0])) + '</span> <span class="ag-term-k ag-term-' + esc(r[1]) + '">' + esc(r[1]) + "</span> " + esc(r[2]);
+    }).join("\n");
+    return '<details class="ag-live-term" data-live-term="' + esc(it.id) + '"' + (LIVE.termOpen[it.id] ? " open" : "") + ">"
+      + '<summary title="what the CLI printed, as it happened">Terminal <span class="muted">· ' + (it.n_lines || lines.length) + " lines</span></summary><pre>" + body + "</pre></details>";
+  }
+  function liveItemHtml(it) {
+    var text = it.phase === "writing" && it.text ? '<div class="ag-live-text">' + esc(it.text.slice(-320)) + "</div>" : "";
+    return '<div class="ag-live-head">' + liveHead(it) + "</div>" + liveSteps(it) + text + liveTerm(it);
+  }
+  function livePaint() {
+    S.mounts.forEach(function (m) {
+      var box = m.root && m.root.querySelector(".ag-live");
+      if (!box) return;
+      // the box shares the column with the feed: when it grows, shrinks or goes, the feed's
+      // height changes under it -- a reader at the bottom stays at the bottom (measured: the
+      // answer card landed one card below the fold when the box closed)
+      var host = cardsHost(m);
+      var pin = host && host.__agScrolledOnce && nearBottom(host);
+      var items = LIVE.items;
+      box.hidden = !items.length;
+      var seen = {};
+      items.forEach(function (it) {
+        seen[it.id] = 1;
+        var el = box.querySelector('[data-live="' + it.id + '"]');
+        if (!el) {
+          el = document.createElement("div");
+          el.setAttribute("data-live", it.id);
+          box.appendChild(el);
+        }
+        el.className = "ag-live-item ag-live-" + it.phase + (m.compact ? " ag-live-compact" : "");
+        if (el.__agSeq !== it.seq) {
+          var pre = el.querySelector(".ag-live-term pre");
+          var follow = !pre || pre.scrollTop + pre.clientHeight >= pre.scrollHeight - 8;
+          el.innerHTML = liveItemHtml(it);
+          el.__agSeq = it.seq;
+          var pre2 = el.querySelector(".ag-live-term pre");
+          if (pre2 && follow) pre2.scrollTop = pre2.scrollHeight;
+        } else {
+          var head = el.querySelector(".ag-live-head");          // between updates only the clocks move
+          if (head) head.innerHTML = liveHead(it);
+          var st = el.querySelector(".ag-live-steps");
+          if (st && liveRunning(it)) st.outerHTML = liveSteps(it);
+        }
+      });
+      Array.prototype.forEach.call(box.querySelectorAll("[data-live]"), function (el) {
+        if (!seen[el.getAttribute("data-live")]) el.remove();
+      });
+      if (pin && m.autoscroll !== false) host.scrollTop = host.scrollHeight;
+    });
+  }
+  function liveFetch() {
+    if (LIVE.inflight || !S.mounts.length) return;
+    LIVE.inflight = true;
+    api("GET", "/api/agent/chat/live").then(function (r) {
+      LIVE.inflight = false;
+      if (r.status !== 200) return;
+      if (typeof r.body.now === "number") LIVE.off = r.body.now - Date.now() / 1000;
+      LIVE.items = r.body.items || [];
+      var running = LIVE.items.some(liveRunning);
+      if (!LIVE.items.length) LIVE.empty += 1; else LIVE.empty = 0;
+      // an ask's answer card lands when it stops: fetch the feed now instead of on the next wake
+      LIVE.items.forEach(function (it) { if (!liveRunning(it) && !LIVE.shown[it.id + ":" + it.seq]) { LIVE.shown[it.id + ":" + it.seq] = 1; poll(true); } });
+      livePaint();
+      if (!running && LIVE.empty >= 2) liveStop();
+    }, function () { LIVE.inflight = false; });
+  }
+  function liveKick() {
+    LIVE.empty = 0;
+    if (!LIVE.timer) {
+      LIVE.timer = setInterval(function () {
+        if (!S.mounts.length) { liveStop(); return; }
+        livePaint();                                   // the clocks tick every second, fetched or not
+        liveFetch();
+      }, 1000);
+    }
+    liveFetch();                                       // a kick looks NOW, even when the poll already runs
+  }
+  function liveStop() {
+    if (LIVE.timer) clearInterval(LIVE.timer);
+    LIVE.timer = null;
+    LIVE.items = LIVE.items.filter(liveRunning);
+    livePaint();
+  }
+  document.addEventListener("toggle", function (e) {
+    var t = e.target;
+    if (t && t.getAttribute && t.hasAttribute("data-live-term")) LIVE.termOpen[t.getAttribute("data-live-term")] = t.open;
+  }, true);
   document.addEventListener("focusout", function (e) {
     // a card that waited while the person typed in it catches up now
     var card = e && e.target && e.target.closest && e.target.closest(".ag-card");
@@ -1227,6 +1385,7 @@ window.AgentPanel = (function () {
       var ok = r.status === 200;
       if (!ok) toast(errText(r, intent === "ask" ? "the question was not asked" : "the agent did not start"), "error");
       if (ok && intent === "task") { S.intentTouched = false; }      // the conversation now leads the default
+      if (ok) liveKick();
       done(ok);
     });
     return false;
@@ -1397,6 +1556,7 @@ window.AgentPanel = (function () {
       '<div class="ag-head"><span class="ag-chip"></span> <span class="ag-qubits"></span></div>' +
       '<div class="ag-now"></div>' +
       '<div class="ag-cards" aria-live="polite"></div>' +
+      '<div class="ag-live" hidden></div>' +
       '<form class="ag-form ag-composer" onsubmit="return AgentPanel.submit(event)">' +
       '<textarea class="ag-input" rows="1" onkeydown="return AgentPanel.key(event)" oninput="AgentPanel.grow(this)" placeholder="Ask, or tell the agent what to do…  (Enter sends · Shift+Enter newline · /run <node> <targets>)"></textarea>' +
       '<div class="ag-form-row"><select class="ag-intent" title="Ask = a read-only question (SM\'s read tools only, nothing can change). Task = the agent session that may propose plans and, after your Start, run them through SM." onchange="AgentPanel.setIntent(this.value, this)"><option value="ask">Ask (read-only)</option><option value="task">Task</option></select>' +
@@ -1667,6 +1827,7 @@ window.AgentPanel = (function () {
     S.after = 0;
     poll(true);
     schedule();
+    liveKick();                  // docs/289: one look; it stops itself when nothing is in flight
     /* Put the caret where the page expects to be typed into.
        Measured before this: activeElement was BODY at 0 / 800 / 2500 ms and a
        typed sentence went nowhere at all, while a leading "/" was taken by the
@@ -1783,5 +1944,6 @@ window.AgentPanel = (function () {
            setPlanMode: setPlanMode, approve: approve, reject: reject, stop: stop, arm: arm, disarm: disarm,
            endSession: endSession, setObserver: setObserver, setActor: setActor, actorName: actorName, showApprovals: showApprovals, apPreview: apPreview,
            toggleFloat: toggleFloat, init: init, syncComposerClass: syncComposerClass, absorb: absorb, _state: S, fmtNum: fmtNum, fmtRow: fmtRow, fmtClock: fmtClock,
-           grow: grow, toggleMore: toggleMore, toggleGroup: toggleGroup, togglePresets: togglePresets };
+           grow: grow, toggleMore: toggleMore, toggleGroup: toggleGroup, togglePresets: togglePresets,
+           liveKick: liveKick, livePaint: livePaint, _live: LIVE, liveClock: liveClock };
 })();

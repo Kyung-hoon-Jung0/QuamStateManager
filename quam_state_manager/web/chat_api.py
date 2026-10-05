@@ -41,6 +41,8 @@ chat_bp = Blueprint("agent_chat", __name__, url_prefix="/api/agent/chat")
 # Tests swap these for fake-CLI subclasses; S7's setup never needs to.
 BACKEND_CLASSES: dict[str, type] = {"claude": ab.ClaudeBackend, "codex": ab.CodexBackend}
 _ASK_KEEP = 40
+_LIVE_LINGER_S = 4.0      # docs/289: a finished turn stays visible this long, so its last state is seen
+_LIVE_KEEP_S = 120.0      # a finished ask's live view can still be fetched by id for this long
 _DETECT_TTL_S = 60.0
 _detect_lock = threading.Lock()
 
@@ -506,6 +508,48 @@ def end():
     return jsonify(ok=True, session=mgr.status(key))
 
 
+def _live_item(proc, **extra) -> dict:
+    snap = proc.live.snapshot()
+    snap.update(extra)
+    snap["alive"] = proc.alive()
+    return snap
+
+
+@chat_bp.route("/live")
+def live():
+    """What the CLI is doing right now (docs/289): the open chip's driving
+    session while its turn is open, and the panel's questions in flight. The
+    page polls this about once a second, and only while something is in
+    flight; a finished turn lingers a few seconds so its last state is seen.
+    ``?id=<ask_id>|session`` asks for one item even after it finished."""
+    chip = aa._chip_name() if _r()._active_path() else None
+    now = time.time()
+    if not chip:
+        return jsonify(ok=True, now=now, items=[])
+    want = str(request.args.get("id") or "")
+    mgr = _manager()
+    items = []
+
+    def fresh(proc) -> bool:
+        ended = proc.live.ended
+        return ended is None or now - ended < _LIVE_LINGER_S
+
+    s = mgr.get(aa._chip_key())
+    if s is not None and s.proc is not None and (s.busy() or want == "session" or fresh(s.proc)):
+        items.append(_live_item(s.proc, id="session", kind="task", queued=len(s.queue)))
+    reg: dict = current_app.config.setdefault("agent_live_asks", {})
+    for aid, ask_chip in list(reg.items()):
+        proc = mgr.asks.get(aid)
+        if proc is None or (proc.live.ended and now - proc.live.ended > _LIVE_KEEP_S):
+            reg.pop(aid, None)
+            continue
+        if ask_chip != chip:
+            continue
+        if proc.alive() or want == aid or fresh(proc):
+            items.append(_live_item(proc, id=aid, kind="ask"))
+    return jsonify(ok=True, now=now, items=items)
+
+
 @chat_bp.route("/events")
 def events():
     """This chip's chat events after ``after`` (the per-app counter ``n``);
@@ -550,6 +594,8 @@ def ask():
         return _err(f"could not start {name}: {exc}", 502)
     current_app.config.setdefault("agent_asks", collections.OrderedDict()).setdefault(res["ask_id"], [])
     if feed:
+        # docs/289: the panel shows this question's live progress until its answer card lands
+        current_app.config.setdefault("agent_live_asks", {})[res["ask_id"]] = chip
         # docs/247 (C-06): the panel's question -- its card now, its answer card when the ask stops
         who = _r()._request_actor()
         current_app.config.setdefault("agent_feed_asks", {})[res["ask_id"]] = {"chip": chip, "backend": name, "who": who}

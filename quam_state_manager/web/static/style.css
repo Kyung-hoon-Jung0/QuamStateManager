@@ -14833,3 +14833,50 @@ html.sm-in-frame .topbar .wb-link { display: none; }
 .asx-result-ok { background: var(--color-success-bg); border: 1px solid color-mix(in srgb, var(--color-success-border) 45%, transparent); }
 .asx-result-bad { background: var(--color-error-bg); border: 1px solid color-mix(in srgb, var(--color-error-border) 45%, transparent); }
 .asx-result .as-answer { margin: .2rem 0 0; font-size: .78rem; }
+
+/* docs/289: what the agent is doing now -- the box between the feed and the composer */
+.ag-live { display: flex; flex-direction: column; gap: .3rem; margin: .3rem 0 .35rem; max-height: 42vh; overflow-y: auto; flex: 0 0 auto; }
+.ag-live[hidden] { display: none; }
+.ag-live-item { border: 1px solid color-mix(in srgb, var(--color-accent) 35%, transparent); border-left: 3px solid var(--color-accent);
+    border-radius: .45rem; background: color-mix(in srgb, var(--color-accent) 7%, var(--pico-card-background-color, transparent));
+    padding: .3rem .6rem .35rem; font-size: .8rem; }
+.ag-live-done { border-left-color: var(--color-success-border); }
+.ag-live-failed, .ag-live-stopped { border-left-color: var(--color-error-border); }
+.ag-live-head { display: flex; align-items: center; gap: .4rem; min-width: 0; }
+.ag-live-dot { width: .5rem; height: .5rem; border-radius: 50%; background: var(--color-accent); flex: 0 0 auto; animation: ag-live-pulse 1.2s ease-in-out infinite; }
+.ag-live-done .ag-live-dot { background: var(--color-success-border); animation: none; }
+.ag-live-failed .ag-live-dot, .ag-live-stopped .ag-live-dot { background: var(--color-error-border); animation: none; }
+@keyframes ag-live-pulse { 0%, 100% { opacity: 1; transform: scale(1); } 50% { opacity: .35; transform: scale(.75); } }
+@media (prefers-reduced-motion: reduce) { .ag-live-dot { animation: none; } }
+.ag-live-what { font-weight: 600; white-space: nowrap; }
+.ag-live-detail { font-size: .72rem; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; padding: 0 .3rem; }
+.ag-live-clock { margin-left: auto; font-variant-numeric: tabular-nums; font-family: var(--pico-font-family-monospace, monospace); font-size: .78rem; }
+.ag-live-kind { color: var(--pico-muted-color); font-size: .72rem; white-space: nowrap; }
+.ag-live-steps { list-style: none; margin: .15rem 0 0; padding: 0 0 0 .9rem; font-size: .72rem; line-height: 1.35; }
+.ag-live-steps li { display: flex; align-items: baseline; gap: .35rem; margin: 0; padding: .05rem 0; list-style: none; min-width: 0; }
+.ag-live-steps code { font-size: .7rem; padding: 0 .25rem; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--pico-muted-color); }
+.ag-live-mark { width: .8rem; flex: 0 0 auto; text-align: center; }
+.ag-live-ok .ag-live-mark { color: var(--color-success-text); }
+.ag-live-bad .ag-live-mark, .ag-live-bad { color: var(--color-error-text); }
+.ag-live-run .ag-live-mark { color: var(--color-accent); }
+.ag-live-took { margin-left: auto; color: var(--pico-muted-color); font-variant-numeric: tabular-nums; white-space: nowrap; }
+.ag-live-text { margin: .25rem 0 0 .9rem; font-size: .76rem; color: var(--pico-muted-color); max-height: 3.4em; overflow: hidden;
+    -webkit-mask-image: linear-gradient(to bottom, transparent 0, #000 1.1em); mask-image: linear-gradient(to bottom, transparent 0, #000 1.1em);
+    display: flex; flex-direction: column; justify-content: flex-end; white-space: pre-wrap; }
+.ag-live-term { margin: .25rem 0 0; }
+.ag-live-term > summary { font-size: .72rem; color: var(--color-accent); cursor: pointer; padding: 0; margin: 0; list-style: none; display: inline-flex; gap: .3rem; align-items: center; }
+.ag-live-term > summary::-webkit-details-marker { display: none; }
+.ag-live-term > summary::before { content: "\25B8"; display: inline-block; transition: transform .12s; }
+.ag-live-term[open] > summary::before { transform: rotate(90deg); }
+.ag-live-term > summary::after { display: none; }
+.ag-live-earlier { color: var(--pico-muted-color); font-style: italic; }
+.ag-live-term pre { margin: .25rem 0 0; max-height: 9.5rem; overflow: auto; font-size: .7rem; line-height: 1.4; padding: .4rem .55rem;
+    border-radius: .35rem; background: var(--pico-code-background-color); white-space: pre-wrap; word-break: break-word; }
+.ag-term-t { color: var(--pico-muted-color); }
+.ag-term-k { display: inline-block; min-width: 3.4em; font-weight: 600; }
+.ag-term-call { color: var(--color-accent); }
+.ag-term-ok, .ag-term-done { color: var(--color-success-text); }
+.ag-term-fail, .ag-term-stop { color: var(--color-error-text); }
+.ag-term-stderr { color: var(--color-warning-text); }
+.ag-term-init, .ag-term-think { color: var(--pico-muted-color); }
+.ag-live-compact .ag-live-text { display: none; }
