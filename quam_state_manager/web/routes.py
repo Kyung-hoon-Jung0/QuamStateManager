@@ -7761,6 +7761,18 @@ def qubits():
     store = _store()
     wiring_json = _wiring_json()
 
+    # docs/286: the XY drive (x180 / x90 pulse, its dBm, the drive IF) for
+    # the rows on THIS page only, read the way the Live-Edit grid reads them.
+    from quam_state_manager.core import xy_drive
+    drive: dict[str, dict] = {}
+    if store is not None:
+        with store._lock:
+            for q in page_qubits:
+                try:
+                    drive[q["id"]] = xy_drive.summary(store, q["id"])
+                except Exception as exc:  # noqa: BLE001 -- a row degrades
+                    logger.warning("qubits page drive(%r) failed: %s", q.get("id"), exc)
+
     template = "_qubits.html" if _is_htmx() else "qubits.html"
     return render_template(
         template,
@@ -7774,6 +7786,7 @@ def qubits():
             total=total,
             per_page=per_page,
             wiring_json=wiring_json,
+            drive=drive,
         ),
     )
 

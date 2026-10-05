@@ -1,3 +1,21 @@
+{# docs/286: drive-pulse cells. A blank is an em dash whose title says
+   why; a pointer string is never shown as a value. #}
+{% macro _blank_cell(why) -%}
+<td data-sort="-"><span class="muted" title="{{ why }}">&mdash;</span></td>
+{%- endmacro %}
+{% macro _op_title(op) -%}
+{{ op.op }}{% if op.pulse and op.pulse != op.op %} &rarr; {{ op.pulse }}{% endif %}{% if op.pulse_class %} ({{ op.pulse_class }}){% endif %}
+{%- endmacro %}
+{% macro _amp_cell(op) -%}
+{% if not op.present %}{{ _blank_cell(op.why) }}{% else %}{% set a = op.amplitude %}{% if a.state == 'num' %}<td title="{{ _op_title(op) }}">{{ "%.4f" | format(a.value) }}</td>{% elif a.state == 'text' %}<td><span class="muted" title="Stored as text &mdash; see Diagnostics (the alarm banner offers a one-click fix)">&quot;{{ a.value }}&quot;</span></td>{% else %}{{ _blank_cell(_op_title(op) ~ ': amplitude. ' ~ a.why) }}{% endif %}{% endif %}
+{%- endmacro %}
+{% macro _phys_cell(op) -%}
+{% if op.present and op.phys %}<td class="col-phys" data-dbm="{{ op.phys.dbm }}" data-sort="{{ op.phys.dbm }}" title="{{ _op_title(op) }}: FSP {{ '%g' | format(op.phys.fsp) }} dBm">{{ op.phys.text }}</td>{% elif op.present %}<td class="col-phys" data-sort="-"><span class="muted" title="{{ op.phys_why }}">&mdash;</span></td>{% else %}<td class="col-phys" data-sort="-"><span class="muted" title="{{ op.why }}">&mdash;</span></td>{% endif %}
+{%- endmacro %}
+{% macro _leaf_cell(op, field, unit_key) -%}
+{% if not op.present %}{{ _blank_cell(op.why) }}{% else %}{% set f = op[field] %}{% if f.state == 'num' %}<td title="{{ _op_title(op) }}">{% if unit_key == 'alpha' %}{{ "%.4g" | format(f.value) }}{% else %}{{ f.value | qty(unit_key) }}{% endif %}</td>{% elif f.state == 'text' %}<td><span class="muted" title="Stored as text &mdash; see Diagnostics (the alarm banner offers a one-click fix)">&quot;{{ f.value }}&quot;</span></td>{% else %}{{ _blank_cell(_op_title(op) ~ ': ' ~ field ~ '. ' ~ f.why) }}{% endif %}{% endif %}
+{%- endmacro %}
+
 <div class="table-header-row">
     <h2>Qubits <small class="muted">({{ total }}{% if active_chain %} &mdash; Chain {{ active_chain }}{% endif %})</small></h2>
     <div class="table-filter">
@@ -31,12 +49,23 @@
             <th class="sortable" data-col="2" data-type="num">f_01 <span class="unit">(GHz)</span></th>
             <th class="sortable" data-col="3" data-type="num">T1 <span class="unit">(&micro;s)</span></th>
             <th class="sortable" data-col="4" data-type="num">T2ramsey <span class="unit">(&micro;s)</span></th>
-            <th class="sortable" data-col="5" data-type="num">Readout Amp</th>
+            {# docs/286: the XY drive -- the x180 / x90 pulses the gates play
+               (the operation alias followed to the pulse in force, the same
+               leaves the Live-Edit grid's "x180 amp" / "x90 amp" columns
+               edit), their true output power, and the drive IF. #}
+            <th class="sortable" data-col="5" data-type="num" title="XY drive intermediate frequency (RF - LO)">XY IF <span class="unit">(MHz)</span></th>
+            <th class="sortable" data-col="6" data-type="num" title="Amplitude of the x180 (pi) pulse in force">x180 Amp</th>
+            <th class="sortable" data-col="7" data-type="num" title="Peak output power of the x180 pulse">P(x180) <span class="unit phys-unit-label">(dBm)</span></th>
+            <th class="sortable" data-col="8" data-type="num" title="Amplitude of the x90 (pi/2) pulse in force">x90 Amp</th>
+            <th class="sortable" data-col="9" data-type="num" title="Peak output power of the x90 pulse">P(x90) <span class="unit phys-unit-label">(dBm)</span></th>
+            <th class="sortable" data-col="10" data-type="num" title="Length of the x180 pulse">x180 Len <span class="unit">(ns)</span></th>
+            <th class="sortable" data-col="11" data-type="num" title="DRAG coefficient (alpha) of the x180 pulse, when its class has one">DRAG alpha</th>
+            <th class="sortable" data-col="12" data-type="num">Readout Amp</th>
             {# docs/109: the TRUE readout output power — unit follows the global
                MW-power setting (Settings), sort key stays dBm via data-sort. #}
-            <th class="sortable" data-col="6" data-type="num">P(RO) <span class="unit phys-unit-label">(dBm)</span></th>
-            <th class="sortable" data-col="7" data-type="num">Gate Fidelity</th>
-            <th class="sortable" data-col="8" data-type="str">Grid</th>
+            <th class="sortable" data-col="13" data-type="num">P(RO) <span class="unit phys-unit-label">(dBm)</span></th>
+            <th class="sortable" data-col="14" data-type="num">Gate Fidelity</th>
+            <th class="sortable" data-col="15" data-type="str">Grid</th>
         </tr>
     </thead>
     <tbody>
@@ -50,6 +79,14 @@
             <td>{{ q.f_01 | qty('f_01') }}</td>
             <td>{{ q.T1 | qty('T1') }}</td>
             <td>{{ q.T2ramsey | qty('T2ramsey') }}</td>
+            {% set _d = drive.get(q.id) if drive else none %}
+            {% if _d and _d.if_hz is not none %}<td{% if _d.rf_hz is not none %} title="RF {{ _d.rf_hz | qty('xy_RF_frequency') }} GHz"{% endif %}>{{ _d.if_hz | qty('xy_intermediate_frequency') }}</td>{% else %}{{ _blank_cell('The drive IF cannot be read: RF or the port LO is not a number.') }}{% endif %}
+            {% if _d %}
+            {{ _amp_cell(_d.x180) }}{{ _phys_cell(_d.x180) }}{{ _amp_cell(_d.x90) }}{{ _phys_cell(_d.x90) }}
+            {{ _leaf_cell(_d.x180, 'length', 'x180_length') }}{{ _leaf_cell(_d.x180, 'alpha', 'alpha') }}
+            {% else %}
+            {% for _i in range(6) %}{{ _blank_cell('Drive pulses could not be read for this qubit.') }}{% endfor %}
+            {% endif %}
             {# r16 0-1 idiom (see _pairs.html): a value stored as TEXT must not
    crash the list — show it honestly, quoted, and let the alarm
    banner's one-click fix (docs/77) repair it. #}
@@ -73,7 +110,7 @@
         </tr>
     {% endfor %}
     {% else %}
-        <tr><td colspan="9" class="muted" style="text-align:center;padding:2rem">No qubits found in this state file.</td></tr>
+        <tr><td colspan="16" class="muted" style="text-align:center;padding:2rem">No qubits found in this state file.</td></tr>
     {% endif %}
     </tbody>
 </table>
