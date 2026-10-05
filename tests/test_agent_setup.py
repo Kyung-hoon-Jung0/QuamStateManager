@@ -545,9 +545,12 @@ class TestTheWiringStrip:
         blk = js[js.index("var WIRE = {"):js.index("function mount(root, opts)")]
         # past tense, because it is a record of a call that already happened
         assert "answered SM" in blk
-        assert "not registered as an MCP server" in blk
+        # docs/288: the strip uses the setup page's words; the mechanism (MCP
+        # server, hook) stays in each word's title
+        assert "terminal: not connected" in blk
         assert "not on PATH" in blk
-        assert r"MCP \u2713" in blk and r"hooks \u2713" in blk
+        assert r"SM tools \u2713" in blk and r"run reports \u2713" in blk
+        assert "registered as an MCP server" in blk
 
     def test_the_strip_is_a_sibling_of_the_mount_point(self):
         """agent.js's mount() does `root.innerHTML = skeleton(...)`, so anything
@@ -801,3 +804,15 @@ class TestRewritingTheContextKeepsTheLabsAnswers:
         assert d["applied"]
         g = c.get("/api/agent/setup/context").get_json()
         assert g["saved"]["notes"] == answers["notes"] and g["saved"]["purcell"] == "yes"
+
+
+def test_the_confirm_is_the_one_connect_on_screen():
+    """docs/288 walk: with the Connect confirm open, the tile's own Connect and
+    pin box are hidden (two Connect buttons side by side were measured on the
+    real page); the tiles align to the top so a short tile is not stretched."""
+    import re
+    css = (_ROOT / "quam_state_manager/web/static/style.css").read_text(encoding="utf-8")
+    rule = re.search(r"\.asx-asking > \.asx-tile-acts, \.asx-asking > \.asx-opt \{ display: none; \}", css)
+    assert rule
+    tiles = re.search(r"\.asx-tiles \{[^}]*\}", css)
+    assert tiles and "align-items: start" in tiles.group(0)

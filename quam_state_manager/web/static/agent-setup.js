@@ -76,98 +76,150 @@ window.AgentSetup = (function () {
     return '<details class="as-sec" id="as-' + id + '"' + (doneFlag && !keepOpen ? "" : " open") + '><summary>' + (doneFlag ? done() : '<span class="as-todo">●</span>') + " " + esc(title) + "</summary><div class=\"as-body\">" + body + "</div></details>";
   }
 
+  /* docs/288: the setup page is a short list of CARDS a person can read once:
+     what is ready, what is left, one primary button per thing. Paths, hook
+     command lines and the exact file changes stay one click away ("Technical
+     details", "Show exact changes"), never in the first read. */
+  var NAMES = { claude: "Claude Code", codex: "Codex" };
+  // the hardware switch's words follow the SAVED value (render and dryRun share them)
+  function dryText(on) { return on ? "Dry run — the agent's runs are simulated, nothing touches the OPX" : "Live — the agent's runs use the OPX"; }
+  var MARKS = { claude: "CC", codex: "CX" };
+  function chk(ok, label, title) {
+    return '<li class="asx-chk ' + (ok ? "asx-ok" : "asx-no") + '"' + (title ? ' title="' + esc(title) + '"' : "") + ">"
+      + (ok ? "✓" : "○") + " " + esc(label) + "</li>";
+  }
+  function state(cls, text) { return '<span class="asx-state asx-' + cls + '">' + esc(text) + "</span>"; }
+  function card(id, n, title, isDone, body, opts) {
+    opts = opts || {};
+    return '<section class="asx-card' + (isDone ? " asx-card-done" : "") + '" id="as-' + id + '">'
+      + '<div class="asx-card-head"><span class="asx-step' + (isDone ? " asx-step-done" : "") + '">' + (isDone ? "✓" : esc(n)) + "</span>"
+      + "<h3>" + esc(title) + "</h3>" + (opts.tag ? '<span class="asx-tag">' + esc(opts.tag) + "</span>" : "") + "</div>"
+      + '<div class="asx-card-body">' + body + "</div></section>";
+  }
+  // "codex-cli 0.159.2" / "2.1.289 (Claude Code)" -> the version number itself
+  function verOf(v) { var m = /\d+\.\d+(?:\.\d+)?/.exec(String(v || "")); return m ? "v" + m[0] : String(v || ""); }
+  function tile(k, d) {
+    var clis = d.clis || {}, c = (k === "claude" ? d.claude : d.codex) || {}, cli = clis[k] || {};
+    if (!cli.found) {
+      return '<div class="asx-tile asx-tile-off" id="as-connect-' + k + '">'
+        + '<div class="asx-tile-top"><span class="asx-logo asx-logo-' + k + '">' + esc(MARKS[k]) + "</span><div><b>" + esc(NAMES[k]) + "</b></div>" + state("off", "Not installed") + "</div>"
+        + '<p class="asx-small">Install it, then log in once in a terminal on this PC. SM never sees your login.</p></div>';
+    }
+    var connected = k === "claude" ? (c.mcp && c.hooks) : c.mcp;
+    var checks = [chk(c.mcp, "SM's tools", "SM is registered as an MCP server named quam-state-manager in " + NAMES[k] + "'s own settings")];
+    if (k === "claude") {
+      checks.push(chk(c.hooks, "Runs reported to SM", "a hook in Claude Code's settings tells SM about each run it starts"));
+      if (d.calibrations_folder) checks.push(chk(c.allow, "No permission prompts", "SM's tools are pre-allowed in the calibrations folder"));
+    }
+    var tested = ((d.record || {}).tested || {})[k];
+    var acts = connected
+      ? '<button type="button" class="btn-sm asx-btn-2" onclick="AgentSetup.test(\'' + k + '\')">Test</button>'
+        + '<button type="button" class="asx-link" onclick="AgentSetup.disconnect(\'' + k + '\')">Disconnect</button>'
+      : '<button type="button" class="btn-sm asx-btn" onclick="AgentSetup.preview(\'' + k + '\')">Connect</button>';
+    var warn = "";
+    if (k === "claude" && d.calibrations_folder && c.allow_python && c.allow_python.length) {
+      warn = '<p class="ag-err asx-small">' + esc(c.allow_python.join(", ")) + " is allowed in the calibrations folder: a terminal agent can run a node script past SM's checks. Disconnect removes it if SM wrote it.</p>";
+    }
+    return '<div class="asx-tile ' + (connected ? "asx-tile-ok" : "asx-tile-todo") + '" id="as-connect-' + k + '">'
+      + '<div class="asx-tile-top"><span class="asx-logo asx-logo-' + k + '">' + esc(MARKS[k]) + "</span><div><b>" + esc(NAMES[k]) + "</b>"
+      + (cli.version ? ' <span class="muted asx-ver">' + esc(verOf(cli.version)) + "</span>" : "") + "</div>"
+      + (connected ? state("ok", "Connected") : state("todo", "Not connected")) + "</div>"
+      + '<ul class="asx-checks">' + checks.join("") + "</ul>"
+      + (tested && tested.ok ? '<p class="asx-small muted">answered a test question' + (tested.elapsed_s ? " in " + esc(tested.elapsed_s) + " s" : "") + "</p>" : "")
+      + warn
+      + '<div class="asx-tile-acts">' + acts + "</div>"
+      // the pin is an option OF Connect (it is read once, by preview): on a
+      // connected tile an unchecked box would claim a state SM never read
+      + (connected ? "" : '<label class="asx-opt" title="Without this, a terminal agent asks which SM window and chip to use when several are open."><input type="checkbox" id="as-pin-' + k + '"> Always use this window and chip</label>')
+      + '<div id="as-prev-' + k + '" class="asx-prev"></div></div>';
+  }
+
   function render() {
     var d = S.data, root = S.root;
     if (!d || !root) return;
     var clis = d.clis || {};
-    var parts = [];
-    // 1. the agent CLIs
-    var cliRows = ["claude", "codex"].map(function (k) {
-      var c = clis[k] || {};
-      return "<li><code>" + k + "</code>: " + (c.found ? "installed · " + esc(c.version || "") : '<span class="ag-err">not found on PATH</span> — install it, then log in once in a terminal (<code>' + k + "</code>)") + "</li>";
-    }).join("");
-    parts.push(sec("clis", "1. Agent CLIs", !!(clis.claude && clis.claude.found) || !!(clis.codex && clis.codex.found),
-      "<ul>" + cliRows + '</ul><p class="muted">Login is done in the terminal on this PC\'s own account; SM never sees a key.</p>'));
-    // 2. connect
-    ["claude", "codex"].forEach(function (k) {
-      if (!(clis[k] && clis[k].found)) return;
-      var c = k === "claude" ? d.claude : d.codex;
-      var isDone = k === "claude" ? (c.mcp && c.hooks) : c.mcp;
-      var lines = [];
-      lines.push("<p>" + (c.mcp ? done() + " SM registered as an MCP server" : "SM is not registered as an MCP server") + " in <code>" + esc(k === "claude" ? c.json : c.config) + "</code></p>");
-      if (k === "claude") {
-        lines.push("<p>" + (c.hooks ? done() + " the live-strip hook is registered" : "the hook (what the pill and the Calibration log follow when you use the terminal) is not registered") + " in <code>" + esc(c.settings) + "</code></p>");
-        lines.push('<p class="muted">hook line: <code>' + esc(d.hook_command || "") + "</code></p>");
-        if (d.calibrations_folder) lines.push("<p>" + (c.allow ? done() + " allow rule for SM's tools in the calibrations folder" : "allow rule (no permission prompt for SM's tools) not yet in <code>" + esc(d.calibrations_folder) + "\\.claude\\settings.local.json</code>") + "</p>");
-        // docs/247: an older SM also allow-listed `python` there -- the door run_node exists to guard
-        if (d.calibrations_folder && c.allow_python && c.allow_python.length) lines.push('<p class="ag-err">' + esc(c.allow_python.join(", ")) + " is allowed in the calibrations folder: a terminal agent can run <code>python &lt;node&gt;.py</code> past SM's gates. Disconnect removes it if SM wrote it; otherwise remove it from <code>.claude\\settings.local.json</code>.</p>");
-      }
-      lines.push('<label><input type="checkbox" id="as-pin-' + k + '"> Pin this window and chip <span class="muted">(port may change after restart)</span></label>');
-      lines.push('<div class="as-acts"><button type="button" class="btn-sm" onclick="AgentSetup.preview(\'' + k + '\')">Preview what SM would write</button> ' +
-        (isDone ? '<button type="button" class="btn-sm" onclick="AgentSetup.disconnect(\'' + k + '\')">Disconnect (remove SM\'s entries)</button>' : "") + "</div>");
-      lines.push('<div id="as-prev-' + k + '"></div>');
-      parts.push(sec("connect-" + k, "2. Connect " + k + " to SM", isDone, lines.join("")));
-    });
-    // 3. run environment
-    parts.push(sec("env", "3. Run environment", !!d.calibrations_folder,
-      "<p>calibrations folder: " + (d.calibrations_folder ? "<code>" + esc(d.calibrations_folder) + "</code>" : '<span class="ag-err">not set</span>') +
-      ' <span class="muted">(Experiment Runner settings hold it: env, calibrations folder, Dry run, timeout — <a href="/scheduler" hx-get="/scheduler" hx-target="#table-pane" hx-push-url="true">open</a>)</span></p>'));
-    // 3b. hardware -- dry run. The value is the Runner's global_simulate as the
-    // server read it; OFF wears ● (runs touch the OPX) and the card never folds.
-    var dry = d.global_simulate !== false;
-    parts.push(sec("dryrun", "3b. Hardware — Dry run", dry,
-      '<label class="ag-observer"><input type="checkbox" id="as-dryrun-box"' + (dry ? " checked" : "") + ' onchange="AgentSetup.dryRun(this)"> Dry run (<code>simulate=True</code>) — no hardware</label>' +
-      '<p class="muted">ON: the agent\'s runs are simulated and their values are never written to the chip. OFF: runs touch the OPX.</p>' +
-      '<div id="as-dryrun-msg"></div>', true));
-    // 4. journal
+    var anyCli = !!(clis.claude && clis.claude.found) || !!(clis.codex && clis.codex.found);
+    var connectedAny = (clis.claude && clis.claude.found && d.claude && d.claude.mcp) || (clis.codex && clis.codex.found && d.codex && d.codex.mcp);
     var j = d.journal || {};
-    parts.push(sec("journal", "4. Journal folder", !!j.configured,
-      "<p>" + (j.configured ? done() + " " : "") + "root: <code>" + esc(j.root) + "</code>" + (j.configured ? "" : ' <span class="muted">(the instance folder — a fallback; choose the lab\'s own folder)</span>') + "</p>" +
-      '<div class="as-acts"><input id="as-jroot" type="text" value="' + esc(j.configured ? j.root : (j.suggested || "")) + '" placeholder="D:\\data\\<project>\\journal" style="min-width:28rem"> ' +
-      '<label class="ag-observer"><input type="checkbox" id="as-jsays"' + (j.claude_says ? " checked" : "") + '> also record what the agent SAYS at the end of a turn</label> ' +
-      '<button type="button" class="btn-sm" onclick="AgentSetup.journal()">Use this folder</button></div>' +
-      '<p class="muted">Suggested: beside the project data folder (shared by everyone who uses this PC account; survives a reinstall). Obsidian: embed with <code>![[&lt;chip&gt;/&lt;date&gt;]]</code>; never type into SM\'s file directly.</p>'));
-    // 5. lab context
+    var dry = d.global_simulate !== false;
+    var tested = (d.record && d.record.tested) || {};
     var ctxUnread = d.context_unread || [];
     var ctxDone = d.context && Object.keys(d.context).length > 0 && !ctxUnread.length;
-    parts.push(sec("context", "5. Lab context (what the agent must know about this device)", !!ctxDone,
-      (ctxUnread.length ? '<p class="ag-err">Codex never reads <code>' + esc(ctxUnread.join(", ")) + "</code>: SM's block there has no effect. Write the lab context again to move it into AGENTS.md.</p>" : "") +
-      '<div id="as-ctx">' + (d.calibrations_folder ? '<button type="button" class="btn-sm" onclick="AgentSetup.loadContext()">Show the questions</button>' : '<p class="muted">needs the calibrations folder first</p>') + "</div>" +
-      (ctxDone ? '<p class="muted">written: ' + Object.keys(d.context).map(function (k) { return esc(k) + " → <code>" + esc(d.context[k]) + "</code>"; }).join(", ") + "</p>" : "")));
-    // 6. test
-    var tested = (d.record && d.record.tested) || {};
-    parts.push(sec("test", "6. Test", !!(tested.claude && tested.claude.ok) || !!(tested.codex && tested.codex.ok),
-      '<p class="muted">A real read-only question through the CLI: the time it took and the answer, verbatim.</p>' +
-      '<div class="as-acts">' + ["claude", "codex"].filter(function (k) { return clis[k] && clis[k].found; }).map(function (k) { return '<button type="button" class="btn-sm" onclick="AgentSetup.test(\'' + k + '\')">Test ' + k + "</button>"; }).join(" ") + "</div>" +
-      '<div id="as-test">' + (S.lastTest || "") + "</div>",
-      /* docs/191 A04: `sec` collapses a section once it is done, and a
-         successful test is what makes this one done -- so the answer arrived
-         and the section shut over it in the same breath. Measured: "asking
-         claude one read-only question…", then a bare "✓ 6. Test" with a real
-         6.8 s answer hidden inside. The result is the whole point of the
-         section ("the time it took and the answer, verbatim"), so while there
-         is one on screen the section stays open. */
-      !!S.lastTest));
-    // 7. limits -- the PERSON's (docs/252): SM refuses an agent's request to change them, and
-    // a request from outside this window; every change is journaled with who, old and new
+    var testedOk = !!(tested.claude && tested.claude.ok) || !!(tested.codex && tested.codex.ok);
+    var envDone = !!d.calibrations_folder && !!j.configured;
+    var steps = [connectedAny, envDone, !!ctxDone, testedOk];
+    var nDone = steps.filter(Boolean).length;
+    var parts = [];
+    parts.push('<div class="asx-progress"><span class="asx-bar"><span style="width:' + Math.round(100 * nDone / steps.length) + '%"></span></span>'
+      + "<b>" + nDone + " of " + steps.length + "</b> ready"
+      + '<span class="muted asx-small"> · the agent inside SM works without any of this · nothing here starts hardware · every file SM changes keeps a backup</span></div>');
+
+    // 1. connect
+    parts.push(card("connect", 1, "Connect a terminal agent", connectedAny,
+      '<p class="asx-lead">Lets a <b>Claude Code</b> or <b>Codex</b> you start in a terminal use SM: read the chip, propose plans you approve here, and report its runs to the Calibration log.</p>'
+      + (anyCli ? "" : '<p class="ag-err">Neither CLI was found on this PC.</p>')
+      + '<div class="asx-tiles">' + tile("claude", d) + tile("codex", d) + "</div>", { tag: "optional" }));
+
+    // 2. where runs live
+    var env = [];
+    env.push('<div class="asx-row"><span class="asx-k">Calibrations folder</span><span class="asx-v">'
+      + (d.calibrations_folder ? '<code class="asx-path">' + esc(d.calibrations_folder) + "</code>" : state("todo", "Not set"))
+      + '</span><a class="asx-link" href="/scheduler" hx-get="/scheduler" hx-target="#table-pane" hx-push-url="true">' + (d.calibrations_folder ? "Change" : "Set it") + " in Experiment Runner →</a></div>");
+    env.push('<div class="asx-row" id="as-dryrun"><span class="asx-k">Hardware</span><span class="asx-v">'
+      + '<label class="asx-switch"><input type="checkbox" id="as-dryrun-box"' + (dry ? " checked" : "") + ' onchange="AgentSetup.dryRun(this)"><span class="asx-knob"></span>'
+      + '<span class="asx-dry-text">' + dryText(dry) + "</span></label></span>"
+      + '<span id="as-dryrun-msg"></span></div>');
+    env.push('<div class="asx-row" id="as-journal"><span class="asx-k">Journal folder</span><span class="asx-v asx-grow">'
+      + '<input id="as-jroot" type="text" value="' + esc(j.configured ? j.root : (j.suggested || "")) + '" placeholder="a folder beside the lab\'s data">'
+      + '<button type="button" class="btn-sm asx-btn-2" onclick="AgentSetup.journal()">' + (j.configured ? "Change" : "Use this folder") + "</button></span>"
+      + (j.configured ? state("ok", "Saved") : state("todo", "Not saved yet")) + "</div>"
+      + '<label class="asx-opt asx-indent"><input type="checkbox" id="as-jsays"' + (j.claude_says ? " checked" : "") + "> Also record what the agent says at the end of a turn</label>");
+    parts.push(card("env", 2, "Where runs and notes live", envDone, env.join("")));
+
+    // 3. lab context
+    parts.push(card("context", 3, "Tell the agent about this device", !!ctxDone,
+      (ctxUnread.length ? '<p class="ag-err asx-small">Codex never reads ' + esc(ctxUnread.join(", ")) + ": write the notes again to move them into AGENTS.md.</p>" : "")
+      + (ctxDone ? '<p class="asx-small muted">Written for ' + Object.keys(d.context).map(esc).join(" and ") + ". You can update the answers any time.</p>" : '<p class="asx-lead">A few questions SM cannot read from the chip (how flux is biased, what must never be touched). The agent reads the answers before it acts.</p>')
+      + '<div id="as-ctx">' + (d.calibrations_folder ? '<button type="button" class="btn-sm ' + (ctxDone ? "asx-btn-2" : "asx-btn") + '" onclick="AgentSetup.loadContext()">' + (ctxDone ? "Edit the answers" : "Answer the questions") + "</button>"
+        : '<p class="muted asx-small">Set the calibrations folder first (step 2).</p>') + "</div>"));
+
+    // 4. test
+    var testable = ["claude", "codex"].filter(function (k) { return clis[k] && clis[k].found; });
+    // the card is #as-test-sec: #as-test is the result box inside it (one id, one element)
+    parts.push(card("test-sec", 4, "Check it works", testedOk,
+      '<p class="asx-lead">Asks the agent one read-only question through SM and shows how long it took and what it answered.</p>'
+      + '<div class="asx-tile-acts">' + testable.map(function (k) { return '<button type="button" class="btn-sm asx-btn-2" onclick="AgentSetup.test(\'' + k + '\')">Test ' + esc(NAMES[k]) + "</button>"; }).join("") + "</div>"
+      + '<div id="as-test">' + (S.lastTest || "") + "</div>"));
+
+    // limits -- the PERSON's (docs/252): SM refuses an agent's request to change them
     if (d.chip && S.limits && S.limits.limits) {
       var lim = S.limits.limits, modes = S.limits.modes || ["auto", "ask-writes", "ask-all"];
       var v = function (x) { return esc(x === undefined || x === null ? "" : String(x)); };
       var delta = lim.max_delta && Object.keys(lim.max_delta).length ? JSON.stringify(lim.max_delta) : "";
-      parts.push(sec("limits", "7. Limits for " + d.chip, true,
-        '<p class="muted">What SM enforces on the agent, whatever it is told. Only a person changes these, here; '
-        + "each change goes into the journal with who, old and new.</p>"
-        + '<div class="as-limits">'
+      parts.push('<details class="asx-card asx-fold" id="as-limits"' + (S.limitsMsg ? " open" : "") + '><summary><span class="asx-step asx-step-done">⚙</span><h3>Safety limits for ' + esc(d.chip) + '</h3><span class="asx-tag">' + esc(lim.mode || "") + "</span></summary>"
+        + '<div class="asx-card-body"><p class="asx-small muted">What SM enforces on the agent, whatever it is told. Only a person changes these, here; every change is recorded in the journal.</p>'
+        + '<div class="as-limits asx-limits">'
         + '<label>Default mode <select id="as-lim-mode">' + modes.map(function (m) { return '<option value="' + esc(m) + '"' + (m === lim.mode ? " selected" : "") + ">" + esc(m) + "</option>"; }).join("") + "</select></label>"
         + '<label>Max writes per plan <input id="as-lim-maxw" type="number" min="0" value="' + v(lim.max_writes_per_plan) + '"> <span class="muted">0 = no cap</span></label>'
         + '<label>Refuse a run within <input id="as-lim-recent" type="number" min="0" value="' + v(lim.human_recent_min) + '"> min of a person\'s run</label>'
         + '<label>Stop by <input id="as-lim-stop" type="text" placeholder="HH:MM" value="' + v(lim.stop_by) + '"></label>'
         + '<label>Webhook <input id="as-lim-hook" type="text" placeholder="https://..." value="' + v(lim.webhook_url) + '"></label>'
         + '<label>Max |&Delta;| per family <input id="as-lim-delta" type="text" placeholder=\'{"ramsey": 2e6}\' value="' + v(delta) + '"></label>'
-        + '</div><div class="as-acts"><button type="button" class="btn-sm" onclick="AgentSetup.saveLimits()">Save limits</button></div>'
-        + '<div id="as-lim-msg"></div>', !!S.limitsMsg));
+        + '</div><div class="asx-tile-acts"><button type="button" class="btn-sm asx-btn-2" onclick="AgentSetup.saveLimits()">Save limits</button></div>'
+        + '<div id="as-lim-msg"></div></div></details>');
     }
-    root.innerHTML = parts.join("");
+
+    // technical details: every path and command line, for whoever needs them
+    var tech = [];
+    if (d.claude) tech.push("<li>Claude Code MCP list: <code>" + esc(d.claude.json) + "</code></li><li>Claude Code hooks: <code>" + esc(d.claude.settings) + "</code></li>");
+    if (d.codex) tech.push("<li>Codex settings: <code>" + esc(d.codex.config) + "</code></li>");
+    if (d.calibrations_folder) tech.push("<li>Allowed tools: <code>" + esc(d.calibrations_folder) + "\\.claude\\settings.local.json</code></li>");
+    tech.push("<li>Journal: <code>" + esc(j.root || "") + "</code></li>");
+    if (d.hook_command) tech.push("<li>Hook command: <code>" + esc(d.hook_command) + "</code></li>");
+    parts.push('<details class="asx-tech"><summary>Technical details</summary><ul>' + tech.join("") + "</ul>"
+      + '<p class="asx-small muted">Each file SM changes gets a dated backup beside it (<code>*.sm-backup-YYYYMMDD-HHMMSS</code>). Login stays in the terminal on this PC\'s own account.</p></details>');
+
+    root.innerHTML = '<div class="asx">' + parts.join("") + "</div>";
     var lm = document.getElementById("as-lim-msg");
     if (lm && S.limitsMsg) lm.innerHTML = S.limitsMsg;
     if (window.htmx) { try { window.htmx.process(root); } catch (e) { /* ignore */ } }
@@ -193,35 +245,65 @@ window.AgentSetup = (function () {
     });
   }
 
+  /* docs/288: Connect is ONE decision. The press asks the server what it would
+     write (nothing is written yet) and says it in a sentence -- which settings
+     of which program, with a backup each; the exact line-by-line changes are a
+     disclosure, not the first thing a person reads. */
+  var FILE_WORDS = { mcp: "add SM to its list of tools", hooks: "report the runs it starts to SM", allow: "stop asking permission for SM's tools in the calibrations folder" };
   function preview(k) {
     var box = document.getElementById("as-pin-" + k);
     var pinned = !!(box && box.checked);
+    var host = document.getElementById("as-prev-" + k);
+    // while the question is open the tile's own Connect + pin step aside: one
+    // Connect button on screen, and the pin already read cannot be changed
+    asking(k, true);
+    if (host) host.innerHTML = '<p class="muted asx-small">checking what would change…</p>';
     api("POST", "/api/agent/setup/connect", { backend: k, pinned: pinned }).then(function (r) {
-      var host = document.getElementById("as-prev-" + k);
+      host = document.getElementById("as-prev-" + k);
       if (!host) return;
-      if (r.status !== 200) { host.innerHTML = '<p class="ag-err">' + esc(r.body.error || "failed") + "</p>"; return; }
+      if (r.status !== 200) { asking(k, false); host.innerHTML = '<p class="ag-err">' + esc(r.body.error || "failed") + "</p>"; return; }
       S.previews[k] = { pinned: pinned, expected_pin: r.body.pin };
       var pv = r.body.previews || {};
-      var html = Object.keys(pv).map(function (name) {
+      var names = Object.keys(pv);
+      var what = names.map(function (n) { return "<li>" + esc(FILE_WORDS[n] || n) + "</li>"; }).join("");
+      var diffs = names.map(function (name) {
         var p = pv[name];
-        return "<h5>" + esc(name) + " → <code>" + esc(p.file) + "</code>" + (p.exists ? "" : ' <span class="muted">(new file)</span>') + "</h5>" + diffHtml(p.before, p.after);
+        return '<div class="asx-diffhead"><code>' + esc(p.file) + "</code>" + (p.exists ? "" : ' <span class="muted">(new file)</span>') + "</div>" + diffHtml(p.before, p.after);
       }).join("");
-      html += '<div class="as-acts"><button type="button" class="btn-sm ag-start" onclick="AgentSetup.connect(\'' + k + '\')">Write these (with backups)</button></div>';
-      host.innerHTML = html;
+      host.innerHTML = '<div class="asx-confirm"><p>SM will change ' + esc(NAMES[k]) + "'s settings to:</p><ul>" + what + "</ul>"
+        + '<p class="asx-small muted">A backup of each file is kept beside it; Disconnect takes the changes back.</p>'
+        + '<div class="asx-tile-acts"><button type="button" class="btn-sm asx-btn ag-start" onclick="AgentSetup.connect(\'' + k + '\')">Connect ' + esc(NAMES[k]) + "</button>"
+        + '<button type="button" class="asx-link" onclick="AgentSetup.cancel(\'' + k + '\')">Cancel</button></div>'
+        + '<details class="asx-tech"><summary>Show exact changes</summary>' + diffs + "</details></div>";
     });
+  }
+  function asking(k, on) {
+    var t = document.getElementById("as-connect-" + k);
+    if (t) t.classList.toggle("asx-asking", !!on);
+  }
+  function cancel(k) {
+    var host = document.getElementById("as-prev-" + k);
+    if (host) host.innerHTML = "";
+    asking(k, false);
+    delete S.previews[k];
   }
   function connect(k) {
     var pin = S.previews[k] || {};
+    var host = document.getElementById("as-prev-" + k);
+    if (host) host.innerHTML = '<p class="muted asx-small">connecting…</p>';
     api("POST", "/api/agent/setup/connect", { backend: k, apply: true, pinned: !!pin.pinned, expected_pin: pin.expected_pin }).then(function (r) {
-      var host = document.getElementById("as-prev-" + k);
+      host = document.getElementById("as-prev-" + k);
       if (r.status !== 200) { if (host) host.innerHTML = '<p class="ag-err">' + esc(r.body.error || "failed") + "</p>"; return; }
-      var w = r.body.writes || {};
-      if (host) host.innerHTML = "<p>written: " + Object.keys(w).map(function (n) { return esc(n) + (w[n].backup ? " (backup <code>" + esc(w[n].backup) + "</code>)" : ""); }).join(", ") + "</p>";
-      load();
+      S.flash = S.flash || {};
+      S.flash[k] = true;
+      load().then(function () {
+        var h = document.getElementById("as-prev-" + k);
+        if (h) h.innerHTML = '<p class="asx-small asx-good">' + esc(NAMES[k]) + " is connected. Press <b>Test</b> to check it answers through SM.</p>";
+      });
     });
   }
   function disconnect(k) {
-    if (window.confirm && !window.confirm("Remove SM's entries from " + k + "'s configuration? (backups are kept)")) return;
+    if (window.confirm && !window.confirm("Disconnect " + (NAMES[k] || k) + " from SM? SM's entries are removed from its settings; backups are kept.")) return;
     api("POST", "/api/agent/setup/disconnect", { backend: k }).then(function () { load(); });
   }
   function journal() {
@@ -238,9 +320,9 @@ window.AgentSetup = (function () {
     // the box goes back to what is persisted (re-read, not assumed).
     var want = !!el.checked, msg = document.getElementById("as-dryrun-msg");
     function mark(v) {
-      // the card's summary marker follows the SAVED value (✓ ON / ● OFF) without a re-render
-      var m = document.querySelector("#as-dryrun > summary .as-done, #as-dryrun > summary .as-todo");
-      if (m) m.outerHTML = v ? done() : '<span class="as-todo">●</span>';
+      // docs/288: the switch's words follow the SAVED value without a re-render
+      var t = document.querySelector("#as-dryrun .asx-dry-text");
+      if (t) t.textContent = dryText(v);
     }
     function revert() {
       // back to what is PERSISTED (re-read, not assumed); a server that cannot
@@ -385,8 +467,22 @@ window.AgentSetup = (function () {
       if (!host) return;
       var b = r.body || {};
       if (r.status !== 200) { host.innerHTML = '<p class="ag-err">' + esc(b.error || "failed") + "</p>"; return; }
-      S.lastTest = "<p><strong>" + esc(k) + "</strong> answered in <strong>" + esc(b.elapsed_s) + " s</strong>" + (b.failed ? ' — <span class="ag-err">failed: ' + esc(b.error) + "</span>" : "") + (b.tools && b.tools.length ? ' <span class="muted">(tools: ' + esc(b.tools.join(", ")) + ")</span>" : "") + "</p>" +
-        (b.answer ? '<blockquote class="as-answer">' + esc(b.answer) + "</blockquote>" : '<p class="ag-err">' + esc(b.error || "no answer") + "</p>");
+      // docs/288: a failure says it failed (not "answered ... failed"), quotes the
+      // CLI's own words once, and -- only when the CLI itself says it is not
+      // logged in -- the one thing to do about it. No other cause is guessed.
+      var who = NAMES[k] || k;
+      if (b.failed || !b.answer) {
+        var why = String(b.error || b.answer || "no answer");
+        var login = /not logged in|\/login|please log ?in/i.test(why);
+        S.lastTest = '<div class="asx-result asx-result-bad"><p><b>' + esc(who) + "</b> did not answer"
+          + (b.elapsed_s ? " (" + esc(b.elapsed_s) + " s)" : "") + ': <span class="ag-err">' + esc(why) + "</span></p>"
+          + (login ? '<p class="asx-small">Open a terminal on this PC, run <code>' + esc(k) + "</code> once and log in there; then press Test again. SM never sees your login.</p>" : "")
+          + "</div>";
+      } else {
+        S.lastTest = '<div class="asx-result asx-result-ok"><p><b>' + esc(who) + "</b> answered in <b>" + esc(b.elapsed_s) + " s</b>"
+          + (b.tools && b.tools.length ? ' <span class="muted">(used ' + esc(b.tools.join(", ")) + ")</span>" : "") + "</p>"
+          + '<blockquote class="as-answer">' + esc(b.answer) + "</blockquote></div>";
+      }
       host.innerHTML = S.lastTest;
       load();                                   // the section's ✓ follows the record; the result stays
     });
@@ -407,7 +503,7 @@ window.AgentSetup = (function () {
   document.addEventListener("htmx:historyRestore", function () { init(); });
   if (document.readyState === "loading") document.addEventListener("DOMContentLoaded", init); else init();
 
-  return { init: init, load: load, preview: preview, connect: connect, disconnect: disconnect, journal: journal,
+  return { init: init, load: load, preview: preview, connect: connect, cancel: cancel, disconnect: disconnect, journal: journal,
            loadContext: loadContext, answer: answer, previewContext: previewContext, writeContext: writeContext,
            test: test, dryRun: dryRun, saveLimits: saveLimits, diffLines: diffLines, _state: S };
 })();

@@ -52,7 +52,7 @@ global.fetch = window.fetch = function (url, opts) {
     if (limitsRefuse) { code = 403; resp = { ok: false, refused: 'no_window_proof', error: limitsRefuse }; }
     else { limitsNow = Object.assign({}, limitsNow, { mode: body.mode, max_writes_per_plan: +body.max_writes_per_plan, human_recent_min: +body.human_recent_min, stop_by: body.stop_by, webhook_url: body.webhook_url, max_delta: JSON.parse(body.max_delta) }); resp = { ok: true, limits: limitsNow }; }
   }
-  else if (/\/api\/agent\/limits$/.test(url)) resp = { ok: true, chip: 'arbel', limits: limitsNow, modes: ['auto', 'ask-writes', 'ask-all'] };
+  else if (/\/api\/agent\/limits$/.test(url)) resp = { ok: true, chip: 'chipA', limits: limitsNow, modes: ['auto', 'ask-writes', 'ask-all'] };
   else if (/\/setup\/test/.test(url)) resp = { ok: true, backend: 'claude', elapsed_s: 12.3, done: true, failed: false, answer: 'PJ_10082026 is open: 20 qubits.', tools: ['mcp__sm__sm_status'] };
   return Promise.resolve({ status: code, json: function () { return Promise.resolve(resp); } });
 };
@@ -64,16 +64,18 @@ const tick = (ms) => new Promise(r => setTimeout(r, ms || 15));
   A.init();
   await tick(30);
   const body = document.getElementById('as-body');
-  ok(body.querySelectorAll('details.as-sec').length === 7, 'seven sections (3b Hardware — Dry run joined the six)');
+  // docs/288: four numbered cards in reading order (+ the limits fold), not nine accordions
+  ok(['as-connect', 'as-env', 'as-context', 'as-test-sec'].every((id, i, a) => { const el = document.getElementById(id); const prev = i && document.getElementById(a[i - 1]); return el && el.classList.contains('asx-card') && (!prev || (prev.compareDocumentPosition(el) & 4)); }),
+     'four cards in order: connect, where runs live, the device, check it works');
   // 3b: the dry-run card -- from the payload, always open, wired to the Runner's settings route
   {
     const box = document.getElementById('as-dryrun-box');
     const card = document.getElementById('as-dryrun');
-    ok(card && card.tagName === 'DETAILS' && box && card.contains(box), 'the card is #as-dryrun and the box #as-dryrun-box (two ids -- the first cut gave both the same one)');
+    ok(card && box && card !== box && card.contains(box), 'the row is #as-dryrun and the box #as-dryrun-box (two ids -- the first cut gave both the same one)');
     ok(box && box.type === 'checkbox' && box.checked === true, 'the dry-run box is CHECKED from global_simulate: true');
-    ok(card && card.open === true && card.querySelector('summary .as-done'), 'the card is open even though ON reads as done (a switch is not a checklist item)');
-    ok(card.previousElementSibling && card.previousElementSibling.id === 'as-env', 'it sits right after 3. Run environment');
-    ok(/never written to the chip/.test(card.textContent) && /runs touch the OPX/.test(card.textContent), 'the one sentence says what ON and OFF mean');
+    ok(card && !card.closest('details:not([open])'), 'the switch is never folded away (a switch is not a checklist item)');
+    ok(card.closest('#as-env'), 'it sits in "Where runs and notes live", beside the calibrations folder');
+    ok(card.querySelector('.asx-dry-text').textContent === "Dry run — the agent's runs are simulated, nothing touches the OPX", 'ON says the runs are simulated and nothing touches the OPX');
     ok(box.getAttribute('onchange') === 'AgentSetup.dryRun(this)', 'the box is wired to AgentSetup.dryRun');
     // flip OFF -> POST {global_simulate:false} -> "Saved — dry run OFF"
     calls.length = 0;
@@ -82,7 +84,7 @@ const tick = (ms) => new Promise(r => setTimeout(r, ms || 15));
     ok(calls[0] && calls[0].url === '/scheduler/settings' && calls[0].method === 'POST' && JSON.stringify(calls[0].body) === '{"global_simulate":false}', 'the change POSTs exactly {global_simulate:false} to /scheduler/settings');
     ok(/Saved — dry run OFF/.test(document.getElementById('as-dryrun-msg').textContent), 'the reply shows inline: ' + document.getElementById('as-dryrun-msg').textContent);
     ok(box.checked === false && box.disabled === false && A._state.data.global_simulate === false, 'the box and the payload copy follow the saved value');
-    ok(card.querySelector('summary .as-todo') && !card.querySelector('summary .as-done'), 'the card marker follows the saved value without a re-render (● when OFF)');
+    ok(card.querySelector('.asx-dry-text').textContent === "Live — the agent's runs use the OPX", 'the words follow the saved value without a re-render (OFF says the runs use the OPX)');
     // a running queue: the 409's words VERBATIM, the box back to what is persisted (re-read)
     settingsBusy = true; calls.length = 0;
     box.checked = true; A.dryRun(box);
@@ -103,19 +105,22 @@ const tick = (ms) => new Promise(r => setTimeout(r, ms || 15));
     // back ON: the marker follows again
     box.checked = true; A.dryRun(box);
     await tick(30);
-    ok(box.checked === true && card.querySelector('summary .as-done') && !card.querySelector('summary .as-todo'), 'the card marker follows the saved value (✓ when ON)');
+    ok(box.checked === true && card.querySelector('.asx-dry-text').textContent === "Dry run — the agent's runs are simulated, nothing touches the OPX", 'the words follow the saved value (ON)');
     // a re-render from a payload saying OFF: unchecked, marked ● (runs touch the OPX), still open
     status.global_simulate = false; A.load();
     await tick(30);
     const box2 = document.getElementById('as-dryrun-box'), card2 = document.getElementById('as-dryrun');
-    ok(box2.checked === false && card2.open === true && card2.querySelector('summary .as-todo') && !card2.querySelector('summary .as-done'), 'OFF renders unchecked, ● and open');
+    ok(box2.checked === false && card2.querySelector('.asx-dry-text').textContent === "Live — the agent's runs use the OPX", 'OFF renders unchecked and says the runs use the OPX');
     status.global_simulate = true; A.load();
     await tick(30);
     ok(document.getElementById('as-dryrun-box').checked === true, 'ON renders checked again');
   }
-  ok(document.getElementById('as-clis').open === false && document.getElementById('as-connect-claude').open === true, 'a done section is folded, an undone one open');
-  ok(!document.getElementById('as-connect-codex'), 'no codex here: not asked');
-  ok(/not registered as an MCP server/.test(document.getElementById('as-connect-claude').textContent), 'says what is missing');
+  // docs/288: one tile per CLI -- what is missing is said in words, with ONE button
+  const tileC = document.getElementById('as-connect-claude');
+  ok(tileC && tileC.classList.contains('asx-tile-todo') && /Not connected/.test(tileC.textContent), 'an unconnected CLI says Not connected');
+  ok(/\u25cb SM's tools/.test(tileC.textContent) && !!tileC.querySelector('button[onclick="AgentSetup.preview(\'claude\')"]'), 'says what is missing, with one Connect button');
+  ok(/Not installed/.test((document.getElementById('as-connect-codex') || {}).textContent || '') && !document.querySelector('#as-connect-codex button'), 'a CLI not on PATH says Not installed and offers nothing to press');
+  ok(document.getElementById('as-test') !== document.getElementById('as-test-sec') && document.getElementById('as-test-sec').contains(document.getElementById('as-test')), 'the test card and its result box are two elements (one id each)');
   ok(document.getElementById('as-jroot').value === 'D:/data/PJ/journal', 'the journal input starts with the suggested folder beside the data');
   // preview -> diff, no write
   calls.length = 0;
@@ -124,7 +129,15 @@ const tick = (ms) => new Promise(r => setTimeout(r, ms || 15));
   ok(calls[0].url === '/api/agent/setup/connect' && calls[0].body.apply === undefined, 'preview posts without apply');
   const prev = document.getElementById('as-prev-claude');
   ok(prev.querySelectorAll('.as-line.as-add').length >= 1 && /"command": "py.exe"/.test(prev.textContent), 'the diff shows the added lines');
-  ok(!!prev.querySelector('.ag-start') && /Write these \(with backups\)/.test(prev.textContent), 'the write is a second click');
+  ok(!!prev.querySelector('.ag-start') && /Connect Claude Code/.test(prev.querySelector('.ag-start').textContent), 'the write is a second click');
+  ok(/add SM to its list of tools/.test(prev.textContent) && prev.querySelector('details .as-diff'), 'the confirm says what changes in words; the exact diff is one click away');
+  // docs/288 walk: with the confirm open, the tile's own Connect + pin step aside (CSS hides
+  // .asx-asking > .asx-tile-acts / .asx-opt) -- the confirm's "Connect Claude Code" is the one press
+  ok(document.getElementById('as-connect-claude').classList.contains('asx-asking'), 'the confirm marks its tile as asking');
+  A.cancel('claude');
+  ok(!document.getElementById('as-connect-claude').classList.contains('asx-asking') && prev.innerHTML === '', 'Cancel clears the confirm and gives the tile its Connect back');
+  A.preview('claude');
+  await tick(30);
   // the diff engine
   const d = A.diffLines('a\nb\nc', 'a\nc\nd');
   ok(JSON.stringify(d) === JSON.stringify([['=', 'a'], ['-', 'b'], ['=', 'c'], ['+', 'd']]), 'line diff: ' + JSON.stringify(d));
@@ -133,6 +146,15 @@ const tick = (ms) => new Promise(r => setTimeout(r, ms || 15));
   A.connect('claude');
   await tick(30);
   ok(calls[0].body.apply === true && calls.some(c => /\/api\/agent\/setup$/.test(c.url)), 'connect applies then reloads the status');
+  // the pin is an option OF Connect: a connected tile never shows a box SM did not read
+  const claudeWas = status.claude;
+  status.claude = Object.assign({}, claudeWas, { mcp: true, hooks: true });
+  A.load();
+  await tick(30);
+  ok(/Connected/.test(document.getElementById('as-connect-claude').textContent) && !document.getElementById('as-pin-claude'), 'a connected tile shows no pin box');
+  status.claude = claudeWas;
+  A.load();
+  await tick(30);
   // journal
   document.getElementById('as-jroot').value = 'D:/lab/journal';
   document.getElementById('as-jsays').checked = true;
@@ -173,12 +195,11 @@ const tick = (ms) => new Promise(r => setTimeout(r, ms || 15));
      breath (measured in real Chrome: "asking claude one read-only question…",
      then a bare "✓ 6. Test" with a real 6.8 s answer inside). While there is a
      result on screen the section stays open. */
-  const testSec = document.getElementById('as-test-sec') || document.getElementById('as-test').closest('details');
-  ok(!!testSec && testSec.open,
-     'A04: the section stays OPEN over the answer it just produced');
-  ok(/✓/.test((testSec.querySelector('summary') || {}).textContent || ''),
-     'A04: and it is still marked done (summary: '
-     + ((testSec.querySelector('summary') || {}).textContent || '').trim().slice(0, 24) + ')');
+  const testSec = document.getElementById('as-test-sec');
+  ok(!!testSec && testSec.contains(document.getElementById('as-test')) && /12\.3 s/.test(testSec.textContent),
+     'A04: the answer stays on screen in its card after the status reload');
+  ok(testSec.classList.contains('asx-card-done') && /\u2713/.test(testSec.querySelector('.asx-step').textContent),
+     'A04: and the card is marked done');
   // a re-write starts from what the lab answered last time, never from the detected values alone
   savedCtx = { tunable: 'fixed-frequency', notes: 'Never retry hardware.' };
   S_reset();
@@ -201,20 +222,21 @@ const tick = (ms) => new Promise(r => setTimeout(r, ms || 15));
   A.load();
   await tick(30);
   const ctxSec = document.getElementById('as-context');
-  ok(!!ctxSec && ctxSec.open && /Codex never reads/.test(ctxSec.textContent) && /AGENTS\.local\.md/.test(ctxSec.textContent) && !/✓/.test(ctxSec.querySelector('summary').textContent),
-     'B-02: an unread AGENTS.local.md block keeps the section open, not done, and says why');
+  // docs/288: the section is a card (never folded); "done" is the card's class + its step mark
+  ok(!!ctxSec && !ctxSec.closest('details:not([open])') && /Codex never reads/.test(ctxSec.textContent) && /AGENTS\.local\.md/.test(ctxSec.textContent) && !ctxSec.classList.contains('asx-card-done') && !/\u2713/.test(ctxSec.querySelector('.asx-step').textContent),
+     'B-02: an unread AGENTS.local.md block keeps the card on screen, not done, and says why');
   status.context_unread = [];
   A.load();
   await tick(30);
   const ctxSec2 = document.getElementById('as-context');
-  ok(!!ctxSec2 && !/Codex never reads/.test(ctxSec2.textContent) && /✓/.test(ctxSec2.querySelector('summary').textContent), 'B-02: nothing unread -> no warning, section done');
+  ok(!!ctxSec2 && !/Codex never reads/.test(ctxSec2.textContent) && ctxSec2.classList.contains('asx-card-done') && /\u2713/.test(ctxSec2.querySelector('.asx-step').textContent), 'B-02: nothing unread -> no warning, card done');
   // docs/252: the limits are the person's, edited here (no other surface could change them)
   ok(!document.getElementById('as-limits'), 'no chip open -> no Limits section');
-  status.chip = 'arbel';
+  status.chip = 'chipA';
   A.load();
   await tick(40);
   const limSec = document.getElementById('as-limits');
-  ok(!!limSec && /7\. Limits for arbel/.test(limSec.querySelector('summary').textContent), 'a chip open -> 7. Limits for <chip>');
+  ok(!!limSec && /Safety limits for chipA/.test(limSec.querySelector('summary').textContent), 'a chip open -> Safety limits for <chip>');
   ok(document.getElementById('as-lim-mode').value === 'ask-writes' && document.getElementById('as-lim-maxw').value === '200'
      && document.getElementById('as-lim-recent').value === '30' && document.getElementById('as-lim-delta').value === '{"ramsey":2000000}',
      'the form starts from the saved limits');

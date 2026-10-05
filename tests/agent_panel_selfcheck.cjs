@@ -918,15 +918,16 @@ const tick = (ms) => new Promise(r => setTimeout(r, ms || 15));
   ok(badge() === 'CONNECTED',
      'W1 a CLI that is installed AND registered reads CONNECTED: ' + badge());
   ok(/2\.1\.263/.test(wire.textContent), 'W2 …with the version it reported');
-  ok(/MCP \u2713/.test(wire.textContent) && /hooks \u2713/.test(wire.textContent),
+  ok(/SM tools \u2713/.test(wire.textContent) && /run reports \u2713/.test(wire.textContent)
+     && /MCP server/.test(wire.querySelector('.ag-wire-ok[title]').title),
      'W3 …and WHY it is connected — the registration is the answer to the '
      + 'question that was asked: ' + wire.textContent);
-  ok(!/allow \u2713/.test(wire.textContent),
+  ok(!/no prompts \u2713/.test(wire.textContent),
      'W4 `allow` is NOT claimed with no calibrations folder — the file it '
      + 'reads lives inside one: ' + wire.textContent);
   ok(/answered SM in 2\.1 s/.test(wire.textContent),
      'W5 the only real evidence, in the past tense: ' + wire.textContent);
-  ok(/2 setup steps/.test(wire.querySelector('.ag-wire-setup').textContent),
+  ok(/Finish setup \(2 left\)/.test(wire.querySelector('.ag-wire-setup').textContent),
      'W6 the door counts what is left, from the server\'s own list: '
      + wire.querySelector('.ag-wire-setup').textContent);
   ok(!/logged in|logged-in|authenticated|signed in/i.test(wire.textContent),
@@ -978,7 +979,7 @@ const tick = (ms) => new Promise(r => setTimeout(r, ms || 15));
   P._wire.data = { backends: { claude: { found: true, version: '9' }, codex: { found: false } }, 'default': 'claude' };
   P._wire.setup.clis = P._wire.data.backends;
   P.wirePaint();
-  ok(badge() === 'IN-APP ONLY' && /terminal: not registered as an MCP server/.test(wire.textContent),
+  ok(badge() === 'IN-APP ONLY' && /terminal: not connected/.test(wire.textContent),
      'W12 installed but not registered is its OWN state, with the fix beside '
      + 'it: ' + wire.textContent);
   ok(!!wire.querySelector('.ag-wire-fix'), 'W13 …and that fix is a link to Setup');

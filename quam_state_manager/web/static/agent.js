@@ -873,7 +873,7 @@ window.AgentPanel = (function () {
       if (alive || armed || runActive) acts.push('<button type="button" class="btn-sm ag-stop ag-stop-now" onclick="AgentPanel.stop(\'now\')">Stop now</button>');
       if (sessionOpen()) acts.push('<button type="button" class="btn-sm" onclick="AgentPanel.endSession()">End session</button>');   // docs/247: a Codex conversation between turns too
     }
-    acts.push('<label class="ag-observer" title="observer: this window shows but never starts, stops or approves (an accident guard, not a permission)"><input type="checkbox" ' + (S.observer ? "checked" : "") + ' onchange="AgentPanel.setObserver(this.checked)"> observer' + (S.observer ? ' <span class="ag-observing">— observing</span>' : "") + "</label>");
+    acts.push('<label class="ag-observer" title="observer: this window shows but never starts, stops or approves (an accident guard, not a permission)"><input type="checkbox" ' + (S.observer ? "checked" : "") + ' onchange="AgentPanel.setObserver(this.checked)"> view only' + (S.observer ? ' <span class="ag-observing">— this window cannot start, stop or approve</span>' : "") + "</label>");
     acts.push('<span class="ag-now-links"><a href="/journal" hx-get="/journal" hx-target="#table-pane" hx-push-url="true">Calibration log →</a>' +
       ' · <a class="ag-summary-link" href="/agent/summary" hx-get="/agent/summary" hx-target="#table-pane" hx-push-url="true" title="the last plan since its Start: applied, held, failed, halted, and why it ended">Night summary →</a>' +
       ' · <a class="ag-setup-link" href="/agent/setup" hx-get="/agent/setup" hx-target="#table-pane" hx-push-url="true" title="connect Claude / Codex to SM, the journal folder, the lab context file">Setup →</a></span>');
@@ -906,7 +906,37 @@ window.AgentPanel = (function () {
       Object.keys(S.runs).forEach(function (k) { renderRun(m, S.runs[k], force); });
       Object.keys(S.approvals).forEach(function (k) { renderApproval(m, S.approvals[k], force); });
       renderNow(m);
+      renderWelcome(m);
     });
+  }
+  /* docs/288: an empty feed was a blank page -- nothing said what it is for or
+     what to type. While the feed holds no card, it says so, with three
+     questions a person can try (a click fills the composer; nothing is sent). */
+  var TRY = ["What changed on this chip today?", "Which qubits look worst right now, and why?",
+             "Summarise the last calibration runs."];
+  function renderWelcome(m) {
+    var host = cardsHost(m);
+    if (!host || m.root.classList.contains("ag-compact")) return;
+    var has = host.querySelector("[data-card]");
+    var w = host.querySelector(".ag-welcome");
+    if (has) { if (w) w.remove(); return; }
+    if (w) return;
+    w = document.createElement("div");
+    w.className = "ag-welcome";
+    w.innerHTML = '<h3>Talk to the agent about this chip</h3>'
+      + '<p><b>Ask</b> is read-only: it reads the chip, its history and the runs through SM, and can change nothing. '
+      + '<b>Task</b> may propose a plan; it shows up here as a card, and nothing runs until you press <b>Start</b>.</p>'
+      + '<div class="ag-try">' + TRY.map(function (q) { return '<button type="button" class="ag-try-q">' + esc(q) + "</button>"; }).join("") + "</div>"
+      + '<p class="muted ag-welcome-foot">Writes to the chip always wait for your approval. '
+      + '<a href="/agent/setup" hx-get="/agent/setup" hx-target="#table-pane" hx-push-url="true">Agent setup</a> also connects a Claude Code or Codex you run in a terminal.</p>';
+    w.addEventListener("click", function (e) {
+      var b = e.target.closest && e.target.closest(".ag-try-q");
+      if (!b) return;
+      var ta = m.root.querySelector(".ag-input");
+      if (ta) { ta.value = b.textContent; ta.focus(); try { grow(ta); } catch (err) { /* ignore */ } }
+    });
+    host.appendChild(w);
+    if (window.htmx) { try { window.htmx.process(w); } catch (e) { /* ignore */ } }
   }
   function nearBottom(host) {
     // review R2-12: the feed follows new cards only when the reader is
@@ -1431,12 +1461,12 @@ window.AgentPanel = (function () {
     }
     var bits = [];
     if (!compact && b.version) bits.push(esc(shortVersion(b.version)));
-    if (reg.mcp) bits.push('<span class="ag-wire-ok" title="SM is registered as an MCP server named quam-state-manager in this CLI\'s own config">MCP \u2713</span>');
-    if (reg.hooks) bits.push('<span class="ag-wire-ok" title="a hook in the CLI\'s settings reports each run back to SM">hooks \u2713</span>');
-    if (reg.allow === true) bits.push('<span class="ag-wire-ok" title="SM\'s tools are pre-allowed in this calibrations folder">allow \u2713</span>');
+    if (reg.mcp) bits.push('<span class="ag-wire-ok" title="SM is registered as an MCP server named quam-state-manager in this CLI\'s own config">SM tools \u2713</span>');
+    if (reg.hooks) bits.push('<span class="ag-wire-ok" title="a hook in the CLI\'s settings reports each run back to SM">run reports \u2713</span>');
+    if (reg.allow === true) bits.push('<span class="ag-wire-ok" title="SM\'s tools are pre-allowed in this calibrations folder">no prompts \u2713</span>');
     var line = '<span class="ag-wire-cli"><b>' + esc(name) + "</b> " + bits.join(" \u00b7 ");
     if (!reg.mcp) {
-      line += ' <span class="ag-wire-warn" title="The agent in this window works without it. A ' + esc(name) + ' you start in a terminal cannot use SM until SM is registered as its MCP server.">terminal: not registered as an MCP server</span>'
+      line += ' <span class="ag-wire-warn" title="The agent in this window works without it. A ' + esc(name) + ' you start in a terminal cannot use SM until SM is registered as its MCP server.">terminal: not connected</span>'
             + ' <a class="ag-wire-fix" href="/agent/setup" hx-get="/agent/setup" hx-target="#table-pane" hx-push-url="true">Connect \u2192</a>';
     } else if (t && t.ok) {
       // past tense, and the title says why it is past tense
@@ -1543,7 +1573,7 @@ window.AgentPanel = (function () {
       var link = el.querySelector(".ag-wire-setup");
       if (link && su && su.todo) {
         link.textContent = su.todo.length
-          ? (su.todo.length + (su.todo.length === 1 ? " setup step \u2192" : " setup steps \u2192"))
+          ? ("Finish setup (" + su.todo.length + " left) \u2192")
           : "Setup \u2192";
         link.classList.toggle("ag-wire-todo", su.todo.length > 0);
       }
