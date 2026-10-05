@@ -1,0 +1,89 @@
+{# docs/284: the State History timeline read from the chip's change ledger.
+   Rows are its state-bearing events, each named honestly (run #N + node, an
+   SM write with its actor and kind, a state SM observed whose writer is not
+   known), plus the older Param History snapshots no event covers. Every
+   action goes through the doors the snapshot rows use, gates and all; a
+   version the ledger cannot hand over exactly says why instead of offering
+   them. Included by _state_history_body.html. #}
+{% from '_snapshot_source.html' import source_badge %}
+{% set lv = ledger_versions %}
+{% if lv.rows %}
+<div class="sh-toolbar">
+    <button id="sh-compare-btn" class="outline btn-sm" disabled
+            onclick="StateHistory.compareSelected()">Compare 2 selected</button>
+    <small class="muted">{{ lv.events }} recorded state{{ 's' if lv.events != 1 }}{% if lv.legacy_total %} · {{ lv.legacy_total }} older snapshot{{ 's' if lv.legacy_total != 1 }}{% endif %}</small>
+</div>
+
+<div class="sh-timeline">
+{% for r in lv.rows %}
+<div class="sh-entry{% if r.legacy %} sh-older{% endif %}{% if r.pinned %} sh-pinned{% endif %}" data-ts="{{ r.ts }}">
+    <div class="sh-entry-main">
+        <input type="checkbox" class="sh-cb" value="{{ r.ts }}"
+               onchange="StateHistory.toggleSelect(this)" aria-label="Select for compare">
+        <span class="sh-time">{{ r.when | ts_local }}</span>
+        {% if r.legacy %}
+        <span class="sh-older-badge" title="A Param History snapshot no change-history event covers: read-only history{% if r.pending %}; still being matched against the change history{% endif %}">older snapshot{% if r.pending %} (matching){% endif %}</span>
+        <span class="sv-kind sv-kind-{{ r.kind }}{% if r.kind_legacy %} sv-kind-legacy{% endif %}">{{ {'exp': 'EXP', 'manual': 'MANUAL', 'backup': 'BACKUP'}[r.kind] }}</span>
+        <span class="history-trigger-badge history-trigger-{{ r.trigger }}">{{ r.trigger }}</span>
+        {% else %}
+        <strong class="sh-event sh-event-{{ r.badge | replace(' ', '-') }}" title="{{ r.hover }}">{{ r.title }}</strong>
+        <span class="muted sh-event-sub">{{ r.sub }}</span>
+        {% for f in r.flags %}<span class="sv-flag">{{ f }}</span>{% endfor %}
+        {% endif %}
+        {{ source_badge(r.source, 'sh-src') }}
+        {% if r.pinned %}<span class="sh-pin-badge" title="Pinned (kept regardless of retention)">&#128204;</span>{% endif %}
+        {% if r.current %}<span class="sv-now" title="The live chip currently holds exactly this content">on this now</span>{% endif %}
+    </div>
+    {% if r.legacy and r.experiment %}
+    <div class="sh-attribution">after <strong>{{ r.experiment }}</strong>{% if r.run_id is not none %} <span class="muted">run #{{ r.run_id }}</span>{% endif %}</div>
+    {% endif %}
+    {% if r.label %}<div class="sh-label">&#9998; {{ r.label }}</div>{% endif %}
+    {% if r.note %}<div class="sh-note" title="Bookmark note">&#128221; {{ r.note }}</div>{% endif %}
+    {% if r.why_diff %}<p class="sh-state-unavailable muted">{{ r.why_diff }}</p>{% endif %}
+    {% if r.why_write and r.why_write != r.why_diff %}<p class="sh-state-unavailable muted">{{ r.why_write }}</p>{% endif %}
+
+    <div class="sh-entry-actions">
+        {% if not r.why_diff %}
+        <button class="outline btn-sm" hx-get="/api/history/{{ r.ts }}/diff"
+                hx-target="#state-history-detail" hx-swap="innerHTML">View changes vs current</button>
+        {% endif %}
+        {% if chip_origin == 'live' and not r.why_write and not r.pending %}
+        <button class="outline btn-sm"
+                hx-post="/state-history/{{ r.ts }}/stage?chip_key={{ hist_chip_key | urlencode }}"
+                hx-target="#state-history-detail" hx-swap="innerHTML"
+                hx-confirm="Load the version of {{ r.when | format_ts }} as the working state? You can then review the diff and Apply to live.{{ auto_push_note }}"
+                title="Mode 1 (safe): load as the working state, review, then apply{{ auto_push_note }}">Load as working state</button>
+        <button class="outline btn-sm sh-restore-live"
+                hx-post="/state-history/{{ r.ts }}/restore-live?chip_key={{ hist_chip_key | urlencode }}"
+                hx-target="#state-history-detail" hx-swap="innerHTML"
+                hx-confirm="Restore the LIVE chip to the version of {{ r.when | format_ts }} now? The current state is snapshotted first (reversible)."
+                title="Mode 2: replace the live chip directly (the current state is snapshotted first)">Restore to live</button>
+        {% endif %}
+        {% if hist_chip_key and not r.why_diff %}
+        <button class="outline btn-sm"
+                hx-get="/diff?a=hist:{{ hist_chip_key | urlencode }}/{{ r.ts | urlencode }}&b=working:{{ active_path | urlencode }}&tab=state"
+                hx-target="#table-pane" hx-sync="#table-pane:replace" hx-push-url="true"
+                title="Diff this version against the current working state">&#8644; Compare&#8230;</button>
+        {% endif %}
+    </div>
+</div>
+{% endfor %}
+</div>
+
+{% if total_pages > 1 %}
+<nav class="history-pagination">
+    {% if current_page > 1 %}
+    <button class="outline btn-sm" hx-get="/state-history?page={{ current_page - 1 }}&per_page={{ per_page }}"
+            hx-target="#table-pane" hx-swap="innerHTML">&laquo; Prev</button>
+    {% endif %}
+    <span class="muted">Page {{ current_page }} / {{ total_pages }}</span>
+    {% if current_page < total_pages %}
+    <button class="outline btn-sm" hx-get="/state-history?page={{ current_page + 1 }}&per_page={{ per_page }}"
+            hx-target="#table-pane" hx-swap="innerHTML">Next &raquo;</button>
+    {% endif %}
+</nav>
+{% endif %}
+{% else %}
+<p class="muted" style="padding:1rem">No recorded states yet. The change history records
+   every run, every SM write and every state SM sees change outside SM.</p>
+{% endif %}

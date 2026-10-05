@@ -1,0 +1,992 @@
+{
+ "mutations": 72,
+ "red": 72,
+ "first_sweep": {
+  "red": 71,
+  "survived": [
+   "cached_rows_drawn_as_they_were"
+  ]
+ },
+ "pins": 29,
+ "pins_turned_red": 29,
+ "pins_never_red": [],
+ "results": [
+  {
+   "name": "stamp_not_checked",
+   "file": "quam_state_manager/core/hub_versions.py",
+   "red": true,
+   "failed_pins": [
+    "test_a_version_id_is_checked_against_its_event_instant",
+    "test_every_door_refuses_a_fault_with_its_reason_and_writes_nothing[stale-earlier"
+   ],
+   "pins": [
+    "test_a_version_id_is_checked_against_its_event_instant",
+    "test_every_door_refuses_a_fault_with_its_reason_and_writes_nothing"
+   ],
+   "seconds": 13.7,
+   "rerun_after_strengthening": false
+  },
+  {
+   "name": "uncertain_offered",
+   "file": "quam_state_manager/core/hub_versions.py",
+   "red": true,
+   "failed_pins": [
+    "test_a_state_the_ledger_cannot_hand_over_refuses[uncertain-chip",
+    "test_every_door_refuses_a_fault_with_its_reason_and_writes_nothing[uncertain-chip"
+   ],
+   "pins": [
+    "test_a_state_the_ledger_cannot_hand_over_refuses",
+    "test_every_door_refuses_a_fault_with_its_reason_and_writes_nothing"
+   ],
+   "seconds": 15.2,
+   "rerun_after_strengthening": false
+  },
+  {
+   "name": "errored_event_offered",
+   "file": "quam_state_manager/core/hub_versions.py",
+   "red": true,
+   "failed_pins": [
+    "test_a_state_the_ledger_cannot_hand_over_refuses[error-No"
+   ],
+   "pins": [
+    "test_a_state_the_ledger_cannot_hand_over_refuses"
+   ],
+   "seconds": 11.0,
+   "rerun_after_strengthening": false
+  },
+  {
+   "name": "derived_shown_as_a_document",
+   "file": "quam_state_manager/core/hub_versions.py",
+   "red": true,
+   "failed_pins": [
+    "test_a_state_the_ledger_cannot_hand_over_refuses[derived-DERIVED]",
+    "test_every_door_refuses_a_fault_with_its_reason_and_writes_nothing[derived-DERIVED]"
+   ],
+   "pins": [
+    "test_a_state_the_ledger_cannot_hand_over_refuses",
+    "test_every_door_refuses_a_fault_with_its_reason_and_writes_nothing"
+   ],
+   "seconds": 16.5,
+   "rerun_after_strengthening": false
+  },
+  {
+   "name": "document_of_the_event_before",
+   "file": "quam_state_manager/core/hub_versions.py",
+   "red": true,
+   "failed_pins": [
+    "test_the_diff_document_is_the_ledgers_and_needs_no_archive_file",
+    "test_diff_and_compare_read_ledger_documents_in_time_order"
+   ],
+   "pins": [
+    "test_the_diff_document_is_the_ledgers_and_needs_no_archive_file",
+    "test_diff_and_compare_read_ledger_documents_in_time_order"
+   ],
+   "seconds": 7.8,
+   "rerun_after_strengthening": false
+  },
+  {
+   "name": "missing_blob_unnamed",
+   "file": "quam_state_manager/core/hub_versions.py",
+   "red": true,
+   "failed_pins": [
+    "test_every_door_refuses_a_fault_with_its_reason_and_writes_nothing[anchor_blob-Missing"
+   ],
+   "pins": [
+    "test_every_door_refuses_a_fault_with_its_reason_and_writes_nothing"
+   ],
+   "seconds": 6.2,
+   "rerun_after_strengthening": false
+  },
+  {
+   "name": "saved_pair_unverified",
+   "file": "quam_state_manager/core/hub_versions.py",
+   "red": true,
+   "failed_pins": [
+    "test_the_exact_pair_refuses_when_the_saved_files_are_not_the_state[rewritten]"
+   ],
+   "pins": [
+    "test_the_exact_pair_refuses_when_the_saved_files_are_not_the_state"
+   ],
+   "seconds": 4.4,
+   "rerun_after_strengthening": false
+  },
+  {
+   "name": "saved_ints_read_as_floats",
+   "file": "quam_state_manager/core/hub_versions.py",
+   "red": true,
+   "failed_pins": [
+    "test_the_exact_pair_is_the_saved_files_types_and_all"
+   ],
+   "pins": [
+    "test_the_exact_pair_is_the_saved_files_types_and_all"
+   ],
+   "seconds": 3.7,
+   "rerun_after_strengthening": false
+  },
+  {
+   "name": "run_pair_from_ram",
+   "file": "quam_state_manager/core/hub_versions.py",
+   "red": true,
+   "failed_pins": [
+    "test_the_exact_pair_refuses_when_the_saved_files_are_not_the_state[deleted]",
+    "test_the_exact_pair_refuses_when_the_saved_files_are_not_the_state[rewritten]"
+   ],
+   "pins": [
+    "test_the_exact_pair_refuses_when_the_saved_files_are_not_the_state"
+   ],
+   "seconds": 4.3,
+   "rerun_after_strengthening": false
+  },
+  {
+   "name": "remembered_pair_shared",
+   "file": "quam_state_manager/core/hub_versions.py",
+   "red": true,
+   "failed_pins": [
+    "test_an_sm_write_hands_over_the_pair_sm_wrote_and_verifies_a_replay"
+   ],
+   "pins": [
+    "test_an_sm_write_hands_over_the_pair_sm_wrote_and_verifies_a_replay"
+   ],
+   "seconds": 4.2,
+   "rerun_after_strengthening": false
+  },
+  {
+   "name": "anchor_not_checked_against_its_hash",
+   "file": "quam_state_manager/core/hub_versions.py",
+   "red": true,
+   "failed_pins": [
+    "test_an_sm_write_hands_over_the_pair_sm_wrote_and_verifies_a_replay"
+   ],
+   "pins": [
+    "test_an_sm_write_hands_over_the_pair_sm_wrote_and_verifies_a_replay"
+   ],
+   "seconds": 4.0,
+   "rerun_after_strengthening": false
+  },
+  {
+   "name": "replay_not_checked_against_the_door",
+   "file": "quam_state_manager/core/hub_versions.py",
+   "red": true,
+   "failed_pins": [
+    "test_an_sm_write_hands_over_the_pair_sm_wrote_and_verifies_a_replay"
+   ],
+   "pins": [
+    "test_an_sm_write_hands_over_the_pair_sm_wrote_and_verifies_a_replay"
+   ],
+   "seconds": 4.1,
+   "rerun_after_strengthening": false
+  },
+  {
+   "name": "derived_pair_handed_over",
+   "file": "quam_state_manager/core/hub_versions.py",
+   "red": true,
+   "failed_pins": [
+    "test_a_state_the_ledger_cannot_hand_over_refuses[derived-DERIVED]"
+   ],
+   "pins": [
+    "test_a_state_the_ledger_cannot_hand_over_refuses"
+   ],
+   "seconds": 4.8,
+   "rerun_after_strengthening": false
+  },
+  {
+   "name": "source_gone_staged_from_the_merged_document",
+   "file": "quam_state_manager/core/hub_versions.py",
+   "red": true,
+   "failed_pins": [
+    "test_the_exact_pair_refuses_when_the_saved_files_are_not_the_state[deleted]",
+    "test_the_exact_pair_refuses_when_the_saved_files_are_not_the_state[rewritten]",
+    "test_a_version_the_ledger_cannot_hand_over_refuses_before_any_write"
+   ],
+   "pins": [
+    "test_the_exact_pair_refuses_when_the_saved_files_are_not_the_state",
+    "test_a_version_the_ledger_cannot_hand_over_refuses_before_any_write"
+   ],
+   "seconds": 4.7,
+   "rerun_after_strengthening": false
+  },
+  {
+   "name": "not_ready_said_as_unreadable",
+   "file": "quam_state_manager/core/hub_versions.py",
+   "red": true,
+   "failed_pins": [
+    "test_every_door_refuses_a_fault_with_its_reason_and_writes_nothing[building-The"
+   ],
+   "pins": [
+    "test_every_door_refuses_a_fault_with_its_reason_and_writes_nothing"
+   ],
+   "seconds": 7.0,
+   "rerun_after_strengthening": false
+  },
+  {
+   "name": "damaged_ledger_raw_error",
+   "file": "quam_state_manager/core/hub_versions.py",
+   "red": true,
+   "failed_pins": [
+    "test_every_door_refuses_a_fault_with_its_reason_and_writes_nothing[unreadable-The"
+   ],
+   "pins": [
+    "test_every_door_refuses_a_fault_with_its_reason_and_writes_nothing"
+   ],
+   "seconds": 7.0,
+   "rerun_after_strengthening": false
+  },
+  {
+   "name": "compare_without_the_rule",
+   "file": "quam_state_manager/core/hub_versions.py",
+   "red": true,
+   "failed_pins": [
+    "test_the_one_comparison_rule"
+   ],
+   "pins": [
+    "test_the_one_comparison_rule"
+   ],
+   "seconds": 3.3,
+   "rerun_after_strengthening": false
+  },
+  {
+   "name": "compare_n_keeps_agreeing_rows",
+   "file": "quam_state_manager/core/hub_versions.py",
+   "red": true,
+   "failed_pins": [
+    "test_the_one_comparison_rule"
+   ],
+   "pins": [
+    "test_the_one_comparison_rule"
+   ],
+   "seconds": 3.1,
+   "rerun_after_strengthening": false
+  },
+  {
+   "name": "compare_n_changed_against_the_first",
+   "file": "quam_state_manager/core/hub_versions.py",
+   "red": true,
+   "failed_pins": [
+    "test_the_one_comparison_rule"
+   ],
+   "pins": [
+    "test_the_one_comparison_rule"
+   ],
+   "seconds": 2.8,
+   "rerun_after_strengthening": false
+  },
+  {
+   "name": "known_stamps_forgotten",
+   "file": "quam_state_manager/core/hub_versions.py",
+   "red": true,
+   "failed_pins": [
+    "test_matching_runs_in_the_background_and_the_row_says_so",
+    "test_an_older_snapshot_is_listed_only_when_no_event_holds_its_state"
+   ],
+   "pins": [
+    "test_matching_runs_in_the_background_and_the_row_says_so",
+    "test_an_older_snapshot_is_listed_only_when_no_event_holds_its_state"
+   ],
+   "seconds": 4.2,
+   "rerun_after_strengthening": false
+  },
+  {
+   "name": "any_run_of_that_id_covers",
+   "file": "quam_state_manager/core/hub_versions.py",
+   "red": true,
+   "failed_pins": [
+    "test_an_older_snapshot_is_listed_only_when_no_event_holds_its_state"
+   ],
+   "pins": [
+    "test_an_older_snapshot_is_listed_only_when_no_event_holds_its_state"
+   ],
+   "seconds": 3.8,
+   "rerun_after_strengthening": false
+  },
+  {
+   "name": "observed_verdict_ignored",
+   "file": "quam_state_manager/core/hub_versions.py",
+   "red": true,
+   "failed_pins": [
+    "test_the_ledgers_observed_import_verdict_covers_a_snapshot"
+   ],
+   "pins": [
+    "test_the_ledgers_observed_import_verdict_covers_a_snapshot"
+   ],
+   "seconds": 3.2,
+   "rerun_after_strengthening": false
+  },
+  {
+   "name": "content_never_covers",
+   "file": "quam_state_manager/core/hub_versions.py",
+   "red": true,
+   "failed_pins": [
+    "test_an_older_snapshot_is_listed_only_when_no_event_holds_its_state"
+   ],
+   "pins": [
+    "test_an_older_snapshot_is_listed_only_when_no_event_holds_its_state"
+   ],
+   "seconds": 3.5,
+   "rerun_after_strengthening": false
+  },
+  {
+   "name": "older_snapshots_dropped",
+   "file": "quam_state_manager/core/hub_versions.py",
+   "red": true,
+   "failed_pins": [
+    "test_an_older_snapshot_is_listed_only_when_no_event_holds_its_state",
+    "test_the_list_follows_the_ledger_and_the_snapshot_list"
+   ],
+   "pins": [
+    "test_an_older_snapshot_is_listed_only_when_no_event_holds_its_state",
+    "test_the_list_follows_the_ledger_and_the_snapshot_list"
+   ],
+   "seconds": 4.4,
+   "rerun_after_strengthening": true
+  },
+  {
+   "name": "oldest_first",
+   "file": "quam_state_manager/core/hub_versions.py",
+   "red": true,
+   "failed_pins": [
+    "test_rows_are_events_newest_first",
+    "test_the_list_follows_the_ledger_and_the_snapshot_list"
+   ],
+   "pins": [
+    "test_rows_are_events_newest_first",
+    "test_the_list_follows_the_ledger_and_the_snapshot_list"
+   ],
+   "seconds": 4.1,
+   "rerun_after_strengthening": true
+  },
+  {
+   "name": "one_timeline_page_only",
+   "file": "quam_state_manager/core/hub_versions.py",
+   "red": true,
+   "failed_pins": [
+    "test_filtered_events_never_leave_a_short_page"
+   ],
+   "pins": [
+    "test_filtered_events_never_leave_a_short_page"
+   ],
+   "seconds": 3.8,
+   "rerun_after_strengthening": false
+  },
+  {
+   "name": "uncertain_rows_listed",
+   "file": "quam_state_manager/core/hub_versions.py",
+   "red": true,
+   "failed_pins": [
+    "test_filtered_events_never_leave_a_short_page"
+   ],
+   "pins": [
+    "test_filtered_events_never_leave_a_short_page"
+   ],
+   "seconds": 3.4,
+   "rerun_after_strengthening": false
+  },
+  {
+   "name": "summary_cached_regardless_of_the_ledger",
+   "file": "quam_state_manager/core/hub_versions.py",
+   "red": true,
+   "failed_pins": [
+    "test_the_list_follows_the_ledger_and_the_snapshot_list"
+   ],
+   "pins": [
+    "test_the_list_follows_the_ledger_and_the_snapshot_list"
+   ],
+   "seconds": 4.2,
+   "rerun_after_strengthening": true
+  },
+  {
+   "name": "summary_cached_regardless_of_the_snapshots",
+   "file": "quam_state_manager/core/hub_versions.py",
+   "red": true,
+   "failed_pins": [
+    "test_the_list_follows_the_ledger_and_the_snapshot_list"
+   ],
+   "pins": [
+    "test_the_list_follows_the_ledger_and_the_snapshot_list"
+   ],
+   "seconds": 3.8,
+   "rerun_after_strengthening": true
+  },
+  {
+   "name": "cached_rows_drawn_as_they_were",
+   "file": "quam_state_manager/core/hub_versions.py",
+   "red": true,
+   "failed_pins": [
+    "test_the_list_follows_the_ledger_and_the_snapshot_list"
+   ],
+   "pins": [
+    "test_the_list_follows_the_ledger_and_the_snapshot_list"
+   ],
+   "seconds": 3.5,
+   "rerun_after_strengthening": true
+  },
+  {
+   "name": "summary_cached_while_matching",
+   "file": "quam_state_manager/core/hub_versions.py",
+   "red": true,
+   "failed_pins": [
+    "test_matching_runs_in_the_background_and_the_row_says_so"
+   ],
+   "pins": [
+    "test_matching_runs_in_the_background_and_the_row_says_so"
+   ],
+   "seconds": 3.7,
+   "rerun_after_strengthening": false
+  },
+  {
+   "name": "preparing_said_as_unreadable",
+   "file": "quam_state_manager/core/hub_versions.py",
+   "red": true,
+   "failed_pins": [
+    "test_modes_other_than_ledger_say_why[preparing]"
+   ],
+   "pins": [
+    "test_modes_other_than_ledger_say_why"
+   ],
+   "seconds": 5.6,
+   "rerun_after_strengthening": false
+  },
+  {
+   "name": "availability_hides_source_gone",
+   "file": "quam_state_manager/core/hub_versions.py",
+   "red": true,
+   "failed_pins": [
+    "test_a_version_the_ledger_cannot_hand_over_refuses_before_any_write"
+   ],
+   "pins": [
+    "test_a_version_the_ledger_cannot_hand_over_refuses_before_any_write"
+   ],
+   "seconds": 3.3,
+   "rerun_after_strengthening": false
+  },
+  {
+   "name": "a_missing_blob_blocks_the_exact_files",
+   "file": "quam_state_manager/core/hub_versions.py",
+   "red": true,
+   "failed_pins": [
+    "test_a_runs_missing_blob_stops_its_diff_not_its_exact_files"
+   ],
+   "pins": [
+    "test_a_runs_missing_blob_stops_its_diff_not_its_exact_files"
+   ],
+   "seconds": 3.3,
+   "rerun_after_strengthening": false
+  },
+  {
+   "name": "a_missing_blob_not_shown",
+   "file": "quam_state_manager/core/hub_versions.py",
+   "red": true,
+   "failed_pins": [
+    "test_a_runs_missing_blob_stops_its_diff_not_its_exact_files"
+   ],
+   "pins": [
+    "test_a_runs_missing_blob_stops_its_diff_not_its_exact_files"
+   ],
+   "seconds": 3.3,
+   "rerun_after_strengthening": false
+  },
+  {
+   "name": "a_missing_anchor_still_offered",
+   "file": "quam_state_manager/core/hub_versions.py",
+   "red": true,
+   "failed_pins": [
+    "test_every_door_refuses_a_fault_with_its_reason_and_writes_nothing[anchor_blob-Missing"
+   ],
+   "pins": [
+    "test_every_door_refuses_a_fault_with_its_reason_and_writes_nothing"
+   ],
+   "seconds": 6.5,
+   "rerun_after_strengthening": false
+  },
+  {
+   "name": "stage_refusal_after_the_confirm",
+   "file": "quam_state_manager/web/routes.py",
+   "red": true,
+   "failed_pins": [
+    "test_a_version_the_ledger_cannot_hand_over_refuses_before_any_write",
+    "test_every_door_refuses_a_fault_with_its_reason_and_writes_nothing[derived-DERIVED]",
+    "test_every_door_refuses_a_fault_with_its_reason_and_writes_nothing[uncertain-chip",
+    "test_every_door_refuses_a_fault_with_its_reason_and_writes_nothing[stale-earlier",
+    "test_every_door_refuses_a_fault_with_its_reason_and_writes_nothing[unreadable-The",
+    "test_every_door_refuses_a_fault_with_its_reason_and_writes_nothing[building-The"
+   ],
+   "pins": [
+    "test_a_version_the_ledger_cannot_hand_over_refuses_before_any_write",
+    "test_every_door_refuses_a_fault_with_its_reason_and_writes_nothing"
+   ],
+   "seconds": 9.4,
+   "rerun_after_strengthening": false
+  },
+  {
+   "name": "restore_refusal_removed",
+   "file": "quam_state_manager/web/routes.py",
+   "red": true,
+   "failed_pins": [
+    "test_a_version_the_ledger_cannot_hand_over_refuses_before_any_write",
+    "test_every_door_refuses_a_fault_with_its_reason_and_writes_nothing[anchor_blob-Missing",
+    "test_every_door_refuses_a_fault_with_its_reason_and_writes_nothing[derived-DERIVED]",
+    "test_every_door_refuses_a_fault_with_its_reason_and_writes_nothing[uncertain-chip",
+    "test_every_door_refuses_a_fault_with_its_reason_and_writes_nothing[stale-earlier",
+    "test_every_door_refuses_a_fault_with_its_reason_and_writes_nothing[unreadable-The",
+    "test_every_door_refuses_a_fault_with_its_reason_and_writes_nothing[building-The"
+   ],
+   "pins": [
+    "test_a_version_the_ledger_cannot_hand_over_refuses_before_any_write",
+    "test_every_door_refuses_a_fault_with_its_reason_and_writes_nothing"
+   ],
+   "seconds": 9.8,
+   "rerun_after_strengthening": false
+  },
+  {
+   "name": "refusal_without_its_reason",
+   "file": "quam_state_manager/web/routes.py",
+   "red": true,
+   "failed_pins": [
+    "test_every_door_refuses_a_fault_with_its_reason_and_writes_nothing[anchor_blob-Missing",
+    "test_every_door_refuses_a_fault_with_its_reason_and_writes_nothing[derived-DERIVED]",
+    "test_every_door_refuses_a_fault_with_its_reason_and_writes_nothing[uncertain-chip",
+    "test_every_door_refuses_a_fault_with_its_reason_and_writes_nothing[stale-earlier",
+    "test_every_door_refuses_a_fault_with_its_reason_and_writes_nothing[unreadable-The",
+    "test_a_version_the_ledger_cannot_hand_over_refuses_before_any_write"
+   ],
+   "pins": [
+    "test_every_door_refuses_a_fault_with_its_reason_and_writes_nothing",
+    "test_a_version_the_ledger_cannot_hand_over_refuses_before_any_write"
+   ],
+   "seconds": 9.4,
+   "rerun_after_strengthening": false
+  },
+  {
+   "name": "not_now_said_as_never",
+   "file": "quam_state_manager/web/routes.py",
+   "red": true,
+   "failed_pins": [
+    "test_every_door_refuses_a_fault_with_its_reason_and_writes_nothing[building-The"
+   ],
+   "pins": [
+    "test_every_door_refuses_a_fault_with_its_reason_and_writes_nothing"
+   ],
+   "seconds": 9.0,
+   "rerun_after_strengthening": false
+  },
+  {
+   "name": "another_chips_version_accepted",
+   "file": "quam_state_manager/web/routes.py",
+   "red": true,
+   "failed_pins": [
+    "test_another_chips_version_is_refused"
+   ],
+   "pins": [
+    "test_another_chips_version_is_refused"
+   ],
+   "seconds": 6.2,
+   "rerun_after_strengthening": false
+  },
+  {
+   "name": "confirm_forgets_the_chip",
+   "file": "quam_state_manager/web/routes.py",
+   "red": true,
+   "failed_pins": [
+    "test_another_chips_version_is_refused"
+   ],
+   "pins": [
+    "test_another_chips_version_is_refused"
+   ],
+   "seconds": 5.8,
+   "rerun_after_strengthening": false
+  },
+  {
+   "name": "popover_confirm_lands_in_the_pane",
+   "file": "quam_state_manager/web/routes.py",
+   "red": true,
+   "failed_pins": [
+    "test_another_chips_version_is_refused"
+   ],
+   "pins": [
+    "test_another_chips_version_is_refused"
+   ],
+   "seconds": 5.6,
+   "rerun_after_strengthening": false
+  },
+  {
+   "name": "a_version_called_a_snapshot",
+   "file": "quam_state_manager/web/routes.py",
+   "red": true,
+   "failed_pins": [
+    "test_restore_live_keeps_every_gate_and_the_record"
+   ],
+   "pins": [
+    "test_restore_live_keeps_every_gate_and_the_record"
+   ],
+   "seconds": 5.3,
+   "rerun_after_strengthening": false
+  },
+  {
+   "name": "a_version_takes_a_label",
+   "file": "quam_state_manager/web/routes.py",
+   "red": true,
+   "failed_pins": [
+    "test_a_ledger_version_carries_no_label"
+   ],
+   "pins": [
+    "test_a_ledger_version_carries_no_label"
+   ],
+   "seconds": 5.3,
+   "rerun_after_strengthening": false
+  },
+  {
+   "name": "restore_alignment_skipped_for_versions",
+   "file": "quam_state_manager/web/routes.py",
+   "red": true,
+   "failed_pins": [
+    "test_restore_live_keeps_every_gate_and_the_record"
+   ],
+   "pins": [
+    "test_restore_live_keeps_every_gate_and_the_record"
+   ],
+   "seconds": 5.7,
+   "rerun_after_strengthening": false
+  },
+  {
+   "name": "stage_writes_the_merged_document",
+   "file": "quam_state_manager/web/routes.py",
+   "red": true,
+   "failed_pins": [
+    "test_stage_apply_revert_round_trip_through_the_existing_doors"
+   ],
+   "pins": [
+    "test_stage_apply_revert_round_trip_through_the_existing_doors",
+    "test_restore_live_keeps_every_gate_and_the_record"
+   ],
+   "seconds": 6.6,
+   "rerun_after_strengthening": false
+  },
+  {
+   "name": "panel_keeps_the_snapshot_rows",
+   "file": "quam_state_manager/web/routes.py",
+   "red": true,
+   "failed_pins": [
+    "test_both_surfaces_name_runs_sm_writes_and_observed_states"
+   ],
+   "pins": [
+    "test_both_surfaces_name_runs_sm_writes_and_observed_states"
+   ],
+   "seconds": 5.6,
+   "rerun_after_strengthening": false
+  },
+  {
+   "name": "history_page_keeps_the_snapshot_rows",
+   "file": "quam_state_manager/web/routes.py",
+   "red": true,
+   "failed_pins": [
+    "test_state_history_pages_through_the_ledger_rows"
+   ],
+   "pins": [
+    "test_both_surfaces_name_runs_sm_writes_and_observed_states",
+    "test_state_history_pages_through_the_ledger_rows"
+   ],
+   "seconds": 6.7,
+   "rerun_after_strengthening": false
+  },
+  {
+   "name": "sm_write_without_its_actor",
+   "file": "quam_state_manager/web/routes.py",
+   "red": true,
+   "failed_pins": [
+    "test_both_surfaces_name_runs_sm_writes_and_observed_states"
+   ],
+   "pins": [
+    "test_both_surfaces_name_runs_sm_writes_and_observed_states"
+   ],
+   "seconds": 5.9,
+   "rerun_after_strengthening": false
+  },
+  {
+   "name": "observed_state_given_a_writer",
+   "file": "quam_state_manager/web/routes.py",
+   "red": true,
+   "failed_pins": [
+    "test_both_surfaces_name_runs_sm_writes_and_observed_states"
+   ],
+   "pins": [
+    "test_both_surfaces_name_runs_sm_writes_and_observed_states"
+   ],
+   "seconds": 5.7,
+   "rerun_after_strengthening": false
+  },
+  {
+   "name": "run_without_its_node",
+   "file": "quam_state_manager/web/routes.py",
+   "red": true,
+   "failed_pins": [
+    "test_both_surfaces_name_runs_sm_writes_and_observed_states"
+   ],
+   "pins": [
+    "test_both_surfaces_name_runs_sm_writes_and_observed_states"
+   ],
+   "seconds": 5.8,
+   "rerun_after_strengthening": false
+  },
+  {
+   "name": "an_archive_marked_as_live",
+   "file": "quam_state_manager/web/routes.py",
+   "red": true,
+   "failed_pins": [
+    "test_an_archive_lists_versions_but_offers_no_write_and_no_live_mark"
+   ],
+   "pins": [
+    "test_an_archive_lists_versions_but_offers_no_write_and_no_live_mark"
+   ],
+   "seconds": 5.5,
+   "rerun_after_strengthening": false
+  },
+  {
+   "name": "live_version_never_marked",
+   "file": "quam_state_manager/web/routes.py",
+   "red": true,
+   "failed_pins": [
+    "test_both_surfaces_name_runs_sm_writes_and_observed_states"
+   ],
+   "pins": [
+    "test_both_surfaces_name_runs_sm_writes_and_observed_states"
+   ],
+   "seconds": 6.0,
+   "rerun_after_strengthening": false
+  },
+  {
+   "name": "fallback_unlabelled",
+   "file": "quam_state_manager/web/routes.py",
+   "red": true,
+   "failed_pins": [
+    "test_a_chip_without_a_ledger_keeps_the_old_path_labelled"
+   ],
+   "pins": [
+    "test_a_chip_without_a_ledger_keeps_the_old_path_labelled"
+   ],
+   "seconds": 6.9,
+   "rerun_after_strengthening": false
+  },
+  {
+   "name": "version_diff_empty",
+   "file": "quam_state_manager/web/routes.py",
+   "red": true,
+   "failed_pins": [
+    "test_diff_and_compare_read_ledger_documents_in_time_order"
+   ],
+   "pins": [
+    "test_diff_and_compare_read_ledger_documents_in_time_order"
+   ],
+   "seconds": 6.7,
+   "rerun_after_strengthening": false
+  },
+  {
+   "name": "pull_offered_for_any_version",
+   "file": "quam_state_manager/web/routes.py",
+   "red": true,
+   "failed_pins": [
+    "test_a_version_the_ledger_cannot_hand_over_refuses_before_any_write"
+   ],
+   "pins": [
+    "test_a_version_the_ledger_cannot_hand_over_refuses_before_any_write"
+   ],
+   "seconds": 6.1,
+   "rerun_after_strengthening": false
+  },
+  {
+   "name": "workbench_compares_a_wiring",
+   "file": "quam_state_manager/web/routes.py",
+   "red": true,
+   "failed_pins": [
+    "test_diff_and_compare_read_ledger_documents_in_time_order"
+   ],
+   "pins": [
+    "test_diff_and_compare_read_ledger_documents_in_time_order"
+   ],
+   "seconds": 6.0,
+   "rerun_after_strengthening": false
+  },
+  {
+   "name": "workbench_state_tab_unmerged",
+   "file": "quam_state_manager/web/routes.py",
+   "red": true,
+   "failed_pins": [
+    "test_diff_and_compare_read_ledger_documents_in_time_order"
+   ],
+   "pins": [
+    "test_diff_and_compare_read_ledger_documents_in_time_order"
+   ],
+   "seconds": 5.4,
+   "rerun_after_strengthening": false
+  },
+  {
+   "name": "workbench_plain_equality",
+   "file": "quam_state_manager/web/routes.py",
+   "red": true,
+   "failed_pins": [
+    "test_the_workbench_compares_ledger_versions_under_the_one_rule"
+   ],
+   "pins": [
+    "test_the_workbench_compares_ledger_versions_under_the_one_rule"
+   ],
+   "seconds": 5.6,
+   "rerun_after_strengthening": false
+  },
+  {
+   "name": "compare_columns_newest_first",
+   "file": "quam_state_manager/web/routes.py",
+   "red": true,
+   "failed_pins": [
+    "test_diff_and_compare_read_ledger_documents_in_time_order"
+   ],
+   "pins": [
+    "test_diff_and_compare_read_ledger_documents_in_time_order"
+   ],
+   "seconds": 5.7,
+   "rerun_after_strengthening": false
+  },
+  {
+   "name": "compare_column_unnamed",
+   "file": "quam_state_manager/web/routes.py",
+   "red": true,
+   "failed_pins": [
+    "test_diff_and_compare_read_ledger_documents_in_time_order"
+   ],
+   "pins": [
+    "test_diff_and_compare_read_ledger_documents_in_time_order"
+   ],
+   "seconds": 5.8,
+   "rerun_after_strengthening": false
+  },
+  {
+   "name": "workbench_refuses_a_version_id",
+   "file": "quam_state_manager/core/compare_sources.py",
+   "red": true,
+   "failed_pins": [
+    "test_diff_and_compare_read_ledger_documents_in_time_order"
+   ],
+   "pins": [
+    "test_diff_and_compare_read_ledger_documents_in_time_order"
+   ],
+   "seconds": 6.1,
+   "rerun_after_strengthening": false
+  },
+  {
+   "name": "panel_stage_for_any_version",
+   "file": "quam_state_manager/web/templates/_state_versions.html",
+   "red": true,
+   "failed_pins": [
+    "test_a_version_the_ledger_cannot_hand_over_refuses_before_any_write"
+   ],
+   "pins": [
+    "test_a_version_the_ledger_cannot_hand_over_refuses_before_any_write"
+   ],
+   "seconds": 6.2,
+   "rerun_after_strengthening": false
+  },
+  {
+   "name": "panel_diff_never_disabled",
+   "file": "quam_state_manager/web/templates/_state_versions.html",
+   "red": true,
+   "failed_pins": [
+    "test_a_runs_missing_blob_stops_its_diff_not_its_exact_files"
+   ],
+   "pins": [
+    "test_a_runs_missing_blob_stops_its_diff_not_its_exact_files"
+   ],
+   "seconds": 5.8,
+   "rerun_after_strengthening": false
+  },
+  {
+   "name": "panel_reason_hidden",
+   "file": "quam_state_manager/web/templates/_state_versions.html",
+   "red": true,
+   "failed_pins": [
+    "test_a_version_the_ledger_cannot_hand_over_refuses_before_any_write"
+   ],
+   "pins": [
+    "test_a_version_the_ledger_cannot_hand_over_refuses_before_any_write"
+   ],
+   "seconds": 5.7,
+   "rerun_after_strengthening": false
+  },
+  {
+   "name": "panel_asks_to_refilter_forever",
+   "file": "quam_state_manager/web/templates/_state_versions.html",
+   "red": true,
+   "failed_pins": [
+    "test_the_ledger_panel_never_asks_the_browser_to_refilter"
+   ],
+   "pins": [
+    "test_the_ledger_panel_never_asks_the_browser_to_refilter"
+   ],
+   "seconds": 5.5,
+   "rerun_after_strengthening": false
+  },
+  {
+   "name": "building_says_no_versions",
+   "file": "quam_state_manager/web/templates/_state_versions.html",
+   "red": true,
+   "failed_pins": [
+    "test_a_building_ledger_draws_the_older_snapshots_and_says_so"
+   ],
+   "pins": [
+    "test_a_building_ledger_draws_the_older_snapshots_and_says_so"
+   ],
+   "seconds": 6.0,
+   "rerun_after_strengthening": false
+  },
+  {
+   "name": "panel_notes_hidden",
+   "file": "quam_state_manager/web/templates/_state_versions.html",
+   "red": true,
+   "failed_pins": [
+    "test_a_building_ledger_draws_the_older_snapshots_and_says_so",
+    "test_a_chip_without_a_ledger_keeps_the_old_path_labelled"
+   ],
+   "pins": [
+    "test_a_building_ledger_draws_the_older_snapshots_and_says_so",
+    "test_a_chip_without_a_ledger_keeps_the_old_path_labelled"
+   ],
+   "seconds": 6.8,
+   "rerun_after_strengthening": false
+  },
+  {
+   "name": "history_notes_hidden",
+   "file": "quam_state_manager/web/templates/_state_history_body.html",
+   "red": true,
+   "failed_pins": [
+    "test_a_building_ledger_draws_the_older_snapshots_and_says_so"
+   ],
+   "pins": [
+    "test_a_building_ledger_draws_the_older_snapshots_and_says_so"
+   ],
+   "seconds": 5.5,
+   "rerun_after_strengthening": false
+  },
+  {
+   "name": "history_write_buttons_for_any_version",
+   "file": "quam_state_manager/web/templates/_ledger_state_history.html",
+   "red": true,
+   "failed_pins": [
+    "test_a_version_the_ledger_cannot_hand_over_refuses_before_any_write"
+   ],
+   "pins": [
+    "test_a_version_the_ledger_cannot_hand_over_refuses_before_any_write"
+   ],
+   "seconds": 6.5,
+   "rerun_after_strengthening": false
+  },
+  {
+   "name": "history_diff_reason_hidden",
+   "file": "quam_state_manager/web/templates/_ledger_state_history.html",
+   "red": true,
+   "failed_pins": [
+    "test_a_runs_missing_blob_stops_its_diff_not_its_exact_files"
+   ],
+   "pins": [
+    "test_a_runs_missing_blob_stops_its_diff_not_its_exact_files"
+   ],
+   "seconds": 6.1,
+   "rerun_after_strengthening": false
+  }
+ ]
+}

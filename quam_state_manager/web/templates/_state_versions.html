@@ -20,16 +20,33 @@
                       It wears the ONE overwrite-live language (docs/86/97),
                       because that is what it does.
 #}
+{# docs/284: on a chip with a change ledger, `ledger_versions.mode` is
+   "ledger" and the rows are its state-bearing events (run #N + node, an SM
+   write with its actor and kind, a state SM observed) plus the older
+   snapshots no event covers; every other mode draws the snapshot rows below
+   with a note saying why. #}
+{% set ledger_mode = ledger_versions is defined and ledger_versions and ledger_versions.mode == 'ledger' %}
+{# data-changes is the snapshot path's changes-only filter; the client
+   re-asks when it differs from the browser's choice. Ledger rows are not
+   filtered, so they carry none (a value there would re-ask forever). #}
 <div class="state-versions" role="dialog" aria-label="State versions"
-     data-changes="{{ 'only' if changes_only else 'all' }}">
+     {% if not ledger_mode %}data-changes="{{ 'only' if changes_only else 'all' }}"{% endif %}
+     data-source="{{ 'ledger' if ledger_mode else 'snapshots' }}">
     <div class="state-versions-head">
         <strong>Versions</strong>
         {% if total %}<span class="muted">{{ rows | length }} of {{ total }}</span>{% endif %}
         <button type="button" class="state-versions-close" onclick="StateVersions.close()"
                 aria-label="Close">&times;</button>
     </div>
+    {% if ledger_versions is defined and ledger_versions %}{% for n in ledger_versions.notes %}
+    <p class="muted sv-ledger-note" data-note="{{ n.code }}">{{ n.text }}</p>
+    {% endfor %}{% endif %}
 
-    {% if not rows %}
+    {% if not rows and ledger_versions is defined and ledger_versions and ledger_versions.mode in ('building', 'preparing') %}
+    {# docs/284: the change history is not ready; the note above says so, and
+       "no recorded versions" would deny the runs it is reading right now #}
+    <p class="muted state-versions-empty">No older snapshots to show meanwhile.</p>
+    {% elif not rows %}
     {# Honest empty state: no history for this chip is a fact, not a failure. #}
     <p class="muted state-versions-empty">
         No recorded versions for this chip yet. One is captured every time the
@@ -99,7 +116,7 @@
                 <span class="sv-when">
                     {# ts_local renders the recorded moment in the viewer's zone —
                        "when was this updated" is the column the user asked for. #}
-                    <span class="sv-time">{{ r.ts | ts_local }}</span>
+                    <span class="sv-time">{{ (r.when or r.ts) | ts_local }}</span>
                     <span class="sv-id">{{ r.ts }}</span>
                 </span>
             </label>
@@ -115,10 +132,15 @@
                    so the write button beside it is an informed act instead
                    of a leap. Offered on every row, archives included
                    (comparing is always safe where restoring is not). #}
+                {% if r.why_diff %}
+                <button type="button" class="btn-xs outline sv-diff" disabled
+                        title="{{ r.why_diff }}">Diff</button>
+                {% else %}
                 <button type="button" class="btn-xs outline sv-diff"
                         onclick="StateVersions.diff('{{ r.ts }}', '{{ chip_key }}')"
                         title="Compare this version with the current working state. Opening writes nothing; inside, ✓ can stage single values into your working state (Review tray).">Diff</button>
-                {% if r.run_id is not none %}
+                {% endif %}
+                {% if r.run_id is not none and (not ledger_mode or r.legacy) %}
                 {# docs/132 (the customer's most-wanted): WHICH RUN produced
                    this state. "After #id" is the honest word — qualibrate
                    saves the state copy AFTER the fit updates land. Click
@@ -144,7 +166,16 @@
                 </a>
                 {% endif %}
                 {% endif %}
-                {% if not archive and not r.current %}
+                {% if ledger_mode and not archive and not r.current and not r.why_write and not r.pending %}
+                {# docs/284: load this version into the working copy for review,
+                   then Apply -- the State History door, gates and all #}
+                <button type="button" class="btn-xs outline sv-stage"
+                        hx-post="/state-history/{{ r.ts }}/stage?target=status&amp;chip_key={{ chip_key | urlencode }}"
+                        hx-target="#status-bar" hx-swap="innerHTML"
+                        onclick="StateVersions.close()"
+                        title="Load this version as your working state to review it, then Apply. Unsaved edits ask first; the live chip is untouched until you Apply.">Stage</button>
+                {% endif %}
+                {% if not archive and not r.current and not r.why_write and not r.pending %}
                 {# The same route State History uses, gates and all — but it
                    WRITES THE LIVE CHIP, and docs/86/97 established one visual
                    language for that: error-tinted, never the primary action.
@@ -154,7 +185,7 @@
                    The two independent force gates are unchanged; this is the
                    styling and the wording catching up to what the button does. #}
                 <button type="button" class="btn-xs outline sv-restore live-diverged-overwrite"
-                        hx-post="/state-history/{{ r.ts }}/restore-live"
+                        hx-post="/state-history/{{ r.ts }}/restore-live{% if ledger_mode %}?chip_key={{ chip_key | urlencode }}{% endif %}"
                         hx-target="#table-pane" hx-swap="innerHTML"
                         onclick="StateVersions.close()"
                         {# Label concise per the user (2026-08-20): the ACT —
@@ -172,8 +203,27 @@
                    The raw trigger + a legacy note live in the tooltip — old
                    snapshots predate the kind field, and certainty the data
                    doesn't hold is never claimed. #}
+                {% if ledger_mode and not r.legacy %}
+                {% if r.run_uid %}
+                <a class="sv-run sv-event" href="/dataset/{{ r.run_uid }}"
+                   hx-get="/dataset/{{ r.run_uid }}" hx-target="#inspector-pane"
+                   hx-swap="innerHTML" onclick="StateVersions.close()"
+                   title="{{ r.hover }} Open this run's data panel.">
+                    <span class="sv-run-id">run #{{ r.run_id }}</span>
+                    {% if r.experiment %}<span class="sv-run-name">{{ r.experiment }}</span>{% endif %}
+                </a>
+                {% else %}
+                <span class="sv-event sv-event-{{ r.badge | replace(' ', '-') }}" title="{{ r.hover }}">{{ r.title }}</span>
+                {% endif %}
+                <span class="muted sv-event-sub">{{ r.sub }}</span>
+                {% for f in r.flags %}<span class="sv-flag">{{ f }}</span>{% endfor %}
+                {% if r.why_write %}<span class="sv-unavailable" title="{{ r.why_write }}">{{ r.why_write }}</span>{% endif %}
+                {% if r.why_diff and r.why_diff != r.why_write %}<span class="sv-unavailable" title="{{ r.why_diff }}">{{ r.why_diff }}</span>{% endif %}
+                {% else %}
+                {% if ledger_mode %}<span class="sv-older" title="A Param History snapshot no change-history event covers: read-only history{% if r.pending %}; still being matched against the change history{% endif %}">older snapshot{% if r.pending %} (matching){% endif %}</span>{% endif %}
                 <span class="sv-kind sv-kind-{{ r.kind }}{% if r.kind_legacy %} sv-kind-legacy{% endif %}"
                       title="{% if r.kind == 'exp' %}A run produced this state{% elif r.kind == 'backup' %}Protective copy taken right before a write{% else %}You changed the state on purpose (apply / pull / restore / snapshot / bookmark){% endif %} — recorded trigger: {{ r.trigger }}{% if r.kind_legacy %} (recorded before kinds existed; this is the likely reading){% endif %}">{{ {'exp': 'EXP', 'manual': 'MANUAL', 'backup': 'BACKUP'}[r.kind] }}</span>
+                {% endif %}
                 {{ source_badge(r.source, 'sv-src') }}
                 {% if r.pinned %}<span class="sv-pin" title="Pinned — exempt from pruning">&#128204;</span>{% endif %}
                 {% if r.current %}<span class="sv-now" title="The live chip currently holds exactly this content">on this now</span>{% endif %}
@@ -211,16 +261,24 @@
        silently would be a lie about the history — the count and the toggle
        make it visible and reversible. #}
     <div class="state-versions-foot muted">
-        {% if hidden_unchanged %}
+        {% if ledger_mode %}
+        <span class="sv-kept-note">From the change history: {{ ledger_versions.events }} recorded
+            state{{ '' if ledger_versions.events == 1 else 's' }}{% if ledger_versions.legacy_total %}
+            and {{ ledger_versions.legacy_total }} older snapshot{{ '' if ledger_versions.legacy_total == 1 else 's' }}{% endif %} — full list in
+            <a href="/state-history" hx-get="/state-history" hx-target="#table-pane"
+               hx-push-url="true" onclick="StateVersions.close()">State History</a>.</span>
+        {% elif hidden_unchanged %}
         <span class="sv-hidden-note">{{ hidden_unchanged }} unchanged {{ 'copy' if hidden_unchanged == 1 else 'copies' }} hidden —
             <a href="#" onclick="StateVersions.setChanges('all'); return false;">show all</a></span>
         {% elif not changes_only %}
         <span class="sv-hidden-note">showing unchanged copies too —
             <a href="#" onclick="StateVersions.setChanges('only'); return false;">hide them</a></span>
         {% endif %}
+        {% if not ledger_mode %}
         <span class="sv-kept-note">All {{ total }} {{ 'version is' if total == 1 else 'versions are' }} kept — full list in
             <a href="/state-history" hx-get="/state-history" hx-target="#table-pane"
                hx-push-url="true" onclick="StateVersions.close()">State History</a>.</span>
+        {% endif %}
     </div>
     {% endif %}
 </div>

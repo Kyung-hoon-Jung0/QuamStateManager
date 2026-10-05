@@ -1,0 +1,906 @@
+{
+ "golden": {
+  "Archive A": {
+   "copy": {
+    "archive": "Archive A",
+    "runs_copied": 39,
+    "runs_with_a_saved_pair": 39,
+    "copy_s": 0.2,
+    "load_and_ledger_s": 1.1,
+    "param_history_backfill_s": 2.8,
+    "outside_edits": {
+     "made": 10,
+     "captured": 10,
+     "import": {
+      "observed:dropped": 0,
+      "observed:inserted": 5
+     }
+    },
+    "sm_writes": {
+     "applied": 3,
+     "undone": 1
+    }
+   },
+   "param_history_snapshots": 20,
+   "ledger_events": 48,
+   "ledger_events_by_kind": {
+    "run": 39,
+    "observed": 5,
+    "sm_apply": 3,
+    "undo": 1
+   },
+   "state_bearing_events": 28,
+   "events_of_an_uncertain_chip_identity": 20,
+   "snapshots_mapped": 19,
+   "mapped_by": {
+    "capture (save): content hash, nearest event": 3,
+    "capture: the ledger's own observed event": 5,
+    "run: its own snapshot key": 11
+   },
+   "snapshots_not_held": {
+    "a capture (auto) whose state no event holds": 1
+   },
+   "replay_vs_snapshot": {
+    "typed_equal": 3,
+    "same_only": 16
+   },
+   "replay_vs_snapshot_by_kind": {
+    "observed: same_only": 5,
+    "run: same_only": 11,
+    "sm_apply: typed_equal": 3
+   },
+   "type_only_leaves": {
+    "int saved, float replayed: a scalar leaf": 6196,
+    "int saved, float replayed: an element of a short list (a row of the changes table)": 192
+   },
+   "exact_pair_vs_snapshot": {
+    "typed_equal (both files)": 19
+   },
+   "events_no_snapshot_shows": {
+    "a run whose state a snapshot of another moment holds (Param History keeps one copy per content)": 8,
+    "an SM write (undo) Param History kept no copy of": 1
+   },
+   "their_replay_vs_their_saved_files": {
+    "same_only": 8
+   },
+   "versions_read_ms": 110.3,
+   "versions_mode": "ledger",
+   "versions_rows": {
+    "events": 28,
+    "older_snapshots": 1,
+    "pending": 0
+   },
+   "older_listed_but_held": [],
+   "older_not_listed_and_not_held": [],
+   "older_listed_but_held_n": 0,
+   "older_not_listed_and_not_held_n": 0
+  },
+  "Archive B": {
+   "copy": {
+    "archive": "Archive B",
+    "runs_copied": 200,
+    "runs_with_a_saved_pair": 191,
+    "copy_s": 2.3,
+    "load_and_ledger_s": 3.4,
+    "param_history_backfill_s": 7.8,
+    "outside_edits": {
+     "made": 10,
+     "captured": 10,
+     "import": {
+      "observed:dropped": 0,
+      "observed:inserted": 10
+     }
+    },
+    "sm_writes": {
+     "applied": 6,
+     "undone": 2
+    }
+   },
+   "param_history_snapshots": 134,
+   "ledger_events": 209,
+   "ledger_events_by_kind": {
+    "run": 191,
+    "observed": 10,
+    "sm_apply": 6,
+    "undo": 2
+   },
+   "state_bearing_events": 209,
+   "events_of_an_uncertain_chip_identity": 0,
+   "snapshots_mapped": 133,
+   "mapped_by": {
+    "capture (save): content hash, nearest event": 6,
+    "run: its own snapshot key": 117,
+    "capture: the ledger's own observed event": 10
+   },
+   "snapshots_not_held": {
+    "a capture (auto) whose state no event holds": 1
+   },
+   "replay_vs_snapshot": {
+    "typed_equal": 6,
+    "same_only": 127
+   },
+   "replay_vs_snapshot_by_kind": {
+    "observed: same_only": 10,
+    "run: same_only": 117,
+    "sm_apply: typed_equal": 6
+   },
+   "type_only_leaves": {
+    "int saved, float replayed: a scalar leaf": 102911,
+    "int saved, float replayed: an element of a short list (a row of the changes table)": 4824
+   },
+   "exact_pair_vs_snapshot": {
+    "typed_equal (both files)": 133
+   },
+   "events_no_snapshot_shows": {
+    "a run whose state a snapshot of another moment holds (Param History keeps one copy per content)": 74,
+    "an SM write (undo) Param History kept no copy of": 2
+   },
+   "their_replay_vs_their_saved_files": {
+    "same_only": 74
+   },
+   "versions_read_ms": 75.0,
+   "versions_mode": "ledger",
+   "versions_rows": {
+    "events": 209,
+    "older_snapshots": 1,
+    "pending": 0
+   },
+   "older_listed_but_held": [],
+   "older_not_listed_and_not_held": [],
+   "older_listed_but_held_n": 0,
+   "older_not_listed_and_not_held_n": 0
+  },
+  "Rig history A": {
+   "copy": {
+    "history": "Rig history A",
+    "snapshots_copied": 40,
+    "copy_s": 0.4,
+    "observed_import": {
+     "observed:inserted": 37,
+     "observed:same_before": 1,
+     "observed:added": 2,
+     "observed:dropped": 0
+    },
+    "load_and_ledger_s": 4.5
+   },
+   "param_history_snapshots": 40,
+   "ledger_events": 42,
+   "ledger_events_by_kind": {
+    "run": 3,
+    "observed": 39
+   },
+   "state_bearing_events": 42,
+   "events_of_an_uncertain_chip_identity": 0,
+   "snapshots_mapped": 40,
+   "mapped_by": {
+    "capture: the ledger's own observed event": 39,
+    "capture (manual): content hash, nearest event [import verdict same_before]": 1
+   },
+   "snapshots_not_held": {},
+   "replay_vs_snapshot": {
+    "same_only": 40
+   },
+   "replay_vs_snapshot_by_kind": {
+    "observed: same_only": 39,
+    "run: same_only": 1
+   },
+   "type_only_leaves": {
+    "int saved, float replayed: an element of a short list (a row of the changes table)": 22218,
+    "int saved, float replayed: a scalar leaf": 88135
+   },
+   "exact_pair_vs_snapshot": {
+    "typed_equal (both files)": 40
+   },
+   "events_no_snapshot_shows": {
+    "a run Param History took no snapshot of": 1,
+    "a run whose state a snapshot of another moment holds (Param History keeps one copy per content)": 1
+   },
+   "their_replay_vs_their_saved_files": {
+    "same_only": 2
+   },
+   "versions_read_ms": 65.2,
+   "versions_mode": "ledger",
+   "versions_rows": {
+    "events": 42,
+    "older_snapshots": 0,
+    "pending": 0
+   },
+   "older_listed_but_held": [],
+   "older_not_listed_and_not_held": [],
+   "older_listed_but_held_n": 0,
+   "older_not_listed_and_not_held_n": 0
+  },
+  "Rig history B": {
+   "copy": {
+    "history": "Rig history B",
+    "snapshots_copied": 647,
+    "copy_s": 3.1,
+    "observed_import": {
+     "observed:inserted": 7,
+     "observed:added": 62,
+     "observed:same_before": 1,
+     "observed:dropped": 0
+    },
+    "load_and_ledger_s": 3.6
+   },
+   "param_history_snapshots": 647,
+   "ledger_events": 108,
+   "ledger_events_by_kind": {
+    "run": 39,
+    "observed": 69
+   },
+   "state_bearing_events": 88,
+   "events_of_an_uncertain_chip_identity": 20,
+   "snapshots_mapped": 72,
+   "mapped_by": {
+    "capture: the ledger's own observed event": 69,
+    "capture (manual): content hash, nearest event [import verdict same_before]": 1,
+    "run: its own snapshot key": 5
+   },
+   "snapshots_not_held": {
+    "a run the ledger does not hold (its folder is not in the copied data)": 572,
+    "a run snapshot whose run's saved files differ from it now": 3
+   },
+   "replay_vs_snapshot": {
+    "same_only": 72
+   },
+   "replay_vs_snapshot_by_kind": {
+    "observed: same_only": 70,
+    "run: same_only": 2
+   },
+   "type_only_leaves": {
+    "int saved, float replayed: an element of a short list (a row of the changes table)": 712,
+    "int saved, float replayed: a scalar leaf": 22870,
+    "float saved, int replayed: an element of a long scalar array (an S2 array blob)": 50560
+   },
+   "exact_pair_vs_snapshot": {
+    "typed_equal (both files)": 72
+   },
+   "events_no_snapshot_shows": {
+    "a run Param History took no snapshot of": 11,
+    "a run whose Param History snapshot differs from its saved files now": 3,
+    "a run whose state a snapshot of another moment holds (Param History keeps one copy per content)": 3
+   },
+   "their_replay_vs_their_saved_files": {
+    "same_only": 17
+   },
+   "versions_read_ms": 136.6,
+   "versions_mode": "ledger",
+   "versions_rows": {
+    "events": 88,
+    "older_snapshots": 575,
+    "pending": 0
+   },
+   "older_listed_but_held": [],
+   "older_not_listed_and_not_held": [],
+   "older_listed_but_held_n": 0,
+   "older_not_listed_and_not_held_n": 0
+  }
+ },
+ "round_trip": {
+  "Archive A": {
+   "version": "run #36",
+   "old_id": "Param History snapshot",
+   "new_id": "ledger version",
+   "old_stage_record": {
+    "kind": "sm_apply",
+    "actor": "human:operator",
+    "src": "apply_staged"
+   },
+   "old_stage_revert_gives_baseline": true,
+   "old_restore_record": {
+    "kind": "restore",
+    "actor": "human:operator",
+    "src": "restore_live"
+   },
+   "old_restore_backed_up_first": true,
+   "old_restore_revert_gives_baseline": true,
+   "new_stage_record": {
+    "kind": "sm_apply",
+    "actor": "human:operator",
+    "src": "apply_staged"
+   },
+   "new_stage_revert_gives_baseline": true,
+   "new_restore_record": {
+    "kind": "restore",
+    "actor": "human:operator",
+    "src": "restore_live"
+   },
+   "new_restore_backed_up_first": true,
+   "new_restore_revert_gives_baseline": true,
+   "stage_bytes_identical": true,
+   "stage_bytes": [
+    97512,
+    2532
+   ],
+   "stage_live_equals_the_runs_files_typed": true,
+   "restore_bytes_identical": true,
+   "restore_bytes": [
+    97512,
+    2532
+   ],
+   "restore_live_equals_the_runs_files_typed": true
+  },
+  "Archive B": {
+   "version": "run #2650",
+   "old_id": "Param History snapshot",
+   "new_id": "ledger version",
+   "old_stage_record": {
+    "kind": "sm_apply",
+    "actor": "human:operator",
+    "src": "apply_staged"
+   },
+   "old_stage_revert_gives_baseline": true,
+   "old_restore_record": {
+    "kind": "restore",
+    "actor": "human:operator",
+    "src": "restore_live"
+   },
+   "old_restore_backed_up_first": true,
+   "old_restore_revert_gives_baseline": true,
+   "new_stage_record": {
+    "kind": "sm_apply",
+    "actor": "human:operator",
+    "src": "apply_staged"
+   },
+   "new_stage_revert_gives_baseline": true,
+   "new_restore_record": {
+    "kind": "restore",
+    "actor": "human:operator",
+    "src": "restore_live"
+   },
+   "new_restore_backed_up_first": true,
+   "new_restore_revert_gives_baseline": true,
+   "stage_bytes_identical": true,
+   "stage_bytes": [
+    314636,
+    7193
+   ],
+   "stage_live_equals_the_runs_files_typed": true,
+   "restore_bytes_identical": true,
+   "restore_bytes": [
+    314636,
+    7193
+   ],
+   "restore_live_equals_the_runs_files_typed": true
+  }
+ },
+ "faults": [
+  {
+   "fault": "missing blob (a run's shape)",
+   "injected_by": "the shape blob of run #2 deleted from the ledger (shared by 3 events)",
+   "expected": "Diff/Compare refuse with 'Missing ledger blob'; Stage/Restore stay exact from the run's own saved files (verified against the raw hash)",
+   "panel": {
+    "source": "ledger",
+    "notes": [],
+    "row": {
+     "listed": true,
+     "words": "#2 2026-01-01 12:00:20 UTC 20260101_120020_000000_event-2 Diff Stage ↑ Pull to Live run #2 scan saved at the run's end Missing ledger blob: the change history cannot rebuild this state.",
+     "diff_offered": false,
+     "stage_offered": true,
+     "restore_offered": true
+    }
+   },
+   "state_history": {
+    "notes": [],
+    "row": {
+     "listed": true,
+     "words": "2026-01-01 12:00:20 UTC run #2 scan saved at the run's end Missing ledger blob: the change history cannot rebuild this state.",
+     "diff_offered": false,
+     "stage_offered": true,
+     "restore_offered": true
+    }
+   },
+   "diff": {
+    "status": 200,
+    "words": "Diff failed: Missing ledger blob: the change history cannot rebuild this state (missing ledger blob eb1bc18642876f88959ffaea839dbf5dd7c53248). ×"
+   },
+   "compare": {
+    "status": 200,
+    "words": "⚠ Compare failed: Missing ledger blob: the change history cannot rebuild this state (missing ledger blob eb1bc18642876f88959ffaea839dbf5dd7c53248)."
+   },
+   "restore-live": {
+    "status": 200,
+    "words": "Live chip restored to snapshot 20260101_120020_000000_event-2. The prior state was snapshotted first, so this is reversible. × ● In sync live ▾ Auto -Sync ↶",
+    "live_unchanged": false,
+    "no_new_snapshot": false,
+    "journal_unchanged": false,
+    "working_unchanged": false
+   },
+   "stage": {
+    "status": 200,
+    "words": "Version 2026-01-01 12:00:20 UTC loaded as the working state. Review it against the live chip from the sync status in the top bar (Staged version · not on live), then press ↑ Apply. × ● Staged version · not on live live ▾ ↑ Apply Auto -Sync ↶",
+    "live_unchanged": true,
+    "no_new_snapshot": true,
+    "journal_unchanged": true,
+    "working_unchanged": true
+   }
+  },
+  {
+   "fault": "missing blob (an SM write's kept pair)",
+   "injected_by": "the anchor blob of the first of two SM applies deleted (the second replays from it)",
+   "expected": "Diff and Stage/Restore refuse with 'Missing ledger blob'; nothing written",
+   "panel": {
+    "source": "ledger",
+    "notes": [
+     "3 older snapshots are still being matched against the change history; such a row may repeat a state listed above until it is done. Reopen in a moment."
+    ],
+    "row": {
+     "listed": true,
+     "words": "#4 2026-10-05 19:53:50 UTC 20261005_195350_135402_event-4 Diff applied by operator SM write (apply) Missing ledger blob: the files this SM write produced are not kept, so it cannot be rebuilt.",
+     "diff_offered": false,
+     "stage_offered": false,
+     "restore_offered": false
+    }
+   },
+   "state_history": {
+    "notes": [],
+    "row": {
+     "listed": true,
+     "words": "2026-10-05 19:53:50 UTC applied by operator SM write (apply) Missing ledger blob: the files this SM write produced are not kept, so it cannot be rebuilt.",
+     "diff_offered": false,
+     "stage_offered": false,
+     "restore_offered": false
+    }
+   },
+   "diff": {
+    "status": 200,
+    "words": "Diff failed: Missing ledger blob: the change history cannot rebuild this state (missing ledger blob bd76a1dd41d21646a03c75d3e1244d3e60405f70). ×"
+   },
+   "compare": {
+    "status": 200,
+    "words": "⚠ Compare failed: Missing ledger blob: the change history cannot rebuild this state (missing ledger blob bd76a1dd41d21646a03c75d3e1244d3e60405f70)."
+   },
+   "restore-live": {
+    "status": 404,
+    "words": "This version cannot be staged or restored exactly: Missing ledger blob: the files this SM write produced cannot be read (missing ledger blob bd76a1dd41d21646a03c75d3e1244d3e60405f70). ×",
+    "live_unchanged": true,
+    "no_new_snapshot": true,
+    "journal_unchanged": true,
+    "working_unchanged": true
+   },
+   "stage": {
+    "status": 404,
+    "words": "This version cannot be staged or restored exactly: Missing ledger blob: the files this SM write produced cannot be read (missing ledger blob bd76a1dd41d21646a03c75d3e1244d3e60405f70). ×",
+    "live_unchanged": true,
+    "no_new_snapshot": true,
+    "journal_unchanged": true,
+    "working_unchanged": true
+   },
+   "the_write_replayed_from_it": {
+    "panel": {
+     "source": "ledger",
+     "notes": [],
+     "row": {
+      "listed": true,
+      "words": "#1 2026-10-05 19:53:50 UTC 20261005_195350_230510_event-5 Diff applied by operator SM write (apply) on this now",
+      "diff_offered": true,
+      "stage_offered": false,
+      "restore_offered": false
+     }
+    },
+    "state_history": {
+     "notes": [],
+     "row": {
+      "listed": true,
+      "words": "2026-10-05 19:53:50 UTC applied by operator SM write (apply) on this now",
+      "diff_offered": true,
+      "stage_offered": true,
+      "restore_offered": true
+     }
+    },
+    "diff": {
+     "status": 200,
+     "words": "Diff failed: Missing ledger blob: the change history cannot rebuild this state (missing ledger blob bd76a1dd41d21646a03c75d3e1244d3e60405f70). ×"
+    },
+    "compare": {
+     "status": 200,
+     "words": "⚠ Compare failed: Missing ledger blob: the change history cannot rebuild this state (missing ledger blob bd76a1dd41d21646a03c75d3e1244d3e60405f70)."
+    }
+   }
+  },
+  {
+   "fault": "SOURCE_GONE",
+   "injected_by": "run #1's folder deleted, full sweep (flags now 256)",
+   "expected": "Diff/Compare read the ledger's merged document; Stage/Restore refuse 'SOURCE_GONE' before any confirm, backup or write",
+   "panel": {
+    "source": "ledger",
+    "notes": [],
+    "row": {
+     "listed": true,
+     "words": "#3 2026-01-01 12:00:10 UTC 20260101_120010_000000_event-1 Diff run #1 scan saved at the run's end SOURCE_GONE: this run's saved files are gone. Diff and Compare read the ledger's merged document; Stage and Restore need the two original files.",
+     "diff_offered": true,
+     "stage_offered": false,
+     "restore_offered": false
+    }
+   },
+   "state_history": {
+    "notes": [],
+    "row": {
+     "listed": true,
+     "words": "2026-01-01 12:00:10 UTC run #1 scan saved at the run's end SOURCE_GONE: this run's saved files are gone. Diff and Compare read the ledger's merged document; Stage and Restore need the two original files.",
+     "diff_offered": true,
+     "stage_offered": false,
+     "restore_offered": false
+    }
+   },
+   "diff": {
+    "status": 200,
+    "words": "3 differing values shown"
+   },
+   "compare": {
+    "status": 200,
+    "words": "table, 2 rows"
+   },
+   "restore-live": {
+    "status": 404,
+    "words": "This version cannot be staged or restored exactly: SOURCE_GONE: this run's saved files are gone or were rewritten. The change ledger keeps one merged document, not the two files, so it cannot be staged or restored exactly. ×",
+    "live_unchanged": true,
+    "no_new_snapshot": true,
+    "journal_unchanged": true,
+    "working_unchanged": true
+   },
+   "stage": {
+    "status": 404,
+    "words": "This version cannot be staged or restored exactly: SOURCE_GONE: this run's saved files are gone or were rewritten. The change ledger keeps one merged document, not the two files, so it cannot be staged or restored exactly. ×",
+    "live_unchanged": true,
+    "no_new_snapshot": true,
+    "journal_unchanged": true,
+    "working_unchanged": true
+   }
+  },
+  {
+   "fault": "an uncertain chip",
+   "injected_by": "run #4 saved under another chip name (flags 4)",
+   "expected": "not listed; a note counts it; a direct Diff/Stage/Restore of its id refuses 'chip identity is uncertain'",
+   "panel": {
+    "source": "ledger",
+    "notes": [
+     "1 run of an uncertain chip identity is not listed."
+    ],
+    "row": {
+     "listed": false
+    }
+   },
+   "state_history": {
+    "notes": [
+     "1 run of an uncertain chip identity is not listed."
+    ],
+    "row": {
+     "listed": false
+    }
+   },
+   "diff": {
+    "status": 200,
+    "words": "Diff failed: This run's chip identity is uncertain, so it is not offered as a version of this chip. ×"
+   },
+   "compare": {
+    "status": 200,
+    "words": "⚠ Compare failed: This run's chip identity is uncertain, so it is not offered as a version of this chip."
+   },
+   "restore-live": {
+    "status": 404,
+    "words": "This version cannot be staged or restored exactly: This run's chip identity is uncertain, so it is not offered as a version of this chip. ×",
+    "live_unchanged": true,
+    "no_new_snapshot": true,
+    "journal_unchanged": true,
+    "working_unchanged": true
+   },
+   "stage": {
+    "status": 404,
+    "words": "This version cannot be staged or restored exactly: This run's chip identity is uncertain, so it is not offered as a version of this chip. ×",
+    "live_unchanged": true,
+    "no_new_snapshot": true,
+    "journal_unchanged": true,
+    "working_unchanged": true
+   }
+  },
+  {
+   "fault": "a stale event id after a ledger rebuild",
+   "injected_by": "ledger deleted, an older run #0 added, ledger rebuilt by the sync; run #2 was 20260101_120020_000000_event-2, now 20260101_120020_000000_event-3",
+   "expected": "the old id refuses 'from an earlier build of the change history; reopen the list'; the panel lists the new ids",
+   "panel": {
+    "source": "ledger",
+    "notes": [],
+    "row": {
+     "listed": false
+    }
+   },
+   "state_history": {
+    "notes": [],
+    "row": {
+     "listed": false
+    }
+   },
+   "diff": {
+    "status": 200,
+    "words": "Diff failed: This version id comes from an earlier build of the change history; reopen the list. ×"
+   },
+   "compare": {
+    "status": 200,
+    "words": "⚠ Compare failed: This version id comes from an earlier build of the change history; reopen the list."
+   },
+   "restore-live": {
+    "status": 404,
+    "words": "This version cannot be staged or restored exactly: This version id comes from an earlier build of the change history; reopen the list. ×",
+    "live_unchanged": true,
+    "no_new_snapshot": true,
+    "journal_unchanged": true,
+    "working_unchanged": true
+   },
+   "stage": {
+    "status": 404,
+    "words": "This version cannot be staged or restored exactly: This version id comes from an earlier build of the change history; reopen the list. ×",
+    "live_unchanged": true,
+    "no_new_snapshot": true,
+    "journal_unchanged": true,
+    "working_unchanged": true
+   },
+   "new_id_listed": true
+  },
+  {
+   "fault": "a DERIVED event",
+   "injected_by": "an SM write recorded and landed with no post bytes (flags 32)",
+   "expected": "Diff and Stage/Restore refuse 'DERIVED'; nothing written",
+   "panel": {
+    "source": "ledger",
+    "notes": [],
+    "row": {
+     "listed": true,
+     "words": "#1 2026-10-05 19:53:52 UTC 20261005_195352_908805_event-4 Diff applied by operator SM write (apply) DERIVED: the ledger derived this SM write's state from its entries; no exact state was recorded. source unknown",
+     "diff_offered": false,
+     "stage_offered": false,
+     "restore_offered": false
+    }
+   },
+   "state_history": {
+    "notes": [],
+    "row": {
+     "listed": true,
+     "words": "2026-10-05 19:53:52 UTC applied by operator SM write (apply) source unknown DERIVED: the ledger derived this SM write's state from its entries; no exact state was recorded.",
+     "diff_offered": false,
+     "stage_offered": false,
+     "restore_offered": false
+    }
+   },
+   "diff": {
+    "status": 200,
+    "words": "Diff failed: DERIVED: the ledger derived this SM write's state from its entries; no exact state was recorded, so it is not shown as one. ×"
+   },
+   "compare": {
+    "status": 200,
+    "words": "⚠ Compare failed: DERIVED: the ledger derived this SM write's state from its entries; no exact state was recorded, so it is not shown as one."
+   },
+   "restore-live": {
+    "status": 404,
+    "words": "This version cannot be staged or restored exactly: DERIVED: the ledger derived this SM write's state from its entries; no exact copy of its files exists to stage or restore. ×",
+    "live_unchanged": true,
+    "no_new_snapshot": true,
+    "journal_unchanged": true,
+    "working_unchanged": true
+   },
+   "stage": {
+    "status": 404,
+    "words": "This version cannot be staged or restored exactly: DERIVED: the ledger derived this SM write's state from its entries; no exact copy of its files exists to stage or restore. ×",
+    "live_unchanged": true,
+    "no_new_snapshot": true,
+    "journal_unchanged": true,
+    "working_unchanged": true
+   }
+  },
+  {
+   "fault": "an unreadable ledger",
+   "injected_by": "ledger.sqlite overwritten with junk bytes",
+   "expected": "both surfaces draw the older snapshot path with S7's 'could not be read' note; a ledger id refuses at every door",
+   "panel": {
+    "source": "snapshots",
+    "notes": [
+     "Older snapshot history: the change ledger could not be read, so changes between snapshots can be missing."
+    ],
+    "row": {
+     "listed": false
+    }
+   },
+   "state_history": {
+    "notes": [
+     "Older snapshot history: the change ledger could not be read, so changes between snapshots can be missing."
+    ],
+    "row": {
+     "listed": false
+    }
+   },
+   "diff": {
+    "status": 200,
+    "words": "Diff failed: The change history could not be read (file is not a database). ×"
+   },
+   "compare": {
+    "status": 200,
+    "words": "⚠ Compare failed: The change history could not be read (file is not a database)."
+   },
+   "restore-live": {
+    "status": 404,
+    "words": "This version cannot be staged or restored exactly: The change history could not be read (file is not a database). ×",
+    "live_unchanged": true,
+    "no_new_snapshot": true,
+    "journal_unchanged": true,
+    "working_unchanged": true
+   },
+   "stage": {
+    "status": 404,
+    "words": "This version cannot be staged or restored exactly: The change history could not be read (file is not a database). ×",
+    "live_unchanged": true,
+    "no_new_snapshot": true,
+    "journal_unchanged": true,
+    "working_unchanged": true
+   }
+  },
+  {
+   "fault": "building",
+   "injected_by": "hub_sync.status = building 1 of 3",
+   "expected": "the older snapshot path with 'being built (1 of 3 runs)'; no ledger row; every door says to try again when complete",
+   "panel": {
+    "source": "snapshots",
+    "notes": [
+     "The change history is being built (1 of 3 runs). Until it is complete, this list shows the older snapshot history."
+    ],
+    "row": {
+     "listed": false
+    }
+   },
+   "state_history": {
+    "notes": [
+     "The change history is being built (1 of 3 runs). Until it is complete, this list shows the older snapshot history."
+    ],
+    "row": {
+     "listed": false
+    }
+   },
+   "diff": {
+    "status": 200,
+    "words": "Diff failed: The change history is being built (1 of 3 runs); try again when it is complete. ×"
+   },
+   "compare": {
+    "status": 200,
+    "words": "⚠ Compare failed: The change history is being built (1 of 3 runs); try again when it is complete."
+   },
+   "restore-live": {
+    "status": 404,
+    "words": "The change history is being built (1 of 3 runs); try again when it is complete. ×",
+    "live_unchanged": true,
+    "no_new_snapshot": true,
+    "journal_unchanged": true,
+    "working_unchanged": true
+   },
+   "stage": {
+    "status": 404,
+    "words": "The change history is being built (1 of 3 runs); try again when it is complete. ×",
+    "live_unchanged": true,
+    "no_new_snapshot": true,
+    "journal_unchanged": true,
+    "working_unchanged": true
+   }
+  },
+  {
+   "fault": "preparing",
+   "injected_by": "another read holds the chip's read connection (hub_index reader lock)",
+   "expected": "the older snapshot path with 'Preparing the change history'; the panel answers from the ledger once the other read is done",
+   "panel": {
+    "source": "snapshots",
+    "notes": [
+     "Preparing the change history… until it is ready, this list shows the older snapshot history."
+    ],
+    "row": {
+     "listed": false
+    }
+   },
+   "state_history": {
+    "notes": [
+     "Preparing the change history… until it is ready, this list shows the older snapshot history."
+    ],
+    "row": {
+     "listed": false
+    }
+   },
+   "diff": {
+    "status": 200,
+    "words": "2 differing values shown"
+   },
+   "compare": {
+    "status": 200,
+    "words": "table, 1 rows"
+   },
+   "after_release": "ledger"
+  }
+ ],
+ "perf_10000_runs": {
+  "runs": 10000,
+  "qubits": 32,
+  "generation_s": 15.4,
+  "state_kb": 3.9,
+  "load_and_ledger_s": 52.0,
+  "param_history_backfill_s": 365.0,
+  "param_history_snapshots": 10000,
+  "ledger_events": 10000,
+  "before": {
+   "versions_panel": {
+    "cold_ms": 547.9,
+    "bytes": 106482,
+    "ledger_rows": false,
+    "warm_ms": 19.7,
+    "warm_p90_ms": 27.4
+   },
+   "state_history": {
+    "cold_ms": 1004.5,
+    "bytes": 112647,
+    "ledger_rows": false,
+    "warm_ms": 18.0,
+    "warm_p90_ms": 21.2
+   },
+   "diff_vs_now": {
+    "cold_ms": 252.4,
+    "bytes": 10998,
+    "ledger_rows": false,
+    "warm_ms": 2.4,
+    "warm_p90_ms": 5.2
+   },
+   "compare_3": {
+    "cold_ms": 238.8,
+    "bytes": 84852,
+    "ledger_rows": false,
+    "warm_ms": 9.6,
+    "warm_p90_ms": 15.6
+   },
+   "stage": {
+    "cold_ms": 82.9,
+    "bytes": 2943,
+    "ledger_rows": false,
+    "warm_ms": 25.1,
+    "warm_p90_ms": 29.3
+   }
+  },
+  "after": {
+   "versions_panel": {
+    "cold_ms": 943.5,
+    "bytes": 129714,
+    "ledger_rows": true,
+    "warm_ms": 14.4,
+    "warm_p90_ms": 15.6
+   },
+   "state_history": {
+    "cold_ms": 1113.8,
+    "bytes": 95899,
+    "ledger_rows": true,
+    "warm_ms": 20.0,
+    "warm_p90_ms": 23.7
+   },
+   "diff_vs_now": {
+    "cold_ms": 489.7,
+    "bytes": 11026,
+    "ledger_rows": false,
+    "warm_ms": 6.5,
+    "warm_p90_ms": 9.4
+   },
+   "compare_3": {
+    "cold_ms": 230.1,
+    "bytes": 85092,
+    "ledger_rows": false,
+    "warm_ms": 12.4,
+    "warm_p90_ms": 16.9
+   },
+   "stage": {
+    "cold_ms": 30.3,
+    "bytes": 2942,
+    "ledger_rows": false,
+    "warm_ms": 38.0,
+    "warm_p90_ms": 43.0
+   }
+  },
+  "after_first_open_no_hash_cache": {
+   "first_request_ms": 1882.9,
+   "says_matching": true,
+   "matching_done_s": 25.4,
+   "next_request_ms": 161.8,
+   "next_says_matching": false
+  }
+ }
+}

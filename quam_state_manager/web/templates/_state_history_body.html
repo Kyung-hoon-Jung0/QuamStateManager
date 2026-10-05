@@ -3,7 +3,14 @@
    auto-refresh, and included by _state_history.html for the full page. #}
 {% from '_snapshot_zero_label.html' import zero_diff_label %}
 {% from '_snapshot_source.html' import source_badge %}
-{% if snapshots %}
+{# docs/284: why this list reads what it reads (the change ledger, or the
+   older snapshot path while the ledger is being built / absent) #}
+{% if ledger_versions is defined and ledger_versions %}{% for n in ledger_versions.notes %}
+<p class="muted sh-ledger-note" data-note="{{ n.code }}">{{ n.text }}</p>
+{% endfor %}{% endif %}
+{% if ledger_versions is defined and ledger_versions and ledger_versions.mode == 'ledger' %}
+{% include '_ledger_state_history.html' %}
+{% elif snapshots %}
 <div class="sh-toolbar">
     <button id="sh-compare-btn" class="outline btn-sm" disabled
             onclick="StateHistory.compareSelected()">Compare 2 selected</button>

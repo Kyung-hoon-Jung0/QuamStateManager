@@ -110,8 +110,12 @@ def _sort_key(row: dict) -> tuple:
     return (0, -pct, -mag, natural_key(row["path"]))
 
 
-def diff_rows(a_doc: Any, b_doc: Any, *, cap: int = ROW_CAP) -> dict:
-    """Every differing leaf between two documents, ranked."""
+def diff_rows(a_doc: Any, b_doc: Any, *, cap: int = ROW_CAP, equal=None) -> dict:
+    """Every differing leaf between two documents, ranked.
+
+    ``equal`` (docs/284): the leaf equality; plain ``==`` when omitted. A
+    comparison with a change-ledger version passes ``_eq`` (compare_equal).
+    """
     a_flat, a_trunc = flatten(a_doc)
     b_flat, b_trunc = flatten(b_doc)
     keys = set(a_flat) | set(b_flat)
@@ -121,7 +125,7 @@ def diff_rows(a_doc: Any, b_doc: Any, *, cap: int = ROW_CAP) -> dict:
     for path in keys:
         av = a_flat.get(path, _MISSING)
         bv = b_flat.get(path, _MISSING)
-        if av is not _MISSING and bv is not _MISSING and av == bv:
+        if av is not _MISSING and bv is not _MISSING and (equal(av, bv) if equal else av == bv):
             same += 1
             continue
         kind = _class_of(av, bv)
@@ -264,7 +268,7 @@ def prune(doc: Any, paths: Iterable[str]) -> Any:
 
 
 def build(a_doc: Any, b_doc: Any, *, cap: int = ROW_CAP,
-          with_rows: bool = True) -> dict:
+          with_rows: bool = True, equal=None) -> dict:
     """The whole payload: counts, both sides pruned to the diff, and — unless
     ``with_rows`` is off — the ranked rows.
 
@@ -273,7 +277,7 @@ def build(a_doc: Any, b_doc: Any, *, cap: int = ROW_CAP,
     1.2 MB drops to ~0.4 MB by leaving them out. The list view fetches them
     separately, paged.
     """
-    res = diff_rows(a_doc, b_doc, cap=cap)
+    res = diff_rows(a_doc, b_doc, cap=cap, equal=equal)
     rows = res["rows"]
     res["tree_a"] = prune(a_doc, [r["path"] for r in rows if r["kind"] != ADDED])
     res["tree_b"] = prune(b_doc, [r["path"] for r in rows if r["kind"] != REMOVED])

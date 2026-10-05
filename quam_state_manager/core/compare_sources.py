@@ -415,10 +415,38 @@ def resolve_source(
         # ``..\..``-shaped segment escapes it on Windows (backslash is a
         # separator there). chip_key must be a bare dir name; ts must be a
         # ``_ts_stamp``-shaped snapshot dir.
+        from quam_state_manager.core import hub_versions
+        is_event = hub_versions.is_ref(ts_dir)
         if ("/" in chip_key or "\\" in chip_key or ".." in chip_key
-                or not _TS_STAMP_RE.match(ts_dir)):
+                or not (_TS_STAMP_RE.match(ts_dir) or is_event)):
             raise SourcePermanentError(
                 f"hist: ref segments are path-shaped, got {ref!r}", ref=ref)
+        if is_event:
+            # docs/284: a version of the chip's change ledger -- its merged
+            # document (HubStore.state_at), which has no separate wiring
+            chip_dir = Path(history_root) / chip_key
+            try:
+                # the pool owns private copies (_PoolEntry); the ledger's
+                # document is shared by its cache
+                doc = copy.deepcopy(hub_versions.document(chip_dir, ts_dir))
+            except hub_versions.NotReady as exc:
+                # the ledger is catching up: asking again later may succeed
+                raise SourceTransientError(str(exc), ref=ref) from exc
+            except Exception as exc:  # noqa: BLE001 -- the reason is the answer
+                raise SourcePermanentError(
+                    f"Change-history version unavailable: {exc}", ref=ref) from exc
+            chash = content_hash(doc, {})
+            pool.put(chash, doc, {}, wiring_missing=True)
+            fp = fingerprint_from_dicts(doc, doc)
+            ts_h = _hist_ts_human(ts_dir)
+            return CompareSource(
+                ref=ref, origin=origin, path=str(chip_dir),
+                label=label_hint or f"{chip_key} · {ts_h} · change history",
+                chip_name=chip_key, snapshot_ts=ts_h,
+                network_token=network_token_of(fp),
+                fingerprint_token=fingerprint_token(fp),
+                content_hash=chash, wiring_missing=True,
+            )
         folder = Path(history_root) / chip_key / ts_dir
         if not folder.is_dir():
             # Alias fallback (docs/20 v2): a ref minted under an old declared

@@ -15817,7 +15817,13 @@ def history_diff_detail(timestamp: str):
     try:
         # Diff against the in-memory store (the working copy) — never the
         # live files, which an experiment program may be writing.
-        entries = hm.diff_current(_active_path(), timestamp, current_store=store)
+        from quam_state_manager.core import hub_versions
+        if hub_versions.is_ref(timestamp):
+            # docs/284: a change-ledger version -- its merged document, under
+            # the one comparison rule (compare_equal)
+            entries = _version_diff_now(_active_ctx(), timestamp)
+        else:
+            entries = hm.diff_current(_active_path(), timestamp, current_store=store)
     except Exception as e:
         return render_template("_status.html", message=f"Diff failed: {e}", level="error")
 
@@ -15883,6 +15889,22 @@ def state_history():
     snapshots = hm.list_snapshots(_active_path())
     page = _int_arg("page", 1, minimum=1)
     per_page = _int_arg("per_page", _STATE_HISTORY_PER_PAGE, minimum=1)
+    # docs/284: the rows come from the chip's change ledger when it has one
+    # (runs, SM writes, observed states + older snapshots it does not cover)
+    versions = _versions_read(_active_ctx(), snapshots, limit=per_page,
+                              offset=(page - 1) * per_page)
+    if versions["mode"] == "ledger":
+        total = versions["total"]
+        total_pages = max(1, math.ceil(total / per_page))
+        ctx = _ctx(page="state_history", snapshots=[], ledger_versions=versions,
+                   total=total, current_page=min(page, total_pages),
+                   total_pages=total_pages, per_page=per_page,
+                   chip_origin=_active_origin(), hist_chip_key=versions["chip_key"],
+                   disk_stats=None, first_ts=None)
+        if request.args.get("body") == "1":
+            return render_template("_state_history_body.html", **ctx)
+        template = "_state_history.html" if _is_htmx() else "state_history.html"
+        return render_template(template, **ctx)
     page_items, total, page, total_pages = _paginate(snapshots, page, per_page)
     # QA chipstatus-r2-15: the drawer's zero-diff rule -- only the chip's FIRST
     # snapshot (of the full newest-first list, not the page) is a baseline.
@@ -15908,6 +15930,7 @@ def state_history():
         hist_chip_key=hist_chip_key,
         disk_stats=disk_stats,
         first_ts=first_ts,
+        ledger_versions=versions,
     )
     # body=1 → just the timeline inner (toolbar + entries + pagination), for the
     # stateRestored auto-refresh that re-fetches it into #state-history-body
@@ -15920,9 +15943,67 @@ def state_history():
 
 def _snapshot_state_wiring(hm, path, timestamp) -> tuple[dict, dict]:
     """Parsed (state, wiring) of a snapshot — deep-copied so callers can write
-    them to the working folder without aliasing the cached store."""
+    them to the working folder without aliasing the cached store.
+
+    docs/284: a change-ledger version (``<stamp>_event-<eid>``) SOURCES its
+    exact pair from the ledger (the event's own saved files, or the pair SM
+    wrote) -- or raises ``hub_versions.Unavailable`` with the reason. The
+    callers WRITE it through their existing doors, gates unchanged."""
+    from quam_state_manager.core import hub_versions
+    if hub_versions.is_ref(timestamp):
+        chip_dir = _hub_chip_dir(path)
+        if chip_dir is None:
+            raise hub_versions.Unavailable("The chip's history folder cannot be resolved.")
+        return hub_versions.exact_pair(chip_dir, timestamp)
     snap = hm.load_snapshot(path, timestamp)
     return copy.deepcopy(snap.state), copy.deepcopy(snap.wiring)
+
+
+def _history_chip_mismatch(ctx):
+    """docs/284: a ledger version id is per chip (``event-7`` of another chip
+    is another state). A press that names its chip (``chip_key``) is refused
+    when another chip is open -- before any gate or write."""
+    asked = (request.values.get("chip_key") or "").strip()
+    if not asked:
+        return None
+    chip_dir = _hub_chip_dir(ctx["path"])
+    if chip_dir is not None and asked == Path(chip_dir).name:
+        return None
+    return render_template(
+        "_status.html", level="warning",
+        message=f"This version belongs to chip '{asked}', which is not the open chip "
+                "— open that chip first."), 409
+
+
+def _version_pair_or_refusal(hm, path, ref):
+    """docs/284: ``(pair, refusal)``. A Param History snapshot id gives
+    ``(None, None)`` (its door is unchanged); a change-ledger version gives
+    its exact pair, or the honest refusal ``(response, 404)`` when the ledger
+    cannot hand that pair over exactly (DERIVED, a missing blob, its saved
+    files gone, ...)."""
+    from quam_state_manager.core import hub_versions
+    if not hub_versions.is_ref(ref):
+        return None, None
+    try:
+        return _snapshot_state_wiring(hm, path, ref), None
+    except hub_versions.NotReady as exc:
+        msg = str(exc)
+    except Exception as exc:  # noqa: BLE001 -- the reason is the answer
+        msg = f"This version cannot be staged or restored exactly: {exc}"
+    return None, (render_template("_status.html", message=msg, level="error"), 404)
+
+
+def _history_noun(ref: str) -> str:
+    """docs/284: what a confirm calls the thing pressed -- a change-history
+    version is not a snapshot folder, and a confirm never says it is."""
+    from quam_state_manager.core import hub_versions
+    return "version" if hub_versions.is_ref(ref) else "snapshot"
+
+
+def _chip_key_qs(prefix: str = "&") -> str:
+    """The press's chip scope, carried into a confirm's follow-up URL."""
+    asked = (request.values.get("chip_key") or "").strip()
+    return f"{prefix}chip_key={quote(asked)}" if asked else ""
 
 
 @bp.route("/state-history/<timestamp>/stage", methods=["POST"])
@@ -15933,10 +16014,18 @@ def state_history_stage(timestamp: str):
     ctx = _active_ctx()
     if not ctx or ctx.get("type") != "quam":
         return render_template("_status.html", message="No state loaded", level="warning")
+    mismatch = _history_chip_mismatch(ctx)
+    if mismatch is not None:
+        return mismatch
     store = ctx["store"]
     wc = ctx["working_copy"]
     hm = _history()
     path = ctx["path"]   # snapshot source = the captured folder, not the live-active one
+    # docs/284: a change-ledger version the ledger cannot hand over exactly
+    # refuses before the unsaved-edits confirm (nothing to confirm for)
+    _version_pair, refusal = _version_pair_or_refusal(hm, path, timestamp)
+    if refusal is not None:
+        return refusal
     _pre_leaves = _leaf_snapshot(ctx)   # docs/144: name what the stage changes
 
     # Don't silently drop pending edits the user hasn't reviewed. Includes
@@ -15953,15 +16042,20 @@ def state_history_stage(timestamp: str):
         # #state-history-detail exists only on the State History page, so
         # the button was a guaranteed htmx targetError (dead click) there.
         _from_tray = request.values.get("from") == "tray"
+        # docs/284: the Versions popover's Stage lands in #status-bar too
+        _to_status = _from_tray or request.values.get("target") == "status"
+        _noun = _history_noun(timestamp)
         return render_template(
             "_sh_confirm.html",
             message=("You have unsaved edits in the working state. Loading this "
-                     "snapshot will replace them."),
+                     f"{_noun} will replace them."),
             action_url=(f"/state-history/{timestamp}/stage?force=1"
-                        + ("&from=tray" if _from_tray else "")),
+                        + ("&from=tray" if _from_tray else "")
+                        + ("&target=status" if _to_status and not _from_tray else "")
+                        + _chip_key_qs()),
             action_label="Replace working state anyway",
-            confirm="Discard your unsaved edits in the working state and load this snapshot?",
-            **({"target": "#status-bar"} if _from_tray else {}),
+            confirm=f"Discard your unsaved edits in the working state and load this {_noun}?",
+            **({"target": "#status-bar"} if _to_status else {}),
         ), 409
 
     try:
@@ -15998,9 +16092,11 @@ def state_history_stage(timestamp: str):
     # pane). The review that exists is the top-bar badge -> openReview ->
     # /state/review (working vs live). The id is a UTC stamp: say so.
     _push = _auto_push_note(ctx)
+    from quam_state_manager.core import hub_versions
+    _what = ("Version" if hub_versions.is_ref(timestamp) else "Snapshot")
     msg = render_template(
         "_status.html",
-        message=(f"Snapshot {current_app.jinja_env.filters['format_ts'](timestamp)} "
+        message=(f"{_what} {current_app.jinja_env.filters['format_ts'](timestamp[:22])} "
                  "loaded as the working state."
                  + (_push or " Review it against the live chip from the sync "
                     "status in the top bar (Staged version · not on live), then "
@@ -16033,10 +16129,18 @@ def state_history_restore_live(timestamp: str):
     blocked = _archive_write_blocked(ctx)   # guard the CAPTURED ctx (TOCTOU)
     if blocked is not None:
         return blocked
+    mismatch = _history_chip_mismatch(ctx)
+    if mismatch is not None:
+        return mismatch
     store = ctx["store"]
     wc = ctx["working_copy"]
     hm = _history()
     path = ctx["path"]   # snapshot source = the captured folder, not the live-active one
+    # docs/284: a change-ledger version the ledger cannot hand over exactly
+    # refuses HERE, with its reason -- before any confirm, backup or write
+    _version_pair, refusal = _version_pair_or_refusal(hm, path, timestamp)
+    if refusal is not None:
+        return refusal
     # Two INDEPENDENT confirmations — one token must never collapse both gates,
     # or consenting to "discard my edits" would silently also overwrite live
     # wiring with a mismatched topology. A bare ?force=1 is a master override
@@ -16054,14 +16158,16 @@ def state_history_restore_live(timestamp: str):
     with store._lock:
         has_pending = (bool(store.change_log) or bool(ctx.get("pending_reapply"))
                        or bool(ctx.get("working_dirty")))
+    _noun = _history_noun(timestamp)
     if has_pending and not force_pending:
         return render_template(
             "_sh_confirm.html",
             message=("You have unsaved edits in the working state. Restoring this "
-                     "snapshot to live will discard them."),
-            action_url=f"/state-history/{timestamp}/restore-live?force_pending=1",
+                     f"{_noun} to live will discard them."),
+            action_url=(f"/state-history/{timestamp}/restore-live?force_pending=1"
+                        + _chip_key_qs()),
             action_label="Discard edits and continue",
-            confirm="Discard your unsaved edits and continue restoring this snapshot?",
+            confirm=f"Discard your unsaved edits and continue restoring this {_noun}?",
         ), 409
 
     # Fingerprint-align gate: a single chip dir can hold snapshots routed by
@@ -16071,20 +16177,24 @@ def state_history_restore_live(timestamp: str):
     # forced past the unsaved-edits gate. The confirm carries force_pending too
     # so it doesn't bounce back to the first gate.
     from quam_state_manager.core.history import (
-        ALIGN_ALIGNED, align, fingerprint_of)
+        ALIGN_ALIGNED, align, fingerprint_from_dicts, fingerprint_of)
     try:
-        snap_dir = hm.load_snapshot(path, timestamp).folder_path
-        alignment = align(fingerprint_of(snap_dir), fingerprint_of(path))
+        if _version_pair is not None:
+            # docs/284: the same gate on the pair the ledger hands over
+            alignment = align(fingerprint_from_dicts(*_version_pair), fingerprint_of(path))
+        else:
+            snap_dir = hm.load_snapshot(path, timestamp).folder_path
+            alignment = align(fingerprint_of(snap_dir), fingerprint_of(path))
     except Exception:
         alignment = "unknown"
     if alignment != ALIGN_ALIGNED and not force_align:
         return render_template(
             "_sh_confirm.html",
-            message=(f"This snapshot's wiring does not match the loaded chip "
+            message=(f"This {_noun}'s wiring does not match the loaded chip "
                      f"({alignment}). Loading it as the working state to review the "
                      "diff first is safer than a direct restore."),
             action_url=(f"/state-history/{timestamp}/restore-live"
-                        "?force_pending=1&force_align=1"),
+                        "?force_pending=1&force_align=1" + _chip_key_qs()),
             action_label="Restore to live anyway",
             confirm="The wiring topology differs — overwrite the live chip regardless?",
         ), 409
@@ -16213,6 +16323,12 @@ def state_history_label(timestamp: str):
     if not store:
         return render_template("_status.html", message="No state loaded", level="warning")
     hm = _history()
+    from quam_state_manager.core import hub_versions
+    if hub_versions.is_ref(timestamp):
+        # docs/284: a change-ledger version is a record, not a snapshot folder
+        return render_template(
+            "_status.html", level="warning",
+            message="A change-history version carries no label or pin; only snapshots do."), 409
     label = (request.values.get("label") or "").strip() or None
     pinned = request.values.get("pinned")
     pinned_val = None if pinned is None else (pinned == "1")
@@ -18414,6 +18530,277 @@ def state_version_chip():
 _STATE_VERSIONS_CAP = 150
 
 
+# ----------------------------------------------------------------------
+# docs/284: the Versions panel and State History on the change ledger
+# ----------------------------------------------------------------------
+
+def _versions_wait_text(res: dict) -> str:
+    if res["mode"] == "preparing":
+        return ("Preparing the change history… until it is ready, this list shows the "
+                "older snapshot history.")
+    st = res.get("status") or {}
+    done, total = st.get("done"), st.get("total")
+    return ("The change history is being built"
+            + (f" ({done or 0} of {total} runs)" if total else "")
+            + ". Until it is complete, this list shows the older snapshot history.")
+
+
+def _version_sm_words(ev: dict) -> tuple[str, str, str]:
+    """(label, sub, hover) of an SM write -- the value drawer's wording (S7)."""
+    kind = ev.get("kind") or ""
+    who = _vh_actor(ev.get("actor"))
+    verb = _VH_SM_VERB.get(kind, kind)
+    if kind == "autofit":
+        label = "Auto Calibrate"
+    elif kind == "agent":
+        actor = str(ev.get("actor") or "")
+        label = (f"agent {actor[3:]}" if actor.startswith("by_")
+                 else f"approved by {who} (agent plan)")
+    else:
+        label = f"{verb} by {who}"
+    src = ev.get("src") or kind
+    hover = f"Written by SM ({kind}, {ev.get('src') or 'door unknown'}) for {who}"
+    if ev.get("plan_id"):
+        hover += f", plan {ev['plan_id']}"
+    return label, f"SM write ({src})", hover + "."
+
+
+def _version_rows(ctx, res: dict, snapshots) -> list[dict]:
+    """One display row per entry of ``hub_versions.read``: a ledger event
+    named honestly (run #N + node / SM write with actor and kind / observed
+    outside-SM state), or an older snapshot the ledger does not cover."""
+    from types import SimpleNamespace
+    from quam_state_manager.core.hub_store import REVERTS_TO_EARLIER, UNDONE
+    from quam_state_manager.core.hub_versions import OBSERVED_KIND
+    hm = _history()
+    path = Path(ctx["path"])
+    try:
+        srcs = hm.snapshot_sources(path, snapshots)
+    except Exception:  # noqa: BLE001 -- a label never breaks the list
+        srcs = {}
+    roots = _uid_roots()
+    # "on this now" names the LIVE chip's content; an archive (a run's own
+    # saved state, opened read-only) has no live chip to point at
+    live_chash = _version_live_chash(ctx) if (ctx.get("origin") or "live") == "live" else None
+    current_seen = False
+    rows = []
+    for item in res["rows"]:
+        if item["legacy"]:
+            m = item["snapshot"]
+            knd, knd_legacy = kind_for(m)
+            rows.append({
+                "ts": m.timestamp, "when": m.timestamp, "legacy": True,
+                "badge": "older snapshot",
+                "title": "", "sub": "", "hover": "",
+                "kind": knd, "kind_legacy": knd_legacy, "trigger": m.trigger,
+                "label": m.label, "note": m.note, "pinned": bool(m.pinned),
+                "experiment": m.experiment_name, "run_id": m.run_id,
+                "run_uid": (_uid_for_run_ref(m.experiment_folder_path, m.run_id, roots)
+                            if m.run_id is not None else None),
+                "source": srcs.get(m.timestamp), "current": False, "flags": [],
+                "why_diff": None, "why_write": None, "pending": item.get("pending", False)})
+            continue
+        ev = item["event"]
+        kind = ev["kind"]
+        run_id = experiment = run_uid = None
+        if kind == "run":
+            run_id, experiment = ev.get("run_id"), ev.get("experiment") or ""
+            title = f"run #{run_id} {experiment}".strip() if run_id is not None else (experiment or "a run")
+            sub = "saved at the run's end"
+            hover = "The state this run saved when it finished."
+            folder = (ev.get("root_path") or "").rstrip("/\\") + "/" + (ev.get("rel_path") or "")
+            if run_id is not None and not item["why_write"]:
+                run_uid = _version_run_uid(folder, run_id, roots)
+            source = {"kind": "run", "folder": folder, "label": None, "lineage": "run"}
+            badge = "run"
+        elif kind == OBSERVED_KIND:
+            trig = str(ev.get("src") or "").split(":", 1)[-1] or "snapshot"
+            title, sub = f"seen by SM ({trig} snapshot)", "writer unknown"
+            hover = ("SM saw the chip hold this state when it took a Param History snapshot; no "
+                     "run or SM write recorded in the ledger produced it, so who did is not known.")
+            source = {"kind": "this", "folder": None, "label": None, "lineage": "own"}
+            badge = "seen"
+        else:
+            title, sub, hover = _version_sm_words(ev)
+            live = ev.get("_live")
+            meta = SimpleNamespace(timestamp=item["stamp"], trigger="save", source_path=live or "",
+                                   experiment_folder_path=None)
+            try:
+                source = hm.snapshot_source(meta, path) if live else {"kind": "unknown", "folder": None,
+                                                                      "label": None, "lineage": "parallel"}
+            except Exception:  # noqa: BLE001
+                source = None
+            badge = "SM write"
+        flags = []
+        if int(ev.get("flags") or 0) & UNDONE:
+            flags.append("undone later")
+        if int(ev.get("flags") or 0) & REVERTS_TO_EARLIER:
+            flags.append("returns to an earlier state")
+        current = False
+        if not current_seen and live_chash and ev.get("chash") == live_chash:
+            current = current_seen = True
+        rows.append({
+            "ts": item["ref"], "when": item["stamp"], "legacy": False, "badge": badge,
+            "title": title, "sub": sub, "hover": hover, "kind": None, "kind_legacy": False,
+            "trigger": kind, "label": "", "note": "", "pinned": False,
+            "experiment": experiment, "run_id": run_id, "run_uid": run_uid,
+            "source": source, "current": current, "flags": flags,
+            "why_diff": item["why_diff"], "why_write": item["why_write"], "pending": False})
+    return rows
+
+
+_VERSION_UID_MEMO: "OrderedDict[tuple, str | None]" = OrderedDict()
+
+
+def _version_run_uid(folder: str, run_id, roots) -> str | None:
+    """``_uid_for_run_ref`` memoized per (run folder, run id, data roots): a
+    run folder's place under a root does not move, and the resolve it costs
+    was most of a warm Versions open."""
+    key = (folder, run_id, tuple((str(root), k) for root, k in roots))
+    if key in _VERSION_UID_MEMO:
+        _VERSION_UID_MEMO.move_to_end(key)
+        return _VERSION_UID_MEMO[key]
+    uid = _uid_for_run_ref(folder, run_id, roots)
+    _VERSION_UID_MEMO[key] = uid
+    while len(_VERSION_UID_MEMO) > 4096:
+        _VERSION_UID_MEMO.popitem(last=False)
+    return uid
+
+
+def _version_live_chash(ctx) -> str | None:
+    """The live pair's content hash (the hash SM writes record), stat-gated
+    like the version chip: recomputed only when the live files moved."""
+    from quam_state_manager.core.working_copy import content_hash
+    p = Path(ctx["path"])
+    try:
+        stamp = tuple((n, (p / n).stat().st_mtime_ns, (p / n).stat().st_size)
+                      for n in ("state.json", "wiring.json"))
+    except OSError:
+        return None
+    memo = ctx.get("_version_live_chash")
+    if memo and memo[0] == str(p) and memo[1] == stamp:
+        return memo[2]
+    try:
+        digest = content_hash(safe_io.read_json(p / "state.json"), safe_io.read_json(p / "wiring.json"))
+    except (OSError, ValueError):
+        digest = None
+    ctx["_version_live_chash"] = (str(p), stamp, digest)
+    return digest
+
+
+def _versions_read(ctx, snapshots, *, limit: int = 40, offset: int = 0) -> dict:
+    """docs/284: what both history surfaces draw. ``mode`` ``ledger`` carries
+    display ``rows``; any other mode means "draw the older snapshot path",
+    with ``notes`` saying why (S7's wording)."""
+    from quam_state_manager.core import hub_versions, value_history as vh
+    out: dict[str, Any] = {"mode": "fallback", "reason": "no_chip_dir", "rows": [],
+                           "notes": [], "chip_key": "", "total": 0}
+    if not ctx or ctx.get("type") != "quam" or not ctx.get("path"):
+        return out
+    chip_dir = ctx.get("hub_chip_dir") or _hub_chip_dir(ctx["path"])
+    if chip_dir is None:
+        out["notes"] = [{"level": "info", "code": "no_chip_dir",
+                         "text": _VH_FALLBACK_NOTES["no_chip_dir"]}]
+        return out
+    chip_dir = Path(chip_dir)
+    res = hub_versions.read(chip_dir, snapshots, binding=_vh_binding(ctx, chip_dir),
+                            limit=limit, offset=offset)
+    res["chip_key"] = chip_dir.name
+    res["chip_dir"] = chip_dir
+    if res["mode"] == "fallback":
+        res["notes"] = [{"level": "info", "code": res["reason"],
+                         "text": _VH_FALLBACK_NOTES[res["reason"]]}]
+        return res
+    if res["mode"] in ("building", "preparing"):
+        res["notes"] = [{"level": "info", "code": res["mode"], "text": _versions_wait_text(res)}]
+        return res
+    notes = list(vh.notes(res.get("status"), {"has_runs": res.get("has_runs")}))
+    if res.get("pending"):
+        n = res["pending"]
+        notes.append({"level": "info", "code": "matching",
+                      "text": f"{n} older snapshot{'s are' if n != 1 else ' is'} still being matched "
+                              "against the change history; such a row may repeat a state listed "
+                              "above until it is done. Reopen in a moment."})
+    if res.get("uncertain"):
+        n = res["uncertain"]
+        notes.append({"level": "info", "code": "uncertain",
+                      "text": f"{n} run{'s' if n != 1 else ''} of an uncertain chip identity "
+                              f"{'are' if n != 1 else 'is'} not listed."})
+    res["notes"] = notes
+    # the live folder each listed SM write wrote, for its source badge
+    lives: dict[int, str] = {}
+    sm_eids = [r["event"]["eid"] for r in res["rows"] if not r["legacy"]
+               and r["event"]["kind"] not in ("run", hub_versions.OBSERVED_KIND)]
+    if sm_eids:
+        try:
+            with hub_versions._ledger(chip_dir) as store:
+                for chunk in range(0, len(sm_eids), 500):
+                    ids = sm_eids[chunk:chunk + 500]
+                    for row in store.conn.execute(
+                            "SELECT eid, live FROM sm_events WHERE eid IN (%s)" % ",".join("?" * len(ids)), ids):
+                        if row["live"]:
+                            lives[row["eid"]] = row["live"]
+        except Exception:  # noqa: BLE001 -- a badge never breaks the list
+            lives = {}
+    for r in res["rows"]:
+        if not r["legacy"]:
+            r["event"]["_live"] = lives.get(r["event"]["eid"])
+    res["rows"] = _version_rows(ctx, res, snapshots)
+    return res
+
+
+def _version_side(path, ref):
+    """One Differ side of a version: a change-ledger version's merged document
+    (``(doc, {})``), or a snapshot's store."""
+    from quam_state_manager.core import hub_versions
+    if hub_versions.is_ref(ref):
+        chip_dir = _hub_chip_dir(path)
+        if chip_dir is None:
+            raise hub_versions.Unavailable("The chip's history folder cannot be resolved.")
+        return (hub_versions.document(chip_dir, ref), {})
+    return _history().load_snapshot(path, ref)
+
+
+def _version_order(path, ref) -> tuple:
+    """Time order of a version: a ledger event by the timeline's order
+    instant, a snapshot by its capture instant."""
+    from quam_state_manager.core import hub_sync, hub_versions
+    if hub_versions.is_ref(ref):
+        ev = hub_versions.event_info(_hub_chip_dir(path), ref)
+        return hub_versions.order_key(ev)
+    return (hub_sync.snapshot_instant_us(ref) or 0, -1)
+
+
+def _version_diff_now(ctx, ref) -> list:
+    """A version against the CURRENT working state, under the one rule."""
+    from quam_state_manager.core import hub_versions
+    return hub_versions.compare(_version_side(ctx["path"], ref), ctx["store"])
+
+
+_VERSION_QUICK: "OrderedDict[tuple, list]" = OrderedDict()
+_VERSION_QUICK_LOCK = threading.Lock()
+
+
+def _version_quick_entries(path, ref_a: str, ref_b: str) -> list:
+    """The panel's "since the previous version" entries, memoized: both
+    versions are immutable (a ledger version id is checked against its own
+    instant; a snapshot folder is written once)."""
+    from quam_state_manager.core import hub_versions
+    chip_dir = _hub_chip_dir(path)
+    key = (str(chip_dir), ref_a, ref_b)
+    with _VERSION_QUICK_LOCK:
+        hit = _VERSION_QUICK.get(key)
+        if hit is not None:
+            _VERSION_QUICK.move_to_end(key)
+            return hit
+    entries = hub_versions.compare(_version_side(path, ref_a), _version_side(path, ref_b))
+    with _VERSION_QUICK_LOCK:
+        _VERSION_QUICK[key] = entries
+        while len(_VERSION_QUICK) > 8:
+            _VERSION_QUICK.popitem(last=False)
+    return entries
+
+
 @bp.route("/state/versions")
 def state_versions_panel():
     """The version list the chip opens: when each was recorded, what produced
@@ -18436,6 +18823,33 @@ def state_versions_panel():
         chip_key = ""
     ver = _state_version_now(ctx)
     limit = min(_int_arg("limit", 40, minimum=1), _STATE_VERSIONS_CAP)
+    # docs/284: on a chip with a change ledger the rows are its state-bearing
+    # events (+ the older snapshots it does not cover); any other answer draws
+    # the older snapshot path below, saying why
+    versions = _versions_read(ctx, snaps, limit=limit)
+    if versions["mode"] == "ledger":
+        rows = versions["rows"]
+        quick = None
+        # "what just changed?" is asked of THIS folder (docs/250), between two
+        # versions that can be read
+        mine = [i for i, r in enumerate(rows)
+                if (r["source"] or {}).get("lineage") != "parallel"
+                and not r["why_diff"] and not r["pending"]]
+        if len(mine) >= 2:
+            b_i, a_i = mine[0], mine[1]
+            try:
+                entries = _version_quick_entries(path, rows[a_i]["ts"], rows[b_i]["ts"])
+                quick = {"a_ts": rows[a_i]["when"], "b_ts": rows[b_i]["when"],
+                         "a_ord": a_i + 1, "b_ord": b_i + 1, "n": len(entries),
+                         "entries": entries if 0 < len(entries) <= 50 else None}
+            except Exception:  # noqa: BLE001 -- the list must render regardless
+                quick = None
+        return render_template("_state_versions.html", rows=rows, ver=ver,
+                               chip_key=versions["chip_key"], total=versions["total"],
+                               visible_total=versions["total"], hidden_unchanged=0,
+                               changes_only=False, cap=_STATE_VERSIONS_CAP, quick=quick,
+                               ledger_versions=versions,
+                               archive=(ctx.get("origin") or "live") != "live")
     # docs/132 — the changes-only filter (default ON: "users do not care about
     # rows with no diff"). A row is hidden iff its capture-time diff_summary is a
     # true zero AND nothing marks it as individually meaningful: pinned rows,
@@ -18526,6 +18940,7 @@ def state_versions_panel():
                            hidden_unchanged=hidden_unchanged,
                            changes_only=changes_only,
                            cap=_STATE_VERSIONS_CAP, quick=quick,
+                           ledger_versions=versions,
                            archive=(ctx.get("origin") or "live") != "live")
 
 
@@ -18549,7 +18964,9 @@ def state_version_diff(timestamp: str):
     # Reject pre-join — the same shape gate load_snapshot enforces. The ts
     # lands in a path join, and a ``..\..``-shaped segment escapes the
     # history root on Windows where backslash is a separator.
-    if not isinstance(timestamp, str) or not _HIST_TS_RE.match(timestamp):
+    from quam_state_manager.core import hub_versions
+    is_version = hub_versions.is_ref(timestamp)
+    if not isinstance(timestamp, str) or not (_HIST_TS_RE.match(timestamp) or is_version):
         return render_template("_status.html", message="Not a snapshot id.",
                                level="error"), 404
     hm = _history()
@@ -18571,8 +18988,17 @@ def state_version_diff(timestamp: str):
         # ignore_keys=set(): this overlay says "No differences — the current
         # working state matches this version" when empty, so it must not skip
         # `__class__` (docs/94 class migration; docs/128 review).
-        entries = hm.diff_current(path, timestamp, current_store=ctx.get("store"),
-                                  ignore_keys=set())
+        if is_version:
+            # docs/284: the ledger's merged document, under the one rule; the
+            # same read says whether this version can be pulled exactly
+            chip_dir = _hub_chip_dir(path)
+            if chip_dir is None:
+                raise hub_versions.Unavailable("The chip's history folder cannot be resolved.")
+            doc, why_write = hub_versions.diff_view(chip_dir, timestamp)
+            entries = hub_versions.compare((doc, {}), ctx["store"])
+        else:
+            entries = hm.diff_current(path, timestamp, current_store=ctx.get("store"),
+                                      ignore_keys=set())
     except Exception as exc:  # noqa: BLE001 — a missing snapshot must explain, not 500
         return render_template("_status.html",
                                message=f"Diff failed: {exc}", level="error")
@@ -18582,6 +19008,10 @@ def state_version_diff(timestamp: str):
     archive = (ctx.get("origin") or "live") != "live"
     offers_pull = (not archive
                    and timestamp != _state_version_now(ctx)["ts"])
+    if offers_pull and is_version:
+        # docs/284: the row offers Pull to Live only for a version the
+        # ledger can hand over exactly (the door re-checks when pressed)
+        offers_pull = why_write is None
     return render_template(
         "_version_diff.html",
         entries=entries[:300],
@@ -28973,9 +29403,27 @@ _DIFF_MEMO_MAX = 6
 _diff_memo_lock = threading.Lock()
 
 
-def _diff_side_doc(src, tab: str) -> tuple[Any, str]:
-    """``(document, unavailable_reason)`` for one side of one tab."""
+def _is_version_src(src) -> bool:
+    """docs/284: a side that is a change-ledger version (``hist:<chip>/<ref>``)."""
+    from quam_state_manager.core import hub_versions
+    return (getattr(src, "origin", "") == "history"
+            and hub_versions.is_ref(str(getattr(src, "ref", "")).rsplit("/", 1)[-1]))
+
+
+#: docs/284: why the Wiring tab has nothing to compare for a ledger version
+_VERSION_WIRING_NOTE = ("A change-history version keeps one merged document (state and "
+                        "wiring together); compare it in the State tab.")
+
+
+def _diff_side_doc(src, tab: str, *, merged: bool = False) -> tuple[Any, str]:
+    """``(document, unavailable_reason)`` for one side of one tab.
+
+    ``merged`` (docs/284, a comparison with a change-ledger version): the
+    State tab holds the MERGED document on every side, so a ledger version is
+    compared with like, and the Wiring tab has nothing of its own."""
     if tab in ("state", "wiring"):
+        if merged and tab == "wiring":
+            return None, _VERSION_WIRING_NOTE
         entry = compare_sources.DEFAULT_POOL.get(src.content_hash)
         if entry is None:
             entry = compare_sources.resolve_source(
@@ -28984,6 +29432,9 @@ def _diff_side_doc(src, tab: str) -> tuple[Any, str]:
             entry = compare_sources.DEFAULT_POOL.get(src.content_hash)
         if entry is None:
             return None, "content unavailable"
+        if merged:
+            from quam_state_manager.core.hub_rules import merged as merge_pair
+            return merge_pair(entry.state, entry.wiring), ""
         return (entry.state if tab == "state" else entry.wiring), ""
     if tab == "node":
         # A run's node.json sits BESIDE its quam_state folder. Snapshots and
@@ -29027,12 +29478,15 @@ def _diff_payload(src_a, src_b, tab: str, *, with_rows: bool) -> dict:
         if hit is not None:
             _DIFF_MEMO.move_to_end(key)
             return hit
-    doc_a, why_a = _diff_side_doc(src_a, tab)
-    doc_b, why_b = _diff_side_doc(src_b, tab)
+    versions = _is_version_src(src_a) or _is_version_src(src_b)
+    doc_a, why_a = _diff_side_doc(src_a, tab, merged=versions)
+    doc_b, why_b = _diff_side_doc(src_b, tab, merged=versions)
     if doc_a is None or doc_b is None:
         return {"ok": False, "unavailable": why_a or why_b,
                 "counts": {}, "rows": [], "tree_a": {}, "tree_b": {}}
-    res = json_diff.build(doc_a, doc_b)
+    # docs/284: with a ledger version on either side, a value differs only
+    # under the one comparison rule (compare_equal, as the N-way panes)
+    res = json_diff.build(doc_a, doc_b, equal=json_diff._eq if versions else None)
     res["ok"] = True
     res["unavailable"] = ""
     with _diff_memo_lock:
@@ -29181,8 +29635,9 @@ def _diff_payload_n(srcs: list, tab: str) -> dict:
     equality groups. Not memoized -- an N-way ask is rare next to the
     tab-strip re-asks the 2-way memo exists for."""
     docs, whys = [], []
+    versions = any(_is_version_src(src) for src in srcs)
     for src in srcs:
-        doc, why = _diff_side_doc(src, tab)
+        doc, why = _diff_side_doc(src, tab, merged=versions)
         docs.append(doc)
         whys.append(why)
     if any(d is None for d in docs):
@@ -29521,6 +29976,10 @@ def diff_snapshots():
     ts_b = (request.args.get("ts_b") or "").strip()
     if not ts_a or not ts_b:
         return _hub_redirect("/diff")
+    from quam_state_manager.core import hub_versions
+    if any(not (_HIST_TS_RE.match(t) or hub_versions.is_ref(t)) for t in (ts_a, ts_b)):
+        return render_template("_status.html", message="Not a saved version id.",
+                               level="error"), 404
     chip = (request.args.get("chip_key") or "").strip()
     if not chip:
         try:
@@ -29528,8 +29987,16 @@ def diff_snapshots():
         except Exception:      # noqa: BLE001
             return _hub_redirect("/diff")
     # Oldest on the left, so the diff reads forward in time like every other
-    # before→after surface.
-    a, b = sorted((ts_a, ts_b))
+    # before -> after surface. docs/284: a change-ledger version sorts by its
+    # order instant (an id is not a time).
+    if hub_versions.is_ref(ts_a) or hub_versions.is_ref(ts_b):
+        try:
+            a, b = sorted((ts_a, ts_b), key=lambda ref: _version_order(_active_path(), ref))
+        except Exception as exc:  # noqa: BLE001 -- the reason is the answer
+            return render_template("_status.html", message=f"Version unavailable: {exc}",
+                                   level="error"), 404
+    else:
+        a, b = sorted((ts_a, ts_b))
     return _hub_redirect(
         f"/diff?a=hist:{quote(chip)}/{quote(a)}&b=hist:{quote(chip)}/{quote(b)}")
 
@@ -29584,8 +30051,22 @@ def diff_versions():
     if asked_chip and chip_key and asked_chip != chip_key:
         return _fail(f"This comparison names chip '{asked_chip}' but "
                      f"'{chip_key}' is open — open that chip first.")
+    from quam_state_manager.core import hub_versions
     ts_list = sorted({t.strip() for t in request.args.getlist("ts")
-                      if t.strip() and _HIST_TS_RE.match(t.strip())})
+                      if t.strip() and (_HIST_TS_RE.match(t.strip())
+                                        or hub_versions.is_ref(t.strip()))})
+    versions = any(hub_versions.is_ref(t) for t in ts_list)
+    ledger_docs: dict = {}
+    if versions:
+        # docs/284: oldest -> newest by the timeline's order (an id is not a
+        # time); every version read in ONE snapshot of the ledger
+        try:
+            ledger_docs = hub_versions.documents(
+                _hub_chip_dir(path), [t for t in ts_list if hub_versions.is_ref(t)])
+            ts_list.sort(key=lambda ref: (hub_versions.order_key(ledger_docs[ref][0])
+                                          if ref in ledger_docs else _version_order(path, ref)))
+        except Exception as exc:  # noqa: BLE001 -- the reason is the answer
+            return _fail(f"Compare failed: {exc}")
     if len(ts_list) < 2:
         return _hub_redirect("/diff")
     dropped_cols = 0
@@ -29594,13 +30075,19 @@ def diff_versions():
         dropped_cols = len(ts_list) - _VERSION_COMPARE_COL_CAP
         ts_list = ts_list[-_VERSION_COMPARE_COL_CAP:]
     try:
-        stores = [hm.load_snapshot(path, ts) for ts in ts_list]
         # ignore_keys=set(): this page TELLS the user every other leaf agrees,
         # so it must not quietly skip `__class__`. A lab's class migration
         # (docs/94) is exactly the difference a physicist opens this for, and
         # the 2-tick button on the same panel (the /diff workbench) already
         # reports it — the two must not disagree about the same two versions.
-        rows = Differ().diff_n(stores, ignore_keys=set())
+        if versions:
+            # docs/284: ledger versions (merged documents) and snapshots, under
+            # the one rule the 2-tick workbench uses with them (compare_equal)
+            rows = hub_versions.compare_n([(ledger_docs[ts][1], {}) if ts in ledger_docs
+                                           else _version_side(path, ts) for ts in ts_list])
+        else:
+            stores = [hm.load_snapshot(path, ts) for ts in ts_list]
+            rows = Differ().diff_n(stores, ignore_keys=set())
     except Exception as exc:      # noqa: BLE001 — a pruned snapshot must explain, not 500
         return _fail(f"Compare failed: {exc}")
     try:
@@ -29616,6 +30103,18 @@ def diff_versions():
         "kind_legacy": (kind_for(meta_by_ts[ts])[1] if ts in meta_by_ts else False),
         "label": getattr(meta_by_ts.get(ts), "label", "") or "",
     } for ts in ts_list]
+    for col in cols:
+        if col["ts"] in ledger_docs:
+            # docs/284: a ledger version's column names its event
+            ev = ledger_docs[col["ts"]][0]
+            if ev["kind"] == "run":
+                col["label"] = f"run #{ev['run_id']} {ev.get('experiment') or ''}".strip()
+                col["kind"] = "exp"
+            elif ev["kind"] == hub_versions.OBSERVED_KIND:
+                col["label"] = "seen by SM (writer unknown)"
+            else:
+                col["label"] = _version_sm_words(ev)[0]
+                col["kind"] = "manual"
     hub_url = "/compare-hub?" + urlencode(
         [("src", f"hist:{chip_key}/{ts}") for ts in ts_list])
     template = ("_version_compare.html" if _is_htmx()
