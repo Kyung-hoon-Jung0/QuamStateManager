@@ -13537,6 +13537,164 @@ var _INSTR_FIT_FLOOR = 0.55;
 // but is never the only copy — see _applyInstrumentFit.
 var _instrFitChoice = null;
 
+// The two situations a rack bar names (the Fit/1:1 bar and the size bar
+// speak with one voice).
+var _IW_NOTE_FIT = 'Whole rack scaled to fit \u2014 switch to 1:1 for full-size ports.';
+var _IW_NOTE_WIDE = '\u2194 Wider than this pane \u2014 scroll sideways, or fit it all in view.';
+
+/* ---- wiring size control (docs/290) ----------------------------------
+ * A surface that opts in (renderInstrumentWiring(..., {sizeControl: name}))
+ * gets a size bar above its rack: minus / slider / plus / Fit / 1:1, the
+ * Chip Status map's zoom control in look and behaviour. The value is the rack's
+ * scale against its natural drawing (1 = the 1:1 mode above), or 'fit'.
+ * Scaling goes through the svg's own width/height over its viewBox, so the
+ * port labels are re-drawn at the larger size, never stretched as a bitmap.
+ * Each surface remembers its own choice (quam_wiring_size_<name>); with none
+ * recorded the shared Fit/1:1 logic decides, which is exactly today's
+ * picture.
+ */
+var _INSTR_SIZE_PREFIX = 'quam_wiring_size_';
+var _INSTR_SIZE_MIN = 0.5;
+var _INSTR_SIZE_MAX = 3;
+var _INSTR_SIZE_STEP = 0.25;
+// Per surface, present only while storage refuses the write (same contract
+// as _instrFitChoice: the press always takes effect on this page).
+var _instrSizeChoice = {};
+
+function _instrSizeParse(raw) {
+    if (raw === 'fit') return 'fit';
+    if (raw === null || raw === undefined || raw === '') return null;
+    var n = parseFloat(raw);
+    // A corrupt or out-of-range record is no record -- the default stands.
+    if (!isFinite(n) || n < _INSTR_SIZE_MIN - 1e-9 || n > _INSTR_SIZE_MAX + 1e-9) return null;
+    return n;
+}
+
+function _instrSizeRead(key) {
+    if (Object.prototype.hasOwnProperty.call(_instrSizeChoice, key)) {
+        return _instrSizeParse(_instrSizeChoice[key]);
+    }
+    var raw = null;
+    try { raw = localStorage.getItem(_INSTR_SIZE_PREFIX + key); } catch (e) { /* blocked */ }
+    return _instrSizeParse(raw);
+}
+
+// The next stop on the STEP grid strictly above (dir > 0) or below the
+// current scale: a fitted 63% goes to 75% / 50%, not to 88% / 38%. The
+// range clamp is _instrSizeWrite's, the one place every value passes.
+function _instrSizeStep(cur, dir) {
+    var k = cur / _INSTR_SIZE_STEP;
+    return dir > 0 ? (Math.floor(k + 1e-6) + 1) * _INSTR_SIZE_STEP
+                   : (Math.ceil(k - 1e-6) - 1) * _INSTR_SIZE_STEP;
+}
+
+function _instrSizeWrite(key, value) {
+    var v = value === 'fit' ? 'fit'
+        : String(Math.round(Math.min(_INSTR_SIZE_MAX,
+                                     Math.max(_INSTR_SIZE_MIN, value)) * 100) / 100);
+    _instrSizeChoice[key] = v;
+    try {
+        localStorage.setItem(_INSTR_SIZE_PREFIX + key, v);
+        delete _instrSizeChoice[key];   // storage holds it; stop shadowing it
+    } catch (e) { /* blocked -- the in-memory copy carries this page */ }
+    // Every rack of this surface on the page follows (the wizard draws one
+    // in step 5 and a mirror in step 6).
+    var bars = document.querySelectorAll('.iw-sizebar');
+    Array.prototype.forEach.call(bars, function(b) {
+        var host = b.parentNode;
+        if (host && host._iwSizeKey === key && b.getAttribute('data-iw-size-key') === key) {
+            _applyInstrumentFit(host);
+        }
+    });
+}
+
+function _buildInstrumentSizeBar(container, key) {
+    var bar = document.createElement('div');
+    bar.className = 'iw-sizebar';
+    bar.setAttribute('data-iw-size-key', key);
+    var note = document.createElement('span');
+    note.className = 'iw-sizebar-note';
+    bar.appendChild(note);
+    // No role="group": Pico styles [role=group] as a full-width button bar
+    // (the same trap the Chip Status zoom control hit).
+    var ctl = document.createElement('span');
+    ctl.className = 'iw-sizectl';
+    ctl.setAttribute('aria-label', 'Wiring size');
+    function btn(act, text, title) {
+        var b = document.createElement('button');
+        b.type = 'button';
+        b.className = 'iw-size-btn';
+        b.setAttribute('data-iw-size', act);
+        b.title = title;
+        b.textContent = text;
+        ctl.appendChild(b);
+        return b;
+    }
+    btn('out', '\u2212', 'Smaller');
+    var sl = document.createElement('input');
+    sl.type = 'range';
+    sl.className = 'iw-size-slider';
+    sl.min = String(_INSTR_SIZE_MIN);
+    sl.max = String(_INSTR_SIZE_MAX);
+    sl.step = '0.05';
+    sl.setAttribute('aria-label', 'Wiring size');
+    sl.title = 'Wiring size';
+    ctl.appendChild(sl);
+    btn('in', '+', 'Bigger');
+    var pct = document.createElement('span');
+    pct.className = 'iw-size-pct';
+    ctl.appendChild(pct);
+    btn('fit', 'Fit', 'Fit the pane width');
+    btn('1', '1:1', 'Full size (scrolls sideways)');
+    bar.appendChild(ctl);
+    bar.addEventListener('click', function(ev) {
+        var b = ev.target && ev.target.closest && ev.target.closest('[data-iw-size]');
+        if (!b || !bar.contains(b)) return;
+        var act = b.getAttribute('data-iw-size');
+        if (act === 'fit') _instrSizeWrite(key, 'fit');
+        else if (act === '1') _instrSizeWrite(key, 1);
+        else _instrSizeWrite(key, _instrSizeStep(container._iwEffScale || 1, act === 'in' ? 1 : -1));
+    });
+    // Applied in place, never a rebuild: a re-render mid-drag would destroy
+    // the slider under the pointer.
+    sl.addEventListener('input', function() {
+        var v = parseFloat(sl.value);
+        if (isFinite(v)) _instrSizeWrite(key, v);
+    });
+    return bar;
+}
+
+function _syncInstrumentSizeBar(container, key, fit, eff, widest, avail) {
+    var bar = null;
+    for (var c = container.firstElementChild; c; c = c.nextElementSibling) {
+        if (c.classList && c.classList.contains('iw-sizebar')) { bar = c; break; }
+    }
+    if (!bar) {
+        bar = _buildInstrumentSizeBar(container, key);
+        container.insertBefore(bar, container.firstChild);
+    }
+    container._iwEffScale = eff;
+    var shown = fit ? Math.min(avail, widest) : widest * eff;
+    bar.querySelector('.iw-sizebar-note').textContent =
+        (fit && widest > avail + 1) ? _IW_NOTE_FIT
+        : (!fit && shown > avail + 1) ? _IW_NOTE_WIDE
+        : '';
+    bar.querySelector('.iw-size-pct').textContent = Math.round(eff * 100) + '%';
+    var sl = bar.querySelector('.iw-size-slider');
+    if (sl && document.activeElement !== sl) {
+        sl.value = Math.min(_INSTR_SIZE_MAX, Math.max(_INSTR_SIZE_MIN, eff)).toFixed(2);
+    }
+    var one = !fit && Math.abs(eff - 1) < 1e-9;
+    Array.prototype.forEach.call(bar.querySelectorAll('[data-iw-size]'), function(b) {
+        var act = b.getAttribute('data-iw-size');
+        var on = act === 'fit' ? fit : act === '1' ? one : false;
+        if (act === 'fit' || act === '1') {
+            b.classList.toggle('active', on);
+            b.setAttribute('aria-pressed', on ? 'true' : 'false');
+        }
+    });
+}
+
 function _applyInstrumentFit(container) {
     _watchInstrumentResize(container);   // armed even while it currently fits
     var svgs = container.querySelectorAll('svg.instrument-svg');
@@ -13546,22 +13704,35 @@ function _applyInstrumentFit(container) {
     });
     var avail = container.clientWidth || widest;
     var scale = widest ? Math.min(1, avail / widest) : 1;
-    // The viewer's explicit choice always wins; with none recorded, show the
-    // WHOLE rack whenever it stays legible — the complaint this fixes was
-    // "half my FEMs aren't there", and a rack the viewer must discover by
-    // scrolling answers that only halfway.
-    // localStorage is best-effort, never the only copy: a browser with site
-    // data blocked (Safari private, Chrome "block all cookies", a webview
-    // with no user-data dir) throws on setItem, and a mode kept ONLY in
-    // storage makes the toggle silently inert. _instrFitChoice is the truth
-    // for this page; storage just carries it to the next one.
-    var stored = _instrFitChoice;
-    if (stored === null) {
-        try { stored = localStorage.getItem(_INSTR_FIT_KEY); } catch (e) { /* blocked */ }
-    }
-    var fit = stored === '1' ? true
+    // docs/290: a surface with the size control has its OWN record, and it
+    // beats the shared Fit/1:1 choice below. Nothing recorded -> the shared
+    // logic decides, so the default stays today's picture exactly.
+    var sizeKey = container._iwSizeKey || null;
+    var sized = sizeKey ? _instrSizeRead(sizeKey) : null;   // 'fit' | number | null
+    var mult = typeof sized === 'number' ? sized : 1;
+    var fit;
+    if (sized === 'fit') {
+        fit = true;
+    } else if (typeof sized === 'number') {
+        fit = false;
+    } else {
+        // The viewer's explicit choice always wins; with none recorded, show the
+        // WHOLE rack whenever it stays legible — the complaint this fixes was
+        // "half my FEMs aren't there", and a rack the viewer must discover by
+        // scrolling answers that only halfway.
+        // localStorage is best-effort, never the only copy: a browser with site
+        // data blocked (Safari private, Chrome "block all cookies", a webview
+        // with no user-data dir) throws on setItem, and a mode kept ONLY in
+        // storage makes the toggle silently inert. _instrFitChoice is the truth
+        // for this page; storage just carries it to the next one.
+        var stored = _instrFitChoice;
+        if (stored === null) {
+            try { stored = localStorage.getItem(_INSTR_FIT_KEY); } catch (e) { /* blocked */ }
+        }
+        fit = stored === '1' ? true
             : stored === '0' ? false
             : scale >= _INSTR_FIT_FLOOR;
+    }
 
     Array.prototype.forEach.call(svgs, function(svg) {
         var w = parseFloat(svg.dataset.natW) || 0;
@@ -13578,11 +13749,19 @@ function _applyInstrumentFit(container) {
             svg.style.height = 'auto';
             svg.style.maxWidth = w + 'px';
         } else {
-            svg.style.width = w + 'px';
-            svg.style.height = h + 'px';
+            // mult is 1 unless the viewer picked a size -- then the rack is
+            // drawn at that scale (magnifying is THEIR call, never a default).
+            svg.style.width = Math.round(w * mult) + 'px';
+            svg.style.height = Math.round(h * mult) + 'px';
             svg.style.maxWidth = 'none';   // the crop this replaced
         }
     });
+    if (sizeKey) {
+        // The size bar replaces the Fit/1:1 bar on this surface: same note,
+        // and its Fit / 1:1 buttons are that bar's two modes.
+        if (svgs.length) _syncInstrumentSizeBar(container, sizeKey, fit, fit ? scale : mult, widest, avail);
+        return;
+    }
     var old = container.querySelector('.iw-fitbar');
     if (old) old.remove();
     // Only speak when the drawing does not fit on its own — an 8-FEM rack in
@@ -13592,9 +13771,7 @@ function _applyInstrumentFit(container) {
     bar.className = 'iw-fitbar';
     var note = document.createElement('span');
     note.className = 'iw-fitbar-note';
-    note.textContent = fit
-        ? 'Whole rack scaled to fit — switch to 1:1 for full-size ports.'
-        : '↔ Wider than this pane — scroll sideways, or fit it all in view.';
+    note.textContent = fit ? _IW_NOTE_FIT : _IW_NOTE_WIDE;
     var btn = document.createElement('button');
     btn.type = 'button';
     btn.className = 'btn-xs outline iw-fitbar-btn';
@@ -13655,6 +13832,10 @@ window.renderInstrumentWiring = function(containerId, data, rawWiring, options) 
     // onPortHover(assignment|null): in editable mode, route port hover to a
     // caller-supplied panel instead of the cursor-following popup.
     var onPortHover = options && options.onPortHover;
+    // sizeControl: a surface name ('instrument', 'generate') -- that surface
+    // gets the size bar and remembers its own size (docs/290). Absent, the
+    // mount keeps the plain Fit/1:1 bar.
+    container._iwSizeKey = (options && options.sizeControl) || null;
 
     // Clear fallback/previous content before rendering
     container.innerHTML = '';

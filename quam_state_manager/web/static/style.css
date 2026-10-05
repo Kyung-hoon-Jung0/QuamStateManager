@@ -3800,6 +3800,23 @@ input.edit-input {
 }
 .iw-fitbar-note { color: var(--pico-muted-color); }
 .iw-fitbar-btn { margin: 0; padding: 0.08rem 0.5rem; white-space: nowrap; }
+/* Wiring size bar (docs/290) -- the Fit/1:1 bar's place and note, plus the
+   Chip Status map's zoom control (its button/slider rules are shared above).
+   Sticky left AND top: it stays over the rack while the rack scrolls under
+   it in either direction (the wizard's populate copy caps its height), so it
+   needs the page background behind it. */
+.iw-sizebar {
+    position: sticky; left: 0; top: 0; z-index: 2;
+    display: flex; align-items: center; flex-wrap: wrap; gap: 0.3rem 0.6rem;
+    margin: 0 0 0.35rem; padding: 0.18rem 0.1rem;
+    background: var(--pico-background-color);
+}
+/* The note keeps the Fit/1:1 bar's size; the control inherits the pane's
+   font so its .78em buttons come out the same size as the map's. */
+.iw-sizebar-note { color: var(--pico-muted-color); font-size: 0.78rem; }
+.iw-sizectl { margin-left: auto; display: inline-flex; gap: .25rem; align-items: center; }
+.iw-size-pct { min-width: 2.8em; text-align: right; font-size: .78em;
+    color: var(--pico-muted-color); font-variant-numeric: tabular-nums; }
 .instrument-svg .port-group { transition: opacity 0.12s; }
 .instrument-svg .port-group:hover circle { opacity: 0.82; filter: drop-shadow(0 0 5px rgba(0,0,0,0.28)); }
 
@@ -4388,7 +4405,7 @@ html.topbar-hidden .topo-subnav {
 /* pair-metric patches read as edges: a subtle link glyph before the label */
 .topo-hero-mbtn-edge::before { content: '↔ '; opacity: .7; }
 .topo-hero-zoomctl { margin-left: auto; display: inline-flex; gap: .25rem; align-items: center; }
-.topo-hero-zbtn {
+.topo-hero-zbtn, .iw-size-btn {
     /* width/margin: Pico's global button rules are width:100% + a bottom
        margin — without the override the three controls render as full-row
        bars (caught by the real-browser probe). */
@@ -4397,10 +4414,10 @@ html.topbar-hidden .topo-subnav {
     border: 1px solid var(--pico-muted-border-color); border-radius: 6px;
     background: transparent; color: var(--pico-muted-color);
 }
-.topo-hero-zbtn:hover { border-color: var(--pico-primary); color: var(--pico-primary); }
-.topo-hero-zbtn.active { background: var(--pico-primary); color: var(--pico-primary-inverse);
+.topo-hero-zbtn:hover, .iw-size-btn:hover { border-color: var(--pico-primary); color: var(--pico-primary); }
+.topo-hero-zbtn.active, .iw-size-btn.active { background: var(--pico-primary); color: var(--pico-primary-inverse);
     border-color: var(--pico-primary); }
-.topo-hero-zslider { width: 110px; margin: 0; padding: 0; height: auto; }
+.topo-hero-zslider, .iw-size-slider { width: 110px; margin: 0; padding: 0; height: auto; }
 /* docs/126 — the per-gate (pulse-variant) picker under the metric row */
 .topo-hero-gatebar { display: flex; gap: .3rem; align-items: center; flex-wrap: wrap;
     flex-basis: 100%; margin-top: .25rem; }

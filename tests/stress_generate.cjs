@@ -883,28 +883,33 @@ async function main() {
      { text: (await txt('#gen-wiring-diagram') || '').slice(0, 200) });
 
   if (hasSvg) {
-    // Fit vs 1:1 — the toggle only appears when the rack is wider than the pane.
-    const fitBar = await ev(`(function(){var b=document.querySelector('#gen-wiring-diagram .iw-fitbar'); return b? b.textContent.trim() : null;})()`);
-    if (fitBar) {
+    // Fit vs 1:1 -- the wizard's rack carries the size bar (docs/290), whose
+    // Fit and 1:1 buttons are the docs/135 modes. Alternate them; on a rack
+    // that already fits the two widths can coincide, so only demand a change
+    // when the rack is wider than the pane.
+    const sizeBar = await ev(`!!document.querySelector('#gen-wiring-diagram .iw-sizebar')`);
+    ok('the wizard rack carries the size bar', sizeBar);
+    if (sizeBar) {
+      const overflows = await ev(`(function(){var h=document.getElementById('gen-wiring-diagram'); var s=h.querySelector('svg.instrument-svg');
+            return s? (parseFloat(s.dataset.natW)||0) > h.clientWidth+1 : false;})()`);
+      // Start from the mode NOT showing, so every press is a real switch.
+      const fitShown = await ev(`(function(){var b=document.querySelector('#gen-wiring-diagram .iw-sizebar [data-iw-size="fit"]'); return !!(b && b.classList.contains('active'));})()`);
       const fitStates = [];
       for (let i = 0; i < 4; i++) {
+        const act = (i % 2 === 0) === fitShown ? '1' : 'fit';
         const before = await ev(`(function(){var s=document.querySelector('#gen-wiring-diagram svg.instrument-svg'); return s? s.style.width : null;})()`);
-        await ev(`(function(){var b=document.querySelector('#gen-wiring-diagram .iw-fitbar-btn'); if(b) b.click(); return 1;})()`);
+        await ev(`(function(){var b=document.querySelector('#gen-wiring-diagram .iw-sizebar [data-iw-size="${act}"]'); if(b) b.click(); return 1;})()`);
         await sleep(350);
-        fitStates.push({ before: before, label: await ev(`(function(){var b=document.querySelector('#gen-wiring-diagram .iw-fitbar-btn'); return b? b.textContent : null;})()`),
+        fitStates.push({ act: act, before: before,
+                         active: await ev(`(function(){var b=document.querySelector('#gen-wiring-diagram .iw-sizebar [data-iw-size="${act}"]'); return b? b.classList.contains('active') : null;})()`),
                          after: await ev(`(function(){var s=document.querySelector('#gen-wiring-diagram svg.instrument-svg'); return s? s.style.width : null;})()`),
-                         bars: await ev(`document.querySelectorAll('#gen-wiring-diagram .iw-fitbar').length`) });
+                         bars: await ev(`document.querySelectorAll('#gen-wiring-diagram .iw-sizebar, #gen-wiring-diagram .iw-fitbar').length`) });
       }
-      ok('Fit / 1:1 toggles the rack width every press', fitStates.every(f => f.before !== f.after), fitStates);
-      ok('…and never leaves two fit bars', fitStates.every(f => f.bars === 1), fitStates.map(f => f.bars));
-      ok('…and the label always matches the state it offers',
-         fitStates.every(f => f.label === '1:1' || f.label === 'Fit width'), fitStates.map(f => f.label));
-    } else {
-      ok('the fit bar is absent because the rack already fits (not a defect)',
-         await ev(`(function(){var h=document.getElementById('gen-wiring-diagram'); var s=h.querySelector('svg.instrument-svg');
-            return s? (parseFloat(s.dataset.natW)||0) <= h.clientWidth+1 : false;})()`),
-         { natW: await ev(`(function(){var s=document.querySelector('#gen-wiring-diagram svg.instrument-svg'); return s? s.dataset.natW : null;})()`),
-           host: await ev(`(document.getElementById('gen-wiring-diagram')||{}).clientWidth`) });
+      ok('Fit / 1:1 toggles the rack width every press (when the rack overflows)',
+         !overflows || fitStates.every(f => f.before !== f.after), fitStates);
+      ok('...and never leaves two bars', fitStates.every(f => f.bars === 1), fitStates.map(f => f.bars));
+      ok('...and the pressed mode is the one marked active', fitStates.every(f => f.active === true),
+         fitStates.map(f => f.act + ':' + f.active));
     }
 
     // --- drags: onto an occupied port, and onto an invalid FEM type -------

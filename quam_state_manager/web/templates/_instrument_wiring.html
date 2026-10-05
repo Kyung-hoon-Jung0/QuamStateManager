@@ -66,7 +66,10 @@
         var rawWiring = {{ wiring_json | script_json }};
         window._rawWiring = rawWiring;
         console.log('[InstrumentWiring] data:', instrumentData);
-        renderInstrumentWiring('instrument-diagram', instrumentData, rawWiring);
+        // docs/290: this page carries the wiring size control (its own
+        // remembered size, independent of the wizard's).
+        renderInstrumentWiring('instrument-diagram', instrumentData, rawWiring,
+                               { sizeControl: 'instrument' });
         // Ring ports flagged by connectivity diagnostics (band mismatch,
         // freq-out-of-band, missing/colliding ports). Reuses the same
         // highlighter the wiring-preview uses; '.iw-port-problem' = red ring.

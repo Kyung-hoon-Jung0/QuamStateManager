@@ -54,7 +54,9 @@
     var rawWiring = {{ wiring_json | script_json }};
     var problems = {{ problems_json | script_json }};
     window._rawWiring = rawWiring;
-    renderInstrumentWiring('instrument-diagram', instrumentData, rawWiring);
+    // docs/290: the dropped-chip preview is the Instrument Wiring page too.
+    renderInstrumentWiring('instrument-diagram', instrumentData, rawWiring,
+                           { sizeControl: 'instrument' });
     if (window._highlightInstrumentPorts) {
       window._highlightInstrumentPorts('instrument-diagram', problems, 'iw-port-problem');
     }

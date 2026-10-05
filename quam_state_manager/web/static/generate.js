@@ -4012,9 +4012,11 @@
       renderWiringIssues(null);   // no allocation, no "✓ Wiring valid" (QA F7)
       return;
     }
+    // docs/290: the wizard's racks share one remembered size ('generate').
     renderInstrumentWiring("gen-wiring-diagram",
                            buildInstrumentData(state.allocation), {},
-                           { editable: true, onPortHover: setMonitorHover });
+                           { editable: true, onPortHover: setMonitorHover,
+                             sizeControl: "generate" });
     attachWiringDrag();
     // Ring the ports involved in any validation error, then list the issues.
     var issues = validateWiring();
@@ -8536,7 +8538,7 @@
     details.hidden = false;
     renderInstrumentWiring("gen-pop-wiring-diagram",
                            buildInstrumentData(state.allocation), {},
-                           { onPortHover: setPopHover });
+                           { onPortHover: setPopHover, sizeControl: "generate" });
     // Ring the ports involved in any wiring error — same as step 5.
     validateWiring().forEach(function (it) {
       if (it.level !== "error") return;
@@ -12104,6 +12106,9 @@
       hideSlotMenu: hideSlotMenu,
       uiZoom: uiZoom,
       attachWiringDrag: attachWiringDrag,
+      // docs/290 seams -- the two wizard racks that carry the size control
+      renderWiringDiagram: renderWiringDiagram,
+      renderPopWiring: renderPopWiring,
       // docs/135 ⑤ seam — the allocation→diagram regroup, incl. digital
       buildInstrumentData: buildInstrumentData,
       // r16 populate-protect + scripts seams (docs/72) — not public API
