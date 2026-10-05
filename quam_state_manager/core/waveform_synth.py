@@ -28,9 +28,27 @@ import math
 from typing import Any, Callable
 
 import numpy as np
-from scipy.ndimage import gaussian_filter1d
-from scipy.signal.windows import blackman as _blackman_window
-from scipy.signal.windows import gaussian as _gaussian_window
+
+
+# scipy is imported where it is used, never at module import: this module is
+# imported by Diagnostics on the app's startup path, and importing
+# scipy.signal / scipy.ndimage there cost 4 s warm and ~15 s on a first run
+# after an install -- time `qsm serve` spent before binding its port, so the
+# browser said "connection refused". The functions are the same scipy ones
+# (the bit-exact golden against the lab's quam still holds).
+def gaussian_filter1d(*args, **kwargs):
+    from scipy.ndimage import gaussian_filter1d as _f
+    return _f(*args, **kwargs)
+
+
+def _blackman_window(*args, **kwargs):
+    from scipy.signal.windows import blackman as _f
+    return _f(*args, **kwargs)
+
+
+def _gaussian_window(*args, **kwargs):
+    from scipy.signal.windows import gaussian as _f
+    return _f(*args, **kwargs)
 
 from quam_state_manager.core.pulse_catalog import (
     PULSE_CATALOG,

@@ -196,6 +196,59 @@ def _run_app(flask_app, *, host: str, port: int, debug: bool) -> None:
         raise
 
 
+def _probe_host(host: str) -> str:
+    """The address a client on this PC reaches a server bound to *host* at."""
+    return "127.0.0.1" if host in ("", "0.0.0.0", "::") else host
+
+
+def _port_in_use(host: str, port: int) -> bool:
+    """True when something already accepts connections on *port*.
+
+    Checked BEFORE the app is built: building it takes seconds, and a busy
+    port used to be reported only after that wait (docs/104 #17 covers the
+    error itself)."""
+    import socket
+    try:
+        with socket.create_connection((_probe_host(host), port), timeout=0.5):
+            return True
+    except OSError:
+        return False
+
+
+def _when_listening(host: str, port: int, on_ready, *, timeout_s: float = 600.0):
+    """Call *on_ready* once the server accepts connections, from a daemon thread.
+
+    The browser must not be opened, and the person must not be told "open
+    http://...", before the port is bound: building the app takes several
+    seconds (more on the first start after an install), and a browser opened
+    earlier shows "connection refused" (docs/287)."""
+    import socket
+    import threading
+    import time
+
+    def run():
+        deadline = time.monotonic() + timeout_s
+        while time.monotonic() < deadline:
+            try:
+                with socket.create_connection((_probe_host(host), port), timeout=0.5):
+                    on_ready()
+                    return
+            except OSError:
+                time.sleep(0.2)
+
+    thread = threading.Thread(target=run, name="sm-ready", daemon=True)
+    thread.start()
+    return thread
+
+
+def _refuse_busy_port(host: str, port: int) -> None:
+    if _port_in_use(host, port):
+        typer.echo(f"ERROR: port {port} is already in use - another "
+                   "State Manager (or app) is serving there.\n"
+                   f"Pick another port:  qsm serve --port {port + 1}", err=True)
+        raise typer.Exit(code=1)
+
+
 # ------------------------------------------------------------------
 # serve — run the web UI in a browser
 # ------------------------------------------------------------------
@@ -219,7 +272,13 @@ def serve(
     # ASCII-only banner: a cp949/legacy-codepage console (Korean/Japanese
     # Windows default) can't encode an em-dash — typer.echo then raised
     # UnicodeEncodeError and  DIED before binding the port.
-    typer.echo(f"QUAM State Manager - open  http://{host}:{port}   (Ctrl+C to quit)")
+    url = f"http://{host}:{port}"
+    _refuse_busy_port(host, port)
+    # docs/287: "open <url>" is printed only once the port answers -- printed
+    # before the app was built, it sent people to "connection refused".
+    typer.echo("QUAM State Manager - starting (the first start after an install can take a while) ...")
+    _when_listening(host, port, lambda: typer.echo(
+        f"QUAM State Manager - ready, open  {url}   (Ctrl+C to quit)"))
     _run_app(create_app(), host=host, port=port, debug=debug)
 
 
@@ -243,18 +302,23 @@ def browser(
     the simplest way to run the app in a browser.
     """
     # (ASCII-only docstring — --help text must survive cp949; docs/102.)
-    import threading
     import webbrowser
 
     from quam_state_manager.web.app import create_app
 
     url = f"http://{host}:{port}"
-    typer.echo(f"QUAM State Manager - opening  {url}   (Ctrl+C to quit)")
+    _refuse_busy_port(host, port)
+    typer.echo("QUAM State Manager - starting (the first start after an install can take a while) ...")
 
-    if not no_open:
-        # Open after a short delay so the server is accepting connections.
-        threading.Timer(1.0, lambda: webbrowser.open(url)).start()
+    def _ready():
+        typer.echo(f"QUAM State Manager - ready, opening  {url}   (Ctrl+C to quit)")
+        if not no_open:
+            webbrowser.open(url)
 
+    # docs/287: the browser opens when the port ANSWERS. A fixed 1 s timer
+    # opened it while the app was still being built (6-20 s), so the first
+    # thing a person saw was "connection refused".
+    _when_listening(host, port, _ready)
     _run_app(create_app(), host=host, port=port, debug=debug)
 
 
