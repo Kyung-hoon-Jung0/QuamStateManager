@@ -172,8 +172,20 @@ def test_missing_project_zone_fails_and_offline_utc_is_explicit(ledger, tmp_path
                  lambda: query.timeline(ledger, q="2026-01-01")):
         with pytest.raises(ValueError, match="time zone"):
             call()
-    with pytest.raises(ValueError, match="time zone"):
-        query.search(query.context(ledger, instance=tmp_path, project="unset"), "")
+    # docs/285: a lab that set no project zone gets this PC's zone (the same
+    # fallback the report and the log's "today" use) -- the refusal this line
+    # used to pin left the Calibration log empty on every such chip. Only when
+    # the PC's zone is unknown too does the bound context still refuse.
+    from quam_state_manager.core import project_time
+    real_pc_zone = project_time.pc_zone
+    try:
+        project_time.pc_zone = lambda: "UTC"
+        assert query.search(query.context(ledger, instance=tmp_path, project="unset"), "2026-01-01") == [1]
+        project_time.pc_zone = lambda: None
+        with pytest.raises(ValueError, match="time zone"):
+            query.search(query.context(ledger, instance=tmp_path, project="unset"), "")
+    finally:
+        project_time.pc_zone = real_pc_zone
     with pytest.raises(ValueError):
         query.context(ledger, instance=tmp_path, zone="UTC")
 
