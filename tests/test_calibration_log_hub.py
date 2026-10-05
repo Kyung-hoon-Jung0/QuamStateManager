@@ -632,6 +632,9 @@ def test_a_long_array_row_reads_as_its_length_not_its_hash(world):
 
 
 def test_report_lists_an_agent_only_day_and_says_when_history_is_building(world, monkeypatch):
+    # while building, the section lists TODAY ("building the history"); the agent day below
+    # is fixed, so "today" is pinned to another day (this failed only on 2026-10-05)
+    monkeypatch.setattr(journal_routes, "_today", lambda: "2026-10-07")
     world["add"]({"v": 1})
     record = {"key": "agent-late", "chip": "chipX", "actor": "by_agent", "node": "scan", "targets": ["qA1"],
               "ts": datetime.fromisoformat("2026-10-05T09:00:00-04:00").timestamp(), "run_id": None,
