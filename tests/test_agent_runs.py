@@ -846,3 +846,30 @@ def test_a_chip_switch_moves_the_agent_clock(app, synth_folder, tmp_path):
     assert seq() == s0 + 1, "a switch moves the agent clock"
     assert c.post("/load", data={"folder": str(synth_folder)}).status_code in (200, 302)
     assert seq() == s0 + 2, "and so does switching back (the cached path)"
+
+
+def test_run_meta_goes_through_safe_io(tmp_path, monkeypatch):
+    """A bare os.replace failed on a transient Windows lock (a reader holding the
+    file) and the status write was dropped; reads met the same lock mid-replace.
+    Every meta.json write and read goes through safe_io's retry ladder."""
+    from quam_state_manager.core import agent_runs as ar, safe_io
+    seen = {"write": 0, "read": 0}
+    real_w, real_r = safe_io.atomic_write_json, safe_io.read_json
+
+    def w(path, data, **kw):
+        seen["write"] += 1
+        return real_w(path, data, **kw)
+
+    def r(path, **kw):
+        seen["read"] += 1
+        return real_r(path, **kw)
+    monkeypatch.setattr(safe_io, "atomic_write_json", w)
+    monkeypatch.setattr(safe_io, "read_json", r)
+    import inspect
+    for fn in (ar.Registry._write_meta, ar.Registry._scan_metas, ar.Registry.get):
+        body = inspect.getsource(fn)
+        assert "os.replace(" not in body and ".read_text(" not in body, fn.__name__ + " bypasses safe_io"
+    reg = ar.Registry(tmp_path)
+    reg._write_meta({"key": "k1", "status": "finished", "path": tmp_path})   # a Path: default=str
+    assert seen["write"] == 1
+    assert reg.get("k1")["status"] == "finished" and seen["read"] >= 1

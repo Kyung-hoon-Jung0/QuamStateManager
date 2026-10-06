@@ -16,7 +16,6 @@ from __future__ import annotations
 
 import json
 import logging
-import os
 import re
 import shutil
 import threading
@@ -28,7 +27,7 @@ from pathlib import Path
 from typing import Any, Callable
 
 from quam_state_manager.core.loader import natural_key
-from quam_state_manager.core import agent_session, approvals, limits as limits_mod, story
+from quam_state_manager.core import agent_session, approvals, limits as limits_mod, safe_io, story
 
 logger = logging.getLogger(__name__)
 
@@ -611,7 +610,7 @@ class Registry:
         try:
             for p in root.glob("*/meta.json"):
                 try:
-                    d = json.loads(p.read_text(encoding="utf-8"))
+                    d = safe_io.read_json(p)      # retries a reader caught mid-replace
                 except (OSError, ValueError):
                     continue
                 if isinstance(d, dict) and d.get("key"):
@@ -700,11 +699,11 @@ class Registry:
         try:
             p = Path(self.instance_path) / "agent_runs" / meta["key"] / "meta.json"
             p.parent.mkdir(parents=True, exist_ok=True)
-            tmp = p.with_suffix(".json.tmp")
-            tmp.write_text(json.dumps(meta, default=str), encoding="utf-8")
-            os.replace(tmp, p)
+            # a bare os.replace failed on a transient Windows lock (a reader holding the
+            # file) and the status write was dropped; safe_io waits it out
+            safe_io.atomic_write_json(p, json.loads(json.dumps(meta, default=str)), compact=True)
         except OSError:
-            logger.debug("run meta write failed", exc_info=True)
+            logger.warning("run meta write failed", exc_info=True)
 
     def _set(self, meta: dict, **fields) -> None:
         with self._cv:
@@ -720,7 +719,7 @@ class Registry:
             return m
         try:
             p = Path(self.instance_path) / "agent_runs" / key / "meta.json"
-            d = json.loads(p.read_text(encoding="utf-8"))
+            d = safe_io.read_json(p)
             if isinstance(d, dict) and d.get("status") in ("starting", "running"):
                 err = interrupted_error(d)
                 d["status"] = "interrupted"

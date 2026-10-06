@@ -24,7 +24,7 @@ from pathlib import Path
 
 import pytest
 
-from quam_state_manager.core import agent_plans, agent_session, limits, scheduler
+from quam_state_manager.core import agent_plans, agent_session, limits, safe_io, scheduler
 from quam_state_manager.core import journal as journal_mod
 from quam_state_manager.web import chat_api
 from quam_state_manager.web.app import create_app
@@ -366,7 +366,9 @@ class TestNoBlankArm:
         r = _run(c, TERM, plan_id=pid["id"], step=0).get_json()
         assert r["ok"], r
         assert r["driver"]["kind"] == "terminal" and r["driver"]["actor"] == "by_claude", r
-        meta = json.loads((Path(str(inst)) / "agent_runs" / r["key"] / "meta.json").read_text(encoding="utf-8"))
+        # safe_io: the run's own thread may be replacing the file right now (Windows refuses
+        # an open mid-replace -- this read failed intermittently with Errno 13)
+        meta = safe_io.read_json(Path(str(inst)) / "agent_runs" / r["key"] / "meta.json")
         assert meta["session_id"] != "dead-in-app-session" and meta["driver"]["kind"] == "terminal"
 
     def test_the_session_door_reads_the_open_chips_record(self, c, inst):
