@@ -430,34 +430,40 @@ window.WiringGrid = (function () {
     var snap = _undoStack.pop();
     sp.qubits = sp.qubits || [];
     var reinserted = sp.qubits.indexOf(snap.qid) < 0;
+    // Re-generate: a row holding the id meanwhile that is ANOTHER source
+    // qubit (a rename onto it) is not the deleted one -- none of the deleted
+    // qubit's physics, pairs or record goes onto it. A bare row the count
+    // re-created (no record) is still taken over, as in Generate.
+    var s0 = S();
+    var rec0 = s0 && s0.mode === "regenerate" ? s0.regenQubitSource : null;
+    var other = !!rec0 && !reinserted &&
+      Object.prototype.hasOwnProperty.call(rec0, snap.qid);
     if (reinserted) {
       sp.qubits.splice(Math.min(snap.index, sp.qubits.length), 0, snap.qid);
     }
-    var pop = sp.populate || (sp.populate = {});
-    Object.keys(snap.populate).forEach(function (g) {
-      (pop[g] || (pop[g] = {}))[snap.qid] = snap.populate[g];
-    });
-    sp.qubit_pairs = sp.qubit_pairs || [];
-    snap.pairs.forEach(function (rec) {
-      var a = rec.pair[0], b = rec.pair[1];
-      if (sp.qubits.indexOf(a) < 0 || sp.qubits.indexOf(b) < 0) return;
-      if (pairIndex(a, b) >= 0) return;
-      sp.qubit_pairs.splice(Math.min(rec.index, sp.qubit_pairs.length), 0, rec.pair.slice());
-    });
-    Object.keys(snap.pairPop).forEach(function (key) {
-      var seg = key.split("-");
-      if (seg.length === 2 && sp.qubits.indexOf(seg[0]) >= 0 && sp.qubits.indexOf(seg[1]) >= 0) {
-        (pop.pairs || (pop.pairs = {}))[key] = snap.pairPop[key];
-      }
-    });
-    var s = S(); if (s) s.pairsTouched = true;
-    // The row's source record comes back only with the row itself: when the
-    // id is held by another row meanwhile (a rename onto it, the count),
-    // that row's record stands.
-    if (s && s.regenQubitSource && snap.src !== undefined && reinserted &&
-        !Object.prototype.hasOwnProperty.call(s.regenQubitSource, snap.qid)) {
-      s.regenQubitSource[snap.qid] = snap.src;
+    if (!other) {
+      var pop = sp.populate || (sp.populate = {});
+      Object.keys(snap.populate).forEach(function (g) {
+        (pop[g] || (pop[g] = {}))[snap.qid] = snap.populate[g];
+      });
+      sp.qubit_pairs = sp.qubit_pairs || [];
+      snap.pairs.forEach(function (rec) {
+        var a = rec.pair[0], b = rec.pair[1];
+        if (sp.qubits.indexOf(a) < 0 || sp.qubits.indexOf(b) < 0) return;
+        if (pairIndex(a, b) >= 0) return;
+        sp.qubit_pairs.splice(Math.min(rec.index, sp.qubit_pairs.length), 0, rec.pair.slice());
+      });
+      Object.keys(snap.pairPop).forEach(function (key) {
+        var seg = key.split("-");
+        if (seg.length === 2 && sp.qubits.indexOf(seg[0]) >= 0 && sp.qubits.indexOf(seg[1]) >= 0) {
+          (pop.pairs || (pop.pairs = {}))[key] = snap.pairPop[key];
+        }
+      });
+    } else if (window.showToast) {
+      window.showToast(snap.qid + " is another qubit now — the deleted one cannot come back under that name", "info");
     }
+    var s = S(); if (s) s.pairsTouched = true;
+    if (rec0 && snap.src !== undefined && !other) rec0[snap.qid] = snap.src;
     _sel = null; _armed = null;
     commit("undo");
     return snap.qid;

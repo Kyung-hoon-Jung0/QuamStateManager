@@ -482,6 +482,22 @@ class TestSecondReview:
                                            *_fresh({"q0": 1, "q1": 2}, pairs=[("q1", "q0")]))
         z = s2["qubits"]["q1"]["z"]["operations"]
         assert z["cz_pulse_q0"] == {"id": "cz_pulse_q0", "amplitude": 0.11}
-        assert z["cz_pulse_q0_stale"]["amplitude"] == 0.99
+        # the leftover names a qubit the source never had: held as _stale, its
+        # own id string with it (quam names the config pulse by id)
+        assert z["cz_pulse_q0_stale"] == {"id": "cz_pulse_q0_stale", "amplitude": 0.99}
         assert (s2["qubit_pairs"]["q1-q0"]["macros"]["cz"]["flux_pulse"]
                 == "#/qubits/q1/z/operations/cz_pulse_q0")
+
+    def test_whatever_used_the_leftover_still_reaches_it(self):
+        s, w = _chip({"q1": 1, "q2": 2}, {"q1": 4.1e9, "q2": 4.2e9})
+        s["qubits"]["q2"]["z"]["operations"] = {
+            "cz_pulse_q0": {"amplitude": 0.99}, "cz_pulse_q1": {"amplitude": 0.11},
+            "alias": "#./cz_pulse_q0",
+            "x_q1_q0": {"amplitude": 1}, "x_q0_q1": {"amplitude": 2}}
+        s["extras"] = {"ref": "#/qubits/q2/z/operations/cz_pulse_q0"}
+        s2, _, _, _ = rename_source_qubits(s, w, {"q1": "q0", "q2": "q1"}, *_fresh({"q0": 1, "q1": 2}))
+        z = s2["qubits"]["q1"]["z"]["operations"]
+        assert z["alias"] == "#./cz_pulse_q0_stale"
+        assert s2["extras"]["ref"] == "#/qubits/q1/z/operations/cz_pulse_q0_stale"
+        # two keys that swap their ids stay two distinct keys
+        assert z["x_q0_q0_stale"] == {"amplitude": 1} and z["x_q0_stale_q0"] == {"amplitude": 2}

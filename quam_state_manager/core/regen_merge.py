@@ -1389,6 +1389,14 @@ def _source_label(oid: str, taken: set) -> str:
     return label
 
 
+def _stale_label(tid: str, taken: set) -> str:
+    label = tid + "_stale"
+    while label in taken:
+        label += "_"
+    taken.add(label)
+    return label
+
+
 def _displaced_label(oid: str, taken: set) -> str:
     label = oid + _DISPLACED_SUFFIX
     while label in taken:
@@ -1452,20 +1460,12 @@ def _rewrite_ids(node: Any, pmap: dict, rename, parent: str | None = None,
             new_keys = {k: pmap.get(k, k) for k in node}
         else:
             new_keys = {k: rename(k) for k in node}
-        # A renamed key wins its new name; a key that merely already had it
-        # (a leftover "cz_pulse_q0" naming a qubit the source does not have,
-        # when q1 becomes q0) steps aside as "<key>_stale", so a pointer or a
-        # pulse.id renamed to that name reaches the renamed object -- in
-        # either key order. Two keys are never merged into one.
-        claimed = {nk for k, nk in new_keys.items() if nk != k}
-        intended = set(new_keys.values())
+        # The token map is one-to-one (renamed, removed-and-reused and stale
+        # ids each get their own name), so two keys cannot meet; should one
+        # anyway, they are never merged into one.
         out: dict = {}
         for k, v in node.items():
             nk = new_keys[k]
-            if nk == k and k in claimed:
-                nk = k + "_stale"
-                while nk in intended or nk in out:
-                    nk += "_"
             while nk in out:
                 nk += "_"
             out[nk] = _rewrite_ids(v, pmap, rename, k, free or k == "extras")
@@ -1519,6 +1519,14 @@ def rename_source_qubits(old_state: dict, old_wiring: dict | None,
     for o in old_q:
         if o not in tok and o in set(renames.values()):
             tok[o] = _displaced_label(o, taken)
+    # A new id the SOURCE never had, spelled inside one of its names (a
+    # leftover "cz_pulse_q0" on a chip with no q0, when q1 becomes q0), names
+    # no qubit of this chip: it is held as "<id>_stale" in keys, pointers and
+    # strings alike, so nothing renamed lands on it and nothing that used it
+    # is pointed at the renamed one.
+    for t in set(renames.values()):
+        if t not in old_q and t not in tok:
+            tok[t] = _stale_label(t, taken)
 
     pmap: dict[str, str] = {}
     old_pairs = old_state.get("qubit_pairs")

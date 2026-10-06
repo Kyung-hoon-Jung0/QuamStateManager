@@ -153,9 +153,21 @@ found four new defects, two of them regressions from the first cut:
 - P2: the pair label first carried a space, and the report reads a line's
   owner up to the first space. It is now `_source`.
 - P2: a key collision kept a renamed key under its OLD name when a leftover
-  key already had the new one. The renamed key now wins, and the leftover
-  (which names a qubit the source does not have) steps aside as
-  `<key>_stale`, in either key order.
+  key already had the new one.
+
+A third round, against those fixes:
+- P0: Undo of a delete onto a row that is now ANOTHER source qubit still
+  merged the deleted qubit's populate values onto it, and the server
+  protected them. The undo now leaves such a row alone and says so. A bare
+  row the count re-created is still taken over, as in Generate.
+- P0, narrow: a port-CSV import cleared the record but not the count's
+  stash, so a later count raise handed an old qubit to a brand-new row. It
+  now clears both.
+- P2: the dict-level fix for the collision missed pointers and `id` strings
+  that used the leftover, and a three-way swap of two leftover-bearing keys.
+  It is replaced by one global rule: a new id the source never had, spelled
+  inside a source name, is held as `<id>_stale` in keys, pointers and
+  strings alike. The token map is one-to-one, so no two keys can meet.
 
 The round also scanned 51 real chips for string leaves the value rule changes.
 Only ids, `thread`, TWPA `qubits`, active-name lists, `core` labels and
@@ -185,10 +197,15 @@ snapshots match the pre-feature JS, and the POST only gains
   - board delete + undo, count truncation, the CSV import.
 - `generate_naming_selfcheck.cjs` F8 now pins the block SHOWN in Re-generate.
 
-Second-round pins: the source pair's report group, the leftover-key collision
-in both orders, N8b-N8d (count down / Ctrl+Z, delete-rename-undo).
+Second- and third-round pins:
+- the source pair's report group;
+- the leftover-key collision in both orders, and whatever used the leftover
+  (an alias, an extras pointer, a swapped pair of keys);
+- N8b-N8e: count down / Ctrl+Z, delete-rename-undo (record and values), and
+  the CSV import with the stash.
 
-Mutation sweep: 33 mutations, 33 caught (4 more for the second round):
+Mutation sweep: 36 mutations, 36 caught (4 for the second round, 3 for the
+third):
 - 7 + 6 server before review (one is the FSP offer);
 - 5 server review fixes;
 - 5 + 6 wizard (one, count truncation, was missed and got its own pin).

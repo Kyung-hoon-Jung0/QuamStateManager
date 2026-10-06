@@ -289,6 +289,26 @@ const DONE = { ok: true, status: 'ok', result: { qubits: ['q0', 'q1', 'q2'], qub
      'N8c: undo never overwrites the record of the row now holding the id (got ' +
      J(st.regenQubitSource) + ')');
 
+  ok(st.spec.populate.qubit.q2.anharmonicity === -220e6,
+     'N8c: ...nor merges the deleted qubit values onto it (got ' +
+     J(st.spec.populate.qubit.q2) + ')');
+
+  // ---- N8e: a CSV import also forgets the rows the count dropped ----------
+  win = makeWorld([]);
+  G = hydrate2(win, [['q1', 'q2']]);
+  st = G._test.state;
+  G._test.renameQubit('q3', 'q7');
+  const qc4 = win.document.getElementById('gen-qubit-count');
+  qc4.value = '2'; qc4.dispatchEvent(new win.Event('change', { bubbles: true }));
+  G._test.applyPortCsv({ ok: true, instruments: st.spec.instruments,
+    qubits: ['q1', 'q2', 'q3', 'q4', 'q5', 'q6'],
+    grid: { q1: '0,0', q2: '1,0', q3: '2,0', q4: '3,0', q5: '4,0', q6: '5,0' },
+    qubit_pairs: [], pins: {}, feedlines: {}, warnings: [] });
+  qc4.value = '7'; qc4.dispatchEvent(new win.Event('change', { bubbles: true }));
+  ok(st.spec.qubits.indexOf('q7') >= 0 && !('q7' in st.regenQubitSource),
+     'N8e: a row added after a CSV import inherits nothing (got ' +
+     J([st.spec.qubits, st.regenQubitSource]) + ')');
+
   // ---- N8d: a swap, the count down, Ctrl+Z ---------------------------------
   win = makeWorld([]);
   G = hydrate2(win, [['q1', 'q2']]);

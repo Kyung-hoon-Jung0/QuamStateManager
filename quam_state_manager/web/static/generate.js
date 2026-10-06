@@ -2790,7 +2790,10 @@
     state.spec.qubits = (payload.qubits || []).slice();
     // A whole-chip replacement: no row is a renamed source qubit any more, so
     // the build matches the CSV's ids with the source's by id, as before.
-    if (state.regenQubitSource) state.regenQubitSource = {};
+    if (state.regenQubitSource) {
+      state.regenQubitSource = {};
+      state.regenSourceStash = {};   // nor may a row the count dropped come back
+    }
     state.namesTouched = true;      // q0-based ids must survive the scheme gate
     state.spec.qubit_pairs = (payload.qubit_pairs || [])
       .map(function (p) { return p.slice(); });
@@ -11462,6 +11465,7 @@
     state.sourcePath = null;
     state.regenLineInventory = null;
     state.regenQubitSource = null;
+    state.regenSourceStash = null;
     state.regenSourcePairGate = null;
     regenPairOrient = null;
     state.autoPresetRows = null;   // a fresh chip prefills again (QA generate-r2-05)
@@ -11819,6 +11823,7 @@
     state.sourcePath = null;
     state.regenLineInventory = null;
     state.regenQubitSource = null;
+    state.regenSourceStash = null;
     state.regenSourcePairGate = null;
     regenPairOrient = null;
     state.regenSourceHash = null;   // QA regenerate-r2-35
