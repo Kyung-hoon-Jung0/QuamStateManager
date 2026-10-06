@@ -53,6 +53,7 @@ import logging
 import os
 import re
 import sqlite3
+import time
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
@@ -310,10 +311,30 @@ def _shift_s(old: str, new: str) -> int | None:
 # apply / revert one chip
 # --------------------------------------------------------------------------
 
+def _rename_settling(a: Path, b: Path) -> None:
+    """``os.rename`` of a snapshot folder, waiting out a transient Windows lock.
+
+    A virus scanner or an indexer reading a file inside the folder makes a
+    directory rename fail with ``PermissionError`` (WinError 5 / 32) for a moment;
+    measured on this project's Windows PC as an intermittent "Access is denied"
+    on freshly written snapshot folders. The same back-off ladder as
+    ``safe_io``'s atomic writes (about 1.6 s in all); a lock that outlasts it
+    raises as before, and the chip's journal stays for the next start."""
+    for attempt in range(safe_io._WRITE_ATTEMPTS):
+        try:
+            os.rename(a, b)
+            return
+        except PermissionError:
+            if attempt == safe_io._WRITE_ATTEMPTS - 1 or not a.exists() or b.exists():
+                raise
+            time.sleep(safe_io._WRITE_BACKOFF_S * safe_io._WRITE_BACKOFF_STEPS[
+                min(attempt, len(safe_io._WRITE_BACKOFF_STEPS) - 1)])
+
+
 def _move_dir(chip_dir: Path, src: str, dst: str) -> None:
     a, b = chip_dir / src, chip_dir / dst
     if a.exists() and not b.exists():
-        os.rename(a, b)
+        _rename_settling(a, b)
     elif a.exists() and b.exists():
         raise RekeyError(f"{chip_dir.name}: both {src} and {dst} exist")
     elif not a.exists() and not b.exists():

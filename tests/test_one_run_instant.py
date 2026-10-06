@@ -22,6 +22,7 @@ import json
 import os
 import shutil
 import sqlite3
+import threading
 from collections import Counter
 from dataclasses import asdict
 from datetime import datetime, timedelta, timezone
@@ -110,8 +111,13 @@ def _entries(runs: list[Path]) -> list:
 
 
 def _ingest(hm: HistoryManager, chip: Path, runs: list[Path], hist: Path | None = None) -> dict:
-    return hm._ingest_entries_into(hist or hm._history_dir(chip), _entries(runs),
-                                   fallback_wiring_path=chip / "wiring.json")
+    out = hm._ingest_entries_into(hist or hm._history_dir(chip), _entries(runs),
+                                  fallback_wiring_path=chip / "wiring.json")
+    # the snapshot index is written by a deferred background thread (it first waits for
+    # the app to go quiet); a tree hash taken before it lands differed from one taken
+    # after -- an intermittent failure of this class (1 in ~4 runs, the slow ones)
+    hm._join_deferred_index(timeout=120.0)
+    return out
 
 
 def _edt_runs(root: Path) -> list[Path]:
@@ -464,11 +470,19 @@ class TestRekeyMigration:
         inst, hm = _build_old_history(tmp_path, chip, runs, monkeypatch)
         seen = []
         real = os.rename
+        me = threading.current_thread()
 
         def spy(a, b):
+            # os.rename is process-wide: a background thread's rename during the
+            # migration was counted too (5 instead of 4, intermittently) -- only
+            # the migration's own renames, on this thread, are its moves
+            if threading.current_thread() is not me:
+                return real(a, b)
             jp = inst / JOURNAL_DIR / f"{hm._history_dir(chip).name}.json"
-            seen.append(jp.exists() and json.loads(jp.read_text())["state"])
-            return real(a, b)
+            state = jp.exists() and json.loads(jp.read_text())["state"]
+            out = real(a, b)               # a rename that raised (and is retried) is no move
+            seen.append(state)
+            return out
         monkeypatch.setattr(history_rekey.os, "rename", spy)
         migrate_history_rekey_v4(inst, skip_if_peers=False)
         assert seen == ["applying"] * 4
@@ -666,3 +680,34 @@ def test_the_clients_read_the_instant():
         pytest.skip("jsdom not installed")
     assert r.returncode == 0, r.stdout + r.stderr
     assert "all passed" in r.stdout, r.stdout + r.stderr
+
+
+class TestRekeyRenameSettles:
+    """A snapshot folder's rename waits out a transient Windows lock (a scanner reading
+    a file inside it): measured here as an intermittent WinError 5 on fresh folders."""
+
+    def _setup(self, tmp_path, monkeypatch, fail_times):
+        from quam_state_manager.core import history_rekey, safe_io
+        monkeypatch.setattr(safe_io, "_WRITE_BACKOFF_S", 0.0)
+        (tmp_path / "a").mkdir()
+        real, calls = os.rename, {"n": 0}
+
+        def flaky(a, b):
+            calls["n"] += 1
+            if calls["n"] <= fail_times:
+                raise PermissionError(5, "Access is denied")
+            return real(a, b)
+        monkeypatch.setattr(history_rekey.os, "rename", flaky)
+        return history_rekey, calls
+
+    def test_a_brief_lock_is_waited_out(self, tmp_path, monkeypatch):
+        rk, calls = self._setup(tmp_path, monkeypatch, fail_times=2)
+        rk._move_dir(tmp_path, "a", "b")
+        assert (tmp_path / "b").is_dir() and not (tmp_path / "a").exists() and calls["n"] == 3
+
+    def test_a_lock_that_never_clears_still_raises(self, tmp_path, monkeypatch):
+        rk, calls = self._setup(tmp_path, monkeypatch, fail_times=99)
+        with pytest.raises(PermissionError):
+            rk._move_dir(tmp_path, "a", "b")
+        from quam_state_manager.core import safe_io
+        assert calls["n"] == safe_io._WRITE_ATTEMPTS and (tmp_path / "a").is_dir()
