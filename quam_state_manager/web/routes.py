@@ -39898,7 +39898,8 @@ def regenerate_build():
                 populate_touched=populate_touched,
                 sidecar_dirs=((str(_live),) if _live and str(_live) != source_folder
                               else ()),
-                source=unsaved[:2] if unsaved else None)
+                source=unsaved[:2] if unsaved else None,
+                qubit_sources=qubit_sources)
         except Exception:  # noqa: BLE001 -- the build reads it again and reports
             logger.warning("source drift check failed on %s", source_folder,
                            exc_info=True)

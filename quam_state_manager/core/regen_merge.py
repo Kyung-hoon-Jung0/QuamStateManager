@@ -1374,6 +1374,20 @@ def source_renames(qubit_sources: Any, old_state: dict,
     return out
 
 
+# An old pair whose id no longer names it (a member renamed, no rebuilt twin:
+# removed, or rebuilt reversed) is held under this -- a space never occurs in a
+# wizard id, and the loss / reversed-pair report reads "q1-q2 (source)".
+_SOURCE_SUFFIX = " (source)"
+
+
+def _source_label(oid: str, taken: set) -> str:
+    label = oid + _SOURCE_SUFFIX
+    while label in taken:
+        label += " "
+    taken.add(label)
+    return label
+
+
 def _displaced_label(oid: str, taken: set) -> str:
     label = oid + _DISPLACED_SUFFIX
     while label in taken:
@@ -1382,16 +1396,22 @@ def _displaced_label(oid: str, taken: set) -> str:
     return label
 
 
-def _token_renamer(tok: dict[str, str]):
+def _token_renamer(tok: dict[str, str], ids=()):
     """``f(text)`` renaming each ``_``-delimited occurrence of a source qubit id
     -- ``cz_SNZ_flux_pulse_q2_q1`` -> ``cz_SNZ_flux_pulse_q1_q0`` -- all at once
     (a swap stays a swap). Labs and the builder both name per-partner
-    operations this way; an id that is only part of a word is left alone."""
+    operations this way; an id that is only part of a word is left alone.
+
+    ``ids`` -- every source qubit id. They are all in the pattern, longest
+    first, so an id that contains another (``q1_b`` beside ``q1``, which the
+    name rule allows) is matched as itself and kept, never read as ``q1``
+    followed by ``_b``."""
     if not tok:
         return lambda text: text
-    alt = "|".join(re.escape(k) for k in sorted(tok, key=len, reverse=True))
+    every = set(tok) | set(ids)
+    alt = "|".join(re.escape(k) for k in sorted(every, key=len, reverse=True))
     pat = re.compile(rf"(?<![^_])(?:{alt})(?![^_])")
-    return lambda text: pat.sub(lambda m: tok[m.group(0)], text)
+    return lambda text: pat.sub(lambda m: tok.get(m.group(0), m.group(0)), text)
 
 
 def _renamed_pointer(s: str, pmap: dict, rename) -> str:
@@ -1413,12 +1433,17 @@ def _renamed_pointer(s: str, pmap: dict, rename) -> str:
     return head + "/" + "/".join(out)
 
 
-def _rewrite_ids(node: Any, tok: dict, pmap: dict, rename, parent: str | None = None,
+def _rewrite_ids(node: Any, pmap: dict, rename, parent: str | None = None,
                  free: bool = False) -> Any:
-    """``node`` re-expressed in the new ids: dict keys and pointers by
-    :func:`_renamed_pointer`'s rule, a string that IS a source qubit id
-    (``id``, ``thread``, a TWPA's ``qubits`` list) or pair id swapped whole.
-    Nothing under ``extras`` changes except pointers' entity segments."""
+    """``node`` re-expressed in the new ids by one rule for keys and string
+    values alike: a pair id is swapped whole, everything else has its qubit-id
+    tokens renamed. A value names a qubit or an operation as often as a key
+    does -- ``id``, a channel's ``thread``, a TWPA's ``qubits``, and the
+    operation a lab's CZ macro plays (``pulse.id = "cz_unipolar_pulse_q1"``,
+    which must follow the operation key it names). Pointers follow
+    :func:`_renamed_pointer` wherever they sit -- one kept under ``extras``
+    still points into the renamed chip -- while other ``extras`` keys and
+    values are free-form and kept verbatim."""
     if isinstance(node, dict):
         out: dict = {}
         for k, v in node.items():
@@ -1430,17 +1455,17 @@ def _rewrite_ids(node: Any, tok: dict, pmap: dict, rename, parent: str | None = 
                 nk = rename(k)
             if nk in out:                  # never merge two keys into one
                 nk = k
-            out[nk] = _rewrite_ids(v, tok, pmap, rename, k, free or k == "extras")
+            while nk in out:
+                nk += "_"
+            out[nk] = _rewrite_ids(v, pmap, rename, k, free or k == "extras")
         return out
     if isinstance(node, list):
-        return [_rewrite_ids(v, tok, pmap, rename, parent, free) for v in node]
+        return [_rewrite_ids(v, pmap, rename, parent, free) for v in node]
     if isinstance(node, str):
         if node.startswith("#"):
-            if free:                       # extras: only the entity segment
-                return _renamed_pointer(node, pmap, lambda seg: tok.get(seg, seg))
             return _renamed_pointer(node, pmap, rename)
         if not free:
-            return tok.get(node, pmap.get(node, node))
+            return pmap[node] if node in pmap else rename(node)
     return node
 
 
@@ -1486,7 +1511,7 @@ def rename_source_qubits(old_state: dict, old_wiring: dict | None,
 
     pmap: dict[str, str] = {}
     old_pairs = old_state.get("qubit_pairs")
-    if isinstance(old_pairs, dict) and old_pairs:
+    if isinstance(old_pairs, dict) and old_pairs and isinstance(new_state, dict):
         old_doc = _merged_doc(old_state, old_wiring)
         new_by_mem: dict[tuple[str, str], str] = {}
         if isinstance(new_state, dict):
@@ -1500,30 +1525,37 @@ def rename_source_qubits(old_state: dict, old_wiring: dict | None,
             m = _pair_membership(opair, old_doc)
             if m is not None:
                 mem[oid] = (tok.get(m[0], m[0]), tok.get(m[1], m[1]))
-        renamed_ids = set(renames.values())
+        # A pair with a renamed (or removed-and-reused) member is the rebuilt
+        # pair with the same (control, target), or no pair at all: its old id
+        # now names a different pair (or none), so it is never kept as is --
+        # a NEW pair the user added under that id would inherit it.
+        moved = set(tok.values())
+        pall = set(old_pairs) | set(new_state.get("qubit_pairs") or {})
         for oid, m in mem.items():
-            if not (m[0] in renamed_ids or m[1] in renamed_ids):
+            if not (m[0] in moved or m[1] in moved):
                 continue
             nid = new_by_mem.get(m)
-            if nid is not None and nid != oid and nid not in pmap.values():
-                pmap[oid] = nid
+            if nid is not None and nid not in pmap.values():
+                if nid != oid:
+                    pmap[oid] = nid
+            else:
+                pmap[oid] = _source_label(oid, pall)
         ptaken = set(pmap.values())
-        pall = set(old_pairs) | ptaken | set((new_state or {}).get("qubit_pairs") or {})
-        for oid in old_pairs:
+        for oid in old_pairs:                  # an untouched pair whose id a rename took
             if oid in pmap or oid not in ptaken:
                 continue
             nid = new_by_mem.get(mem.get(oid))
             pmap[oid] = (nid if nid is not None and nid not in ptaken
-                         else _displaced_label(oid, pall))
+                         else _source_label(oid, pall))
             ptaken.add(pmap[oid])
 
-    rename = _token_renamer(tok)
-    state = _rewrite_ids(old_state, tok, pmap, rename)
-    wiring = (_rewrite_ids(old_wiring, tok, pmap, rename)
+    rename = _token_renamer(tok, old_q)
+    state = _rewrite_ids(old_state, pmap, rename)
+    wiring = (_rewrite_ids(old_wiring, pmap, rename)
               if isinstance(old_wiring, dict) else old_wiring)
     qubits = sorted(renames.items(), key=lambda t: natural_key(t[0]))
     pairs = sorted(((o, n) for o, n in pmap.items()
-                    if not n.endswith(_DISPLACED_SUFFIX)),
+                    if not n.endswith(_SOURCE_SUFFIX)),
                    key=lambda t: natural_key(t[0]))
     return state, wiring, qubits, pairs
 

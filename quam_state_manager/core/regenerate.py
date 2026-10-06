@@ -75,6 +75,7 @@ def source_drift(
     populate_touched: list | None = None,
     sidecar_dirs: tuple[Path | str, ...] = (),
     source: tuple[dict, dict] | None = None,
+    qubit_sources: dict | None = None,
 ) -> list[dict]:
     """The Populate cells the wizard DISPLAYS whose source value changed since
     the wizard read the chip (QA regenerate-r2-35).
@@ -97,15 +98,23 @@ def source_drift(
     unsaved edits (QA regenerate-r2-21): the same source the reconstruct
     stamped and the build will merge from, so the user's own unsaved edits
     are never reported as a change made elsewhere (merged at integration).
+
+    ``qubit_sources`` -- the wizard's ``{current id: source id}`` record. The
+    baseline is in the CURRENT ids (the wizard re-keys it with each rename);
+    the source is re-read in its own, so it is re-keyed the same way before
+    the diff -- else each renamed row is compared with another qubit's values.
     """
     from . import regen_populate
     state, wiring = source if source is not None else safe_io.read_state_wiring(Path(folder))
     if not baseline_hash or regen_spec.content_hash(state, wiring) == baseline_hash:
         return []
     baseline = populate_baseline if isinstance(populate_baseline, dict) else {}
-    now_view = regen_populate.populate_view(
-        reconstruct_from_folder(folder, sidecar_dirs=sidecar_dirs,
-                                source=source).spec)
+    now_view = _populate_in_new_ids(
+        regen_populate.populate_view(
+            reconstruct_from_folder(folder, sidecar_dirs=sidecar_dirs,
+                                    source=source).spec),
+        regen_merge.source_renames(qubit_sources, state,
+                                   (spec or {}).get("qubits") or ()))
     drifted = regen_populate.changed_fields(now_view, baseline, None)
     yours = set(regen_populate.changed_fields(
         regen_populate.populate_view(spec or {}), baseline, populate_touched))
@@ -113,6 +122,37 @@ def source_drift(
              "shown": baseline[g][i][f], "now": now_view[g][i][f],
              "yours": (g, i, f) in yours}
             for g, i, f in drifted]
+
+
+_ID_KEYED_POPULATE = ("qubit", "resonator", "flux", "pulses", "qdac")
+
+
+def _populate_in_new_ids(view: dict, renames: dict[str, str]) -> dict:
+    """A populate view keyed by SOURCE ids, re-keyed to the wizard's current
+    ones (the per-qubit groups by id, ``pairs`` by ``control-target``). A
+    source qubit whose id a renamed one took is dropped, never handed to it."""
+    if not renames or not isinstance(view, dict):
+        return view
+    taken = set(renames.values())
+
+    def q(k: str) -> str | None:
+        return renames[k] if k in renames else (None if k in taken else k)
+
+    def pair(k: str) -> str | None:
+        c, sep, t = k.partition("-")
+        if not sep:
+            return k
+        nc, nt = q(c), q(t)
+        return f"{nc}-{nt}" if nc and nt else None
+
+    out: dict = {}
+    for grp, ids in view.items():
+        if not isinstance(ids, dict) or not (grp == "pairs" or grp in _ID_KEYED_POPULATE):
+            out[grp] = ids
+            continue
+        f = pair if grp == "pairs" else q
+        out[grp] = {nk: v for k, v in ids.items() if (nk := f(k)) is not None}
+    return out
 
 
 def _trim_build_outcome(outcome: dict) -> dict:

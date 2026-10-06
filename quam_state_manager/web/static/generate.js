@@ -1339,6 +1339,19 @@
     if (state.regenQubitSource) {
       state.regenQubitSource = remapKeysBy(state.regenQubitSource, q);
     }
+    // Each source pair's orientation (QA regenerate-r2-09) is keyed and
+    // recorded by member names: unmoved, a renamed pair read as reversed.
+    if (regenPairOrient) {
+      regenPairOrient = remapKeysBy(regenPairOrient, function (k) {
+        var seg = k.split("|");
+        return seg.length === 2 ? [q(seg[0]), q(seg[1])].sort().join("|") : k;
+      });
+      Object.keys(regenPairOrient).forEach(function (k) {
+        var r = regenPairOrient[k];
+        if (r && r.src) r.src = r.src.map(q);
+        if (r && r.cur) r.cur = r.cur.map(q);
+      });
+    }
     // The source chip's port pins are keyed by element: a renamed qubit (and
     // its pairs) keeps the ports it is cabled to, so the re-derive and the
     // re-allocate land every line where it was.
@@ -1720,6 +1733,18 @@
         qubits.push("q" + k);
         used["q" + k] = true;
       }
+    }
+    // Re-generate: a row the count drops leaves the source behind, and a row
+    // it adds is brand new -- neither may keep (or inherit) a source record.
+    if (state.regenQubitSource) {
+      var nowIds = {};
+      qubits.forEach(function (qid) { nowIds[qid] = true; });
+      state.spec.qubits.forEach(function (qid) {
+        if (!nowIds[qid]) delete state.regenQubitSource[qid];
+      });
+      qubits.forEach(function (qid) {
+        if (state.spec.qubits.indexOf(qid) < 0) delete state.regenQubitSource[qid];
+      });
     }
     state.spec.qubits = qubits;
 
@@ -2747,6 +2772,9 @@
     // The CSV's own pins are applied after deriveLines below, as before.
     state.spec.lines = [];
     state.spec.qubits = (payload.qubits || []).slice();
+    // A whole-chip replacement: no row is a renamed source qubit any more, so
+    // the build matches the CSV's ids with the source's by id, as before.
+    if (state.regenQubitSource) state.regenQubitSource = {};
     state.namesTouched = true;      // q0-based ids must survive the scheme gate
     state.spec.qubit_pairs = (payload.qubit_pairs || [])
       .map(function (p) { return p.slice(); });
@@ -11492,6 +11520,13 @@
     if (!own) return null;
     own.spec.forEach(function (k) { snap.spec[k] = _clone(state.spec[k]); });
     own.st.forEach(function (k) { snap.st[k] = _clone(state[k]); });
+    // Re-generate: the qubit ids live on step 4, and so do the records keyed
+    // by them -- a reset or an undo of that step moves them together.
+    if (step === 4 && state.mode === "regenerate") {
+      snap.ids = _clone({ src: state.regenQubitSource || null,
+                          base: state.regenBaselinePopulate || null,
+                          orient: regenPairOrient || null });
+    }
     return snap;
   }
   function stepRestore(step, snap) {
@@ -11503,6 +11538,95 @@
       else state.spec[k] = _clone(snap.spec[k]);
     });
     own.st.forEach(function (k) { state[k] = _clone(snap.st[k]); });
+    if (snap.ids) {
+      state.regenQubitSource = _clone(snap.ids.src);
+      state.regenBaselinePopulate = _clone(snap.ids.base);
+      regenPairOrient = _clone(snap.ids.orient);
+    }
+  }
+  // {source id: current id} for each renamed row now on the wizard, or null.
+  function regenRenameMap() {
+    var src = state.regenQubitSource || {}, fwd = {}, any = false;
+    (state.spec.qubits || []).forEach(function (cur) {
+      var s = src[cur];
+      if (s != null && s !== cur) { fwd[s] = cur; any = true; }
+    });
+    return any ? fwd : null;
+  }
+  // Re-generate: a step restored from the SOURCE chip comes back in source
+  // names. Put it in the current ones, or a reset after a rename gives each
+  // qubit its neighbour's ports / values. A source qubit whose name a renamed
+  // row took is gone: its entries are dropped, never handed to that row.
+  function regenRekeyRestored(step) {
+    var fwd = regenRenameMap();
+    if (!fwd) return;
+    var taken = {};
+    Object.keys(fwd).forEach(function (s) { taken[fwd[s]] = true; });
+    var q = function (k) { return fwd[k] || (taken[k] ? null : k); };
+    var pair = function (k) {
+      var i = k.indexOf("-");
+      if (i < 0) return k;
+      var c = q(k.slice(0, i)), t = q(k.slice(i + 1));
+      return c && t ? c + "-" + t : null;
+    };
+    var el = function (k) {
+      return (fwd[k] || taken[k]) ? q(k) : k.indexOf("-") > 0 ? pair(k) : k;
+    };
+    var rekey = function (obj, f) {
+      var out = {};
+      Object.keys(obj || {}).forEach(function (k) {
+        var nk = f(k);
+        if (nk != null) out[nk] = obj[k];
+      });
+      return out;
+    };
+    var cell = function (k) {
+      var seg = k.split("|");
+      if (seg.length < 3) return k;
+      var r = seg[0] === "pairs" ? pair(seg[1]) : _REGEN_POP_GROUPS[seg[0]] ? q(seg[1]) : seg[1];
+      if (r == null) return null;
+      seg[1] = r;
+      return seg.join("|");
+    };
+    if (step === 3 || step === 5) state.allocation = null;   // keyed by element: re-allocate
+    if (step === 5) {
+      state.spec.lines = (state.spec.lines || []).filter(function (ln) {
+        if (!ln || typeof ln.element !== "string") return true;
+        var e = el(ln.element);
+        if (e == null) return false;
+        ln.element = e;
+        return true;
+      });
+      if (state.heldPins) {
+        state.heldPins = rekey(state.heldPins, function (k) {
+          var cut = k.lastIndexOf("|");
+          if (cut < 0) return k;
+          var e = el(k.slice(0, cut));
+          return e == null ? null : e + k.slice(cut);
+        });
+      }
+    }
+    if (step === 6) {
+      var pop = state.spec.populate || {};
+      Object.keys(pop).forEach(function (grp) {
+        if (grp === "pairs") pop[grp] = rekey(pop[grp], pair);
+        else if (_REGEN_POP_GROUPS[grp]) pop[grp] = rekey(pop[grp], q);
+      });
+      if (state.spec.qdac && state.spec.qdac.qubits) {
+        state.spec.qdac.qubits = rekey(state.spec.qdac.qubits, q);
+      }
+      var apr = state.autoPresetRows;
+      if (apr) {
+        apr.q = rekey(apr.q, q);
+        apr.pairs = rekey(apr.pairs, function (k) {
+          var seg = k.split("|"), a = q(seg[0]), b = q(seg[1]);
+          return a && b ? [a, b].sort().join("|") + "|" + seg.slice(2).join("|") : null;
+        });
+      }
+      ["regenTouched", "regenFilled"].forEach(function (name) {
+        if (state[name]) state[name] = rekey(state[name], cell);
+      });
+    }
   }
   function repaintAfterStepReset(step) {
     if (step === 3 || step === 4 || step === 5) resetAllocRuntime();
@@ -11609,6 +11733,7 @@
     var before = stepSnapshot(step);
     if (regen) {
       stepRestore(step, _regenStepBase[step]);
+      regenRekeyRestored(step);
       regenMarkEdited(null);
     } else {
       resetStepToFresh(step);

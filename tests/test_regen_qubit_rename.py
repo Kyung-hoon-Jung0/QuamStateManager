@@ -121,7 +121,7 @@ class TestARenameOntoARemovedQubitsId:
         assert r.merged["qubit_pairs"]["q1-q2"]["macros"]["cz"]["phase_shift_control"] == 0.22
         lost = r.stats.residual_lost
         assert "qubits.q1_removed.f_01" in lost
-        assert "qubit_pairs.q1-q2_removed.macros.cz.phase_shift_control" in lost
+        assert "qubit_pairs.q1-q2 (source).macros.cz.phase_shift_control" in lost
         assert qr == [("q2", "q1"), ("q3", "q2")]
         assert pr == [("q2-q3", "q1-q2")]
 
@@ -350,3 +350,104 @@ class TestEveryPlaceAQubitIsNamed:
         s["qubits"]["q1"]["xy"]["operations"]["xq1_q10"] = {"amplitude": 0.5}
         s2, _, _, _ = rename_source_qubits(s, w, {"q1": "q0"})
         assert "xq1_q10" in s2["qubits"]["q0"]["xy"]["operations"]
+
+
+class TestReviewFindings:
+    """An adversarial review of the first cut (docs/295 §Review) reproduced each
+    of these; every one was silent."""
+
+    def test_a_lab_macro_plays_the_pulse_its_id_names_after_a_swap(self):
+        # the CZ macro plays `pulse.id`, a STRING naming an operation key: a
+        # swap that renamed the keys but not the id made pair q3-q2 play the
+        # other pair's pulse
+        s, w = _chip({"q1": 1, "q2": 2, "q3": 3}, {"q1": 4.1e9, "q2": 4.2e9, "q3": 4.3e9},
+                     pairs=[("q3", "q1", 0.0), ("q3", "q2", 0.0)])
+        s["qubits"]["q3"]["z"]["operations"] = {
+            "cz_unipolar_pulse_q1": {"id": "cz_unipolar_pulse_q1", "amplitude": 0.11},
+            "cz_unipolar_pulse_q2": {"id": "cz_unipolar_pulse_q2", "amplitude": 0.22}}
+        for t in ("q1", "q2"):
+            s["qubit_pairs"][f"q3-{t}"]["macros"]["cz"]["pulse_id"] = f"cz_unipolar_pulse_{t}"
+        new = _fresh({"q2": 1, "q1": 2, "q3": 3}, pairs=[("q3", "q2"), ("q3", "q1")])
+        s2, _, _, _ = rename_source_qubits(s, w, {"q1": "q2", "q2": "q1"}, *new)
+        ops = s2["qubits"]["q3"]["z"]["operations"]
+        for pid in ("q3-q1", "q3-q2"):
+            pulse = s2["qubit_pairs"][pid]["macros"]["cz"]["pulse_id"]
+            assert ops[pulse]["id"] == pulse
+        # pair q3-q2 is the old q3-q1: it plays the old q3-q1's 0.11
+        assert ops[s2["qubit_pairs"]["q3-q2"]["macros"]["cz"]["pulse_id"]]["amplitude"] == 0.11
+
+    def test_a_new_pair_never_inherits_an_old_pair_id(self):
+        # shift q1,q2,q3 -> q0,q1,q2; the old q1-q2 (now q0-q1) is deleted and
+        # a NEW q1-q2 (the old q2,q3, never a pair) is added: the old id now
+        # names a different pair, which must start uncalibrated
+        old = _chip({"q1": 1, "q2": 2, "q3": 3}, {"q1": 4.1e9, "q2": 4.2e9, "q3": 4.3e9},
+                    pairs=[("q1", "q2", 0.11)])
+        new = _fresh({"q0": 1, "q1": 2, "q2": 3}, pairs=[("q1", "q2")])
+        r, _, pr = _merge(old, new, {"q0": "q1", "q1": "q2", "q2": "q3"})
+        assert r.merged["qubit_pairs"]["q1-q2"]["macros"]["cz"]["phase_shift_control"] == 0.0
+        assert "qubit_pairs.q1-q2 (source).macros.cz.phase_shift_control" in r.stats.residual_lost
+        assert pr == []
+
+    def test_a_renamed_pair_rebuilt_reversed_is_reported_as_the_source_pair(self):
+        old = _chip({"q1": 1, "q2": 2}, {"q1": 4.1e9, "q2": 4.2e9}, pairs=[("q1", "q2", 0.11)])
+        new = _fresh({"q0": 1, "q1": 2}, pairs=[("q1", "q0")])
+        r, _, _ = _merge(old, new, {"q0": "q1", "q1": "q2"})
+        assert r.stats.pairs_reversed == [("q1-q2 (source)", "q1-q0")]
+        assert r.merged["qubit_pairs"]["q1-q0"]["macros"]["cz"]["phase_shift_control"] == 0.0
+
+    def test_an_id_with_an_underscore_is_its_own_qubit(self):
+        # q1 -> q5 only; q1_b and q5_b are other qubits and keep their values
+        old = _chip({"q1": 1, "q1_b": 2, "q5_b": 3}, {"q1": 4.1e9, "q1_b": 4.2e9, "q5_b": 4.3e9})
+        new = _fresh({"q5": 1, "q1_b": 2, "q5_b": 3})
+        r, _, _ = _merge(old, new, {"q5": "q1", "q1_b": "q1_b", "q5_b": "q5_b"})
+        q = r.merged["qubits"]
+        assert (q["q5"]["f_01"], q["q1_b"]["f_01"], q["q5_b"]["f_01"]) == (4.1e9, 4.2e9, 4.3e9)
+        assert r.stats.residual_lost == []
+
+    def test_a_pointer_kept_under_extras_follows_the_renamed_operation(self):
+        s, w = _chip({"q1": 1, "q2": 2}, {"q1": 4.1e9, "q2": 4.2e9})
+        s["qubits"]["q2"]["z"]["operations"] = {"cz_flux_q2_q1": {"amplitude": 0.3}}
+        s["extras"] = {"best": "#/qubits/q2/z/operations/cz_flux_q2_q1", "note": "q2"}
+        s2, _, _, _ = rename_source_qubits(s, w, {"q1": "q0", "q2": "q1"}, *_fresh({"q0": 1, "q1": 2}))
+        assert s2["extras"] == {"best": "#/qubits/q1/z/operations/cz_flux_q1_q0", "note": "q2"}
+
+
+def test_source_drift_compares_each_row_with_its_own_source(tmp_path):
+    # the wizard's baseline is in the renamed ids; an unrelated save to the
+    # source used to light up every renamed row as "changed elsewhere"
+    from quam_state_manager.core import regen_populate
+    from tests.test_web import _make_state, _make_wiring
+
+    chip = _write(tmp_path / "src", _make_state(), _make_wiring())
+    rec = regenerate.reconstruct_from_folder(chip)
+    qs = list(rec.spec["qubits"])
+    idmap = {q: f"q{i}" for i, q in enumerate(qs)}
+    sources = {n: o for o, n in idmap.items()}
+
+    def renamed(view):
+        out = {}
+        for g, rows in view.items():
+            if g == "pairs":
+                out[g] = {"-".join(idmap.get(m, m) for m in k.split("-", 1)): v
+                          for k, v in rows.items()}
+            elif g in ("qubit", "resonator", "flux", "pulses", "qdac"):
+                out[g] = {idmap.get(k, k): v for k, v in rows.items()}
+            else:
+                out[g] = rows
+        return out
+
+    base = renamed(regen_populate.populate_view(rec.spec))
+    spec = dict(rec.spec, qubits=[idmap[q] for q in qs])
+    state = json.loads((chip / "state.json").read_text(encoding="utf-8"))
+    state.setdefault("extras", {})["note"] = "an unrelated save"
+    (chip / "state.json").write_text(json.dumps(state), encoding="utf-8")
+    assert regenerate.source_drift(chip, rec.source_hash, base, spec=spec,
+                                   qubit_sources=sources) == []
+    state["qubits"][qs[0]]["anharmonicity"] = -190e6
+    (chip / "state.json").write_text(json.dumps(state), encoding="utf-8")
+    drift = regenerate.source_drift(chip, rec.source_hash, base, spec=spec,
+                                    qubit_sources=sources)
+    # without the record the source's qA1 never meets the wizard's q0: missed
+    assert regenerate.source_drift(chip, rec.source_hash, base, spec=spec) == []
+    assert [(d["group"], d["id"], d["field"], d["now"]) for d in drift] == [
+        ("qubit", "q0", "anharmonicity", -190e6)]

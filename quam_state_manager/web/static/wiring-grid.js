@@ -377,6 +377,13 @@ window.WiringGrid = (function () {
     // Snapshot BEFORE any mutation: id + position, per-group physics, incident
     // pairs (with their list positions), and the pair-physics buckets.
     var snap = { qid: qid, index: i, populate: {}, pairs: [], pairPop: {} };
+    // Re-generate: which source qubit the row is goes with the row -- kept
+    // for its undo, never left behind for a new row that reuses the id.
+    var st0 = S(), rec = st0 && st0.regenQubitSource;
+    if (rec && Object.prototype.hasOwnProperty.call(rec, qid)) {
+      snap.src = rec[qid];
+      delete rec[qid];
+    }
     ["qubit", "resonator", "flux", "pulses"].forEach(function (g) {
       if (pop[g] && pop[g][qid] !== undefined) snap.populate[g] = _clone(pop[g][qid]);
     });
@@ -443,6 +450,7 @@ window.WiringGrid = (function () {
       }
     });
     var s = S(); if (s) s.pairsTouched = true;
+    if (s && s.regenQubitSource && snap.src !== undefined) s.regenQubitSource[snap.qid] = snap.src;
     _sel = null; _armed = null;
     commit("undo");
     return snap.qid;
