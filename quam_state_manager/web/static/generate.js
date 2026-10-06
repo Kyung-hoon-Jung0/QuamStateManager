@@ -1339,6 +1339,9 @@
     if (state.regenQubitSource) {
       state.regenQubitSource = remapKeysBy(state.regenQubitSource, q);
     }
+    if (state.regenSourceStash) {
+      Object.keys(map).forEach(function (k) { delete state.regenSourceStash[map[k]]; });
+    }
     // Each source pair's orientation (QA regenerate-r2-09) is keyed and
     // recorded by member names: unmoved, a renamed pair read as reversed.
     if (regenPairOrient) {
@@ -1734,16 +1737,29 @@
         used["q" + k] = true;
       }
     }
-    // Re-generate: a row the count drops leaves the source behind, and a row
-    // it adds is brand new -- neither may keep (or inherit) a source record.
+    // Re-generate: a row the count drops keeps its source record aside, and
+    // the same id coming back (Ctrl+Z of the count, or the count raised
+    // again) is that row again -- the count cannot tell them apart, and an
+    // id the wizard re-adds is the same qubit everywhere else (the line
+    // inventory, the by-id merge). Any other added row is brand new: none.
     if (state.regenQubitSource) {
-      var nowIds = {};
+      var nowIds = {}, stash = state.regenSourceStash || (state.regenSourceStash = {});
       qubits.forEach(function (qid) { nowIds[qid] = true; });
       state.spec.qubits.forEach(function (qid) {
-        if (!nowIds[qid]) delete state.regenQubitSource[qid];
+        if (nowIds[qid]) return;
+        if (Object.prototype.hasOwnProperty.call(state.regenQubitSource, qid)) {
+          stash[qid] = state.regenQubitSource[qid];
+        }
+        delete state.regenQubitSource[qid];
       });
       qubits.forEach(function (qid) {
-        if (state.spec.qubits.indexOf(qid) < 0) delete state.regenQubitSource[qid];
+        if (state.spec.qubits.indexOf(qid) >= 0) return;
+        if (Object.prototype.hasOwnProperty.call(stash, qid)) {
+          state.regenQubitSource[qid] = stash[qid];
+          delete stash[qid];
+        } else {
+          delete state.regenQubitSource[qid];
+        }
       });
     }
     state.spec.qubits = qubits;
@@ -11524,6 +11540,7 @@
     // by them -- a reset or an undo of that step moves them together.
     if (step === 4 && state.mode === "regenerate") {
       snap.ids = _clone({ src: state.regenQubitSource || null,
+                          stash: state.regenSourceStash || null,
                           base: state.regenBaselinePopulate || null,
                           orient: regenPairOrient || null });
     }
@@ -11540,6 +11557,7 @@
     own.st.forEach(function (k) { state[k] = _clone(snap.st[k]); });
     if (snap.ids) {
       state.regenQubitSource = _clone(snap.ids.src);
+      state.regenSourceStash = _clone(snap.ids.stash);
       state.regenBaselinePopulate = _clone(snap.ids.base);
       regenPairOrient = _clone(snap.ids.orient);
     }
@@ -12178,6 +12196,7 @@
     // Each row starts as its own source qubit; a rename moves the record with
     // the row (remapRegenRecords).
     state.regenQubitSource = state.mode === "regenerate" ? {} : null;
+    state.regenSourceStash = {};
     ((state.regenQubitSource && spec && spec.qubits) || []).forEach(function (qid) {
       state.regenQubitSource[qid] = qid;
     });

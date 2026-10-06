@@ -121,7 +121,7 @@ class TestARenameOntoARemovedQubitsId:
         assert r.merged["qubit_pairs"]["q1-q2"]["macros"]["cz"]["phase_shift_control"] == 0.22
         lost = r.stats.residual_lost
         assert "qubits.q1_removed.f_01" in lost
-        assert "qubit_pairs.q1-q2 (source).macros.cz.phase_shift_control" in lost
+        assert "qubit_pairs.q1-q2_source.macros.cz.phase_shift_control" in lost
         assert qr == [("q2", "q1"), ("q3", "q2")]
         assert pr == [("q2-q3", "q1-q2")]
 
@@ -385,14 +385,14 @@ class TestReviewFindings:
         new = _fresh({"q0": 1, "q1": 2, "q2": 3}, pairs=[("q1", "q2")])
         r, _, pr = _merge(old, new, {"q0": "q1", "q1": "q2", "q2": "q3"})
         assert r.merged["qubit_pairs"]["q1-q2"]["macros"]["cz"]["phase_shift_control"] == 0.0
-        assert "qubit_pairs.q1-q2 (source).macros.cz.phase_shift_control" in r.stats.residual_lost
+        assert "qubit_pairs.q1-q2_source.macros.cz.phase_shift_control" in r.stats.residual_lost
         assert pr == []
 
     def test_a_renamed_pair_rebuilt_reversed_is_reported_as_the_source_pair(self):
         old = _chip({"q1": 1, "q2": 2}, {"q1": 4.1e9, "q2": 4.2e9}, pairs=[("q1", "q2", 0.11)])
         new = _fresh({"q0": 1, "q1": 2}, pairs=[("q1", "q0")])
         r, _, _ = _merge(old, new, {"q0": "q1", "q1": "q2"})
-        assert r.stats.pairs_reversed == [("q1-q2 (source)", "q1-q0")]
+        assert r.stats.pairs_reversed == [("q1-q2_source", "q1-q0")]
         assert r.merged["qubit_pairs"]["q1-q0"]["macros"]["cz"]["phase_shift_control"] == 0.0
 
     def test_an_id_with_an_underscore_is_its_own_qubit(self):
@@ -451,3 +451,37 @@ def test_source_drift_compares_each_row_with_its_own_source(tmp_path):
     assert regenerate.source_drift(chip, rec.source_hash, base, spec=spec) == []
     assert [(d["group"], d["id"], d["field"], d["now"]) for d in drift] == [
         ("qubit", "q0", "anharmonicity", -190e6)]
+
+
+class TestSecondReview:
+    """The second adversarial round, against the review fixes themselves."""
+
+    def test_the_reversed_source_pair_groups_under_its_own_label(self):
+        # the label once carried a space, and the report reads a line's owner
+        # up to the first space: the group named the NEW pair "q1-q2"
+        from quam_state_manager.core.regen_merge import group_lost_paths
+
+        old = _chip({"q1": 1, "q2": 2}, {"q1": 4.1e9, "q2": 4.2e9}, pairs=[("q1", "q2", 0.11)])
+        new = _fresh({"q0": 1, "q1": 2}, pairs=[("q1", "q0")])
+        r, _, _ = _merge(old, new, {"q0": "q1", "q1": "q2"})
+        groups = group_lost_paths(r.stats.residual_lost, r.merged,
+                                  dict(r.stats.pairs_reversed))
+        pair_groups = [(g["owner"], g.get("reversed_as")) for g in groups if g["kind"] == "pair"]
+        assert pair_groups == [("q1-q2_source", "q1-q0")]
+
+    @pytest.mark.parametrize("leftover_first", [True, False])
+    def test_a_renamed_key_wins_its_new_name_over_a_leftover(self, leftover_first):
+        # a leftover op names a qubit the source does not have (q0); q1 -> q0
+        s, w = _chip({"q1": 1, "q2": 2}, {"q1": 4.1e9, "q2": 4.2e9}, pairs=[("q2", "q1", 0.0)])
+        ops = [("cz_pulse_q0", {"id": "cz_pulse_q0", "amplitude": 0.99}),
+               ("cz_pulse_q1", {"id": "cz_pulse_q1", "amplitude": 0.11})]
+        s["qubits"]["q2"]["z"]["operations"] = dict(ops if leftover_first else ops[::-1])
+        s["qubit_pairs"]["q2-q1"]["macros"]["cz"]["flux_pulse"] = (
+            "#/qubits/q2/z/operations/cz_pulse_q1")
+        s2, _, _, _ = rename_source_qubits(s, w, {"q1": "q0", "q2": "q1"},
+                                           *_fresh({"q0": 1, "q1": 2}, pairs=[("q1", "q0")]))
+        z = s2["qubits"]["q1"]["z"]["operations"]
+        assert z["cz_pulse_q0"] == {"id": "cz_pulse_q0", "amplitude": 0.11}
+        assert z["cz_pulse_q0_stale"]["amplitude"] == 0.99
+        assert (s2["qubit_pairs"]["q1-q0"]["macros"]["cz"]["flux_pulse"]
+                == "#/qubits/q1/z/operations/cz_pulse_q0")

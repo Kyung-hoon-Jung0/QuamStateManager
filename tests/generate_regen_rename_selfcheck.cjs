@@ -17,7 +17,9 @@
  *  N7. the pair-orientation record follows a rename (no false "Reversed
  *      pairs"), and a real reversal after a rename is still named.
  *  N8. a row deleted on the board takes its record with it (undo returns
- *      it); rows the count adds have none.
+ *      it, never over a row that holds the id meanwhile); a row the count
+ *      drops keeps its record aside and gets it back when the same id is
+ *      re-added (Ctrl+Z of the count); any other added row has none.
  *
  * Run:  node tests/generate_regen_rename_selfcheck.cjs
  */
@@ -260,7 +262,7 @@ const DONE = { ok: true, status: 'ok', result: { qubits: ['q0', 'q1', 'q2'], qub
   ok(b8 && !Object.keys(b8.qubit_sources).some(function (k) { return b8.qubit_sources[k] === 'q3'; }),
      'N8: no count-added row inherits the deleted qubit (got ' + J(b8 && b8.qubit_sources) + ')');
 
-  // ---- N8b: a row the count drops leaves its record too --------------------
+  // ---- N8b: the count drops a row; re-adding the same id is that row ------
   win = makeWorld([]);
   G = hydrate2(win, [['q1', 'q2']]);
   st = G._test.state;
@@ -271,10 +273,35 @@ const DONE = { ok: true, status: 'ok', result: { qubits: ['q0', 'q1', 'q2'], qub
   G._test.runBuild();
   await settle();
   const b8b = (win._posts[win._posts.length - 1] || {}).body;
-  ok(st.spec.qubits.length === 4 && b8b &&
-     !Object.keys(b8b.qubit_sources).some(function (k) { return b8b.qubit_sources[k] === 'q3'; }),
-     'N8b: a count-truncated row is not inherited by a count-added one (got ' +
+  ok(J(st.spec.qubits) === J(['q1', 'q2', 'q3', 'q4']) && b8b &&
+     J(b8b.qubit_sources) === J({ q1: 'q1', q2: 'q2', q4: 'q3' }),
+     'N8b: the re-added q4 is the dropped row again; the new q3 has no source (got ' +
      J([st.spec.qubits, b8b && b8b.qubit_sources]) + ')');
+
+  // ---- N8c: delete, rename onto that id, then undo the delete -------------
+  win = makeWorld([]);
+  G = hydrate2(win, [['q1', 'q2']]);
+  st = G._test.state;
+  win.WiringGrid._removeQubit('q2');
+  G._test.renameQubit('q3', 'q2');
+  win.WiringGrid.undoDelete();
+  ok(st.regenQubitSource.q2 === 'q3',
+     'N8c: undo never overwrites the record of the row now holding the id (got ' +
+     J(st.regenQubitSource) + ')');
+
+  // ---- N8d: a swap, the count down, Ctrl+Z ---------------------------------
+  win = makeWorld([]);
+  G = hydrate2(win, [['q1', 'q2']]);
+  st = G._test.state;
+  G._test.applyQubitIdMap({ q2: 'q3', q3: 'q2' });
+  const qc3 = win.document.getElementById('gen-qubit-count');
+  qc3.dispatchEvent(new win.FocusEvent('focusin', { bubbles: true }));
+  qc3.value = '2'; qc3.dispatchEvent(new win.Event('change', { bubbles: true }));
+  win._wizUndo.tryUndo();
+  ok(J(st.spec.qubits) === J(['q1', 'q3', 'q2']),
+     'N8d: Ctrl+Z brought the row back (got ' + J(st.spec.qubits) + ')');
+  ok(st.regenQubitSource.q2 === 'q3' && st.regenQubitSource.q3 === 'q2',
+     'N8d: ...with its source record (got ' + J(st.regenQubitSource) + ')');
 
   // ---- N9: a port-CSV import replaces the chip: no row is a renamed one ---
   win = makeWorld([]);

@@ -80,9 +80,9 @@ Other `extras` keys and values are free-form and kept verbatim (docs/81).
 
 A pair with a renamed (or removed-and-reused) member takes the id the rebuild
 gave the pair with the same (control, target). With no such pair (deleted, or
-rebuilt reversed) it is held as `"<id> (source)"`: its old id now names a
+rebuilt reversed) it is held as `"<id>_source"`: its old id now names a
 different pair, or none, and a NEW pair the user added under that id must not
-inherit it. A pair rebuilt reversed is reported as `q1-q2 (source)`. The
+inherit it. A pair rebuilt reversed is reported as `q1-q2_source`. The
 source-drift check (`source_drift`, QA r2-35) re-keys the source the same way,
 so each renamed row is compared with its own values.
 
@@ -140,6 +140,29 @@ the renamed rebuild.
 In real Chrome: after a rename, Reset step 5 kept every qubit on its own
 ports. Reset step 4 returned the names with their records.
 
+A second round against those fixes closed every first-round finding. It
+found four new defects, two of them regressions from the first cut:
+- P0: board delete, then a rename onto that id, then Undo, overwrote the
+  renamed row's record. Undo now restores a record only with the row it
+  re-inserts, and never over a key another row holds.
+- P1: the count down, then Ctrl+Z, re-added the row without its record.
+  A dropped row's record is now kept aside, and the same id re-added gets it
+  back. The count cannot tell "undo" from "raise again", and a re-added id
+  is the same qubit everywhere else (the line inventory, the by-id merge).
+  Any other added row has no record.
+- P2: the pair label first carried a space, and the report reads a line's
+  owner up to the first space. It is now `_source`.
+- P2: a key collision kept a renamed key under its OLD name when a leftover
+  key already had the new one. The renamed key now wins, and the leftover
+  (which names a qubit the source does not have) steps aside as
+  `<key>_stale`, in either key order.
+
+The round also scanned 51 real chips for string leaves the value rule changes.
+Only ids, `thread`, TWPA `qubits`, active-name lists, `core` labels and
+`pulse.id` change, all consistently. Generate mode is unchanged: 13 state
+snapshots match the pre-feature JS, and the POST only gains
+`qubit_sources: null`.
+
 ## Pins
 
 - `tests/test_regen_qubit_rename.py` (28):
@@ -162,7 +185,10 @@ ports. Reset step 4 returned the names with their records.
   - board delete + undo, count truncation, the CSV import.
 - `generate_naming_selfcheck.cjs` F8 now pins the block SHOWN in Re-generate.
 
-Mutation sweep: 29 mutations, 29 caught:
+Second-round pins: the source pair's report group, the leftover-key collision
+in both orders, N8b-N8d (count down / Ctrl+Z, delete-rename-undo).
+
+Mutation sweep: 33 mutations, 33 caught (4 more for the second round):
 - 7 + 6 server before review (one is the FSP offer);
 - 5 server review fixes;
 - 5 + 6 wizard (one, count truncation, was missed and got its own pin).

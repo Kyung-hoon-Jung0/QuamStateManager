@@ -429,7 +429,8 @@ window.WiringGrid = (function () {
     var sp = spec(); if (!sp || !_undoStack.length) return null;
     var snap = _undoStack.pop();
     sp.qubits = sp.qubits || [];
-    if (sp.qubits.indexOf(snap.qid) < 0) {
+    var reinserted = sp.qubits.indexOf(snap.qid) < 0;
+    if (reinserted) {
       sp.qubits.splice(Math.min(snap.index, sp.qubits.length), 0, snap.qid);
     }
     var pop = sp.populate || (sp.populate = {});
@@ -450,7 +451,13 @@ window.WiringGrid = (function () {
       }
     });
     var s = S(); if (s) s.pairsTouched = true;
-    if (s && s.regenQubitSource && snap.src !== undefined) s.regenQubitSource[snap.qid] = snap.src;
+    // The row's source record comes back only with the row itself: when the
+    // id is held by another row meanwhile (a rename onto it, the count),
+    // that row's record stands.
+    if (s && s.regenQubitSource && snap.src !== undefined && reinserted &&
+        !Object.prototype.hasOwnProperty.call(s.regenQubitSource, snap.qid)) {
+      s.regenQubitSource[snap.qid] = snap.src;
+    }
     _sel = null; _armed = null;
     commit("undo");
     return snap.qid;

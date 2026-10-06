@@ -1375,15 +1375,16 @@ def source_renames(qubit_sources: Any, old_state: dict,
 
 
 # An old pair whose id no longer names it (a member renamed, no rebuilt twin:
-# removed, or rebuilt reversed) is held under this -- a space never occurs in a
-# wizard id, and the loss / reversed-pair report reads "q1-q2 (source)".
-_SOURCE_SUFFIX = " (source)"
+# removed, or rebuilt reversed) is held under this; the loss / reversed-pair
+# report reads "q1-q2_source". No space: the report reads a line's owner from
+# the dot-path before the first space.
+_SOURCE_SUFFIX = "_source"
 
 
 def _source_label(oid: str, taken: set) -> str:
     label = oid + _SOURCE_SUFFIX
     while label in taken:
-        label += " "
+        label += "_"
     taken.add(label)
     return label
 
@@ -1445,16 +1446,26 @@ def _rewrite_ids(node: Any, pmap: dict, rename, parent: str | None = None,
     still points into the renamed chip -- while other ``extras`` keys and
     values are free-form and kept verbatim."""
     if isinstance(node, dict):
+        if free:
+            new_keys = {k: k for k in node}
+        elif parent == "qubit_pairs":
+            new_keys = {k: pmap.get(k, k) for k in node}
+        else:
+            new_keys = {k: rename(k) for k in node}
+        # A renamed key wins its new name; a key that merely already had it
+        # (a leftover "cz_pulse_q0" naming a qubit the source does not have,
+        # when q1 becomes q0) steps aside as "<key>_stale", so a pointer or a
+        # pulse.id renamed to that name reaches the renamed object -- in
+        # either key order. Two keys are never merged into one.
+        claimed = {nk for k, nk in new_keys.items() if nk != k}
+        intended = set(new_keys.values())
         out: dict = {}
         for k, v in node.items():
-            if free:
-                nk = k
-            elif parent == "qubit_pairs":
-                nk = pmap.get(k, k)
-            else:
-                nk = rename(k)
-            if nk in out:                  # never merge two keys into one
-                nk = k
+            nk = new_keys[k]
+            if nk == k and k in claimed:
+                nk = k + "_stale"
+                while nk in intended or nk in out:
+                    nk += "_"
             while nk in out:
                 nk += "_"
             out[nk] = _rewrite_ids(v, pmap, rename, k, free or k == "extras")
