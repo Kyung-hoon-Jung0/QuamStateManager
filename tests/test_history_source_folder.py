@@ -345,3 +345,14 @@ class TestTheSurfaces:
         assert src["kind"] == "this", src
         html = c.get("/state/versions?changes=all").data.decode()
         assert "snap-src" not in html
+
+
+def test_a_snapshot_annotation_goes_through_safe_io():
+    """annotate_snapshot read and replaced meta.json bare; a snapshot listing reading
+    the same file at that moment made it fail transiently, and Take live's backup
+    silently lost its label (this file's take-live test failed intermittently)."""
+    import inspect
+    from quam_state_manager.core.history import HistoryManager
+    body = inspect.getsource(HistoryManager.annotate_snapshot)
+    assert "safe_io.read_json(" in body and "safe_io.atomic_write_json(" in body
+    assert ".read_text(" not in body and ".replace(" not in body

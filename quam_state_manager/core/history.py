@@ -3488,15 +3488,16 @@ class HistoryManager:
         snap_dir = self._history_dir(path) / timestamp
         meta_p = snap_dir / "meta.json"
         with self._lock:
-            data = json.loads(meta_p.read_text(encoding="utf-8"))
+            # safe_io: a bare read / replace failed on a transient Windows lock (a
+            # snapshot listing reading this meta.json at that moment); Take live's
+            # backup then silently lost its "Backup before Take live" label
+            data = safe_io.read_json(meta_p)
             data["label"] = label
             if pinned is not None:
                 data["pinned"] = bool(pinned)
             if note is not _KEEP_NOTE:
                 data["note"] = note
-            tmp = meta_p.with_suffix(".json.tmp")
-            tmp.write_text(json.dumps(data, indent=2), encoding="utf-8")
-            tmp.replace(meta_p)
+            safe_io.atomic_write_json(meta_p, data)
             # in-place: the name set did not move, so the sidecar must be told
             self._manifest_update_entry(snap_dir.parent, snap_dir.name, data)
             self._snapshot_list_cache.pop(str(path.resolve()), None)

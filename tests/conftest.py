@@ -147,6 +147,24 @@ def _isolate_env_discovery_cache():
     config_generator.reset_env_discovery_cache()
 
 
+@pytest.fixture(autouse=True)
+def _isolate_runner_shared_settings(tmp_path_factory):
+    """The runner keeps its machine-level settings and presets ONE level above a
+    chip scope (``scheduler.shared_settings_path``). A test passing ``tmp_path``
+    itself as the scope wrote them into pytest's session-wide base temp dir, and a
+    later test read another's ``env_python`` as a "default" -- intermittent,
+    depending on which tests shared a run. Each test starts without them."""
+    from quam_state_manager.core import scheduler
+
+    base = tmp_path_factory.getbasetemp()
+    for name in ("_shared.json", scheduler._PRESETS_FILENAME):
+        try:
+            (base / name).unlink()
+        except FileNotFoundError:
+            pass
+    yield
+
+
 @pytest.fixture
 def any_project_env_chosen(monkeypatch):
     """Opening a qualibrate project needs an env the user chose for it
