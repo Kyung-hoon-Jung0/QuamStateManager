@@ -1297,11 +1297,89 @@
       rli.elements = nEls;
       rli.lines = nLns;
     }
+    remapRegenRecords(map);
     state.allocation = null;        // old element-id keys are stale → re-allocate
     state.pairsTouched = true;
     deriveLines();
     renderQubitsStep();             // includes the (unconditional) board repaint
     showMessage(null);              // clear any stale gap warning
+  }
+
+  // Re-key an object under a qubit rename, simultaneously: a key the map
+  // moves wins over a stale key already spelled like its target (a deleted
+  // qubit's leftover record must not shadow the renamed one).
+  function remapKeysBy(obj, newKey) {
+    var out = {}, moved = {};
+    Object.keys(obj).forEach(function (k) {
+      var nk = newKey(k);
+      if (nk !== k) { out[nk] = obj[k]; moved[nk] = true; }
+    });
+    Object.keys(obj).forEach(function (k) {
+      if (newKey(k) === k && !moved[k]) out[k] = obj[k];
+    });
+    return out;
+  }
+
+  // Re-generate: which SOURCE qubit each row is, and the populate-protect
+  // records, follow a rename. Without this the build matched by name: renaming
+  // q1, q2 to q0, q1 put the old q1's calibration on the qubit that used to be
+  // q2, and the server diffed each renamed row against another qubit's values.
+  var _REGEN_POP_GROUPS = { qubit: 1, resonator: 1, flux: 1, pulses: 1, qdac: 1 };
+  function remapRegenRecords(map) {
+    if (state.mode !== "regenerate") return;
+    var q = function (k) { return map[k] || k; };
+    var pair = function (k) {
+      var i = k.indexOf("-");
+      if (i < 0) return k;
+      return q(k.slice(0, i)) + "-" + q(k.slice(i + 1));
+    };
+    var rid = function (grp, k) {
+      return grp === "pairs" ? pair(k) : _REGEN_POP_GROUPS[grp] ? q(k) : k;
+    };
+    if (state.regenQubitSource) {
+      state.regenQubitSource = remapKeysBy(state.regenQubitSource, q);
+    }
+    // The source chip's port pins are keyed by element: a renamed qubit (and
+    // its pairs) keeps the ports it is cabled to, so the re-derive and the
+    // re-allocate land every line where it was.
+    var el = function (k) { return map[k] ? map[k] : k.indexOf("-") > 0 ? pair(k) : k; };
+    (state.spec.lines || []).forEach(function (ln) {
+      if (ln && typeof ln.element === "string") ln.element = el(ln.element);
+    });
+    if (state.heldPins) {
+      state.heldPins = remapKeysBy(state.heldPins, function (k) {
+        var cut = k.lastIndexOf("|");
+        return cut < 0 ? k : el(k.slice(0, cut)) + k.slice(cut);
+      });
+    }
+    var bp = state.regenBaselinePopulate;
+    if (bp) {
+      Object.keys(bp).forEach(function (grp) {
+        if (bp[grp] && typeof bp[grp] === "object" &&
+            (grp === "pairs" || _REGEN_POP_GROUPS[grp])) {
+          bp[grp] = remapKeysBy(bp[grp], function (k) { return rid(grp, k); });
+        }
+      });
+    }
+    ["regenTouched", "regenFilled"].forEach(function (name) {
+      if (!state[name]) return;
+      state[name] = remapKeysBy(state[name], function (k) {
+        var seg = k.split("|");
+        if (seg.length < 3) return k;
+        seg[1] = rid(seg[0], seg[1]);
+        return seg.join("|");
+      });
+    });
+  }
+
+  // {current id: source id} for the qubits this build has -- a deleted row's
+  // record stays behind (its undo restores it) but is never sent.
+  function qubitSourcesForBuild() {
+    var src = state.regenQubitSource || {}, out = {};
+    (state.spec.qubits || []).forEach(function (qid) {
+      if (Object.prototype.hasOwnProperty.call(src, qid)) out[qid] = src[qid];
+    });
+    return out;
   }
 
   // Renumber a hole-y qubit set back onto the active naming scheme (the
@@ -1455,7 +1533,9 @@
     }
     return "Apply the naming scheme? This remaps: " + moves.slice(0, 12).join(", ") +
       (moves.length > 12 ? ", … (" + moves.length + " total)" : "") +
-      " — your typed values move with each qubit.";
+      (state.mode === "regenerate"
+        ? " — each qubit keeps its calibration and ports."
+        : " — your typed values move with each qubit.");
   }
 
   // Rename ONE qubit (inline edit). Returns an error string, or null on
@@ -1494,7 +1574,7 @@
     var host = document.getElementById("gen-qubit-name-list");
     if (!host) return;
     host.innerHTML = "";
-    if (state.mode === "regenerate" || !state.spec.qubits.length) return;
+    if (!state.spec.qubits.length) return;
     state.spec.qubits.forEach(function (q) {
       var input = document.createElement("input");
       input.type = "text";
@@ -1535,7 +1615,9 @@
   function renderNamingUi() {
     var block = document.getElementById("gen-naming");
     if (!block) return;
-    block.hidden = state.mode === "regenerate";
+    // Re-generate too: a rename there keeps each qubit's calibration and its
+    // wiring pins (remapRegenRecords + the build's qubit_sources).
+    block.hidden = false;
     var nm = state.naming || {};
     var sel = document.getElementById("gen-naming-preset");
     if (sel) sel.value = nm.preset || "one_based";
@@ -1551,7 +1633,10 @@
     var note = document.getElementById("gen-naming-note");
     if (note) {
       note.classList.remove("gen-topo-caption-warn");   // QA F3: clear a refusal
-      if (nm.preset === "grid") {
+      if (state.mode === "regenerate") {
+        note.textContent = "Rename here, or Apply a scheme: each qubit keeps " +
+          "its calibration and its ports under the new name.";
+      } else if (nm.preset === "grid") {
         var r = schemeNames(state.spec.qubits.length);
         note.textContent = r.error ? r.error
           : "Letters follow board rows (A = bottom row), numbers the column " +
@@ -10225,6 +10310,19 @@
             " are listed below";
           el.appendChild(tl);
         });
+        // A qubit renamed on the wizard is ONE qubit: its calibration moved
+        // with it, and so did its pairs'.
+        [["qubits_renamed", "Renamed ", " — each qubit's calibration carried under its new name"],
+         ["pairs_renamed", "Pairs renamed with them: ", ""]].forEach(function (spec) {
+          var rows = m[spec[0]] || [];
+          if (!rows.length) return;
+          var shown = rows.slice(0, 24).map(function (t) { return t.old + " → " + t["new"]; });
+          var rn = document.createElement("div");
+          rn.className = "gen-merge-muted gen-merge-detail gen-merge-" + spec[0].replace("_", "-");
+          rn.textContent = spec[1] + shown.join(", ") +
+            (rows.length > 24 ? ", … (+" + (rows.length - 24) + ")" : "") + spec[2];
+          el.appendChild(rn);
+        });
         // QA review of r2-10: a rename on the same line is ONE TWPA.
         (m.twpas_renamed || []).forEach(function (t) {
           var rn = document.createElement("div");
@@ -10923,6 +11021,8 @@
         // spec.populate so in-wizard edits beat the tier-1 value merge.
         populate_baseline: state.mode === "regenerate"
           ? (state.regenBaselinePopulate || {}) : null,
+        // which source qubit each row is, so a rename keeps its calibration
+        qubit_sources: state.mode === "regenerate" ? qubitSourcesForBuild() : null,
         populate_touched: state.mode === "regenerate"
           ? Object.keys(state.regenTouched || {}).map(function (k) {
               return k.split("|");
@@ -11317,6 +11417,7 @@
     state.buildEndpoint = "/generate/build";
     state.sourcePath = null;
     state.regenLineInventory = null;
+    state.regenQubitSource = null;
     state.regenSourcePairGate = null;
     regenPairOrient = null;
     state.autoPresetRows = null;   // a fresh chip prefills again (QA generate-r2-05)
@@ -11574,6 +11675,7 @@
     state.buildEndpoint = "/generate/build";
     state.sourcePath = null;
     state.regenLineInventory = null;
+    state.regenQubitSource = null;
     state.regenSourcePairGate = null;
     regenPairOrient = null;
     state.regenSourceHash = null;   // QA regenerate-r2-35
@@ -11948,6 +12050,12 @@
       _inv.lines[el + "|" + ln.line] = true;
     });
     state.regenLineInventory = _inv;
+    // Each row starts as its own source qubit; a rename moves the record with
+    // the row (remapRegenRecords).
+    state.regenQubitSource = state.mode === "regenerate" ? {} : null;
+    ((state.regenQubitSource && spec && spec.qubits) || []).forEach(function (qid) {
+      state.regenQubitSource[qid] = qid;
+    });
     applyDraft({
       // env: KEEP an already-made selection (docs/134) — loadEnvs() applies
       // the server-persisted env as soon as /generate/envs answers, and the

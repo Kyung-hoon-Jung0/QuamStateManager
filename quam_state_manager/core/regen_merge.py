@@ -26,6 +26,7 @@ from __future__ import annotations
 from quam_state_manager.core.loader import natural_key
 
 import copy
+import re
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -144,6 +145,8 @@ class MergeStats:
     ports_inherited: list[tuple[str, str, str]] = field(default_factory=list)  # (port, old owner, new owner) -- kept by port number from a line the rebuild removed (QA review of F1)
     twpas_removed: list[str] = field(default_factory=list)  # OLD TWPAs the step-4 list no longer carries (renamed / deleted) -- not grafted back (QA r2-10)
     twpas_renamed: list[tuple[str, str]] = field(default_factory=list)  # (old id, new id) -- a TWPA renamed on step 4; its calibration carried under the new id (QA review of r2-10)
+    qubits_renamed: list[tuple[str, str]] = field(default_factory=list)  # (source id, new id) -- a qubit renamed on the wizard; its calibration carried under the new id
+    pairs_renamed: list[tuple[str, str]] = field(default_factory=list)  # (source id, new id) -- a pair whose member was renamed, matched by (control, target)
 
 
 @dataclass
@@ -1325,6 +1328,204 @@ def _ungraft_unlanded(merged: dict, stats: MergeStats,
         cls = str(obj.get("__class__") or "object").rsplit(".", 1)[-1]
         stats.rebuild_removed.append(
             (sub, f"old {cls} not put back — {miss} is not in the rebuild"))
+
+
+# ---------------------------------------------------------------------------
+# A qubit renamed on the wizard is the same qubit under a new id
+# ---------------------------------------------------------------------------
+
+# A removed source qubit / pair whose id a rename now uses is held under this
+# suffix, so its values stay reported as not carried instead of landing on the
+# renamed one -- and an operation named after it ("cz_flattop_pulse_q1") cannot
+# take the name of the renamed qubit's own.
+_DISPLACED_SUFFIX = "_removed"
+
+
+def source_renames(qubit_sources: Any, old_state: dict,
+                   new_ids: Any = None) -> dict[str, str]:
+    """``{source id: new id}`` for each qubit the wizard renamed.
+
+    ``qubit_sources`` is the wizard's ``{current id: source id}`` record: the
+    rename and naming-scheme actions carry each source qubit's row to its new
+    id, so the row, not the name, is the qubit. Only a real rename is kept: the
+    source id must be on the source chip, the new id in ``new_ids`` (the build's
+    qubits) when given, and no source may be claimed twice -- a claim that
+    cannot be checked is dropped, which leaves that qubit matched by id exactly
+    as before this record existed.
+    """
+    if not isinstance(qubit_sources, dict):
+        return {}
+    old_q = old_state.get("qubits") if isinstance(old_state, dict) else None
+    if not isinstance(old_q, dict):
+        return {}
+    allowed = set(new_ids) if new_ids is not None else None
+    claims: dict[str, list[str]] = {}
+    for cur, src in qubit_sources.items():
+        if isinstance(cur, str) and isinstance(src, str):
+            claims.setdefault(src, []).append(cur)
+    out: dict[str, str] = {}
+    for src, curs in claims.items():
+        if len(curs) != 1 or src not in old_q:
+            continue
+        cur = curs[0]
+        if cur == src or (allowed is not None and cur not in allowed):
+            continue
+        out[src] = cur
+    return out
+
+
+def _displaced_label(oid: str, taken: set) -> str:
+    label = oid + _DISPLACED_SUFFIX
+    while label in taken:
+        label += "_"
+    taken.add(label)
+    return label
+
+
+def _token_renamer(tok: dict[str, str]):
+    """``f(text)`` renaming each ``_``-delimited occurrence of a source qubit id
+    -- ``cz_SNZ_flux_pulse_q2_q1`` -> ``cz_SNZ_flux_pulse_q1_q0`` -- all at once
+    (a swap stays a swap). Labs and the builder both name per-partner
+    operations this way; an id that is only part of a word is left alone."""
+    if not tok:
+        return lambda text: text
+    alt = "|".join(re.escape(k) for k in sorted(tok, key=len, reverse=True))
+    pat = re.compile(rf"(?<![^_])(?:{alt})(?![^_])")
+    return lambda text: pat.sub(lambda m: tok[m.group(0)], text)
+
+
+def _renamed_pointer(s: str, pmap: dict, rename) -> str:
+    """A pointer with the renamed ids swapped in: the pair segment after
+    ``qubit_pairs`` by ``pmap``, every other segment by its qubit-id tokens --
+    except below ``extras``, which is free-form and kept verbatim."""
+    head, _, rest = s.partition("/")
+    if not rest:
+        return s
+    segs = rest.split("/")
+    out, free = [], False
+    for i, seg in enumerate(segs):
+        if free:
+            out.append(seg)
+            continue
+        prev = segs[i - 1] if i else None
+        out.append(pmap.get(seg, seg) if prev == "qubit_pairs" else rename(seg))
+        free = seg == "extras"
+    return head + "/" + "/".join(out)
+
+
+def _rewrite_ids(node: Any, tok: dict, pmap: dict, rename, parent: str | None = None,
+                 free: bool = False) -> Any:
+    """``node`` re-expressed in the new ids: dict keys and pointers by
+    :func:`_renamed_pointer`'s rule, a string that IS a source qubit id
+    (``id``, ``thread``, a TWPA's ``qubits`` list) or pair id swapped whole.
+    Nothing under ``extras`` changes except pointers' entity segments."""
+    if isinstance(node, dict):
+        out: dict = {}
+        for k, v in node.items():
+            if free:
+                nk = k
+            elif parent == "qubit_pairs":
+                nk = pmap.get(k, k)
+            else:
+                nk = rename(k)
+            if nk in out:                  # never merge two keys into one
+                nk = k
+            out[nk] = _rewrite_ids(v, tok, pmap, rename, k, free or k == "extras")
+        return out
+    if isinstance(node, list):
+        return [_rewrite_ids(v, tok, pmap, rename, parent, free) for v in node]
+    if isinstance(node, str):
+        if node.startswith("#"):
+            if free:                       # extras: only the entity segment
+                return _renamed_pointer(node, pmap, lambda seg: tok.get(seg, seg))
+            return _renamed_pointer(node, pmap, rename)
+        if not free:
+            return tok.get(node, pmap.get(node, node))
+    return node
+
+
+def rename_source_qubits(old_state: dict, old_wiring: dict | None,
+                         renames: dict[str, str],
+                         new_state: dict | None = None,
+                         new_wiring: dict | None = None):
+    """The SOURCE chip re-expressed in the rebuilt chip's qubit ids.
+
+    The merge matches by path, so before this a wizard rename moved calibration
+    by NAME: renaming q1, q2 to q0, q1 carried the old q1's values onto the new
+    q1 -- the qubit that used to be q2 -- and reported the old q2's as lost.
+    Renaming the source first makes every later step (tier-1 carry, port
+    moves, populate protection, the loss report) see one qubit under one id.
+
+    What is renamed: the qubit keys (state and wiring), every pointer, every
+    string that is a qubit id (``id``, a channel's ``thread``, a TWPA's
+    ``qubits``), and the qubit ids inside keys -- ``cz_SNZ_flux_pulse_q2_q1``
+    becomes ``cz_SNZ_flux_pulse_q1_q0``, the name a fresh build gives the
+    renamed pair's pulse. ``extras`` is free-form and kept verbatim.
+
+    ``renames`` is :func:`source_renames`' ``{source id: new id}``. A source
+    qubit the user removed whose id a rename now uses is held as
+    ``"<id>_removed"`` so its values stay reported as not carried. With
+    ``new_state`` given, a pair with a renamed member takes the id the rebuild
+    gave the pair with the same (control, target); without it (no build yet)
+    pair ids stay as they are.
+
+    Returns ``(state, wiring, qubits_renamed, pairs_renamed)``, the two lists
+    as ``[(old id, new id)]``. Pure: the inputs are not modified, and with no
+    renames they come back as they are.
+    """
+    old_q = old_state.get("qubits") if isinstance(old_state, dict) else None
+    if not renames or not isinstance(old_q, dict):
+        return old_state, old_wiring, [], []
+    tok = dict(renames)
+    taken = set(old_q) | set(tok.values())
+    if isinstance(new_state, dict):
+        taken |= set(new_state.get("qubits") or {})
+    for o in old_q:
+        if o not in tok and o in set(renames.values()):
+            tok[o] = _displaced_label(o, taken)
+
+    pmap: dict[str, str] = {}
+    old_pairs = old_state.get("qubit_pairs")
+    if isinstance(old_pairs, dict) and old_pairs:
+        old_doc = _merged_doc(old_state, old_wiring)
+        new_by_mem: dict[tuple[str, str], str] = {}
+        if isinstance(new_state, dict):
+            new_doc = _merged_doc(new_state, new_wiring)
+            for nid, npair in (new_state.get("qubit_pairs") or {}).items():
+                m = _pair_membership(npair, new_doc)
+                if m is not None:
+                    new_by_mem.setdefault(m, nid)
+        mem = {}
+        for oid, opair in old_pairs.items():
+            m = _pair_membership(opair, old_doc)
+            if m is not None:
+                mem[oid] = (tok.get(m[0], m[0]), tok.get(m[1], m[1]))
+        renamed_ids = set(renames.values())
+        for oid, m in mem.items():
+            if not (m[0] in renamed_ids or m[1] in renamed_ids):
+                continue
+            nid = new_by_mem.get(m)
+            if nid is not None and nid != oid and nid not in pmap.values():
+                pmap[oid] = nid
+        ptaken = set(pmap.values())
+        pall = set(old_pairs) | ptaken | set((new_state or {}).get("qubit_pairs") or {})
+        for oid in old_pairs:
+            if oid in pmap or oid not in ptaken:
+                continue
+            nid = new_by_mem.get(mem.get(oid))
+            pmap[oid] = (nid if nid is not None and nid not in ptaken
+                         else _displaced_label(oid, pall))
+            ptaken.add(pmap[oid])
+
+    rename = _token_renamer(tok)
+    state = _rewrite_ids(old_state, tok, pmap, rename)
+    wiring = (_rewrite_ids(old_wiring, tok, pmap, rename)
+              if isinstance(old_wiring, dict) else old_wiring)
+    qubits = sorted(renames.items(), key=lambda t: natural_key(t[0]))
+    pairs = sorted(((o, n) for o, n in pmap.items()
+                    if not n.endswith(_DISPLACED_SUFFIX)),
+                   key=lambda t: natural_key(t[0]))
+    return state, wiring, qubits, pairs
 
 
 def merge_states(old_state: dict, new_state: dict,

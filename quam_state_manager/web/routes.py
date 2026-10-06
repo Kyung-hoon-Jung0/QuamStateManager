@@ -39771,6 +39771,11 @@ def regenerate_build():
     # QA regenerate-r2-18: the wizard's export checkbox. Absent (an older
     # client) keeps today's behaviour; an explicit false writes no bundle.
     scripts_enabled = data.get("scripts_enabled") is not False
+    # The wizard's {current id: source id} record: a qubit renamed there keeps
+    # its own calibration. Absent (an older client) matches by id, as before.
+    qubit_sources = data.get("qubit_sources")
+    if not isinstance(qubit_sources, dict):
+        qubit_sources = None
 
     errors = config_generator.validate_spec(spec)
     if errors:
@@ -39937,7 +39942,8 @@ def regenerate_build():
         if power_mode != "absolute":
             pending = regenerate.pending_fsp_offers(
                 source_folder, spec, populate_baseline, populate_touched, fsp_ack,
-                old_source=unsaved[:2] if unsaved else None)
+                old_source=unsaved[:2] if unsaved else None,
+                qubit_sources=qubit_sources)
             if pending:
                 return jsonify({
                     "ok": False, "needs_confirm": True, "confirm_kind": "fsp",
@@ -39958,6 +39964,7 @@ def regenerate_build():
             fsp_ack=fsp_ack,
             populate_filled=populate_filled,
             scripts_enabled=scripts_enabled,
+            qubit_sources=qubit_sources,
         )
     finally:
         _release_build_output(claim)

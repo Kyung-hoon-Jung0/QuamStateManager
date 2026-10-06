@@ -228,7 +228,8 @@ def pending_fsp_offers(old_folder: Path | str, spec: dict,
                        populate_baseline: dict | None,
                        populate_touched: list | None,
                        fsp_ack: dict | None,
-                       old_source: tuple[dict, dict] | None = None) -> list[dict]:
+                       old_source: tuple[dict, dict] | None = None,
+                       qubit_sources: dict | None = None) -> list[dict]:
     """The FSP-compensation offers a rebuild of ``spec`` raises that ``fsp_ack``
     has not answered yet (QA regenerate-r2-06).
 
@@ -240,6 +241,9 @@ def pending_fsp_offers(old_folder: Path | str, spec: dict,
     ``old_source`` -- the in-memory ``(state, wiring)`` the rebuild will merge
     from (QA regenerate-r2-21: an open chip's unsaved edits); the offers are
     judged on that same source instead of the files on disk.
+
+    ``qubit_sources`` -- the wizard's ``{current id: source id}`` record; a
+    renamed qubit's cells are judged against its own source values.
     """
     if populate_baseline is None:
         return []
@@ -247,6 +251,10 @@ def pending_fsp_offers(old_folder: Path | str, spec: dict,
     try:
         old_state, old_wiring = (old_source if old_source is not None
                                  else safe_io.read_state_wiring(Path(old_folder)))
+        renames = regen_merge.source_renames(
+            qubit_sources, old_state, (spec or {}).get("qubits") or ())
+        old_state, old_wiring, _, _ = regen_merge.rename_source_qubits(
+            old_state, old_wiring, renames)
         pop_view = regen_populate.populate_view(spec)
         changed = regen_populate.changed_fields(
             pop_view, populate_baseline, populate_touched)
@@ -273,6 +281,7 @@ def run_regenerate(
     fsp_ack: dict | None = None,
     populate_filled: list | None = None,
     scripts_enabled: bool = True,
+    qubit_sources: dict | None = None,
 ) -> dict:
     """Build ``spec`` fresh into ``out_dir`` then merge the OLD chip's values on.
 
@@ -317,6 +326,10 @@ def run_regenerate(
     ``old_source`` -- ``(state, wiring)`` to merge from INSTEAD of
     ``old_folder``'s files: the open chip's in-memory content when it holds
     unsaved edits (QA regenerate-r2-21). ``None`` reads the files, as before.
+
+    ``qubit_sources`` -- the wizard's ``{current id: source id}`` record. A
+    qubit renamed there keeps its own calibration under the new id (see
+    :func:`regen_merge.rename_source_qubits`); ``None`` matches by id, as before.
     """
     old_folder = Path(old_folder)
     out_dir = Path(out_dir)
@@ -349,6 +362,15 @@ def run_regenerate(
     # Builder-generation id drift (twpaA ⇄ A) would leave a zombie NEW TWPA
     # beside the grafted OLD one — rename the NEW ids onto the OLD chip's
     # BEFORE the merge so tier-1 carry matches naturally (pair-id precedent).
+    # A qubit renamed on the wizard is the same qubit: the source is re-expressed
+    # in the rebuilt ids BEFORE anything below matches by path (populate
+    # protection, port moves, tier-1 carry, the loss report).
+    renames = regen_merge.source_renames(
+        qubit_sources, old_state, (new_state.get("qubits") or {}))
+    old_state, old_wiring, qubits_renamed, pairs_renamed = (
+        regen_merge.rename_source_qubits(old_state, old_wiring, renames,
+                                         new_state, new_wiring))
+
     twpa_renames = regen_merge.reconcile_twpa_ids(new_state, new_wiring, old_state)
     if twpa_renames:
         safe_io.atomic_write_json(out_dir / "wiring.json", new_wiring)
@@ -411,6 +433,8 @@ def run_regenerate(
                                       twpa_ids=_spec_twpa_ids(spec),
                                       env_fields=env_fields)
     result.stats.populate_conflicts.extend(pop_conflicts)
+    result.stats.qubits_renamed = qubits_renamed
+    result.stats.pairs_renamed = pairs_renamed
 
     # QA regenerate-r2-04 / r2-06: rescale the amplitudes carried onto a port
     # whose FSP the wizard changed (or say so) — see the docstring.
@@ -564,6 +588,10 @@ def run_regenerate(
         # ...and the ones only renamed there: one device, its calibration
         # carried under the new id (QA review of r2-10).
         "twpas_renamed": [{"old": o, "new": n} for o, n in s.twpas_renamed[:20]],
+        # A qubit renamed on the wizard, and the pairs that follow it: one
+        # device each, its calibration carried under the new id.
+        "qubits_renamed": [{"old": o, "new": n} for o, n in s.qubits_renamed[:200]],
+        "pairs_renamed": [{"old": o, "new": n} for o, n in s.pairs_renamed[:200]],
         "class_kept": len(s.class_kept),
         "class_kept_paths": [{"path": p, "cls": c} for p, c in s.class_kept[:80]],
         "class_kept_total": len(s.class_kept),

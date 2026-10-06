@@ -228,7 +228,9 @@ function buildWizard(win, nQubits) {
     'F7: shrink truncates from the end');
 })();
 
-// F8: regenerate mode — naming block hidden, names never touched by the gate.
+// F8: regenerate mode — names never touched by the gate. The naming block is
+// SHOWN since a rename there keeps each qubit's calibration and ports (the
+// build carries qubit_sources); it was hidden while the merge matched by name.
 (function regenerateMode() {
   const win = makeWorld();
   const G = buildWizard(win, 2);
@@ -241,7 +243,12 @@ function buildWizard(win, nQubits) {
   ok(G.state.namesTouched === true, 'F8: hydrate detaches the scheme');
   ok(G.QT.expectedNamesOrNull() === null, 'F8: no expectation in regenerate');
   const block = win.document.getElementById('gen-naming');
-  ok(block && block.hidden, 'F8: naming block hidden in regenerate mode');
+  ok(block && !block.hidden, 'F8: naming block shown in regenerate mode');
+  const note = win.document.getElementById('gen-naming-note');
+  ok(note && /keeps its calibration and its ports/.test(note.textContent),
+     'F8: the note says what a rename keeps (got ' + (note && note.textContent) + ')');
+  ok(win.document.querySelectorAll('#gen-qubit-name-list .gen-qubit-name-in').length === 2,
+     'F8: one rename input per qubit');
 })();
 
 if (fails) { console.error(fails + ' check(s) failed'); process.exit(1); }
