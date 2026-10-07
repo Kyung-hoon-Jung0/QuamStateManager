@@ -253,7 +253,12 @@ window.AgentPanel = (function () {
     if (el) { el.textContent = msg; el.hidden = false; setTimeout(function () { el.hidden = true; }, 5000); }
   }
   function observer() { try { return localStorage.getItem("quam_agent_observer") === "1"; } catch (e) { return false; } }
-  function setObserver(on) { try { localStorage.setItem("quam_agent_observer", on ? "1" : "0"); } catch (e) { /* ignore */ } S.observer = !!on; renderAll(true); }
+  function setObserver(on) {
+    try { localStorage.setItem("quam_agent_observer", on ? "1" : "0"); } catch (e) { /* ignore */ }
+    S.observer = !!on;
+    if (S.observer) S.mounts.forEach(function (m) { closeSheets(m.root); });   // docs/297: an open Clear / Delete is not this window's any more
+    renderAll(true);
+  }
   function pathLabel(p) { var parts = String(p || "").split("."); return parts[parts.length - 1]; }
   function runLink(rid) { return rid ? '<a class="ag-run" href="/dataset/by-run/' + rid + '" hx-get="/dataset/by-run/' + rid + '" hx-target="#table-pane" hx-push-url="true">#' + rid + "</a>" : ""; }
   /* docs/254 (D-05/D-15): a run IS its node, its targets and its params, and an
@@ -888,9 +893,13 @@ window.AgentPanel = (function () {
       if (armed || runActive) acts.push('<button type="button" class="btn-sm ag-stop" onclick="AgentPanel.stop(\'after_run\')">Stop after this run</button>');
       if (alive || armed || runActive) acts.push('<button type="button" class="btn-sm ag-stop ag-stop-now" onclick="AgentPanel.stop(\'now\')">Stop now</button>');
       if (sessionOpen()) acts.push('<button type="button" class="btn-sm" onclick="AgentPanel.endSession()">End session</button>');   // docs/247: a Codex conversation between turns too
+      if (canClear(m)) acts.push('<button type="button" class="btn-sm ag-clear" onclick="AgentPanel.clearAsk(this)" title="Start a fresh conversation: archive or delete this one, and the agent forgets it">Clear…</button>');   // docs/297
     }
     acts.push('<label class="ag-observer" title="observer: this window shows but never starts, stops or approves (an accident guard, not a permission)"><input type="checkbox" ' + (S.observer ? "checked" : "") + ' onchange="AgentPanel.setObserver(this.checked)"> view only' + (S.observer ? ' <span class="ag-observing">— this window cannot start, stop or approve</span>' : "") + "</label>");
-    acts.push('<span class="ag-now-links"><a href="/journal" hx-get="/journal" hx-target="#table-pane" hx-push-url="true">Calibration log →</a>' +
+    var nArch = (S.conv && S.conv.archives) || 0;
+    acts.push('<span class="ag-now-links">' +
+      (nArch ? '<button type="button" class="ag-linkish ag-archived-link" onclick="AgentPanel.archives(this)" title="conversations put away by Clear (read-only)">Archived (' + nArch + ")</button> · " : "") +
+      '<a href="/journal" hx-get="/journal" hx-target="#table-pane" hx-push-url="true">Calibration log →</a>' +
       ' · <a class="ag-summary-link" href="/agent/summary" hx-get="/agent/summary" hx-target="#table-pane" hx-push-url="true" title="the last plan since its Start: applied, held, failed, halted, and why it ended">Night summary →</a>' +
       ' · <a class="ag-setup-link" href="/agent/setup" hx-get="/agent/setup" hx-target="#table-pane" hx-push-url="true" title="connect Claude / Codex to SM, the journal folder, the lab context file">Setup →</a></span>');
     var runHtml = d.running ? "▶ <code>" + esc(d.running.node || d.running.tool || "") + "</code> " + esc(fmtAgo(d.running.since)) +
@@ -976,9 +985,11 @@ window.AgentPanel = (function () {
       S.chipKey = key;
       S.plans = {}; S.runs = {}; S.approvals = {}; S.deciding = {};
       S.seenCards = {}; S.after = 0;
+      S.sinceN = undefined; S.conv = null;
       S.mounts.forEach(function (m) {
         var host = cardsHost(m);
         if (host) { host.innerHTML = ""; host.__agScrolledOnce = false; }
+        closeSheets(m.root); closeArchive(m.root);
         var chipEl = m.root.querySelector(".ag-chip");
         if (chipEl) chipEl.textContent = d.chip || "no chip open";
         var q = m.root.querySelector(".ag-qubits");
@@ -988,6 +999,36 @@ window.AgentPanel = (function () {
       return;
     }
     S.chipKey = key;
+    /* docs/297: a Clear (in this window or another) moved where the conversation
+       starts. The feed starts over: the conversation's cards and the plan / run
+       cards go (live ones come back with the next poll), cursor back to 0, a
+       fresh poll. An APPROVAL card stays, and so does any card the person is
+       typing in: a decision still waits on it, and a value typed into it must
+       never be swapped for the proposal under the person's hand (review: the
+       next "Write to chip" would have written the agent's value). */
+    var conv = d.conversation || null;
+    if (conv && typeof conv.since_n === "number") {
+      if (S.sinceN !== undefined && conv.since_n !== S.sinceN) {
+        S.sinceN = conv.since_n;
+        S.conv = conv;
+        S.plans = {}; S.runs = {};
+        S.seenCards = {}; S.after = 0;
+        S.mounts.forEach(function (m) {
+          var host = cardsHost(m);
+          if (!host) return;
+          Array.prototype.slice.call(host.children).forEach(function (el) {
+            var dc = el.getAttribute("data-card") || "";
+            if (dc.indexOf("approval:") === 0 || editingIn(el)) return;
+            el.remove();
+          });
+          host.__agScrolledOnce = false; host.__agGroups = {};
+        });
+        setTimeout(function () { poll(true); }, 0);
+        return;
+      }
+      S.sinceN = conv.since_n;
+    }
+    S.conv = conv;
     S.chip = d.chip;
     S.mounts.forEach(function (m) {
       var chipEl = m.root.querySelector(".ag-chip");
@@ -1286,6 +1327,7 @@ window.AgentPanel = (function () {
     if (!ta) return false;
     var text = ta.value.trim();
     if (!text) return false;
+    closeArchive(root);                                  // docs/297: the answer lands in the live feed
     var sel = root.querySelector(".ag-backend");
     var backend = (sel && sel.value) || S.defaultBackend;
 
@@ -1546,6 +1588,238 @@ window.AgentPanel = (function () {
   function arm() { toast("Arm is per plan: press Start on the plan card", "info"); }   // docs/253: no session-wide Arm
   function disarm() { if (S.observer) return; api("POST", "/api/agent/session/disarm", {}).then(function (r) { if (r.status !== 200) toast(errText(r, "not disarmed"), "error"); poll(true); }); }
   function endSession() { if (S.observer) return; api("POST", "/api/agent/chat/end", {}).then(function (r) { if (r.status !== 200) toast(errText(r, "no session"), "error"); poll(true); }); }
+
+  // ------------------------------------------------- clear / archive (docs/297)
+  /* Clear starts the conversation over: the in-app session ends, its id is
+     forgotten (the next message is a fresh context), and the conversation is
+     archived or deleted. The confirm is a SHEET under the status strip -- the
+     strip re-renders on every poll and would eat an inline confirm. The server
+     decides whether a clear is possible now (nothing of the conversation may
+     still be working); its reason is shown in the sheet. */
+  var CHAT_KINDS = ["user", "answer", "tool", "error", "limited", "stop"];
+  function canClear(m) {
+    // something a clear would take away: the conversation's cards, a session to end or
+    // forget, a plan or run that has settled -- never only live work or an approval
+    if (sessionOpen() || (S.conv && S.conv.resumable)) return true;
+    var host = cardsHost(m);
+    if (host && CHAT_KINDS.some(function (k) { return host.querySelector('[data-card^="' + k + ':"]'); })) return true;
+    if (Object.keys(S.plans).some(function (k) { var st = S.plans[k] && S.plans[k].status; return st && ["draft", "running", "stopping"].indexOf(st) < 0; })) return true;
+    return Object.keys(S.runs).some(function (k) { var st = S.runs[k] && S.runs[k].status; return st && st !== "starting" && st !== "running"; });
+  }
+  function rootOf(el) { return (el && el.closest && el.closest(".ag-root")) || (S.mounts[0] && S.mounts[0].root) || null; }
+  var SHEETS = ["ag-clearbox", "ag-archbox"];
+  function closeSheets(root, except) {
+    if (!root) return;
+    SHEETS.forEach(function (c) { if (c === except) return; var x = root.querySelector("." + c); if (x) x.remove(); });
+  }
+  function openSheet(root, cls, label, html, opener) {
+    closeSheets(root, cls);
+    var box = root.querySelector("." + cls);
+    if (!box) {
+      box = document.createElement("div");
+      box.className = "ag-sheet " + cls;
+      box.setAttribute("role", "region");                 // not "group": Pico lays a group out as one row of buttons
+      box.setAttribute("aria-label", label);
+      var now = root.querySelector(".ag-now");
+      if (now && now.parentNode === root) now.insertAdjacentElement("afterend", box); else root.insertBefore(box, root.firstChild);
+      box.addEventListener("keydown", function (e) { if (e.key === "Escape") { e.preventDefault(); e.stopPropagation(); closeSheet(box); } });
+    }
+    box.__opener = opener || null;
+    box.innerHTML = html;
+    return box;
+  }
+  function closeSheet(box) {
+    if (!box) return;
+    var root = box.closest(".ag-root");
+    var back = box.__opener;
+    box.remove();
+    // the focus goes back where the sheet came from (the strip re-renders: the same control, by class)
+    if (back && !document.body.contains(back) && root) back = root.querySelector(back.classList.contains("ag-clear") ? ".ag-clear" : ".ag-archived-link");
+    if (!back || !document.body.contains(back)) back = root && root.querySelector(".ag-input");
+    if (back) { try { back.focus(); } catch (e) { /* ignore */ } }
+  }
+  function sheetError(box, msg) {
+    var er = box.querySelector(".ag-sheet-err");
+    if (!er) return;
+    er.textContent = msg;
+    er.hidden = !msg;
+  }
+  function clearAsk(btn) {
+    if (S.observer) return;
+    var root = rootOf(btn);
+    if (!root) return;
+    var box = openSheet(root, "ag-clearbox", "Clear the conversation",
+      '<p class="ag-sheet-q"><strong>Start a fresh conversation?</strong> The agent will not remember this one.' +
+      (sessionOpen() ? " Its session ends now." : "") + "</p>" +
+      '<p class="muted ag-sheet-note"><b>Archive</b> keeps a read-only copy under Archived; <b>Delete</b> keeps no copy in SM. ' +
+      "Neither edits SM's agent event log or the CLI's own session files. Running work and approvals stay here; finished plans and runs stay in the Calibration log.</p>" +
+      '<p class="ag-err ag-sheet-err" role="alert" hidden></p>' +
+      '<div class="ag-sheet-acts"><button type="button" class="btn-sm ag-clear-keep">Archive and clear</button>' +
+      '<button type="button" class="btn-sm ag-danger ag-clear-drop">Delete and clear</button>' +
+      '<button type="button" class="btn-sm secondary ag-sheet-close">Cancel</button></div>', btn);
+    box.__sinceN = typeof S.sinceN === "number" ? S.sinceN : undefined;
+    box.onclick = function (e) {
+      var b = e.target.closest && e.target.closest("button");
+      if (!b) return;
+      if (b.classList.contains("ag-sheet-close")) closeSheet(box);
+      else if (b.classList.contains("ag-clear-keep")) clearDo(box, true, b);
+      else if (b.classList.contains("ag-clear-drop")) clearDo(box, false, b);
+    };
+    var first = box.querySelector(".ag-clear-keep");
+    if (first) { try { first.focus(); } catch (e) { /* ignore */ } }
+  }
+  function clearDo(box, keep, pressed) {
+    if (S.observer || box.__busy) return;
+    // a flag, never `disabled`: a focused button that is disabled drops the focus to <body>,
+    // and the sheet's Escape (and Tab) stopped working after a refused press (measured in Chrome)
+    box.__busy = true;
+    box.setAttribute("aria-busy", "true");
+    sheetError(box, "");
+    // the conversation this sheet was opened on: a clear from another window meanwhile is a 409, not a second clear
+    var body = { keep: keep ? 1 : 0 };
+    if (typeof box.__sinceN === "number") body.since_n = box.__sinceN;
+    api("POST", "/api/agent/chat/clear", body).then(function (r) {
+      box.__busy = false;
+      box.removeAttribute("aria-busy");
+      if (r.status !== 200) {
+        sheetError(box, errText(r, "the conversation was not cleared"));
+        if (pressed && document.body.contains(pressed) && !box.contains(document.activeElement)) { try { pressed.focus(); } catch (e) { /* ignore */ } }
+        return;
+      }
+      var root = box.closest(".ag-root");
+      box.remove();
+      S.intentTouched = false;                       // the default intent follows the (now closed) conversation again
+      toast(r.body.kept ? "Conversation archived. The next message starts a fresh one."
+            : keep ? "Nothing to archive. The next message starts a fresh conversation."
+            : "Conversation deleted. The next message starts a fresh one.", "success");
+      var ta = root && root.querySelector(".ag-input");
+      if (ta) { try { ta.focus(); } catch (e) { /* ignore */ } }
+      poll(true);
+    });
+  }
+  function plural(n, w) { return n + " " + w + (n === 1 ? "" : "s"); }
+  function archRange(a) {
+    var f = fmtClock(a.from_ts), t = fmtClock(a.to_ts);
+    return f + (t && t !== f ? " – " + t : "");
+  }
+  var ARCH_HEAD = '<div class="ag-sheet-head"><strong>Archived conversations</strong>' +
+    '<button type="button" class="btn-sm secondary ag-sheet-close">Close</button></div>';
+  function archives(btn) {
+    var root = rootOf(btn);
+    if (!root) return false;
+    var box = openSheet(root, "ag-archbox", "Archived conversations", ARCH_HEAD + '<p class="muted">Loading…</p>', btn);
+    box.onclick = function (e) { archClick(box, e); };
+    loadArchives(box);
+    var close = box.querySelector(".ag-sheet-close");
+    if (close) { try { close.focus(); } catch (e) { /* ignore */ } }
+    return false;
+  }
+  function loadArchives(box) {
+    return api("GET", "/api/agent/chat/archives").then(function (r) {
+      if (!document.body.contains(box)) return;
+      var had = box.contains(document.activeElement);
+      if (r.status !== 200) {
+        box.innerHTML = ARCH_HEAD + '<p class="ag-err">' + esc(errText(r, "the archive could not be listed")) + "</p>";
+      } else {
+        var list = r.body.archives || [];
+        var rows = list.map(function (a) {
+          return '<li data-id="' + esc(a.id) + '"><button type="button" class="ag-linkish ag-arch-open" title="open it read-only">' + esc(a.title || "(no message)") + "</button>" +
+            ' <span class="muted ag-arch-meta">' + esc(archRange(a)) + " · " + plural(Number(a.messages) || 0, "message") +
+            (a.cleared_by ? " · cleared by " + esc(a.cleared_by) : "") + "</span>" +
+            (S.observer ? "" : '<span class="ag-arch-acts"><button type="button" class="btn-sm secondary ag-arch-del">Delete</button></span>') + "</li>";
+        });
+        box.innerHTML = ARCH_HEAD + (rows.length ? '<ul class="ag-arch-list">' + rows.join("") + "</ul>"
+          : '<p class="muted">No archived conversations on this chip.</p>') + '<p class="ag-err ag-sheet-err" role="alert" hidden></p>';
+      }
+      if (had) { var c = box.querySelector(".ag-sheet-close"); if (c) { try { c.focus(); } catch (e) { /* ignore */ } } }
+    });
+  }
+  var DEL_ASK = 'Delete for good? <button type="button" class="btn-sm ag-danger ag-arch-del-yes">Delete</button>' +
+    ' <button type="button" class="btn-sm secondary ag-arch-del-no">Keep</button>';
+  var DEL_IDLE = '<button type="button" class="btn-sm secondary ag-arch-del">Delete</button>';
+  function archClick(box, e) {
+    var b = e.target.closest && e.target.closest("button");
+    if (!b) return;
+    var li = b.closest("li");
+    var id = li && li.getAttribute("data-id");
+    var root = box.closest(".ag-root");
+    if (b.classList.contains("ag-sheet-close")) { closeSheet(box); return; }
+    if (b.classList.contains("ag-arch-open") && id) { closeSheets(root); openArchive(root, id); return; }
+    var acts = li && li.querySelector(".ag-arch-acts");
+    if (!acts || S.observer) return;
+    if (b.classList.contains("ag-arch-del")) {
+      acts.innerHTML = DEL_ASK;
+      var no = acts.querySelector(".ag-arch-del-no");
+      if (no) { try { no.focus(); } catch (err) { /* ignore */ } }
+    } else if (b.classList.contains("ag-arch-del-no")) {
+      acts.innerHTML = DEL_IDLE;
+      var d = acts.querySelector(".ag-arch-del");
+      if (d) { try { d.focus(); } catch (err) { /* ignore */ } }
+    } else if (b.classList.contains("ag-arch-del-yes") && id) {
+      if (box.__busy) return;
+      box.__busy = true;
+      api("POST", "/api/agent/chat/archives/" + encodeURIComponent(id) + "/delete", {}).then(function (r) {
+        box.__busy = false;
+        if (r.status !== 200) { sheetError(box, errText(r, "not deleted")); return; }
+        S.mounts.forEach(function (m) { var v = m.root.querySelector(".ag-archview"); if (v && v.__id === id) closeArchive(m.root); });
+        loadArchives(box).then(function () {
+          var c = box.querySelector(".ag-sheet-close");
+          if (c && document.body.contains(c)) { try { c.focus(); } catch (err) { /* ignore */ } }
+        });
+        poll(true);
+      });
+    }
+  }
+  /* An archived conversation is shown IN PLACE of the live feed, read-only, with the
+     same card renderer (a pseudo-mount whose root is the view). The live feed keeps
+     polling underneath; "Back" -- or sending a message -- shows it again. */
+  function closeArchive(root) {
+    if (!root) return;
+    var v = root.querySelector(".ag-archview");
+    if (v) v.remove();
+    var live = root.querySelector(".ag-cards");
+    if (live) live.classList.remove("ag-feed-away");
+  }
+  function openArchive(root, id) {
+    if (!root) return;
+    closeArchive(root);
+    var live = root.querySelector(".ag-cards");     // the live feed is the FIRST .ag-cards in the panel
+    if (!live) return;
+    var view = document.createElement("section");
+    view.className = "ag-archview";
+    view.__id = id;
+    view.setAttribute("aria-label", "Archived conversation, read-only");
+    view.innerHTML = '<div class="ag-archview-head"><span class="ag-archview-tag">Archived · read-only</span>' +
+      ' <span class="ag-archview-title muted">Loading…</span>' +
+      ' <button type="button" class="btn-sm secondary ag-archview-back">Back to the conversation</button></div>' +
+      '<div class="ag-cards ag-arch-cards"></div>';
+    live.insertAdjacentElement("afterend", view);
+    live.classList.add("ag-feed-away");
+    var back = view.querySelector(".ag-archview-back");
+    back.onclick = function () {
+      closeArchive(root);
+      var ta = root.querySelector(".ag-input");
+      if (ta) { try { ta.focus(); } catch (e) { /* ignore */ } }
+    };
+    try { back.focus(); } catch (e) { /* ignore */ }
+    api("GET", "/api/agent/chat/archives/" + encodeURIComponent(id)).then(function (r) {
+      if (!document.body.contains(view)) return;
+      var t = view.querySelector(".ag-archview-title");
+      var host = view.querySelector(".ag-arch-cards");
+      if (r.status !== 200) { t.className = "ag-archview-title ag-err"; t.textContent = errText(r, "the archived conversation could not be opened"); return; }
+      var a = r.body.archive || {};
+      t.className = "ag-archview-title";
+      t.innerHTML = "<strong>" + esc(a.title || "(no message)") + '</strong> <span class="muted">' + esc(archRange(a)) +
+        " · " + plural(Number(a.messages) || 0, "message") + "</span>";
+      var cards = r.body.cards || [];
+      if (r.body.omitted) host.insertAdjacentHTML("beforeend", '<p class="muted ag-arch-omitted">' + plural(r.body.omitted, "earlier event") + " not shown.</p>");
+      var pm = { root: view, id: "arch:" + id, autoscroll: false };
+      cards.forEach(function (c) { renderChatCard(pm, c); });
+      groupTools(host);
+      if (!cards.length) host.insertAdjacentHTML("beforeend", '<p class="muted">Nothing was kept in this copy.</p>');
+      if (window.htmx) { try { window.htmx.process(view); } catch (e) { /* ignore */ } }
+    });
+  }
 
   // -------------------------------------------------------------- mount
   function skeleton(compact) {
@@ -1942,7 +2216,8 @@ window.AgentPanel = (function () {
            wireHelp: wireHelp, wirePaint: wirePaint, wireLoad: wireLoad, _wire: WIRE,
            shortVersion: shortVersion,
            setPlanMode: setPlanMode, approve: approve, reject: reject, stop: stop, arm: arm, disarm: disarm,
-           endSession: endSession, setObserver: setObserver, setActor: setActor, actorName: actorName, showApprovals: showApprovals, apPreview: apPreview,
+           endSession: endSession, clearAsk: clearAsk, archives: archives, openArchive: openArchive, closeArchive: closeArchive,
+           setObserver: setObserver, setActor: setActor, actorName: actorName, showApprovals: showApprovals, apPreview: apPreview,
            toggleFloat: toggleFloat, init: init, syncComposerClass: syncComposerClass, absorb: absorb, _state: S, fmtNum: fmtNum, fmtRow: fmtRow, fmtClock: fmtClock,
            grow: grow, toggleMore: toggleMore, toggleGroup: toggleGroup, togglePresets: togglePresets,
            liveKick: liveKick, livePaint: livePaint, _live: LIVE, liveClock: liveClock };

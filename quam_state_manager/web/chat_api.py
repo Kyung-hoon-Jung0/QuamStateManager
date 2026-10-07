@@ -137,16 +137,19 @@ def _record(rec: dict) -> None:
         aa._wake()
         return
     ev = aa._events()                               # initialise (and replay) BEFORE writing today's file
-    rec["n"] = _next_n(ev)                           # sets agent_chat_n under _N_LOCK (review R4-7)
-    try:
-        d = aa._events_dir()
-        d.mkdir(parents=True, exist_ok=True)
-        with open(d / (datetime.now().strftime("%Y-%m-%d") + ".jsonl"), "a", encoding="utf-8") as f:
-            f.write(json.dumps(rec, default=str) + "\n")
-    except OSError:
-        logger.debug("chat event disk write failed", exc_info=True)
-    with aa._events_lock:
-        ev.append(rec)
+    # docs/297: numbering and writing are one step -- a clear (which takes this lock to read
+    # the counter) never sees a number whose event is not yet on disk and in the ring
+    with _REC_LOCK:
+        rec["n"] = _next_n(ev)                       # sets agent_chat_n under _N_LOCK (review R4-7)
+        try:
+            d = aa._events_dir()
+            d.mkdir(parents=True, exist_ok=True)
+            with open(d / (datetime.now().strftime("%Y-%m-%d") + ".jsonl"), "a", encoding="utf-8") as f:
+                f.write(json.dumps(rec, default=str) + "\n")
+        except OSError:
+            logger.debug("chat event disk write failed", exc_info=True)
+        with aa._events_lock:
+            ev.append(rec)
     try:
         aa._absorb(rec)
     except Exception:  # noqa: BLE001
@@ -177,6 +180,7 @@ def _post_feed_answer(ask_id: str, evs: list[dict]) -> None:
 
 
 _N_LOCK = threading.Lock()
+_REC_LOCK = threading.Lock()
 
 
 def _next_n(ev) -> int:
@@ -198,6 +202,9 @@ def _next_n(ev) -> int:
             # events can evict the chat events whose n we must exceed -- read the persisted
             # high-water mark AND scan the day files directly, never just the ring.
             cur = max(cur, _persisted_n(), _disk_max_chat_n())
+        # docs/297: another SM process on this instance numbers too, and a clear there moves
+        # the shared since_n -- the persisted mark is re-read every time, never only at start
+        cur = max(int(cur), _persisted_n())
         nxt = int(cur) + 1
         current_app.config["agent_chat_n"] = nxt
     try:
@@ -428,6 +435,10 @@ def start():
         resume = str(resume)
     else:
         resume = None
+    from quam_state_manager.core import agent_conversation
+    conv = agent_conversation.load(inst, chip)
+    if resume and agent_conversation.closed(conv, resume):
+        return _err("that conversation was cleared; start a new one", 409)
     cwd = _cwd()
     try:
         backend = _build_backend(name, readonly=False, chip=chip, mode=mode, cwd=cwd, model=data.get("model"))
@@ -437,6 +448,8 @@ def start():
     away = _away_block(rec) if resume else ""
     if away:
         prompt = away + (prompt or "Continue.")
+    from quam_state_manager.core import agent_conversation
+    agent_conversation.reopen(inst, chip, _current_n())   # docs/297: a reused session id is the new conversation's from here
     try:
         st = mgr.start(key, backend, owner=actor, mode=mode, until=until, prompt=prompt, resume=resume, display=chip)
     except RuntimeError as exc:
@@ -470,6 +483,13 @@ def send():
     if not session_open(cur):
         return _err("no running session on this chip; start one", 409)
     inst = current_app.instance_path
+    from quam_state_manager.core import agent_conversation
+    if _cleared_under(cur, agent_conversation.load(inst, chip)):
+        mgr.end(key)
+        aa._bump()
+        aa._wake()
+        return _err("this conversation was cleared (in another window); send again to start a new one", 409,
+                    cleared=True)
     rec = agent_session.load(inst, key)
     if agent_session.stopped(rec):
         # a human typing again IS the resumption; the flag run_node reads is cleared first
@@ -494,18 +514,250 @@ def end():
     cur = mgr.get(key)
     if cur is None:
         return _err("no session on this chip", 409)
-    mgr.end(key)
-    inst = current_app.instance_path
-    agent_session.save(inst, key, pid=None)
     who = _r()._request_actor()
-    # docs/253 (D-06): the arming SM's in-app session drove ends with it, and so does its plan (a step
-    # still running finishes and reports); a plan a terminal agent drives is not this session's
-    g = aa._end_grant(f"the in-app {cur.backend.name} session was ended by {who}", driver_kind="app")
-    journal_mod.append(inst, chip, f"{cur.backend.name} session ended by {who}"
+    g = _end_session(cur, key, who)
+    journal_mod.append(current_app.instance_path, chip, f"{cur.backend.name} session ended by {who}"
                        + (f" -- disarmed (plan `{g.get('title')}` stopped)" if g else ""), kind="sm")
     aa._bump()
     aa._wake()
     return jsonify(ok=True, session=mgr.status(key))
+
+
+def _end_session(cur, key: str, who: str) -> dict | None:
+    """End the chip's in-app session; returns the grant it ended, if any."""
+    _manager().end(key)
+    agent_session.save(current_app.instance_path, key, pid=None)
+    # docs/253 (D-06): the arming SM's in-app session drove ends with it, and so does its plan (a step
+    # still running finishes and reports); a plan a terminal agent drives is not this session's
+    return aa._end_grant(f"the in-app {cur.backend.name} session was ended by {who}", driver_kind="app")
+
+
+# ------------------------------------------------- clear / archive (docs/297)
+
+def _current_n() -> int:
+    """The chat counter's high-water mark, without taking a number."""
+    ev = aa._events()
+    with _N_LOCK:
+        cur = current_app.config.get("agent_chat_n")
+        if cur is None:
+            with aa._events_lock:
+                cur = max((int(e.get("n") or 0) for e in ev if e.get("origin") == "chat"), default=0)
+            cur = max(cur, _persisted_n(), _disk_max_chat_n())
+        return max(int(cur), _persisted_n())
+
+
+def _raise_persisted_n(n: int) -> None:
+    """Every SM process on this instance numbers above ``n`` from now on."""
+    with _N_LOCK:
+        try:
+            if _persisted_n() < n:
+                d = aa._events_dir()
+                d.mkdir(parents=True, exist_ok=True)
+                (d / "chat_n.txt").write_text(str(n), encoding="utf-8")
+        except OSError:
+            pass
+
+
+_CHAT_MARK = b'"origin": "chat"'
+
+
+def _conversation_events(chip: str, after_n: int, upto_n: int, since_ts: float | None) -> list[dict]:
+    """The chip's chat events with ``after_n < n <= upto_n``: every day file
+    from the previous clear on (the ring forgets past 800 lines / 7 days, and
+    a conversation can be older than that), plus the ring for an event whose
+    disk write failed. Lines are screened as bytes first: a day file is
+    mostly hook events, and only chat lines are parsed."""
+    found: dict[int, dict] = {}
+    name = json.dumps(chip).encode("utf-8")
+
+    def take(e) -> None:
+        if not isinstance(e, dict) or e.get("origin") != "chat" or e.get("chip") != chip:
+            return
+        try:
+            n = int(e.get("n") or 0)
+        except (TypeError, ValueError):
+            return
+        if after_n < n <= upto_n:
+            found.setdefault(n, e)
+
+    first = datetime.fromtimestamp(since_ts).strftime("%Y-%m-%d") if since_ts else ""
+    try:
+        files = sorted(f for f in aa._events_dir().glob("*.jsonl") if re.match(r"^\d{4}-\d{2}-\d{2}$", f.stem))
+    except OSError:
+        files = []
+    for f in files:
+        if f.stem < first:
+            continue
+        try:
+            data = f.read_bytes()
+        except OSError:
+            continue
+        for line in data.splitlines():
+            if _CHAT_MARK not in line or name not in line:
+                continue
+            try:
+                take(json.loads(line))
+            except ValueError:
+                continue
+    with aa._events_lock:
+        for e in list(aa._events()):
+            take(e)
+    return [found[k] for k in sorted(found)]
+
+
+def _busy_reason(chip: str, key: str, cur) -> str | None:
+    """Why the conversation cannot be cleared right now, or None. A clear
+    ends the agent's memory of the conversation, so it waits until nothing
+    of it is still working."""
+    from quam_state_manager.core import agent_plans
+    if cur is not None and cur.busy():
+        return "the agent is still answering; press Stop now or wait for it to finish, then clear"
+    mgr = _manager()
+    for aid, c in list((current_app.config.get("agent_live_asks") or {}).items()):
+        if c == chip and mgr.ask_alive(aid):
+            return "a question is still being answered; clear after its answer arrives"
+    for p in agent_plans.load(current_app.instance_path, key):
+        if p.get("status") in ("running", "stopping"):
+            return f"plan `{p.get('title') or p.get('id')}` is {p.get('status')}; stop it or let it finish, then clear"
+    for m in aa._registry().runs.values():
+        if m.get("chip") == key and m.get("status") in ("starting", "running"):
+            return f"`{m.get('node')}` is still running; clear after it ends"
+    rec = agent_session.load(current_app.instance_path, key)
+    if rec and agent_session.alive(rec) and not (cur and cur.alive()):
+        return (f"another {rec.get('backend') or 'agent'} session (pid {rec.get('pid')}, by "
+                f"{rec.get('owner') or '?'}) is alive on this chip; stop it first")
+    return None
+
+
+def _cleared_under(cur, conv: dict) -> bool:
+    """Was this in-app session's conversation cleared -- in this process or in
+    another SM process on the same instance (which cannot end our session)?"""
+    from quam_state_manager.core import agent_conversation as conv_mod
+    if cur is None:
+        return False
+    if conv_mod.closed(conv, cur.session_id):
+        return True
+    at = conv.get("cleared_at")
+    return bool(at) and float(cur.started or 0) < float(at)
+
+
+@chat_bp.route("/clear", methods=["POST"])
+def clear():
+    """docs/297: start the panel's conversation over. The in-app session ends
+    and its id is forgotten, so the next message starts a fresh context.
+    ``keep`` (default) puts the cleared conversation in the chip's archive;
+    ``keep=0`` keeps no copy. ``since_n`` (optional) is the conversation the
+    presser saw: if another window cleared it meanwhile, 409 and nothing
+    happens. The index and the archive are written FIRST; only when they are
+    on disk does the session end -- a failed clear changes nothing. Plans,
+    runs, approvals, the Calibration log and the agent event log are never
+    touched."""
+    from quam_state_manager.core import agent_conversation as conv_mod
+    chip, bad = _chip_or_409()
+    if bad:
+        return bad
+    data = request.get_json(silent=True) or request.form.to_dict()
+    keep = str(data.get("keep", "1")).lower() not in ("0", "false", "no", "")
+    expect = data.get("since_n")
+    try:
+        expect = None if expect in (None, "") else int(expect)
+    except (TypeError, ValueError):
+        return _err("since_n must be an integer")
+    key = aa._chip_key()
+    inst = current_app.instance_path
+    cur = _manager().get(key)
+    why = _busy_reason(chip, key, cur)
+    if why:
+        return _err(why, 409)
+    try:
+        conv = conv_mod.read_strict(inst, chip)
+    except conv_mod.Unreadable as exc:
+        return _err(f"the conversation index cannot be read ({exc}); nothing was cleared", 500)
+    if expect is not None and expect != int(conv["since_n"]):
+        return _err("this conversation was already cleared (in another window); nothing more was cleared", 409,
+                    since_n=conv["since_n"])
+    who = _r()._request_actor()
+    rec = agent_session.load(inst, key) or {}
+    closed = (cur.session_id if cur is not None and not cur.ended else None) or rec.get("session_id")
+    with _REC_LOCK:
+        upto = _current_n()          # every event numbered up to here is on disk and in the ring
+    events = _conversation_events(chip, int(conv["since_n"]), upto, conv.get("cleared_at"))
+    try:
+        meta = conv_mod.clear(inst, chip, since_n=upto, events=events, who=who, keep=keep, closed_session=closed,
+                              expect_since=int(conv["since_n"]))
+    except conv_mod.Moved:
+        return _err("this conversation was already cleared (in another window); nothing more was cleared", 409)
+    except conv_mod.Unreadable as exc:
+        return _err(f"the conversation index cannot be read ({exc}); nothing was cleared", 500)
+    except OSError as exc:
+        return _err(f"the conversation could not be saved ({exc}); nothing was cleared", 500)
+    _raise_persisted_n(upto)
+    # only now, with the clear on disk: the session ends and its id is forgotten
+    ended = None
+    if cur is not None and not cur.ended:
+        ended = cur.backend.name
+        g = _end_session(cur, key, who)
+        if g:
+            ended += f" -- disarmed (plan `{g.get('title')}` stopped)"
+    if rec.get("session_id"):
+        agent_session.save(inst, key, session_id=None)       # the next Start cannot resume what was cleared
+    if events or ended or rec.get("session_id"):
+        say = f"agent conversation cleared by {who}"
+        say += f" ({meta['messages']} messages archived)" if meta else (" (not kept)" if not keep else "")
+        if ended:
+            say += f"; {ended} session ended"
+        journal_mod.append(inst, chip, say, kind="sm")
+    aa._bump()
+    aa._wake()
+    return jsonify(ok=True, since_n=upto, archive=meta, kept=bool(meta), ended=bool(ended))
+
+
+@chat_bp.route("/archives")
+def archives_list():
+    from quam_state_manager.core import agent_conversation as conv_mod
+    chip, bad = _chip_or_409()
+    if bad:
+        return bad
+    return jsonify(ok=True, chip=chip, archives=conv_mod.archives(current_app.instance_path, chip))
+
+
+ARCHIVE_CARDS = 2000
+
+
+@chat_bp.route("/archives/<aid>")
+def archive_get(aid: str):
+    """One kept conversation as read-only cards (the newest ``ARCHIVE_CARDS``;
+    ``omitted`` says how many earlier ones are not shown)."""
+    from quam_state_manager.core import agent_conversation as conv_mod
+    chip, bad = _chip_or_409()
+    if bad:
+        return bad
+    got = conv_mod.read_archive(current_app.instance_path, chip, aid)
+    if got is None:
+        return _err("no such archived conversation", 404)
+    meta, events = got
+    cards = [c for c in (aa._chat_card(e) for e in events) if c]
+    omitted = max(0, len(cards) - ARCHIVE_CARDS)
+    return jsonify(ok=True, chip=chip, archive=meta, cards=cards[omitted:], omitted=omitted)
+
+
+@chat_bp.route("/archives/<aid>/delete", methods=["POST"])
+def archive_delete(aid: str):
+    from quam_state_manager.core import agent_conversation as conv_mod
+    chip, bad = _chip_or_409()
+    if bad:
+        return bad
+    try:
+        gone = conv_mod.delete_archive(current_app.instance_path, chip, aid)
+    except conv_mod.Unreadable as exc:
+        return _err(f"the conversation index cannot be read ({exc}); nothing was deleted", 500)
+    except OSError as exc:
+        return _err(f"the archive could not be updated ({exc}); nothing was deleted", 500)
+    if not gone:
+        return _err("no such archived conversation", 404)
+    aa._bump()
+    aa._wake()
+    return jsonify(ok=True)
 
 
 def _live_item(proc, **extra) -> dict:
@@ -558,9 +810,11 @@ def events():
     chip = aa._chip_name() if _r()._active_path() else None
     after = int(request.args.get("after") or 0)
     limit = max(1, min(int(request.args.get("limit") or 200), aa._EVENT_RING))
+    from quam_state_manager.core import agent_conversation as conv_mod
+    conv = conv_mod.load(current_app.instance_path, chip) if chip else None
     with aa._events_lock:
         ev = [e for e in aa._events() if e.get("origin") == "chat" and int(e.get("n") or 0) > after
-              and (chip is None or e.get("chip") == chip)]
+              and (chip is None or e.get("chip") == chip) and (conv is None or conv_mod.visible(e, conv))]
     ev = ev[-limit:]
     return jsonify(ok=True, chip=chip, events=ev, last=max((int(e.get("n") or 0) for e in ev), default=after),
                    agent_seq=int(current_app.config.get("agent_seq") or 0),

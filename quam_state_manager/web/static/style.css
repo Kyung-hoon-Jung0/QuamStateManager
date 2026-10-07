@@ -13998,6 +13998,30 @@ table.diff-wb-list tbody > tr[hidden] { display: none; }
 .ag-root details[open] > summary { margin-bottom: .1rem; }
 .ag-t { font-family: var(--pico-font-family-monospace, ui-monospace, Menlo, Consolas, monospace); font-size: .78em; color: var(--pico-muted-color); text-align: right; padding-top: .35em; white-space: nowrap; line-height: 1.3; }
 .ag-body { min-width: 0; }
+/* docs/297: Clear / Archived -- a sheet under the status strip, and the read-only archive view */
+.ag-sheet { flex: 0 0 auto; padding: .5rem .65rem; border: 1px solid var(--pico-muted-border-color); border-radius: .4rem;
+  background: var(--pico-card-background-color); font-size: .92em; }
+.ag-sheet p { margin: 0 0 .4rem; }
+.ag-sheet-note { font-size: .92em; }
+.ag-sheet-acts { display: flex; flex-wrap: wrap; gap: .4rem; }
+.ag-sheet[aria-busy="true"] button { cursor: progress; opacity: .75; }
+.ag-sheet-head { display: flex; align-items: center; justify-content: space-between; gap: .5rem; margin-bottom: .35rem; }
+.ag-root .btn-sm.ag-danger { background: color-mix(in srgb, var(--color-error-border, #dc3545) 80%, #000);
+  border-color: color-mix(in srgb, var(--color-error-border, #dc3545) 80%, #000); color: #fff; }   /* white on it: 6.5:1, both themes */
+.ag-arch-list { list-style: none; margin: 0 0 .25rem; padding: 0; max-height: 14rem; overflow-y: auto; }
+.ag-arch-list li { list-style: none; display: flex; flex-wrap: wrap; align-items: baseline; gap: .15rem .5rem; margin: 0;
+  padding: .3rem 0; border-top: 1px solid var(--pico-muted-border-color); }
+.ag-arch-list li:first-child { border-top: 0; }
+.ag-arch-meta { font-size: .9em; }
+.ag-arch-acts { margin-left: auto; display: inline-flex; gap: .3rem; align-items: center; white-space: nowrap; }
+.ag-root .ag-linkish { background: none; border: 0; padding: 0; color: var(--pico-primary); text-decoration: underline;
+  cursor: pointer; font: inherit; text-align: left; line-height: inherit; }
+.ag-cards.ag-feed-away { display: none; }
+.ag-archview { flex: 1 1 auto; min-height: 0; display: flex; flex-direction: column; gap: .35rem; }
+.ag-archview-head { flex: 0 0 auto; display: flex; flex-wrap: wrap; align-items: center; gap: .3rem .6rem; padding: .3rem .55rem;
+  border: 1px dashed var(--pico-muted-border-color); border-radius: .4rem; font-size: .9em; }
+.ag-archview-tag { font-weight: 600; color: var(--pico-muted-color); white-space: nowrap; }
+.ag-archview-head .ag-archview-back { margin-left: auto; }
 .ag-who { display: block; font-size: .8em; color: var(--pico-muted-color); margin-bottom: .05rem; }
 /* a person's message: a tinted bubble on the right */
 .ag-card.ag-user .ag-body { display: flex; justify-content: flex-end; }

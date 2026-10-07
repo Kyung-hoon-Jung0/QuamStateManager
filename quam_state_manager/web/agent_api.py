@@ -1325,6 +1325,20 @@ def _failed_runs_today(day_start: float, day_end: float, sessions: dict[str, lis
     return ends
 
 
+def _ended_by_sm(sid) -> bool:
+    """docs/297: SM ended this session itself (End session, Clear) and its process is gone --
+    the event window's guess must not keep it "thinking" for a quarter of an hour. Clear also
+    forgets the session id the record held, so the record cannot say whose events these are;
+    the manager (or, after a restart, the clear's own closed list) can."""
+    from quam_state_manager.core import agent_conversation
+    key = _chip_key()
+    mgr = current_app.config.get("agent_chat")
+    cur = mgr.get(key) if mgr else None
+    if cur is not None and str(cur.session_id or "") == str(sid):
+        return bool(cur.ended) and not cur.alive()
+    return agent_conversation.ended_by_clear(agent_conversation.load(current_app.instance_path, _chip_name()), sid)
+
+
 def _now_state() -> dict:
     """The pill's one state, in the precedence order of docs/173 §3.1:
     waiting > limited > stalled > failed > running > between > human-ran > idle."""
@@ -1405,6 +1419,8 @@ def _now_state() -> dict:
         if not any(float(e.get("ts") or 0) > stop_at and e.get("hook_event_name") != "Stop" for e in es):
             alive = False
     elif alive and own and sess.get("window") == "chat" and (sess.get("pid") or sess.get("worker_pid")):
+        alive = False
+    if alive and _ended_by_sm(sid):
         alive = False
     running = None
     if open_tools and alive:
@@ -2752,7 +2768,7 @@ def _feed_display(live: dict) -> None:
 def chat_cards():
     """The panel's feed: chat cards after ``after`` plus the live objects
     (plans, runs, approvals), the session, the pill's state."""
-    from quam_state_manager.core import agent_plans, agent_session, approvals
+    from quam_state_manager.core import agent_conversation, agent_plans, agent_session, approvals
     r = _r()
     chip = _chip_name() if r._active_path() else None
     key = _chip_key() if chip else None
@@ -2763,34 +2779,54 @@ def chat_cards():
     cards: list[dict] = []
     last = after
     more = False
+    inst = current_app.instance_path
+    # docs/297: a clear moves where the conversation starts; `since_n` tells every window to start over
+    conv = agent_conversation.load(inst, chip) if chip else agent_conversation._empty()
+    since_n = int(conv["since_n"])
     if chip:
+        start = max(after, since_n)
         with _events_lock:
-            ev = [e for e in _events() if e.get("origin") == "chat" and int(e.get("n") or 0) > after
+            ev = [e for e in _events() if e.get("origin") == "chat" and int(e.get("n") or 0) > start
                   and e.get("chip") == chip]
         more = len(ev) > 300
+        last = start
         for e in ev[:300]:                       # review R2-13: from the FRONT, so the cursor never skips
-            c = _chat_card(e)
+            c = _chat_card(e) if agent_conversation.visible(e, conv) else None
             if c:
                 cards.append(c)
             last = max(last, int(e.get("n") or 0))
-    inst = current_app.instance_path
     live = {"plans": [], "runs": [], "approvals": []}
     file = None
     session = None
+    resumable = False
     if chip:
-        plans = agent_plans.load(inst, key)[-6:]
+        cut = conv.get("cleared_at")
+
+        def kept(rec: dict, settled: bool, born: str) -> bool:
+            # a plan or run that SETTLED before the clear went with the conversation; one still
+            # going (or a draft waiting for Start) stays -- the clear never hides live work, and
+            # work that was live at the clear stays when it settles after it
+            if not (cut and settled):
+                return True
+            return float(rec.get("ended") or rec.get(born) or 0) > cut
+        plans = [p for p in agent_plans.load(inst, key)
+                 if kept(p, p.get("status") not in ("draft", "running", "stopping"), "created")][-6:]
         live["plans"] = [_plan_view(p, with_may_change=(p.get("status") in ("draft", "running", "stopping"))) for p in plans]
         reg = _registry()
-        runs = [_run_view(m) for m in reg.runs.values() if m.get("chip") == key]
+        runs = [_run_view(m) for m in reg.runs.values() if m.get("chip") == key
+                and kept(m, m.get("status") not in ("starting", "running"), "since")]
         runs.sort(key=lambda x: float(x.get("since") or 0))
         live["runs"] = runs[-20:]
         live["approvals"] = [_approval_view(a, r._store()) for a in approvals.pending(inst, key)]
-        file = agent_session.summary(agent_session.load(inst, key))
+        rec = agent_session.load(inst, key)
+        file = agent_session.summary(rec)
+        resumable = bool(rec and rec.get("session_id"))
         mgr = current_app.config.get("agent_chat")
         session = mgr.status(key) if mgr else None
         _feed_display(live)
     store = r._store()
     return jsonify(ok=True, chip=chip, chip_key=key, cards=cards, last=last, more=more, live=live, session=session, file=file,
+                   conversation={"since_n": since_n, "archives": len(conv["archives"]), "resumable": resumable},
                    now=_now_state(), waiting=_waiting_count(), agent_seq=int(current_app.config.get("agent_seq") or 0),
                    qubits=len(store.qubit_names) if store else None)
 
