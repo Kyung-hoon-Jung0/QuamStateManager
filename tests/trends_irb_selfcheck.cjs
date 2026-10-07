@@ -86,5 +86,31 @@ tr = hoverOf('<div id="topo-trends"><div class="topo-trends-grid"><div id="topo-
              {metric: 'T1', unit: 's', series: [{entity: 'qA1', points: PTS([3.3883e-5])}]});
 ok(/%\{text\}/.test(tr.hovertemplate) && tr.text[0] === '33.883 \u00b5s', 'with no provenance map too: ' + tr.hovertemplate);
 
+// docs/301 F29: change points over a day and a held tail two months long --
+// the chart opens on the change points and says until when the values hold.
+{
+  const one = '<div id="topo-trends"><div class="topo-trends-grid"><div id="topo-trend-0"></div></div></div>';
+  let s9 = boot(one);
+  s9.w.ChipTrends.render([{metric: 'T1', unit: 's', series: [{entity: 'qA1',
+    points: [['20260809_030000', 3e-5], ['20260809_140000', 2e-5], ['20260810_110000', 2.5e-5], ['20261008_040000', 2.5e-5]],
+    held: {'20261008_040000': '20260810_110000'}}]}]);
+  const L = s9.layout, r = L.xaxis.range;
+  ok(Array.isArray(r) && L.xaxis.autorange === false, 'a long held tail: the chart opens on a set range');
+  const lo = Date.parse(r[0] + 'Z'), hi = Date.parse(r[1] + 'Z');
+  const first = Date.parse(s9.traces[0].x[0] + 'Z'), lastChange = Date.parse(s9.traces[0].x[2] + 'Z'),
+        heldX = Date.parse(s9.traces[0].x[3] + 'Z');
+  ok(lo < first && hi > lastChange && hi < heldX, 'the range spans the change points, not the held tail: ' + r);
+  ok(/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}$/.test(r[0]), 'the range is in the points’ own naive spelling: ' + r[0]);
+  ok((L.annotations || []).some(a => /^held to \d{4}-\d{2}-\d{2}/.test(a.text) && /Double-click/.test(a.hovertext)),
+     'it says until when the values hold, and how to see it all');
+  // a held tail no longer than the changes: the whole span, untouched
+  s9 = boot(one);
+  s9.w.ChipTrends.render([{metric: 'T1', unit: 's', series: [{entity: 'qA1',
+    points: [['20260809_030000', 3e-5], ['20260810_030000', 2e-5], ['20260810_200000', 2e-5]],
+    held: {'20260810_200000': '20260810_030000'}}]}]);
+  ok(!s9.layout.xaxis.range && !(s9.layout.annotations || []).some(a => /held to/.test(a.text)),
+     'a short held tail leaves the axis alone');
+}
+
 console.log(n + ' client assertions passed');
 setTimeout(() => process.exit(0), 0);

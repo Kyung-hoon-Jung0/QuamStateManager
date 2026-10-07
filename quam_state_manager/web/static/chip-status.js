@@ -7154,6 +7154,49 @@ window.ChipTrends = (function () {
         return m[1] + '-' + m[2] + '-' + m[3] + 'T' + m[4] + ':' + m[5] + ':' + m[6];
     }
 
+    /* docs/301 F29: a chip whose runs ended weeks ago and that got one SM
+       write today drew every series as its change points squeezed into a few
+       pixels at the left of a weeks-long axis -- the held tail (the last value
+       carried to the newest record) stretched it, and points could not be told
+       apart or hovered. When that tail is more than twice as long as the span
+       of the change points, the chart OPENS on the change points (the lines
+       run on to the edge) and says until when the values hold; a double-click
+       shows the whole span (Plotly: the first double-click on the initial view
+       autoscales). The axis values are zone-shifted naive ISO strings; they
+       are measured here as UTC-wall milliseconds and the range is written
+       back in the same naive spelling. */
+    function _focusOnChanges(layout, series, axisType) {
+        if (axisType !== 'date') return;
+        var lo = Infinity, hi = -Infinity, heldHi = -Infinity;
+        series.forEach(function (s) {
+            var held = s.held || {};
+            s.points.forEach(function (p) {
+                var x = _iso(p[0]);
+                var t = x ? Date.parse(String(x).replace(' ', 'T') + 'Z') : NaN;
+                if (!isFinite(t)) return;
+                if (held[p[0]]) { if (t > heldHi) heldHi = t; return; }
+                if (t < lo) lo = t;
+                if (t > hi) hi = t;
+            });
+        });
+        if (!isFinite(lo) || !isFinite(heldHi) || heldHi <= hi) return;
+        var span = hi - lo, HOUR = 3600e3;
+        if (heldHi - hi <= Math.max(2 * span, HOUR)) return;
+        var pad = Math.max(span * 0.05, HOUR / 2);
+        // the same naive spelling the points use: a number would be read
+        // through the browser's zone and land a zone offset away
+        var naive = function (t) { return new Date(t).toISOString().slice(0, 19); };
+        layout.xaxis.range = [naive(lo - pad), naive(hi + pad)];
+        layout.xaxis.autorange = false;
+        var until = new Date(heldHi).toISOString().slice(0, 10);
+        layout.annotations = (layout.annotations || []).concat([{
+            x: 1, xref: 'paper', y: 1, yref: 'paper', xanchor: 'right', yanchor: 'top',
+            showarrow: false, text: 'held to ' + until + ' \u2192', font: { size: 9 },
+            hovertext: 'Each line keeps its last value until ' + until
+                + ' (the newest record). Double-click the chart to see the whole span.'
+        }]);
+    }
+
     /* What the axis must SAY, so the basis is never a guess again. */
     function _tzNote() {
         return window.SnapTime ? (' (' + window.SnapTime.label() + ')') : '';
@@ -7623,6 +7666,7 @@ window.ChipTrends = (function () {
                              hovertext: 'Renamed in Re-generate: ' + m.words };
                 });
             }
+            _focusOnChanges(layout, c.series, axisType);
             if (window.PlotTheme && window.PlotTheme.houseLayout) {
                 layout = window.PlotTheme.houseLayout(layout);
             }
