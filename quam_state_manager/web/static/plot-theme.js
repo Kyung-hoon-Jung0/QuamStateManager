@@ -56,9 +56,13 @@
         Object.keys(out).forEach(function (k) {
             var ax = out[k];
             if (!/^[xy]axis\d+$/.test(k) || !ax || typeof ax !== 'object' || !ax.overlaying) return;
-            ax = Object.assign({ showgrid: false, zeroline: false,
-                                 gridcolor: grid, zerolinecolor: grid, automargin: true }, ax);
-            out[k] = ax;
+            var dflt = { showgrid: false, zeroline: false,
+                         gridcolor: grid, zerolinecolor: grid, automargin: true };
+            // docs/301 F37: a top x axis's labels sit on the plot's top edge,
+            // where its first one (at the left corner) ran into the y axis's
+            // top label. Lift them clear; automargin makes the room.
+            if (/^xaxis/.test(k) && ax.side === 'top') dflt.ticklabelstandoff = 8;
+            out[k] = Object.assign(dflt, ax);
         });
         return out;
     }
