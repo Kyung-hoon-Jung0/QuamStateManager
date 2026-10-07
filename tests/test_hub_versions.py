@@ -395,7 +395,8 @@ def test_both_surfaces_name_runs_sm_writes_and_observed_states(env):
     now = [r for r in rows if "on this now" in r]
     assert len(now) == 1 and "applied by tester" in text(now[0]), "the live chip holds the SM write"
     words = text(panel)
-    assert "run #3 scan" in words and "applied by tester" in words and "SM write (apply" in words
+    # docs/301 F16: the sub-line names the door in words, never its raw id
+    assert "run #3 scan" in words and "applied by tester" in words and "SM write · Applied" in words
     assert "seen by SM (auto snapshot) writer unknown" in words
     page = text(env.client.get("/state-history").get_data(as_text=True))
     assert "run #1 scan" in page and "applied by tester" in page and "seen by SM (auto snapshot)" in page

@@ -792,12 +792,27 @@ class TestDoors:
         e = _events(env)[-1]
         assert e["src"] == "auto_apply" and e["entries"][0]["new"] == 5e-5
 
-    def test_pull_and_apply(self, env):
+    def test_plain_apply_is_recorded_as_an_apply(self, env):
+        """docs/301 F16: the sync panel's Apply over an unchanged live chip
+        pulls nothing in -- it was recorded as "Pull & apply (merge)"."""
         _edit(env, "qubits.qA1.T1", "3.3e-5")
         r = env["client"].post("/state/sync", data={"mode": "apply"})
-        assert r.get_json()["status"] == "ok"
+        assert r.get_json()["status"] == "ok" and not r.get_json()["pulled_other_changes"]
         e = _events(env)[-1]
-        assert e["src"] == "pull_apply" and e["entries"][0]["new"] == 3.3e-5
+        assert e["src"] == "apply" and e["entries"][0]["new"] == 3.3e-5
+        assert r.get_json()["hub_event"] == e["id"]
+
+    def test_pull_and_apply(self, env):
+        """The same press when the live chip moved meanwhile: the pull merges
+        the outside change in, and the record says so."""
+        _edit(env, "qubits.qA1.T1", "3.3e-5")
+        st = json.loads((env["live"] / "state.json").read_text(encoding="utf-8"))
+        st["qubits"]["qA1"]["f_01"] = 5.05e9
+        (env["live"] / "state.json").write_text(json.dumps(st), encoding="utf-8")
+        r = env["client"].post("/state/sync", data={"mode": "apply"})
+        assert r.get_json()["status"] == "ok" and r.get_json()["pulled_other_changes"]
+        e = _events(env)[-1]
+        assert e["src"] == "pull_apply"
         assert r.get_json()["hub_event"] == e["id"]
 
     def test_staged_version_then_apply_records_the_wholesale_difference(self, env):

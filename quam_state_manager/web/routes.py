@@ -12000,7 +12000,9 @@ def _vh_present(p: dict, uid_roots, uid_memo: dict) -> dict:
             label += " (a run's state)"
             uid = p["run_uid"]
             link_title = "Open the run whose saved state this apply wrote"
-        sub = f"SM write ({p.get('src') or kind})"
+        # docs/301 F16 (docs/281: never raw door ids)
+        from quam_state_manager.core import story as _story
+        sub = f"SM write \u00b7 {_story.write_label(kind, p.get('src'))}"
         title = f"Written by SM ({kind}, {p.get('src') or 'door unknown'}) for {who}"
         if p.get("plan_id"):
             title += f", plan {p['plan_id']}"
@@ -18787,7 +18789,8 @@ def _version_sm_words(ev: dict) -> tuple[str, str, str]:
     hover = f"Written by SM ({kind}, {ev.get('src') or 'door unknown'}) for {who}"
     if ev.get("plan_id"):
         hover += f", plan {ev['plan_id']}"
-    return label, f"SM write ({src})", hover + "."
+    from quam_state_manager.core import story as _story
+    return label, f"SM write \u00b7 {_story.write_label(kind, ev.get('src'))}", hover + "."
 
 
 def _version_rows(ctx, res: dict, snapshots) -> list[dict]:
@@ -28517,7 +28520,11 @@ def _sync_pull_apply_to_live(ctx, replay, *, pulled_other_changes=False,
     _saved_ids = _hub_saved_units(ctx) if (_press.get("dirty") and journal) else []
     _bref: dict = {}
     _pend = _hub_pending(
-        ctx, _hub.get("src") or _from.get("src") or ("apply_staged" if _staged else "pull_apply"),
+        # docs/301 F16: a plain Apply whose pull brought nothing in is an
+        # apply -- recording it as "Pull & apply (merge)" named a merge that
+        # never happened
+        ctx, _hub.get("src") or _from.get("src") or (
+            "apply_staged" if _staged else ("pull_apply" if pulled_other_changes else "apply")),
         log=_press.get("cleared"), kind=_hub.get("kind"),
         wholesale=bool(_staged or force or not _hub_content_ok(ctx, _press)
                        or not _press.get("cleared")),
