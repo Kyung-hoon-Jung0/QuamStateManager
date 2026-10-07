@@ -418,21 +418,13 @@
       <p id="gen-pop-hidden-note" class="muted" hidden></p>
 
       {# Live waveform preview — focus/edit a pulse cell (1Q DRAG, readout, CZ/CR)
-         and generate_preview.js POSTs /api/pulse/synth and draws it here. The
-         toggle persists an on/off preference; the panel × turns it off. #}
+         and generate_preview.js POSTs /api/pulse/synth and draws it into
+         #gen-pop-preview at the end of this step. The toggle persists an
+         on/off preference; the panel × turns it off. #}
       <label class="gen-preview-toggle" title="Show a live waveform when you edit an amplitude / length cell">
         <input type="checkbox" id="gen-preview-toggle" checked>
         <span>Show live waveform preview while editing</span>
       </label>
-      <div id="gen-pop-preview" class="gen-pop-preview" hidden>
-        <div class="gen-pop-preview-head">
-          <div class="gen-pop-preview-title muted"></div>
-          <button type="button" class="gen-pop-preview-close" id="gen-pop-preview-close"
-                  title="Hide the waveform preview (turn it off)" aria-label="Hide preview">&times;</button>
-        </div>
-        <div id="gen-pop-preview-plot" class="gen-pop-preview-plot"></div>
-        <div class="gen-pop-preview-err pulse-synth-err" hidden></div>
-      </div>
 
       <div id="gen-pop-sec-qubit">
         <h4>Qubit &amp; XY drive</h4>
@@ -475,6 +467,19 @@
         <h4>Qubit pairs &mdash; CZ</h4>
         <p id="gen-pop-pair-order-note" class="muted" hidden></p>
         <div id="gen-pop-pairs" class="gen-pop-host"></div>
+      </div>
+
+      {# docs/301 F35: the preview docks at the BOTTOM of the pane (sticky
+         bottom, after every table). Sticky at the top it covered the table
+         header and the rows above the cell being edited. #}
+      <div id="gen-pop-preview" class="gen-pop-preview" hidden>
+        <div class="gen-pop-preview-head">
+          <div class="gen-pop-preview-title muted"></div>
+          <button type="button" class="gen-pop-preview-close" id="gen-pop-preview-close"
+                  title="Hide the waveform preview (turn it off)" aria-label="Hide preview">&times;</button>
+        </div>
+        <div id="gen-pop-preview-plot" class="gen-pop-preview-plot"></div>
+        <div class="gen-pop-preview-err pulse-synth-err" hidden></div>
       </div>
     </section>
 

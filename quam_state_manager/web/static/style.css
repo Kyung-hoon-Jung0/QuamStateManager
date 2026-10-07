@@ -8720,10 +8720,12 @@ table.gen-wiring tbody tr.pinned {
 /* Live waveform preview panel (generate_preview.js) — sticky so it stays visible
    while scrolling the populate tables. */
 .gen-pop-preview {
-  position: sticky; top: 0; z-index: 5;
+  /* docs/301 F35: docked at the bottom of the pane, never over the header */
+  position: sticky; bottom: 0; z-index: 5;
   border: 1px solid var(--pico-muted-border-color);
-  border-radius: 6px; padding: 0.4rem 0.6rem; margin-bottom: 0.5rem;
+  border-radius: 6px; padding: 0.4rem 0.6rem; margin-top: 0.5rem;
   background: var(--pico-card-background-color);
+  box-shadow: 0 -4px 12px rgba(0, 0, 0, 0.15);
 }
 .gen-pop-preview-head { display: flex; align-items: center; justify-content: space-between; gap: 0.5rem; }
 .gen-pop-preview-title { font-size: 0.8em; font-weight: 600; margin-bottom: 0.2rem; }
