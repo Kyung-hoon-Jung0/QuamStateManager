@@ -7855,8 +7855,16 @@
         var g = byId[p.key];
         if (g) { g.loFreq = lo; g.band = band; }
       }
-      info[p.key] = { band: band, lo: lo, p: p };
+      info[p.key] = { band: band, lo: lo, p: p, explicit: bands.length > 0 };
     });
+    // docs/301 F33: two coupled ports whose bands are BOTH derived (no row on
+    // either sets one) and that one band covers -- e.g. a band-1 drive on
+    // Out1 beside a band-2 readout read on In1 under the crossing default --
+    // get that band on both (the build writes it), named on Review, instead
+    // of a conflict every new chip had to fix by hand. A band a person set
+    // is never moved: those still warn.
+    calc.coBands = {};
+    calc.notes = [];
     var fems = {};
     calc.ports.forEach(function (p) { fems[p.con + "/" + p.slot] = p.femName; });
     Object.keys(fems).forEach(function (fk) {
@@ -7869,6 +7877,21 @@
         var fix = [1, 2, 3].filter(function (bb) {
           return a.lo != null && b.lo != null && covers(bb, a.lo) && covers(bb, b.lo);
         });
+        var both = a.p.members.concat(b.p.members);
+        if (fix.length && !a.explicit && !b.explicit && both.every(function (m) {
+              var prev = calc.coBands[m.group + "/" + m.rid];
+              return prev == null || prev === fix[0];
+            })) {
+          var cb = fix[0];
+          a.band = cb; b.band = cb;
+          [a, b].forEach(function (x) { var g = byId[x.p.key]; if (g) g.band = cb; });
+          both.forEach(function (m) { calc.coBands[m.group + "/" + m.rid] = cb; });
+          calc.notes.push({ members: both, message:
+            fems[fk] + " " + a.p.desc + " (" + who(a.p.members) + ") and " +
+            b.p.desc + " (" + who(b.p.members) + ") are coupled, so they share a " +
+            "band: the build uses band " + cb + " (" + bandSpan(cb) + ") on both." });
+          return;
+        }
         warn(fems[fk] + " " + a.p.desc + " (band " + a.band + ": " +
           who(a.p.members) + ") and " + b.p.desc + " (band " + b.band + ": " +
           who(b.p.members) + ") are coupled — coupled MW-FEM ports must share " +
@@ -7880,6 +7903,26 @@
       });
     });
     return calc;
+  }
+
+  // docs/301 F33: the spec the build receives -- the shared band of every
+  // auto-banded coupled pair written onto the rows whose band is automatic.
+  // state.spec itself is not touched: the step-6 cells keep reading "auto".
+  function specWithCoBands() {
+    var cb = (loBandFindings(computeLoAssignments()).coBands) || {};
+    var keys = Object.keys(cb);
+    if (!keys.length) return state.spec;
+    var sp = JSON.parse(JSON.stringify(state.spec));
+    sp.populate = sp.populate || {};
+    keys.forEach(function (k) {
+      var i = k.indexOf("/");
+      var grp = k.slice(0, i), rid = k.slice(i + 1);
+      var rows = sp.populate[grp] = sp.populate[grp] || {};
+      var row = rows[rid] = rows[rid] || {};
+      var b = parseInt(row.band, 10);
+      if (!(b === 1 || b === 2 || b === 3)) row.band = cb[k];
+    });
+    return sp;
   }
 
   // -- step 6: LO-group visualisation ----------------------------------
@@ -9511,6 +9554,10 @@
     // derived fresh from the spec (pure reads; step 6 may never have run).
     var loCalc = loBandFindings(computeLoAssignments());
     recomputeAllPowerFindings();
+    if (loCalc.notes && loCalc.notes.length) {
+      rows.push(["Coupled ports", loCalc.notes.map(function (n) {
+        return n.message; }).join(" ")]);
+    }
     var reviewFindings = loCalc.warnings.concat(powerWarningList());
     if (reviewFindings.length) {
       rows.push(["LO / band / power conflicts", reviewFindings.length +
@@ -11061,7 +11108,7 @@
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
-        spec: state.spec, output_path: outPath,
+        spec: specWithCoBands(), output_path: outPath,
         force: !!state._buildForce, ack_degrades: !!state._buildAck,
         source_folder: state.sourcePath || null,  // regenerate: merge from here
         // optional editable-scripts export (step 7 checkbox)
@@ -12311,6 +12358,7 @@
       ampForTarget: ampForTarget,
       computeLoAssignments: computeLoAssignments,
       loBandFindings: loBandFindings,   // QA F16 / r2-07
+      specWithCoBands: specWithCoBands,   // docs/301 F33
       recomputeLOs: recomputeLOs,
       runBuild: runBuild,               // QA regenerate-r2-06
       askFspCompensation: askFspCompensation,

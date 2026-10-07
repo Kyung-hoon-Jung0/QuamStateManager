@@ -244,6 +244,45 @@ function panelText(win) {
     'L6: LO 7.0 GHz with explicit band 3 -> 141 ns (band 3), not band 2 (got ' + t + ')');
 })();
 
+// ---- L8: coupled ports with AUTOMATIC bands share the band that covers both
+// docs/301 F33: a 4.9 GHz drive on Out1 (derived band 1) beside a 7.1 GHz
+// readout read on In1 (derived band 2) -- the crossing default -- used to be
+// a conflict every new chip had to fix by hand; band 2 covers both LOs.
+(function () {
+  const RR8 = [{ con: 1, slot: 3, port: 8, io_type: 'output' },
+               { con: 1, slot: 3, port: 1, io_type: 'input' }];
+  const w = world('generate', {
+    qubit: { q1: { RF_freq: 4.9e9 } },
+    resonator: { q1: { RF_freq: 7.1e9 } } }, ['q1']);
+  w.st.allocation = { q1: { xy: xy(1), rr: RR8 } };
+  let calc = w.T.loBandFindings(w.T.computeLoAssignments());
+  const coupled = calc.warnings.filter(function (x) { return /coupled/.test(x.message); });
+  ok(coupled.length === 0,
+    'L8: auto bands on coupled Out1/In1 raise no conflict (got ' +
+    JSON.stringify(calc.warnings.map(function (x) { return x.message; })) + ')');
+  ok(calc.coBands['qubit/q1'] === 2 && calc.coBands['resonator/q1'] === 2,
+    'L8: both rows get band 2 (got ' + JSON.stringify(calc.coBands) + ')');
+  ok(calc.notes.length === 1 && /share a band: the build uses band 2/.test(calc.notes[0].message),
+    'L8: the shared band is named (got ' + JSON.stringify(calc.notes) + ')');
+  const sp = w.T.specWithCoBands();
+  ok(sp.populate.qubit.q1.band === 2 && sp.populate.resonator.q1.band === 2,
+    'L8: the build spec carries band 2 on both rows (got ' +
+    JSON.stringify(sp.populate) + ')');
+  ok(w.st.spec.populate.qubit.q1.band == null,
+    'L8: the step-6 row itself stays automatic');
+  // a band a person set is never moved: it warns, naming the fix
+  w.st.spec.populate.qubit.q1.band = 1;
+  calc = w.T.loBandFindings(w.T.computeLoAssignments());
+  ok(calc.warnings.some(function (x) { return /coupled/.test(x.message) && /Band 2/.test(x.message); }),
+    'L8: an explicit band 1 still warns and names band 2 as the fix (got ' +
+    JSON.stringify(calc.warnings.map(function (x) { return x.message; })) + ')');
+  ok(Object.keys(calc.coBands).length === 0 &&
+     w.T.specWithCoBands().populate.qubit.q1.band === 1,
+    'L8: and the build keeps the band the person set');
+  ok(/spec: specWithCoBands\(\), output_path/.test(GEN_JS),
+    'L8: the build request carries specWithCoBands(), not the raw spec');
+})();
+
 // ---- L7: step-6 deep link with no allocation -----------------------------
 (async function () {
   const alloc = { q1: { xy: xy(2) }, q2: { xy: xy(3) } };
