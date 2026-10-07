@@ -666,7 +666,32 @@ class TestReviewCountsNameTheSide:
         # every row names its side by COLUMN -- "here (SM)" and "live chip" --
         # and the delta names its direction; the ambiguous verbs stay gone.
         assert ">here (SM)<" in html and ">live chip<" in html
-        assert "live chip − here" in html
+        # docs/301: each group names its own direction; a staged version's delta is
+        # what applying it changes on the live chip (here minus live)
+        assert "Δ = here &minus; live chip" in html or "Δ = here − live chip" in html or "&Delta; = here &minus; live chip" in html
         assert "Removed:" not in html and "Added:" not in html
         # here (the working state) is the left column, the live chip the right
         assert html.index(">here (SM)<") < html.index(">live chip<")
+
+
+class TestDeltaDirectionPerGroup:
+    """docs/301 (F3): an unapplied edit's delta is the change applying it makes --
+    the edit minus the live value. It used to read live minus here, so lowering
+    f_01 by 400 kHz showed "+0.006%" next to the row's own "was ..." line."""
+
+    def _mine_delta(self, client):
+        import re
+        html = client.get("/state/review").data.decode()
+        row = re.search(r'<tr class="sp-row sp-row-mine.*?</tr>', html, re.S).group(0)
+        return re.search(r'class="val-delta delta-(\w+)[^"]*" title="([^"]+)"', row).groups(), html
+
+    def test_raising_a_value_reads_plus(self, loaded_client):
+        _edit(loaded_client, "qubits.qA1.f_01", "6.251e9")
+        (d, title), html = self._mine_delta(loaded_client)
+        assert d == "up" and "+1,000,000" in title, (d, title)
+        assert "your edit &minus; live chip" in html
+
+    def test_lowering_a_value_reads_minus(self, loaded_client):
+        _edit(loaded_client, "qubits.qA1.f_01", "6.249e9")
+        (d, title), _ = self._mine_delta(loaded_client)
+        assert d == "down" and "-1,000,000" in title, (d, title)

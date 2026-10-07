@@ -73,10 +73,10 @@
 
   {% if conflict_rows or external_rows or mine_rows or staged_rows %}
   <table class="sp-diff">
-    <thead><tr><th>field</th><th>here (SM)</th><th>live chip</th><th title="Δ = live chip − here">&Delta;</th><th></th></tr></thead>
+    <thead><tr><th>field</th><th>here (SM)</th><th>live chip</th><th title="Δ = the change each group names (its heading says which way)">&Delta;</th><th></th></tr></thead>
     {% if conflict_rows %}
     <tbody class="sp-group sp-group-collide">
-      <tr class="sp-group-head"><td colspan="5">Changed on both sides &mdash; pick one ({{ _nc }})</td></tr>
+      <tr class="sp-group-head"><td colspan="5">Changed on both sides &mdash; pick one ({{ _nc }}) <small class="muted sp-delta-dir">&Delta; = live chip &minus; yours</small></td></tr>
       {% for r in conflict_rows %}
       <tr class="sp-row sp-row-collide" data-path="{{ r.path }}">
         <td class="sp-path"><code title="{{ r.path }}">{{ r.path.split('.') | map('e') | join('.<wbr>' | safe) }}</code></td>
@@ -93,7 +93,7 @@
     {% endif %}
     {% if external_rows %}
     <tbody class="sp-group sp-group-live">
-      <tr class="sp-group-head"><td colspan="5">{% if mixed %}Differs between here and the live chip{% else %}Live chip changed{% endif %} ({{ _ne }}){% if _ne > external_rows | length %} <small class="muted">showing {{ external_rows | length }}</small>{% endif %}</td></tr>
+      <tr class="sp-group-head"><td colspan="5">{% if mixed %}Differs between here and the live chip{% else %}Live chip changed{% endif %} ({{ _ne }}) <small class="muted sp-delta-dir">&Delta; = live chip &minus; here</small>{% if _ne > external_rows | length %} <small class="muted">showing {{ external_rows | length }}</small>{% endif %}</td></tr>
       {% for r in external_rows %}
       {#- the live value stays an editable input with a per-field ↓ (the
           review's on-the-fly accept, Phase D): take just this field, as shown
@@ -120,7 +120,7 @@
     {% endif %}
     {% if mine_rows %}
     <tbody class="sp-group sp-group-mine">
-      <tr class="sp-group-head"><td colspan="5">Your unapplied edits ({{ mine_rows | length }})</td></tr>
+      <tr class="sp-group-head"><td colspan="5">Your unapplied edits ({{ mine_rows | length }}) <small class="muted sp-delta-dir">&Delta; = your edit &minus; live chip</small></td></tr>
       {% for r in mine_rows %}
       <tr class="sp-row sp-row-mine tray-change-item" data-group-id="{{ r.gid or '' }}" data-path="{{ r.path }}">
         <td class="sp-path"><code class="tray-change-path" title="{{ r.path }}">{{ r.path.split('.') | map('e') | join('.<wbr>' | safe) }}</code></td>
@@ -128,7 +128,7 @@
             carried into the panel): a scalar inline, a mapping as a leaf list -#}
         <td class="sp-val">{% if r.created or r.deleted %}{% set _v = r.new if r.created else r.old %}{% set _cls = 'change-new' if r.created else 'change-old' %}{% set _sg = '+' if r.created else '&minus;' %}{% if _v is mapping %}<details class="tray-subtree"><summary class="{{ _cls }} tray-op-pill">{{ _sg | safe }} {{ 'added' if r.created else 'deleted' }} ({{ _v | length }} field{{ 's' if _v | length != 1 }})</summary><div class="tray-subtree-leaves">{% for lp, lv in _v | flatten_leaves %}<div class="tray-subtree-leaf"><code>{{ lp }}</code> <span class="{{ _cls }}">{{ lv | groupdigits if lv is not none else 'null' }}</span></div>{% endfor %}</div></details>{% else %}<span class="{{ _cls }} tray-op-pill">{{ _sg | safe }} {{ _v | groupdigits if _v is not none else 'null' }}</span>{% endif %}{% else %}{{ r.new | groupdigits if r.new is not none else 'null' }}<small class="sp-sub">was {{ r.old | groupdigits if r.old is not none else 'null' }}</small>{% endif %}</td>
         <td class="sp-val">{% if r.live is not none and not r.created and not r.deleted %}{{ r.live | groupdigits }}{% else %}—{% endif %}</td>
-        <td class="sp-delta">{% if not r.created and not r.deleted and r.live is not none %}{{ delta_pct(r.new, r.live) }}{% endif %}</td>
+        <td class="sp-delta">{% if not r.created and not r.deleted and r.live is not none %}{{ delta_pct(r.live, r.new) }}{% endif %}</td>
         <td class="sp-x">
           {#- QA liveedit-r2-16, carried from the old tray: an FSP bundle's ✕ takes
               the whole unit (FSP + its compensated amplitudes) and must SAY so
@@ -147,13 +147,13 @@
     {% endif %}
     {% if staged_rows %}
     <tbody class="sp-group sp-group-staged">
-      <tr class="sp-group-head"><td colspan="5">{% if working_dirty %}Staged / saved version vs the live chip{% else %}Here vs the live chip{% endif %} ({{ staged_rows | length }})</td></tr>
+      <tr class="sp-group-head"><td colspan="5">{% if working_dirty %}Staged / saved version vs the live chip{% else %}Here vs the live chip{% endif %} ({{ staged_rows | length }}) <small class="muted sp-delta-dir">&Delta; = here &minus; live chip</small></td></tr>
       {% for r in staged_rows %}
       <tr class="sp-row sp-row-staged" data-path="{{ r.path }}">
         <td class="sp-path"><code title="{{ r.path }}">{{ r.path.split('.') | map('e') | join('.<wbr>' | safe) }}</code></td>
         <td class="sp-val">{{ r.here | groupdigits if r.here is not none else '—' }}</td>
         <td class="sp-val">{{ r.live | groupdigits if r.live is not none else '—' }}</td>
-        <td class="sp-delta">{{ delta_pct(r.here, r.live) }}</td>
+        <td class="sp-delta">{{ delta_pct(r.live, r.here) }}</td>
         <td></td>
       </tr>
       {% endfor %}
