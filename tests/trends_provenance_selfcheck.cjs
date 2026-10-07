@@ -279,9 +279,12 @@ world.push((function () {
        && !/click/i.test(tr.customdata[2][2]),
        '3f1 ...and its hover says WHY it cannot open, without offering a click: '
        + JSON.stringify(tr.customdata[2][2]));
-    ok(/%\{customdata\[0\]\}/.test(tr.hovertemplate)
+    // docs/301 F10 (replaces "the snapshot id stays in the hover"): the id is a
+    // ledger event id now -- a UTC stamp + counter whose date contradicts the
+    // local time above it and that names nothing a person can look up
+    ok(!/%\{customdata\[0\]\}/.test(tr.hovertemplate)
        && /%\{customdata\[1\]\}/.test(tr.hovertemplate),
-       '3g the snapshot id stays in the hover beside the provenance line');
+       '3g the hover shows the provenance line, never the raw event id');
   });
 })());
 

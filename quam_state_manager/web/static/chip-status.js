@@ -7510,9 +7510,11 @@ window.ChipTrends = (function () {
                     // between two change points showed a drift that never happened
                     line: { shape: 'hv' },
                     connectgaps: false, marker: { size: 5 },
-                    hovertemplate: '%{fullData.name}<br>%{x}<br>%{text}'
-                                 + '<br><span style="font-size:.85em">%{customdata}</span>'
-                                 + '<extra></extra>',
+                    // docs/301 F10: no raw event id in the hover -- it is a
+                    // UTC stamp + counter ("20261003_124949_e1534") that names
+                    // nothing a person can look up, and its date contradicts
+                    // the local time on the line above it
+                    hovertemplate: '%{fullData.name}<br>%{x}<br>%{text}<extra></extra>',
                 };
                 if (held) {
                     // A HELD point is the last value carried to the newest
@@ -7561,7 +7563,6 @@ window.ChipTrends = (function () {
                 tr.hovertemplate =
                     '%{fullData.name}<br>%{x}<br>%{text}'
                     + '<br>%{customdata[1]}'
-                    + '<br><span style="font-size:.85em">%{customdata[0]}</span>'
                     + '<br>%{customdata[2]}'
                     + '<extra></extra>';
                 return tr;
