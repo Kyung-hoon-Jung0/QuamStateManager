@@ -2331,6 +2331,11 @@
       }
       sel.value = mode;
     }
+    // docs/301 F31: the per-qubit pickers below say the same thing. They
+    // read "LF-FEM" on a cross-resonance chip, which has no LF-FEM line.
+    Array.prototype.forEach.call(
+      document.querySelectorAll("#gen-qdac-list select.gen-qdac-source"),
+      function (p) { labelQdacSourcePick(p, lfOk); });
     var n = (state.spec.qubits || []).filter(isQdacBiased).length;
     var tees = (state.spec.qubits || []).filter(isBiasTee).length;
     if (note) {
@@ -2352,8 +2357,23 @@
       sub.textContent = tees
         ? "— DC bias; " + tees + " qubit" + (tees === 1 ? "" : "s") +
           " share their LF-FEM port through a bias tee"
-        : "— DC flux bias";
+        : lfOk ? "— DC flux bias"
+        // A QDAC can still bias fixed-frequency qubits (docs/136), so the
+        // band stays; it says the choice is optional here.
+        : "— optional DC bias (these qubits have no flux line)";
     }
+  }
+
+  // The per-qubit twin of the chip-level selector's labels: with no OPX z
+  // line, "opx" means no DC bias, and a bias tee has no z line to play on.
+  function labelQdacSourcePick(pick, lfOk) {
+    Array.prototype.forEach.call(pick.options, function (o) {
+      if (o.value === "opx") o.textContent = lfOk ? "LF-FEM" : "None";
+      if (o.value === "tee") {
+        o.disabled = !lfOk;
+        o.title = lfOk ? "" : "needs a flux-tunable architecture with an LF-FEM (steps 3-4)";
+      }
+    });
   }
 
   function qdacDefaults() {
@@ -2482,6 +2502,7 @@
         pick.appendChild(opt);
       });
       pick.value = fluxSourceOf(qid);
+      labelQdacSourcePick(pick, (hasLfFem() || hasOpxPlus()) && state.qubitFlux);
       head.appendChild(label);
       head.appendChild(pick);
       row.appendChild(head);
