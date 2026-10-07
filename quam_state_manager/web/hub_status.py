@@ -163,15 +163,84 @@ def _paths_today(conn, index, ren, numeric):
     return order, counts, frozenset(num), frozenset(order)
 
 
+#: docs/298: the parts of a row a ledger answer is presented as (a curated
+#: row's points and words, a leaf's), kept per entity and validated on the
+#: SERIALS of the per-key answers it was built from (``value_history.read``:
+#: the same serial is the same, unchanged answer) and the dataset roots its
+#: data links resolve against. A new run re-presents only what it changed.
+_ROWS = ramcache.KeyedMemo("hub_status_rows", max_bytes=64 * 1024 * 1024,
+                           sizeof=lambda v: 512 + 700 * len(v[0]))
+
+#: docs/298: no value of a part can be a hit for this edit counter
+_NEVER = object()
+
+
+class _Part:
+    """A cached part: its value, the facts of the chip's CURRENT state its
+    compute read (``{(kind, arg): what it read}``) and the token it is valid
+    for apart from the chip's edit counter. Shadow mode (``SM_RAM_VERIFY``)
+    compares two parts by their values."""
+
+    __slots__ = ("value", "facts", "base")
+
+    def __init__(self, value, facts: dict, base: tuple):
+        self.value, self.facts, self.base = value, facts, base
+
+    def __eq__(self, other):
+        return isinstance(other, _Part) and other.value == self.value
+
+    __hash__ = None
+
+    def ram_bytes(self) -> int:
+        return ramcache._default_sizeof(self.value) + 64 * len(self.facts)
+
+
+_ABSENT_MARK = "\x00absent"
+
+
+def _canon(value: Any) -> str:
+    return json.dumps(value, sort_keys=True, default=repr)
+
+
+def _current_sig(tgt: dict):
+    """What a reader of a path's CURRENT value sees: whether it has one and
+    the value in the ledger's own terms (``value_history.comparable``)."""
+    if not tgt.get("has_current"):
+        return None
+    cur = value_history.comparable(tgt)
+    return _ABSENT_MARK if cur is value_history.ABSENT else _canon(cur)
+
+
+def meta_paths(store) -> tuple:
+    """The metric meta's panel paths, enumerated through the one resolver:
+    ``(qubit paths, pair RB paths, load ids)`` (``metric_meta``)."""
+    from functools import partial
+    from quam_state_manager.core import metric_meta as mm
+    with store._lock:
+        doc = store.merged
+        resolver = partial(value_history.target, container=True)
+        qpaths = mm.qubit_paths(doc, list(store.qubit_names), resolver=resolver)
+        ppaths, loads = mm.pair_rb_paths(doc, list(store.qubit_pair_names), resolver=resolver)
+    return qpaths, ppaths, loads
+
+
 class LedgerTable:
     """The Trends table interface (``chip_trends_ram.table``'s methods the
     renderers call) over the chip's ledger.
 
     The route supplies its one reader (``_value_history``) and presenter
     (``_vh_present``). Every cached part is validated against the ledger's
-    read version and newest event, the chip's ``mutation_seq`` (the current
-    value a point is compared with), the registered dataset roots (a point's
-    data link) and the sync status (the notes)."""
+    read version and newest event, the registered dataset roots (a point's
+    data link), the sync status (the notes) and the chip's state.
+
+    docs/298, the chip's state: a part keeps the FACTS of the current state
+    its compute read -- which holder each path names now (``targets``), a
+    path's value now (``currents``, only where a part compares with it), the
+    qubit and pair names, an alias of a matrix (``ctarget``), the metric
+    meta's panel paths. After an edit of the chip (its ``mutation_seq``
+    moves), a part is served again when every fact still reads the same;
+    a part that reads the state any other way says so (``narrow=False``)
+    and is recomputed on every edit, as before."""
 
     def __init__(self, ctx, answer, binding, read, present, roots, roots_sig=None, scope=None):
         """*roots*: the dataset roots a point's data link resolves against,
@@ -187,20 +256,26 @@ class LedgerTable:
         self._roots = roots
         self.directory = str(Path(ctx["hub_chip_dir"]))
         status = answer.get("status") or {}
+        store = ctx["store"]
+        #: the edit counter the token was taken at (docs/298: a part computed
+        #: while it moved is never an exact hit)
+        self.seq = store.mutation_seq
         #: what the ledger's own parts depend on (its paths, families): the
         #: version the mode read was taken at (S7's read reports it)
         self.ledger_token = tuple(answer["ledger"]["version"])
+        roots_part = roots_sig if roots_sig is not None else tuple((str(r), k) for r, k in self.roots)
         #: ...and what an answer depends on besides: the chip's current
         #: values, the dataset roots (data links), the sync status (notes)
         self.token = self.ledger_token + (
-            ctx["store"].mutation_seq,
-            roots_sig if roots_sig is not None else tuple((str(r), k) for r, k in self.roots),
+            self.seq, roots_part,
             json.dumps({k: status.get(k) for k in
                         ("state", "roots", "deferred", "failed", "unreadable")},
                        sort_keys=True, default=str))
-        self.uid_memo: dict = _shared_uid_memo(self.token[len(self.ledger_token) + 1])
+        self.roots_sig = roots_part
+        self.uid_memo: dict = _shared_uid_memo(roots_part)
 
         scope = scope or {}
+        self.scope = scope
         lineage = scope.get("lineage")
         era = tuple(scope.get("era") or ())
         self._lineage = lineage
@@ -210,6 +285,17 @@ class LedgerTable:
         # and ONE era
         self.token += (str(ctx.get("path") or ""), era,
                        tuple(sorted(lineage.recs)) if lineage is not None else ())
+        #: docs/298: the token apart from the edit counter
+        n = len(self.ledger_token)
+        self.base_token = self.token[:n] + self.token[n + 1:]
+        #: the state facts read in this request (one resolution per path) and
+        #: the facts every part being computed right now has read so far
+        self._targets: dict = {}
+        self._merged = None
+        self._facts_now: dict = {}
+        self._recorders: list[dict] = []
+        self._series_memo: dict = {}
+        self._meta = None
 
         def paths():
             with hub_index.snapshot(binding) as (conn, index):
@@ -239,33 +325,128 @@ class LedgerTable:
             self._roots = self._roots()
         return self._roots
 
+    # ------------------------------------------------- the chip's state
+    def target(self, path: str, *, container: bool = False) -> dict:
+        """``value_history.target`` of *path* in the chip's current state,
+        resolved once per request (a part's value and the facts it records
+        come from the same resolution)."""
+        key = (path, container)
+        got = self._targets.get(key)
+        if got is None:
+            if self._merged is None:
+                store = self.ctx["store"]
+                with store._lock:
+                    self._merged = store.merged
+            got = self._targets[key] = value_history.target(self._merged, path, container=container)
+        return got
+
+    def _eval(self, kind: str, arg):
+        """A fact of the current state (docs/298), evaluated once per request."""
+        key = (kind, arg)
+        if key not in self._facts_now:
+            store = self.ctx["store"]
+            if kind == "targets":
+                val = tuple(value_history.target_sig(self.target(p)) for p in arg)
+            elif kind == "currents":
+                val = tuple(_current_sig(self.target(p)) for p in arg)
+            elif kind == "ctarget":
+                val = self.target(arg, container=True)["holder"]
+            elif kind == "qubits":
+                with store._lock:
+                    val = tuple(store.qubit_names)
+            elif kind == "pairs":
+                with store._lock:
+                    val = tuple(store.qubit_pair_names)
+            elif kind == "meta_paths":
+                if self._meta is None:
+                    self._meta = meta_paths(store)
+                val = _canon(self._meta)
+            else:
+                raise KeyError(kind)
+            self._facts_now[key] = val
+        return self._facts_now[key]
+
+    def fact(self, kind: str, arg=None):
+        """Read a fact of the chip's current state and record it for every
+        part being computed (each is then valid only while it reads the same)."""
+        val = self._eval(kind, arg)
+        for rec in self._recorders:
+            rec[(kind, arg)] = val
+        return val
+
+    def metric_paths(self) -> tuple:
+        """The metric meta's panel paths (:func:`meta_paths`), recorded as a fact."""
+        self.fact("meta_paths")
+        return self._meta
+
+    def _holds(self, facts: dict) -> bool:
+        return all(self._eval(kind, arg) == val for (kind, arg), val in facts.items())
+
     # -------------------------------------------------------------- memo
-    def part(self, key, compute, **_kwargs):
+    def part(self, key, compute, *, narrow: bool = True, **_kwargs):
         """*key*'s value for this ledger state. Shared and read-only, like a
         ``chip_trends_ram`` part: every caller builds its own structures from
-        it and never writes into it."""
-        return _CACHE.get((self.directory, key), self.token, compute, wait_s=_WAIT_S)
+        it and never writes into it.
+
+        docs/298: with *narrow*, a part computed at another edit counter is
+        served again when the ledger, the roots, the status and the folder are
+        the same and every fact of the chip's state it read still holds (an
+        edit elsewhere in the chip recomputes nothing). A part whose compute
+        reads the state other than through :meth:`fact` / :meth:`target`
+        must pass ``narrow=False``."""
+        def comp(prev):
+            if (narrow and isinstance(prev, _Part) and prev.base == self.base_token
+                    and self._holds(prev.facts)):
+                return _Part(prev.value, prev.facts, self.base_token)
+            rec: dict = {}
+            self._recorders.append(rec)
+            try:
+                value = compute()
+            finally:
+                # by identity: two recorders may hold equal facts
+                self._recorders[:] = [r for r in self._recorders if r is not rec]
+            out = _Part(value, rec, self.base_token)
+            if self.ctx["store"].mutation_seq != self.seq:
+                # the chip changed while this was computed: never an exact
+                # hit (its facts still say what it read)
+                n = len(self.ledger_token)
+                return ramcache.Keyed(out, self.token[:n] + (_NEVER,) + self.token[n + 1:])
+            return out
+        got = _CACHE.get((self.directory, key), self.token, comp, wait_s=_WAIT_S, incremental=True)
+        for rec in self._recorders:
+            rec.update(got.facts)
+        return got.value
 
     # ---------------------------------------------------------- the read
     def series_many(self, paths):
-        """S7's answer for *paths* (``_value_history``), cached per ledger
-        state. Raises ``ramcache.Warming`` when the read did not answer from
-        the ledger (building / preparing): never an empty answer."""
-        paths = tuple(dict.fromkeys(paths))
+        """S7's answer for *paths* (``_value_history``). Raises
+        ``ramcache.Warming`` when the read did not answer from the ledger
+        (building / preparing): never an empty answer.
 
-        def compute():
-            ans = self.read(self.ctx, {p: p for p in paths})
-            if ans["mode"] != "ledger":
-                # never cached: a building / preparing answer is not a value. S7's
-                # FALLBACK (an unreadable ledger, no runs) keeps its own mode -- it
-                # is not "about to be ready", and saying "Preparing" made the page
-                # ask again every 800 ms forever (S8 review P2-1)
-                if ans["mode"] not in ("building", "preparing", "fallback"):
-                    ans["mode"] = "preparing"
-                self.waiting = ans
-                raise ramcache.Warming("hub_status", self.directory, 0)
-            return ans
-        return self.part(("values", paths), compute)
+        docs/298: not kept here -- ``value_history.read`` keeps each path's
+        answer and serves it again while the ledger proves it unchanged; this
+        read resolves the paths (recorded as the ``targets`` fact: a part
+        built on it is valid while each path names the same holder) and adds
+        the notes. A part that compares with a path's value NOW records the
+        ``currents`` fact itself."""
+        paths = tuple(dict.fromkeys(paths))
+        self.fact("targets", paths)
+        hit = self._series_memo.get(paths)
+        if hit is not None:
+            return hit
+        tgts = {p: self.target(p) for p in paths}
+        ans = self.read(self.ctx, {p: p for p in paths}, targets=tgts, scope=self.scope)
+        if ans["mode"] != "ledger":
+            # never kept: a building / preparing answer is not a value. S7's
+            # FALLBACK (an unreadable ledger, no runs) keeps its own mode -- it
+            # is not "about to be ready", and saying "Preparing" made the page
+            # ask again every 800 ms forever (S8 review P2-1)
+            if ans["mode"] not in ("building", "preparing", "fallback"):
+                ans["mode"] = "preparing"
+            self.waiting = ans
+            raise ramcache.Warming("hub_status", self.directory, 0)
+        self._series_memo[paths] = ans
+        return ans
 
     def point(self, p):
         """``(axis key, what the point says)`` -- S7's words for it, and only
@@ -283,6 +464,21 @@ class LedgerTable:
 
     def _newest(self, ans):
         return event_key(ans["ledger"].get("last_us"), ans["ledger"].get("last_eid"))
+
+    def _serials(self, ans, paths) -> tuple | None:
+        serials = ans.get("serials") or {}
+        got = tuple(serials.get(p) for p in paths)
+        return None if any(s is None for s in got) else got
+
+    def _kept_rows(self, what, paths, ans, build):
+        """docs/298: *build()* for these per-key answers, kept per entity and
+        served again while the answers are the same (their serials) and the
+        data links resolve against the same roots."""
+        serials = self._serials(ans, paths)
+        if serials is None:
+            return build()
+        slot = (self.directory, str(self.ctx.get("path") or "")) + tuple(what)
+        return _ROWS.get(slot, (serials, tuple(paths), self.roots_sig), build, wait_s=_WAIT_S)
 
     # ---------------------------------------- chip_trends_ram's interface
     def snapshot_count(self):
@@ -327,12 +523,16 @@ class LedgerTable:
         newest = self._newest(ans)
         out = {}
         for dp in paths:
-            rows, attrs = [], {}
-            for p in ans["rows"][dp]["effective"]:
-                key, info = self.point(p)
-                rows.append((key, None if p["removed"] else p["value"], source_of(p),
-                             p.get("run_id"), p.get("experiment"), p.get("folder")))
-                attrs[key] = info
+            def build(dp=dp):
+                rows, attrs = [], {}
+                for p in ans["rows"][dp]["effective"]:
+                    key, info = self.point(p)
+                    rows.append((key, None if p["removed"] else p["value"], source_of(p),
+                                 p.get("run_id"), p.get("experiment"), p.get("folder")))
+                    attrs[key] = info
+                return rows, attrs
+            kept_rows, attrs = self._kept_rows(("leaf", dp), (dp,), ans, build)
+            rows = list(kept_rows)
             if hold_to_newest and rows and newest and rows[-1][0] != newest:
                 last = rows[-1]
                 rows.append((newest, last[1], None, None, None, None, last[0]))
@@ -376,10 +576,8 @@ class LedgerTable:
         recorded under its holder (followed through an alias of the matrix
         itself); none when it never recorded one."""
         base = ".".join(("qubits", q) + rel)
-        with self.ctx["store"]._lock:
-            merged = self.ctx["store"].merged
         holders = [value_history.holder_spelling(base)]
-        alias = value_history.target(merged, base, container=True)["holder"]
+        alias = self.fact("ctarget", base)
         if alias and alias not in holders:
             holders.append(alias)
         size = 0
@@ -391,8 +589,7 @@ class LedgerTable:
         return base, [f"{base}.{i}.{j}" for i in range(size) for j in range(size)]
 
     def _curated(self, props):
-        from quam_state_manager.core import hub_rules
-        qubits = sorted(self.ctx["store"].qubit_names, key=natural_key)
+        qubits = sorted(self.fact("qubits"), key=natural_key)
         wanted, cells = [], {}
         for q in qubits:
             for prop in props:
@@ -411,47 +608,12 @@ class LedgerTable:
         newest = self._newest(ans)
         out = []
         for (q, prop), (leaf, paths) in cells.items():
-            values, attrs = [], {}
-            if prop in _VALUE_PATHS:
-                for p in ans["rows"][leaf]["effective"]:
-                    key, info = self.point(p)
-                    attrs[key] = info
-                    values.append({"timestamp": key, "value": None if p["removed"] else p["value"],
-                                   "point": p, "trigger": source_of(p)})
-            else:
-                # the snapshot index's own formula over the matrix ELEMENTS'
-                # in-force series, refolded at every event that moved one
-                formula = _DERIVED_FIDELITY_PROPS[prop][1]
-                events: dict = {}
-                for dp in paths:
-                    for p in ans["rows"][dp]["effective"]:
-                        events.setdefault((p["ord"], p["eid"]), []).append((dp, p))
-                held: dict = {}
-                previous = value_history.ABSENT
-                for ev in sorted(events):
-                    changed = events[ev]
-                    for dp, p in changed:
-                        held[dp] = None if p["removed"] else p["value"]
-                    present = [(i, j) for i in range(_MAX_MATRIX) for j in range(_MAX_MATRIX)
-                               if held.get(f"{leaf}.{i}.{j}") is not None]
-                    size = 1 + max((max(i, j) for i, j in present), default=-1)
-                    matrix = [[held.get(f"{leaf}.{i}.{j}") for j in range(size)]
-                              for i in range(size)]
-                    value = formula(matrix) if size else None
-                    same = (previous is not value_history.ABSENT and (
-                        (previous is None and value is None)
-                        or (previous is not None and value is not None
-                            and hub_rules.same(previous, value))))
-                    if same:
-                        continue
-                    p = representative([c for _dp, c in changed])
-                    key, info = self.point(p)
-                    attrs[key] = info
-                    values.append({"timestamp": key, "value": value, "point": p,
-                                   "trigger": source_of(p)})
-                    previous = value
-            if not values:
+            kept, attrs = self._kept_rows(("curated", q, prop), paths, ans,
+                                          lambda leaf=leaf, paths=paths, prop=prop:
+                                          self._curated_row(ans, prop, leaf, paths))
+            if not kept:
                 continue
+            values = list(kept)
             if newest and values[-1]["timestamp"] != newest:
                 values.append({"timestamp": newest, "value": values[-1]["value"],
                                "trigger": values[-1]["trigger"],
@@ -462,6 +624,51 @@ class LedgerTable:
                         "count": len(values), "_leaf": leaf, "_attrs": attrs,
                         "raw_pointer": via[0]["pointer"] if via else None})
         return out
+
+    def _curated_row(self, ans, prop, leaf, paths):
+        """``(values, attrs)`` of one (qubit, property): every change point
+        with its words (no held point: that one names the newest event)."""
+        from quam_state_manager.core import hub_rules
+        values, attrs = [], {}
+        if prop in _VALUE_PATHS:
+            for p in ans["rows"][leaf]["effective"]:
+                key, info = self.point(p)
+                attrs[key] = info
+                values.append({"timestamp": key, "value": None if p["removed"] else p["value"],
+                               "point": p, "trigger": source_of(p)})
+            return values, attrs
+        # the snapshot index's own formula over the matrix ELEMENTS'
+        # in-force series, refolded at every event that moved one
+        formula = _DERIVED_FIDELITY_PROPS[prop][1]
+        events: dict = {}
+        for dp in paths:
+            for p in ans["rows"][dp]["effective"]:
+                events.setdefault((p["ord"], p["eid"]), []).append((dp, p))
+        held: dict = {}
+        previous = value_history.ABSENT
+        for ev in sorted(events):
+            changed = events[ev]
+            for dp, p in changed:
+                held[dp] = None if p["removed"] else p["value"]
+            present = [(i, j) for i in range(_MAX_MATRIX) for j in range(_MAX_MATRIX)
+                       if held.get(f"{leaf}.{i}.{j}") is not None]
+            size = 1 + max((max(i, j) for i, j in present), default=-1)
+            matrix = [[held.get(f"{leaf}.{i}.{j}") for j in range(size)]
+                      for i in range(size)]
+            value = formula(matrix) if size else None
+            same = (previous is not value_history.ABSENT and (
+                (previous is None and value is None)
+                or (previous is not None and value is not None
+                    and hub_rules.same(previous, value))))
+            if same:
+                continue
+            p = representative([c for _dp, c in changed])
+            key, info = self.point(p)
+            attrs[key] = info
+            values.append({"timestamp": key, "value": value, "point": p,
+                           "trigger": source_of(p)})
+            previous = value
+        return values, attrs
 
     # ----------------------------------------------------- param search
     def path_rank(self):

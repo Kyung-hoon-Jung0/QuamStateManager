@@ -117,10 +117,128 @@ _SCHEMA_S5R_STATEMENTS = (
     "CREATE TRIGGER IF NOT EXISTS events_default_t_ord AFTER INSERT ON events WHEN NEW.t_ord IS NULL"
     " BEGIN UPDATE events SET t_ord=NEW.t_utc_us WHERE eid=NEW.eid; END",
 )
+# docs/298: the REWRITE LOG. A reader that derived an answer from the ledger at
+# (log position, newest event) may keep it after the ledger grows only when no
+# row it derived from changed in place. Triggers log every in-place change, so
+# a write by ANY process (an older SM window included) is logged:
+#   (eid, pid)   a change row inserted, updated or deleted (a re-diff, a
+#                re-proof; an append's own rows too): that event's row on that
+#                path;
+#   (eid, NULL)  an event's own facts updated (a flag: undone, run folder gone,
+#                rewritten; its status, time, ...) or its SM facts changed;
+#   (0, NULL)    what moves every event: an event deleted, the order changed
+#                (``ord``), a root, a path or a blob changed or deleted.
+# A reader asks only about events up to the newest one it saw: an append's
+# entries name only the new event (a later eid), so an append changes nothing
+# a reader saw. Every insert is logged, the newest event's too: re-diffing
+# the newest run in place inserts its rows again (docs/298, found by the
+# equality harness -- a condition "not the newest event" missed it).
+# The epoch is drawn anew whenever the log is (re)created: a log that was ever
+# missing vouches for nothing derived before it.
+#: every events column but t_ord (the insert-time default trigger sets it and
+#: no reader derives from it) and ord (logged as a change of every event); a
+#: column added later must be added here (tests/test_hub_incremental.py pins
+#: this list against the table)
+REWRITE_EVENT_COLUMNS = ("eid", "kind", "t_utc_us", "t_src", "t_quality", "root_id", "rel_path",
+                         "run_id", "experiment", "status", "run_start_us", "run_end_us", "parents",
+                         "targets", "patches_n", "actor", "plan_id", "src", "state_hash", "base_hash",
+                         "state_ref", "n_changes", "flags", "shape_hash", "error", "chash")
+#: the log is trimmed past this many entries (the meta key ``rewrite_trimmed``
+#: names the newest position trimmed: a reader stamped before it re-derives)
+REWRITE_KEEP = 65536
+#: what the triggers below log; a ledger whose log was made by other trigger
+#: definitions gets them replaced (and a new epoch) by the next writer, and is
+#: never trusted by a reader until then
+REWRITE_LOG_VERSION = "298-2"
+
+
+def _rewrite_trigger(name: str, when: str, table: str, values: tuple[str, ...], cond: str = "") -> str:
+    body = " ".join(f"INSERT INTO rewrite_log(eid, pid) VALUES({v});" for v in values)
+    return (f"CREATE TRIGGER IF NOT EXISTS {name} AFTER {when} ON {table}"
+            + (f" WHEN {cond}" if cond else "") + f" BEGIN {body} END")
+
+
+_EVERY = ("0, NULL",)
+_REWRITE_STATEMENTS = (
+    "CREATE TABLE IF NOT EXISTS rewrite_log(seq INTEGER PRIMARY KEY AUTOINCREMENT, "
+    "eid INTEGER NOT NULL, pid INTEGER)",
+    _rewrite_trigger("rewrite_events_upd", "UPDATE OF " + ", ".join(REWRITE_EVENT_COLUMNS), "events",
+                     ("OLD.eid, NULL", "NEW.eid, NULL")),
+    _rewrite_trigger("rewrite_events_ord", "UPDATE OF ord", "events", _EVERY),
+    _rewrite_trigger("rewrite_events_del", "DELETE", "events", _EVERY),
+    _rewrite_trigger("rewrite_changes_ins", "INSERT", "changes", ("NEW.eid, NEW.pid",)),
+    _rewrite_trigger("rewrite_changes_upd", "UPDATE", "changes", ("OLD.eid, OLD.pid", "NEW.eid, NEW.pid")),
+    _rewrite_trigger("rewrite_changes_del", "DELETE", "changes", ("OLD.eid, OLD.pid",)),
+    _rewrite_trigger("rewrite_sm_ins", "INSERT", "sm_events", ("NEW.eid, NULL",)),
+    _rewrite_trigger("rewrite_sm_upd", "UPDATE", "sm_events", ("OLD.eid, NULL", "NEW.eid, NULL")),
+    _rewrite_trigger("rewrite_sm_del", "DELETE", "sm_events", ("OLD.eid, NULL",)),
+    _rewrite_trigger("rewrite_roots_upd", "UPDATE OF root_id, path, folder_key", "roots", _EVERY),
+    _rewrite_trigger("rewrite_roots_del", "DELETE", "roots", _EVERY),
+    _rewrite_trigger("rewrite_paths_upd", "UPDATE", "paths", _EVERY),
+    _rewrite_trigger("rewrite_paths_del", "DELETE", "paths", _EVERY),
+    _rewrite_trigger("rewrite_blobs_upd", "UPDATE", "blobs", _EVERY),
+    _rewrite_trigger("rewrite_blobs_del", "DELETE", "blobs", _EVERY),
+    f"CREATE TRIGGER IF NOT EXISTS rewrite_log_trim AFTER INSERT ON rewrite_log WHEN NEW.seq % 4096 = 0"
+    f" BEGIN DELETE FROM rewrite_log WHERE seq <= NEW.seq - {REWRITE_KEEP};"
+    f" INSERT OR REPLACE INTO meta(k, v) VALUES('rewrite_trimmed', CAST(NEW.seq - {REWRITE_KEEP} AS TEXT));"
+    " END",
+)
+REWRITE_OBJECTS = ("rewrite_log", "rewrite_events_upd", "rewrite_events_ord", "rewrite_events_del",
+                   "rewrite_changes_ins", "rewrite_changes_upd", "rewrite_changes_del", "rewrite_sm_ins",
+                   "rewrite_sm_upd", "rewrite_sm_del", "rewrite_roots_upd", "rewrite_roots_del",
+                   "rewrite_paths_upd", "rewrite_paths_del", "rewrite_blobs_upd", "rewrite_blobs_del",
+                   "rewrite_log_trim")
 _SCHEMA_OBJECTS = ("meta", "roots", "events", "run_identity", "locations", "locations_by_event", "paths",
                    "changes", "changes_by_event", "blobs", "checkpoints", "sm_events", "sm_anchors",
                    "events_by_state_hash", "events_by_time", "run_files", "events_by_order_time",
-                   "events_by_chash", "events_default_t_ord")
+                   "events_by_chash", "events_default_t_ord", *REWRITE_OBJECTS)
+
+
+def rewrite_mark(conn) -> tuple | None:
+    """docs/298: ``(epoch, seq, trimmed)`` of a ledger's rewrite log as this
+    read snapshot sees it, or None when the log cannot vouch for anything (an
+    older ledger never opened by a writer that creates it, or a log missing a
+    trigger). *seq* is the newest log position; *trimmed* the newest one
+    trimmed away."""
+    names = {r[0] for r in conn.execute(
+        "SELECT name FROM sqlite_master WHERE name IN (%s)" % ",".join("?" * len(REWRITE_OBJECTS)),
+        REWRITE_OBJECTS)}
+    if names != set(REWRITE_OBJECTS):
+        return None
+    meta = {r[0]: r[1] for r in conn.execute(
+        "SELECT k, v FROM meta WHERE k IN ('rewrite_epoch', 'rewrite_trimmed', 'rewrite_log_version')")}
+    epoch = meta.get("rewrite_epoch")
+    if not epoch or meta.get("rewrite_log_version") != REWRITE_LOG_VERSION:
+        return None
+    seq = conn.execute("SELECT COALESCE(MAX(seq), 0) FROM rewrite_log").fetchone()[0]
+    try:
+        trimmed = int(meta.get("rewrite_trimmed") or 0)
+    except ValueError:
+        return None
+    return epoch, int(seq), trimmed
+
+
+def rewritten_since(conn, seq: int, high: int) -> tuple[bool, frozenset, frozenset]:
+    """What changed in place since log position *seq* among the events up to
+    eid *high*: ``(every, eids, paths)`` -- *every*: something that moves every
+    event (an event deleted, the order, a root, a path, a blob); *eids*: the
+    events whose own facts changed; *paths*: the holder paths whose change
+    rows of those events changed."""
+    every, eids, paths = False, set(), set()
+    for eid, pid, path in conn.execute(
+            "SELECT l.eid, l.pid, p.path FROM rewrite_log l LEFT JOIN paths p ON p.pid = l.pid "
+            "WHERE l.seq > ? AND l.eid <= ?", (seq, high)):
+        if eid == 0:
+            every = True
+            break
+        if pid is None:
+            eids.add(eid)
+        elif path is None:
+            every = True          # a row of a path that no longer exists
+            break
+        else:
+            paths.add(path)
+    return every, frozenset(eids), frozenset(paths)
 
 
 def json_bytes(value: Any) -> bytes:
@@ -299,16 +417,39 @@ class HubStore:
                 self.conn.execute("UPDATE events SET t_ord=t_utc_us WHERE t_ord IS NULL")
                 for stmt in _SCHEMA_S5R_STATEMENTS:
                     self.conn.execute(stmt)
+                self._create_rewrite_log()
             self.conn.commit()
         except BaseException:
             self.conn.rollback()
             raise
+
+    def _create_rewrite_log(self) -> None:
+        """docs/298: the rewrite log and its triggers (inside the schema
+        transaction). A log that was not complete, or was made by other
+        trigger definitions, is made anew under a new epoch: nothing derived
+        while it was missing, partial or different is ever vouched for."""
+        had = {r[0] for r in self.conn.execute(
+            "SELECT name FROM sqlite_master WHERE name IN (%s)" % ",".join("?" * len(REWRITE_OBJECTS)),
+            REWRITE_OBJECTS)}
+        same = had == set(REWRITE_OBJECTS) and self.meta("rewrite_log_version") == REWRITE_LOG_VERSION
+        if not same:
+            for name in REWRITE_OBJECTS[1:]:
+                self.conn.execute(f"DROP TRIGGER IF EXISTS {name}")
+            self.conn.execute("DROP TABLE IF EXISTS rewrite_log")
+        for stmt in _REWRITE_STATEMENTS:
+            self.conn.execute(stmt)
+        if not same or self.meta("rewrite_epoch") is None:
+            self.set_meta("rewrite_epoch", os.urandom(8).hex())
+            self.set_meta("rewrite_log_version", REWRITE_LOG_VERSION)
+            self.conn.execute("DELETE FROM meta WHERE k='rewrite_trimmed'")
 
     def _schema_current(self) -> bool:
         names = {r[0] for r in self.conn.execute(
             "SELECT name FROM sqlite_master WHERE name IN (%s)" % ",".join("?" * len(_SCHEMA_OBJECTS)),
             _SCHEMA_OBJECTS)}
         if names != set(_SCHEMA_OBJECTS):
+            return False
+        if self.meta("rewrite_log_version") != REWRITE_LOG_VERSION or self.meta("rewrite_epoch") is None:
             return False
         for table, col, _typ in _COLUMNS:
             if col not in {r[1] for r in self.conn.execute(f"PRAGMA table_info({table})")}:
