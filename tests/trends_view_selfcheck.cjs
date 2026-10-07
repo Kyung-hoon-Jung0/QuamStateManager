@@ -287,6 +287,23 @@ async function view(body, opts) {
   ok(R([1, 2, 3, 4, 5, 6, 7, 1e9]) !== null, 'I: 8 values -> judged');
   ok(R(base.map((x, i) => (i === 3 ? true : x)).concat([1e9])) === null, 'I: a flag series -> autorange');
 
+  // docs/301 F40: the dashboard's charts carry the house theme (unthemed, Plotly
+  // drew a near-white grid on the dark page)
+  {
+    const W = H.world();
+    W.w.eval(require('fs').readFileSync(require('path').join(__dirname, '..', 'quam_state_manager',
+      'web', 'static', 'plot-theme.js'), 'utf8'));
+    const p = H.payload(4, [{ q: 'q1', m: 'T1', v: [1, 2, 3, 4] }]);
+    W.answers.push({ body: p });
+    W.mount();
+    await H.until(() => W.draws.length >= 1);
+    const L = W.draws[0].layout;
+    const grid = W.w.PlotTheme.houseLayout({}).xaxis.gridcolor;
+    ok(L.paper_bgcolor === 'rgba(0,0,0,0)' && L.xaxis.gridcolor === grid && L.yaxis.gridcolor === grid,
+       'F40: the dashboard chart wears the house theme (got ' + L.xaxis.gridcolor + ')');
+    ok(L.xaxis.type === 'date' && L.hovermode === 'x unified', 'F40: and keeps its own axis and hover');
+  }
+
   if (fails) { console.error(fails + ' of ' + asserts + ' check(s) failed'); process.exit(1); }
   console.log('ALL OK (' + asserts + ' assertions)');
   process.exit(0);

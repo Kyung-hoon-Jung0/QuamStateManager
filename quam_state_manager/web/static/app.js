@@ -18873,7 +18873,7 @@ window.DatasetTrends = (function () {
             xaxis.type = 'category';
             xaxis.tickangle = mini.xTickAngle;
         }
-        return {
+        var lay = {
             margin: mini.margin,
             xaxis: xaxis,
             yaxis: yaxisFor(st, idx, { title: s.m, tickfont: mini.yTickFont }),
@@ -18882,6 +18882,10 @@ window.DatasetTrends = (function () {
             showlegend: false,
             hovermode: 'x unified'
         };
+        // docs/301 F40: the house theme, as every other chart -- unthemed,
+        // Plotly drew this page's grid in its near-white default on the dark page
+        return (window.PlotTheme && window.PlotTheme.houseLayout)
+            ? window.PlotTheme.houseLayout(lay) : lay;
     }
 
     /* a few off-scale values: the axis is the rest's (robustRange) */
