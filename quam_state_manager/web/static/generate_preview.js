@@ -218,6 +218,19 @@ window.GenPreview = (function () {
     return Math.max(120, Math.min(260, Math.round(h * 0.28)));
   }
 
+  // docs/301 F35: the panel docks at the bottom of the pane, so the cell it
+  // previews must stay above it. A cell the panel would cover is scrolled up
+  // just clear of it; nothing above the cell (rows, the header) is covered.
+  function keepSourceClear() {
+    var p = panel(), el = _srcEl;
+    var tp = document.getElementById("table-pane");
+    if (!p || p.hidden || !el || !tp || !document.body.contains(el)) return;
+    var pr = p.getBoundingClientRect(), er = el.getBoundingClientRect();
+    if (!(pr.height > 0)) return;                    // no layout yet
+    var cover = er.bottom + 6 - pr.top;
+    if (cover > 0 && er.top < pr.bottom) tp.scrollTop += cover;
+  }
+
   function showErr(p, msg) {
     var el = p && p.querySelector(".gen-pop-preview-err");
     if (el) { el.textContent = msg || ""; el.hidden = !msg; }
@@ -277,6 +290,7 @@ window.GenPreview = (function () {
     watchSource(_srcEl);   // QA F18
     var title = p.querySelector(".gen-pop-preview-title");
     if (title) title.textContent = d.title;
+    keepSourceClear();     // docs/301 F35
     fetchSynth({ qclass: d.qclass, params: d.params }, function (data) {
       if (!document.body.contains(p) || !stepActive(p)) return;
       if (data.ok && data.plot && data.plot.ok &&
@@ -290,6 +304,7 @@ window.GenPreview = (function () {
         if (pd) pd.innerHTML = "";
         showErr(p, data.error || firstParamError(data.param_errors));
       }
+      keepSourceClear();   // docs/301 F35: the plot just gave the panel its height
     });
   }
 

@@ -1701,6 +1701,12 @@ body.sidebar-resizing { cursor: col-resize; user-select: none; }
 .path-suggestion:hover, .path-suggestion.active {
     background: var(--pico-primary-focus);
 }
+/* docs/301 F34: the typed folder itself, when it is a loadable chip folder */
+.path-suggestion-tag {
+    font-family: var(--font-sans, inherit); font-size: 0.85em; font-weight: 600;
+    margin-right: 0.4em; padding: 0 0.3em; border-radius: 3px;
+    color: var(--pico-primary); border: 1px solid currentColor;
+}
 
 /* Folder browser dialog */
 .folder-browser-dialog {
@@ -8126,11 +8132,15 @@ button.recents-item:focus {
     --gen-lf-border: #63c98c;
 }
 /* LO-group colour-coding (Populate step). Theme-independent — each colour is
-   used as a 3px accent, a swatch, and a white-text pill, so no dark variant. */
+   used as a 3px accent, a swatch, and a white-text pill, so no dark variant.
+   docs/301 F32: no red, pink, brick, orange or amber: a cell striped in the
+   app's error/warning colours read as "invalid" when it only names a port
+   group. Every colour keeps AA contrast with the white pill text
+   (tests/test_generate_lo_palette.py). */
 :root {
-    --lo-c0:  #2563eb; --lo-c1:  #ea580c; --lo-c2:  #15803d; --lo-c3:  #7c3aed;
-    --lo-c4:  #dc2626; --lo-c5:  #0e7490; --lo-c6:  #a16207; --lo-c7:  #db2777;
-    --lo-c8:  #4338ca; --lo-c9:  #4d7c0f; --lo-c10: #0f766e; --lo-c11: #9a3412;
+    --lo-c0:  #2563eb; --lo-c1:  #a21caf; --lo-c2:  #15803d; --lo-c3:  #7c3aed;
+    --lo-c4:  #475569; --lo-c5:  #0e7490; --lo-c6:  #57534e; --lo-c7:  #065f46;
+    --lo-c8:  #4338ca; --lo-c9:  #4d7c0f; --lo-c10: #0f766e; --lo-c11: #0369a1;
 }
 .generate-root { padding: 0.5rem 0.75rem; max-width: 1100px; }
 .gen-header {
@@ -8710,10 +8720,12 @@ table.gen-wiring tbody tr.pinned {
 /* Live waveform preview panel (generate_preview.js) — sticky so it stays visible
    while scrolling the populate tables. */
 .gen-pop-preview {
-  position: sticky; top: 0; z-index: 5;
+  /* docs/301 F35: docked at the bottom of the pane, never over the header */
+  position: sticky; bottom: 0; z-index: 5;
   border: 1px solid var(--pico-muted-border-color);
-  border-radius: 6px; padding: 0.4rem 0.6rem; margin-bottom: 0.5rem;
+  border-radius: 6px; padding: 0.4rem 0.6rem; margin-top: 0.5rem;
   background: var(--pico-card-background-color);
+  box-shadow: 0 -4px 12px rgba(0, 0, 0, 0.15);
 }
 .gen-pop-preview-head { display: flex; align-items: center; justify-content: space-between; gap: 0.5rem; }
 .gen-pop-preview-title { font-size: 0.8em; font-weight: 600; margin-bottom: 0.2rem; }

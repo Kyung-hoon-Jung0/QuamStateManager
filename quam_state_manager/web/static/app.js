@@ -8519,25 +8519,60 @@ window.initPathAutocomplete = function(inputEl) {
 
     function hide() { box.innerHTML = ""; box.style.display = "none"; activeIdx = -1; }
 
+    // docs/301 F34: the list opened over the form's own submit button (the
+    // sidebar's "State Load" sits right under the box), so the button could
+    // not be clicked and a click aimed at it picked a suggestion instead.
+    // When that button is under the list, the list opens below it.
+    function place() {
+        box.style.top = "";
+        var form = inputEl.form || inputEl.closest("form");
+        var btn = form && form.querySelector(
+            'button[type="submit"]:not(.hidden-submit), input[type="submit"]:not(.hidden-submit)');
+        if (!btn) return;
+        var hr = inputEl.parentNode.getBoundingClientRect();
+        var br = btn.getBoundingClientRect();
+        if (!(br.height > 0)) return;                      // hidden button
+        var listBottom = hr.bottom + (box.offsetHeight || 0);
+        if (br.top >= hr.bottom - 1 && br.top < listBottom &&
+            br.left < hr.right && br.right > hr.left) {
+            box.style.top = (br.bottom - hr.top + 4) + "px";
+        }
+    }
+
+    // items: [{path, self}] -- `self` is the typed folder itself, a chip
+    // folder (state.json + wiring.json): picking it keeps it, no drill-down.
     function show(items) {
         if (!items || items.length === 0) { hide(); return; }
         box.innerHTML = "";
         activeIdx = -1;
         for (var i = 0; i < items.length; i++) {
             var div = document.createElement("div");
-            div.className = "path-suggestion";
-            div.textContent = items[i];
-            div.setAttribute("data-path", items[i]);
+            div.className = "path-suggestion" + (items[i].self ? " path-suggestion-self" : "");
+            div.textContent = items[i].path;
+            div.setAttribute("data-path", items[i].path);
+            if (items[i].self) {
+                div.setAttribute("data-self", "1");
+                var tag = document.createElement("span");
+                tag.className = "path-suggestion-tag";
+                tag.textContent = "chip folder";
+                div.insertBefore(tag, div.firstChild);
+                div.title = "This folder holds state.json + wiring.json";
+            }
             div.addEventListener("mousedown", function(e) {
                 e.preventDefault();
                 inputEl.value = this.getAttribute("data-path");
+                var self = this.getAttribute("data-self") === "1";
                 hide();
-                inputEl.dispatchEvent(new Event("input"));
+                if (!self) inputEl.dispatchEvent(new Event("input"));
             });
             box.appendChild(div);
         }
         box.style.display = "block";
+        place();
     }
+
+    var _form = inputEl.form || inputEl.closest("form");
+    if (_form) _form.addEventListener("submit", hide);
 
     function highlight(idx) {
         var items = box.querySelectorAll(".path-suggestion");
@@ -8557,7 +8592,13 @@ window.initPathAutocomplete = function(inputEl) {
             // it (it gets ancestor-walk semantics instead — see /browse).
             fetch("/browse?complete=1&path=" + encodeURIComponent(val))
                 .then(function(r) { return r.json(); })
-                .then(function(data) { show(data.dirs || []); })
+                .then(function(data) {
+                    var items = (data.dirs || []).map(function(d) { return { path: d }; });
+                    // docs/301 F34: a typed path that IS a chip folder offers
+                    // itself first (it used to offer only its subfolders).
+                    if (data.has_quam_state && data.path) items.unshift({ path: data.path, self: true });
+                    show(items);
+                })
                 .catch(function() { hide(); });
         }, 250);
     });

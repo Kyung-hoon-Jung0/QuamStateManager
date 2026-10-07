@@ -30,5 +30,15 @@ ok(L.yaxis2.showgrid === true, 'an explicit showgrid is kept');
 const S = H({ xaxis2: { domain: [0.55, 1], anchor: 'y2' } });
 ok(S.xaxis2.showgrid === undefined, 'a side-by-side subplot axis (no overlaying) is left alone');
 
+// docs/301 F37: the top axis's first label ("-20" at the left corner) sat on
+// the y axis's top label ("3.2"); its labels now stand off the plot edge.
+ok(L.xaxis2.ticklabelstandoff >= 6, 'F37: a top overlaying axis lifts its labels off the plot edge -- got ' + L.xaxis2.ticklabelstandoff);
+ok(L.yaxis2.ticklabelstandoff === undefined, 'F37: a right-side overlaying y axis is not shifted');
+ok(S.xaxis2.ticklabelstandoff === undefined, 'F37: nor is a subplot axis');
+const B = H({ xaxis2: { overlaying: 'x', side: 'bottom' } });
+ok(B.xaxis2.ticklabelstandoff === undefined, 'F37: nor an overlaying axis at the bottom');
+const C = H({ xaxis2: { overlaying: 'x', side: 'top', ticklabelstandoff: 2 } });
+ok(C.xaxis2.ticklabelstandoff === 2, 'F37: a caller\'s own standoff is kept');
+
 if (fails) { console.error(fails + ' failed'); process.exit(1); }
 console.log('all passed');

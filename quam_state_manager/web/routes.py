@@ -18031,8 +18031,14 @@ def _topology_trends_html(hm, path: Path, store, qubits: list[str],
         _kind = _TREND_ENTITY_ROOTS[_fam[0]] if _fam else ""
         if _p in _typed and not _trend_typed_names_a_leaf(
                 hm, path, store, _p, qubits, pairs, tbl):
-            _c = _chart(_p, "", [], typed=_p)
             _m = tbl.leaf_families(_p.replace("*", " "))
+            # docs/301 F30: the card asks the user to pick one; once a family
+            # it offers is charted (its badge, or a remembered selection), the
+            # pick was made and the card has nothing left to ask.
+            _picked = {(m.get("path") if isinstance(m, dict) else m) for m in _m}
+            if (_picked - {_p}) & set(extras):
+                continue
+            _c = _chart(_p, "", [], typed=_p)
             _c.update(unmatched=True, matches=_m[:6], n_matches=len(_m))
             charts.append(_c)
             continue
