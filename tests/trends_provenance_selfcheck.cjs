@@ -509,6 +509,45 @@ world.push((function () {
   });
 })());
 
+// ── 7b) docs/301 F9: an unproven ledger point opens the run that SAVED it ──
+/* A customer archive whose nodes record no patches: 24 of 25 T1 points were
+   "saved in #N, writer not proven" and opened nothing. The run is offered now
+   -- in its own slot (customdata[4]), never the writer's uid -- and opened
+   with ?via=saved so the run itself says it is not proven to have measured it.
+   A point with neither link still opens nothing. */
+world.push((function () {
+  const charts = JSON.parse(JSON.stringify(CHARTS));
+  charts[0].series[0].attr = {
+    '20260901_010100': { label: 'saved in #3 25_T1', sub: 'writer not proven',
+                         provenance: 'run_saved', saved_uid: 'a1b2c3d4:3' },
+    '20260901_010200': { label: 'saved in #4 25_T1', sub: 'writer not proven',
+                         provenance: 'run_saved' },
+  };
+  const win = makeWorld({ charts: charts });
+  render(win);
+  return bound(win).then(function () {
+    const cd = host(win).data[0].customdata;
+    ok(cd[1][3] === null && cd[1][4] === 'a1b2c3d4:3',
+       '7j the saving run rides in its own slot, never as the writer uid: ' + JSON.stringify(cd[1]));
+    ok(/saved in #3 25_T1/.test(cd[1][1]) && /writer not proven/.test(cd[1][1])
+       && /click to open the run that saved it \(not proven to have measured it\)/.test(cd[1][2]),
+       '7k ...and the hover says what a click opens: ' + JSON.stringify(cd[1][2]));
+    win._htmxCalls.length = 0;
+    fire(win, 'plotly_click', { points: [{ customdata: cd[1] }] });
+    ok(win._htmxCalls.length === 1 && win._htmxCalls[0][1] === '/dataset/a1b2c3d4:3?via=saved',
+       '7l a click opens that run WITH the not-proven note: '
+       + JSON.stringify(win._htmxCalls[0] && win._htmxCalls[0][1]));
+    fire(win, 'plotly_hover', { points: [{ customdata: cd[1] }] });
+    ok(host(win).style.cursor === 'pointer', '7m ...and the cursor says it is clickable');
+    win._htmxCalls.length = 0;
+    fire(win, 'plotly_click', { points: [{ customdata: cd[2] }] });
+    ok(win._htmxCalls.length === 0 && cd[2][2] === '' && cd[2][4] === null,
+       '7n a point with no openable run still opens nothing and offers no hint');
+    fire(win, 'plotly_hover', { points: [{ customdata: cd[2] }] });
+    ok(host(win).style.cursor !== 'pointer', '7o ...and its cursor stays plain');
+  });
+})());
+
 // ── 8) the Param History drawer opens only a run that WROTE the value ─────
 /* 2026-09-29: the drawer plots every snapshot's value; its run is the run
    whose save the snapshot copied. An unchanged value was not written there,

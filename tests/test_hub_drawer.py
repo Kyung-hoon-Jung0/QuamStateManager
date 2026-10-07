@@ -184,7 +184,10 @@ class TestDrawerOnTheLedger:
         assert new["label"].startswith("saved in #3") and "not proven" in new["title"]
         assert '<span class="vh-sub"' in new["body"] and "writer not proven" in new["body"], \
             "the row SAYS the writer is not proven, not only on hover"
-        assert not new["data"], "no Data link: run #3 is not shown to have written it"
+        # docs/301 F9: still no WRITER link ("Data"); the run that saved it is
+        # offered as "Run", and opens saying it is not proven to have measured it
+        assert ">Data</button>" not in new["body"], "no Data link: run #3 is not shown to have written it"
+        assert "?via=saved" in new["body"] and ">Run</button>" in new["body"]
 
     def test_strings_and_booleans_have_a_history_too(self, sm):
         html = drawer(sm, "qubits.qA1.flag")

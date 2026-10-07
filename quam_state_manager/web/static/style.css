@@ -8683,6 +8683,12 @@ table.gen-wiring tbody tr.pinned {
 }
 .gen-cap-blocker { color: #ef4444; border-left: 2px solid #ef4444; }
 .gen-cap-degrade { color: var(--pico-color, #b45309); border-left: 2px solid #f59e0b; }
+/* docs/301 F9: a run opened from a value whose writer is not proven */
+.ds-provenance-note {
+    font-size: .85em; margin: .1rem 0 .45rem; padding: .3rem .55rem;
+    color: var(--color-warning-text); background: var(--color-warning-bg);
+    border-left: 3px solid var(--color-warning-border); border-radius: 3px;
+}
 /* docs/301: the root-class picker sat flush under the skip list */
 .gen-cap-root { margin-top: 0.9rem; }
 .gen-cap-inventory { margin: 0.5rem 0; font-size: 0.82em; }

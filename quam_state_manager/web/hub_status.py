@@ -460,6 +460,10 @@ class LedgerTable:
             info["flag_text"] = view["flag_text"]
         if view.get("uid"):
             info["uid"] = view["uid"]
+        elif view.get("saved_uid"):
+            # docs/301 F9: an unproven point opens the run that saved it,
+            # and that run then says it is not proven to have measured it
+            info["saved_uid"] = view["saved_uid"]
         return event_key(p["t_us"], p["eid"]), info
 
     def _newest(self, ans):

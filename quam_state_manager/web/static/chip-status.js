@@ -7310,6 +7310,12 @@ window.ChipTrends = (function () {
     }
     function _hintLine(info) {
         if (info && info.uid) return '<i style="opacity:.7">click to open the dataset</i>';
+        // docs/301 F9: the run whose saved state first carried the value --
+        // opened with a note that it is not proven to have measured it
+        if (info && info.saved_uid) {
+            return '<i style="opacity:.7">click to open the run that saved it'
+                 + ' (not proven to have measured it)</i>';
+        }
         if (info && info.run) {
             return '<i style="opacity:.7">not openable here: its run folder is not'
                  + ' under a loaded Datasets folder</i>';
@@ -7324,13 +7330,17 @@ window.ChipTrends = (function () {
             var sid = (cd && cd.length !== undefined && typeof cd !== 'string') ? cd[0] : cd;
             if (!sid) return;
             var uid = _pointUid(cd, sid);
+            // docs/301 F9: a ledger point whose writer is not proven opens the
+            // run whose saved state first carried it, and asks that run to say
+            // so (?via=saved) -- never as if it were the measurement
+            var saved = (!uid && cd && typeof cd !== 'string' && cd.length > 4) ? cd[4] : null;
             // No uid => the point is not clickable and the hover has already
             // said why (_hintLine names the unloaded run folder; a no-run point's
             // provenance line is the why; a captured-only point names the run
             // that did NOT write it). Doing NOTHING is the contract: no
             // navigation to a 404, no error.
-            if (!uid) return;
-            var url = '/dataset/' + uid;
+            if (!uid && !saved) return;
+            var url = '/dataset/' + (uid || (saved + '?via=saved'));
             if (window.htmx && window.htmx.ajax) {
                 // `source` is not optional: htmx reads the SOURCE element's
                 // hx-sync, and without one every dataset load shares body's
@@ -7379,7 +7389,8 @@ window.ChipTrends = (function () {
                     if (!evt || !evt.points || !evt.points.length) return;
                     var cd = evt.points[0].customdata;
                     var sid = (cd && cd.length !== undefined && typeof cd !== 'string') ? cd[0] : cd;
-                    host.style.cursor = (sid && _pointUid(cd, sid)) ? 'pointer' : '';
+                    host.style.cursor = (sid && (_pointUid(cd, sid)
+                        || (cd && typeof cd !== 'string' && cd.length > 4 && cd[4]))) ? 'pointer' : '';
                 } catch (e) { /* cursor only */ }
             });
             host.on('plotly_unhover', function () {
@@ -7598,7 +7609,8 @@ window.ChipTrends = (function () {
                                     + ' wrote this value…</i>', '', null];
                         }
                         return [p[0], _provLine(ov) + _capturerLine(info),
-                                _hintLine(ov), ov.uid || null];
+                                _hintLine(ov), ov.uid || null,
+                                (!ov.uid && ov.saved_uid) || null];
                     }
                     return [p[0], _provLine(info), _hintLine(info),
                             (info && info.uid) || null];

@@ -11948,6 +11948,10 @@ def _vh_present(p: dict, uid_roots, uid_memo: dict) -> dict:
     run = f"#{rid}" if rid is not None else "a run"
     uid = None
     link_title = ""
+    # docs/301 F9: the run whose saved state first carried an unproven value.
+    # Never ``uid`` (that one names a WRITER); a surface that opens it says,
+    # on the opened run, that the run is not proven to have measured it.
+    saved_uid = None
     if prov == "run_proven":
         label = f"{run} {exp}".strip()
         title = (f"Run {run} ({exp}) wrote this value: its node.json records the patch "
@@ -11967,6 +11971,11 @@ def _vh_present(p: dict, uid_roots, uid_memo: dict) -> dict:
                  f"records no patch for it, so the run that set it is not proven; a change "
                  f"made outside SM before the run lands here too.")
         trigger = "auto"
+        if "source_gone" not in p["flags"] and rid is not None:
+            key = p.get("folder") or ""
+            if key not in uid_memo:
+                uid_memo[key] = _uid_for_run_ref(p.get("folder"), rid, uid_roots)
+            saved_uid = uid_memo[key]
     elif prov == "first_record":
         label = f"first recorded in {run}"
         sub = "ledger start; writer unknown"
@@ -12028,7 +12037,7 @@ def _vh_present(p: dict, uid_roots, uid_memo: dict) -> dict:
     display, fill, usable = _vh_value_strings(p["value"], p["removed"])
     return {**p, "label": label, "sub": sub, "title": title, "trigger": trigger, "uid": uid,
             "link_title": link_title, "flag_text": flags, "display": display,
-            "fill": fill, "usable": usable}
+            "fill": fill, "usable": usable, "saved_uid": saved_uid}
 
 
 def _vh_wait_message(ans: dict) -> str:
@@ -37998,6 +38007,8 @@ def dataset_detail(uid):
         # be read and lists the images that are on disk instead.
         run = dict(run, figure_names=[], fit_results={})
     return render_template(template, **_ctx(page="dataset_detail"), run=run,
+                           # docs/301 F9: opened from a value whose writer is not proven
+                           via_saved=request.args.get("via") == "saved",
                            fit_targets=resolve_fit_targets(run, names=run_names_),
                            fit_names=fit_names,
                            uid=uid, folder_key=uid.split(":")[0],

@@ -24,6 +24,16 @@
 {% endif %}
 {% include '_inspector_header.html' %}
 
+{#- docs/301 F9: opened from a value (a Trends point, a value drawer row) whose
+    writer the ledger cannot prove. Said HERE, on the run, so the run is never
+    read as the measurement. -#}
+{% if via_saved is defined and via_saved %}
+<p class="ds-provenance-note" role="note">&#9432; Opened from a value whose writer is not
+    proven: this run&rsquo;s saved state is the first to carry it, but its
+    <code>node.json</code> records no patch that set it, so it may not be the
+    run that measured it.</p>
+{% endif %}
+
 {# Which registered data folder this run belongs to (P2) — leaf name shown,
    full registered path on hover. Disambiguates same run-id across folders. #}
 {% if folder_label %}

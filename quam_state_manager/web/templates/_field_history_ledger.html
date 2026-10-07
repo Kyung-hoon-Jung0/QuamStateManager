@@ -82,6 +82,12 @@
         <button type="button" class="fh-data" hx-get="/dataset/{{ pt.uid }}"
                 hx-target="#inspector-pane" hx-swap="innerHTML"
                 title="{{ pt.link_title }}">Data</button>
+        {% elif pt.saved_uid %}
+        {#- docs/301 F9: the run that saved it, which then says it is not
+            proven to have measured it -#}
+        <button type="button" class="fh-data fh-data-saved" hx-get="/dataset/{{ pt.saved_uid }}?via=saved"
+                hx-target="#inspector-pane" hx-swap="innerHTML"
+                title="Open the run whose saved state first carries this value -- not proven to be the run that measured it">Run</button>
         {% endif %}
       </td>
     </tr>
