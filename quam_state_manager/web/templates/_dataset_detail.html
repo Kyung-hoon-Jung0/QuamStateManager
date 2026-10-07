@@ -14,6 +14,14 @@
    instant as the date row below); else the folder clock, as before #}
 {% set _run_when = run_clock.header if (run_clock is defined and run_clock and run_clock.header) else (run.date ~ " " ~ run.time) %}
 {% set inspector_sub = _run_when ~ ((" | " ~ "%.1f" | format(run.duration_s) ~ "s") if run.duration_s else "") %}
+{#- docs/301 F39: with no page zone the header used to read the acquisition
+    PC's clock with no offset (a run headed "01:03:26" whose Trends point said
+    14:03); its instant is now localized in the browser like every other time
+    on the page, offset named. A page zone keeps the server line above. -#}
+{% if run_clock is defined and run_clock and not run_clock.header and run_clock.utc %}
+{% set _hdr_utc = run_clock.corrected.utc if run_clock.corrected else run_clock.utc %}
+{% set inspector_sub_html = (_hdr_utc | ts_local) ~ (" corrected" if run_clock.corrected else "") ~ ((" | " ~ "%.1f" | format(run.duration_s) ~ "s") if run.duration_s else "") %}
+{% endif %}
 {% include '_inspector_header.html' %}
 
 {# Which registered data folder this run belongs to (P2) — leaf name shown,
