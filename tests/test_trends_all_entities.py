@@ -1568,6 +1568,25 @@ class TestTypedTextThatNamesNoParameter:
         ch = _charts(picked)
         assert len(ch) == 1 and len(ch[0]["series"]) == len(PAIRS), ch
 
+    def test_the_card_goes_once_its_pick_is_charted(self, tmp_path):
+        """docs/301 F30: with the typed text still in the box, pressing the
+        family's 2Q badge charted it (the badge lit) while the "pick one" card
+        stayed under the chart. The pick was made; the card goes. A family the
+        card does NOT offer leaves it in place."""
+        c, _ = _chip_with(tmp_path, "irbpick", PAIRS, {IRB_TAIL: 0.99, SRB_TAIL: 0.97})
+        fam = "qubit_pairs.*." + IRB_TAIL
+        body = c.get("/topology/trends?metrics=&path=interleaved&paths=" + fam
+                     ).get_data(as_text=True)
+        ch = _charts(body)
+        assert "is not one parameter" not in body, self._slot(body)
+        assert len(ch) == 1 and len(ch[0]["series"]) == len(PAIRS), ch
+        assert not any(x.get("unmatched") for x in ch), ch
+        other = "qubit_pairs.*." + SRB_TAIL
+        body = c.get("/topology/trends?metrics=&path=interleaved&paths=" + other
+                     ).get_data(as_text=True)
+        assert "is not one parameter" in body, "an unrelated badge resolves nothing"
+        assert any(x.get("unmatched") for x in _charts(body))
+
     def test_a_real_parameter_with_no_numeric_history_keeps_the_yet(self, tmp_path):
         """The honest "nothing recorded yet" still belongs to a leaf the chip
         HAS -- here T2echo, null on every qubit (the real 20-qubit chip's case)."""
