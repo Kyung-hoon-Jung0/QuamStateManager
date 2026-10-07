@@ -384,6 +384,36 @@ def required_capabilities(spec: dict) -> set[str]:
     return req
 
 
+def _cz_default_variant_caps(spec: dict) -> set[str]:
+    """The pulse-shape capabilities the build TRIES on a CZ chip whose pairs
+    run the default ("all" / blank) variant set (docs/301 F36).
+
+    run_build seeds every variant on such a pair and skips one whose pulse
+    class the env lacks ("CZ variant 'flattop_erf' needs a pulse class missing
+    from this quam_builder install -- skipped"). :func:`required_capabilities`
+    leaves these out on purpose (nothing is REQUIRED: the other variants still
+    seed), so :func:`assess` asks here to name the skip before the build. A
+    pair with no populate entry runs the default too; one with an explicit
+    variant attempts only that one (which ``required_capabilities`` covers).
+    """
+    pairs = spec.get("qubit_pairs") or []
+    if not pairs or not (spec.get("pair_gate") or "").startswith("cz"):
+        return set()
+    explicit = sum(1 for pv in _pair_populate(spec)
+                   if (pv.get("cz_variant") or "all") != "all")
+    if explicit >= len(pairs):
+        return set()
+    return {cap for caps in _CZ_VARIANT_CAPS.values() for cap in caps}
+
+
+def _cz_skip_text(cid: str) -> str:
+    """What a missing shape costs a default-variant CZ chip, in the build's words."""
+    names = [v for v, caps in _CZ_VARIANT_CAPS.items() if cid in caps]
+    quoted = " and ".join(repr(v) for v in names)
+    return (f"the {quoted} CZ variant{'s' if len(names) > 1 else ''} on each pair "
+            "(skipped without it; the other variants still seed)")
+
+
 def _manifest_available(manifest: Any, cid: str) -> tuple[bool, str]:
     caps = (manifest or {}).get("capabilities") or {}
     entry = caps.get(cid) or {}
@@ -458,13 +488,17 @@ def assess(spec: dict, manifest: Any) -> dict:
                 "versions": (manifest or {}).get("versions") or {},
                 "ok": [], "blockers": [], "warnings": [], "inventory": []}
 
+    # docs/301 F36: shapes the default CZ variant set tries (not required).
+    attempted = _cz_default_variant_caps(spec) - required
     for cid in REGISTRY:
         available, detail = _manifest_available(manifest, cid)
-        requested = cid in required
+        requested = cid in required or cid in attempted
         inventory.append(_row(cid, detail, requested, available))
         if not requested:
             continue
         row = _row(cid, detail, True, available)
+        if cid in attempted:
+            row["produces"] = _cz_skip_text(cid)
         if available:
             ok.append(row)
         elif row["severity"] == BLOCKER:
