@@ -46,7 +46,21 @@
             legend: { orientation: 'h', y: -0.22, font: { size: 11 } },
             showlegend: false,
         };
-        return deepMerge(base, overrides || {});
+        var out = deepMerge(base, overrides || {});
+        // docs/301 F28: a secondary axis (one that overlays another, e.g. the
+        // "Detuning [MHz]" scale on top of a spectroscopy) got no theme, so
+        // Plotly drew its grid in its own near-white default -- bright
+        // vertical lines that read as markers on the data -- with a second
+        // zero line. The primary axis already draws the grid; a secondary one
+        // only labels it.
+        Object.keys(out).forEach(function (k) {
+            var ax = out[k];
+            if (!/^[xy]axis\d+$/.test(k) || !ax || typeof ax !== 'object' || !ax.overlaying) return;
+            ax = Object.assign({ showgrid: false, zeroline: false,
+                                 gridcolor: grid, zerolinecolor: grid, automargin: true }, ax);
+            out[k] = ax;
+        });
+        return out;
     }
 
     function houseConfig(overrides) {
