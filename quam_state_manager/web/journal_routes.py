@@ -142,6 +142,7 @@ def _search_text(c) -> str:
     if kind == "run":
         gate = c.get("gate") or {}
         parts += [c.get("node"), c.get("family_label"), " ".join(c.get("targets") or []),
+                  " ".join(c.get("targets_as_recorded") or []), c.get("renamed_here"),
                   c.get("outcome") or "no outcome", f"#{c.get('run_id')}",
                   gate and f"gate {gate.get('verdict')}", gate.get("reason"),
                   " ".join(f["label"] for f in c.get("flags") or []),
@@ -376,7 +377,8 @@ def _build_base(day: str, *, gate_wait=False, lazy_ok=True) -> dict:
                                # app waits, so a page is the same page twice
                                gate_wait=gate_wait or bool(current_app.config.get(
                                    "JOURNAL_GATE_WAIT", current_app.testing)),
-                               int_of=_int_types() if ledger is not None else None)
+                               int_of=_int_types() if ledger is not None else None,
+                               rename=r._rename_scope() if ledger is not None else None)
     data["lazy"] = bool(lazy_ok and len(data["cards"]) > LAZY_CARDS)
     data["paged"] = bool(lazy_ok and len(data["cards"]) > PAGE_CARDS)
     for order, c in enumerate(data["cards"]):

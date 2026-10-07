@@ -572,8 +572,20 @@
         var c = chipEl();
         var ent = entityValue(cube);
         var click = cube.click || {};
+        // docs/296: `names` maps the run's qubit / pair names to the loaded
+        // chip's (present only when the run predates a rename). A candidate
+        // path is filled with today's name; a name with none stages nothing.
+        var entNow = ent, entRefused = null;
+        if (click.names && ent) {
+            entNow = Object.prototype.hasOwnProperty.call(click.names, ent) ? click.names[ent] : null;
+            if (!entNow) {
+                entRefused = (click.refusals && click.refusals[ent]) || click.refused ||
+                    'Not applied: this qubit of the run has no name on the loaded chip since the rename.';
+            }
+        }
         var html = '<div class="ndv-chip-head">' +
             (ent ? '<span class="ndv-chip-entity">' + esc(ent) + '</span>' : '') +
+            (entNow && entNow !== ent ? ' <span class="ndv-chip-now muted">now ' + esc(entNow) + '</span>' : '') +
             '<button type="button" class="ndv-chip-x" aria-label="Close">&times;</button></div>';
         rows.forEach(function (r) {
             var raw = r[1];
@@ -591,12 +603,19 @@
         var cands = (click.candidates || []).filter(function (cd) {
             return !ent || cd.path.indexOf('{p}') === -1 || view.entity === 'qubit_pair';
         });
+        if (entRefused) {
+            if (cands.length) {
+                html += '<div class="ndv-chip-cands ndv-chip-refused">' +
+                    '<span class="muted" style="font-size:0.7rem">' + esc(entRefused) + '</span></div>';
+            }
+            cands = [];
+        }
         if (cands.length && ent) {
             html += '<div class="ndv-chip-cands" data-pending="1">' +
                 '<span class="muted" style="font-size:0.7rem">loading current values…</span></div>';
         }
         html += '<div class="ndv-chip-foot">' +
-            (ent ? '<button type="button" class="ndv-chip-explorer">Open in Explorer →</button>' : '') +
+            (ent && !entRefused ? '<button type="button" class="ndv-chip-explorer">Open in Explorer →</button>' : '') +
             '</div>';
         c.innerHTML = html;
         c.hidden = false;
@@ -623,8 +642,8 @@
                 // entities. The flux target is `z.joint_offset` on an
                 // OPX-biased qubit and `z.dc_offset` on a QDAC-biased one —
                 // the same physical quantity, on two different components.
-                var byEnt = cd.path_by_entity && cd.path_by_entity[ent];
-                return (byEnt || cd.path).replace('{q}', ent).replace('{p}', ent);
+                var byEnt = cd.path_by_entity && cd.path_by_entity[entNow];
+                return (byEnt || cd.path).replace('{q}', entNow).replace('{p}', entNow);
             });
             fetch('/field/peek?' + paths.map(function (pp) {
                 return 'dot_path=' + encodeURIComponent(pp);   // server reads getlist("dot_path")
@@ -690,7 +709,7 @@
         if (ex) ex.onclick = function () {
             c.hidden = true;
             if (window._navigateToExplorerPath) {
-                window._navigateToExplorerPath('qubits.' + ent);
+                window._navigateToExplorerPath('qubits.' + entNow);
             }
         };
     }

@@ -331,15 +331,20 @@
         // with the negate flag.
         switch (key) {
             case 'qubit':
-                if (!row.q) return false;
-                for (var i = 0; i < row.q.length; i++) {
-                    if (String(row.q[i]).toLowerCase().indexOf(value) !== -1) return true;
+                // docs/296: a qubit filter names a qubit TODAY: a run saved
+                // before a rename answers by today's names (row.qn) only --
+                // its recorded "q1" may be another qubit now
+                var qs = row.qn || row.q || [];
+                if (!qs.length) return false;
+                for (var i = 0; i < qs.length; i++) {
+                    if (String(qs[i]).toLowerCase().indexOf(value) !== -1) return true;
                 }
                 return false;
             case 'pair':
-                if (!row.p) return false;
-                for (var pi = 0; pi < row.p.length; pi++) {
-                    if (String(row.p[pi]).toLowerCase().indexOf(value) !== -1) return true;
+                var ps = row.pn || row.p;      // docs/296: today's pair names
+                if (!ps) return false;
+                for (var pi = 0; pi < ps.length; pi++) {
+                    if (String(ps[pi]).toLowerCase().indexOf(value) !== -1) return true;
                 }
                 return false;
             case 'exp':
@@ -471,8 +476,9 @@
     }
 
     function _rowHasQubit(row, q) {
-        if (!row.q) return false;
-        for (var i = 0; i < row.q.length; i++) if (String(row.q[i]).toLowerCase() === q) return true;
+        var qs = row.qn || row.q || [];   // docs/296: today's names (see matchScope)
+        if (!qs.length) return false;
+        for (var i = 0; i < qs.length; i++) if (String(qs[i]).toLowerCase() === q) return true;
         return false;
     }
     function _rowHasAllQubits(row, set) {
@@ -481,8 +487,9 @@
         return true;
     }
     function _rowHasPair(row, p) {
-        if (!row.p) return false;
-        for (var i = 0; i < row.p.length; i++) if (String(row.p[i]).toLowerCase() === p) return true;
+        var ps = row.pn || row.p;          // docs/296: today's pair names
+        if (!ps) return false;
+        for (var i = 0; i < ps.length; i++) if (String(ps[i]).toLowerCase() === p) return true;
         return false;
     }
     function _rowHasAllPairs(row, set) {
@@ -498,7 +505,7 @@
             String(row.id),
             '#' + row.id,
             row.exp || '',
-            (row.q || []).join(' '),
+            (row.q || []).concat(row.qn || [], row.pn || []).join(' '),
             (row.p || []).join(' '),
             (row.tags || []).join(' '),
             row.date || '',
@@ -620,7 +627,13 @@
         {key: 'qubits', label: 'Qubits', on: true, w: 96, sortKey: 'qubits', type: 'str',
          // Prefer the intact pair names ("q0-1") for 2Q runs; fall back to single
          // qubits for 1Q runs. (Search still matches the normalized member qubits.)
-         render: function (r) { return (r.p && r.p.length) ? escapeHtml(r.p.join(', ')) : ((r.q && r.q.length) ? escapeHtml(r.q.join(', ')) : '-'); }},
+         render: function (r) {
+             var pr = r.p && r.p.length, now = pr ? (r.pn || r.p) : (r.qn || r.q || []);
+             // docs/296: today's names (pn / qn) lead; the recorded ones beside
+             var was = pr ? (r.pn ? r.p : null) : (r.qn ? r.q : null);
+             var as = was ? ' <span class="muted ds-recorded-as" title="Saved before the qubits were renamed">(as ' + escapeHtml(was.join(', ')) + ')</span>' : '';
+             return (now.length ? escapeHtml(now.join(', ')) : (as ? '' : '-')) + as;
+         }},
         {key: 'status', label: 'Status', on: true, w: 96, sortKey: 'status', type: 'str',
          render: function (r) { return statusChip(r.status); }},
         {key: 'metric', label: 'Key Metric', on: true, w: 96, sortKey: 'metric', type: 'num', cls: 'col-metric',
@@ -2174,13 +2187,16 @@
         for (var i = 0; i < state.rows.length; i++) {
             var r = state.rows[i];
             if (!r) continue;
-            if (r.q) for (var j = 0; j < r.q.length; j++) {
-                var qRaw = String(r.q[j]), qKey = qRaw.toLowerCase();
+            // docs/296: the picker and the qubit-aware search know the names
+            // the qubits have TODAY (a run saved before a rename: r.qn)
+            var rq = r.qn || r.q, rp = r.pn || r.p;
+            if (rq) for (var j = 0; j < rq.length; j++) {
+                var qRaw = String(rq[j]), qKey = qRaw.toLowerCase();
                 qubits.add(qKey);
                 if (!qubitLabels.has(qKey)) qubitLabels.set(qKey, qRaw);
             }
-            if (r.p) for (var pj = 0; pj < r.p.length; pj++) {
-                var pRaw = String(r.p[pj]), pKey = pRaw.toLowerCase();
+            if (rp) for (var pj = 0; pj < rp.length; pj++) {
+                var pRaw = String(rp[pj]), pKey = pRaw.toLowerCase();
                 pairs.add(pKey);
                 if (!pairLabels.has(pKey)) pairLabels.set(pKey, pRaw);
             }

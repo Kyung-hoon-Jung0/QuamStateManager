@@ -12145,6 +12145,9 @@ body.scheduler-active #pending-tray { opacity: .5; pointer-events: none; }
 .jr-family { font-weight: 600; }
 .jr-targets { font-family: var(--pico-font-family-monospace); }
 .jr-badge { font-size: .72rem; padding: .05rem .45rem; border-radius: 1rem; border: 1px solid var(--pico-muted-border-color); }
+/* docs/296: a row saved before a Re-generate rename, under its old name */
+.jr-recorded-as { border-style: dashed; color: var(--color-text-muted); font-size: .65rem; }
+.jr-renamed-here { border-left: 3px solid var(--pico-muted-border-color); padding-left: .4rem; }
 .jr-gate-pass { border-color: var(--color-success-border, #2e7d32); }
 .jr-gate-suspect { border-color: var(--color-warn-border, #e6a700); }
 .jr-gate-fail { border-color: var(--cell-bad-color, #d62728); color: var(--cell-bad-color, #d62728); }
@@ -12436,6 +12439,11 @@ body.scheduler-active #pending-tray { opacity: .5; pointer-events: none; }
 /* the drawer's flags wrap inside the value cell, never over the When column */
 .vh-table .fh-val .vh-flag { white-space: normal; max-width: 100%; }
 .vh-flag-bv { color: var(--color-warning-text); }
+/* docs/296: a Re-generate rename -- the qubit's older rows under its old name */
+.vh-rename { margin: 0 0 .3rem; font-size: .7rem; color: var(--color-text-muted);
+    border-left: 3px solid var(--pico-muted-border-color); padding: .1rem .4rem; }
+.vh-rename code { font-size: .7rem; }
+.vh-flag-renamed { color: var(--color-text-muted); border-style: dashed; }
 .vh-run_saved .vh-by, .vh-first_record .vh-by, .vh-run_uncertain_chip .vh-by { color: var(--color-text-muted); }
 .vh-chip { flex-wrap: wrap; max-width: 100%; }
 .vh-chip-who { flex: 1 0 100%; font-size: .6rem; line-height: 1.2; color: var(--color-text-muted);

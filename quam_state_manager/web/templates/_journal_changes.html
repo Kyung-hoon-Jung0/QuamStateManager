@@ -6,7 +6,7 @@
 
 {# ``author``: the card's own who; an entry names its actor only when it differs. #}
 {% macro change_list(rows, actors=False, author=None) -%}
-<ul class="jr-changes">{% for w in rows %}<li{% if w.taken_back %} class="jr-taken-back"{% endif %}><code class="jr-path" data-path="{{ w.path }}">{{ w.path }}</code>
+<ul class="jr-changes">{% for w in rows %}<li{% if w.taken_back %} class="jr-taken-back"{% endif %}><code class="jr-path" data-path="{{ w.path }}">{{ w.path }}</code>{% if w.recorded_as %} <span class="jr-badge jr-recorded-as" title="Recorded as {{ w.recorded_as }}, before a Re-generate rename">as {{ w.recorded_short }}</span>{% endif %}
     {{ before_after(w.old, w.new, w.op or 'set') }}{% if w.taken_back %} <span class="jr-badge jr-undone" title="a later undo took this value back">undone</span>{% endif %}{% if actors and w.actor and w.actor != author %} <span class="jr-author jr-author-{{ w.actor.split(':')[0] }}">{{ w.actor }}</span>{% endif %}</li>{% endfor %}</ul>
 {%- endmacro %}
 

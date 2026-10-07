@@ -11698,6 +11698,68 @@ _VH_FALLBACK_NOTES = {
 }
 
 
+def _rename_scope(ctx: dict | None = None, chip_dir=None) -> dict:
+    """docs/296: ``{"lineage", "era"}`` of the open chip for a ledger read --
+    the chip's Re-generate rename lineage and the era today's paths are
+    spelled in (empty for a chip that was never renamed)."""
+    from quam_state_manager.core import rename_lineage
+    ctx = ctx if ctx is not None else _active_ctx()
+    store = (ctx or {}).get("store")
+    if store is None:
+        return {}
+    with store._lock:
+        merged = store.merged
+    if chip_dir is None:
+        try:
+            chip_dir = ctx.get("hub_chip_dir") or _hub_chip_dir(ctx["path"])
+        except Exception:  # noqa: BLE001 -- no history dir: the state alone
+            chip_dir = None
+    lin = rename_lineage.lineage_for(chip_dir, merged)
+    return {"lineage": lin, "era": rename_lineage.era(merged)} if lin.active else {}
+
+
+def _side_today(side, scope: dict | None = None):
+    """docs/296: one Differ side (``(state, wiring)``, ``(merged doc, {})`` or a
+    snapshot store) saved before a Re-generate rename, re-expressed in today's
+    names -- so a diff, a compare, a Stage or a Restore pairs each qubit with
+    itself, never with the qubit that holds its old name today. A side of
+    today's era, or of a newer / other era, is returned as it is."""
+    scope = _rename_scope() if scope is None else scope
+    lin = scope.get("lineage")
+    if lin is None:
+        return side
+    if isinstance(side, tuple) and len(side) == 2:
+        state, wiring = side
+        merged_doc = not wiring        # (merged document, {}): wiring is inside it
+    elif hasattr(side, "state") and hasattr(side, "wiring"):
+        state, wiring, merged_doc = side.state, side.wiring, False
+    else:
+        return side
+    got = lin.forward_state(state, None if merged_doc else wiring, tuple(scope.get("era") or ()))
+    if got is None or got[0] is state:
+        return side
+    return (got[0], {} if merged_doc else (got[1] or {}))
+
+
+def _sides_in_one_era(sides: list) -> list:
+    """docs/296 review P1-3: the sides of a DIFF / COMPARE (``(state, wiring)``,
+    ``(merged doc, {})`` or a store) in one rename era -- each older side moved
+    forward into the newest side's (``rename_lineage.in_one_era``), whichever
+    of them is newer than the open chip. A side that did not move is handed
+    back as it was (a chip never renamed diffs exactly as before)."""
+    from quam_state_manager.core import rename_lineage
+    pairs = []
+    for side in sides:
+        if isinstance(side, tuple) and len(side) == 2:
+            pairs.append(side)
+        elif hasattr(side, "state") and hasattr(side, "wiring"):
+            pairs.append((side.state, side.wiring))
+        else:
+            return list(sides)
+    moved = rename_lineage.in_one_era(pairs)
+    return [orig if m[0] is p[0] else m for orig, p, m in zip(sides, pairs, moved)]
+
+
 def _value_history(ctx: dict, path_map: dict[str, str], *, limit: int | None = None,
                    runs: int = 0) -> dict:
     """docs/282: the history of every path in *path_map* (``{key: dot_path}``).
@@ -11735,9 +11797,11 @@ def _value_history(ctx: dict, path_map: dict[str, str], *, limit: int | None = N
         return out
     if not (chip_dir / "ledger.sqlite").exists():
         return fallback("no_ledger")
+    # docs/296: today's paths are spelled in today's rename era; the ledger
+    # reads each position in its own
     try:
         res = vh.read(chip_dir, targets, limit=limit, runs=runs,
-                      binding=_vh_binding(ctx, chip_dir))
+                      binding=_vh_binding(ctx, chip_dir), **_rename_scope(ctx, chip_dir))
     except hub_sync.Building as exc:
         out.update(mode="building", status=getattr(exc, "status", None) or st)
         return out
@@ -11932,6 +11996,8 @@ def _vh_points_view(ans: dict, key: str, uid_roots, uid_memo: dict) -> list[dict
     from quam_state_manager.core import hub_rules
     tgt = ans["targets"][key]
     pts = [_vh_present(p, uid_roots, uid_memo) for p in ans["rows"][key]["points"]]
+    for pt in pts:
+        pt["recorded_as_short"] = _vh_short_name(pt.get("recorded_as"), tgt.get("holder"))
     pts.reverse()
     current = tgt.get("current")
     marked = False
@@ -11978,9 +12044,42 @@ def _vh_drawer_view(ans: dict, key: str, dot_path: str) -> dict:
     return {"dot_path": dot_path, "tgt": tgt, "points": pts, "total": row["total"],
             "via": _vh_via_view(ans, key, uid_roots, uid_memo),
             "via_since": row.get("via_since"), "notes": ans["notes"].get(key) or [],
+            "renames": _vh_rename_view(row.get("renames") or [], tgt.get("holder")),
             "ledger": ans["ledger"], "chart": chart if len(chart) >= 2 else [],
             "current_display": cur_display,
             "current_value": current if not isinstance(current, (dict, list)) else None}
+
+
+def _vh_short_name(holder: str | None, here: str | None) -> str:
+    """The part of a holder spelling that differs from today's (``q2`` for
+    ``qubits.q2.f_01`` against ``qubits.q1.f_01``), or the whole path."""
+    if not holder:
+        return ""
+    if not here:
+        return holder
+    a, b = holder.split("."), here.split(".")
+    if len(a) == len(b):
+        diff = [x for x, y in zip(a, b) if x != y]
+        if diff:
+            return ".".join(diff)
+    return holder
+
+
+def _vh_rename_view(marks: list, here: str | None) -> list[dict]:
+    """docs/296: each rename the value's qubit went through, newest first --
+    what it was called before, when, and whether it had a name at all."""
+    out = []
+    for m in reversed(marks):
+        pairs = []
+        for r in m.get("renames") or []:
+            pairs += [f"{a} \u2192 {b}" for a, b in sorted((r.get("qubits") or {}).items())]
+        now = m.get("now") or ""
+        out.append({"t": m.get("t"), "was": m.get("was"), "now": m.get("now"),
+                    "kind": ("pair" if "qubit_pairs" in now.split(".")[:2]
+                             else "qubit" if "qubits" in now.split(".")[:2] else "value"),
+                    "was_short": _vh_short_name(m.get("was"), m.get("now")),
+                    "new": m.get("was") is None, "renames": pairs})
+    return out
 
 
 def _vh_agent_view(ans: dict, key: str) -> dict:
@@ -11990,7 +12089,7 @@ def _vh_agent_view(ans: dict, key: str) -> dict:
     pts = _vh_points_view(ans, key, uid_roots, uid_memo)
     keep = ("t", "value", "old", "op", "removed", "kind", "provenance", "proven", "label",
             "sub", "title", "run_id", "experiment", "actor", "src", "plan_id", "run_uid", "flags",
-            "undone", "before_via", "is_current", "uid")
+            "undone", "before_via", "is_current", "uid", "recorded_as")
     return {"path": tgt["path"], "holder": tgt["holder_path"], "current": tgt.get("current"),
             "via": [{k: h[k] for k in ("from_path", "pointer", "to_path")} for h in tgt["via"]],
             "retargets": [{"from_path": v["from_path"], "pointer": v["pointer"],
@@ -15831,6 +15930,9 @@ def history_diff_detail(timestamp: str):
             # docs/284: a change-ledger version -- its merged document, under
             # the one comparison rule (compare_equal)
             entries = _version_diff_now(_active_ctx(), timestamp)
+        elif _rename_scope():
+            # docs/296: the snapshot and the working state in one rename era
+            entries = Differ().diff(*_sides_in_one_era([_version_side(_active_path(), timestamp), store]))
         else:
             entries = hm.diff_current(_active_path(), timestamp, current_store=store)
     except Exception as e:
@@ -15963,9 +16065,10 @@ def _snapshot_state_wiring(hm, path, timestamp) -> tuple[dict, dict]:
         chip_dir = _hub_chip_dir(path)
         if chip_dir is None:
             raise hub_versions.Unavailable("The chip's history folder cannot be resolved.")
-        return hub_versions.exact_pair(chip_dir, timestamp)
+        return _side_today(hub_versions.exact_pair(chip_dir, timestamp))
     snap = hm.load_snapshot(path, timestamp)
-    return copy.deepcopy(snap.state), copy.deepcopy(snap.wiring)
+    # docs/296: a version saved before a rename is put back in today's names
+    return _side_today((copy.deepcopy(snap.state), copy.deepcopy(snap.wiring)))
 
 
 def _history_chip_mismatch(ctx):
@@ -17616,7 +17719,8 @@ def _hub_status_table(ctx):
         roots_sig = None
     try:
         table = LedgerTable(ctx, ans, _vh_binding(ctx, ctx["hub_chip_dir"]),
-                            _value_history, _vh_present, _uid_roots, roots_sig=roots_sig)
+                            _value_history, _vh_present, _uid_roots, roots_sig=roots_sig,
+                            scope=_rename_scope(ctx, ctx["hub_chip_dir"]))
     except _ramcache.Warming as exc:
         from quam_state_manager.core import hub_sync
         ans["mode"] = "building" if isinstance(exc, hub_sync.Building) else "preparing"
@@ -17905,7 +18009,12 @@ def _topology_trends_html(hm, path: Path, store, qubits: list[str],
         volatile.append("writers")
     for c in charts:
         c["sig"] = _trend_chart_sig(c, snaps)
+    # docs/296: where the chip's qubits were renamed (a dotted mark per chart)
+    from quam_state_manager.core.story import _rename_words
+    renames = ([{"t": r["t"], "words": _rename_words(r["renames"])} for r in tbl.renames()]
+               if ledger else [])
     return render_template("_topo_trends.html", charts=charts, curated=curated,
+                           renames=renames,
                            selected=sel, extra=extra, no_chip=False,
                            metric_labels=metric_labels, pair_chips=pair_chips,
                            pair_chips_more=pair_chips_more,
@@ -18783,7 +18892,7 @@ def _version_order(path, ref) -> tuple:
 def _version_diff_now(ctx, ref) -> list:
     """A version against the CURRENT working state, under the one rule."""
     from quam_state_manager.core import hub_versions
-    return hub_versions.compare(_version_side(ctx["path"], ref), ctx["store"])
+    return hub_versions.compare(*_sides_in_one_era([_version_side(ctx["path"], ref), ctx["store"]]))
 
 
 _VERSION_QUICK: "OrderedDict[tuple, list]" = OrderedDict()
@@ -18802,7 +18911,8 @@ def _version_quick_entries(path, ref_a: str, ref_b: str) -> list:
         if hit is not None:
             _VERSION_QUICK.move_to_end(key)
             return hit
-    entries = hub_versions.compare(_version_side(path, ref_a), _version_side(path, ref_b))
+    entries = hub_versions.compare(*_sides_in_one_era([_version_side(path, ref_a),
+                                                        _version_side(path, ref_b)]))
     with _VERSION_QUICK_LOCK:
         _VERSION_QUICK[key] = entries
         while len(_VERSION_QUICK) > 8:
@@ -19004,7 +19114,10 @@ def state_version_diff(timestamp: str):
             if chip_dir is None:
                 raise hub_versions.Unavailable("The chip's history folder cannot be resolved.")
             doc, why_write = hub_versions.diff_view(chip_dir, timestamp)
-            entries = hub_versions.compare((doc, {}), ctx["store"])
+            entries = hub_versions.compare(*_sides_in_one_era([(doc, {}), ctx["store"]]))
+        elif _rename_scope():
+            entries = Differ().diff(*_sides_in_one_era([_version_side(path, timestamp), ctx.get("store")]),
+                                    ignore_keys=set())
         else:
             entries = hm.diff_current(path, timestamp, current_store=ctx.get("store"),
                                       ignore_keys=set())
@@ -29424,27 +29537,42 @@ _VERSION_WIRING_NOTE = ("A change-history version keeps one merged document (sta
                         "wiring together); compare it in the State tab.")
 
 
-def _diff_side_doc(src, tab: str, *, merged: bool = False) -> tuple[Any, str]:
+def _diff_pool_pair(src) -> tuple[dict, dict] | None:
+    """One side's ``(state, wiring)`` from the compare pool (None: gone)."""
+    entry = compare_sources.DEFAULT_POOL.get(src.content_hash)
+    if entry is None:
+        compare_sources.resolve_source(
+            src.ref, history_root=_hub_history_root(),
+            working_lookup=_hub_working_lookup)
+        entry = compare_sources.DEFAULT_POOL.get(src.content_hash)
+    return None if entry is None else (entry.state, entry.wiring)
+
+
+def _pairs_in_one_era(pairs: list) -> list:
+    """docs/296: :func:`rename_lineage.in_one_era` (the one rule)."""
+    from quam_state_manager.core import rename_lineage
+    return rename_lineage.in_one_era(pairs)
+
+
+def _diff_side_doc(src, tab: str, *, merged: bool = False, pair=None) -> tuple[Any, str]:
     """``(document, unavailable_reason)`` for one side of one tab.
 
     ``merged`` (docs/284, a comparison with a change-ledger version): the
     State tab holds the MERGED document on every side, so a ledger version is
-    compared with like, and the Wiring tab has nothing of its own."""
+    compared with like, and the Wiring tab has nothing of its own. ``pair``:
+    the side's ``(state, wiring)`` already read (and put in one rename era)."""
     if tab in ("state", "wiring"):
         if merged and tab == "wiring":
             return None, _VERSION_WIRING_NOTE
-        entry = compare_sources.DEFAULT_POOL.get(src.content_hash)
-        if entry is None:
-            entry = compare_sources.resolve_source(
-                src.ref, history_root=_hub_history_root(),
-                working_lookup=_hub_working_lookup)
-            entry = compare_sources.DEFAULT_POOL.get(src.content_hash)
-        if entry is None:
+        if pair is None:
+            pair = _diff_pool_pair(src)
+        if pair is None:
             return None, "content unavailable"
+        state, wiring = pair
         if merged:
             from quam_state_manager.core.hub_rules import merged as merge_pair
-            return merge_pair(entry.state, entry.wiring), ""
-        return (entry.state if tab == "state" else entry.wiring), ""
+            return merge_pair(state, wiring), ""
+        return (state if tab == "state" else wiring), ""
     if tab == "node":
         # A run's node.json sits BESIDE its quam_state folder. Snapshots and
         # the working copy have no run behind them — say so rather than
@@ -29488,8 +29616,13 @@ def _diff_payload(src_a, src_b, tab: str, *, with_rows: bool) -> dict:
             _DIFF_MEMO.move_to_end(key)
             return hit
     versions = _is_version_src(src_a) or _is_version_src(src_b)
-    doc_a, why_a = _diff_side_doc(src_a, tab, merged=versions)
-    doc_b, why_b = _diff_side_doc(src_b, tab, merged=versions)
+    pairs = [None, None]
+    if tab in ("state", "wiring"):
+        got = [_diff_pool_pair(src_a), _diff_pool_pair(src_b)]
+        if None not in got:
+            pairs = _pairs_in_one_era(got)
+    doc_a, why_a = _diff_side_doc(src_a, tab, merged=versions, pair=pairs[0])
+    doc_b, why_b = _diff_side_doc(src_b, tab, merged=versions, pair=pairs[1])
     if doc_a is None or doc_b is None:
         return {"ok": False, "unavailable": why_a or why_b,
                 "counts": {}, "rows": [], "tree_a": {}, "tree_b": {}}
@@ -29645,8 +29778,13 @@ def _diff_payload_n(srcs: list, tab: str) -> dict:
     tab-strip re-asks the 2-way memo exists for."""
     docs, whys = [], []
     versions = any(_is_version_src(src) for src in srcs)
-    for src in srcs:
-        doc, why = _diff_side_doc(src, tab, merged=versions)
+    pairs = [None] * len(srcs)
+    if tab in ("state", "wiring"):
+        got = [_diff_pool_pair(src) for src in srcs]
+        if None not in got:
+            pairs = _pairs_in_one_era(got)
+    for src, pair in zip(srcs, pairs):
+        doc, why = _diff_side_doc(src, tab, merged=versions, pair=pair)
         docs.append(doc)
         whys.append(why)
     if any(d is None for d in docs):
@@ -30092,10 +30230,11 @@ def diff_versions():
         if versions:
             # docs/284: ledger versions (merged documents) and snapshots, under
             # the one rule the 2-tick workbench uses with them (compare_equal)
-            rows = hub_versions.compare_n([(ledger_docs[ts][1], {}) if ts in ledger_docs
-                                           else _version_side(path, ts) for ts in ts_list])
+            rows = hub_versions.compare_n(_sides_in_one_era(
+                [(ledger_docs[ts][1], {}) if ts in ledger_docs else _version_side(path, ts)
+                 for ts in ts_list]))
         else:
-            stores = [hm.load_snapshot(path, ts) for ts in ts_list]
+            stores = _sides_in_one_era([_version_side(path, ts) for ts in ts_list])
             rows = Differ().diff_n(stores, ignore_keys=set())
     except Exception as exc:      # noqa: BLE001 — a pruned snapshot must explain, not 500
         return _fail(f"Compare failed: {exc}")
@@ -31816,6 +31955,64 @@ def _load_compare_stores(paths_raw: list[str]):
     return stores, contexts, labels, all_qubit_names
 
 
+def _trend_stores_in_todays_names(stores: list, labels: list[str]):
+    """docs/296: the Trend Tracker keys every value by qubit NAME, and a run
+    saved before a qubit rename spells its qubits by their old ids -- so
+    each such run of the open chip is re-expressed in today's names first
+    (``Lineage.forward_state``, the rebuild's own rule). A run that cannot be
+    carried forward is left out and named, never keyed by a guessed name;
+    another chip's run (not one of this chip's data folders, and not the same
+    chip by fingerprint) is left as it is.
+
+    Returns ``(stores, labels, note)``; a chip never renamed gets its inputs
+    back untouched and ``note`` None."""
+    names = _chip_names()
+    if names is None or not names.active:
+        return stores, labels, None
+    from quam_state_manager.core import history as _hist
+    from quam_state_manager.core import rename_lineage
+    ctx = _active_ctx()
+    chip_store = ctx["store"]
+    with chip_store._lock:
+        chip_fp = _hist.fingerprint_from_dicts(chip_store.state, chip_store.wiring)
+    out_s: list = []
+    out_l: list[str] = []
+    moved: list[str] = []
+    dropped: list[str] = []
+    renamed = ""
+    for store, label in zip(stores, labels):
+        src = rename_lineage.era(store.state)
+        if src == names.current:
+            out_s.append(store)
+            out_l.append(label)
+            continue
+        own = (store.folder_path is not None and names.owns(store.folder_path)) or (
+            _hist.align(chip_fp, _hist.fingerprint_from_dicts(store.state, store.wiring))
+            == _hist.ALIGN_ALIGNED)
+        if not own:
+            out_s.append(store)
+            out_l.append(label)
+            continue
+        fwd = names.lineage.forward_state(store.state, store.wiring or {}, names.current)
+        if fwd is None:
+            dropped.append(label)
+            continue
+        out_s.append(QuamStore.from_dicts(fwd[0], fwd[1] if isinstance(fwd[1], dict) else {}))
+        out_l.append(label)
+        moved.append(label)
+        renamed = renamed or names.for_era(src).renames_text()
+    bits = []
+    if moved:
+        n = len(moved)
+        bits.append(f"{n} run{'s' if n != 1 else ''} from before a qubit rename"
+                    + (f" ({renamed})" if renamed else "")
+                    + f" {'is' if n == 1 else 'are'} shown under today's qubit names.")
+    if dropped:
+        bits.append("Not shown: " + ", ".join(dropped)
+                    + " -- saved under qubit names that cannot be carried into today's names.")
+    return out_s, out_l, (" ".join(bits) or None)
+
+
 def _compute_diff_cells(all_rows: list[dict], ref_idx: int) -> set[tuple[str, str, int]]:
     """Compute which (qubit, property, store_idx) cells differ from the reference."""
     diff_cells: set[tuple[str, str, int]] = set()
@@ -32166,6 +32363,10 @@ def trend():
     stores, _contexts, labels, all_qubit_names = _load_compare_stores(paths_raw)
     if len(stores) < 2:
         return _refuse("Need at least 2 valid stores -- fewer than two of the ticked runs could be read.")
+    # docs/296: the qubits offered are today's names
+    stores, labels, rename_note = _trend_stores_in_todays_names(stores, labels)
+    if rename_note is not None:
+        all_qubit_names = sorted({q for s in stores for q in s.qubit_names}, key=natural_key)
 
     template = "_trend_picker.html" if _is_htmx() else "compare.html"
     return render_template(
@@ -32176,6 +32377,7 @@ def trend():
             labels=labels,
             all_qubit_names=all_qubit_names,
             prop_groups=_TABLE_PROP_GROUPS,
+            rename_note=rename_note,
         ),
     )
 
@@ -32209,6 +32411,8 @@ def trend_chart():
     stores, _contexts, labels, _ = _load_compare_stores(paths_raw)
     if len(stores) < 2:
         return render_template("_status.html", message="Need at least 2 valid stores", level="warning")
+    # docs/296: one physical qubit is one row across a rename
+    stores, labels, rename_note = _trend_stores_in_todays_names(stores, labels)
 
     indexed = list(zip(stores, labels))
     indexed.sort(key=lambda pair: _extract_run_id(pair[1]) or 0)
@@ -32236,6 +32440,7 @@ def trend_chart():
         qubit_filter=qubit_filter or [],
         legend=legend,
         symbol_map=symbol_map,
+        rename_note=rename_note,
     )
 
 
@@ -34061,7 +34266,7 @@ def _hub_param_changes(table) -> tuple[str, int]:
         result = hub_query.timeline(table.binding, path=prefix or None, path_prefix=True,
                                     cursor=None if at else cursor,
                                     event_id=int(at) if at else None, changed_only=True,
-                                    limit=1 if at else _CHANGES_SNAPS)
+                                    limit=1 if at else _CHANGES_SNAPS, **_rename_scope())
     except ValueError:
         return bad
     events = result["events"]
@@ -34086,6 +34291,7 @@ def _hub_param_changes(table) -> tuple[str, int]:
                 pt["undone"] = "undone"
             info = _vh_present(pt, table.roots, table.uid_memo)
             rows.append({"path": c["path"], "previous": c["old"], "value": c["new"],
+                         "recorded_as": c.get("recorded_as"), "recorded_short": c.get("recorded_short"),
                          "op": c["op"], "is_first": pt["provenance"] == "first_record",
                          "proven": pt["provenance"] == "run_proven",
                          "who": info["sub"] if ev.get("kind") == "run" else "",
@@ -34114,7 +34320,10 @@ def _hub_param_changes(table) -> tuple[str, int]:
                 flags.append("partly undone (the rows a later undo took back are marked)")
         if int(ev.get("flags") or 0) & CHIP_UNCERTAIN:
             uid = None
-        groups.append({"timestamp": vh.iso_z(ev["t_utc_us"]), "eid": ev["eid"],
+        from quam_state_manager.core.story import _rename_words
+        groups.append({"renamed_here": _rename_words(ev.get("renamed_here")),
+                       "renamed_here_short": _rename_words(ev.get("renamed_here"), limit=4),
+                       "timestamp": vh.iso_z(ev["t_utc_us"]), "eid": ev["eid"],
                        "trigger": None, "experiment": None, "label": label, "sub": sub,
                        "flags": flags, "uid": uid, "link_title": link,
                        "run_id": ev.get("run_id"), "total": len(changes),
@@ -36029,24 +36238,55 @@ _DATASETS_PAYLOAD = _ramcache.KeyedMemo("datasets.payload", max_entries=6,
 
 
 def _datasets_payload_token(active: list[dict], is_collections: bool,
-                            date: str | None) -> tuple:
+                            date: str | None, names_v: Any = None) -> tuple:
     return (bool(is_collections), date or "",
             tuple((f["key"], f["path"], f["store"].instance_seq,
                    f["store"].generation, f["store"].meta_generation)
-                  for f in active))
+                  for f in active), names_v)
 
 
 def _datasets_payload(active: list[dict], is_collections: bool,
                       date: str | None) -> dict[str, Any]:
-    token = _datasets_payload_token(active, is_collections, date)
+    # docs/296: the open chip's rename lineage (None, and nothing read, for a
+    # chip never renamed) -- its version is part of what the rows depend on
+    try:
+        names = _chip_names()
+    except RuntimeError:        # no request / app (a direct call): no open chip
+        names = None
+    if names is not None and not names.active:
+        names = None
+    token = _datasets_payload_token(active, is_collections, date,
+                                    names.version if names is not None else None)
     slot = ("datasets", bool(is_collections), date or "")
     return _DATASETS_PAYLOAD.get(
-        slot, token, lambda: _datasets_payload_compute(active, is_collections, date),
+        slot, token, lambda: _datasets_payload_compute(active, is_collections, date, names),
         sizeof=lambda v: len(v["rows_json"]) + 4096)
 
 
+def _row_names_today(row: dict, store, names) -> None:
+    """docs/296: a run saved before the open chip's qubits were renamed gets
+    ``qn`` / ``pn`` -- its qubits and pairs in today's names (a name with
+    none kept as recorded) -- so the table shows and finds it under the
+    qubit it measured; ``q`` / ``p`` stay as the run recorded them."""
+    run = (getattr(store, "runs", None) or {}).get(row.get("id"))
+    if run is None:
+        return
+    rn = names.for_run(getattr(run, "folder_path", None))
+    if rn.identity or rn.src is None:
+        return
+    pairs = set(row.get("p") or ())
+    # today's names only (review): a qubit the chip no longer has (a rebuild
+    # label) gets none -- the row never answers to a name it does not hold
+    qn = [n for n in (rn.current(q, pair=q in pairs) for q in row.get("q") or ()) if n]
+    pn = [n for n in (rn.current(p, pair=True) for p in row.get("p") or ()) if n]
+    if qn != list(row.get("q") or ()):
+        row["qn"] = qn
+    if pn != list(row.get("p") or ()):
+        row["pn"] = pn
+
+
 def _datasets_payload_compute(active: list[dict], is_collections: bool,
-                              date: str | None) -> dict[str, Any]:
+                              date: str | None, names=None) -> dict[str, Any]:
     """Everything ``_datasets_view`` shows that is a function of the stores
     alone (see ``_DATASETS_PAYLOAD``)."""
     from quam_state_manager.core.dataset import FAVORITE_TAG
@@ -36062,8 +36302,11 @@ def _datasets_payload_compute(active: list[dict], is_collections: bool,
         store = fol["store"]
         folders.append({"key": fol["key"], "label": fol["label"], "full_path": fol["path"]})
         frows = store.list_runs_compact(date=date)
+        owned = names is not None and names.owns(store.folder_path)
         for row in frows:
             row["f"] = fol["key"]   # _compact_row returns a fresh dict — safe to tag
+            if owned:
+                _row_names_today(row, store, names)
             rows.append(row)
         tags_set.update(store.list_all_tags())
         if is_collections:
@@ -36121,6 +36364,12 @@ def _datasets_payload_compute(active: list[dict], is_collections: bool,
             exp_categories.append(
                 {"label": lbl,
                  "experiments": sorted(cat_map[lbl], key=natural_key)})
+    if names is not None:
+        # docs/296 review: a renamed chip's runs are counted by the names
+        # their qubits have today (q1 and the q2 it was are one qubit)
+        qubits_set = set()
+        for r in rows:
+            qubits_set.update(r.get("qn") or r.get("q") or ())
     stats = {
         "total_runs": total,
         "date_range": f"{dates[-1]} - {dates[0]}" if dates else "",
@@ -36749,6 +36998,14 @@ def datasets_changes_since():
     partial_scans = 0
     scan_ms_total = 0.0
     _exp_candidates: list = []
+    # docs/296 review P1-6: a delta row carries today's names exactly as the
+    # table's rows do (the client replaces the whole row)
+    try:
+        names = _chip_names()
+    except RuntimeError:
+        names = None
+    if names is not None and not names.active:
+        names = None
     for fol in active:
         if time.monotonic() >= deadline:
             skipped += 1
@@ -36760,8 +37017,11 @@ def datasets_changes_since():
             # instead of one huge folder blowing past the client's abort.
             delta = fol["store"].changes_since(ts, date=date,
                                                deadline=deadline)
+            owned = names is not None and names.owns(fol["store"].folder_path)
             for row in delta.get("updated", []):
                 row["f"] = fol["key"]
+                if owned:
+                    _row_names_today(row, fol["store"], names)
                 updated.append(row)
                 # docs/132: a new/updated run WITH a quam_state copy is an
                 # EXP-version candidate. Enqueue-only — the RunInfo lookup
@@ -37385,6 +37645,37 @@ _run_chip_identity_cache: dict[str, tuple[tuple[float, float], tuple[str, str]]]
 _RUN_CHIP_IDENTITY_CAP = 512
 
 
+def _chip_names(ctx: dict | None = None):
+    """docs/296: the open chip's rename lineage for the Datasets surfaces
+    (``run_names.ChipNames``), or None when no chip is open. A chip that was
+    never renamed answers ``active`` False and reads nothing more."""
+    ctx = ctx if ctx is not None else _active_ctx()
+    if ctx is None or ctx.get("type") != "quam" or ctx.get("store") is None:
+        return None
+    from quam_state_manager.core import run_names
+    store = ctx["store"]
+    with store._lock:
+        merged = store.merged
+    chip_dir = ctx.get("hub_chip_dir") or _hub_chip_dir(ctx["path"])
+    names = run_names.ChipNames(chip_dir, merged)
+    if names.active and chip_dir is not None:
+        try:
+            names._binding = _vh_binding(ctx, chip_dir)
+        except Exception:  # noqa: BLE001 -- the plain store reads the same ledger
+            names._binding = None
+    return names
+
+
+def _dataset_run_names(folder):
+    """docs/296: run *folder*'s qubit / pair names in the open chip's names
+    (``run_names.RunNames``); None when there is nothing to translate (no
+    chip open, or a chip that was never renamed)."""
+    names = _chip_names()
+    if names is None or not names.active:
+        return None
+    return names.for_run(folder)
+
+
 def _run_chip_identity(run_qs: Path) -> tuple[str, str]:
     """``(chip_token, chip_name)`` for a run's frozen quam_state folder, memoized
     on the state/wiring mtimes."""
@@ -37479,6 +37770,15 @@ def dataset_detail(uid):
         run_qs = Path(run["folder_path"]) / "quam_state"
         chip_token, chip_name = _run_chip_identity(run_qs)
     template = "_dataset_detail.html" if _is_htmx() else "dataset_detail.html"
+    # docs/296: a run saved before a rename names its qubits by their old ids;
+    # its fit targets are spelled in the open chip's names (or refused)
+    run_names_ = _dataset_run_names(run["folder_path"])
+    fit_names = {}
+    if run_names_ is not None and not run_names_.identity:
+        for qn in (run.get("fit_results") or {}):
+            note = run_names_.note(str(qn))
+            if note:
+                fit_names[str(qn)] = note
     # datasets-r2-20: an unreadable file / a missing figure is SAID
     file_health = ds.run_file_health(run_id)
     if "data.json" in file_health.get("unreadable", []):
@@ -37490,7 +37790,8 @@ def dataset_detail(uid):
         # be read and lists the images that are on disk instead.
         run = dict(run, figure_names=[], fit_results={})
     return render_template(template, **_ctx(page="dataset_detail"), run=run,
-                           fit_targets=resolve_fit_targets(run),
+                           fit_targets=resolve_fit_targets(run, names=run_names_),
+                           fit_names=fit_names,
                            uid=uid, folder_key=uid.split(":")[0],
                            run_chip_token=chip_token, run_chip_name=chip_name,
                            folder_label=folder_label, folder_path=str(ds.folder_path),
@@ -37601,6 +37902,17 @@ def dataset_ndview_data(uid):
         if getattr(run, "has_quam_state", False):
             token, name = _run_chip_identity(run.folder_path / "quam_state")
             extra["click"]["chip"] = {"token": token, "name": name}
+        # docs/296: the clicked entity is named as the RUN named it; a run
+        # saved before a rename fills {q} / {p} with today's name (or refuses)
+        names = _dataset_run_names(run.folder_path)
+        if names is not None and not names.identity:
+            from quam_state_manager.core import run_names
+            nmap = run_names.names_map(
+                names, list(run.qubits or ()) + list(run.qubit_pairs or ()))
+            extra["click"]["names"] = nmap
+            extra["click"]["refusals"] = {e: names.refusal(e)
+                                          for e, now in nmap.items() if now is None}
+            extra["click"]["refused"] = names.refusal(None)
     extra_members = json.dumps(extra, separators=(",", ":"))[1:-1].encode("utf-8")
     body = cube_bytes[:-1] + b"," + extra_members + b"}"
     resp = make_response(body)
@@ -37685,6 +37997,15 @@ def dataset_interactive_plot(uid):
     fig = build_interactive_figure(run, fig_key)
     if fig is None:
         return jsonify({"error": "Figure not available"}), 404
+    if fig.get("clickable"):
+        # docs/296: the click contract names the RUN's qubits; a run saved
+        # before a rename stages into today's names (or refuses)
+        names = _dataset_run_names(run.folder_path)
+        if names is not None and not names.identity:
+            from quam_state_manager.core import run_names
+            fig = dict(fig, clickable=run_names.translate_clickable(
+                fig["clickable"], names,
+                list(run.qubits or ()) + list(run.qubit_pairs or ())))
     return jsonify(fig)
 
 
@@ -37854,11 +38175,35 @@ def dataset_apply_selected_preview(uid):
             continue
         _flat(p, v)
 
+    # docs/296: a run saved before a qubit rename spells the selection in its
+    # OLD ids -- each field is written under its own qubit's name today, and a
+    # field with no qubit today is skipped with the reason, never guessed
+    names = None
+    chip_names = _chip_names(ctx)
+    if chip_names is not None and chip_names.active:
+        names = chip_names.for_run(Path(qs).parent)
+        if names.identity:
+            names = None
+
     rows = []
     with store._lock:
         merged = store.merged
         for path, new in leaves:
             row: dict[str, Any] = {"path": path, "new": new}
+            if names is not None:
+                now = names.target(path)
+                if now is None:
+                    row.update(old=None, status="skip",
+                               reason=names.refusal(names.entity_of(path)))
+                    rows.append(row)
+                    continue
+                if now != path:
+                    row.update(path=now, **{"from": path})
+                    path = now
+                # review P1-4: the value too -- a pointer or a qubit id
+                # spelled in the run's names would name another qubit today
+                new = names.value(new, path)
+                row["new"] = new
             found, cur = _walk(merged, path.split("."))
             row["old"] = cur if found else None
             if not found:
@@ -37908,11 +38253,16 @@ def dataset_apply_selected_preview(uid):
     counts: dict[str, int] = {}
     for r in rows:
         counts[r["status"]] = counts.get(r["status"], 0) + 1
+    extra = {}
+    if names is not None:
+        extra["renamed"] = ("This run predates a qubit rename"
+                            + (f" ({names.renames_text()})" if names.renames_text() else "")
+                            + ": each field is written under today's name.")
     return jsonify(ok=True, rows=rows, counts=counts, missing=missing,
                    capped=len(leaves) >= _CAP,
                    chip=_chip_display_name(Path(ctx["path"])),
                    same_chip=(alignment == _hist.ALIGN_ALIGNED),
-                   chip_unknown=(alignment == _hist.ALIGN_UNKNOWN))
+                   chip_unknown=(alignment == _hist.ALIGN_UNKNOWN), **extra)
 
 
 @bp.route("/dataset/<uid>/prev-state-diff")
@@ -38202,6 +38552,31 @@ def dataset_load_state(uid):
         return render_template("_status.html",
                                message=f"Could not read the run's quam_state: {exc}",
                                level="error"), 500
+    # docs/296: a run saved before a qubit rename names its qubits by their
+    # OLD ids. Staged as it is, it would undo the rename and land each value
+    # on the qubit that holds that name now -- so it is carried into today's
+    # names first (the rebuild's own rule), or refused when it cannot be.
+    rename_note = ""
+    chip_names = _chip_names(ctx)
+    if (chip_names is not None and chip_names.active
+            and chip_names.same_chip(Path(state_path).parent, state, wiring)):
+        from quam_state_manager.core import rename_lineage
+        run_era = rename_lineage.era(state)
+        if run_era != chip_names.current:
+            moved = chip_names.lineage.forward_state(state, wiring, chip_names.current)
+            if moved is None:
+                return render_template(
+                    "_status.html",
+                    message=("Not loaded: this run's qubit names cannot be carried into "
+                             f"{chip_label}'s current names (it was saved after a rename the "
+                             "chip does not have, or under one SM does not know). Loading it "
+                             "would put its values on the wrong qubits."),
+                    level="error"), 409
+            renamed = chip_names.for_era(run_era).renames_text()
+            state, wiring = moved
+            rename_note = (" This run predates a qubit rename"
+                           + (f" ({renamed})" if renamed else "")
+                           + "; its values were carried into today's names.")
     wc = ctx["working_copy"]
     try:
         with _active_wc_lock(ctx):
@@ -38263,7 +38638,7 @@ def dataset_load_state(uid):
             msg = render_template(
                 "_status.html",
                 message=(f"Run #{run_id}'s state is now LIVE on {chip_label}."
-                         + drift_note + replaced_note + ident_note
+                         + rename_note + drift_note + replaced_note + ident_note
                          # docs/198: it STAGES -- the chip moves on the
                          # following Apply, not on this press. Saying
                          # "restores" made a correct staging read as a
@@ -38298,7 +38673,7 @@ def dataset_load_state(uid):
                  "the top bar"
                  + (" (the live chip is untouched until then)."
                     if not _auto_apply_state() else ".")
-                 + _auto_push_note()),
+                 + rename_note + _auto_push_note()),
         level="success")
     # detail-area message + OOB tray refresh; stateRestored patches the pane
     # in place when it can (docs/144) and closes stale inspector panes only
@@ -38481,9 +38856,18 @@ def trends():
         return render_template(template, **_ctx(page="trends"), no_workspace=True)
     experiments: set[str] = set()
     qubits: set[str] = set()
+    trend_names = _trends_names(active)
     for f in active:
         experiments.update(f["store"].experiment_types)
-        qubits.update(f["store"].summary_stats.get("unique_qubits", []))
+        sn = (trend_names or {}).get(f["store"].instance_seq)
+        if sn is not None:
+            # docs/296: a renamed chip's runs offer their qubits by today's names
+            from quam_state_manager.core import run_names
+            with f["store"]._scan_lock:
+                runs = list(f["store"].runs.values())
+            qubits.update(run_names.run_qubits_now(runs, sn))
+        else:
+            qubits.update(f["store"].summary_stats.get("unique_qubits", []))
     folders = [{"key": f["key"], "label": f["label"], "full_path": f["path"]} for f in active]
     # Project lens (docs/63): pre-select the scope's recorded roots — all of
     # them only when they're provably the SAME chip (cross-chip trend merges
@@ -38562,6 +38946,21 @@ def _trends_query(sel: list[dict[str, Any]], experiment: str, qubit: str | None,
     return urlencode(q)
 
 
+def _trends_names(sel: list[dict[str, Any]]) -> dict[int, Any] | None:
+    """docs/296: ``{store instance_seq: run_names.StoreNames}`` for the
+    selected data folders that are the open chip's while that chip has been
+    renamed -- their runs are indexed under today's qubit names. None (and
+    nothing read) for a chip never renamed; another chip's folder is left as
+    its runs spell their names."""
+    names = _chip_names()
+    if names is None or not names.active:
+        return None
+    from quam_state_manager.core import run_names
+    store_names = run_names.StoreNames(names)
+    return {f["store"].instance_seq: store_names for f in sel
+            if names.owns(f["store"].folder_path)}
+
+
 def _trends_rescan(sel: list[dict[str, Any]]) -> None:
     """The data endpoints see every run on disk right now: the staleness gate
     (one stat per date dir) and, when it opened, the bounded incremental walk
@@ -38623,6 +39022,8 @@ def _trends_data_request():
         return None, "", None, ("The selected folders are different chips; "
                                 "a combined trend is meaningless.", 409)
     _trends_rescan(sel)
+    # docs/296: one physical qubit is one series across a rename
+    _trend_index.set_names([(f["key"], f["store"]) for f in sel], _trends_names(sel))
     return sel, experiment, qubit, None
 
 

@@ -7364,6 +7364,16 @@ window.ChipTrends = (function () {
         return function release() { if (!done) { done = true; _holds = Math.max(0, _holds - 1); } };
     }
     function busy() { return _holds > 0 && (Date.now() - _heldAt) < _HOLD_CAP_MS; }
+    // docs/296: the section's rename marks, on the chart's own time axis
+    function _renameMarks() {
+        var el = document.getElementById('topo-trends-renames');
+        var list = [];
+        try { list = el ? (JSON.parse(el.textContent || '[]') || []) : []; } catch (e) { list = []; }
+        var ST = window.SnapTime;
+        return list.map(function (r) {
+            return { x: (ST && ST.axisValue && ST.axisValue(r.t)) || r.t, words: r.words || '' };
+        });
+    }
     function render(charts, opts) {
         var release = hold();
         var draws = [];
@@ -7577,6 +7587,22 @@ window.ChipTrends = (function () {
             // toggle. houseLayout deep-merges UNDER the overrides above, so
             // every explicit choice here (tickformat, ranges, transparent
             // backgrounds) stands.
+            // docs/296: a Re-generate rename -- each line is one qubit on both
+            // sides; the dotted mark says its name changed there
+            var marks = axisType === 'date' ? _renameMarks() : [];
+            if (marks.length) {
+                layout.shapes = marks.map(function (m) {
+                    return { type: 'line', xref: 'x', yref: 'paper', x0: m.x, x1: m.x, y0: 0, y1: 1,
+                             line: { dash: 'dot', width: 1, color: '#888' } };
+                });
+                layout.annotations = marks.map(function (m) {
+                    // inside the plot, right of the mark: the 8 px top margin
+                    // (and the hover mode bar) would hide it above
+                    return { x: m.x, xref: 'x', y: 1, yref: 'paper', yanchor: 'top', xanchor: 'left',
+                             xshift: 3, showarrow: false, text: 'renamed', font: { size: 9 },
+                             hovertext: 'Renamed in Re-generate: ' + m.words };
+                });
+            }
             if (window.PlotTheme && window.PlotTheme.houseLayout) {
                 layout = window.PlotTheme.houseLayout(layout);
             }

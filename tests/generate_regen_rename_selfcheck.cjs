@@ -120,7 +120,7 @@ const DONE = { ok: true, status: 'ok', result: { qubits: ['q0', 'q1', 'q2'], qub
   merge: { carried: 10, grafted: 0, populate_protected: 0, populate_conflicts: [],
            qubits_renamed: [{ old: 'q1', new: 'q0' }, { old: 'q2', new: 'q1' },
                             { old: 'q3', new: 'q2' }],
-           pairs_renamed: [{ old: 'q1-q2', new: 'q0-q1' }] } };
+           pairs_renamed: [{ old: 'q1-q2', new: 'q0-q1' }], rename_record: '0123456789abcdef' } };
 
 (async function () {
   // ---- N1 + N2: a scheme-style map moves every record with its row -------
@@ -159,6 +159,23 @@ const DONE = { ok: true, status: 'ok', result: { qubits: ['q0', 'q1', 'q2'], qub
      'N5: the result names the renamed qubits (got ' + res.slice(0, 400) + ')');
   ok(/Pairs renamed with them: q1-q2 → q0-q1/.test(res),
      'N5: ...and the pairs (got ' + res.slice(0, 400) + ')');
+  // docs/296: the panel says whether the history follows the renamed qubits
+  ok(/History follows each renamed qubit/.test(res) && !/History will not follow/.test(res),
+     'N10: a recorded rename says the history follows (got ' + res.slice(0, 600) + ')');
+  {
+    const undone = JSON.parse(J(DONE));
+    delete undone.merge.rename_record;
+    undone.merge.rename_unmarked = true;
+    const w2 = makeWorld([undone]);
+    const G2 = hydrate(w2, 'regenerate');
+    G2._test.applyQubitIdMap({ q1: 'q0', q2: 'q1', q3: 'q2' });
+    G2._test.runBuild();
+    await settle();
+    const r2 = w2.document.getElementById('gen-build-result');
+    ok(/History will not follow the renamed qubits/.test(r2.textContent) &&
+       r2.querySelector('.gen-merge-rename-history.gen-merge-warn'),
+       'N10: an unmarked rename is a warning (got ' + r2.textContent.slice(0, 600) + ')');
+  }
 
   // ---- N3: a deleted row's leftover never shadows a renamed one ---------
   win = makeWorld([]);

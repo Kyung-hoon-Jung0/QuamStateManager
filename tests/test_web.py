@@ -287,7 +287,10 @@ class TestRound15PairDisplay:
         i = js.index("key: 'qubits'")
         seg = js[i:i + 400]
         assert "r.p" in seg and "r.q" in seg
-        assert seg.index("r.p") < seg.index("r.q.join")
+        # docs/296: the names a run's qubits have today (r.pn / r.qn) lead,
+        # pairs still before qubits
+        assert seg.index("r.p") < seg.index("r.q")
+        assert "r.pn" in seg and "r.qn" in seg
 
     def test_overview_row_prefers_pairs(self):
         html = self._read("web", "templates", "_dataset_detail.html")

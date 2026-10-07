@@ -29,6 +29,14 @@ What lives in RAM here, and what keeps it correct:
 ``PARAMS_MEMO``  the rendered Parameter Differences fragment per
     (folders, experiment, qubit, window).
 
+Renamed qubits (docs/296): a run saved before a Re-generate rename keys its
+fit results by the qubits' OLD ids. A store whose runs are the open chip's is
+indexed under a ``run_names.StoreNames`` (:func:`set_names`): every series is
+keyed by TODAY's name, so one physical qubit is one series. Its ``version``
+(the chip's era and known renames) is a component of every key built over
+that store, so a rename invalidates them; a store with no names (a chip never
+renamed, or another chip's data) is keyed exactly as before.
+
 Nothing is served for a token it was not computed at (``core/ramcache``).
 Every key is built by :func:`_key` from NAMED components, so the mutation
 sweep in tests/test_trend_index.py can drop each one and watch a pin fail.
@@ -97,14 +105,23 @@ class ExperimentTrend:
     ``incomplete`` maps the ids of runs whose files could not be read at their
     last parse (mid-write, or unreadable) to their qubit sets: they are not
     drawn, and the view says how many there are.
+    docs/296: ``names_v`` is the rename translation the index was built under
+    (None: names as the runs spell them). ``renamed`` holds the ids of runs
+    drawn under today's names; ``unmatched`` maps a run whose names (some or
+    all) have no name today -- or whose era cannot be told -- to those names:
+    their values are not drawn, and the view says how many runs that is.
     """
 
     __slots__ = ("experiment", "exp_gen", "run_ids", "dates", "times", "t_ms",
-                 "qubits", "figs", "params", "series", "incomplete", "how")
+                 "qubits", "figs", "params", "series", "incomplete", "how",
+                 "names_v", "renamed", "unmatched")
 
-    def __init__(self, experiment: str, exp_gen: int):
+    def __init__(self, experiment: str, exp_gen: int, names_v: Any = None):
         self.experiment = experiment
         self.exp_gen = exp_gen
+        self.names_v = names_v
+        self.renamed: set[int] = set()
+        self.unmatched: dict[int, frozenset] = {}
         self.run_ids: list[int] = []
         self.dates: list[str] = []
         self.times: list[str] = []
@@ -121,7 +138,7 @@ class ExperimentTrend:
         return self.run_ids[-1] if self.run_ids else -1
 
     _FIELDS = ("experiment", "exp_gen", "run_ids", "dates", "times", "t_ms", "qubits",
-               "figs", "params", "series", "incomplete")
+               "figs", "params", "series", "incomplete", "names_v", "renamed", "unmatched")
 
     def __eq__(self, other: object) -> bool:
         """Field-wise (shadow mode and the pins compare an appended index with
@@ -136,8 +153,9 @@ class ExperimentTrend:
     __hash__ = None  # type: ignore[assignment]
 
     @classmethod
-    def build(cls, experiment: str, exp_gen: int, runs: Iterable[Any]) -> "ExperimentTrend":
-        idx = cls(experiment, exp_gen)
+    def build(cls, experiment: str, exp_gen: int, runs: Iterable[Any],
+              names: Any = None) -> "ExperimentTrend":
+        idx = cls(experiment, exp_gen, _version(names))
         complete = []
         for r in runs:
             if getattr(r, "incomplete", False):
@@ -145,14 +163,17 @@ class ExperimentTrend:
             else:
                 complete.append(r)
         complete.sort(key=lambda r: r.run_id)
-        idx._append(complete)
+        idx._append(complete, names)
         return idx
 
-    def extended(self, exp_gen: int, touched: set, runs: Iterable[Any]) -> "ExperimentTrend":
+    def extended(self, exp_gen: int, touched: set, runs: Iterable[Any],
+                 names: Any = None) -> "ExperimentTrend":
         """A NEW index: this one plus ``runs`` (every id greater than
         ``max_run_id``). Copy-on-write -- ``self`` is never modified, so a
-        request still reading it sees a consistent object."""
-        new = ExperimentTrend(self.experiment, exp_gen)
+        request still reading it sees a consistent object. ``names`` must be
+        the translation ``self`` was built under (the caller rebuilds when it
+        is not)."""
+        new = ExperimentTrend(self.experiment, exp_gen, self.names_v)
         new.run_ids = list(self.run_ids)
         new.dates = list(self.dates)
         new.times = list(self.times)
@@ -162,6 +183,8 @@ class ExperimentTrend:
         new.params = list(self.params)
         new.series = {k: list(v) for k, v in self.series.items()}
         new.incomplete = {rid: q for rid, q in self.incomplete.items() if rid not in touched}
+        new.renamed = {rid for rid in self.renamed if rid not in touched}
+        new.unmatched = {rid: q for rid, q in self.unmatched.items() if rid not in touched}
         complete = []
         for r in runs:
             if getattr(r, "incomplete", False):
@@ -169,11 +192,11 @@ class ExperimentTrend:
             else:
                 complete.append(r)
         complete.sort(key=lambda r: r.run_id)
-        new._append(complete)
+        new._append(complete, names)
         new.how = "append"
         return new
 
-    def _append(self, runs_sorted: Sequence[Any]) -> None:
+    def _append(self, runs_sorted: Sequence[Any], names: Any = None) -> None:
         series = self.series
         for r in runs_sorted:
             i = len(self.run_ids)
@@ -181,13 +204,32 @@ class ExperimentTrend:
             self.dates.append(r.date)
             self.times.append(r.time)
             self.t_ms.append(run_instant_ms(r))
-            self.qubits.append(frozenset(r.qubits or ()))
+            # docs/296: the run's names in today's names (None: as spelled)
+            rn = names(r) if names is not None else None
+            if rn is not None and rn.identity:
+                rn = None
+            lost: set[str] = set()
+            if rn is not None:
+                pairs = set(getattr(r, "qubit_pairs", None) or ())
+
+                def now(name: str, _rn=rn, _pairs=pairs, _lost=lost) -> str | None:
+                    got = _rn.entity(name, pair=True if name in _pairs else None)
+                    if got is None:
+                        _lost.add(name)
+                    return got
+                self.qubits.append(frozenset(n for n in map(now, r.qubits or ()) if n is not None))
+            else:
+                self.qubits.append(frozenset(r.qubits or ()))
             self.figs.append(tuple(r.figure_names or ()))
             self.params.append(r.parameters if isinstance(r.parameters, dict) else {})
             fr = r.fit_results if isinstance(r.fit_results, dict) else {}
             for q, qv in fr.items():
                 if not isinstance(qv, dict):
                     continue
+                if rn is not None:
+                    q = now(q)
+                    if q is None:
+                        continue
                 for m, raw in qv.items():
                     if m == "success":
                         continue
@@ -202,6 +244,11 @@ class ExperimentTrend:
                     if len(arr) < i:
                         arr.extend([None] * (i - len(arr)))
                     arr.append(v)
+            if rn is not None:
+                if lost or not rn.known:
+                    self.unmatched[r.run_id] = frozenset(lost)
+                else:
+                    self.renamed.add(r.run_id)
         n = len(self.run_ids)
         for arr in series.values():
             if len(arr) < n:
@@ -212,7 +259,8 @@ class ExperimentTrend:
         are shared with the RunInfo that holds them, so only the slots count)."""
         n = len(self.run_ids)
         slots = sum(len(a) for a in self.series.values())
-        return 512 + n * 360 + slots * 8 + len(self.series) * 160 + len(self.incomplete) * 120
+        return (512 + n * 360 + slots * 8 + len(self.series) * 160 + len(self.incomplete) * 120
+                + len(self.renamed) * 40 + len(self.unmatched) * 120)
 
 
 def run_instant_ms(run: Any) -> int | None:
@@ -249,7 +297,9 @@ def _key(**components: Any) -> tuple:
 
     * index slot ``store`` + ``index_exp``, token ``exp_gen``;
     * series / params slot ``folders`` + ``exp`` + ``qubit`` (+ ``window``),
-      token ``ver`` + ``stores``, each store ``seq`` + ``gen`` + ``truncated``.
+      token ``ver`` + ``stores``, each store ``seq`` + ``gen`` + ``truncated``;
+    * docs/296: ``names`` (the rename translation's version) joins the index
+      token and a store's token only for a store indexed under one.
     """
     return tuple(sorted(components.items()))
 
@@ -331,7 +381,35 @@ def _watch_store(store: Any) -> None:
 
 def _drop_store(seq: int) -> None:
     _finalized.discard(seq)
+    _store_names.pop(seq, None)
     INDEX_MEMO.drop_where(lambda slot: dict(slot).get("store") == seq)
+
+
+# docs/296: the rename translation each store's runs are indexed under,
+# ``{instance_seq: run_names.StoreNames}``. Set per request by the Trends
+# routes (:func:`set_names`) and read by every function here -- the run-watch
+# tick included, so it keeps building the index the next request asks for.
+_store_names: dict[int, Any] = {}
+
+
+def _version(names: Any) -> Any:
+    return getattr(names, "version", None) if names is not None else None
+
+
+def set_names(selection: "Selection", names: Any) -> None:
+    """Index each selected store under ``names[store.instance_seq]`` (a
+    ``run_names.StoreNames``), or as its runs spell their names when it has
+    none -- a chip never renamed, or another chip's data folder."""
+    for _fk, s in selection:
+        n = (names or {}).get(s.instance_seq)
+        if _version(n) is None:
+            _store_names.pop(s.instance_seq, None)
+        else:
+            _store_names[s.instance_seq] = n
+
+
+def _names_of(store: Any) -> Any:
+    return _store_names.get(store.instance_seq)
 
 
 Selection = Sequence[tuple[str, Any]]      # [(folder_key, DatasetStore), ...]
@@ -341,38 +419,52 @@ def _locks(selection: Selection, extra: Iterable[Any] = ()) -> list[Any]:
     return [s._scan_lock for _fk, s in selection] + [lk for lk in extra if lk is not None]
 
 
-def _index_token(gen: int) -> tuple:
-    return _key(exp_gen=gen)
+def _index_token(gen: int, names_v: Any = None) -> tuple:
+    if names_v is None:
+        return _key(exp_gen=gen)
+    return _key(exp_gen=gen, names=names_v)
 
 
 def experiment_index(store: Any, experiment: str, *, forbid_held: Iterable[Any] = ()
                      ) -> ExperimentTrend:
     """The RAM index of one experiment in one store, current as of this call."""
     _watch_store(store)
+    names = _names_of(store)
+    names_v = _version(names)
 
     def compute(prev: ExperimentTrend | None) -> Keyed:
+        if prev is not None and prev.names_v != names_v:
+            prev = None             # built under another translation: rebuild
         if prev is not None:
             gen, touched, runs = store.experiment_snapshot(
                 experiment, since_gen=prev.exp_gen, append_above=prev.max_run_id)
         else:
             gen, touched, runs = store.experiment_snapshot(experiment)
         if prev is not None and touched is not None:
-            idx = prev.extended(gen, touched, runs)
+            idx = prev.extended(gen, touched, runs, names)
         else:
-            idx = ExperimentTrend.build(experiment, gen, runs)
-        return Keyed(idx, _index_token(gen))
+            idx = ExperimentTrend.build(experiment, gen, runs, names)
+        return Keyed(idx, _index_token(gen, names_v))
 
     return INDEX_MEMO.get(_key(store=store.instance_seq, index_exp=experiment),
-                          _index_token(store.exp_gen.get(experiment, 0)),
+                          _index_token(store.exp_gen.get(experiment, 0), names_v),
                           compute, incremental=True, wait_s=WAIT_S,
                           forbid_held=list(forbid_held) + [store._scan_lock])
 
 
+def _store_token(seq: int, gen: int, truncated: bool, names_v: Any) -> tuple:
+    if names_v is None:
+        return _key(seq=seq, gen=gen, truncated=truncated)
+    return _key(seq=seq, gen=gen, truncated=truncated, names=names_v)
+
+
 def _data_token(selection: Selection, experiment: str, gens: Sequence[int],
-                truncated: Sequence[bool]) -> tuple:
+                truncated: Sequence[bool], names_vs: Sequence[Any] | None = None) -> tuple:
+    if names_vs is None:
+        names_vs = [_version(_names_of(s)) for _fk, s in selection]
     return _key(ver=PAYLOAD_VER,
-                stores=tuple(_key(seq=s.instance_seq, gen=g, truncated=t)
-                             for (_fk, s), g, t in zip(selection, gens, truncated)))
+                stores=tuple(_store_token(s.instance_seq, g, t, nv)
+                             for (_fk, s), g, t, nv in zip(selection, gens, truncated, names_vs)))
 
 
 def _slot(selection: Selection, experiment: str, qubit: str | None,
@@ -461,6 +553,12 @@ def build_payload(parts: Sequence[tuple[str, ExperimentTrend]], experiment: str,
 
     incomplete = sum(1 for _fk, idx in parts for _rid, qs in idx.incomplete.items()
                      if qubit is None or qubit in qs)
+    # docs/296: only a view over a renamed chip's runs says anything about it
+    renames = {}
+    if any(idx.names_v is not None for _fk, idx in parts):
+        renames = {"renamed": sum(1 for pi, ri in rows
+                                  if parts[pi][1].run_ids[ri] in parts[pi][1].renamed),
+                   "unmatched": sum(len(idx.unmatched) for _fk, idx in parts)}
     return {
         "v": v,
         "ver": PAYLOAD_VER,
@@ -474,6 +572,7 @@ def build_payload(parts: Sequence[tuple[str, ExperimentTrend]], experiment: str,
         "series": series,
         "fig_keys": fig_keys,
         "fig_runs": fig_runs,
+        **renames,
     }
 
 
@@ -505,7 +604,8 @@ def series_blob(selection: Selection, experiment: str, qubit: str | None, *,
 
     def compute() -> Keyed:
         parts, trunc = _parts(selection, experiment, forbid)
-        token = _data_token(selection, experiment, [idx.exp_gen for _fk, idx in parts], trunc)
+        token = _data_token(selection, experiment, [idx.exp_gen for _fk, idx in parts], trunc,
+                            [idx.names_v for _fk, idx in parts])
         v = _digest(_slot(selection, experiment, qubit), token)
         payload = build_payload(parts, experiment, qubit, merged=len(selection) > 1,
                                 indexing=any(trunc), v=v)
@@ -576,7 +676,7 @@ def cold_series_payload(selection: Selection, experiment: str, qubit: str | None
     gens = []
     for fk, s in selection:
         gen, _t, runs = s.experiment_snapshot(experiment)
-        parts.append((fk, ExperimentTrend.build(experiment, gen, runs)))
+        parts.append((fk, ExperimentTrend.build(experiment, gen, runs, _names_of(s))))
         gens.append(gen)
     trunc = [bool(getattr(s, "scan_truncated", False)) for _fk, s in selection]
     v = _digest(_slot(selection, experiment, qubit),
@@ -636,7 +736,8 @@ def params_blob(selection: Selection, experiment: str, qubit: str | None, window
 
     def compute() -> Keyed:
         parts, trunc = _parts(selection, experiment, forbid)
-        token = _data_token(selection, experiment, [idx.exp_gen for _fk, idx in parts], trunc)
+        token = _data_token(selection, experiment, [idx.exp_gen for _fk, idx in parts], trunc,
+                            [idx.names_v for _fk, idx in parts])
         v = _digest(_slot(selection, experiment, qubit), token)
         data = param_diff_data(parts, qubit, merged=len(selection) > 1, window=window, v=v)
         return Keyed(ParamsBlob(render(data), v), token)
@@ -653,7 +754,7 @@ def cold_param_diff_data(selection: Selection, experiment: str, qubit: str | Non
     gens = []
     for fk, s in selection:
         gen, _t, runs = s.experiment_snapshot(experiment)
-        parts.append((fk, ExperimentTrend.build(experiment, gen, runs)))
+        parts.append((fk, ExperimentTrend.build(experiment, gen, runs, _names_of(s))))
         gens.append(gen)
     trunc = [bool(getattr(s, "scan_truncated", False)) for _fk, s in selection]
     v = _digest(_slot(selection, experiment, qubit),

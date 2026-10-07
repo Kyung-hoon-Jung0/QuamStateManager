@@ -116,6 +116,53 @@ def _shared_uid_memo(roots_key) -> dict:
         return memo
 
 
+def _paths_today(conn, index, ren, numeric):
+    """docs/296: every recorded path in today's spelling -- each path read in
+    the era of the events that recorded it (a path saved before a rename is
+    listed under today's name; a name only an older era used, and that names
+    no value today, is not listed). Counts are the events per today's path."""
+    from bisect import bisect_left
+    from quam_state_manager.core.hub_store import OPS
+    segs = ren.segments()
+    counts: dict[str, int] = {}
+    num: set[str] = set()
+
+    from quam_state_manager.core.rename_lineage import is_label
+
+    def add(now, n, pid):
+        # a rebuild label (a qubit the chip no longer has) is no path of today's
+        if now is None or not n or any(is_label(k) for k in now.split(".")[:3]):
+            return
+        counts[now] = counts.get(now, 0) + n
+        if pid in numeric:
+            num.add(now)
+    # the event where a rename came into force holds rows of BOTH spellings
+    # (the old names going, the new ones arriving): each row is read in the
+    # era its own side belongs to
+    bounds = {lo: (era, ren.timeline.at(lo - 1)) for lo, _hi, era in segs
+              if lo > 0 and ren.timeline.at(lo - 1) != era}
+    for p, pid in index.paths.items():
+        posts = index.path_postings.get(pid, ())
+        if not posts:
+            continue
+        pos = sorted(index.positions[e] for e in posts if e in index.positions)
+        for lo, hi, era in segs:
+            start = lo + 1 if lo in bounds else lo
+            add(ren.holder(p, era), bisect_left(pos, hi) - bisect_left(pos, start), pid)
+    for b, (era, before) in bounds.items():
+        seen: dict[str, int] = {}
+        for path, op, pid in conn.execute(
+                "SELECT p.path, c.op, c.pid FROM changes c JOIN paths p USING(pid) WHERE c.eid=?",
+                (index.eids[b],)):
+            now = ren.holder(path, before if op == OPS["gone"] else era)
+            if now is not None and (now not in seen or pid in numeric):
+                seen[now] = pid
+        for now, pid in seen.items():          # one event counts once per path
+            add(now, 1, pid)
+    order = tuple(sorted(counts))
+    return order, counts, frozenset(num), frozenset(order)
+
+
 class LedgerTable:
     """The Trends table interface (``chip_trends_ram.table``'s methods the
     renderers call) over the chip's ledger.
@@ -126,10 +173,12 @@ class LedgerTable:
     value a point is compared with), the registered dataset roots (a point's
     data link) and the sync status (the notes)."""
 
-    def __init__(self, ctx, answer, binding, read, present, roots, roots_sig=None):
+    def __init__(self, ctx, answer, binding, read, present, roots, roots_sig=None, scope=None):
         """*roots*: the dataset roots a point's data link resolves against,
         or a callable returning them (resolved only when a part is computed);
-        *roots_sig*: what names them in the cache token (their spelling)."""
+        *roots_sig*: what names them in the cache token (their spelling);
+        *scope*: the chip's rename lineage and today's era (docs/296) -- the
+        path list is then every recorded path in today's spelling."""
         self.ctx, self.answer, self.binding = ctx, answer, binding
         #: the read's own building / preparing answer, when one did not
         #: answer from the ledger (the surface waits on it)
@@ -151,15 +200,32 @@ class LedgerTable:
                        sort_keys=True, default=str))
         self.uid_memo: dict = _shared_uid_memo(self.token[len(self.ledger_token) + 1])
 
+        scope = scope or {}
+        lineage = scope.get("lineage")
+        era = tuple(scope.get("era") or ())
+        self._lineage = lineage
+        # docs/296 review P1-1: two folders of one chip share its history dir
+        # (a rebuild and its source; both start at mutation_seq 0) and read it
+        # in different rename eras -- an answer is valid for ONE open folder
+        # and ONE era
+        self.token += (str(ctx.get("path") or ""), era,
+                       tuple(sorted(lineage.recs)) if lineage is not None else ())
+
         def paths():
             with hub_index.snapshot(binding) as (conn, index):
                 numeric = {pid for (pid,) in conn.execute(
                     "SELECT DISTINCT pid FROM changes WHERE num IS NOT NULL")}
+                if lineage is not None:
+                    from quam_state_manager.core.hub_eras import Renamer
+                    ren = Renamer(conn, index, lineage, era)
+                    if ren.active:
+                        return _paths_today(conn, index, ren, numeric)
                 counts = {p: len(index.path_postings.get(pid, ())) for p, pid in index.paths.items()}
                 return tuple(index.paths), counts, frozenset(
                     p for p, pid in index.paths.items() if pid in numeric), frozenset(index.paths)
+        token = self.ledger_token + ((era, tuple(sorted(lineage.recs))) if lineage is not None else ())
         self.paths, self.counts, self.numeric, self.path_set = _CACHE.get(
-            (self.directory, "paths"), self.ledger_token, paths, wait_s=_WAIT_S)
+            (self.directory, "paths"), token, paths, wait_s=_WAIT_S)
         # what every surface says beside the answer (degraded / deferred /
         # idle / no data folder): the sync status's notes, never a per-value
         # "the value now differs" (that one belongs to the value itself)
@@ -273,6 +339,26 @@ class LedgerTable:
             self.attrs[dp] = attrs
             out[dp] = rows
         return out
+
+    def renames(self) -> list[dict]:
+        """docs/296: every point where a Re-generate rename came into force
+        on this chip -- ``[{"t", "renames"}]`` oldest first -- for the
+        charts' marks (empty for a chip that was never renamed)."""
+        lineage = self._lineage
+        if lineage is None:
+            return []
+
+        def compute():
+            from quam_state_manager.core.hub_eras import EraTimeline, first_rename_at
+            with hub_index.snapshot(self.binding) as (conn, index):
+                tl = EraTimeline(conn, index)
+                out = []
+                for b in tl.boundaries:
+                    if 0 < b < len(index.eids) and first_rename_at(tl, b):
+                        out.append({"t": value_history.iso_z(index.t[b]),
+                                    "renames": lineage.label(tl.at(b - 1), tl.at(b))})
+                return out
+        return self.part(("renames",), compute)
 
     def leaf_series(self, dp):
         """One path's series with no held point (the old tier's shape)."""

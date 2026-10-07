@@ -89,7 +89,8 @@ def _decode(cursor):
 
 def timeline(store, q=None, kinds=None, entity=None, path=None, day_from=None,
              day_to=None, cursor=None, limit=50, include_runs=False,
-             include_ambiguous=False, path_prefix=False, event_id=None, changed_only=False):
+             include_ambiguous=False, path_prefix=False, event_id=None, changed_only=False,
+             lineage=None, era=()):
     """Return {events: [... with changes], cursor: str | None}, newest first.
 
     The cursor freezes the initial max eid, excluding subsequent appends even
@@ -109,6 +110,11 @@ def timeline(store, q=None, kinds=None, entity=None, path=None, day_from=None,
     docs/283 (Param History Changes): ``path_prefix`` treats ``path`` as a
     case-insensitive prefix of the holder path; ``event_id`` keeps one event;
     ``changed_only`` keeps events that changed at least one value.
+    docs/296: ``lineage`` / ``era`` (the chip's rename lineage and today's
+    era) -- every row is spelled in today's ids (``recorded_as`` keeps the
+    spelling it was saved under), the event where a rename came into force
+    has its rows recomputed qubit by qubit (``renamed_here``), and ``path``
+    is matched in each event's own era.
     """
     with snapshot(store) as (conn, index):
         if not isinstance(limit, int) or isinstance(limit, bool) or limit < 1:
@@ -131,6 +137,12 @@ def timeline(store, q=None, kinds=None, entity=None, path=None, day_from=None,
                     or data.get("filters") != signature):
                 raise ValueError("timeline cursor belongs to another ledger, zone, or query")
             high, last = data["high"], tuple(data["last"])
+        ren = None
+        if lineage is not None and (lineage.active or era):
+            from quam_state_manager.core.hub_eras import Renamer
+            ren = Renamer(conn, index, lineage, era)
+            if not ren.active:
+                ren = None
         found = _search(store, index, q)
         if kinds:
             allowed = set()
@@ -139,7 +151,10 @@ def timeline(store, q=None, kinds=None, entity=None, path=None, day_from=None,
             found.intersection_update(allowed)
         if entity is not None:
             found.intersection_update(index.postings["entity"].get(entity.lower(), ()))
-        if path is not None:
+        if path is not None and ren is not None:
+            from quam_state_manager.core.hub_eras import path_filter
+            found.intersection_update(path_filter(index, ren, path, bool(path_prefix)))
+        elif path is not None:
             if path_prefix:
                 # docs/283: Param History Changes' filter -- a case-insensitive
                 # prefix of the holder path (the change-point index's LIKE 'p%')
@@ -229,6 +244,16 @@ def timeline(store, q=None, kinds=None, entity=None, path=None, day_from=None,
                                "filters": signature, "high": high,
                                "last": index.keys[selected[-1]]}) if more else None
         _taken_back(conn, events)
+        if ren is not None:
+            from quam_state_manager.core.hub_eras import annotate
+            annotate(conn, index, ren, [events[eid] for eid in selected])
+            if path is not None:
+                # the event where a rename came into force is listed by the rows
+                # it has once each qubit is compared with itself
+                low = path.lower()
+                selected = [eid for eid in selected if any(
+                    (c["path"].lower().startswith(low) if path_prefix else c["path"] == path)
+                    for c in events[eid]["changes"])]
         result = {"events": [events[eid] for eid in selected], "cursor": next_cursor}
         if include_ambiguous:
             result["ambiguous_run_ids"] = {row[0] for row in conn.execute(

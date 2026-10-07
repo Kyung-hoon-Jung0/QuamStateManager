@@ -80,6 +80,7 @@
         <span class="ph-change-exp vh-by">{{ g.label }}</span>
         {% if g.sub %}<span class="muted vh-sub">{{ g.sub }}</span>{% endif %}
         {% for flag in g.flags or [] %}<span class="vh-flag">{{ flag }}</span>{% endfor %}
+        {% if g.renamed_here %}<span class="vh-flag vh-flag-renamed" title="A Re-generate rename came into force in this state ({{ g.renamed_here }}); its rows compare each qubit with itself under its old name">renamed here: {{ g.renamed_here_short or g.renamed_here }}</span>{% endif %}
         {% if g.uid %}
         <button type="button" class="btn-xs outline"
                 hx-get="/dataset/{{ g.uid }}" hx-target="#inspector-pane"
@@ -109,7 +110,8 @@
               <button type="button" class="ph-path-btn"
                       hx-get="/field/history?path={{ r.path | urlencode }}"
                       hx-target="#inspector-pane" hx-swap="innerHTML"
-                      title="Open this parameter's full timeline">{{ r.path }}</button>
+                      title="Open this parameter's full timeline">{{ r.path }}</button>{% if r.recorded_as %}
+              <span class="vh-flag vh-flag-renamed" title="Recorded as {{ r.recorded_as }}, before a Re-generate rename">as {{ r.recorded_short }}</span>{% endif %}
             </td>
             {% if hub_mode == 'ledger' %}
             <td class="ph-change-new" colspan="3">{{ before_after(r.previous, r.value, 'first' if r.is_first else r.op) }}</td>

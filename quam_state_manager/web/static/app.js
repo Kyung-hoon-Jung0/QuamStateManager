@@ -15881,7 +15881,7 @@ function _showPlotApplyPopup(mappings, pt, expName, qubitName) {
 /* Open the editable parameter-apply popup for pre-computed {dot_path, value}
    updates. Shared by the Data tab (axis→path mappings) and the Interactive tab
    (recipe `clickable` spec). Activates the loaded state first so edits target it. */
-function _openPlotApplyPopup(updates, expName, qubitName, contextRows, chipExpect, runUid) {
+function _openPlotApplyPopup(updates, expName, qubitName, contextRows, chipExpect, runUid, qubitNow) {
     if (!updates || !updates.length) return;
     // chipExpect = {token, name} for a dataset fit-apply: the run's OWN chip
     // identity. We carry it into every Apply so the server refuses (409) to
@@ -15890,7 +15890,7 @@ function _openPlotApplyPopup(updates, expName, qubitName, contextRows, chipExpec
     function render() {
         // Even if activation failed, still render — the popup shows real
         // per-row errors when Apply is clicked.
-        _renderPlotApplyPopup(updates, expName, qubitName, contextRows, expect, runUid);
+        _renderPlotApplyPopup(updates, expName, qubitName, contextRows, expect, runUid, qubitNow);
         _fetchPlotApplyOldValues(updates);
     }
     // Cross-chip pre-check: warn BEFORE the popup if the loaded chip isn't
@@ -16041,7 +16041,10 @@ window.applyAllFitValues = applyAllFitValues;
    dot-path(s), the per-target unit transform (value = axisVal*scale + offset),
    and the figure's qubit. */
 function _attachInteractivePlotClickHandler(plotDiv, clickable, runId) {
-    if (!clickable || !clickable.targets || !clickable.targets.length) return;
+    // docs/296: a run saved before a qubit rename whose qubit has no name on
+    // the loaded chip carries no targets but a `refused` sentence -- the click
+    // says it instead of staging anything
+    if (!clickable || ((!clickable.targets || !clickable.targets.length) && !clickable.refused)) return;
     // 2026-09-27 (big30x journey): the host was swapped out while Plotly
     // drew -- a detached div was never made a plot and has no .on; a plot
     // that is gone has nothing to click (it threw a TypeError)
@@ -16053,6 +16056,24 @@ function _attachInteractivePlotClickHandler(plotDiv, clickable, runId) {
         var root = _dsRootFor(plotDiv);   // QA r2-07: the column this tile is in
         var q = clickable.qubit || (pt.customdata != null ? String(pt.customdata).trim() : null);
         if (!q) { var qs = _getRunQubits(root); if (qs.length === 1) q = qs[0]; }
+        if (clickable.refused) { _showPlotClickToast(clickable.refused, null, null); return; }
+        // docs/296: `names` maps the run's qubit names to the loaded chip's
+        // (present only when the run predates a rename); a {q} path is filled
+        // with today's name, and a name with none is refused, never guessed
+        var qNow = q;
+        if (clickable.names) {
+            qNow = (q != null && Object.prototype.hasOwnProperty.call(clickable.names, q))
+                ? clickable.names[q] : null;
+            var templated = (clickable.targets || []).some(function(t) {
+                return String(t.path).indexOf('{') >= 0;
+            });
+            if (!qNow && templated) {
+                _showPlotClickToast((clickable.refusals && clickable.refusals[q]) ||
+                    'Not applied: this qubit of the run has no name on the loaded chip since the rename.',
+                    null, null);
+                return;
+            }
+        }
 
         var updates = [];
         clickable.targets.forEach(function(t) {
@@ -16060,7 +16081,7 @@ function _attachInteractivePlotClickHandler(plotDiv, clickable, runId) {
             // set values from both x and y — e.g. flux on y, frequency on x).
             var av = ((t.axis || clickable.axis) === 'y') ? pt.y : pt.x;
             if (av === undefined || av === null) return;
-            var path = String(t.path).replace('{q}', q || '').replace('{name}', q || '');
+            var path = String(t.path).replace('{q}', qNow || '').replace('{name}', qNow || '');
             if (path.indexOf('{') >= 0) return;  // unresolved qubit → skip
             var value;
             if (t.transform && t.transform.type === 'dbm_to_amp') {
@@ -16125,8 +16146,10 @@ function _attachInteractivePlotClickHandler(plotDiv, clickable, runId) {
         // Carry the run's own chip identity so the server 409s a cross-chip
         // write (same gate as the Results-tab apply path) — without it a run's
         // CZ amp could silently land on a different chip reusing pair names.
+        // docs/296 review: the popup also names the qubit the edit lands on
+        // today (the run's own name stays the key its fit audit reads)
         _openPlotApplyPopup(updates, expName, q, contextRows, _runChipExpect(root),
-                            _dsRunUidOf(root));
+                            _dsRunUidOf(root), (qNow && qNow !== q) ? qNow : null);
     });
 }
 window._attachInteractivePlotClickHandler = _attachInteractivePlotClickHandler;
@@ -16160,7 +16183,7 @@ function _updatePlotRowDomainWarning(row) {
     else { box.textContent = ''; box.hidden = true; }
 }
 
-function _renderPlotApplyPopup(updates, expName, qubitName, contextRows, chipExpect, runUid) {
+function _renderPlotApplyPopup(updates, expName, qubitName, contextRows, chipExpect, runUid, qubitNow) {
     var rowsBox = document.getElementById('plot-apply-rows');
     var ctxBox = document.getElementById('plot-apply-context');
     var popup = document.getElementById('plot-apply-popup');
@@ -16181,7 +16204,8 @@ function _renderPlotApplyPopup(updates, expName, qubitName, contextRows, chipExp
     if (ctxBox) {
         var bits = [];
         if (expName)   bits.push('<small>Experiment: <code>' + _ppEscape(expName) + '</code></small>');
-        if (qubitName) bits.push('<small>Qubit: <code>'      + _ppEscape(qubitName) + '</code></small>');
+        if (qubitName) bits.push('<small>Qubit: <code>'      + _ppEscape(qubitNow || qubitName) + '</code>'
+                                 + (qubitNow ? ' (as <code>' + _ppEscape(qubitName) + '</code>)' : '') + '</small>');
         // The edit targets the LOADED chip (not the dataset's own snapshot) —
         // show the active context's path, refreshed by the popup's pre-check;
         // the load-path box is only a fallback when nothing is loaded.
@@ -18591,6 +18615,11 @@ window.DatasetTrends = (function () {
         }
         if (d.incomplete) bits.push(plural(d.incomplete, 'run') + ' whose files could not be read '
             + '(still being written, or unreadable) ' + (d.incomplete === 1 ? 'is' : 'are') + ' not shown.');
+        /* docs/296: runs saved before a qubit rename are drawn under today's names */
+        if (d.renamed) bits.push(plural(d.renamed, 'run') + ' from before a qubit rename '
+            + (d.renamed === 1 ? 'is' : 'are') + " drawn under today's qubit names.");
+        if (d.unmatched) bits.push(plural(d.unmatched, 'run') + ' saved under qubit names with no match on '
+            + "today's chip " + (d.unmatched === 1 ? 'is' : 'are') + ' not drawn for those qubits.');
         if (d.indexing) bits.push('The data folder is still being indexed — runs not indexed yet are not shown.');
         return bits.join(' ');
     }
@@ -24160,9 +24189,19 @@ window.FieldHistory = (function () {
             },
             hovertemplate: "%{customdata}<br>%{y}<extra></extra>",
         };
+        // docs/296: where a Re-generate rename happened -- the line on each
+        // side is the same qubit, the dashed mark says the name changed there
+        var renames = [];
+        var renEl = p.querySelector("#fh-chart-renames");
+        if (renEl) { try { renames = JSON.parse(renEl.textContent || "[]") || []; } catch (e) { renames = []; } }
         var layout = {
             height: 128,
             margin: { l: 46, r: 8, t: 6, b: 30 },
+            shapes: renames.map(function (t) {
+                var x = (ST && ST.axisValue(t)) || t;
+                return { type: "line", xref: "x", yref: "paper", x0: x, x1: x, y0: 0, y1: 1,
+                         line: { color: muted, width: 1, dash: "dot" } };
+            }),
             xaxis: { type: "date", tickfont: { size: 9 } },
             // Same rule as the Trends charts and the drawer, asked for
             // rather than spelled again -- this chart had reached the
@@ -27143,6 +27182,8 @@ window.DsPick = (function () {
             (c.same ? ' · ' + c.same + ' already equal' : '') +
             (c.skip ? ' · ' + c.skip + ' skipped' : '') +
             '. Goes into the working state (Review, then Apply); Ctrl+Z undoes it.</p>';
+        // docs/296: a run saved before a qubit rename is written in today's names
+        if (d.renamed) html += '<p class="muted ds-pick-renamed">' + esc(d.renamed) + '</p>';
         if (!d.same_chip) {
             html += '<label class="ds-pick-warn"><input type="checkbox" class="ds-pick-ack"> ' +
                 (d.chip_unknown ? 'This run\'s chip could not be verified against the open chip.'
@@ -27161,6 +27202,7 @@ window.DsPick = (function () {
                 html += '<tr class="ds-pick-r ds-pick-' + r.status + '"' + (r.status === 'same' ? ' hidden' : '') + '>' +
                     '<td class="ds-pick-path" title="' + esc(r.path) + '">' + esc(r.path) +
                     (r.target ? '<div class="muted ds-pick-target">writes → ' + esc(r.target) + ' (shared by a pointer)</div>' : '') +
+                    (r.from ? '<div class="muted ds-pick-from">in this run: ' + esc(r.from) + '</div>' : '') +
                     (r.reason ? '<div class="muted">' + esc(r.reason) + '</div>' : '') + '</td>' +
                     '<td><code>' + esc(show(r.old)) + '</code></td>' +
                     '<td><code>' + esc(show(r['new'])) + '</code></td>' +

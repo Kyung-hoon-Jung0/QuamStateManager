@@ -11,6 +11,14 @@
   {{ 'is' if hist.parallel_hidden == 1 else 'are' }} not part of this folder's timeline.
 </p>
 {%- endif -%}
+{# docs/296: snapshots saved before a Re-generate rename name another qubit
+   by this path; the snapshot history cuts there (the change ledger joins
+   each qubit's history across the rename) #}
+{%- if hist.renamed_hidden -%}
+<p class="fh-other-note fh-renamed-note">
+  {{ hist.renamed_hidden }} older snapshot{{ 's' if hist.renamed_hidden != 1 }} saved before the qubit rename{% if hist.renamed and hist.renamed.since %} of {{ hist.renamed.since | ts_local(short=True) }}{% endif %} {{ 'is' if hist.renamed_hidden == 1 else 'are' }} not shown: this value had another name then. Link a data folder to the chip for its full history across the rename.
+</p>
+{%- endif -%}
 {%- endmacro %}
 {# Per-field value-history panel (the 🕘 button on Live-Edit cells and
    inspector rows). Injected into the FieldHistory floating container by

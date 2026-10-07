@@ -62,7 +62,7 @@
             {% if p.is_current %}<span class="ch-chip-now">current</span>{% endif %}
             {% if _prev and p.usable and _prev.usable %}{{ delta_chip(_prev.value, p.value, 'ch-chip-delta') }}{% endif %}
             {# who set it, on its own line under the value: the chip never clips it #}
-            <span class="vh-chip-who"><span class="vh-chip-by">{{ p.label }}</span>{% if p.provenance not in ('run_proven', 'sm') %}<span class="vh-chip-sub"> · {{ p.sub }}</span>{% endif %}{% if p.before_via %}<span class="vh-chip-bv"> · before {{ row.via[0].alias if row.via else 'the alias' }} pointed here</span>{% endif %}</span>
+            <span class="vh-chip-who"><span class="vh-chip-by">{{ p.label }}</span>{% if p.provenance not in ('run_proven', 'sm') %}<span class="vh-chip-sub"> · {{ p.sub }}</span>{% endif %}{% if p.before_via %}<span class="vh-chip-bv"> · before {{ row.via[0].alias if row.via else 'the alias' }} pointed here</span>{% endif %}{% if p.recorded_as %}<span class="vh-chip-renamed" title="Recorded as {{ p.recorded_as }}, before a Re-generate rename"> · as {{ p.recorded_as_short }}</span>{% endif %}</span>
           </button>
           {% if p.uid %}
           <button type="button" class="ch-chip-data" hx-get="/dataset/{{ p.uid }}"

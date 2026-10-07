@@ -148,7 +148,7 @@ def _attr(run, key, default=None):
     return getattr(run, key, default)
 
 
-def resolve_fit_targets(run) -> dict[str, dict[str, dict[str, Any]]]:
+def resolve_fit_targets(run, names=None) -> dict[str, dict[str, dict[str, Any]]]:
     """Map a run's pushable fit_results to state dot-paths.
 
     Returns ``{qname: {fit_key: {"path", "value" (scaled), "label"}}}`` for every
@@ -156,6 +156,13 @@ def resolve_fit_targets(run) -> dict[str, dict[str, dict[str, Any]]]:
     AND whose value is a finite number. Diagnostics, non-numeric, pointer-string,
     boolean and NaN values are omitted, so only mappable rows get an Apply button.
     Accepts either a RunInfo object or the dict that ``get_run`` returns.
+
+    ``names`` (docs/296, a ``run_names.RunNames``): the run's names in the
+    LOADED chip's names. ``qname`` stays the run's own key (it labels the
+    run's fit), the path is spelled in today's names -- a run saved before a
+    rename names its qubits by their old ids. A row with no qubit or pair on
+    the loaded chip is ``{"refused": <sentence>, "label"}`` instead (no
+    ``path``: never a guessed target).
     """
     spec = _match(_attr(run, "experiment_name", "") or "")
     if not spec:
@@ -183,6 +190,13 @@ def resolve_fit_targets(run) -> dict[str, dict[str, dict[str, Any]]]:
                 if not op:
                     continue
                 path = path.replace("{operation}", str(op))
+            if names is not None and not names.identity:
+                now = names.target(path)
+                if now is None:
+                    rows[fit_key] = {"refused": names.refusal(str(qname)),
+                                     "label": entry.get("label", fit_key)}
+                    continue
+                path = now
             scale = entry.get("scale", 1.0)
             rows[fit_key] = {"path": path, "value": qres[fit_key] * scale,
                              "label": entry.get("label", fit_key)}

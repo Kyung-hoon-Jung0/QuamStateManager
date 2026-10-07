@@ -22,7 +22,7 @@
 {% if not qubit_filter %}
 {% set _nq = trend_data | map(attribute='qubit') | unique | list | length %}
 <p class="muted trend-all-qubits">No qubit ticked — showing all {{ _nq }} qubit{{ 's' if _nq != 1 }}.</p>
-{% endif %}
+{% endif %}{% if rename_note %}<p class="muted trend-rename-note">{{ rename_note }}</p>{% endif %}
 <div class="trend-chart-container">
     {% for prop in unique_props %}
     <div id="trend-chart-{{ loop.index0 }}" class="trend-mini-chart"></div>

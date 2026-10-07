@@ -59,6 +59,27 @@ _HW_ENTITY_COLLECTIONS = {"ports", "octaves", "mixers"}
 STRUCTURAL_LEAF_KEYS = {
     "active_qubit_names", "active_qubit_pair_names", "active_twpa_names",
 }
+# ...except the user's own choice of which of them are ACTIVE: the wizard has
+# no control for it, so the build writes its default (every qubit, no pair) and
+# a rebuild used to wipe the chip's active pairs (and re-activate every
+# qubit). Each active list is kept for the entities the rebuild still has
+# (renamed ones under their new ids -- the source is re-expressed first); an
+# entity the source did not have takes the build's default.
+_ACTIVE_OF = {"active_qubit_names": "qubits", "active_qubit_pair_names": "qubit_pairs",
+              "active_twpa_names": "twpas"}
+
+
+def _active_list(key: str, old_root: dict, new_root: dict, nv: Any) -> Any:
+    """The merged value of a root active-membership list (see _ACTIVE_OF)."""
+    ov = old_root.get(key)
+    coll = _ACTIVE_OF[key]
+    old_all = old_root.get(coll) if isinstance(old_root.get(coll), dict) else {}
+    new_all = new_root.get(coll) if isinstance(new_root.get(coll), dict) else {}
+    if not isinstance(ov, list) or not isinstance(nv, list) or not new_all:
+        return copy.deepcopy(nv)
+    out = [x for x in ov if isinstance(x, str) and x in new_all]
+    out += [x for x in nv if isinstance(x, str) and x not in old_all and x not in out]
+    return out
 
 
 def is_pointer(v: Any) -> bool:
@@ -147,6 +168,9 @@ class MergeStats:
     twpas_renamed: list[tuple[str, str]] = field(default_factory=list)  # (old id, new id) -- a TWPA renamed on step 4; its calibration carried under the new id (QA review of r2-10)
     qubits_renamed: list[tuple[str, str]] = field(default_factory=list)  # (source id, new id) -- a qubit renamed on the wizard; its calibration carried under the new id
     pairs_renamed: list[tuple[str, str]] = field(default_factory=list)  # (source id, new id) -- a pair whose member was renamed, matched by (control, target)
+    rename_record: str | None = None  # docs/296: id of the rename record written into extras (history follows the renamed qubits)
+    active_kept: list[str] = field(default_factory=list)  # active-membership lists kept from the source (the build writes its defaults)
+    rename_unmarked: bool = False  # docs/296: renamed, but the root class keeps no extras -- history cannot follow
 
 
 @dataclass
@@ -278,6 +302,11 @@ def _merge(old: Any, new: Any, path: str, stats: MergeStats,
                 out[k] = copy.deepcopy(nv)
                 continue
             if k in STRUCTURAL_LEAF_KEYS:               # membership -> always NEW
+                if not path and k in _ACTIVE_OF:
+                    out[k] = _active_list(k, old, new, nv)
+                    if out[k] != nv:
+                        stats.active_kept.append(k)
+                    continue
                 out[k] = copy.deepcopy(nv)
                 stats.kept_new_pointer += 1
                 continue
@@ -1405,6 +1434,18 @@ def _displaced_label(oid: str, taken: set) -> str:
     return label
 
 
+def token_pattern(ids) -> re.Pattern | None:
+    """THE match rule for qubit ids inside a name: each ``_``-delimited
+    occurrence of one of ``ids``, longest first (``q1_b`` is matched as
+    itself, never as ``q1`` followed by ``_b``). Shared by the rebuild's
+    rename and the history lineage (docs/296)."""
+    every = sorted({i for i in ids if isinstance(i, str) and i}, key=len, reverse=True)
+    if not every:
+        return None
+    alt = "|".join(re.escape(k) for k in every)
+    return re.compile(rf"(?<![^_])(?:{alt})(?![^_])")
+
+
 def _token_renamer(tok: dict[str, str], ids=()):
     """``f(text)`` renaming each ``_``-delimited occurrence of a source qubit id
     -- ``cz_SNZ_flux_pulse_q2_q1`` -> ``cz_SNZ_flux_pulse_q1_q0`` -- all at once
@@ -1417,9 +1458,7 @@ def _token_renamer(tok: dict[str, str], ids=()):
     followed by ``_b``."""
     if not tok:
         return lambda text: text
-    every = set(tok) | set(ids)
-    alt = "|".join(re.escape(k) for k in sorted(every, key=len, reverse=True))
-    pat = re.compile(rf"(?<![^_])(?:{alt})(?![^_])")
+    pat = token_pattern(set(tok) | set(ids))
     return lambda text: pat.sub(lambda m: tok.get(m.group(0), m.group(0)), text)
 
 
@@ -1480,10 +1519,26 @@ def _rewrite_ids(node: Any, pmap: dict, rename, parent: str | None = None,
     return node
 
 
+def rebuilt_pairs(new_state: dict | None, new_wiring: dict | None) -> dict[str, tuple[str, str]]:
+    """``{pair id: (control, target)}`` of a rebuilt chip -- what
+    :func:`rename_source_qubits` matches a renamed pair against."""
+    out: dict[str, tuple[str, str]] = {}
+    if not isinstance(new_state, dict):
+        return out
+    new_doc = _merged_doc(new_state, new_wiring)
+    for nid, npair in (new_state.get("qubit_pairs") or {}).items():
+        m = _pair_membership(npair, new_doc)
+        if m is not None:
+            out[nid] = m
+    return out
+
+
 def rename_source_qubits(old_state: dict, old_wiring: dict | None,
                          renames: dict[str, str],
                          new_state: dict | None = None,
-                         new_wiring: dict | None = None):
+                         new_wiring: dict | None = None, *,
+                         new_ids: Any = None,
+                         new_pairs: dict | None = None):
     """The SOURCE chip re-expressed in the rebuilt chip's qubit ids.
 
     The merge matches by path, so before this a wizard rename moved calibration
@@ -1503,19 +1558,44 @@ def rename_source_qubits(old_state: dict, old_wiring: dict | None,
     ``"<id>_removed"`` so its values stay reported as not carried. With
     ``new_state`` given, a pair with a renamed member takes the id the rebuild
     gave the pair with the same (control, target); without it (no build yet)
-    pair ids stay as they are.
+    pair ids stay as they are. ``new_ids`` / ``new_pairs`` (the rebuilt
+    chip's qubit ids and :func:`rebuilt_pairs`) stand in for ``new_state``
+    when only its record is at hand: the history lineage (docs/296) re-expresses
+    a state saved before a rename with the same rule the rebuild used.
 
     Returns ``(state, wiring, qubits_renamed, pairs_renamed)``, the two lists
     as ``[(old id, new id)]``. Pure: the inputs are not modified, and with no
     renames they come back as they are.
     """
+    plan = rename_plan(old_state, old_wiring, renames, new_state, new_wiring,
+                       new_ids=new_ids, new_pairs=new_pairs)
+    if plan is None:
+        return old_state, old_wiring, [], []
+    tok, pmap, old_q = plan
+    state, wiring = apply_rename_plan(old_state, old_wiring, tok, pmap, old_q)
+    qubits = sorted(renames.items(), key=lambda t: natural_key(t[0]))
+    pairs = sorted(((o, n) for o, n in pmap.items()
+                    if not n.endswith(_SOURCE_SUFFIX)),
+                   key=lambda t: natural_key(t[0]))
+    return state, wiring, qubits, pairs
+
+
+def rename_plan(old_state: dict, old_wiring: dict | None, renames: dict[str, str],
+                new_state: dict | None = None, new_wiring: dict | None = None, *,
+                new_ids: Any = None, new_pairs: dict | None = None):
+    """``(token map, pair map, source ids)`` :func:`rename_source_qubits`
+    applies (None when nothing is renamed) -- the rename record of a rebuild
+    (docs/296) keeps the maps, so the history reads the same rule."""
     old_q = old_state.get("qubits") if isinstance(old_state, dict) else None
     if not renames or not isinstance(old_q, dict):
-        return old_state, old_wiring, [], []
+        return None
     tok = dict(renames)
     taken = set(old_q) | set(tok.values())
     if isinstance(new_state, dict):
         taken |= set(new_state.get("qubits") or {})
+        new_pairs = rebuilt_pairs(new_state, new_wiring)
+    elif new_ids is not None:
+        taken |= set(new_ids)
     for o in old_q:
         if o not in tok and o in set(renames.values()):
             tok[o] = _displaced_label(o, taken)
@@ -1530,15 +1610,11 @@ def rename_source_qubits(old_state: dict, old_wiring: dict | None,
 
     pmap: dict[str, str] = {}
     old_pairs = old_state.get("qubit_pairs")
-    if isinstance(old_pairs, dict) and old_pairs and isinstance(new_state, dict):
+    if isinstance(old_pairs, dict) and old_pairs and new_pairs is not None:
         old_doc = _merged_doc(old_state, old_wiring)
         new_by_mem: dict[tuple[str, str], str] = {}
-        if isinstance(new_state, dict):
-            new_doc = _merged_doc(new_state, new_wiring)
-            for nid, npair in (new_state.get("qubit_pairs") or {}).items():
-                m = _pair_membership(npair, new_doc)
-                if m is not None:
-                    new_by_mem.setdefault(m, nid)
+        for nid, m in new_pairs.items():
+            new_by_mem.setdefault(tuple(m), nid)
         mem = {}
         for oid, opair in old_pairs.items():
             m = _pair_membership(opair, old_doc)
@@ -1549,7 +1625,7 @@ def rename_source_qubits(old_state: dict, old_wiring: dict | None,
         # now names a different pair (or none), so it is never kept as is --
         # a NEW pair the user added under that id would inherit it.
         moved = set(tok.values())
-        pall = set(old_pairs) | set(new_state.get("qubit_pairs") or {})
+        pall = set(old_pairs) | set(new_pairs)
         for oid, m in mem.items():
             if not (m[0] in moved or m[1] in moved):
                 continue
@@ -1568,15 +1644,15 @@ def rename_source_qubits(old_state: dict, old_wiring: dict | None,
                          else _source_label(oid, pall))
             ptaken.add(pmap[oid])
 
-    rename = _token_renamer(tok, old_q)
-    state = _rewrite_ids(old_state, pmap, rename)
-    wiring = (_rewrite_ids(old_wiring, pmap, rename)
-              if isinstance(old_wiring, dict) else old_wiring)
-    qubits = sorted(renames.items(), key=lambda t: natural_key(t[0]))
-    pairs = sorted(((o, n) for o, n in pmap.items()
-                    if not n.endswith(_SOURCE_SUFFIX)),
-                   key=lambda t: natural_key(t[0]))
-    return state, wiring, qubits, pairs
+    return tok, pmap, list(old_q)
+
+
+def apply_rename_plan(state: dict, wiring: dict | None, tok: dict, pmap: dict, ids):
+    """``(state, wiring)`` with the token map ``tok`` and the pair map
+    ``pmap`` applied by :func:`_rewrite_ids` -- pure."""
+    rename = _token_renamer(tok, ids)
+    out = _rewrite_ids(state, pmap, rename)
+    return out, (_rewrite_ids(wiring, pmap, rename) if isinstance(wiring, dict) else wiring)
 
 
 def merge_states(old_state: dict, new_state: dict,

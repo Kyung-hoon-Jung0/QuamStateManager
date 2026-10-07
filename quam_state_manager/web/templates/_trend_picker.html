@@ -1,5 +1,5 @@
 <h2>Trend Tracker</h2>
-<p class="muted">Select properties and qubits to track across <strong>{{ labels | length }}</strong> experiments, then click <strong>Show Chart</strong>.</p>
+<p class="muted">Select properties and qubits to track across <strong>{{ labels | length }}</strong> experiments, then click <strong>Show Chart</strong>.</p>{% if rename_note %}<p class="muted trend-rename-note">{{ rename_note }}</p>{% endif %}
 
 {% set default_props = ["f_01", "T1", "T2ramsey", "gate_fidelity_avg"] %}
 

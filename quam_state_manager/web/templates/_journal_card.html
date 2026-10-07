@@ -10,6 +10,8 @@
         <div class="jr-body">
             {% if c.gate and c.gate.reason %}<p class="jr-gate-reason muted">gate: {{ c.gate.reason }}</p>{% endif %}
             {% for f in c.flags or [] %}<p class="jr-flag-note jr-flag-{{ f.key }} muted">{{ f.note }}</p>{% endfor %}
+            {%- if c.renamed_here %}<p class="jr-note jr-renamed-here" title="{{ c.renamed_here }}">A Re-generate rename came into force in this run's saved state ({{ c.renamed_here_short or c.renamed_here }}). Its changes compare each qubit with itself under its old name.</p>{% endif %}
+            {%- if c.targets_as_recorded %}<p class="jr-note muted jr-recorded-targets">Saved under the qubit names from before a Re-generate rename: recorded as {{ c.targets_as_recorded|join(' ') }}; shown in today's names.</p>{% endif %}
             {% if c.rows_hidden %}<p class="jr-note warn jr-rows-hidden">{{ '{:,}'.format(c.rows_hidden) }} changed value{{ 's' if c.rows_hidden != 1 }} not listed: this run may be another chip's.</p>{% endif %}
             {{ run_changes(c) }}
             {% if c.params_diff %}

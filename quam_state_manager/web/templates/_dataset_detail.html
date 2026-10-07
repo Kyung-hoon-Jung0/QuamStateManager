@@ -340,9 +340,9 @@
     {% endif %}
     {% if run.fit_results %}
         {% for qname, qresults in run.fit_results.items() %}
-        {% set qtargets = (fit_targets or {}).get(qname, {}) %}
+        {% set qtargets = (fit_targets or {}).get(qname, {}) %}{# docs/296: a refused row (renamed chip) has no path, so no Apply #}{% set qapply = qtargets.values() | selectattr("path") | list %}
         <details open class="detail-section">
-            <summary class="section-header">{{ qname }}{% if qtargets %}<button type="button" class="btn-sm outline section-apply-btn" title="Apply all mapped fitted values to the loaded state" onclick="event.stopPropagation(); applyAllFitValues(this)">Apply all &rarr;</button>{% endif %}<button type="button" class="btn-sm outline section-copy-btn" title="Copy this table as tab-separated rows (paste into Excel/Sheets)" onclick="event.stopPropagation(); copyPropTable(this, 'tsv')">Copy</button></summary>
+            <summary class="section-header">{{ qname }}{% if (fit_names or {}).get(qname) %} <span class="muted fit-renamed" title="This run was saved before the chip's qubits were renamed">({{ fit_names[qname] }})</span>{% endif %}{% if qapply %}<button type="button" class="btn-sm outline section-apply-btn" title="Apply all mapped fitted values to the loaded state" onclick="event.stopPropagation(); applyAllFitValues(this)">Apply all &rarr;</button>{% endif %}<button type="button" class="btn-sm outline section-copy-btn" title="Copy this table as tab-separated rows (paste into Excel/Sheets)" onclick="event.stopPropagation(); copyPropTable(this, 'tsv')">Copy</button></summary>
             <table class="prop-table" role="grid">
                 <thead><tr><th class="col-prop">Property</th><th class="col-val">Value</th></tr></thead>
                 <tbody>
@@ -375,14 +375,15 @@
                             {{ val }}
                         {% endif %}
                         {% set tgt = qtargets.get(key) %}
-                        {% if tgt %}<button type="button" class="btn-sm outline fit-apply-btn"
+                        {% if tgt and tgt.path %}<button type="button" class="btn-sm outline fit-apply-btn"
                                 title="Apply {{ tgt.label }} to {{ tgt.path }} on the loaded state"
                                 data-fit-path="{{ tgt.path }}" data-fit-value="{{ tgt.value }}"
                                 data-fit-qubit="{{ qname }}" data-fit-label="{{ tgt.label }}"
                                 onclick="applyFitValue(this)">Apply &rarr;</button><button type="button" class="btn-sm outline fit-goto-btn"
                                 title="Show {{ tgt.path }} in Live edit - Json Tree view (raw JSON tree)"
                                 data-fit-path="{{ tgt.path }}"
-                                onclick="goToFitState(this)">Go to state</button>{% else %}<span
+                                onclick="goToFitState(this)">Go to state</button>{% elif tgt and tgt.refused %}<span
+                                class="fit-copy-only fit-refused muted">{{ tgt.refused }}</span>{% else %}<span
                                 class="fit-copy-only muted"
                                 title="This fitted value isn't mapped to a chip state field — it's a diagnostic / derived result (or its target operation isn't recorded in this run), so it can be read or copied but not auto-applied. Copy it manually if you need it.">copy-only</span>{% endif %}
                     </td>

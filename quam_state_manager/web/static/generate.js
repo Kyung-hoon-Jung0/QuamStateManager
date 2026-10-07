@@ -10370,6 +10370,17 @@
             (rows.length > 24 ? ", … (+" + (rows.length - 24) + ")" : "") + spec[2];
           el.appendChild(rn);
         });
+        // docs/296: whether the history surfaces can follow the renamed
+        // qubits (the rename is recorded in the rebuilt state's extras)
+        if (m.rename_record || m.rename_unmarked) {
+          var rh = document.createElement("div");
+          rh.className = "gen-merge-detail gen-merge-rename-history" +
+            (m.rename_unmarked ? " gen-merge-warn" : " gen-merge-muted");
+          rh.textContent = m.rename_unmarked
+            ? "⚠ History will not follow the renamed qubits: this chip's root class has no extras field to record the rename in. From this build on, each name's history is the qubit that holds it now."
+            : "History follows each renamed qubit: the rename is recorded in this chip's extras, so the value history, Trends and the Calibration log read older runs under today's names.";
+          el.appendChild(rh);
+        }
         // QA review of r2-10: a rename on the same line is ONE TWPA.
         (m.twpas_renamed || []).forEach(function (t) {
           var rn = document.createElement("div");

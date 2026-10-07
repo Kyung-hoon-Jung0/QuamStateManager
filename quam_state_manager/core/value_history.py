@@ -16,6 +16,13 @@ hop's pointer holder). A value row older than the row that gave a hop its
 current pointer is marked ``before_via``: the alias did not name this holder
 then. Nothing is stitched across a retarget.
 
+Renames (docs/296): a qubit renamed by Re-generate is the same qubit. The
+ledger keeps each event's paths as that event's state spelled them, and each
+state carries its rename era (``rename_lineage``); a path asked for in today's
+ids is spelled at every position in that position's era -- ``qubits.q1.f_01``
+reads ``qubits.q2.f_01`` before a q2 -> q1 rename, and nothing at all where the
+qubit had no name. Two physical qubits are never joined under one name.
+
 Provenance (the "never show wrong provenance" rule): a run is named as the
 writer of a value only when the ledger proves it (``proven``: the run's own
 ``node.json`` patch set exactly this leaf to exactly this value). Every other
@@ -33,7 +40,7 @@ from datetime import datetime, timedelta, timezone
 from types import SimpleNamespace
 from typing import Any, Iterable
 
-from quam_state_manager.core import hub_index, hub_query
+from quam_state_manager.core import hub_index, hub_query, rename_lineage
 from quam_state_manager.core import hub_rules as rules
 from quam_state_manager.core.hub_rules import _segment
 from quam_state_manager.core.hub_store import (
@@ -237,6 +244,7 @@ class _Rows:
         self.blobs = _Blobs(conn)
         self.memo: dict[str, list] = {}
         self.pos_memo: dict[str, list] = {}
+        self.eras: _Eras | None = None
 
     def has(self, holder: str | None) -> bool:
         return holder is not None and holder in self.index.paths
@@ -309,6 +317,58 @@ class _Rows:
         return _ABSENT if first[3] == "add" else first[1]
 
 
+class _Eras:
+    """docs/296: the rename era of every ledger position, read from the
+    ledger itself (each state's ``extras.qubit_renames.<i>.id``), and a
+    current-era path spelled in the era of a position."""
+
+    def __init__(self, rows: _Rows, lineage: rename_lineage.Lineage, current: tuple):
+        from quam_state_manager.core.hub_eras import EraTimeline
+        self.rows, self.lineage, self.current = rows, lineage, tuple(current)
+        self.timeline = EraTimeline(rows.conn, rows.index)
+        self.boundaries = self.timeline.boundaries
+        if self.timeline.any:
+            from quam_state_manager.core.hub_eras import complete_lineage
+            complete_lineage(rows.conn, rows.index, self.timeline, self.lineage)
+        self._memo: dict[tuple, str | None] = {}
+
+    @property
+    def active(self) -> bool:
+        return self.timeline.any or bool(self.current)
+
+    def at(self, pos: int) -> tuple:
+        return self.timeline.at(pos)
+
+    def path(self, dot_path: str, pos: int) -> str | None:
+        """``dot_path`` (today's ids) as the state at *pos* spelled it;
+        None where that state had no such value under any name."""
+        e = self.at(pos)
+        key = (dot_path, e)
+        if key not in self._memo:
+            self._memo[key] = self.lineage.path(dot_path, self.current, e)
+        return self._memo[key]
+
+    def value(self, v: Any, pos: int, holder: str | None) -> Any:
+        """A value stored at *pos* as today's era spells it (a string that
+        names a qubit or an operation follows the renames; a value below
+        ``extras`` changes only when it is a pointer)."""
+        if not isinstance(v, str):
+            return v
+        free = holder is not None and "extras" in holder.split(".")
+        return self.lineage.value(v, self.at(pos), self.current, free)
+
+    def holder_segments(self, holder_path: str) -> list[tuple[int, str | None]]:
+        """``[(start, holder)]``: the literal holder *holder_path* (today's
+        spelling) at each era of the ledger."""
+        out: list[tuple[int, str | None]] = []
+        for pos in [0, *self.boundaries]:
+            p = self.path(holder_path, pos)
+            h = holder_spelling(p) if p is not None else None
+            if not out or out[-1][1] != h:
+                out.append((pos, h))
+        return out
+
+
 _MAX_HOPS = 64
 
 
@@ -320,9 +380,13 @@ def holder_at(rows: _Rows, dot_path: str, pos: int) -> tuple[str | None, set]:
     string then is followed, a leaf pointer is followed while its target is a
     value holder. Returns ``(holder, consulted)``: the S2 holder (None for a
     pointer that named nothing) and every holder whose rows decided it."""
+    consulted: set[str] = set()
+    if rows.eras is not None:
+        dot_path = rows.eras.path(dot_path, pos)
+        if dot_path is None:
+            return None, consulted
     segs = [s for s in dot_path.split(".") if s != ""]
     cur: list[str] = []
-    consulted: set[str] = set()
     hops = 0
     i = 0
 
@@ -368,6 +432,8 @@ def alias_segments(rows: _Rows, dot_path: str) -> list[tuple[int, str | None]]:
     a pointer later is consulted from then on)."""
     watched: set[str] = set()
     points = {0}
+    if rows.eras is not None:
+        points.update(rows.eras.boundaries)
     while True:
         segments: list[tuple[int, str | None]] = []
         grew = False
@@ -395,7 +461,7 @@ def _segment_at(segments: list, pos: int) -> str | None:
     return holder
 
 
-def effective_rows(rows: _Rows, segments: list, events: dict) -> list[tuple]:
+def effective_rows(rows: _Rows, segments: list, events: dict, eras: _Eras | None = None) -> list[tuple]:
     """The value IN FORCE through the path at each change, oldest first, as
     ``(event, old, new, op, proven)``: the rows of the holder the path named
     at the time, plus one ``via`` row where a retarget changed the value
@@ -403,10 +469,14 @@ def effective_rows(rows: _Rows, segments: list, events: dict) -> list[tuple]:
     then (docs/282 review P0-1)."""
     out: list[tuple] = []
     running: Any = _ABSENT
+
+    def today(v, p, holder):
+        # docs/296: every value in today's spelling before it is compared
+        return v if eras is None or v is _ABSENT else eras.value(v, p, holder)
     for i, (start, holder) in enumerate(segments):
         end = segments[i + 1][0] if i + 1 < len(segments) else None
         hrows, hpos = rows.rows(holder), rows.positions(holder)
-        at_start = rows.fold(holder, start)
+        at_start = today(rows.fold(holder, start), start, holder)
         first_row_at_start = bool(hpos) and start in hpos
         if not first_row_at_start and not _same_or_absent(running, at_start) and start in events:
             out.append((events[start], None if running is _ABSENT else running,
@@ -415,13 +485,45 @@ def effective_rows(rows: _Rows, segments: list, events: dict) -> list[tuple]:
         for row, p in zip(hrows, hpos):
             if p < start or (end is not None and p >= end):
                 continue
-            new = _ABSENT if row[3] == "gone" else row[2]
+            new = _ABSENT if row[3] == "gone" else today(row[2], p, holder)
             if _same_or_absent(running, new):
                 continue
             op = "add" if running is _ABSENT else ("gone" if new is _ABSENT else "set")
             out.append((row[0], None if running is _ABSENT else running,
                         None if new is _ABSENT else new, op, row[4]))
             running = new
+    return out
+
+
+def _renamed_rows(rows_: list[tuple], hsegs: list, index) -> list[tuple]:
+    """docs/296: a row :func:`effective_rows` made at a rename boundary
+    (the qubit's value differs there and its new name has no row of its own)
+    is a change of THIS qubit at that event, not a pointer retarget."""
+    if len(hsegs) < 2:
+        return rows_
+    starts = {s for s, _h in hsegs[1:]}
+    out = []
+    for ev, old, new, op, proven in rows_:
+        if op == "via" and index.positions.get(ev["eid"]) in starts:
+            op = "add" if old is None else ("gone" if new is None else "set")
+        out.append((ev, old, new, op, proven))
+    return out
+
+
+def _rename_marks(hsegs: list, index, eras: _Eras) -> list[dict]:
+    """Every point where a rename changed the holder's name: when, from
+    which spelling, and the qubits renamed there (oldest first)."""
+    from quam_state_manager.core.hub_eras import first_rename_at
+    out = []
+    for (_p, was), (start, now) in zip(hsegs, hsegs[1:]):
+        if not 0 < start < len(index.eids):
+            continue
+        if not first_rename_at(eras.timeline, start):
+            continue                # an old chip used again, or back to the renamed one
+        before, after = eras.at(start - 1), eras.at(start)
+        out.append({"t": iso_z(index.t[start]), "eid": index.eids[start],
+                    "was": was, "now": now,
+                    "renames": eras.lineage.label(before, after)})
     return out
 
 
@@ -560,7 +662,8 @@ def undone_paths(conn, index, ev: dict, sm: dict) -> Any:
 
 
 def read(chip_dir, targets: dict[str, dict], *, limit: int | None = None,
-         runs: int = 0, binding=None) -> dict:
+         runs: int = 0, binding=None, lineage: rename_lineage.Lineage | None = None,
+         era: tuple = ()) -> dict:
     """Every target's history from ONE ledger read snapshot.
 
     ``targets``: ``{key: target(...)}``. ``limit``: keep the newest N change
@@ -575,6 +678,10 @@ def read(chip_dir, targets: dict[str, dict], *, limit: int | None = None,
     ``effective`` (the value in force through the path at each change -- the
     rows of whichever holder it named then), ``retargets`` (the hops' rows).
 
+    ``lineage`` / ``era``: the chip's rename lineage and the era today's
+    paths are spelled in (docs/296). Each key then also answers ``renames``:
+    every point where a rename changed the holder's name.
+
     Raises ``hub_sync.Building`` while the ledger is catching up and
     ``ramcache.Warming`` while its RAM index is being prepared -- a surface
     says so, it never shows a partial history as complete.
@@ -586,11 +693,18 @@ def read(chip_dir, targets: dict[str, dict], *, limit: int | None = None,
         has_observed = bool(index.postings["kind"].get(OBSERVED_KIND))
         roots = {r[0]: r[1] for r in conn.execute("SELECT root_id, path FROM roots")}
         cache = _Rows(conn, index)
+        eras = _Eras(cache, lineage or rename_lineage.Lineage(), era)
+        cache.eras = eras if eras.active else None
         segs: dict[str, list] = {}
         for key, tgt in targets.items():
             segs[key] = alias_segments(cache, tgt["path"])
+        # the holder itself, followed across renames (docs/296)
+        hsegs: dict[str, list] = {
+            key: (cache.eras.holder_segments(tgt["holder_path"]) if cache.eras is not None
+                  else [(0, tgt["holder"])])
+            for key, tgt in targets.items()}
         # the events a retarget point may need (segment starts), fetched once
-        starts = {s for lst in segs.values() for s, _h in lst}
+        starts = {s for lst in list(segs.values()) + list(hsegs.values()) for s, _h in lst}
         start_events = hub_query._events(conn, [index.eids[p] for p in starts if 0 <= p < len(index.eids)])
         start_ev = {p: start_events[index.eids[p]] for p in starts
                     if 0 <= p < len(index.eids) and index.eids[p] in start_events}
@@ -598,8 +712,11 @@ def read(chip_dir, targets: dict[str, dict], *, limit: int | None = None,
         eff: dict[str, list] = {}
         hop_rows: dict[str, list] = {}
         for key, tgt in targets.items():
-            raw[key] = cache.rows(tgt["holder"])
-            eff[key] = effective_rows(cache, segs[key], start_ev)
+            raw[key] = (cache.rows(tgt["holder"]) if cache.eras is None
+                        else _renamed_rows(effective_rows(cache, hsegs[key], start_ev, cache.eras),
+                                           hsegs[key], index))
+            eff[key] = _renamed_rows(effective_rows(cache, segs[key], start_ev, cache.eras),
+                                     hsegs[key], index)
             for hop in tgt.get("via") or ():
                 hop_rows.setdefault(hop["from"], cache.rows(hop["from"]))
         sm_eids = [r[0]["eid"] for rows in list(raw.values()) + list(eff.values()) + list(hop_rows.values())
@@ -618,7 +735,11 @@ def read(chip_dir, targets: dict[str, dict], *, limit: int | None = None,
             here = tgt["holder"]
             for p in pts:
                 # P1-1: one rule -- the holder the path named AT this row
-                p["before_via"] = _segment_at(segs[key], index.positions[p["eid"]]) != here
+                # (docs/296: the holder as spelled in that row's rename era)
+                at = index.positions[p["eid"]]
+                p["before_via"] = _segment_at(segs[key], at) != _segment_at(hsegs[key], at)
+                was = _segment_at(hsegs[key], at)
+                p["recorded_as"] = was if was != here else None
             total = len(pts)
             if limit is not None and len(pts) > limit:
                 pts = pts[-limit:] if limit else []
@@ -633,7 +754,7 @@ def read(chip_dir, targets: dict[str, dict], *, limit: int | None = None,
                                   "unrecorded": latest != here})
             since = None
             for start, holder in reversed(segs[key]):
-                if holder == here:
+                if holder == _segment_at(hsegs[key], start):
                     since = start
                 else:
                     break
@@ -644,7 +765,8 @@ def read(chip_dir, targets: dict[str, dict], *, limit: int | None = None,
                 "segments": [{"t": iso_z(index.t[s]) if 0 <= s < len(index.eids) else None,
                               "holder": h} for s, h in segs[key]],
                 "via_since": (iso_z(index.t[since]) if since is not None and 0 < since < len(index.eids)
-                              else None)}
+                              else None),
+                "renames": _rename_marks(hsegs[key], index, eras)}
 
         by_run: list[dict] = []
         left_out = 0
@@ -674,7 +796,10 @@ def read(chip_dir, targets: dict[str, dict], *, limit: int | None = None,
                 values = {}
                 for key in targets:
                     # P0-3: the value in force through the path at this run
-                    v = cache.fold(_segment_at(segs[key], pos), pos)
+                    h = _segment_at(segs[key], pos)
+                    v = cache.fold(h, pos)
+                    if cache.eras is not None and v is not _ABSENT:
+                        v = cache.eras.value(v, pos, h)
                     values[key] = None if v is _ABSENT else v
                 folder = None
                 if ev.get("root_id") is not None and ev.get("rel_path"):
@@ -703,6 +828,88 @@ def read(chip_dir, targets: dict[str, dict], *, limit: int | None = None,
                     ledger["last_run"] = iso_z(index.t[pos])
                     break
         return {"rows": out_rows, "runs": by_run, "runs_left_out": left_out, "ledger": ledger}
+
+
+#: docs/296: per chip dir, the last :func:`run_eras_known` answer and its
+#: ledger version (a few chips at most are open in one process)
+_RUN_ERAS: dict[str, tuple] = {}
+
+
+def norm_folder(path: Any) -> str:
+    """One spelling of a run folder for :func:`run_eras` lookups."""
+    import os
+    return os.path.normcase(os.path.normpath(str(path)))
+
+
+def run_eras_known(chip_dir, binding=None) -> tuple[dict[str, tuple], frozenset]:
+    """docs/296: ``({run folder: rename era}, every run folder the ledger
+    holds)``. The map holds only runs saved in an era other than the oldest
+    (``()``): a held folder missing from it was saved before any rename, a
+    folder not held at all is not in the ledger. One read per ledger version,
+    memoized per chip. Keys are :func:`norm_folder` spellings."""
+    with hub_index.snapshot(binding if binding is not None else _reader(chip_dir)) as (conn, index):
+        token = (index.ledger_id, len(index.eids), index.eids[-1] if index.eids else 0)
+        slot = norm_folder(chip_dir)
+        hit = _RUN_ERAS.get(slot)
+        if hit is not None and hit[0] == token:
+            return hit[1], hit[2]
+        uncertain: set[str] = set()
+        from quam_state_manager.core.hub_eras import EraTimeline
+        timeline = EraTimeline(conn, index)
+        out: dict[str, tuple] = {}
+        known: set[str] = set()
+        roots = {r[0]: r[1] for r in conn.execute("SELECT root_id, path FROM roots")}
+        for eid, root_id, rel, flags in conn.execute(
+                "SELECT l.eid, l.root_id, l.rel_path, e.flags FROM locations l JOIN events e USING(eid) "
+                "WHERE e.kind='run'"):
+            base = roots.get(root_id)
+            pos = index.positions.get(eid)
+            if base is None or pos is None:
+                continue
+            key = norm_folder(base.rstrip("/\\") + "/" + rel)
+            known.add(key)
+            if int(flags or 0) & CHIP_UNCERTAIN:
+                uncertain.add(key)
+            if timeline.any:
+                e = timeline.at(pos)
+                if e:
+                    out[key] = e
+        if len(_RUN_ERAS) > 8:
+            _RUN_ERAS.clear()
+        frozen = frozenset(known)
+        _RUN_ERAS[slot] = (token, out, frozen, frozenset(uncertain))
+        return out, frozen
+
+
+def run_chip_uncertain(chip_dir, binding=None) -> frozenset:
+    """docs/296 review P1-5: the run folders the ledger holds but marks
+    ``chip uncertain`` (another chip's runs in this chip's data folder) --
+    from the same memoized read as :func:`run_eras_known`."""
+    run_eras_known(chip_dir, binding)
+    hit = _RUN_ERAS.get(norm_folder(chip_dir))
+    return hit[3] if hit is not None else frozenset()
+
+
+def run_eras(chip_dir, binding=None) -> dict[str, tuple]:
+    """:func:`run_eras_known`'s map alone."""
+    return run_eras_known(chip_dir, binding)[0]
+
+
+def run_era(chip_dir, folder, binding=None) -> tuple | None:
+    """docs/296: the rename era one run was saved in -- the ledger's answer
+    when it holds the run, else the run's own saved state
+    (``rename_lineage.folder_era``); None when neither can tell."""
+    if chip_dir is not None:
+        try:
+            eras, known = run_eras_known(chip_dir, binding)
+            key = norm_folder(folder)
+            if key in eras:
+                return eras[key]
+            if key in known:
+                return ()
+        except Exception:  # noqa: BLE001 -- no ledger (or building): the file decides
+            pass
+    return rename_lineage.folder_era(folder)
 
 
 def notes(status: dict | None, ledger: dict, *, current: Any = _ABSENT,

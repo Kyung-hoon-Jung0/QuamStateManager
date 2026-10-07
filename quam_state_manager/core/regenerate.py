@@ -20,7 +20,8 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any
 
-from . import config_generator, path_match, regen_merge, regen_script, regen_spec, safe_io
+from . import (config_generator, path_match, regen_merge, regen_script, regen_spec,
+               rename_lineage, safe_io)
 
 
 def reconstruct_from_folder(
@@ -407,6 +408,18 @@ def run_regenerate(
     # protection, port moves, tier-1 carry, the loss report).
     renames = regen_merge.source_renames(
         qubit_sources, old_state, (new_state.get("qubits") or {}))
+    # docs/296: the rename is recorded in the rebuilt state, so every history
+    # surface can tell the states saved before it from those saved after it
+    source_chain = rename_lineage.records(old_state)
+    rename_rec = None
+    plan = (regen_merge.rename_plan(old_state, old_wiring, renames, new_state, new_wiring)
+            if renames else None)
+    if plan is not None:
+        rename_rec = rename_lineage.new_record(
+            renames=renames, tokens=plan[0], pairs=plan[1], source_qubits=plan[2],
+            source_pairs=list(old_state.get("qubit_pairs") or {}),
+            qubits_after=list(new_state.get("qubits") or {}),
+            pairs_after=regen_merge.rebuilt_pairs(new_state, new_wiring))
     old_state, old_wiring, qubits_renamed, pairs_renamed = (
         regen_merge.rename_source_qubits(old_state, old_wiring, renames,
                                          new_state, new_wiring))
@@ -475,6 +488,15 @@ def run_regenerate(
     result.stats.populate_conflicts.extend(pop_conflicts)
     result.stats.qubits_renamed = qubits_renamed
     result.stats.pairs_renamed = pairs_renamed
+    chain = list(source_chain)
+    if rename_rec is not None:
+        if rename_lineage.can_mark(result.merged, class_schemas):
+            chain.append(rename_rec)
+            result.stats.rename_record = rename_rec["id"]
+        else:
+            result.stats.rename_unmarked = True
+    if chain or rename_lineage.records(result.merged):
+        result.merged = rename_lineage.with_chain(result.merged, chain)
 
     # QA regenerate-r2-04 / r2-06: rescale the amplitudes carried onto a port
     # whose FSP the wizard changed (or say so) — see the docstring.
@@ -632,6 +654,10 @@ def run_regenerate(
         # device each, its calibration carried under the new id.
         "qubits_renamed": [{"old": o, "new": n} for o, n in s.qubits_renamed[:200]],
         "pairs_renamed": [{"old": o, "new": n} for o, n in s.pairs_renamed[:200]],
+        "rename_record": s.rename_record,
+        # the source's active qubits / pairs kept (the build writes defaults)
+        "active_kept": list(s.active_kept),
+        "rename_unmarked": s.rename_unmarked,
         "class_kept": len(s.class_kept),
         "class_kept_paths": [{"path": p, "cls": c} for p, c in s.class_kept[:80]],
         "class_kept_total": len(s.class_kept),

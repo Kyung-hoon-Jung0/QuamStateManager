@@ -559,8 +559,16 @@ def _diff_snapshot_dirs(a: Path, b: Path, *, b_pair=None, a_hash: str | None = N
     from quam_state_manager.core import doc_cache
 
     def compute():
-        from quam_state_manager.core import diff_cache
+        from quam_state_manager.core import diff_cache, rename_lineage
         from quam_state_manager.core.differ import _DEFAULT_IGNORE, _leaf_key
+        # docs/296: a side saved before a Re-generate rename is compared in
+        # the other side's names (never kept in the shared content cache,
+        # whose key is the raw bytes)
+        moved = rename_lineage.in_one_era([(pa.state, pa.wiring), (pb.state, pb.wiring)])
+        if moved[0][0] is not pa.state or moved[1][0] is not pb.state:
+            ents = _differ.diff(QuamStore.from_dicts(*moved[0]), QuamStore.from_dicts(*moved[1]),
+                                ignore_keys=set())
+            return [e for e in ents if _leaf_key(e.dot_path) not in _DEFAULT_IGNORE]
         # content hashes known (a capture): the drift poll may have taken
         # exactly this diff already (diff_cache)
         shared = diff_cache.lookup(a_hash, b_hash, _DEFAULT_IGNORE)
@@ -770,8 +778,10 @@ def fingerprint_from_dicts(state: Any, wiring: Any) -> ChipFingerprint:
     """
     s = state if isinstance(state, dict) else {}
     w = wiring if isinstance(wiring, dict) else {}
-    qubits = frozenset((s.get("qubits") or {}).keys())
-    pairs = frozenset((s.get("qubit_pairs") or {}).keys())
+    # docs/296: the labels as named before the chip's first Re-generate
+    # rename -- renaming a qubit does not make another chip
+    from quam_state_manager.core.rename_lineage import base_names
+    qubits, pairs = base_names(s)
     network = _normalised_network(w.get("network"))
     return ChipFingerprint(network=network, qubits=qubits, pairs=pairs)
 
@@ -3601,11 +3611,17 @@ class HistoryManager:
         srcs, first_own = self._sources_and_cut(path, snapshots)
         mine = [m for m in snapshots
                 if srcs[m.timestamp]["lineage"] != LINEAGE_PARALLEL]
+        # docs/296: a snapshot saved under another rename era names another
+        # qubit by this path -- cut, never joined
+        rkeep, rinfo = self.rename_keep(path)
+        if rkeep is not None:
+            mine = [m for m in mine if rkeep(m.timestamp, dot_path)]
         out: dict[str, Any] = {
             "dot_path": dot_path, "points": [],
             "total_snapshots": len(snapshots), "scanned": 0,
             "truncated": False, "source": "scan", "runs_merged": 0,
             "parallel_hidden": 0, "other_folders": [],
+            "renamed_hidden": 0, "renamed": rinfo,
         }
 
         # (ts, value, trigger, run_id, experiment, folder) oldest-first
@@ -3657,6 +3673,9 @@ class HistoryManager:
         hidden: dict[str, dict] = {}
         for r in series:
             r = tuple(r)[:6]
+            if rkeep is not None and not rkeep(r[0], dot_path):
+                out["renamed_hidden"] += 1
+                continue
             ent = self._row_source(srcs, first_own, r[0], r[2], r[5])
             if ent["lineage"] == LINEAGE_PARALLEL:
                 h = hidden.setdefault(ent["folder"] or "", {
@@ -3815,6 +3834,7 @@ class HistoryManager:
         srcs, first_own = self._sources_and_cut(path, snapshots)
         snapshots = [m for m in snapshots
                      if srcs[m.timestamp]["lineage"] != LINEAGE_PARALLEL]
+        rkeep, _rinfo = self.rename_keep(path)       # docs/296: cut at a rename
 
         # Index fastpath: one column = one suffix; rows are entity names.
         props = {self._tracked_property_for(dp) for dp in path_map.values()}
@@ -3846,6 +3866,8 @@ class HistoryManager:
                 for ts, ent, value, trigger, run_id, exp in rows:
                     if self._row_source(srcs, first_own, ts, trigger, None)[
                             "lineage"] == LINEAGE_PARALLEL:
+                        continue
+                    if rkeep is not None and not rkeep(ts, qubit=ent):
                         continue
                     meta = meta_by_ts.get(ts)
                     folder = meta.experiment_folder_path if meta else None
@@ -3879,6 +3901,8 @@ class HistoryManager:
                     merged.update(wiring)
                     root = merged
             for row, segs in segs_by_row.items():
+                if rkeep is not None and not rkeep(meta.timestamp, path_map[row]):
+                    continue                          # docs/296: another qubit then
                 found, value = _walk_any_path(root, segs)
                 if not found:
                     value = None
@@ -3888,6 +3912,74 @@ class HistoryManager:
                                  meta.run_id, meta.experiment_name,
                                  meta.experiment_folder_path))
         return out
+
+    def rename_keep(self, quam_state_path: str | Path):
+        """docs/296: for a chip renamed by Re-generate, ``(keep, info)`` --
+        ``keep(timestamp)`` says whether a snapshot was saved in the chip's
+        CURRENT rename era. The snapshot history (a chip with no change ledger)
+        cuts at a rename instead of joining two qubits under one name: rows of
+        another era are left out and counted, ``info["since"]`` names the
+        rename. ``(None, None)`` for a chip that was never renamed.
+
+        A snapshot older than a day before the first rename record was written
+        cannot carry it; a newer one is read once (its era cached per file
+        version). A snapshot that cannot be read now -- pruned, unreadable --
+        is never kept while the era is in doubt."""
+        from datetime import timedelta
+        from quam_state_manager.core import rename_lineage
+        path = Path(quam_state_path)
+        live = rename_lineage.folder_records(path) or []
+        cur = tuple(r["id"] for r in live)
+        try:
+            hist_dir = self._history_dir(path)
+        except Exception:  # noqa: BLE001 -- no history folder: nothing to cut
+            return None, None
+        known = rename_lineage.remember(hist_dir, live)
+        if not known and not cur:
+            return None, None
+        first = rename_lineage.earliest_at(known or live)
+        cutoff = ((first - timedelta(days=1)).strftime("%Y%m%d_%H%M%S")
+                  if first is not None else "")
+        eras: dict[str, tuple | None] = {}
+        lin = rename_lineage.Lineage(list(known) + list(live))
+        same: dict[tuple, bool] = {}
+
+        def era_of(ts: str) -> tuple | None:
+            if ts not in eras:
+                if cutoff and ts < cutoff:
+                    eras[ts] = ()
+                else:
+                    e = rename_lineage.folder_era(hist_dir / ts)
+                    eras[ts] = tuple(e) if e is not None else None
+            return eras[ts]
+
+        def keep(ts: str, path: str | None = None, qubit: str | None = None) -> bool:
+            """A row of snapshot *ts* -- of *path*, or of the qubit / pair
+            *qubit* -- is today's when the snapshot is today's era, or when the
+            renames between the two eras spell that path the same (a qubit the
+            rename did not touch is the same qubit under the same name)."""
+            e = era_of(str(ts))
+            if e is None:
+                return False
+            if e == cur:
+                return True
+            if path is None and qubit is None:
+                return False
+            key = (e, path, qubit)
+            if key not in same:
+                if path is not None:
+                    same[key] = lin.path(path, cur, e) == path
+                else:
+                    # a curated row's entity is a qubit, or a pair id the
+                    # records name as one
+                    is_pair = any(qubit in r["pairs_after"] or qubit in r["source_pairs"]
+                                  for r in lin.recs.values())
+                    now = lin.pair(qubit, cur, e) if is_pair else lin.qubit(qubit, cur, e)
+                    same[key] = now == qubit and not rename_lineage.is_label(qubit)
+            return same[key]
+        labels = lin.label((), cur) if cur else []
+        return keep, {"since": first.strftime("%Y-%m-%dT%H:%M:%SZ") if first else None,
+                      "renames": labels}
 
     def _index_fresh_for_read(self, path: Path) -> None:
         """Run the curated self-heal before a tracked-tier read (docs/258).
@@ -4632,11 +4724,14 @@ class HistoryManager:
             if leaf_index.path_needs_scan(conn, dot_path):
                 return None
             rows = leaf_index.series(conn, dot_path)
-            return rows or None
         except sqlite3.Error:
             return None
         finally:
             conn.close()
+        keep, _info = self.rename_keep(quam_state_path)      # docs/296
+        if keep is not None:
+            rows = [r for r in rows if keep(r[0], dot_path)]
+        return rows or None
 
     def leaf_field_series_many(
             self, quam_state_path: str | Path,
@@ -4689,6 +4784,10 @@ class HistoryManager:
             out = leaf_series_on(conn, dot_paths, hold_to_newest=hold_to_newest)
         finally:
             conn.close()
+        keep, _info = self.rename_keep(quam_state_path)      # docs/296: cut at a rename
+        if keep is not None:
+            out = {p: kept for p, rows in out.items()
+                   if (kept := [r for r in rows if keep(r[0], p)])}
         return out
 
     def snapshot_provenance(self, quam_state_path: str | Path) -> list[dict]:
@@ -4802,13 +4901,22 @@ class HistoryManager:
         except sqlite3.Error:
             return []
         try:
-            return leaf_index.changes_by_snapshot(
+            groups = leaf_index.changes_by_snapshot(
                 conn, limit_snaps=limit_snaps, rows_per_snap=rows_per_snap,
                 prefix=prefix, before_ts=before_ts, at_ts=at_ts)
         except sqlite3.Error:
             return []
         finally:
             conn.close()
+        keep, _info = self.rename_keep(quam_state_path)      # docs/296
+        if keep is not None:
+            kept = []
+            for g in groups:
+                rows = [r for r in g.get("rows") or () if keep(g.get("timestamp"), r.get("path"))]
+                if rows:
+                    kept.append(dict(g, rows=rows, shown=len(rows)))
+            groups = kept
+        return groups
 
     def leaf_search(self, quam_state_path: str | Path, query: str, *,
                     limit: int = 50) -> list[dict]:
@@ -5116,7 +5224,26 @@ class HistoryManager:
         sampled.append(cleaned[-1])
         return sampled
 
-    def extract_property_history(
+    def extract_property_history(self, quam_state_path: str | Path,
+                                 properties: list[str] | None = None, **kwargs
+                                 ) -> list[dict[str, Any]]:
+        """:meth:`_extract_property_history` (read it for the shape), cut at
+        a Re-generate rename (docs/296): a series' points saved in another
+        rename era than the chip's now name another qubit by this id, so they
+        are left out -- never joined -- and a series left empty is dropped."""
+        results = self._extract_property_history(quam_state_path, properties, **kwargs)
+        keep, _info = self.rename_keep(quam_state_path)
+        if keep is None:
+            return results
+        out = []
+        for s in results:
+            q = s.get("qubit")
+            vals = [v for v in s.get("values") or () if keep(v.get("timestamp"), qubit=q)]
+            if vals:
+                out.append(dict(s, values=vals))
+        return out
+
+    def _extract_property_history(
         self,
         quam_state_path: str | Path,
         properties: list[str] | None = None,

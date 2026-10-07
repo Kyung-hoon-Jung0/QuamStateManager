@@ -1217,8 +1217,35 @@ def _one_zone(ledger):
     return ledger
 
 
+def _rename_words(labels, limit: int | None = None) -> str:
+    """docs/296: ``q1 -> q0, q2 -> q1`` for a list of ``Lineage.label``s;
+    with ``limit``, the first ones and "and N more" (the full list belongs in
+    a title)."""
+    out = []
+    for lab in labels or ():
+        out += [f"{a} \u2192 {b}" for a, b in sorted((lab.get("qubits") or {}).items())]
+    if limit is not None and len(out) > limit:
+        return ", ".join(out[:limit]) + f" and {len(out) - limit} more"
+    return ", ".join(out)
+
+
+def _targets_today(targets, pairs, rename, era) -> list[str] | None:
+    """docs/296: a run's targets in today's names when the run was saved in
+    an older rename era (None when it was not, or nothing changed); a name
+    with no qubit today is kept as recorded."""
+    lin = (rename or {}).get("lineage")
+    cur = tuple((rename or {}).get("era") or ())
+    if lin is None or era is None or tuple(era) == cur:
+        return None
+    out = []
+    for t in targets:
+        now = (lin.pair(t, tuple(era), cur) if t in pairs else lin.qubit(t, tuple(era), cur))
+        out.append(now if now is not None else t)
+    return out if out != list(targets) else None
+
+
 def _build_day_hub(instance_path, chip, day, *, ds, active_path, events, uid_of, gate_compute,
-                   with_gates, ledger, agent_chip, gate_wait=False, int_of=None) -> dict:
+                   with_gates, ledger, agent_chip, gate_wait=False, int_of=None, rename=None) -> dict:
     from quam_state_manager.core import hub_query, hub_sync
     from quam_state_manager.core.hub_store import SM_KINDS
     from quam_state_manager.core.ramcache import Warming
@@ -1228,7 +1255,8 @@ def _build_day_hub(instance_path, chip, day, *, ds, active_path, events, uid_of,
         history = hub_sync.require_ready(directory)
         ledger = _one_zone(ledger)
         page = hub_query.timeline(ledger, day_from=day, day_to=day, limit=1_000_000,
-                                  include_runs=bool(records), include_ambiguous=True)
+                                  include_runs=bool(records), include_ambiguous=True,
+                                  **(rename or {}))
         if page["cursor"]:
             return _empty_day(chip, day, {"state": "unavailable", "note": "This day exceeds the log's display limit."}, instance_path)
     except Warming as exc:
@@ -1313,6 +1341,8 @@ def _build_day_hub(instance_path, chip, day, *, ds, active_path, events, uid_of,
             prev_id, folder_prev = previous[eid]
             prev = _run_facts(folder_prev, facts_memo)
         fam_key, fam_label = _family_label(run.get("experiment_name") or "")
+        shown_targets = _targets_today(targets, set(run.get("qubit_pairs") or []), rename,
+                                       event.get("era"))
         gate = _hub_gate(instance_path, run, ledger_key, gate_compute, ds, gate_wait) if with_gates else None
         figs = list(run.get("figure_names") or [])
         flags = _flags_of(event)
@@ -1327,7 +1357,10 @@ def _build_day_hub(instance_path, chip, day, *, ds, active_path, events, uid_of,
             "eid": eid, "order": event.get("ord"), "duration_s": run.get("duration_s"),
             "node": run.get("experiment_name"), "family": fam_key, "family_label": fam_label,
             "family_short": _short_family(fam_key, fam_label, run.get("experiment_name")),
-            "targets": targets, "outcome": _outcome(run.get("outcomes")), "outcomes": run.get("outcomes") or {},
+            "targets": shown_targets or targets, "targets_as_recorded": targets if shown_targets else None,
+            "renamed_here": _rename_words(event.get("renamed_here")),
+            "renamed_here_short": _rename_words(event.get("renamed_here"), limit=4),
+            "outcome": _outcome(run.get("outcomes")), "outcomes": run.get("outcomes") or {},
             "status": run.get("status"), "gate": gate,
             "author": author, "certainty": certainty,
             "plan_id": (ar or {}).get("plan_id"), "step": (ar or {}).get("step"),
@@ -1407,12 +1440,16 @@ def _hub_write(event, ledger, int_of=None):
 def build_day(instance_path, chip: str, day: str, *, ds, hm=None, active_path=None,
               events: list[dict] | None = None, uid_of: Callable | None = None,
               gate_compute: Callable | None = None, with_gates: bool = True,
-              ledger=None, agent_chip=None, gate_wait: bool = False, int_of=None) -> dict:
-    """Everything the Calibration log renders for one chip and one day."""
+              ledger=None, agent_chip=None, gate_wait: bool = False, int_of=None,
+              rename=None) -> dict:
+    """Everything the Calibration log renders for one chip and one day.
+    ``rename`` (docs/296): ``{"lineage", "era"}`` of the open chip, so runs
+    saved before a Re-generate rename read in today's names."""
     if ledger is not None:
         return _build_day_hub(instance_path, chip, day, ds=ds, active_path=active_path, events=events,
                               uid_of=uid_of, gate_compute=gate_compute, with_gates=with_gates,
-                              ledger=ledger, agent_chip=agent_chip, gate_wait=gate_wait, int_of=int_of)
+                              ledger=ledger, agent_chip=agent_chip, gate_wait=gate_wait, int_of=int_of,
+                              rename=rename)
     events = events or []
     text = journal_mod.read(instance_path, chip, day)
     entries = parse_journal(text, day)
