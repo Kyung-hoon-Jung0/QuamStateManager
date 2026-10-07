@@ -134,6 +134,39 @@ def hline(y, color="gray", dash="dot", width=0.5):
             "line": {"color": color, "dash": dash, "width": width}}
 
 
+def _wrap(text, width=44):
+    """Break a note into short lines (``<br>``) so it covers a corner, not the plot."""
+    lines, cur = [], ""
+    for word in str(text).split():
+        if cur and len(cur) + 1 + len(word) > width:
+            lines.append(cur)
+            cur = word
+        else:
+            cur = f"{cur} {word}".strip()
+    if cur:
+        lines.append(cur)
+    return "<br>".join(lines)
+
+
+def note(text, where="top"):
+    """A small in-plot caption saying why a fit curve is absent or held.
+
+    ``text`` may be a list of notes: they share one caption, one per line
+    group. Top-left by default (``where="bottom"`` for figures whose data hugs
+    the top, e.g. a resonator dip under its baseline). No font colour is set so
+    the house theme's text colour applies in light and dark mode; the grey
+    backing keeps it readable over a trace.
+    """
+    texts = [text] if isinstance(text, str) else list(text)
+    top = where != "bottom"
+    return {"text": "<br>".join(_wrap(t) for t in texts), "xref": "paper", "yref": "paper",
+            "x": 0.01, "y": 0.99 if top else 0.01,
+            "xanchor": "left", "yanchor": "top" if top else "bottom",
+            "showarrow": False, "align": "left", "font": {"size": 11},
+            "bgcolor": "rgba(127,127,127,0.35)", "borderpad": 3,
+            "name": "fit-note"}
+
+
 # Cap markers per scatter trace. IQ blobs hold thousands of single-shot points;
 # we render with SVG (not WebGL) so it works in every browser/webview, and a few
 # thousand SVG markers stay responsive. A uniform subsample preserves blob shape.

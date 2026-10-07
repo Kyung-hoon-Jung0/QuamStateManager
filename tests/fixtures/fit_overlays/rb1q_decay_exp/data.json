@@ -1,0 +1,9 @@
+{
+ "fit_results": {
+  "q0": {
+   "error_per_clifford": 0.0016190456893734884,
+   "error_per_gate": 0.0008634910343325271,
+   "success": true
+  }
+ }
+}

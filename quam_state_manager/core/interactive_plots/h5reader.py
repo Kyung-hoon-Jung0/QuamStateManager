@@ -24,8 +24,14 @@ def _decode(x):
     return x.decode() if isinstance(x, bytes) else x
 
 
+# The Interactive recipes also read the resonator circle-fit dataset some
+# resonator nodes save beside ds_fit (docs/300). A fixed literal, so it adds no
+# path-traversal surface; the dataset routes keep their own whitelist.
+_READER_WHICH = _H5_WHICH_WHITELIST | {"ds_port_fit"}
+
+
 def _h5_path(run, which: str) -> Path | None:
-    if which not in _H5_WHICH_WHITELIST:
+    if which not in _READER_WHICH:
         return None
     p = Path(run.folder_path) / f"{which}.h5"
     return p if p.exists() else None

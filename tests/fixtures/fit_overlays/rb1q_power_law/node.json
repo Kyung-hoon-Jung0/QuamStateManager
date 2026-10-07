@@ -1,0 +1,23 @@
+{
+ "metadata": {
+  "name": "27_single_qubit_randomized_benchmarking"
+ },
+ "data": {
+  "parameters": {
+   "model": {
+    "multiplexed": false,
+    "use_state_discrimination": true,
+    "use_strict_timing": false,
+    "num_random_sequences": 300,
+    "num_shots": 10,
+    "max_circuit_depth": 2048,
+    "delta_clifford": 20,
+    "log_scale": true,
+    "simulate": false,
+    "simulation_duration_ns": 50000,
+    "use_waveform_report": true,
+    "timeout": 120
+   }
+  }
+ }
+}

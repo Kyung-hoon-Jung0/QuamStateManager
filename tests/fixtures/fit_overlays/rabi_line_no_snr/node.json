@@ -1,0 +1,23 @@
+{
+ "metadata": {
+  "name": "11_power_rabi"
+ },
+ "data": {
+  "parameters": {
+   "model": {
+    "multiplexed": false,
+    "use_state_discrimination": false,
+    "num_shots": 50,
+    "min_amp_factor": 0.001,
+    "max_amp_factor": 1.99,
+    "amp_factor_step": 0.005,
+    "max_number_pulses_per_sweep": 1,
+    "update_x90": true,
+    "simulate": false,
+    "simulation_duration_ns": 50000,
+    "use_waveform_report": true,
+    "timeout": 120
+   }
+  }
+ }
+}

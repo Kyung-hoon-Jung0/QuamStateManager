@@ -249,13 +249,26 @@ def _conditional_phase(bundle, key, pname):
     if pd.ndim <= 1:  # 2Q_20: single conditional-phase curve (+ fit overlay)
         data.append(pb.line(x, pd.ravel(), name="conditional phase", color=_CONTROL,
                             mode="lines+markers"))
+        # The node's stored curve, drawn only when the node accepted it -- its own
+        # figure's rule (calibration_utils/cz_conditional_phase/plotting.py, line 106:
+        # ``if hasattr(fit_result, "success") and fit_result.success and not
+        # np.all(np.isnan(fit_result.fitted_curve)):``). A run without a
+        # ``success`` flag (older generations) keeps its curve (docs/300).
+        ok = pair_scalar(fit, "success", pidx) if "success" in fit.get("vars", {}) else None
+        rejected = "success" in fit.get("vars", {}) and not ok
+        notes = []
         if "fitted_curve" in fit.get("vars", {}):
-            data.append(pb.line(x, np.asarray(pslice(fit, "fitted_curve", pidx)[0], dtype=float),
-                                name="fit", color=pb.FIT_COLOR, dash="dash"))
+            if rejected:
+                notes.append("No fit curve: the node marked this fit as failed.")
+            else:
+                data.append(pb.line(x, np.asarray(pslice(fit, "fitted_curve", pidx)[0], dtype=float),
+                                    name="fit", color=pb.FIT_COLOR, dash="dash"))
         shapes = [pb.vline(opt, dash="dot")] if (opt is not None and np.isfinite(opt)) else []
         layout = {"xaxis": {"title": {"text": xlabel}},
                   "yaxis": {"title": {"text": "Conditional phase [2π units]"}},
                   "shapes": shapes, "hovermode": "closest", "margin": _M}
+        if notes:
+            layout["annotations"] = [pb.note(notes)]
     else:  # 2Q_20b/33 error amplification: 2-D map, the saved figure's form
         title = "CZ conditional phase (error-amplified)"
         kind = "2d"

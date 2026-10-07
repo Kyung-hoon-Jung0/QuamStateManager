@@ -1,0 +1,13 @@
+{
+ "fit_results": {
+  "q0": {
+   "frequency": 7126155828.3813505,
+   "fwhm": 494594.86185248534,
+   "r2": 0.9950806927180925,
+   "success": true,
+   "success_shape": true,
+   "ambiguous": false,
+   "dip_snr": 498.9949676521911
+  }
+ }
+}

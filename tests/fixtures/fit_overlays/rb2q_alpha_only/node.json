@@ -1,0 +1,22 @@
+{
+ "metadata": {
+  "name": "37_two_qubit_standard_rb"
+ },
+ "data": {
+  "parameters": {
+   "model": {
+    "multiplexed": false,
+    "use_state_discrimination": true,
+    "num_shots": 150,
+    "num_circuits_per_length": 8,
+    "seed": 0,
+    "use_input_stream": false,
+    "max_chunk_ints": 15500,
+    "simulate": false,
+    "simulation_duration_ns": 50000,
+    "use_waveform_report": true,
+    "timeout": 120
+   }
+  }
+ }
+}

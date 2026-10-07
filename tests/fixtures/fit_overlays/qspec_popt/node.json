@@ -1,0 +1,31 @@
+{
+ "metadata": {
+  "name": "08_qubit_spectroscopy"
+ },
+ "data": {
+  "parameters": {
+   "model": {
+    "multiplexed": false,
+    "use_state_discrimination": false,
+    "num_shots": 100,
+    "frequency_span_in_mhz": 40.0,
+    "frequency_step_in_mhz": 0.25,
+    "operation_amplitude_factor": 1.0,
+    "escalate_on_no_peak": false,
+    "max_escalation_span_in_mhz": 1000.0,
+    "escalation_amp_growth": 3.0,
+    "min_peak_snr": 5.0,
+    "r2_threshold": 0.75,
+    "max_fwhm_mhz": 30.0,
+    "min_contrast": 0.05,
+    "target_peak_width": 3000000.0,
+    "update_pulses_amplitude": false,
+    "opposite_sweet_spot": false,
+    "simulate": false,
+    "simulation_duration_ns": 50000,
+    "use_waveform_report": true,
+    "timeout": 120
+   }
+  }
+ }
+}

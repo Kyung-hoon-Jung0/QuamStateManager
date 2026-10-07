@@ -1,0 +1,22 @@
+{
+ "fit_results": {
+  "q0": {
+   "opt_amp_prefactor": 0.6603645998108448,
+   "opt_amp": 0.2443349019300126,
+   "success": true,
+   "opt_amp_prefactor_raw": 0.6499999999999999,
+   "osc_amp_snr": 6.014906172859496,
+   "n_periods": 1.4899860384117476,
+   "pts_per_period": 65.77242838091497,
+   "raw_fit_consistent": true,
+   "pi_sweep_fraction": 0.33181867337288007,
+   "prefactor_extrapolated": false,
+   "pi_amp_reachable": true,
+   "required_full_scale_power_dbm": NaN,
+   "recommended_amplitude": NaN,
+   "power_plan_reachable": true,
+   "multipulse_fit_quality": NaN,
+   "multipulse_raw_gap": 0.005288061127982103
+  }
+ }
+}

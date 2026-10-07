@@ -1,0 +1,14 @@
+{
+ "fit_results": {
+  "q0": {
+   "opt_amp_prefactor": 0.984060394023881,
+   "opt_amp": 0.38162431186098034,
+   "success": true,
+   "opt_amp_prefactor_raw": 0.841,
+   "osc_amp_snr": NaN,
+   "n_periods": 1.008576308961698,
+   "pts_per_period": 393.62415760955207,
+   "raw_fit_consistent": true
+  }
+ }
+}

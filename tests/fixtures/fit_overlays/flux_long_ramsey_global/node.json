@@ -1,0 +1,33 @@
+{
+ "metadata": {
+  "name": "1Q_19b_qubit_flux_long_distortion_ramsey"
+ },
+ "data": {
+  "parameters": {
+   "model": {
+    "multiplexed": false,
+    "use_state_discrimination": false,
+    "num_shots": 70,
+    "duration_in_ns": 5000000,
+    "time_step_in_ns": 48,
+    "time_step_num": 50,
+    "min_wait_time_in_ns": 32,
+    "ramsey_wait_time_in_ns": 1000,
+    "ramsey_flux_amplitude_in_v": 0.017,
+    "ramsey_flux_sweep_range_in_v": 0.0024,
+    "num_ramsey_flux_points": 101,
+    "num_frame_rotations": 20,
+    "qubit_flux_amplitude_in_v": 0.17,
+    "flux_settle_time_in_ns": 200000,
+    "n_exponentials": 2,
+    "update_state": true,
+    "update_state_from_GUI": true,
+    "simulate": false,
+    "simulation_duration_ns": 50000,
+    "use_waveform_report": true,
+    "timeout": 120,
+    "load_data_id": 345
+   }
+  }
+ }
+}

@@ -8,12 +8,18 @@ to the stored amplitude in Volts.
 Clickable: a clicked amplitude (mV) sets ``xy.operations.<op>.amplitude``
 (÷1e3 → V); for ``op == "x180"`` it also sets ``x90.amplitude`` (= ½), matching
 the node's ``update_state``.
+
+The 1D fit overlay is qualibration_libs ``oscillation`` -- a COSINE in the
+amplitude prefactor (see ``models.oscillation``; the previous overlay used a
+sine, a quarter period off). Where the run stores the node's ``osc_amp_snr``
+(computed from this very curve), SM recomputes it and withholds the curve
+with a note when the two disagree (docs/300).
 """
 from __future__ import annotations
 
 import numpy as np
 
-from .. import models, plotbuild as pb
+from .. import fitcheck, models, plotbuild as pb
 from .base import FigureSpec, figure_key, qslice, qubit_index, qubits_of, split_key
 
 FAMILY = ("1Q_11_power_rabi", "1Q_29_power_rabi_ef")
@@ -73,6 +79,15 @@ def build(bundle, key):
     amp_v, _ = qslice(src, "full_amp", qidx)  # absolute amplitude per prefactor [V]
     x_mv = np.asarray(amp_v, dtype=float) * 1e3
     pref = np.asarray(src["coords"].get("amp_prefactor", []), dtype=float)
+
+    # A single-pulse sweep still carries nb_of_pulses as a length-1 axis. The node
+    # drops it and fits the 1D trace (calibration_utils/power_rabi/analysis.py, line 523:
+    # ``ds_fit = ds.isel(nb_of_pulses=0, drop=True) if "nb_of_pulses" in ds.dims else ds``),
+    # so draw it as that 1D trace with its fit, not as a one-row heatmap without one
+    # (docs/300).
+    if "nb_of_pulses" in dims and z.ndim == 2 and z.shape[dims.index("nb_of_pulses")] == 1:
+        z = np.take(z, 0, axis=dims.index("nb_of_pulses"))
+        dims = [d for d in dims if d != "nb_of_pulses"]
 
     if "nb_of_pulses" in dims and z.ndim == 2:
         return _heatmap(bundle, key, qname, src, qidx, sig, z, dims, x_mv, pref)
@@ -140,15 +155,20 @@ def _line(bundle, key, qname, src, qidx, sig, z, x_mv, pref):
                     customdata=[qname] * len(x_mv))]
     # Oscillation overlay from 1D fit params, when present.
     fit = bundle.fit
+    notes = []
     if fit and "fit" in fit.get("vars", {}) and pref.size:
         try:
-            farr, fdims = qslice(fit, "fit", qidx)
+            farr, fdims = qslice(fit, "fit", qubit_index(fit, qname))
             labels = [str(v) for v in fit["coords"].get("fit_vals", [])]
-            fv = {lab: float(np.asarray(farr)[i]) for i, lab in enumerate(labels)}
+            fv = {lab: float(np.asarray(farr).ravel()[i]) for i, lab in enumerate(labels)}
             if {"a", "f", "phi", "offset"} <= set(fv):
-                curve = models.sin_osc(pref, fv["offset"], fv["a"], fv["f"], fv["phi"])
-                curve = curve * 1e3 if sig != "state" else curve
-                data.append(pb.line(x_mv, curve, name="fit", color=pb.FIT_COLOR, dash="dash"))
+                curve = models.oscillation(pref, fv["a"], fv["f"], fv["phi"], fv["offset"])
+                why = _snr_mismatch(fit, qname, np.asarray(z, dtype=float).ravel(), curve, fv["a"])
+                if why:
+                    notes.append(why)
+                else:
+                    curve = curve * 1e3 if sig != "state" else curve
+                    data.append(pb.line(x_mv, curve, name="fit", color=pb.FIT_COLOR, dash="dash"))
         except Exception:  # noqa: BLE001
             pass
     ylabel = "Signal [mV]" if sig != "state" else "State population"
@@ -156,6 +176,8 @@ def _line(bundle, key, qname, src, qidx, sig, z, x_mv, pref):
               "xaxis2": {"overlaying": "x", "side": "top", "title": {"text": "amplitude prefactor"}},
               "yaxis": pb.axis(ylabel), "shapes": _opt_amp_vline(bundle, qidx),
               "margin": {"l": 60, "r": 30, "t": 50, "b": 50}}
+    if notes:
+        layout["annotations"] = [pb.note(notes)]
     # Twin prefactor axis range.
     if pref.size:
         data.append({"x": [float(pref.min()), float(pref.max())], "y": [None, None],
@@ -163,6 +185,24 @@ def _line(bundle, key, qname, src, qidx, sig, z, x_mv, pref):
                      "marker": {"opacity": 0}, "showlegend": False, "hoverinfo": "skip"})
     return FigureSpec(key=key, title="Power Rabi", kind="1d",
                       figure={"data": data, "layout": layout}, clickable=_click(bundle, qname))
+
+
+def _snr_mismatch(fit, qname, y, curve, a):
+    """A note when the run's stored ``osc_amp_snr`` contradicts SM's curve, else ''."""
+    if "osc_amp_snr" not in fit.get("vars", {}):
+        return ""
+    try:
+        stored = float(np.asarray(qslice(fit, "osc_amp_snr", qubit_index(fit, qname))[0],
+                                  dtype=float).ravel()[0])
+    except Exception:  # noqa: BLE001
+        return ""
+    if not np.isfinite(stored) or y.shape != np.shape(curve):
+        return ""
+    recomputed = fitcheck.osc_amp_snr(y, curve, a)
+    if fitcheck.agrees_rel(recomputed, stored, fitcheck.SNR_REL_TOL):
+        return ""
+    return (f"Fit curve withheld: SM's reconstruction gives oscillation SNR {recomputed:.3g}, "
+            f"the node stored {stored:.3g}.")
 
 
 def _opt_amp_vline(bundle, qidx):

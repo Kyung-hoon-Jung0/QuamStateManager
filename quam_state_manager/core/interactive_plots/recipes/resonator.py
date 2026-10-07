@@ -1,10 +1,23 @@
 """Resonator spectroscopy (single) — interactive reproduction.
 
 Mirrors ``calibration_utils/resonator_spectroscopy/plotting.py``: amplitude+fit,
-raw phase (+group delay), detrended phase, and IQ circle. Handles both ds_fit
-schemas: the new Lorentzian schema (``popt``/``f0``) drives the fit overlay; the
-old peaks schema (``base_line``/``res_freq``) is detected and the overlay is
-drawn from ``base_line`` when present, else traces render without an overlay.
+raw phase (+group delay), detrended phase, and IQ circle.
+
+Fit overlay (docs/300). The Lorentzian ``popt`` = [f0, fwhm, amp, bg0, bg1] is
+NOT redrawn as a curve: its linear background is referenced to the mean of a
+fit window the node does not save (``fc = f.mean()`` over the window,
+calibration_utils/resonator_spectroscopy/analysis.py line 63), current node
+generations may have won with a quadratic background whose third coefficient
+is dropped from ``popt``, and they overwrite ``popt[0]`` with the refined dip
+minimum (``popt[0] = refined``, line 379). Redrawn over the sweep it tilted
+away from the data (median R^2 -1.7 on single sweeps, -67 on wide ones). The
+node's own current figure makes the same call (plotting.py line 411):
+"The Lorentzian is NOT drawn - it fits |S| alone". So the Lorentzian is shown
+as what is exact -- the f0 marker and the FWHM band -- with a note. Where the
+node saved a circle fit
+(``ds_port_fit.h5``), that stored model is drawn verbatim: solid inside the
+fitted window, dashed where it is extended over the rest of the sweep, as
+the node figure does.
 
 Clickable (amplitude + phase): a clicked frequency (full_freq, displayed in GHz)
 sets both ``resonator.f_01`` and ``resonator.RF_frequency`` (×1e9 → Hz), matching
@@ -15,7 +28,7 @@ from __future__ import annotations
 import numpy as np
 
 from .. import models
-from ..plotbuild import FIT_COLOR, GROUP_DELAY, clean
+from ..plotbuild import FIT_COLOR, GROUP_DELAY, clean, note
 from .base import FigureSpec, figure_key, qslice, qubit_index, qubits_of, split_key
 
 FAMILY = ("1Q_03_resonator_spectroscopy",)
@@ -161,18 +174,22 @@ def _amplitude(bundle, key, qidx, qname):
     if det_mhz.size:
         data.append(_twin_detuning_trace(det_mhz, y_mv))
     shapes = []
+    notes = []
     popt = _popt(bundle, qidx)
     if popt is not None:
-        curve_mv = models.lorentzian_dip_linbg(ff_hz, *popt) * 1e3
-        data.append({"x": clean(x_ghz), "y": clean(curve_mv), "type": "scatter",
-                     "mode": "lines", "name": "fit",
-                     "line": {"color": FIT_COLOR, "dash": "dash"}})
         f0, fwhm = float(popt[0]), float(popt[1])
         if np.isfinite(f0) and np.isfinite(fwhm) and fwhm > 0:
             shapes.append({"type": "rect", "xref": "x", "yref": "paper",
                            "x0": (f0 - fwhm / 2) / 1e9, "x1": (f0 + fwhm / 2) / 1e9,
                            "y0": 0, "y1": 1, "fillcolor": "rgba(225,87,89,0.15)",
                            "line": {"width": 0}, "layer": "below"})
+        if np.isfinite(f0):
+            shapes.append({"type": "line", "xref": "x", "yref": "paper",
+                           "x0": f0 / 1e9, "x1": f0 / 1e9, "y0": 0, "y1": 1,
+                           "line": {"color": FIT_COLOR, "dash": "dot", "width": 1}})
+        notes.append("Lorentzian curve not redrawn (its fit window was not saved); "
+                     "f₀ and FWHM shown.")
+    data.extend(_circle_fit_traces(bundle, qname))
 
     layout = {
         "xaxis": {"title": {"text": "RF frequency [GHz]"}},
@@ -180,10 +197,58 @@ def _amplitude(bundle, key, qidx, qname):
         "shapes": shapes, "hovermode": "closest",
         "margin": {"l": 60, "r": 30, "t": 50, "b": 50},
     }
+    if notes:
+        layout["annotations"] = [note(notes, where="bottom")]
     if det_mhz.size:
         layout["xaxis2"] = {"overlaying": "x", "side": "top", "title": {"text": "Detuning [MHz]"}}
     return FigureSpec(key=key, title="Amplitude + fit", kind="1d",
                       figure={"data": data, "layout": layout}, clickable=_freq_click(qname))
+
+
+def _circle_fit_traces(bundle, qname):
+    """|S| of the node's stored circle fit for ``qname`` (mV), or [] when absent.
+
+    Drawn as the node figure draws it (calibration_utils/resonator_spectroscopy/
+    plotting.py, ``_port_model``, line 183):
+    ``z = row.z_fit_real.values + 1j * row.z_fit_imag.values``
+    is the model inside the fitted window (NaN elsewhere) and ``z_full_*`` the
+    same model over the whole sweep -- "Solid = fitted, dashed = extrapolated." (line 178)
+    """
+    port = bundle.port_fit
+    if not port or "z_fit_real" not in port.get("vars", {}) or "freq_hz" not in port.get("vars", {}):
+        return []
+    names = [str(q) for q in port.get("coords", {}).get("qubit", [])]
+    if names and qname not in names:
+        return []                               # never another qubit's circle
+    pidx = qubit_index(port, qname)
+    try:
+        f = np.asarray(qslice(port, "freq_hz", pidx)[0], dtype=float).ravel()
+        z_in = (np.asarray(qslice(port, "z_fit_real", pidx)[0], dtype=float).ravel()
+                + 1j * np.asarray(qslice(port, "z_fit_imag", pidx)[0], dtype=float).ravel())
+        z_out = None
+        if "z_full_real" in port["vars"] and "z_full_imag" in port["vars"]:
+            z_out = (np.asarray(qslice(port, "z_full_real", pidx)[0], dtype=float).ravel()
+                     + 1j * np.asarray(qslice(port, "z_full_imag", pidx)[0], dtype=float).ravel())
+    except Exception:  # noqa: BLE001
+        return []
+    if f.size != z_in.size or not np.any(np.isfinite(z_in.real)):
+        return []
+    ok = None
+    if "success" in port["vars"]:
+        try:
+            ok = bool(np.asarray(qslice(port, "success", pidx)[0]).ravel()[0])
+        except Exception:  # noqa: BLE001
+            ok = None
+    label = "circle fit" + (" [node: failed]" if ok is False else "")
+    traces = []
+    if z_out is not None and z_out.size == f.size and np.any(np.isfinite(z_out.real)):
+        traces.append({"x": clean(f / 1e9), "y": clean(np.abs(z_out) * 1e3), "type": "scatter",
+                       "mode": "lines", "name": label + " (extrapolated)", "opacity": 0.6,
+                       "line": {"color": FIT_COLOR, "dash": "dash", "width": 1}})
+    traces.append({"x": clean(f / 1e9), "y": clean(np.abs(z_in) * 1e3), "type": "scatter",
+                   "mode": "lines", "name": label,
+                   "line": {"color": FIT_COLOR, "width": 2}})
+    return traces
 
 
 def _amplitude_local(bundle, key, qidx, qname):

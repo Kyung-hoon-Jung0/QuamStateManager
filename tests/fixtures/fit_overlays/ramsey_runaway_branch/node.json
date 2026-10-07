@@ -1,0 +1,22 @@
+{
+ "metadata": {
+  "name": "12_ramsey"
+ },
+ "data": {
+  "parameters": {
+   "model": {
+    "multiplexed": false,
+    "use_state_discrimination": false,
+    "num_shots": 300,
+    "frequency_detuning_in_mhz": 1.0,
+    "min_wait_time_in_ns": 16,
+    "max_wait_time_in_ns": 30000,
+    "wait_time_num_points": 500,
+    "simulate": false,
+    "simulation_duration_ns": 50000,
+    "use_waveform_report": true,
+    "timeout": 120
+   }
+  }
+ }
+}

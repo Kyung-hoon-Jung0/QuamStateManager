@@ -1,0 +1,13 @@
+{
+ "fit_results": {
+  "q0-q1": {
+   "success": true,
+   "alpha": 0.9186852664776765,
+   "fidelity": 0.9390139498582574,
+   "average_gate_fidelity": 0.9947567484871139,
+   "error_per_gate": 0.0052432515128860244,
+   "error_per_2q_layer": 0.007917309784457897,
+   "error_per_clifford": 0.06098605014174263
+  }
+ }
+}

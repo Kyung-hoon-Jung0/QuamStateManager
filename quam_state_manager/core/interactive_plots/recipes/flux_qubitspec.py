@@ -151,6 +151,12 @@ def _fitted(bundle, key, qname, qidx, time):
     a_dc, components = comps
     fr, _ = qslice(fit, "flux_response", qidx)
     fr = np.asarray(fr, dtype=float)
+    # The fitter evaluates the plain step model on the ``time`` coordinate [ns]
+    # (calibration_utils/qubit_flux_long_distortion_qubitspec/analysis.py,
+    # line 595: ``term = amp * np.exp(-t / tau)``; no pulse length is passed for
+    # this node, so the finite-pulse factor is skipped).
     curve = models.multiexp_decay(time, a_dc, components)
-    figure = fc.fitted_two_panel(time, fr, curve, ylabel="flux response [V]")
-    return FigureSpec(key=key, title="Flux response + fit", kind="1d", figure=figure)
+    why = fc.rms_mismatch(fc.fit_result(bundle.fit_results, qname), time, fr, curve)
+    figure = fc.fitted_two_panel(time, fr, None if why else curve, ylabel="flux response [V]")
+    return FigureSpec(key=key, title="Flux response + fit", kind="1d",
+                      figure=fc.note_figure(figure, why))
