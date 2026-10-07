@@ -7490,6 +7490,10 @@ window.ChipTrends = (function () {
                     customdata: s.points.map(function (p) { return p[0]; }),
                     mode: (longest > 120 && !held) ? 'lines' : 'lines+markers',
                     type: dense ? 'scattergl' : 'scatter', name: s.entity,
+                    // docs/301 (F8): a stored value HOLDS until the next change --
+                    // a step, as the value drawer draws the same series; a slope
+                    // between two change points showed a drift that never happened
+                    line: { shape: 'hv' },
                     connectgaps: false, marker: { size: 5 },
                     hovertemplate: '%{fullData.name}<br>%{x}<br>%{y}'
                                  + '<br><span style="font-size:.85em">%{customdata}</span>'

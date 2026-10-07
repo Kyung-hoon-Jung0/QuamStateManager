@@ -29,6 +29,7 @@ ok(!w.document.getElementById('topo-trends').textContent.includes('Pick a metric
 w.ChipTrends.render([{metric: 'macros.*.fidelity.InterleavedRB', label: '2Q gate fid. (IRB)', kind: 'pair', series: [{entity: 'q1-2 · cz_SNZ', points: [['20260101_000000', .99], ['20260102_000000', .99]], held: {'20260102_000000': '20260101_000000'}}]}]);
 ok(s.traces[0].marker.symbol[1] === 'circle-open' && s.traces[0].marker.symbol[0] === 'circle', 'held point hollow, real point filled');
 ok(s.traces[0].marker.size[1] === 7, 'held marker size');
+ok(s.traces[0].line && s.traces[0].line.shape === 'hv', 'a stored value holds until its next change: a step line, as the value drawer draws it');
 ok(s.traces[0].customdata[1][0] === '', 'held point has no snapshot id (a click does nothing)');
 ok(/^unchanged since 20[0-9][0-9]-[0-9][0-9]-[0-9][0-9] [0-9][0-9]:[0-9][0-9]:00$/.test(s.traces[0].customdata[1][1]), 'hover says unchanged since <time>');
 ok(!JSON.stringify(s.traces[0].customdata[1]).includes('99'), 'held point not attributed to the newest run');
