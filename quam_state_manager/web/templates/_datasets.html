@@ -13,7 +13,12 @@
 
 {# Flex column that fills #table-pane so the virtual-scroll list grows to the
    available height instead of a hardcoded max-height estimate (no dead space). #}
-<div class="datasets-page">
+{# docs/301 F17: every run rides this page as one JSON script, which outgrows
+   htmx's localStorage history cache (htmx:historyCacheError on leaving, and
+   the retries emptied the cache of every other page). htmx's hx-history
+   switch: no snapshot of this page; Back re-requests it from the server. It
+   must stay inside this page -- htmx looks for it anywhere in the document. #}
+<div class="datasets-page" hx-history="false">
 {# At-a-glance digest of the latest day (PI/skim persona): counts + failure
    chips that click-to-filter via the scoped search (.ds-help-example reuses the
    existing paste-into-search handler). Only shown when something is notable. #}

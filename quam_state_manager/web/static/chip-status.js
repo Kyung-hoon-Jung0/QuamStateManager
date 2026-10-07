@@ -7252,6 +7252,19 @@ window.ChipTrends = (function () {
        click that silently did nothing. A constant, so nothing to escape, and
        it never says "click": it is not an offer. A no-run point gets no hint
        (its provenance line already carries the why). */
+    /* docs/301 F10: the hover's value in the chart's unit -- "33.883 us" (micro
+       sign) for a T1, as the tiles and the axis title say it. Plotly's %{y}
+       borrows the axis' SI exponent format and dropped the unit ("33.883u").
+       The text rule for a value with a unit is PlotTheme.siFormat; a unit that
+       already carries its scale (ns, dBm) takes no SI prefix ("mdBm" is no
+       unit). */
+    function _hoverValue(v, unit) {
+        if (typeof v !== 'number' || !isFinite(v)) return '';
+        var PT = window.PlotTheme;
+        if (!PT || !PT.siFormat) return String(v) + (unit ? ' ' + unit : '');
+        if (unit === 'ns' || unit === 'dBm') return PT.siFormat(v, '') + ' ' + unit;
+        return PT.siFormat(v, unit || '');
+    }
     function _hintLine(info) {
         if (info && info.uid) return '<i style="opacity:.7">click to open the dataset</i>';
         if (info && info.run) {
@@ -7485,6 +7498,8 @@ window.ChipTrends = (function () {
                     x: s.points.map(function (p) {
                         return axisType === 'date' ? _iso(p[0]) : p[0]; }),
                     y: s.points.map(function (p) { return p[1]; }),
+                    // docs/301 F10: the value as the hover says it, with its unit
+                    text: s.points.map(function (p) { return _hoverValue(p[1], c.unit); }),
                     // The snapshot id, carried per point so the hover can name
                     // the snapshot the value came from even on a date axis.
                     customdata: s.points.map(function (p) { return p[0]; }),
@@ -7495,7 +7510,7 @@ window.ChipTrends = (function () {
                     // between two change points showed a drift that never happened
                     line: { shape: 'hv' },
                     connectgaps: false, marker: { size: 5 },
-                    hovertemplate: '%{fullData.name}<br>%{x}<br>%{y}'
+                    hovertemplate: '%{fullData.name}<br>%{x}<br>%{text}'
                                  + '<br><span style="font-size:.85em">%{customdata}</span>'
                                  + '<extra></extra>',
                 };
@@ -7510,7 +7525,7 @@ window.ChipTrends = (function () {
                             return held[p[0]] ? 'circle-open' : 'circle'; }),
                     };
                 }
-                if (!snaps && !held) return tr;      // no map => byte-identical to before
+                if (!snaps && !held) return tr;      // no map => no provenance, no click
                 // [snapshot id, provenance line, click hint] — joined in
                 // BROWSER memory, so the wire still carries 2-tuples.
                 tr.customdata = s.points.map(function (p) {
@@ -7544,7 +7559,7 @@ window.ChipTrends = (function () {
                             (info && info.uid) || null];
                 });
                 tr.hovertemplate =
-                    '%{fullData.name}<br>%{x}<br>%{y}'
+                    '%{fullData.name}<br>%{x}<br>%{text}'
                     + '<br>%{customdata[1]}'
                     + '<br><span style="font-size:.85em">%{customdata[0]}</span>'
                     + '<br>%{customdata[2]}'

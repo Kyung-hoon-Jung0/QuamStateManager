@@ -19,6 +19,9 @@ window.UndoTrail = (function () {
     var _steps = [];          // newest first: {kind, tier, entries:[{dot_path, value, from}], at}
     var _hidden = false;      // closed by the user for this page
     var _panel = null;
+    var _shownOn = null;      // the page (path) the panel was last shown on
+    var _follow = 0;          // when "go to field" sent the user to another page
+    var FOLLOW_MS = 60000;    // a big chip's Live Edit takes tens of seconds
 
     function esc(s) {
         return String(s == null ? '' : s).replace(/[&<>"']/g, function (c) {
@@ -64,8 +67,11 @@ window.UndoTrail = (function () {
             if (el.focus) { try { el.focus({ preventScroll: true }); } catch (e) {} }
             return;
         }
-        if (nav && nav.handle) { nav.handle([{ dot_path: dp }]); return; }
-        if (window._navigateToExplorerPath) window._navigateToExplorerPath(dp);
+        if (nav && nav.handle) {
+            if (nav.handle([{ dot_path: dp }]) === 'page') _follow = Date.now();
+            return;
+        }
+        if (window._navigateToExplorerPath) { _follow = Date.now(); window._navigateToExplorerPath(dp); }
     }
 
     function render() {
@@ -97,8 +103,42 @@ window.UndoTrail = (function () {
         _hidden = false;
         var p = panel();
         p.hidden = false;
+        _shownOn = location.pathname;
         render();
     }
+
+    /* docs/301 F7: the panel is body-level, so it outlived a page change and
+       sat over the next page's content (Trends' charts). Leaving the page
+       hides it, as x does: the steps stay, and the next step brings it back.
+       The page "go to field" opened is the exception -- the user went there
+       from the panel. Deferred: a pane swap's own listeners may push the
+       address after this one runs (_navigateTablePane). */
+    function navigated() {
+        setTimeout(function () {
+            if (!_panel || _panel.hidden || !document.body.contains(_panel)) return;
+            var here = location.pathname;
+            if (here === _shownOn) return;            // the same page, re-rendered
+            if (_follow && Date.now() - _follow < FOLLOW_MS) {
+                _follow = 0;
+                _shownOn = here;
+                return;
+            }
+            _follow = 0;
+            _panel.hidden = true;
+        }, 0);
+    }
+    document.addEventListener('htmx:afterSwap', function (evt) {
+        if (evt && evt.target && evt.target.id === 'table-pane') navigated();
+    });
+    /* Back/Forward swaps the whole body from htmx's snapshot, which can hold
+       a COPY of this panel: markup without its listeners, its x dead. Only
+       the live panel is ours (the restore detached it; the next step shows
+       it again). */
+    document.addEventListener('htmx:historyRestore', function () {
+        Array.prototype.forEach.call(document.querySelectorAll('.undo-trail'), function (el) {
+            if (el !== _panel) el.remove();
+        });
+    });
 
     // server tier: the /undo and /redo responses (HX-Trigger cellsReverted)
     document.addEventListener('cellsReverted', function (evt) {

@@ -921,6 +921,19 @@ def zone_note(view_zone: str | None, run_offsets: dict[str, int]) -> str | None:
             "A different zone is not an error; each run's tooltip keeps its recorded time.")
 
 
+def evidence_text(src: str | None, n: int) -> str:
+    """What the run clock was measured on, for the Diagnostics line: *n* runs
+    SM saw arrive (``live``), or *n* run folders written in place, whose file
+    time is the moment the run was saved (``in_place``; a copied folder's is
+    the copy time, which ``classify_archive`` rules out)."""
+    one = n == 1
+    if src == "live":
+        return f"{n} run{'' if one else 's'} seen arriving live"
+    return (f"{n} run folder{'' if one else 's'} written in place: "
+            + ("its file time is the save time" if one
+               else "their file times are the save times"))
+
+
 def diagnostics_line(inst, project: str | None, view_zone: str | None = None) -> dict | None:
     """The ONE Diagnostics info line about the run clock (or None):
     ``{"level", "text", "ask"}``."""
@@ -933,12 +946,11 @@ def diagnostics_line(inst, project: str | None, view_zone: str | None = None) ->
     tail = f" {note}" if note else ""
     if s["class"] == "none":
         return {"level": "info", "text": note, "ask": False} if note else None
-    src = "seen arriving live" if s["src"] == "live" else "folders written in place"
     if s["class"] == "small":
         return {"level": "info", "ask": False,
                 "text": (f"Run clock: agrees with this PC within {skew_text(s['skew_s'])} "
-                         f"({s['n']} runs {src}); below the {span_text(SKEW_ASK_S)} ask "
-                         f"threshold, so never asked.{tail}")}
+                         f"({evidence_text(s['src'], s['n'])}); below the "
+                         f"{span_text(SKEW_ASK_S)} ask threshold, so never asked.{tail}")}
     direction = "ahead of" if s["skew_s"] > 0 else "behind"
     if oa and same_skew(oa["skew_s"], s["skew_s"]):
         what = {"experiment_pc": "run times are shown corrected (labelled; originals kept)",
@@ -946,16 +958,17 @@ def diagnostics_line(inst, project: str | None, view_zone: str | None = None) ->
                 "ignore": "ignored"}[oa["choice"]]
         return {"level": "info", "ask": False,
                 "text": (f"Run clock: {skew_text(s['skew_s'])} {direction} this PC "
-                         f"({s['n_regime']} runs {src}); your answer: {_choice_text(oa['choice'])} "
-                         f"— {what}.{tail}")}
+                         f"({evidence_text(s['src'], s['n_regime'])}); your answer: "
+                         f"{_choice_text(oa['choice'])} — {what}.{tail}")}
     if s["class"] == "ask":
         return {"level": "warning", "ask": True,
                 "text": (f"Run clock: {skew_text(s['skew_s'])} {direction} this PC "
-                         f"({s['n_regime']} runs {src}) — waiting for your answer.{tail}")}
+                         f"({evidence_text(s['src'], s['n_regime'])}) — waiting for your "
+                         f"answer.{tail}")}
     return {"level": "info", "ask": False,
-            "text": (f"Run clock: {skew_text(s['skew_s'])} {direction} this PC in "
-                     f"{s['n']} runs {src}; waiting for {MIN_ASK_N} runs that agree "
-                     f"before asking.{tail}")}
+            "text": (f"Run clock: {skew_text(s['skew_s'])} {direction} this PC "
+                     f"({evidence_text(s['src'], s['n'])}); waiting for {MIN_ASK_N} runs "
+                     f"that agree before asking.{tail}")}
 
 
 def _choice_text(choice: str) -> str:

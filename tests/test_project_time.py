@@ -452,6 +452,33 @@ class TestAskOnce:
         line = pt.diagnostics_line(inst, "alpha", None)
         assert not line["ask"] and "this PC's clock is wrong" in line["text"]
 
+    def test_the_line_names_its_evidence_in_plain_words(self, inst, tmp_path):
+        """docs/301 F2: an archive written in place read "(5 runs folders written
+        in place)", and one run read "1 runs". The evidence is counted in run
+        folders whose file time is the save time, or in runs SM saw arrive."""
+        base = datetime(2026, 10, 1, 9, 0, tzinfo=UTC)
+        folders = [pt.make_witness(_node(base + timedelta(hours=i)), f"m{i}", src="in_place",
+                                   folder_mtime_utc_us=_us(base + timedelta(hours=i, seconds=-2)))
+                   for i in range(5)]
+        pt.add_witnesses(inst, "alpha", folders)
+        text = pt.diagnostics_line(inst, "alpha", None)["text"]
+        assert ("within 2 s (5 run folders written in place: their file times are the "
+                "save times); below the 30 min ask threshold") in text, text
+        one = tmp_path / "_one"
+        pt.add_witnesses(one, "alpha", folders[:1])
+        text = pt.diagnostics_line(one, "alpha", None)["text"]
+        assert "(1 run folder written in place: its file time is the save time)" in text, text
+        live = tmp_path / "_live"
+        pt.add_witnesses(live, "alpha", _live_witnesses([5]))
+        text = pt.diagnostics_line(live, "alpha", None)["text"]
+        assert "(1 run seen arriving live)" in text, text
+        # still settling: the same parenthesis, never "in 2 runs ..."
+        unsettled = tmp_path / "_unsettled"
+        pt.add_witnesses(unsettled, "alpha", _live_witnesses([3600, 3600]))
+        text = pt.diagnostics_line(unsettled, "alpha", None)["text"]
+        assert text.startswith("Run clock: 1 h 00 min ahead of this PC (2 runs seen arriving "
+                               "live); waiting for 3 runs that agree before asking."), text
+
 
 class TestCorrection:
 

@@ -377,6 +377,40 @@ class TestOpening:
             assert routes._active_ctx() is not None
             assert routes._qualibrate_tray_badge()["env"]["state"] == "global"
 
+    def test_use_this_on_the_landing_names_the_env_in_the_badge_at_once(self, lab):
+        """docs/301 F1: with no chip open, the landing's "Use this" for the
+        project qualibrate names active saved the env, but the badge it
+        answered out of band still read "no env" (nothing was SELECTED: only
+        an open project's sync selected) until the project was opened. That
+        project is the one the badge is judged against, so its sync selects."""
+        def badge(body):
+            return body[body.index('id="sidebar-folder-badges-slot"'):]
+
+        with lab["app"].test_request_context("/"):
+            assert routes._active_ctx() is None                      # no chip open
+        assert _selected(lab) is None                                # "no env" before
+        r = lab["c"].post("/qualibrate/project-env",
+                          data={"project": "alpha", "python": lab["A"], "how": "changed"})
+        assert r.status_code == 200
+        b = badge(r.get_data(as_text=True))
+        assert 'hx-swap-oob="true"' in b.split(">", 1)[0]
+        assert 'data-env-state="remembered"' in b and "env&nbsp;ENV_A" in b, b
+        assert ">no env<" not in b
+        assert os.path.normcase(_selected(lab)) == os.path.normcase(lab["A"])
+        # another env for the same project: the badge follows, never "not the project's"
+        r = lab["c"].post("/qualibrate/project-env",
+                          data={"project": "alpha", "python": lab["B"], "how": "changed"})
+        b = badge(r.get_data(as_text=True))
+        assert 'data-env-state="remembered"' in b and "env&nbsp;ENV_B" in b, b
+        # a cold render says the same
+        html = lab["c"].get("/?landing=1").get_data(as_text=True)
+        assert 'data-env-state="remembered"' in badge(html) and "env&nbsp;ENV_B" in badge(html)
+        # a project the badge is NOT about only remembers its env
+        lab["c"].post("/qualibrate/project-env",
+                      data={"project": "beta", "python": lab["A"], "how": "changed"})
+        assert os.path.normcase(_selected(lab)) == os.path.normcase(lab["B"])
+        assert project_env.remembered(lab["inst"], "beta") == lab["A"]
+
 
 # ------------------------------------------------------------ the picker JS
 def test_landing_env_selfcheck():

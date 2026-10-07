@@ -28,4 +28,9 @@
 </form>
 
 <div id="jr-raw"></div>
-<div id="jr-body">{% include '_journal_body.html' %}</div>
+{# docs/301 F17: hundreds of cards outgrow htmx's localStorage history cache
+   (htmx:historyCacheError on leaving, and the retries emptied the cache of
+   every other page). htmx's hx-history switch: no snapshot of this page;
+   Back re-requests it from the server. It must stay inside this page --
+   htmx looks for it anywhere in the document. #}
+<div id="jr-body" hx-history="false">{% include '_journal_body.html' %}</div>
