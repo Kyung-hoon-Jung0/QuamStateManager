@@ -55,6 +55,9 @@ class Bundle:
     # for recipes that need it; ``iqblobs_vars`` is the cheap menu-pass probe.
     iqblobs: dict | None = None
     iqblobs_vars: set = field(default_factory=set)
+    # Resonator nodes that run a circle (impedance) fit save it as
+    # ``ds_port_fit.h5``: the model |S| inside and outside the fitted window.
+    port_fit: dict | None = None
 
 
 def figure_key(base: str, qname: str) -> str:

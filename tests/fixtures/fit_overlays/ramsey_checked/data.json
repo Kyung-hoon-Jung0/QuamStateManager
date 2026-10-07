@@ -1,0 +1,15 @@
+{
+ "fit_results": {
+  "q0": {
+   "freq_offset": 343.3402889644124,
+   "decay": 3.5500248372676845e-05,
+   "decay_error": 2.3647962539247402e-06,
+   "success": true,
+   "osc_amp_snr": 10.89375652096962,
+   "r2": 0.9705685647017687,
+   "t2_in_range": true,
+   "gauss_fraction": NaN,
+   "detuning_consistency": -0.000386655326939378
+  }
+ }
+}

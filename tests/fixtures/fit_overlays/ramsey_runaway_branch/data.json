@@ -1,0 +1,13 @@
+{
+ "fit_results": {
+  "q0": {
+   "freq_offset": 4375270.656113885,
+   "decay": 1.1310017333284209e-05,
+   "decay_error": Infinity,
+   "success": false,
+   "osc_amp_snr": 5.713369936682985e-13,
+   "r2": -4.530478716225772,
+   "t2_in_range": false
+  }
+ }
+}

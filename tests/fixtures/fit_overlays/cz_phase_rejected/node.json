@@ -1,0 +1,21 @@
+{
+ "metadata": {
+  "name": "32a_cz_conditional_phase"
+ },
+ "data": {
+  "parameters": {
+   "model": {
+    "multiplexed": false,
+    "use_state_discrimination": true,
+    "num_shots": 300,
+    "amp_range": 0.09,
+    "amp_step": 0.006,
+    "num_frame_rotations": 8,
+    "simulate": false,
+    "simulation_duration_ns": 50000,
+    "use_waveform_report": true,
+    "timeout": 900
+   }
+  }
+ }
+}

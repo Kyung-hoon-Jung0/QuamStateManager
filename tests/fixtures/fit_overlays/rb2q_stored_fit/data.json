@@ -1,0 +1,27 @@
+{
+ "fit_results": {
+  "q0-q1": {
+   "alpha": 0.9743394803387262,
+   "alpha_stderr": 0.005081928865699402,
+   "fidelity": 0.9807546102540446,
+   "fidelity_stderr": 0.0038114466492745517,
+   "fit_amplitude": 0.9012933471370951,
+   "fit_amplitude_stderr": 0.12779271687877836,
+   "fit_offset": 0.0715507202041174,
+   "fit_offset_stderr": 0.1306543743475494,
+   "success": true,
+   "fit_issues": [],
+   "fit_warnings": [],
+   "coherence_limit_epg": 0.001746284421265204,
+   "fit_quality_poor": false,
+   "reduced_chi2": 1.8219709001452487,
+   "survival_non_monotonic": false,
+   "epc": 0.019245389745955355,
+   "epc_stderr": 0.0038114466492745517,
+   "epg": 0.0036380343542238235,
+   "epg_stderr": 0.000720493273058616,
+   "average_gate_fidelity": 0.9963619656457762,
+   "average_gates_per_clifford": 5.290051679586563
+  }
+ }
+}

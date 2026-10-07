@@ -1,0 +1,11 @@
+{
+ "fit_results": {
+  "q0-q1": {
+   "optimal_amplitude": -0.0021320000000000006,
+   "success": false,
+   "tanh_r2": 0.19549310745236737,
+   "frame_coverage": 1.0,
+   "in_sweep": false
+  }
+ }
+}

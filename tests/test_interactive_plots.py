@@ -25,14 +25,22 @@ skip_no_data = pytest.mark.skipif(not _HAS_DATA, reason="experiment data folder 
 # Pure-unit tests (no data) — never skipped
 # ======================================================================
 
-def test_lorentzian_dip_linbg_at_center():
-    # At f == f0 (single point), fc == 0 → bg0 - amp.
-    val = models.lorentzian_dip_linbg(np.array([5.0]), 5.0, 1.0, 2.0, 10.0, 0.0)
-    assert val[0] == pytest.approx(8.0)
+def test_lorentzian_peak_linbg_is_a_peak_referenced_to_the_window_mean():
+    # At f == f0 (single point), fc == f0 -> bg0 + amp: a PEAK (docs/300).
+    val = models.lorentzian_peak_linbg(np.array([5.0]), 5.0, 1.0, 2.0, 10.0, 0.0)
+    assert val[0] == pytest.approx(12.0)
+    # The background is referenced to mean(f): the same f0 point evaluated on
+    # two different windows differs by bg1 * (mean difference).
+    w1 = models.lorentzian_peak_linbg(np.array([4.0, 5.0, 6.0]), 5.0, 1.0, 2.0, 10.0, 1.0)
+    w2 = models.lorentzian_peak_linbg(np.array([5.0, 6.0, 7.0]), 5.0, 1.0, 2.0, 10.0, 1.0)
+    assert w1[1] == pytest.approx(12.0) and w2[0] == pytest.approx(11.0)
 
 
-def test_sin_osc():
-    assert models.sin_osc(np.array([0.0]), 1.0, 2.0, 0.25, 0.0)[0] == pytest.approx(1.0)
+def test_oscillation_is_the_library_cosine():
+    # qualibration_libs oscillation: a*cos(2 pi f t + phi) + offset -> t=0, phi=0 gives a+offset.
+    assert models.oscillation(np.array([0.0]), 2.0, 0.25, 0.0, 1.0)[0] == pytest.approx(3.0)
+    # a quarter period later the cosine is at the offset (a sine would be at its maximum)
+    assert models.oscillation(np.array([1.0]), 2.0, 0.25, 0.0, 1.0)[0] == pytest.approx(1.0)
 
 
 def test_multiexp_decay_at_zero():
@@ -327,23 +335,44 @@ def _rb_bundle(name="2Q_37_two_qubit_standard_rb", alpha=0.9, fidelity=0.95):
                   fit_results={"qA2-qA1": {"alpha": alpha, "fidelity": fidelity}})
 
 
-def test_two_qubit_rb_decay_fit_and_replaces_static():
-    """2Q RB: survival P(|00>) decay (log-x) + alpha overlay + fidelity title; the
-    figure is keyed to the node's auto-named fig_<pair> so it replaces the PNG."""
+def test_two_qubit_rb_alpha_only_generation_draws_no_refit_and_keeps_the_png():
+    """2Q RB, a node generation that stored only alpha + fidelity (docs/300): the
+    amplitude/offset are not on disk, so SM draws NO curve (it used to re-fit
+    them), says so, and keys the tile off ``fig_<pair>`` so the node's saved
+    figure -- which does carry the curve -- stays visible beside it."""
     from quam_state_manager.core.interactive_plots.recipes import two_qubit_rb as rb
     bundle = _rb_bundle()
-    assert [s.key for s in rb.menu(bundle)] == ["fig_qA2-qA1::qA2-qA1"]
-    spec = rb.build(bundle, "fig_qA2-qA1::qA2-qA1")
+    assert [s.key for s in rb.menu(bundle)] == ["survival::qA2-qA1"]
+    spec = rb.build(bundle, "survival::qA2-qA1")
     assert spec.available
     # RB fidelity is fit-derived, never a clicked coordinate — stays view-only.
     assert spec.clickable is None
     names = [t.get("name") for t in spec.figure["data"]]
-    assert "P(|00⟩)" in names and "fit" in names
+    assert "P(|00⟩)" in names and "fit" not in names
+    notes = [a["text"].replace("<br>", " ") for a in spec.figure["layout"].get("annotations", [])]
+    assert any("only α" in n for n in notes)
     surv = next(t for t in spec.figure["data"] if t.get("name") == "P(|00⟩)")
     assert surv["y"][0] > surv["y"][-1]                       # decays
-    assert spec.figure["layout"]["xaxis"]["type"] == "log"
+    assert spec.figure["layout"]["xaxis"].get("type") != "log"  # the node's default axis
     assert "fidelity 0.9500" in spec.title
     json.dumps(spec.figure, allow_nan=False)
+
+
+def test_two_qubit_rb_draws_the_stored_fit_and_respects_the_node_verdict():
+    from quam_state_manager.core.interactive_plots.recipes import two_qubit_rb as rb
+    A, alpha, B = 0.7, 0.9, 0.25
+    bundle = _rb_bundle()
+    bundle.fit_results["qA2-qA1"].update(fit_amplitude=A, fit_offset=B, success=True)
+    assert [s.key for s in rb.menu(bundle)] == ["fig_qA2-qA1::qA2-qA1"]
+    spec = rb.build(bundle, "fig_qA2-qA1::qA2-qA1")
+    fit = next(t for t in spec.figure["data"] if t.get("name") == "fit")
+    x, y = np.asarray(fit["x"], float), np.asarray(fit["y"], float)
+    assert np.allclose(y, A * alpha ** x + B)                  # the node's numbers, no re-fit
+    bundle.fit_results["qA2-qA1"]["success"] = False
+    spec = rb.build(bundle, "fig_qA2-qA1::qA2-qA1")
+    assert "fit" not in [t.get("name") for t in spec.figure["data"]]
+    assert any("failed" in a["text"].replace("<br>", " ")
+               for a in spec.figure["layout"]["annotations"])
 
 
 def test_two_qubit_rb_family_and_naming_variant():
@@ -609,11 +638,15 @@ def test_routes(store):
 # Round 2: all-experiments coverage + new click transforms
 # ======================================================================
 
-def test_osc_decay_and_lorentzian_peak_models():
-    assert models.osc_decay(np.array([0.0]), 2.0, 0.1, 0.0, 1.0, -0.01)[0] == pytest.approx(3.0)
-    # peak at f0 (single point): base + amp
-    v = models.lorentzian_peak_linbg(np.array([5.0]), 5.0, 1.0, 2.0, np.array([10.0]))
-    assert v[0] == pytest.approx(12.0)
+def test_oscillation_decay_exp_decays_for_a_positive_rate_and_lorentzian_peak():
+    t = np.array([0.0, 100.0])
+    y = models.oscillation_decay_exp(t, 2.0, 0.0, 0.0, 1.0, 0.01)
+    assert y[0] == pytest.approx(3.0)
+    # a positive stored decay RATE shrinks the envelope: 1 + 2*exp(-1)
+    assert y[1] == pytest.approx(1.0 + 2.0 * math.exp(-1.0))
+    # legacy peak: offset + amplitude at the centre, half width = width
+    v = models.lorentzian_peak(np.array([5.0, 6.0]), 2.0, 5.0, 1.0, 10.0)
+    assert v[0] == pytest.approx(12.0) and v[1] == pytest.approx(11.0)
 
 
 def test_plotbuild_new_helpers():

@@ -2,7 +2,16 @@
 
 Mirrors the node's plot_data: raw Ramsey signal heatmap (linear/log time), the
 mapped flux-response line (linear/log), the reference amplitude-sweep heatmap,
-and the global finite-pulse multi-exponential ``fitted_data`` overlay.
+and the multi-exponential ``fitted_data`` overlay.
+
+Which model the overlay uses depends on the fitter that produced the run
+(docs/300). The global fitter fits the FINITE-PULSE model with T =
+``flux_settle_time_in_ns`` (calibration_utils/qubit_flux_long_distortion_ramsey/
+analysis.py, line 353:
+``t_pulse_ns = float(getattr(node.parameters, "flux_settle_time_in_ns", 0)) or None``);
+the legacy sequential fitter, whose
+results carry ``optimized_fractions``, fitted the plain step model. The stored
+``rms_error`` confirms the choice per run (``flux_common.rms_mismatch``).
 
 Not clickable: the updated parameter (``z.opx_output.exponential_filter``) comes
 from a global fit, with no single-point correspondence.
@@ -48,8 +57,7 @@ def menu(bundle):
             ("flux_response_log", "Flux response (log)", "1d", has_fr, "no flux_response"),
             ("ref_data", "Reference sweep", "2d", bool(ref), "no reference"),
             ("fitted_data", "Flux response + fit", "1d",
-             has_fr and fc.fit_components(bundle.fit_results, q) is not None
-             and _settle_time(bundle) is not None, "no fit/settle-time"),
+             has_fr and fc.fit_components(bundle.fit_results, q) is not None, "no fit"),
         ]
         for base, title, kind, avail, reason in rows:
             specs.append(FigureSpec(key=figure_key(base, q),
@@ -136,17 +144,23 @@ def _fitted(bundle, key, qname):
     fit = bundle.fit
     comps = fc.fit_components(bundle.fit_results, qname)
     settle = _settle_time(bundle)
-    if not fit or "flux_response" not in fit.get("vars", {}) or comps is None or settle is None:
+    if not fit or "flux_response" not in fit.get("vars", {}) or comps is None:
         return FigureSpec(key=key, title="Flux response + fit",
-                          available=False, reason="no fit/settle-time")
+                          available=False, reason="no fit")
     qidx = qubit_index(fit, qname)
     a_dc, components = comps
     fr, _ = qslice(fit, "flux_response", qidx)
     fr = np.asarray(fr, dtype=float)
     time = np.asarray(fit["coords"].get("time", []), dtype=float)
-    curve = models.multiexp_finite_pulse(time, a_dc, components, settle)
-    figure = fc.fitted_two_panel(time, fr, curve, ylabel="flux response [V]")
-    return FigureSpec(key=key, title="Flux response + fit", kind="1d", figure=figure)
+    res = fc.fit_result(bundle.fit_results, qname)
+    if settle and "optimized_fractions" not in res:
+        curve = models.multiexp_finite_pulse(time, a_dc, components, settle)
+    else:   # legacy sequential fitter, or no pulse length (the fitter's t_pulse_ns=None)
+        curve = models.multiexp_decay(time, a_dc, components)
+    why = fc.rms_mismatch(res, time, fr, curve)
+    figure = fc.fitted_two_panel(time, fr, None if why else curve, ylabel="flux response [V]")
+    return FigureSpec(key=key, title="Flux response + fit", kind="1d",
+                      figure=fc.note_figure(figure, why))
 
 
 def _settle_time(bundle):

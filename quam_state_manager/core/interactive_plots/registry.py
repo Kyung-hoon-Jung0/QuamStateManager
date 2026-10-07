@@ -216,7 +216,7 @@ _bundle_cache_lock = threading.Lock()
 
 # Exactly the per-run files build_interactive_figure reads.
 _BUNDLE_INPUT_FILES = (
-    "ds_raw.h5", "ds_fit.h5", "ds_iq_blobs.h5", "node.json",
+    "ds_raw.h5", "ds_fit.h5", "ds_iq_blobs.h5", "ds_port_fit.h5", "node.json",
     os.path.join("quam_state", "state.json"),
     os.path.join("quam_state", "wiring.json"),
 )
@@ -244,6 +244,7 @@ def _load_bundle_inputs(run) -> dict:
         "raw": h5reader.load_dataset(run, "ds_raw"),
         "fit": h5reader.load_dataset(run, "ds_fit"),
         "iqb": h5reader.load_dataset(run, "ds_iq_blobs"),
+        "port": h5reader.load_dataset(run, "ds_port_fit"),
         "quam_state": h5reader.load_quam_state(run),
     }
 
@@ -284,7 +285,7 @@ def build_interactive_figure(run, key: str) -> dict | None:
     raw, fit, iqb = inputs["raw"], inputs["fit"], inputs["iqb"]
     bundle = Bundle(
         run=run, node_meta=node_meta, fit_results=getattr(run, "fit_results", {}) or {},
-        raw=raw, fit=fit, iqblobs=iqb,
+        raw=raw, fit=fit, iqblobs=iqb, port_fit=inputs.get("port"),
         raw_vars=set(raw["vars"]) if raw else set(),
         fit_vars=set(fit["vars"]) if fit else set(),
         raw_coords=set(raw["coords"]) if raw else set(),

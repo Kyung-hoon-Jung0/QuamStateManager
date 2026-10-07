@@ -1,0 +1,26 @@
+{
+ "metadata": {
+  "name": "29_power_rabi_ef"
+ },
+ "data": {
+  "parameters": {
+   "model": {
+    "multiplexed": false,
+    "use_state_discrimination": false,
+    "num_shots": 100,
+    "min_amp_factor": 0.01,
+    "max_amp_factor": 1.99,
+    "amp_factor_step": 0.02,
+    "max_number_pulses_per_sweep": 1,
+    "sweep_2d": false,
+    "frequency_span_in_mhz": 2.0,
+    "frequency_step_in_mhz": 0.1,
+    "readout_detuning_in_mhz": 0.0,
+    "simulate": false,
+    "simulation_duration_ns": 50000,
+    "use_waveform_report": true,
+    "timeout": 120
+   }
+  }
+ }
+}

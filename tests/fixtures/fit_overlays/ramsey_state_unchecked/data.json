@@ -1,0 +1,10 @@
+{
+ "fit_results": {
+  "q0": {
+   "freq_offset": -12243.318654524193,
+   "decay": 3.982156290430365e-05,
+   "decay_error": 6.348482098194615e-06,
+   "success": true
+  }
+ }
+}

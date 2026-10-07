@@ -1,0 +1,26 @@
+{
+ "metadata": {
+  "name": "03_resonator_spectroscopy_single"
+ },
+ "data": {
+  "parameters": {
+   "model": {
+    "multiplexed": true,
+    "use_state_discrimination": false,
+    "num_shots": 1200,
+    "frequency_span_in_mhz": 6.0,
+    "frequency_step_in_mhz": 0.03,
+    "escalate_on_no_dip": false,
+    "max_escalation_span_in_mhz": 1000.0,
+    "min_dip_snr": 6.0,
+    "max_fwhm_mhz": 40.0,
+    "dip_dominance": 2.0,
+    "opposite_sweet_spot": false,
+    "simulate": false,
+    "simulation_duration_ns": 50000,
+    "use_waveform_report": true,
+    "timeout": 120
+   }
+  }
+ }
+}
