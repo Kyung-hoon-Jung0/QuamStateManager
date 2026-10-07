@@ -124,18 +124,44 @@ class Building(Warming):
 ROOT_SOURCES = ("declared", "project_storage", "project_roots", "decided_same")
 
 
+def _holds_runs(folder: Path) -> bool:
+    """A folder qualibrate writes runs into: it has a day folder (YYYY-MM-DD)."""
+    try:
+        with os.scandir(folder) as it:
+            for e in it:
+                n = e.name
+                if (len(n) == 10 and n[4] == "-" and n[7] == "-"
+                        and n[:4].isdigit() and n[5:7].isdigit() and n[8:].isdigit()
+                        and e.is_dir()):
+                    return True
+    except OSError:
+        return False
+    return False
+
+
 def project_run_root(location: str | None, project: str | None) -> str | None:
     """Where qualibrate writes a project's runs (docs/275 review, P1-1): the
     storage location when it already names the project (the lazy
     ``${#/qualibrate/project}`` template), else ``<location>/<project>`` -- a
-    storage location shared by several projects holds one subfolder each."""
+    storage location shared by several projects holds one subfolder each.
+
+    docs/301 F38: the evidence on disk decides before that naming rule. The
+    config tool creates an EMPTY ``<location>/<project>`` whenever it writes a
+    config whose location does not name the project, while the runs sit in
+    the location's own day folders (observed on this machine's lab setup). A
+    project subfolder holding no runs, beside a location that does, is not
+    where the runs are: the ledger of a chip with no ``extras.data_folder``
+    found none and every history surface stayed empty."""
     if not location:
         return None
     if not project:
         return location
     if os.path.normcase(project) in {os.path.normcase(p) for p in Path(location).parts}:
         return location
-    return str(Path(location) / project)
+    sub = Path(location) / project
+    if not _holds_runs(sub) and _holds_runs(Path(location)):
+        return location
+    return str(sub)
 
 
 def _inside(child: str, parent: str, key: Callable[[str], str]) -> bool:

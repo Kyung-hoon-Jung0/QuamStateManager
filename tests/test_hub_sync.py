@@ -1671,6 +1671,53 @@ class TestReviewRoots:
         assert [r["sources"] for r in st["roots"]] == [["project_storage"]], st["roots"]
         assert [e["run_id"] for e in events(Path(st["chip_dir"]))] == [1]
 
+    def test_opening_a_project_whose_runs_are_in_the_location_itself_syncs_them(
+            self, tmp_path, monkeypatch, any_project_env_chosen):
+        """docs/301 F38: a chip with no extras.data_folder, its project's runs
+        straight in the storage location's day folders, and the config tool's
+        empty <location>/<project> beside them -- the ledger synced nothing."""
+        cfg = tmp_path / ".qualibrate"
+        chip = tmp_path / "chips" / "live"
+        chip.mkdir(parents=True)
+        (chip / "state.json").write_text(json.dumps(doc(1.0, name="chip-a")), encoding="utf-8")
+        (chip / "wiring.json").write_text(json.dumps(WIRING), encoding="utf-8")
+        storage = tmp_path / "datasets" / "lab_runs"
+        run(storage, 1, doc(1.0, name="chip-a"))
+        run(storage, 2, doc(2.0, name="chip-a"))
+        (storage / "pa").mkdir()
+        (cfg / "projects" / "pa").mkdir(parents=True)
+        (cfg / "projects" / "pa" / "config.toml").write_text(f'[quam]\nstate_path = "{chip.as_posix()}"\n',
+                                                             encoding="utf-8")
+        (cfg / "config.toml").write_text(
+            f'[qualibrate]\nproject = "pa"\nversion = 5\n\n[qualibrate.storage]\nlocation = "{storage.as_posix()}"\n\n'
+            f'[quam]\nstate_path = "{chip.as_posix()}"\nversion = 3\n', encoding="utf-8")
+        monkeypatch.setenv("QUALIBRATE_CONFIG_FILE", str(cfg))
+        monkeypatch.delenv("QUALIBRATE_CONFIG_DIR", raising=False)
+        _qc._state_index_cache.clear()
+        from quam_state_manager.web.app import create_app
+        app = create_app(testing=True, instance_path=str(tmp_path / "_inst"))
+        app.config["HUB_SYNC_ON_OPEN"] = True
+        c = app.test_client()
+        assert c.post("/qualibrate/open", data={"project": "pa"}).status_code in (200, 302)
+        st = c.get("/hub/status").get_json()
+        assert [Path(r["path"]) for r in st["roots"]] == [storage], st["roots"]
+        assert [e["run_id"] for e in events(Path(st["chip_dir"]))] == [1, 2]
+
+    def test_runs_in_the_location_itself_are_the_projects(self, tmp_path):
+        """docs/301 F38: the config tool's empty <location>/<project> beside the
+        day folders the runs are in -- the location is the run root."""
+        loc = tmp_path / "datasets"
+        run(loc, 1, doc(1.0))
+        (loc / "pa").mkdir()
+        assert hub_sync.project_run_root(str(loc), "pa") == str(loc)
+        # a shared location keeps its per-project rule: runs in loc/pa win
+        run(loc / "pa", 2, doc(1.0))
+        assert hub_sync.project_run_root(str(loc), "pa") == str(loc / "pa")
+        # and nothing anywhere keeps the naming rule
+        empty = tmp_path / "empty"
+        empty.mkdir()
+        assert hub_sync.project_run_root(str(empty), "pa") == str(empty / "pa")
+
     def test_project_run_root_and_sibling_folders(self, tmp_path):
         loc = tmp_path / "datasets"
         for p in ("pa", "pb"):
