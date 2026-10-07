@@ -4289,7 +4289,7 @@ def _adopt_extras_data_folders(ctx: dict | None) -> None:
         scope = ctx.get("qualibrate_project")
         if scope:
             try:
-                _record_project_roots(scope, resolved)
+                _record_project_roots(scope, resolved, from_extras=True)
             except Exception:  # noqa: BLE001
                 pass
     except Exception:  # noqa: BLE001 — pairing must never break activation
@@ -16107,6 +16107,26 @@ def state_history():
     return render_template(template, **ctx)
 
 
+def _keep_identity_extras(ctx: dict | None, state: dict,
+                          source: str = "version") -> tuple[dict, str]:
+    """docs/301 F6: a whole version of this same chip keeps the chip's own
+    ``extras.chip_name`` / ``extras.data_folder`` (identity, not calibration
+    -- see ``core.identity_extras``). Answers the state to write and the
+    sentence naming what was kept ("" when nothing was)."""
+    from quam_state_manager.core import identity_extras
+    store = (ctx or {}).get("store")
+    if store is None:
+        return state, ""
+    try:
+        with store._lock:
+            current = store.state
+        out, kept = identity_extras.keep_identity(state, current)
+    except Exception:  # noqa: BLE001 -- the load itself must not fail on this
+        logger.warning("identity extras carry failed", exc_info=True)
+        return state, ""
+    return out, identity_extras.kept_note(kept, source)
+
+
 def _snapshot_state_wiring(hm, path, timestamp) -> tuple[dict, dict]:
     """Parsed (state, wiring) of a snapshot — deep-copied so callers can write
     them to the working folder without aliasing the cached store.
@@ -16231,6 +16251,11 @@ def state_history_stage(timestamp: str):
         return render_template("_status.html",
                                message=f"Could not load snapshot {timestamp}: {exc}",
                                level="error"), 404
+    # docs/301 F6: a version of this chip keeps the chip's own name and data
+    # folder; Revert last apply (from=tray) restores the pre-apply files exactly
+    _kept_note = ""
+    if request.values.get("from") != "tray":
+        state, _kept_note = _keep_identity_extras(ctx, state)
     try:
         with _active_wc_lock(ctx):
             safe_io.write_state_wiring(wc.working_folder, state, wiring)
@@ -16265,7 +16290,7 @@ def state_history_stage(timestamp: str):
     msg = render_template(
         "_status.html",
         message=(f"{_what} {zone_ts_text(timestamp[:22])} "
-                 "loaded as the working state."
+                 "loaded as the working state." + _kept_note
                  + (_push or " Review it against the live chip from the sync "
                     "status in the top bar (Staged version · not on live), then "
                     "press ↑ Apply.")),
@@ -16291,6 +16316,7 @@ def state_history_restore_live(timestamp: str):
       - write through working_copy.apply_to_live(force) under the build lock
         (the single live writer), then rebuild every derived cache.
     """
+    _kept_note = ""   # docs/301 F6: set where the version is read
     ctx = _active_ctx()
     if not ctx or ctx.get("type") != "quam":
         return render_template("_status.html", message="No state loaded", level="warning")
@@ -16417,6 +16443,8 @@ def state_history_restore_live(timestamp: str):
                 return render_template("_status.html",
                                        message=f"Could not load snapshot {timestamp}: {exc}",
                                        level="error"), 404
+            # docs/301 F6: the chip keeps its own name and data folder
+            state, _kept_note = _keep_identity_extras(ctx, state)
 
             safe_io.write_state_wiring(wc.working_folder, state, wiring)
             _before_tree = _live_merged_tree(wc)      # docs/160 B: the chip, before
@@ -16475,7 +16503,9 @@ def state_history_restore_live(timestamp: str):
     logger.info("State History: restored snapshot %s to live", timestamp)
     msg = render_template(
         "_status.html",
-        message=(f"Live chip restored to snapshot {timestamp}. The prior state "
+        # docs/301 F5: the instant in the page's zone, not the raw UTC stamp
+        message=(f"Live chip restored to the {_history_noun(timestamp)} of "
+                 f"{zone_ts_text(timestamp[:22])}.{_kept_note} The prior state "
                  "was snapshotted first, so this is reversible."),
         level="success")
     resp = make_response(msg + "\n" + _tray_oob())
@@ -35267,7 +35297,8 @@ def _save_pending_roots(data: dict) -> None:
         logger.warning("Could not save pending project roots: %s", exc)
 
 
-def _record_project_roots(project: str, roots: list[str]) -> None:
+def _record_project_roots(project: str, roots: list[str], *,
+                          from_extras: bool = False) -> None:
     """Merge *roots* into the project's recorded list (fs_key-dedup, atomic).
 
     Called by /qualibrate/open with ALL of the project's found roots —
@@ -35281,6 +35312,10 @@ def _record_project_roots(project: str, roots: list[str]) -> None:
     dataset-roots banner asks "only the new path, or both?". First-time
     recording (no prior roots) stays automatic; a per-project decline memo
     stops the asking permanently (keeps today's merge behavior).
+
+    docs/301 F26: a root that came from the chip's own ``extras.data_folder``
+    (``from_extras``) is remembered as such, so the question withdraws itself
+    once the chip no longer declares it (an edit discarded, Take live).
     """
     if not project or not roots:
         return
@@ -35302,8 +35337,10 @@ def _record_project_roots(project: str, roots: list[str]) -> None:
         else:
             known = set((entry or {}).get("new", [])) if isinstance(entry, dict) else set()
             merged_new = sorted(known | set(fresh), key=natural_key)
-            if set(merged_new) != known:
-                pend[project] = {"new": merged_new}
+            ext = set((entry or {}).get("extras", [])) if isinstance(entry, dict) else set()
+            merged_ext = sorted(ext | (set(fresh) if from_extras else set()), key=natural_key)
+            if set(merged_new) != known or set(merged_ext) != ext:
+                pend[project] = {"new": merged_new, **({"extras": merged_ext} if merged_ext else {})}
                 _save_pending_roots(pend)
             return                                  # ask before scoping (r16 ③)
     for resolved in fresh:
@@ -35333,6 +35370,13 @@ def _dataset_roots_ask(ctx: dict | None) -> dict | None:
     if not isinstance(entry, dict) or entry.get("declined"):
         return None
     new = [r for r in entry.get("new", []) if isinstance(r, str)]
+    # docs/301 F26: a root the chip's extras.data_folder proposed is asked
+    # about only while the chip still declares it
+    from_extras = {path_match.fs_key(r) for r in entry.get("extras", []) if isinstance(r, str)}
+    if from_extras:
+        declared = {path_match.fs_key(r) for r in (ctx or {}).get("extras_data_roots") or []}
+        new = [r for r in new
+               if path_match.fs_key(r) not in from_extras or path_match.fs_key(r) in declared]
     if not new:
         return None
     return {"project": project, "new": new,
@@ -35354,6 +35398,11 @@ def project_roots_confirm():
     pend = _load_pending_roots()
     entry = pend.get(project)
     new = [r for r in (entry or {}).get("new", [])] if isinstance(entry, dict) else []
+    # docs/301 F26: answer for the roots the banner showed (a withdrawn
+    # extras root is not scoped by "only the new path")
+    _shown = _dataset_roots_ask(_active_ctx())
+    if _shown and _shown.get("project") == project:
+        new = list(_shown["new"])
     if choice == "decline":
         pend[project] = {"declined": True}
         _save_pending_roots(pend)
@@ -38638,6 +38687,12 @@ def dataset_load_state(uid):
             rename_note = (" This run predates a qubit rename"
                            + (f" ({renamed})" if renamed else "")
                            + "; its values were carried into today's names.")
+    # docs/301 F6: a run of this chip keeps the chip's own name and data
+    # folder; an explicit cross-chip load (force_chip) takes the run's state
+    # as it is and the result names the identity change (QA F1)
+    _kept_note = ""
+    if request.values.get("force_chip") != "1":
+        state, _kept_note = _keep_identity_extras(ctx, state, "run")
     wc = ctx["working_copy"]
     try:
         with _active_wc_lock(ctx):
@@ -38699,7 +38754,7 @@ def dataset_load_state(uid):
             msg = render_template(
                 "_status.html",
                 message=(f"Run #{run_id}'s state is now LIVE on {chip_label}."
-                         + rename_note + drift_note + replaced_note + ident_note
+                         + rename_note + _kept_note + drift_note + replaced_note + ident_note
                          # docs/198: it STAGES -- the chip moves on the
                          # following Apply, not on this press. Saying
                          # "restores" made a correct staging read as a
@@ -38734,7 +38789,7 @@ def dataset_load_state(uid):
                  "the top bar"
                  + (" (the live chip is untouched until then)."
                     if not _auto_apply_state() else ".")
-                 + rename_note + _auto_push_note()),
+                 + rename_note + _kept_note + _auto_push_note()),
         level="success")
     # detail-area message + OOB tray refresh; stateRestored patches the pane
     # in place when it can (docs/144) and closes stale inspector panes only

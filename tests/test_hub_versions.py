@@ -429,11 +429,18 @@ def test_stage_apply_revert_round_trip_through_the_existing_doors(env):
         return tuple(json.dumps(safe_io.read_json(env.live / n), sort_keys=True)
                      for n in ("state.json", "wiring.json"))
     baseline = typed()
+    before = safe_io.read_json(env.live / "state.json")
     r = c.post(f"/state-history/{env.refs[1]}/stage")
     assert r.status_code == 200 and "loaded as the working state" in r.get_data(as_text=True)
     assert c.post("/state/apply-to-live", headers={"X-SM-Actor": "tester"}).status_code == 200
     state, wiring = safe_io.read_json(env.live / "state.json"), safe_io.read_json(env.live / "wiring.json")
-    assert json.dumps(state, sort_keys=True) == json.dumps(env.states[1], sort_keys=True)
+    # docs/301 F6: the version's saved files exactly, except the chip's own
+    # identity extras (name, data folder), which the stage keeps and names
+    from quam_state_manager.core.identity_extras import keep_identity
+    want, kept = keep_identity(env.states[1], before)
+    assert [k["key"] for k in kept] == ["data_folder"]
+    assert "Kept this chip&#39;s own data folder" in r.get_data(as_text=True)
+    assert json.dumps(state, sort_keys=True) == json.dumps(want, sort_keys=True)
     assert wiring == WIRING
     line = sm_lines(env)[-1]
     assert (line["kind"], line["actor"], line["src"]) == ("sm_apply", "human:tester", "apply_staged")
@@ -648,10 +655,13 @@ def test_a_runs_missing_blob_stops_its_diff_not_its_exact_files(env):
     assert "Diff failed" in body and "missing ledger blob" in body
     # the run's own saved files are still exact: Stage + Apply writes them
     c = env.client
+    before = safe_io.read_json(env.live / "state.json")
     assert c.post(f"/state-history/{env.refs[0]}/stage").status_code == 200
     assert c.post("/state/apply-to-live", headers={"X-SM-Actor": "tester"}).status_code == 200
+    # docs/301 F6: exact except the chip's own identity extras, which it keeps
+    from quam_state_manager.core.identity_extras import keep_identity
     assert (json.dumps(safe_io.read_json(env.live / "state.json"), sort_keys=True)
-            == json.dumps(env.states[0], sort_keys=True))
+            == json.dumps(keep_identity(env.states[0], before)[0], sort_keys=True))
 
 
 def test_the_list_follows_the_ledger_and_the_snapshot_list(env):

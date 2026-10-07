@@ -12567,6 +12567,13 @@ form.inline-edit.fh-host:focus-within .field-hist-btn,
     color: var(--pico-contrast); }
 .cnb-df-form input[type=text] { width: 16rem; }
 .chip-name-banner.cnb-suggest { border-color: var(--pico-primary); }
+/* docs/301 F26: the "stop asking" x is a small text button -- unstyled, Pico's
+   button rule drew it as a full-width primary block beside its two answers */
+.cnb-form .cnb-dismiss {
+    width: auto; margin: 0; padding: .1rem .4rem; font-size: .85rem; line-height: 1.2;
+    background: transparent; border: 0; color: var(--pico-muted-color); box-shadow: none;
+}
+.cnb-form .cnb-dismiss:hover, .cnb-form .cnb-dismiss:focus-visible { color: var(--pico-contrast); }
 .fh-chart { margin: 0 0 .3rem; min-height: 128px; }
 
 /* ── Column History panel + LiveEditUndo (docs/20 v2) ─────────────────── */
