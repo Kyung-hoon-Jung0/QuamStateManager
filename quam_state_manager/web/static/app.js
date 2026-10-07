@@ -3422,6 +3422,27 @@ window.showToast = function(message, level) {
     setTimeout(function() { div.remove(); }, duration + 500);
 };
 
+/* docs/301 F7: a server toast that lands in #status-bar OUT OF BAND (the
+ * apply and save answers ride hx-swap-oob beside the tray) was never faded:
+ * base.html's fade listens for #status-bar as the swap TARGET only. "Applied
+ * to the live chip." then stayed for minutes, over the next pages. A success
+ * or info toast fades on showToast's clock; a warning or an error keeps its
+ * x (docs/126) and stays until it is closed. */
+(function () {
+    function fade(bar) {
+        Array.prototype.forEach.call(bar.querySelectorAll(".toast-success, .toast-info"), function (t) {
+            if (t.hasAttribute("data-fading")) return;    // oobAfterSwap fires once per settled elt
+            t.setAttribute("data-fading", "1");
+            setTimeout(function () { t.style.opacity = "0"; }, 3500);
+            setTimeout(function () { t.remove(); }, 4000);
+        });
+    }
+    document.addEventListener("htmx:oobAfterSwap", function (evt) {
+        var bar = evt && evt.detail && evt.detail.target;
+        if (bar && bar.id === "status-bar") fade(bar);
+    });
+})();
+
 /**
  * w7 fq-sync: a live write never waits on a whole-chip lint. When the chip's
  * lint was not ready in time, the write answers without its crash-value
@@ -5765,6 +5786,14 @@ document.addEventListener("cellsReverted", function(evt) {
     _repaintGridsForReverted(entries, structural, d.stopped);
     // QA F8: ...and the red box follows the server's per-path pending truth
     if (window.PendingMarkers && window.PendingMarkers.followPending) window.PendingMarkers.followPending(entries);
+    // docs/301 F7: a step that landed took back the action a success toast may
+    // still announce ("Applied to the live chip." after Ctrl+Z reverted that
+    // apply); the step's own toast below says what holds now
+    if ((entries.length || d.structural) && d.level !== "warning" && d.level !== "error") {
+        var _bar = document.getElementById("status-bar");
+        if (_bar) Array.prototype.forEach.call(_bar.querySelectorAll(".toast-success"),
+                                               function (t) { t.remove(); });
+    }
     // docs/160: a refused / rolled-back walk step ("Not undone — …", a too-large
     // skip) arrives as level "warning" -- it must not read as a green success
     if (d.message && window.showToast) window.showToast(d.message,
@@ -25122,6 +25151,9 @@ window.UndoNav = (function () {
         return covered.length;
     }
 
+    /* Returns where the user is now: "here" (flashed / jumped in place),
+       "inspector" (opened beside the page) or "page" (the page changes) --
+       the Undo trail keeps its panel open for a page it sent the user to. */
     function handle(entries) {
         entries = entries || [];
         if (!entries.length) return;
@@ -25134,7 +25166,7 @@ window.UndoNav = (function () {
             // swallow the highlight mid-swap.
             covered.forEach(function (e) { flash(visibleEl(e.dot_path)); });
             _pend(covered.map(function (e) { return e.dot_path; }));
-            return;
+            return "here";
         }
         var os = ownerSurface(entries);
         _pend(entries.map(function (e) { return e.dot_path; }));
@@ -25145,11 +25177,11 @@ window.UndoNav = (function () {
                 htmx.ajax("GET", os.url, {
                     target: "#inspector-pane", swap: "innerHTML" });
             }
-            return;
+            return "inspector";
         }
         if (os.inPlace) {                   // no pane swap follows: arm nothing
             if (window._navigateToExplorerPath) _navigateToExplorerPath(os.path);
-            return;
+            return "here";
         }
         stashDirtyInputs();
         window._undoNavAt = Date.now();     // one-shot beforeSwap-confirm bypass
@@ -25157,7 +25189,7 @@ window.UndoNav = (function () {
             if (window._navigateToExplorerPath) {
                 _navigateToExplorerPath(os.path);   // nav + expand + highlight
             }
-            return;
+            return "page";
         }
         if (window.htmx && document.getElementById("table-pane")) {
             htmx.ajax("GET", os.url, { target: "#table-pane", swap: "innerHTML" });
@@ -25169,6 +25201,7 @@ window.UndoNav = (function () {
         } else {
             window.location.assign(os.url);
         }
+        return "page";
     }
 
     document.addEventListener("htmx:afterSwap", function () { restorePass(); });

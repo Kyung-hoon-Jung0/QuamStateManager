@@ -39,6 +39,16 @@ def test_undo_trail_selfcheck():
     _run("undo_trail_selfcheck.cjs", "ok - go to field flashes + scrolls a VISIBLE field")
 
 
+def test_toasts_and_the_trail_leave_with_what_they_announce():
+    """docs/301 F7: "Applied to the live chip." (an out-of-band toast) stayed
+    for minutes, survived the Ctrl+Z that reverted the apply, and the Undo /
+    Redo panel followed the user onto the next page over its charts. Under the
+    real htmx: the success toast fades, an undo that landed takes it away, a
+    page change hides the panel (go to field excepted), and Back leaves no
+    dead copy of it."""
+    _run("toast_trail_nav_selfcheck.cjs", "all toast / trail navigation checks passed")
+
+
 def test_tree_search_list_selfcheck():
     _run("tree_search_list_selfcheck.cjs", "ok - exactly the first CAP matches are highlighted")
 
