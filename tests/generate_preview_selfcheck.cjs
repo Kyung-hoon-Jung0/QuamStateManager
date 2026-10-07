@@ -341,6 +341,23 @@ const sleep = function (ms) { return new Promise(function (r) { setTimeout(r, ms
       'F18: opts.plotHeight sizes the plot (got ' + (layouts[1] || {}).height + ')');
   }
 
+  // ---- docs/301 F41: the waveform plot wears the house theme ----
+  {
+    const dom = new JSDOM('<!DOCTYPE html><body><div id="pp"></div></body>',
+      { runScripts: 'outside-only', pretendToBeVisual: true, url: 'http://localhost/' });
+    const w = dom.window;
+    const layouts = [];
+    w._plotlyRender = function (id, data, layout) { layouts.push(layout); return w.Promise.resolve(null); };
+    w.eval(fs.readFileSync(path.join(ROOT, 'quam_state_manager/web/static/plot-theme.js'), 'utf8'));
+    new w.Function(PULSES).call(w);
+    w.PulsesPage.renderPulsePlot('pp', { ok: true, traces: [{ name: 'I', x: [0, 1], y: [0, 1] }] });
+    const grid = w.PlotTheme.houseLayout({}).xaxis.gridcolor;
+    ok(layouts[0] && layouts[0].xaxis.gridcolor === grid && layouts[0].paper_bgcolor === 'rgba(0,0,0,0)',
+      'F41: the house theme -- not Plotly\'s near-white grid (got ' + (layouts[0] && layouts[0].xaxis.gridcolor) + ')');
+    ok(layouts[0].height === 260 && layouts[0].xaxis.title === 'time (ns)',
+      'F41: its own size and axis titles stand');
+  }
+
   if (fails) { console.error(fails + ' check(s) FAILED'); process.exit(1); }
   console.log('generate_preview_selfcheck: all checks passed');
 })();

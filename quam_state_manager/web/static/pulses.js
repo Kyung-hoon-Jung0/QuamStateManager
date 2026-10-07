@@ -551,6 +551,11 @@ window.PulsesPage = (function () {
             height: plotHeight() + legendRoom
         };
         if (opts && opts.plotHeight > 0) layout.height = opts.plotHeight + legendRoom;
+        // docs/301 F41: the house theme, as every other chart -- unthemed, the
+        // Pulses page and the Generate preview drew Plotly's near-white grid
+        if (window.PlotTheme && window.PlotTheme.houseLayout) {
+            layout = window.PlotTheme.houseLayout(layout);
+        }
         return window._plotlyRender(divId, data, layout,
             { displayModeBar: false, responsive: true });
     }
