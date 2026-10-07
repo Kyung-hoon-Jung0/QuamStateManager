@@ -91,3 +91,4 @@ def test_the_page_shows_a_responses_toast_trigger():
                        capture_output=True, text=True, env=node_env, encoding="utf-8")
     assert r.returncode == 0, r.stdout + r.stderr
     assert "all passed" in r.stdout
+
