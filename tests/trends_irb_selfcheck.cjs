@@ -62,5 +62,29 @@ const before2 = s.events.length;
 tick2.fn();
 ok(s.events.length === before2 + 2 && s.events[before2] === 'htmx:abort', 'with no newer request it re-fetches');
 
+// docs/301 F10: the hover's value carries its unit, the way the tiles and the
+// axis title say it -- Plotly's %{y} borrowed the axis' SI exponent and read
+// "33.883" + micro sign with no unit. PlotTheme.siFormat is the text rule.
+const THEME = fs.readFileSync('quam_state_manager/web/static/plot-theme.js', 'utf8');
+function hoverOf(html, chart) {
+  const b = boot(html);
+  b.w.eval(THEME);
+  b.w.ChipTrends.render([chart]);
+  return b.traces[0];
+}
+const PTS = (vals) => vals.map((v, i) => ['2026010' + (i + 1) + '_000000', v]);
+let tr = hoverOf(HTML, {metric: 'T1', unit: 's', series: [{entity: 'qA1', points: PTS([3.3883e-5, 3.2e-5])}]});
+ok(/%\{text\}/.test(tr.hovertemplate) && !/%\{y\}/.test(tr.hovertemplate), 'the hover shows the formatted value, not the axis-formatted %{y}: ' + tr.hovertemplate);
+ok(tr.text[0] === '33.883 \u00b5s' && tr.text[1] === '32 \u00b5s', 'a T1 reads in microseconds, with its unit: ' + JSON.stringify(tr.text));
+tr = hoverOf(HTML, {metric: 'gate_fidelity_avg', unit: '', series: [{entity: 'qA1', points: PTS([0.99123])}]});
+ok(tr.text[0] === '0.99123', 'a bare ratio takes no prefix: ' + tr.text[0]);
+tr = hoverOf(HTML, {metric: 'f_01', unit: 'Hz', series: [{entity: 'qA1', points: PTS([4.9876e9])}]});
+ok(tr.text[0] === '4.9876 GHz', 'a frequency reads in GHz: ' + tr.text[0]);
+tr = hoverOf(HTML, {metric: 'xy_power', unit: 'dBm', series: [{entity: 'qA1', points: PTS([-0.5])}]});
+ok(tr.text[0] === '-0.5 dBm', 'a unit that carries its own scale takes no prefix: ' + tr.text[0]);
+tr = hoverOf('<div id="topo-trends"><div class="topo-trends-grid"><div id="topo-trend-0"></div></div></div>',
+             {metric: 'T1', unit: 's', series: [{entity: 'qA1', points: PTS([3.3883e-5])}]});
+ok(/%\{text\}/.test(tr.hovertemplate) && tr.text[0] === '33.883 \u00b5s', 'with no provenance map too: ' + tr.hovertemplate);
+
 console.log(n + ' client assertions passed');
 setTimeout(() => process.exit(0), 0);
