@@ -14437,6 +14437,11 @@ html.topbar-hidden #pending-tray > :not(.state-status-badge):not(.auto-sync-wrap
 .sp-diff code { font-size: .95em; background: none; padding: 0; overflow-wrap: normal; word-break: normal; }
 .sp-diff .sp-val, .sp-diff .sp-delta { white-space: nowrap; }
 .sp-diff .sp-val .sp-sub { white-space: normal; }   /* "was X": wraps at its spaces, X never splits */
+/* docs/301 F25: a text value (a folder path) wraps instead -- one long path made the
+   table wider than the capped panel, and the body clips x, so the delta column sat
+   out of reach. Numbers keep nowrap. The body scrolls x as a last resort. */
+.sp-diff .sp-val-text { white-space: normal; overflow-wrap: anywhere; min-width: 14ch; }
+.sync-panel .state-review-body.sp-body { overflow-x: auto; }
 .state-review.sync-panel .sp-live-input { max-width: none; field-sizing: content; min-width: 6ch; }
 .sp-group-head td { font-weight: 700; font-size: .74rem; padding-top: .4rem;
     background: color-mix(in srgb, var(--pico-muted-border-color) 30%, transparent); }
