@@ -6205,9 +6205,11 @@ def qualibrate_project_env():
     """Sync a project with an env (w9/labwarm): the user CONFIRMED the
     suggested env (``how=confirmed``) or picked another one (``changed``).
     Remembered per project (``core/project_env``); when that project is the
-    one open in SM, the env also becomes THE selected env right away (the
-    old env's lab worker retired, the open chip's started). Answers the
-    card's env row, plus the sidebar badge out of band."""
+    one the sidebar env badge is judged against -- the project open in SM,
+    or with no chip open the project qualibrate names active -- the env also
+    becomes THE selected env right away (the old env's lab worker retired,
+    the open chip's started). Answers the card's env row, plus the sidebar
+    badge out of band."""
     from quam_state_manager.core import project_env
     name = (request.form.get("project") or "").strip()
     raw = _unquote_path(request.form.get("python"))
@@ -6230,7 +6232,19 @@ def qualibrate_project_env():
     project_env.remember(inst, name, python_path, how)
     ctx = _active_ctx()
     applied = False
-    if ctx and ctx.get("qualibrate_project") == name:
+    # docs/301 F1: the badge names the SELECTED env, judged against the open
+    # chip's scope or, with no chip open, against the project qualibrate names
+    # active (_qualibrate_tray_badge). Selecting only for an OPEN project left
+    # the landing's "Use this" answering a badge that still read "no env" (or
+    # "not the project's") until the project was opened.
+    if ctx:
+        badge_project = ctx.get("qualibrate_project")
+    else:
+        try:
+            badge_project = qualibrate_config.tray_status().get("active")
+        except Exception:  # noqa: BLE001 -- the badge must never fail a sync
+            badge_project = None
+    if badge_project == name:
         cur = config_generator.get_selected_env(inst)
         if not cur or os.path.normcase(cur) != os.path.normcase(python_path):
             _apply_selected_env(python_path)
