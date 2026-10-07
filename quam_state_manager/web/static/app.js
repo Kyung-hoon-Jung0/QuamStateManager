@@ -1038,9 +1038,18 @@ window.syncZoneNote = syncZoneNote;
 if (document.readyState === 'loading')
     document.addEventListener('DOMContentLoaded', syncZoneNote);
 else syncZoneNote();
-document.addEventListener('htmx:afterSwap', function (e) {
-    if (e.detail && e.detail.target) applyLocalTimes(e.detail.target);
-});
+/* An outerHTML swap's detail.target is the element it REPLACED, detached by
+   now -- localizing it reached nothing, and the new content kept its hidden
+   UTC fallback (Param History's Changes tab showed no times at all after the
+   Trends -> Changes switch). The new content is wherever the swap put it, so
+   a detached target hands the job to the whole document; an out-of-band swap
+   is the same case. Only spans not yet localized are touched. */
+function localizeSwapped(e) {
+    var t = e && e.detail && e.detail.target;
+    applyLocalTimes(t && t.isConnected ? t : document);
+}
+document.addEventListener('htmx:afterSwap', localizeSwapped);
+document.addEventListener('htmx:oobAfterSwap', localizeSwapped);
 if (document.readyState === 'loading')
     document.addEventListener('DOMContentLoaded', function () { applyLocalTimes(document); });
 else applyLocalTimes(document);

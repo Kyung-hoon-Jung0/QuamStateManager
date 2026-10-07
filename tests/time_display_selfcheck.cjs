@@ -43,6 +43,30 @@ ok(world('Asia/Kolkata').SnapTime.display('2026-07-15T03:00:00Z') === '2026-07-1
 ok(world('UTC').SnapTime.display('2026-07-15T03:00:00Z') === '2026-07-15 03:00:00 (UTC)', 'UTC itself');
 ok(S.axisValue('2026-09-30T19:55:46+09:00') === '2026-09-30T19:55:46', 'axisValue reads an ISO instant too (the field-history chart)');
 
+// an outerHTML swap hands the hook the element it REPLACED (detached): the new
+// content must still be localized (it was not: Param History's Changes tab showed no times)
+{
+    const b = SRC.indexOf('function localizeSwapped(e) {');
+    const HOOK = SRC.slice(b, SRC.indexOf('\n}', b) + 2);
+    const w2 = world('Asia/Seoul');
+    w2.eval(HOOK + '\nwindow.localizeSwapped = localizeSwapped;');
+    const doc = w2.document;
+    const old = doc.createElement('div'); old.id = 'root';
+    old.innerHTML = '<span class="ts-local" data-utc="2026-10-07T15:32:16Z" data-fmt="short">10-07 15:32</span>';
+    doc.body.appendChild(old);
+    const fresh = doc.createElement('div'); fresh.id = 'root';
+    fresh.innerHTML = '<span id="n" class="ts-local" data-utc="2026-10-07T15:32:16Z" data-fmt="short">10-07 15:32</span>';
+    old.replaceWith(fresh);
+    w2.localizeSwapped({ detail: { target: old } });
+    const n = doc.getElementById('n');
+    ok(n.getAttribute('data-localized') === '1' && n.textContent === '10-08 00:32',
+       'an outerHTML swap (detached target) still localizes the new content: ' + n.textContent);
+    const oob = doc.createElement('span'); oob.className = 'ts-local'; oob.setAttribute('data-utc', '2026-10-07T15:32:16Z');
+    doc.body.appendChild(oob);
+    w2.localizeSwapped({ detail: {} });
+    ok(oob.getAttribute('data-localized') === '1', 'a swap with no target (out-of-band) localizes too');
+    ok(/htmx:oobAfterSwap', localizeSwapped/.test(SRC) && /htmx:afterSwap', localizeSwapped/.test(SRC), 'both swap events carry the hook');
+}
 W.applyLocalTimes(W.document);
 const l = W.document.getElementById('l'), s = W.document.getElementById('s');
 ok(l.textContent === '2026-09-30 19:55:46 (UTC+9)', 'applyLocalTimes renders the one form: ' + l.textContent);
