@@ -12575,6 +12575,9 @@ form.inline-edit.fh-host:focus-within .field-hist-btn,
 }
 .cnb-form .cnb-dismiss:hover, .cnb-form .cnb-dismiss:focus-visible { color: var(--pico-contrast); }
 .fh-chart { margin: 0 0 .3rem; min-height: 128px; }
+.fh-show-all { width: auto; margin: 0 0 0 .4rem; padding: .05rem .5rem; font-size: .76rem;
+    line-height: 1.3; background: transparent; border: 1px solid var(--pico-primary);
+    color: var(--pico-primary); border-radius: .4rem; }
 
 /* ── Column History panel + LiveEditUndo (docs/20 v2) ─────────────────── */
 /* ── Stored-as-text auto-correction dialog (docs/77) ──────────────────────

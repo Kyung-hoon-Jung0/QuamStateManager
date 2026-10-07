@@ -11719,6 +11719,9 @@ CH_SERIES_EXAMINE = 60
 
 #: change points the drawer reads (and shows); the total is always stated
 _VH_DRAWER_LIMIT = 40
+# docs/301 F15: the drawer's "Show all" -- every change point of the value,
+# bounded only so a pathological path cannot render an unbounded table
+_VH_DRAWER_ALL_LIMIT = 5000
 
 _VH_FALLBACK_NOTES = {
     "no_ledger": ("Older snapshot history: this chip has no change ledger yet, so "
@@ -12450,13 +12453,15 @@ def field_history():
     # docs/282: the chip's change ledger answers, through the one function
     # Column History and the agent API read too. The old snapshot path below
     # answers only when the chip has no ledger of its runs yet, labelled.
-    ans = _value_history(ctx, {"value": dot_path}, limit=_VH_DRAWER_LIMIT)
+    show_all = request.args.get("all") == "1"
+    ans = _value_history(ctx, {"value": dot_path},
+                         limit=_VH_DRAWER_ALL_LIMIT if show_all else _VH_DRAWER_LIMIT)
     if ans["mode"] in ("building", "preparing"):
         return render_template("_value_history_wait.html", ans=ans, surface="drawer",
                                message=_vh_wait_message(ans),
                                dot_path=dot_path)
     if ans["mode"] == "ledger":
-        return render_template("_field_history_ledger.html",
+        return render_template("_field_history_ledger.html", show_all=show_all,
                                **_vh_drawer_view(ans, "value", dot_path))
     hist, current, chart = _legacy_field_history(ctx, dot_path)
     hist["fallback_note"] = ans.get("fallback_note")

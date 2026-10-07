@@ -24114,10 +24114,12 @@ window.FieldHistory = (function () {
         });
     }
 
+    var openAnchor = null;
     function open(anchor, path, input) {
         if (!path) return;
         applyInput = input || null;
         openPath = path;
+        openAnchor = anchor;
         var p = ensurePanel();
         // The previous open's #fh-chart (responsive:true) holds a window
         // resize handler referencing the graph div — innerHTML without purge
@@ -24134,9 +24136,9 @@ window.FieldHistory = (function () {
     // by itself -- only while the panel is open on the SAME path, and only for
     // the newest open (a stale retry never overwrites another field's panel).
     var loadSeq = 0;
-    function load(anchor, path, seq) {
+    function load(anchor, path, seq, all) {
         var p = ensurePanel();
-        fetch("/field/history?path=" + encodeURIComponent(path))
+        fetch("/field/history?path=" + encodeURIComponent(path) + (all ? "&all=1" : ""))
             .then(function (r) { return r.text(); })
             .then(function (html) {
                 if (seq !== loadSeq || openPath !== path) return;
@@ -24152,7 +24154,7 @@ window.FieldHistory = (function () {
                     setTimeout(function () {
                         if (seq !== loadSeq || openPath !== path) return;
                         if (p.style.display === "none") return;
-                        load(anchor, path, seq);
+                        load(anchor, path, seq, all);
                     }, ms);
                 }
             })
@@ -24595,8 +24597,14 @@ window.FieldHistory = (function () {
         if (cellBtn && e.target === cellBtn._input) _positionCellBtn();
     });
 
+    // docs/301 F15: the footer's "Show all N" -- the same panel, every point
+    function showAll() {
+        if (!openPath) return;
+        load(openAnchor, openPath, ++loadSeq, true);
+    }
+
     return { open: open, close: close, useValue: useValue, revertTo: revertTo,
-             openInspector: openInspector,
+             openInspector: openInspector, showAll: showAll,
              _cellTextWidth: _cellTextWidth };   // r11 test seam
 })();
 
