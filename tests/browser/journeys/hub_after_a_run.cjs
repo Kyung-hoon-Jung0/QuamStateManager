@@ -52,7 +52,7 @@ async function center(b, sel) {
 async function clickSel(b, sel) {
   const c = await center(b, sel);
   if (!c) return false;
-  await sleep(200);
+  await sleep(600);
   const c2 = await center(b, sel);
   await b.click(c2[0], c2[1]);
   return true;
@@ -75,22 +75,33 @@ async function pointAt(b, metric, entity, want) {
       var cd=tr.customdata||[];
       for (var i=cd.length-1;i>=0;i--){ var c=cd[i]; if(!c) continue;
         if(!(${want})(c, tr.y[i])) continue;
+        // a trace hidden from the legend draws no group: count the drawn ones
+        var drawn=0; for (var k=0;k<t;k++){ var v=data[k].visible; if(v!=='legendonly'&&v!==false) drawn++; }
         var groups=host.querySelectorAll('.scatterlayer .trace');
-        var marks=groups[t]&&groups[t].querySelectorAll('.point');
-        var mark=marks&&marks[i]; if(!mark) return {miss:'no mark',i:i};
+        var marks=groups[drawn]&&groups[drawn].querySelectorAll('.point');
+        // a gap (a null value) draws no mark either: count the drawn points before it
+        var mi=0; for (var q=0;q<i;q++){ if(tr.y[q]!==null&&tr.y[q]!==undefined) mi++; }
+        var mark=marks&&marks[mi];
+        if(!mark) return {miss:'no mark',i:i,uid:c[3],words:c[1],value:tr.y[i]};
         var r=mark.getBoundingClientRect();
         return {x:r.left+r.width/2,y:r.top+r.height/2,uid:c[3],words:c[1],value:tr.y[i],i:i};
       } }
     return null;})()`);
 }
 async function trendsWith(b, metric) {
-  await b.send('Page.navigate', { url: URL0 + '/topology?view=trends' });
+  await go(b, URL0 + '/topology?view=trends');
   const ready = await waitFor(b, "document.querySelectorAll('#topo-trends .js-plotly-plot').length", 90000);
   if (!ready) return false;
   // the metric's pill, pressed like a person when its chart is not drawn yet
-  if (!(await b.ev(`!!document.querySelector('#topo-trends .topo-trend-box[data-trend-metric="${metric}"] .js-plotly-plot')`))) {
-    await clickSel(b, `#topo-trends [data-trend-metric="${metric}"][aria-pressed]`);
-    await waitFor(b, `!!document.querySelector('#topo-trends .topo-trend-box[data-trend-metric="${metric}"] .js-plotly-plot')`, 60000);
+  // (the page settles first: its lazy sections move the pill while they land)
+  const drawn = `!!document.querySelector('#topo-trends .topo-trend-box[data-trend-metric="${metric}"] .js-plotly-plot')`;
+  for (let i = 0; i < 3 && !(await b.ev(drawn)); i++) {
+    if (await b.ev(`(document.querySelector('#topo-trends button[data-trend-metric="${metric}"]')||{}).getAttribute&&document.querySelector('#topo-trends button[data-trend-metric="${metric}"]').getAttribute('aria-pressed')==='true'`)) {
+      if (await waitFor(b, drawn, 30000)) break;
+    }
+    await sleep(800);
+    await clickSel(b, `#topo-trends button[data-trend-metric="${metric}"]`);
+    if (await waitFor(b, drawn, 30000)) break;
   }
   await b.ev(`(function(){var e=document.querySelector('#topo-trends .topo-trend-box[data-trend-metric="${metric}"]');if(e)e.scrollIntoView({block:'center'});})()`);
   await sleep(1500);
@@ -108,6 +119,20 @@ async function isolate(b, metric, entity) {
   await b.click(leg[0], leg[1]); await sleep(60); await b.click(leg[0], leg[1]);
   await sleep(1200);
   return true;
+}
+// leaving a page with staged edits asks "leave this page?" (SM's own
+// beforeunload): like a person, press Leave
+async function go(b, url) {
+  const mark = b.events.length;
+  const nav = b.send('Page.navigate', { url });
+  for (let i = 0; i < 40; i++) {
+    if (b.events.slice(mark).some(e => e.method === 'Page.javascriptDialogOpening')) {
+      await b.send('Page.handleJavaScriptDialog', { accept: true });
+      break;
+    }
+    if (await Promise.race([nav.then(() => true), sleep(150).then(() => false)])) break;
+  }
+  await nav;
 }
 async function post(b, url, form) {
   return b.ev(`(async function(){var f=new URLSearchParams(${JSON.stringify(form)});
@@ -146,7 +171,9 @@ async function post(b, url, form) {
       for (let i = 0; i < 6 && !lab; i++) {
         const q = await pointAt(b, 'f_01', Q, `function(c,y){return /#${rid}\\b/.test(c[1]||'');}`);
         await hover(b, q.x, q.y);
-        lab = await waitFor(b, `(function(){var t=(document.querySelector('.hoverlayer')||{}).textContent||'';return /#${rid}\\b/.test(t)?t:'';})()`, 3000);
+        // each chart has its own hover layer: read the f_01 chart's
+        lab = await waitFor(b, `(function(){var box=document.querySelector('#topo-trends .topo-trend-box[data-trend-metric="f_01"]');
+          var t=((box&&box.querySelector('.hoverlayer'))||{}).textContent||'';return /#${rid}\\b/.test(t)?t:'';})()`, 3000);
       }
       ok(/its own patch set it/.test(lab || ''), 'its hover says so: ' + (lab || '').slice(0, 140));
       await b.shot(path.join(SHOTS, '02_trends_new_run_hover.png'));
@@ -169,7 +196,7 @@ async function post(b, url, form) {
     ok(await post(b, '/field/edit', { dot_path: `qubits.${Q}.f_01`, value: '4200000000' }) === 200, `stage an edit of ${Q} f_01`);
     ok(await trendsWith(b, 'f_01'), 'Trends after the edit of the drawn value');
     ok((await trace(b, 'f_01', Q)) === afterRun, 'Trends still draws only recorded points (the staged value is not one)');
-    await b.send('Page.navigate', { url: URL0 + '/topology?view=frequencies' });
+    await go(b, URL0 + '/topology?view=frequencies');
     const cellSel = `.heatmap-cell[data-qubit="${Q}"]`;
     const panel = await waitFor(b, `(function(){var p=document.querySelector('[data-density-panel="f_01"]');return p&&p.querySelector(${JSON.stringify(cellSel)})?'y':'';})()`, 60000);
     ok(!!panel, 'the f_01 panel is drawn');
@@ -187,7 +214,9 @@ async function post(b, url, form) {
     ok(/Not in this chip.s change ledger yet/.test(card || ''), 'the meta says the value on screen is not in the ledger: ' + (card || '').slice(0, 200));
     ok(new RegExp('#' + rid + '\\b').test(card || ''), `...and names the ledger's newest change, run #${rid}`);
     await b.shot(path.join(SHOTS, '05_meta_after_edit.png'));
-    const errs = b.errors();
+    // leaving a page with staged edits asks "unsaved changes?" (SM's own
+    // beforeunload); headless Chrome blocks that prompt and logs it
+    const errs = b.errors().filter(m => !/beforeunload/.test(m));
     ok(errs.length === 0, 'console errors: ' + errs.length + (errs.length ? ' ' + JSON.stringify(errs.slice(0, 3)) : ''));
   } catch (e) {
     fails++;

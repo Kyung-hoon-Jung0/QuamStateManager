@@ -21,6 +21,7 @@ from contextlib import contextmanager
 import json
 import os
 import random
+import re
 import shutil
 import sqlite3
 import time
@@ -204,6 +205,18 @@ class TestRewriteLog:
         with ledger(sm) as db:
             every, eids, paths = hub_store.rewritten_since(db, seq, 10 ** 9)
         assert not every and "qubits.qA1.f_01" in paths
+
+    def test_a_deleted_change_row_is_logged_with_its_path(self, sm):
+        """Every SM writer that deletes a change row also updates its event (a
+        re-diff) or moves every event; the row's own entry is the trace of a
+        delete by any other writer."""
+        with ledger(sm) as db:
+            seq = db.execute("SELECT COALESCE(MAX(seq), 0) FROM rewrite_log").fetchone()[0]
+            db.execute("DELETE FROM changes WHERE eid=(SELECT eid FROM events WHERE run_id=2) "
+                       "AND pid=(SELECT pid FROM paths WHERE path='qubits.qA1.T1')")
+            db.commit()
+            every, eids, paths = hub_store.rewritten_since(db, seq, 10 ** 9)
+        assert not every and paths == {"qubits.qA1.T1"} and not eids
 
     def test_a_changed_order_is_logged_as_every_event(self, sm):
         with ledger(sm) as db:
@@ -510,6 +523,48 @@ class TestKeptAnswers:
         with from_scratch():
             assert canon(b) == canon(history(sm, T1))
 
+    def test_an_alias_to_an_element_of_a_long_list_watches_the_list(self, tmp_path):
+        """The path walks to an alias whose target is one element of a long
+        list: the list holder is never walked to, only read for the element."""
+        from tests.test_hub_drawer import make_app
+
+        def st(k):
+            s = chip_state(wave=[0.0] * 3 + [k] + [0.0] * 16)
+            s["qubits"]["qA1"]["wave_pick"] = "#./wave/3"
+            return s
+        data, live = tmp_path / "data", tmp_path / "chips" / "live"
+        run(data, 1, st(0.1))
+        write_chip(live, st(0.1), data)
+        app = make_app(tmp_path)
+        env = {"app": app, "client": app.test_client(), "data": data, "live": live, "tmp": tmp_path}
+        assert env["client"].post("/load", data={"folder": str(live)}).status_code in (200, 302)
+        paths = {"p": "qubits.qA1.wave_pick"}
+        a = history(env, paths)
+        new_run(env, 2, st(0.7))
+        b = history(env, paths)
+        assert 0.7 in [p["value"] for p in b["rows"]["p"]["points"]]
+        assert b["serials"]["p"] != a["serials"]["p"]
+        with from_scratch():
+            assert canon(b) == canon(history(env, paths))
+
+    def test_the_ledger_start_is_read_by_a_path_it_holds_no_row_for(self, sm):
+        """A path recorded only later still reads the ledger's first event (its
+        first segment starts there): that event's own facts changed in place
+        re-derive it."""
+        state = chip_state(**BASE)
+        state["qubits"]["qA2"]["T2echo"] = 2.5e-5
+        new_run(sm, 5, state)
+        paths = {"n": "qubits.qA2.T2echo"}
+        a = history(sm, paths)
+        with ledger(sm) as db:
+            db.execute("UPDATE events SET t_utc_us = t_utc_us - 1000000 WHERE eid = "
+                       "(SELECT eid FROM events ORDER BY ord LIMIT 1)")
+            db.commit()
+        b = history(sm, paths)
+        assert b["serials"]["n"] != a["serials"]["n"]
+        with from_scratch():
+            assert canon(b) == canon(history(sm, paths))
+
     def test_a_drawer_limit_is_its_own_answer(self, sm):
         a = history(sm, {"a": "qubits.qA1.T1"}, limit=1)
         b = history(sm, {"a": "qubits.qA1.T1"})
@@ -606,16 +661,21 @@ class TestSurfacesAfterAnEdit:
         assert after == scratch(sm, CHANGES)
         assert before != after or b'data-change-count="0"' in before
 
-    def test_a_qubit_gone_from_the_state_leaves_the_grid(self, sm, monkeypatch):
+    def test_a_qubit_gone_from_the_state_leaves_trends_and_the_grid(self, sm):
+        """The curated rows are one per qubit of the state NOW (a fact): a
+        qubit gone from the state has no line, though the ledger holds it."""
+        get(sm, TRENDS)
         get(sm, GRID)
         with sm["app"].test_request_context():
             store = routes._store()
-        curated = counting(monkeypatch, hub_status.LedgerTable, "_curated")
         with store._lock:
             store.merged["qubits"].pop("qA2")
             store.mutation_seq += 1
+        served = get(sm, TRENDS)
+        assert served == scratch(sm, TRENDS)
+        data = re.search(rb'id="topo-trends-data"[^>]*>(.*?)</script>', served, re.S).group(1)
+        assert all(s["entity"] != "qA2" for c in json.loads(data) for s in c["series"])
         assert get(sm, GRID) == scratch(sm, GRID)
-        assert curated, "the qubit names are a fact of the grid's rows"
 
     def test_a_data_folder_unlinked_moves_the_points_links(self, sm):
         """A point opens its run through the registered dataset roots: kept
@@ -685,6 +745,95 @@ def test_a_renamed_chip_keeps_what_a_new_run_did_not_touch(tmp_path):
         assert canon(b) == canon(history(env, paths))
     for url in ("/topology/trends?metrics=f_01", META, GRID):
         assert get(env, url) == scratch(env, url), url
+
+
+def _renamed_chip(tmp_path, runs):
+    """A chip renamed by a Re-generate (q1 -> q0, q2 -> q1) whose live state
+    already carries the rename, so the lineage knows the record before the
+    ledger does; *runs* are the runs saved before it."""
+    from tests.test_rename_history import REC, make, state
+    return make(tmp_path, runs, state({"q0": 5.2e9, "q1": 5.1e9}, [REC]))
+
+
+def test_a_rename_era_appended_rederives_a_path_its_rows_never_touch(tmp_path):
+    """The appended run carries the rename and changes nothing under the old
+    spelling the kept answer watched (qubits.q1.f_01 keeps its value): only
+    the era it brings moves today's q0 to another holder from there on."""
+    from tests.test_rename_history import REC, run as rename_run, state
+    env = _renamed_chip(tmp_path, [state({"q1": 5.0e9, "q2": 6.0e9}), state({"q1": 5.1e9, "q2": 6.1e9})])
+    paths = {"a": "qubits.q0.f_01"}
+    a = history(env, paths)
+    rename_run(env["data"], 3, state({"q0": 5.2e9, "q1": 5.1e9}, [REC]))
+    with env["app"].app_context():
+        hub_sync.on_roots_moved([str(env["data"])])
+    b = history(env, paths)
+    assert b["serials"]["a"] != a["serials"]["a"]
+    assert 5.2e9 in [p["value"] for p in b["rows"]["a"]["effective"]]
+    with from_scratch():
+        assert canon(b) == canon(history(env, paths))
+
+
+def test_a_rename_era_written_into_an_old_run_rederives_a_path_its_rows_never_touch(tmp_path):
+    from tests.test_rename_history import REC, state
+    env = _renamed_chip(tmp_path, [state({"q1": 5.0e9, "q2": 6.0e9}), state({"q1": 5.0e9, "q2": 6.1e9})])
+    paths = {"a": "qubits.q0.f_01"}
+    a = history(env, paths)
+    folder = next(env["data"].glob("*/#2_*"))
+    (folder / "quam_state" / "state.json").write_text(
+        json.dumps(state({"q0": 5.3e9, "q1": 5.0e9}, [REC])), encoding="utf-8")
+    full_sync(env)
+    b = history(env, paths)
+    assert b["serials"]["a"] != a["serials"]["a"]
+    assert 5.3e9 in [p["value"] for p in b["rows"]["a"]["effective"]]
+    with from_scratch():
+        assert canon(b) == canon(history(env, paths))
+
+
+def test_the_era_today_is_part_of_a_kept_answer(tmp_path):
+    """The same path spelled in another era names another qubit: the live
+    state losing its rename record (no ledger change) reads it afresh."""
+    from tests.test_rename_history import REC, state
+    env = _renamed_chip(tmp_path, [state({"q1": 5.0e9, "q2": 6.0e9}),
+                                   state({"q0": 5.1e9, "q1": 6.1e9}, [REC])])
+    paths = {"a": "qubits.q1.f_01"}
+    a = history(env, paths)
+    with env["app"].test_request_context():
+        store = routes._store()
+    with store._lock:
+        store.merged["extras"].pop("qubit_renames")
+        store.mutation_seq += 1
+    b = history(env, paths)
+    with from_scratch():
+        assert canon(b) == canon(history(env, paths))
+    assert canon(b) != canon(a), "q1 before the rename is another qubit"
+
+
+def test_a_matrix_alias_that_starts_naming_a_recorded_matrix_brings_its_row(tmp_path):
+    """A qubit's confusion matrix is an alias. The ledger saw it name a recorded
+    matrix (run #1), then nothing (run #2, the state now): no fidelity row --
+    no element path is read, so no holder fact either. Retargeted by an edit to
+    the recorded matrix, the row (its history through the alias) is there."""
+    from tests.test_hub_drawer import make_app
+    st = chip_state()
+    st["qubits"]["qA1"]["resonator"]["cm_a"] = [[0.9, 0.1], [0.2, 0.8]]
+    st["qubits"]["qA1"]["resonator"]["confusion_matrix"] = "#./cm_a"
+    data, live = tmp_path / "data", tmp_path / "chips" / "live"
+    run(data, 1, st)
+    st2 = json.loads(json.dumps(st))
+    st2["qubits"]["qA1"]["resonator"]["confusion_matrix"] = "#./cm_none"
+    run(data, 2, st2)
+    write_chip(live, st2, data)
+    app = make_app(tmp_path)
+    env = {"app": app, "client": app.test_client(), "data": data, "live": live, "tmp": tmp_path}
+    assert env["client"].post("/load", data={"folder": str(live)}).status_code in (200, 302)
+    url = "/param-history?since=all&props=assignment_fidelity"
+    row = b'data-qubit="qA1" data-prop="assignment_fidelity"'
+    before = get(env, url)
+    assert before == scratch(env, url) and row not in before
+    edit(env, "qubits.qA1.resonator.confusion_matrix", "#./cm_a")
+    after = get(env, url)
+    assert after == scratch(env, url)
+    assert row in after, "the alias names a matrix the ledger recorded through it: its row appears"
 
 
 # ======================================================================
