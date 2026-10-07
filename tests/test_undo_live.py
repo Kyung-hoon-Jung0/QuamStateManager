@@ -360,11 +360,15 @@ class TestLiveWalk:
         assert c.post(f"/state-history/{ts}/stage").status_code == 200
         ctx = _ctx(env)
         assert ctx["staged_base"]
-        r = c.post("/undo")                                    # top unit: the f_01 apply
-        t = _trig(r)["cellsReverted"]
-        assert t["live"] is False and "staged snapshot" in t["message"]
+        r = c.post("/undo")
+        # docs/301 F24: the press stops at the loaded version -- it means "undo
+        # the load", which Take live does; staging an older apply's inverse on
+        # top of the loaded version (the C2 fix's non-live walk) is not it
+        trig = _trig(r)
+        assert "cellsReverted" not in trig and "Take live" in trig["showToast"]["message"]
         assert _live_f01(env) == 5.1e9                          # the chip did not move
         assert ctx["staged_base"]                               # and the stage is intact
+        assert not ctx["store"].change_log                      # nothing rode in on top
 
     def test_read_only_archive_stages(self, env):
         c = env["client"]

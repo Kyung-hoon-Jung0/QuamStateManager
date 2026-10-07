@@ -3407,6 +3407,19 @@ window.trapFocus = function(container, onEscape) {
  * Show a transient toast in #status-bar. level: 'info' | 'success' | 'warning'
  * | 'error'. Used to surface async failures that would otherwise be silent.
  */
+/* docs/301 F27: a response can carry a message for the person in its
+   HX-Trigger header -- {"showToast": "text"} (htmx hands it over as
+   {value: "text"}) or {"showToast": {"message": ..., "level": ...}}. Nothing
+   listened, so those messages (Auto-Sync's withheld half, the Ctrl+Z hint
+   after a version load) were never shown. */
+document.addEventListener("showToast", function (e) {
+    var d = e && e.detail;
+    if (d == null || !window.showToast) return;
+    var msg = typeof d === "string" ? d : (d.message != null ? d.message : d.value);
+    if (msg == null || msg === "") return;
+    window.showToast(String(msg), (d && typeof d === "object" && d.level) || "info");
+});
+
 window.showToast = function(message, level) {
     var bar = document.getElementById("status-bar");
     if (!bar) return;

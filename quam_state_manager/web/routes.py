@@ -9648,6 +9648,8 @@ def _undo_next_preview(ctx, changes) -> dict | None:
         return None
     if (ctx.get("origin") or "live") != "live":
         return None
+    if ctx.get("staged_base"):
+        return None   # docs/301 F24: /undo stops at a loaded version
     units = ctx.get("undo_units") or []
     cursor = int(ctx.get("undo_cursor") or 0)
     if cursor <= 0 or cursor > len(units):
@@ -25196,6 +25198,13 @@ def undo():
             if (not store.change_log
                     or (isinstance(top_gid, str)
                         and top_gid.startswith(undo_journal.GID_PREFIX))):
+                # docs/301 F24: a whole loaded version sits on top. The press
+                # means "undo the load", which is not an edit; walking the
+                # journal here would undo an OLDER apply -- on the live chip
+                # when the live walk is on. Stop and name Take live instead.
+                if not store.change_log and ctx.get("staged_base"):
+                    stopped = "staged"
+                    break
                 if groups == 0:
                     _journal_now = True
                 stopped = "journal"
@@ -25234,6 +25243,16 @@ def undo():
         # Nothing to undo — return the (unchanged) tray so the keyboard-triggered
         # outerHTML swap is a harmless no-op instead of replacing the tray with a
         # status line.
+        if ctx.get("staged_base"):
+            # docs/301 F24: a whole loaded version has no change-log entries, so
+            # Ctrl+Z after "Load as working state" did nothing and said nothing.
+            # Name the door that sets it aside.
+            resp = make_response(_tray_html())
+            resp.headers["HX-Trigger"] = json.dumps({"showToast": {
+                "message": ("Nothing to undo: a loaded version is not an edit. "
+                            "To set it aside, use \u2193 Take live in the sync menu."),
+                "level": "info"}})
+            return resp
         return _tray_html()
     entries = all_entries
 
