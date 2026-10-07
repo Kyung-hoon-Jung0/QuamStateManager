@@ -11812,7 +11812,7 @@ def _sides_in_one_era(sides: list) -> list:
 
 
 def _value_history(ctx: dict, path_map: dict[str, str], *, limit: int | None = None,
-                   runs: int = 0) -> dict:
+                   runs: int = 0, targets: dict | None = None, scope: dict | None = None) -> dict:
     """docs/282: the history of every path in *path_map* (``{key: dot_path}``).
 
     ``mode``:
@@ -11820,15 +11820,21 @@ def _value_history(ctx: dict, path_map: dict[str, str], *, limit: int | None = N
       read raised ``Building``): the surface says so and asks again;
     * ``preparing`` -- the RAM index is being built by another request;
     * ``ledger`` -- the answer: ``rows`` / ``runs`` / ``ledger`` from
-      :func:`value_history.read`, ``notes`` per key;
+      :func:`value_history.read`, ``notes`` per key; ``serials`` names each
+      key's answer (docs/298: the same serial is the same, unchanged answer);
     * ``fallback`` -- the chip has no ledger of its runs yet: the caller
       draws the OLD path under ``fallback_note``.
+
+    *targets* / *scope*: the paths already resolved (``value_history.target``)
+    and the rename scope (:func:`_rename_scope`), by a caller whose cache is
+    keyed on exactly what it resolved (docs/298); else resolved here.
     """
     from quam_state_manager.core import hub_sync, value_history as vh
-    store = ctx["store"]
-    with store._lock:
-        merged = store.merged
-    targets = {k: vh.target(merged, dp) for k, dp in path_map.items()}
+    if targets is None:
+        store = ctx["store"]
+        with store._lock:
+            merged = store.merged
+        targets = {k: vh.target(merged, dp) for k, dp in path_map.items()}
     out: dict[str, Any] = {"mode": "fallback", "targets": targets, "status": None,
                            "fallback_note": None, "notes": {}, "rows": {}, "runs": [],
                            "ledger": {}}
@@ -11852,7 +11858,8 @@ def _value_history(ctx: dict, path_map: dict[str, str], *, limit: int | None = N
     # reads each position in its own
     try:
         res = vh.read(chip_dir, targets, limit=limit, runs=runs,
-                      binding=_vh_binding(ctx, chip_dir), **_rename_scope(ctx, chip_dir))
+                      binding=_vh_binding(ctx, chip_dir),
+                      **(scope if scope is not None else _rename_scope(ctx, chip_dir)))
     except hub_sync.Building as exc:
         out.update(mode="building", status=getattr(exc, "status", None) or st)
         return out
@@ -11867,7 +11874,7 @@ def _value_history(ctx: dict, path_map: dict[str, str], *, limit: int | None = N
             and not st.get("roots")):
         return fallback("no_runs")
     out.update(mode="ledger", rows=res["rows"], runs=res["runs"], ledger=res["ledger"],
-               runs_left_out=res.get("runs_left_out", 0))
+               runs_left_out=res.get("runs_left_out", 0), serials=res.get("serials") or {})
     for key, tgt in targets.items():
         pts = res["rows"][key]["points"]
         newest: Any = vh.ABSENT
@@ -17789,9 +17796,13 @@ def topology_trends():
         return _hub_surface_wait(ans, "trends")
     if ledger_table is not None:
         try:
+            # docs/298: a TYPED path also asks the chip's state whether it names a
+            # leaf (outside the table's facts): such a fragment is recomputed on
+            # every edit; any other is served again while its facts hold
             return ledger_table.part(
                 ("trends_fragment", request.query_string, tuple(qubits), tuple(pairs)),
-                lambda: _topology_trends_html(hm, path, store, qubits, pairs, ledger_table))
+                lambda: _topology_trends_html(hm, path, store, qubits, pairs, ledger_table),
+                narrow=not (request.args.get("path") or "").strip())
         except _ramcache.Warming:
             return _hub_surface_wait(_hub_waiting(ledger_table), "trends")
     fallback = ans.get("fallback_note")
@@ -18418,18 +18429,16 @@ def _hub_metric_meta(table) -> dict:
     resolver (``value_history.target``), so a metric read through an alias
     (a confusion matrix behind a pointer) keeps its own paths and its history
     follows whichever holder the alias named at each change (S7)."""
-    from functools import partial
-    from quam_state_manager.core import metric_meta as mm, value_history as vh
+    from quam_state_manager.core import value_history as vh
     from quam_state_manager.web import hub_status
-    store = table.ctx["store"]
-    with store._lock:
-        doc = store.merged
-        resolver = partial(vh.target, container=True)
-        qpaths = mm.qubit_paths(doc, list(store.qubit_names), resolver=resolver)
-        ppaths, loads = mm.pair_rb_paths(doc, list(store.qubit_pair_names), resolver=resolver)
+    # docs/298: every read of the chip's state goes through the table's facts
+    # (the panel paths, the holder each names, each value now), so the meta is
+    # served again after an edit that changes none of them
+    qpaths, ppaths, loads = table.metric_paths()
     wanted = [dp for group in (qpaths, ppaths) for per in group.values()
               for paths in per.values() for dp in paths]
     ans = table.series_many(wanted)
+    table.fact("currents", tuple(dict.fromkeys(wanted)))      # matches_current reads them
     rows = ans["rows"]
 
     def entry_for(paths: list[str]) -> dict | None:
@@ -34390,8 +34399,18 @@ def param_history_changes():
             return _hub_surface_wait(ans, "changes")
         if table is not None:
             try:
-                body, status = table.part(("changes_page", request.query_string, _is_htmx()),
-                                          lambda: _hub_param_changes(table))
+                # docs/298: what the page lists reads only the ledger (kept while
+                # it holds); the FULL page also carries the top bar -- the pending
+                # tray and the sync state, which an apply moves without an edit or
+                # a ledger change (an apply of no change) -- so it is rendered on
+                # every request from the kept list, never kept itself
+                data = table.part(("changes_data", request.query_string),
+                                  lambda: _hub_param_changes_data(table))
+                if _is_htmx():
+                    body, status = table.part(("changes_page", request.query_string, True),
+                                              lambda: _hub_param_changes(table, data))
+                else:
+                    body, status = _hub_param_changes(table, data)
             except _ramcache.Warming:
                 return _hub_surface_wait(_hub_waiting(table), "changes")
             return body, status
@@ -34399,8 +34418,21 @@ def param_history_changes():
     return _legacy_param_history_changes()
 
 
-def _hub_param_changes(table) -> tuple[str, int]:
-    """The ledger page of :func:`param_history_changes`: ``(html, status)``.
+def _hub_param_changes(table, data: dict | None = None) -> tuple[str, int]:
+    """The ledger page of :func:`param_history_changes`: ``(html, status)``,
+    from :func:`_hub_param_changes_data` (computed here when not given)."""
+    data = _hub_param_changes_data(table) if data is None else data
+    if "bad" in data:
+        return data["bad"]
+    template = "_param_history_changes.html" if _is_htmx() else "param_history_changes.html"
+    html = render_template(template, **_ctx(page="param_history", **data))
+    return html, 200
+
+
+def _hub_param_changes_data(table) -> dict:
+    """What the ledger page of :func:`param_history_changes` lists:
+    ``{"bad": (message, status)}`` for an invalid page reference, else the
+    page template's arguments.
 
     One group per ledger event that changed a matching path. The group names
     the EVENT (a run, an SM write, a state SM saw); each row says what the
@@ -34413,7 +34445,7 @@ def _hub_param_changes(table) -> tuple[str, int]:
     prefix = (request.args.get("prefix") or "").strip()
     cursor = (request.args.get("before") or "").strip() or None
     at = (request.args.get("at") or "").strip() or None
-    bad = ("This history page reference is invalid; open Changes again.", 400)
+    bad = {"bad": ("This history page reference is invalid; open Changes again.", 400)}
     if at is not None and not at.isdigit():
         return bad
     try:
@@ -34484,12 +34516,9 @@ def _hub_param_changes(table) -> tuple[str, int]:
                        "shown": len(rows), "rows": rows})
     stats = {"paths": len(table.paths), "rows": sum(table.counts.values()),
              "snapshots": table.snapshot_count(), "dirty": False}
-    template = "_param_history_changes.html" if _is_htmx() else "param_history_changes.html"
-    html = render_template(template, **_ctx(
-        page="param_history", groups=groups, stats=stats, prefix=prefix,
-        has_more=(not at) and result["cursor"] is not None, oldest_ts=result["cursor"],
-        at_ts=at, hub_mode="ledger", hub_notes=table.notes))
-    return html, 200
+    return {"groups": groups, "stats": stats, "prefix": prefix,
+            "has_more": (not at) and result["cursor"] is not None, "oldest_ts": result["cursor"],
+            "at_ts": at, "hub_mode": "ledger", "hub_notes": table.notes}
 
 
 def _legacy_param_history_changes(fallback_note: str | None = None):

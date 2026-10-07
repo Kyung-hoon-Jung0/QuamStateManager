@@ -407,10 +407,21 @@ def _slot(directory) -> str:
     return slot
 
 
+#: docs/298: called with a chip's reader slot when its reader is closed, so a
+#: cache derived from that chip's ledger frees its memory with it (memory
+#: only: every such cache validates what it serves on its own)
+ON_CLOSE: list = []
+
+
 def _close(reader, slot) -> None:
     with reader.lock:
         reader.conn.close()
     INDEX_CACHE.drop_where(lambda candidate: candidate == slot)
+    for hook in list(ON_CLOSE):
+        try:
+            hook(slot)
+        except Exception:  # noqa: BLE001 -- freeing memory never fails a close
+            pass
 
 
 def close_readers(directory=None):

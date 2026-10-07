@@ -34,18 +34,20 @@ from __future__ import annotations
 
 import gzip
 import hashlib
+import itertools
 import json
-from bisect import bisect_right
+from array import array
+from bisect import bisect_left, bisect_right
 from datetime import datetime, timedelta, timezone
 from types import SimpleNamespace
 from typing import Any, Iterable
 
-from quam_state_manager.core import hub_index, hub_query, rename_lineage
+from quam_state_manager.core import hub_index, hub_query, ramcache, rename_lineage
 from quam_state_manager.core import hub_rules as rules
 from quam_state_manager.core.hub_rules import _segment
 from quam_state_manager.core.hub_store import (
     CHIP_UNCERTAIN, NODE_UNREADABLE, OVERLAPS_SM_WRITE, PARTLY_UNDONE, REVERTS_TO_EARLIER,
-    REWRITTEN, SM_KINDS, SOURCE_GONE, TIME_ASSUMED, UNDONE, segments)
+    REWRITTEN, SM_KINDS, SOURCE_GONE, TIME_ASSUMED, UNDONE, rewrite_mark, rewritten_since, segments)
 from quam_state_manager.core.pointer_path import pointer_to_abs, resolve_field_target
 from quam_state_manager.core.pointer_resolver import is_pointer
 
@@ -245,11 +247,24 @@ class _Rows:
         self.memo: dict[str, list] = {}
         self.pos_memo: dict[str, list] = {}
         self.eras: _Eras | None = None
+        #: docs/298: while one key is derived, every holder spelling it ASKED
+        #: about (found or not, and the long-array parent an element could be
+        #: read from): the answer can change only through rows of these
+        self.seen: set[str] | None = None
+
+    def _see(self, holder: str | None) -> None:
+        if self.seen is not None and holder is not None:
+            self.seen.add(holder)
+            parent, _, last = holder.rpartition(".")
+            if parent and last.isdigit():
+                self.seen.add(parent)
 
     def has(self, holder: str | None) -> bool:
+        self._see(holder)
         return holder is not None and holder in self.index.paths
 
     def rows(self, holder: str | None) -> list[tuple]:
+        self._see(holder)
         if holder is None:
             return []
         if holder not in self.memo:
@@ -262,6 +277,7 @@ class _Rows:
         return self.memo[holder]
 
     def positions(self, holder: str | None) -> list[int]:
+        self._see(holder)
         if holder not in self.pos_memo:
             self.pos_memo[holder] = [self.index.positions[r[0]["eid"]] for r in self.rows(holder)]
         return self.pos_memo[holder]
@@ -661,6 +677,250 @@ def undone_paths(conn, index, ev: dict, sm: dict) -> Any:
     return out
 
 
+def target_sig(tgt: dict) -> tuple:
+    """docs/298: everything :func:`read` takes from a target -- the path, its
+    holder now and every pointer hop on the way. The value the path holds
+    NOW (``current``) is not part of it: no row of the answer depends on it."""
+    return (tgt["path"], tgt["holder"], tgt["holder_path"],
+            tuple((h["from"], h["from_path"], h["pointer"], h["to"], h["to_path"])
+                  for h in tgt.get("via") or ()))
+
+
+def _scope_sig(lineage, era) -> tuple:
+    """The rename scope a read derives in (docs/296): the lineage as the read
+    completed it from the ledger, and today's era."""
+    recs = getattr(lineage, "recs", None) or {}
+    blob = json.dumps(recs, sort_keys=True, default=repr) if recs else ""
+    return (hashlib.sha1(blob.encode("utf-8")).hexdigest() if blob else "", tuple(era or ()))
+
+
+#: docs/298: the holders a rename era is read from (``hub_eras``); an appended
+#: row on any of them may move every key's spelling, so it is never reused past it
+_ERA_ROOT = "extras." + rename_lineage.EXTRAS_KEY
+
+
+class _KeyEntry:
+    """One key's derived answer, the ledger state it was derived at
+    (:func:`_stamp`), the holder spellings the derivation asked about and
+    the events whose facts it read (sorted eids)."""
+
+    __slots__ = ("stamp", "row", "watched", "used", "serial", "nbytes")
+
+    def __init__(self, stamp: tuple, row: dict, watched: frozenset, used: array, serial: int):
+        self.stamp, self.row, self.watched, self.used, self.serial = stamp, row, watched, used, serial
+        n = (len(row["points"]) + len(row["effective"])
+             + sum(len(r["rows"]) for r in row["retargets"]))
+        self.nbytes = 1024 + 1400 * n + 120 * len(watched) + 4 * len(used)
+
+    def uses(self, eids) -> bool:
+        used = self.used
+        for e in eids:
+            i = bisect_left(used, e)
+            if i < len(used) and used[i] == e:
+                return True
+        return False
+
+
+#: docs/298: every key's answer, kept between reads of a chip (bounded, under
+#: the shared RAM budget). An entry is served for a LATER ledger state only
+#: when :class:`_Reuse` proves the from-scratch answer there is the same.
+_KEYS = ramcache.KeyedMemo("value_history_keys", max_bytes=96 * 1024 * 1024,
+                           sizeof=lambda e: e.nbytes)
+_SERIAL = itertools.count(1)
+
+
+def _drop_chip(slot: str) -> None:
+    _KEYS.drop_where(lambda s: s[0] == slot)
+
+
+hub_index.ON_CLOSE.append(_drop_chip)
+
+
+def _stamp(conn, index) -> tuple:
+    """The ledger state one read snapshot sees: ``(ledger id, reader opening,
+    data version, rewrite log mark, newest eid, events, first event)``. Equal
+    stamps mean nothing changed at all; the rewrite log mark
+    (``hub_store.rewrite_mark``, None when the ledger has no complete log) is
+    what lets a later state vouch for an earlier answer."""
+    return (index.ledger_id, getattr(conn, "gen", 0),
+            conn.execute("PRAGMA data_version").fetchone()[0],
+            rewrite_mark(conn), max(index.eids, default=0), len(index.eids),
+            index.eids[0] if index.eids else None)
+
+
+class _Reuse:
+    """docs/298: may an answer derived at an earlier stamp be served now?
+
+    Yes only when ALL hold, each checked against this snapshot:
+
+    1. the same ledger file and reader opening, and the same rewrite log
+       (epoch), which still covers the old position (not trimmed past it);
+    2. no in-place change logged since then, among the events up to the
+       newest one the answer was derived from, touched what the answer read:
+       nothing that moves every event (an event deleted, the order, a root, a
+       path, a blob, a rename era), no change row on a holder spelling the
+       derivation asked about (a re-diff, a re-proof), and no fact of an
+       event it read (a flag: undone, run folder gone; its status, time).
+       The log is kept by triggers, so a write of any process is in it;
+    3. the events up to that newest one are still exactly the ones it saw
+       (a removed event is logged too; this is the belt to the log's braces),
+       and the first of them is still the ledger's first (every derivation
+       reads the state at position 0, rows or not);
+    4. none of the events added since -- at the head, or placed between
+       earlier ones (a late run, a snapshot SM took before an apply) -- has a
+       row on a holder spelling the derivation asked about (whether it
+       existed then or not), and none moved a rename era. An event placed
+       between two others re-diffs the one after it: that is an in-place
+       change of its rows, and rule 2 judges it.
+
+    Then every input of that key's derivation is what it was: its holders'
+    rows, the events those rows belong to and their order (positions move
+    when an event lands between, but no answer carries a position). The
+    from-scratch answer at this state is the same answer."""
+
+    def __init__(self, conn, index, stamp: tuple):
+        self.conn, self.index, self.stamp = conn, index, stamp
+        self._rewritten: dict[tuple, tuple] = {}
+        self._tail: dict[int, int] = {}
+        self._touched: dict[int, tuple] = {}
+
+    def holds(self, entry: _KeyEntry) -> bool:
+        old, now = entry.stamp, self.stamp
+        if old == now:
+            return True
+        lid, gen, _dv, mark, high, n, first = old
+        nlid, ngen, _ndv, nmark, nhigh, nn, nfirst = now
+        if mark is None or nmark is None or (lid, gen, mark[0]) != (nlid, ngen, nmark[0]):
+            return False
+        if first != nfirst:
+            return False            # the ledger START moved: every key reads position 0
+        seq = mark[1]
+        if nmark[1] < seq or nmark[2] > seq:
+            return False                      # a log that went back, or was trimmed past it
+        if nmark[1] > seq:
+            if (seq, high) not in self._rewritten:
+                every, eids, paths = rewritten_since(self.conn, seq, high)
+                every = every or any(p == _ERA_ROOT or p.startswith(_ERA_ROOT + ".") for p in paths)
+                self._rewritten[(seq, high)] = (every, eids, paths)
+            every, eids, paths = self._rewritten[(seq, high)]
+            if every or not entry.watched.isdisjoint(paths) or entry.uses(eids):
+                return False
+        if high not in self._tail:
+            self._tail[high] = sum(1 for e in self.index.eids if e <= high)
+        if self._tail[high] != n:
+            return False
+        if nhigh > high:
+            if high not in self._touched:
+                touched = {r[0] for r in self.conn.execute(
+                    "SELECT DISTINCT p.path FROM changes c JOIN paths p USING(pid) WHERE c.eid > ?",
+                    (high,))}
+                moved = any(p == _ERA_ROOT or p.startswith(_ERA_ROOT + ".") for p in touched)
+                self._touched[high] = (touched, moved)
+            touched, moved = self._touched[high]
+            if moved or not entry.watched.isdisjoint(touched):
+                return False
+        return True
+
+
+def _canon(value: Any) -> str:
+    return json.dumps(value, sort_keys=True, default=repr)
+
+
+def _derive(conn, index, cache: _Rows, eras: _Eras, roots: dict, targets: dict[str, dict],
+            limit: int | None, *, record: bool = False) -> tuple[dict, dict, dict, dict]:
+    """``(answers, segments, asked, used)`` for *targets* -- each key's answer
+    as docs/282 defines it (unchanged), its alias segments (for By run) and,
+    with *record*, every holder spelling its derivation asked about and the
+    events whose facts it read. A key's answer depends only on its own
+    target: deriving a subset gives each key the answer it gets among all."""
+    segs: dict[str, list] = {}
+    hsegs: dict[str, list] = {}
+    asked: dict[str, set] = {}
+    for key, tgt in targets.items():
+        cache.seen = asked.setdefault(key, set()) if record else None
+        segs[key] = alias_segments(cache, tgt["path"])
+        # the holder itself, followed across renames (docs/296)
+        hsegs[key] = (cache.eras.holder_segments(tgt["holder_path"]) if cache.eras is not None
+                      else [(0, tgt["holder"])])
+    cache.seen = None
+    # the events a retarget point may need (segment starts), fetched once
+    starts = {s for lst in list(segs.values()) + list(hsegs.values()) for s, _h in lst}
+    start_events = hub_query._events(conn, [index.eids[p] for p in starts if 0 <= p < len(index.eids)])
+    start_ev = {p: start_events[index.eids[p]] for p in starts
+                if 0 <= p < len(index.eids) and index.eids[p] in start_events}
+    raw: dict[str, list] = {}
+    eff: dict[str, list] = {}
+    hop_rows: dict[str, list] = {}
+    for key, tgt in targets.items():
+        cache.seen = asked[key] if record else None
+        raw[key] = (cache.rows(tgt["holder"]) if cache.eras is None
+                    else _renamed_rows(effective_rows(cache, hsegs[key], start_ev, cache.eras),
+                                       hsegs[key], index))
+        eff[key] = _renamed_rows(effective_rows(cache, segs[key], start_ev, cache.eras),
+                                 hsegs[key], index)
+        for hop in tgt.get("via") or ():
+            got = cache.rows(hop["from"])
+            hop_rows.setdefault(hop["from"], got)
+    cache.seen = None
+    used: dict[str, array] = {}
+    if record:
+        # the events whose facts each answer read: every row of a holder it
+        # asked about, and every event a segment of it starts at
+        for key in targets:
+            eids = {r[0]["eid"] for h in asked[key] for r in cache.memo.get(h) or ()}
+            eids.update(index.eids[p] for p, _h in segs[key] + hsegs[key] if 0 <= p < len(index.eids))
+            used[key] = array("I", sorted(eids))
+    sm_eids = [r[0]["eid"] for rows in list(raw.values()) + list(eff.values()) + list(hop_rows.values())
+               for r in rows if r[0]["kind"] in SM_KINDS]
+    sm = _sm_info(conn, sm_eids)
+
+    def points(rows):
+        pts = [_point(ev, old, new, op, proven, roots, sm) for ev, old, new, op, proven in rows]
+        _mark_undone(rows, pts, sm)
+        return pts
+
+    hops = {path: points(rows) for path, rows in hop_rows.items()}
+    out_rows: dict[str, dict] = {}
+    for key, tgt in targets.items():
+        pts = points(raw[key])
+        here = tgt["holder"]
+        for p in pts:
+            # P1-1: one rule -- the holder the path named AT this row
+            # (docs/296: the holder as spelled in that row's rename era)
+            at = index.positions[p["eid"]]
+            p["before_via"] = _segment_at(segs[key], at) != _segment_at(hsegs[key], at)
+            was = _segment_at(hsegs[key], at)
+            p["recorded_as"] = was if was != here else None
+        total = len(pts)
+        if limit is not None and len(pts) > limit:
+            pts = pts[-limit:] if limit else []
+        latest = segs[key][-1][1] if segs[key] else None
+        retargets = []
+        for hop in tgt.get("via") or ():
+            retargets.append({"from": hop["from"], "from_path": hop["from_path"],
+                              "pointer": hop["pointer"], "to": hop["to"],
+                              "to_path": hop["to_path"], "rows": hops.get(hop["from"]) or [],
+                              # the chip's pointer now names a holder the
+                              # ledger never saw this path name (not applied)
+                              "unrecorded": latest != here})
+        since = None
+        for start, holder in reversed(segs[key]):
+            if holder == _segment_at(hsegs[key], start):
+                since = start
+            else:
+                break
+        out_rows[key] = {
+            "points": pts, "total": total, "retargets": retargets,
+            "effective": [dict(p, holder=_segment_at(segs[key], index.positions[p["eid"]]))
+                          for p in points(eff[key])],
+            "segments": [{"t": iso_z(index.t[s]) if 0 <= s < len(index.eids) else None,
+                          "holder": h} for s, h in segs[key]],
+            "via_since": (iso_z(index.t[since]) if since is not None and 0 < since < len(index.eids)
+                          else None),
+            "renames": _rename_marks(hsegs[key], index, eras)}
+    return out_rows, segs, asked, used
+
+
 def read(chip_dir, targets: dict[str, dict], *, limit: int | None = None,
          runs: int = 0, binding=None, lineage: rename_lineage.Lineage | None = None,
          era: tuple = ()) -> dict:
@@ -682,10 +942,17 @@ def read(chip_dir, targets: dict[str, dict], *, limit: int | None = None,
     paths are spelled in (docs/296). Each key then also answers ``renames``:
     every point where a rename changed the holder's name.
 
+    docs/298: a key's answer is kept between reads (``_KEYS``) and served
+    again for a later ledger state only when :class:`_Reuse` proves the
+    from-scratch answer there is identical (``serials`` names each answer:
+    the same serial is the same answer object, which callers must not
+    change). A By-run read (``runs``) is always derived from scratch.
+
     Raises ``hub_sync.Building`` while the ledger is catching up and
     ``ramcache.Warming`` while its RAM index is being prepared -- a surface
     says so, it never shows a partial history as complete.
     """
+    memo = not runs
     with hub_index.snapshot(binding if binding is not None else _reader(chip_dir)) as (conn, index):
         kind_names = {v: k for k, v in index.names["kind"].items()}
         run_kind = index.names["kind"].get("run")
@@ -695,78 +962,50 @@ def read(chip_dir, targets: dict[str, dict], *, limit: int | None = None,
         cache = _Rows(conn, index)
         eras = _Eras(cache, lineage or rename_lineage.Lineage(), era)
         cache.eras = eras if eras.active else None
-        segs: dict[str, list] = {}
-        for key, tgt in targets.items():
-            segs[key] = alias_segments(cache, tgt["path"])
-        # the holder itself, followed across renames (docs/296)
-        hsegs: dict[str, list] = {
-            key: (cache.eras.holder_segments(tgt["holder_path"]) if cache.eras is not None
-                  else [(0, tgt["holder"])])
-            for key, tgt in targets.items()}
-        # the events a retarget point may need (segment starts), fetched once
-        starts = {s for lst in list(segs.values()) + list(hsegs.values()) for s, _h in lst}
-        start_events = hub_query._events(conn, [index.eids[p] for p in starts if 0 <= p < len(index.eids)])
-        start_ev = {p: start_events[index.eids[p]] for p in starts
-                    if 0 <= p < len(index.eids) and index.eids[p] in start_events}
-        raw: dict[str, list] = {}
-        eff: dict[str, list] = {}
-        hop_rows: dict[str, list] = {}
-        for key, tgt in targets.items():
-            raw[key] = (cache.rows(tgt["holder"]) if cache.eras is None
-                        else _renamed_rows(effective_rows(cache, hsegs[key], start_ev, cache.eras),
-                                           hsegs[key], index))
-            eff[key] = _renamed_rows(effective_rows(cache, segs[key], start_ev, cache.eras),
-                                     hsegs[key], index)
-            for hop in tgt.get("via") or ():
-                hop_rows.setdefault(hop["from"], cache.rows(hop["from"]))
-        sm_eids = [r[0]["eid"] for rows in list(raw.values()) + list(eff.values()) + list(hop_rows.values())
-                   for r in rows if r[0]["kind"] in SM_KINDS]
-        sm = _sm_info(conn, sm_eids)
-
-        def points(rows):
-            pts = [_point(ev, old, new, op, proven, roots, sm) for ev, old, new, op, proven in rows]
-            _mark_undone(rows, pts, sm)
-            return pts
-
-        hops = {path: points(rows) for path, rows in hop_rows.items()}
+        # the scope as the read uses it: the lineage completed from the ledger
+        # (the same for every caller that asks with the same records)
+        scope = _scope_sig(eras.lineage, era) if memo else None
+        reused: dict[str, _KeyEntry] = {}
+        slots: dict[str, tuple] = {}
+        stamp = None
+        if memo and targets:
+            stamp = _stamp(conn, index)
+            chip = hub_index._slot(chip_dir)
+            check = _Reuse(conn, index, stamp)
+            for key, tgt in targets.items():
+                slots[key] = (chip, target_sig(tgt), limit, scope)
+                held = _KEYS.peek(slots[key])
+                if held is not None and check.holds(held[1]):
+                    reused[key] = held[1]
+        todo = {k: t for k, t in targets.items() if k not in reused}
+        derived, segs, asked, used = _derive(conn, index, cache, eras, roots, todo, limit, record=memo)
+        if reused and ramcache._verify_on():
+            # shadow mode (SM_RAM_VERIFY): every reused answer against a
+            # from-scratch derivation at this very snapshot
+            fresh = _Rows(conn, index)
+            fresh.eras = cache.eras
+            again, _s, _a, _u = _derive(conn, index, fresh, eras, roots,
+                                        {k: targets[k] for k in reused}, limit)
+            for k, e in reused.items():
+                if _canon(again[k]) != _canon(e.row):
+                    raise ramcache.StaleCacheError(f"value_history_keys: the kept answer for "
+                                                   f"{targets[k]['path']!r} differs from a "
+                                                   f"from-scratch read")
         out_rows: dict[str, dict] = {}
-        for key, tgt in targets.items():
-            pts = points(raw[key])
-            here = tgt["holder"]
-            for p in pts:
-                # P1-1: one rule -- the holder the path named AT this row
-                # (docs/296: the holder as spelled in that row's rename era)
-                at = index.positions[p["eid"]]
-                p["before_via"] = _segment_at(segs[key], at) != _segment_at(hsegs[key], at)
-                was = _segment_at(hsegs[key], at)
-                p["recorded_as"] = was if was != here else None
-            total = len(pts)
-            if limit is not None and len(pts) > limit:
-                pts = pts[-limit:] if limit else []
-            latest = segs[key][-1][1] if segs[key] else None
-            retargets = []
-            for hop in tgt.get("via") or ():
-                retargets.append({"from": hop["from"], "from_path": hop["from_path"],
-                                  "pointer": hop["pointer"], "to": hop["to"],
-                                  "to_path": hop["to_path"], "rows": hops.get(hop["from"]) or [],
-                                  # the chip's pointer now names a holder the
-                                  # ledger never saw this path name (not applied)
-                                  "unrecorded": latest != here})
-            since = None
-            for start, holder in reversed(segs[key]):
-                if holder == _segment_at(hsegs[key], start):
-                    since = start
+        serials: dict[str, int] = {}
+        for key in targets:
+            e = reused.get(key)
+            if e is not None:
+                out_rows[key], serials[key] = e.row, e.serial
+                if e.stamp != stamp:
+                    _KEYS.put(slots[key], stamp, _KeyEntry(stamp, e.row, e.watched, e.used, e.serial))
                 else:
-                    break
-            out_rows[key] = {
-                "points": pts, "total": total, "retargets": retargets,
-                "effective": [dict(p, holder=_segment_at(segs[key], index.positions[p["eid"]]))
-                              for p in points(eff[key])],
-                "segments": [{"t": iso_z(index.t[s]) if 0 <= s < len(index.eids) else None,
-                              "holder": h} for s, h in segs[key]],
-                "via_since": (iso_z(index.t[since]) if since is not None and 0 < since < len(index.eids)
-                              else None),
-                "renames": _rename_marks(hsegs[key], index, eras)}
+                    _KEYS.get_held(slots[key], stamp)          # LRU order only
+                continue
+            out_rows[key], serials[key] = derived[key], next(_SERIAL)
+            if memo:
+                entry = _KeyEntry(stamp, derived[key], frozenset(asked[key]), used[key], serials[key])
+                _KEYS.put(slots[key], stamp, entry, nbytes=entry.nbytes)
 
         by_run: list[dict] = []
         left_out = 0
@@ -827,7 +1066,8 @@ def read(chip_dir, targets: dict[str, dict], *, limit: int | None = None,
                 if index.kind[pos] == run_kind:
                     ledger["last_run"] = iso_z(index.t[pos])
                     break
-        return {"rows": out_rows, "runs": by_run, "runs_left_out": left_out, "ledger": ledger}
+        return {"rows": out_rows, "runs": by_run, "runs_left_out": left_out, "ledger": ledger,
+                "serials": serials}
 
 
 #: docs/296: per chip dir, the last :func:`run_eras_known` answer and its
