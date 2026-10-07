@@ -6,7 +6,9 @@
        times in {{ zone_label }}. The value beside each qubit is its newest
        recorded value.{% if no_time %} {{ no_time }} point{{ '' if no_time == 1 else 's' }}
        whose snapshot id is not a time {{ 'is' if no_time == 1 else 'are' }} not drawn.{% endif %}</p>
-    {% if not charts %}
+    {% if building is defined and building %}
+    <p class="rep-note">{{ building }} Trends are in the next report made after it.</p>
+    {% elif not charts %}
     <p class="rep-note">No parameter history is recorded for this chip yet.
        Trends fill in as calibrations and saves are captured.</p>
     {% endif %}

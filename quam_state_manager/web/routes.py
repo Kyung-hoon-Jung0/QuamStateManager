@@ -15479,16 +15479,15 @@ def _snap_epoch(ts: Any) -> float | None:
 
 def _report_crop(pts: list[tuple[float, Any]], start: float | None) -> list[tuple[float, Any]]:
     """The points a chart zoomed to ``[start, ...]`` shows: those inside, plus
-    the line's value AT the window edge when it crosses it (the straight line
-    the live chart draws between the two neighbours -- nothing new)."""
+    the line's value AT the window edge when it crosses it -- the value held
+    since the point before it, as the live chart draws a step (docs/301 F8);
+    nothing new."""
     if start is None:
         return pts
     inside = [p for p in pts if p[0] >= start]
     before = [p for p in pts if p[0] < start]
     if before and inside and inside[0][0] > start:
-        (x0, y0), (x1, y1) = before[-1], inside[0]
-        if isinstance(y0, (int, float)) and isinstance(y1, (int, float)) and x1 > x0:
-            inside.insert(0, (start, y0 + (y1 - y0) * (start - x0) / (x1 - x0)))
+        inside.insert(0, (start, before[-1][1]))
     elif before and not inside:
         inside = [(start, before[-1][1])]          # unchanged since before the window
     return inside
@@ -15503,7 +15502,26 @@ def _report_build_trends(rc: _ReportCtx) -> str:
     from quam_state_manager.core import units as _units
     hm = _history()
     path = Path(rc.path)
-    tbl = chip_trends_ram.table(hm, path)
+    # docs/301 F22: the report reads what Chip Status > Trends reads -- the
+    # chip's change ledger when it holds the chip's runs, the snapshot table
+    # only for a chip with no ledger. It said "No parameter history" beside a
+    # Trends page charting 2,082 runs.
+    tbl, building = None, None
+    ctx = _active_ctx()
+    if ctx and ctx.get("type") == "quam" and ctx.get("path") and Path(ctx["path"]) == path:
+        try:
+            ans, tbl = _hub_status_table(ctx)
+            if ans.get("mode") in ("building", "preparing"):
+                building = _vh_wait_message(ans)
+        except Exception:  # noqa: BLE001 -- the snapshot table still answers
+            logger.warning("report trends: ledger table unavailable", exc_info=True)
+            tbl = None
+    if building:
+        return render_template("_report_trends.html", charts=[], building=building,
+                               window_label=_cr.window_label(rc.window),
+                               zone_label=_report_zone_label(rc), no_time=0, n_snapshots=0)
+    if tbl is None:
+        tbl = chip_trends_ram.table(hm, path)
     curated = list(DEFAULT_TRACKED_PROPERTIES)
     have = _trend_metrics_with_data(hm, path, curated, tbl)
     metrics = [m for m in curated if m in have]
@@ -15549,7 +15567,7 @@ def _report_build_trends(rc: _ReportCtx) -> str:
         svg = _svg.line_chart(sv, x_kind="time", tz=tz, y_factor=factor,
                               y_label=label + (f" ({suffix})" if suffix else ""),
                               x_label=f"time ({_report_zone_label(rc)})", title=label,
-                              x_range=x_rng)
+                              x_range=x_rng, step=True)
         charts.append({"metric": m, "label": label, "svg": svg,
                        "legend": _svg.legend(leg), "n": len(rows),
                        "empty": not xs_all})

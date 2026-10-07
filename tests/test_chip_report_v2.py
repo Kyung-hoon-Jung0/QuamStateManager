@@ -368,7 +368,9 @@ class TestTrends:
     def test_the_window_crops_never_recomputes(self):
         pts = [(0.0, 1.0), (10.0, 1.0), (20.0, 3.0), (30.0, 3.0)]
         assert routes._report_crop(pts, None) == pts
-        assert routes._report_crop(pts, 15.0) == [(15.0, 2.0), (20.0, 3.0), (30.0, 3.0)]
+        # docs/301 F8/F22: the live chart draws a step, so the edge holds the
+        # value before it (1.0) -- it used to interpolate (2.0) along a slope
+        assert routes._report_crop(pts, 15.0) == [(15.0, 1.0), (20.0, 3.0), (30.0, 3.0)]
         assert routes._report_crop(pts, 40.0) == [(40.0, 3.0)]        # unchanged since
 
     def test_a_chip_without_history_says_so(self, chip_client):
@@ -744,3 +746,18 @@ def test_review_cached_overview_refreshes_generated_time(chip_client, monkeypatc
     now[0] = "2026-01-01 00:00:01 (UTC+0)"
     second = _section(c, "overview")[1]
     assert "00:00:00" in first and "00:00:01" in second
+
+
+def test_the_report_chart_draws_a_step_with_markers_on_the_recorded_points():
+    """docs/301 F8/F22: the report's line holds each value until the next
+    point, as the live Trends chart does; the dots stay on recorded points."""
+    from quam_state_manager.core import report_svg
+    svg = report_svg.line_chart([{"name": "q1", "xs": [0.0, 10.0, 20.0], "ys": [1.0, 3.0, 2.0]}],
+                                x_kind="linear", step=True)
+    pts = re.search(r'<polyline[^>]*points="([^"]+)"', svg).group(1).split()
+    assert len(pts) == 5, pts                       # 3 recorded + 2 corners
+    assert pts[1].split(",")[1] == pts[0].split(",")[1], "the corner keeps the earlier value"
+    assert svg.count("h0") == 3, "markers only on the recorded points"
+    plain = report_svg.line_chart([{"name": "q1", "xs": [0.0, 10.0, 20.0], "ys": [1.0, 3.0, 2.0]}],
+                                  x_kind="linear")
+    assert len(re.search(r'<polyline[^>]*points="([^"]+)"', plain).group(1).split()) == 3

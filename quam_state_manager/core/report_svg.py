@@ -120,12 +120,14 @@ def line_chart(series: Sequence[dict], *, x_kind: str = "linear",
                x_label: str = "", y_label: str = "", y_factor: float = 1.0,
                width: int = 760, height: int = 230, tz: tzinfo | None = None,
                title: str = "", x_range: tuple[float, float] | None = None,
-               markers: bool | None = None) -> str:
+               markers: bool | None = None, step: bool = False) -> str:
     """One static chart. Each series: ``{"name", "xs", "ys"}`` plus optional
     ``"color"``, ``"dash"``, ``"width"``. ``xs`` are epoch seconds
     (``x_kind="time"``), nanoseconds on a log axis (``"log"``), or plain
     numbers. ``ys`` may hold ``None`` (a gap, never bridged). Values are
-    multiplied by *y_factor* for placement and tick labels only."""
+    multiplied by *y_factor* for placement and tick labels only. ``step``
+    draws each value held until the next point (the live Trends chart's
+    ``hv`` line, docs/301 F8); markers stay on the recorded points only."""
     ml, mr, mt, mb = 62, 14, 10, 40
     pw, ph = width - ml - mr, height - mt - mb
     pts_all = [(x, y * y_factor) for s in series for x, y in zip(s["xs"], s["ys"])
@@ -212,8 +214,14 @@ def line_chart(series: Sequence[dict], *, x_kind: str = "linear",
         da = f' stroke-dasharray="{dash}"' if dash else ""
         for seg in segs:
             if len(seg) >= 2:
+                line = seg
+                if step:
+                    line = [seg[0]]
+                    for prev, cur in zip(seg, seg[1:]):
+                        line.append(cur.split(",")[0] + "," + prev.split(",")[1])
+                        line.append(cur)
                 parts.append(f'<polyline fill="none" stroke="{color}" stroke-width="{w}"{da}'
-                             f' stroke-linejoin="round" points="{" ".join(seg)}"/>')
+                             f' stroke-linejoin="round" points="{" ".join(line)}"/>')
         show = markers if markers is not None else n <= 60
         if show:
             dots = "".join(f"M{p.replace(',', ' ')}h0" for seg in segs for p in seg)

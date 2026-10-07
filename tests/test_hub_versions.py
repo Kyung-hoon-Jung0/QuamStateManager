@@ -768,3 +768,20 @@ def test_the_value_drawer_reaches_its_older_points(env, monkeypatch):
     assert re.search(rf"\b{total} change points", text(every)), text(every)[-300:]
     js = (Path(__file__).resolve().parents[1] / "quam_state_manager" / "web" / "static" / "app.js").read_text(encoding="utf-8")
     assert "showAll: showAll" in js and '(all ? "&all=1" : "")' in js, "the button reaches the all=1 load"
+
+
+def test_the_report_trends_read_the_ledger(env):
+    """docs/301 F22: the shareable report's Trends read what Chip Status >
+    Trends reads. With the snapshot table empty and the ledger holding the
+    chip's runs, it said "No parameter history is recorded for this chip"."""
+    body = env.client.get("/chip-status/report/section/trends?redact=0&window=all").get_data(as_text=True)
+    assert "No parameter history is recorded" not in body, text(body)[:300]
+    fig = body[body.index('data-rep-metric="T1"'):]
+    fig = fig[:fig.index("</figure>")]
+    assert "<polyline" in fig and "qA1" in fig, text(fig)[:300]
+    # a step, as the live chart draws it: a corner that keeps the earlier
+    # value, then a vertical move to the next one
+    pts = [tuple(float(v) for v in xy.split(","))
+           for xy in re.search(r'<polyline[^>]*points="([^"]+)"', fig).group(1).split()]
+    assert any(a[1] == b[1] and b[0] == c[0] and b[1] != c[1]
+               for a, b, c in zip(pts, pts[1:], pts[2:])), pts
