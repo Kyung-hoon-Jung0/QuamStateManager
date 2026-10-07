@@ -507,3 +507,19 @@ def test_a_runaway_fit_keeps_the_axis_on_the_data_rb_and_flux():
     assert fig["layout"]["yaxis"]["range"][1] < 2 and fig["layout"]["yaxis2"]["range"][1] < 2
     calm = fc.fitted_two_panel(t, np.exp(-t / 10), np.exp(-t / 10))
     assert "range" not in calm["layout"]["yaxis"]
+
+
+def test_ramsey_fit_is_drawn_finer_than_the_data_so_it_can_be_seen():
+    """docs/301: on the data's own points (about six per period) the fit was a
+    polyline through the same places as the data line -- same colour, same
+    width -- and could not be told apart. The data are points; the fit is a
+    curve on a fine grid that still agrees with them."""
+    from quam_state_manager.core.interactive_plots.recipes import ramsey
+    bundle, t, _y = _ramsey_bundle(fit_signs=[-1, 1])
+    spec = ramsey.build(bundle, "amplitude::q0")
+    data = [tr for tr in spec.figure["data"] if not _is_fit(tr)]
+    fits = _fit_traces(spec.figure)
+    assert data and all(tr["mode"] == "markers" for tr in data)
+    assert fits and all(len(f["x"]) >= 10 * t.size for f in fits)
+    for name, s in agreement(spec.figure):
+        assert s > 0.999, (name, s)
