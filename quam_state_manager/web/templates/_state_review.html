@@ -273,7 +273,7 @@
               hx-target="#status-bar" hx-swap="innerHTML" hx-trigger="{% if auto_apply %}revertconfirmed{% else %}armed{% endif %}"
               data-after-request="syncPanelRefresh"
               onclick="{% if auto_apply %}revertSessionConfirm(this){% else %}SyncPanel.arm(this, event){% endif %}"
-              title="{% if auto_apply %}Revert the whole Auto-Sync session — stages the state as it was when you turned it on, including values pulled since (the confirm names them).{% else %}Revert last apply (done {{ last_apply.at | format_ts }}) — stages the state as it was before it, for review; nothing touches the live chip until you apply.{% endif %}">&#8634; Revert {% if auto_apply %}this session{% else %}last apply{% endif %}</button>
+              title="{% if auto_apply %}Revert the whole Auto-Sync session — stages the state as it was when you turned it on, including values pulled since (the confirm names them).{% else %}Revert last apply, done {{ last_apply.at | format_ts_zone }} — stages the state as it was before it, for review; nothing touches the live chip until you apply.{% endif %}">&#8634; Revert {% if auto_apply %}this session{% else %}last apply{% endif %}</button>
     </div>
     {% endif %}
     {% if auto_apply or applied_log %}{% include '_applied_log.html' %}{% endif %}

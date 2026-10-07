@@ -62,7 +62,7 @@
     <tr class="vh-row vh-{{ pt.provenance }}{% if pt.is_current %} fh-current{% endif %}{% if pt.undone %} vh-undone{% endif %}{% if pt.before_via %} vh-before-via{% endif %}"
         data-eid="{{ pt.eid }}" data-provenance="{{ pt.provenance }}">
       <td class="fh-val" title="{{ pt.fill }}"><code>{{ pt.display }}</code>{% if pt.is_current %} <span class="fh-now">current</span>{% endif %}{% if pt.has_prev and pt.usable %}{{ delta_chip(pt.prev_value, pt.value, 'fh-delta') }}{% endif %}
-        {% if pt.before_via %}<span class="vh-flag vh-flag-bv" title="The alias named another holder at this time{% if via_since %}; it has named this one since {{ via_since | format_ts }}{% endif %}.">before {{ via[0].alias if via else 'the alias' }} pointed here</span>{% endif %}
+        {% if pt.before_via %}<span class="vh-flag vh-flag-bv" title="The alias named another holder at this time{% if via_since %}; it has named this one since {{ via_since | format_ts_zone }}{% endif %}.">before {{ via[0].alias if via else 'the alias' }} pointed here</span>{% endif %}
         {% if pt.recorded_as %}<span class="vh-flag vh-flag-renamed" title="Recorded as {{ pt.recorded_as }}, before a rename">as {{ pt.recorded_as_short }}</span>{% endif %}
         {% for f in pt.flag_text %}<span class="vh-flag">{{ f }}</span>{% endfor %}
       </td>

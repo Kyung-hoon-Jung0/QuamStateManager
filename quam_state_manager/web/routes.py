@@ -6321,6 +6321,38 @@ def _display_zone() -> dict | None:
         return None
 
 
+def zone_ts_text(ts: Any, seconds: bool = True) -> str:
+    """*ts* (any form ``timefmt.to_utc`` reads) as plain text in the zone the
+    page renders in, its offset named -- for text no script localizes
+    (attributes, option labels, toasts). The zone is looked up once per
+    request. Not a time: returned as written (docs/301 F5)."""
+    from flask import g, has_request_context
+    from quam_state_manager.core.timefmt import local_text, to_utc
+    d = to_utc(ts)
+    if d is None:
+        return str(ts)
+    zone = None
+    if has_request_context():
+        if not hasattr(g, "_sm_zone_name"):
+            g._sm_zone_name = (_display_zone() or {}).get("zone")
+        zone = g._sm_zone_name
+    return local_text(d, zone, seconds=seconds)
+
+
+def _zone_src(src):
+    """A history source with its UTC snapshot time shown in the page's zone
+    (the label is built in core, which knows no zone). Display copy only."""
+    ts = getattr(src, "snapshot_ts", "") or ""
+    label = getattr(src, "label", "") or ""
+    if getattr(src, "origin", "") != "history" or not ts or ts not in label:
+        return src
+    shown = zone_ts_text(ts)
+    if shown == ts:
+        return src
+    import dataclasses
+    return dataclasses.replace(src, label=label.replace(ts, shown, 1))
+
+
 @bp.route("/project-time/clock")
 def project_time_clock():
     """This PC's clock as SM sees it: the OS zone, NTP sync (clock_health,
@@ -16225,13 +16257,14 @@ def state_history_stage(timestamp: str):
     # QA F19: there is no "diff below" on either door (the tray's Revert last
     # apply lands in #status-bar; State History's Load replaces the detail
     # pane). The review that exists is the top-bar badge -> openReview ->
-    # /state/review (working vs live). The id is a UTC stamp: say so.
+    # /state/review (working vs live). The id is a UTC stamp: the message
+    # names it in the page's zone, offset included (docs/301 F5).
     _push = _auto_push_note(ctx)
     from quam_state_manager.core import hub_versions
     _what = ("Version" if hub_versions.is_ref(timestamp) else "Snapshot")
     msg = render_template(
         "_status.html",
-        message=(f"{_what} {current_app.jinja_env.filters['format_ts'](timestamp[:22])} "
+        message=(f"{_what} {zone_ts_text(timestamp[:22])} "
                  "loaded as the working state."
                  + (_push or " Review it against the live chip from the sync "
                     "status in the top bar (Staged version · not on live), then "
@@ -29965,8 +29998,9 @@ def _diff_source_options() -> list[dict]:
             chip = Path(hm.resolve_chip_dir(Path(path))[0]).name
             for m in hm.list_snapshots(path)[:60]:
                 ts = m.timestamp
-                when = (f"{ts[0:4]}-{ts[4:6]}-{ts[6:8]} {ts[9:11]}:{ts[11:13]}"
-                        if len(ts) >= 13 else ts)
+                # docs/301 F5: a snapshot id is a UTC stamp; the picker shows
+                # it in the page's zone with the offset named
+                when = zone_ts_text(ts, seconds=False)
                 what = m.experiment_name or (m.trigger or "snapshot")
                 out.append({"ref": f"hist:{chip}/{ts}",
                             "label": f"{when} · {what}"})
@@ -30120,6 +30154,10 @@ def diff_view():
     except Exception:      # noqa: BLE001 — no take is the safe default
         take_active_ok = False
     template = "_diff_workbench.html" if _is_htmx() else "diff_workbench.html"
+    # docs/301 F5: display copies whose snapshot time reads in the page's zone
+    srcs = [_zone_src(s) for s in srcs]
+    slot_srcs = [_zone_src(s) if s is not None else None for s in slot_srcs]
+    src_a, src_b, src_c = slot_srcs[0], slot_srcs[1], slot_srcs[2]
     return render_template(
         template,
         **_ctx(page="diff", a_ref=a_ref, b_ref=b_ref, c_ref=c_ref, tab=tab, view=view,
@@ -32816,7 +32854,7 @@ def _hub_basket(refs: list[str], live_paths: set[str]):
             badge = "LIVE" if src.path in live_paths else "FOLDER"
         rows.append({
             "src_idx": idx, "valid_idx": len(sources), "ref": src.ref,
-            "label": src.label, "badge": badge, "path": src.path,
+            "label": _zone_src(src).label, "badge": badge, "path": src.path,
             "snapshot_ts": src.snapshot_ts,
             "wiring_missing": src.wiring_missing,
             "error": None, "transient": False,

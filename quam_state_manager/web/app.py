@@ -705,6 +705,16 @@ def create_app(*, testing: bool = False, instance_path: str | None = None) -> Fl
         return utc_text(d) if d is not None else str(ts)
     app.jinja_env.filters["format_ts"] = _format_ts_filter
 
+    def _format_ts_zone_filter(ts) -> str:
+        """``format_ts`` in the zone the page shows its times in, offset named
+        (``2026-10-08 00:31:04 (UTC+9)``) -- for attribute sites a person reads
+        next to localized times: a confirm that said "13:30 UTC" beside a list
+        showing "22:30" read as a different version (docs/301 F5). Anything
+        that is not a time is returned as written."""
+        from quam_state_manager.web.routes import zone_ts_text
+        return zone_ts_text(ts)
+    app.jinja_env.filters["format_ts_zone"] = _format_ts_zone_filter
+
     def _ts_local_filter(ts, short: bool = False):
         """Render a timestamp as a CLIENT-LOCALIZABLE span (feedback C2: users are
         worldwide). ``data-utc`` carries the instant (ISO-8601 Z); app.js's

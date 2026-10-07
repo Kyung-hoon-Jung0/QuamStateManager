@@ -624,7 +624,8 @@ class TestANoteMutationAnswersWithTheRowMarks:
 class TestTheStageMessagePointsAtAReviewThatExists:
     """"Review the diff below" pointed at nothing: the tray's Revert last apply
     lands in #status-bar and no diff renders under it. The review that exists
-    is the top-bar badge (openReview -> /state/review). The id is a UTC stamp."""
+    is the top-bar badge (openReview -> /state/review). The id is a UTC stamp;
+    the message names it in the page's zone with the offset (docs/301 F5)."""
 
     def _ts(self, env):
         c = env["client"]
@@ -634,14 +635,17 @@ class TestTheStageMessagePointsAtAReviewThatExists:
         s0 = snaps[0]
         return getattr(s0, "timestamp", None) or s0["timestamp"]
 
-    def test_the_revert_door_names_the_badge_and_a_utc_time(self, env):
+    def test_the_revert_door_names_the_badge_and_a_zoned_time(self, env):
         ts = self._ts(env)
         body = env["client"].post(f"/state-history/{ts}/stage?force=1&from=tray").data.decode()
         assert "diff below" not in body, body[:400]
         assert "loaded as the working state" in body
         # sync-ux 2026-09-25 (user decision: one control + one panel): the message names the control that exists
         assert "sync status in the top bar" in body and "↑ Apply" in body, body[:400]
-        pretty = f"{ts[0:4]}-{ts[4:6]}-{ts[6:8]} {ts[9:11]}:{ts[11:13]}:{ts[13:15]} UTC"
+        # docs/301 F5: "13:30:24 UTC" beside a list reading 22:30 looked like
+        # another version; the instant is named in the page's zone, offset kept
+        from quam_state_manager.core.timefmt import local_text, to_utc
+        pretty = local_text(to_utc(ts))
         assert pretty in body, (pretty, body[:400])
 
     def test_armed_the_note_replaces_the_review_instruction(self, env):
@@ -659,11 +663,13 @@ class TestTheStageMessagePointsAtAReviewThatExists:
         tray = c.get("/state/review").data.decode()
         assert "tray-revert-apply" in tray, tray[:600]
         import re
-        m = re.search(r"Revert last apply \(done ([^)]*)\)", tray)
+        m = re.search(r"Revert last apply, done (.*?) \u2014", tray)
         # docs/244: the time names its zone. It used to be the server's naive
         # wall clock labelled "local time"; a title attribute cannot be
-        # localized by the page, so it now reads the instant in UTC, offset kept
-        assert m and re.fullmatch(r"\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2} UTC", m.group(1)), m and m.group(1)
+        # localized by the page. docs/301 F5: it reads in the page's zone (the
+        # machine's when no project zone is set), the offset always named
+        assert m and re.fullmatch(r"\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2} \(UTC([+-]\d{1,2}(:\d{2})?)?\)",
+                                  m.group(1)), m and m.group(1)
 
 
 # ── liveedit-r2-31 ──────────────────────────────────────────────────────────

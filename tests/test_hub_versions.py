@@ -723,3 +723,21 @@ def test_an_archive_lists_versions_but_offers_no_write_and_no_live_mark(env):
     assert "/restore-live?" not in page and "/stage?" not in page and "on this now" not in page
     r = c.post(f"/state-history/{env.refs[1]}/restore-live")
     assert r.status_code in (400, 403, 409) and "read-only" in r.get_data(as_text=True)
+
+
+def test_a_ledger_rows_confirms_name_its_time_in_the_pages_zone(env):
+    """docs/301 (F5): the Load/Restore confirms said "13:30:24 UTC" beside a
+    row that reads 22:30 -- the same version looked like two. The confirm
+    names the row's instant in the page's zone, offset included."""
+    from quam_state_manager.core import project_time
+    from quam_state_manager.core.timefmt import local_text, to_utc
+    project_time.set_zone(env.app.instance_path, "proj", "America/Los_Angeles")
+    page = env.client.get("/state-history").get_data(as_text=True)
+    rows = page.split('<span class="sh-time">')[1:]
+    assert rows, page[:400]
+    for row in rows:
+        utc = re.search(r'data-utc="([^"]+)"', row).group(1)
+        want = local_text(to_utc(utc), "America/Los_Angeles")
+        confirms = re.findall(r'hx-confirm="([^"]*)"', row.split('<span class="sh-time">')[0])
+        assert confirms and all(want in x for x in confirms if "version of" in x), (want, confirms)
+        assert not any(" UTC " in x for x in confirms), confirms
