@@ -20,7 +20,9 @@ from datetime import datetime, timedelta
 from pathlib import Path
 from types import SimpleNamespace
 
-from flask import Blueprint, current_app, jsonify, render_template, request
+from urllib.parse import urlencode
+
+from flask import Blueprint, current_app, jsonify, make_response, render_template, request
 from markupsafe import Markup
 
 from quam_state_manager.core import journal as journal_mod
@@ -98,6 +100,31 @@ def _ledger_context():
 def _filters() -> dict:
     return {"author": (request.args.get("author") or "").strip(),
             "q": (request.args.get("q") or "").strip()}
+
+
+def _page_url() -> str:
+    """docs/299: the address of what the page now shows -- the day the person
+    picked (none: today, whatever day that is when the page is next opened)
+    and the filters -- so a reload, Back after leaving the page and a copied
+    link land on the same view. ``/journal`` reads the same three arguments."""
+    params = {}
+    if (request.args.get("day") or "").strip():
+        params["day"] = _day_arg()
+    f = _filters()
+    if f["q"]:
+        params["q"] = f["q"]
+    if f["author"]:
+        params["author"] = f["author"]
+    return "/journal" + ("?" + urlencode(params) if params else "")
+
+
+def _with_page_url(html: str):
+    """Only the page's own day/filter form moves the address: the body's
+    "building the history" poll carries the day it shows, not a choice."""
+    resp = make_response(html)
+    if request.headers.get("HX-Trigger") == "jr-filters":
+        resp.headers["HX-Replace-Url"] = _page_url()
+    return resp
 
 
 _OP_WORD = {"add": "added", "gone": "removed", "retarget": "retargeted", "first": "first recorded"}
@@ -470,14 +497,14 @@ def journal_day():
     with _DAY_HTML_LOCK:
         hit = cache.get(token)
     if hit is not None:
-        return hit
+        return _with_page_url(hit)
     html = render_template("_journal_day_swap.html", story=data)
     if len(html.encode("utf-8")) <= 6 * 1024 * 1024:
         with _DAY_HTML_LOCK:
             if len(cache) >= 2:
                 cache.pop(next(iter(cache)))
             cache[token] = html
-    return html
+    return _with_page_url(html)
 
 
 @journal_bp.route("/journal/card")
