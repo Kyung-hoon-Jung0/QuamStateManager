@@ -111,17 +111,22 @@
         <td>{{ p.moving_qubit or '-' }}</td>
         {# r16 0-1: `is number` gates — see the CR table's note #}
         <td>{% if p.get('cz_flattop_amplitude') is none %}-{% elif p.cz_flattop_amplitude is number %}{{ "%.6f" | format(p.cz_flattop_amplitude) }}{% else %}<span class="muted" title="Stored as text — see Diagnostics">&quot;{{ p.cz_flattop_amplitude }}&quot;</span>{% endif %}</td>
-        <td>
-            {% if p.get('cz_flattop_bell_fidelity') is not none %}
-            {% if p.cz_flattop_bell_fidelity is not number %}
-            <span class="muted" title="Stored as text — see Diagnostics">&quot;{{ p.cz_flattop_bell_fidelity }}&quot;</span>
-            {% elif p.cz_flattop_bell_fidelity >= 0.95 %}
-            <span class="cell-good" aria-label="Good"><span class="cell-glyph" aria-hidden="true">&#10003;</span>{{ "%.4f" | format(p.cz_flattop_bell_fidelity) }}</span>
-            {% elif p.cz_flattop_bell_fidelity >= 0.85 %}
-            <span class="cell-ok" aria-label="OK"><span class="cell-glyph" aria-hidden="true">&#9888;</span>{{ "%.4f" | format(p.cz_flattop_bell_fidelity) }}</span>
+        {#- docs/301 (F21): the Bell fidelity of the gate that has one -- it was
+            read from cz_flattop only, so a chip whose Bell state lives under
+            another CZ macro showed "-" on every row. The cell names its gate. -#}
+        {% set _bf = p.get('bell_fidelity') %}
+        <td{% if p.get('bell_gate') %} title="Bell state fidelity of {{ p.bell_gate }}{% if p.get('bell_others') %} (also: {{ p.bell_others }}){% endif %}"{% endif %}>
+            {% if _bf is not none %}
+            {% if _bf is not number %}
+            <span class="muted" title="Stored as text — see Diagnostics">&quot;{{ _bf }}&quot;</span>
+            {% elif _bf >= 0.95 %}
+            <span class="cell-good" aria-label="Good"><span class="cell-glyph" aria-hidden="true">&#10003;</span>{{ "%.4f" | format(_bf) }}</span>
+            {% elif _bf >= 0.85 %}
+            <span class="cell-ok" aria-label="OK"><span class="cell-glyph" aria-hidden="true">&#9888;</span>{{ "%.4f" | format(_bf) }}</span>
             {% else %}
-            <span class="cell-bad" aria-label="Bad"><span class="cell-glyph" aria-hidden="true">&#10007;</span>{{ "%.4f" | format(p.cz_flattop_bell_fidelity) }}</span>
+            <span class="cell-bad" aria-label="Bad"><span class="cell-glyph" aria-hidden="true">&#10007;</span>{{ "%.4f" | format(_bf) }}</span>
             {% endif %}
+            {% if p.get('bell_gate') and p.bell_gate != 'cz_flattop' %}<small class="muted">{{ p.bell_gate }}</small>{% endif %}
             {% else %}-{% endif %}
         </td>
         <td>{{ p.detuning | qty('pair_detuning') }}</td>

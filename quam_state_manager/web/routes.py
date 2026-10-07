@@ -13813,6 +13813,26 @@ def _field_edit_batch_impl(payload=None, *, pulse_door: bool = False):
 # ======================================================================
 
 
+def _pair_bell(p: dict) -> None:
+    """docs/301 (F21): the one Bell fidelity a Pairs row shows -- cz_flattop's
+    when that gate states one (as before), else the highest any CZ macro
+    states, with the gate named (``bell_gate``) and the others listed."""
+    if p.get("_error"):
+        return
+    found = [(k[: -len("_bell_fidelity")], v) for k, v in p.items()
+             if k.endswith("_bell_fidelity") and isinstance(v, (int, float)) and not isinstance(v, bool)]
+    if p.get("cz_flattop_bell_fidelity") is not None:
+        gate, value = "cz_flattop", p["cz_flattop_bell_fidelity"]
+    elif found:
+        gate, value = max(found, key=lambda kv: kv[1])
+    else:
+        return
+    p["bell_fidelity"], p["bell_gate"] = value, gate
+    others = [f"{g} {v:.4f}" for g, v in found if g != gate]
+    if others:
+        p["bell_others"] = ", ".join(others)
+
+
 @bp.route("/pairs")
 def pairs():
     engine = _engine()
@@ -13833,6 +13853,9 @@ def pairs():
             logger.warning("get_pair(%r) failed: %s", pair_name, exc)
             pair_data.append({"id": pair_name, "is_active": True,
                               "_error": f"{type(exc).__name__}: {exc}"})
+
+    for p in pair_data:
+        _pair_bell(p)
 
     # CR chips get CR-native columns (drive levers, 2Q fidelity, effective IF,
     # active badge) and adjacency ordering so the two DIRECTIONS of a physical
