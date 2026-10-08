@@ -41,6 +41,8 @@ def _fit_scalar(bundle, pname, key):
 def _node_params(bundle, pname):
     """``(A, alpha, B, success)`` as the node stored them, or ``None`` if any is missing."""
     fit = bundle.fit
+    if _missing_fit_pair(bundle, pname):
+        return None
     pidx = pair_index(fit, pname) if fit else 0
     if fit and {"fit_amplitude", "fit_alpha", "fit_offset"} <= set(fit.get("vars", {})):
         vals = [pair_scalar(fit, v, pidx) for v in ("fit_amplitude", "fit_alpha", "fit_offset")]
@@ -53,6 +55,12 @@ def _node_params(bundle, pname):
     if any(v is None or not np.isfinite(v) for v in vals):
         return None
     return vals[0], vals[1], vals[2], success
+
+
+def _missing_fit_pair(bundle, pname):
+    fit = bundle.fit
+    return (fit is not None and "qubit_pair" in fit.get("coords", {})
+            and pname not in [str(p) for p in fit["coords"]["qubit_pair"]])
 
 
 def _stores_amplitude(bundle, pname) -> bool:
@@ -99,7 +107,10 @@ def build(bundle, key):
     notes = []
     params = _node_params(bundle, pname)
     if params is None:
-        notes.append("No fit curve: the node saved only α, not the amplitude/offset.")
+        if _missing_fit_pair(bundle, pname):
+            notes.append("No fit curve: the node saved no fit for this pair.")
+        else:
+            notes.append("No fit curve: the node saved only α, not the amplitude/offset.")
     else:
         A, alpha, B, success = params
         if success is False:

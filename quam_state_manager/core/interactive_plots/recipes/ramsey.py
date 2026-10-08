@@ -105,12 +105,35 @@ def _fit_curves(fit, qname, t, ys, signs):
     to draw for that branch. ``params`` are the model parameters the curves
     were evaluated from, or ``None`` when the node's stored curve is drawn.
     """
-    if not fit or "fit" not in fit.get("vars", {}):
+    if not fit:
+        return None, [], False, None
+    fidx = qubit_index(fit, qname)
+    mixed = _scalar(fit, "used_mixed", fidx)
+    if mixed is not None and bool(mixed):
+        fsigns = list(fit["coords"].get("detuning_signs", []))
+        stored = _stored_curves(fit, fidx, len(fsigns), t.size)
+        why = "No fit curve: the node used the mixed model; its curve was not saved or usable."
+        if stored is None:
+            return None, [why], False, None
+        order = _sign_order(fsigns, len(stored), signs)
+        curves, notes = [], []
+        for sgn, si in zip(signs, order):
+            if si is None:
+                curves.append(None)
+                notes.append(f"No fit curve for detuning sign {sgn:+g}: the node saved no fit row.")
+            elif not np.all(np.isfinite(stored[si])):
+                curves.append(None)
+                notes.append(f"Detuning sign {sgn:+g}: {why}")
+            else:
+                curves.append(stored[si])
+        if any(c is not None for c in curves):
+            notes.append("Fit: the node's stored mixed-envelope curve.")
+        return curves, notes, False, None
+    if "fit" not in fit.get("vars", {}):
         return None, [], False, None
     labels = [str(v) for v in fit["coords"].get("fit_vals", [])]
     if not set(_PARAMS) <= set(labels):
         return None, ["No fit curve: the saved fit parameters are not the known Ramsey model's."], False, None
-    fidx = qubit_index(fit, qname)
     try:
         farr, fdims = qslice(fit, "fit", fidx)          # [detuning_signs, fit_vals]
         farr = np.asarray(farr, dtype=float)
@@ -121,40 +144,36 @@ def _fit_curves(fit, qname, t, ys, signs):
     # Rows follow ds_fit's own detuning_signs coordinate; pair them with the
     # data traces BY SIGN VALUE, never by position.
     fsigns = list(fit["coords"].get("detuning_signs", []))
-    order = None
-    if len(fsigns) == farr.shape[0] and set(map(float, fsigns)) == set(map(float, signs)):
-        order = [list(map(float, fsigns)).index(float(s)) for s in signs]
-        farr = farr[order]
+    order = _sign_order(fsigns, farr.shape[0], signs)
     params = []
-    for si in range(min(farr.shape[0], len(ys))):
-        params.append({lab: float(farr[si][labels.index(lab)]) for lab in _PARAMS})
-    if not params:
-        return None, [], False, None
+    notes = []
+    for sgn, si in zip(signs, order):
+        if si is None:
+            params.append(None)
+            notes.append(f"No fit curve for detuning sign {sgn:+g}: the node saved no fit row.")
+        else:
+            params.append({lab: float(farr[si][labels.index(lab)]) for lab in _PARAMS})
 
     exp_curves = [models.oscillation_decay_exp(t, p["a"], p["f"], p["phi"], p["offset"], p["decay"])
-                  if all(np.isfinite(list(p.values()))) else None for p in params]
+                  if p is not None and all(np.isfinite(list(p.values()))) else None for p in params]
 
     # Per-run proof that the reconstruction is the node's curve.
-    why = _mismatch(fit, fidx, params, exp_curves, ys)
+    # Aggregate checks require all saved rows to be paired with raw traces.
+    why = (_mismatch(fit, fidx, params, exp_curves, ys)
+           if all(p is not None for p in params) and len(params) == farr.shape[0] else "")
     if why:
-        return None, [why], False, None
+        return None, notes + [why], False, None
 
-    curves = exp_curves
-    model_params = params
-    notes = []
-    mixed = _scalar(fit, "used_mixed", fidx)
-    if "fit_curve" in fit.get("vars", {}) and mixed is not None and bool(mixed):
-        stored = _stored_curves(fit, fidx, len(params), t.size)
-        if stored is not None and order is not None:
-            stored = [stored[i] for i in order]
-        if stored is not None:
-            curves = stored
-            model_params = None
-            notes.append("Fit: the node's stored mixed-envelope curve.")
-    diverged = any(not (p["decay"] > 0) for p in params)
+    diverged = any(p is not None and not (p["decay"] > 0) for p in params)
     if diverged:
         notes.append("Fit decay rate ≤ 0 (the node's own fit runs away): y axis held to the data.")
-    return curves, notes, diverged, model_params
+    return exp_curves, notes, diverged, params
+
+
+def _sign_order(fsigns, n_rows, signs):
+    fsigns = list(map(float, fsigns))
+    return [fsigns.index(float(s)) if float(s) in fsigns
+            and fsigns.index(float(s)) < n_rows else None for s in signs]
 
 
 def _mismatch(fit, fidx, params, curves, ys):
@@ -192,7 +211,7 @@ def _stored_curves(fit, fidx, n_signs, n_t):
         arr = np.asarray(arr, dtype=float)
         if dims and dims[0] == "idle_time":
             arr = arr.T
-        if arr.shape != (n_signs, n_t):
+        if n_t < 2 or arr.shape != (n_signs, n_t):
             return None
         return [arr[i] for i in range(n_signs)]
     except Exception:  # noqa: BLE001

@@ -11733,8 +11733,7 @@ CH_SERIES_EXAMINE = 60
 
 #: change points the drawer reads (and shows); the total is always stated
 _VH_DRAWER_LIMIT = 40
-# docs/301 F15: the drawer's "Show all" -- every change point of the value,
-# bounded only so a pathological path cannot render an unbounded table
+# The Show all read stays bounded; the footer discloses any older points omitted.
 _VH_DRAWER_ALL_LIMIT = 5000
 
 _VH_FALLBACK_NOTES = {
@@ -13891,8 +13890,9 @@ def _pair_bell(p: dict) -> None:
     if p.get("_error"):
         return
     found = [(k[: -len("_bell_fidelity")], v) for k, v in p.items()
-             if k.endswith("_bell_fidelity") and isinstance(v, (int, float)) and not isinstance(v, bool)]
-    if p.get("cz_flattop_bell_fidelity") is not None:
+             if k.endswith("_bell_fidelity") and isinstance(v, (int, float))
+             and not isinstance(v, bool) and math.isfinite(v)]
+    if any(g == "cz_flattop" for g, _v in found):
         gate, value = "cz_flattop", p["cz_flattop_bell_fidelity"]
     elif found:
         gate, value = max(found, key=lambda kv: kv[1])
