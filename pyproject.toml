@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "quam-state-manager"
-version = "1.1.0"
+version = "1.1.1"
 description = "Desktop + web tool for inspecting and editing quantum machine (QUAM) state files"
 readme = "README.md"
 license = {text = "MIT"}
@@ -84,6 +84,10 @@ include-package-data = true
 [tool.setuptools.package-data]
 "quam_state_manager.web" = ["templates/*", "static/*"]
 "quam_state_manager.core.autofit" = ["judge_packs/*/*.json"]
+# the calibration knowledge packs (case manuals + exemplar figures) the agent
+# reads -- left out, an installed SM answers "no manual" for every family
+"quam_state_manager" = ["knowledge/*/*/*.json", "knowledge/*/*/*.md",
+                        "knowledge/*/*/exemplars/*", "knowledge/*/*/exemplars/*/*"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

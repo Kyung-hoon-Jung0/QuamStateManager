@@ -800,3 +800,11 @@ four kinds of chip (docs/301).
   Auto-Sync per-field choice (docs/195, 209); z-line distortion view
   (docs/219); Chip Status meta info (docs/220); the chip report v2
   (docs/277); dBm follows the FSP and the pulse class (docs/238, 248).
+
+## v1.1.1 (2026-10-08)
+
+- **Packaging**: the calibration knowledge packs (the per-family case manuals
+  and their exemplar figures, docs/129-133) ship in the wheel. A pip-installed
+  SM had none of them, so its agent API answered "no manual" for every family;
+  the wheel test now builds from a clean copy and checks every pack file.
+

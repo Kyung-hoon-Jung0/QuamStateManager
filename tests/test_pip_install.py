@@ -66,7 +66,18 @@ def test_wheel_install_serves_a_page(tmp_path):
     resolve from the installed layout."""
     pip = [sys.executable, "-m", "pip"]
     wheel_dir = tmp_path / "wheel"
-    r = subprocess.run(pip + ["wheel", str(_REPO), "--no-deps",
+    # docs/301: build from a CLEAN copy -- a dev tree's stale build/lib or
+    # egg-info is packed into the wheel and can ship files the package data
+    # rules no longer (or never did) include
+    import shutil
+    src = tmp_path / "src"
+    src.mkdir()
+    for name in ("pyproject.toml", "MANIFEST.in", "README.md", "LICENSE"):
+        if (_REPO / name).exists():
+            shutil.copy2(_REPO / name, src / name)
+    shutil.copytree(_REPO / "quam_state_manager", src / "quam_state_manager",
+                    ignore=shutil.ignore_patterns("__pycache__", "*.pyc"))
+    r = subprocess.run(pip + ["wheel", str(src), "--no-deps",
                               "--no-build-isolation", "-w", str(wheel_dir)],
                        capture_output=True, text=True, encoding="utf-8",
                        timeout=600)
@@ -104,3 +115,10 @@ def test_wheel_install_serves_a_page(tmp_path):
     out = _json.loads(r.stdout.strip().splitlines()[-1])
     assert out["status"] == 200 and out["has_html"], out
     assert str(site) in out["pkg"]          # really the installed copy
+    # docs/301: the agent's calibration knowledge packs ship too (an installed
+    # SM answered "no manual" for every family)
+    shipped = site / "quam_state_manager" / "knowledge" / "v1"
+    src = _REPO / "quam_state_manager" / "knowledge" / "v1"
+    want = sorted(str(f.relative_to(src)) for f in src.rglob("*") if f.is_file())
+    got = sorted(str(f.relative_to(shipped)) for f in shipped.rglob("*") if f.is_file())
+    assert want and got == want, (len(want), len(got), sorted(set(want) - set(got))[:5])

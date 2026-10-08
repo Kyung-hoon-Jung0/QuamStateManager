@@ -8,3 +8,7 @@ recursive-include quam_state_manager/web/static *
 # SILENTLY: load_pack() returns {} and the judge is asked to rule on figures it
 # was taught nothing about.
 recursive-include quam_state_manager/core/autofit/judge_packs *.json
+# The calibration knowledge packs (docs/129-133): per-family case manuals and
+# their exemplar figures. Data, not code; without them an installed SM's agent
+# API reports "no manual" for every family.
+recursive-include quam_state_manager/knowledge *
