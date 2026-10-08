@@ -1,6 +1,6 @@
 {% if rows %}
 <div class="topo-popup-section topo-spark-section">
-    <div class="topo-popup-section-title">Trends &middot; {{ snapshots }} snapshot{{ 's' if snapshots != 1 }}</div>
+    <div class="topo-popup-section-title">Trends &middot; {{ snapshots }} {% if ledger %}recorded event{% else %}snapshot{% endif %}{{ 's' if snapshots != 1 }}</div>
     {% for r in rows %}
     <div class="topo-spark-row" title="{{ r.label }}{% if r.n %} &mdash; {{ r.n }} points{% endif %}">
         <span class="topo-prop-label">{{ r.abbr }}</span>

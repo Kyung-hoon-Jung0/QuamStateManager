@@ -564,6 +564,48 @@ class LedgerTable:
                 return out
         return self.part(("renames",), compute)
 
+    def run_change_times(self) -> dict:
+        """docs/301 F11: ``{"q": {qubit: t_us}, "p": {pair: t_us}}`` -- per
+        qubit / pair, the newest RUN event that changed one of its values
+        (a path under ``qubits.<id>.`` / ``qubit_pairs.<id>.``), whether or
+        not its own patch proves it set them: the time a run's saved state
+        moved the entity is a fact even when the writer is not.
+
+        Never counted: the ledger's first event (the starting state, not a
+        change), a run whose chip identity is uncertain, an SM write. On a
+        renamed chip only the events since the last rename count -- an id
+        from before it may have named another qubit."""
+        def compute():
+            from quam_state_manager.core.hub_store import CHIP_UNCERTAIN
+            with hub_index.snapshot(self.binding) as (conn, index):
+                since = None
+                if self._lineage is not None:
+                    from quam_state_manager.core.hub_eras import EraTimeline, first_rename_at
+                    tl = EraTimeline(conn, index)
+                    starts = [b for b in tl.boundaries
+                              if 0 < b < len(index.eids) and first_rename_at(tl, b)]
+                    if starts:
+                        since = conn.execute("SELECT ord FROM events WHERE eid=?",
+                                             (index.eids[max(starts)],)).fetchone()[0]
+                rows = conn.execute(
+                    "SELECT p.path, MAX(e.t_utc_us) FROM changes c"
+                    " JOIN events e ON e.eid = c.eid JOIN paths p ON p.pid = c.pid"
+                    " WHERE e.kind = 'run' AND e.base_hash IS NOT NULL AND (e.flags & ?) = 0"
+                    " AND (p.path LIKE 'qubits.%' OR p.path LIKE 'qubit_pairs.%')"
+                    + (" AND e.ord >= ?" if since is not None else "")
+                    + " GROUP BY c.pid",
+                    (CHIP_UNCERTAIN,) + ((since,) if since is not None else ())).fetchall()
+            out: dict = {"q": {}, "p": {}}
+            for path, t in rows:
+                parts = path.split(".", 2)
+                if len(parts) < 3 or t is None:
+                    continue
+                group = out["q"] if parts[0] == "qubits" else out["p"] if parts[0] == "qubit_pairs" else None
+                if group is not None and (parts[1] not in group or t > group[parts[1]]):
+                    group[parts[1]] = t
+            return out
+        return self.part(("run_change_times",), compute)
+
     def leaf_series(self, dp):
         """One path's series with no held point (the old tier's shape)."""
         return self.leaf_series_many([dp], hold_to_newest=False)[dp] or None

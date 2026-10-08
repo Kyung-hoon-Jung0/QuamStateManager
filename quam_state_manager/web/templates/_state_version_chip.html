@@ -33,7 +33,9 @@
        exact version id still lives in the tooltip and in the panel rows. #}
     <span class="state-version-ico" aria-hidden="true">&#9114;</span>
     <span class="state-version-id">Versions</span>
-    {% if not ver.ts and ver.count %}<span class="state-version-none">unrecorded</span>{% endif %}
+    {#- docs/301 F14: ``count`` may be the ledger's; "unrecorded" stays the
+        snapshot fact ``ts`` was read from (``unmatched``) -#}
+    {% if ver.unmatched %}<span class="state-version-none">unrecorded</span>{% endif %}
     {% if ver.dirty %}<span class="state-version-edits" aria-label="unapplied edits">+</span>{% endif %}
     {% if ver.count %}<span class="state-version-count">{{ ver.count }}</span>{% endif %}
 </button>

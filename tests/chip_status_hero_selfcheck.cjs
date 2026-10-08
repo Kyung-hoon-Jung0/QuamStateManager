@@ -334,6 +334,7 @@ function part5() {
     anharmSubLine();
     edgeDeltaLabels();
     edgeLabelsBesideTheBar();
+    calibrationAgeNamesItsBasis();
     finish();
   }, 400);
 }
@@ -729,6 +730,43 @@ function edgeLabelsBesideTheBar() {
   ok(/\.topo-hero-svg \.topo-hero-lbl-start \{ text-anchor: start; \}/.test(css)
      && /\.topo-hero-svg \.topo-hero-lbl-end \{ text-anchor: end; \}/.test(css),
      'F-26: the start/end anchors exist as class rules in style.css');
+}
+
+/* docs/301 F11: an entity's last_calibrated may come from the change ledger
+   (a run's saved state moved one of its values) instead of a *_updated_at
+   stamp. The tile says how many of each; the map's age cell says which. */
+function calibrationAgeNamesItsBasis() {
+  const win = makeWorld();
+  win.document.body.insertAdjacentHTML('beforeend', '<div id="topo-overview-tiles"></div>');
+  const now = Date.now();
+  const topo = {
+    nodes: [
+      { id: 'q1', grid_location: '0,0', T1: 1e-5, last_calibrated: now - 864e5, last_calibrated_from: 'run' },
+      { id: 'q2', grid_location: '1,0', T1: 2e-5, last_calibrated: now - 8 * 864e5, last_calibrated_from: 'stamp' },
+    ],
+    edges: [
+      { pair_id: 'q1-2', source: 'q1', target: 'q2', has_cz: true, cz_fidelity: 0.97,
+        gate_kind: 'cz', directed: false, active: null, best_gate: 'cz',
+        cz_fidelity_updated_at: now - 30 * 864e5,
+        last_calibrated: now - 2 * 864e5, last_calibrated_from: 'run' },
+    ],
+  };
+  mount(win, topo, []);
+  const html = win.document.getElementById('topo-overview-tiles').textContent;
+  ok(/Calibration Age/.test(html) && /oldest 8 days ago/.test(html),
+     'F11: the oldest entity is the stamped one (the edge ages by its run change, not its 30-day CZ stamp): '
+     + (html.match(/Calibration Age.{0,80}/) || [''])[0]);
+  ok(/2 by a run’s change, 1 stamped/.test(html),
+     'F11: the tile says how many ages come from a run change and how many from a stamp');
+  const hero = win.document.getElementById('topo-hero');
+  const btn = hero.querySelector('[data-hero-metric="last_calibrated"]');
+  ok(!!btn, 'F11 fixture: the Last calibrated map metric exists');
+  if (btn) btn.click();
+  const q1 = hero.querySelector('[data-hero-qubit="q1"]'), q2 = hero.querySelector('[data-hero-qubit="q2"]');
+  ok(q1 && /last changed by a run/.test(q1.innerHTML) && /change ledger/.test(q1.innerHTML),
+     'F11: a run-dated stone says so on hover');
+  ok(q2 && /last calibrated/.test(q2.innerHTML) && !/changed by a run/.test(q2.innerHTML),
+     'F11: a stamp-dated stone keeps its own words');
 }
 
 function finish() {

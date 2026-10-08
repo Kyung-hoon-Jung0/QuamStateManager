@@ -4764,6 +4764,10 @@ html.topbar-hidden .topo-subnav {
 }
 .topo-card-popup { padding: 6px 2px; min-width: 200px; }
 .topo-card-popup .topo-prop-row { padding: 0 8px; }
+/* docs/301 F13: the two readout-fidelity rows both read "Read.…" -- in the
+   popup a long label wraps onto a second line instead of being cut */
+.topo-card-popup .topo-prop-label { flex-basis: 128px; white-space: normal; overflow: visible;
+    text-overflow: clip; line-height: 1.2; }
 .topo-pair-popup { padding: 8px 2px; min-width: 240px; max-width: 340px; }
 .topo-card-popup .topo-popup-header, .topo-pair-popup .topo-popup-header {
     display: flex; align-items: center; justify-content: space-between; gap: .5rem;

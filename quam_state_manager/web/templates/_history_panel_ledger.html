@@ -1,0 +1,38 @@
+{# docs/301 F14: the Chip Status History drawer on a chip with a change
+   ledger. It used to list only the Param History snapshots (3 on a chip
+   whose State History page lists ~3,000 runs and SM writes) under the same
+   "State History" title. It now lists the newest recorded states of the SAME
+   ledger the State History page reads, read-only, and sends the user there to
+   compare, load or restore one. #}
+{% set lv = ledger_versions %}
+<div id="history-list">
+<div class="history-toolbar">
+    <a class="outline btn-sm" role="button" href="/state-history" hx-get="/state-history"
+       hx-target="#table-pane" hx-sync="#table-pane:replace" hx-push-url="true"
+       title="Compare, load or restore a version on the State History page">Open State History</a>
+    <button class="outline btn-sm"
+            hx-post="/api/history/snapshot"
+            hx-target="#history-content"
+            hx-swap="innerHTML">Take Snapshot</button>
+    <small class="muted hp-ledger-count">{{ lv.total }} recorded state{{ 's' if lv.total != 1 }}{% if lv.rows | length < lv.total %} &middot; newest {{ lv.rows | length }} shown{% endif %}</small>
+</div>
+{% for n in lv.notes %}<p class="muted hp-ledger-note">{{ n.text }}</p>{% endfor %}
+<div class="history-timeline">
+{% for r in lv.rows %}
+<div class="history-entry hp-ledger-row" data-ts="{{ r.ts }}">
+    <div class="history-entry-header">
+        <span class="history-entry-time">{{ r.when | ts_local }}</span>
+        {% if r.legacy %}
+        <span class="sh-older-badge" title="A Param History snapshot no change-history event covers">older snapshot</span>
+        {% else %}
+        <strong class="sh-event sh-event-{{ r.badge | replace(' ', '-') }}" title="{{ r.hover }}">{{ r.title }}</strong>
+        <span class="muted sh-event-sub">{{ r.sub }}</span>
+        {% endif %}
+        {% if r.current %}<span class="sv-now" title="The live chip currently holds exactly this content">on this now</span>{% endif %}
+    </div>
+</div>
+{% else %}
+<p class="muted" style="padding: 0.5rem;">No recorded states yet.</p>
+{% endfor %}
+</div>
+</div>

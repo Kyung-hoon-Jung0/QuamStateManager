@@ -15355,7 +15355,7 @@ def _report_build_chip_status(rc: _ReportCtx) -> str:
     # so does the Standard-RB-per-gate derivation. An enrichment never breaks
     # the page -- a topology that raises leaves the report's own tables intact.
     try:
-        topo = _topology_with_derived_rb(engine)
+        topo = _topology_for_chip_status(engine)
     except Exception:  # noqa: BLE001
         logger.exception("report: topology failed")
         topo = {"nodes": [], "edges": []}
@@ -15363,8 +15363,9 @@ def _report_build_chip_status(rc: _ReportCtx) -> str:
     topo_edges = list(topo.get("edges") or [])
 
     # Per-entity calibration recency. `last_calibrated` is the freshest
-    # *updated_at anywhere in that qubit/pair (chip_health.newest_epoch_ms) --
-    # the same number Chip Status ages its tiles by.
+    # *updated_at anywhere in that qubit/pair (chip_health.newest_epoch_ms),
+    # or a run's later change of it from the ledger (docs/301 F11) -- the
+    # same number Chip Status ages its tiles by.
     cal: dict[str, str] = {}
     for rec in list(topo.get("nodes") or []) + topo_edges:
         key = rec.get("id") or rec.get("pair_id")
@@ -15898,10 +15899,21 @@ def wiring_view():
         return _no_chip("the chip topology", "topology")
 
     store = _store()
-    topology = _topology_with_derived_rb(engine)
+    topology = _topology_for_chip_status(engine)
     wiring_json = _wiring_json()
 
-    history_count = len(_history().list_snapshots(_active_path())) if store else 0
+    _snaps = _history().list_snapshots(_active_path()) if store else []
+    history_count = len(_snaps)
+    # docs/301 F14: the History (N) button counts what its drawer lists -- the
+    # ledger's recorded states when the chip has one (it said 3 beside a
+    # State History of ~3,000)
+    if store:
+        try:
+            _hv = _versions_read(_active_ctx(), _snaps, limit=1)
+            if _hv["mode"] == "ledger":
+                history_count = max(history_count, int(_hv.get("total") or 0))
+        except Exception:  # noqa: BLE001 -- the snapshot count stands
+            logger.debug("history count from the ledger failed", exc_info=True)
 
     # Health layer (Chip Status overhaul): the structural linter (port collisions,
     # dangling pointers, value-spec violations) — already used by the drag-drop
@@ -15970,6 +15982,9 @@ def wiring_view():
 _HISTORY_PANEL_PER_PAGE = 50
 
 
+_HISTORY_DRAWER_LEDGER_ROWS = 20
+
+
 @bp.route("/api/history")
 def history_list():
     """Return the history panel content with paginated snapshot list."""
@@ -15979,6 +15994,12 @@ def history_list():
 
     hm = _history()
     snapshots = hm.list_snapshots(_active_path())
+    # docs/301 F14: a chip with a change ledger lists ITS newest recorded
+    # states -- what the State History page lists -- instead of the Param
+    # History snapshots alone, under the same title
+    versions = _versions_read(_active_ctx(), snapshots, limit=_HISTORY_DRAWER_LEDGER_ROWS)
+    if versions["mode"] == "ledger":
+        return render_template("_history_panel_ledger.html", ledger_versions=versions)
 
     page = _int_arg("page", 1, minimum=1)
     per_page = _int_arg("per_page", _HISTORY_PANEL_PER_PAGE, minimum=0)  # 0 = All (explicit)
@@ -18769,6 +18790,15 @@ def _state_version_now(ctx: dict | None) -> dict:
     # "No snapshot holds exactly this content" is the ORDINARY mid-edit state,
     # not a fault — say so plainly rather than inventing a nearest match.
     out["unmatched"] = out["ts"] is None and out["count"] > 0
+    # docs/301 F14: the chip counts what its panel lists -- the ledger's
+    # recorded states when the chip has one (it said 5 over a list of ~3,000).
+    # ``unmatched`` above stays a snapshot fact: it is what ``ts`` was read from.
+    try:
+        _v = _versions_read(ctx, snaps, limit=1)
+        if _v["mode"] == "ledger":
+            out["count"] = max(out["count"], int(_v.get("total") or 0))
+    except Exception:  # noqa: BLE001 -- the snapshot count stands
+        logger.debug("version count from the ledger failed", exc_info=True)
     # WHOSE version this is, stated rather than assumed. The hash above is of
     # ``ctx["path"]`` — the LIVE pair — so the id names what the chip is on,
     # not what SM is holding. With unapplied edits those are different states,
@@ -29491,12 +29521,28 @@ def topology_sparklines(qubit: str):
         qd = {}
     hm = _history()
     rows = []
+    # docs/301 F13: the popup reads what Chip Status > Trends reads -- the
+    # chip's change ledger when it holds the chip's runs (every change point,
+    # thinned for the drawing only), the snapshot index otherwise. It drew
+    # three flat Param History snapshots beside a Trends chart of 25 changes.
+    ledger_rows, events = None, None
+    ctx = _active_ctx()
+    if ctx and ctx.get("type") == "quam" and ctx.get("path"):
+        try:
+            _ans, table = _hub_status_table(ctx)
+            if table is not None:
+                ledger_rows = [r for r in table.curated(tuple(DEFAULT_TRACKED_PROPERTIES))
+                               if r.get("qubit") == qubit]
+                events = table.snapshot_count()
+        except Exception:  # noqa: BLE001 -- warming / unreadable: the snapshot index answers
+            ledger_rows = None
     # docs/142 compress: the popup's delta arrow now reads "since the last
     # CHANGE", not "since the previous identical sample" -- which is what a
     # trend arrow was always meant to say.
-    for r in hm.extract_property_history(path, list(DEFAULT_TRACKED_PROPERTIES),
-                                         qubit_filter=[qubit], downsample=_SPARK_POINTS,
-                                         compress="changes"):
+    source = ledger_rows if ledger_rows is not None else hm.extract_property_history(
+        path, list(DEFAULT_TRACKED_PROPERTIES), qubit_filter=[qubit],
+        downsample=_SPARK_POINTS, compress="changes")
+    for r in source:
         prop = r["property"]
         cur = qd.get(prop)
         cur_num = float(cur) if isinstance(cur, (int, float)) and not isinstance(cur, bool) else None
@@ -29507,7 +29553,14 @@ def topology_sparklines(qubit: str):
         # physicality() only bounds the keys that have one (T1/T2 >0); frequencies
         # / amplitudes are unconstrained and pass through unchanged.
         phys_vals = [p for p in r["values"] if chip_health.physicality(prop, p.get("value"))]
-        svg = HistoryManager.render_sparkline_svg_inner(phys_vals, current=cur_num)
+        drawn = phys_vals
+        if ledger_rows is not None and len(phys_vals) > _SPARK_POINTS:
+            thin = HistoryManager._lttb_downsample(
+                [(i, p.get("value")) for i, p in enumerate(phys_vals)
+                 if isinstance(p.get("value"), (int, float)) and not isinstance(p.get("value"), bool)],
+                _SPARK_POINTS)
+            drawn = [phys_vals[i] for i, _v in thin]
+        svg = HistoryManager.render_sparkline_svg_inner(drawn, current=cur_num)
         if not svg:
             continue  # <2 finite points → no real trend (honest gap)
         nums = [p["value"] for p in phys_vals
@@ -29519,7 +29572,7 @@ def topology_sparklines(qubit: str):
         # one. When LTTB thinned the series (it can drop a step's flat edge),
         # read that one property undownsampled so the step is the real last one.
         full = phys_vals
-        if len(r["values"]) >= _SPARK_POINTS:
+        if ledger_rows is None and len(r["values"]) >= _SPARK_POINTS:
             try:
                 ex = [b for b in hm.extract_property_history(
                           path, [prop], qubit_filter=[qubit], downsample=None,
@@ -29549,7 +29602,9 @@ def topology_sparklines(qubit: str):
             "good": good,
         })
     return render_template("_topo_sparklines.html", rows=rows,
-                           snapshots=len(hm.list_snapshots(path)))
+                           snapshots=(events if ledger_rows is not None
+                                      else len(hm.list_snapshots(path))),
+                           ledger=ledger_rows is not None)
 
 
 @bp.route("/topology/report")
@@ -35014,7 +35069,7 @@ def api_topology():
     engine = _engine()
     if not engine:
         return jsonify({"error": "No state loaded"}), 400
-    return jsonify(_topology_with_derived_rb(engine))
+    return jsonify(_topology_for_chip_status(engine))
 
 
 def _rb_run_folder(load_id, stores=None):
@@ -35097,6 +35152,57 @@ def _copy_topology_rb_rows(topo: dict) -> dict:
                     e["gate_fidelities"] = [dict(r) if isinstance(r, dict) else r for r in gf]
             new_edges.append(e)
         out["edges"] = new_edges
+    return out
+
+
+def _topology_for_chip_status(engine):
+    """The topology Chip Status, its JSON and its report read: the per-gate
+    RB derivation, then each entity's calibration age from the ledger."""
+    return _with_ledger_calibration(_topology_with_derived_rb(engine))
+
+
+def _with_ledger_calibration(topo):
+    """docs/301 F11: a qubit's / pair's ``last_calibrated`` is the newer of
+    its own ``*_updated_at`` stamps and the last time a run's saved state
+    changed one of its values (``LedgerTable.run_change_times``). A lab whose
+    nodes stamp nothing showed "8 days ago" for a chip re-measured yesterday.
+    Each entity says which one it is (``last_calibrated_from``: "run" /
+    "stamp"). No ledger, or one still being built: the stamps, unchanged.
+    The cached topology is never mutated -- the touched rows are copies."""
+    try:
+        ctx = _active_ctx()
+        if not (ctx and ctx.get("type") == "quam" and ctx.get("path")):
+            return topo
+        _ans, table = _hub_status_table(ctx)
+        if table is None:
+            return topo
+        times = table.run_change_times()
+    except Exception:  # noqa: BLE001 -- Warming / an unreadable ledger: the stamps stand
+        return topo
+    if not (times["q"] or times["p"]):
+        return topo
+
+    def fold(rec, t_us):
+        stamp = rec.get("last_calibrated")
+        ms = int(t_us // 1000) if isinstance(t_us, (int, float)) else None
+        if ms is None and stamp is None:
+            return rec
+        out = dict(rec)
+        if ms is not None:
+            out["last_run_change"] = ms
+        if ms is not None and (stamp is None or ms > stamp):
+            out["last_calibrated"], out["last_calibrated_from"] = ms, "run"
+        else:
+            out["last_calibrated_from"] = "stamp"
+        return out
+
+    out = dict(topo)
+    out["nodes"] = [fold(n, times["q"].get(str(n.get("id")))) for n in topo.get("nodes") or []]
+    out["edges"] = [fold(e, times["p"].get(str(e.get("pair_id")))) for e in topo.get("edges") or []]
+    cal = [r["last_calibrated"] for r in out["nodes"] + out["edges"] if r.get("last_calibrated")]
+    if isinstance(topo.get("summary"), dict):
+        out["summary"] = dict(topo["summary"], oldest_calibration=min(cal) if cal else None,
+                              newest_calibration=max(cal) if cal else None)
     return out
 
 

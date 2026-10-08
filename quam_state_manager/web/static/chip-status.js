@@ -1493,16 +1493,26 @@ window.ChipStatus.mount = function (opts) {
         var lenAgg = computeAggregates(gateLenE.map(function(x) { return x.v; }));
         function nsF(v) { return (Math.round(v * 10) / 10) + ' ns'; }
         // Calibration freshness: node last_calibrated + edge cz timestamps.
-        var stamps = [];
+        // docs/301 F11: an entity's last_calibrated may come from the change
+        // ledger (a run's saved state moved one of its values) rather than a
+        // *_updated_at stamp; the sub line says how many of each.
+        var stamps = [], byRun = 0;
         topo.nodes.forEach(function(n) {
-            if (typeof n.last_calibrated === 'number') stamps.push(n.last_calibrated); });
+            if (typeof n.last_calibrated === 'number') {
+                stamps.push(n.last_calibrated);
+                if (n.last_calibrated_from === 'run') byRun++;
+            } });
         topo.edges.forEach(function(e) {
-            if (typeof e.cz_fidelity_updated_at === 'number') stamps.push(e.cz_fidelity_updated_at); });
+            if (e.last_calibrated_from === 'run' && typeof e.last_calibrated === 'number') {
+                stamps.push(e.last_calibrated); byRun++;
+            } else if (typeof e.cz_fidelity_updated_at === 'number') stamps.push(e.cz_fidelity_updated_at); });
         var freshTile;
         if (stamps.length) {
             var newest = Math.max.apply(null, stamps), oldest = Math.min.apply(null, stamps);
             freshTile = { id: 'cal_age', composite: true, title: 'Calibration Age', value: _ageLabel(newest),
-                sub: 'oldest ' + _ageLabel(oldest) + '  ·  (' + stamps.length + ' stamped)',
+                sub: 'oldest ' + _ageLabel(oldest) + '  ·  ('
+                     + (byRun ? byRun + ' by a run\u2019s change, ' + (stamps.length - byRun) + ' stamped'
+                              : stamps.length + ' stamped') + ')',
                 color: '#76b7b2' };
         } else {
             freshTile = { id: 'cal_age', composite: true, title: 'Calibration Age', value: '—', sub: 'no timestamps', muted: true };
@@ -2705,7 +2715,10 @@ window.ChipStatus.mount = function (opts) {
                                          text: '—', title: 'no calibration timestamps' };
                 var ac = _ageClass(ms);
                 if (!ac) return { fill: dCfg.nullCellColor, fg: 'var(--pico-muted-color)', text: '—', title: '' };
-                return { cls: 'hs-' + ac, text: _ageLabel(ms), title: 'last calibrated ' + _ageLabel(ms) };
+                return { cls: 'hs-' + ac, text: _ageLabel(ms),
+                         title: n.last_calibrated_from === 'run'
+                             ? 'last changed by a run ' + _ageLabel(ms) + ' (change ledger)'
+                             : 'last calibrated ' + _ageLabel(ms) };
             }
             if (_badFit(n, m.key)) {
                 return { fill: dCfg.nullCellColor, fg: 'var(--pico-muted-color)', cls: 'hs-badfit',
