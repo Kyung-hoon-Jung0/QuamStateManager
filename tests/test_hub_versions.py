@@ -771,6 +771,38 @@ def test_the_value_drawer_reaches_its_older_points(env, monkeypatch):
     assert "showAll: showAll" in js and '(all ? "&all=1" : "")' in js, "the button reaches the all=1 load"
 
 
+@pytest.mark.parametrize("total", [5001, 6123])
+def test_show_all_drawer_discloses_the_newest_points_cap(env, monkeypatch, total):
+    requested = []
+
+    def fake_history(ctx, path_map, *, limit=None, **kwargs):
+        requested.append(limit)
+        return {"mode": "ledger", "limit": limit}
+
+    point = {"eid": 1, "provenance": "unknown", "display": "1", "t": None,
+             "flag_text": [], "fill": "1", "value": 1, "usable": True,
+             "is_current": False, "removed": False}
+
+    def fake_view(answer, key, path):
+        return {"dot_path": path, "tgt": {"holder": path, "has_current": True},
+                "points": [point] * min(total, answer["limit"]), "total": total,
+                "via": [], "via_since": None, "notes": [], "renames": [],
+                "ledger": {"events": total}, "chart": [],
+                "current_display": "1", "current_value": 1}
+
+    monkeypatch.setattr(routes_mod, "_value_history", fake_history)
+    monkeypatch.setattr(routes_mod, "_vh_drawer_view", fake_view)
+    response = env.client.get("/field/history?path=qubits.qA1.T1&all=1")
+    assert response.status_code == 200
+    body = response.get_data(as_text=True)
+    assert requested == [5000]
+    assert body.count('class="vh-row ') == 5000
+    footer = re.search(r'<p class="fh-foot vh-foot">(.*?)</p>', body, re.S).group(1)
+    assert f"newest 5,000 of {total:,} shown" in text(footer)
+    assert f"{total - 5000} older not shown" in text(footer)
+    assert 'class="fh-show-all"' not in body
+
+
 def test_the_report_trends_read_the_ledger(env):
     """docs/301 F22: the shareable report's Trends read what Chip Status >
     Trends reads. With the snapshot table empty and the ledger holding the

@@ -61,3 +61,22 @@ def test_no_bell_anywhere_is_a_dash(tmp_path):
     c = _client(tmp_path, {"cz_unipolar": _cz()})
     cell = _bell_cell(c.get("/pairs").get_data(as_text=True))
     assert re.sub(r"\s+", "", re.sub(r"<[^>]+>", "", cell)) == "-", cell
+
+
+@pytest.mark.parametrize("nonfinite", [float("nan"), float("inf"), -float("inf")])
+@pytest.mark.parametrize("preferred", [False, True])
+def test_nonfinite_bell_values_do_not_hide_a_finite_alternative(tmp_path, nonfinite, preferred):
+    macros = {"cz_unipolar": _cz(bell=nonfinite), "cz_flattop_erf": _cz(bell=0.99)}
+    if preferred:
+        macros["cz_flattop"] = _cz(bell=nonfinite)
+    c = _client(tmp_path, macros)
+    cell = _bell_cell(c.get("/pairs").get_data(as_text=True))
+    assert "0.9900" in cell and "cz_flattop_erf" in cell, cell
+    assert not re.search(r"\b(?:nan|inf)\b", cell, re.I), cell
+
+
+@pytest.mark.parametrize("nonfinite", [float("nan"), float("inf"), -float("inf")])
+def test_only_nonfinite_bell_values_render_empty(tmp_path, nonfinite):
+    c = _client(tmp_path, {"cz_unipolar": _cz(bell=nonfinite), "cz_flattop": _cz(bell=nonfinite)})
+    cell = _bell_cell(c.get("/pairs").get_data(as_text=True))
+    assert re.sub(r"\s+", "", re.sub(r"<[^>]+>", "", cell)) == "-", cell
