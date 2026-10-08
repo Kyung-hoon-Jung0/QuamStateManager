@@ -83,7 +83,9 @@ findings; every one was re-checked here, and fixed with a pin that fails without
 | P2 "Show all" stopped at 5,000 with no word | "newest 5,000 of N shown" |
 | P3 the age wording claimed a run made a change it is not proven to have made | "moved in a run's saved state (the run is not named as its writer)" |
 | P3 the path autocomplete could reopen after submit | the pending lookup is cancelled; a late answer is dropped |
-| P2 (F42, found while checking a P3) every browser Back re-ran base.html's body scripts: listeners grew by ~11-14 per Back and a run opened after three Backs had four stacked split gutters -- on origin/main too | see below |
+| P2 (F42, found while checking a P3) every browser Back re-ran base.html's body scripts: listeners grew by ~11-14 per Back and a run opened after three Backs had four stacked split gutters -- on origin/main too | each body script owns a lifecycle scope (`window.__smBase.replace(key)`): a re-run tears down the previous run's listeners, timers, observers, fetches and Split instance first. Chrome, after the fix: listener counts flat across Back rounds, one gutter, split drag/toggle and the path autocomplete work, no console error |
+| P3 (F42) each visit to Qubits / Pairs / Flux / Resonators / Couplers added one document keydown listener (the JSON panel's Escape) | bound once |
+| P2 (found by the suite, not a reviewer) the Bell NaN fix also hid a TEXT value on cz_flattop, which main shows quoted | cz_flattop's own value is shown whatever it holds; only a non-finite number gives way |
 
 ## Decisions that changed an existing pin (old expectation → new, and why)
 
