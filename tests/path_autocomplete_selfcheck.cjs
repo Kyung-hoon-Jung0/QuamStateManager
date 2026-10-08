@@ -162,6 +162,51 @@ async function main() {
   await type(CHIP);
   ok(box.style.top === '', 'A4: a button below the list\'s reach does not move it -- top=' + box.style.top);
 
+  // -- A7/A8: submission cancels pending and in-flight completions.
+  const assert = require('node:assert/strict');
+  const isolated = new JSDOM('<form><div><input></div></form>', { runScripts: 'outside-only' });
+  const iw = isolated.window;
+  const timers = new Map();
+  let timerId = 0;
+  iw.setTimeout = function (callback) { timers.set(++timerId, callback); return timerId; };
+  iw.clearTimeout = id => timers.delete(id);
+  function runTimers() {
+    const pending = Array.from(timers.values());
+    timers.clear();
+    pending.forEach(callback => callback());
+  }
+  const start = APP_JS.indexOf('window.initPathAutocomplete = function(inputEl) {');
+  const end = APP_JS.indexOf('/* Folder browser modal', start);
+  new iw.Function(APP_JS.slice(start, end)).call(iw);
+  const pendingInput = iw.document.querySelector('input');
+  const form = pendingInput.form;
+  iw.initPathAutocomplete(pendingInput);
+  const pendingBox = form.querySelector('.path-suggestions');
+  let release;
+  const requests = [];
+  iw.fetch = function (url) {
+    requests.push(url);
+    return new iw.Promise(function (resolve) { release = resolve; });
+  };
+  pendingInput.value = 'C:\\data\\state';
+  pendingInput.dispatchEvent(new iw.Event('input'));
+  form.dispatchEvent(new iw.Event('submit', { bubbles: true, cancelable: true }));
+  runTimers();
+  assert.equal(requests.length, 0, 'A7: submitting cancels the pending debounce request');
+  assert.equal(pendingBox.style.display, 'none', 'A7: the pending timer cannot reopen the list');
+
+  pendingInput.dispatchEvent(new iw.Event('input'));
+  runTimers();
+  assert.equal(requests.length, 1, 'A8: precondition -- the browse request is in flight');
+  form.dispatchEvent(new iw.Event('submit', { bubbles: true, cancelable: true }));
+  release({ json: () => iw.Promise.resolve({ path: pendingInput.value,
+    dirs: ['C:\\data\\state\\runs'], has_quam_state: true }) });
+  await wait(20);
+  assert.ok(pendingBox.style.display === 'none' && pendingBox.children.length === 0,
+    'A8: a late browse response cannot reopen the list after submission');
+  iw.close();
+  console.log('autocomplete cancellation: all 4 checks passed');
+
   if (fails) { console.error(fails + ' of ' + n + ' check(s) failed'); process.exit(1); }
   console.log('path_autocomplete_selfcheck: all ' + n + ' checks passed');
   process.exit(0);

@@ -762,7 +762,8 @@ def test_the_value_drawer_reaches_its_older_points(env, monkeypatch):
     first = c.get("/field/history?path=qubits.qA1.T1").get_data(as_text=True)
     total = int(re.search(r"(\d+) of (\d+) change point", text(first)).group(2))
     assert total >= 2 and "older not shown" in first, text(first)[-300:]
-    assert f"Show all {total}" in first and "FieldHistory.showAll()" in first
+    assert f"Show all {total}" in first and "FieldHistory.showAll(this)" in first
+    assert 'data-path="qubits.qA1.T1"' in first
     every = c.get("/field/history?path=qubits.qA1.T1&all=1").get_data(as_text=True)
     assert "older not shown" not in every and "Show all" not in every
     assert re.search(rf"\b{total} change points", text(every)), text(every)[-300:]

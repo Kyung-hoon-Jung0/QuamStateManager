@@ -7878,42 +7878,103 @@
       }
       info[p.key] = { band: band, lo: lo, p: p, explicit: bands.length > 0 };
     });
-    // docs/301 F33: two coupled ports whose bands are BOTH derived (no row on
-    // either sets one) and that one band covers -- e.g. a band-1 drive on
-    // Out1 beside a band-2 readout read on In1 under the crossing default --
-    // get that band on both (the build writes it), named on Review, instead
-    // of a conflict every new chip had to fix by hand. A band a person set
-    // is never moved: those still warn.
+    // A row's band also sets its other ports. Recheck every coupled pair
+    // after each tentative rewrite, and publish only a complete assignment.
+    // Explicit bands stay fixed; an unresolved assignment keeps its warnings.
     calc.coBands = {};
     calc.notes = [];
     var fems = {};
     calc.ports.forEach(function (p) { fems[p.con + "/" + p.slot] = p.femName; });
+    var pairs = [];
     Object.keys(fems).forEach(function (fk) {
       MW_LO_PAIRS.forEach(function (pair) {
         var a = info[fk + "/" + pair[0][0] + "/" + pair[0][1]];
         var b = info[fk + "/" + pair[1][0] + "/" + pair[1][1]];
         if (!a || !b || a.band == null || b.band == null) return;
-        if (a.band === b.band ||
-            (a.band === 1 && b.band === 3) || (a.band === 3 && b.band === 1)) return;
-        var fix = [1, 2, 3].filter(function (bb) {
-          return a.lo != null && b.lo != null && covers(bb, a.lo) && covers(bb, b.lo);
+        pairs.push({ a: a, b: b, femName: fems[fk] });
+      });
+    });
+    function compatible(a, b) {
+      return a.band === b.band || (a.band === 1 && b.band === 3) ||
+        (a.band === 3 && b.band === 1);
+    }
+    function fixes(a, b) {
+      return [1, 2, 3].filter(function (bb) {
+        return a.lo != null && b.lo != null && covers(bb, a.lo) && covers(bb, b.lo);
+      });
+    }
+    var proposed = {}, changedPairs = [], seen = {};
+    Object.keys(info).forEach(function (k) { info[k].originalBand = info[k].band; });
+    function refreshBands() {
+      Object.keys(info).forEach(function (k) {
+        var x = info[k], bands = [];
+        x.p.members.forEach(function (m) {
+          var b = explicitBand(m);
+          if (b == null) b = proposed[m.group + "/" + m.rid];
+          if (b != null && bands.indexOf(b) < 0) bands.push(b);
         });
+        x.band = bands.length ? bands[bands.length - 1] : x.originalBand;
+      });
+    }
+    var settled = false;
+    // At most three band choices per port; repeated states stop oscillation.
+    for (var pass = 0; pass < calc.ports.length * 3 + 1; pass++) {
+      if (pairs.every(function (pair) { return compatible(pair.a, pair.b); })) {
+        settled = true;
+        break;
+      }
+      var signature = JSON.stringify(proposed);
+      if (seen[signature]) break;
+      seen[signature] = true;
+      pairs.forEach(function (pair) {
+        var a = pair.a, b = pair.b;
+        if (compatible(a, b) || a.explicit || b.explicit) return;
         var both = a.p.members.concat(b.p.members);
-        if (fix.length && !a.explicit && !b.explicit && both.every(function (m) {
-              var prev = calc.coBands[m.group + "/" + m.rid];
-              return prev == null || prev === fix[0];
-            })) {
-          var cb = fix[0];
-          a.band = cb; b.band = cb;
-          [a, b].forEach(function (x) { var g = byId[x.p.key]; if (g) g.band = cb; });
-          both.forEach(function (m) { calc.coBands[m.group + "/" + m.rid] = cb; });
-          calc.notes.push({ members: both, message:
-            fems[fk] + " " + a.p.desc + " (" + who(a.p.members) + ") and " +
+        var affected = {};
+        both.forEach(function (m) { affected[m.group + "/" + m.rid] = true; });
+        var fix = fixes(a, b).filter(function (bb) {
+          if (!both.every(function (m) {
+            var prev = proposed[m.group + "/" + m.rid];
+            return prev == null || prev === bb;
+          })) return false;
+          return Object.keys(info).every(function (k) {
+            var x = info[k];
+            if (!x.p.members.some(function (m) { return affected[m.group + "/" + m.rid]; })) return true;
+            return covers(bb, x.lo) && x.p.members.every(function (m) {
+              var eb = explicitBand(m);
+              if (eb == null && !affected[m.group + "/" + m.rid]) {
+                eb = proposed[m.group + "/" + m.rid];
+              }
+              return eb == null || eb === bb;
+            });
+          });
+        });
+        if (!fix.length) return;
+        both.forEach(function (m) { proposed[m.group + "/" + m.rid] = fix[0]; });
+        if (changedPairs.indexOf(pair) < 0) changedPairs.push(pair);
+        refreshBands();
+      });
+    }
+    if (settled) {
+      calc.coBands = proposed;
+      Object.keys(info).forEach(function (k) {
+        var g = byId[k];
+        if (g) g.band = info[k].band;
+      });
+      changedPairs.forEach(function (pair) {
+        var a = pair.a, b = pair.b, cb = a.band;
+        calc.notes.push({ members: a.p.members.concat(b.p.members), message:
+            pair.femName + " " + a.p.desc + " (" + who(a.p.members) + ") and " +
             b.p.desc + " (" + who(b.p.members) + ") are coupled, so they share a " +
             "band: the build uses band " + cb + " (" + bandSpan(cb) + ") on both." });
-          return;
-        }
-        warn(fems[fk] + " " + a.p.desc + " (band " + a.band + ": " +
+      });
+    } else {
+      Object.keys(info).forEach(function (k) { info[k].band = info[k].originalBand; });
+      pairs.forEach(function (pair) {
+        var a = pair.a, b = pair.b;
+        if (compatible(a, b)) return;
+        var fix = fixes(a, b);
+        warn(pair.femName + " " + a.p.desc + " (band " + a.band + ": " +
           who(a.p.members) + ") and " + b.p.desc + " (band " + b.band + ": " +
           who(b.p.members) + ") are coupled — coupled MW-FEM ports must share " +
           "a band or be bands 1 and 3." + (fix.length
@@ -7922,7 +7983,7 @@
             : " Move an element to another port."),
           a.p.members.concat(b.p.members));
       });
-    });
+    }
     return calc;
   }
 
