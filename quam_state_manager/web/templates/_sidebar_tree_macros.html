@@ -72,7 +72,7 @@
 {% set _leafdir = node.entries and not node.children %}
 <details class="tree-dir{% if node.is_date %} tree-date{% endif %}{% if _leafdir %} tree-leafdir{% endif %}"
          data-tpath="{{ node.tpath }}"{% if not node.is_date %} open{% endif %}{% if _lazy %} data-lazy-group="1" hx-get="/workspace/tree/group?capped=1" hx-vals='{"root": {{ root_path | string | tojson }}, "tpath": {{ node.tpath | string | tojson }}}' hx-trigger="lazy-open once" hx-target="find ul.tree-entries" hx-swap="innerHTML"{% endif %}>
-    <summary class="tree-date-label{% if not node.is_date %} tree-dirname{% endif %}">{{ node.name }} <small class="muted">({{ node.n_total }})</small></summary>
+    <summary class="tree-date-label{% if not node.is_date %} tree-dirname{% endif %}">{{ node.name }} <small class="muted" title="Runs here that saved a chip state (state.json + wiring.json); the Datasets table lists every run">({{ node.n_total }})</small></summary>
     {% for child in node.children %}{{ dir_node(root_path, child, name_filter) }}{% endfor %}
     {% if _lazy %}
     <ul class="tree-entries" data-lazy="1"><li class="tree-entry muted tree-lazy-hint"><small>loading&hellip;</small></li></ul>
