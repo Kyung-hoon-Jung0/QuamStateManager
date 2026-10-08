@@ -13892,8 +13892,11 @@ def _pair_bell(p: dict) -> None:
     found = [(k[: -len("_bell_fidelity")], v) for k, v in p.items()
              if k.endswith("_bell_fidelity") and isinstance(v, (int, float))
              and not isinstance(v, bool) and math.isfinite(v)]
-    if any(g == "cz_flattop" for g, _v in found):
-        gate, value = "cz_flattop", p["cz_flattop_bell_fidelity"]
+    flat = p.get("cz_flattop_bell_fidelity")
+    # cz_flattop's own value is shown whatever it holds (a text value is shown
+    # quoted, as before) -- only a non-finite number gives way (review)
+    if flat is not None and not (isinstance(flat, float) and not math.isfinite(flat)):
+        gate, value = "cz_flattop", flat
     elif found:
         gate, value = max(found, key=lambda kv: kv[1])
     else:
