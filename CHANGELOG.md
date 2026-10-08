@@ -740,3 +740,63 @@ it calibrate — often overnight. SM stops competing with that and becomes its
 - On real **IQCC cloud hardware**, the chatbot brought up qA1 from
   time-of-flight through Ramsey, checking every fit before the next step
   (docs/173 S9).
+
+## v1.1.0 (2026-10-08)
+
+The release that makes SM's history **one record**. Every run, every SM write
+and every state SM saw is kept in a per-chip **change ledger**, and every
+surface that shows "when" or "who" now reads it — Trends, the value drawer,
+Param History, State History, the Versions list, the Calibration log, the
+chip report. Delivered after a walk of every surface in a real browser on
+four kinds of chip (docs/301).
+
+### One history: the change ledger (docs/269–285, 292, 298)
+
+- **The ledger keeps itself current**: new runs land in it as they finish,
+  SM's own writes are recorded at the door that made them, a state SM only
+  saw is recorded as such (docs/270, 271, 275).
+- **A run is named as the writer of a value only when its own patch proves
+  it**; every other point says what is known ("saved in #N, writer not
+  proven", "first recorded", "seen by SM") (docs/279–283).
+- **Calibration log** on the ledger: a story per day, searchable, its day
+  in the address (docs/276, 281, 291, 299).
+- **Versions and State History** list the ledger's recorded states; load or
+  restore any of them through the same gated doors (docs/284).
+- **Re-generate keeps the history** of a renamed qubit (docs/295, 296).
+- **RAM-first**: ledger tables and parts kept per entity and served again
+  while the facts they read still hold (docs/210–217, 298).
+
+### Delivery walk (docs/301, F1–F41)
+
+- Trends draw a **step** (a stored value holds until its next change),
+  open on the change points, show values in their unit, and an unproven
+  point **opens the run that saved it** with a note that it may not be the
+  run that measured it.
+- **Calibration Age** counts a run's change of a value, not only
+  `*_updated_at` stamps; the map popup's trends and the History drawer read
+  the ledger; all history counts agree.
+- Times everywhere in the page's zone with the offset named; a run header
+  shows the run's instant, not the acquisition PC's clock.
+- Loading an older version keeps the chip's own name and data folder.
+- Ctrl+Z after a version load says how to set it aside instead of staging
+  an older apply.
+- Interactive fit overlays draw the **node's own model** (Ramsey decay,
+  spectroscopy peak, Rabi, RB) or say why not (docs/300).
+- Generate wizard: coupled MW-FEM ports with automatic bands get the band
+  that covers both; Review names the CZ variants the build will skip; the
+  waveform preview docks below the edited row and wears the house theme.
+- A chip whose project runs sit directly in the storage location gets its
+  ledger (it had none).
+
+### Agent and safety (docs/245–260, 272–274, 286–289, 297)
+
+- A node run never writes live; the agent cannot loosen its own
+  guardrails; an approval is what the person saw; a refused apply changes
+  nothing; agents can see figures; clear a conversation.
+
+### Also
+
+- Display time zone per project, clock health (docs/196, 263, 264);
+  Auto-Sync per-field choice (docs/195, 209); z-line distortion view
+  (docs/219); Chip Status meta info (docs/220); the chip report v2
+  (docs/277); dBm follows the FSP and the pulse class (docs/238, 248).
